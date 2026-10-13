@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from espalier import surface_hygiene
+from espalier.managed_inventory import get_managed_public_prefixes
 from espalier.pack_manifest import (
     ADDED,
     CHANGED_SEMANTICS,
@@ -59,6 +60,11 @@ from espalier._text import plural
 # ONLY here: running it over engine source (espalier/*.py) is a category error
 # and self-matches surface_hygiene.py's own pattern definitions.
 _HYGIENE_SCAN_PREFIXES = (".claude/", "espalier/assets/", "docs/", "memory/")
+
+# The bodies the audience gate (tests/test_deployed_text_audience.py) holds at
+# zero maintainer-addressed markers. The seeded docs ratchet on a floor there
+# instead, so a pre-flight line for each of their hits would be noise.
+_AUDIENCE_SCAN_PREFIXES = (".claude/", "espalier/assets/claude/")
 
 # ONE spelling, because the filter below keys on it. Five call sites listed this
 # demand as a literal; a reworded copy at any one of them would have silently
@@ -137,7 +143,7 @@ class ContentHit:
     """A cheap-scan finding on a declared path that already exists on disk."""
 
     path: str
-    kind: str               # "internal-id" | "self-host-vocab" | "provenance-tag"
+    kind: str               # "internal-id" | "self-host-vocab" | "maintainer-marker" | "provenance-tag"
     hits: list[str]
 
 
@@ -268,7 +274,7 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
             "CLAUDE.md '## Slash Commands' table row + README command-count claim",
             "cc/COMMANDS.md + cc/LIVE_SURFACE.md + cc/PACK_MANIFEST.txt regen "
             "(espalier.cli.write_required_surface) + examples/CLAUDE.template.md "
-            "(espalier render-template claude)",
+            "(espalier render-template claude --canonical)",
             "prose carriers no count gate reads: grep the command name across "
             "docs/, README.md, the advisor's roster and tools/cc/hooks/"
             "_denial_reasons.py (the 2026-09-28 retirement touched ten such sites)",
@@ -902,6 +908,18 @@ def _scan_existing(repo_root: Path, rel_path: str, report: SurfaceImpactReport) 
             report.content_hits.append(
                 ContentHit(rel_path, "self-host-vocab", vocab_hits)
             )
+    if p.startswith(_AUDIENCE_SCAN_PREFIXES):
+        # Read the body an adopter receives: a self-host block is stripped at
+        # deploy, so a marker inside one is no hit (the gate reads it so too).
+        marker_hits = surface_hygiene.maintainer_marker_hits(
+            surface_hygiene.strip_self_host_blocks(text),
+            deployed_prefixes=get_managed_public_prefixes(),
+        )
+        if marker_hits:
+            report.content_hits.append(ContentHit(
+                rel_path, "maintainer-marker",
+                sorted({f"{family}: {match}" for family, match in marker_hits}),
+            ))
     if _provenance_applies(p):
         # Per-token, mirroring the census: an _ALLOWED_HITS entry forgives
         # specific tags in this file, it does NOT exempt the file. A second,

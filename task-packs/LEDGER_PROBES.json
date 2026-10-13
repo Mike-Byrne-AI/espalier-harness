@@ -1635,16 +1635,17 @@
   {
    "id": "DEF-938",
    "subject": "tests/test_sister_site_probe_regression.py",
-   "cmd": "python3 -c \"import ast;U=ast.unparse;g=lambda p,f:any(f(n) for n in ast.walk(ast.parse(open(p,encoding='utf-8').read())));a=g('tests/test_sister_site_probe_regression.py',lambda n:isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='pytestmark' for t in n.targets) and 'skipif' in U(n.value) and '_tag_present(EXPECTED_TAG)' in U(n.value));b=g('tests/test_verify_pins.py',lambda n:isinstance(n,ast.If) and '_have_history()' in U(n.test) and any(isinstance(c,ast.Call) and U(c.func)=='pytest.skip' and any(k.arg=='allow_module_level' for k in c.keywords) for s in n.body for c in ast.walk(s)));print(a or b)\"",
+   "cmd": "python3 -c \"import ast;U=ast.unparse;t=ast.parse(open('tests/test_sister_site_probe_regression.py',encoding='utf-8').read());S=[n for n in ast.walk(t) if isinstance(n,ast.Call) and U(n.func)=='pytest.mark.skipif'];g=any(isinstance(c,ast.Call) and U(c.func)=='_tag_present' for s in S for a in s.args for c in ast.walk(a));w='skips here as in every public clone' in open('.github/workflows/test.yml',encoding='utf-8').read();print(g or w)\"",
    "open_value": "True",
    "why_not": null,
-   "inputs": [
-    "tests/test_verify_pins.py"
-   ],
-   "row_sha": "c9af85869bf6",
-   "text_sha": "c00e24b62a9d",
+   "row_sha": "5426cccc0e64",
+   "text_sha": "cbd4a2ae9d10",
    "verified_2026_09_27": "OPEN (filed 2026-09-27; probe driven at filing)",
-   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged; severity minor -> major on 2026-10-11: raised to major by the operator on 2026-10-11 as high priority: re-measured that day on a full clone of the public repository (821 commits, not shallow, at 0a6335b), tests/test_verify_pins.py still skips at module level because its control commits are not reachable, so the verify-pins discriminator and the sister-site calibration are still validated nowhere the merge gate reads; the claim stands unchanged)"
+   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged; severity minor -> major on 2026-10-11: raised to major by the operator on 2026-10-11 as high priority: re-measured that day on a full clone of the public repository (821 commits, not shallow, at 0a6335b), tests/test_verify_pins.py still skips at module level because its control commits are not reachable, so the verify-pins discriminator and the sister-site calibration are still validated nowhere the merge gate reads; the claim stands unchanged)",
+   "verified_2026_10_12": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['.github/workflows/test.yml'] on 2026-10-12: the probe also reads the test job's checkout sentence, so the row strikes only when the gate and the sentence are both gone)",
+   "inputs": [
+    ".github/workflows/test.yml"
+   ]
   },
   {
    "id": "DEF-943",
@@ -1842,16 +1843,6 @@
    "why_not": "no mechanical oracle separates a kept register from a leaked one; each of the fifteen is a deletion from an adopter's copy that needs the operator's reading",
    "row_sha": "e43b0cab1377",
    "text_sha": "34fdaa7fbe18",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
-   "id": "DEF-988",
-   "subject": ".claude/commands/implement-pack.md",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "the subject is an agent-read command body: nothing short of running the command on a fixture tree can tell a derived folder from a literal one, and a text predicate over the body is closed by its own fix's paperwork (docs/FAILURE_MODES.md 5.23); the fix lands with a fixture tree carrying done/ that reds the literal",
-   "row_sha": "27493043af35",
-   "text_sha": "bbff4a569cb2",
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
@@ -2348,36 +2339,6 @@
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
   },
   {
-   "id": "DEF-1074",
-   "subject": "espalier/cli.py",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "The fix is a design this row proposes but does not settle (a generic core with an adopter overlay, or a render stage in the deployer), so no structure it must satisfy can be named before it is built; a key on a guessed identifier would stay open under any other name and flip on an unrelated one.",
-   "row_sha": "0dbeb5298b2c",
-   "text_sha": "ae66dc980531",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1075",
-   "subject": "espalier/surface_hygiene.py",
-   "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/surface_hygiene.py\",encoding=\"utf-8\").read());a=[n for n in t.body if isinstance(n,ast.Assign) and getattr(n.targets[0],\"id\",\"\")==\"SPECIFIC_ID_RE\"][0];print(any(\"DEF\" in c.value for c in ast.walk(a.value) if isinstance(c,ast.Constant) and isinstance(c.value,str)))'",
-   "open_value": "False",
-   "why_not": null,
-   "row_sha": "77181e01b65e",
-   "text_sha": "864a0a7b78b2",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1076",
-   "subject": "tools/cc/hooks/post_compact.py",
-   "cmd": "python -c 'import ast,re;t=ast.parse(open(\"tools/cc/hooks/post_compact.py\",encoding=\"utf-8\").read());f=[n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name==\"_capture_compact_summary\"][0];print(sum(isinstance(c,ast.Call) and getattr(c.func,\"attr\",\"\")==\"write\" and any(re.search(r\"(?<![\\w(.])latest\\b\",ast.unparse(a)) for a in c.args) for c in ast.walk(f)))'",
-   "open_value": "1",
-   "why_not": null,
-   "row_sha": "cf597504d7b3",
-   "text_sha": "198e4f4c3883",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
    "id": "DEF-1077",
    "subject": "espalier/cli.py",
    "cmd": null,
@@ -2415,16 +2376,6 @@
    "why_not": "The defect is prompt prose inside a JavaScript template literal; no AST or runtime value in the .js file separates the unconditional frame from a conditional one without reading the prompt text itself, which would be a text trap.",
    "row_sha": "b11c6e1be47a",
    "text_sha": "2f34ca777f18",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1082",
-   "subject": "tools/cc/hooks/_denial_reasons.py",
-   "cmd": "python -c 'import ast;t=ast.parse(open(\"tools/cc/hooks/_denial_reasons.py\",encoding=\"utf-8\").read());v=[n.value for n in ast.walk(t) if isinstance(n,ast.Assign) and any(getattr(x,\"id\",\"\")==\"KILL_SWITCH_DETECTED\" for x in n.targets)];print(any(isinstance(c,ast.Constant) and isinstance(c.value,str) and \"CI will still fail\" in c.value for x in v for c in ast.walk(x)))'",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "977e9e859af8",
-   "text_sha": "20d0e7f5d4f2",
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
   },
   {
@@ -3059,20 +3010,6 @@
    "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: the pack it cited landed 2026-10-08 on lane/generic-systems-fire-off-self-host and moved to Done/; the citation now names the lane and date, the claim and its open state unchanged)"
   },
   {
-   "id": "DEF-1187",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import sys,re,pathlib,tempfile,subprocess;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');r=subprocess.run([sys.executable,'-m','espalier','render-template','claude'],cwd=t,capture_output=True,text=True,timeout=120);print(any('python' in l.lower() for l in r.stdout.splitlines() if 'Languages' in l))\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "50e0a27ffd3a",
-   "text_sha": "bb5975a0ea82",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['tests/_adopter_tree.py', 'tests/_stack_trees.py'] on 2026-10-07: the first probe read the canonical fingerprint's languages, which the fix keeps as the fallback, so it could never flip (review finding); the render on a tree with a saved Node fingerprint is the predicate; the claim and its open state are unchanged)",
-   "inputs": [
-    "tests/_adopter_tree.py",
-    "tests/_stack_trees.py"
-   ]
-  },
-  {
    "id": "DEF-1189",
    "subject": "tools/cc/hooks/_recall.py",
    "cmd": "python3 -c \"import sys,pathlib;sys.path.insert(0,'tools/cc/hooks');import _recall as r;print(any(str(d.source).replace(chr(92),'/').endswith('docs/HOOKS.md') for d in r._load_corpus(pathlib.Path('.'))))\"",
@@ -3176,16 +3113,6 @@
    "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: wording only: the joins left where line numbers were removed are tidied)"
   },
   {
-   "id": "DEF-3002",
-   "subject": "tests/test_cli_deploy.py",
-   "cmd": "python -c 'import pathlib;print(not any(\"build_parser\" in s and \"refuses the commit carrying\" in s for s in (p.read_text(encoding=\"utf-8\",errors=\"replace\") for p in pathlib.Path(\"tests\").glob(\"test_*.py\"))))'",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "fe9b2b87e46e",
-   "text_sha": "a259c88605a0",
-   "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: re-keyed from the pack id to its lane and landing date: the install, upgrade and CI pack left the shipped locations for task-packs/Done/ at its last lane's landing, 2026-10-11)"
-  },
-  {
    "id": "DEF-4012",
    "subject": "tools/cc/hooks/_zone_watch.py",
    "cmd": "python -c \"import sys,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');import _zone_watch as z;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=pathlib.Path(T.name);(t/'espalier.toml').write_text('protected_paths = ['+chr(34)+'models/'+chr(34)+']'+chr(10),encoding='utf-8');c=t/'models'/'clone';(c/'.git').mkdir(parents=True);(c/'.git'/'HEAD').write_bytes(b'ref: refs/heads/main');(c/'weights.json').write_bytes(b'{}');(t/'models'/'card.md').write_bytes(b'# card');print('models/clone/weights.json' in z.snapshot(t))\"",
@@ -3229,6 +3156,67 @@
    ],
    "row_sha": "cfd93df1785e",
    "text_sha": "f14be7ecc4ba",
+   "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4014",
+   "subject": "pyproject.toml",
+   "cmd": "python3 -B -c \"from espalier._compat import tomllib;import ast;d=tomllib.load(open('pyproject.toml','rb'));r=[x.replace(' ','') for x in d['project']['optional-dependencies']['dev'] if x.replace(' ','').lower().startswith('ruff')];p=any('==' in x or ('~=' in x and x.count('.')>=2) for x in r) or 'required-version' in d.get('tool',{}).get('ruff',{});e=any(isinstance(n,ast.Constant) and n.value=='--version' for n in ast.walk(ast.parse(open('scripts/proof_tier.py',encoding='utf-8').read())));print(not p and not e)\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "scripts/proof_tier.py"
+   ],
+   "row_sha": "f87223a7a0ad",
+   "text_sha": "41b50d4e3edf",
+   "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4016",
+   "subject": "espalier/analyze.py",
+   "cmd": "python3 -B -c \"import tempfile,pathlib;from espalier.analyze import detect_package_roots as P,detect_monorepo as M;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);b=pathlib.Path(T.name);w=lambda r,fs:[(r/f).parent.mkdir(parents=True,exist_ok=True) or (r/f).write_text('x') for f in fs] and r;a=w(b/'a',['packages/one/setup.py','packages/two/setup.py']);v=w(b/'v',['pyproject.toml','third_party/libA/setup.py','third_party/libB/setup.cfg','vendor/libC/Gemfile','docs/setup.cfg']);print(not (M(P(a)) and not M(P(v))))\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "espalier/_stack_table.py",
+    "espalier/_safe_walk.py"
+   ],
+   "row_sha": "24504a0439f0",
+   "text_sha": "65f2c65510b3",
+   "verified_2026_10_12": "STILL_OPEN (re-pinned value unchanged on 2026-10-12: re-keyed the closed pack's citation from its id to its title (the dangling-citation baseline); the claim is unchanged)"
+  },
+  {
+   "id": "DEF-4017",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -B -c \"import ast;t=ast.parse(open('espalier/cli.py',encoding='utf-8').read());F={n.name:n for n in ast.walk(t) if isinstance(n,ast.FunctionDef)};C=lambda f:{(c.func.id if isinstance(c.func,ast.Name) else getattr(c.func,'attr',None)) for c in ast.walk(F[f]) if isinstance(c,ast.Call)};R=lambda f,S:S if (f in S or f not in F or f=='_wire_hooks_into_existing') else (S.add(f),[R(g,S) for g in C(f)],S)[2];print(not {'_stale_denies','settings_stale_denies','_report_allow_gaps','_report_allow_gaps_read_only'}&R('cmd_init',set()))\"",
+   "open_value": "True",
+   "why_not": null,
+   "row_sha": "340b1c1144ca",
+   "text_sha": "7fd35c82d54c",
+   "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+  },
+  {
+   "id": "DEF-4015",
+   "subject": "tools/cc/hooks/_reinject.py",
+   "cmd": "python3 -B -c \"import sys,pathlib;sys.path.insert(0,'tools/cc/hooks');import _reinject as r;r._locked_increment=lambda d,name='',**k:99 if name==r.REINJECT_COUNTER else 1;r._log_recall_event=lambda *a,**k:None;r._mark_once=lambda *a,**k:None;R=pathlib.Path('/nonexistent-probe-root');print(any(not r.check('PostToolUse','Edit',{'file_path':p},R) for p in ('tools/cc/ci_guard.py','docs/INSTALL-CI.md','.claude/commands/ship.md','task-packs/CLAUDE.md','.github/workflows/harness-guard.yml','espalier/_vendor/selfcheck_tests/conftest.py')))\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "tools/cc/hooks/_hook_utils.py",
+    "tools/cc/hooks/_maintenance_mode.py"
+   ],
+   "row_sha": "002d29c10d6c",
+   "text_sha": "44d46bed416a",
+   "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+  },
+  {
+   "id": "DEF-2001",
+   "subject": "tools/cc/hooks/post_write_check.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "a design gap gated on a measurement: Task 0 reads the after-check's audit records and decides whether a latch is built at all, so no structure it must satisfy can be named before then",
+   "row_sha": "b02c759ac57e",
+   "text_sha": "4a4b2771fc64",
    "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
   }
  ],

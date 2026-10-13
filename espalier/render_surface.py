@@ -18,6 +18,17 @@ from espalier._atomic_io import atomic_write_text
 from espalier.harness_config import CANONICAL_HOOK_WIRING
 from espalier.managed_markers import MANAGED_MARKER
 
+#: What re-checks a change once the local hooks are off, in a sentence true on
+#: every tree: plain ``init`` installs no CI gate, and the texts that carry this
+#: (cc/LIVE_SURFACE.md here, the root CLAUDE.md ``cli._build_claude_md`` writes
+#: once) outlive the tree they were rendered on, so a claim keyed on today's tree
+#: would turn false at the adopter's next ``install-ci``. The hooks' own texts,
+#: judged live at each event, say which case holds.
+CI_RECHECK_SENTENCE = (
+    "CI re-checks pull requests where the CI gate is installed "
+    "(`espalier install-ci`; plain `init` installs none)."
+)
+
 # The core-loop commands surfaced in the SessionStart banner's "Commands:" line.
 # SINGLE SOURCE OF TRUTH for "core" -- render_commands_doc emits these into
 # cc/COMMANDS.md's `## Core flow` section, which the banner's _commands_footer
@@ -327,7 +338,7 @@ def render_live_surface(repo_root: Path) -> str:
         f"<!-- {MANAGED_MARKER} -->",
         "# Live Surface",
         "",
-        "Canonical index for the Espalier-Harness governance harness. Rendered from the",
+        "Canonical index of the harness surface deployed to this repository. Rendered from the",
         "discovered surface; edit `espalier init` rendering logic, not this file.",
         "",
         "## Session bootstrap",
@@ -339,7 +350,7 @@ def render_live_surface(repo_root: Path) -> str:
         (
             "SessionStart loads context and reports integrity state. "
             "ConfigChange and PreToolUse are the blocking local hook surfaces. "
-            "CI is the merge-time guarantee. SessionStart cannot block Claude "
+            f"{CI_RECHECK_SENTENCE} SessionStart cannot block Claude "
             "Code execution per the official hook protocol "
             "(docs/external/cc-hook-protocol.md)."
         ),
@@ -446,7 +457,7 @@ def render_commands_doc(repo_root: Path) -> str:
 
 
 def render_pack_manifest(repo_root: Path) -> str:
-    """Render cc/PACK_MANIFEST.txt listing shipped self-host surface files.
+    """Render cc/PACK_MANIFEST.txt listing the files ``espalier init`` manages in this repository.
 
     Sources from ``espalier.managed_inventory.get_managed_public_files`` so the
     manifest cannot drift from init/cleanup/doctor's view of the managed
@@ -463,7 +474,7 @@ def render_pack_manifest(repo_root: Path) -> str:
     unique = sorted(set(entries))
     lines = [
         f"# {MANAGED_MARKER}",
-        "# Operator-facing manifest for shipped self-host surface files.",
+        "# Operator-facing manifest of the files `espalier init` manages in this repository.",
         "# The authoritative ownership inventory lives in espalier.managed_inventory.",
         # Stamp the deploying engine version so `espalier upgrade` can detect a
         # stale committed harness. Re-rendered on every deploy/upgrade; read by

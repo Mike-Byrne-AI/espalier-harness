@@ -92,6 +92,7 @@ from espalier import surface_contract
 from espalier.release_pack import create_release_zip
 from espalier import pack_manifest as _pack_manifest
 from espalier.render_surface import (
+    CI_RECHECK_SENTENCE,
     PLAN_READERS,
     write_required_surface,
     _block_scalar_body_continues,
@@ -450,14 +451,24 @@ def _deploy_asset_md(
     return "skipped_user_file"
 
 
-def _asset_transform(rel: str, test_commands: object) -> Callable[[str], str] | None:
-    """The render a packaged ``.claude`` body takes on this tree, or None.
+def _asset_transform(
+    rel: str, test_commands: object, repo_root: Path,
+) -> Callable[[str], str] | None:
+    """The render a packaged ``.claude`` body takes on ``repo_root``, or None.
 
-    One today: a runner agent (``harness_config.RUNNER_AGENT_PATHS``) gains
-    the narrowed rules the fingerprint's test commands derive, the ones its
-    packaged ``tools:`` line does not already grant. ``deploy_harness``
-    passes the fingerprint it deploys from and the ``upgrade`` preview the
-    saved one, so the two agree on what a current body is.
+    Two renders, composed:
+
+    - off the harness's own tree, the self-host-only blocks go
+      (``surface_hygiene.strip_self_host_blocks``). This repository's sessions keep them,
+      so each mirror stays byte-equal to its source and the strip is a render
+      at deploy, like the next one;
+    - a runner agent (``harness_config.RUNNER_AGENT_PATHS``) gains the narrowed
+      rules the fingerprint's test commands derive, the ones its packaged
+      ``tools:`` line does not already grant.
+
+    ``deploy_harness`` passes the fingerprint it deploys from and the
+    ``upgrade`` preview the saved one, both with the tree they render for, so
+    the two agree on what a current body is.
     """
     from espalier.harness_config import (
         RUNNER_AGENT_PATHS,
@@ -465,12 +476,24 @@ def _asset_transform(rel: str, test_commands: object) -> Callable[[str], str] | 
         render_agent_tools,
     )
 
-    if rel not in RUNNER_AGENT_PATHS:
+    from espalier.surface_hygiene import strip_self_host_blocks
+
+    renders: list[Callable[[str], str]] = []
+    if surface_contract.off_self_host(repo_root):
+        renders.append(strip_self_host_blocks)
+    if rel in RUNNER_AGENT_PATHS:
+        rules = agent_runner_rules(test_commands)
+        if rules:
+            renders.append(lambda body: render_agent_tools(body, rules))
+    if not renders:
         return None
-    rules = agent_runner_rules(test_commands)
-    if not rules:
-        return None
-    return lambda body: render_agent_tools(body, rules)
+
+    def render(body: str) -> str:
+        for step in renders:
+            body = step(body)
+        return body
+
+    return render
 
 
 def _saved_test_commands(repo_root: Path) -> list[str]:
@@ -2111,9 +2134,30 @@ def _mark_generated_sections(text: str) -> str:
     return "\n".join(out) + ("\n" if text.endswith("\n") else "")
 
 
-def _build_claude_md(fp: 'RepoFingerprint', harness: 'BuildPlan') -> str:
+#: Sections ``_build_claude_md`` renders on the harness's own tree only. Earlier
+#: releases wrote them on every tree, so ``doctor`` still counts them among the
+#: headings ``init`` wrote (``doctor._generated_claude_headings``).
+_SELF_HOST_ONLY_CLAUDE_MD_HEADINGS: tuple[str, ...] = ("Architecture Rules",)
+
+
+def _settings_json_is_tracked(root: Path) -> bool:
+    """True when ``root`` tracks ``.claude/settings.json``: ``init`` then withheld
+    its ignore entry (``_tracked_conflicts``), so the wiring travels with a clone."""
+    withheld, _shared, _left = _tracked_conflicts(root, [".claude/settings.json"])
+    return bool(withheld)
+
+
+def _build_claude_md(
+    fp: 'RepoFingerprint', harness: 'BuildPlan', *, root: Path | None = None,
+) -> str:
     """Build a skeleton CLAUDE.md for the target repo. Every section it renders
-    carries ``GENERATED_SECTION_RECALL_MARKER`` (see there)."""
+    carries ``GENERATED_SECTION_RECALL_MARKER`` (see there).
+
+    ``root`` is the tree the file is written into, passed by the caller and never
+    read off ``fp`` (whose saved ``repo_root`` is ``.``, the process's cwd). It
+    decides two sentences: whether ``.claude/settings.json`` travels with a clone,
+    and whether the hook-authoring rules render (the harness's own tree only).
+    With no root -- the canonical render -- both take the common case."""
     name = fp.repo_name or "this project"
     languages = ", ".join(fp.languages) if fp.languages else "unknown"
     profiles = ", ".join(harness.profiles) if harness.profiles else "general"
@@ -2172,6 +2216,30 @@ def _build_claude_md(fp: 'RepoFingerprint', harness: 'BuildPlan') -> str:
             f"```toml\n{example}\n```\n"
         )
 
+    if root is not None and _settings_json_is_tracked(root):
+        settings_travel = (
+            "Espalier's\n"
+            "> hooks are wired in `.claude/settings.json`, which this repository\n"
+            "> tracks, so the wiring travels with a clone -- and so does the\n"
+            "> interpreter it names, which another machine may not have. If you did\n"
+            "> **not** receive the"
+        )
+    else:
+        settings_travel = (
+            "Espalier's\n"
+            "> hooks are wired in `.claude/settings.json`, which is per-machine and\n"
+            "> gitignored — it does NOT travel with a clone. If you did **not** receive the"
+        )
+    architecture_rules = (
+        f"## {_SELF_HOST_ONLY_CLAUDE_MD_HEADINGS[0]}\n\n"
+        "- `tools/cc/` scripts run standalone — zero project-specific imports\n"
+        "- Hook exit codes: `0` = allow OR structured channel (JSON on stdout for "
+        "permission/decision); `2` = simple block (plain stderr, no stdout JSON); "
+        "`1` = script error (bug).\n"
+        "- Path comparisons use `.replace(\"\\\\\", \"/\")` for Windows compatibility\n\n"
+        if root is not None and surface_contract.is_self_host_repo(root) else ""
+    )
+
     return _mark_generated_sections(f"""# {name} — Claude Code Governance Harness
 
 ## Project Context
@@ -2184,9 +2252,7 @@ conventions you want `/recall` to find -- and delete the `<!-- recall: skip -->`
 line under its heading: `/recall` indexes a root CLAUDE.md section by section
 as your own knowledge, and skips the ones `init` wrote until you make them yours.
 
-> **First-response governance check (fresh clone / new machine).** Espalier's
-> hooks are wired in `.claude/settings.json`, which is per-machine and
-> gitignored — it does NOT travel with a clone. If you did **not** receive the
+> **First-response governance check (fresh clone / new machine).** {settings_travel}
 > Espalier `=== Session Start ===` context block at the start of this session,
 > the governance hooks are **not active** on this machine: tell the user to run
 > `python -m espalier init .` before relying on mechanical enforcement. (When
@@ -2214,7 +2280,7 @@ Espalier wires {n_hook_scripts} hook scripts that run automatically on Claude Co
 | `subagent_start.py` | SubagentStart | Injects cold-subagent orientation (host facts + fan-out finding-schema pointer); never blocks (reporter) |
 | `context_reinject_failure.py` | PostToolUseFailure | On a failed Edit/Write, injects the untrusted-oracle re-derivation discipline (Rule A); never blocks (reporter) |
 
-**Hook semantics rule:** SessionStart reports. PreToolUse and ConfigChange deny. CI guarantees. SessionStart cannot block per the official Claude Code hook protocol.
+**Hook semantics rule:** SessionStart reports. PreToolUse and ConfigChange deny. {CI_RECHECK_SENTENCE} SessionStart cannot block per the official Claude Code hook protocol.
 
 {tier_tables}
 {plan_hint}
@@ -2238,7 +2304,8 @@ While it is active, `write_guard` skips its protected-zone path check,
 `plan_guard` skips the plan-required check, `stop_gate` skips the docs-refresh
 and code-review gates, and `subagent_stop` skips the blueprint append. Still
 enforced: the kill-switch denial, dangerous-command patterns, the speed-bump
-checkpoints, `config_guard`, `post_write_check`, and CI. Every bypass logs a
+checkpoints, `config_guard`, `post_write_check`, and, where it is installed,
+the CI gate. Every bypass logs a
 line to stderr, which Claude Code routes to its debug log rather than the
 transcript (these hooks exit 0, and that stderr never reaches it); what you
 read back is the once-per-session audit row those guard and stop bypasses
@@ -2260,13 +2327,7 @@ Windows Python Launcher). macOS typically ships only `python3`, some Windows
 installs ship only `python`, and a python.org install that left PATH alone
 answers only to `py -3`.
 
-## Architecture Rules
-
-- `tools/cc/` scripts run standalone — zero project-specific imports
-- Hook exit codes: `0` = allow OR structured channel (JSON on stdout for permission/decision); `2` = simple block (plain stderr, no stdout JSON); `1` = script error (bug).
-- Path comparisons use `.replace("\\\\", "/")` for Windows compatibility
-
-## Build & Test
+{architecture_rules}## Build & Test
 
 ```bash
 # Run tests
@@ -3663,7 +3724,7 @@ def deploy_harness(
     if claude_md.exists():
         skipped.append(_CLAUDE_MD_SKIPPED_MARKER)
     else:
-        atomic_write_text(claude_md, _build_claude_md(fp, harness))
+        atomic_write_text(claude_md, _build_claude_md(fp, harness, root=repo_root))
         deployed.append("CLAUDE.md")
 
     # 3b. Deploy the config skeleton, every key commented out, on CLAUDE.md's
@@ -3728,7 +3789,7 @@ def deploy_harness(
     for rel, src in _packaged_md_assets(harness_root):
         dest = repo_root / rel
         action = _deploy_asset_md(
-            src, dest, transform=_asset_transform(rel, list(fp.test_commands)),
+            src, dest, transform=_asset_transform(rel, list(fp.test_commands), repo_root),
         )
         if action == "created":
             deployed.append(rel)
@@ -3861,7 +3922,7 @@ def preview_managed_surface(
     for rel, src in _packaged_md_assets(harness_root):
         _fold(rel, _deploy_asset_md(
             src, repo_root / rel, dry_run=True,
-            transform=_asset_transform(rel, saved_tests),
+            transform=_asset_transform(rel, saved_tests, repo_root),
         ))
     for rel, action in write_required_surface(repo_root, dry_run=True):
         _fold(rel, action)
@@ -4192,8 +4253,35 @@ def render_canonical_template(subject: str) -> str:
     raise ValueError(f"unknown subject: {subject!r}")
 
 
+def _render_claude_md_for(root: Path) -> str | None:
+    """The root CLAUDE.md ``init`` would write into ``root``, rendered from the
+    tree's saved ``reports/repo_fingerprint.json``; None when there is none or it
+    cannot be read (the read ``_expected_plan`` makes, the same tolerance)."""
+    from espalier._report_io import load_report_json
+
+    saved = load_report_json(root / "reports" / "repo_fingerprint.json")
+    if not saved:
+        return None
+    try:
+        fp = RepoFingerprint.from_dict(saved)
+        return _build_claude_md(fp, build_harness_config(fp), root=root)
+    except (TypeError, ValueError, KeyError, AttributeError):
+        return None
+
+
 def cmd_render_template(args: argparse.Namespace) -> int:
-    """Print the canonical deploy template for `claude`, `memory`, `toml` or `changelog`."""
+    """Print the deploy template for `claude`, `memory`, `toml` or `changelog`.
+
+    ``claude`` renders for the tree it runs in, from its saved fingerprint, the
+    way ``init`` rendered it there: init's NOTE sends an adopter whose repository
+    already has a CLAUDE.md here to copy sections, and a fixed fingerprint
+    described every tree as Python. With no saved fingerprint, or under
+    ``--canonical``, it prints the canonical render the examples/ snapshot pins."""
+    if args.subject == "claude" and not getattr(args, "canonical", False):
+        rendered = _render_claude_md_for(Path.cwd())
+        if rendered is not None:
+            print(rendered, end="")
+            return 0
     print(render_canonical_template(args.subject), end="")
     return 0
 
@@ -5381,12 +5469,63 @@ def _dominant_line_ending(path: Path) -> str:
 #: ``.claude/settings.json`` from the session's own directory, so without this
 #: entry a session launched in a worktree loads none of the harness's hooks --
 #: no banner, no guards, no stop gate -- and nothing says so (measured
-#: 2026-10-08 on two background sessions; DEF-1192). One tuple, read by init,
-#: upgrade and doctor through ``worktree_include_status``; every member must
-#: also be a ``REQUIRED_GITIGNORE`` path, because Claude Code copies only a
-#: listed path git ignores (pinned in tests/test_init_worktree_include.py).
+#: 2026-10-08 on two background sessions; DEF-1192). The two generated reports
+#: ride with it: ``espalier audit`` and the release gate read them, and in a
+#: worktree with neither a session's /smoke and /preflight failed the audit on
+#: "missing generated file" (2026-10-12). One tuple, read by init, upgrade and
+#: doctor through ``worktree_include_status``; every member must be a path a
+#: ``REQUIRED_GITIGNORE`` entry covers (the entry itself, or a file under an
+#: ignored directory), because Claude Code copies only a listed path git
+#: ignores (pinned in tests/test_init_worktree_include.py). The header line
+#: stays as it was: ``has_header`` matches it exactly, and a reworded one would
+#: be appended a second time to every adopter's file at upgrade.
 WORKTREE_INCLUDE_FILE = ".worktreeinclude"
-WORKTREE_INCLUDE_ENTRIES: tuple[str, ...] = (".claude/settings.json",)
+WORKTREE_INCLUDE_ENTRIES: tuple[str, ...] = (
+    ".claude/settings.json",
+    "reports/repo_fingerprint.json",
+    "reports/harness_config.json",
+)
+#: What a session launched in a worktree loses without each entry, so every
+#: message names the loss its missing entries cause: a missing report never
+#: reads as "no hooks", and only the hooks loss is the silent one (the audit
+#: names a missing report itself; an adopter has no release gate). Every member
+#: of the tuple above has one (pinned in tests/test_init_worktree_include.py).
+_WORKTREE_INCLUDE_LOSS: dict[str, str] = {
+    ".claude/settings.json": "loads none of the hooks, and nothing in that session says so",
+    "reports/repo_fingerprint.json": "fails the harness audit on a missing generated file",
+    "reports/harness_config.json": "fails the harness audit on a missing generated file",
+}
+
+
+def worktree_include_loss(entries: "Collection[str]") -> str:
+    """What a session launched in a worktree loses without ``entries``: each
+    loss once, in roster order, joined for a sentence that begins "a Claude
+    Code session launched in a worktree of this repo ..."."""
+    losses: list[str] = []
+    for entry in entries:
+        loss = _WORKTREE_INCLUDE_LOSS.get(entry, f"has no copy of {entry}")
+        if loss not in losses:
+            losses.append(loss)
+    return ", and ".join(losses)
+
+
+def _gitignore_entry_covering(entry: str, gitignore_entries: "Collection[str]") -> str | None:
+    """The gitignore entry that ignores ``entry``: one that names it, or a
+    directory entry (a line ending in ``/``) above it. ``_gitignore_key`` is
+    deliberately no prefix relation (a narrower line never satisfies a broad
+    one); this is the other direction, a broad directory line covering a file
+    beneath it, which is what "git ignores this include entry" asks. Out of
+    scope, and answered None: a bare name (``reports``) and a contents glob
+    (``reports/*``), which git also reads as covering; neither is a shape the
+    harness writes or its callers pass."""
+    key = _gitignore_key(entry)
+    for line in gitignore_entries:
+        k = _gitignore_key(line)
+        if key == k or (line.rstrip().endswith("/") and key.startswith(k + "/")):
+            return line
+    return None
+
+
 WORKTREE_INCLUDE_HEADER = (
     "# Espalier: gitignored files Claude Code copies into each worktree it "
     "creates, so a session launched there loads the hooks"
@@ -5404,32 +5543,51 @@ class WorktreeIncludeStatus(NamedTuple):
     inert: tuple[str, ...] = ()
     #: Whether the file already carries the harness's header line.
     has_header: bool = False
+    #: Entries a declined gitignore line covers (``gitignore_declined`` in
+    #: espalier.toml): git does not ignore them, so Claude Code would not copy
+    #: them; never written, never reported missing, and said when the file is.
+    declined: tuple[str, ...] = ()
 
 
 def worktree_include_status(
     repo_root: Path, *, withheld: "Collection[str] | None" = None,
+    declined: "Collection[str] | None" = None,
 ) -> WorktreeIncludeStatus:
     """What ``.worktreeinclude`` lacks of ``WORKTREE_INCLUDE_ENTRIES``: a
     line-exact compare (whitespace stripped, backslashes read as slashes;
     comments and blank lines are not entries). The one computation ``init``,
-    ``upgrade`` and ``doctor`` render from, so the three cannot disagree.
+    ``upgrade`` and ``doctor`` render from.
 
-    ``withheld`` is the set of entries git already tracks, as
-    ``gitignore_status`` computes it (``doctor`` passes its own); ``None``
-    asks git here. A tracked entry is ``inert``, not ``missing``."""
+    ``withheld`` is the set of INCLUDE entries git already tracks; ``None``
+    asks git here (``_tracked_conflicts`` over the entries themselves), which
+    is what all three callers pass, so they cannot disagree. ``doctor`` once
+    passed ``gitignore_status``'s set, keyed by gitignore lines, and warned
+    forever about a tracked report init would never write (code review, driven
+    2026-10-12). A tracked entry is ``inert``, not ``missing``.
+
+    ``declined`` is the adopter's ``gitignore_declined`` list (None reads the
+    repo's espalier.toml): an entry under a declined line is not ignored, so
+    Claude Code would not copy it; it leaves ``missing`` for ``declined``."""
     if withheld is None:
         withheld, _shared, _left = _tracked_conflicts(repo_root, list(WORKTREE_INCLUDE_ENTRIES))
+    if declined is None:
+        from espalier.config import load_declined_gitignore_entries
+
+        declined = load_declined_gitignore_entries(repo_root)
+    declined_lines = list(declined)
     inert = tuple(e for e in WORKTREE_INCLUDE_ENTRIES if e in withheld)
-    wanted = tuple(e for e in WORKTREE_INCLUDE_ENTRIES if e not in withheld)
+    declined_out = tuple(e for e in WORKTREE_INCLUDE_ENTRIES
+                         if e not in inert and _gitignore_entry_covering(e, declined_lines))
+    wanted = tuple(e for e in WORKTREE_INCLUDE_ENTRIES if e not in inert and e not in declined_out)
     path = repo_root / WORKTREE_INCLUDE_FILE
     try:
         text = path.read_text(encoding="utf-8-sig")
     except FileNotFoundError:
-        return WorktreeIncludeStatus(False, wanted, None, inert)
+        return WorktreeIncludeStatus(False, wanted, None, inert, declined=declined_out)
     except OSError as exc:
-        return WorktreeIncludeStatus(True, wanted, os_error_text(exc), inert)
+        return WorktreeIncludeStatus(True, wanted, os_error_text(exc), inert, declined=declined_out)
     except UnicodeDecodeError:
-        return WorktreeIncludeStatus(True, wanted, "not UTF-8 text", inert)
+        return WorktreeIncludeStatus(True, wanted, "not UTF-8 text", inert, declined=declined_out)
     lines = text.splitlines()
     present = {
         line.strip().replace("\\", "/")
@@ -5438,7 +5596,7 @@ def worktree_include_status(
     }
     missing = tuple(e for e in wanted if e not in present)
     has_header = any(line.strip() == WORKTREE_INCLUDE_HEADER for line in lines)
-    return WorktreeIncludeStatus(True, missing, None, inert, has_header)
+    return WorktreeIncludeStatus(True, missing, None, inert, has_header, declined_out)
 
 
 def _git_hides(repo_root: Path, rel: str) -> bool:
@@ -5526,30 +5684,52 @@ def _approval_marker_lines(repo_root: Path, written: Sequence[str]) -> list[str]
     return lines
 
 
+def _worktree_include_left_out(status: WorktreeIncludeStatus) -> list[str]:
+    """One sentence per reason an entry is left out of the include: the repo
+    tracks it (every worktree checks it out already), or espalier.toml
+    declines the gitignore line that would ignore it (Claude Code copies only
+    an ignored path). Empty when nothing is left out."""
+    notes = []
+    for entries, why in (
+        (status.inert, "this repo tracks {it}, so every worktree checks {it} out already"),
+        (status.declined, "gitignore_declined in espalier.toml leaves {it} unignored, "
+                          "and Claude Code copies only an ignored path"),
+    ):
+        if entries:
+            it = "it" if len(entries) == 1 else "them"
+            notes.append(f"{', '.join(entries)} left out: " + why.format(it=it))
+    return notes
+
+
 def _handle_worktree_include(
     repo_root: Path, *, write: bool, rerun_hint: str,
     withheld: "Collection[str] | None" = None,
 ) -> list[str]:
     """Create or append ``.worktreeinclude`` so Claude Code copies the
-    gitignored settings file into every worktree it creates (DEF-1192).
+    gitignored settings file (DEF-1192) and the two generated reports the
+    audit reads into every worktree it creates.
 
     Runs whether or not the file exists: absence is the common case and the
-    one that needs the entry most. Appends only -- an existing line is never
+    one that needs the entries most. Appends only -- an existing line is never
     rewritten, the header is written once -- in the file's own line ending, as
-    the gitignore append does. On a repo that tracks the settings file (DEF-11)
-    the include is inert and is neither written nor reported. Returns the
-    still-missing entries, so a caller's summary stays honest when the write
-    fails or was not asked for."""
+    the gitignore append does. An entry the repo tracks (DEF-11: the settings
+    file, on some repos) is inert and never written; when every entry is, the
+    file is not written at all and that is said. Returns the still-missing
+    entries, so a caller's summary stays honest when the write fails or was
+    not asked for."""
     status = worktree_include_status(repo_root, withheld=withheld)
-    if status.inert and not status.missing and not status.exists and write:
-        print(f"\n{WORKTREE_INCLUDE_FILE} not written: this repo tracks "
-              f"{', '.join(status.inert)}, so every worktree checks it out already.")
+    left_out = _worktree_include_left_out(status)
+    if left_out and not status.missing and not status.exists and write:
+        print(f"\n{WORKTREE_INCLUDE_FILE} not written:")
+        for note in left_out:
+            print(f"  {note}")
         return []
     if status.unreadable:
         print()
         print(f"WARN: could not read {WORKTREE_INCLUDE_FILE} ({status.unreadable}). "
-              "A Claude Code session launched in a worktree of this repo loads the "
-              f"hooks only when that file lists: {', '.join(WORKTREE_INCLUDE_ENTRIES)}")
+              "Unless it lists "
+              f"{', '.join(status.missing)}, a Claude Code session launched in a "
+              f"worktree of this repo {worktree_include_loss(status.missing)}.")
         return list(status.missing)
     if not status.missing:
         return []
@@ -5569,7 +5749,7 @@ def _handle_worktree_include(
             print()
             print(f"WARN: could not write {WORKTREE_INCLUDE_FILE} ({os_error_text(exc)}). "
                   "Without it a Claude Code session launched in a worktree of this "
-                  "repo loads none of the hooks. Add these lines by hand:")
+                  f"repo {worktree_include_loss(status.missing)}. Add these lines by hand:")
             print()
             for line in lines:
                 print(line)
@@ -5577,8 +5757,10 @@ def _handle_worktree_include(
             return list(status.missing)
         verb = "Appended to" if status.exists else "Wrote"
         print(f"\n{verb} {WORKTREE_INCLUDE_FILE}: {', '.join(status.missing)} -- Claude "
-              "Code copies it into each worktree it creates, so a session launched "
-              "there loads the hooks. Commit the file.")
+              "Code copies these into each worktree it creates; without them a session "
+              f"launched there {worktree_include_loss(status.missing)}. Commit the file.")
+        for note in left_out:
+            print(f"({note})")
         if _git_hides(repo_root, WORKTREE_INCLUDE_FILE):
             # A dotfile catch-all in the adopter's .gitignore: written here,
             # never committed, and the other machine's worktrees run unhooked.
@@ -5588,8 +5770,8 @@ def _handle_worktree_include(
     print()
     print(f"WARN: {WORKTREE_INCLUDE_FILE} lacks {', '.join(status.missing)}"
           + ("" if status.exists else " (no such file)")
-          + ": a Claude Code session launched in a worktree of this repo loads "
-          "none of the hooks.")
+          + ": a Claude Code session launched in a worktree of this repo "
+          f"{worktree_include_loss(status.missing)}.")
     print(rerun_hint)
     return list(status.missing)
 
@@ -10289,7 +10471,7 @@ def _refresh_fingerprint_derivatives(repo_root: Path, fp, config) -> tuple[list[
         try:
             action = _deploy_asset_md(
                 src, repo_root / rel,
-                transform=_asset_transform(rel, list(fp.test_commands)),
+                transform=_asset_transform(rel, list(fp.test_commands), repo_root),
             )
             if action == "updated_managed":
                 refreshed.append(rel)
@@ -10653,7 +10835,9 @@ def cmd_provenance(args: argparse.Namespace) -> int:
             f"tags, which have no meaning in your repo."
         )
         return 0
-    offenders = census_offenders(repo_root)
+    # Untracked files too: /commit runs this before staging, so a new file is
+    # not in the index yet (the regression test reads the index, what ships).
+    offenders = census_offenders(repo_root, include_untracked=True)
     if offenders:
         print(format_offenders(offenders), file=sys.stderr)
         return 2
@@ -11594,10 +11778,6 @@ def cmd_install_ci(args: argparse.Namespace, *, report: dict | None = None) -> i
         print("Wrote:")
         for rel in wrote:
             print(f"  {rel}")
-        # The adopter's next step is the commit carrying these, which the
-        # guard just installed refuses unmarked (DEF-1050).
-        for line in _approval_marker_lines(repo_root, wrote):
-            print(line)
     # init seeds .espalier/integrity.json BEFORE ci_guard.py and
     # harness-guard.yml exist, so the init→install-ci flow leaves both files
     # absent from the manifest (tampering goes undetected). Re-seed now that
@@ -11627,6 +11807,13 @@ def cmd_install_ci(args: argparse.Namespace, *, report: dict | None = None) -> i
                 "[info] re-seeded .espalier/integrity.json to cover "
                 "ci_guard.py + harness-guard.yml"
             )
+            # Rewritten every time (it stamps generated_at), so a re-run whose
+            # guard files are unchanged still changes it wherever it is tracked.
+            wrote.append(".espalier/integrity.json")
+    # The adopter's next step is the commit carrying these, which the guard
+    # just installed refuses unmarked (DEF-1050, DEF-3002).
+    for line in _approval_marker_lines(repo_root, wrote):
+        print(line)
     # The workflow just written flips `detect_ci`'s raw `.github/workflows`
     # probe, so the baseline `init` saved (`ci_providers: []`) now disagrees
     # with a fresh inference and the adopter's next documented step, `doctor .`,
@@ -11768,6 +11955,7 @@ def cmd_refresh_self_host_pin(args: argparse.Namespace) -> int:
     # be located in one carrier aborts the whole run rather than leaving the
     # tree half-updated.
     rewritten: list[tuple[Path, str]] = []
+    moved: list[str] = []  # the carriers whose pin this run changes
     for pin_file in pin_files:
         text = pin_file.read_text(encoding="utf-8")
         updated, n = SELF_HOST_PIN_ASSIGNMENT_RE.subn(
@@ -11780,11 +11968,18 @@ def cmd_refresh_self_host_pin(args: argparse.Namespace) -> int:
             )
             return 2
         rewritten.append((pin_file, updated))
+        if updated != text:
+            moved.append(pin_file.relative_to(repo_root).as_posix())
     for pin_file, updated in rewritten:
         atomic_write_text(pin_file, updated)
     print(f"refreshed: WRITE_GUARD_PREFIX_SHA256 = {new_hash}")
     for pin_file in pin_files:
         print(f"  {pin_file.relative_to(repo_root).as_posix()}")
+    # Two of the carriers sit under tools/cc/, which the Harness Guard gates,
+    # so the commit carrying a moved pin needs the marker (DEF-3002: the census
+    # sees this verb refuse on an adopter tree; the helper keeps the gated ones).
+    for line in _approval_marker_lines(repo_root, moved):
+        print(line)
     print(
         f"Run `{_remedy_py()} scripts/sync_vendor_cc.py` to carry "
         "the tools/cc changes into espalier/_vendor/cc/."
@@ -14096,6 +14291,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="print a canonical CLAUDE.md / ESPALIER_MEMORY.md / CHANGELOG.md template",
     )
     p_rt.add_argument("subject", choices=["claude", "memory", "toml", "changelog"])
+    p_rt.add_argument(
+        "--canonical", action="store_true",
+        help="claude: render the fixed canonical fingerprint, not this tree's saved one",
+    )
     p_rt.set_defaults(func=cmd_render_template)
 
     # Pack scope pre-flight

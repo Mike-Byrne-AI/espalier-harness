@@ -74,6 +74,16 @@ import, never an in-suite one. Corollary: a source-mutation harness that execs
 a module into a bare module object must give it a file attribute, because an
 own-directory insert reads it.
 
+**A deny hook's sibling imports stay at module top, inside one `try`
+(2026-10-10).** The kept-helper guard
+(`tests/test_hooks_start_on_a_kept_helper.py`) was first drafted as an
+`_import_siblings()` function that imported the siblings and re-exported them
+with `global`. Review measured why not: a function-scope wrap unbinds the
+module globals for an in-process importer such as the tests, and the function
+needed some forty module-level re-exports. The module-top `try`/`except` keeps
+every import at module scope, and its handler refuses only under `__main__`,
+so an in-process importer still sees the real error.
+
 ## Maintenance mode — parent-shell launch only
 
 `ESPALIER_MAINTENANCE_MODE=1` bypasses friction-only checks (write_guard
@@ -488,7 +498,15 @@ Three lessons from TP-449 group 9, the write-guard layer.
   `check_fired` (a `say_once` record names the skip; the three deny-owning calls
   above the gate stay unwrapped on purpose, with a test). After any hook edit,
   before the next tool call: `python3 -c "import _bash_patterns, write_guard,
-  _speedbump"` from `tools/cc/hooks`.
+  _speedbump"` from `tools/cc/hooks`. Since the start-or-refuse contract
+  (2026-10-10) the wedge has a second door: `write_guard` and `config_guard` read
+  every helper name on their `_*_HELPER_NAMES` list at import, and a name missing
+  from `_hook_utils` refuses EVERY tool call, the shell included, before anything
+  is judged. Removing a helper therefore goes callers and lists first, the helper
+  last (2026-10-12: the reverse order locked a lane until the operator edited the
+  two lists from a terminal; there, run the one-liner without the `!`, which only
+  the Claude prompt reads). A name the verdict never needs belongs nowhere on the
+  floor list: read it with a `getattr` default instead.
 - **A syntactic model of shell state must enumerate the constructs that do NOT
   execute before it is trusted.** The first directory-chain walk credited every
   `cd` it could read; two review rounds drove eleven shapes against `/bin/bash`
@@ -1272,6 +1290,18 @@ pass, found the sites beyond the ones the class named: plan_guard's ignored
 exemption lines, subagent_stop's record failures, the integrity module's
 unlocked read, write_guard's skipped discard snapshot, the Stop gate's other
 skips and its misspelt mode.
+
+**A degrade decided at import speaks at each entry's root, not in its first
+reader (2026-10-07).** When a guarded module-level import falls back to a
+pinned copy, a once-a-session voice placed in the first function that reads
+the fallback is skipped by every entry path that returns before that read. The
+stack table did this: `plan_guard`'s root-file branch returns before it ever
+calls `source_extensions`, so three unreadable-table drives stayed red until
+each source gate called `_hook_utils.say_stack_table_fault` at its own root
+resolution, with `repo_name` saying it for the reporters
+(`tests/test_stack_table.py::TestTheHookLayerSurvivesAnUnreadableTable`).
+Drive the fault through every entry branch, not only the one that reads the
+value.
 
 ## See also
 

@@ -863,7 +863,8 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
     if deferrals:
         if not despite_deferrals:
             print(f"ledger_row: {len(deferrals)} Scope (out) line(s) in active packs still cite "
-                  f"what this strike closes (DEF-412a):", file=sys.stderr)
+                  f"what this strike closes, and a deferral into a row is a reason not to "
+                  f"strike it:", file=sys.stderr)
             for h in deferrals:
                 print(f"  {h}", file=sys.stderr)
             print("  Re-point or drop each citation in its pack (or record where the work went), "
@@ -1372,7 +1373,7 @@ def main(argv: list[str] | None = None) -> int:
     st.add_argument("--anchor", help="replace the site/anchor cell (default: keep)")
     st.add_argument("--despite-deferrals", action="store_true",
                     help="strike although an active pack's Scope (out) still defers into the row "
-                         "or the section it empties (DEF-412a); the deferrals print as an advisory "
+                         "or the section it empties; the deferrals print as an advisory "
                          "and the closing text should say where the work went")
     cl = sub.add_parser("class", help="open a class: its class-index row and its empty section")
     cl.add_argument("section", help="the new class, e.g. C7")

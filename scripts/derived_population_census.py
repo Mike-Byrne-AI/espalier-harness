@@ -229,7 +229,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        22, "4cd3b59803a15e24bfba45d94fae2c944df5fcf961fbce8e459943380ecbee76",
+        24, "7a11e3bf3f3da82190027d29bc978c3910a26f707f70924506a836fb9ee72cb0",
         "MIXED",
         "Lane 6 (DEF-806). Seven rows walk `PLAN_READERS`, the engine's hand-kept "
         "pair of plan-reading cc/ docs, asserting per member that a plan writer "
@@ -277,7 +277,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "The twenty-first and twenty-second (:2216, :2239) ARE the remedy for that table: "
         "test_the_truth_table_holds_every_coded_row_open_and_closed derives the coded rows from "
         "`_ONBOARDING_ROWS` and holds the table's ids equal to them, each with an open and a "
-        "closed state, so a row that gains or loses a probe reds by name.",
+        "closed state, so a row that gains or loses a probe reds by name."
+        " The twenty-third and twenty-fourth (2026-10-12, DEF-3002's marker-writer census): "
+        "the comprehension over `build_parser()`'s command groups asserts no group also runs on "
+        "its own (a property of every member: a group dropped from the parser runs nothing, so "
+        "its silent drop is inert, while the direction that hurts, a group the census would never "
+        "run, reds by name); and the gated subset of `SELF_HOST_PIN_CARRIERS` is held EQUAL to the "
+        "gated paths git sees the pin refresh change, so a carrier the roster drops while the verb "
+        "still writes it reds as surely as one the verb stops writing.",
     ),
     # 1 row(s), shapes: for-assert
     "tests/test_fuse.py": (
@@ -565,6 +572,11 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "CORRECT_BY_PROPERTY",
         "tests/test_managed_inventory.py:228-241 exact tuple equality",
     ),
+    "tests/test_deployed_text_audience.py": (
+        2, "712eb5c4754cf5526e86666817f13ba0f9c281e605b2553001d9c2cf99be2a41",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-12 (the audience gate): the path-root loop asserts the derivation property against the deploy inventory (each root is a directory here that no deployed prefix covers) and earns it by widening the prefixes so a root drops; the allowlist loop asserts each entry's file exists and holds exactly its count. The populations are the deploy's own enumerators (_packaged_md_assets, the vendored tree), never a hand list.",
+    ),
     "tests/test_derived_population_census.py": (
         14, "fa56c9d6231394c796423e3bcc212156acce02ca09c1eee7d09c09700f11b854",
         "MIXED_WITH_PRIOR_PASS",
@@ -749,9 +761,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "adjudicated in the parametrize/for-assert pass; per-row reason not preserved",
     ),
     "tests/test_hooks.py": (
-        5, "005bbddbc900c550d48bcfdb0016d4b463a6545ee0e93786a6a96b198b8f9d6e",
+        6, "89b9ab9e0c4c4254a79726f501528b9b6aefa2b5f81b305f0e8e557f50053a05",
         "MIXED_WITH_PRIOR_PASS",
-        "per-row verdicts differ within this file; see the ledger row for DEF-600",
+        "per-row verdicts differ within this file; see the ledger row for DEF-600. "
+        "Added 2026-10-12 (the kill-switch CI clause): the get_install_ci_artifacts() "
+        "comprehension is exact tuple equality between the hooks' CI_GATE_FILES copy "
+        "and the engine's set less its .new twin, so a drop or an addition on either side reds.",
     ),
     "tests/test_implement_pack_step_zero.py": (
         4, "bdcf38049c1482b27f8458bc21de1e5e77560677cf56165c7baede28f28a0574",
@@ -793,16 +808,25 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 2 row(s), shapes: comprehension, for-assert
     "tests/test_init_worktree_include.py": (
-        2, "5444c76fdbaa9b997eaf51d06ddc135ec805e74b742de296b530f50e18ea7500",
+        4, "61b86a4e51452349c7779d258b3fbaabcdae23f70f53e83241eafe605a33ff7b",
         "MIXED_WITH_PRIOR_PASS",
-        "NEW 2026-10-09 (DEF-1192): two rows in test_every_entry_is_a_required_"
-        "gitignore_path -- a set comprehension over cli.REQUIRED_GITIGNORE and a "
-        "for-assert over cli.WORKTREE_INCLUDE_ENTRIES holding each include entry to "
-        "the gitignore block (Claude Code copies only a gitignored path, so an "
-        "entry outside the block is inert). Worth having: it is the sole pin of "
-        "that coupling. Blind to a SHRINK of WORKTREE_INCLUDE_ENTRIES (an empty "
-        "tuple passes the loop vacuously); the literal pin one test over, "
-        "test_the_settings_file_is_the_entry, carries the membership.",
+        "NEW 2026-10-09 (DEF-1192), re-read 2026-10-12 when the roster gained the "
+        "two generated reports. Rows (3) and (4), test_every_audit_input_the_harness_"
+        "ignores_rides_the_include: a comprehension over proofs.AUDIT_REQUIRED_FILES "
+        "keeping the ones the gitignore block covers, and a for-assert holding each "
+        "to the include roster; the derivation that replaced a hand copy of the "
+        "audit's inputs, with a floor of 3 so it is never vacuous. Rows (1) and (2), "
+        "two for-asserts over cli.WORKTREE_INCLUDE_ENTRIES. "
+        "(1) test_every_entry_is_covered_by_a_required_gitignore_path holds each "
+        "entry to a REQUIRED_GITIGNORE line that covers it, its own or a directory "
+        "above it (Claude Code copies only an ignored path, so an uncovered entry is "
+        "inert); the sole pin of that coupling, with the helper's refusals pinned by "
+        "literals one test over. (2) test_every_entry_names_what_a_worktree_loses_"
+        "without_it holds each entry to cli._WORKTREE_INCLUDE_LOSS, so no message "
+        "falls back to the generic loss. Both are blind to a SHRINK of the tuple (an "
+        "empty one passes vacuously); test_the_settings_file_is_the_entry and the "
+        "real-command tests' _entries == list(WORKTREE_INCLUDE_ENTRIES) carry the "
+        "membership.",
     ),
     "tests/test_init_gitignore_default.py": (
         10, "33f146dffbe292d1be2def3a515f8fbd40853e3835104eb2e893318bbf2518cf",

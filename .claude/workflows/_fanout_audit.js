@@ -38,7 +38,7 @@ export const meta = {
 // With NO args it discovers task-packs/**/TP-*.md and runs the landing audit —
 // the exact incident that motivated this scaffold (this scaffold's own earn-the-red).
 //
-// SCHEMA NOTE: FINDING_SCHEMA lives in espalier/fan_out_findings.py (the SoT).
+// SCHEMA NOTE: FINDING_SCHEMA lives in the engine's fan_out_findings module (the SoT).
 // The JS sandbox cannot import it, so the shape below is an inlined copy (the
 // W1-E reality). Drift is caught at PERSIST time: aggregate_findings validates
 // every finding against the REAL schema and reports `invalid` > 0 in the summary
@@ -75,11 +75,11 @@ const stripRefuterFields = (x) => {
   return rest
 }
 
-// Inlined FINDING_SCHEMA v2 (SoT: espalier/fan_out_findings.py::FINDING_SCHEMA).
+// Inlined FINDING_SCHEMA v2 (SoT: the engine's fan_out_findings.FINDING_SCHEMA).
 // Enums are verbatim: confidence ("high","med","low"), severity
 // ("blocker","major","minor","nit"), refutation ("unattempted","survived","refuted").
-// FINDING_SCHEMA v2 — in-sync with espalier/fan_out_findings.py SoT (pinned by
-// tests/test_contracts.py::TestFanoutSchemaParity). Keep current; do not hand-edit fields.
+// FINDING_SCHEMA v2 — in sync with the engine's SoT (pinned by
+// TestFanoutSchemaParity). Keep current; do not hand-edit fields.
 const FINDING = {
   type: 'object',
   additionalProperties: false,

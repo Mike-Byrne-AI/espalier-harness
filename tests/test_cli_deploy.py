@@ -3263,3 +3263,636 @@ class TestEveryWriterOfAGatedPathNamesTheMarker:
                                                rewire_interpreter=True)) == 0
         out = capsys.readouterr().out
         assert ".claude/settings.json" in out and f"{_MARKER}@<sha> in the title" in out, out
+
+
+# DEF-3002: _MARKER_WRITERS is the population its authors remembered, and the CI
+# lane found three silent writers it had missed. The census derives the
+# population instead: every leaf command build_parser registers, run once bare
+# and once per switch (a store_true or store_false flag, or each value of a
+# flag or positional that takes choices), on a tree that gives each known
+# writer work to do. A run that leaves a path the Harness Guard gates, and git
+# does not ignore, changed in the tree must print the helper's clause. A new
+# command or switch joins without an edit here; one the census cannot build
+# reds by name until it gets a value (_CENSUS_VALUES) or a reason
+# (_CENSUS_NOT_RUN), and one that exits non-zero, so may never have reached its
+# write, reds until _CENSUS_REFUSES says why. The limits: a flag that takes a
+# free value runs at its default, and a write that needs a state this tree
+# lacks is not seen.
+
+_CENSUS_PACK = "task-packs/TP-1-census.md"
+
+#: A value for each positional that is neither the repository nor a choice.
+_CENSUS_VALUES: dict[str, str] = {
+    "pack_path": _CENSUS_PACK,
+    "fragment_id": "census-fragment",
+}
+
+#: The leaf commands the census does not run, each with its reason.
+_CENSUS_NOT_RUN: dict[str, str] = {
+    "fuse": "writes a new tree at --out, never the census tree; "
+            "tests/test_fuse.py::TestFuseCiGateBanner holds its clause",
+    "refresh-externals": "fetches each docs/external/ pin's source over the network, and "
+                         "--apply writes docs/external/, which the Harness Guard does not gate",
+}
+
+#: The runs that exit non-zero on the census tree, each with why. A refusal
+#: may stop a command before its write, so an unlisted one reds; a listed one
+#: that now exits 0 reds too, so the table cannot keep excusing a command that
+#: has started to run through.
+_CENSUS_REFUSES: dict[str, str] = {
+    # A key is a census id; `<id> *` also covers every switch of that id.
+    "doctor *": "reports the census tree's planted drift (the stale hook, the unwired "
+                "settings file) and exits 1; a reader",
+    "integrity verify": "reports the stale hook's drift and exits 1; a reader",
+    "selfcheck --contracts": "fails its upstream-parity check on the stale hook; a reader",
+    "scope-check *": "walks the pack's symbol through the tree and exits 2 on the scope "
+                     "gap it finds; a reader",
+    "blueprint record *": "needs the session `blueprint start` opens; the blueprint "
+                          "commands write cc/blueprints/, which init ignores",
+    "blueprint finalize *": "needs the session `blueprint start` opens; cc/blueprints/ "
+                            "is ignored",
+    "blueprint load *": "needs a blueprint on disk; a reader",
+    "freshness pin *": "names a fragment no doc on the tree carries; "
+                       ".espalier/freshness.json is not a path the Harness Guard gates",
+    "freshness unpin": "names a fragment the manifest does not hold; not a gated path",
+    "memory prune": "needs Session Log rows the tree does not have (--allow-empty runs "
+                    "through); writes memory files, which the Harness Guard does not gate",
+    "release-pack": "refuses off the Espalier-Harness source tree",
+    "_refresh-self-host-pin": "refuses off the Espalier-Harness source tree; its pin "
+                              "rewrite is held on a clone of this repository by "
+                              "::TestTheSelfHostPinRefreshNamesTheMarker",
+}
+
+
+def _census_refusal(census_id: str) -> "str | None":
+    """The reason a census id exits non-zero: its own key, or `<id> *` for a
+    command it is a switch of."""
+    for key, reason in _CENSUS_REFUSES.items():
+        base = key.removesuffix(" *")
+        if census_id == base or (key.endswith(" *") and census_id.startswith(base + " ")):
+            return reason
+    return None
+
+#: The writers _MARKER_WRITERS names, as census ids. Each must change a gated
+#: path on the census tree, or the tree has stopped giving writers work and
+#: every assertion below passes over nothing.
+_CENSUS_FLOOR = ("init", "merge-settings", "upgrade --execute", "clean-generated --execute",
+                 "integrity refresh", "install-ci")
+
+
+def _census_leaves(parser=None, path: tuple[str, ...] = ()):
+    """(command path, its parser) for every leaf build_parser registers."""
+    import argparse
+    if parser is None:
+        from espalier.cli import build_parser
+        parser = build_parser()
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for name, sub in action.choices.items():
+                yield from _census_leaves(sub, (*path, name))
+            return
+    yield path, parser
+
+
+def _census_variants() -> dict[str, list[str]]:
+    """census id -> argv, ``{repo}`` standing for the census tree."""
+    import argparse
+    variants: dict[str, list[str]] = {}
+    for path, parser in _census_leaves():
+        leaf = " ".join(path)
+        if leaf in _CENSUS_NOT_RUN:
+            continue
+        heads: list[tuple[list[str], list[str]]] = [([], [])]  # (argv, the id's choice words)
+        switches: list[list[str]] = []
+        for action in parser._actions:
+            if isinstance(action, argparse._HelpAction):
+                continue
+            if not action.option_strings:
+                if action.choices:
+                    heads = [(argv + [str(c)], ids + [str(c)]) for argv, ids in heads
+                             for c in action.choices]
+                else:
+                    value = "{repo}" if action.dest == "repo" else _CENSUS_VALUES.get(
+                        action.dest, f"<no census value for {action.dest}>")
+                    heads = [(argv + [value], ids) for argv, ids in heads]
+            elif isinstance(action, (argparse._StoreTrueAction, argparse._StoreFalseAction)):
+                switches.append([action.option_strings[-1]])
+            elif action.choices:
+                switches.extend([action.option_strings[-1], str(c)] for c in action.choices)
+            elif type(action) is not argparse._StoreAction:  # a free value runs at its default
+                # store_const, count, append and BooleanOptionalAction switch
+                # behaviour too; until the census has a rule for one, it reds.
+                switches.append([f"<no census rule for {type(action).__name__} "
+                                 f"{action.option_strings[-1]}>"])
+        for argv, ids in heads:
+            base = " ".join([leaf, *ids])
+            variants[base] = [*path, *argv]
+            for switch in switches:
+                variants[f"{base} {'='.join(switch)}"] = [*path, *argv, *switch]
+    return variants
+
+
+_CENSUS_VARIANTS = _census_variants()
+
+
+def _census_changed(tree: Path) -> list[str]:
+    """Every path git reports changed, added or deleted in ``tree`` (a rename's
+    two names both), ignored paths left out as git leaves them out."""
+    raw = subprocess.run(["git", "-C", str(tree), "status", "--porcelain=v1", "-z", "-uall"],
+                         capture_output=True, check=True).stdout.decode("utf-8", "replace")
+    entries = raw.split("\0")
+    changed: list[str] = []
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if not entry:
+            continue
+        changed.append(entry[3:])
+        if entry[0] in "RC":  # -z puts the source name in the next field
+            changed.append(entries[index])
+            index += 1
+    return changed
+
+
+def _census_head(tree: Path) -> str:
+    return subprocess.run(["git", "-C", str(tree), "rev-parse", "HEAD"], capture_output=True,
+                          text=True, encoding="utf-8", check=True).stdout.strip()
+
+
+def _census_committed(tree: Path, since: str) -> list[str]:
+    """The paths the commits after ``since`` changed: a command that commits
+    its own write leaves ``git status`` clean."""
+    raw = subprocess.run(["git", "-C", str(tree), "diff", "--name-only", "-z", since, "HEAD"],
+                         capture_output=True, check=True).stdout
+    return [rel for rel in raw.decode("utf-8", "replace").split("\0") if rel]
+
+
+@pytest.fixture(scope="module")
+def census_tree(tmp_path_factory):
+    """An install-ci tree that tracks its settings file and its integrity
+    manifest, committed with work in it for every known writer: a stale hook
+    (init, upgrade, integrity refresh), an older stamp (upgrade's version-bump
+    arm), an unwired settings file (merge-settings) and a task pack (the
+    commands that read one)."""
+    with pytest.MonkeyPatch.context() as mp:
+        for var in ("CLAUDECODE", "CLAUDE_PROJECT_DIR"):
+            mp.delenv(var, raising=False)
+        tree = _marker_tree(tmp_path_factory.mktemp("census"), guard=True,
+                            track_settings=True, track_manifest=True)
+    _stale_a_hook(tree)
+    _stamp_older(tree)
+    (tree / ".claude" / "settings.json").write_text("{}\n", encoding="utf-8")
+    pack = tree / _CENSUS_PACK
+    pack.parent.mkdir(parents=True, exist_ok=True)
+    pack.write_text("# TP-1: the census pack\n\n## Affected symbols\n\n### Changed\n\n"
+                    "- `tools/cc/hooks/plan_guard.py::main`\n",
+                    encoding="utf-8")
+    _git_q(tree, "add", "-A")
+    _git_q(tree, "add", "-f", ".claude/settings.json", ".espalier/integrity.json")
+    _git_q(tree, "commit", "-qm", "the census tree")
+    return tree
+
+
+class TestEveryCommandThatWritesAGatedPathNamesTheMarker:
+    """DEF-3002: the marker-writer population derived from build_parser,
+    not remembered. The hand list above keeps its negative arms (no guard,
+    every gated path ignored), which this census does not build."""
+
+    @pytest.mark.parametrize("census_id", sorted(_CENSUS_VARIANTS))
+    def test_a_run_that_changes_a_gated_path_names_the_marker(
+        self, census_id, census_tree, tmp_path, capsys, monkeypatch,
+    ):
+        import shutil
+
+        from espalier import surface_contract
+        from espalier.cli import build_parser
+
+        for var in ("CLAUDECODE", "CLAUDE_PROJECT_DIR"):
+            monkeypatch.delenv(var, raising=False)
+        tree = tmp_path / "t"
+        shutil.copytree(census_tree, tree)
+        argv = [arg.replace("{repo}", str(tree)) for arg in _CENSUS_VARIANTS[census_id]]
+        unvalued = [arg for arg in argv if arg.startswith("<no census")]
+        assert not unvalued, (
+            f"{census_id}: {unvalued}. Give the positional a value in _CENSUS_VALUES, teach "
+            "_census_variants the action, or give the command a reason in _CENSUS_NOT_RUN")
+        try:
+            args = build_parser().parse_args(argv)
+        except SystemExit:
+            pytest.fail(f"{census_id}: the parser refused {argv}. Give its positionals a value "
+                        "in _CENSUS_VALUES, or the command a reason in _CENSUS_NOT_RUN")
+        monkeypatch.chdir(tree)
+        head = _census_head(tree)
+        capsys.readouterr()
+        try:
+            rc = args.func(args)
+        except SystemExit as exc:
+            rc = exc.code
+        captured = capsys.readouterr()
+        out = captured.out + captured.err
+        if _census_refusal(census_id) is not None:
+            assert rc not in (0, None), (
+                f"{census_id} now exits 0 on the census tree; drop its _CENSUS_REFUSES "
+                "entry so the census holds the run it now makes")
+        else:
+            assert rc in (0, None), (
+                f"`espalier {census_id}` exited {rc!r} on the census tree, so it may never "
+                "have reached its write. Give the census tree the state it needs, or say "
+                "why in _CENSUS_REFUSES. Output:\n" + out[-1500:])
+        changed = set(_census_changed(tree))
+        if _census_head(tree) != head:  # a command that commits its own write
+            changed |= set(_census_committed(tree, head))
+        self_host = surface_contract.is_self_host_repo(tree)
+        gated = sorted(rel for rel in changed
+                       if surface_contract.is_protected_from_ci(rel, self_host=self_host))
+        if census_id in _CENSUS_FLOOR:
+            assert gated, (
+                f"{census_id} changed no gated path on the census tree, so the census no "
+                "longer gives the writers it exists for anything to write")
+        if gated:
+            assert ("refuses the commit carrying" in out
+                    and f"{_MARKER} in the HEAD commit message" in out
+                    and f"{_MARKER}@<sha> in the title" in out), (
+                f"`espalier {census_id}` changed {gated}, which the Harness Guard gates and "
+                "git will commit, and did not print the approval-marker clause "
+                "(espalier/cli.py::_approval_marker_lines). Output:\n" + out[-2000:])
+            # The sibling roster: a command that rewrites a protected file
+            # records its writes for the session's zone check
+            # (tests/test_zone_writes.py::TestOnlyTheWritersAreBracketed).
+            assert getattr(args, "zone_writer", False), (
+                f"`espalier {census_id}` changed {gated} and its parser does not set "
+                "zone_writer=True, so a session watching the tree reports the write back")
+
+    def test_the_census_tables_name_only_what_the_parser_has(self):
+        """Both ways: a reason or a value for something the parser no longer
+        has would excuse nothing while reading as coverage."""
+        leaves = {" ".join(path) for path, _ in _census_leaves()}
+        positionals = {action.dest for _, parser in _census_leaves()
+                       for action in parser._actions if not action.option_strings}
+        assert set(_CENSUS_NOT_RUN) <= leaves, set(_CENSUS_NOT_RUN) - leaves
+        assert all(reason.strip() for reason in _CENSUS_NOT_RUN.values())
+        assert set(_CENSUS_VALUES) <= positionals, set(_CENSUS_VALUES) - positionals
+        assert set(_CENSUS_FLOOR) <= set(_CENSUS_VARIANTS), set(_CENSUS_FLOOR) - set(_CENSUS_VARIANTS)
+        refused = {key.removesuffix(" *") for key in _CENSUS_REFUSES}
+        assert refused <= set(_CENSUS_VARIANTS), refused - set(_CENSUS_VARIANTS)
+        assert not {cid for cid in _CENSUS_FLOOR if _census_refusal(cid)}, (
+            "a floor writer cannot be excused")
+        assert all(reason.strip() for reason in _CENSUS_REFUSES.values())
+
+    def test_no_command_group_runs_on_its_own(self):
+        """The census runs leaves. A group with subcommands that also runs by
+        itself (a default ``func``) would be a command it never runs."""
+        import argparse
+
+        from espalier.cli import build_parser
+
+        def groups(parser, path=()):
+            for action in parser._actions:
+                if isinstance(action, argparse._SubParsersAction):
+                    for name, sub in action.choices.items():
+                        yield (*path, name), sub
+                        yield from groups(sub, (*path, name))
+
+        runnable = [" ".join(path) for path, sub in groups(build_parser())
+                    if any(isinstance(a, argparse._SubParsersAction) for a in sub._actions)
+                    and sub.get_default("func") is not None]
+        assert not runnable, runnable
+
+
+class TestTheSelfHostPinRefreshNamesTheMarker:
+    """`_refresh-self-host-pin` refuses on an adopter tree, so the census sees
+    it exit 2 and never write. On this repository it rewrites three pin
+    carriers under tools/cc/ and espalier/, which the Harness Guard gates
+    here, so it is held on a clone of this repository instead (DEF-3002)."""
+
+    def test_the_refresh_names_the_marker_exactly_when_it_moves_the_pin(
+        self, tmp_path, capsys, monkeypatch,
+    ):
+        import argparse
+
+        from espalier import cli, surface_contract
+        from tests._git_oracle import owns_its_worktree
+
+        if not owns_its_worktree(REPO_ROOT):
+            pytest.skip("needs this repository's own history to clone")
+        clone = tmp_path / "self-host"
+        subprocess.run(["git", "clone", "-q", "--shared", str(REPO_ROOT), str(clone)],
+                       check=True, capture_output=True)
+        monkeypatch.delenv("CLAUDECODE", raising=False)
+        refresh = argparse.Namespace(repo=str(clone))
+
+        # The pin is current at HEAD: the carriers are rewritten byte for byte,
+        # nothing reaches a commit, and the clause stays quiet.
+        capsys.readouterr()
+        assert cli.cmd_refresh_self_host_pin(refresh) == 0
+        assert _census_changed(clone) == []
+        assert _MARKER not in capsys.readouterr().out
+
+        # Inside the pinned 200 bytes: the refresh moves the pin in every carrier.
+        guard = clone / "tools" / "cc" / "hooks" / "write_guard.py"
+        guard.write_bytes(guard.read_bytes().replace(b"friction layer", b"friction  layer", 1))
+        _git_q(clone, "commit", "-qam", "move the pinned prefix")
+        assert cli.cmd_refresh_self_host_pin(refresh) == 0
+        out = capsys.readouterr().out
+        self_host = surface_contract.is_self_host_repo(clone)
+        gated = sorted(rel for rel in _census_changed(clone)
+                       if surface_contract.is_protected_from_ci(rel, self_host=self_host))
+        gated_carriers = sorted(rel for rel in cli.SELF_HOST_PIN_CARRIERS
+                                if surface_contract.is_protected_from_ci(rel, self_host=self_host))
+        assert gated_carriers and gated == gated_carriers, (gated, gated_carriers)
+        assert "refuses the commit carrying" in out and f"{_MARKER}@<sha> in the title" in out, out
+
+
+# ── TP-473 1-C: a self-host-only block is stripped at deploy, off this tree ───
+
+
+_FENCED = (
+    "---\nname: x\n---\n"
+    "keep 1\n"
+    "<!-- espalier:self-host-only -->\n"
+    "python scripts/proof_tier.py --run\n"
+    "<!-- /espalier:self-host-only -->\n"
+    "keep 2\n"
+    "// <!-- espalier:self-host-only -->\n"
+    "// SoT: espalier/fan_out_findings.py\n"
+    "// <!-- /espalier:self-host-only -->\n"
+    "keep 3\n"
+)
+
+
+class TestSelfHostBlocksStripAtDeploy:
+    """A ``.claude`` body fences this repository's own procedure between the
+    two ``espalier:self-host-only`` markers; ``init`` strips the block on every
+    other tree and this repository's sessions keep it, so the mirrors stay
+    byte-equal to their source."""
+
+    def test_the_strip_takes_each_block_with_its_marker_lines(self):
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        assert _strip_self_host_blocks(_FENCED) == "---\nname: x\n---\nkeep 1\nkeep 2\nkeep 3\n"
+
+    def test_an_unclosed_block_strips_nothing(self):
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        body = "a\n<!-- espalier:self-host-only -->\nb\n"
+        assert _strip_self_host_blocks(body) == body
+
+    def test_a_stray_opener_above_a_block_takes_nothing_with_it(self):
+        """A stray opener must not pair with the NEXT block's closer and take the
+        adopter text between them (the first cut's DOTALL body did: review)."""
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        body = ("a\n<!-- espalier:self-host-only -->\nKEEP\nmid\n"
+                "<!-- espalier:self-host-only -->\nx\n<!-- /espalier:self-host-only -->\nafter\n")
+        assert _strip_self_host_blocks(body) == "a\n<!-- espalier:self-host-only -->\nKEEP\nmid\nafter\n"
+
+    def test_a_block_at_the_end_of_a_body_without_a_newline_goes(self):
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        body = "a\n<!-- espalier:self-host-only -->\nb\n<!-- /espalier:self-host-only -->"
+        assert _strip_self_host_blocks(body) == "a\n"
+
+    def test_the_strip_is_idempotent(self):
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        once = _strip_self_host_blocks(_FENCED)
+        assert _strip_self_host_blocks(once) == once
+
+    def test_off_this_tree_a_body_is_stripped_and_on_it_none_is(self, tmp_path):
+        from espalier.cli import _asset_transform
+        off = _asset_transform(".claude/commands/x.md", [], tmp_path)
+        assert off is not None and "proof_tier" not in off(_FENCED)
+        assert _asset_transform(".claude/commands/x.md", [], REPO_ROOT) is None
+
+    def test_a_runner_agent_takes_both_renders(self, tmp_path):
+        from espalier.cli import _asset_transform
+        from espalier.harness_config import RUNNER_AGENT_PATHS
+        rel = sorted(RUNNER_AGENT_PATHS)[0]
+        body = "---\nname: x\ntools: Read, Bash(git *)\n---\n" + _FENCED.split("---\n", 2)[2]
+        rendered = _asset_transform(rel, ["npm test"], tmp_path)(body)
+        assert "proof_tier" not in rendered and "npm test" in rendered, rendered
+
+    def test_a_fusion_built_with_init_off_strips_too(self, tmp_path):
+        """fuse's overlay marks the bodies init did not deploy; with init off that
+        is every body, and it shipped them unstripped (review)."""
+        from espalier.fuse import _mark_overlaid_md
+        from espalier.managed_markers import has_managed_marker
+        dst = tmp_path / "x.md"
+        dst.write_bytes(_FENCED.encode("utf-8"))
+        _mark_overlaid_md(dst)
+        text = dst.read_text(encoding="utf-8")
+        assert "proof_tier" not in text and "self-host-only" not in text, text
+        assert has_managed_marker(text)
+
+    def test_every_workflow_an_adopter_receives_is_a_valid_function_body(self, tmp_path):
+        """The strip removes whole lines from a .js workflow, so a fence around a
+        code line would leave the adopter's copy unparseable while the source
+        parses -- the silently absent slash command (review). The oracle
+        tests/test_finding_ledger.py runs over the source, run over the render."""
+        import shutil
+        from espalier.cli import _asset_transform, _packaged_md_assets
+        node = shutil.which("node")
+        if not node:
+            pytest.skip("node not installed")
+        probe = (
+            "const fs=require('fs');"
+            "const src=fs.readFileSync(process.argv[1],'utf8').replace(/^export /mg,'');"
+            "new (Object.getPrototypeOf(async function(){}).constructor)(src);"
+        )
+        workflows = [(rel, src) for rel, src in _packaged_md_assets(REPO_ROOT) if rel.endswith(".js")]
+        assert len(workflows) >= 3, workflows
+        for rel, src in workflows:
+            out = tmp_path / Path(rel).name
+            out.write_bytes(_asset_transform(rel, [], tmp_path)(src.read_text(encoding="utf-8")).encode("utf-8"))
+            r = subprocess.run([node, "-e", probe, str(out)], capture_output=True, text=True,
+                               timeout=45, encoding="utf-8")
+            assert r.returncode == 0, (rel, r.stderr[-400:])
+
+    def test_a_fenced_body_deploys_once_and_then_reads_as_current(self, tmp_path):
+        """The refutation the pack names: if the adopter's body read as drifted
+        after every init, the strip would not be idempotent through the deploy's
+        own no-drift compare. Deploy, re-deploy, then the upgrade preview's dry run."""
+        from espalier.cli import _asset_transform, _deploy_asset_md
+        src = tmp_path / "src" / "x.md"
+        src.parent.mkdir()
+        src.write_bytes(_FENCED.encode("utf-8"))
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        rel = ".claude/commands/x.md"
+        dest = tree / rel
+        assert _deploy_asset_md(src, dest, transform=_asset_transform(rel, [], tree)) == "created"
+        written = dest.read_text(encoding="utf-8")
+        assert "self-host-only" not in written and "proof_tier" not in written, written
+        assert _deploy_asset_md(src, dest, transform=_asset_transform(rel, [], tree)) == "skipped_no_drift"
+        assert _deploy_asset_md(
+            src, dest, dry_run=True, transform=_asset_transform(rel, ["pytest -q"], tree),
+        ) == "skipped_no_drift"
+
+
+# ── DEF-988: /implement-pack retires a pack into the tree's own folder ────────
+
+
+class TestImplementPackRetiresIntoTheTreesOwnFolder:
+    """Step 12 used to name ``task-packs/Done/`` as a literal, so an adopter whose
+    finished packs live in ``done/`` got a second folder -- and on a case-insensitive
+    filesystem the move landed in ``done/`` on disk while the index recorded
+    ``Done/``. The deployed body now derives the folder; this drives the body's own
+    probe, as an adopter receives it, against trees shaped like theirs."""
+
+    _BODY = REPO_ROOT / "espalier" / "assets" / "claude" / "commands" / "implement-pack.md"
+
+    def _probe(self, tmp_path) -> str:
+        from espalier.cli import _asset_transform
+        body = _asset_transform(".claude/commands/implement-pack.md", [], tmp_path)(
+            self._BODY.read_text(encoding="utf-8"))
+        lines = [ln.strip() for ln in body.splitlines() if ln.strip().startswith("p='<pack-path>';")]
+        assert len(lines) == 1, "step 12's retirement-folder probe is gone or doubled"
+        return lines[0]
+
+    def _retired(self, tmp_path, tree: Path, pack: str) -> str:
+        import shutil
+        bash = shutil.which("bash")
+        if bash is None:
+            pytest.skip("no bash on PATH; the probe is a POSIX shell line")
+        script = self._probe(tmp_path).replace("<pack-path>", pack)
+        out = subprocess.run([bash, "-c", script], cwd=tree, capture_output=True, text=True,
+                             encoding="utf-8", timeout=30, check=True)
+        return out.stdout.strip()
+
+    def _tree(self, tmp_path, *files: str) -> Path:
+        tree = tmp_path / "tree"
+        for rel in files:
+            (tree / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tree / rel).write_bytes(b"x\n")
+        return tree
+
+    def test_an_existing_lowercase_done_folder_wins(self, tmp_path):
+        tree = self._tree(tmp_path, "task-packs/done/TP-1-old.md", "task-packs/TP-2-new.md")
+        assert self._retired(tmp_path, tree, "task-packs/TP-2-new.md") == "task-packs/done"
+
+    def test_drafts_retire_beside_their_folder(self, tmp_path):
+        """The probelab shape the row was found on: drafts under ``drafts/``,
+        finished packs under ``done/`` beside it."""
+        tree = self._tree(tmp_path, "task-packs/done/TP-80-old.md", "task-packs/drafts/TP-81_new.md")
+        assert self._retired(tmp_path, tree, "task-packs/drafts/TP-81_new.md") == "task-packs/done"
+
+    def test_the_folder_is_read_under_its_own_spelling(self, tmp_path):
+        """On a case-insensitive filesystem ``done`` answers for ``Done``; the probe
+        must still print the spelling on disk, or the index and the disk split."""
+        tree = self._tree(tmp_path, "task-packs/Done/TP-1-old.md", "task-packs/TP-2-new.md")
+        assert self._retired(tmp_path, tree, "task-packs/TP-2-new.md") == "task-packs/Done"
+
+    def test_a_folder_without_packs_is_not_a_retirement_folder(self, tmp_path):
+        tree = self._tree(tmp_path, "task-packs/archive/notes.txt", "task-packs/TP-2-new.md")
+        assert self._retired(tmp_path, tree, "task-packs/TP-2-new.md") == "task-packs/Done"
+
+    def test_a_fresh_tree_defaults_to_done(self, tmp_path):
+        tree = self._tree(tmp_path, "task-packs/TP-2-new.md")
+        assert self._retired(tmp_path, tree, "task-packs/TP-2-new.md") == "task-packs/Done"
+
+    def test_a_pack_path_with_a_space_is_read_whole(self, tmp_path):
+        tree = self._tree(tmp_path, "task packs/done/TP-1-old.md", "task packs/TP-2-new.md")
+        assert self._retired(tmp_path, tree, "task packs/TP-2-new.md") == "task packs/done"
+
+    def test_a_folder_at_the_repository_root_is_not_the_packs(self, tmp_path):
+        """Climbing one level is for drafts beside their done folder; for a pack
+        under task-packs/ it would reach the repository root (review)."""
+        tree = self._tree(tmp_path, "archive/TP-9-elsewhere.md", "task-packs/TP-2-new.md")
+        assert self._retired(tmp_path, tree, "task-packs/TP-2-new.md") == "task-packs/Done"
+
+
+# ── DEF-1082, DEF-1187: the root CLAUDE.md says what is true of its tree ──────
+
+
+def _canonical_claude_md(root=None) -> str:
+    from espalier.cli import (
+        _build_claude_md, _canonical_template_build_plan, _canonical_template_fingerprint,
+    )
+    return _build_claude_md(_canonical_template_fingerprint(), _canonical_template_build_plan(), root=root)
+
+
+def _git_tree(tmp_path: Path, *, track_settings: bool) -> Path:
+    tree = tmp_path / "tree"
+    (tree / ".claude").mkdir(parents=True)
+    (tree / "app.txt").write_bytes(b"x\n")
+    (tree / ".claude" / "settings.json").write_bytes(b"{}\n")
+    _git_q(tree, "init", "-q")
+    _git_q(tree, "add", "app.txt", *((".claude/settings.json",) if track_settings else ()))
+    _git_q(tree, "commit", "-qm", "initial")
+    return tree
+
+
+class TestTheRootClaudeMdSaysWhatIsTrueOfItsTree:
+    """The template said "CI guarantees" and "...and CI" on every tree, while
+    plain init installs no CI gate; it said settings.json does not travel with a
+    clone on a repository that tracks it; and it handed every adopter the
+    harness's own hook-authoring rules. It is written once and kept, so its CI
+    sentence is the one true in both states; the other two read the tree."""
+
+    def test_the_ci_sentence_promises_nothing_this_tree_lacks(self):
+        from espalier.render_surface import CI_RECHECK_SENTENCE
+        text = _canonical_claude_md()
+        assert CI_RECHECK_SENTENCE in text
+        assert "CI guarantees" not in text and "`post_write_check`, and CI." not in text
+
+    def test_a_tracked_settings_file_travels_with_a_clone(self, tmp_path):
+        text = _canonical_claude_md(_git_tree(tmp_path, track_settings=True))
+        assert "which this repository\n> tracks, so the wiring travels with a clone" in text, text
+        assert "does NOT travel with a clone" not in text
+
+    def test_an_ignored_settings_file_does_not(self, tmp_path):
+        text = _canonical_claude_md(_git_tree(tmp_path, track_settings=False))
+        assert "does NOT travel with a clone" in text
+        assert "travels with a clone" not in text
+
+    def test_the_hook_authoring_rules_render_on_the_harness_tree_only(self, tmp_path):
+        assert "## Architecture Rules" not in _canonical_claude_md()
+        assert "## Architecture Rules" not in _canonical_claude_md(tmp_path)
+        assert "## Architecture Rules" in _canonical_claude_md(REPO_ROOT)
+
+    def test_doctor_still_counts_the_section_init_once_wrote_everywhere(self):
+        """A tree installed while init wrote the section on every tree still holds
+        it as init's; doctor's recall row must keep naming it (review)."""
+        from espalier.doctor import _generated_claude_headings
+        assert "Architecture Rules" in _generated_claude_headings()
+
+
+class TestRenderTemplateRendersForTheTreeItRunsIn:
+    """DEF-1187: init's NOTE sends an adopter with a CLAUDE.md of their own to
+    copy sections from `render-template claude`, which rendered a fixed
+    fingerprint and so told a Node tree its languages were Python. It renders
+    the tree's saved fingerprint now; `--canonical` keeps the fixed one."""
+
+    @staticmethod
+    def _node_tree(tmp_path: Path) -> Path:
+        import json
+        from espalier.analyze import fingerprint_repo
+        tree = tmp_path / "node"
+        (tree / "src").mkdir(parents=True)
+        (tree / "package.json").write_bytes(b'{"name": "n", "scripts": {"test": "node --test"}}\n')
+        (tree / "src" / "index.js").write_bytes(b"export const x = 1;\n")
+        fp = fingerprint_repo(tree)
+        (tree / "reports").mkdir()
+        (tree / "reports" / "repo_fingerprint.json").write_bytes(json.dumps(fp.to_dict()).encode("utf-8"))
+        return tree
+
+    @staticmethod
+    def _render(tree: Path, monkeypatch, capsys, *, canonical: bool) -> str:
+        import argparse
+        from espalier.cli import cmd_render_template
+        monkeypatch.chdir(tree)
+        capsys.readouterr()
+        assert cmd_render_template(argparse.Namespace(subject="claude", canonical=canonical)) == 0
+        return capsys.readouterr().out
+
+    @staticmethod
+    def _languages(text: str) -> str:
+        return next(ln for ln in text.splitlines() if ln.startswith("- **Languages:**"))
+
+    def test_a_node_tree_is_not_described_as_python(self, tmp_path, monkeypatch, capsys):
+        line = self._languages(self._render(self._node_tree(tmp_path), monkeypatch, capsys, canonical=False))
+        assert "python" not in line.lower() and line != "- **Languages:** unknown", line
+
+    def test_canonical_keeps_the_fixed_render(self, tmp_path, monkeypatch, capsys):
+        line = self._languages(self._render(self._node_tree(tmp_path), monkeypatch, capsys, canonical=True))
+        assert "python" in line.lower(), line
+
+    def test_a_tree_with_no_saved_fingerprint_gets_the_canonical_render(self, tmp_path, monkeypatch, capsys):
+        from espalier.cli import render_canonical_template
+        assert self._render(tmp_path, monkeypatch, capsys, canonical=False) == render_canonical_template("claude")

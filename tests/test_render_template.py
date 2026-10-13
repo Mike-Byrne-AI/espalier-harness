@@ -17,11 +17,23 @@ from espalier.cli import render_canonical_template
 
 
 class TestChannelXORContract:
-    """Hook exit codes in rendered CLAUDE.md must match cc-hook-protocol.md."""
+    """Hook exit codes in rendered CLAUDE.md must match cc-hook-protocol.md.
+
+    The exit-code rules are hook-AUTHORING rules, so the template renders them
+    on the harness's own tree only (an adopter authors no tools/cc hook); this
+    reads that render, where the contract still has to be the right one."""
 
     @pytest.fixture
     def rendered(self) -> str:
-        return render_canonical_template("claude")
+        from pathlib import Path
+
+        from espalier.cli import (
+            _build_claude_md, _canonical_template_build_plan, _canonical_template_fingerprint,
+        )
+        self_host_root = Path(__file__).resolve().parent.parent
+        return _build_claude_md(
+            _canonical_template_fingerprint(), _canonical_template_build_plan(), root=self_host_root,
+        )
 
     def test_forbidden_phrase_absent(self, rendered: str) -> None:
         """`2 = block (JSON on stdout)` is the wrong contract -- must not

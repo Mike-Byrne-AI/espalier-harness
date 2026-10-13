@@ -2,7 +2,9 @@
 
 Every control in this file is a real artifact reached through
 ``git show <sha>^:<path>``. Not one is a hand-typed reconstruction of what a
-commit "looked like", and that is the whole subject of the tool under test:
+commit "looked like" (the per-file probe's control scripts pytest's verdict over
+a real commit's real reverts, and ``TestThePerFileProbe`` says why), and that is
+the whole subject of the tool under test:
 ``docs/FAILURE_MODES.md`` §5.18 -- "the red you earned against a synthetic
 defect proves nothing about the real one" -- was itself committed one commit
 after the broken pin it describes shipped. A synthetic fixture here would
@@ -10,16 +12,30 @@ reproduce the exact defect the tool exists to find.
 
 THE HEADLINE SEPARATION
 -----------------------
-``3060e20`` is UNPINNED and the working tree is PINNED, and a gate that cannot
-tell those two apart does not work. The hard half is ``3060e20``: it DID change
-two test files, so every count-based check ("did this commit touch a test?")
-calls it pinned. Its parity test is green against
-``git show 3060e20^:.claude/agents/code-reviewer.md`` -- the pin cannot fail, so
+``6c5632b`` is UNPINNED and ``3f48387`` is PINNED, and a gate that cannot tell
+those two apart does not work. The hard half is ``6c5632b``: it DID change a
+test file (``tests/test_stack_table.py``) beside the two copies of
+``_hook_utils.py`` it fixed, so every count-based check ("did this commit touch
+a test?") calls it pinned. Its selection is green against
+``git show 6c5632b^:tools/cc/hooks/_hook_utils.py`` -- the pin cannot fail, so
 the change it claims to pin is unpinned. Only reverting the real prior bytes and
-re-running shows it.
+re-running shows it. ``3f48387`` changed one module beside its test, and
+reverting the module reds that test. The working tree, while it carries the
+parity rebuild this file was first calibrated on, is a third, live control.
 
-``9b97e89`` is the same separation in COMMITTED form, so the discriminator keeps
-a control after the working tree is committed and goes clean.
+WHERE THE CONTROLS LIVE
+-----------------------
+Every control is a commit on this repository's public ``main``. Until
+2026-10-12 they were commits of the private development history, which no
+public clone carries, so the whole module skipped in every CI cell while the
+workflow said the ``test`` job ran it (``DEF-938``). Each was re-anchored to a
+public commit with the same property, its verdict confirmed first by an
+oracle that runs none of this tool's code: detach at the parent, overlay the
+commit's test files, run the same selection. A shallow checkout, a release
+export and a tree with no git history of its own have none of them, and the
+tests that read them skip by name there (`_history_disposition`); a full clone
+missing one fails `test_a_full_checkout_carries_every_control` by name, since
+that is a rewritten history or a mistyped id, never an environment to skip in.
 
 WHY THE VERDICTS ARE ASSERTED AS LITERALS
 -----------------------------------------
@@ -101,13 +117,16 @@ _no_recursion = pytest.mark.skipif(
 )
 
 # full-tree-exempt: every control reads git HISTORY, which survives a `git
-# archive` export only if `.git/` came with it -- and it does not. The module
-# guard below turns "no history" into a module-level skip with a reason rather
-# than a wall of CalledProcessError.
+# archive` export only if `.git/` came with it -- and it does not. The history
+# guard below the controls turns "no history" into a skip of the tests that read
+# it, with a reason, rather than a wall of CalledProcessError; the in-process
+# tests still run there.
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import verify_pins  # noqa: E402
-from _git_oracle import require_tracked_paths  # noqa: E402
+from _git_oracle import _git_env, owns_its_worktree, require_tracked_paths  # noqa: E402
+
+from espalier.surface_contract import is_release_export  # noqa: E402
 from verify_pins import (  # noqa: E402
     DEPTH_ENV,
     ERROR,
@@ -126,83 +145,142 @@ from verify_pins import (  # noqa: E402
 # Short shas, resolved through `git rev-parse` by the tool. Each is annotated
 # with the property that makes it a control rather than a sample.
 
-#: Changed 2 test files AND its pin is green against the real prior artifact.
-#: The hard case: every "did a test change?" heuristic gets this one wrong.
-UNPINNED_BUT_CHANGED_TESTS = "3060e20"
+#: Changed a test file (`tests/test_stack_table.py`) AND its selection is green
+#: against the real prior `_hook_utils.py` (oracle: 94 passed at the parent with
+#: the commit's test file laid over it, 2026-10-12). The hard case: every "did a
+#: test change?" heuristic gets this one wrong.
+UNPINNED_BUT_CHANGED_TESTS = "6c5632b"
 
-#: 7 files, 0 test files, 10 fix claims in its message.
-UNPINNED_NO_TESTS_AT_ALL = "536a8c5"
+#: 1 file, 0 test files, a fix to `espalier/_python_floor.py`, and no
+#: name-derived test module for it.
+UNPINNED_NO_TESTS_AT_ALL = "fa9f216"
 
 #: Docs-only: 4 `.md` files, none carrying a source-language extension.
-DOCS_ONLY = "7a533e3"
+DOCS_ONLY = "1eef3a0"
 
-#: Committed PINNED control. Added `tests/test_check_ledger_probes.py` beside a
-#: fix to `scripts/check_ledger_probes.py`; reverting the script reds the test.
-PINNED_COMMIT = "9b97e89"
+#: Committed PINNED control. Changed `espalier/scope_walker.py` beside
+#: `tests/test_scope_walker.py`; reverting the module reds the test (oracle:
+#: `test_walks_the_adopters_source_suffixes` fails at the parent with the
+#: commit's test file laid over it, 2026-10-12).
+PINNED_COMMIT = "3f48387"
 
 #: Changed only a test file -- the mechanic has no subject.
-TEST_ONLY = "8bf7868"
+TEST_ONLY = "cbec883"
 
-#: ADDED a non-test file (`A scripts/check_ledger_probes.py`), so its revert is
-#: a DELETE. The only real artifact in the recent window that exercises that arm.
-ADDED_NON_TEST = "de32f81"
+#: ADDED a non-test file (`A scripts/merge_cost_census.py`) and nothing else
+#: outside the tests, so its revert is a DELETE.
+ADDED_NON_TEST = "3ea7c95"
 
-#: BOTH ADD a non-test file, and BOTH were FALSE PASSES before the index/HEAD
-#: sync landed: `revert_to_base` deleted the added path from the worktree and
-#: left it in the index, so `git archive HEAD` (which reads the INDEX) shipped a
-#: file absent from the tree under test and
-#: `test_git_archive_export_ignores_internal_docs` reddened off a phantom. That
-#: single phantom was the ONLY red, so the verdict itself was manufactured --
-#: 2 of the 7 PINNED rows in the tool's own calibration table.
-#:
-#: The honest answer was established INDEPENDENTLY of this tool, by an oracle
-#: that reaches the same model without the contradiction: detach at `<sha>^`,
-#: overlay the commit's new test blobs, run the same selection. 277 passed and
-#: 15 passed, rc=0 -- UNPINNED both. Measured 2026-08-21.
-ADD_REVERT_PHANTOM_A = "a198289"
-ADD_REVERT_PHANTOM_B = "dec327f"
+#: Each ADDS a non-test file beside files it modifies: a workflow, and a
+#: changelog fragment. Before the index/HEAD sync landed, `revert_to_base`
+#: deleted an added path from the worktree and left it in the index, so
+#: `git archive HEAD` (which reads the INDEX) shipped a file absent from the
+#: tree under test: two private-history commits were false PINNEDs off that one
+#: phantom red (measured 2026-08-21). No public commit carries that shape (a
+#: whole-change revert that is UNPINNED and selects a test reading the index),
+#: so the verdict-level control went with them on 2026-10-12; the invariant it
+#: stood on is asserted directly on these two.
+ADD_REVERT_A = "0ac9f90"
+ADD_REVERT_B = "47532cc"
 
-#: Touches `tools/cc/execution_plan.py`. 46 tests at HEAD isolate themselves by
-#: `cwd=tmp_path` alone and read the plan path through `CLAUDE_PROJECT_DIR`, so
-#: while `run_pytest` SET that variable to the clone the baseline was red with
-#: the change fully applied and this commit -- a core-harness fix, exactly what
-#: the gate exists to guard -- returned ERROR instead of a verdict.
-CORE_HARNESS_COMMIT = "b4ef0c8"
+#: Touches `tools/cc/execution_plan.py`, and its selection holds the plan
+#: tests. 46 tests isolate themselves by `cwd=tmp_path` alone and read the plan
+#: path through `CLAUDE_PROJECT_DIR`, so while `run_pytest` SET that variable to
+#: the clone the baseline went red with the change fully applied, and a
+#: core-harness fix -- exactly what the gate exists to guard -- returned ERROR
+#: instead of a verdict (measured 2026-08-21 on a private-history commit).
+CORE_HARNESS_COMMIT = "6511509"
 
 #: Fixed SIX scanners; one of them is named `espalier/scanners/test_loosening.py`
-#: and is a live engine module (imported at espalier/cli.py:3921). The old
-#: `test_*.py`-anywhere basename glob classified it as TEST material, so the
-#: revert put back five of the six and reported PINNED for a scanner change it
-#: had silently held at its new state.
-SIX_SCANNERS_ONE_NAMED_TEST = "45b24c7"
+#: and is a live engine module. The old `test_*.py`-anywhere basename glob
+#: classified it as TEST material, so on the private-history commit that first
+#: showed it the revert put back five of the six and reported PINNED for a
+#: scanner change it had silently held at its new state.
+SIX_SCANNERS_ONE_NAMED_TEST = "060db6b"
 
-#: Raised `MAX_PRAGMA_COUNT` 6 -> 7 in the same commit that added the one new
-#: pragma. `count_pragmas` is TREE-WIDE, so a whole-change revert drops the
-#: measurement and the threshold together and they cancel -- the strongest
-#: negative sentence the tool has, printed about a genuinely pinned change.
-CAP_AND_MEASUREMENT_MOVED_TOGETHER = "de32f81"
+#: Changed both copies of `_bash_patterns.py` (a byte mirror) beside two
+#: ledger files and a test: the relation the per-file probe exists for, two
+#: files that only a one-sided revert can pull apart.
+MIRROR_PAIR_AND_OTHERS = "5d5a6cc"
 
 #: Changed `docs/ENV_CATALOG.md`, whose name-derived candidate is
 #: `tests/test_ENV_CATALOG.py` while the real file is `tests/test_env_catalog.py`.
 #: On a case-insensitive filesystem `Path.is_file()` says the first one exists.
-CASE_TRAP_COMMIT = "63beda2"
+CASE_TRAP_COMMIT = "858a36d"
 
 
-def _have_history() -> bool:
-    proc = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "cat-file", "-e", f"{UNPINNED_BUT_CHANGED_TESTS}^{{commit}}"],
-        capture_output=True,
-    )
-    return proc.returncode == 0
+#: Every control above; `TestTheHistoryGuard` holds this to the module's own
+#: constants, so a control added without it reds instead of going unguarded.
+_CONTROLS = (
+    UNPINNED_BUT_CHANGED_TESTS, UNPINNED_NO_TESTS_AT_ALL, DOCS_ONLY, PINNED_COMMIT,
+    TEST_ONLY, ADDED_NON_TEST, ADD_REVERT_A, ADD_REVERT_B,
+    CORE_HARNESS_COMMIT, SIX_SCANNERS_ONE_NAMED_TEST, MIRROR_PAIR_AND_OTHERS,
+    CASE_TRAP_COMMIT,
+)
 
 
-if not _have_history():
-    pytest.skip(
-        f"the control commits ({UNPINNED_BUT_CHANGED_TESTS}, {PINNED_COMMIT}, ...) "
-        "are not reachable from this checkout, so no real prior artifact can be "
-        "restored. Run on a full clone.",
-        allow_module_level=True,
-    )
+def _git(*args: str) -> "subprocess.CompletedProcess[str]":
+    # The scrubbed env `owns_its_worktree` uses, so a GIT_DIR exported by a git
+    # hook cannot make the two answer about different repositories.
+    return subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", env=_git_env())
+
+
+def _missing_controls(controls: "tuple[str, ...]" = _CONTROLS) -> list[str]:
+    """The controls this checkout cannot revert: the commit or its parent is
+    absent."""
+    return [sha for sha in controls
+            if _git("rev-parse", "-q", "--verify", f"{sha}^1^{{commit}}").returncode != 0]
+
+
+def _history_disposition(*, owns: bool, export: bool, shallow: bool, missing: bool) -> str:
+    """What this tree's history is, for the tests that revert a control.
+
+    ``present`` runs them. A tree with no history of its own (a directory inside
+    another checkout, such as an archive extracted under ``dist/``, where git
+    answers about the parent, §C21; or no ``.git`` at all), a release export
+    (the seeded single-commit tree the release matrix and the archive probe
+    test) and a shallow checkout skip them, each by name. ``missing`` is a full
+    clone without a control: a rewritten history or a mistyped id, never an
+    environment to skip in, so `test_a_full_checkout_carries_every_control`
+    fails by name while the rest skip and every other module still reports."""
+    if not owns:
+        return "a tree with no git history of its own"
+    if export:
+        return "a release export"
+    if shallow:
+        return "a shallow checkout"
+    return "missing" if missing else "present"
+
+
+_OWNS_ITS_HISTORY = owns_its_worktree(REPO_ROOT)
+_MISSING_CONTROLS = _missing_controls() if _OWNS_ITS_HISTORY else list(_CONTROLS)
+_HISTORY = _history_disposition(
+    owns=_OWNS_ITS_HISTORY,
+    export=is_release_export(REPO_ROOT),
+    shallow=_OWNS_ITS_HISTORY and _git("rev-parse", "--is-shallow-repository").stdout.strip() == "true",
+    missing=bool(_MISSING_CONTROLS),
+)
+
+_needs_history = pytest.mark.skipif(
+    _HISTORY != "present",
+    reason=(
+        f"{_HISTORY if _HISTORY != 'missing' else 'a full checkout missing a control'}: "
+        "the control commits and their parents are not here, so no real prior artifact "
+        "can be restored. Every full clone of this repository has them; CI's `test` job "
+        "checks out with fetch-depth: 0 and runs these, and the shallow `clean-checkout` "
+        "job skips them by design."
+    ),
+)
+
+#: The two in-process tests that ask git about THIS tree: where git would answer
+#: about a parent checkout, or not at all, they skip rather than read the wrong
+#: repository.
+_needs_own_git = pytest.mark.skipif(
+    not _OWNS_ITS_HISTORY,
+    reason="a tree with no git history of its own: git would answer about another "
+           "repository, or not at all",
+)
 
 
 def _run(*args: str) -> tuple[int, dict]:
@@ -239,6 +317,18 @@ def reports():
         key = " ".join(args)
         if key not in cache:
             cache[key] = _run(*args)
+        rep = cache[key][1]
+        if rep.get("verdict") == ERROR and "ALREADY RED" in rep.get("reason", ""):
+            # Every control was green with its change applied when it was chosen,
+            # so a red baseline is the environment moving under a fixed commit
+            # (a new interpreter, pytest or plugin), not the tool.
+            pytest.fail(
+                f"control {key!r} has a red baseline: its own tests no longer pass at "
+                f"its commit under Python {sys.version.split()[0]}, pytest "
+                f"{pytest.__version__}. That is environment drift, not a verify_pins "
+                "defect: re-anchor the control to a public commit with the same "
+                "property (the module docstring's oracle), measured 2026-10-12 on "
+                f"Python 3.11. Failures: {(rep.get('baseline') or {}).get('failures', [])[:5]}")
         return cache[key]
 
     return get
@@ -302,7 +392,8 @@ def _worktree_is_the_live_control(
     control failed with "PINNED for the WRONG reason" over tests pinned for
     exactly the right one. Skipping when the tree is not the control is
     honest; skipping SILENTLY would not be, which is why the committed pair
-    (`3060e20` vs `9b97e89`) carries the same separation and never skips.
+    (`6c5632b` vs `3f48387`) carries the same separation and skips only where
+    the history guard says so, on a shallow checkout.
 
     The three readers default to the live tree -- the ``-z`` change parse the
     tool under test is trusted for, ``git show HEAD:``, the working file --
@@ -336,7 +427,7 @@ def _worktree_is_the_live_control(
 
 
 _worktree_control = pytest.mark.skipif(
-    not _worktree_is_the_live_control(),
+    not (_OWNS_ITS_HISTORY and _worktree_is_the_live_control()),
     reason=(
         "the working tree does not carry the parity rebuild (a modified "
         f"{_PARITY_TEST} beside a generated ci-gated-paths block that differs "
@@ -345,6 +436,57 @@ _worktree_control = pytest.mark.skipif(
         f"({UNPINNED_BUT_CHANGED_TESTS} vs {PINNED_COMMIT}) still runs."
     ),
 )
+
+
+class TestTheHistoryGuard:
+    """DEF-938: the guard that replaced the module-level skip. In-process, so
+    it runs on a shallow checkout too."""
+
+    def test_every_control_is_one_the_guard_checks(self):
+        """Derived from this module's own constants: a control added without
+        joining `_CONTROLS` would go unguarded and error on a shallow checkout
+        instead of skipping by name."""
+        import re
+        controls = {value for name, value in globals().items()
+                    if name.isupper() and isinstance(value, str)
+                    and re.fullmatch(r"[0-9a-f]{7,40}", value)}
+        assert len(controls) >= 10, controls  # non-vacuity: the constants were found
+        assert controls <= set(_CONTROLS), controls - set(_CONTROLS)
+
+    def test_an_absent_commit_is_reported_missing(self):
+        """The predicate the disposition reads. A shallow clone of some depth may
+        hold one control and not another, so the real one may go either way."""
+        assert _missing_controls(("0000000",)) == ["0000000"]
+        assert _missing_controls((TEST_ONLY,)) in ([], [TEST_ONLY])
+
+    @pytest.mark.parametrize(("owns", "export", "shallow", "missing", "expected"), [
+        (True, False, False, False, "present"),
+        (True, False, False, True, "missing"),
+        (True, False, True, True, "a shallow checkout"),
+        (True, True, False, True, "a release export"),
+        (False, False, False, True, "a tree with no git history of its own"),
+        (False, True, True, True, "a tree with no git history of its own"),
+    ])
+    def test_the_disposition_reads_the_tree(self, owns, export, shallow, missing, expected):
+        """The release export is a seeded single-commit tree that owns its
+        worktree and is not shallow (scripts/final_release_matrix.py stage 02,
+        scripts/archive_probe.py); before this arm it read as a full clone with
+        every control missing."""
+        assert _history_disposition(owns=owns, export=export, shallow=shallow,
+                                    missing=missing) == expected
+
+    def test_a_full_checkout_carries_every_control(self):
+        """One named red, not a collection error that would cost every other
+        module its result: a full clone missing a control is a rewritten history
+        or a mistyped id. After a rewrite, `git filter-repo`'s commit-map names
+        each control's new id."""
+        assert _HISTORY != "missing", (
+            f"control commit(s) {_MISSING_CONTROLS} are missing from a FULL checkout. Every "
+            "control is a commit on main beside its parent; re-anchor each one (DEF-938)")
+
+    def test_the_skip_reason_names_the_shallow_checkout(self):
+        reason = _needs_history.kwargs["reason"]
+        assert "shallow" in reason and "fetch-depth: 0" in reason, reason
 
 
 class TestTheLiveControlGuardKeysOnTheRebuild:
@@ -447,14 +589,14 @@ class TestTheLiveControlGuardKeysOnTheRebuild:
 
 @_no_recursion
 class TestTheFourRealArtifactControls:
+    @_needs_history
     def test_a_commit_that_changed_tests_can_still_be_unpinned(self, reports):
-        """`3060e20` -- the hard one.
+        """`6c5632b` -- the hard one.
 
-        It changed `tests/test_check_ledger_probes.py` AND
-        `tests/test_protected_path_contract_parity.py`, so it looks pinned by
-        every cheap heuristic. Restore the real
-        `git show 3060e20^:.claude/agents/code-reviewer.md` and its parity test
-        stays green: the pin cannot fail.
+        It changed `tests/test_stack_table.py` beside the two copies of
+        `_hook_utils.py` it fixed, so it looks pinned by every cheap heuristic.
+        Restore the real `git show 6c5632b^:tools/cc/hooks/_hook_utils.py` and
+        its mirror, and the selection stays green: the pin cannot fail.
         """
         rc, rep = reports("--commit", UNPINNED_BUT_CHANGED_TESTS)
         assert rc == 0, "advisory by default"
@@ -464,10 +606,13 @@ class TestTheFourRealArtifactControls:
         assert rep["selection"], rep
         assert rep["baseline"]["rc"] == 0, rep["baseline"]
         assert rep["after_revert"]["rc"] == 0, rep["after_revert"]
-        assert "tests/test_protected_path_contract_parity.py" in rep["selection"]
+        # The commit's own changed test ran: it is the pin that cannot fail.
+        assert "tests/test_stack_table.py" in rep["selection"], rep["selection"]
+        assert set(rep["changed"]["test"]) <= set(rep["selection"]), rep
 
+    @_needs_history
     def test_a_commit_with_no_test_at_all_is_unpinned(self, reports):
-        """`536a8c5` -- 7 files, 0 test files, 10 fix claims."""
+        """`fa9f216` -- 1 file, 0 test files, a fix to `espalier/_python_floor.py`."""
         rc, rep = reports("--commit", UNPINNED_NO_TESTS_AT_ALL)
         assert rc == 0
         assert rep["verdict"] == UNPINNED, rep["reason"]
@@ -475,8 +620,9 @@ class TestTheFourRealArtifactControls:
         assert rep["selection"] == []
         assert "no test module" in rep["reason"]
 
+    @_needs_history
     def test_a_docs_only_commit_is_reported_unpinned_with_its_buckets(self, reports):
-        """`7a533e3` -- and this asserts the rule that was actually BUILT.
+        """`1eef3a0` -- and this asserts the rule that was actually BUILT.
 
         No extension allowlist decides anything here. The verdict is UNPINNED,
         exactly as for a behaviour change with no pin, and the two evidence
@@ -516,6 +662,7 @@ class TestTheFourRealArtifactControls:
 
 
 @_no_recursion
+@_needs_history
 class TestTheHeadlineSeparation:
     """If the gate cannot tell these apart it does not work."""
 
@@ -531,16 +678,17 @@ class TestTheHeadlineSeparation:
     def test_the_committed_pair_carries_the_same_separation(self, reports):
         """Survives the working tree being committed and going clean.
 
-        Both commits changed `scripts/check_ledger_probes.py` and both touched
-        `tests/test_check_ledger_probes.py`'s file -- the only difference is
-        whether the test can fail without the fix.
+        Each changed source beside the test file that exercises it
+        (`_hook_utils.py` with `tests/test_stack_table.py`,
+        `espalier/scope_walker.py` with `tests/test_scope_walker.py`) -- the
+        difference is whether the test can fail without the fix.
         """
         _, unpinned = reports("--commit", UNPINNED_BUT_CHANGED_TESTS)
         _, pinned = reports("--commit", PINNED_COMMIT)
         assert unpinned["verdict"] == UNPINNED, unpinned["reason"]
         assert pinned["verdict"] == PINNED, pinned["reason"]
         assert any(
-            "test_check_ledger_probes" in red
+            "test_scope_walker" in red
             for red in pinned["after_revert"]["failures"]
         ), pinned["after_revert"]
 
@@ -583,17 +731,18 @@ class TestTestFilesAreNeverReverted:
 
 
 @_no_recursion
+@_needs_history
 class TestTheRevertArms:
     def test_an_added_non_test_file_is_reverted_by_deleting_it(self, reports):
-        """`de32f81` ADDED `scripts/check_ledger_probes.py`. Its prior state is
+        """`3ea7c95` ADDED `scripts/merge_cost_census.py`. Its prior state is
         absence, so a revert that only ever overwrites bytes would leave the new
         file in place and silently under-report."""
         rc, rep = reports("--commit", ADDED_NON_TEST)
         assert rc == 0
-        assert "delete scripts/check_ledger_probes.py" in rep["reverted"], rep["reverted"]
+        assert "delete scripts/merge_cost_census.py" in rep["reverted"], rep["reverted"]
 
     def test_a_test_only_change_has_no_subject(self, reports):
-        """`8bf7868` changed one test file and nothing else. NOT_APPLICABLE is
+        """`cbec883` changed one test file and nothing else. NOT_APPLICABLE is
         the MECHANICAL answer -- there is nothing to revert -- and it is the only
         thing that earns that verdict. No content taxonomy decides it."""
         rc, rep = reports("--commit", TEST_ONLY)
@@ -602,16 +751,18 @@ class TestTheRevertArms:
         assert rep["changed"]["non_test"] == []
 
 
+@_needs_history
 class TestSelectionExistsWithExactCase:
     """macOS/APFS is case-insensitive; `Path.is_file()` is not an existence
     oracle there.
 
-    Measured 2026-08-21 on the calibration sweep: `63beda2` changed
+    Measured 2026-08-21 on the calibration sweep: a commit that changed
     `docs/ENV_CATALOG.md`, whose derived candidate is `tests/test_ENV_CATALOG.py`.
     `is_file()` returned True for it (the real file is `test_env_catalog.py`),
     pytest was handed a name it could not collect, exited rc=4 "no tests ran",
-    and the commit became unanswerable. This runs in-process against the real
-    commit's real changed set -- no clone, no pytest, milliseconds.
+    and the commit became unanswerable. The control is `858a36d`, which changed
+    the same file. This runs in-process against the real commit's real changed
+    set -- no clone, no pytest, milliseconds.
     """
 
     def test_no_selected_path_is_a_case_only_match(self):
@@ -640,6 +791,7 @@ class TestSelectionExistsWithExactCase:
 
 
 @_no_recursion
+@_needs_history
 class TestTheBaselineGuardIsPresentAndGreen:
     """A red that predates the revert cannot be attributed to the revert.
 
@@ -850,6 +1002,7 @@ class TestIsolation:
             "the control went blind to a region --carry actually writes"
         )
 
+    @_needs_history
     def test_a_run_does_not_touch_the_live_tree(self):
         """The clone is the whole safety argument, so this must be able to fail.
 
@@ -889,6 +1042,7 @@ class TestIsolation:
 
 @_no_recursion
 class TestExitCodes:
+    @_needs_history
     def test_advisory_by_default_and_nonzero_only_under_strict(self):
         """FAILURE_MODES §C19: a gate that reds on correct work gets switched
         off. This one exits 0 whatever it finds unless asked otherwise."""
@@ -909,6 +1063,7 @@ class TestExitCodes:
             f"{strict.stdout[-2000:]}"
         )
 
+    @_needs_own_git
     def test_a_merge_commit_is_refused_rather_than_guessed(self):
         """'The change' has no single parent to revert to. Reported as ERROR,
         never resolved by silently picking parent 1."""
@@ -925,6 +1080,7 @@ class TestExitCodes:
 
 
 class TestTheReportIsHonestAboutItself:
+    @_needs_history
     @_no_recursion
     def test_a_zero_test_change_carries_the_analytic_note(self, reports):
         """A commit that changed no test file reproduces its parent tree exactly
@@ -934,6 +1090,7 @@ class TestTheReportIsHonestAboutItself:
         _, rep = reports("--commit", UNPINNED_NO_TESTS_AT_ALL)
         assert any("ANALYTIC" in note for note in rep["notes"]), rep["notes"]
 
+    @_needs_history
     @_no_recursion
     def test_the_evidence_bucket_refuses_to_be_a_verdict(self, reports):
         _, rep = reports("--commit", DOCS_ONLY)
@@ -1001,6 +1158,7 @@ class TestTheRecursionFuse:
 
 
 @_no_recursion
+@_needs_history
 class TestTheRevertReconstructsATreeGitCouldProduce:
     """`revert_to_base` restores CONTENT. git's metadata has to be made to agree.
 
@@ -1008,28 +1166,16 @@ class TestTheRevertReconstructsATreeGitCouldProduce:
     present-but-untracked after the revert -- a state git cannot reach on its
     own. Every test in this suite driving `git ls-files` or `git archive` is
     then answering a question about a tree that never existed.
+
+    A third test here asserted that two add-reverts came out UNPINNED rather
+    than PINNED off that phantom. Its controls were private-history commits
+    whose selections read the index, and no public commit has that shape (see
+    ``ADD_REVERT_A``), so it was retired on 2026-10-12. The invariant under it
+    is the consistency check below, which reds when the sync is removed.
     """
 
     @pytest.mark.parametrize(
-        "sha", [ADD_REVERT_PHANTOM_A, ADD_REVERT_PHANTOM_B]
-    )
-    def test_an_add_revert_does_not_manufacture_a_phantom_red(self, reports, sha):
-        rc, rep = reports("--commit", sha)
-        assert rc == 0
-        # Non-vacuity FIRST: the selection must have genuinely run both sides,
-        # otherwise UNPINNED is true for a boring reason.
-        assert rep["selection"], rep
-        assert rep["baseline"]["rc"] == 0, rep["baseline"]
-        assert rep["verdict"] == UNPINNED, (
-            f"{sha} reported {rep['verdict']}. Both of these commits were FALSE "
-            f"PASSES off a single phantom red from `git archive HEAD` reading an "
-            f"index the revert never touched; an independent oracle puts both at "
-            f"rc=0. reds={rep['after_revert']['failures']}"
-        )
-        assert rep["after_revert"]["rc"] == 0, rep["after_revert"]
-
-    @pytest.mark.parametrize(
-        "sha", [ADD_REVERT_PHANTOM_A, ADD_REVERT_PHANTOM_B, PINNED_COMMIT]
+        "sha", [ADD_REVERT_A, ADD_REVERT_B, ADDED_NON_TEST, PINNED_COMMIT]
     )
     def test_the_reverted_clone_is_internally_consistent(self, reports, sha):
         """The invariant, asserted directly -- cheaper than any verdict.
@@ -1045,11 +1191,13 @@ class TestTheRevertReconstructsATreeGitCouldProduce:
     def test_the_sync_actually_fires_on_an_add_revert(self, reports):
         """Non-vacuity for the test above: silence must mean "consistent", not
         "the check never had anything to do"."""
-        _, rep = reports("--commit", ADD_REVERT_PHANTOM_A)
+        _, rep = reports("--commit", ADD_REVERT_A)
+        assert any(r.startswith("delete ") for r in rep["reverted"]), rep["reverted"]
         assert any("recorded the reverted tree as a commit" in n
                    for n in rep["notes"]), rep["notes"]
 
 
+@_needs_history
 class TestADeathIsNotARed:
     """`subprocess.run` returns a NEGATIVE rc when the child dies by signal.
 
@@ -1145,6 +1293,7 @@ class TestTheRunnerEnvDoesNotManufactureRedness:
     by UNSETTING the variable, not by re-pointing it.
     """
 
+    @_needs_history
     def test_a_core_harness_commit_gets_a_verdict_not_an_error(self, reports):
         rc, rep = reports("--commit", CORE_HARNESS_COMMIT)
         assert rc == 0
@@ -1186,6 +1335,7 @@ class TestThePartitionIsLocationOnly:
     13 tracked paths including a live engine module.
     """
 
+    @_needs_own_git
     def test_no_tracked_path_outside_the_declared_roots_is_test_material(self):
         """Derived, so it self-updates as the repo adds files. This would have
         reddened the day the basename clause was written."""
@@ -1209,6 +1359,7 @@ class TestThePartitionIsLocationOnly:
             f"TEST material and would be exempted from the revert: {stray}"
         )
 
+    @_needs_history
     @_no_recursion
     def test_a_production_module_named_test_something_is_reverted(self, reports):
         """The real artifact. Six scanners were fixed; five were reverted."""
@@ -1234,6 +1385,7 @@ class TestEvidenceIsNeverSilentlyUnavailable:
         real = verify_pins.source_language_extensions(REPO_ROOT)
         assert real is not None and ".py" in real, real
 
+    @_needs_history
     @_no_recursion
     def test_a_source_bearing_change_reports_a_NON_empty_bucket(self, reports):
         """The docs-only control asserts the bucket is EMPTY -- which is exactly
@@ -1241,7 +1393,7 @@ class TestEvidenceIsNeverSilentlyUnavailable:
         _, rep = reports("--commit", UNPINNED_NO_TESTS_AT_ALL)
         ev = rep["evidence"]
         assert ev["source_ext_non_test"], (
-            f"{UNPINNED_NO_TESTS_AT_ALL} changes scripts/check_ledger_probes.py; "
+            f"{UNPINNED_NO_TESTS_AT_ALL} changes espalier/_python_floor.py; "
             f"an empty bucket here means the derivation broke, not that no path "
             f"carries a source extension. owner={ev['source_ext_owner']}"
         )
@@ -1249,6 +1401,7 @@ class TestEvidenceIsNeverSilentlyUnavailable:
 
 
 @_no_recursion
+@_needs_history
 class TestCarryCannotReachIntoTheSourceRepo:
     """`Path(clone) / "/abs/path"` DISCARDS the left operand.
 
@@ -1311,44 +1464,92 @@ class TestCarryCannotReachIntoTheSourceRepo:
         assert "OSError" in rep["reason"], rep["reason"]
 
 
-@_no_recursion
+_MIRROR_SOT = "tools/cc/hooks/_bash_patterns.py"
+_MIRROR_COPY = "espalier/_vendor/cc/hooks/_bash_patterns.py"
+
+
+@pytest.fixture(scope="module")
+def probed() -> dict:
+    """`MIRROR_PAIR_AND_OTHERS` through the real tool with `--per-file`, pytest's
+    verdict scripted to the byte-mirror relation (see `TestThePerFileProbe`).
+    Each scripted run also records which changed files the clone holds at the
+    parent's blob, so the control can show every revert really happened: a
+    verdict alone cannot tell "reverted, and green" from "never reverted"."""
+    non_test = [c.path for c in commit_changes(REPO_ROOT, MIRROR_PAIR_AND_OTHERS)
+                if not is_test_path(c.path, declared_test_roots(REPO_ROOT))]
+    parent_blob = {rel: _git("rev-parse", f"{MIRROR_PAIR_AND_OTHERS}^:{rel}").stdout.strip()
+                   for rel in non_test}
+    reverted_sets: list[frozenset[str]] = []
+
+    def _the_mirror_pin(clone, selection, timeout):
+        root = Path(clone)
+        hashed = subprocess.run(["git", "-C", str(root), "hash-object", *non_test],
+                                capture_output=True, text=True, encoding="utf-8",
+                                check=True).stdout.split()
+        reverted_sets.append(frozenset(
+            rel for rel, blob in zip(non_test, hashed) if blob == parent_blob[rel]))
+        if (root / _MIRROR_SOT).read_bytes() == (root / _MIRROR_COPY).read_bytes():
+            return verify_pins.RunResult(0, [], "")
+        return verify_pins.RunResult(1, ["scripted::the_two_copies_agree"], "")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(verify_pins, "run_pytest", _the_mirror_pin)
+        report = verify_pins.verify(REPO_ROOT, sha=MIRROR_PAIR_AND_OTHERS, per_file=True)
+    report["_reverted_sets"] = reverted_sets
+    return report
+
+
+@_needs_history
 class TestThePerFileProbe:
     """A whole-change revert can self-cancel a real pin.
 
-    `de32f81` raised `MAX_PRAGMA_COUNT` 6 -> 7 in the same commit that added the
-    single new pragma. The count is TREE-WIDE, so reverting everything drops the
-    measurement and the threshold together: 60 passed, rc=0, and the tool prints
-    its strongest negative sentence about a genuinely pinned change.
+    The pin it cannot see is a RELATION between files the change moved
+    together -- this repository's byte mirrors, generated blocks, tree-wide
+    caps. Reverting everything restores both sides and the relation holds;
+    reverting one side alone breaks it. The private-history control was a
+    commit that raised `MAX_PRAGMA_COUNT` beside the one new pragma (measured
+    2026-08-21: 60 passed on the whole revert, `test_pragma_count_within_cap`
+    red with the scanner reverted alone). No public commit measured on
+    2026-10-12 has a whole-green, one-side-red selection: the candidates were
+    PINNED whole, or every single-file revert stayed green too. So the mechanic
+    is driven on a real commit's real reverts, with only pytest's verdict
+    scripted to the relation this repository pins most: red exactly when the two
+    copies of `_bash_patterns.py` differ (the byte mirror
+    `scripts/sync_vendor_cc.py` keeps). In-process otherwise, as
+    `TestADeathIsNotARed` is for the same reason.
     """
 
-    def test_the_cap_pin_the_whole_change_cancels_is_recovered(self, reports):
-        _, rep = reports("--commit", CAP_AND_MEASUREMENT_MOVED_TOGETHER,
-                         "--wide", "--per-file")
-        assert rep["verdict"] == UNPINNED, rep["reason"]
-        assert rep["after_revert"]["rc"] == 0, rep["after_revert"]
-        alone = {r["path"]: r for r in rep["per_file"]}
-        target = "espalier/scanners/subprocess_contracts.py"
-        assert target in alone, list(alone)
-        assert alone[target]["verdict"] == PINNED, alone[target]
-        assert any("test_pragma_count_within_cap" in f
-                   for f in alone[target]["failures"]), alone[target]
+    _SOT = _MIRROR_SOT
+    _MIRROR = _MIRROR_COPY
+
+    def test_the_pin_the_whole_change_cancels_is_recovered(self, probed):
+        assert probed["verdict"] == UNPINNED, probed["reason"]
+        alone = {r["path"]: r["verdict"] for r in probed["per_file"]}
+        # Non-vacuity: every non-test file was reverted on its own.
+        assert set(alone) == set(probed["changed"]["non_test"]), (alone, probed["changed"])
+        assert alone[self._SOT] == alone[self._MIRROR] == PINNED, alone
         # And it must DISCRIMINATE -- not just report everything as pinned.
-        others = [p for p, r in alone.items()
-                  if p != target and r["verdict"] == PINNED]
-        assert others == [], others
+        others = {p: v for p, v in alone.items() if p not in (self._SOT, self._MIRROR)}
+        assert others and set(others.values()) == {UNPINNED}, others
 
-    def test_the_probe_never_changes_the_verdict(self, reports):
-        """`3060e20` is the discriminator this whole tool exists to produce.
-        Reverting its mirror ALONE reds two parity controls (measured), so
-        folding a per-file red into PINNED would collapse it against the
-        working-tree control and destroy the gate."""
-        _, plain = reports("--commit", UNPINNED_BUT_CHANGED_TESTS)
-        _, probed = reports("--commit", UNPINNED_BUT_CHANGED_TESTS, "--per-file")
-        assert plain["verdict"] == probed["verdict"] == UNPINNED, (
-            plain["verdict"], probed["verdict"]
-        )
+    def test_each_file_was_really_reverted_alone(self, probed):
+        """Without this, a probe that skipped the revert for the files outside
+        the relation would still read UNPINNED for them and pass."""
+        seen = set(probed["_reverted_sets"])
+        non_test = probed["changed"]["non_test"]
+        assert frozenset(non_test) in seen, seen  # the whole-change revert
+        assert {frozenset({rel}) for rel in non_test} <= seen, seen
+
+    def test_the_probe_never_changes_the_verdict(self, probed):
+        """Folding a per-file red into PINNED would flip every mirror sync --
+        `UNPINNED_BUT_CHANGED_TESTS` is one -- to PINNED and collapse it against
+        the PINNED control, destroying the gate."""
+        assert any(r["verdict"] == PINNED for r in probed["per_file"]), probed["per_file"]
+        assert probed["verdict"] == UNPINNED, probed["reason"]
+        assert any(n.startswith("PER-FILE: 2 of 4") for n in probed["notes"]), probed["notes"]
 
 
+@_needs_history
 class TestTheReportDoesNotSendTheReaderOnAPointlessRun:
     """Limit 4 names `--full` as the corrective. The ANALYTIC note, in the same
     report, states that `--full` cannot change the verdict. 40% of commits got
@@ -1363,6 +1564,7 @@ class TestTheReportDoesNotSendTheReaderOnAPointlessRun:
         assert "--full CANNOT change this" in rep["reason"], rep["reason"]
 
 
+@_needs_history
 class TestTheWideningLadderIsDriven:
     """`--full` was shipped with no control at all -- one grep hit, inside a
     docstring. It is also the mode limit 4 names as its own corrective, so an

@@ -12,6 +12,10 @@ from pathlib import Path
 
 import pytest
 
+# slow-exempt: three tests build a scratch repo and one `git worktree add`
+# (measured 0.7 s together) -- whether a gitlink file reads as a checkout is a
+# fact about real git output, so only real git can show it.
+
 from espalier import surface_contract as sc
 from espalier._self_host_fingerprint import (
     WRITE_GUARD_PREFIX_BYTES,
@@ -314,3 +318,81 @@ class TestGitPrintsANameTheDecoderRefuses:
         files, source = list_tracked_or_walked_files(repo)
         assert source == "git"
         assert files == ["caf�.txt"], files
+
+
+class TestALinkedWorktreeIsACheckout:
+    """A linked worktree's ``.git`` is a FILE (``gitdir: <main>/.git/worktrees/<name>``).
+    Read as "no checkout of its own", the lister walked the filesystem and
+    listed gitignored files with the tracked ones: on a worktree seat the
+    machine-local-path gate then redded on the guard's own ignored snapshot
+    log, which a normal clone and CI never list (driven 2026-10-12)."""
+
+    def _seat(self, tmp_path: Path) -> Path:
+        import subprocess
+
+        from tests._git_oracle import _git_env
+
+        def git(cwd: Path, *args: str) -> None:
+            subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
+                           env=_git_env(), timeout=45)
+
+        main = tmp_path / "main"
+        main.mkdir()
+        git(main, "init", "-q", "-b", "main")
+        for key, value in (("user.name", "t"), ("user.email", "t@example.invalid"),
+                           ("commit.gpgsign", "false")):
+            git(main, "config", key, value)
+        (main / ".gitignore").write_text("cc/scratch.log\n", encoding="utf-8")
+        (main / "tracked.py").write_text("x = 1\n", encoding="utf-8")
+        git(main, "add", "-A")
+        git(main, "commit", "-qm", "base")
+        seat = tmp_path / "seat"
+        git(main, "worktree", "add", "-q", "-b", "seat", str(seat))
+        (seat / "cc").mkdir()
+        # an ignored file holding a home path, the shape the guard's log took
+        (seat / "cc" / "scratch.log").write_text("/Users/someone/scratch\n", encoding="utf-8")
+        return seat
+
+    def test_a_linked_worktree_lists_by_git_and_never_an_ignored_file(self, tmp_path):
+        """Dies to: the directory-only test, which reads the seat as no checkout."""
+        from espalier.repo_mode import list_tracked_or_walked_files
+
+        seat = self._seat(tmp_path)
+        assert (seat / ".git").is_file()
+        files, source = list_tracked_or_walked_files(seat)
+        assert source == "git"
+        assert sorted(files) == [".gitignore", "tracked.py"], files
+
+    def test_require_git_accepts_a_linked_worktree(self, tmp_path):
+        from espalier.repo_mode import list_tracked_or_walked_files
+
+        files, source = list_tracked_or_walked_files(self._seat(tmp_path), require_git=True)
+        assert source == "git" and "cc/scratch.log" not in files
+
+    def test_a_dangling_gitlink_still_walks(self, tmp_path):
+        """An export built from a worktree can carry its gitlink, pointing at a
+        path no other machine has (``release_noise`` names the shape). git
+        refuses it, and the lister falls back to the walk rather than reading an
+        empty checkout. A guard on the fallback, green before and after."""
+        from espalier.repo_mode import list_tracked_or_walked_files
+
+        export = tmp_path / "export"
+        export.mkdir()
+        (export / ".git").write_text("gitdir: /nonexistent/main/.git/worktrees/x\n", encoding="utf-8")
+        (export / "a.py").write_text("x = 1\n", encoding="utf-8")
+        files, source = list_tracked_or_walked_files(export)
+        assert source == "filesystem" and "a.py" in files
+
+    def test_include_untracked_adds_a_new_file_and_never_an_ignored_one(self, tmp_path):
+        """A gate that runs before staging (``espalier provenance``, from
+        /commit) must see a file not yet in the index; the index alone is what
+        ships. Dies to: the flag ignored, or ``--exclude-standard`` dropped."""
+        from espalier.repo_mode import list_tracked_or_walked_files
+
+        seat = self._seat(tmp_path)
+        (seat / "new.py").write_text("y = 2\n", encoding="utf-8")
+        index_only, _ = list_tracked_or_walked_files(seat)
+        assert "new.py" not in index_only
+        files, source = list_tracked_or_walked_files(seat, include_untracked=True)
+        assert source == "git" and "new.py" in files
+        assert "cc/scratch.log" not in files

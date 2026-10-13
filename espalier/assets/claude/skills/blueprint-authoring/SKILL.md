@@ -338,7 +338,7 @@ When the blueprint includes a concrete code change:
 - **Never "change this" without exact placement.** "In the import block,
   add X" is too vague; show the existing imports plus the inserted line.
 - **Tag a prescribed fence with the file it lands in.** Write the language
-  *and* the target: ` ```python target=espalier/cli.py `. A pack quotes
+  *and* the target: ` ```python target=src/app/cli.py `. A pack quotes
   existing source and prescribes new source in the *same* syntax, and nothing
   downstream can tell the two apart without the tag. An untagged fence is
   read as a quotation, so it is skipped by the check that resolves prescribed
@@ -370,8 +370,8 @@ A pack is read against a tree that moved after it was written. Every claim it
 makes about the repo is hand-copied, with no diff, no blame and no CI behind
 it — so write claims in the forms that survive an edit.
 
-1. **Cite by symbol, not by line.** `` `espalier/cli.py::_detect_python_command` ``
-   over `` `espalier/cli.py:NNN` ``. A symbol survives every edit above it; a line
+1. **Cite by symbol, not by line.** `` `src/app/cli.py::parse_args` ``
+   over `` `src/app/cli.py:NNN` ``. A symbol survives every edit above it; a line
    number goes stale the moment anyone inserts a line anywhere earlier in the
    file. Use a bare line anchor only where there is no enclosing symbol — a
    module-level constant block, a prose file — and pair it with the symbol
@@ -413,8 +413,8 @@ absence proof)
 
 | Item | Status | Evidence |
 |---|---|---|
-| `DEF-484` | **CLOSED** | the mechanism was driven against it and it goes red |
-| `DEF-473` | **NOT REACHED** | absence-shaped; a positive match cannot express an omission |
+| `DEF-NNN` | **CLOSED** | the mechanism was driven against it and it goes red |
+| `DEF-MMM` | **NOT REACHED** | absence-shaped; a positive match cannot express an omission |
 ````
 
 Rules:

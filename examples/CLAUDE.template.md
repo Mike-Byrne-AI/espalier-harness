@@ -44,7 +44,7 @@ Espalier wires 12 hook scripts that run automatically on Claude Code events:
 | `subagent_start.py` | SubagentStart | Injects cold-subagent orientation (host facts + fan-out finding-schema pointer); never blocks (reporter) |
 | `context_reinject_failure.py` | PostToolUseFailure | On a failed Edit/Write, injects the untrusted-oracle re-derivation discipline (Rule A); never blocks (reporter) |
 
-**Hook semantics rule:** SessionStart reports. PreToolUse and ConfigChange deny. CI guarantees. SessionStart cannot block per the official Claude Code hook protocol.
+**Hook semantics rule:** SessionStart reports. PreToolUse and ConfigChange deny. CI re-checks pull requests where the CI gate is installed (`espalier install-ci`; plain `init` installs none). SessionStart cannot block per the official Claude Code hook protocol.
 
 ## Slash Commands
 
@@ -135,7 +135,8 @@ While it is active, `write_guard` skips its protected-zone path check,
 `plan_guard` skips the plan-required check, `stop_gate` skips the docs-refresh
 and code-review gates, and `subagent_stop` skips the blueprint append. Still
 enforced: the kill-switch denial, dangerous-command patterns, the speed-bump
-checkpoints, `config_guard`, `post_write_check`, and CI. Every bypass logs a
+checkpoints, `config_guard`, `post_write_check`, and, where it is installed,
+the CI gate. Every bypass logs a
 line to stderr, which Claude Code routes to its debug log rather than the
 transcript (these hooks exit 0, and that stderr never reaches it); what you
 read back is the once-per-session audit row those guard and stop bypasses
@@ -158,14 +159,6 @@ prompt of a Windows App Execution Alias -- try `python`, then `py -3` (the
 Windows Python Launcher). macOS typically ships only `python3`, some Windows
 installs ship only `python`, and a python.org install that left PATH alone
 answers only to `py -3`.
-
-## Architecture Rules
-
-<!-- recall: skip --> <!-- written at init: delete this line when you make this section your own, so /recall indexes it -->
-
-- `tools/cc/` scripts run standalone — zero project-specific imports
-- Hook exit codes: `0` = allow OR structured channel (JSON on stdout for permission/decision); `2` = simple block (plain stderr, no stdout JSON); `1` = script error (bug).
-- Path comparisons use `.replace("\\", "/")` for Windows compatibility
 
 ## Build & Test
 

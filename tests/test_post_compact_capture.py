@@ -389,6 +389,39 @@ class TestCaptureWritesLiveDoc:
         mod._capture_compact_summary(tmp_path, str(tp))
         assert not escape.exists()  # never wrote through the symlink
 
+    @pytest.mark.parametrize("native_path", [
+        "/Users/someone/.claude/projects/-Users-someone-repo/0f1e2d3c-4b5a-6978-8091-a2b3c4d5e6f7.jsonl",
+        "C:\\Users\\some one\\.claude\\projects\\C--Users-some-one-repo\\0f1e2d3c-4b5a-6978-8091-a2b3c4d5e6f7.jsonl",
+    ], ids=["posix-home", "windows-home-with-a-space"])
+    def test_the_native_transcript_sentence_names_its_session_not_the_home(self, tmp_path, native_path):
+        """DEF-1076: Claude Code's own compaction message ends by pointing at the
+        transcript under the user's home, and the capture wrote it verbatim into
+        both files it keeps inside the repository. Read with the deployed-asset
+        gate's home-path shapes, so the two scans agree on what a home path is."""
+        from tests.test_deployed_assets_home_path_shapes import HOME_SHAPES
+
+        mod = _load_module()
+        sid = "nativesent01"
+        body = ("Summary body.\n\nIf you need specific details from before compaction (like exact "
+                "code snippets, error messages, or content you generated), read the full "
+                f"transcript at: {native_path}\n")
+        mod._capture_compact_summary(tmp_path, str(_write_transcript(tmp_path, sid, summary=body)))
+        for written in (_artifact(tmp_path, sid), self._live(tmp_path)):
+            text = written.read_text(encoding="utf-8")
+            assert "Summary body." in text, written
+            assert not HOME_SHAPES.search(text), (written, text)
+            assert "read the full transcript of session `0f1e2d3c-4b5a-6978-8091-a2b3c4d5e6f7`" in text, text
+
+    def test_a_backticked_path_leaves_no_stray_backtick(self, tmp_path):
+        mod = _load_module()
+        out = mod._without_transcript_path("read the full transcript at: `/home/u/.claude/projects/-r/s1.jsonl`.")
+        assert out == "read the full transcript of session `s1` (resolve: `read_summary.py --session s1`).", out
+
+    def test_a_summary_without_the_native_sentence_is_untouched(self, tmp_path):
+        mod = _load_module()
+        body = "No pointer here; a path like /srv/x/notes.jsonl is the summary's own text."
+        assert mod._without_transcript_path(body) == body
+
 
 # ─── BC-033 lock: captured text never reaches any priming limb ────────────────
 

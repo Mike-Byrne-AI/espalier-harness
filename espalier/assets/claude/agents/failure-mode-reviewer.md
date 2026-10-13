@@ -261,7 +261,7 @@ greps the modules that implement pin/unpin):
 
 ```bash
 grep -n "rebinding\|unpin.*before\|bound.*changed" \
-  espalier/freshness.py espalier/scanners/freshness.py espalier/cli.py
+  <the modules that implement pin and unpin>
 ```
 
 Adapt the grep targets to whichever modules implement the

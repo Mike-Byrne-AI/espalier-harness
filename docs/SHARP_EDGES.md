@@ -2536,6 +2536,15 @@ name it. The general shape: when a permission
 rule and a hook both claim a shape, the hook is the layer that can explain
 itself and clear on re-issue; a deny rule refuses with no reason and no path.
 
+When a deny rule refuses a command the work needs, change the rule, not the
+command. A spelling its text does not match (a long flag) gets that one
+command through and leaves the rule refusing the next session in every mode,
+with nothing on record; the rule is the operator's, and a dodge hides from
+them the defect they would fix. Fix it at the class: the line out of each
+settings file that carries it, then the shipped default retired with its
+reporters. On 2026-09-29 the scratch prune waited until both settings files
+had lost the line by hand, and the lane retired the default the same day.
+
 ## A `Read()` deny rule silently disables bypass mode for every Bash command that reads a file
 
 **What it is:** `espalier init` used to emit five `Read()` deny rules

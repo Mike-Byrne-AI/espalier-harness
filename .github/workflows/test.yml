@@ -119,9 +119,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          # Fetch full history + tags so the tag-coupled tests (sister-site
-          # calibration corpus, CHANGELOG tag-parity) RUN here rather than
-          # skip — the skip-guards keep fresh/adopter clones green.
+          # Full history and tags, so the tests that read past commits RUN here
+          # rather than skip: tests/test_verify_pins.py drives its controls
+          # against commits on main, and the CHANGELOG tag-parity test reads the
+          # release tags. The calibration class in
+          # tests/test_sister_site_probe_regression.py reads a tag this
+          # repository does not carry, so it skips here as in every public clone.
           fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}

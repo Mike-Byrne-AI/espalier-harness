@@ -939,9 +939,9 @@ CP_FORCEPUSH = SpeedBump(
 CP_RELEASE = SpeedBump(
     id="CP-RELEASE",
     predicate=_pred_release,
-    body="this pushes a release tag (or runs `gh release create`) -> publish.yml burns "
-         "a PyPI version that can never be replaced; verify the tag + CHANGELOG narrative "
-         "first",
+    body="this pushes a release tag (or runs `gh release create`) -> where a publish "
+         "workflow listens for tags, the version it publishes can never be replaced; "
+         "verify the tag + CHANGELOG narrative first",
     cap_exempt=True,
     flag_key=_discard_key,      # per-invocation: each distinct tag burns a
                                 # DIFFERENT version, so each earns its own nudge

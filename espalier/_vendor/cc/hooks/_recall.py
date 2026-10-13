@@ -138,15 +138,15 @@ def _tokenize(text: str) -> list[str]:
 #: more than three points from a fresh sweep. The first version of this
 #: table was typed from a one-off script on a 246-heading corpus and nothing
 #: regenerated it, so every number aged silently for forty documents (DEF-679's
-#: closure records the gap). Corpus 318 docs, 2026-09-21; heading arm 310
-#: queries, stripped arm 269 (df > 0.15n removed, >= 2 tokens kept):
+#: closure records the gap). Corpus 335 docs, 2026-10-12; heading arm 320
+#: queries, stripped arm 282 (df > 0.15n removed, >= 2 tokens kept):
 #:
 #:     alpha  heading@1  stripped@1   heading@4  lost-to-a-BIGGER-doc
-#:      0.00      83.9%       79.5%       98.1%      3   <- shipped for a long time (with the path-name tie-break: 60.2% / 62.2% / 94.8% / 108)
-#:      0.05      84.2%       81.4%       98.1%      0   <- CHOSEN
-#:      0.15      81.9%       80.3%       98.1%      0
-#:      0.50      74.8%       76.2%       93.5%      0   <- the naive sqrt guess
-#:      1.00      56.1%       57.6%       81.0%      0
+#:      0.00      83.4%       79.8%       97.5%      3   <- shipped for a long time (with the path-name tie-break: 60.2% / 62.2% / 94.8% / 108)
+#:      0.05      83.8%       81.6%       97.8%      0   <- CHOSEN
+#:      0.15      81.9%       80.5%       97.8%      0
+#:      0.50      74.7%       77.0%       93.4%      0   <- the naive sqrt guess
+#:      1.00      53.8%       54.3%       80.9%      0
 #:
 #: The last column was the bias this exponent was calibrated against -- heading
 #: queries whose named document lost top-1 to a document with a LARGER
@@ -163,19 +163,19 @@ def _tokenize(text: str) -> list[str]:
 #: canonical key, by design; two lost to a document with a LARGER vocabulary
 #: but FEWER tokens -- the case the focus key reads backwards and the exponent,
 #: which divides by vocabulary, reads right. The 2026-09-15 folds took the
-#: column to 3, and it read 3 again on 2026-09-21; which of the four resolved
+#: column to 3, and it read 3 again on 2026-09-21 and 2026-10-12; which of the four resolved
 #: was not re-driven, so the two-and-two split above is the 2026-09-12
 #: reading. The exponent's measured job is therefore the stripped arm and
 #: those ties, held as a PROPERTY rather than re-pinned as a number:
 #: tests/test_recall_eval.py's
 #: test_alpha_zero_shows_the_bias_the_exponent_corrects requires, against a
 #: fresh sweep, that the shipped alpha beats alpha 0 on stripped@1 and ties or
-#: wins on heading@1 (2026-09-21: +1.9pp and +0.3pp; earlier readings are in
+#: wins on heading@1 (2026-10-12: +1.8pp and +0.4pp; earlier readings are in
 #: this block's history, not repeated here). tests/test_recall_eval.py keeps
 #: the shipped regression reproducible by putting the old key back.
 #:
 #: Both label tiers peak at the same value. 0.05 over 0.15 is ~2pp on the
-#: heading arm and ~1pp on the stripped arm (2026-09-21) -- real but small;
+#: heading arm and ~1pp on the stripped arm (2026-10-12) -- real but small;
 #: the value is taken at the measured peak rather than nudged, because "pick
 #: by the measurement" is the whole point. The
 #: heading@4 column is NOT flat across the range any more (it was ~96.7% at

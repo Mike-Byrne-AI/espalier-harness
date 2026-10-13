@@ -93,14 +93,17 @@ Without `(root / p).resolve().relative_to(root)`,
 `tools/cc/` and slips past the guard while still landing at the
 protected file on disk. And before that compare, translate the drive
 spelling through `_hook_utils._msys_drive_to_windows` on **both** sides of
-it: the Git Bash prefix (`/c/x`, Windows only, DEF-731) and, on every host,
-the Windows prefix spellings (`\\?\C:\x`, `\\.\C:\x`, `\\localhost\C$\x`,
-DEF-935). A normaliser that compares a drive-spelled root against an
+it: the Git Bash prefix (`/c/x`, Windows only) and, on every host,
+the Windows prefix spellings (`\\?\C:\x`, `\\.\C:\x`, `\\localhost\C$\x`).
+A normaliser that compares a drive-spelled root against an
 untranslated leaf, or translates one side only, turns a deny into an allow
 without an error anywhere; the sketch above shows the resolve step and
-relies on that chokepoint for the spelling. Regression coverage (Espalier source repo) lives in
+relies on that chokepoint for the spelling.
+<!-- espalier:self-host-only -->
+Regression coverage in this repository's suite lives in
 `tests/test_write_guard.py::TestPathTraversalBlocked` and the
 parametrised case in `tests/test_hooks.py::TestPlanGuard`.
+<!-- /espalier:self-host-only -->
 
 And relativise against the checkout that *contains* the resolved path,
 not the root alone. A Claude Code session that enters a git worktree
@@ -122,9 +125,9 @@ any new variant must follow the same shape.
 
 `write_guard.py` extracts target paths from Bash commands, and from
 PowerShell commands on the PowerShell tool (a PowerShell payload handed to
-the **Bash** tool is not extracted -- DEF-637, the routing question). Every
+the **Bash** tool is not extracted -- the routing question). Every
 arm matches on the MASKED scan and reads its operand from the RAW command
-at the match's offsets (`raw_operand` / `raw_span`, DEF-794): the masker
+at the match's offsets (`raw_operand` / `raw_span`): the masker
 blanks a quoted span's parens and a bare capture stops at a blank, so an
 operand read off the scan is a path that exists nowhere; a source census in
 the guard's own test suite (`TestQuotedTargetSurvivesTheRoot`, Espalier
@@ -150,7 +153,7 @@ read. The friction-layer scope:
   source repo -- not deployed by `init`), and the arm tuples it consumes are
   pinned to the readers by an AST walk there -- that class, not a list here,
   is the oracle. An UN-NARROWED `find` with a delete action is read one
-  tier up as well (DEF-815): from a catastrophic root -- the repo or a
+  tier up as well: from a catastrophic root -- the repo or a
   parent of it, your home, the filesystem root, a shallow system path --
   it is the same hard stop the recursive force-delete draws, ahead of the
   maintenance gate; from any other root it is the CP-RMRF nudge, and a
@@ -162,9 +165,9 @@ read. The friction-layer scope:
   re-widens; `-type` and the attribute tests (`-size`, `-perm`, `-mtime`,
   `-user`, `-links`) never narrow (each was a one-token exit from the wall
   in the first cut). On the PowerShell tool the same arm reads the same
-  span (DEF-824): pwsh's alias table is per platform, and on macOS and
+  span: pwsh's alias table is per platform, and on macOS and
   Linux `find`, `rm` and `rmdir` are the native binaries, so `find .
-  -delete` there is the real sweep. Its siblings on that tool (DEF-822):
+  -delete` there is the real sweep. Its siblings on that tool:
   an enumerator piped into a remove verb (`Get-ChildItem -Recurse |
   Remove-Item -Recurse -Force`, by any alias or unambiguous switch
   prefix) is judged by ITS root -- the current location when it names
@@ -181,7 +184,7 @@ read. The friction-layer scope:
   process directory; the head reads a bare verb, a quoted verb, an
   executable path or a wrapper word behind the call operator, and the
   call operator on a command object (`& (Get-Command find)`, `& $f`) is a
-  declared gap (DEF-827) the rehearsal carries; the recurse and force
+  declared gap the rehearsal carries; the recurse and force
   switches are read by every spelling that runs (`_PS_RECURSE_SWITCH`,
   `_PS_FORCE_SWITCH`: the cmdlet prefixes, the long forms, the `/bin/rm`
   clusters with bash's own rule that an `i` after the last `f` cancels
@@ -189,7 +192,7 @@ read. The friction-layer scope:
   Remove-Item tier's rule has it. The oracles are the PowerShell guard
   rehearsal and the pwsh-gated reachability differential (Espalier source
   repo -- not deployed by `init`), whose sweep rows must reach on the
-  platform they are listed for. The carrier (DEF-826): on BOTH tools an
+  platform they are listed for. The carrier: on BOTH tools an
   enumerator -- a `find` with no action, or `ls` -- piped through `xargs`
   into the remove verb is the same wipe with its operands arriving on
   stdin, and the Bash tool had no pipeline arm at all; now `_PIPED_REMOVE_RE`
@@ -208,8 +211,8 @@ read. The friction-layer scope:
   right before its guard), and a stage between the enumerator and `xargs`
   and a single path echoed into it are declared limits. The loop carrier
   -- the enumerator's output bound to a loop variable and removed in the
-  body -- is read by its own openers (DEF-830): three composed on the same
-  head group, and a fourth (DEF-837) for a for loop over a bare word list,
+  body -- is read by its own openers: three composed on the same
+  head group, and a fourth for a for loop over a bare word list,
   which has no enumerator -- its roots are the list's words, cut by the
   word regex that parsed them (on the scan span, read raw) and judged one
   per word by the rm tier's own rule, its wipe the family's one rule
@@ -219,7 +222,7 @@ read. The friction-layer scope:
   own placement helper; a
   compound statement crosses lines by grammar, so those openers sit in the
   newline census's compound roster, whose promise is checked on every
-  named group. The version-control listing (DEF-831) is the third head on both
+  named group. The version-control listing is the third head on both
   tools -- a two-word SPELLING composed on the git head's one home
   (`_GIT_SUBCOMMAND_AT`, so that block sits before the carrier), not a
   roster word. The heads are ONE table (`_PIPED_ENUM_HEAD_SPELLINGS`, key
@@ -245,12 +248,12 @@ read. The friction-layer scope:
   search-only classifier over a match's text was retired for the `head`
   group rather than declared on two census axes
 - `git restore [opts] path`, `git checkout path`, `git checkout ref -- path`
-  -- the `--` separator bare or quoted in either kind (DEF-814: `git
+  -- the `--` separator bare or quoted in either kind (`git
   checkout "--" <hook>` hands git a bare `--` after quote-removal), a global
   option between `git` and the subcommand (`git -C <dir> checkout`, `git
   --no-pager restore`; `_GIT_PREOPT_RUN`, one home for every git arm and the
   discard bump), `restore -s <ref>`, the three arms on the PowerShell tool
-  too (until DEF-814's lane that leg had none)
+  too
 - `chmod`/`chown`/`chgrp`/`chflags`/`chattr` on a protected path (every
   positional after the mode/owner/flags token; `--reference=` and macOS
   `chmod -E`/`-N`/`-I` make every positional a target) and `setfacl` (every
@@ -322,10 +325,10 @@ read. The friction-layer scope:
   patterns (`open(<lit>,'w')`, `Path(<lit>).write_text`, `shutil.copy(_,
   <lit>)`, `os.replace(_, <lit>)`, the node/ruby/perl siblings -- perl in
   both the two-argument `open(F, '>path')` and the three-argument `open(my
-  $fh, '>', 'path')` spelling, DEF-813, the read twins `'<'` alike). Filed as
+  $fh, '>', 'path')` spelling, the read twins `'<'` alike). Filed as
   out of scope beside the two-step class until 2026-09-06; now an in-scope
   corpus row.
-- A program operand is ONE bash WORD, not one quoted span (DEF-832): bash
+- A program operand is ONE bash WORD, not one quoted span: bash
   concatenates adjacent segments -- single-quoted, ANSI-C, double-quoted,
   bare -- with each segment's quote removal into the one argument the
   program receives, so a path quoted inside a single-quoted program (spelled
@@ -359,12 +362,12 @@ read. The friction-layer scope:
   leg's nested programs: the raw scan reads a single-span program already,
   a spliced one only as its concatenation. The PowerShell tool's own inline
   openers are a different word grammar and stay as they are.
-- The same on the PowerShell tool (DEF-712): four `_PS_CMD_POS`-anchored
+- The same on the PowerShell tool: four `_PS_CMD_POS`-anchored
   inline openers (`python -c`, `node -e`, `ruby -e`, `perl -e`, the `py`
   launcher) and one piped-stdin opener (`| <interpreter> [switches] [-]` at
   the end of a statement -- PowerShell has no heredoc), the head given as a
   bare or `&`-called quoted executable path (`_PS_EXE_PREFIX`, shared with
-  the permission verbs), the switch run before `-c` the DEF-717 constant --
+  the permission verbs), the switch run before `-c` one shared constant --
   one bare value per switch, and the Bash openers carry the same run
   (`python3 -W ignore -c` denies on both shells). The opener is matched on
   the scan text and the body sliced from a same-length RAW twin
@@ -377,10 +380,10 @@ read. The friction-layer scope:
   which is what the hook runs (the ReDoS suite drives that shape).
 - Variable-indirect: `VAR=path; ... > $VAR` (a binding of any name case,
   bare or behind a declaration builtin, bound at any statement start --
-  DEF-847, 2026-09-19; literal values only, no `$(...)` or
+  literal values only, no `$(...)` or
   `${VAR:-default}`) — handled by `_expand_simple_var_assignments`; and
-  its PowerShell twin `_expand_simple_ps_var_assignments` (DEF-801,
-  2026-09-15: `$p = '<hook>'; Set-Content -Path $p`, the .NET spelling,
+  its PowerShell twin `_expand_simple_ps_var_assignments`
+  (`$p = '<hook>'; Set-Content -Path $p`, the .NET spelling,
   `"$d/x.py"` interpolation), run on the RAW command
   before the scan pair so every offset read downstream survives. Both are
   sequential — each reference takes the most recent binding before it, a
@@ -391,7 +394,7 @@ read. The friction-layer scope:
 - Two-step subprocess (write to /tmp, then `cp /tmp/x dest`)
 - On the PowerShell tool: an UNBOUND variable holding the program (`$code |
   python -`, `python -c $code`; a same-line literal binding is inlined
-  first since DEF-801), a program read from a file (`Get-Content x.py |
+  first), a program read from a file (`Get-Content x.py |
   python -`), `Start-Process python -ArgumentList "-c ..."` (the `-c` sits
   inside the argument list, no opener shape), and a quoted executable
   behind an EXPANDABLE wrapper span (`powershell -Command "& 'C:\...\
@@ -426,23 +429,23 @@ read. The friction-layer scope:
   allow row in `TestRemovedOrRelocatedOperandIsAMutation`: an operand that
   arrives on stdin (`echo <hook> | xargs rm`), a `find -exec` whose action is
   not a remove verb, an UNBOUND variable holding the operand (`Remove-Item
-  $p`; a same-line literal binding is inlined first on both shells since
-  DEF-801 closed on 2026-09-15, so `$p = '<hook>'; Remove-Item $p` denies),
+  $p`; a same-line literal binding is inlined first on both shells, so
+  `$p = '<hook>'; Remove-Item $p` denies),
   and a directory operand
   that merely CONTAINS a secret (`tar -cf backup.tar .`). The recursive
-  spelling on a zone directory, forced or not since DEF-842, is bumped first by `_speedbump` (CP-RMRF:
+  spelling on a zone directory, forced or not, is bumped first by `_speedbump` (CP-RMRF:
   deny-once, ahead of the maintenance gate, keyed on the SPELLING and not on
   the operand -- the same bump fires on an unprotected directory, so it is
   not zone coverage) and its re-issue reaches the zone check; a plain delete
   and every move never bump and are the zone check's alone. Until
   2026-09-14 this bullet said a delete was governed by `_speedbump`; driven,
   no bump fired on any plain delete or move-away shape, and the zone check
-  never examined the operand (DEF-795)
+  never examined the operand
 - PowerShell permission verbs reached without a cmdlet or a literal path: the
   property-assignment form `(Get-Item <hook>).IsReadOnly = $true` (nothing to
   anchor on), a piped path or one held in an UNBOUND variable (`Get-Item
   <hook> | Set-Acl`, `attrib +R $hook` with no same-line literal binding;
-  `$hook = '<hook>'; attrib +R $hook` denies since DEF-801, the pre-pass
+  `$hook = '<hook>'; attrib +R $hook` denies, the pre-pass
   inlining the literal before this arm reads it), an executable given by
   path behind an
   EXPANDABLE wrapper span (`powershell -Command "& 'C:\...\icacls.exe'
@@ -463,18 +466,14 @@ not motivated bypass. Motivated bypass is the visibility layer's job
 **Which layer proves a job (2026-10-11).** A protected-zone write is a
 location job: it is proven at the location layer -- the after-check in
 `post_write_check.py` reports a watched file that changed when nothing accounts
-for it, whatever the command's spelling
-(`tests/test_zone_watch.py::TestTheAfterCheck`, Espalier source repo -- not
-deployed by `init`) -- and a parser row whose job is
+for it, whatever the command's spelling -- and a parser row whose job is
 location closes against that test, never against a new spelling arm, **for the
 zones the after-check watches**: not `cc/` and not the two settings files,
 where the parser's path check is still the only live layer (`config_guard`
 judges those for kill-switch and unwiring shapes only), so a row there stays a
 parser row. The parser tiers that remain (a catastrophic delete, a speed bump, a
 secret read where no sandbox refuses it) are proven by a composition over the
-code's own verb roster, as
-`tests/test_write_guard.py::TestPowerShellRecursiveRemoveTiersAgree` does (Espalier
-source repo -- not deployed by `init`), and a
+code's own verb roster, and a
 sibling-spelling hunt on them stops at the coverage contract's forms
 (`docs/HOOKS.md` §4, "The coverage contract for the jobs the parser keeps"): a
 program named directly with literal operands, and one level of a literal launch
@@ -482,9 +481,14 @@ wrapper. On those jobs an operand the reader cannot resolve is refused
 conservatively (the nudge, or a deny on the literal part), never allowed, so a
 quiet one is a defect; a form no reader sees at all (an encoded program, a
 script file, pieces nothing binds) is recorded as a limit with the contract as
-its reason, pinned at the verdict it draws
-(`tests/test_write_guard.py::TestTheCoverageContract`, Espalier source repo -- not
-deployed by `init`), never chased one spelling at a time.
+its reason, pinned at the verdict it draws, never chased one spelling at a time.
+<!-- espalier:self-host-only -->
+The tests behind this paragraph, in this repository's suite:
+`tests/test_zone_watch.py::TestTheAfterCheck` (the after-check),
+`tests/test_write_guard.py::TestPowerShellRecursiveRemoveTiersAgree` (the
+composition over the verb roster) and
+`tests/test_write_guard.py::TestTheCoverageContract` (a limit pinned at its verdict).
+<!-- /espalier:self-host-only -->
 
 Every closed bypass class has a regression test parameterized over
 canonical forms:
@@ -534,7 +538,7 @@ result = run_hook(script,
 assert result.returncode == 0
 ```
 
-`run_hook` lives in `tests/conftest.py` (Espalier source repo; a fork keeps its own copy). Use it; don't roll your own.
+`run_hook` is the suite's shared hook driver, kept in its `conftest`; a fork keeps its own copy. Use it; don't roll your own.
 
 ## Fail-open with voice
 

@@ -644,7 +644,8 @@ class TestKillSwitchRemediation:
 
     def test_do_line_names_the_fired_setting(self) -> None:
         rendered = _denial_reasons.KILL_SWITCH_DETECTED.format(
-            context=" in local change", findings=".claude/settings.local.json: hooks.PreToolUse is an empty list"
+            context=" in local change", findings=".claude/settings.local.json: hooks.PreToolUse is an empty list",
+            ci_clause=_denial_reasons.KILL_SWITCH_CI_GATE_ABSENT,
         )
         do_line = next(
             ln for ln in rendered.splitlines() if ln.strip().startswith("Do:")
@@ -662,7 +663,8 @@ class TestKillSwitchRemediation:
         # The Don't: anti-pattern line correctly keeps disableAllHooks as the
         # canonical kill-switch example — only the Do: remediation was wrong.
         rendered = _denial_reasons.KILL_SWITCH_DETECTED.format(
-            context="", findings="disableAllHooks: true"
+            context="", findings="disableAllHooks: true",
+            ci_clause=_denial_reasons.KILL_SWITCH_CI_GATE_ABSENT,
         )
         dont_line = next(
             ln for ln in rendered.splitlines() if ln.strip().startswith("Don't:")

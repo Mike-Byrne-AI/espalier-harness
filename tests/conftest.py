@@ -765,6 +765,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_scope_walker",
             "test_surface_impact",
             "test_surface_hygiene_parity",
+            # Everything init deploys is addressed to the adopter: contract, so a
+            # body-only lane (which earns the contract slice) runs it.
+            "test_deployed_text_audience",
             "test_cheat_sheet_no_internal_ids",
             "test_common_tier_agent_adopter_handoff",
             "test_common_tier_asset_availability",
@@ -1195,6 +1198,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # ends its test is a fact about a real pytest child under the
             # signal method.
             "test_timeout_backstop",
+            # Moved from the unit grandfather 2026-10-12: whether a linked
+            # worktree (its .git a gitlink file) reads as a checkout of its own
+            # is a fact about real `git init` and `git worktree add` output.
+            "test_repo_mode",
         ),
         "integration",
     ),
@@ -1240,7 +1247,6 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_quickstart_tier_counts",
             "test_reflect_reasoning",
             "test_render_template",
-            "test_repo_mode",
             "test_self_host_fingerprint_parity",
             "test_skill_delegation_parity",
             "test_skill_frontmatter",

@@ -31,8 +31,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
-          # Full history and tags, as test.yml's cells fetch, so the
-          # tag-coupled tests run here rather than skip.
+          # Full history and tags, as test.yml's cells fetch, so the tests
+          # that read past commits or release tags run here rather than skip.
           fetch-depth: 0
 
       - name: Set up Python
