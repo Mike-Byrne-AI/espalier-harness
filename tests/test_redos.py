@@ -1086,7 +1086,9 @@ def test_ps_program_body_linear_on_unclosed_runs(label, make):
 # walker row's lesson: a memoised reader's rebuild scales with the host, not
 # the payload -- about 1 ms here, over a hundred on a shared runner). A pair
 # whose half-cap reading is under the sample floor is not judged: single-digit
-# milliseconds are clock noise on this box.
+# milliseconds are clock noise on this box. A misread under load is no reason
+# to lower the ratio: 2.83 was measured and did no better (DEF-2000, at
+# `tests/test_speedbump_irreversible.py::_search_window_ms`).
 _PS_BODY_LINEAR_RATIO = 3.0
 _PS_BODY_NOISE_FLOOR_MS = 1.0
 _PS_BODY_MIN_SAMPLE_MS = 5.0
@@ -1113,7 +1115,9 @@ def _ps_body_call_ms(fn: Callable[[str], object], payload: str) -> float | None:
 def _min_ps_body_ms(fn: Callable[[str], object], payload: str) -> float | None:
     """The floor of `_PS_BODY_SAMPLES` timings of one call, the cyclic
     collector paused throughout and restored after (the walker discipline);
-    None when a call overran `_CHAIN_CEILING_MS`."""
+    None when a call overran `_CHAIN_CEILING_MS`. The per-call cost's floor
+    only: a ratio's pair comes from :func:`_ps_body_window_ms`, never from two
+    of these back to back (DEF-2000)."""
     best: float | None = None
     collector_was_on = gc.isenabled()
     gc.disable()
@@ -1268,13 +1272,18 @@ def test_ps_body_scaling_rule_reds_a_pair_under_the_sample_floor():
 _BURST_FACTOR = 1.5
 
 
-def _burst_call_clock(ms_at_big: float, n_big: int, burst_ms: float, calls: "list[int]"):
+def _burst_call_clock(
+    ms_at_big: float, n_big: int, burst_ms: float, calls: list[int],
+) -> Callable[..., float]:
     """A stand-in for a one-call timer (:func:`_ps_body_call_ms`,
     :func:`_walker_call_ms`) on a simulated clock: a quadratic cost,
     ``ms_at_big`` at ``n_big`` bytes, and every call that STARTS in the first
     ``burst_ms`` after the first window opens (the first payload over 64 bytes;
     the zero-payload calls before it are outside the slowdown) costs
-    `_BURST_FACTOR` times more -- one sustained slowdown. Records each length."""
+    `_BURST_FACTOR` times more -- one sustained slowdown. Records each length,
+    so a row asserts the order its windows timed: the burst opens with the
+    window, so a big-first back-to-back window would pass the reading alone
+    (failure-mode review)."""
     now: list[float | None] = [None]
 
     def reading(*args: object) -> float:
@@ -1301,12 +1310,15 @@ def test_ps_body_scaling_rule_reads_a_quadratic_through_a_slowdown_on_its_small_
     floors. On a simulated clock (:func:`_burst_call_clock`), so it needs no
     alarm and runs on every host."""
     n_big = _WORST_CASE_BODY_LEN
+    n_small = n_big // 2
+    small_ms = 40.0 * (n_small / n_big) ** 2
     calls: list[int] = []
     monkeypatch.setattr(sys.modules[__name__], "_ps_body_call_ms", _burst_call_clock(
-        40.0, n_big, 3 * _BURST_FACTOR * 10.0, calls))
-    verdict = _ps_body_scaling_verdict(lambda _p: None, "x" * n_big, "x" * (n_big // 2), "x" * 64)
+        40.0, n_big, _PS_BODY_SAMPLES * _BURST_FACTOR * small_ms, calls))
+    verdict = _ps_body_scaling_verdict(lambda _p: None, "x" * n_big, "x" * n_small, "x" * 64)
     assert verdict is not None and "super-linear" in verdict, verdict
-    assert len([n for n in calls if n > 64]) == 4 * _PS_BODY_SAMPLES, calls  # two windows were taken
+    # two windows, each interleaved small-first
+    assert [n for n in calls if n > 64] == [n_small, n_big] * (2 * _PS_BODY_SAMPLES), calls
 
 
 def test_the_ps_body_scaling_arm_cannot_outlast_the_per_test_timeout():
@@ -1509,6 +1521,13 @@ def test_bash_walker_linear_on_opener_flood(label, payload, tmp_path):
 #     cost of a deterministic walk is its floor, and a scheduler spike on one
 #     call is additive noise (a single 16 KB masker call read 25.8 ms against
 #     4.5, 18.9 and 35.7 at the neighbouring sizes on the execution day);
+#   * a window INTERLEAVES its samples (small, large, `_WALKER_SAMPLES` times;
+#     `_walker_window_ms`), never all of one size and then the other: one
+#     slowdown as long as the small samples took lifted the small floor alone,
+#     reading a quadratic consumer linear or a linear one flat (DEF-2000,
+#     measured at `tests/test_speedbump_irreversible.py::_search_window_ms`,
+#     where a lower ratio did no better). `_min_walker_ms` times one payload,
+#     for the per-call cost, and is never paired for a ratio;
 #   * a small-size time under `_WALKER_MIN_SAMPLE_MS` is a RED naming the
 #     consumer and its sizes, never a pass: a consumer in the noise cannot be
 #     judged, and the fix is to re-declare its cap, never to widen the bound;
@@ -1658,6 +1677,7 @@ def _walker_call_ms(
     t0 = time.perf_counter()
     try:
         consumer(payload, root)
+        signal.setitimer(signal.ITIMER_REAL, 0)  # disarm before anything else can be interrupted
         return (time.perf_counter() - t0) * 1000
     except _Timeout:
         return None
@@ -1672,7 +1692,9 @@ def _min_walker_ms(
     before each and the cyclic collector paused throughout, restored after
     (the discipline above: a long pytest process's full collections are the
     host's cost, and only the larger payload triggers them); None when a call
-    overran `_WALKER_CEILING_MS`."""
+    overran `_WALKER_CEILING_MS`. The per-call cost's floor only: a ratio's
+    pair comes from :func:`_walker_window_ms`, never from two of these back
+    to back (DEF-2000)."""
     best: float | None = None
     collector_was_on = gc.isenabled()
     gc.disable()
@@ -2024,14 +2046,45 @@ def test_walker_scaling_row_reads_a_quadratic_through_a_slowdown_on_its_small_sa
     floors. On a simulated clock (:func:`_burst_call_clock`), so it needs no
     alarm and runs on every host."""
     cap = _BASH_COMMAND_CAP
-    n_big, _n_small = _walker_sizes(cap)
+    n_big, n_small = _walker_sizes(cap)
+    small_ms = 40.0 * (n_small / n_big) ** 2
     calls: list[int] = []
     monkeypatch.setattr(sys.modules[__name__], "_walker_call_ms", _burst_call_clock(
-        40.0, n_big, 3 * _BURST_FACTOR * 10.0, calls))
+        40.0, n_big, _WALKER_SAMPLES * _BURST_FACTOR * small_ms, calls))
     problem, unjudged = _walker_scaling_judgement(
         "quadratic", lambda _p, _r: None, cap, lambda n: "x" * n, tmp_path)
     assert unjudged is None, unjudged
     assert problem is not None and "super-linear on two windows" in problem, problem
+    # two windows, each interleaved small-first
+    assert [n for n in calls if n > 64] == [n_small, n_big] * (2 * _WALKER_SAMPLES), calls
+
+
+@pytest.mark.parametrize("t_zero, t_small, swamped", [
+    # DEF-926's incident: most of 196.1 ms was the per-call rebuild -- a slow host
+    pytest.param(195.0, 196.1, True, id="swamped-slow-runner-skips"),
+    # a box faster than the floors' host: under the floor, with its re-measure remedy
+    pytest.param(0.5, 1.5, False, id="fast-box-reds"),
+])
+def test_walker_scaling_judgement_routes_an_under_floor_sample_by_cause(
+        tmp_path, monkeypatch, t_zero, t_small, swamped):
+    """The judgement's under-floor branch returns a swamped sample as
+    ``unjudged`` (the row skips it with its cause) and any other as a
+    ``problem`` (the row reds with the re-measure remedy), never both and
+    never neither -- a swapped or dropped return retires the guard on the hosts
+    it should red on (DEF-926; the failure-mode review of DEF-2000, which
+    moved this branch into :func:`_walker_scaling_judgement`). On a stubbed
+    one-call timer, so it needs no alarm and runs on every host."""
+    cap = _BASH_COMMAND_CAP
+    n_big, n_small = _walker_sizes(cap)
+    costs = {64: t_zero, n_small: t_small, n_big: 2 * t_small}
+    monkeypatch.setattr(sys.modules[__name__], "_walker_call_ms",
+                        lambda _consumer, payload, _root: costs[len(payload)])
+    problem, unjudged = _walker_scaling_judgement(
+        "stand_in", lambda _p, _r: None, cap, lambda n: "x" * n, tmp_path)
+    if swamped:
+        assert problem is None and unjudged is not None and "slow shared runner" in unjudged, (problem, unjudged)
+    else:
+        assert unjudged is None and problem is not None and "much faster" in problem, (problem, unjudged)
 
 
 @pytest.mark.parametrize("pattern,payload", [

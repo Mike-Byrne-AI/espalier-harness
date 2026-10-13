@@ -1760,6 +1760,8 @@ def _alarm(_signum, _frame) -> None:
 #: reads about two, a quadratic one about four). Pairs whose half-cap floor is
 #: under the sample floor are not judged: single-digit milliseconds are clock
 #: noise on this box (the timing stand-in rule in auto-memory: tens of ms).
+#: A misread under load is no reason to lower the ratio: 2.83 was measured and
+#: did no better (DEF-2000, at :func:`_search_window_ms`).
 _SPEEDBUMP_LINEAR_RATIO = 3.0
 _SPEEDBUMP_NOISE_FLOOR_MS = 1.0
 _SPEEDBUMP_SCALING_MIN_SAMPLE_MS = 5.0
@@ -1786,11 +1788,13 @@ def _search_ms(compiled: "re.Pattern[str]", probe: str) -> float | None:
             signal.setitimer(signal.ITIMER_REAL, 0)
 
 
-def _search_window_ms(compiled: "re.Pattern[str]", big: str, small: str) -> "tuple[float, float] | None":
+def _search_window_ms(compiled: "re.Pattern[str]", big: str, small: str
+                      ) -> "tuple[float | None, float | None]":
     """One window of the scaling rule: ``(t_small_ms, t_big_ms)``, the floor of
     `_SPEEDBUMP_SAMPLES` timings at each size, the cyclic collector paused
-    throughout and restored after (`tests/test_redos.py`'s walker discipline);
-    None when a search overran `_SPEEDBUMP_CI_SAFE_MS`.
+    throughout and restored after (`tests/test_redos.py`'s walker discipline).
+    A search that overran `_SPEEDBUMP_CI_SAFE_MS` ends the window: its size
+    reads None and the other size's floor so far rides along.
 
     The samples interleave (small, big, three times), never all of one size
     and then the other (DEF-2000). A quadratic reads only about 30 percent
@@ -1817,11 +1821,11 @@ def _search_window_ms(compiled: "re.Pattern[str]", big: str, small: str) -> "tup
         for _ in range(_SPEEDBUMP_SAMPLES):
             t_small = _search_ms(compiled, small)
             if t_small is None:
-                return None
+                return None, min(bigs, default=None)
             smalls.append(t_small)
             t_big = _search_ms(compiled, big)
             if t_big is None:
-                return None
+                return min(smalls), None
             bigs.append(t_big)
     finally:
         if collector_was_on:
@@ -1839,19 +1843,20 @@ def _scaling_reading(compiled: "re.Pattern[str]", big: str, small: str
     ratio is the estimate. The timings ride along so that a red carries its
     reading: a bare None on the Windows runner could not say whether the control
     fell under the floor or inside the bound (DEF-4001)."""
-    first = _search_window_ms(compiled, big, small)
-    if first is None:
-        return f"exceeded {_SPEEDBUMP_CI_SAFE_MS}ms", None, None, None
-    t_small, t_big = first
+    t_small, t_big = _search_window_ms(compiled, big, small)
+    if t_small is None or t_big is None:
+        overran = len(small) if t_small is None else len(big)
+        return f"exceeded {_SPEEDBUMP_CI_SAFE_MS}ms at {overran} bytes", t_small, t_big, None
     if t_small < _SPEEDBUMP_SCALING_MIN_SAMPLE_MS:
         return None, t_small, t_big, None
     bound = _SPEEDBUMP_LINEAR_RATIO * t_small + _SPEEDBUMP_NOISE_FLOOR_MS
     if t_big <= bound:
         return None, t_small, t_big, bound
-    second = _search_window_ms(compiled, big, small)
-    if second is None:
-        return f"exceeded {_SPEEDBUMP_CI_SAFE_MS}ms on the second window", None, None, bound
-    t_small_2, t_big_2 = second
+    t_small_2, t_big_2 = _search_window_ms(compiled, big, small)
+    if t_small_2 is None or t_big_2 is None:
+        overran = len(small) if t_small_2 is None else len(big)
+        return (f"exceeded {_SPEEDBUMP_CI_SAFE_MS}ms at {overran} bytes on the second window",
+                t_small_2, t_big_2, bound)
     if t_big_2 / t_small_2 < t_big / t_small:
         t_small, t_big = t_small_2, t_big_2
         if t_small < _SPEEDBUMP_SCALING_MIN_SAMPLE_MS:
@@ -2061,11 +2066,19 @@ class TestSpeedbumpRegexBudget:
         # and at which sizes (DEF-4001; on the Air, 2026-10-10, 20 runs: 8.5 ->
         # 35 ms, ratio 3.9 to 4.1 against a bound ratio of 3.11, so the margin is
         # 28 percent, DEF-2000).
+        # A reading inside the bound names the residue the interleaved window
+        # leaves, so the red points at the measurement before anyone moves the
+        # ratio (DEF-2000's failure-mode review).
+        residue = "" if bound is None else (
+            "; a sustained slowdown can still read an interleaved window linear (DEF-2000's "
+            "residue, at _search_window_ms): re-run before changing anything -- a lower ratio "
+            "was measured and did no better"
+        )
         assert verdict is not None and "super-linear" in verdict, (
             f"the rule did not name the quadratic stand-in super-linear (verdict {verdict!r}): "
             f"{t_small} ms at {small_n} bytes -> {t_big} ms at {big_n} bytes{stepped}, "
             f"linear bound {bound} ms (sample floor {_SPEEDBUMP_SCALING_MIN_SAMPLE_MS} ms, "
-            f"ratio rule {_SPEEDBUMP_LINEAR_RATIO}, noise floor {_SPEEDBUMP_NOISE_FLOOR_MS} ms)"
+            f"ratio rule {_SPEEDBUMP_LINEAR_RATIO}, noise floor {_SPEEDBUMP_NOISE_FLOOR_MS} ms){residue}"
         )
 
     @pytest.mark.parametrize(
@@ -2117,16 +2130,19 @@ class TestSpeedbumpRegexBudget:
         the same slowdown also covers the first big sample and the clean ones that
         follow set both floors. Driven on a simulated clock
         (:func:`_burst_clock`) through the real control, on every host. The
-        measurement and the residue the interleave leaves are at
-        :func:`_search_window_ms`."""
+        order the two windows timed is asserted exactly: the burst opens with
+        the window, so a big-first back-to-back window, or one whose small run
+        outlasts a slowdown sized to the literal three, would pass the reading
+        alone (failure-mode review). The measurement and the residue the
+        interleave leaves are at :func:`_search_window_ms`."""
         factor = 1.5  # the measured slowdown: 35.4 ms against a 23.2 median (DEF-2000)
         ms_at_first = 8.5  # the Air's small sample at `_CONTROL_SMALL_BYTES`
         seen: list[int] = []
         monkeypatch.setattr(sys.modules[__name__], "_search_ms", _burst_clock(
-            ms_at_first, 2.0, 3 * factor * ms_at_first, factor, seen))
+            ms_at_first, 2.0, _SPEEDBUMP_SAMPLES * factor * ms_at_first, factor, seen))
         self.test_the_scaling_rule_still_reds_a_quadratic_pattern()
         n = _CONTROL_SMALL_BYTES
-        assert set(seen) == {n, 2 * n}, f"sizes timed {sorted(set(seen))}: the control stepped up"
+        assert seen == [n, 2 * n] * (2 * _SPEEDBUMP_SAMPLES), f"searches timed in the order {seen}"
 
 
 def _stub_clock(ms_at_first: float, power: float, seen: "list[int]"):
