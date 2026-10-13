@@ -433,7 +433,7 @@ def retired_ids(probes: list[dict]) -> set[str]:
     """
     if not _LEDGER.is_file():
         return set()
-    text = _LEDGER.read_text(encoding="utf-8", errors="replace")
+    text = _ledger_view()
     grammar = _grammar()
     out = set()
     for probe in probes:
@@ -448,6 +448,17 @@ def retired_ids(probes: list[dict]) -> set[str]:
                 out.add(rid)
                 break
     return out
+
+
+def _ledger_view(*, strict: bool = False) -> str:
+    """The ledger as every check here reads it: the file with any row files
+    beside it placed in it (``_record_fragments``' view). ``strict`` decodes
+    the file strictly (a caller that refuses on bytes it cannot read);
+    otherwise a bad byte costs a character, as the file's own read always
+    did. Raises ``OSError`` (and, strict, ``ValueError``) as that read did."""
+    text = (_LEDGER.read_text(encoding="utf-8") if strict
+            else _LEDGER.read_text(encoding="utf-8", errors="replace"))
+    return _grammar().record_fragments().ledger_view_at(_LEDGER, ledger_text=text).text
 
 
 def unprobed_live_ids(probes: list[dict]) -> list[str]:
@@ -467,8 +478,8 @@ def unprobed_live_ids(probes: list[dict]) -> list[str]:
     if not _LEDGER.is_file():
         return []
     try:
-        text = _LEDGER.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+        text = _ledger_view()
+    except OSError:  # fail-open: ok note -- the note is advisory; the runner's own read refuses an unreadable ledger
         return []
     have = {p.get("id") for p in probes if isinstance(p, dict)}
     return sorted(_grammar().live_cell_ids(text) - have)
@@ -506,7 +517,7 @@ def stale_claims(probes: list[dict]) -> list[tuple[str, str, str]]:
     """
     if not _LEDGER.is_file():
         return []
-    text = _LEDGER.read_text(encoding="utf-8", errors="replace")
+    text = _ledger_view()
     out: list[tuple[str, str, str]] = []
     for probe in probes:
         stored = probe.get("text_sha") or probe.get("row_sha")
@@ -714,7 +725,7 @@ def _ledger_live_rows() -> "int | None":
     read; the caller refuses."""
     if not _LEDGER.is_file():
         return None
-    return len(_grammar().live_member_ids(_LEDGER.read_text(encoding="utf-8")))
+    return len(_grammar().live_member_ids(_ledger_view(strict=True)))
 
 
 def _empty_roster_verdict(what: str) -> "int | None":
@@ -743,7 +754,8 @@ def _empty_roster_verdict(what: str) -> "int | None":
 
 
 def _run(args: argparse.Namespace) -> int:
-    if not _PROBES.is_file():
+    loader = _grammar().record_fragments()
+    if not _PROBES.is_file() and not loader.probe_fragment_dir(_PROBES).is_dir():
         # `relative_to` RAISES for a path outside the root, so building the
         # message could crash the very branch whose job is to degrade quietly.
         try:
@@ -757,9 +769,13 @@ def _run(args: argparse.Namespace) -> int:
         return rc
 
     try:
-        _doc = json.loads(_PROBES.read_text(encoding="utf-8"))
-        if not isinstance(_doc, dict):
-            raise ValueError("the file is JSON but not an object")
+        # The roster's view: the file's entries and every probe file beside it
+        # (a missing file is an empty list there). A probe file that does not
+        # parse is refused like a roster that does not: never read as "no probe".
+        roster = loader.probe_roster_at(_PROBES)
+        if roster.problems:
+            raise ValueError("; ".join(roster.problems))
+        _doc = roster.data
         probes = _doc.get("probes", [])
         # A file that PARSES can still be empty or renamed-key, which reported
         # "0 probes re-derived" and exited 0 -- a clean green over a roster of

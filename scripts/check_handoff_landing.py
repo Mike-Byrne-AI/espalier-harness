@@ -279,10 +279,11 @@ def _trailer_keys() -> "tuple[str, ...]":
     return (head, *_EXTRA_TRAILER_KEYS)
 
 
-def _ledger_id_shape() -> "re.Pattern[str]":
-    """The ledger id shape, read from its one home
-    (``tools/cc/generate_ledger_regions.py``) by path, so it resolves whether this
-    file runs as a script or is loaded by a test."""
+def _ledger_module():
+    """``tools/cc/generate_ledger_regions.py``, the ledger grammar's one home,
+    loaded by path so it resolves whether this file runs as a script or is
+    loaded by a test. Its ``record_fragments()`` is the loader whose view every
+    ledger and roster read here takes."""
     import importlib.util
 
     src = Path(__file__).resolve().parents[1] / "tools" / "cc" / "generate_ledger_regions.py"
@@ -290,7 +291,12 @@ def _ledger_id_shape() -> "re.Pattern[str]":
     assert spec is not None and spec.loader is not None, src
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod._ID_SHAPE
+    return mod
+
+
+def _ledger_id_shape() -> "re.Pattern[str]":
+    """The ledger id shape, read from its one home by path."""
+    return _ledger_module()._ID_SHAPE
 
 
 def ledger_prefixes() -> "frozenset[str]":
@@ -302,9 +308,13 @@ def ledger_prefixes() -> "frozenset[str]":
     ledger = REPO_ROOT / LEDGER_DOC
     if not ledger.is_file():
         return frozenset()
-    shape = _ledger_id_shape()
+    gen = _ledger_module()
+    shape = gen._ID_SHAPE
+    # The view: a prefix minted in a row file is a prefix the ledger mints.
+    text = gen.record_fragments().ledger_view_at(
+        ledger, ledger_text=ledger.read_text(encoding="utf-8", errors="replace")).text
     found: set[str] = set()
-    for line in ledger.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in text.splitlines():
         if not line.startswith("|"):
             continue
         cell = line.split("|", 2)[1].strip().strip("~").strip("`").strip("~")
@@ -628,7 +638,7 @@ def check_owed(notes: "list[str] | None" = None) -> list[str]:
                     "other owed marker anywhere in the file."]
         return []
     try:
-        data = json.loads(probes_path.read_text(encoding="utf-8"))
+        data = json.loads(probes_path.read_text(encoding="utf-8"))  # ledger-read: cc/GOAL_OWED.json, the session's owed list, not the roster
         owed = data["owed"]
     except (OSError, ValueError, KeyError) as exc:
         return [f"{OWED_PROBES} is unreadable: {exc}"]
@@ -901,12 +911,14 @@ def _cited_candidate_keys(row: str, context: "re.Pattern[str]") -> list[str]:
 
 def _known_row_shas() -> "set[str]":
     """Every ``row_sha`` the ledger probes carry -- 12-hex by construction and
-    routinely discussed in a handoff row -- so none is mistaken for a key."""
+    routinely discussed in a handoff row -- so none is mistaken for a key. The
+    roster's view: a probe that lives in its own file carries one too."""
     path = REPO_ROOT / _LEDGER_PROBES
-    if not path.is_file():
-        return set()
     try:
-        probes = json.loads(path.read_text(encoding="utf-8")).get("probes", [])
+        loader = _ledger_module().record_fragments()
+        if not path.is_file() and not loader.probe_fragment_dir(path).is_dir():
+            return set()
+        probes = loader.probe_roster_at(path).data.get("probes", [])
     except (OSError, ValueError, AttributeError):
         return set()
     return {p.get("row_sha") for p in probes

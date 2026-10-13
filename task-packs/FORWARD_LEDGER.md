@@ -165,8 +165,8 @@ is then appended to again.
 
 ### How this file defends itself
 
-_Three mechanisms, added by the 2026-08-20 rebuild. Each exists because the
-corresponding failure was **measured** on this file, not anticipated._
+_Three mechanisms, added by the 2026-08-20 rebuild, and a fourth on 2026-10-13. Each exists
+because the corresponding failure was **measured** on this file, not anticipated._
 
 **1. Derived counts — computed on read, never stored.** Every total this file used to carry
 -- the live count and its split, the §2 heading's figures, each class's members, each numbered
@@ -214,6 +214,22 @@ Anchors are now `file::symbol` or `file#heading` wherever one exists: forms this
 already validate, since `tests/test_doc_source_citations.py` AST-resolves the first and
 `tests/test_md_heading_anchors.py` the second. **A bare line number is a last resort, not
 the convention** — and it is the one anchor form nothing here can check.
+
+**4. Rows as files — read through the view.** This repository sets `ledger_fragments = true`
+in `espalier.toml`, so `tools/cc/ledger_row.py file` writes a new row as
+`task-packs/ledger.d/<id>.md` (its class, its member row and its Appendix B index lines) and
+its probe as `task-packs/probes.d/<id>.json`, and `strike` and `repin` edit a row where it
+lives. Two lanes filing into one class, or striking two neighbouring rows, then touch
+different files and merge clean; they used to meet on neighbouring lines of this file and on
+the roster's tail, and GitHub read every such pair as conflicting until a catch-up (measured on
+the real verbs: two filings after one anchor conflicted on the member row, its index row and
+the roster). The rows already here stay here until a later fold. Every tool reads the ledger's
+**view** -- this file with the row files placed in it, built on each read and never written
+back -- so this file alone no longer shows every row:
+
+```bash
+python3 tools/cc/_record_fragments.py ledger   # the whole ledger, as every tool reads it
+```
 
 
 ## How to read a status tag

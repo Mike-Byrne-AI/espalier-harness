@@ -743,7 +743,7 @@ class TestFloorsDeclaredByTheLedger:
         reds here instead of switching the floor off."""
         if not gen._LEDGER.is_file():
             pytest.skip("self-host only: the forward ledger is absent off the dev tree")
-        declared = gen.declared_floors(gen._LEDGER.read_text(encoding="utf-8"))
+        declared = gen.declared_floors(gen._LEDGER.read_text(encoding="utf-8"))  # ledger-read: the floors line lives in the file itself
         assert declared == (gen._FLOOR_SECTIONS, gen._FLOOR_ROWS)
 
     def test_a_small_ledger_that_declares_no_floor_is_checked_not_refused(
@@ -782,7 +782,10 @@ class TestTheLiveLedgerConverges:
     def test_every_derived_region_matches_the_member_rows(self):
         if not gen._LEDGER.is_file():
             pytest.skip("FORWARD_LEDGER.md is self-host only")
-        drift = gen.find_drift(gen._LEDGER.read_text(encoding="utf-8"))
+        # The view: the live ledger with any row files placed in it, and the
+        # row files the view could not place, as the generator's --check reads.
+        view = gen.record_fragments().ledger_view_at(gen._LEDGER)
+        drift = gen.find_drift(view.text) + gen.view_problems(view.problems)
         assert not drift, (
             f"{len(drift)} ledger region(s) disagree with the member rows:\n"
             + "\n".join(f"  [{d['region']}] {d['detail']}" for d in drift)
@@ -888,7 +891,7 @@ class TestClassIndexAnchorGrammar:
         ledger = REPO_ROOT / "task-packs" / "FORWARD_LEDGER.md"
         if not ledger.is_file():
             pytest.skip("self-host only: the forward ledger is absent off the dev tree")
-        text = ledger.read_text(encoding="utf-8")
+        text = ledger.read_text(encoding="utf-8")  # ledger-read: the class index and its headings live in the file
         available = heading_anchors(text)
         rows = [ln for ln in text.splitlines() if gen._CLASS_TABLE_ROW.match(ln)]
         assert len(rows) >= gen._FLOOR_SECTIONS, "the class index shrank below the section floor"

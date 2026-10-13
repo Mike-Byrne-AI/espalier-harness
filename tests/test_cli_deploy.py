@@ -2235,7 +2235,7 @@ class TestOnboardingProbesDoNotWalk:
 
         from espalier.cli import _ONBOARDING_ROWS
 
-        seed = (REPO_ROOT / "espalier" / "assets" / "seed" / "FORWARD_LEDGER.md").read_text(encoding="utf-8")
+        seed = (REPO_ROOT / "espalier" / "assets" / "seed" / "FORWARD_LEDGER.md").read_text(encoding="utf-8")  # ledger-read: the adopter's seed, one file by design
         for row in _ONBOARDING_ROWS:
             assert ("code" in row) != ("why_not" in row), row["id"]
             assert re.fullmatch(r"[A-Z]{2,5}-\d+", row["id"]), row["id"]

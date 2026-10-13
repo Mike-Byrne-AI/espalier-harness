@@ -2383,6 +2383,10 @@ _RAW_GIT_POPULATION_SITES: dict[str, int] = {
     "test_folder_claude_md_routers.py": 2,
     "test_git_archive_parity.py": 2,
     "test_init_gitignore_default.py": 1,
+    # 2026-10-13: one `check-ignore --no-index` on a scratch repository holding
+    # a copy of a `.gitignore` block: what git's own rules say about a row file
+    # is the fact pinned, on a tmp_path fixture, never this tree's index.
+    "test_ledger_fragments.py": 1,
     "test_ladder_claudemd_pointers.py": 1,
     "test_md_heading_anchors.py": 1,
     "test_record_axis_reconciliation.py": 4,

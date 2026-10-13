@@ -761,10 +761,14 @@ def probe_roster_from_texts(roster_text: str | None,
     import json  # stdlib, imported here: the Session Log readers never need it
 
     data = json.loads(roster_text) if roster_text is not None else {"probes": []}
-    if not isinstance(data, dict) or not isinstance(data.get("probes"), list):
-        raise ValueError(f"{PROBES_FILE} holds no 'probes' list")
+    if not isinstance(data, dict):
+        raise ValueError(f"{PROBES_FILE} is JSON but not an object")
     data = dict(data)
-    data["probes"] = list(data["probes"])
+    # A missing or renamed `probes` key reads as an empty legacy list, as a
+    # reader's `.get("probes", [])` always did: whether an empty roster beside
+    # live rows was LOST is the reader's rule to apply, not the loader's.
+    legacy = data.get("probes")
+    data["probes"] = list(legacy) if isinstance(legacy, list) else []
     skipped: list[str] = []
     problems: list[str] = []
     entries: list[tuple[tuple[str, int, str], dict]] = []

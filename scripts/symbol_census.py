@@ -80,13 +80,16 @@ _RECORD_SURFACES: tuple[str, ...] = (
     # for exactly the names most worth censusing (failure-mode pass, driven)
     "ESPALIER_MEMORY.md",
 )
-#: The same records written one file per change (the Session Log rows and the
-#: changelog entries since 2026-10-10; the forward ledger's rows and probes
-#: where a repository opts in, since 2026-10-13): every file under them is a
+#: The same two records written one file per change since 2026-10-10 (the
+#: Session Log rows and the changelog entries): every file under them is a
 #: record, or the "swept" exit is unreachable again for any name the last
-#: thirty handoff rows mention (failure-mode review, 2026-10-10).
-_RECORD_DIRS: tuple[str, ...] = ("memory/session-log.d/", "changelog.d/",
-                                 "task-packs/ledger.d/", "task-packs/probes.d/")
+#: thirty handoff rows mention (failure-mode review, 2026-10-10). The forward
+#: ledger's row and probe files are NOT here: like the ledger and its roster
+#: they are live text (a renamed symbol in a live row or a probe command
+#: breaks), and only a struck row keeps an old name on purpose (``_STRUCK_ROW``).
+_RECORD_DIRS: tuple[str, ...] = ("memory/session-log.d/", "changelog.d/")
+#: The ledger's row files: read like the ledger, a struck row's line a record.
+_LEDGER_ROW_DIR = "task-packs/ledger.d/"
 
 #: Directories that hold generated or foreign bytes, never a rename target.
 _SKIP_DIR_PREFIXES: tuple[str, ...] = ("build/", "dist/", ".git/")
@@ -201,7 +204,8 @@ def census(root: Path, names: list[str]) -> dict:
             for name, pat in patterns.items():
                 if pat.search(line):
                     k, d = kind, detail
-                    if rel.endswith("FORWARD_LEDGER.md") and _STRUCK_ROW.match(line):
+                    if ((rel.endswith("FORWARD_LEDGER.md") or rel.startswith(_LEDGER_ROW_DIR))
+                            and _STRUCK_ROW.match(line)):
                         k, d = "record", "record"   # a struck row's PRIOR TEXT keeps old names on purpose
                     hits.append({"name": name, "path": rel, "line": lineno,
                                  "kind": k, "detail": d,

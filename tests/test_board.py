@@ -331,7 +331,7 @@ class TestDerivedNotRestated:
         """The count comes from the generator's own parser, never a second one."""
         ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
         ledger.parent.mkdir(parents=True)
-        ledger.write_text((REPO_ROOT / "task-packs" / "FORWARD_LEDGER.md").read_text(encoding="utf-8"),
+        ledger.write_text((REPO_ROOT / "task-packs" / "FORWARD_LEDGER.md").read_text(encoding="utf-8"),  # ledger-read: copied into a scratch tree with no row files; compared there
                           encoding="utf-8")
         gen = _load("generate_ledger_regions", "gen_for_board_test")
         expected = len(gen.live_member_ids(ledger.read_text(encoding="utf-8")))

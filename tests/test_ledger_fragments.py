@@ -15,8 +15,10 @@ used to write them. Nothing writes the view back.
 """
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -54,6 +56,11 @@ def frag():
 @pytest.fixture(scope="module")
 def gen():
     return _load("generate_ledger_regions")
+
+
+@pytest.fixture(scope="module")
+def chk():
+    return _load("check_ledger_probes")
 
 
 @pytest.fixture(autouse=True)
@@ -668,6 +675,351 @@ class TestTheFilesAreTrackedAndShip:
         for rel in self._SHAPES:
             assert not is_local_only(rel) and classify_release_path(rel) == "public", rel
         assert is_local_only("task-packs/ledger.d/nested/DEF-9.md")
+
+
+# ---------------------------------------------------------------- the reader census
+
+_CENSUS_ROOTS = ("tools/cc", "scripts", "espalier", "tests")
+_RECORD_NAMES = ("FORWARD_LEDGER.md", "LEDGER_PROBES.json")
+_VERB_MODULES = ("ledger_row", "generate_ledger_regions", "check_ledger_probes", "record_merge")
+#: A read's target that names the ledger or its roster (a path, a constant, a
+#: variable), never a module's own source file.
+_RECORD_TARGET_RE = re.compile(r"(?i)ledger|probes")
+_MODULE_SOURCE_RE = re.compile(r"\.py\b")
+#: In a test, only a read of the LIVE tree is a reader; a scratch fixture is
+#: read for what a verb wrote to it.
+_LIVE_TREE_RE = re.compile(r"REPO_ROOT|\b_ROOT\b|parents\[|gen\._LEDGER|gen\._PROBES|\b_LEDGER\b|\b_PROBE_FILE\b")
+#: The names that reach the loader's view: its functions, and the helpers that
+#: return it. Read from a function's CODE (names and attributes), never from
+#: its docstring or comments, which can name the loader without calling it.
+_LOADER_NAMES = frozenset({
+    "record_fragments", "ledger_view_at", "probe_roster_at", "ledger_text_from_texts",
+    "ledger_view_from_texts", "probe_roster_from_texts", "_view", "_ledger_view",
+    "_live_roster_probes", "_row_home",
+})
+_LEDGER_READ = "# ledger-read:"
+
+
+def _reaches_loader(fn: ast.AST) -> bool:
+    """Whether a function's code names a loader function or a view helper
+    (``pending.view`` included), its own name and docstring left out."""
+    body = list(fn.body)
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        body = body[1:]
+    for stmt in body:
+        for node in ast.walk(stmt):
+            if isinstance(node, ast.Name) and node.id in _LOADER_NAMES:
+                return True
+            if isinstance(node, ast.Attribute):
+                if node.attr in _LOADER_NAMES:
+                    return True
+                if node.attr == "view" and isinstance(node.value, ast.Name) and node.value.id == "pending":
+                    return True
+    return False
+
+
+def _string_constants(tree: ast.AST) -> list[str]:
+    return [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+
+
+def _record_reads(rel: str, text: str, tree: ast.AST) -> list[tuple[int, str, str]]:
+    """``(line, enclosing function, target)`` for every read of a ledger record
+    in one module that names a record or loads a verb module."""
+    consts = _string_constants(tree)
+    if not (any(r in c for c in consts for r in _RECORD_NAMES) or any(v in c for c in consts for v in _VERB_MODULES)):
+        return []
+    funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f, target = node.func, None
+        if isinstance(f, ast.Attribute) and f.attr in ("read_text", "read_bytes"):
+            target = f.value
+        elif isinstance(f, ast.Name) and f.id == "open" and node.args:
+            target = node.args[0]
+        elif isinstance(f, ast.Attribute) and f.attr in ("load", "loads") and node.args:
+            target = node.args[0]
+        if target is None:
+            continue
+        src = ast.get_source_segment(text, target) or ""
+        if not _RECORD_TARGET_RE.search(src) or _MODULE_SOURCE_RE.search(src):
+            continue
+        if rel.startswith("tests/") and not _LIVE_TREE_RE.search(src):
+            continue
+        enclosing = [fn for fn in funcs if fn.lineno <= node.lineno <= (fn.end_lineno or fn.lineno)]
+        out.append((node.lineno, enclosing[-1].name if enclosing else "<module>", src))
+    return out
+
+
+def _unexplained_reads(root: Path) -> list[str]:
+    """Every read of a ledger record under the census roots whose function
+    does not reach the loader and whose line names no reason. The loader is
+    the one module that reads the files themselves."""
+    found = []
+    for base in _CENSUS_ROOTS:
+        for p in sorted((root / base).rglob("*.py")):
+            rel = p.relative_to(root).as_posix()
+            if "/_vendor/" in rel or "/assets/" in rel or rel == "tools/cc/_record_fragments.py":
+                continue
+            text = p.read_text(encoding="utf-8", errors="replace")
+            if not any(name in text for name in (*_RECORD_NAMES, *_VERB_MODULES)):
+                continue   # a cheap pre-filter: the AST arm below asks the same of string constants
+            try:
+                tree = ast.parse(text)
+            except SyntaxError:
+                continue
+            reads = _record_reads(rel, text, tree)
+            if not reads:
+                continue
+            lines = text.splitlines()
+            # Judged by the function's code: a helper named for the view
+            # (`_ledger_view`) or a docstring naming the loader vouches for nothing.
+            reaches = {fn.name: _reaches_loader(fn)
+                       for fn in ast.walk(tree) if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            for line, fn, src in reads:
+                if _LEDGER_READ in lines[line - 1] or reaches.get(fn, False):
+                    continue
+                found.append(f"{rel}:{line} {fn}: {src[:70]}")
+    return found
+
+
+class TestTheReaderCensus:
+    """Every reader of the ledger or its roster reads the loader's view, or
+    names why it reads the file itself. A reader that reads the file alone
+    does not red when a row moves into a file: it reads less and passes, which
+    is the blocker the parent pack's own sweep found (a ship check that read
+    one file and refused every handoff). Derived by AST over tools/cc, scripts,
+    espalier and the tests that read the live tree."""
+
+    @pytest.mark.contract
+    def test_every_reader_takes_the_view_or_names_its_reason(self):
+        found = _unexplained_reads(REPO_ROOT)
+        assert not found, (
+            "readers of the ledger or its roster that neither reach the loader "
+            "(tools/cc/_record_fragments.py's ledger_view_at / probe_roster_at) nor carry "
+            f"`{_LEDGER_READ} <why>` on the line:\n  " + "\n  ".join(found))
+
+    @pytest.mark.contract
+    def test_every_reason_says_something(self):
+        bare = []
+        for base in _CENSUS_ROOTS:
+            for p in sorted((REPO_ROOT / base).rglob("*.py")):
+                rel = p.relative_to(REPO_ROOT).as_posix()
+                if "/_vendor/" in rel or rel == "tests/test_ledger_fragments.py":
+                    continue
+                for n, line in enumerate(p.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+                    if _LEDGER_READ in line and not line.split(_LEDGER_READ, 1)[1].strip():
+                        bare.append(f"{rel}:{n}")
+        assert not bare, f"`{_LEDGER_READ}` with no reason: {bare}"
+
+    @pytest.mark.contract
+    def test_the_census_sees_a_planted_reader_and_reads_the_exits(self, tmp_path):
+        """Dies to: a census blind to a new module, to the live-tree arm in
+        tests, or that takes a marker without reading it."""
+        cc = tmp_path / "tools" / "cc"
+        cc.mkdir(parents=True)
+        (cc / "planted.py").write_text(
+            "from pathlib import Path\n"
+            "def rows():\n"
+            "    return Path('task-packs/FORWARD_LEDGER.md').read_text()\n"
+            "def kept():\n"
+            "    return Path('task-packs/FORWARD_LEDGER.md').read_text()  # ledger-read: a reason\n"
+            "def viewed(rf):\n"
+            "    t = Path('task-packs/FORWARD_LEDGER.md').read_text()\n"
+            "    return rf.ledger_view_at(Path('x'), ledger_text=t)\n"
+            "def _ledger_view():\n"
+            "    '''Named for the view, and its docstring names record_fragments.'''\n"
+            "    return Path('task-packs/FORWARD_LEDGER.md').read_text()\n", encoding="utf-8")
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tests / "test_planted.py").write_text(
+            "REPO_ROOT = None\n"
+            "def test_live():\n"
+            "    (REPO_ROOT / 'task-packs' / 'FORWARD_LEDGER.md').read_text()\n"
+            "def test_scratch(tmp_path):\n"
+            "    (tmp_path / 'task-packs' / 'FORWARD_LEDGER.md').read_text()\n", encoding="utf-8")
+        found = _unexplained_reads(tmp_path)
+        assert sorted(f.split(" ", 1)[1].split(":")[0] for f in found) == ["_ledger_view", "rows", "test_live"], found
+
+
+class TestTheEnginesPathSites:
+    """Where the engine names the two files as files the verbs rewrite, it
+    names the two directories beside them."""
+
+    def test_the_formatter_ignore_lines_name_the_row_file_directories(self, tmp_path):
+        """A formatter that reflows a row file changes its ``row_sha`` and
+        flips its probe to a stale claim, as it would the ledger. Dies to: the
+        directories left off the lines init and upgrade print."""
+        from espalier import cli
+
+        packs = tmp_path / "task-packs"
+        (packs / "ledger.d").mkdir(parents=True)
+        (packs / "ledger.d" / "DEF-9.md").write_text(_row_file("DEF-9"), encoding="utf-8")
+        (packs / "probes.d").mkdir()
+        lines = cli._ignore_snippet_lines(tmp_path)
+        assert "task-packs/ledger.d/" in lines and "task-packs/probes.d/" in lines
+
+
+class TestTheProbeRunnerReadsTheView:
+    """``check_ledger_probes.py`` reads the ledger's and the roster's views:
+    a row file and a probe file count like a row and an entry in the files."""
+
+    @staticmethod
+    def _json(chk, root: Path, capsys) -> tuple[int, dict]:
+        rc = chk.main(["--root", str(root), "--json"])
+        out = capsys.readouterr().out
+        return rc, json.loads(out[out.index("{"):])
+
+    def test_a_row_files_probe_file_is_its_entry(self, chk, tmp_path, capsys):
+        """Dies to: the unprobed-row note reading the roster file alone (the
+        row file's probe file is not seen) or the ledger file alone (the row
+        file is not seen)."""
+        root = _fragment_tree(tmp_path, rows={"DEF-9.md": _row_file("DEF-9"), "DEF-8.md": _row_file("DEF-8")},
+                              probes={"DEF-9.json": {"id": "DEF-9", "subject": "s", "why_not": "x"}})
+        _rc, report = self._json(chk, root, capsys)
+        assert report["unprobed_live_rows"] == ["DEF-8"]
+        assert "DEF-9" in {r["id"] for r in report["results"]}
+
+    def test_a_struck_row_files_probe_is_retired(self, chk, tmp_path):
+        """Dies to: the retired filter reading the ledger file alone."""
+        root = _fragment_tree(tmp_path, rows={"DEF-9.md": _row_file("DEF-9", struck=True)})
+        saved = chk._LEDGER
+        chk._LEDGER = root / "task-packs" / "FORWARD_LEDGER.md"
+        try:
+            assert chk.retired_ids([{"id": "DEF-9"}, {"id": "DEF-1"}]) == {"DEF-9"}
+        finally:
+            chk._LEDGER = saved
+
+    def test_probe_files_without_a_roster_file_are_still_run(self, chk, tmp_path, capsys):
+        """Dies to: a missing roster file read as "no probes" while probe
+        files sit beside it."""
+        from tests.test_generate_ledger_regions import _ledger
+
+        root = _fragment_tree(tmp_path, ledger=_ledger(c1_rows=(), appendix=()),
+                              rows={"DEF-9.md": _row_file("DEF-9")},
+                              probes={"DEF-9.json": {"id": "DEF-9", "subject": "s", "why_not": "x"}})
+        (root / "task-packs" / "LEDGER_PROBES.json").unlink()
+        _rc, report = self._json(chk, root, capsys)
+        assert [r["id"] for r in report["results"]] == ["DEF-9"]
+
+    def test_a_probe_file_that_does_not_parse_is_refused(self, chk, tmp_path, capsys):
+        """Dies to: an unreadable probe file read as no probe."""
+        root = _fragment_tree(tmp_path, rows={"DEF-9.md": _row_file("DEF-9")})
+        (root / "task-packs" / "probes.d" / "DEF-9.json").write_text("{", encoding="utf-8")
+        assert chk.main(["--root", str(root)]) == 1
+        assert "DEF-9.json: not JSON" in capsys.readouterr().out
+
+
+class TestTheRecordMergeReadsTheView:
+    """``record_merge.regenerate_ledger`` checks the merged ledger with the
+    row files the merge left on disk placed in it."""
+
+    def test_a_struck_row_file_keeping_its_probe_file_does_not_converge(self, tmp_path):
+        """Dies to: the merge checking the ledger file alone (the struck row
+        file is not seen, so its live probe file reads as nobody's)."""
+        rm = _load("record_merge")
+        root = _fragment_tree(tmp_path, rows={"DEF-9.md": _row_file("DEF-9", struck=True)},
+                              probes={"DEF-9.json": {"id": "DEF-9", "subject": "s"}})
+        gen = rm._load_sibling("generate_ledger_regions")
+        text = (root / "task-packs" / "FORWARD_LEDGER.md").read_text(encoding="utf-8")
+        with pytest.raises(rm.Unresolvable, match="does not converge"):
+            rm.regenerate_ledger(text, gen, root / "task-packs" / "LEDGER_PROBES.json")
+
+    def test_a_merged_ledger_with_placed_row_files_converges_and_is_returned_as_the_file(self, tmp_path):
+        """Dies to: the merge writing the view back (the row file's line in
+        the text it returns)."""
+        rm = _load("record_merge")
+        root = _fragment_tree(tmp_path, rows={"DEF-9.md": _row_file("DEF-9")},
+                              probes={"DEF-9.json": {"id": "DEF-9", "subject": "s"}})
+        gen = rm._load_sibling("generate_ledger_regions")
+        text = (root / "task-packs" / "FORWARD_LEDGER.md").read_text(encoding="utf-8")
+        assert rm.regenerate_ledger(text, gen, root / "task-packs" / "LEDGER_PROBES.json") == text
+
+
+class TestTheBoardAndTheLandingCheckReadTheView:
+    """The board's live count and the landing check's two ledger reads take
+    the views, so a row or probe that lives in its own file counts."""
+
+    def test_the_boards_live_count_counts_a_row_file(self, tmp_path):
+        """Dies to: the board counting the ledger file alone."""
+        board = _load("board")
+        root = _fragment_tree(tmp_path, rows={"DEF-9.md": _row_file("DEF-9")})
+        assert board.read_ledger_live(root) == 3
+
+    @staticmethod
+    def _landing(monkeypatch, root: Path):
+        spec = importlib.util.spec_from_file_location("_lf_landing", REPO_ROOT / "scripts" / "check_handoff_landing.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        monkeypatch.setattr(mod, "REPO_ROOT", root)
+        return mod
+
+    def test_a_prefix_minted_in_a_row_file_is_a_ledger_prefix(self, tmp_path, monkeypatch):
+        """Dies to: the prefixes derived from the ledger file alone."""
+        root = _fragment_tree(tmp_path, rows={"QQ-1.md": _row_file("QQ-1")})
+        assert "QQ" in self._landing(monkeypatch, root).ledger_prefixes()
+
+    def test_a_probe_files_row_sha_is_known(self, tmp_path, monkeypatch):
+        """Dies to: the row shas read from the roster file alone."""
+        root = _fragment_tree(tmp_path, rows={"DEF-9.md": _row_file("DEF-9")},
+                              probes={"DEF-9.json": {"id": "DEF-9", "row_sha": "abcdef123456"}})
+        assert "abcdef123456" in self._landing(monkeypatch, root)._known_row_shas()
+
+
+class TestTheTrendReadsTheViewAtEachCommit:
+    """``scripts/ledger_trend.py`` walks the commits that touched the ledger or
+    its row-file directory, and reads the view at each."""
+
+    @staticmethod
+    def _trend():
+        spec = importlib.util.spec_from_file_location("_lf_trend", REPO_ROOT / "scripts" / "ledger_trend.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_a_commit_that_only_files_a_row_file_is_a_snapshot_and_reads_it(self, tmp_path):
+        """Dies to: the walk logging the ledger file alone (the commit is not a
+        snapshot), or the read showing the file alone (the row is not in it)."""
+        trend = self._trend()
+        repo = _Repo(tmp_path, opted_in=True)
+        row = tmp_path / "task-packs" / "ledger.d" / "DEF-9.md"
+        row.parent.mkdir(parents=True)
+        row.write_text(_row_file("DEF-9"), encoding="utf-8")
+        repo.commit("a row file only")
+        snaps = trend.snapshots(tmp_path, "HEAD", "task-packs/FORWARD_LEDGER.md")
+        assert len(snaps) == 2
+        text = trend.ledger_at(tmp_path, snaps[-1][0], "task-packs/FORWARD_LEDGER.md")
+        assert "| `DEF-9` | site/DEF-9 |" in text
+        assert "DEF-9" not in trend.ledger_at(tmp_path, snaps[0][0], "task-packs/FORWARD_LEDGER.md")
+
+
+class TestTheSymbolCensusReadsRowFilesLikeTheLedger:
+    """``scripts/symbol_census.py``: a live row file is live text (a renamed
+    symbol in it needs sweeping, as in the ledger); a struck row's line is a
+    record that keeps the old name on purpose."""
+
+    def test_live_and_struck_row_files_are_classed_like_ledger_rows(self, tmp_path):
+        """Dies to: row files read wholesale as records, or struck lines as live."""
+        spec = importlib.util.spec_from_file_location("_lf_symbol_census", REPO_ROOT / "scripts" / "symbol_census.py")
+        census_mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = census_mod
+        spec.loader.exec_module(census_mod)
+        repo = _Repo(tmp_path, opted_in=True)
+        rows = tmp_path / "task-packs" / "ledger.d"
+        rows.mkdir(parents=True)
+        (rows / "DEF-9.md").write_text(
+            "<!-- class: §C1 -->\n| `DEF-9` | tools/cc/x.py::old_symbol_name | what | nit |\n"
+            "| `DEF-9` | §C1 | site |\n", encoding="utf-8")
+        (rows / "DEF-8.md").write_text(
+            "<!-- class: §C1 -->\n| ~~`DEF-8`~~ | site | CLOSED. PRIOR TEXT: old_symbol_name | nit |\n"
+            "| ~~`DEF-8`~~ | §C1 | site |\n", encoding="utf-8")
+        repo.commit("row files")
+        hits = census_mod.census(tmp_path, ["old_symbol_name"])["hits"]
+        kinds = {h["path"].rsplit("/", 1)[-1]: h["kind"] for h in hits}
+        assert kinds == {"DEF-9.md": "live", "DEF-8.md": "record"}, hits
 
 
 class TestConvergenceReadsThePendingView:

@@ -399,7 +399,6 @@ _FULL_SET_COPIES = {
     "tools/cc/ci_guard.py": "_RECORD_FILES",
     "tools/cc/hooks/_hook_utils.py": "RECORD_FILES",
     "tools/cc/record_merge.py": "FRAGMENT_DIRS",
-    "scripts/symbol_census.py": "_RECORD_DIRS",
     "scripts/merge_cost_census.py": "RECORD_DIRS",
 }
 #: Modules that name one directory by its literal, each with why it cannot read
@@ -412,6 +411,10 @@ _ONE_DIRECTORY_SITES = {
     "espalier/cli.py": "the memory prune's note on a folded section (the engine imports nothing from tools/cc)",
     "tools/cc/ship.py": "the row question's pathspec, read without loading the loader on every ship",
     "espalier/surface_contract.py": "the ship decision (the engine imports nothing from tools/cc)",
+    "scripts/symbol_census.py": ("a subset on purpose: the two dated records are records, while the "
+                                 "ledger's row files are live text with a struck row's line a record"),
+    "tools/cc/hooks/_reinject.py": ("the ledger-parser hint's trigger and text, in a hook that loads "
+                                    "no sibling beyond its own"),
 }
 #: Each fragment directory's release bucket, decided once. A new directory
 #: reds here until someone decides whether it ships.

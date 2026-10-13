@@ -656,8 +656,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"--date must be YYYY-MM-DD, got {args.date!r}", file=sys.stderr)
         return 2
     try:
-        text = args.ledger.read_text(encoding="utf-8")
-        probes = _ASM.load_probes(json.loads(args.probes.read_text(encoding="utf-8")), args.probes.name)
+        text = args.ledger.read_text(encoding="utf-8")  # ledger-read: a one-off cut of a rebuilt legacy file, by design
+        probes = _ASM.load_probes(json.loads(args.probes.read_text(encoding="utf-8")), args.probes.name)  # ledger-read: its rebuilt roster, by design
         note = args.rebuilt_note.read_text(encoding="utf-8") if args.rebuilt_note else None
     except (OSError, ValueError) as exc:  # strict decode: a structured answer
         print(f"ledger_structural_cut: {exc}", file=sys.stderr)

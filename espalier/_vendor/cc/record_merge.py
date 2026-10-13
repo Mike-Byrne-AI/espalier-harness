@@ -638,13 +638,22 @@ def regenerate_ledger(text: str, gen, probes_path: Path) -> str:
     refuse if anything still drifts: a merged ledger the generator cannot
     converge is not one to commit. The generator's probes path is pointed at
     this tree for the call and put back after, as the generator's own verbs
-    do with their path globals."""
+    do with their path globals.
+
+    The check reads the merged ledger's VIEW: ``text`` with the row files the
+    merge left beside the roster placed in it (the merge runs in the merging
+    checkout, so the files on disk are the merge's own), and the roster's ids
+    with its probe files. The one repair, a stored total's removal, rewrites
+    ``text`` itself, never the view."""
+    loader = gen.record_fragments()
+    rows = loader.fragment_texts(loader.ledger_fragment_dir(probes_path.parent / Path(LEDGER).name))
     was = getattr(gen, "_PROBES", None)
     gen._PROBES = probes_path
     try:
-        drift = gen.find_drift(text)
-        text, _applied = gen.apply_writable(text, drift)
-        residual = gen.find_drift(text)
+        if gen.stored_counts(text):
+            text, _applied = gen.apply_writable(text, [{"region": "stored-count"}])
+        view = loader.ledger_view_from_texts(text, rows)
+        residual = gen.find_drift(view.text) + gen.view_problems(view.problems)
     finally:
         gen._PROBES = was
     if residual:
@@ -766,7 +775,7 @@ def settle_probes_count(root: Path, gen, *, say: Callable[[str], None] = print) 
     probes_path = root / PROBES
     if not probes_path.is_file():
         return [], None
-    text, problem = decode_text_or_problem(probes_path.read_bytes())
+    text, problem = decode_text_or_problem(probes_path.read_bytes())  # ledger-read: a stored total lives in the roster file itself
     if problem:
         say(f"note: {PROBES}: {problem}; a stored count was not checked for")
         return [], None
@@ -1073,8 +1082,9 @@ def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
                            f"(git merge {ref})")
     twice = [p for p in unmerged if is_fragment(p)]
     if twice:
-        raise Unresolvable(f"a fragment is written once, so a conflict on one is two writers on one "
-                           f"name: {', '.join(twice)} -- keep one by hand (git merge {ref})")
+        raise Unresolvable(f"a fragment has one writer per name (a dated file, or one ledger row or probe "
+                           f"the verb that owns its id writes), so a conflict on one is two writers on "
+                           f"one name: {', '.join(twice)} -- keep one by hand (git merge {ref})")
     rc, listing, err = run(["git", "ls-files", "-u", "--", *unmerged], cwd=str(root))
     if rc != 0:
         raise Unresolvable(f"git ls-files -u failed: {err.strip()[:160]}")
@@ -1160,7 +1170,7 @@ def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
                 elif PROBES in versions and (root / LEDGER).is_file():
                     # The roster changed under a ledger git merged clean; the
                     # derived regions read that roster, so re-derive them too.
-                    before, problem = decode_text_or_problem((root / LEDGER).read_bytes())
+                    before, problem = decode_text_or_problem((root / LEDGER).read_bytes())  # ledger-read: handed to regenerate_ledger, which checks the view
                     if problem:
                         raise Unresolvable(f"{LEDGER}: {problem}")
                     after = regenerate_ledger(before, gen, root / PROBES)

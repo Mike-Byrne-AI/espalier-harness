@@ -774,7 +774,7 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
             for d in drift:
                 print(f"  {d}", file=sys.stderr)
             return 2
-        if new_text != ledger.read_text(encoding="utf-8"):
+        if new_text != ledger.read_text(encoding="utf-8"):  # ledger-read: the file's own bytes, to skip an unchanged write
             gen._atomic_write(ledger, new_text)
         if write_roster:
             sidecar.replace(probes)
@@ -821,7 +821,7 @@ def _load_probes(probes: Path, *, ledger_text: str) -> dict | None:
                   "one; nothing written.", file=sys.stderr)
             return None
         return {"_README": _EMPTY_ROSTER_README, "probes": []}
-    data = json.loads(probes.read_text(encoding="utf-8"))
+    data = json.loads(probes.read_text(encoding="utf-8"))  # ledger-read: the roster file the verb writes back; probe files are edited by path
     if not isinstance(data, dict) or not isinstance(data.get("probes"), list):
         print(f"ledger_row: {probes.name} is not a probe roster (a JSON object with a "
               "`probes` list); nothing written.", file=sys.stderr)
@@ -1090,7 +1090,7 @@ def new_class(section: str, *, ledger: Path, probes: Path, title: str, populatio
     if not title or "|" in title or "\n" in title:
         print("ledger_row: a class title is one line of text with no '|'", file=sys.stderr)
         return 2
-    text = ledger.read_text(encoding="utf-8")
+    text = ledger.read_text(encoding="utf-8")  # ledger-read: a class heading and index row live in the file, which this verb writes
     if name in gen.ledger_sections(text) or name in gen.declared_class_tags(text):
         print(f"ledger_row: {name} already exists", file=sys.stderr)
         return 2

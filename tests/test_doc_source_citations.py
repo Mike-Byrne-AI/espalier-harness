@@ -545,8 +545,17 @@ class TestSourceCitationPopulation:
         ledger = REPO_ROOT / "task-packs" / "FORWARD_LEDGER.md"
         if not ledger.exists():
             pytest.skip("the forward ledger is not on this tree")
+        # The ledger's view: a row that lives in its own file under ledger.d/
+        # is tracked markdown in the same sweep, so its struck lines count too.
+        import importlib.util
+        import sys
+        spec = importlib.util.spec_from_file_location(
+            "_citations_record_fragments", REPO_ROOT / "tools" / "cc" / "_record_fragments.py")
+        loader = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = loader
+        spec.loader.exec_module(loader)
         unread = []
-        for n, line in enumerate(ledger.read_text(encoding="utf-8").splitlines(), 1):
+        for n, line in enumerate(loader.ledger_view_at(ledger).text.splitlines(), 1):
             cells = _CELL_SPLIT_RE.split(line.lstrip(" "))[1:3] if line.lstrip(" ").startswith("|") else []
             id_cells = [c for c in cells if _STRUCK_SPAN_RE.search(c)]
             if not id_cells or _is_struck_row(line):

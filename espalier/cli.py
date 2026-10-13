@@ -2731,7 +2731,7 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
     outcome: dict[str, list[str]] = {"filed": [], "satisfied": [], "failed": []}
     ledger, verb = repo_root / _LEDGER_REL, repo_root / _LEDGER_VERB_REL
     try:
-        if not verb.is_file() or not seed_is_untouched(ledger.read_text(encoding="utf-8")):
+        if not verb.is_file() or not seed_is_untouched(ledger.read_text(encoding="utf-8")):  # ledger-read: the adopter's seed, one file by design
             return outcome
     except (OSError, ValueError):
         return outcome
@@ -2794,7 +2794,7 @@ def _onboarding_would_file(repo_root: Path) -> bool:
     if not ledger.exists():
         return True
     try:
-        return seed_is_untouched(ledger.read_text(encoding="utf-8"))
+        return seed_is_untouched(ledger.read_text(encoding="utf-8"))  # ledger-read: the adopter's seed, one file by design
     except (OSError, ValueError):
         return False
 
@@ -6076,6 +6076,11 @@ def _ignore_snippet_lines(repo_root: Path) -> list[str]:
     for rel in ("task-packs/FORWARD_LEDGER.md", "task-packs/LEDGER_PROBES.json"):
         if (repo_root / rel).is_file():
             lines.add(rel)
+    # The ledger's rows and probes as one file each, where a repository opts in
+    # (ledger_fragments): the verbs rewrite them as they rewrite the two files.
+    for d in ("task-packs/ledger.d", "task-packs/probes.d"):
+        if (repo_root / d).is_dir():
+            lines.add(d + "/")
     return sorted(lines)
 
 

@@ -59,6 +59,17 @@ def _load_tools_cc(name: str):
     spec.loader.exec_module(mod)
     return mod
 
+def _live_roster_probes() -> list[dict]:
+    """Every live probe, wherever it lives: the roster file's entries and the
+    probe files under ``task-packs/probes.d/`` (this repository files probes
+    as files since it set ``ledger_fragments``), read through the loader. A
+    ratchet over the roster file alone would never see a probe filed since."""
+    loader = _load_tools_cc("_record_fragments")
+    rows = loader.probe_roster_at(REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").data["probes"]
+    assert rows, "the live roster read as empty: the ratchet below would pass over nothing"
+    return rows
+
+
 if not (REPO_ROOT / "tools" / "cc" / "check_ledger_probes.py").is_file():  # pragma: no cover
     pytest.skip("tools/cc/check_ledger_probes.py is absent", allow_module_level=True)
 
@@ -1290,11 +1301,7 @@ class TestProbeShapesAreRatcheted:
     )
     @pytest.mark.contract
     def test_no_new_probe_is_satisfiable_by_its_own_fixs_paperwork(self):
-        data = json.loads(
-            (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8")
-        )
-        rows = data["probes"]
-        rows = list(rows.values()) if isinstance(rows, dict) else rows
+        rows = _live_roster_probes()
         trapped = {r["id"] for r in rows if self._is_trap_shaped(r)}
         new = sorted(trapped - self._TEXT_OVER_OWN_SUBJECT)
         assert not new, (
@@ -1319,11 +1326,7 @@ class TestProbeShapesAreRatcheted:
 
     @pytest.mark.contract
     def test_no_new_probe_spawns_a_literal_interpreter_inside_its_program(self):
-        data = json.loads(
-            (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8")
-        )
-        rows = data["probes"]
-        rows = list(rows.values()) if isinstance(rows, dict) else rows
+        rows = _live_roster_probes()
         spawning = {r["id"] for r in rows if self._LITERAL_SPAWN_RE.search(r.get("cmd") or "")}
         new = sorted(spawning - self._SPAWNS_A_LITERAL_INTERPRETER)
         assert not new, (
@@ -1419,12 +1422,7 @@ class TestProbeShapesAreRatcheted:
     @pytest.mark.contract
     def test_the_baseline_has_no_dead_entries(self):
         """A baselined id that no longer exists is bookkeeping rot, not safety."""
-        data = json.loads(
-            (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8")
-        )
-        rows = data["probes"]
-        rows = list(rows.values()) if isinstance(rows, dict) else rows
-        live = {r["id"] for r in rows}
+        live = {r["id"] for r in _live_roster_probes()}
         dead = sorted(self._TEXT_OVER_OWN_SUBJECT - live)
         assert not dead, (
             f"{len(dead)} baselined probe id(s) are gone from LEDGER_PROBES.json. "
