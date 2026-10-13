@@ -16,6 +16,7 @@ used to write them. Nothing writes the view back.
 from __future__ import annotations
 
 import ast
+import functools
 import importlib.util
 import json
 import re
@@ -1178,8 +1179,28 @@ _LEDGER_READ = "# ledger-read:"
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 
+@functools.lru_cache(maxsize=1)
+def _segments():
+    """The population census's split-once pair, ``_source_lines`` and
+    ``_segment``, pinned equal to ``ast.get_source_segment`` by
+    ``tests/test_derived_population_census.py``. The stdlib call re-splits the
+    whole file on every call, a per-character loop on Python 3.10, and this
+    census timed out on the 3.10 cell alone (2026-10-13, `DEF-762`'s mechanism).
+    Loaded on first use, so the module imports without the script."""
+    spec = importlib.util.spec_from_file_location(
+        "_lf_derived_population_census", REPO_ROOT / "scripts" / "derived_population_census.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@functools.lru_cache(maxsize=8)
+def _lines(text: str) -> list[str]:
+    return _segments()._source_lines(text)
+
+
 def _src(text: str, node: ast.AST) -> str:
-    return ast.get_source_segment(text, node) or ""
+    return _segments()._segment(_lines(text), node) or ""
 
 
 def _names_a_record(text: str, node: ast.AST) -> bool:
@@ -1276,8 +1297,13 @@ def _record_reads(rel: str, text: str, tree: ast.AST) -> list[tuple[int, str, st
             cur = parents.get(cur)
         return cur if cur is not None else tree
 
+    bound_by_scope: dict[ast.AST, dict[str, ast.AST]] = {}
+
     def bindings(scope: ast.AST) -> dict[str, ast.AST]:
-        """Names bound in ``scope``'s own body (not nested scopes), by the value."""
+        """Names bound in ``scope``'s own body (not nested scopes), by the value.
+        Walked once per scope: every call in a scope asks for the same one."""
+        if scope in bound_by_scope:
+            return bound_by_scope[scope]
         out: dict[str, ast.AST] = {}
         stack = list(ast.iter_child_nodes(scope))
         while stack:
@@ -1289,6 +1315,7 @@ def _record_reads(rel: str, text: str, tree: ast.AST) -> list[tuple[int, str, st
                     if isinstance(t, ast.Name):
                         out[t.id] = n.value
             stack.extend(ast.iter_child_nodes(n))
+        bound_by_scope[scope] = out
         return out
 
     def credited_at(node: ast.AST, scope: ast.AST) -> bool:
