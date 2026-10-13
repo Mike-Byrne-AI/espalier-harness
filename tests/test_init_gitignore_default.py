@@ -1213,7 +1213,13 @@ class TestTaskPacksIgnoreMigration:
         assert tuple(lines[at + 1:at + 1 + len(cli.GITIGNORE_REINCLUDES)]) == cli.GITIGNORE_REINCLUDES
         assert "Rewrote /task-packs/ as /task-packs/*" in capsys.readouterr().out
         for rel in cli.REINCLUDED_PATHS:
-            assert not self._ignored(fresh_repo, rel), rel
+            # A directory is asked about through a file in it, as `git add` asks
+            # and as `cli._entry_probe_paths` does: `write_text` leaves this file
+            # CRLF on Windows, its blank line reaches git as an empty pattern, and
+            # that pattern matches EVERY path with a trailing slash (driven
+            # 2026-10-13, git 2.52 for Windows), while a file there still stages.
+            probe = rel + "DEF-1.md" if rel.endswith("/") else rel
+            assert not self._ignored(fresh_repo, probe), probe
         assert not self._ignored(fresh_repo, "task-packs/FORWARD_LEDGER.md")   # independent of the constant
         assert self._ignored(fresh_repo, "task-packs/TP-1-a-draft.md")
         assert cli.gitignore_status(fresh_repo).ok
