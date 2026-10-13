@@ -244,12 +244,12 @@ branch protection under the pull-request block's deadline; no line when it
 cannot be read, never a guess). The docs point here rather than restating the
 setting.
 
-An `Engine:` line names a checkout that holds the engine source
-(`espalier/__init__.py` at its root, so never an adopter tree) whose test
+An `Engine:` line names a checkout that holds the engine source (the
+`espalier` package at its root, so never an adopter tree) whose test
 interpreter imports `espalier` from somewhere else: an installed copy, or
 another checkout an editable install names. Every child process a test tier
-spawns then runs that engine, not this tree's (measured 2026-10-12: a worktree
-seat's full tier ran the main checkout's engine in every CLI test). The
+spawns then runs that engine, not this tree's (measured on a worktree seat:
+its full tier ran the main checkout's engine in every CLI test). The
 interpreter is `python3`, then `python`, on the PATH Claude Code was launched
 with, asked from an empty temporary directory where `espalier` would come
 from, without importing it: about 20 ms, capped at one second, after the
@@ -257,8 +257,8 @@ network reads. The line names both locations and the fix: a `.venv` of the
 checkout's own with its `bin` (`Scripts` on Windows) first on PATH, or, when
 that `.venv` exists already, to put it first. It is silent when the two agree,
 on an adopter tree, and when no interpreter answers in time. It is the early
-notice; the test session itself stops on the same mismatch
-(`tests/conftest.py`), with the interpreter that is really running.
+notice; the engine's own test suite stops its session on the same mismatch,
+with the interpreter that is really running.
 
 And on a fresh session (source `startup` or `clear`) it first catches the
 checkout up and clears the leftover worktrees beside it
