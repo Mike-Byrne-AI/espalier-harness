@@ -45,8 +45,10 @@ worked invariants with your project's equivalents.
 - Block JSON shape is event-specific:
   - **PreToolUse:** `{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": "..."}}`
   - **Stop / ConfigChange:** `{"decision": "block", "reason": "..."}` (top-level, not nested)
-  Mixing these schemas across events is a real bug class — the test in
-  `tests/test_hook_protocol.py` (Espalier source repo) enforces correct shape per event.
+  Mixing these schemas across events is a real bug class.
+  <!-- espalier:self-host-only -->
+  On this repository `tests/test_hook_protocol.py` enforces correct shape per event.
+  <!-- /espalier:self-host-only -->
 
 - `espalier/scanners/` modules are **stdlib-only** — no third-party imports. They must
   work without any third-party packages installed. Any non-stdlib import silently breaks
@@ -103,9 +105,11 @@ one restated. `tools/cc/`, `cc/`, `espalier/`, `.espalier/freshness.json` are
 runtime-protected but are NOT themselves in the CI-gated set above, so a PR
 touching one needs no marker unless it also matches a row above.
 <!-- END GENERATED: ci-gated-paths -->
-- (Espalier source repo only) Editing `espalier/hook_contract.py` without mirroring the change in
+<!-- espalier:self-host-only -->
+- Editing `espalier/hook_contract.py` without mirroring the change in
   `tools/cc/hooks/_hook_contract.py` — the two files must stay in sync; parity tests will
   fail if they drift
+<!-- /espalier:self-host-only -->
 - Adding kill-switch / bypass-detection logic to a hook without
   shipping a regression test that proves the detector catches the
   bypass — kill-switch enforcement is contractual; new detection
@@ -186,8 +190,8 @@ Look for:
 - **Dataclass discipline** — new dataclasses in `espalier/` should default to
   `@dataclass(frozen=True, slots=True)`. Plain `@dataclass`
   without a documented reason is drift. `frozen=True` blocks `__setattr__` but
-  not in-place list mutation; the `CognitiveBlueprint` API in
-  `espalier/cognitive_blueprint.py` (Espalier source repo) deliberately uses both styles
+  not in-place list mutation; the harness's own `CognitiveBlueprint` API
+  deliberately uses both styles
   (`add_reasoning` / `record_reflect_pass` append in-place;
   `set_continuation_fragments` returns a new instance via `dataclasses.replace`).
   When reviewing new dataclasses, flag missing `frozen=True, slots=True` and
@@ -328,9 +332,12 @@ Not evaluated:          {N items}     → surfaces missing
 - **Dual-witness invariants** — when a change touches a SoT pair where two
   modules must derive the same answer independently, verify the AST-level
   independence test still passes and the dual-witness pattern isn't
-  collapsed. (Example from the Espalier source repo: `espalier/release_denylist.py`,
+  collapsed.
+  <!-- espalier:self-host-only -->
+  (On this repository: `espalier/release_denylist.py`,
   `release_noise.py`, and `surface_contract.py` are pinned by
   `tests/test_release_denylist.py::TestNoSharedImports`.)
+  <!-- /espalier:self-host-only -->
 
 ## Output Format
 

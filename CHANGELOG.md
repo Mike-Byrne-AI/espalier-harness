@@ -647,9 +647,9 @@ While pre-1.0, minor version bumps may include breaking changes.
   Code copies into each worktree it creates (an existing file keeps its lines
   and gains the entry in its own line ending; the dry run names the gap);
   `doctor` warns when the file lacks it. On a repo that tracks its settings
-  file the include is inert, so `init`, `upgrade` and `doctor` all leave it
-  alone and say so; a `.gitignore` that would hide the include is named with
-  the one line that fixes it.
+  file that entry is inert: never written, never reported missing, and `init`
+  says so; a `.gitignore` that would hide the include is named with the one
+  line that fixes it.
 
 - **The first `/handoff` on a fresh tree no longer errors mid-handoff.** The
   deployed body appended the session's summary into

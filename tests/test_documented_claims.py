@@ -823,7 +823,7 @@ class TestDeployTemplateSnapshots:
         expected = render_canonical_template("claude")
         assert snapshot == expected, (
             "examples/CLAUDE.template.md is stale. Regenerate with:\n"
-            "  python3 -m espalier.cli render-template claude > examples/CLAUDE.template.md"
+            "  python3 -m espalier.cli render-template claude --canonical > examples/CLAUDE.template.md"
         )
 
     def test_memory_template_snapshot_matches_generator(self):

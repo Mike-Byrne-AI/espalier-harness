@@ -2186,14 +2186,18 @@ def _probe_index() -> dict[str, dict]:
 @pytest.mark.skipif(not _LEDGER.is_file(), reason="FORWARD_LEDGER.md is self-host only")
 @pytest.mark.skipif(not _PROBE_FILE.is_file(), reason="LEDGER_PROBES.json is self-host only")
 def test_every_live_row_is_probed_or_declared():
-    """No live row may be silently un-re-measurable."""
+    """No live row may be silently un-re-measurable. The population is every id
+    a live row carries (`live_cell_ids`): a co-id owns its own probe, and keyed
+    on first ids a co-id's lost entry passed this gate (failure-mode review,
+    driven 2026-10-12, once the roster's stored count no longer caught it)."""
     text = _LEDGER.read_text(encoding="utf-8")
-    live, probes = _live_member_ids(text), _probe_index()
-    assert len(live) >= _FLOOR_ROWS, (
-        f"only {len(live)} live member ids parsed -- the section walker has "
+    rows, probes = _live_member_ids(text), _probe_index()
+    assert len(rows) >= _FLOOR_ROWS, (
+        f"only {len(rows)} live member ids parsed -- the section walker has "
         "broken and this gate would pass vacuously. Fix the parser, do not "
         "weaken this floor."
     )
+    live = _live_cell_ids(text)
     unprobed = sorted(live - set(probes))
     assert not unprobed, (
         f"{len(unprobed)} live ledger row(s) have no entry in "
@@ -2211,6 +2215,34 @@ def test_every_live_row_is_probed_or_declared():
         f"probe entries with neither a `cmd` nor a `why_not`: {silent}. "
         "An entry that measures nothing and explains nothing is worse than no "
         "entry -- it makes the row look covered."
+    )
+
+
+@pytest.mark.skipif(not _PROBE_FILE.is_file(), reason="LEDGER_PROBES.json is self-host only")
+def test_the_live_roster_stores_no_total():
+    """The probes roster stores no `_count` since 2026-10-12: two lanes that each
+    re-derived it conflicted on that line at every catch-up GitHub merged. A lane
+    branched before the change writes it back at its own catch-up (its copy of
+    `tools/cc/record_merge.py` read a missing key as drift), and GitHub merges
+    that lane with no settle step, so this pin reds the lane's own CI before the
+    key lands. A repeated key is refused too: two such lanes merged one after
+    the other left `_count` twice (failure-mode review, driven 2026-10-12)."""
+    import json
+
+    def no_repeats(pairs):
+        keys = [k for k, _ in pairs]
+        repeated = sorted({k for k in keys if keys.count(k) > 1})
+        assert not repeated, f"{_PROBE_FILE.name} repeats the key(s) {repeated}"
+        return dict(pairs)
+
+    doc = json.loads(_PROBE_FILE.read_text(encoding="utf-8"), object_pairs_hook=no_repeats)
+    assert "_count" not in doc, (
+        f"{_PROBE_FILE.name} stores `_count` ({doc['_count']}) again: a lane branched before "
+        "2026-10-12 wrote it back at its catch-up. Drop it with the record merge's own step, "
+        "from the repository root (python3, else python, else py -3), then commit the file:\n"
+        "  python3 -c \"import sys; sys.path.insert(0, 'tools/cc'); import record_merge as rm, "
+        "generate_ledger_regions as g; from pathlib import Path; "
+        "print(rm.settle_probes_count(Path('.'), g)[1])\""
     )
 
 

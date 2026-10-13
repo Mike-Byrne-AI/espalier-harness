@@ -4788,19 +4788,24 @@ class TestDoctorReportsTheRecallCorpus:
         assert "1 notes on declared entries" in rows[0] and "docs/MISSING.md" in rows[0] and "matches no file" in rows[0], rows[0]
 
     def test_doctor_names_unmarked_init_headings_on_an_older_tree(self, tmp_path, monkeypatch):
-        """A tree installed before the marker: init's ten sections are indexed as
-        the adopter's own and ``own`` is not 0, so the hint would never fire; the
-        row names the count and the headings instead."""
+        """A tree installed before the marker: init's sections are indexed as the
+        adopter's own and ``own`` is not 0, so the hint would never fire; the row
+        names the count and the headings instead. The count is read off the tree
+        init wrote (it fell from ten to nine when the hook-authoring rules stopped
+        rendering off the harness's own tree)."""
         tree = self._init_tree(tmp_path)
         claude = tree / "CLAUDE.md"
         lines = [ln for ln in claude.read_text(encoding="utf-8").splitlines() if not ln.startswith("<!-- recall: skip -->")]
         claude.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        init_sections = sum(1 for ln in lines if ln.startswith("## "))
+        assert init_sections >= 5, lines
         monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
         result = run_doctor_check(tree, skip_self_host=True)
         rows = [i for i in result["info"] if i.startswith("recall corpus:")]
         assert len(rows) == 1, result["info"]
-        assert "10 indexed CLAUDE.md sections carry init's headings" in rows[0] and "Project Context" in rows[0], rows[0]
-        assert "recall_sources in espalier.toml" not in rows[0], "own is 10 here; the hint is not the remedy"
+        assert (f"{init_sections} indexed CLAUDE.md sections carry init's headings" in rows[0]
+                and "Project Context" in rows[0]), rows[0]
+        assert "recall_sources in espalier.toml" not in rows[0], "own is not 0 here; the hint is not the remedy"
 
 
 class TestDoctorNamesReadDenyRules:

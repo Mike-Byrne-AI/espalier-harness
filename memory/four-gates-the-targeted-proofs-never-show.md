@@ -24,6 +24,13 @@ never surfaces them: they are hazards of the artifact kind, not of the task.
    byte (`population_full` and `bound_via` are two of the three fields
    `file_digest` hashes), so two branches that differ only in how a literal is
    quoted are two distinct rows, and a cosmetic requote moves the digest.
+
+   A loop over a function-local union (`planted = seed | TABLE`) is the
+   function-local alias `DEF-684` names: the census never binds it to the
+   table, the row vanishes, and the file's adjudicated entry reds. Write the
+   union in the iterable with the table inside the call
+   (`_SEED.union(table.x())`); `_root_name` follows a call's first argument,
+   so the table stays the root (2026-10-07, the dependency-directory lane).
 2. **The adopter-pointer gate reads a constant inside a `return` as emitted
    output.** A tuple or string that names a self-host-only file (a memory
    note, a task pack, a report) and is referenced inside a `return`
@@ -42,6 +49,15 @@ never surfaces them: they are hazards of the artifact kind, not of the task.
    grandfathered baseline). Remedy: build it on `ast.parse(` or drive the
    instance, which the ratchet reads as structural. A strike that retires a
    baselined probe leaves a dead baseline slot; drop the id.
+
+   Do not buy the exemption by the predicate's letter: adding `ast.parse(` to
+   a command whose deciding half still reads text passes the ratchet without
+   being comment-proof where it matters (`DEF-1067`'s first probe, declined
+   2026-10-02). And when part of a row's deliverable has no predictable value,
+   file a declared `why_not`: that row closes only when a prompt is reworded
+   AND a fresh rate is measured on it, so a wording-keyed probe would print
+   closed while the quoted rate still belonged to the retired prompt. A probe
+   that closes before the work is done is worse than no probe.
 4. **A deployed `tools/cc/` file that defines residue tokens joins the
    placeholder-scan exclusions.** A file under `tools/cc/` that spells the
    placeholder tokens it scans for reds `tests/test_proofs.py` until it is
@@ -198,8 +214,11 @@ shipping surface such as the changelog (the §C10 lane's one blocker).
    follow.** §C52 was seeded on 2026-09-14 by a hand block that reused the
    verb's own helpers (`check_ledger_probes.run_probe`, `_pins`, `_load_probes`,
    `_commit_both`), so the probe was still driven before the write and both
-   files still committed together; a hand edit that skips them leaves `_count`
-   disagreeing with its rows and the next verb refuses outright. Seed a new
+   files still committed together; a hand edit that skips them can leave a
+   live row with no roster entry, which `check_ledger_probes.py` names in a
+   NOTE and the full suite's completeness test reds (until 2026-10-12 it left
+   `_count` disagreeing with its rows and the next verb refused outright; the
+   roster stores no total since). Seed a new
    class that way until `ledger_row.py file` grows a `--first-in-section`
    mode, never by editing the two files directly.
 16. **A word swept through the shipped prose trips two contracts a guard's own
@@ -276,7 +295,8 @@ shipping surface such as the changelog (the §C10 lane's one blocker).
    rebuild that rewrites one leaves a STALE_CLAIM no verb clears (`DEF-869`). Until
    the verb exists, stamp it the way `repin` would and nothing less: drive the
    probe with `check_ledger_probes.run_probe`, set `row_sha`/`text_sha` from the
-   checker's own functions, re-derive `_count`, record the reason in
+   checker's own functions, write no `_count` (the roster stores no total since
+   2026-10-12; this step re-derived it until then), record the reason in
    `verified_<date>`; never touch the pin without driving the probe (2026-09-20,
    1-D session 3, the live write's re-pin pass).
 
@@ -302,6 +322,40 @@ shipping surface such as the changelog (the §C10 lane's one blocker).
     repaired in the working tree stays red until it is committed. And
     `test_every_active_pack_is_ledger_tracked` wants a ledger row naming the
     new root pack -- re-pin one of the rows it closes, dry run first.
+27. **A new deployed script, spawn or root-reading test joins a roster no
+    targeted proof reads (2026-10-05).** A new `tools/cc/` script joins
+    `espalier/managed_paths.py::STANDARD_MANAGED_TOOLS`, the tuple pinned in
+    `tests/test_managed_inventory.py`, the deploy-inventory doc regions
+    (`scripts/generate_doc_regions.py`) and `cc/PACK_MANIFEST.txt`
+    (re-rendered with `render_pack_manifest`). A new spawn that takes a `#
+    subprocess-contract: ok` pragma raises that scanner's `MAX_PRAGMA_COUNT`,
+    with its reason. A test reading `ESPALIER_MEMORY.md` at the repo root
+    joins `_FULL_TREE_NODEIDS` and
+    `tests/test_test_suite_contract.py::_REGISTERED_MODULE_DEV_ONLY_CHAINS`
+    and carries the contract marker. Item 2's gate counts `append` and
+    `extend` as emitting calls, so a doc-path constant appended to a list of
+    lines reads as printed text.
+28. **A new short-name alias reds the alias-miss ceiling, and no targeted
+    proof runs it.** A module-level `_x = module.attr` (or `from M import attr
+    as _x`) under `espalier/` or `tools/cc/hooks/` whose name is not the
+    export's trips
+    `tests/test_sister_site_probe_ceilings.py::TestSisterSiteProbeCeilings::test_alias_miss_count_does_not_grow`
+    (ceiling 0). The file is `security`-marked, so the contract slice does not
+    collect it either. Name the alias after the export, or put `# sister-site:
+    ok <reason>` directly above it, before the tier: one miss cost a second
+    18-minute tier (2026-10-05). The detector's rules:
+    [[sister-site-compression]].
+29. **Three more, all hit by one hooks-and-engine lane on 2026-10-10.** A
+    paragraph that names `ESPALIER_MAINTENANCE_MODE` and two or more bypass
+    hooks must name all four (`write_guard`, `plan_guard`, `stop_gate`,
+    `subagent_stop`) or drop the env literal
+    (`tests/test_maintenance_mode.py::test_no_tracked_doc_states_a_partial_roster`).
+    A new `hookEventName` emitter whose event is not a literal joins
+    `tests/test_hook_event_contracts.py::_PARAMETERISED_EMITTERS`. A
+    `subprocess.run` a test adds pins `encoding="utf-8"`: the encoding scanner
+    walks `tests/`
+    (`tests/test_scanner_encoding_contracts.py::test_live_tree_has_no_locale_following_io`),
+    where `TestSubprocessEncodingPinned` does not.
 
 
 Related: [[recall-keys-on-the-hazard-not-the-task]] (why the task text never

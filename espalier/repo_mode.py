@@ -261,9 +261,15 @@ def list_tracked_or_walked_files(
     repo_root: Path,
     *,
     require_git: bool = False,
+    include_untracked: bool = False,
 ) -> tuple[list[str], str]:
     """Return (file_list, source) — file_list is repo-relative POSIX paths,
     source is one of "git" or "filesystem".
+
+    ``include_untracked`` adds the files git neither tracks nor ignores
+    (``--others --exclude-standard``) to the git listing: what a gate run
+    BEFORE staging must see, since a new file is not in the index yet. The
+    default is the index alone, which is what a release archive ships.
 
     Tries ``git ls-files`` first; falls back to a filesystem walk if git
     is unavailable, times out, or the directory is not a checkout. If
@@ -271,19 +277,30 @@ def list_tracked_or_walked_files(
     back — useful for callers that need provenance certainty.
 
     Detects the "extracted under a parent git repo" case explicitly:
-    when ``repo_root`` has no local ``.git/``, skip the git probe and
+    when ``repo_root`` has no ``.git`` of its own, skip the git probe and
     walk the filesystem directly. Without this check, ``git ls-files``
     invoked from inside a gitignored extracted-archive subtree returns
     exit 0 + empty stdout (it walks up to the parent's ``.git/`` and
     reports zero tracked files for the cwd subtree), which misleads
     callers into thinking the repo legitimately has no files.
+
+    A ``.git`` FILE is a checkout of its own too: a linked worktree's (and a
+    submodule's) gitlink. Read as none, a worktree seat was walked and its
+    gitignored files listed with the tracked ones, so the machine-local-path
+    gate redded there on the guard's own snapshot log (2026-10-12). A gitlink
+    whose target is gone makes git refuse, and the fallback below walks. The
+    test is ``_safe_walk.is_own_git_repo``, the one predicate the archive's
+    enumerator uses too.
     """
     import subprocess
 
-    if not (repo_root / ".git").is_dir():
+    from espalier._safe_walk import is_own_git_repo
+
+    if not is_own_git_repo(repo_root):
         if require_git:
             raise FileNotFoundError(
-                f"{repo_root} has no .git/ directory and require_git=True"
+                f"{repo_root} has no .git of its own (directory or gitlink) "
+                "and require_git=True"
             )
         return (_walked_files_matching_git_tracked(repo_root), "filesystem")
 
@@ -293,7 +310,8 @@ def list_tracked_or_walked_files(
             # (matching the filesystem-walk fallback in
             # list_repo_files_via_filesystem), not git's default octal-escaped,
             # double-quoted form — so the git and filesystem branches agree.
-            ["git", "-c", "core.quotePath=false", "ls-files"],
+            ["git", "-c", "core.quotePath=false", "ls-files",
+             *(["--cached", "--others", "--exclude-standard"] if include_untracked else [])],
             cwd=str(repo_root),
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",

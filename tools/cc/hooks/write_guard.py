@@ -2750,8 +2750,11 @@ def _run_main(data: dict | None = None) -> int:
     if kill_switch_findings:
         _audit(root, "pretooluse_blocked_kill_switch",
                findings=kill_switch_findings, tool_name=tool_name)
+        # The clause is read with a fallback: a kept _denial_reasons that predates
+        # it has no {ci_clause} slot either, and the deny must still go out.
         return deny(_denial_reasons.KILL_SWITCH_DETECTED.format(
             context="", findings=kill_switch_findings,
+            ci_clause=getattr(_denial_reasons, "kill_switch_ci_clause", lambda _root: "")(root),
         ))
 
     # Secret-bearing paths -- fires ALWAYS, including under MAINTENANCE_MODE and

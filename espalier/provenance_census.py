@@ -224,8 +224,8 @@ def allowed_tokens(rel: str) -> frozenset[str]:
     )
 
 
-def _shipping_surface_files(repo_root: Path) -> list[str]:
-    files, _source = list_tracked_or_walked_files(repo_root)
+def _shipping_surface_files(repo_root: Path, *, include_untracked: bool = False) -> list[str]:
+    files, _source = list_tracked_or_walked_files(repo_root, include_untracked=include_untracked)
     return [rel for rel in files if path_is_scanned(rel)]
 
 
@@ -243,16 +243,23 @@ def _is_allowed(rel: str, line: str) -> bool:
     return PROVENANCE_RE.search(remainder) is None
 
 
-def census_offenders(repo_root: Path | None = None) -> list[tuple[str, int, str]]:
+def census_offenders(
+    repo_root: Path | None = None, *, include_untracked: bool = False,
+) -> list[tuple[str, int, str]]:
     """Every ``(relpath, lineno, line)`` carrying a build-history tag on a
     shipping surface, outside the allowlist.
 
     ``repo_root`` defaults to this checkout's root so the regression test can
     call it argument-free; the CLI passes an explicit ``--repo``.
+    ``include_untracked`` adds the files git neither tracks nor ignores: the
+    CLI sets it, because ``/commit`` runs it BEFORE staging and a new file is
+    not in the index yet (a linked worktree listed them by accident through a
+    filesystem walk until 2026-10-12; a main checkout never did). The
+    regression test reads the index, which is what ships.
     """
     root = Path(repo_root) if repo_root is not None else _REPO_ROOT
     offenders: list[tuple[str, int, str]] = []
-    for rel in _shipping_surface_files(root):
+    for rel in _shipping_surface_files(root, include_untracked=include_untracked):
         try:
             text = (root / rel).read_text(encoding="utf-8", errors="replace")
         except OSError:

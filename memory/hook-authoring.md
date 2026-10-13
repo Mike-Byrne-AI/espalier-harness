@@ -297,6 +297,15 @@ where it cannot), and a fixed expected tier pins the artifact.
   after-check watches neither `cc/` nor the two settings files (`config_guard`
   judges those for kill-switch and unwiring shapes only), so a parser row on
   those stays a parser row.
+- **Pin a declared limit on the job its sentence governs, at the deny reason
+  that job draws (2026-10-11).** The coverage contract's first pins measured
+  the zone-write path check (an allow) for forms the delete wall, the speed
+  bumps and the secret read refuse conservatively, so the shipped sentence
+  would have filed a real regression as a limit. Each deny row now asserts
+  `contains_reason`, and each job has its own test in
+  `TestTheCoverageContract`. The same lane misread a row by its headline three
+  times (the zone class, a variable-binding row, the wrapper depth): read the
+  row whole and drive the hook before writing a verdict.
 
 ## Two constraints on writing a regex in `tools/cc/hooks/`
 
@@ -479,7 +488,15 @@ Three lessons from TP-449 group 9, the write-guard layer.
   `check_fired` (a `say_once` record names the skip; the three deny-owning calls
   above the gate stay unwrapped on purpose, with a test). After any hook edit,
   before the next tool call: `python3 -c "import _bash_patterns, write_guard,
-  _speedbump"` from `tools/cc/hooks`.
+  _speedbump"` from `tools/cc/hooks`. Since the start-or-refuse contract
+  (2026-10-10) the wedge has a second door: `write_guard` and `config_guard` read
+  every helper name on their `_*_HELPER_NAMES` list at import, and a name missing
+  from `_hook_utils` refuses EVERY tool call, the shell included, before anything
+  is judged. Removing a helper therefore goes callers and lists first, the helper
+  last (2026-10-12: the reverse order locked a lane until the operator edited the
+  two lists from a terminal; there, run the one-liner without the `!`, which only
+  the Claude prompt reads). A name the verdict never needs belongs nowhere on the
+  floor list: read it with a `getattr` default instead.
 - **A syntactic model of shell state must enumerate the constructs that do NOT
   execute before it is trusted.** The first directory-chain walk credited every
   `cd` it could read; two review rounds drove eleven shapes against `/bin/bash`

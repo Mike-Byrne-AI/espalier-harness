@@ -484,8 +484,9 @@ _PACKAGED_ROOT_DOCS: tuple[str, ...] = (
     # rewrites: unmarked, so clean-generated preserves it.
     "espalier.toml",
     # The worktree include init writes (DEF-1192): one header and the
-    # gitignored settings path, appended to the adopter's own lines if any;
-    # unmarked and committable, so clean-generated preserves it too.
+    # gitignored paths a worktree session needs (the settings file and the two
+    # generated reports the audit reads), appended to the adopter's own lines
+    # if any; unmarked and committable, so clean-generated preserves it too.
     ".worktreeinclude",
     "docs/CONVENTIONS.md",
     "docs/SHARP_EDGES.md",

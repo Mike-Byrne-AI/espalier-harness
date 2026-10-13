@@ -1,7 +1,6 @@
 {
  "_README": "Mechanical probes for FORWARD_LEDGER.md rows. Each re-derives its row's claim; when a probe stops printing open_value the row is a STRIKE CANDIDATE. Run tools/cc/check_ledger_probes.py. A missing subject is UNRESOLVED, never STRIKE -- a wrong strike costs a re-discovery, and until 2026-09-21 the ledger was gitignored, so it was invisible to `git status` as well. (It was never unrecoverable, which this line once claimed: `scripts/record_snapshot.py` carries the file on the orphan `record` branch, so `git show record:task-packs/FORWARD_LEDGER.md` reaches the snapshots from before it was tracked, and `git log -p -- task-packs/FORWARD_LEDGER.md` reaches every committed state since. The three-way verdict is right on its own merits and never needed the stronger claim.) A STRUCK row must also LOSE its probe: the tests gate live-row coverage only, so retired probes accumulated until 14 of 198 aimed at struck rows and made 10 of 11 strike candidates noise -- `scripts/generate_ledger_regions.py` now reports that direction. `row_sha` is the sha256[:12] of the ledger line this probe re-derives: when the row's PROSE is edited and the probe is not, the runner reports STALE_CLAIM. That is a separate axis from the verdict, because a row can be STILL_OPEN and stale at the same time -- DEF-493 was, for five days, and nothing said so. A probe whose COMMAND reads paths beyond its subject -- a local-only folder or an untracked file the public checkout lacks -- declares them in `inputs`, written only by `ledger_row.py` `file` or `repin --inputs` (a hand edit is undriven): a missing member, or a directory that exists and holds nothing, is UNRESOLVED like a missing subject, never a strike (DEF-858, 2026-09-22).",
  "_generated": "2026-09-20 rebuild (third)",
- "_count": 282,
  "probes": [
   {
    "id": "CONV-3",
@@ -1847,16 +1846,6 @@
    "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
   },
   {
-   "id": "DEF-988",
-   "subject": ".claude/commands/implement-pack.md",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "the subject is an agent-read command body: nothing short of running the command on a fixture tree can tell a derived folder from a literal one, and a text predicate over the body is closed by its own fix's paperwork (docs/FAILURE_MODES.md 5.23); the fix lands with a fixture tree carrying done/ that reds the literal",
-   "row_sha": "27493043af35",
-   "text_sha": "bbff4a569cb2",
-   "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
-  },
-  {
    "id": "DEF-990",
    "subject": "espalier/fan_out_findings.py",
    "cmd": "python -c \"import os, tempfile; from espalier.fan_out_findings import append_findings_to_corpus as a; d = tempfile.mkdtemp(); p = os.path.join(d, 'round.md'); a(p, []); print(os.path.exists(p))\"",
@@ -2350,36 +2339,6 @@
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
   },
   {
-   "id": "DEF-1074",
-   "subject": "espalier/cli.py",
-   "cmd": null,
-   "open_value": null,
-   "why_not": "The fix is a design this row proposes but does not settle (a generic core with an adopter overlay, or a render stage in the deployer), so no structure it must satisfy can be named before it is built; a key on a guessed identifier would stay open under any other name and flip on an unrelated one.",
-   "row_sha": "0dbeb5298b2c",
-   "text_sha": "ae66dc980531",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1075",
-   "subject": "espalier/surface_hygiene.py",
-   "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/surface_hygiene.py\",encoding=\"utf-8\").read());a=[n for n in t.body if isinstance(n,ast.Assign) and getattr(n.targets[0],\"id\",\"\")==\"SPECIFIC_ID_RE\"][0];print(any(\"DEF\" in c.value for c in ast.walk(a.value) if isinstance(c,ast.Constant) and isinstance(c.value,str)))'",
-   "open_value": "False",
-   "why_not": null,
-   "row_sha": "77181e01b65e",
-   "text_sha": "864a0a7b78b2",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1076",
-   "subject": "tools/cc/hooks/post_compact.py",
-   "cmd": "python -c 'import ast,re;t=ast.parse(open(\"tools/cc/hooks/post_compact.py\",encoding=\"utf-8\").read());f=[n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name==\"_capture_compact_summary\"][0];print(sum(isinstance(c,ast.Call) and getattr(c.func,\"attr\",\"\")==\"write\" and any(re.search(r\"(?<![\\w(.])latest\\b\",ast.unparse(a)) for a in c.args) for c in ast.walk(f)))'",
-   "open_value": "1",
-   "why_not": null,
-   "row_sha": "cf597504d7b3",
-   "text_sha": "198e4f4c3883",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
    "id": "DEF-1077",
    "subject": "espalier/cli.py",
    "cmd": null,
@@ -2417,16 +2376,6 @@
    "why_not": "The defect is prompt prose inside a JavaScript template literal; no AST or runtime value in the .js file separates the unconditional frame from a conditional one without reading the prompt text itself, which would be a text trap.",
    "row_sha": "b11c6e1be47a",
    "text_sha": "2f34ca777f18",
-   "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
-  },
-  {
-   "id": "DEF-1082",
-   "subject": "tools/cc/hooks/_denial_reasons.py",
-   "cmd": "python -c 'import ast;t=ast.parse(open(\"tools/cc/hooks/_denial_reasons.py\",encoding=\"utf-8\").read());v=[n.value for n in ast.walk(t) if isinstance(n,ast.Assign) and any(getattr(x,\"id\",\"\")==\"KILL_SWITCH_DETECTED\" for x in n.targets)];print(any(isinstance(c,ast.Constant) and isinstance(c.value,str) and \"CI will still fail\" in c.value for x in v for c in ast.walk(x)))'",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "977e9e859af8",
-   "text_sha": "20d0e7f5d4f2",
    "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
   },
   {
@@ -3061,20 +3010,6 @@
    "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: the pack it cited landed 2026-10-08 on lane/generic-systems-fire-off-self-host and moved to Done/; the citation now names the lane and date, the claim and its open state unchanged)"
   },
   {
-   "id": "DEF-1187",
-   "subject": "espalier/cli.py",
-   "cmd": "python3 -c \"import sys,re,pathlib,tempfile,subprocess;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');r=subprocess.run([sys.executable,'-m','espalier','render-template','claude'],cwd=t,capture_output=True,text=True,timeout=120);print(any('python' in l.lower() for l in r.stdout.splitlines() if 'Languages' in l))\"",
-   "open_value": "True",
-   "why_not": null,
-   "row_sha": "50e0a27ffd3a",
-   "text_sha": "bb5975a0ea82",
-   "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['tests/_adopter_tree.py', 'tests/_stack_trees.py'] on 2026-10-07: the first probe read the canonical fingerprint's languages, which the fix keeps as the fallback, so it could never flip (review finding); the render on a tree with a saved Node fingerprint is the predicate; the claim and its open state are unchanged)",
-   "inputs": [
-    "tests/_adopter_tree.py",
-    "tests/_stack_trees.py"
-   ]
-  },
-  {
    "id": "DEF-1189",
    "subject": "tools/cc/hooks/_recall.py",
    "cmd": "python3 -c \"import sys,pathlib;sys.path.insert(0,'tools/cc/hooks');import _recall as r;print(any(str(d.source).replace(chr(92),'/').endswith('docs/HOOKS.md') for d in r._load_corpus(pathlib.Path('.'))))\"",
@@ -3221,6 +3156,16 @@
    ],
    "row_sha": "cfd93df1785e",
    "text_sha": "f14be7ecc4ba",
+   "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+  },
+  {
+   "id": "DEF-2001",
+   "subject": "tools/cc/hooks/post_write_check.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "a design gap gated on a measurement: Task 0 reads the after-check's audit records and decides whether a latch is built at all, so no structure it must satisfy can be named before then",
+   "row_sha": "b02c759ac57e",
+   "text_sha": "4a4b2771fc64",
    "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
   }
  ],

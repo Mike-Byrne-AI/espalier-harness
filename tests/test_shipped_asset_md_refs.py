@@ -163,6 +163,8 @@ def test_shipped_asset_bodies_execute_no_undeployed_script() -> None:
     declared = {(e.carrier, e.target) for e in _NOT_POINTERS if e.literal is None}
     offenders: list[str] = []
     seen: set[tuple[str, str]] = set()
+    from espalier.surface_hygiene import strip_self_host_blocks
+
     for path in _shipped_asset_bodies():
         text = path.read_text(encoding="utf-8")
         rel = path.relative_to(REPO_ROOT).as_posix()
@@ -173,6 +175,10 @@ def test_shipped_asset_bodies_execute_no_undeployed_script() -> None:
         deployed_rel = rel.removeprefix("espalier/assets/")
         if deployed_rel.startswith("claude/"):
             deployed_rel = "." + deployed_rel
+            # A .claude body reaches an adopter with its self-host blocks
+            # stripped (cli._asset_transform); the sibling gate reads the
+            # driven tree, so it sees the same body this reads.
+            text = strip_self_host_blocks(text)
         for ref in exec_refs(text):
             if ref.file in deployed or ref.guarded:
                 continue

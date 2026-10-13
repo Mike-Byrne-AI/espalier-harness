@@ -276,7 +276,7 @@ says how.
 
 On the Espalier-Harness source tree the branch protection requires the pull
 request and its required checks; the `test (3.x)` cells run the tier the diff
-earns (`scripts/proof_tier.py --base`, the same rule as the local run), 9 to
+earns (its `proof_tier.py --base`, the same rule as the local run), 9 to
 40 minutes measured in September 2026. The guard's `verify` check reads the
 pull request title as it is at check time, not as the event that started the
 run saw it, so a push's run and a title edit's run agree whichever one GitHub

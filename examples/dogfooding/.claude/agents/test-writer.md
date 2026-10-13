@@ -102,9 +102,9 @@ code. The two block-payload shapes:
 - **Stop / ConfigChange**: top-level `decision == "block"` with `reason`.
 
 Asserting `result.returncode == 0` alone proves only that the hook didn't
-crash — it does **not** prove a deny payload was emitted. Use the SSoT
-helpers in `tests/_hook_assertions.py` (Espalier source repo; on another
-tree, its equivalent — the assertions below are what they check):
+crash — it does **not** prove a deny payload was emitted. Use your suite's
+shared hook-assertion helpers (`_hook_assertions` on the Espalier-Harness tree;
+on another tree, its equivalent — the assertions below are what they check):
 
 ```python
 from tests._hook_assertions import assert_hook_denied, assert_hook_allowed
@@ -120,8 +120,8 @@ def test_legitimate_command_allowed(tmp_path):
 
 **Surface cardinality assertions (FACT)**: any test that pins a count of
 agents / commands / hooks / skills MUST import the constants from
-`tests/_surface_expected.py` (Espalier source repo; your suite's own
-constants module elsewhere) rather than hardcoding integers. Adding a
+your suite's own constants module (`_surface_expected` on the
+Espalier-Harness tree) rather than hardcoding integers. Adding a
 new agent / command / hook is then a one-file bump.
 
 ```python
@@ -180,8 +180,8 @@ This is a pure filesystem tool. No mocking of network calls or databases needed.
    temporarily break the behavior under test (mutate the code, or invert the expected
    value) and verify the test FAILS — then revert. A test that stays green when its
    subject is broken is a rubber-stamp; rewrite it so the assertion actually depends on
-   the behavior. The `zero_assertion` / `assert_tautological` rules in
-   `espalier/scanners/test_loosening.py` (Espalier source repo) catch the mechanical floor (no assertion / a
+   the behavior. The `zero_assertion` / `assert_tautological` rules of the
+   `test_loosening` scanner (`/scan test_loosening`) catch the mechanical floor (no assertion / a
    tautological one); this step catches the larger class those rules cannot see — a test
    that asserts the wrong thing, or asserts on a value that is true regardless of the
    code path. Do not present a test you have not watched fail.
