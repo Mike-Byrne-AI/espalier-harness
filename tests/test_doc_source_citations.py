@@ -57,6 +57,7 @@ import subprocess
 import pytest
 
 from espalier.surface_contract import is_shipped_pack
+from tests._record_paths import is_ledger_record, record_fragments
 
 # Reuse the sibling's canonical resolvers rather than re-deriving them: the AST symbol
 # resolver and the git-ls-files tracked-set are the same shape this contract needs. The
@@ -523,7 +524,9 @@ class TestSourceCitationPopulation:
             pytest.skip("`git ls-files` yielded nothing — not a dev tree / fresh clone")
         outside = []
         for rel in _swept_docs(tracked):
-            if rel == "task-packs/FORWARD_LEDGER.md":
+            # The ledger's record, wherever a row lives: a struck row in its own
+            # file under ledger.d/ is the same record as one in the ledger.
+            if is_ledger_record(rel):
                 continue
             try:
                 lines = (REPO_ROOT / rel).read_text(encoding="utf-8").splitlines()
@@ -547,15 +550,8 @@ class TestSourceCitationPopulation:
             pytest.skip("the forward ledger is not on this tree")
         # The ledger's view: a row that lives in its own file under ledger.d/
         # is tracked markdown in the same sweep, so its struck lines count too.
-        import importlib.util
-        import sys
-        spec = importlib.util.spec_from_file_location(
-            "_citations_record_fragments", REPO_ROOT / "tools" / "cc" / "_record_fragments.py")
-        loader = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = loader
-        spec.loader.exec_module(loader)
         unread = []
-        for n, line in enumerate(loader.ledger_view_at(ledger).text.splitlines(), 1):
+        for n, line in enumerate(record_fragments().ledger_view_at(ledger).text.splitlines(), 1):
             cells = _CELL_SPLIT_RE.split(line.lstrip(" "))[1:3] if line.lstrip(" ").startswith("|") else []
             id_cells = [c for c in cells if _STRUCK_SPAN_RE.search(c)]
             if not id_cells or _is_struck_row(line):

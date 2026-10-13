@@ -58,6 +58,7 @@ import importlib.util
 import json
 import re
 import sys
+from collections import Counter
 from datetime import date
 from pathlib import Path
 
@@ -680,10 +681,48 @@ class _Pending:
     path (None deletes one), and the pending view they make: every check runs
     on what the write WILL leave, never on the tree before it."""
 
-    def __init__(self, ledger: Path, probes: Path) -> None:
+    def __init__(self, ledger: Path, probes: Path, ids: "tuple[str, ...]" = ()) -> None:
         self.ledger, self.probes = ledger, probes
         self.rows: dict[Path, str | None] = {}
         self.probe_files: dict[Path, dict | None] = {}
+        #: The ids the verb acts on; a problem naming one refuses even when the
+        #: tree carried it before (``_converge``).
+        self.ids: set[str] = set(ids)
+        #: Whether this tree keeps rows as files (``ledger_fragments = true`` in
+        #: the ``espalier.toml`` above ``task-packs/``): only there does a verb
+        #: let a problem it did not cause through as a note, because only there
+        #: does a gate hold the tree to it (this repository's CI). Elsewhere a
+        #: verb refuses on every problem, as it did before rows were files
+        #: (operator, 2026-10-13).
+        self.scoped: bool = _FRAG.ledger_fragments_setting(ledger.parent.parent)[0]
+        #: What ``_converge`` let through: drift the tree carried before the
+        #: write, about no row the verb touches. Printed as a note.
+        self.noted: list[dict] = []
+
+    def touched(self) -> set[str]:
+        """The ids the verb acts on: its own, and every id of a row or probe
+        file it writes or removes (a co-id row's second id included)."""
+        out = set(self.ids)
+        for path, text in self.rows.items():
+            out.add(path.stem)
+            if text is not None:
+                frag = _FRAG.parse_ledger_fragment(path.name, text)
+                if not isinstance(frag, str):
+                    out.update(_FRAG.row_ids(frag.member))
+        out.update(path.stem for path in self.probe_files)
+        return out
+
+    def held(self, gen) -> "list[dict] | None":
+        """The drift the tree carries BEFORE the verb writes: the view and
+        the roster as they are on disk. None when they cannot be read, so
+        nothing counts as held and every problem refuses, as it always did."""
+        try:
+            before = _FRAG.ledger_view_at(self.ledger)
+            roster = _FRAG.probe_roster_at(self.probes)
+        except (OSError, ValueError):  # strict decode: UnicodeDecodeError is a ValueError
+            return None
+        ids = {str(p["id"]) for p in roster.data["probes"] if isinstance(p, dict) and p.get("id")}
+        return gen.find_drift(before.text, ids) + gen.view_problems(before.problems + roster.problems)
 
     def view(self, file_text: str):
         texts = dict(_FRAG.fragment_texts(_FRAG.ledger_fragment_dir(self.ledger)))
@@ -694,18 +733,21 @@ class _Pending:
                 texts[path.name] = text
         return _FRAG.ledger_view_from_texts(file_text, sorted(texts.items(), key=lambda p: p[0]))
 
-    def probe_ids(self, data: dict) -> set[str]:
-        """The roster's ids once written: the file's entries (``data``) and
-        every probe file beside it, the pending ones applied."""
-        ids = {str(p["id"]) for p in data.get("probes", []) if isinstance(p, dict) and p.get("id")}
-        names = {name for name, _t in _FRAG.fragment_texts(_FRAG.probe_fragment_dir(self.probes))}
+    def roster(self, data: dict):
+        """The roster's view once written: the file's entries (``data``) and
+        every probe file beside it, the pending ones applied; its problems (a
+        second probe for one id, a probe file that does not parse) included."""
+        texts: dict[str, str | None] = dict(_FRAG.fragment_texts(_FRAG.probe_fragment_dir(self.probes)))
         for path, entry in self.probe_files.items():
             if entry is None:
-                names.discard(path.name)
+                texts.pop(path.name, None)
             else:
-                names.add(path.name)
-        ids.update(m.group(1) for n in names if (m := _FRAG.PROBE_NAME_RE.match(n)))
-        return ids
+                texts[path.name] = json.dumps(entry, indent=1, ensure_ascii=False) + "\n"
+        return _FRAG.probe_roster_from_texts(json.dumps(data), sorted(texts.items(), key=lambda p: p[0]))
+
+    def probe_ids(self, data: dict) -> set[str]:
+        """The roster's ids once written."""
+        return {str(p["id"]) for p in self.roster(data).data["probes"] if isinstance(p, dict) and p.get("id")}
 
 
 def _converge(gen, text: str, probes_path: Path,
@@ -727,16 +769,64 @@ def _converge(gen, text: str, probes_path: Path,
     if gen.stored_counts(text):
         text, _n = gen.apply_writable(text, [{"region": "stored-count"}])
     view = pending.view(text)
-    return text, gen.find_drift(view.text, pending.probe_ids(data)) + gen.view_problems(view.problems)
+    roster = pending.roster(data)
+    ids = {str(p["id"]) for p in roster.data["probes"] if isinstance(p, dict) and p.get("id")}
+    drift = gen.find_drift(view.text, ids) + gen.view_problems(view.problems + roster.problems)
+    if not pending.scoped:
+        return text, drift
+    refused, pending.noted = _scope_drift(drift, pending.held(gen), pending.touched())
+    return text, refused
 
 
-def _write_pending(gen, pending: _Pending) -> None:
-    for path, entry in pending.probe_files.items():
-        if entry is None:
-            path.unlink(missing_ok=True)
+#: A drift detail's leading line number moves when a row is inserted above
+#: it, and a class's live-row count moves with every filing or strike in it.
+_DETAIL_LINE = re.compile(r"^line \d+: ")
+_DETAIL_COUNT = re.compile(r"\b\d+ live row\(s\)")
+
+
+def _drift_key(d: dict) -> tuple[str, str]:
+    detail = _DETAIL_LINE.sub("", str(d.get("detail", "")))
+    return str(d.get("region")), _DETAIL_COUNT.sub("N live row(s)", detail)
+
+
+def _scope_drift(drift: list[dict], held: "list[dict] | None",
+                 touched: set[str]) -> tuple[list[dict], list[dict]]:
+    """``(refused, noted)``: a verb refuses on what its own write leaves
+    WORSE -- a problem the tree did not carry before, counted as a multiset so
+    a second copy of a held one is new -- and on any problem naming an id it
+    touches. A held problem about other rows is noted and let through: one
+    Finder file, one hand-edited duplicate or one half-finished strike used to
+    stop every ledger verb on every row, on every seat, while CI (which never
+    sees an ignored file) stayed green (operator, 2026-10-13). The generator's
+    ``--check`` and this repository's CI gate hold the tree to every problem;
+    a tree that has not opted into row files never reaches here
+    (``_Pending.scoped``). An id is matched in any case: a mis-cased row file
+    names the row it holds."""
+    remaining = Counter(_drift_key(d) for d in held or [])
+    names = re.compile(r"(?<![A-Za-z0-9-])(?:" + "|".join(map(re.escape, sorted(touched))) + r")(?![0-9a-z])",
+                       re.IGNORECASE) if touched else None
+    refused: list[dict] = []
+    noted: list[dict] = []
+    for d in drift:
+        key = _drift_key(d)
+        if remaining[key] > 0 and not (names and names.search(key[1])):
+            remaining[key] -= 1
+            noted.append(d)
         else:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            gen._atomic_write(path, json.dumps(entry, indent=1, ensure_ascii=False) + "\n")
+            refused.append(d)
+    return refused, noted
+
+
+def _print_noted(pending: _Pending, what: str) -> None:
+    if pending.noted:
+        print(f"ledger_row: note -- the tree already carries {len(pending.noted)} problem(s) about rows "
+              f"this {what} does not touch; written anyway (rows are files here: ledger_fragments = true). "
+              "tools/cc/generate_ledger_regions.py --check lists them:", file=sys.stderr)
+        for d in pending.noted:
+            print(f"  [{d.get('region')}] {d.get('detail')}", file=sys.stderr)
+
+
+def _write_pending_rows(gen, pending: _Pending) -> None:
     for path, text in pending.rows.items():
         if text is None:
             path.unlink(missing_ok=True)
@@ -745,8 +835,19 @@ def _write_pending(gen, pending: _Pending) -> None:
             gen._atomic_write(path, text)
 
 
+def _write_pending_probes(gen, pending: _Pending, *, removals: bool) -> None:
+    """The pending probe files' removals (``removals``) or writes."""
+    for path, entry in pending.probe_files.items():
+        if entry is None and removals:
+            path.unlink(missing_ok=True)
+        elif entry is not None and not removals:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            gen._atomic_write(path, json.dumps(entry, indent=1, ensure_ascii=False) + "\n")
+
+
 def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
-                 what: str, pending: _Pending | None = None, write_roster: bool = True) -> int:
+                 what: str, pending: _Pending | None = None, write_roster: bool = True,
+                 probes_first: bool = False) -> int:
     """Converge against the NEW probe roster held in a sidecar, then write the
     ledger and the probes together -- or neither. The first cut wrote the probe
     file before checking convergence, so a refused strike still retired the
@@ -758,7 +859,29 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
     convergence reads the view they leave. The ledger file is written only when
     its text changed and the roster only when the verb changed it
     (``write_roster``), so a verb that touched only row files leaves both
-    files' bytes alone."""
+    files' bytes alone.
+
+    Several files cannot be written as one, so they go in the order whose
+    half-written state is a live row with no probe -- the probe runner's note
+    -- never a probe with no row: a filing writes its row first and its probe
+    last, and a strike (``probes_first``) retires its probe (the probe file,
+    or the roster's entry) before it writes the struck row. A strike that dies
+    part-way is finished by running it again. A FILING that dies between its
+    row and its probe is not: the row is there, so ``file`` refuses it as a
+    second member row, and ``repin`` finds no probe to re-pin -- no verb
+    finishes it yet (``DEF-4019``; the same state the file-and-roster pair
+    could always reach). The other orders were driven
+    on 2026-10-13: a filing's probe written first left an orphan probe file no
+    check named, and a strike's row written first left a struck row still
+    carrying a probe, which no verb could clear (failure-mode reviews). A probe
+    file's removal always goes first: removing one never leaves a probe behind
+    a row.
+
+    Where the tree keeps rows as files (``_Pending.scoped``), convergence
+    refuses on what the write leaves worse and on problems about the rows it
+    touches (``_scope_drift``), and problems the tree already carried about
+    other rows are printed as a note while the write goes ahead; elsewhere it
+    refuses on every problem."""
     pending = pending or _Pending(ledger, probes)
     sidecar = probes.with_name(probes.name + ".pending")
     # newline="\n": the tracked probes file is LF; a Windows host's write_text
@@ -769,16 +892,24 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
     try:
         new_text, drift = _converge(gen, new_text, sidecar, pending)
         if drift:
-            print(f"ledger_row: the ledger would not converge after the {what}; nothing written:",
+            print(f"ledger_row: nothing written: after the {what} the ledger would carry these problems"
+                  + (", each new with this write or about a row it touches:" if pending.scoped else ":"),
                   file=sys.stderr)
             for d in drift:
-                print(f"  {d}", file=sys.stderr)
+                print(f"  [{d.get('region')}] {d.get('detail')}", file=sys.stderr)
             return 2
-        if new_text != ledger.read_text(encoding="utf-8"):  # ledger-read: the file's own bytes, to skip an unchanged write
-            gen._atomic_write(ledger, new_text)
-        if write_roster:
+        _print_noted(pending, what)
+        _write_pending_probes(gen, pending, removals=True)
+        if write_roster and probes_first:
             sidecar.replace(probes)
-        _write_pending(gen, pending)
+        _write_pending_rows(gen, pending)
+        # Bytes, never a decode: the verb read the file strictly already, and a
+        # write that changes only line endings is one the LF pin wants anyway.
+        if new_text.encode("utf-8") != ledger.read_bytes():  # ledger-read: the file's own bytes, to skip an unchanged write
+            gen._atomic_write(ledger, new_text)
+        if write_roster and not probes_first:
+            sidecar.replace(probes)
+        _write_pending_probes(gen, pending, removals=False)
         return 0
     finally:
         if sidecar.exists():
@@ -901,6 +1032,20 @@ def _row_home(ledger: Path, rid: str) -> "tuple[Path, object] | None":
     return None if isinstance(frag, str) else (path, frag)
 
 
+def _broken_row_file(ledger: Path, rid: str) -> str | None:
+    """Why the row file named for ``rid`` cannot be read, when one is there
+    and does not parse: a verb then names the file, never reports the row as
+    missing (code review, 2026-10-13)."""
+    path = _FRAG.ledger_fragment_dir(ledger) / f"{rid}.md"
+    if not path.is_file():
+        return None
+    try:
+        frag = _FRAG.parse_ledger_fragment(path.name, _FRAG.strict_text(path))
+    except (OSError, UnicodeDecodeError) as exc:
+        return f"{path.name}: unreadable ({type(exc).__name__})"
+    return frag if isinstance(frag, str) else None
+
+
 def _row_file_text(section: str, member: str, index: "list[str] | tuple[str, ...]") -> str:
     return "\n".join([f"<!-- class: {section} -->", member, *index]) + "\n"
 
@@ -919,8 +1064,11 @@ def _retire_probe_files(probes: Path, ids: list[str], pending: _Pending) -> int:
 def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
            anchor: str | None, dry_run: bool, despite_deferrals: bool = False) -> int:
     gen = _load("generate_ledger_regions")
-    text = ledger.read_text(encoding="utf-8")
-    pending = _Pending(ledger, probes)
+    text = ledger.read_text(encoding="utf-8")  # ledger-read: the file's own text, edited for a legacy row; a row file is found and edited by path
+    pending = _Pending(ledger, probes, (rid,))
+    if broken := _broken_row_file(ledger, rid):
+        print(f"ledger_row: {broken}; repair the row file first, nothing struck", file=sys.stderr)
+        return 2
     home = _row_home(ledger, rid)
     found = (_member_line(rid, home[1].member, struck_ok=False) if home
              else _member_line(rid, text, struck_ok=False))
@@ -996,7 +1144,7 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
     if data is None:
         return 2
     before = len(data["probes"])
-    data["probes"] = [p for p in data["probes"] if p["id"] not in ids]
+    data["probes"] = [p for p in data["probes"] if not (isinstance(p, dict) and p.get("id") in ids)]
     retired_in_roster = before - len(data["probes"])
     retired = retired_in_roster + _retire_probe_files(probes, ids, pending)
     index_note = (f"index row {index_state[rid]}" if len(ids) == 1
@@ -1006,8 +1154,9 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
         print(f"({index_note}; {retired} probe(s) would retire"
               + (f"; in {home[0].name}" if home else "") + ")")
         return 0
+    pending.ids.update(ids)
     rc = _commit_both(gen, ledger=ledger, probes=probes, new_text=new_text, data=data, what="strike",
-                      pending=pending, write_roster=not home or retired_in_roster > 0)
+                      pending=pending, write_roster=not home or retired_in_roster > 0, probes_first=True)
     if rc == 0:
         with_ids = f" (with {', '.join(i for i in ids if i != rid)})" if len(ids) > 1 else ""
         print(f"struck {rid}{with_ids}; {retired} probe(s) retired; regions converged")
@@ -1129,13 +1278,15 @@ def new_class(section: str, *, ledger: Path, probes: Path, title: str, populatio
         return 0
     lines[section_at:section_at] = block      # below the index: insert it first
     lines.insert(index_at, index_row)
-    new_text, drift = _converge(gen, "\n".join(lines), probes, _Pending(ledger, probes))
+    pending = _Pending(ledger, probes)
+    new_text, drift = _converge(gen, "\n".join(lines), probes, pending)
     if drift:
-        print(f"ledger_row: the ledger would not converge with {name}; nothing written:",
-              file=sys.stderr)
+        print(f"ledger_row: nothing written: with {name} the ledger would carry these problems"
+              + (", each new with this write:" if pending.scoped else ":"), file=sys.stderr)
         for d in drift:
-            print(f"  {d}", file=sys.stderr)
+            print(f"  [{d.get('region')}] {d.get('detail')}", file=sys.stderr)
         return 2
+    _print_noted(pending, "section")
     gen._atomic_write(ledger, new_text)
     print(f"opened {name} ({population} / {audience}); regions converged")
     return 0
@@ -1149,18 +1300,25 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
              inputs: list[str] | None = None) -> int:
     gen = _load("generate_ledger_regions")
     file_text = ledger.read_text(encoding="utf-8")
-    pending = _Pending(ledger, probes)
+    pending = _Pending(ledger, probes, (rid,))
     # Where the row goes is the repository's setting (espalier.toml
     # ledger_fragments); every lookup below reads the view either way, so a
     # row or class that lives in a file is seen like one in the ledger.
-    as_files = _FRAG.ledger_fragments_setting(root)[0]
+    as_files, how = _FRAG.ledger_fragments_setting(root)
+    if not as_files and any(s in how for s in ("neither true nor false", "not the top-level", "could not be read")):
+        # A setting written but not read as on (`= True`, `= "true"`, under a
+        # table) would send every filing into the file without a word.
+        print(f"ledger_row: note -- {how}; this row goes into {ledger.name}", file=sys.stderr)
     text = pending.view(file_text).text
     if _member_line(rid, text, struck_ok=True) is not None:
         print(f"ledger_row: {rid} already has a member row", file=sys.stderr)
         return 2
     row_file = _FRAG.ledger_fragment_dir(ledger) / f"{rid}.md"
     probe_file = _FRAG.probe_fragment_dir(probes) / f"{rid}.json"
-    if as_files and (row_file.exists() or probe_file.exists()):
+    # A probe file for this id is a second home whichever way the row goes
+    # (an orphan left by a crash, or a tree whose setting went off): filing
+    # over it would replace it, or give the id a second probe, unseen.
+    if probe_file.exists() or (as_files and row_file.exists()):
         print(f"ledger_row: {rid} already has a file under {row_file.parent.name}/ or "
               f"{probe_file.parent.name}/ (a second home for one id); nothing filed", file=sys.stderr)
         return 2
@@ -1194,7 +1352,11 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
     else:
         prev = _member_line(after, slots, struck_ok=True)
         if prev is None:
-            print(f"ledger_row: no member row for --after {after}", file=sys.stderr)
+            elsewhere = None if as_files else _FRAG.fragment_for(ledger, after)
+            print(f"ledger_row: no member row for --after {after}"
+                  + (f" in {ledger.name}: its row lives in {elsewhere.parent.name}/{elsewhere.name}, and with "
+                     f"ledger_fragments off a new row goes into {ledger.name}, so name a row there"
+                     if elsewhere else ""), file=sys.stderr)
             return 2
         # --section selects the class whose tags the new row is validated against,
         # so it must be the section --after's row actually sits in: the row lands
@@ -1328,9 +1490,12 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
     """
     gen = _load("generate_ledger_regions")
     file_text = ledger.read_text(encoding="utf-8")
-    pending = _Pending(ledger, probes)
+    pending = _Pending(ledger, probes, (rid,))
     # A row and its probe are re-pinned where each lives: a row file or the
     # ledger, a probe file or the roster. Class reads take the view.
+    if broken := _broken_row_file(ledger, rid):
+        print(f"ledger_row: {broken}; repair the row file first, nothing re-pinned", file=sys.stderr)
+        return 2
     home = _row_home(ledger, rid)
     text = pending.view(file_text).text
     found = (_member_line(rid, home[1].member, struck_ok=False) if home
@@ -1506,6 +1671,9 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
         return 0
     if not in_roster:
         pending.probe_files[probe_file] = entry
+    # A co-id row's index rows all move with its anchor: every id it carries
+    # is one this re-pin touches (a legacy row has no row file to read it from).
+    pending.ids.update(ids)
     rc = _commit_both(gen, ledger=ledger, probes=probes, new_text=new_text, data=data, what="re-pin",
                       pending=pending, write_roster=in_roster)
     if rc == 0:

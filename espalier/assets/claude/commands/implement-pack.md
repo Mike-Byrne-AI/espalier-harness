@@ -492,7 +492,9 @@ reachability analysis. Both gates run before any sub-task executes.
         since 2026-09-21, `Done/` gitignored): two things differ. First, re-key every ledger row that cites
         `<TP-NN>` BEFORE the move: after it the id resolves in neither shipped
         location and `test_live_ledger_grows_no_new_dangling_id_references` reds;
-        `command grep -n '<TP-NN>' task-packs/FORWARD_LEDGER.md` is the census, and
+        `python tools/cc/_record_fragments.py ledger | command grep -n '<TP-NN>'` is the census
+        (the ledger as its readers see it: a row filed as its own file under
+        `task-packs/ledger.d/` cites the pack too), and
         the re-key goes through `tools/cc/ledger_row.py repin <id> --anchor ... --reason ...`,
         never a hand edit (a `repin`, like `file` and `strike`, exits 2 when another
         machine's live claim on the mail channel names the row: the refusal names the

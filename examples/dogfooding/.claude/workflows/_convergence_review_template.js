@@ -171,7 +171,9 @@ const FRAME =
 
 const DISCIPLINE =
   `DISCIPLINE (non-negotiable):\n` +
-  `1. DEDUP: before emitting, grep task-packs/FORWARD_LEDGER.md for the file + symbol (if that file is\n` +
+  `1. DEDUP: before emitting, grep the forward ledger for the file + symbol: task-packs/FORWARD_LEDGER.md and,\n` +
+  `   where the repository keeps rows as files, task-packs/ledger.d/ (\`python tools/cc/_record_fragments.py ledger\`\n` +
+  `   prints both as one text to grep). If that file is\n` +
   `   absent, as on an adopter tree that keeps no ledger, write ABSENT-LEDGER in verification.negative and\n` +
   `   mark the finding UN-DEDUPED, not new: absence is not clearance). If the finding\n` +
   `   or its CLASS is a live row or a section-6 do-not-rediscover entry, DROP it: a re-find is un-deduped, not new.\n` +
@@ -179,7 +181,8 @@ const DISCIPLINE =
   `   python -m espalier <cmd>, python -c '<exec the path>', parse the file — and quote the\n` +
   `   exact bytes (path:line) in minimal_repro. NEVER report from memory or one rendered frame.\n` +
   `3. CLASSIFICATION GUARD — deferred-intentional != abandoned: before flagging a half-finished /\n` +
-  `   abandoned / supplanted item, cross-reference task-packs/FORWARD_LEDGER.md, if the repository keeps one (DEF-* / drafted-\n` +
+  `   abandoned / supplanted item, cross-reference the forward ledger (task-packs/FORWARD_LEDGER.md and task-packs/ledger.d/),\n` +
+  `   if the repository keeps one (DEF-* / drafted-\n` +
   `   pack entries) + in-code dormant notes. A documented deferral is a KEEP, not rot.\n` +
   `4. A clean area yields an EMPTY findings array. Finding NOTHING NEW is the correctness signal,\n` +
   `   not a failure. Do NOT manufacture findings.\n\n`
@@ -196,7 +199,8 @@ function refutePrompt(f) {
     `It SURVIVES only if you reproduce it against HEAD with an ORACLE (re-read the cited\n` +
     `location; run the minimal_repro or an equivalent grep / git / python -m espalier /\n` +
     `python -c exec / file-parse). If it does not reproduce, is already a live row or a\n` +
-    `section-6 do-not-rediscover entry in task-packs/FORWARD_LEDGER.md (grep it, if the repository keeps one) -> refuted.\n` +
+    `section-6 do-not-rediscover entry in the forward ledger (grep task-packs/FORWARD_LEDGER.md and task-packs/ledger.d/,\n` +
+    `if the repository keeps one) -> refuted.\n` +
     `RE-JUDGE blocks_release through the FRAME. Set externally_verified=true ONLY on an oracle-\n` +
     `confirmed survivor. Quote the bytes you read.\n\n` +
     `FINDING:\n${JSON.stringify(f, null, 2)}\n\n` +
@@ -238,7 +242,7 @@ const scopedThunks = DIMENSIONS.map(d => () =>
 const corpusBlindThunk = () =>
   agent(
     FRAME +
-    `You are the CORPUS-BLIND lane. Do NOT read the repository's forward ledger (task-packs/FORWARD_LEDGER.md where one exists) and do NOT assume any\n` +
+    `You are the CORPUS-BLIND lane. Do NOT read the repository's forward ledger (task-packs/FORWARD_LEDGER.md, its row files under task-packs/ledger.d/ and its probes, where they exist) and do NOT assume any\n` +
     `prior round caught anything. cwd = repo root. Re-examine the codebase with fresh eyes — you\n` +
     `are explicitly ALLOWED to re-find "known-good" things, because the whole point is to catch\n` +
     `a broadly-visible problem that every scoped lens assumed was handled earlier. Still EARN-THE-\n` +

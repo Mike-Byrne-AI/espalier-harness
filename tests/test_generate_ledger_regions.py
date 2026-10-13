@@ -171,6 +171,16 @@ def _kinds(drift: list[dict]) -> set[str]:
     return {d["region"] for d in drift}
 
 
+def _gate_drift() -> list[dict]:
+    """What the CI gate holds the tree at ``gen._LEDGER``/``gen._PROBES`` to,
+    as the generator's ``--check`` reads it: every derived region over the
+    ledger's view, the row files the view could not place, and the roster's
+    own problems (a second probe for one id, a probe file that does not parse,
+    a stray name). One computation for the live gate and its planted twin."""
+    view = gen.record_fragments().ledger_view_at(gen._LEDGER)
+    return gen.find_drift(view.text) + gen.view_problems(view.problems + gen.roster_problems())
+
+
 _STRUCK_ONE = dict(
     c1_rows=("| ~~`DEF-1`~~ | site | closed | major |", "| `DEF-2` | site | open | minor |"),
     appendix=("| ~~`DEF-1`~~ | §C1 | site |", "| `DEF-2` | §C1 | site |"),
@@ -782,18 +792,32 @@ class TestTheLiveLedgerConverges:
     def test_every_derived_region_matches_the_member_rows(self):
         if not gen._LEDGER.is_file():
             pytest.skip("FORWARD_LEDGER.md is self-host only")
-        # The view: the live ledger with any row files placed in it, and the
-        # row files the view could not place, as the generator's --check reads.
-        view = gen.record_fragments().ledger_view_at(gen._LEDGER)
-        drift = gen.find_drift(view.text) + gen.view_problems(view.problems)
+        drift = _gate_drift()
         assert not drift, (
             f"{len(drift)} ledger region(s) disagree with the member rows:\n"
             + "\n".join(f"  [{d['region']}] {d['detail']}" for d in drift)
             + "\n\nRun `python3 tools/cc/generate_ledger_regions.py --write` to remove "
             "a stored total (the ledger keeps rows, not totals; `--print` shows them); "
-            "the Appendix B, probe-roster and vocabulary entries name a judgement call "
-            "and must be made by hand. Do NOT relax this assertion."
+            "the Appendix B, probe-roster, vocabulary and row-file entries name a judgement "
+            "call and must be made by hand. Do NOT relax this assertion."
         )
+
+    def test_the_gate_reds_on_a_roster_problem(self, tmp_path, monkeypatch):
+        """The ledger verbs refuse on a second probe for an id they touch and
+        note it otherwise, so the gate is what holds the tree to it. Dies to:
+        the gate reading the ledger's view alone (round-2 review: a duplicate
+        entry, a corrupt probe file and a probe file beside an entry were all
+        GREEN here)."""
+        packs = tmp_path / "task-packs"
+        (packs / "probes.d").mkdir(parents=True)
+        (packs / "FORWARD_LEDGER.md").write_text(_ledger(), encoding="utf-8")
+        (packs / "LEDGER_PROBES.json").write_text(json.dumps({"probes": [
+            {"id": "DEF-1", "why_not": "none"}, {"id": "DEF-2", "why_not": "none"}]}), encoding="utf-8")
+        monkeypatch.setattr(gen, "_LEDGER", packs / "FORWARD_LEDGER.md")
+        monkeypatch.setattr(gen, "_PROBES", packs / "LEDGER_PROBES.json")
+        assert not [d for d in _gate_drift() if d["region"] == "row-files"]
+        (packs / "probes.d" / "DEF-7.json").write_text("{not json", encoding="utf-8")
+        assert any(d["region"] == "row-files" and "DEF-7.json: not JSON" in d["detail"] for d in _gate_drift())
 
     def test_the_json_mode_reports_the_same_population(self, capsys):
         if not gen._LEDGER.is_file():
@@ -841,7 +865,7 @@ class TestTheFloorsAreDerivedFromTheRecord:
         fixture, so the dict is pinned everywhere; the live-record arm stays as
         the stronger check where the file is present."""
         fixture = REPO_ROOT / "tests" / "fixtures" / "ledger_snapshot_2026_09_20.json"
-        assert gen._SNAPSHOT_2026_09_20 == json.loads(fixture.read_text(encoding="utf-8")), (
+        assert gen._SNAPSHOT_2026_09_20 == json.loads(fixture.read_text(encoding="utf-8")), (  # ledger-read: a tracked fixture of four figures, not the ledger
             "the snapshot dict and its tracked fixture disagree -- a rebuild moved one "
             "without the other; re-derive both from the record file, never by hand"
         )
@@ -849,7 +873,7 @@ class TestTheFloorsAreDerivedFromTheRecord:
     def test_the_snapshot_is_what_derive_reads_from_the_record_file(self):
         if not self._RECORD.is_file():
             pytest.skip("the 2026-09-20 pre-rebuild record is self-host only (record branch)")
-        d = gen.derive(self._RECORD.read_text(encoding="utf-8"))
+        d = gen.derive(self._RECORD.read_text(encoding="utf-8"))  # ledger-read: a dated pre-rebuild record file, before rows were files
         snap = gen._SNAPSHOT_2026_09_20
         assert (d["live_total"], d["class_count"], d["population_live"]["HYGIENE"], d["audience_live"]["MAINTAINER"]) \
             == (snap["live"], snap["sections"], snap["HYGIENE"], snap["MAINTAINER"]), (

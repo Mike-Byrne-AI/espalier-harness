@@ -2726,12 +2726,10 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
     """
     import tempfile
 
-    from espalier.managed_markers import seed_is_untouched
-
     outcome: dict[str, list[str]] = {"filed": [], "satisfied": [], "failed": []}
     ledger, verb = repo_root / _LEDGER_REL, repo_root / _LEDGER_VERB_REL
     try:
-        if not verb.is_file() or not seed_is_untouched(ledger.read_text(encoding="utf-8")):  # ledger-read: the adopter's seed, one file by design
+        if not verb.is_file() or not _ledger_is_the_untouched_seed(ledger):
             return outcome
     except (OSError, ValueError):
         return outcome
@@ -2782,21 +2780,44 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
             else:
                 why = (proc.stderr.strip().splitlines() or [f"exit {proc.returncode}"])[-1]
                 outcome["failed"].append(f"{row['id']} ({why[:160]})")
+    # Where the rows went is the deployed verb's call (the repository's
+    # ledger_fragments setting, which tools/cc reads): read it off the tree, so
+    # the sentence names a file each under ledger.d/ when that is what it made.
+    rows_dir = ledger.parent / "ledger.d"
+    if any((rows_dir / f"{rid}.md").is_file() for rid in outcome["filed"]):
+        outcome["into"] = [f"{_LEDGER_REL.rsplit('/', 1)[0]}/ledger.d/ (a file each)"]
     return outcome
 
 
 def _onboarding_would_file(repo_root: Path) -> bool:
     """Whether an install would file the onboarding rows here: the ledger is
     absent (its seed would be created) or still the untouched seed."""
-    from espalier.managed_markers import seed_is_untouched
-
     ledger = repo_root / _LEDGER_REL
     if not ledger.exists():
         return True
     try:
-        return seed_is_untouched(ledger.read_text(encoding="utf-8"))  # ledger-read: the adopter's seed, one file by design
+        return _ledger_is_the_untouched_seed(ledger)
     except (OSError, ValueError):
         return False
+
+
+def _ledger_is_the_untouched_seed(ledger: Path) -> bool:
+    """Whether nothing has been filed into the adopter's ledger yet: its file
+    is still the seed init wrote, and no row lives in a file of its own
+    beside it (``task-packs/ledger.d/``, where the repository sets
+    ``ledger_fragments = true``). Read the file alone, a tree that opted in
+    before its first filing kept an untouched seed for good, and every upgrade
+    re-ran the onboarding filings and reported them as failed (failure-mode
+    review, 2026-10-13). Raises ``OSError``/``ValueError`` as the read does."""
+    from espalier.managed_markers import seed_is_untouched
+
+    rows = ledger.parent / "ledger.d"
+    # A row file's name; never a dotfile an editor left, or the directory's
+    # own README or CLAUDE.md (the loader's never_a_record, by the same names).
+    if rows.is_dir() and any(p.suffix == ".md" and not p.name.startswith(".")
+                             and p.name.lower() not in ("readme.md", "claude.md") for p in rows.iterdir()):
+        return False
+    return seed_is_untouched(ledger.read_text(encoding="utf-8"))  # ledger-read: the seed file's own bytes; the row files are asked about above
 
 
 def _onboarding_sentence(outcome: dict[str, list[str]]) -> str | None:
@@ -2805,7 +2826,7 @@ def _onboarding_sentence(outcome: dict[str, list[str]]) -> str | None:
     parts = []
     if outcome["filed"]:
         parts.append(f"filed {plural(len(outcome['filed']), 'onboarding row')} "
-                     f"({', '.join(outcome['filed'])}) into {_LEDGER_REL}")
+                     f"({', '.join(outcome['filed'])}) into {(outcome.get('into') or [_LEDGER_REL])[0]}")
     if outcome["satisfied"]:
         parts.append(f"{', '.join(outcome['satisfied'])} already satisfied by this tree, not filed")
     if outcome["failed"]:
@@ -10103,7 +10124,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         if preview_stages and _onboarding_would_file(repo_root):
             print(f"[upgrade] would file the {len(_ONBOARDING_ROWS)} onboarding rows into "
                   f"{_LEDGER_REL} (each probe driven first; a row this tree already "
-                  "satisfies is skipped), creating task-packs/LEDGER_PROBES.json.")
+                  "satisfies is skipped), creating task-packs/LEDGER_PROBES.json; where "
+                  "espalier.toml sets ledger_fragments = true, a file each under "
+                  "task-packs/ledger.d/ and task-packs/probes.d/ instead.")
     else:
         done = _deploy_seed_docs(repo_root)
         print("[upgrade] re-deployed init-seeded docs: "

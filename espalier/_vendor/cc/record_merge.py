@@ -653,14 +653,18 @@ def regenerate_ledger(text: str, gen, probes_path: Path) -> str:
         if gen.stored_counts(text):
             text, _applied = gen.apply_writable(text, [{"region": "stored-count"}])
         view = loader.ledger_view_from_texts(text, rows)
-        residual = gen.find_drift(view.text) + gen.view_problems(view.problems)
+        # The roster's own problems too (a second probe for one id, a probe
+        # file that does not parse, a stray name): a merge that lands one stops
+        # every ledger verb that touches the id, so it is no merge to commit.
+        residual = gen.find_drift(view.text) + gen.view_problems(view.problems + gen.roster_problems())
     finally:
         gen._PROBES = was
     if residual:
-        shown = "; ".join(f"{d.get('region')} at line {d.get('line')}" for d in residual[:5])
+        shown = "; ".join(f"[{d.get('region')}] {d.get('detail')}" for d in residual[:5])
         more = f" (+{len(residual) - 5} more)" if len(residual) > 5 else ""
-        raise Unresolvable(f"{LEDGER}: the merged ledger does not converge ({shown}{more}) -- "
-                           "resolve by hand, then `python tools/cc/generate_ledger_regions.py --write`")
+        raise Unresolvable(f"{LEDGER}: the merged ledger does not converge: {shown}{more} -- resolve by "
+                           "hand (`python tools/cc/generate_ledger_regions.py --check` names each; its "
+                           "`--write` repairs a stored total only)")
     return text
 
 

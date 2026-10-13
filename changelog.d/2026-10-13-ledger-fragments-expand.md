@@ -16,7 +16,9 @@
   and never written back; `python tools/cc/_record_fragments.py ledger` prints
   it. The generator's check, the probe runner, the record merge, the board, the
   landing check, the trend and the census scripts read it, and a row file the
-  view cannot place is reported, never dropped.
+  view cannot place is reported, never dropped. `python
+  tools/cc/_record_fragments.py probes` prints the roster the same way: the
+  file's entries, then the probe files.
 
 ### Changed
 
@@ -25,3 +27,15 @@
   conflict on one row file by name (two writers on one id), both `.gitignore`
   blocks re-include the directories (`upgrade` delivers the adopter's), and the
   files ship with the ledger.
+- **On a tree that keeps rows as files, a ledger verb refuses only on what it
+  would make worse.** A problem the tree already carried about another row (a
+  stray file beside the rows, a second probe for one id) is printed as a note
+  and the filing, strike or re-pin goes ahead; one about a row the verb
+  touches, or one its own write would add, still refuses. `--check`, the
+  ledger's CI gate and the record merge hold the tree to every problem, the
+  roster's own included. A tree that has not opted in refuses on every
+  problem, as before. What an operating system or an editor leaves in the two
+  directories (`.DS_Store`, a swap file, a `~` backup) is never read as a row.
+- **A strike retires its probe before it writes the struck row,** so one that
+  dies part-way leaves a live row with no probe, which running the strike
+  again finishes.

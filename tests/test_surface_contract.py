@@ -422,8 +422,11 @@ class TestShippedPackBoundary:
             f"{sorted(sc.SHIPPED_TASK_PACK_FILES)} -- move both together"
         )
         # One TP-*.md re-include per shipped pack directory, plus the directory
-        # re-include Deferred/ needs so its packs can be re-included at all.
-        expected_globs = {f"{d}/TP-*.md" for d in sc.SHIPPED_PACK_DIRS} | {"task-packs/Deferred/"}
+        # re-include Deferred/ needs so its packs can be re-included at all, plus
+        # one per record directory the classifier ships whole (the ledger's row
+        # and probe files, since 2026-10-13).
+        expected_globs = ({f"{d}/TP-*.md" for d in sc.SHIPPED_PACK_DIRS} | {"task-packs/Deferred/"}
+                          | set(sc.SHIPPED_TASK_PACK_DIRS))
         assert globs == expected_globs, (
             f".gitignore pack re-includes {sorted(globs)} vs the shipped pack dirs "
             f"{sc.SHIPPED_PACK_DIRS} -> {sorted(expected_globs)}"

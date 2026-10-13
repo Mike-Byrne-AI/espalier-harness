@@ -1396,11 +1396,32 @@ def test_the_probes_file_is_byte_stable_under_its_own_serializer():
     p = REPO_ROOT / "task-packs" / "LEDGER_PROBES.json"
     if not p.is_file():
         pytest.skip("self-host only: the probes file is absent on this tree")
-    text = p.read_text(encoding="utf-8")
+    text = p.read_text(encoding="utf-8")  # ledger-read: the roster file's own bytes (the probe files' twin pin is below)
     assert json.dumps(json.loads(text), indent=1, ensure_ascii=False) + "\n" == text, (
         "task-packs/LEDGER_PROBES.json is not byte-stable under ledger_row.py's own "
         "serializer -- something reformatted it; write it through the verbs only"
     )
+
+
+@pytest.mark.contract
+def test_every_row_and_probe_file_is_in_the_verbs_own_spelling(lr):
+    """The same pin for the ledger's rows and probes as one file each
+    (``ledger_fragments``): a probe file is one entry in the roster's spelling,
+    and a row file is the class line, the member row and its index lines, as
+    ``ledger_row.py`` writes them. A hand-reformatted file re-pins nothing and
+    rides along in the next verb's diff."""
+    rows_dir, probes_dir = REPO_ROOT / "task-packs" / "ledger.d", REPO_ROOT / "task-packs" / "probes.d"
+    off = []
+    for p in sorted(probes_dir.glob("*.json")) if probes_dir.is_dir() else []:
+        text = p.read_text(encoding="utf-8")
+        if json.dumps(json.loads(text), indent=1, ensure_ascii=False) + "\n" != text:
+            off.append(p.name)
+    for p in sorted(rows_dir.glob("*.md")) if rows_dir.is_dir() else []:
+        frag = lr._FRAG.parse_ledger_fragment(p.name, p.read_text(encoding="utf-8"))
+        if isinstance(frag, str) or lr._row_file_text(frag.section, frag.member, frag.index) != p.read_text(
+                encoding="utf-8"):
+            off.append(p.name)
+    assert not off, f"row or probe files not in the verbs' spelling (write them through the verbs only): {off}"
 
 
 # ── the verbs read the mail channel's claims before they write ───────────────

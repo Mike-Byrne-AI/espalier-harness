@@ -229,7 +229,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        24, "7a11e3bf3f3da82190027d29bc978c3910a26f707f70924506a836fb9ee72cb0",
+        25, "d399fc45625607db4d68ab48ed2b8a29d220bc025e10d65faa46845df651c12f",
         "MIXED",
         "Lane 6 (DEF-806). Seven rows walk `PLAN_READERS`, the engine's hand-kept "
         "pair of plan-reading cc/ docs, asserting per member that a plan writer "
@@ -284,7 +284,11 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "its silent drop is inert, while the direction that hurts, a group the census would never "
         "run, reds by name); and the gated subset of `SELF_HOST_PIN_CARRIERS` is held EQUAL to the "
         "gated paths git sees the pin refresh change, so a carrier the roster drops while the verb "
-        "still writes it reds as surely as one the verb stops writing.",
+        "still writes it reds as surely as one the verb stops writing."
+        " The twenty-fifth (2026-10-13, the row-files lane: an opted-in install files its "
+        "onboarding rows as files) holds the stems of the row files the install wrote EQUAL to "
+        "`_ONBOARDING_ROWS`' ids, both directions: a row filed into the big file instead, or one "
+        "missing, reds by name; a row dropped from the tuple is a design change, same verdict.",
     ),
     # 1 row(s), shapes: for-assert
     "tests/test_fuse.py": (

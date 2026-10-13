@@ -18,7 +18,9 @@ corpus; and only a **compact summary** returns to the main window (the two-hop
 anti-bloat dataflow — verbose rationales never reach the orchestrator chat). The
 machinery lives in `espalier/fan_out_findings.py`
 (`FINDING_SCHEMA` + `aggregate_findings` + `append_findings_to_corpus`); the
-cross-round dedup source is `task-packs/FORWARD_LEDGER.md` (live rows plus the
+cross-round dedup source is the forward ledger, `task-packs/FORWARD_LEDGER.md`
+with any rows kept one file each under `task-packs/ledger.d/` (read as one by
+`python tools/cc/_record_fragments.py ledger`; live rows plus the
 section-6 do-not-rediscover entries); the shared findings corpus retired to the
 record branch on 2026-09-21.
 
@@ -196,8 +198,10 @@ instruction in the repo toward exactly that outcome.
   least-attacked-surface dimensions, a general adversarial refute, and a one-hop
   persist to its per-round report (a dated one-off: it writes no finding-ledger
   row). Copy it and edit the `DIMENSIONS` for your surface.
-- **Dedup source:** `task-packs/FORWARD_LEDGER.md` (live rows + section-6
-  do-not-rediscover; the shared findings corpus retired 2026-09-21). The
+- **Dedup source:** the forward ledger as its readers see it,
+  `python tools/cc/_record_fragments.py ledger` (`task-packs/FORWARD_LEDGER.md`
+  with any rows kept one file each under `task-packs/ledger.d/`; live rows +
+  section-6 do-not-rediscover; the shared findings corpus retired 2026-09-21). The
   per-round report under `reports/` is the round's own record.
 - **Per-run ledger:** `cc/finding_ledger.jsonl` (`espalier/finding_ledger.py`) — one
   run-boundaried JSON record per fan-out (scalars + raw survivors); the structured
@@ -247,7 +251,9 @@ full (3) is reserved for the pre-launch "this is it" sweep. The convergence-crit
 
 **Classification guard — deferred-intentional ≠ abandoned.** Any finder flagging a
 half-finished / abandoned / supplanted / orphaned item MUST cross-reference the Forward
-Ledger (`task-packs/FORWARD_LEDGER.md` — its `DEF-*` / `drafted-pack` entries) and in-code
+Ledger (`task-packs/FORWARD_LEDGER.md` and any row files under `task-packs/ledger.d/`,
+read as one by `python tools/cc/_record_fragments.py ledger` — its `DEF-*` /
+`drafted-pack` entries) and in-code
 dormant notes before scoring it a defect. A documented deferral (a ledger entry, or an
 `audit_accuracy`-style "planned / dormant / not-yet-built" docstring) is a KEEP, not rot.
 The refute stage rejects any "dead / half-finished" finding whose subject is a

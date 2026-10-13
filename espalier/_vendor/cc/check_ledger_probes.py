@@ -773,8 +773,15 @@ def _run(args: argparse.Namespace) -> int:
         # (a missing file is an empty list there). A probe file that does not
         # parse is refused like a roster that does not: never read as "no probe".
         roster = loader.probe_roster_at(_PROBES)
-        if roster.problems:
-            raise ValueError("; ".join(roster.problems))
+        # A name beside the probe files that is not one (a merge tool's .orig)
+        # holds no probe the run would miss: say it and go on. Anything else
+        # the view could not read -- a probe file that does not parse, a second
+        # probe for one id -- refuses the run, as an unreadable roster does.
+        strays = [p for p in roster.problems if p.split(":", 1)[0] in roster.skipped]
+        for p in strays:
+            print(f"NOTE: {p}")
+        if len(strays) < len(roster.problems):
+            raise ValueError("; ".join(p for p in roster.problems if p not in strays))
         _doc = roster.data
         probes = _doc.get("probes", [])
         # A file that PARSES can still be empty or renamed-key, which reported

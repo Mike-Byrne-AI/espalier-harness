@@ -2209,9 +2209,13 @@ _PROBE_FILE = _LEDGER.parent / "LEDGER_PROBES.json"
 
 
 def _probe_index() -> dict[str, dict]:
-    """The roster's view: the file's entries and every probe file beside it."""
-    return {p["id"]: p for p in _record_fragments().probe_roster_at(_PROBE_FILE).data["probes"]
-            if p.get("id")}
+    """The roster's view: the file's entries and every probe file beside it.
+    A roster the view could not read whole (a second probe for one id, a probe
+    file that does not parse) is no index to judge rows by: the dict would
+    keep one of two entries, or none, and pass over the other."""
+    roster = _record_fragments().probe_roster_at(_PROBE_FILE)
+    assert not roster.problems, f"the probe roster has problems: {roster.problems}"
+    return {p["id"]: p for p in roster.data["probes"] if p.get("id")}
 
 
 # _live_member_ids is imported above from the generator (single home).
@@ -2271,7 +2275,7 @@ def test_the_live_roster_stores_no_total():
 
     # The roster FILE itself, not its view: this pins the file's own bytes (a
     # stored total, a repeated key), which no probe file can carry for it.
-    doc = json.loads(_PROBE_FILE.read_text(encoding="utf-8"), object_pairs_hook=no_repeats)
+    doc = json.loads(_PROBE_FILE.read_text(encoding="utf-8"), object_pairs_hook=no_repeats)  # ledger-read: the roster file's own bytes
     assert "_count" not in doc, (
         f"{_PROBE_FILE.name} stores `_count` ({doc['_count']}) again: a lane branched before "
         "2026-10-12 wrote it back at its catch-up. Drop it with the record merge's own step, "

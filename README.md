@@ -704,7 +704,9 @@ on Python, TypeScript, Go, Rust, or polyglot codebases.
 The **agent and command roster** is dogfooded prose; "What you get day to
 day" above says what that means for your repo. The forward-work tracker ships
 with the source at
-[`task-packs/FORWARD_LEDGER.md`](https://github.com/Mike-Byrne-AI/espalier-harness/blob/main/task-packs/FORWARD_LEDGER.md):
+[`task-packs/FORWARD_LEDGER.md`](https://github.com/Mike-Byrne-AI/espalier-harness/blob/main/task-packs/FORWARD_LEDGER.md),
+its newer rows kept one file each beside it in
+[`task-packs/ledger.d/`](https://github.com/Mike-Byrne-AI/espalier-harness/tree/main/task-packs/ledger.d):
 a non-zero count there is disclosure, not backlog. Every defect we know of is a
 row a stranger can act on, counted apart by population, and the file's own
 contract says what its count does and does not mean.

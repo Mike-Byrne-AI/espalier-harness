@@ -481,6 +481,30 @@ LEDGER_FRAGMENTS_KEY = "ledger_fragments"
 _ID_SHAPE = r"[A-Z]{2,5}-\d+[a-z]*"
 LEDGER_NAME_RE = re.compile(rf"^({_ID_SHAPE})\.md$")
 PROBE_NAME_RE = re.compile(rf"^({_ID_SHAPE})\.json$")
+#: The one other name either directory may hold: its own README, which no
+#: reader takes as a record and no gate calls a stray.
+DIRECTORY_README = "README.md"
+#: A directory's own documents, in any case: its README and the folder
+#: ``CLAUDE.md`` this repository writes beside the files it governs.
+_DIRECTORY_DOCS = frozenset(name.lower() for name in (DIRECTORY_README, "CLAUDE.md"))
+#: Names an operating system or an editor leaves in any directory it opens.
+_OS_DROPPINGS = frozenset({"Thumbs.db", "desktop.ini"})
+#: A byte-order mark, spelled by code point so no editor folds it away.
+_BOM = chr(0xFEFF)
+
+
+def never_a_record(name: str) -> bool:
+    """Whether a name under a fragment directory is one no writer here makes
+    and no reader takes as a record, so it is skipped without a word: a
+    dotfile (Finder's ``.DS_Store``, a macOS ``._`` file, a vim swap file,
+    ``.gitkeep``), an editor's backup (``name~``, ``#name#``), Windows's
+    ``Thumbs.db``, or the directory's own README or ``CLAUDE.md``. The
+    repository's ``.gitignore`` already ignores the droppings, so CI never sees
+    one; counted as strays, one Finder visit stopped every ledger verb on the
+    box (review, driven 2026-10-13). Any other name that is not a record's is
+    a stray, and the views name it."""
+    return (name.startswith(".") or name.endswith("~") or (len(name) > 1 and name[0] == name[-1] == "#")
+            or name in _OS_DROPPINGS or name.lower() in _DIRECTORY_DOCS)
 #: The name a writer gives a file under each fragment directory: a dated name
 #: for the Session Log and the changelog, the row's or probe's id for the
 #: ledger's two. The record-file lists' copies (``ci_guard``, ``_hook_utils``,
@@ -503,6 +527,23 @@ _CLASS_LINE_RE = re.compile(r"^<!-- class: (§C\d+) -->[ \t]*$")
 _CELL_ID_RE = re.compile(r"`([^`]+)`")
 _ID_SHAPE_RE = re.compile(rf"^{_ID_SHAPE}$")
 _ID_PARTS_RE = re.compile(r"^([A-Z]+)-(\d+)([a-z]*)$")
+
+
+def is_ledger_record(rel: str) -> bool:
+    """Whether a repo-relative path (either slash) is the forward ledger's
+    record wherever a row lives: the ledger, its roster, or a file under one of
+    their two directories. The one answer for a rule that exempts (or reads)
+    the ledger by name, so a row in its own file is held the same way."""
+    rel = rel.replace("\\", "/")
+    return rel in (LEDGER_FILE, PROBES_FILE) or rel.startswith((LEDGER_DIR + "/", PROBES_DIR + "/"))
+
+
+def is_dated_fragment(rel: str) -> bool:
+    """Whether a repo-relative path (either slash) is under the Session Log's
+    or the changelog's fragment directory: the dated records a rule that
+    exempts ``ESPALIER_MEMORY.md`` or ``CHANGELOG.md`` exempts too."""
+    rel = rel.replace("\\", "/")
+    return rel.startswith((SESSION_LOG_DIR + "/", CHANGELOG_DIR + "/"))
 
 
 def ledger_fragments_setting(root: Path) -> tuple[bool, str]:
@@ -559,6 +600,10 @@ def parse_ledger_fragment(name: str, text: str) -> LedgerFragment | str:
     """A row file's parts, or why it cannot be read: its first line names a
     class, its second is a member row whose first id is the file's name, and
     every later table line is an index line for one of the row's ids."""
+    # A byte-order mark is not part of the class line, whether the text came
+    # from a file (``strict_text`` drops it) or from a blob a trend reader
+    # decoded as plain UTF-8.
+    text = text[1:] if text.startswith(_BOM) else text
     lines = [ln for ln in text.replace("\r\n", "\n").split("\n") if ln.strip()]
     if len(lines) < 2:
         return f"{name}: a row file holds a class line and a member row"
@@ -619,6 +664,13 @@ def ledger_view_from_texts(ledger_text: str, fragments: "Sequence[tuple[str, str
     for name, text in sorted(fragments, key=lambda pair: pair[0]):
         if not LEDGER_NAME_RE.match(name):
             skipped.append(name)
+            if not never_a_record(name):
+                # A verb writes a row file through <name>.tmp and retires its
+                # probe first, so a .tmp is a write that never finished: the
+                # verb, run again, writes it whole.
+                problems.append(f"{name}: not a row-file name (<id>.md) -- a mis-cased id: rename it to "
+                                "<id>.md; a crashed write's .tmp: delete it and run the verb again; a backup "
+                                f"(a merge tool's .orig): delete it or move it out of {LEDGER_DIR}/")
             continue
         if text is None:
             problems.append(f"{name}: unreadable, or not UTF-8")
@@ -659,7 +711,10 @@ def ledger_view_from_texts(ledger_text: str, fragments: "Sequence[tuple[str, str
             (j for j in range(app + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
         at = None if app is None else _table_end(lines, app + 1, end, _APPENDIX_B_ROW_RE)
         if at is None:
-            problems.append(f"{LEDGER_FILE} has no Appendix B table for the row files' index lines")
+            # One problem per row file, named: a verb's refusal keys on the
+            # rows it touches, and one line for every file named none of them.
+            problems.extend(f"{f.name}: {LEDGER_FILE} has no Appendix B table for its index lines"
+                            for f in placed if f.index)
         else:
             inserts.append((at, index_lines))
     for at, block in sorted(inserts, key=lambda p: p[0], reverse=True):
@@ -677,6 +732,10 @@ def strict_text(path: Path) -> str:
     CLOSED on bytes that are not UTF-8 (a structured answer, never a reading
     with a replaced character: ``DEF-829``), unlike the Session Log's, which
     are only shown. Raises ``OSError`` or ``UnicodeDecodeError``."""
+    # Plain utf-8, as every verb reads the two files: a reader that dropped a
+    # byte-order mark the verbs' own reads keep passed a marked roster in CI
+    # while every verb crashed on it (failure-mode review, driven 2026-10-13). A
+    # row or probe file's mark is dropped where the file is parsed.
     return path.read_bytes().decode("utf-8").replace("\r\n", "\n")
 
 
@@ -771,17 +830,42 @@ def probe_roster_from_texts(roster_text: str | None,
     data["probes"] = list(legacy) if isinstance(legacy, list) else []
     skipped: list[str] = []
     problems: list[str] = []
+    # One probe per id, wherever it lives: a second entry for an id in the file,
+    # or a probe file for an id the file already carries, is a second home --
+    # a re-pin would stamp one and leave the other stale, unseen.
+    homes: dict[str, str] = {}
+    for entry in data["probes"]:
+        rid = entry.get("id") if isinstance(entry, dict) else None
+        if not rid:
+            # A verb looks every entry up by its id; one without stopped every
+            # strike with a KeyError while every reader passed it (failure-mode review).
+            problems.append(f"{PROBES_FILE}: an entry carries no id -- give it its row's id, or delete it")
+            continue
+        if rid in homes:
+            problems.append(f"{PROBES_FILE}: {rid} has two entries -- keep one")
+        homes[rid] = PROBES_FILE
     entries: list[tuple[tuple[str, int, str], dict]] = []
     for name, text in sorted(fragments, key=lambda pair: pair[0]):
         m = PROBE_NAME_RE.match(name)
         if not m:
             skipped.append(name)
+            if not never_a_record(name):
+                # A filing writes its probe file last: a .tmp here is a filing
+                # that died after its row, which no verb finishes yet (the
+                # probe runner names the row as having no probe).
+                problems.append(f"{name}: not a probe-file name (<id>.json) -- a mis-cased id: rename it to "
+                                "<id>.json; a crashed write's .tmp: delete it (a filing that died here left "
+                                "its row with no probe, which the probe runner names); a backup: delete it "
+                                f"or move it out of {PROBES_DIR}/")
             continue
+        if m.group(1) in homes:
+            problems.append(f"{name}: {m.group(1)} also has a probe in {homes[m.group(1)]} -- keep one: "
+                            "delete this file, or the entry there")
         if text is None:
             problems.append(f"{name}: unreadable, or not UTF-8")
             continue
         try:
-            entry = json.loads(text)
+            entry = json.loads(text[1:] if text.startswith(_BOM) else text)
         except json.JSONDecodeError as exc:
             problems.append(f"{name}: not JSON ({exc.msg})")
             continue
@@ -824,6 +908,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("rows", help="print the Session Log rows, newest first, as the readers see them")
     sub.add_parser("ledger", help="print the forward ledger as its readers see it: the file with "
                                   "task-packs/ledger.d/ placed in it (never written back)")
+    sub.add_parser("probes", help="print the probe roster as its readers see it: the file's entries, "
+                                  "then task-packs/probes.d/ (never written back)")
     prune = sub.add_parser("prune", help="archive and delete the Session Log fragments beyond the cap")
     prune.add_argument("--keep", type=int, default=SESSION_LOG_CAP)
     prune.add_argument("--dry-run", action="store_true")
@@ -872,6 +958,21 @@ def main(argv: list[str] | None = None) -> int:
         for problem in view.problems:
             print(f"(not placed: {problem})", file=sys.stderr)
         return 1 if view.problems else 0
+    if args.verb == "probes":
+        import json  # stdlib, imported here as the roster's reader does
+
+        try:
+            roster = probe_roster_at(root / PROBES_FILE)
+        except OSError as exc:
+            print(f"cannot read {PROBES_FILE}: {exc.strerror or type(exc).__name__}", file=sys.stderr)
+            return 2
+        except ValueError as exc:  # not JSON, or not UTF-8 (the strict decode)
+            print(f"cannot read {PROBES_FILE}: {type(exc).__name__}", file=sys.stderr)
+            return 2
+        sys.stdout.write(json.dumps(roster.data, indent=1, ensure_ascii=False) + "\n")
+        for problem in roster.problems:
+            print(f"(not read: {problem})", file=sys.stderr)
+        return 1 if roster.problems else 0
     rows = prune_session_log(root, keep=args.keep, dry_run=args.dry_run)
     verb = "would prune" if args.dry_run else "pruned"
     if rows:

@@ -1773,6 +1773,28 @@ class TestLedgerSeed:
         assert f"STILL_OPEN         {opened}" in out
         assert f"NO_ORACLE          {len(_ONBOARDING_ROWS) - opened}" in out
 
+    def test_an_opted_in_tree_gets_its_rows_as_files_and_is_told_so(self, tmp_path):
+        """``ledger_fragments = true`` before the first install: the deployed
+        verb writes a row file and a probe file per row, the seed file stays
+        the untouched seed, the sentence names where the rows went, and a
+        second install files nothing. Dies to: the sentence naming the big
+        file (round-2 review), or the onboarding gate reading the seed file
+        alone (every upgrade re-filed and failed)."""
+        from espalier.cli import _ONBOARDING_ROWS, _onboarding_sentence
+
+        (tmp_path / "espalier.toml").write_text("ledger_fragments = true\n", encoding="utf-8")
+        outcome = self._install(tmp_path)
+        ids = [r["id"] for r in _ONBOARDING_ROWS]
+        assert outcome["filed"] == ids and outcome["failed"] == []
+        packs = tmp_path / "task-packs"
+        assert sorted(p.stem for p in (packs / "ledger.d").glob("*.md")) == sorted(ids)
+        assert "into task-packs/ledger.d/ (a file each)" in _onboarding_sentence(outcome)
+        gen = self._cc("generate_ledger_regions")
+        assert gen.main(["--root", str(tmp_path), "--check"]) == 0
+        seed = (packs / "FORWARD_LEDGER.md").read_bytes()
+        assert self._install(tmp_path) == {"filed": [], "satisfied": [], "failed": []}
+        assert (packs / "FORWARD_LEDGER.md").read_bytes() == seed
+
     def test_a_second_install_files_nothing_again(self, tmp_path):
         self._install(tmp_path)
         ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"

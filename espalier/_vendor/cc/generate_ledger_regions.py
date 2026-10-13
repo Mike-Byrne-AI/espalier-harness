@@ -934,6 +934,20 @@ def render_counts(text: str) -> str:
     return "\n".join(out)
 
 
+def roster_problems() -> list[str]:
+    """What the roster's view at ``_PROBES`` could not read: a probe file that
+    does not parse, a second probe for one id, a stray name beside the probe
+    files. Empty when there is neither a roster file nor a probe directory,
+    and when the roster file itself cannot be read (its own reader refuses
+    that, by name)."""
+    if not _PROBES.is_file() and not record_fragments().probe_fragment_dir(_PROBES).is_dir():
+        return []
+    try:
+        return list(record_fragments().probe_roster_at(_PROBES).problems)
+    except (OSError, ValueError):  # strict decode: the probe runner refuses the file itself (DEF-829)
+        return []
+
+
 def _probe_ids() -> set[str]:
     """Ids carried by the roster's view at ``_PROBES`` (the file's entries and
     the probe files beside it), or an empty set when there is neither."""
@@ -1267,7 +1281,7 @@ def _run_unlocked(args: argparse.Namespace) -> int:
         print(render_counts(text))
         return 0
 
-    drift = find_drift(text) + view_problems(view.problems)
+    drift = find_drift(text) + view_problems(view.problems + roster_problems())
 
     if args.write and drift:
         new_text, applied = apply_writable(file_text, drift)

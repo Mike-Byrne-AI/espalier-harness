@@ -229,7 +229,16 @@ back -- so this file alone no longer shows every row:
 
 ```bash
 python3 tools/cc/_record_fragments.py ledger   # the whole ledger, as every tool reads it
+python3 tools/cc/_record_fragments.py probes   # every probe: the roster and task-packs/probes.d/
 ```
+
+Here a verb refuses only on a problem its own write would leave, or one about a row it
+touches; a problem the tree already carried about another row (a stray file beside the rows,
+a second probe for one id) is printed as a note and the write goes ahead, and
+`generate_ledger_regions.py --check` and this repository's CI gate hold the tree to every
+problem. Files an operating system or an editor leaves (`.DS_Store`, a swap file, a `~`
+backup) and a directory's README or CLAUDE.md are never read as rows. A tree that has not
+opted in refuses on every problem, as the verbs always did.
 
 
 ## How to read a status tag
