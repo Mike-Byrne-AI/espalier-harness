@@ -36,10 +36,14 @@ from pathlib import Path
 
 #: The fragment directories, repo-relative with forward slashes, no trailing
 #: slash. ``FRAGMENT_DIRS`` spells them with one, the form the record-file
-#: lists use for a directory entry.
+#: lists use for a directory entry. The forward ledger's two (its rows and its
+#: probes) are defined with the ledger section below.
 SESSION_LOG_DIR = "memory/session-log.d"
 CHANGELOG_DIR = "changelog.d"
-FRAGMENT_DIRS: tuple[str, ...] = (SESSION_LOG_DIR + "/", CHANGELOG_DIR + "/")
+LEDGER_DIR = "task-packs/ledger.d"
+PROBES_DIR = "task-packs/probes.d"
+FRAGMENT_DIRS: tuple[str, ...] = (SESSION_LOG_DIR + "/", CHANGELOG_DIR + "/",
+                                  LEDGER_DIR + "/", PROBES_DIR + "/")
 
 MEMORY_FILE = "ESPALIER_MEMORY.md"
 CHANGELOG_FILE = "CHANGELOG.md"
@@ -469,16 +473,25 @@ def _branch(root: Path) -> str:
 
 LEDGER_FILE = "task-packs/FORWARD_LEDGER.md"
 PROBES_FILE = "task-packs/LEDGER_PROBES.json"
-#: Each directory sits beside its file: the verbs take the two file paths and
-#: find the directories from them.
-LEDGER_DIR = "task-packs/ledger.d"
-PROBES_DIR = "task-packs/probes.d"
+#: Each directory (``LEDGER_DIR``, ``PROBES_DIR``, above) sits beside its
+#: file: the verbs take the two file paths and find the directories from them.
 LEDGER_FRAGMENTS_KEY = "ledger_fragments"
 
 #: ``generate_ledger_regions._ID_SHAPE``: ``DEF-536``, ``LG-1``, ``DEF-371a``.
 _ID_SHAPE = r"[A-Z]{2,5}-\d+[a-z]*"
 LEDGER_NAME_RE = re.compile(rf"^({_ID_SHAPE})\.md$")
 PROBE_NAME_RE = re.compile(rf"^({_ID_SHAPE})\.json$")
+#: The name a writer gives a file under each fragment directory: a dated name
+#: for the Session Log and the changelog, the row's or probe's id for the
+#: ledger's two. The record-file lists' copies (``ci_guard``, ``_hook_utils``,
+#: ``record_merge``) read one pattern per directory and are pinned to these,
+#: so another tool's file in a directory of the same name is not a record file.
+FRAGMENT_NAMES: dict[str, "re.Pattern[str]"] = {
+    SESSION_LOG_DIR + "/": SESSION_LOG_NAME_RE,
+    CHANGELOG_DIR + "/": CHANGELOG_NAME_RE,
+    LEDGER_DIR + "/": LEDGER_NAME_RE,
+    PROBES_DIR + "/": PROBE_NAME_RE,
+}
 #: ``generate_ledger_regions._SECTION_HEADING``.
 _SECTION_HEADING_RE = re.compile(r"^### (§C\d+)\b")
 #: ``generate_ledger_regions._MEMBER_ROW``: a table row opening with an id.

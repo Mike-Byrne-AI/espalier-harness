@@ -2490,6 +2490,25 @@ class TestRecordFileMarkers:
         now = dt.datetime(2026, 10, 10, 23, 30, 9)
         assert ci._FRAGMENT_NAME_RE.match(rf.session_log_name(now, "win-2"))
         assert ci._FRAGMENT_NAME_RE.match(f"2026-10-10-{rf.lane_slug('lane/parallel-work-c')}.md")
+        # The ledger's two take the loader's own patterns, so a row or probe
+        # file the verbs write is never one the gate skips.
+        for d in ("task-packs/ledger.d/", "task-packs/probes.d/"):
+            assert ci._FRAGMENT_NAMES[d].pattern == rf.FRAGMENT_NAMES[d].pattern, d
+        assert set(ci._FRAGMENT_NAMES) == set(rf.FRAGMENT_DIRS)
+
+    def test_a_marker_in_a_probe_file_is_refused_by_file_and_line(self, fresh_repo):
+        """A probe file is JSON, not markdown: the scan reads each directory by
+        its own name rule. Mutation seen red: the scan reads ``*.md`` only."""
+        env = _git_env()
+        _git(["checkout", "-b", "feature"], fresh_repo, env)
+        _commit(
+            fresh_repo, "task-packs/probes.d/DEF-9.json",
+            "{\n" + _OPEN + " HEAD\n \"id\": \"DEF-9\"\n" + _MID + "\n \"id\": \"DEF-9\"\n" + _CLOSE + " x\n}\n",
+            "half-merged probe file",
+        )
+        result = _run_guard(fresh_repo)
+        assert result.returncode == 2, result.stdout + result.stderr
+        assert "task-packs/probes.d/DEF-9.json:2: " + _OPEN in result.stdout
 
     def test_the_approval_marker_does_not_waive_it(self, fresh_repo):
         """A push reads the marker from the HEAD commit message; the record

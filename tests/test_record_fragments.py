@@ -418,8 +418,11 @@ _ONE_DIRECTORY_SITES = {
 _SHIP_DECISIONS = {
     "memory/session-log.d/": ("internal", "the dev log, which ships in no artifact, as ESPALIER_MEMORY.md does not"),
     "changelog.d/": ("public", "unreleased changelog entries, which the release fold reads"),
+    "task-packs/ledger.d/": ("public", "the forward ledger's rows, which ship with the ledger"),
+    "task-packs/probes.d/": ("public", "the ledger's probes, which ship with the roster"),
 }
-_DIR_TOKEN_RE = re.compile(r"(?<![\w.-])((?:[\w.-]+/)*(?:session-log|changelog)\.d)(?=/|$|[^\w.-])")
+_DIR_TOKEN_RE = re.compile(
+    r"(?<![\w.-])((?:[\w.-]+/)*(?:session-log|changelog|ledger|probes)\.d)(?=/|$|[^\w.-])")
 
 
 def _dir_literals(root: Path) -> dict[str, list[str]]:
@@ -433,7 +436,7 @@ def _dir_literals(root: Path) -> dict[str, list[str]]:
             if "/_vendor/" in rel or "/assets/" in rel:
                 continue
             text = p.read_text(encoding="utf-8", errors="replace")
-            if "session-log.d" not in text and "changelog.d" not in text:
+            if not any(f"{name}.d" in text for name in ("session-log", "changelog", "ledger", "probes")):
                 continue
             tree = ast.parse(text)
             docs = set()

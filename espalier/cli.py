@@ -4007,6 +4007,13 @@ _FOREIGN_KEY_SENTENCES: dict[str, tuple[str, str]] = {
         "# so a changelog.d/ another changelog tool keeps (scriv, towncrier) stays its.",
         "changelog_fragments = true",
     ),
+    "ledger_fragments": (
+        "Write each forward-ledger row and its probe as a file of its own under\n"
+        "# task-packs/ledger.d/ and task-packs/probes.d/ (tools/cc/ledger_row.py),\n"
+        "# so seats filing in parallel never conflict on the ledger. Off when absent:\n"
+        "# the verbs write the two files, and every reader takes both forms.",
+        "ledger_fragments = true",
+    ),
     "handoff_push": (
         "Let /handoff push the lane after it commits the memory row (through\n"
         "# tools/cc/ship.py: a pull request with auto-merge armed). Off when absent:\n"
@@ -4383,11 +4390,17 @@ REQUIRED_GITIGNORE = (
 #: of ``REQUIRED_GITIGNORE`` on purpose: every reader of that tuple -- the
 #: coverage probe, the tracked- and untracked-conflict checks, doctor, the
 #: retire on uninstall -- reads its members as paths to IGNORE, and a ``!``
-#: member would read as "ignore the ledger" in all of them.
+#: member would read as "ignore the ledger" in all of them. The two directory
+#: entries hold the ledger's rows and probes as one file each, where a
+#: repository sets ``ledger_fragments = true``: without them each file the
+#: verbs write is silently untracked. A member ending in ``/`` is a directory,
+#: matched by prefix (``_is_reincluded``).
 GITIGNORE_REINCLUDES = (
     "!/task-packs/CLAUDE.md",
     "!/task-packs/FORWARD_LEDGER.md",
     "!/task-packs/LEDGER_PROBES.json",
+    "!/task-packs/ledger.d/",
+    "!/task-packs/probes.d/",
 )
 #: The rule the re-includes sit under, and the one spelling of it a tree
 #: initialised before they existed carries in the harness block.
@@ -4712,11 +4725,12 @@ def _git_ignorecase(repo_root: Path) -> bool:
 
 def _is_reincluded(rel: str, *, fold: bool) -> bool:
     """True when ``rel`` is one of the paths ``GITIGNORE_REINCLUDES`` keeps
-    tracked beneath ``/task-packs/*`` -- under the block it is not ignored."""
+    tracked beneath ``/task-packs/*``, or a path under one of its directory
+    entries -- under the block it is not ignored."""
     rel = rel.replace("\\", "/")
-    if fold:
-        return rel.casefold() in {p.casefold() for p in REINCLUDED_PATHS}
-    return rel in REINCLUDED_PATHS
+    paths = {p.casefold() for p in REINCLUDED_PATHS} if fold else REINCLUDED_PATHS
+    key = rel.casefold() if fold else rel
+    return key in paths or any(key.startswith(p) for p in paths if p.endswith("/"))
 
 
 def _is_harness_owned(rel: str, managed: set[str], *, fold: bool) -> bool:

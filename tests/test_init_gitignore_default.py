@@ -1210,7 +1210,7 @@ class TestTaskPacksIgnoreMigration:
         lines = (fresh_repo / ".gitignore").read_text(encoding="utf-8").splitlines()
         assert "/task-packs/" not in lines
         at = lines.index(cli.REINCLUDED_UNDER)
-        assert tuple(lines[at + 1:at + 4]) == cli.GITIGNORE_REINCLUDES
+        assert tuple(lines[at + 1:at + 1 + len(cli.GITIGNORE_REINCLUDES)]) == cli.GITIGNORE_REINCLUDES
         assert "Rewrote /task-packs/ as /task-packs/*" in capsys.readouterr().out
         for rel in cli.REINCLUDED_PATHS:
             assert not self._ignored(fresh_repo, rel), rel
@@ -1258,6 +1258,20 @@ class TestTaskPacksIgnoreMigration:
         assert cli.REINCLUDED_UNDER not in status.shared
         assert cli.REINCLUDED_UNDER not in status.withheld
 
+    def test_a_tracked_ledger_row_file_is_not_reported_as_a_collision(self, fresh_repo: Path) -> None:
+        """A tree that keeps its ledger rows as files (``ledger_fragments``):
+        the block re-includes their directory, and git's ``/task-packs/*``
+        matches that directory whole, so its files are read under the
+        directory entry. Dies to: re-included paths matched by exact name."""
+        row = fresh_repo / "task-packs" / "ledger.d" / "DEF-1.md"
+        row.parent.mkdir(parents=True)
+        row.write_text("<!-- class: §C1 -->\n", encoding="utf-8")
+        subprocess.run(["git", "add", "task-packs/ledger.d/DEF-1.md"], cwd=fresh_repo, check=True)
+        status = cli.gitignore_status(fresh_repo)
+        assert cli.REINCLUDED_UNDER in status.missing
+        assert cli.REINCLUDED_UNDER not in status.shared
+        assert cli.REINCLUDED_UNDER not in status.withheld
+
     def test_the_migration_prints_no_false_unanchored_note(self, fresh_repo: Path, capsys) -> None:
         """``/task-packs/`` and ``/task-packs/*`` share a key, and every tree
         carrying the old anchored line was told it "matches at EVERY depth"
@@ -1284,7 +1298,7 @@ class TestTaskPacksIgnoreMigration:
         data = (fresh_repo / ".gitignore").read_bytes()
         body = data.rstrip(b"\r\n")
         assert body.count(b"\n") == body.count(b"\r\n"), "a bare LF crept into a CRLF file"
-        assert data.endswith(b"!/task-packs/LEDGER_PROBES.json")
+        assert data.endswith(cli.GITIGNORE_REINCLUDES[-1].encode("utf-8"))
 
     def test_a_footer_block_with_a_blank_line_and_a_comment_is_still_rewritten(
         self, fresh_repo: Path

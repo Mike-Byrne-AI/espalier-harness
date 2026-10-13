@@ -623,6 +623,53 @@ class TestRowFilesOnATreeThatHasNotOptedIn:
         assert lines[index + 1] == "| `DEF-4` | §C2 | a/DEF-4 |"
 
 
+class TestTheFilesAreTrackedAndShip:
+    """A row or probe file the verbs write is tracked by git and ships with the
+    ledger. Both ``.gitignore`` blocks re-include by name under
+    ``task-packs/*``, so without the two directory lines every file was
+    silently untracked while ``file`` reported success (measured 2026-10-13)."""
+
+    _SHAPES = ("task-packs/ledger.d/DEF-9.md", "task-packs/probes.d/DEF-9.json")
+
+    @staticmethod
+    def _ignored(repo: Path, rel: str) -> bool:
+        from tests._git_oracle import _git_env
+
+        return subprocess.run(["git", "check-ignore", "-q", "--no-index", rel], cwd=repo,
+                              env=_git_env(), timeout=45).returncode == 0
+
+    def test_the_block_init_writes_tracks_them(self, tmp_path):
+        """Dies to: a directory dropped from ``GITIGNORE_REINCLUDES``."""
+        from espalier import cli
+        from tests._git_oracle import _git_env
+
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, env=_git_env(), check=True, timeout=45)
+        (tmp_path / ".gitignore").write_text(
+            "\n".join(cli.render_gitignore_entries(cli.REQUIRED_GITIGNORE)) + "\n", encoding="utf-8")
+        assert self._ignored(tmp_path, "task-packs/TP-1-draft.md")   # the rule is live
+        for rel in self._SHAPES:
+            assert not self._ignored(tmp_path, rel), rel
+
+    def test_this_repositorys_gitignore_tracks_them(self, tmp_path):
+        """The self-host block is its own allow-list (its hand copy is the
+        QUICKSTART's). Dies to: the two lines dropped from ``.gitignore``."""
+        from tests._git_oracle import _git_env
+
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, env=_git_env(), check=True, timeout=45)
+        (tmp_path / ".gitignore").write_bytes((REPO_ROOT / ".gitignore").read_bytes())
+        assert self._ignored(tmp_path, "task-packs/scratch-note.md")   # the allow-list is live
+        for rel in self._SHAPES:
+            assert not self._ignored(tmp_path, rel), rel
+
+    def test_they_ship_with_the_ledger(self):
+        """Dies to: the directories missing from the ship set."""
+        from espalier.surface_contract import classify_release_path, is_local_only
+
+        for rel in self._SHAPES:
+            assert not is_local_only(rel) and classify_release_path(rel) == "public", rel
+        assert is_local_only("task-packs/ledger.d/nested/DEF-9.md")
+
+
 class TestConvergenceReadsThePendingView:
     """``ledger_row._converge`` checks what the write WILL leave: the row
     files on disk with the pending ones applied."""
