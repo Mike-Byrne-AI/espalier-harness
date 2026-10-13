@@ -24,7 +24,7 @@ from typing import Any
 # pattern as the hooks.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _paths  # noqa: E402
-from _json_safe import os_error_text  # noqa: E402
+from _json_safe import os_error_text, run_bounded  # noqa: E402
 
 # Committed project-memory filename, routed through one per-file constant so a
 # future rename is a value flip. Per-file (not a shared import) — tools/cc scripts
@@ -82,7 +82,7 @@ def _git_summary(repo_root: Path) -> "dict[str, Any]":
     if not (repo_root / ".git").exists():
         return {"status": "unknown", "branch": "", "changed_count": 0, "preview": []}
     try:
-        branch_proc = subprocess.run(
+        branch_proc = run_bounded(
             ["git", "-C", str(repo_root), "branch", "--show-current"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=5,
         )
@@ -91,7 +91,7 @@ def _git_summary(repo_root: Path) -> "dict[str, Any]":
         return {"status": "unknown", "branch": "", "changed_count": 0, "preview": [],
                 "warning": f"git probe failed: {os_error_text(exc)}"}
     try:
-        status_proc = subprocess.run(
+        status_proc = run_bounded(
             ["git", "-C", str(repo_root), "status", "--short"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=5,
         )
@@ -128,7 +128,7 @@ def _blueprint_summary(repo_root: Path) -> "dict[str, Any]":
         # silently route the lookup to a different repo. See
         # docs/SHARP_EDGES.md "Subprocesses Inheriting CLAUDE_PROJECT_DIR".
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo_root)}
-        proc = subprocess.run(
+        proc = run_bounded(
             [sys.executable, str(bp_script), "load", "--json"],
             capture_output=True, text=True, encoding="utf-8", check=False, timeout=10,
             cwd=str(repo_root), env=env,
@@ -469,7 +469,7 @@ def _start_session(repo_root: Path) -> bool:
         # _blueprint_summary because it produces a *write* in the wrong
         # place.
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo_root)}
-        proc = subprocess.run(
+        proc = run_bounded(
             [sys.executable, str(bp_script), "start"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=15,
             cwd=str(repo_root), env=env,

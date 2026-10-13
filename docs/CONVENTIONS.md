@@ -278,9 +278,13 @@ discipline applies in spirit, not just to that directory.
   the channel; `_bash_patterns.py` carries a file-level `text-fallback`
   declaration on line 1. The same rule for spawns: a gate spawns through
   `_hook_utils.spawn_checked` (argv[0] resolved through `shutil.which`, a
-  typed `SpawnFailure` instead of a raise) and a reporter's raw
-  `subprocess.run` carries `# spawn: ok <reason>`; `tests/test_spawn_chokepoint.py`
-  is that gate. Two spawn pragma vocabularies coexist on purpose and answer
+  typed `SpawnFailure` instead of a raise) and a reporter's own spawn
+  carries `# spawn: ok <reason>`; `tests/test_spawn_chokepoint.py` is that
+  gate. A spawn with a timeout, anywhere under `tools/cc`, calls `run_bounded`
+  (`_json_safe`, re-exported by `_hook_utils`; `spawn_checked` is built on
+  it), never a raw `subprocess.*` call: on Windows `subprocess.run` waits past
+  its timeout for a grandchild holding the pipe (`docs/SHARP_EDGES.md`), and
+  the same test file refuses the raw form by file and line. Two spawn pragma vocabularies coexist on purpose and answer
   different questions: `# subprocess-contract: ok <reason>` answers the
   `subprocess_contracts` scanner (is this espalier-CLI argv pinned?);
   `# spawn: ok <reason>` answers the chokepoint gate (is this raw spawn

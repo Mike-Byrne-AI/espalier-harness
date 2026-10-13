@@ -88,7 +88,7 @@ def _append_subagent_reasoning(
     # record subagent reasoning into the wrong repo's blueprint chain.
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
     try:
-        result = subprocess.run(  # spawn: ok a reporter's append; a spawn that cannot start is handled where it is caught
+        result = _hook_utils.run_bounded(  # spawn: ok a reporter's append; a spawn that cannot start is handled where it is caught
             argv,
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
@@ -212,7 +212,7 @@ def _changed_markdown(root: Path) -> list[str]:
     conservative answer when we cannot see the tree.
     """
     try:
-        r = subprocess.run(  # spawn: ok a reporter; a git that cannot run lists no changed markdown (declared at its handler)
+        r = _hook_utils.run_bounded(  # spawn: ok a reporter; a git that cannot run lists no changed markdown (declared at its handler)
             ["git", "status", "--porcelain", "--", "*.md", "*.mdx"],
             cwd=str(root), capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=10, check=False,

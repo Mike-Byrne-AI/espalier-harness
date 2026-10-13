@@ -59,6 +59,20 @@ except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates
             return
         import fcntl
         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+# The bounded spawn every timed hook spawn and spawn_checked take from HERE,
+# guarded the same way: a `_json_safe.py` that predates it leaves each call on
+# subprocess.run, unbounded on Windows as before it, never an import crash.
+try:
+    from _json_safe import run_bounded  # noqa: E402
+except ImportError:  # pragma: no cover - a tools/cc/_json_safe.py that predates the bounded spawn
+    def run_bounded(
+        args: Any, *, timeout: float | None = None, input: Any = None,
+        capture_output: bool = False, check: bool = False, **kwargs: Any,
+    ) -> "subprocess.CompletedProcess[Any]":
+        """``subprocess.run``, read when called, so a replaced one is honoured as ``run_bounded`` honours it."""
+        import subprocess
+        return subprocess.run(  # spawn: ok the bounded spawn's fallback, for a _json_safe.py that predates it
+            args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
 
 # shutil / subprocess / tempfile are imported lazily inside the three functions
 # that use them (host_orientation_line, check_branch, atomic_write_text). All
@@ -1066,7 +1080,8 @@ def spawn_checked(
 ) -> "subprocess.CompletedProcess[Any] | SpawnFailure":
     """The spawn a gate routes through. Resolves argv[0] (``resolve_program``)
     and refuses a Windows script shim with a metacharacter argument, then runs
-    the resolved argv; a program that cannot start returns a ``SpawnFailure``
+    the resolved argv through ``run_bounded``, so a ``timeout`` is a bound on
+    Windows too; a program that cannot start returns a ``SpawnFailure``
     instead of raising, so the caller decides what to say. ``TimeoutExpired``
     propagates as today. ``kwargs`` are ``subprocess.run``'s."""
     import subprocess
@@ -1085,10 +1100,10 @@ def spawn_checked(
         # Two pragma vocabularies meet here on purpose: `subprocess-contract: ok`
         # answers the subprocess_contracts scanner (is this espalier-CLI argv
         # pinned?); `spawn: ok` answers tests/test_spawn_chokepoint.py (is this
-        # raw spawn declared?). This call is the chokepoint itself, so it needs
-        # the first and is exempt from the second by position.
+        # raw spawn declared?). This call is the chokepoint, routed onto the
+        # bounded spawn, so it needs the first and not the second.
         # subprocess-contract: ok the chokepoint -- argv is the caller's, argv[0] resolved above; an espalier-signature spawn that routes here carries its own pin at its call site
-        return subprocess.run([resolved, *argv[1:]], **kwargs)
+        return run_bounded([resolved, *argv[1:]], **kwargs)
     except subprocess.TimeoutExpired:
         raise
     except (OSError, ValueError) as exc:  # ValueError: a NUL in an argument
@@ -3311,7 +3326,7 @@ def interpreter_is_python3(name_or_path: str) -> bool:
         except OSError:
             pass
         try:
-            result = subprocess.run(  # spawn: ok the interpreter probe resolves its own token through shutil.which above; a probe that cannot run is a False verdict the banner names
+            result = run_bounded(  # spawn: ok the interpreter probe resolves its own token through shutil.which above; a probe that cannot run is a False verdict the banner names
                 [resolved, *flags, "--version"], capture_output=True, text=True,
                 encoding="utf-8", timeout=2,
             )
@@ -3481,7 +3496,7 @@ def interpreter_meets_floor(name_or_path: str) -> bool:
         # short-circuit to True and bless exactly the host this check exists to
         # catch. The version has to be read.
         try:
-            result = subprocess.run(  # spawn: ok the floor probe resolves its own token through shutil.which above; a probe that cannot run is a False verdict the banner names
+            result = run_bounded(  # spawn: ok the floor probe resolves its own token through shutil.which above; a probe that cannot run is a False verdict the banner names
                 [resolved, *flags, "--version"], capture_output=True, text=True,
                 encoding="utf-8", timeout=2,
             )
@@ -3942,7 +3957,7 @@ def check_branch(root: Path) -> str:
     import subprocess  # deferred: per-tool-call hooks never call check_branch
 
     try:
-        result = subprocess.run(  # spawn: ok a session-start reporter; a git that cannot run costs the branch line, never the banner
+        result = run_bounded(  # spawn: ok a session-start reporter; a git that cannot run costs the branch line, never the banner
             ["git", "branch", "--show-current"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=str(root),
         )

@@ -3218,6 +3218,21 @@
    "row_sha": "b02c759ac57e",
    "text_sha": "4a4b2771fc64",
    "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+  },
+  {
+   "id": "DEF-3004",
+   "subject": "espalier/cli.py",
+   "cmd": "python3 -c \"import ast,pathlib; F={'run','Popen','call','check_output','check_call'}; n=sum(1 for p in pathlib.Path('espalier').rglob('*.py') if not {'_vendor','assets'}&set(p.parts) for c in ast.walk(ast.parse(p.read_text(encoding='utf-8'))) if isinstance(c,ast.Call) and isinstance(c.func,ast.Attribute) and c.func.attr in F and isinstance(c.func.value,ast.Name) and c.func.value.id=='subprocess' and any(k.arg=='timeout' for k in c.keywords)); print(n>0)\"",
+   "open_value": "True",
+   "why_not": null,
+   "inputs": [
+    "espalier/doctor.py",
+    "espalier/freshness.py",
+    "espalier/scanners/freshness.py"
+   ],
+   "row_sha": "a9863ef24740",
+   "text_sha": "1e3768b2250d",
+   "verified_2026_10_13": "OPEN (filed 2026-10-13; probe driven at filing)"
   }
  ],
  "_note": "A probe is retired WITH its row. Leaving the ten C2 probes behind made every future run report ten permanent STRIKE_CANDIDATEs -- a runner that cries wolf trains its reader to ignore it, which is worse than no runner."

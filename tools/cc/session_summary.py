@@ -25,6 +25,7 @@ from pathlib import Path
 # effect.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from read_summary import _project_dir, _safe_mtime  # noqa: E402
+from _json_safe import run_bounded  # noqa: E402
 
 # Cap the resume-index compaction-leg list so a long-lived checkout does not
 # render hundreds of paths. Newest legs are the useful ones; older are elided.
@@ -34,7 +35,7 @@ _COMPACTION_LEG_DISPLAY_CAP = 12
 def _project_root() -> Path:
     """Git toplevel, or cwd when not in a work tree (graceful)."""
     try:
-        out = subprocess.run(
+        out = run_bounded(
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, encoding="utf-8", timeout=10,
         )
@@ -83,7 +84,7 @@ def session_ref(stem: str) -> str:
 
 def _git(root: Path, *args: str) -> str:
     try:
-        out = subprocess.run(
+        out = run_bounded(
             ["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
         )
         return out.stdout.strip() if out.returncode == 0 else ""

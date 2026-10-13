@@ -68,7 +68,7 @@ from typing import Callable
 # Sibling helpers, reached through the script's own directory (both ship in the
 # deploy set; tests/test_deploy_set_import_closure.py pins the reachability).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _json_safe import decode_text_or_problem, fold_newlines, os_error_text  # noqa: E402
+from _json_safe import decode_text_or_problem, fold_newlines, os_error_text, run_bounded  # noqa: E402
 import _merge_rules  # noqa: E402  the up-to-date rule and the stale-base read, shared with the board
 import _paths  # noqa: E402  the hooks-module loader behind the checkout's wiring note
 import record_merge  # noqa: E402  the shape-aware merge of the record files (a deployed sibling)
@@ -150,7 +150,7 @@ def run(argv: list[str], *, timeout: float = DEFAULT_TIMEOUT, input: str | None 
     stdin_kw: dict = {"input": input} if input is not None else {"stdin": subprocess.DEVNULL}
     try:
         # subprocess-contract: ok the argv is the caller's by design (one runner for every verb); each verb's argv is pinned by tests/test_ship_driver.py through the injectable runner
-        result = subprocess.run(
+        result = run_bounded(
             [prog, *argv[1:]], capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=timeout, cwd=cwd, env=env, **stdin_kw,
         )

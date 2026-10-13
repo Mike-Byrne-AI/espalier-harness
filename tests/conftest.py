@@ -542,6 +542,8 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # The spawn chokepoint: every spawn in the hooks is the chokepoint,
             # routed through it, or declared (the stop gate's spawns route).
             "test_spawn_chokepoint",
+            # Its bound: a timeout holds against a grandchild holding the pipe.
+            "test_bounded_spawn",
             "test_security_regression",
             "test_integrity",
             "test_hook_regression",
@@ -1294,6 +1296,9 @@ _SLOW_FILES: set[str] = {
     # Spawns eight appender children per site behind a start barrier, and a
     # locker child per primitive case: a real process tree on every OS.
     "test_file_lock",
+    # A launcher whose child holds the pipe and sleeps, and real git against an
+    # origin whose upload-pack sleeps: each case waits out a 3 s cap.
+    "test_bounded_spawn",
     # The drift matrix drives real `git init` / `commit` in throwaway trees so
     # the commit-subject and ratio census is the detector's own reading, not a
     # string fixture. It lives in its own file so the pure normalizer rows in

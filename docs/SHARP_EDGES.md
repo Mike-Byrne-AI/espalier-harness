@@ -6259,3 +6259,40 @@ sits in and removing nothing when the registry cannot be read. After any removal
 `git worktree list` and check the folder is gone instead of trusting the exit code; a folder
 git unregistered but could not delete is a process holding it, and the session in it must
 be ended (`claude daemon stop` ends background sessions) before the folder goes.
+
+## On Windows, `subprocess.run(timeout=...)` waits for a grandchild that holds the pipe
+
+**What it is:** at the timeout `subprocess.run` kills the child it started and then, on
+Windows only, reads the pipes to their end with no timeout (CPython's `run`:
+`process.kill()`, then `process.communicate()`; on POSIX it only `wait()`s for the killed
+child). A grandchild that inherited stdout or stderr keeps the pipe open, so the call returns
+when the grandchild ends, not at the cap. Two grandchildren are everyday: the program a
+`.bat` shim starts (pyenv-win's `python.bat`), and git itself, because Git for Windows's
+`cmd\git.exe` is a launcher that runs the real git as its child and a network read adds
+`git-remote-https` below that. Driven on Windows 11 with CPython 3.11.9 (2026-10-12): a 2 s
+cap returned after 20.1 s through a shim whose python slept 20 s, and a 1 s cap on
+`git ls-remote` to an unroutable host after 21.1 s. The `TimeoutExpired` still arrives, so
+nothing reads as wrong but the clock; in a hook, a read that overruns its cap can carry the
+hook past Claude Code's own timeout for it (SessionStart's is 15 s), and then the whole
+banner is lost, not the one line.
+
+**How you hit it:** any timed `subprocess.run`, `check_output` or `call` whose program is a
+shim or a launcher, or that reaches the network through git. A test of it reds on a wall
+clock, never on an exception.
+
+**How to avoid it:** under `tools/cc`, call `run_bounded` (`tools/cc/_json_safe.py`; a hook
+takes it from `_hook_utils`). On Windows with a timeout it starts the child under `Popen`,
+ends the whole tree with `taskkill /T /F` at the timeout and drains under a 2 s grace; it is
+`subprocess.run` everywhere else, and so is it where `subprocess.run` has been replaced (a
+test's fake). `spawn_checked` is built on it. Sending the output to files instead of pipes
+also works and needs no tree kill (`tools/cc/checkout_sync.py::spawn`, the SessionStart
+catch-up). `tests/test_spawn_chokepoint.py::TestEveryTimedSpawnIsBounded` refuses a raw timed
+spawn anywhere under `tools/cc`; the engine, `scripts/` and `bench/` are not swept yet
+(`DEF-3004`). A detector that recognises a spawn by its spelling must read the wrappers too:
+`tests/test_contracts.py::TestSpawnWrappersReadEverywhere` derives the wrapper set from the
+code and holds the scanners' and contracts' copies to it, because the reroute onto
+`run_bounded` would otherwise have hidden 48 sites from the UTF-8, decode and env gates.
+
+**Backed by:** `tests/test_bounded_spawn.py` (red at 20.1 s and 20.2 s on a 3 s cap before
+the reroute, 3.6 s after; a child-only kill reds its tree-kill assertion) and
+`tests/test_spawn_chokepoint.py`.

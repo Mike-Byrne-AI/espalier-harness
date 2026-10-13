@@ -641,7 +641,7 @@ def _record_reflect_to_blueprint(root: Path, env: dict, raw: str) -> None:
         )
         return
     try:
-        subprocess.run(  # spawn: ok a reporter's helper; a record that cannot be spawned is warned in its handler
+        _hook_utils.run_bounded(  # spawn: ok a reporter's helper; a record that cannot be spawned is warned in its handler
             [sys.executable, str(blueprint_script), "record-reflect",
              "--data", raw],
             capture_output=True,
@@ -668,7 +668,7 @@ def _run_reflect(root: Path) -> None:
     # symmetry on reflect_protocol future-proofs against added coupling.
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
     try:
-        result = subprocess.run(  # spawn: ok a reporter's helper; a reflect pass that cannot be spawned is warned in its handler
+        result = _hook_utils.run_bounded(  # spawn: ok a reporter's helper; a reflect pass that cannot be spawned is warned in its handler
             [sys.executable, str(reflect_script), "--pass", "1", "--json"],
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",

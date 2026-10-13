@@ -908,7 +908,7 @@ def _is_tracked(root: Path, rel: str) -> bool:
     guess, never noise."""
     import subprocess
     try:
-        rc = subprocess.run(  # spawn: ok an advisory classify; a git that cannot run classifies nothing
+        rc = _hook_utils.run_bounded(  # spawn: ok an advisory classify; a git that cannot run classifies nothing
             ["git", "-C", str(root), "ls-files", "--error-unmatch", "--", rel],
             capture_output=True, timeout=_spawn_timeout(5),
         ).returncode

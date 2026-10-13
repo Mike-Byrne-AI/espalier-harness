@@ -28,7 +28,11 @@ import codecs
 import json
 import os
 import sys
-from typing import IO, Any
+import time
+from typing import IO, TYPE_CHECKING, Any
+
+if TYPE_CHECKING:  # the annotation only; subprocess stays a lazy import, as in _hook_utils
+    import subprocess
 
 _MISSING = object()
 
@@ -297,3 +301,102 @@ def _lock_byte(fh: IO[Any], flags: int, *, unlock: bool) -> None:
         if unlock and error == _ERROR_NOT_LOCKED:
             return
         raise ctypes.WinError(error)
+
+
+#: What :func:`run_bounded` adds to a timeout on Windows: one deadline for the
+#: tree kill, the drain of what was written and the reap of the child.
+SPAWN_KILL_GRACE_SECONDS = 2.0
+
+
+def run_bounded(
+    args: Any, *, timeout: float | None = None, input: Any = None,
+    capture_output: bool = False, check: bool = False, **kwargs: Any,
+) -> "subprocess.CompletedProcess[Any]":
+    """``subprocess.run``, whose ``timeout`` bounds the call on Windows too.
+
+    On Windows, ``subprocess.run`` kills only the child at the timeout and then
+    reads the pipes with no timeout (CPython's ``run``: ``process.kill()``,
+    then ``process.communicate()``), so a grandchild that inherited a pipe sets
+    the real bound. Two such grandchildren are common: the program a ``.bat``
+    shim starts (pyenv-win's ``python.bat``), and git itself, because Git for
+    Windows's ``cmd\\git.exe`` is a launcher that runs the real git as its
+    child, and a network read adds ``git-remote-https`` below that. Driven on
+    Windows 11 with CPython 3.11.9 (2026-10-12): a 2 s cap returned after
+    20.1 s through a shim whose python slept 20 s, and a 1 s cap on
+    ``git ls-remote`` to an unroutable host after 21.1 s.
+
+    So on Windows with a ``timeout`` the child starts under ``Popen``; at the
+    timeout ``taskkill /T /F`` ends its whole tree, and the drain and the reap
+    share :data:`SPAWN_KILL_GRACE_SECONDS`. The call returns within ``timeout``
+    plus that grace even when the tree kill misses a holder: that holder keeps
+    its pipe, and the reader threads, which are daemons, are left behind.
+    ``TimeoutExpired`` is raised as ``run`` raises it, carrying what was read.
+    Everywhere else this IS ``subprocess.run``: on POSIX, where ``run`` only
+    waits for the killed child; with no ``timeout``; and where
+    ``subprocess.run`` has been replaced (a test's fake), since the bound
+    belongs to a real process tree and a fake has none.
+
+    Lives here, beside ``lock_file``, because both ``tools/cc/*.py`` and the
+    hooks import this module; ``_hook_utils.spawn_checked`` is built on it, and
+    ``tests/test_spawn_chokepoint.py`` holds every timed spawn under
+    ``tools/cc`` to one of the two.
+    """
+    import subprocess
+
+    real_run = getattr(subprocess.run, "__module__", None) == "subprocess"
+    if timeout is None or sys.platform != "win32" or not real_run:
+        return subprocess.run(args, timeout=timeout, input=input,  # spawn: ok the bounded spawn itself
+                              capture_output=capture_output, check=check, **kwargs)
+    if input is not None:
+        if kwargs.get("stdin") is not None:
+            raise ValueError("stdin and input arguments may not both be used.")
+        kwargs["stdin"] = subprocess.PIPE
+    if capture_output:
+        if kwargs.get("stdout") is not None or kwargs.get("stderr") is not None:
+            raise ValueError("stdout and stderr arguments may not be used with capture_output.")
+        kwargs["stdout"] = subprocess.PIPE
+        kwargs["stderr"] = subprocess.PIPE
+    proc = subprocess.Popen(args, **kwargs)  # spawn: ok the bounded spawn itself -- Windows with a timeout
+    try:
+        stdout, stderr = proc.communicate(input, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        end = time.monotonic() + SPAWN_KILL_GRACE_SECONDS
+        _end_tree(proc, end)
+        try:
+            exc.stdout, exc.stderr = proc.communicate(timeout=max(0.05, end - time.monotonic()))
+        except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a holder the tree kill missed keeps its pipe; the bound holds and the TimeoutExpired below says what happened
+            pass
+        try:
+            proc.wait(timeout=max(0.05, end - time.monotonic()))
+        except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a child that outlives TerminateProcess is the OS's now
+            pass
+        raise
+    except BaseException:  # Ctrl-C or a write error: the child must not outlive the call, as in run
+        proc.kill()
+        raise
+    retcode = proc.wait()  # communicate() returned, so it reaped the child: this answers at once
+    if check and retcode:
+        raise subprocess.CalledProcessError(retcode, proc.args, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(proc.args, retcode, stdout, stderr)
+
+
+def _end_tree(proc: "subprocess.Popen[Any]", end: float) -> None:
+    """End ``proc`` and every process below it (Windows): ``taskkill /T /F``
+    by pid, from System32 so no PATH entry can stand in for it, with no pipe
+    of its own to wait on; then ``kill`` the child itself, which covers a
+    ``taskkill`` that could not start or found the tree already gone."""
+    import subprocess
+
+    taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "taskkill.exe")
+    try:
+        subprocess.run(  # spawn: ok the bounded spawn's tree kill -- no pipes, its own timeout
+            [taskkill, "/T", "/F", "/PID", str(proc.pid)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=max(0.05, end - time.monotonic()),
+        )
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- the kill below still ends the child, and the drain's deadline holds either way
+        pass
+    try:
+        proc.kill()
+    except OSError:  # fail-open: ok deliberate -- the child already ended
+        pass

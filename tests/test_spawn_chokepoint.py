@@ -1,20 +1,30 @@
 """Every spawn in ``tools/cc/hooks/`` is the chokepoint, routed through it, or
-declared.
+declared; every timed spawn under ``tools/cc/`` is bounded.
 
 The chokepoint, ``_hook_utils.spawn_checked``, resolves argv[0] first
 (``shutil.which``, which honours PATHEXT on Windows so ``npm`` finds
 ``npm.cmd`` -- DEF-948's remaining half) and returns a ``SpawnFailure``
 instead of raising when the program cannot start, so every gate that routes
-through it must decide what to SAY. Reporters keep their own
-``subprocess.run`` under a ``# spawn: ok <reason>`` declaration on the call
-line or the line above.
+through it must decide what to SAY. Reporters keep their own spawn -- since
+2026-10-13 ``run_bounded``, the bounded one -- under a ``# spawn: ok <reason>``
+declaration on the call line or the line above.
 
-The population is derived, never hand-listed: an AST walk over every
+The bounded spawn, ``_json_safe.run_bounded``, is ``subprocess.run`` whose
+``timeout`` holds on Windows too, where ``run`` kills only the child and then
+waits on any grandchild holding its pipe (``tests/test_bounded_spawn.py``).
+``spawn_checked`` is built on it, and every other timed spawn under
+``tools/cc`` calls it, so a raw ``subprocess.*`` call carrying a ``timeout``
+(or the ``**`` splat that can carry one) lives only inside it.
+
+The populations are derived, never hand-listed: an AST walk over every
 ``subprocess.run`` / ``Popen`` / ``call`` / ``check_output`` / ``check_call``
-and every ``spawn_checked(`` call. FLOOR: the 27 sites the walk found at first
-execution (28 by grep at authoring; the walk is the number that counts), so a
-walk that finds fewer broke or a site vanished without the floor being lowered
-on purpose. This pins the chokepoint contract and prevents the drift it
+and every ``spawn_checked(`` and ``run_bounded(`` call. FLOOR: the 27 hook
+sites the walk found at first execution (28 by grep at authoring; the walk is
+the number that counts), and the 53 timed sites under ``tools/cc`` at the
+reroute (48 ``subprocess.run`` and 5 ``spawn_checked``), so a walk that finds
+fewer broke or a site vanished without the floor being lowered on purpose --
+the first floor caught the reroute itself, 27 read as 5 until the walk learnt
+the bounded spawn. This pins the chokepoint contract and prevents the drift it
 exists to end: a gate spawning raw again (the Windows shim unresolved, a
 spawn failure raising past the gate) reds here by file and line, because a
 silent green was exactly how the ``npm test`` gate ran green while never
@@ -32,9 +42,17 @@ from pathlib import Path
 import pytest
 
 HOOKS_DIR = Path(__file__).resolve().parents[1] / "tools" / "cc" / "hooks"
+TOOLS_CC = HOOKS_DIR.parent
 SPAWN_FLOOR = 27
+TIMED_FLOOR = 53
 SPAWN_ATTRS = frozenset({"run", "Popen", "call", "check_output", "check_call"})
 PRAGMA = "# spawn: ok"
+#: Where a raw timed spawn may stand: inside ``run_bounded`` -- the bounded
+#: spawn itself, and the fallback of that name a module keeps for a load where
+#: ``_json_safe`` is not importable, which hands its call to ``subprocess.run``
+#: -- and the bounded spawn's tree kill.
+BOUNDED_FUNCTION = "run_bounded"
+TREE_KILL = ("_json_safe.py", "_end_tree")
 
 
 def _load_hook_utils():
@@ -45,13 +63,34 @@ def _load_hook_utils():
     return mod
 
 
-def spawn_sites() -> list[dict]:
-    """Every raw ``subprocess.*`` call and every ``spawn_checked(`` call."""
+def _named(fn: ast.expr, name: str) -> bool:
+    """``fn`` calls ``name`` by bare name or as an attribute (``_hook_utils.name``)."""
+    return (isinstance(fn, ast.Attribute) and fn.attr == name) or (isinstance(fn, ast.Name) and fn.id == name)
+
+
+def _enclosing_functions(tree: ast.AST) -> dict[int, str]:
+    """Each node's innermost enclosing function name, keyed by ``id``."""
+    owner: dict[int, str] = {}
+
+    def visit(node: ast.AST, name: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            inner = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else name
+            owner[id(child)] = inner
+            visit(child, inner)
+
+    visit(tree, "<module>")
+    return owner
+
+
+def spawn_sites(root: Path = HOOKS_DIR, pattern: str = "*.py") -> list[dict]:
+    """Every raw ``subprocess.*`` call (and ``.communicate(timeout=...)``), and
+    every ``spawn_checked(`` and ``run_bounded(`` call, under ``root``."""
     out: list[dict] = []
-    for f in sorted(HOOKS_DIR.glob("*.py")):
+    for f in sorted(root.glob(pattern)):
         src = f.read_text(encoding="utf-8")
         lines = src.splitlines()
         tree = ast.parse(src)
+        owner = _enclosing_functions(tree)
         # `from subprocess import run` binds a bare name the attribute form
         # would miss; so would `os.system` / `os.popen` (the 2-A review).
         bare_spawns = {
@@ -64,20 +103,26 @@ def spawn_sites() -> list[dict]:
             if not isinstance(node, ast.Call):
                 continue
             fn = node.func
+            keywords = {k.arg for k in node.keywords}
             raw = (
                 isinstance(fn, ast.Attribute) and fn.attr in SPAWN_ATTRS
                 and isinstance(fn.value, ast.Name) and fn.value.id == "subprocess"
             ) or (
                 isinstance(fn, ast.Attribute) and fn.attr in {"system", "popen"}
                 and isinstance(fn.value, ast.Name) and fn.value.id == "os"
-            ) or (isinstance(fn, ast.Name) and fn.id in bare_spawns)
-            routed = (isinstance(fn, ast.Attribute) and fn.attr == "spawn_checked") or (
-                isinstance(fn, ast.Name) and fn.id == "spawn_checked"
+            ) or (isinstance(fn, ast.Name) and fn.id in bare_spawns) or (
+                isinstance(fn, ast.Attribute) and fn.attr == "communicate" and "timeout" in keywords
             )
-            if not raw and not routed:
+            routed = _named(fn, "spawn_checked")
+            bounded = _named(fn, "run_bounded")
+            if not (raw or routed or bounded):
                 continue
             declared = any(PRAGMA in lines[i] for i in (node.lineno - 1, node.lineno - 2) if 0 <= i < len(lines))
-            out.append({"file": f.name, "lineno": node.lineno, "raw": raw, "routed": routed, "declared": declared})
+            out.append({
+                "file": f.relative_to(root).as_posix(), "lineno": node.lineno, "raw": raw,
+                "routed": routed, "bounded": bounded, "declared": declared,
+                "timed": "timeout" in keywords or None in keywords, "function": owner.get(id(node), "<module>"),
+            })
     return out
 
 
@@ -89,25 +134,79 @@ class TestSpawnChokepoint:
             "the walk broke, or a site was deleted -- lower the floor on purpose, naming it"
         )
 
-    def test_every_raw_spawn_is_the_chokepoint_or_declared(self):
-        chokepoint = [s for s in spawn_sites() if s["raw"] and s["file"] == "_hook_utils.py" and not s["declared"]]
-        assert len(chokepoint) == 1, (
-            "exactly one undeclared raw subprocess call belongs in _hook_utils.py -- the "
-            f"chokepoint's own; found {chokepoint}"
+    def test_every_spawn_is_the_chokepoint_or_declared(self):
+        undeclared = [s for s in spawn_sites() if (s["raw"] or s["bounded"]) and not s["declared"]]
+        chokepoint = [s for s in undeclared if s["file"] == "_hook_utils.py"]
+        assert [(s["function"], s["bounded"]) for s in chokepoint] == [("spawn_checked", True)], (
+            "exactly one undeclared spawn belongs in _hook_utils.py -- the chokepoint's own, "
+            f"spawn_checked onto run_bounded; found {chokepoint}"
         )
-        stray = [s for s in spawn_sites() if s["raw"] and not s["declared"] and s["file"] != "_hook_utils.py"]
+        stray = [s for s in undeclared if s["file"] != "_hook_utils.py"]
         assert not stray, (
-            "raw subprocess calls outside the chokepoint must route through "
-            "_hook_utils.spawn_checked (a gate) or carry `# spawn: ok <reason>` on the "
-            "call line or the line above (a reporter):\n  "
+            "spawns outside the chokepoint must route through _hook_utils.spawn_checked "
+            "(a gate) or carry `# spawn: ok <reason>` on the call line or the line above "
+            "(a reporter):\n  "
             + "\n  ".join(f"{s['file']}:{s['lineno']}" for s in stray)
         )
 
     def test_the_gates_route(self):
         routed = {(s["file"]) for s in spawn_sites() if s["routed"]}
         assert "stop_gate.py" in routed, "the stop gate's spawns (override, pytest, finalize) route through the chokepoint"
-        raw_stop = [s for s in spawn_sites() if s["raw"] and s["file"] == "stop_gate.py"]
-        assert not raw_stop, f"stop_gate.py still spawns raw: {raw_stop}"
+        raw_stop = [s for s in spawn_sites() if (s["raw"] or s["bounded"]) and s["file"] == "stop_gate.py"]
+        assert not raw_stop, f"stop_gate.py still spawns outside the chokepoint: {raw_stop}"
+
+
+class TestEveryTimedSpawnIsBounded:
+    """Under all of ``tools/cc`` (the hooks and the scripts beside them), a
+    spawn with a ``timeout`` goes through ``run_bounded`` or ``spawn_checked``;
+    a raw one stands only inside the bounded spawn itself."""
+
+    def test_the_timed_population_holds_its_floor(self):
+        timed = [s for s in spawn_sites(TOOLS_CC, "**/*.py") if (s["bounded"] or s["routed"]) and s["timed"]]
+        assert len(timed) >= TIMED_FLOOR, (
+            f"{len(timed)} timed spawns through run_bounded or spawn_checked under tools/cc, below "
+            f"the floor {TIMED_FLOOR} recorded at the reroute: the walk broke, or sites went back "
+            "to subprocess.run -- lower the floor on purpose, naming it"
+        )
+
+    def test_no_raw_spawn_carries_a_timeout_outside_the_bounded_spawn(self):
+        stray = [
+            s for s in spawn_sites(TOOLS_CC, "**/*.py")
+            if s["raw"] and s["timed"] and s["function"] != BOUNDED_FUNCTION
+            and (s["file"], s["function"]) != TREE_KILL
+        ]
+        assert not stray, (
+            "a raw subprocess call with a timeout (or the ** splat that can carry one) "
+            "waits on any grandchild holding its pipe on Windows, past its cap; call "
+            "run_bounded (from _json_safe, or _hook_utils in a hook) instead:\n  "
+            + "\n  ".join(f"tools/cc/{s['file']}:{s['lineno']} in {s['function']}" for s in stray)
+        )
+
+    def test_the_walk_reads_each_shape_it_rules_on(self, tmp_path):
+        """The walk's own control, on a planted tree: a raw timed spawn, a raw
+        splat, a timed ``communicate`` and an untimed raw spawn are each read
+        as what they are, a bounded call through a module is read as bounded,
+        and the enclosing function is the one the home rule keys on."""
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / "planted.py").write_bytes((
+            "import subprocess\nimport _hook_utils\n"
+            "def probe(**kw):\n"
+            "    subprocess.run(['git'], timeout=5)\n"
+            "    subprocess.run(['git'], **kw)\n"
+            "    subprocess.Popen(['git']).communicate(timeout=5)\n"
+            "    subprocess.run(['git'])\n"
+            "    _hook_utils.run_bounded(['git'], timeout=5)\n"
+        ).encode("ascii"))
+        got = [(s["lineno"], s["raw"], s["bounded"], s["timed"], s["function"])
+               for s in sorted(spawn_sites(tmp_path, "**/*.py"), key=lambda s: (s["lineno"], s["timed"]))]
+        assert got == [
+            (4, True, False, True, "probe"),
+            (5, True, False, True, "probe"),
+            (6, True, False, False, "probe"),  # the Popen: untimed itself
+            (6, True, False, True, "probe"),  # its communicate(timeout=)
+            (7, True, False, False, "probe"),
+            (8, False, True, True, "probe"),
+        ], got
 
 
 class TestSpawnChecked:
@@ -223,6 +322,7 @@ class TestWindowsShimResolution:
             pytest.skip("npm is not on this runner's PATH: the .cmd measurement cannot run here "
                         "(the windows-latest image ships node; a skip here means the image changed)")
         assert found.lower().endswith(".cmd"), found
-        got = hu.spawn_checked(["npm", "--version"], root=tmp_path, capture_output=True, text=True, timeout=45)
+        got = hu.spawn_checked(["npm", "--version"], root=tmp_path, capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=45)
         assert not isinstance(got, hu.SpawnFailure), got
         assert got.returncode == 0, got.stderr

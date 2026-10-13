@@ -193,6 +193,33 @@ def test_sibling_function_list_binding_does_not_leak(tmp_path) -> None:
     )
 
 
+# slow-exempt: as above, the `subprocess.` needles below are a fixture STRING
+# the scanner AST-parses in-process; no child process is spawned.
+def test_a_spawn_wrapper_is_read_as_the_spawn_it_wraps(tmp_path) -> None:
+    """2026-10-13: every timed tools/cc spawn routes through ``run_bounded``, so
+    a call of a wrapper (``SPAWN_WRAPPERS``, by bare name or through a module)
+    is read as ``subprocess.run`` -- an unpinned espalier verb through one is
+    still found. A wrapper's spawn of its own first parameter is its caller's
+    argv and is skipped; any other dynamic spawn inside a wrapper is not."""
+    src = (
+        "import subprocess, sys\nimport _hook_utils\n"
+        "def run_bounded(args, **kw):\n"
+        "    return subprocess.run(args, **kw)\n"
+        "def spawn_checked(argv, **kw):\n"
+        "    return run_bounded(build(argv), **kw)\n"
+        "def caller():\n"
+        "    _hook_utils.run_bounded([sys.executable, '-m', 'espalier.cli', 'no-such-verb'])\n"
+        "    run_bounded(['git', 'status'], timeout=5)\n"
+    )
+    f = tmp_path / "mod.py"
+    f.write_bytes(src.encode("ascii"))
+    by_line = {x.caller_lineno: x.severity for x in sc._scan_file(f, tmp_path)}
+    assert 4 not in by_line, by_line  # the forward of its own first parameter
+    assert by_line.get(6) == "UNRESOLVED", by_line  # a wrapper's other dynamic spawn
+    assert by_line.get(8) == "UNPINNED", by_line  # read through the module attribute
+    assert 9 not in by_line, by_line  # an OS binary, cleared as subprocess.run's would be
+
+
 def test_build_report_shape() -> None:
     """build_report must return the dict-of-counts shape cmd_scan expects."""
     report = sc.build_report(REPO_ROOT)

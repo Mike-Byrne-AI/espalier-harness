@@ -223,7 +223,7 @@ def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
             "--keep-newest", "1",
         ]
         try:
-            result = subprocess.run(  # spawn: ok the autoprune's own three-arm interpreter resolver and warning above; a reporter
+            result = _hook_utils.run_bounded(  # spawn: ok the autoprune's own three-arm interpreter resolver and warning above; a reporter
                 cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, env=env
             )
         except (OSError, subprocess.TimeoutExpired, ValueError) as exc:

@@ -137,6 +137,28 @@ class TestParityWithTheSubprocessContract:
         assert older == {3, 5, 6, 7}, older  # the older net's own verdict, pinned
         assert scanner == older, (scanner, older)
 
+    def test_a_spawn_wrapper_is_read_as_the_spawn_it_wraps(self, tmp_path: Path) -> None:
+        """``run_bounded`` and ``spawn_checked`` take ``subprocess.run``'s own
+        keywords, so a locale decode through either, by bare name or through a
+        module, is the same finding -- and the older net agrees line for line
+        (2026-10-13, when 48 timed spawns moved onto ``run_bounded``)."""
+        from tests.test_contracts import _text_subprocess_calls_missing_encoding
+
+        src = (
+            "import _hook_utils\nfrom _json_safe import run_bounded\n"
+            "def a(argv, root):\n"
+            "    run_bounded(argv, text=True)\n"
+            "    _hook_utils.run_bounded(argv, text=True, encoding='utf-8')\n"
+            "    _hook_utils.spawn_checked(argv, root=root, text=True)\n"
+            "    run_bounded(argv, capture_output=True)\n"
+        )
+        target = tmp_path / "wrapped.py"
+        target.write_bytes(src.encode("ascii"))
+        older = {lineno for lineno, _func in _text_subprocess_calls_missing_encoding("wrapped.py", src)}
+        scanner = {f.lineno for f in ec._scan_file(target, tmp_path) if f.shape == "subprocess"}
+        assert older == {4, 6}, older
+        assert scanner == older, (scanner, older)
+
     def test_an_alias_the_older_contract_forbids_is_seen_here(self, tmp_path: Path) -> None:
         """The older net bans the alias in production; tests use it, so the
         scanner resolves it instead. The verdict per line is unchanged."""

@@ -49,7 +49,18 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
+
+try:  # the bounded spawn beside this file; it is also loaded where that sibling is not importable
+    from _json_safe import run_bounded
+except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (copied alone, or loaded by path): subprocess.run, a bound everywhere but Windows
+    def run_bounded(
+        args: Any, *, timeout: float | None = None, input: Any = None,
+        capture_output: bool = False, check: bool = False, **kwargs: Any,
+    ) -> "subprocess.CompletedProcess[Any]":
+        """``subprocess.run``, read when called, so a replaced one is honoured as ``run_bounded`` honours it."""
+        return subprocess.run(  # spawn: ok the bounded spawn's fallback where _json_safe.py is not importable
+            args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
 
 _GRAMMAR = None
 
@@ -229,7 +240,7 @@ def _tracked_by_basename() -> dict[str, list[str]]:
     catch. Proven by planting one and watching the check stay green.
     """
     try:
-        proc = subprocess.run(
+        proc = run_bounded(
             ["git", "ls-files"], cwd=_ROOT, capture_output=True,
             text=True, encoding="utf-8", errors="replace", timeout=_TIMEOUT,
         )
@@ -275,7 +286,7 @@ def _ignored_root_dirs() -> list[str]:
         if not child.is_dir() or child.name == ".git":
             continue
         try:
-            ignored = subprocess.run(
+            ignored = run_bounded(
                 ["git", "check-ignore", "-q", child.name],
                 cwd=_ROOT, timeout=_TIMEOUT,
             ).returncode == 0
@@ -647,7 +658,7 @@ def run_probe(probe: dict) -> tuple[str, str]:
         # single command with no pipe, redirect or expansion. Still dynamic --
         # the argv comes from a file -- hence the pragma.
         # subprocess-contract: ok data-driven-probe-argv-from-LEDGER_PROBES-json
-        proc = subprocess.run(
+        proc = run_bounded(
             argv, capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             timeout=_TIMEOUT, cwd=_ROOT, env=_outside_the_launching_session(),
