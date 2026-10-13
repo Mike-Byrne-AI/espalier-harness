@@ -18,6 +18,9 @@ from tests._report_os_name_guard import pytest_runtest_makereport  # noqa: F401
 # ceiling is a signal alarm, a pass past it is a failure and a test that blocks
 # again after it still ends (the module says why).
 from tests._timeout_backstop import pytest_configure  # noqa: F401
+# Stops a session whose interpreter imports another tree's engine before any
+# test runs: every CLI-spawning test would otherwise pass about the wrong code.
+from tests._engine_check import pytest_sessionstart  # noqa: F401
 
 # The stack fixtures below write rows of the one stack table. Imported bare,
 # the way the selfcheck mirror's conftest imports its byte copy.

@@ -30,8 +30,10 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 import time
 from datetime import datetime, timezone
@@ -837,6 +839,101 @@ def _seat_line(root: Path, mail: Any = None, *, source: str = "startup", deadlin
         return "(no time left this start to give this worktree its own machine name; the next fresh start does)"
     _name, said = mail.name_this_worktree(root, timeout=min(2.0, left / 8))
     return _ascii(said)
+
+
+# The interpreter a tier runs (`python3`, else `python`, on PATH) asked where
+# `espalier` would come from, without importing it. Measured 2026-10-12: 19 ms
+# median over 12 runs, so it fits the banner; the cap keeps a hung interpreter
+# from costing more than this one line, and it runs after the network reads,
+# whose _HOOK_BUDGET_SECONDS it adds to under the 15 s ceiling (pinned).
+_ENGINE_PROBE = ("import importlib.util as u; s = u.find_spec('espalier'); "
+                 "print(s.origin if s and s.origin else '')")
+_ENGINE_CAP_SECONDS = 1.0
+
+
+def _probe_engine(exe: str, timeout: float, env: dict[str, str] | None) -> Path | None:
+    """Where ``exe`` would import ``espalier``'s package directory from, asked
+    from a fresh empty directory so no cwd answers for it; None when it cannot
+    say (no answer in time, a non-zero exit, a namespace package, output that
+    is not one absolute ``__init__.py`` path: a shim or a sitecustomize that
+    prints at start is read by its LAST line, and anything else is no answer,
+    never a false alarm)."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="espalier-engine-probe-") as neutral:
+            done = subprocess.run(  # spawn: ok reporter probe, bounded, no shell, a fixed program text
+                [exe, "-c", _ENGINE_PROBE], cwd=neutral, env=env, capture_output=True,
+                text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False,
+            )
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- an interpreter that cannot answer costs the Engine line, never the banner
+        return None
+    lines = [ln.strip() for ln in done.stdout.splitlines() if ln.strip()]
+    origin = lines[-1] if lines else ""
+    if done.returncode != 0 or not origin.endswith("__init__.py") or not Path(origin).is_absolute():
+        return None
+    return Path(origin).parent
+
+
+def _same_dir(a: Path, b: Path) -> bool:
+    """One directory, by the filesystem's own answer (case-insensitive macOS,
+    NFC/NFD names, symlinks), falling back to normalised strings."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:  # fail-open: ok deliberate -- a path that cannot be statted compares by its spelling
+        norm = (lambda p: os.path.normcase(str(p.resolve())).replace("\\", "/"))  # noqa: E731
+        return norm(a) == norm(b)
+
+
+def _engine_line(root: Path, deadline: float | None = None, *,
+                 python: str | None = None, env: dict[str, str] | None = None) -> str:
+    """The banner's `Engine:` value: in a checkout whose root holds the engine
+    source (``espalier/__init__.py``), the interpreter a tier runs resolving
+    ``espalier`` from somewhere else (an installed copy, another checkout).
+    Every child a tier spawns then tests that engine, not this tree's: on
+    2026-10-12 this box's editable install pointed at the main checkout, and a
+    worktree seat's full tier ran main's engine in every CLI test without a
+    word. Any checkout, not only a linked worktree: a second full clone (the
+    box's air-2) has the same mismatch (failure-mode review). Empty on an
+    adopter tree (no engine source at its root: its engine is always the
+    installed one), when the paths agree, with no interpreter that answers, and
+    when the probe cannot answer in time. The interpreter is ``python3``, then
+    ``python`` (a Windows Store stub that cannot answer is passed over).
+
+    This is the early notice; the test session itself stops on the same
+    mismatch (``tests/conftest.py``), where the interpreter is the real one
+    rather than the launch PATH's guess. The probe is a subprocess from a
+    fresh empty directory (``_probe_engine``); never an import of
+    ``espalier`` (hooks import none). ``python`` and ``env`` are injectable
+    for tests."""
+    if not (root / "espalier" / "__init__.py").is_file():
+        return ""  # an adopter tree: its engine is always the installed one
+    own = root / "espalier"
+    names = [python] if python else [c for c in (shutil.which("python3"), shutil.which("python")) if c]
+    for exe in names:
+        timeout = _seconds_left(deadline, _ENGINE_CAP_SECONDS)
+        if timeout < 0.3:
+            return ""  # the line is advice; the next start asks again
+        found = _probe_engine(exe, timeout, env)
+        if found is not None:
+            break
+    else:
+        return ""  # no interpreter that answers: a tier there fails loudly on its own
+    if _same_dir(found, own):
+        return ""
+    bindir = Path(".venv") / ("Scripts" if os.name == "nt" else "bin")
+    venv_python = root / bindir / ("python.exe" if os.name == "nt" else "python")
+    left = _seconds_left(deadline, _ENGINE_CAP_SECONDS)
+    if venv_python.is_file() and left >= 0.3 and (
+            (mine := _probe_engine(str(venv_python), left, env)) is not None and _same_dir(mine, own)):
+        remedy = f"this checkout's .venv imports its own: put {bindir} first on PATH for every tier"
+    else:
+        remedy = (f"give this checkout its own: `uv venv .venv`, then `uv pip install --python "
+                  f"{bindir / 'python'} -e '.[dev]'` here, and put {bindir} first on PATH for every tier")
+    return _ascii(
+        f"{Path(exe).name} imports espalier from {found} (an installed copy or another checkout), "
+        f"not from this checkout ({root}), so a tier run with it tests that engine; {remedy} "
+        "(never a global PYTHONPATH: the wheel and fresh-clone tests import an installed artifact "
+        "on purpose). The test session stops on the same mismatch"
+    )
 
 
 def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> str:
@@ -2163,6 +2260,20 @@ def _report_integrity_state(root: Path) -> str:
         # Not a failure: the manifest is gitignored and per-install, so a cloned
         # but un-inited tree legitimately has none. Same exemption the drift
         # warning above applies, and the same call `audit` and `doctor` make.
+        if _integrity._linked_worktree_main(root) is not None:
+            # A linked worktree (never a submodule: its gitlink names a
+            # `modules` dir) checks out tracked files only, so it has none even
+            # where the main checkout does, and `init` would redeploy the
+            # harness into the seat (2026-10-12). Spelled as a module run from
+            # the worktree's root, so it is THIS tree's engine that hashes this
+            # tree's hooks: the bare console script imports whichever checkout
+            # the install names (failure-mode review, driven 2026-10-12).
+            # The helper returns "" when nothing here clears the floor; then
+            # no command is printed rather than a broken one (DEF-636).
+            py = _hook_utils.python_command_hint()
+            how = (f"`{py} -m espalier integrity refresh .`" if py
+                   else "`-m espalier integrity refresh .` under a Python 3.10 or newer")
+            return f"no manifest in this worktree (per checkout, gitignored)  ->  from its root, run {how}"
         return "no manifest (run `espalier init .`)"
     if not ok and _integrity.is_protocol_mismatch(mismatched):
         return "MANIFEST NEWER THAN HOOKS  ->  run `espalier upgrade --execute`"
@@ -3219,7 +3330,7 @@ def _permissions_line(root: Path) -> str:
 def _build_compact_context(
     root: Path, self_host: bool, integrity: str = "", loose: str = "",
     open_prs: str = "", merged_prs: str = "", mail: str = "", sessions: str = "",
-    permissions: str = "", merging: str = "", seat: str = "",
+    permissions: str = "", merging: str = "", seat: str = "", engine: str = "",
 ) -> str:
     """The mid-session COMPACT-orientation banner. Reshapes the normal banner:
     OMITS the MEMORY digest + the prior-session blueprint note (the compaction
@@ -3261,6 +3372,7 @@ def _build_compact_context(
         *([f"Merged:    {merged_prs}\n"] if merged_prs else []),
         *([f"Merging:   {merging}\n"] if merging else []),
         *([f"Seat:      {seat}\n"] if seat else []),
+        *([f"Engine:    {engine}\n"] if engine else []),
         *([f"Mail:      {mail}\n"] if mail else []),
         f"Surface:   {surface_line}\n",
         # Tamper state, in the channel the session actually reads. Omitted when the
@@ -3348,6 +3460,7 @@ def _build_context(
     worktrees: str = "",
     merging: str = "",
     seat: str = "",
+    engine: str = "",
 ) -> str:
     """Assemble the SessionStart additionalContext banner. ``self_host`` is the
     once-computed value from main so is_self_host_repo is not re-probed here.
@@ -3360,7 +3473,7 @@ def _build_context(
     normal banner byte-identical."""
     if source == "compact":
         return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs, mail, sessions,
-                                      permissions, merging, seat=seat)
+                                      permissions, merging, seat=seat, engine=engine)
     name = repo_name(root, warn_label="session_start")
     branch = check_branch(root)
     status = _check_dirty(root)
@@ -3425,6 +3538,9 @@ def _build_context(
         # A linked worktree given its own machine name this start, or why it
         # could not be (_seat_line). Same omit-when-empty contract.
         *([f"Seat:      {seat}\n"] if seat else []),
+        # A worktree seat whose tier interpreter imports another checkout's
+        # engine (_engine_line). Same omit-when-empty contract.
+        *([f"Engine:    {engine}\n"] if engine else []),
         # The other machine's unread mail (tools/cc/mail.py), where this box
         # is named: headlines newest first, then the tail that says whose
         # text it is. Same omit-when-empty contract; read once in main.
@@ -3744,12 +3860,23 @@ def _run_main() -> int:
         _hook_utils.advise_exc("session_start: merge-rules read failed", e)
         merge_rules_line = ""
 
+    # A checkout whose tier interpreter imports another engine. Local, about
+    # 20 ms, AFTER the network reads (the mail takes the budget first) and
+    # under its own cap, which _HOOK_BUDGET_SECONDS plus _ENGINE_CAP_SECONDS
+    # keeps under the 15 s ceiling (pinned in tests/test_session_banner.py).
+    try:
+        engine_line = _engine_line(root)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _hook_utils.advise_exc("session_start: engine probe failed", e)
+        engine_line = ""
+
     context = _build_context(
         root, self_host, _should_advance_chain(source), source,
         integrity=integrity_line, loose=loose_line, sessions=sessions_line,
         permissions=permissions_line,
         open_prs=open_prs_line, merged_prs=merged_prs_line, mail=mail_line,
         checkout=checkout_line, worktrees=worktrees_line, merging=merge_rules_line, seat=seat_line,
+        engine=engine_line,
     )
 
     # Enforce size budget — truncate rather than flood context window.

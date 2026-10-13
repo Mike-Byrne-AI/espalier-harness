@@ -1463,13 +1463,14 @@ class TestIntegrityReachesTheBanner:
     the value the banner renders -- across every state, plus the rendering itself.
     """
 
-    def _summary(self, monkeypatch, *, ok, mismatched, kill=(), raises=False):
+    def _summary(self, monkeypatch, *, ok, mismatched, kill=(), raises=False, root=Path(".")):
         mod = _load()
 
         class _Stub:
             MANIFEST_ABSENT = mod._integrity.MANIFEST_ABSENT
             # the real predicate: the stub fakes the VERDICT, not the reading of it
             is_protocol_mismatch = staticmethod(mod._integrity.is_protocol_mismatch)
+            _linked_worktree_main = staticmethod(mod._integrity._linked_worktree_main)
 
             def scan_for_kill_switches(self, root, include_unreadable=False):
                 return list(kill)
@@ -1483,7 +1484,7 @@ class TestIntegrityReachesTheBanner:
                 return None
 
         monkeypatch.setattr(mod, "_integrity", _Stub())
-        return mod, mod._report_integrity_state(Path("."))
+        return mod, mod._report_integrity_state(root)
 
     def test_clean_reports_ok_not_silence(self, monkeypatch):
         # "ok" and "no line at all" must not look the same: if the check ever
@@ -1498,16 +1499,46 @@ class TestIntegrityReachesTheBanner:
         assert "DRIFT" in summary and "3 files" in summary
         assert "integrity refresh" in summary, "a drift report must carry its fix"
 
-    def test_absent_manifest_is_guidance_not_drift(self, monkeypatch):
+    def test_absent_manifest_is_guidance_not_drift(self, monkeypatch, tmp_path):
         # The manifest is gitignored and per-install, so a cloned-but-un-inited
         # tree legitimately has none. Same exemption the stderr warning applies,
-        # and the same call `audit` and `doctor` make.
+        # and the same call `audit` and `doctor` make. A main checkout's root
+        # (`.git` a directory), never the run's own cwd, which is a linked
+        # worktree on a worktree seat.
         mod = _load()
+        (tmp_path / ".git").mkdir()
         _mod, summary = self._summary(
-            monkeypatch, ok=False, mismatched=[mod._integrity.MANIFEST_ABSENT]
+            monkeypatch, ok=False, mismatched=[mod._integrity.MANIFEST_ABSENT], root=tmp_path
         )
         assert "DRIFT" not in summary
         assert "init" in summary
+
+    def test_absent_manifest_in_a_worktree_names_the_refresh_not_init(self, monkeypatch, tmp_path):
+        """A linked worktree checks out tracked files only, so it has no
+        manifest even where the main checkout does, and `init` there would
+        redeploy the harness into the seat (2026-10-12). Dies to: the one
+        message for both shapes."""
+        mod = _load()
+        (tmp_path / ".git").write_text("gitdir: /x/main/.git/worktrees/seat\n", encoding="utf-8")
+        _mod, summary = self._summary(
+            monkeypatch, ok=False, mismatched=[mod._integrity.MANIFEST_ABSENT], root=tmp_path
+        )
+        assert "integrity refresh" in summary and "worktree" in summary
+        # a module run from the worktree's root: this tree's engine hashes this
+        # tree's hooks, never the checkout the bare console script imports
+        assert "-m espalier integrity refresh" in summary
+        assert "init" not in summary and "DRIFT" not in summary
+
+    def test_a_submodule_keeps_the_init_advice(self, monkeypatch, tmp_path):
+        """A submodule's `.git` is a gitlink file too, naming a `modules` dir:
+        it is no worktree of an installed checkout. Dies to: `.git` being a
+        file read as "a linked worktree" (code review, 2026-10-12)."""
+        mod = _load()
+        (tmp_path / ".git").write_text("gitdir: ../.git/modules/x\n", encoding="utf-8")
+        _mod, summary = self._summary(
+            monkeypatch, ok=False, mismatched=[mod._integrity.MANIFEST_ABSENT], root=tmp_path
+        )
+        assert "init" in summary and "worktree" not in summary
 
     def test_a_protocol_sentinel_is_a_redeploy_not_drift(self, monkeypatch):
         # DEF-725: a manifest this deployed copy cannot read was written by a
@@ -2711,6 +2742,197 @@ class TestSeatLine:
 
 def _mail_message(i: int, text: str = "hello") -> dict:
     return {"id": f"id-{i}", "type": "note", "from": "win", "at": f"2026-10-0{i}T00:00:00Z", "re": {}, "text": text}
+
+
+class TestEngineLine:
+    """The banner's `Engine:` line: in a linked worktree seat whose root holds
+    the engine source, `python3` (the interpreter a tier runs) resolving
+    `espalier` from another checkout means every tier here tests that engine;
+    on the 2026-10-12 box the editable install pointed at the main checkout,
+    and a worktree seat's tier ran main's engine without a word. Silent in a
+    main checkout, an adopter tree (no engine source at its root), and when
+    the paths agree; the probe is a bounded subprocess, never an import."""
+
+    def _seat(self, tmp_path: Path) -> Path:
+        seat = tmp_path / "seat"
+        (seat / "espalier").mkdir(parents=True)
+        (seat / "espalier" / "__init__.py").write_text("", encoding="utf-8")
+        (seat / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+        return seat
+
+    def _other_checkout(self, tmp_path: Path) -> Path:
+        main = tmp_path / "main"
+        (main / "espalier").mkdir(parents=True)
+        (main / "espalier" / "__init__.py").write_text("", encoding="utf-8")
+        return main
+
+    def _no_spawn(self, monkeypatch, mod):
+        def _never(*a, **kw):
+            raise AssertionError("no probe may run here")
+        monkeypatch.setattr(mod.subprocess, "run", _never)
+
+    def _fake_python(self, tmp_path: Path, name: str, *lines: str) -> str:
+        """A stand-in interpreter (POSIX): prints ``lines`` whatever it is asked."""
+        exe = tmp_path / name
+        exe.write_text("#!/bin/sh\n" + "".join(f"echo '{ln}'\n" for ln in lines), encoding="utf-8")
+        exe.chmod(0o755)
+        return str(exe)
+
+    def test_an_adopter_tree_spawns_nothing(self, tmp_path, monkeypatch):
+        """Dies to: the probe run on an adopter tree, whose engine always comes
+        from site-packages (a false alarm on every start)."""
+        mod = _load()
+        adopter = tmp_path / "adopter"
+        adopter.mkdir()
+        (adopter / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+        self._no_spawn(monkeypatch, mod)
+        assert mod._engine_line(adopter) == ""
+
+    def test_a_full_clone_is_named_too_and_silent_when_its_engine_is_its_own(self, tmp_path):
+        """A second full clone (this box's air-2) has the same mismatch with
+        `.git` a directory. Dies to: a gate that probes only linked worktrees
+        (failure-mode review, 2026-10-12)."""
+        mod = _load()
+        clone, main = tmp_path / "clone", self._other_checkout(tmp_path)
+        (clone / "espalier").mkdir(parents=True)
+        (clone / "espalier" / "__init__.py").write_text("", encoding="utf-8")
+        (clone / ".git").mkdir()
+        named = mod._engine_line(clone, python=sys.executable, env={**os.environ, "PYTHONPATH": str(main)})
+        assert str(main.resolve()).replace("\\", "/") in named.replace("\\", "/"), named
+        assert mod._engine_line(clone, python=sys.executable, env={**os.environ, "PYTHONPATH": str(clone)}) == ""
+
+    @pytest.mark.skipif(os.name == "nt", reason="the stand-in interpreter is a /bin/sh script")
+    def test_the_last_line_answers_and_anything_else_is_no_answer(self, tmp_path):
+        """A shim or a sitecustomize that prints at start is read by its last
+        line; output that is not one absolute __init__.py path is no answer,
+        never a false alarm. Dies to: the whole stdout read as the path."""
+        mod = _load()
+        seat, main = self._seat(tmp_path), self._other_checkout(tmp_path)
+        chatty = self._fake_python(tmp_path, "chatty", "a shim says hello", str(main / "espalier" / "__init__.py"))
+        assert str(main.resolve()) in mod._engine_line(seat, python=chatty)
+        garbage = self._fake_python(tmp_path, "garbage", "not a path at all")
+        relative = self._fake_python(tmp_path, "relative", "espalier/__init__.py")
+        assert mod._engine_line(seat, python=garbage) == ""
+        assert mod._engine_line(seat, python=relative) == ""
+
+    def test_a_probe_that_times_out_costs_the_line_only(self, tmp_path, monkeypatch):
+        mod = _load()
+        seat = self._seat(tmp_path)
+
+        def _hang(cmd, **kw):
+            raise mod.subprocess.TimeoutExpired(cmd, kw.get("timeout", 1.0))
+        monkeypatch.setattr(mod.subprocess, "run", _hang)
+        assert mod._engine_line(seat, python=sys.executable) == ""
+
+    @pytest.mark.skipif(os.name == "nt", reason="the stand-in interpreter is a /bin/sh script")
+    def test_a_venv_of_its_own_is_named_as_the_remedy(self, tmp_path):
+        """The seat already has `.venv` importing its own engine, but Claude Code
+        was launched without it on PATH: the line says to put it first, not to
+        build another. Without one, it says how to build it."""
+        mod = _load()
+        seat, main = self._seat(tmp_path), self._other_checkout(tmp_path)
+        launch = self._fake_python(tmp_path, "launch", str(main / "espalier" / "__init__.py"))
+        build = mod._engine_line(seat, python=launch)
+        assert "uv venv .venv" in build and ".venv/bin first on PATH" in build, build
+        (seat / ".venv" / "bin").mkdir(parents=True)
+        own = Path(self._fake_python(seat / ".venv" / "bin", "python", str(seat / "espalier" / "__init__.py")))
+        assert own.is_file()
+        use = mod._engine_line(seat, python=launch)
+        assert "this checkout's .venv imports its own" in use and "uv venv" not in use, use
+
+    def test_the_test_session_stops_on_the_same_mismatch(self, tmp_path):
+        """The point-of-use twin (tests/_engine_check.py): the interpreter that
+        is really running pytest, not the launch PATH's guess. Dies to: the
+        comparison dropped, or the check run from this tree's own cwd."""
+        from tests._engine_check import foreign_engine
+
+        seat, main = self._seat(tmp_path), self._other_checkout(tmp_path)
+        stop = foreign_engine(seat, executable=sys.executable, env={**os.environ, "PYTHONPATH": str(main)})
+        assert stop and str(main.resolve()) in stop and ".venv" in stop and "No test ran" in stop, stop
+        assert foreign_engine(seat, executable=sys.executable, env={**os.environ, "PYTHONPATH": str(seat)}) is None
+        adopter = tmp_path / "adopter"
+        adopter.mkdir()
+        assert foreign_engine(adopter, executable=sys.executable) is None  # no engine source: nothing to compare
+
+    def test_this_session_passed_its_own_check(self):
+        """The suite that is running this test was not stopped: its interpreter
+        imports this checkout's engine. A live witness, not a mock."""
+        from tests._engine_check import foreign_engine
+
+        assert foreign_engine(HOOKS_DIR.parent.parent.parent) is None
+
+    def test_the_probe_fits_under_the_hook_ceiling(self):
+        """The probe runs after the network reads and adds its cap to theirs;
+        the sum stays a second under settings.json's 15 s SessionStart ceiling."""
+        mod = _load()
+        assert mod._HOOK_BUDGET_SECONDS + mod._ENGINE_CAP_SECONDS <= 14.0
+
+    def test_run_main_feeds_the_probe_into_the_banner(self):
+        """Structural: _run_main assigns engine_line from a call to
+        _engine_line and passes it to _build_context as engine=. Dies to: the
+        call replaced by a constant, which every behaviour test above survives
+        (failure-mode review, 2026-10-12)."""
+        tree = ast.parse((HOOKS_DIR / "session_start.py").read_text(encoding="utf-8"))
+        run_main = next(f for f in tree.body if isinstance(f, ast.FunctionDef) and f.name == "_run_main")
+        nodes = list(ast.walk(run_main))
+        assigned = any(
+            isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "engine_line" for t in n.targets)
+            and isinstance(n.value, ast.Call) and getattr(n.value.func, "id", "") == "_engine_line"
+            for n in nodes)
+        passed = any(
+            isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_build_context"
+            and any(k.arg == "engine" and isinstance(k.value, ast.Name) and k.value.id == "engine_line"
+                    for k in n.keywords)
+            for n in nodes)
+        assert assigned and passed
+
+    @pytest.mark.contract
+    def test_every_conditional_banner_line_is_documented(self):
+        """Derived, not a hand list: each label a builder renders only when it
+        has something to say (`*([f"Label: ..."] if x else [])`) is described in
+        docs/HOOKS.md, where a reader of the banner looks. Dies to: a new line
+        shipped undocumented (`Merging:` was, until 2026-10-12)."""
+        import re
+        source = (HOOKS_DIR / "session_start.py").read_text(encoding="utf-8")
+        labels = sorted(set(re.findall(r'\*\(\[f"([A-Z][A-Za-z ]*):', source)))
+        assert len(labels) >= 10, labels  # never vacuous
+        doc = (HOOKS_DIR.parent.parent.parent / "docs" / "HOOKS.md").read_text(encoding="utf-8")
+        missing = [label for label in labels if f"`{label}:" not in doc]
+        assert not missing, f"docs/HOOKS.md never names these banner lines: {missing}"
+
+    def test_a_seat_whose_python_imports_another_checkout_is_named(self, tmp_path):
+        """Dies to: the comparison dropped, or the probe run from the seat's own
+        cwd (where `espalier/` beside it would answer for the interpreter)."""
+        mod = _load()
+        seat, main = self._seat(tmp_path), self._other_checkout(tmp_path)
+        env = {**os.environ, "PYTHONPATH": str(main)}
+        line = mod._engine_line(seat, python=sys.executable, env=env)
+        assert str(main.resolve()).replace("\\", "/") in line.replace("\\", "/"), line
+        assert "uv venv" in line and "PYTHONPATH" in line and line.isascii(), line
+
+    def test_a_seat_whose_python_imports_its_own_engine_is_silent(self, tmp_path):
+        mod = _load()
+        seat = self._seat(tmp_path)
+        env = {**os.environ, "PYTHONPATH": str(seat)}
+        assert mod._engine_line(seat, python=sys.executable, env=env) == ""
+
+    def test_a_spent_budget_or_no_interpreter_spawns_nothing(self, tmp_path, monkeypatch):
+        mod = _load()
+        seat = self._seat(tmp_path)
+        self._no_spawn(monkeypatch, mod)
+        assert mod._engine_line(seat, deadline=time.monotonic()) == ""
+        monkeypatch.setattr(mod.shutil, "which", lambda name: None)
+        assert mod._engine_line(seat) == ""
+
+    def test_the_banner_carries_the_line_in_both_builders(self, tmp_path):
+        """Dies to: the line dropped from the compact (re-orient) builder."""
+        mod = _load()
+        assert "Engine:" not in mod._build_context(tmp_path, False, False)
+        engine = "python3 imports espalier from /elsewhere"
+        for source in ("", "compact"):
+            banner = mod._build_context(tmp_path, False, False, source, engine=engine)
+            assert f"Engine:    {engine}\n" in banner, source
+            assert banner.index("Engine:") < banner.index("Surface:"), source
 
 
 class TestMailLine:
