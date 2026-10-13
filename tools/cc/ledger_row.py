@@ -845,6 +845,12 @@ def _write_pending_probes(gen, pending: _Pending, *, removals: bool) -> None:
             gen._atomic_write(path, json.dumps(entry, indent=1, ensure_ascii=False) + "\n")
 
 
+def _universal_newlines(data: bytes) -> bytes:
+    """``data`` with its line ends read as a text-mode read reads them:
+    ``\\r\\n`` and a lone ``\\r`` each become ``\\n``."""
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
                  what: str, pending: _Pending | None = None, write_roster: bool = True,
                  probes_first: bool = False) -> int:
@@ -903,9 +909,15 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
         if write_roster and probes_first:
             sidecar.replace(probes)
         _write_pending_rows(gen, pending)
-        # Bytes, never a decode: the verb read the file strictly already, and a
-        # write that changes only line endings is one the LF pin wants anyway.
-        if new_text.encode("utf-8") != ledger.read_bytes():  # ledger-read: the file's own bytes, to skip an unchanged write
+        # Bytes, never a decode: the verb read the file strictly already. Line
+        # ends are set aside the way the verb's own read set them aside: an
+        # adopter's tree does not inherit our `.gitattributes` eol=lf, so a
+        # Windows checkout (core.autocrlf=true, git's default there) holds the
+        # ledger as CRLF, and a bytes compare rewrote all of it on every filing
+        # on a tree that keeps rows as files (portability cell, 2026-10-13).
+        # The LF pin forbids a verb re-lining the file as CRLF; a write it
+        # skips re-lines nothing.
+        if new_text.encode("utf-8") != _universal_newlines(ledger.read_bytes()):  # ledger-read: the file's own bytes, to skip an unchanged write
             gen._atomic_write(ledger, new_text)
         if write_roster and not probes_first:
             sidecar.replace(probes)
