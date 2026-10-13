@@ -860,7 +860,7 @@ def _probe_engine(exe: str, timeout: float, env: dict[str, str] | None) -> Path 
     never a false alarm)."""
     try:
         with tempfile.TemporaryDirectory(prefix="espalier-engine-probe-") as neutral:
-            done = subprocess.run(  # spawn: ok reporter probe, bounded, no shell, a fixed program text
+            done = _hook_utils.run_bounded(  # spawn: ok reporter probe, bounded, no shell, a fixed program text
                 [exe, "-c", _ENGINE_PROBE], cwd=neutral, env=env, capture_output=True,
                 text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False,
             )
