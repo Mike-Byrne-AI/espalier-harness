@@ -12,3 +12,10 @@
 # The codename gate's local pattern file: absent in a worktree, the gate runs on
 # its tracked list alone (the landing check's local arm says so).
 .local-codenames.txt
+
+# The two generated reports `espalier audit` and the release gate read; without
+# them a worktree session fails both on "missing generated file" (2026-10-12).
+# The copy is the main checkout's snapshot, not the worktree branch's: run
+# `espalier fingerprint .` in the worktree to re-derive it there.
+reports/repo_fingerprint.json
+reports/harness_config.json

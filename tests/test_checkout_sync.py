@@ -976,3 +976,21 @@ class TestPieces:
         payload = json.loads(r.stdout)
         assert payload["checkout"]["state"] == "would_catch_up"
         assert _out(work, "rev-parse", "HEAD") == before
+
+
+def test_every_worktree_include_entry_is_safe_for_the_reap(cs):
+    """Each path `.worktreeinclude` copies into a worktree (init's roster for
+    adopters, and this repo's own file) must be one the reap can account for:
+    a regenerable output (``_disposable``) or a copy it compares with the
+    root's (``_COPIED_FROM_ROOT``). Any other copied file keeps every worktree
+    forever, silently (failure-mode review, 2026-10-12: the reports were safe
+    only because ``reports`` is a disposable top, and nothing said so)."""
+    from espalier.cli import WORKTREE_INCLUDE_ENTRIES
+
+    own = REPO_ROOT / ".worktreeinclude"
+    lines = [ln.strip() for ln in own.read_text(encoding="utf-8").splitlines()
+             if ln.strip() and not ln.lstrip().startswith("#")] if own.is_file() else []
+    entries = [*WORKTREE_INCLUDE_ENTRIES, *lines]
+    assert ".claude/settings.json" in entries
+    for entry in entries:
+        assert cs._disposable(entry) or entry in cs._COPIED_FROM_ROOT, entry

@@ -220,7 +220,11 @@ move first. The line then says why, and how to name the worktree by hand.
 - **Its time limit:** each git call takes a slice of the banner's budget.
 - **What it depends on:** the hooks must load in the worktree. Claude Code
   copies `.claude/settings.json` into each worktree it makes through
-  `.worktreeinclude`, which `init` writes. A worktree made before the include
+  `.worktreeinclude`, which `init` writes (with the two generated reports
+  `espalier audit` reads, `reports/repo_fingerprint.json` and
+  `reports/harness_config.json`, so the audit runs there too; those copies are
+  the main checkout's snapshot, and `espalier fingerprint .` in the worktree
+  re-derives them). A worktree made before the include
   existed, or one whose include was never committed, has no copy, and no hook
   can say so; the two tools that act in a checkout of their own say it
   instead: every `tools/cc/ship.py` verb that pushes (`open`, `handoff`,
@@ -264,8 +268,10 @@ holds it, the remedy is to end that session first). Then each registered
 worktree under `.claude/worktrees/` is removed only when it is clean, merged
 into `origin/main`, holds no lock or a lock whose holder process has exited,
 has no plan in progress, no live session is in it, and every ignored file in
-it is a cache or build output, a byte-identical copy of the root's (what
-`.worktreeinclude` copied in), or `cc/` session state, which is copied into
+it is a cache, a build output or a regenerable report (`reports/`,
+`.espalier/`, `dist/`), a byte-identical copy of the root's (what
+`.worktreeinclude` copied in, the reports aside: they are regenerable, so a
+regenerated one keeps nothing), or `cc/` session state, which is copied into
 the root first (compaction legs and the working summary into
 `cc/blueprints/compact_summaries/`, the rest under
 `cc/blueprints/from-worktrees/<name>/`, never over a file). Any other ignored
