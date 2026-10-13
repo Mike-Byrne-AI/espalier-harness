@@ -148,7 +148,8 @@ class TestStrike:
         """Atomicity: the first cut retired the probe before checking
         convergence, leaving an open row with no probe when the strike was
         refused (failure-mode pass, driven)."""
-        monkeypatch.setattr(lr, "_converge", lambda gen, text, probes_path: (text, [{"region": "x", "detail": "forced"}]))
+        monkeypatch.setattr(lr, "_converge",
+                            lambda gen, text, probes_path, pending=None: (text, [{"region": "x", "detail": "forced"}]))
         before = tree["ledger"].read_text(encoding="utf-8"), tree["probes"].read_text(encoding="utf-8")
         assert lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"]))) == 2
         assert "nothing written" in capsys.readouterr().err

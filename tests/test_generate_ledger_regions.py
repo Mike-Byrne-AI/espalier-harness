@@ -667,7 +667,8 @@ class TestRootResolution:
         directory finds the checkout."""
         repo = tmp_path / "repo"
         (repo / "tools" / "cc").mkdir(parents=True)
-        for name in ("generate_ledger_regions.py", "check_ledger_probes.py", "_json_safe.py"):
+        for name in ("generate_ledger_regions.py", "check_ledger_probes.py", "_json_safe.py",
+                     "_record_fragments.py"):
             (repo / "tools" / "cc" / name).write_bytes((REPO_ROOT / "tools" / "cc" / name).read_bytes())
         (repo / "task-packs").mkdir()
         (repo / "task-packs" / "FORWARD_LEDGER.md").write_text(_ledger(), encoding="utf-8")
