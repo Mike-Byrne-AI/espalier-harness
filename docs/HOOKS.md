@@ -233,6 +233,29 @@ move first. The line then says why, and how to name the worktree by hand.
   hook entries aside as SessionStart and `config_guard` do, and names the
   remedies SessionStart's own warning names; a note, never a refusal).
 
+A `Merging:` line after `Merged:` prints the base branch's merge rules as
+GitHub reports them now: whether a pull request must be up to date with the
+base before it merges, and how many checks are required (one bounded read of
+branch protection under the pull-request block's deadline; no line when it
+cannot be read, never a guess). The docs point here rather than restating the
+setting.
+
+An `Engine:` line names a checkout that holds the engine source
+(`espalier/__init__.py` at its root, so never an adopter tree) whose test
+interpreter imports `espalier` from somewhere else: an installed copy, or
+another checkout an editable install names. Every child process a test tier
+spawns then runs that engine, not this tree's (measured 2026-10-12: a worktree
+seat's full tier ran the main checkout's engine in every CLI test). The
+interpreter is `python3`, then `python`, on the PATH Claude Code was launched
+with, asked from an empty temporary directory where `espalier` would come
+from, without importing it: about 20 ms, capped at one second, after the
+network reads. The line names both locations and the fix: a `.venv` of the
+checkout's own with its `bin` (`Scripts` on Windows) first on PATH, or, when
+that `.venv` exists already, to put it first. It is silent when the two agree,
+on an adopter tree, and when no interpreter answers in time. It is the early
+notice; the test session itself stops on the same mismatch
+(`tests/conftest.py`), with the interpreter that is really running.
+
 And on a fresh session (source `startup` or `clear`) it first catches the
 checkout up and clears the leftover worktrees beside it
 (`tools/cc/checkout_sync.py`), before anything above is read, so the branch,

@@ -24,6 +24,20 @@ remembered. A red `main` is reverted before anything lands on it.
   (`docs/SHARP_EDGES.md`, "The worktrees of one clone share its machine name").
   Two seats on one box are two seats. Two sessions in one checkout are one seat
   and must not happen; the SessionStart `Sessions:` line reports it.
+- **A worktree seat's interpreter.** A linked worktree checks out the source,
+  not an interpreter: an editable install of `espalier` names one checkout, so
+  in every other seat a tier's child processes import that checkout's engine
+  (measured 2026-10-12: a worktree seat's full tier ran the main checkout's
+  engine in every CLI test). Give each seat its own, in the checkout itself:
+  `uv venv .venv`, then `uv pip install --python .venv/bin/python -e '.[dev]'`
+  (`.venv\Scripts\python.exe` on Windows), and run every tier with `.venv/bin`
+  (`.venv\Scripts`) first on PATH, launching Claude Code that way too so the
+  banner agrees (`scripts/proof_tier.py` launches pytest, ruff and mypy by
+  name). `.venv` is gitignored, reaped as disposable, and `uv run`'s default.
+  Never a global `PYTHONPATH`: the wheel and fresh-clone tests build venvs of
+  their own and would inherit it. A test session on the wrong engine stops
+  before any test runs (`tests/_engine_check.py`); the SessionStart `Engine:`
+  line names the mismatch earlier, from the launch PATH.
 - **Job.** A pack, a wave of a pack, or a ledger class: the unit the dispatcher
   assigns. Never a path. Measured 2026-10-09 over the 93 pull requests merged
   since 10-02: of the 65 that touched code, 47 crossed two or more areas of a
