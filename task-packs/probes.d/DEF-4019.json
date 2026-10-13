@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4019",
+ "subject": "tools/cc/ledger_row.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "a crash window: no read-only command witnesses a filing that dies part-way on a healthy tree, and a probe keyed on a verb path that does not exist yet would key on a name",
+ "row_sha": "69358a566e94",
+ "text_sha": "99d90b0d6af3",
+ "verified_2026_10_13": "OPEN (filed 2026-10-13; probe driven at filing)"
+}

@@ -29,6 +29,18 @@
   for the reason 0-G gives). A re-review of the correction returned one more BLOCK, the
   generator and the convergence step reading the files directly; it and the rest of both
   reviews' findings are folded into Wave B and Wave C below.
+- Wave B built 2026-10-13 by air-work on `lane/ledger-fragments-expand`: the loader, the
+  verbs writing row and probe files on an opted-in tree, every reader on the view, and this
+  repository opted in (`ledger_fragments = true`). Three review rounds each returned
+  REQUEST CHANGES (round 1 both reviewers on the first three commits, round 2 both on the
+  fix batch, round 3 the failure-mode lane on the refusal change alone, at the operator's
+  call); every finding was fixed in the lane or filed: `DEF-4018` (readers no mechanical
+  check holds: English instructions, multi-hop helpers) and `DEF-4019` (a filing that dies
+  between its row and its probe, which no verb finishes). The operator decided three forks
+  on the way: a verb notes a problem it did not cause instead of refusing only where the
+  tree keeps rows as files; the prose check and the reader census hold the shapes they can
+  decide and say so; the recovery verb is filed, not built. Earn-the-red: 62 named
+  mutations over the three fix batches, each red alone.
 
 ## Motivation
 
