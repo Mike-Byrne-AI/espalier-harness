@@ -3146,19 +3146,6 @@
    "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
   },
   {
-   "id": "DEF-4014",
-   "subject": "pyproject.toml",
-   "cmd": "python3 -B -c \"from espalier._compat import tomllib;import ast;d=tomllib.load(open('pyproject.toml','rb'));r=[x.replace(' ','') for x in d['project']['optional-dependencies']['dev'] if x.replace(' ','').lower().startswith('ruff')];p=any('==' in x or ('~=' in x and x.count('.')>=2) for x in r) or 'required-version' in d.get('tool',{}).get('ruff',{});e=any(isinstance(n,ast.Constant) and n.value=='--version' for n in ast.walk(ast.parse(open('scripts/proof_tier.py',encoding='utf-8').read())));print(not p and not e)\"",
-   "open_value": "True",
-   "why_not": null,
-   "inputs": [
-    "scripts/proof_tier.py"
-   ],
-   "row_sha": "f87223a7a0ad",
-   "text_sha": "41b50d4e3edf",
-   "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
-  },
-  {
    "id": "DEF-4016",
    "subject": "espalier/analyze.py",
    "cmd": "python3 -B -c \"import tempfile,pathlib;from espalier.analyze import detect_package_roots as P,detect_monorepo as M;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);b=pathlib.Path(T.name);w=lambda r,fs:[(r/f).parent.mkdir(parents=True,exist_ok=True) or (r/f).write_text('x') for f in fs] and r;a=w(b/'a',['packages/one/setup.py','packages/two/setup.py']);v=w(b/'v',['pyproject.toml','third_party/libA/setup.py','third_party/libB/setup.cfg','vendor/libC/Gemfile','docs/setup.cfg']);print(not (M(P(a)) and not M(P(v))))\"",
