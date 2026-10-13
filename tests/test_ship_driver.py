@@ -252,9 +252,11 @@ class TestRunner:
 
         monkeypatch.setattr(ship, "shutil", types.SimpleNamespace(
             which=lambda name: which))
+        # ship.run spawns through the bounded spawn (2026-10-13); the stub
+        # stands in for it, and the namespace keeps the names run still reads.
+        monkeypatch.setattr(ship, "run_bounded", fake_run)
         monkeypatch.setattr(ship, "subprocess", types.SimpleNamespace(
-            run=fake_run, DEVNULL=subprocess.DEVNULL,
-            TimeoutExpired=subprocess.TimeoutExpired))
+            DEVNULL=subprocess.DEVNULL, TimeoutExpired=subprocess.TimeoutExpired))
         return spawned
 
     def test_the_program_is_resolved_on_path_so_a_bare_name_finds_a_windows_exe(

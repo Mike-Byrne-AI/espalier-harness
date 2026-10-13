@@ -907,8 +907,11 @@ def _is_tracked(root: Path, rel: str) -> bool:
     subprocess. When git cannot be asked the answer is 'tracked': silence on a
     guess, never noise."""
     import subprocess
+    # Read with a degrade (DEF-1176): a kept helper that predates the bounded
+    # spawn leaves this read on subprocess.run, unbounded on Windows as before.
+    run_bounded = getattr(_hook_utils, "run_bounded", None) or subprocess.run
     try:
-        rc = subprocess.run(  # spawn: ok an advisory classify; a git that cannot run classifies nothing
+        rc = run_bounded(  # spawn: ok an advisory classify; a git that cannot run classifies nothing
             ["git", "-C", str(root), "ls-files", "--error-unmatch", "--", rel],
             capture_output=True, timeout=_spawn_timeout(5),
         ).returncode

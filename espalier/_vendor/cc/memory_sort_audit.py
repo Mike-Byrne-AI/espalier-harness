@@ -69,6 +69,7 @@ from pathlib import Path
 # main() is __main__-guarded, so importing it has no side effect.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from read_summary import _project_dir  # noqa: E402
+from _json_safe import run_bounded  # noqa: E402
 
 # Committed project-memory filename, routed through one per-file constant so a
 # future rename is a value flip. Per-file (not a shared import) — tools/cc scripts
@@ -211,7 +212,7 @@ def _section_slugs(text: str) -> list[str]:
 def _tracked_files(repo: Path) -> list[str]:
     """Repo-relative tracked paths, or [] outside a work tree (fail-soft)."""
     try:
-        out = subprocess.run(
+        out = run_bounded(
             ["git", "-C", str(repo), "ls-files"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
         )
@@ -440,7 +441,7 @@ def _repo_root(explicit: str | None) -> Path:
     if explicit:
         return Path(explicit).resolve()
     try:
-        out = subprocess.run(
+        out = run_bounded(
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, encoding="utf-8", timeout=10,
         )

@@ -586,8 +586,12 @@ three words or more; the kind alone is wallpaper. A payload the hook could
 not read is a `BadStdin` (an empty dict that remembers the fault); a blocking
 hook calls `say_bad_stdin`. Spawns: a gate routes through
 `_hook_utils.spawn_checked` (argv[0] resolved through `shutil.which`, a typed
-`SpawnFailure` instead of a raise); a reporter's raw `subprocess.run` carries
-`# spawn: ok <reason>`. Derived-population gates in the harness's own
+`SpawnFailure` instead of a raise); a reporter's own spawn carries
+`# spawn: ok <reason>`. A spawn with a timeout calls `_hook_utils.run_bounded`
+(`spawn_checked` is built on it), never a raw `subprocess.*` call: on Windows
+`subprocess.run` kills only the child at the timeout and then waits for any
+grandchild still holding the pipe -- a `.bat` shim's program, or the real git
+behind Git for Windows's launcher -- so the cap is not a cap. Derived-population gates in the harness's own
 suite (the fail-open voice census, its stderr call-site census, and the spawn
 chokepoint census, described under the fail-open-with-voice convention in the
 harness's own conventions doc) walk every handler, every stderr line and

@@ -20,6 +20,18 @@ import stat as _stat
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
+
+try:  # the bounded spawn beside this file; it is also loaded where that sibling is not importable
+    from _json_safe import run_bounded
+except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (copied alone, or loaded by path): subprocess.run, a bound everywhere but Windows
+    def run_bounded(
+        args: Any, *, timeout: float | None = None, input: Any = None,
+        capture_output: bool = False, check: bool = False, **kwargs: Any,
+    ) -> "subprocess.CompletedProcess[Any]":
+        """``subprocess.run``, read when called, so a replaced one is honoured as ``run_bounded`` honours it."""
+        return subprocess.run(  # spawn: ok the bounded spawn's fallback where _json_safe.py is not importable
+            args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
 
 MAX_FRESHNESS_MANIFEST_BYTES = 65_536  # 64 KB cap.
 STATE_CACHE_MAX_AGE_HOURS = 24
@@ -142,7 +154,7 @@ def _is_state_cache_stale(
 
 def _git_head_sha_quiet(cwd: Path) -> str | None:
     try:
-        result = subprocess.run(
+        result = run_bounded(
             ["git", "-C", str(cwd), "rev-parse", "HEAD"],
             capture_output=True, text=True, encoding="utf-8", timeout=5,
         )
@@ -163,7 +175,7 @@ def _git_is_ancestor_within_n(
     candidate_sha: str, ref: str, *, n: int, cwd: Path,
 ) -> bool:
     try:
-        result = subprocess.run(
+        result = run_bounded(
             ["git", "-C", str(cwd), "rev-list", f"-n{n}", ref],
             capture_output=True, text=True, encoding="utf-8", timeout=5,
         )
@@ -234,7 +246,7 @@ def _pinned_bound_changed_since(repo_root: Path, cache_sha: str) -> bool:
     if not paths:
         return False
     try:
-        result = subprocess.run(
+        result = run_bounded(
             ["git", "-C", str(repo_root), "diff", "--quiet",
              cache_sha, "HEAD", "--", *paths],
             capture_output=True, timeout=5,

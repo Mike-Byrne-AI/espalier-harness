@@ -372,7 +372,7 @@ def _safe_read(path: Path, max_lines: int = 0) -> str:
 def _check_dirty(root: Path) -> str:
     """Report uncommitted changes count."""
     try:
-        result = subprocess.run(  # spawn: ok a reporter: a git that cannot run costs the dirty line, never the banner
+        result = _hook_utils.run_bounded(  # spawn: ok a reporter: a git that cannot run costs the dirty line, never the banner
             ["git", "status", "--short"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=str(root),
         )
@@ -459,7 +459,7 @@ def _read_process_table() -> str:
     if os.name != "posix":
         return ""
     try:
-        result = subprocess.run(  # spawn: ok a reporter: a ps that cannot run costs the Loose: line, never the banner
+        result = _hook_utils.run_bounded(  # spawn: ok a reporter: a ps that cannot run costs the Loose: line, never the banner
             ["ps", "-axo", "pid,ppid,time,comm"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=5,
@@ -637,7 +637,7 @@ def _gh_pr_list(root: Path, state: str, limit: int, deadline: float | None) -> s
     if timeout <= 0.2:
         return ""
     try:
-        result = subprocess.run(  # spawn: ok a reporter: a gh that cannot run costs the Open PRs: line; a missing gh is named by the load-bearing-tool warning
+        result = _hook_utils.run_bounded(  # spawn: ok a reporter: a gh that cannot run costs the Open PRs: line; a missing gh is named by the load-bearing-tool warning
             ["gh", "pr", "list", "--author", "@me", "--state", state,
              "--limit", str(limit), "--json", _PR_FIELDS],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -671,7 +671,7 @@ def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> lis
     if timeout <= 0.2:
         return None
     try:
-        result = subprocess.run(  # spawn: ok a reporter: a gh that cannot run costs the required-red name in one tail, never the line; a missing gh is named by the load-bearing-tool warning
+        result = _hook_utils.run_bounded(  # spawn: ok a reporter: a gh that cannot run costs the required-red name in one tail, never the line; a missing gh is named by the load-bearing-tool warning
             ["gh", "pr", "checks", str(number), "--required", "--json", "name,bucket"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),
@@ -860,7 +860,7 @@ def _probe_engine(exe: str, timeout: float, env: dict[str, str] | None) -> Path 
     never a false alarm)."""
     try:
         with tempfile.TemporaryDirectory(prefix="espalier-engine-probe-") as neutral:
-            done = subprocess.run(  # spawn: ok reporter probe, bounded, no shell, a fixed program text
+            done = _hook_utils.run_bounded(  # spawn: ok reporter probe, bounded, no shell, a fixed program text
                 [exe, "-c", _ENGINE_PROBE], cwd=neutral, env=env, capture_output=True,
                 text=True, encoding="utf-8", errors="replace", timeout=timeout, check=False,
             )
@@ -1164,7 +1164,7 @@ def _local_has_commit(
         if timeout <= 0.2:
             return None
         try:
-            have = subprocess.run(  # spawn: ok a reporter: a git that cannot answer decides nothing about the Merged: line
+            have = _hook_utils.run_bounded(  # spawn: ok a reporter: a git that cannot answer decides nothing about the Merged: line
                 ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{base}"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=timeout, cwd=str(root),
@@ -1180,7 +1180,7 @@ def _local_has_commit(
     if timeout <= 0.2:
         return None
     try:
-        reach = subprocess.run(  # spawn: ok a reporter: a git that cannot answer decides nothing about the Merged: line
+        reach = _hook_utils.run_bounded(  # spawn: ok a reporter: a git that cannot answer decides nothing about the Merged: line
             ["git", "merge-base", "--is-ancestor", oid, f"refs/heads/{base}"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),
@@ -1930,7 +1930,7 @@ def _load_blueprint(root: Path, advance_chain: bool) -> str:
     # "Subprocesses Inheriting CLAUDE_PROJECT_DIR".
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
     try:
-        result = subprocess.run(  # spawn: ok a reporter: a blueprint load that cannot be spawned is warned at its handler
+        result = _hook_utils.run_bounded(  # spawn: ok a reporter: a blueprint load that cannot be spawned is warned at its handler
             [sys.executable, str(blueprint_script), "load"],
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
@@ -1957,7 +1957,7 @@ def _load_blueprint(root: Path, advance_chain: bool) -> str:
         # as empty `load` output but IS present, so a continuation source falls
         # through to the read-only return below.
         if advance_chain or not _blueprint_present(root):
-            start_result = subprocess.run(  # spawn: ok a reporter: a blueprint start that cannot be spawned is warned at its handler
+            start_result = _hook_utils.run_bounded(  # spawn: ok a reporter: a blueprint start that cannot be spawned is warned at its handler
                 [sys.executable, str(blueprint_script), "start"],
                 capture_output=True,
                 text=True, encoding="utf-8", errors="replace",
@@ -2600,7 +2600,7 @@ def _find_nested_repo_litter(
     # (``worktree <path>`` first, attribute lines such as ``locked`` after it,
     # a blank line between blocks); ``locked`` is read per block.
     try:
-        wl = subprocess.run(  # spawn: ok a reporter: a git that cannot list worktrees reports the litter it can see
+        wl = _hook_utils.run_bounded(  # spawn: ok a reporter: a git that cannot list worktrees reports the litter it can see
             ["git", "worktree", "list", "--porcelain"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=str(root),
         )
@@ -2639,7 +2639,7 @@ def _find_nested_repo_litter(
 
     # Source B: untracked dirs that are (or hide) a nested ``.git``.
     try:
-        st = subprocess.run(  # spawn: ok a reporter: a git that cannot run reports the litter it can see
+        st = _hook_utils.run_bounded(  # spawn: ok a reporter: a git that cannot run reports the litter it can see
             ["git", "-c", "core.quotepath=false", "status", "--porcelain"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=str(root),
         )
@@ -3238,7 +3238,7 @@ def _open_plan_section(root: Path) -> str:
 def _recent_commits(root: Path, n: int = 3) -> str:
     """The newest ``n`` commit subjects, regenerated here. '' on git failure/timeout."""
     try:
-        r = subprocess.run(  # spawn: ok a reporter: a git that cannot run draws no recent-commits section
+        r = _hook_utils.run_bounded(  # spawn: ok a reporter: a git that cannot run draws no recent-commits section
             ["git", "log", f"-{n}", "--oneline", "--no-decorate"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=str(root),
         )
@@ -3257,7 +3257,7 @@ def _blueprint_recent(root: Path) -> str:
         return ""
     try:
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
-        r = subprocess.run(  # spawn: ok a reporter: a show-recent that cannot run is warned at its handler
+        r = _hook_utils.run_bounded(  # spawn: ok a reporter: a show-recent that cannot run is warned at its handler
             [sys.executable, str(bp), "show-recent", "--n", "5"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, cwd=str(root), env=env,
         )
