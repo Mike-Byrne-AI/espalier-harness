@@ -1766,35 +1766,67 @@ _SPEEDBUMP_SCALING_MIN_SAMPLE_MS = 5.0
 _SPEEDBUMP_SAMPLES = 3
 
 
-def _min_search_ms(compiled: "re.Pattern[str]", probe: str) -> float | None:
-    """The floor of `_SPEEDBUMP_SAMPLES` timings of one search, the cyclic
-    collector paused throughout and restored after (`tests/test_redos.py`'s
-    walker discipline); None when a search overran `_SPEEDBUMP_CI_SAFE_MS`."""
-    best: float | None = None
+def _search_ms(compiled: "re.Pattern[str]", probe: str) -> float | None:
+    """One timed search; None when it overran `_SPEEDBUMP_CI_SAFE_MS`. The
+    caller pauses the cyclic collector (:func:`_search_window_ms`)."""
     has_alarm = hasattr(signal, "SIGALRM")
+    if has_alarm:
+        signal.signal(signal.SIGALRM, _alarm)
+        signal.setitimer(signal.ITIMER_REAL, _SPEEDBUMP_CI_SAFE_MS / 1000.0)
+    t0 = time.perf_counter()
+    try:
+        compiled.search(probe)
+        if has_alarm:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+        return (time.perf_counter() - t0) * 1000
+    except _Timeout:
+        return None
+    finally:
+        if has_alarm:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+
+
+def _search_window_ms(compiled: "re.Pattern[str]", big: str, small: str) -> "tuple[float, float] | None":
+    """One window of the scaling rule: ``(t_small_ms, t_big_ms)``, the floor of
+    `_SPEEDBUMP_SAMPLES` timings at each size, the cyclic collector paused
+    throughout and restored after (`tests/test_redos.py`'s walker discipline);
+    None when a search overran `_SPEEDBUMP_CI_SAFE_MS`.
+
+    The samples interleave (small, big, three times), never all of one size
+    and then the other (DEF-2000). A quadratic reads only about 30 percent
+    over the linear bound, and one slowdown as long as three small samples
+    took back to back lifted the whole small floor and left the big one clean,
+    reading the quadratic linear; interleaved, the same slowdown covers a big
+    sample too and the clean samples after it set both floors. Measured on
+    the Windows self-host box (2026-10-13, two runs of 200 trials per
+    estimator, the estimators rotated per trial, the second run under about
+    twice the load): the control's stand-in read linear 16 then 136 of 400
+    back to back and 1 then 46 of 400 interleaved, and a linear stand-in
+    super-linear 1 then 2 of 200 back to back and none interleaved, at 1.00
+    then 1.05 to 1.12 times the cost. A lower ratio (2.83: 13 then 136 of 400)
+    did no better; a second window on the linear side (3 then 58 of 400) cost
+    up to twice as much on every linear pass and read the linear stand-in
+    super-linear 15 of 200 in the second run. Interleaving narrows the misread
+    and does not close it: a slowdown spanning a window's three small samples
+    and every big one but the last still reads a quadratic linear."""
+    smalls: list[float] = []
+    bigs: list[float] = []
     collector_was_on = gc.isenabled()
     gc.disable()
     try:
         for _ in range(_SPEEDBUMP_SAMPLES):
-            if has_alarm:
-                signal.signal(signal.SIGALRM, _alarm)
-                signal.setitimer(signal.ITIMER_REAL, _SPEEDBUMP_CI_SAFE_MS / 1000.0)
-            t0 = time.perf_counter()
-            try:
-                compiled.search(probe)
-                if has_alarm:
-                    signal.setitimer(signal.ITIMER_REAL, 0)
-                elapsed_ms = (time.perf_counter() - t0) * 1000
-            except _Timeout:
+            t_small = _search_ms(compiled, small)
+            if t_small is None:
                 return None
-            finally:
-                if has_alarm:
-                    signal.setitimer(signal.ITIMER_REAL, 0)
-            best = elapsed_ms if best is None else min(best, elapsed_ms)
+            smalls.append(t_small)
+            t_big = _search_ms(compiled, big)
+            if t_big is None:
+                return None
+            bigs.append(t_big)
     finally:
         if collector_was_on:
             gc.enable()
-    return best
+    return min(smalls), min(bigs)
 
 
 def _scaling_reading(compiled: "re.Pattern[str]", big: str, small: str
@@ -1807,19 +1839,19 @@ def _scaling_reading(compiled: "re.Pattern[str]", big: str, small: str
     ratio is the estimate. The timings ride along so that a red carries its
     reading: a bare None on the Windows runner could not say whether the control
     fell under the floor or inside the bound (DEF-4001)."""
-    t_small = _min_search_ms(compiled, small)
-    t_big = _min_search_ms(compiled, big)
-    if t_small is None or t_big is None:
-        return f"exceeded {_SPEEDBUMP_CI_SAFE_MS}ms", t_small, t_big, None
+    first = _search_window_ms(compiled, big, small)
+    if first is None:
+        return f"exceeded {_SPEEDBUMP_CI_SAFE_MS}ms", None, None, None
+    t_small, t_big = first
     if t_small < _SPEEDBUMP_SCALING_MIN_SAMPLE_MS:
         return None, t_small, t_big, None
     bound = _SPEEDBUMP_LINEAR_RATIO * t_small + _SPEEDBUMP_NOISE_FLOOR_MS
     if t_big <= bound:
         return None, t_small, t_big, bound
-    t_small_2 = _min_search_ms(compiled, small)
-    t_big_2 = _min_search_ms(compiled, big)
-    if t_small_2 is None or t_big_2 is None:
-        return f"exceeded {_SPEEDBUMP_CI_SAFE_MS}ms on the second window", t_small_2, t_big_2, bound
+    second = _search_window_ms(compiled, big, small)
+    if second is None:
+        return f"exceeded {_SPEEDBUMP_CI_SAFE_MS}ms on the second window", None, None, bound
+    t_small_2, t_big_2 = second
     if t_big_2 / t_small_2 < t_big / t_small:
         t_small, t_big = t_small_2, t_big_2
         if t_small < _SPEEDBUMP_SCALING_MIN_SAMPLE_MS:
@@ -2058,7 +2090,7 @@ class TestSpeedbumpRegexBudget:
     def test_the_control_steps_up_once_and_only_under_the_floor(
             self, monkeypatch, ms_at_first, power, names_it, steps_up):
         """The control's sizing on a stubbed clock (:func:`_stub_clock` standing
-        in for `_min_search_ms`), so each runner a row names is driven on every
+        in for `_search_ms`), so each runner a row names is driven on every
         host, through the real control method. The timed sizes are asserted
         exactly, as multiples of `_CONTROL_SMALL_BYTES`: a wider step, a second
         step and a step on a linear reading each red a row."""
@@ -2066,7 +2098,7 @@ class TestSpeedbumpRegexBudget:
             "the row's premise moved: its first pair no longer reads on the side of the floor it is about"
         )
         seen: list[int] = []
-        monkeypatch.setattr(sys.modules[__name__], "_min_search_ms", _stub_clock(ms_at_first, power, seen))
+        monkeypatch.setattr(sys.modules[__name__], "_search_ms", _stub_clock(ms_at_first, power, seen))
         if names_it:
             self.test_the_scaling_rule_still_reds_a_quadratic_pattern()
         else:
@@ -2076,15 +2108,51 @@ class TestSpeedbumpRegexBudget:
         expected = {n, 2 * n, 4 * n} if steps_up else {n, 2 * n}
         assert set(seen) == expected, f"sizes timed {sorted(set(seen))}, expected {sorted(expected)}"
 
+    def test_a_slowdown_across_the_small_samples_still_reads_the_quadratic(self, monkeypatch):
+        """DEF-2000: one sustained slowdown, as long as a window's three small
+        samples take back to back, lifts the window's small floor and leaves its
+        big one clean. Taken in that order the control's quadratic stand-in reads
+        8.5 x 1.5 -> 34 ms, ratio 2.67, inside the 3.0 bound, and passes on that
+        one read; the rule interleaves each window (small, big, three times), so
+        the same slowdown also covers the first big sample and the clean ones that
+        follow set both floors. Driven on a simulated clock
+        (:func:`_burst_clock`) through the real control, on every host. The
+        measurement and the residue the interleave leaves are at
+        :func:`_search_window_ms`."""
+        factor = 1.5  # the measured slowdown: 35.4 ms against a 23.2 median (DEF-2000)
+        ms_at_first = 8.5  # the Air's small sample at `_CONTROL_SMALL_BYTES`
+        seen: list[int] = []
+        monkeypatch.setattr(sys.modules[__name__], "_search_ms", _burst_clock(
+            ms_at_first, 2.0, 3 * factor * ms_at_first, factor, seen))
+        self.test_the_scaling_rule_still_reds_a_quadratic_pattern()
+        n = _CONTROL_SMALL_BYTES
+        assert set(seen) == {n, 2 * n}, f"sizes timed {sorted(set(seen))}: the control stepped up"
+
 
 def _stub_clock(ms_at_first: float, power: float, seen: "list[int]"):
-    """A stand-in for :func:`_min_search_ms`: ``ms_at_first`` at
+    """A stand-in for :func:`_search_ms`: ``ms_at_first`` at
     `_CONTROL_SMALL_BYTES` and ``2 ** power`` times more at each doubling (2.0
     an exact quadratic, 1.5 inside the linear bound), recording every probe
     length it is asked to time."""
     def reading(_compiled: "re.Pattern[str]", probe: str) -> float:
         seen.append(len(probe))
         return ms_at_first * (len(probe) / _CONTROL_SMALL_BYTES) ** power
+    return reading
+
+
+def _burst_clock(ms_at_first: float, power: float, burst_ms: float, factor: float, seen: "list[int]"):
+    """:func:`_stub_clock` on a simulated clock: every search that STARTS in the
+    first ``burst_ms`` of simulated time costs ``factor`` times more (one
+    sustained slowdown, the shape DEF-2000 measured)."""
+    now = [0.0]
+
+    def reading(_compiled: "re.Pattern[str]", probe: str) -> float:
+        seen.append(len(probe))
+        cost = ms_at_first * (len(probe) / _CONTROL_SMALL_BYTES) ** power
+        if now[0] < burst_ms:
+            cost *= factor
+        now[0] += cost
+        return cost
     return reading
 
 
