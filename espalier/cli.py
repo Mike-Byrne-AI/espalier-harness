@@ -11778,10 +11778,6 @@ def cmd_install_ci(args: argparse.Namespace, *, report: dict | None = None) -> i
         print("Wrote:")
         for rel in wrote:
             print(f"  {rel}")
-        # The adopter's next step is the commit carrying these, which the
-        # guard just installed refuses unmarked (DEF-1050).
-        for line in _approval_marker_lines(repo_root, wrote):
-            print(line)
     # init seeds .espalier/integrity.json BEFORE ci_guard.py and
     # harness-guard.yml exist, so the init→install-ci flow leaves both files
     # absent from the manifest (tampering goes undetected). Re-seed now that
@@ -11811,6 +11807,13 @@ def cmd_install_ci(args: argparse.Namespace, *, report: dict | None = None) -> i
                 "[info] re-seeded .espalier/integrity.json to cover "
                 "ci_guard.py + harness-guard.yml"
             )
+            # Rewritten every time (it stamps generated_at), so a re-run whose
+            # guard files are unchanged still changes it wherever it is tracked.
+            wrote.append(".espalier/integrity.json")
+    # The adopter's next step is the commit carrying these, which the guard
+    # just installed refuses unmarked (DEF-1050, DEF-3002).
+    for line in _approval_marker_lines(repo_root, wrote):
+        print(line)
     # The workflow just written flips `detect_ci`'s raw `.github/workflows`
     # probe, so the baseline `init` saved (`ci_providers: []`) now disagrees
     # with a fresh inference and the adopter's next documented step, `doctor .`,
@@ -11952,6 +11955,7 @@ def cmd_refresh_self_host_pin(args: argparse.Namespace) -> int:
     # be located in one carrier aborts the whole run rather than leaving the
     # tree half-updated.
     rewritten: list[tuple[Path, str]] = []
+    moved: list[str] = []  # the carriers whose pin this run changes
     for pin_file in pin_files:
         text = pin_file.read_text(encoding="utf-8")
         updated, n = SELF_HOST_PIN_ASSIGNMENT_RE.subn(
@@ -11964,11 +11968,18 @@ def cmd_refresh_self_host_pin(args: argparse.Namespace) -> int:
             )
             return 2
         rewritten.append((pin_file, updated))
+        if updated != text:
+            moved.append(pin_file.relative_to(repo_root).as_posix())
     for pin_file, updated in rewritten:
         atomic_write_text(pin_file, updated)
     print(f"refreshed: WRITE_GUARD_PREFIX_SHA256 = {new_hash}")
     for pin_file in pin_files:
         print(f"  {pin_file.relative_to(repo_root).as_posix()}")
+    # Two of the carriers sit under tools/cc/, which the Harness Guard gates,
+    # so the commit carrying a moved pin needs the marker (DEF-3002: the census
+    # sees this verb refuse on an adopter tree; the helper keeps the gated ones).
+    for line in _approval_marker_lines(repo_root, moved):
+        print(line)
     print(
         f"Run `{_remedy_py()} scripts/sync_vendor_cc.py` to carry "
         "the tools/cc changes into espalier/_vendor/cc/."
