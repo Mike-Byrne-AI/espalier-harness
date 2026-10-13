@@ -199,8 +199,21 @@ Six shapes to recognise:
   below makes it here: the base merged in with the record files resolved by
   shape, a push, a re-bind. A conflict outside the record files it refuses by
   name; then `git fetch origin && git merge origin/<base>`, resolve, commit,
-  push, `rebind`. Never a rebase of a pushed lane: a merge carries the same
-  content without rewriting what was pushed.
+  push, `rebind`. When that same merge also conflicts on a record file (the
+  ledger, its probes file, the memory file), resolve only the other file by
+  hand and `git add` it; never hand-merge a record file, whose derived counts
+  read right and total wrong. Then let the record resolver finish the merge:
+
+  ```bash
+  python -c "import sys, pathlib; sys.path.insert(0, 'tools/cc'); import record_merge as rm; rm._resolve_unmerged(pathlib.Path('.').resolve(), 'origin/<base>', [rm.MEMORY, rm.LEDGER, rm.PROBES], run=rm.run, say=print)"
+  ```
+
+  It resolves the record files by shape, stages them and concludes the merge
+  itself, so your staged hand resolution rides the same merge commit. It is a
+  private function: when it raises, run `git merge --abort` yourself. Check `python tools/cc/generate_ledger_regions.py --check` and
+  that no conflict markers remain, then push and `rebind`. Never a rebase of a
+  pushed lane: a merge carries the same content without rewriting what was
+  pushed.
 - **Behind the base, nothing red, armed and waiting** -- a repository whose
   branch protection requires the pull request to be up to date with its base
   holds it here; GitHub's merge state reads `BEHIND` and the banner says so.
