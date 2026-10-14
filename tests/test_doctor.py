@@ -204,10 +204,28 @@ class TestDoctorRetiredDenyRule:
     reason and the one-line fix, read-only and BOM-tolerant like the allow-gap
     twin beside it."""
 
+    @staticmethod
+    def _armed(repo) -> dict:
+        """The fixture's hooks run under the interpreter init would wire on this
+        host: doctor names a retired rule only where the hooks run (the hook
+        layer stands in for it), and the fixture's `python3` does not resolve
+        on a host that ships only `python`."""
+        from espalier.cli import _detect_python_command, _enforcement_claim_blockers
+
+        settings = repo / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        for entries in data["hooks"].values():
+            for entry in entries:
+                for hook in entry["hooks"]:
+                    hook["command"] = _detect_python_command()
+        settings.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        assert _enforcement_claim_blockers(repo, settings) == [], "the fixture is not armed"
+        return data
+
     def test_a_retired_deny_rule_is_a_warning_with_the_one_line_fix(self, harness_repo):
         """Red at HEAD before the fix: doctor read only the allow list."""
         settings = harness_repo / ".claude" / "settings.json"
-        data = json.loads(settings.read_text(encoding="utf-8"))
+        data = self._armed(harness_repo)
         data.setdefault("permissions", {})["deny"] = ["Bash(rm -rf /)", "Bash(rm -rf /*)"]
         settings.write_text(json.dumps(data, indent=2), encoding="utf-8")
         result = run_doctor_check(harness_repo, skip_self_host=True)
@@ -222,6 +240,8 @@ class TestDoctorRetiredDenyRule:
         assert any("Bash(rm -rf /*)" in step for step in result["next_steps"]), result["next_steps"]
 
     def test_no_retired_deny_warning_on_clean_wired_settings(self, harness_repo):
+        # Armed, or the gate's silence would pass this whatever the file holds.
+        self._armed(harness_repo)
         result = run_doctor_check(harness_repo, skip_self_host=True)
         assert not any("retired deny rule" in w for w in result["warnings"]), result["warnings"]
 
@@ -231,6 +251,7 @@ class TestDoctorRetiredDenyRule:
         later editor who backticks `permissions.deny` in the step, a natural
         edit, hears that the second rule's step vanished (failure-mode review)."""
         from espalier import cli as _cli
+        self._armed(harness_repo)
         monkeypatch.setattr(
             _cli, "settings_stale_denies",
             lambda path: (("Bash(rm -rf /*)", "first"), ("Bash(rm -rf /opt/*)", "second")),
@@ -2050,7 +2071,10 @@ class TestEveryWarningCarriesANextStep:
     def _retired_deny_rule(mp):
         """A settings.json still carrying a deny rule `init` has retired (the
         trailing-star rm rule, 2026-09-29); the twin is patched at its source
-        module because doctor imports it lazily."""
+        module because doctor imports it lazily. The gate that holds the advice
+        back while the hooks do not run is opened here (its own rows are
+        tests/test_cli_deploy.py::TestNoDeleteAdviceWhileTheHooksDoNotRun):
+        this fixture's `python3` does not resolve on every host."""
         from espalier import cli as _cli
         # Two rules, so the dedupe in `_append_step` is exercised, not skirted.
         mp.setattr(
@@ -2058,6 +2082,7 @@ class TestEveryWarningCarriesANextStep:
             lambda path: (("Bash(rm -rf /*)", "a trailing star is a prefix match"),
                           ("Bash(rm -rf /opt/*)", "a second retired rule")),
         )
+        mp.setattr(_cli, "_retired_rules_to_name", lambda stale, **_kw: tuple(stale))
 
     @staticmethod
     def _superseded_allow_rule(mp):

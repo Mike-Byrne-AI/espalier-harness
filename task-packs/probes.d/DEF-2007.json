@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2007",
+ "subject": "espalier/cli.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "three members on three surfaces and tree shapes: one printed value would cover one member, and each is a one-line test in the lane that fixes it",
+ "row_sha": "91aeeaef046e",
+ "text_sha": "9fecb3f313e9",
+ "verified_2026_10_14": "OPEN (filed 2026-10-14; probe driven at filing)"
+}
