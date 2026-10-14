@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2003",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the defect is the run order of the catch-up and module loading inside one hook process; a one-line probe can read only text, and any text it keys on prescribes one fix. The oracle is a scratch clone one commit behind an origin whose head adds a name to tools/cc/_json_safe.py that a by-path-loaded module imports, and one SessionStart run there.",
+ "row_sha": "6981045483f2",
+ "text_sha": "aa95b488419e",
+ "verified_2026_10_13": "OPEN (filed 2026-10-13; probe driven at filing)"
+}

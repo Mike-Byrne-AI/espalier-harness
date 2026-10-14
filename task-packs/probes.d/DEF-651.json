@@ -1,0 +1,11 @@
+{
+ "id": "DEF-651",
+ "subject": "tests/test_agent_contracts.py",
+ "cmd": "python3 -c \"import importlib.util;s=importlib.util.spec_from_file_location('t','tests/test_agent_contracts.py');m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m._bash_pattern_covers(['Bash(python *)'],'python3'))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "c8429c4c788b",
+ "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
+ "text_sha": "aa2b56e0af00",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

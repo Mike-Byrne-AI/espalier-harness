@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1014",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;f=getattr(b,\"_candidate_paths_from_bash\",None);g=chr(62);n=chr(10);a=chr(39);z=\"tools/\"+\"cc\";m=a+\"moved \"+g+\" \"+z+\"/hooks\"+a;c=[\"gh pr create --title t --body \"+m,\"gh pr edit 5 --body \"+m,\"gh issue comment 5 --body \"+m,\"gh api repos/o/r/issues/5/comments -f body=\"+m,\"gh pr create --title t --body-file - \"+chr(60)*2+a+\"EOF\"+a+n+\"- moved -\"+g+\" \"+z+\"/hooks/x.py\"+n+\"EOF\",\"gh pr create --title t --body x; echo x \"+g+\" \"+z+\"/a\"];print(\"MISSING_SYMBOL\" if f is None else [any(p.startswith(z) for p in f(x)) for x in c])'",
+ "open_value": "[True, True, True, True, True, True]",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_hook_utils.py"
+ ],
+ "row_sha": "d63ac038aeec",
+ "text_sha": "10c0c8ad16fe",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

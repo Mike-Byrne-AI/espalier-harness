@@ -1,0 +1,10 @@
+{
+ "id": "DEF-889",
+ "subject": "docs/README.md",
+ "cmd": "python3 -c \"from pathlib import Path;from espalier.reflect_protocol import _extract_local_links as L;from espalier.surface_contract import get_indexed_doc_relpaths as g;d='docs/CLASSIFIER_FALSE_POSITIVES.md';print(d in g() and any(t.endswith(Path(d).name) for t in L(Path('docs/README.md').read_text(encoding='utf-8'))))\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "196b39a6f63c",
+ "text_sha": "9837e30b1dc8",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

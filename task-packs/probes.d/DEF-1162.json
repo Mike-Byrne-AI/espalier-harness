@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1162",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import sys,os,re,tempfile,pathlib;sys.path.insert(0,\"tools/cc/hooks\");[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);os.environ[\"CLAUDE_PROJECT_DIR\"]=str(r);import _bash_patterns as b,write_guard as g;W=re.findall(r\"\\w+\",b._CMD_POS_WRAPPER);print(sum(g._ps_dangerous_reason(w+\" rm -r .\",r,cwd=r) is None for w in W))'",
+ "open_value": "22",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "6345dcba3c30",
+ "text_sha": "8d39f76f1271",
+ "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+}

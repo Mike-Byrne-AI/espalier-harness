@@ -1,0 +1,13 @@
+{
+ "id": "DEF-623",
+ "subject": ".gitignore",
+ "cmd": "python3 -c \"print(sum(1 for l in open('.gitignore') if l.strip()=='.espalier/'))\"",
+ "open_value": "0",
+ "why_not": null,
+ "note": "0 == open: this repo enumerates individual .espalier/ files instead of the directory form REQUIRED_GITIGNORE prescribes. Becomes 1 when the two shapes agree.",
+ "row_sha": "3ea146ef8260",
+ "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
+ "text_sha": "258424e74aae",
+ "verified_2026_09_14": "STILL_OPEN (re-pinned value unchanged on 2026-09-14: walk 3 (2026-09-14, W3-P13): init on the self-host clone drove the blanket entry and its narration; the release-boundary consequence appended; value unchanged)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

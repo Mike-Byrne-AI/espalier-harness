@@ -1,0 +1,10 @@
+{
+ "id": "DEF-987",
+ "subject": "espalier/assets/docs/FAILURE_MODES.md",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "no mechanical oracle separates a kept register from a leaked one; each of the fifteen is a deletion from an adopter's copy that needs the operator's reading",
+ "row_sha": "e43b0cab1377",
+ "text_sha": "34fdaa7fbe18",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

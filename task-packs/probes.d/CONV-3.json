@@ -1,0 +1,12 @@
+{
+ "id": "CONV-3",
+ "subject": "espalier/fuse.py",
+ "cmd": "python3 -c \"L=open('espalier/fuse.py').read().splitlines(); c=[i for i,x in enumerate(L) if '_fresh_baseline_commit(out' in x]; m=[i for i,x in enumerate(L) if '_seed_fusion_marker(out)' in x]; print(bool(c) and bool(m) and max(c[-1], m[-1])==m[-1] and c[-1]!=m[-1])\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "e678404fffad",
+ "text_sha": "6c0ceda02d24",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: citation form: the bare line anchor converted to the symbol it named; the claim stands)"
+}

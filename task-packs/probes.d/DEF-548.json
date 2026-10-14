@@ -1,0 +1,12 @@
+{
+ "id": "DEF-548",
+ "subject": "espalier/claim_extractor.py",
+ "cmd": "python3 -c \"import pathlib; ps=[p for p in pathlib.Path('espalier').rglob('*.py') if '_vendor' not in str(p) and p.name != 'claim_extractor.py']; print(sum(1 for p in ps if 'RECORD_SURFACES' in p.read_text(encoding='utf-8',errors='replace')))\"",
+ "open_value": "1",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "88bc120ec1b2",
+ "verified_2026_09_08": "STILL_OPEN (re-pinned '0' -> '1' on 2026-09-08: 0 -> 1 on 2026-09-08 (§C12): espalier/reflect_protocol.py now derives its residue-exempt set from the canon (RECORD_SURFACES minus docs/FAILURE_MODES.md), a fourth consumer; the hook half carries a hand-kept twin of that set pinned to the canon by TestReflectTwinParity, which is the cross-boundary shape, not a seventh disagreeing list. The six lists the row names still disagree; still open)",
+ "text_sha": "78d920f5b587",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

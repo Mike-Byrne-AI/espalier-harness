@@ -1,0 +1,10 @@
+{
+ "id": "DEF-920",
+ "subject": "tests/test_catalog_self_consistency.py",
+ "cmd": "python3 -c \"import importlib.util,sys;spec=importlib.util.spec_from_file_location('c','tests/test_catalog_self_consistency.py');m=importlib.util.module_from_spec(spec);sys.modules['c']=m;spec.loader.exec_module(m);g={'m':m,'s':chr(96)+'verify_integrity'+chr(96)+' raised out through '+chr(96)+'espalier/doctor.py:1'+chr(96)};exec('try:\\n m._check_line_anchors_fresh(s,\\'docs/probe.md\\');r=False\\nexcept AssertionError as e:\\n r=\\'is not defined in\\' in str(e)',g);print('reds_on_call_site='+str(g['r']))\"",
+ "open_value": "reds_on_call_site=True",
+ "why_not": null,
+ "row_sha": "393932189bfc",
+ "text_sha": "92097059327e",
+ "verified_2026_09_23": "STILL_OPEN (re-pinned value unchanged on 2026-09-23: review 2026-09-23: the repro sentence carried a backticked symbol beside a line anchor and named a phantom module, so the ledger itself tripped the checker it documents (five gates); the probe is keyed to the assertion message so a call-chain fix cannot hold the row red through a stale anchor of its own)"
+}

@@ -1,0 +1,14 @@
+{
+ "id": "DEF-660",
+ "subject": "CLAUDE.md",
+ "cmd": "python3 -c \"from espalier.claim_extractor import RECORD_SURFACES as r;print(len(r), open('CLAUDE.md').read().count('_RECORD_SURFACE_DOCS'))\"",
+ "open_value": "6 1",
+ "why_not": null,
+ "row_sha": "6320d895e3e2",
+ "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
+ "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
+ "text_sha": "cbd40bbe023c",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "verified_2026_09_21": "STILL_OPEN (re-pinned '8 1' -> '7 1' on 2026-09-21: the findings corpus left RECORD_SURFACES when it retired to the record branch (2026-09-21): the canon holds seven and Core Rule 13 still names the two-doc citation set)",
+ "verified_2026_09_26": "STILL_OPEN (re-pinned '7 1' -> '6 1' on 2026-09-26: the canon RECORD_SURFACES lost docs/RELEASE_FINDINGS_LEDGER.md on 2026-09-26 (TP-457 2-A: the findings ledger stayed in the archive at the seed), so the probe reads 6 1 for 7 1; the claim stands: the charter still names the two-doc list once and the canon holds six, and the row text's counts are corrected to match)"
+}

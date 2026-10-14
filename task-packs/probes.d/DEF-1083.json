@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1083",
+ "subject": ".claude/commands/implement-pack.md",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The defect is the absence of an instruction item in a Markdown command body (and a behaviour only an agent run shows); any text check on the body would flip on wording, not on the repo-declared approval being honoured.",
+ "row_sha": "9a03241af3c5",
+ "text_sha": "15177e3415ed",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

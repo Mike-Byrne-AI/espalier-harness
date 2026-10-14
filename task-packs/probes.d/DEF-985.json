@@ -1,0 +1,10 @@
+{
+ "id": "DEF-985",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import ast,pathlib;A=('run','Popen','call','check_output','check_call');S=[p.read_text(encoding='utf-8') for p in pathlib.Path('espalier').rglob('*.py') if '_vendor' not in p.parts];print('undeclared_engine_spawns='+str(any(isinstance(x,ast.Call) and isinstance(x.func,ast.Attribute) and x.func.attr in A and isinstance(x.func.value,ast.Name) and x.func.value.id=='subprocess' and 'spawn: ok' not in s.splitlines()[x.lineno-1] and (x.lineno<2 or 'spawn: ok' not in s.splitlines()[x.lineno-2]) for s in S for x in ast.walk(ast.parse(s)))))\"",
+ "open_value": "undeclared_engine_spawns=True",
+ "why_not": null,
+ "row_sha": "77be9a66af9d",
+ "text_sha": "2c30e362e031",
+ "verified_2026_10_01": "STILL_OPEN (re-pinned value unchanged on 2026-10-01: the citation of the landed pack is re-keyed to its title: a pack under Done/ is dangling to the completeness guard by construction)"
+}

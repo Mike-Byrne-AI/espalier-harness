@@ -1,0 +1,10 @@
+{
+ "id": "DEF-876",
+ "subject": "tools/cc/hooks/_speedbump.py",
+ "cmd": "python3 -c \"import importlib.util,sys,pathlib;sys.path.insert(0,'tools/cc/hooks');s=importlib.util.spec_from_file_location('_sb','tools/cc/hooks/_speedbump.py');m=importlib.util.module_from_spec(s);sys.modules['_sb']=m;s.loader.exec_module(m);print(not all(m._pred_mcp_sideeffect(n,{},pathlib.Path('.')) for n in ('mcp__notion__write_page','mcp__docs__edit_document')))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "4764a1f6367f",
+ "text_sha": "ecccfcc718fa",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

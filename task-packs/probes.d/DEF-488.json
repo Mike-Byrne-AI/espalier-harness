@@ -1,0 +1,11 @@
+{
+ "id": "DEF-488",
+ "subject": "tests/test_write_guard.py",
+ "cmd": "python3 -c \"import ast; s=open('tests/test_write_guard.py').read(); f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='_assignment_guarded_verbs'][0]; src=ast.get_source_segment(s,f); print('_ASSIGN_GUARD not in' in src and 'continue' in src)\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "1be1da703cad",
+ "text_sha": "fb03930838c0",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

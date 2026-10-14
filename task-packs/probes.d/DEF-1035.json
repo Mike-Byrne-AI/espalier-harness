@@ -1,0 +1,11 @@
+{
+ "id": "DEF-1035",
+ "subject": "tests/test_generate_ledger_regions.py",
+ "cmd": "python -c 'import ast; t=ast.parse(open(\"tests/test_generate_ledger_regions.py\",encoding=\"utf-8\").read()); print(\"scripts/generate_ledger_regions.py\" in (ast.get_docstring(t) or \"\"))'",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "75c45c3a4378",
+ "text_sha": "e7e01ac4a376",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
+ "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: re-pointed: the ledger-counts lane rewrote the remedy TestTheLiveLedgerConverges prints, the ledger's derivation paragraph and its how-this-file-defends-itself block with tools/cc paths; the module docstring and the row's other sites still name scripts/)"
+}

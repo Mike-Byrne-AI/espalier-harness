@@ -1,0 +1,10 @@
+{
+ "id": "DEF-912",
+ "subject": "espalier/worktree.py",
+ "cmd": "python3 -c \"import ast;P=['espalier/worktree.py','espalier/cli.py'];slot=lambda v:isinstance(v,(ast.Name,ast.Attribute)) or (isinstance(v,ast.Call) and (getattr(v.func,'attr',None)=='resolve' or getattr(v.func,'id',None)=='str'));tag=lambda s:s.endswith('-C ') or (s.endswith(' ') and len(s.split())>1 and s.split()[-2]=='espalier');print(any(isinstance(j.values[i],ast.Constant) and tag(str(j.values[i].value)) and isinstance(j.values[i+1],ast.FormattedValue) and slot(j.values[i+1].value) for p in P for j in ast.walk(ast.parse(open(p).read())) if isinstance(j,ast.JoinedStr) for i in range(len(j.values)-1)))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "8750c36243a1",
+ "text_sha": "303d81a3966b",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

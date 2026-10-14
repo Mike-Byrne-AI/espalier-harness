@@ -1,0 +1,13 @@
+{
+ "id": "DEF-943",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import subprocess,sys,tempfile,pathlib,shutil,os;d=pathlib.Path(tempfile.mkdtemp()).resolve();subprocess.run(['git','init','-q','-b','main',str(d)],check=True);(d/'src').mkdir();(d/'src'/'app.js').write_text('export const x = 1;\\n');(d/'package.json').write_text('{}');e=dict(os.environ,ESPALIER_AUDIT_DIR=str(d/'audit'));r=subprocess.run([sys.executable,'-m','espalier','init',str(d)],capture_output=True,text=True,env=e,check=True);shutil.rmtree(d,ignore_errors=True);h=pathlib.Path('docs/HOOKS.md').read_text(encoding='utf-8');print(('.espalier/audit' in r.stdout or 'ESPALIER_AUDIT_DIR' in r.stdout,'pruned automatically' in h))\"",
+ "open_value": "(False, True)",
+ "why_not": null,
+ "inputs": [
+  "docs/HOOKS.md"
+ ],
+ "row_sha": "a21b1bba8b4b",
+ "text_sha": "4383b7e92fd5",
+ "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
+}

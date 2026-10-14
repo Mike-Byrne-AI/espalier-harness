@@ -1,0 +1,11 @@
+{
+ "id": "DEF-811",
+ "subject": "bench/powershell_guard_rehearsal.py",
+ "cmd": "python3 -c \"import ast;fs=['bench/run_benchmark.py','bench/guard_metamorphic.py','bench/powershell_reachability_differential.py','bench/reachability_differential.py','bench/powershell_guard_rehearsal.py','bench/guard_row_probe.py','tests/test_guard_false_positives.py','tests/test_write_guard.py'];u=lambda f:any((isinstance(n,ast.Name) and n.id=='ROOT_SHAPES') or (isinstance(n,ast.Attribute) and n.attr=='ROOT_SHAPES') for n in ast.walk(ast.parse(open(f,encoding='utf-8').read())));print(f'{sum(map(u,fs))}/{len(fs)}')\"",
+ "open_value": "3/8",
+ "why_not": null,
+ "row_sha": "73252300c254",
+ "text_sha": "adbed2702de0",
+ "verified_2026_09_14": "STILL_OPEN (re-pinned value unchanged on 2026-09-14: the text spelled the clobber operator with a bare pipe, which split the cell and made the two member-row predicates disagree (the tier's completeness test); escaped by hand (the verb refused the five-cell row), then re-pinned so the registry follows; value unchanged)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

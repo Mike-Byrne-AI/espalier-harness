@@ -1,0 +1,14 @@
+{
+ "id": "DEF-1193",
+ "subject": "espalier/harness_config.py",
+ "cmd": "python3 -c \"import sys,json,pathlib,tempfile;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node');d=json.load(open(t/'reports'/'harness_config.json'));print(any('tests' in a.get('primary_paths',[]) for a in d.get('agents',[])) and not (t/'tests').is_dir() and (t/'test').is_dir())\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tests/_adopter_tree.py",
+  "tests/_stack_trees.py"
+ ],
+ "row_sha": "ea13de348de7",
+ "text_sha": "cf94d9172f80",
+ "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: the origin citation re-keyed from the pack id to the lane and date: the pack lands in Done/ with this change, where the id resolves to no shipped pack)"
+}

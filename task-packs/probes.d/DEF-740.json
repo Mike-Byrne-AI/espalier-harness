@@ -1,0 +1,11 @@
+{
+ "id": "DEF-740",
+ "subject": "scripts/record_snapshot.py",
+ "cmd": "python3 -c \"import os;print(sum(1 for d in ('tests','scripts') for f in os.listdir(d) if f.endswith('.py') and f!='record_snapshot.py' and 'RECORD_ROOTS' in open(os.path.join(d,f),encoding='utf-8',errors='replace').read()))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "0fcb0b3d3546",
+ "text_sha": "20b41845bd61",
+ "verified_2026_09_09": "OPEN (filed 2026-09-09; probe driven at filing)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

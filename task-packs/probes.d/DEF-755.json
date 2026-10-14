@@ -1,0 +1,12 @@
+{
+ "id": "DEF-755",
+ "subject": "tools/cc/hooks/_hook_utils.py",
+ "cmd": "python3 -c \"import pathlib; print(not any('msys-drive: ok' in p.read_text(encoding='utf-8') for p in pathlib.Path('tests').glob('test_*.py')))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "2869185e4aa4",
+ "text_sha": "035d4b235444",
+ "verified_2026_09_10": "OPEN (filed 2026-09-10; probe driven at filing)",
+ "verified_2026_09_14": "STILL_OPEN (re-pinned value unchanged on 2026-09-14: walk 3 (2026-09-14, W3-P35): the first site outside the proposed scan existed before the gate did; widen the population to tools/cc/**/*.py and cross-reference DEF-664; value unchanged)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

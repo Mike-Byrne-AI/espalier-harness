@@ -1,0 +1,11 @@
+{
+ "id": "DEF-516",
+ "subject": "docs/CONVENTIONS.md",
+ "cmd": "python3 -c \"s=open('docs/CONVENTIONS.md').read(); print(s.count('string names depends on where it is written'))\"",
+ "open_value": "1",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "ae7da6546a39",
+ "text_sha": "40e040a9c613",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

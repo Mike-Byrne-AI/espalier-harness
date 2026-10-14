@@ -1,0 +1,14 @@
+{
+ "id": "DEF-944",
+ "subject": ".claude/commands/commit.md",
+ "cmd": "python3 -c \"import pathlib; b=pathlib.Path('.claude/commands/commit.md').read_text(encoding='utf-8'); print('Types: feat, fix' in b and 'freeform' not in b)\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "espalier/assets/claude/commands/commit.md"
+ ],
+ "row_sha": "b672845df656",
+ "text_sha": "9eeca4bf1d6f",
+ "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)",
+ "verified_2026_09_29": "STILL_OPEN (re-pinned 'git add -A True' -> 'True'; severity major -> minor on 2026-09-29: the staging half landed 2026-09-29 (a reviewed and approved path list, staged and committed by path); what stays open is the commit-convention half, so the probe is re-keyed to it and the grade follows: a borrowed message style, no unreviewed file in a commit)"
+}

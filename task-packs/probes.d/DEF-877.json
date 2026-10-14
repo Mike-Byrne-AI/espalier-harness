@@ -1,0 +1,10 @@
+{
+ "id": "DEF-877",
+ "subject": ".gitignore",
+ "cmd": "python3 -c \"import subprocess;paths=['ESPALIER_MEMORY.md','examples/ESPALIER_MEMORY.template.md'];print(sum(subprocess.run(['git','-c','core.ignorecase=true','check-ignore','-q','--no-index','--',p]).returncode==0 for p in paths))\"",
+ "open_value": "2",
+ "why_not": null,
+ "row_sha": "1df07bc79648",
+ "text_sha": "16a9d51bb9d4",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

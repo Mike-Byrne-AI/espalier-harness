@@ -1,0 +1,10 @@
+{
+ "id": "DEF-875",
+ "subject": "espalier/analyze.py",
+ "cmd": "python3 -c \"import ast;t=ast.parse(open('espalier/analyze.py').read());print(any(isinstance(n,ast.Constant) and isinstance(n.value,str) and '/draft-review' in n.value for n in ast.walk(t)))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "9452c7c70201",
+ "text_sha": "d5ce585702bd",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

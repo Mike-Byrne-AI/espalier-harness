@@ -1,0 +1,11 @@
+{
+ "id": "DEF-1119",
+ "subject": "scripts/check_handoff_landing.py",
+ "cmd": "python -c 'import ast;t=ast.parse(open(\"scripts/check_handoff_landing.py\",encoding=\"utf-8\").read());print(sum(isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr==\"is_file\" and any(isinstance(m,ast.Name) and m.id==\"GOAL_DOC\" for m in ast.walk(n.func.value)) for n in ast.walk(t)))'",
+ "open_value": "2",
+ "why_not": null,
+ "row_sha": "ef7e975d55d4",
+ "text_sha": "0711e7f77c35",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
+ "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: the two arm-level tell reads moved into one helper (_operator_root) on the DEF-1137 lane, which also widened the tell to a clone's linked worktrees; the count stayed 2 by coincidence, so the row and anchor name the helper)"
+}

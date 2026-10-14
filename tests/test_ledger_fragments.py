@@ -1952,3 +1952,159 @@ class TestConvergenceReadsThePendingView:
         _text, drift = lr._converge(gen, t["ledger"].read_text(encoding="utf-8"), t["probes"], pending)
         assert any("DEF-9: struck in its class section but still carries a probe" in d["detail"]
                    for d in drift), drift
+
+
+# ── the fold (TP-479a Wave C) ───────────────────────────────────────────────
+
+_ROSTER_REL = "task-packs/LEDGER_PROBES.json"
+_LEDGER_REL = "task-packs/FORWARD_LEDGER.md"
+
+
+def _view_parts(frag, ledger_text: str, row_files, roster_text, probe_files):
+    """The view, taken apart for a row-for-row comparison: every line that is
+    not a member row or an Appendix B index row, in order; each class table's
+    rows and Appendix B's as a multiset; each probe by its id; and what the
+    loader could not read. Order within a table is not compared: the view
+    places row files in id order, and the legacy tables were not."""
+    from collections import Counter
+
+    view = frag.ledger_view_from_texts(ledger_text, row_files)
+    roster = frag.probe_roster_from_texts(roster_text, probe_files)
+    lines = view.text.split("\n")
+    owner: dict[int, str] = {}
+    for section, (start, end) in frag._section_bounds(lines).items():
+        for j in range(start, end):
+            if frag.row_ids(lines[j]):
+                owner[j] = section
+    app = next((i for i, ln in enumerate(lines) if ln.startswith("## Appendix B")), None)
+    if app is not None:
+        end = next((j for j in range(app + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
+        owner.update({j: "Appendix B" for j in range(app + 1, end) if frag._APPENDIX_B_ROW_RE.match(lines[j])})
+    tables: dict[str, Counter] = {}
+    for j, section in owner.items():
+        tables.setdefault(section, Counter())[lines[j]] += 1
+    other = [ln for j, ln in enumerate(lines) if j not in owner]
+    probes = {entry["id"]: entry for entry in roster.data["probes"]}
+    return other, tables, probes, view.problems + roster.problems
+
+
+@pytest.fixture(scope="module")
+def trend():
+    """``scripts/ledger_trend.py``, whose commit reader (``_row_files_at``) the
+    fold test reuses rather than copies."""
+    spec = importlib.util.spec_from_file_location("_lf_ledger_trend", REPO_ROOT / "scripts" / "ledger_trend.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _git_here(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=45, check=False)
+
+
+#: The fold's commit: the data move alone, 2026-10-14. Named, never found as
+#: "the latest commit that deleted the roster": a later commit that deletes it
+#: again (a pre-fold lane's catch-up repaired by a new commit) would stand in
+#: for it and compare two folded trees.
+_FOLD_COMMIT = "5b04f16a9d7a4907607530db524643333fd75325"
+
+
+def _folded() -> bool | None:
+    """Whether this tree's history holds the fold: True or False, or None when
+    git cannot say (no git, a shallow clone, a release export's seeded history,
+    an adopter's repository). Decided by history, never by the
+    ``ledger_fragments`` setting, whose flip the live pin exists to catch."""
+    if _git_here("cat-file", "-e", f"{_FOLD_COMMIT}^{{commit}}").returncode != 0:
+        return None
+    return _git_here("merge-base", "--is-ancestor", _FOLD_COMMIT, "HEAD").returncode == 0
+
+
+def _parts_at(frag, trend, commit: str):
+    """The view's parts at ``commit``: the two files (the roster absent after
+    the fold) and the row and probe files beside them, read from git."""
+    ledger = _git_here("show", f"{commit}:{_LEDGER_REL}")
+    assert ledger.returncode == 0, ledger.stderr
+    roster = _git_here("show", f"{commit}:{_ROSTER_REL}")
+    rows = trend._row_files_at(REPO_ROOT, commit, "task-packs/ledger.d")
+    probes = trend._row_files_at(REPO_ROOT, commit, "task-packs/probes.d")
+    return _view_parts(frag, ledger.stdout, rows, roster.stdout if roster.returncode == 0 else None, probes)
+
+
+class TestTheFold:
+    """The fold moved every legacy row and probe into a file of its own in one
+    commit (TP-479a Wave C): the class tables and Appendix B keep their header
+    and rule, the roster's prose lives in ``task-packs/probes.d/README.md``,
+    and the roster file is gone. Readers see the same rows before and after,
+    row for row; byte for byte was never possible, since 21 class tables,
+    Appendix B and the roster were not in id order and the view orders row
+    files by id."""
+
+    def test_the_views_at_the_fold_commit_are_equal_row_for_row(self, frag, trend):
+        folded = _folded()
+        if folded is None:
+            pytest.skip("git cannot reach the fold's commit here (no git, a shallow clone, a release "
+                        "export's seeded history, or another repository)")
+        if not folded:
+            pytest.skip("this tree's history does not hold the fold (a lane branched before it)")
+        before = _parts_at(frag, trend, f"{_FOLD_COMMIT}^")
+        after = _parts_at(frag, trend, _FOLD_COMMIT)
+        assert not before[3] and not after[3], (before[3][:5], after[3][:5])
+        assert before[0] == after[0], "a line that is not a row moved or changed at the fold"
+        assert before[1] == after[1], "a class table's rows or Appendix B's differ before and after the fold"
+        assert before[2] == after[2], "a probe differs before and after the fold"
+        assert sum(len(c) for c in after[1].values()) >= 900, "the fold's view read almost no rows: the walk broke"
+
+    def test_the_comparison_reads_a_lost_row_a_lost_index_line_and_a_changed_probe(self, frag):
+        """The comparison's own control, on planted texts: a row file dropped,
+        an index line dropped, or a probe's value changed reads as unequal."""
+        ledger = ("# L\n\n### §C1 — one\n\n| id | site |\n|---|---|\n\n## Appendix B\n\n| id | class | site |\n"
+                  "|---|---|---|\n")
+        rows = [("DEF-1.md", _row_file("DEF-1")), ("DEF-2.md", _row_file("DEF-2"))]
+        probes = [("DEF-1.json", json.dumps({"id": "DEF-1", "open_value": "True"}) + "\n")]
+        whole = _view_parts(frag, ledger, rows, None, probes)
+        assert not whole[3], whole[3]
+        assert _view_parts(frag, ledger, rows[:1], None, probes)[1] != whole[1]
+        lost_index = [(n, t.rsplit("\n| `", 1)[0] + "\n") if n == "DEF-2.md" else (n, t) for n, t in rows]
+        assert _view_parts(frag, ledger, lost_index, None, probes)[1] != whole[1]
+        changed = [("DEF-1.json", json.dumps({"id": "DEF-1", "open_value": "False"}) + "\n")]
+        assert _view_parts(frag, ledger, rows, None, changed)[2] != whole[2]
+
+    @pytest.mark.contract
+    def test_this_tree_keeps_rows_and_probes_only_as_files(self, frag):
+        """After the fold the big file holds no member row and no index row and
+        the roster file is gone, so a lane branched before the fold cannot bring
+        a legacy row or the roster back unseen (the loader would read the row
+        twice, or the roster beside its probe files). Each class table and
+        Appendix B keep the header and rule the view places rows under. Whether
+        the tree has folded is read from history, so turning
+        ``ledger_fragments`` off, which sends the verbs back to the big files,
+        reds here instead of skipping (failure-mode review, driven 2026-10-14)."""
+        folded = _folded()
+        if folded is None:
+            pytest.skip("git cannot reach the fold's commit here (no git, a shallow clone, a release "
+                        "export's seeded history, or another repository)")
+        if not folded:
+            pytest.skip("this tree's history does not hold the fold (a lane branched before it)")
+        on, how = frag.ledger_fragments_setting(REPO_ROOT)
+        assert on, (f"ledger_fragments is off ({how}), so the ledger verbs write rows and the roster back "
+                    "into the big files the fold emptied: set `ledger_fragments = true` in espalier.toml")
+        assert not (REPO_ROOT / _ROSTER_REL).exists(), (
+            f"{_ROSTER_REL} is back: a lane branched before the fold kept it at its catch-up. Its probes "
+            "live in task-packs/probes.d/ now: `git rm` the file and amend the catch-up merge, then re-run "
+            "that lane's ledger verb (file, strike, repin) on the merged tree")
+        text = (REPO_ROOT / _LEDGER_REL).read_bytes().decode("utf-8").replace("\r\n", "\n")  # ledger-read: the file's own lines, which must hold no row after the fold
+        lines = text.split("\n")
+        bounds = frag._section_bounds(lines)
+        legacy = [lines[j][:60] for start, end in bounds.values() for j in range(start, end) if frag.row_ids(lines[j])]
+        app = next(i for i, ln in enumerate(lines) if ln.startswith("## Appendix B"))
+        end = next((j for j in range(app + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
+        legacy += [lines[j][:60] for j in range(app + 1, end) if frag._APPENDIX_B_ROW_RE.match(lines[j])]
+        assert not legacy, (f"{len(legacy)} row(s) in {_LEDGER_REL} itself: every row lives in "
+                            "task-packs/ledger.d/ since the fold; take main's side for the file in the "
+                            f"catch-up merge and re-run that lane's ledger verb on the merged tree: {legacy[:3]}")
+        unplaceable = [s for s, (start, end) in bounds.items()
+                       if frag._table_end(lines, start, end, frag._MEMBER_ROW_RE) is None]
+        assert not unplaceable, f"class sections with no table for the view to place rows in: {unplaceable}"
+        assert frag._table_end(lines, app + 1, end, frag._APPENDIX_B_ROW_RE) is not None, "Appendix B lost its table"
