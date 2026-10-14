@@ -834,9 +834,9 @@ class TestRunnerCommandConstruction:
 
         path = REPO_ROOT / "tools" / "cc" / "hooks" / "_maintenance_mode.py"
         spec = importlib.util.spec_from_file_location("_e2e_maintenance_mode", path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        assert runner._friction_bypass_vars() == (mod.ENV_VAR,)
+        maintenance_mode = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(maintenance_mode)
+        assert runner._friction_bypass_vars() == (maintenance_mode.ENV_VAR,)
 
     def test_the_child_runs_without_the_bypass_or_a_parent_session(self, tmp_path, monkeypatch):
         """A run launched from a maintenance-mode shell, or from inside a Claude
