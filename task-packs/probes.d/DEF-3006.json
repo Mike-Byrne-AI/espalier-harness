@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3006",
+ "subject": "tools/cc/board.py",
+ "cmd": "python3 -c \"import pathlib; print('def read_ledger_at_base' not in pathlib.Path('tools/cc/board.py').read_text(encoding='utf-8'))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "fe3c55bd1297",
+ "text_sha": "9f6c5b291e0d",
+ "verified_2026_10_14": "OPEN (filed 2026-10-14; probe driven at filing)"
+}
