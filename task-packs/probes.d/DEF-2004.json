@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2004",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c \"import json,subprocess,sys,tempfile,pathlib; d=pathlib.Path(tempfile.mkdtemp()); (d/'README.md').write_text('# t'); (d/'.git').mkdir(); r=lambda *a: subprocess.run([sys.executable,'-m','espalier','init',str(d),*a],capture_output=True,timeout=300); r('--profile','minimal'); r(); print(json.loads((d/'reports'/'harness_config.json').read_text(encoding='utf-8')).get('settings_profile')!='minimal')\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "2e4f2c643fe1",
+ "text_sha": "3de5458fcb8e",
+ "verified_2026_10_14": "OPEN (filed 2026-10-14; probe driven at filing)"
+}
