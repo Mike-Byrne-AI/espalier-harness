@@ -44,6 +44,25 @@ FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "pre_pack_tp104"
 #: the operator approved on 2026-10-12 (prefix 5846d53e86e8ddb4), read from
 #: the pre-pack-TP-104 tag (8e138f6) with git show.
 FIXTURE_SHA256 = "5846d53e86e8ddb46dc0d62294bb6e1acf2666d56cfd7c39aa67232ab94e055d"
+#: Each fixture's own sha256, so a red names the file that changed.
+FIXTURE_SHA256_BY_HOOK = {
+    "config_guard": "1cdae0d809d69da35789c77b4cf6d58060b4b9f9bec978249afb3e9d68811b65",
+    "plan_guard": "790e16570a185cb4b0d30b1d099ba526a31b49b95b61fde04e2971383f5f45c6",
+    "post_compact": "aa836068fd489054961385d634fc7f96aa08958b0aeec9171f7a6b97aad26821",
+    "post_write_check": "35fbf6387a0b8458d3d20c2d5b5785f2a77bffb365b67802104cc668067a35c4",
+    "reflect_trigger": "04f72ea1c1ea6406bb2052d765e7dad7ec233a5e4e6045cad7ccaf75f7b0e04a",
+    "session_start": "c1aa43df26fc0a96ed252791452ae29f21a675dd3f96c4ccb87c6181e98c2ed8",
+    "stop_gate": "04a6defca2070f49c59b8d4cbdb51a610148156b00698afcdd1b65c270028cf5",
+    "subagent_stop": "4f7c8f8a07e83af41df13a155eceee58fd28fc2d2108f29cd8176fb7650dafec",
+    "write_guard": "d422e06bc5257266d4587dcb616cb8c995b8c6674cdfa9473387139fee273bdf",
+}
+_RESTORE = (
+    "Do not re-pin: these are the bytes the operator approved, the calibration's whole "
+    "point. Restore them with `git restore --source=origin/main -- tests/fixtures/pre_pack_tp104/` "
+    "(or from the pre-pack-TP-104 tag where it exists, with git show). If `git status` is "
+    "clean, a core.autocrlf checkout rewrote them: check the fixture's -text row in "
+    "`.gitattributes`."
+)
 
 
 def _fixture(hook: str) -> Path:
@@ -59,12 +78,22 @@ class TestProbeAgainstPrePackTP104:
         CRLF checkout among them, which the fixture's `-text` row in
         `.gitattributes` forecloses); the hash catches each one.
         """
+        changed = sorted(h for h in PRE_PACK_HOOKS
+                         if hashlib.sha256(_fixture(h).read_bytes()).hexdigest() != FIXTURE_SHA256_BY_HOOK[h])
+        assert not changed, (
+            f"tests/fixtures/pre_pack_tp104/: {[f'{h}.py.txt' for h in changed]} changed, so the "
+            f"probe's 'earn the gate' validation receipt is broken. {_RESTORE}")
         digest = hashlib.sha256(b"".join(_fixture(h).read_bytes() for h in PRE_PACK_HOOKS)).hexdigest()
         assert digest == FIXTURE_SHA256, (
-            f"tests/fixtures/pre_pack_tp104/ hashes to {digest}, not the approved "
-            f"{FIXTURE_SHA256}. The probe's 'earn the gate' validation receipt is "
-            f"broken; restore the bytes from the pre-pack-TP-104 tag with git show."
-        )
+            f"the nine files hash to {digest} together, not the approved {FIXTURE_SHA256} "
+            f"(a byte moved across a file boundary). {_RESTORE}")
+
+    def test_the_fixture_keeps_its_bytes_on_every_checkout(self):
+        """`*.py`'s `eol=lf` row does not match `.py.txt`, so only this row keeps a
+        core.autocrlf=true checkout from rewriting the fixture. Dies to: the row
+        dropped, which no Linux or macOS run could otherwise notice."""
+        rows = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8").splitlines()
+        assert "tests/fixtures/pre_pack_tp104/*.py.txt -text" in rows
 
     def test_probe_fires_9_clique_on_pre_pack_hooks(self, tmp_path):
         """Probe must surface the 9-clique on _project_root in pre-pack state.
