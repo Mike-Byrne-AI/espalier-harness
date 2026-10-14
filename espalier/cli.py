@@ -9454,11 +9454,17 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
             if repaired else
             "merge-settings: Espalier hooks are already wired in .claude/settings.json"
         )
-        # "Nothing to do" only when it is true: a wired file can still lack
-        # the profile's allow rules, and those are reported right below.
-        tail = ("" if repaired and not result.missing_allows
-                else " Nothing to do." if not result.missing_allows
-                else " Hook events are current; the allow rules below are not.")
+        # "Nothing to do" only when it is whole (upgrade's rule, 2026-09-29): a
+        # wired file can still lack the profile's allow rules, carry a retired
+        # deny rule, or run no hooks, and each is reported right below.
+        named_stale = _retired_rules_to_name(result.stale_denies, repo_root=repo_root,
+                                             settings_path=settings_path, blockers=missing)
+        if result.missing_allows:
+            tail = " Hook events are current; the allow rules below are not."
+        elif repaired or named_stale or missing != []:
+            tail = ""
+        else:
+            tail = " Nothing to do."
         if unverified:
             print(head + "." + tail, flush=True)
             print(_unverifiable_settings_warning(settings_path), file=sys.stderr)
@@ -10487,15 +10493,17 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 print(f"[upgrade] {_merge_did_phrase(merge_result, noun='hook event')} "
                       f"into settings.json (backup {merge_result.detail}).")
                 marker_written.append(".claude/settings.json")
-                # A retired rule is named only where the hooks run; this branch
-                # reads no armament of its own, so when the gate holds a rule
-                # back, say why, as --wire-hooks does after the same merge.
-                if merge_result.stale_denies:
-                    exec_blockers = _enforcement_claim_blockers(repo_root, settings_path)
-                    if exec_blockers != []:
-                        print(_disarmed_hook_tree_warning(
-                            repo_root, prefix="[upgrade]", wrote_settings=True,
-                        ), file=sys.stderr)
+                # Writing hook events does not arm a gate whose interpreter is
+                # missing: read the file back, as --wire-hooks does after the same
+                # merge, and name a tree whose hooks do not run. The read is also
+                # the retired-rule gate's below.
+                exec_blockers = _enforcement_claim_blockers(repo_root, settings_path)
+                if exec_blockers is None:
+                    print(_unverifiable_settings_warning(settings_path), file=sys.stderr)
+                elif exec_blockers:
+                    print(_disarmed_hook_tree_warning(
+                        repo_root, prefix="[upgrade]", wrote_settings=True,
+                    ), file=sys.stderr)
             elif merge_result.status == MERGE_ALREADY:
                 # "Current" is the merge's word for "every event carries an
                 # espalier entry"; a neutered or shell-form entry counts. Say

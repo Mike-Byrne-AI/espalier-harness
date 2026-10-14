@@ -1084,6 +1084,79 @@ class TestNoDeleteAdviceWhileTheHooksDoNotRun:
         assert len(calls) == 1, len(calls)
 
 
+class TestMergeSettingsSaysNothingToDoOnlyWhenItIsWhole:
+    """upgrade's rule since 2026-09-29, for merge-settings: on a file whose
+    hook events are current, "Nothing to do." printed above a retired-rule
+    WARN (armed tree) or above the not-armed warning (disarmed tree), each
+    of which is something to do."""
+
+    @staticmethod
+    def _said(root: Path, capsys) -> str:
+        return _what_the_surface_says("merge-settings", root, capsys)
+
+    def test_not_over_a_retired_rule_on_an_armed_tree(self, tmp_path, capsys, monkeypatch):
+        from espalier.cli import _detect_python_command
+
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        _plant_retired_rule(root)
+        _rewire_every_hook(root, _detect_python_command())
+        said = self._said(root, capsys)
+        assert "retired deny rule Bash(rm -rf /*)" in said, said[-2500:]
+        assert "Nothing to do" not in said, said[-2500:]
+
+    def test_not_over_hooks_that_do_not_run(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        _rewire_every_hook(root, "python-no-such-w0")
+        said = self._said(root, capsys)
+        assert "does not resolve" in said, said[-2500:]
+        assert "Nothing to do" not in said, said[-2500:]
+
+    def test_still_said_when_it_is_whole(self, tmp_path, capsys, monkeypatch):
+        from espalier.cli import _detect_python_command
+
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        _rewire_every_hook(root, _detect_python_command())
+        said = self._said(root, capsys)
+        assert "Nothing to do." in said, said[-2500:]
+
+
+class TestUpgradeExecuteReadsTheArmamentAfterItWires:
+    """``--wire-hooks`` reads the hooks back after its merge writes events;
+    ``upgrade --execute``'s same merge did not, and told a tree whose hooks
+    cannot run that it had wired them, and nothing more."""
+
+    @staticmethod
+    def _tree(tmp_path: Path, monkeypatch, command: str) -> Path:
+        import json
+
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        _rewire_every_hook(root, command)
+        settings = root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["hooks"].pop("SubagentStart")
+        settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        (root / "docs" / "CHEAT-SHEET.md").unlink()
+        return root
+
+    def test_a_disarmed_tree_is_told_after_the_events_are_wired(self, tmp_path, capsys, monkeypatch):
+        root = self._tree(tmp_path, monkeypatch, "python-no-such-w0")
+        said = _what_the_surface_says("upgrade --execute", root, capsys)
+        assert "into settings.json" in said, said[-2500:]
+        assert "does not resolve" in said, said[-2500:]
+
+    def test_an_armed_tree_is_not(self, tmp_path, capsys, monkeypatch):
+        from espalier.cli import _detect_python_command
+
+        root = self._tree(tmp_path, monkeypatch, _detect_python_command())
+        said = _what_the_surface_says("upgrade --execute", root, capsys)
+        assert "into settings.json" in said, said[-2500:]
+        assert "NOT yet active" not in said, said[-2500:]
+
+
 class TestEveryRetiredRuleReportGoesThroughTheGate:
     """Derived from espalier/, so a reporter added later cannot skip the gate
     by not being on a hand-written list: every ``stale=`` handed to the shared

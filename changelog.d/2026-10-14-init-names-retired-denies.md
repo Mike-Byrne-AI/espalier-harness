@@ -32,3 +32,12 @@
   `merge-settings`, `upgrade` and the re-run all said "the init command wrote
   it". They now say the line matches a deny rule `init` wrote through that
   version.
+- **`merge-settings` says "Nothing to do." only when there is nothing to do.**
+  On a file whose hook events were already current it printed the sentence
+  above a retired-rule warning, and above the warning that the hooks do not
+  run; `upgrade` has kept the sentence whole since 2026-09-29, and now
+  `merge-settings` does too.
+- **`upgrade --execute` reads the hooks back after it wires new events.** It
+  said it had wired them and nothing more, even where the hooks cannot run
+  (an interpreter the host lacks); like `init --wire-hooks` after the same
+  merge, it now names that state and the repair.
