@@ -55,6 +55,23 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    holds on Windows, where ``run`` waits on a grandchild holding its pipe
+    (DEF-3004)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_host_check", REPO_ROOT / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
 REPORT_ROOT = REPO_ROOT / "reports" / "host-check"
 REF_PREFIX = "refs/heads/host-check/"
 _STAMP_RE = re.compile(r"(\d{8}-\d{4})")
@@ -62,7 +79,7 @@ _STAMP_RE = re.compile(r"(\d{8}-\d{4})")
 
 def _git(*args: str, cwd: Path = REPO_ROOT, env: dict[str, str] | None = None,
          timeout: int = 300) -> str:
-    result = subprocess.run(
+    result = run_bounded(
         ["git", *args], cwd=cwd, capture_output=True, text=True,
         encoding="utf-8", errors="replace", env=env, timeout=timeout,
     )
@@ -182,9 +199,9 @@ def run_step(step: dict, out_dir: Path, repo_root: Path = REPO_ROOT) -> dict:
         fh.flush()
         try:
             # subprocess-contract: ok planned-step-argv-is-pytest-or-one-of-the-three-benches-see-plan_steps
-            proc = subprocess.run(step["argv"], cwd=repo_root, stdout=fh,
-                                  stderr=subprocess.STDOUT, env=step["env"],
-                                  timeout=step["timeout"])
+            proc = run_bounded(step["argv"], cwd=repo_root, stdout=fh,
+                               stderr=subprocess.STDOUT, env=step["env"],
+                               timeout=step["timeout"])
             rc: int | None = proc.returncode
         except subprocess.TimeoutExpired:
             rc = None
@@ -232,9 +249,9 @@ def publish(label: str, out_dir: Path, message: str, repo_root: Path = REPO_ROOT
     is supplied when the host has none configured."""
     rel = out_dir.relative_to(repo_root).as_posix()
     env = dict(os.environ)
-    if not subprocess.run(["git", "config", "user.name"], cwd=repo_root,
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=60).stdout.strip():
+    if not run_bounded(["git", "config", "user.name"], cwd=repo_root,
+                       capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=60).stdout.strip():
         for key in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
             env[key] = "host-check"
         for key in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
@@ -265,8 +282,8 @@ def read(label: str, repo_root: Path = REPO_ROOT, remote: str = "origin") -> str
     if not files:
         raise RuntimeError(f"{REF_PREFIX}{label} carries no {rel}/")
     for name in files:
-        data = subprocess.run(["git", "show", f"FETCH_HEAD:{name}"], cwd=repo_root,
-                              capture_output=True, timeout=120, check=True).stdout
+        data = run_bounded(["git", "show", f"FETCH_HEAD:{name}"], cwd=repo_root,
+                           capture_output=True, timeout=120, check=True).stdout
         target = repo_root / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)

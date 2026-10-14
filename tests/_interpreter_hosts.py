@@ -44,9 +44,10 @@ from __future__ import annotations
 
 import os
 import shlex
-import stat
 import sys
 from pathlib import Path
+
+from tests._stubs import write_stub
 
 STORE_PYTHON3 = "store_python3"
 LAUNCHER_ONLY = "launcher_only"
@@ -113,9 +114,15 @@ _PY_FORWARDER = (
 
 
 def _write(path: Path, body: str, *, crlf: bool) -> Path:
+    """A stand-in the host runs as its own program (a shell script, a ``.cmd``)
+    goes through :func:`tests._stubs.write_stub`, which warms it so a timed
+    probe never meets a cold file; a Python forwarder is source a stand-in
+    hands to ``sys.executable``, never executed itself, so it is written
+    plain."""
+    if body.startswith("#!") or path.suffix.lower() in (".cmd", ".bat"):
+        return write_stub(path, body, crlf=crlf)
     newline = "\r\n" if crlf else "\n"
     path.write_bytes(newline.join(body.splitlines()).encode("utf-8") + newline.encode("ascii"))
-    path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     return path
 
 

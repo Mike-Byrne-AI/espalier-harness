@@ -52,6 +52,23 @@ from espalier.changelog import (  # noqa: E402
 )
 
 
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    holds on Windows, where ``run`` waits on a grandchild holding its pipe
+    (DEF-3004)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_release_check", REPO_ROOT / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
+
+
 #: Every Tier-1 opt-in flag this module reads -- the single census, and the set
 #: that must be stripped from any child process this module spawns.
 #:
@@ -142,7 +159,7 @@ SKIP = "SKIP"
 
 def check_package_import(repo_root: Path = REPO_ROOT) -> CheckResult:
     """`import espalier` works (espalier is the installed top-level package name)."""
-    result = subprocess.run(
+    result = run_bounded(
         [sys.executable, "-c", "import espalier; print('ok')"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, cwd=str(repo_root),
         env=child_env_without_opt_ins(),
@@ -161,7 +178,7 @@ def check_package_import(repo_root: Path = REPO_ROOT) -> CheckResult:
 def check_cli_entrypoint(repo_root: Path = REPO_ROOT) -> CheckResult:
     """`python -m espalier.cli --version` returns 0 and prints a non-empty version."""
     try:
-        result = subprocess.run(
+        result = run_bounded(
             [sys.executable, "-m", "espalier.cli", "--version"],
             capture_output=True, text=True, encoding="utf-8", timeout=15, cwd=str(repo_root),
             env=child_env_without_opt_ins(),
@@ -198,7 +215,7 @@ def check_tests_pass(repo_root: Path = REPO_ROOT) -> CheckResult:
     child_env.pop("PYTEST_TIMEOUT", None)
     leg_t0 = _now()
     try:
-        result = subprocess.run(
+        result = run_bounded(
             [sys.executable, "-m", "pytest", "-m", "not slow", "-q"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=NOT_SLOW_LEG_BOUND_S, cwd=str(repo_root),
@@ -260,7 +277,7 @@ def check_wheel_smoke(repo_root: Path = REPO_ROOT) -> CheckResult:
             "wheel_smoke", "FAIL",
             f"scripts/wheel_smoke.py missing at {smoke_script}",
         )
-    result = subprocess.run(
+    result = run_bounded(
         [sys.executable, str(smoke_script)],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600, cwd=str(repo_root),
         # Stripped for the same anti-recursion reason as check_tests_pass, and

@@ -28,6 +28,23 @@ import sys
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
+
+
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    holds on Windows, where ``run`` waits on a grandchild holding its pipe
+    (DEF-3004)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_sync_github_workflow_asset", _ROOT / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
 #: Source of truth -- the packaged asset, NOT the root file.
 _ASSET = Path("espalier/assets/github/workflows/harness-guard.yml")
 #: The generated copy.
@@ -50,7 +67,7 @@ def _root_file_status() -> str:
     it exists for.
     """
     try:
-        completed = subprocess.run(
+        completed = run_bounded(
             # as_posix(): a git pathspec must use forward slashes, and str() on a
             # Path yields backslashes on Windows. Same reason as the repo-wide
             # `.replace("\\", "/")` path convention.
@@ -67,7 +84,7 @@ def _root_file_status() -> str:
 def _git(*args: str) -> "subprocess.CompletedProcess[str] | None":
     """Run git in ``_ROOT``; ``None`` when git cannot be reached at all."""
     try:
-        return subprocess.run(
+        return run_bounded(
             ["git", *args], cwd=_ROOT, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=10,
         )

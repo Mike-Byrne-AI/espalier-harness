@@ -970,10 +970,12 @@ def _starts_with_emoji(msg: str) -> bool:
 def detect_git_conventions(repo_root: Path) -> dict[str, Any]:
     """Analyze git log to detect commit message patterns."""
     import subprocess
+
+    from espalier._spawn import run_bounded
     result: dict[str, Any] = {"format": "freeform", "evidence": [], "confidence": 0.0}
 
     try:
-        log = subprocess.run(
+        log = run_bounded(
             ["git", "log", "--oneline", "-30", "--format=%s"],
             cwd=repo_root,
             capture_output=True,
