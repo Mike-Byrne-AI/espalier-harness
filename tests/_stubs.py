@@ -31,8 +31,14 @@ from pathlib import Path
 #: The variable the warm-up sets; no probe or test sets it, so a real run of
 #: the stub always reaches its body.
 STUB_WARMUP_ENV = "ESPALIER_STUB_WARMUP"
-_SH_GUARD = f'[ -n "${STUB_WARMUP_ENV}" ] && exit 0'
+_SH_GUARD = f'[ -n "${{{STUB_WARMUP_ENV}:-}}" ] && exit 0'  # `:-`: safe under a `sh -u` shebang
 _CMD_GUARD = f"@if defined {STUB_WARMUP_ENV} exit /b 0"
+
+#: What a refused stub does instead.
+_WAY_OUT = ("write a /bin/sh stand-in that execs the interpreter, or run a Python one through "
+            "sys.executable without making it executable (tests/_interpreter_hosts.py does both); "
+            "a stub whose subject is timing or a failed exec is exempted by name in "
+            "tests/test_stub_warmup.py::EXEMPT")
 
 #: Every stub this module warmed, in order (the contract reads it).
 WARMED: list[Path] = []
@@ -48,10 +54,10 @@ def _guarded(path: Path, body: str) -> str:
         at = 1 if lines and lines[0].strip().lower() == "@echo off" else 0
         return "\n".join(lines[:at] + [_CMD_GUARD] + lines[at:])
     if not lines or not lines[0].startswith("#!"):
-        raise ValueError(f"{path.name}: a stub runs as its own program and needs a shebang")
+        raise ValueError(f"{path.name}: a stub runs as its own program and needs a shebang; {_WAY_OUT}")
     shell = lines[0][2:].strip().split()
     if not shell or Path(shell[0]).name not in ("sh", "bash", "dash", "zsh"):
-        raise ValueError(f"{path.name}: the warm-up guard is shell; {lines[0]!r} is not a shell")
+        raise ValueError(f"{path.name}: the warm-up guard is shell; {lines[0]!r} is not a shell; {_WAY_OUT}")
     return "\n".join(lines[:1] + [_SH_GUARD] + lines[1:])
 
 
@@ -64,7 +70,8 @@ def write_stub(path: Path, body: str, *, crlf: bool = False, encoding: str = "ut
     path.write_bytes(newline.join(text.splitlines()).encode(encoding) + newline.encode("ascii"))
     path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
     if _is_cmd(path) == (os.name == "nt"):
-        done = subprocess.run([str(path)], capture_output=True, timeout=60,
+        # Below the suite's 60 s per-test ceiling, so a hung warm-up fails here, by name.
+        done = subprocess.run([str(path)], capture_output=True, timeout=30,
                               env={**os.environ, STUB_WARMUP_ENV: "1"})
         if done.returncode != 0 or done.stdout or done.stderr:
             raise RuntimeError(f"{path.name}: the warm-up reached the stub's body "

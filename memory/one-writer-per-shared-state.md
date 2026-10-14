@@ -28,16 +28,18 @@ The same class, four ways in one month, every one green until it was not:
 
 - **xdist workers and the live tree.** A sibling worker's atomic-write
   temp file under `reports/` appears or vanishes while another test watches
-  the directory, and the `_no_live_tree_writes` teardown fires. Nine
-  instances since 2026-09-06, all logged on the races line of
-  `tests/README.md`, each re-run serially green. The writer was found
+  the directory, and the `_no_live_tree_writes` teardown fires. The races
+  line of `tests/README.md` names that temp file 26 times between 2026-09-06
+  and 2026-10-09, each re-run serially green. The writer was found
   (DEF-973, fixed 2026-10-14): seventeen tests ran the surface gate on the
   live checkout, which rewrites `reports/cc_surface_gate.json` through a
   temp file beside it. They run on the `initialized_repo_root` fixture now,
   and `tests/test_live_root_gate_writers.py` reds a new one by what its
-  argument is. So this race is no longer to be expected: a `reports/`
-  teardown error after that date is a new writer to find, never noise to
-  re-run past.
+  argument is. So the suite no longer causes this race: a `reports/`
+  teardown error after that date is a new writer in the suite, or a gate run
+  on this checkout from outside it while the tier ran (`/smoke`'s
+  `espalier audit .`, a doctor or self-host run). The entry the failure
+  names says which; neither is noise to re-run past.
 - **Two PowerShell differential runs at once (2026-09-10).** pwsh keeps a
   startup cache under the user's profile. Two concurrent populations wrote
   it together; every pwsh afterwards aborted on load with "The given

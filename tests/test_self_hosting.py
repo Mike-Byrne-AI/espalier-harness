@@ -60,7 +60,7 @@ class TestRunSelfHostCheck:
 
     def test_profiles_non_empty_and_all_strings(self, initialized_repo_root):
         """TP-174b R17: ``profiles`` must be a non-empty list of strings on
-        the live repo. The isinstance-only parametrize above passes on an
+        the self-host repo (its init'd copy). The isinstance-only parametrize above passes on an
         empty/garbage list, silently disarming profile detection. Stay
         value-agnostic (so the R16 languages→profiles swap doesn't break
         this) — only assert non-empty + all-string."""
@@ -633,10 +633,7 @@ class TestSelfHostModeAwareness:
         # live root: DEF-973). Auto mode follows.
         report = run_self_host_check(initialized_repo_root, mode="auto")
         assert report["mode_requested"] == "auto"
-        assert report["mode_resolved"] in (
-            "initialized_self_host",
-            "source_checkout",  # if a fresh checkout, no reports yet
-        )
+        assert report["mode_resolved"] == "initialized_self_host"
 
 
 class TestTheGateIsNamedForTheTreeItRanOn:
