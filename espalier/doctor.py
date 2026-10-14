@@ -387,10 +387,12 @@ def _check_doc_drift(repo_root: Path) -> list[str]:
 # The install hint is the one-line recovery the doctor / SessionStart
 # banner shows the operator. Keep it short and copy-pasteable.
 _LOAD_BEARING_EXTERNAL_TOOLS: dict[str, str] = {
-    # Lead with the adopter-correct standalone install. `.[dev]` is
-    # espalier's OWN dev-extras (only valid in a source checkout); a median
-    # `pip install espalier-harness` adopter has no such extras.
-    "ruff": "pip install 'ruff>=0.5,<1.0'  # or, in an espalier source checkout: pip install -e '.[dev]'",
+    # The loop that shows this runs on the source tree only (run_doctor_check
+    # gates it on is_self_host_repo), so the hint installs the dev extra, which
+    # pins ruff to the one version CI runs; a range would install a newer one.
+    # A tool adopters must see needs adopter-relevance gating and a standalone
+    # hint first (the NOTE at the loop).
+    "ruff": "pip install -e '.[dev]'  # the dev extra pins the ruff CI runs",
 }
 
 

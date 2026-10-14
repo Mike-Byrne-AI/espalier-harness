@@ -4,8 +4,11 @@ These guard against two first-run friction regressions:
 - The protected-zone deny message must tell an adopter whose OWN source collides
   with a harness path (e.g. a top-level `cc/`) to RELOCATE it, because relaunching
   in maintenance mode (the old advice) is the wrong remedy for adopter code.
-- The doctor / session_start ruff install hint must lead with the adopter-correct
-  standalone install, not espalier's own source-checkout `.[dev]` extras.
+- The doctor / session_start ruff install hint installs the dev extra, which pins
+  ruff to the one version CI runs. Both loops that show it run on the source tree
+  only (pinned by tests/test_doctor.py::test_load_bearing_tool_warning_is_self_host_gated
+  and tests/test_session_start_ruff_gate.py), so no adopter reads it; until 2026-10-13
+  it led with a standalone range, which installed a newer ruff than the pin.
 """
 from __future__ import annotations
 
@@ -30,21 +33,21 @@ def test_protected_zone_deny_offers_relocate_for_adopter_collision():
     assert "cc/" in msg  # the remedy is anchored to a colliding adopter dir
 
 
-def test_doctor_ruff_hint_leads_with_standalone_install():
+def test_doctor_ruff_hint_installs_the_dev_extras_pin():
     hint = _LOAD_BEARING_EXTERNAL_TOOLS["ruff"]
-    assert hint.startswith("pip install 'ruff"), (
-        "doctor ruff hint must lead with the adopter standalone install, not "
-        "espalier's `.[dev]`:\n" + hint
+    assert hint.startswith("pip install -e '.[dev]'"), (
+        "the doctor ruff hint is shown on the source tree only, where the dev extra "
+        "pins ruff; it installs that extra:\n" + hint
     )
-    # `.[dev]` may remain as a labelled source-checkout secondary, but AFTER.
-    assert hint.index("ruff>=") < hint.index(".[dev]"), hint
+    assert not re.search(r"ruff\s*[<>=~!@]", hint), "a spec of the hint's own drifts from the pin: " + hint
 
 
-def test_session_start_ruff_hint_is_adopter_standalone():
+def test_session_start_ruff_hint_installs_the_dev_extras_pin():
     text = (HOOKS_DIR / "session_start.py").read_text(encoding="utf-8")
     m = re.search(r'\("ruff",\s*"([^"]+)"\)', text)
     assert m, "ruff hint tuple not found in session_start.py"
-    assert "ruff>=" in m.group(1) and ".[dev]" not in m.group(1), m.group(1)
+    assert m.group(1).startswith("pip install -e '.[dev]'"), m.group(1)
+    assert not re.search(r"ruff\s*[<>=~!@]", m.group(1)), m.group(1)
 
 
 def test_runtime_strings_do_not_deny_the_pypi_channel():

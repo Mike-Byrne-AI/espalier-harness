@@ -2297,10 +2297,11 @@ def _report_integrity_state(root: Path) -> str:
 # adopter-relevance gating first — a new row alone is silently suppressed for
 # adopters. The parity contract pins membership, NOT gating, so it won't catch it.
 _SESSION_START_LOAD_BEARING_TOOLS = (
-    # Adopter-correct standalone install (`.[dev]` is espalier's own
-    # source-checkout dev-extras, not an adopter's). Names must stay parallel
-    # with doctor._LOAD_BEARING_EXTERNAL_TOOLS; only the hint string differs.
-    ("ruff", "pip install 'ruff>=0.5,<1.0'"),
+    # Shown on the source tree only (the warn below returns on an adopter's),
+    # so the hint installs the dev extra, which pins ruff to the one version
+    # CI runs; a range here would install a newer ruff than the pin. Names
+    # must stay parallel with doctor._LOAD_BEARING_EXTERNAL_TOOLS.
+    ("ruff", "pip install -e '.[dev]' (the dev extra pins the ruff CI runs)"),
 )
 
 

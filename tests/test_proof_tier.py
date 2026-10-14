@@ -1157,18 +1157,66 @@ class TestRun:
     an exit line, the summary names how many ran, and the worst code is the
     exit. The subprocess is faked so no pytest is spawned from inside pytest."""
 
-    def _fake_run(self, monkeypatch, pt, codes):
-        """Fake only the pytest spawns; the script's own `git status` call goes
-        through to the real runner (pt.subprocess IS the stdlib module)."""
+    def _fake_run(self, monkeypatch, pt, codes, versions=None):
+        """Fake only the runner spawns; the script's own `git status` call goes
+        through to the real runner (pt.subprocess IS the stdlib module). A
+        runner's ``--version`` read answers from ``versions`` (default
+        ``<runner> 0.0.0``) and is kept out of ``calls``, which records the
+        tier's commands only."""
         calls = []
         real = subprocess.run
         def fake(argv, **kw):
             if list(argv)[:1] not in (["pytest"], ["mypy"], ["ruff"]):
                 return real(argv, **kw)
+            if list(argv)[1:] == ["--version"]:
+                said = (versions or {}).get(argv[0], f"{argv[0]} 0.0.0")
+                return types.SimpleNamespace(returncode=0, stdout=said + "\n", stderr="")
             calls.append(list(argv))
             return types.SimpleNamespace(returncode=codes[len(calls) - 1])
         monkeypatch.setattr(pt.subprocess, "run", fake)
         return calls
+
+    def test_the_receipt_names_each_runners_version_once_before_its_commands(self, pt, monkeypatch, capsys):
+        self._fake_run(monkeypatch, pt, [0, 0, 0, 0],
+                       versions={"mypy": "mypy 2.4.0 (compiled: yes)", "ruff": "ruff 0.17.0", "pytest": "pytest 9.1.1"})
+        assert pt.run_commands(pt._TIER_ARGVS["full"], REPO_ROOT) == 0
+        lines = capsys.readouterr().out.splitlines()
+        version = [line for line in lines if line.startswith("version: ")]
+        assert [v.split()[1] for v in version] == ["mypy", "ruff", "pytest"], version
+        first_exit = next(i for i, line in enumerate(lines) if line.startswith("exit "))
+        assert all(lines.index(v) < first_exit for v in version), lines
+
+    def test_a_runner_off_the_dev_extras_pin_is_named_with_the_reinstall_line(self, pt, monkeypatch, capsys, tmp_path):
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "x"\n[project.optional-dependencies]\n'
+            'dev = ["ruff==0.17.0", "mypy == 2.4.0", "pytest>=7.0"]\n', encoding="utf-8")
+        assert pt.dev_extra_pins(tmp_path) == {"ruff": "0.17.0", "mypy": "2.4.0"}
+        self._fake_run(monkeypatch, pt, [0, 0, 0, 0],
+                       versions={"mypy": "mypy 2.4.0 (compiled: yes)", "ruff": "ruff 0.16.9", "pytest": "pytest 9.1.1"})
+        assert pt.run_commands(pt._TIER_ARGVS["full"], tmp_path) == 0
+        version = {line.split()[1]: line for line in capsys.readouterr().out.splitlines() if line.startswith("version: ")}
+        assert "the dev extra pins ruff==0.17.0, which CI runs: python -m pip install ruff==0.17.0" in version["ruff"]
+        assert "pins" not in version["mypy"] and "pins" not in version["pytest"], version
+
+    def test_a_runner_with_no_branch_of_its_own_is_refused_not_read_as_pytest(self, pt, tmp_path):
+        """Both dispatches end in a refusal, so a runner added to the roster
+        without its own branch cannot print pytest's version in its slot."""
+        with pytest.raises(ValueError, match="black"):
+            pt.version_lines((("black", "."),), tmp_path)
+
+    def test_a_runner_with_no_version_or_no_binary_never_changes_the_verdict(self, pt, monkeypatch, capsys, tmp_path):
+        real = subprocess.run
+        def fake(argv, **kw):
+            if list(argv) == ["ruff", "--version"]:
+                raise FileNotFoundError("ruff")
+            if list(argv)[:1] in (["mypy"], ["ruff"], ["pytest"]):
+                return subprocess.CompletedProcess(argv, 0)  # no stdout, no stderr
+            return real(argv, **kw)
+        monkeypatch.setattr(pt.subprocess, "run", fake)
+        assert pt.run_commands(pt._TIER_ARGVS["full"], tmp_path) == 0
+        out = capsys.readouterr().out
+        assert "version: ruff not installed" in out and "version: mypy printed no version (exit 0)" in out
+        assert "proof: PASS -- 4 of 4 command(s) ran" in out
 
     def test_a_forced_downgrade_is_named_beside_the_receipt(self, pt, monkeypatch, tmp_path, capsys):
         """`--tier contract` on a runtime diff prints the forced note at the top
@@ -1214,7 +1262,7 @@ class TestRun:
             if list(argv)[:1] == ["mypy"]:
                 raise FileNotFoundError("mypy")
             if list(argv)[:1] in (["pytest"], ["ruff"]):
-                return types.SimpleNamespace(returncode=0)
+                return types.SimpleNamespace(returncode=0, stdout="", stderr="")
             return real(argv, **kw)
         monkeypatch.setattr(pt.subprocess, "run", fake)
         assert pt.run_commands(pt._TIER_ARGVS["full"], REPO_ROOT) == 127

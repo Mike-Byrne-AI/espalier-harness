@@ -3136,19 +3136,6 @@
    "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
   },
   {
-   "id": "DEF-4014",
-   "subject": "pyproject.toml",
-   "cmd": "python3 -B -c \"from espalier._compat import tomllib;import ast;d=tomllib.load(open('pyproject.toml','rb'));r=[x.replace(' ','') for x in d['project']['optional-dependencies']['dev'] if x.replace(' ','').lower().startswith('ruff')];p=any('==' in x or ('~=' in x and x.count('.')>=2) for x in r) or 'required-version' in d.get('tool',{}).get('ruff',{});e=any(isinstance(n,ast.Constant) and n.value=='--version' for n in ast.walk(ast.parse(open('scripts/proof_tier.py',encoding='utf-8').read())));print(not p and not e)\"",
-   "open_value": "True",
-   "why_not": null,
-   "inputs": [
-    "scripts/proof_tier.py"
-   ],
-   "row_sha": "f87223a7a0ad",
-   "text_sha": "41b50d4e3edf",
-   "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
-  },
-  {
    "id": "DEF-4016",
    "subject": "espalier/analyze.py",
    "cmd": "python3 -B -c \"import tempfile,pathlib;from espalier.analyze import detect_package_roots as P,detect_monorepo as M;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);b=pathlib.Path(T.name);w=lambda r,fs:[(r/f).parent.mkdir(parents=True,exist_ok=True) or (r/f).write_text('x') for f in fs] and r;a=w(b/'a',['packages/one/setup.py','packages/two/setup.py']);v=w(b/'v',['pyproject.toml','third_party/libA/setup.py','third_party/libB/setup.cfg','vendor/libC/Gemfile','docs/setup.cfg']);print(not (M(P(a)) and not M(P(v))))\"",
@@ -3219,6 +3206,16 @@
    "why_not": null,
    "row_sha": "c3931bba4756",
    "text_sha": "a4ca3c974b33",
+   "verified_2026_10_13": "OPEN (filed 2026-10-13; probe driven at filing)"
+  },
+  {
+   "id": "DEF-2003",
+   "subject": "tools/cc/hooks/session_start.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the defect is the run order of the catch-up and module loading inside one hook process; a one-line probe can read only text, and any text it keys on prescribes one fix. The oracle is a scratch clone one commit behind an origin whose head adds a name to tools/cc/_json_safe.py that a by-path-loaded module imports, and one SessionStart run there.",
+   "row_sha": "6981045483f2",
+   "text_sha": "aa95b488419e",
    "verified_2026_10_13": "OPEN (filed 2026-10-13; probe driven at filing)"
   }
  ],

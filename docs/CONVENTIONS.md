@@ -2282,6 +2282,24 @@ The triple is pinned by `tests/test_external_tool_contract.py`.
 Adding a tool to `_LOAD_BEARING_EXTERNAL_TOOLS` without the dev-extras
 + SessionStart wiring fails the contract.
 
+A gate whose output is the finding (ruff, mypy) takes ONE exact version in
+the dev extra (`ruff==X.Y.Z`), never a range: a release that adds or
+changes a check would otherwise red every required `test (3.x)` cell at
+once with no change here, and read as an ordinary finding. Every workflow
+job that runs one installs the dev extra rather than a spec of its own, so
+the pin has one home and a bump is one pull request whose CI runs the new
+version; `scripts/proof_tier.py`'s receipt prints each runner's version
+and names one that is off the pin. The missing-tool install hints in
+`espalier/doctor.py` and the SessionStart banner install the dev extra
+too: both loops run on the source tree only, so no adopter reads them.
+Dependabot keeps each gate out of its grouped pip pull request, so a bump
+of one never waits on the other. `[tool.ruff] required-version` is left
+out on purpose: dependabot would move the pin and not that setting, so
+every bump would go red. The same contract file pins the pins, the
+workflow installs, the dependabot exclusion and the proof tier's runners
+as a closed world (a new runner is pinned, or named as ranged with its
+reason).
+
 The two side lists (doctor / session_start) stay parallel-and-separate
 because the SessionStart hook lives under `tools/cc/` and the harness's
 zero-`espalier`-imports invariant forbids the hook from importing the
