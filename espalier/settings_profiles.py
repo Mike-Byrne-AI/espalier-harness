@@ -589,8 +589,9 @@ def retired_deny_rules() -> tuple[tuple[str, str, str], ...]:
     and no longer does, with the last version that wrote each.
 
     A settings.json that still carries one is named by ``doctor``,
-    ``merge-settings`` and the ``upgrade`` preview, with the reason and the
-    version; nothing removes it, because ``permissions`` is the operator's
-    (the note above ``RETIRED_DENY_RULES``).
+    ``merge-settings``, ``upgrade`` and a re-run of ``init`` over an install
+    (``--wire-hooks`` or not), with the reason and the version; nothing
+    removes it, because ``permissions`` is the operator's (the note above
+    ``RETIRED_DENY_RULES``).
     """
     return RETIRED_DENY_RULES

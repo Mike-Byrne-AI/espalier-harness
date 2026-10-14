@@ -2526,7 +2526,7 @@ the machine, so removing it from the project file alone changed nothing.
 `write_guard`'s catastrophic-rm classifier walls the root glob wipe at the hook
 layer, where a wall carries a reason. An install that predates the retirement
 keeps the line -- `merge-settings` never removes a rule -- so `doctor`,
-`merge-settings` and the `upgrade` preview name it with the fix: delete that one
+`merge-settings`, `upgrade` and a re-run of `init` name it with the fix: delete that one
 line from `permissions.deny`, then check `.claude/settings.local.json` and the
 user-level file (the reporters name all three). Never end a deny rule in a `*`,
 and never put one right after a `/`; `tests/test_settings_profiles.py` pins

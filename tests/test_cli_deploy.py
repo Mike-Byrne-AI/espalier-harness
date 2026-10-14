@@ -794,6 +794,72 @@ def test_upgrade_on_a_version_current_install_names_a_retired_deny_rule_and_is_n
     assert settings.read_bytes() == before
 
 
+class TestInitNamesARetiredDenyRule:
+    """DEF-4017: an adopter on 0.8.0b2 or earlier who refreshes by re-running
+    ``init .`` (QUICKSTART lists it beside ``upgrade --execute``) was told
+    nothing about the retired deny rule their settings.json still carries,
+    the one that refuses every recursive delete of an absolute path in every
+    permission mode, while ``upgrade``, ``doctor``, ``merge-settings`` and
+    ``init --wire-hooks`` each named it. The re-run now says it in the same
+    voice, read-only."""
+
+    RULE = "Bash(rm -rf /*)"
+    WARN = "carries the retired deny rule Bash(rm -rf /*)"
+
+    def _plant(self, root: Path) -> bytes:
+        import json
+
+        settings = root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["permissions"].setdefault("deny", []).append(self.RULE)
+        settings.write_bytes((json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+        return settings.read_bytes()
+
+    def test_a_plain_init_rerun_names_the_rule_and_leaves_the_file_alone(self, tmp_path, capsys, monkeypatch):
+        import argparse
+        from espalier.cli import cmd_init
+
+        monkeypatch.chdir(tmp_path)
+        before = self._plant(_initialized_tree(tmp_path))
+        capsys.readouterr()
+        assert cmd_init(argparse.Namespace(repo=str(tmp_path), config=None, write_gitignore=True)) == 0
+        err = capsys.readouterr().err
+        assert f"init: WARN: .claude/settings.json {self.WARN}" in err, err[-1500:]
+        assert "Delete that line by hand" in err, err[-1500:]
+        assert (tmp_path / ".claude" / "settings.json").read_bytes() == before
+
+    def test_upgrade_execute_names_the_rule_once_not_once_per_layer(self, tmp_path, capsys, monkeypatch):
+        """``upgrade --execute`` runs the same deploy init does and then its own
+        report; the deploy's copy is init's alone, so the WARN is said once."""
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        self._plant(root)
+        (root / "docs" / "CHEAT-SHEET.md").unlink()  # drift, so --execute deploys
+        capsys.readouterr()
+        assert _upgrade(root, execute=True) == 0
+        captured = capsys.readouterr()
+        assert "[upgrade] re-deployed" in captured.out, captured.out[-1500:]
+        assert captured.err.count(self.WARN) == 1, captured.err[-2500:]
+
+    def test_init_never_calls_an_adopters_own_rule_retired(self, tmp_path, capsys, monkeypatch):
+        """Case (b): a settings.json the adopter brought, with no Espalier hooks,
+        is theirs; the same rule there is their choice, never one init wrote."""
+        import argparse
+        import json
+        from espalier.cli import cmd_init
+
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "README.md").write_text("# t\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_bytes(
+            json.dumps({"permissions": {"deny": [self.RULE]}}).encode("utf-8"))
+        assert cmd_init(argparse.Namespace(repo=str(tmp_path), config=None, write_gitignore=True)) == 0
+        err = capsys.readouterr().err
+        assert "NO Espalier hooks wired" in err, err[-1500:]
+        assert "retired deny rule" not in err, err[-1500:]
+
+
 def test_init_records_the_effective_settings_profile_and_refresh_keeps_it(tmp_path):
     """Every reader that compares settings.json against a profile needs the one
     init rendered it from; the per-machine file records nothing itself."""
