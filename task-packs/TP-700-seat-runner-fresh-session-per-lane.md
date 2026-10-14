@@ -172,12 +172,43 @@ kept on that seat under the gitignored `reports/w0-streams-mac/<probe>.jsonl`.
 | W0-F | edit `tools/cc/_paths.py`, commit on a local scratch branch, `gh pr list` (`auto`) | **No stall in either run.** Without maintenance mode: `write_guard` refused the protected-zone edit (the harness's guard, not a permission prompt), so the commit had nothing; `gh pr list` ran; the refusal is also data in the `result` event's `permission_denials` (the denied `Edit` with its input). With `ESPALIER_MAINTENANCE_MODE=1`: edit, commit and `gh pr list` all ran, nothing pushed. 53 s and 100 s. Side finding: a branch made in a throwaway worktree lives in the clone's shared refs and outlives the worktree. |
 | W0-G | `sleep 600` in Bash, bound 40 s | **Holds.** The group kill returned at 41.4 s (SIGTERM, exit 143), no process survived. Two inputs: the session ran the sleep in the background and emitted a `success` `result` at 10.7 s while it kept running, so process exit, not the `result` event, ends a session; and the next session's banner `Sessions:` line counted every finished and killed `-p` session as a live sibling (no pid check), so W1's live-session refusal checks pids itself. |
 | W0-H | `/implement-task add one sentence to the end of docs/CHEAT-SHEET.md ...` | **Refuted.** The session went from recall to `execution_plan.py create` to the `Edit` without presenting a plan or asking anything (no `AskUserQuestion` call); it then synced the twin, built a `.venv` and started a proof tier until the 480 s bound killed it. A headless `/implement-task` approves itself: this shapes `TP-700a` (W1), it does not end the pack. |
-| W0-I | `proof_tier.py --run --tier full` as one Bash call | **Completes inside `-p`, not in the foreground.** The session ran the call with `run_in_background` and a 7,200,000 ms timeout, emitted a first `result` at 14 s, and a second `result` with the receipt when the task notified; the process exited on its own at 29.9 min, exit 0, no survivor, about $0.90. The tier on clean `main` in the throwaway: 21,322 passed, 2 failed (`tests/test_session_banner.py::TestEngineLine`, sensitive to the throwaway's own `.venv`), 2 errors (the `reports/cc_surface_gate.json` live-tree race), serial leg 1,938 passed. Design input: the runner reads the last `result` after process exit, or the tier's own log, and expects a fresh throwaway's tier to carry these reds. |
+| W0-I | `proof_tier.py --run --tier full` as one Bash call | **Completes inside `-p`, not in the foreground.** The session ran the call with `run_in_background` and a 7,200,000 ms timeout, emitted a first `result` at 14 s, and a second `result` with the receipt when the task notified; the process exited on its own at 29.9 min, exit 0, no survivor, about $0.90. The tier on clean `main` in the throwaway: 21,322 passed, 2 failed (`tests/test_session_banner.py::TestEngineLine`, sensitive to the throwaway's own `.venv`), 2 errors (the `reports/cc_surface_gate.json` live-tree race), serial leg 1,938 passed. Design input: the runner reads the last `result` after process exit, or the tier's own log; `claude` exited 0 while the tier was red, so the verdict is the tier's receipt, never the exit code. These reds are `lane/fresh-tree-tier-green`'s to clear before W1, not a set to expect. |
 
-The nine Mac runs cost about $4.70 together by each run's last `result` (W0-H unpriced: killed
-before one).
+The ten Mac runs (W0-A twice, W0-F twice) cost about $4.73 together by each priced run's last
+`result`; W0-H is unpriced, killed before it emitted one.
 
-**Windows:** pending (`lane/seat-runner-w0-windows`, the `win` seat).
+**Windows** (`win` seat, Windows 11 build 26200, Claude Code `2.1.299` resolved by `shutil.which`
+to `.local\bin\claude.EXE`, no `.cmd` shim; reported by that seat in its mail note `b5335e`,
+2026-10-14 05:34Z, recorded here as its report). Every run: `claude -p "<prompt>" --output-format
+stream-json --verbose --permission-mode auto --model opus` (the box's default model is Fable),
+bounded by `tools/cc/_json_safe.py::run_bounded`, the stream decoded as UTF-8, in a detached
+throwaway worktree (`C:\tmp\w0 win`, at `6ca7ebb`) with its own `.venv`, interpreter `python` (no
+`python3` on that box); `CLAUDE*` and `ESPALIER_*` stripped, maintenance mode off except W0-F's
+second run. Claude Code's PowerShell tool is on by default there. Streams and transcripts are kept
+on that box under `C:\tmp\w0-streams-win\<probe>\`.
+
+| Probe | Prompt | Result |
+|---|---|---|
+| W0-A | `reply with the single word PONG` | **Holds.** Exit 0, 15.8 s. |
+| W0-B | the W0-A run | **Holds.** The session marker and `cc/blueprints` were written during the run. |
+| W0-C | `/status` | **Holds, by the transcript, as on the Mac.** The stream carries no expansion; the transcript carries the command-name tag and the body, and the session ran the body's commands verbatim. The first run was void: Git Bash's MSYS path conversion turned the argument `/status` into `C:/Program Files/Git/status`, and the model still called `Skill(status)`. So a `Skill` call is no proof of dispatch, and a slash goal never goes through an MSYS argv. |
+| W0-D | one `Agent` call, `general-purpose` | **Holds.** About 44.3k tokens. The subagent's reply arrives in the hand-back's input, not in the `Agent` call's result. |
+| W0-E | `mail.py assignments` and `board.py` as two calls | **Holds.** Both ran as Bash calls and their JSON parses. |
+| W0-F | edit under `tools/cc/`, commit on a scratch branch, `gh pr list` | **No stall, as on the Mac.** Without maintenance mode `write_guard` refused the `Edit` (in `permission_denials`), the commit was empty and `gh` ran; with it, every step ran. The shell steps went to PowerShell. |
+| W0-G | a long sleep, bound 40 s | **Holds.** Returned at 40.2 s, none of the session's 12 processes survived. The next banner's `Sessions:` line listed all 8 ended `-p` sessions as live, as on the Mac. |
+| W0-H | the real `/implement-task` on a trivial assign | **Refuted, as on the Mac.** No plan shown and no `AskUserQuestion`: plan creation, the `Edit`, the reviewers, then the contract slice, until the bound killed it at 540 s (none of 56 processes survived). It left the edit and an `in_progress` plan behind. |
+| W0-I | the full proof tier as one call | **Did not complete inside `-p` on this box.** The session backgrounded the tier itself and emitted a `result` at 21.6 s with no verdict while the process stayed up; the 75-minute bound killed it at 89 percent of the parallel leg (4 workers, with another pytest running on that box), and nothing survived. A control run that backgrounded a 90 s sleep emitted two `result` events, the second carrying the output, and exited 0 at 122.7 s. Design input, as on the Mac: read the last `result` after the process exits; the runner, not the session, runs the tier, under a bound well past 75 minutes. |
+
+**Exit rule:** W0-A, W0-B, W0-C, W0-D and W0-G hold on both machines, so the wave does not stop.
+Two qualifications. W0-C holds by the transcript, the oracle the dispatcher accepted on 2026-10-14
+(ack `de0679`) in place of this table's stream oracle: read literally, both machines' streams show
+the refuting result (no expansion event), and the operator may still read the cell that way.
+W0-G's third arm (a worktree left in a state the next session cannot detect) was not exercised
+by the sleep probe; the killed W0-H run on Windows did leave an edit and an `in_progress` plan
+behind, which is that state. W0-H is refuted on both machines, which shapes `TP-700a` (a headless
+session approves its own plan). Whether a headless form of the lane procedure keeps its approval
+steps, the clause above that would stop the pack, is not answered by W0; it is `TP-700a`'s first
+question. W0-F and W0-I are recorded as design input.
 
 ## Relevant memory
 
@@ -224,12 +255,16 @@ Every fix below is a **fix shape (untested)**; its refutation is named with it.
 5. Skip a job already landed, keyed by `mail.py::_job_key` (not the assign id, which changes when a
    job is re-sent), and record landing, not committing, unlike the driver (`DEF-644`).
 6. Run one `claude -p` with `--output-format stream-json --verbose`, the stream saved, a
-   process-tree wall clock as in W0, the environment stated (maintenance mode recorded,
-   `CLAUDECODE` and `CLAUDE_PROJECT_DIR` stripped). The goal names the full command chain by name
+   process-tree wall clock as in W0, the environment stated (`CLAUDECODE`,
+   `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_PROJECT_DIR` and `ESPALIER_MAINTENANCE_MODE` stripped, as in
+   W0: an inherited maintenance mode turns off `write_guard`'s zone check), and `claude --version`
+   recorded beside the stream (W0 saw a subagent's reply land in a different place on each
+   version). The goal names the full command chain by name
    (`/implement-task`, then `/commit`, then `/handoff`) with the assign text as the brief. What
    stands in for `/implement-task`'s step-2 approval is decided from W0-H, and is never the
    session approving itself.
-7. Check from the stream and the filesystem: the command expansions happened (dispatch, per lane;
+7. Check from the session transcript and the filesystem: the command expansions happened (its
+   command-name tags, since W0-C found the stream shows none; dispatch, per lane, because
    `DEF-645`'s gap is a check made once and read from printed text), the lane branch advanced, and
    the push happened. Then the runner itself runs `python3 scripts/proof_tier.py --run` on the
    lane outside the session if W0-I shows the session cannot. Any miss: the stop protocol.
@@ -283,8 +318,8 @@ which case that lane kind needs a human check and the runner stops on it.
 - **W1:** with `claude` mocked, the runner (a) runs nothing while the stop file exists, and a stop
   writes the file before its mail, so a refused send still leaves it; (b) refuses a second open pull
   request for the seat and a live interactive session in the worktree; (c) takes no job without
-  `after:` or a night-board listing; (d) stops when the session made no commit, when the stream
-  lacks the command expansions, when the push is missing, and when a board section is unread, each
+  `after:` or a night-board listing; (d) stops when the session made no commit, when the
+  transcript lacks the command expansions, when the push is missing, and when a board section is unread, each
   with a test that goes red when that check is removed; (e) a session past its bound leaves no
   surviving process. No check may be weakened to pass a test.
 - **W4:** an old message without `after:` reads as not-for-the-runner; a job whose `after:` is
