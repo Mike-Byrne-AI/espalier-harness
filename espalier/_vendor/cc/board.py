@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _merge_rules  # noqa: E402  the merge-rules read, shared with the SessionStart banner
 import mail  # noqa: E402  the claims and assignments folds
 from _json_safe import os_error_text  # noqa: E402  an OSError rendered as its path and reason
+from _record_fragments import LEDGER_DIR  # noqa: E402  the ledger's row directory, named once by the loader
 from record_merge import Unresolvable, run  # noqa: E402  the one spawn and the named stop
 
 Runner = Callable[..., tuple[int, str, str]]
@@ -69,8 +70,8 @@ LEDGER = "task-packs/FORWARD_LEDGER.md"
 #: What the ledger count reads from the base tree: ``tools/cc`` (the generator
 #: and every sibling it loads by path, the fragment loader among them), the
 #: ledger, and its row files where the base keeps them.
-BASE_COUNT_PATHS = ("tools/cc", LEDGER, "task-packs/ledger.d")
-LEDGER_ROWS = "task-packs/ledger.d/"
+BASE_COUNT_PATHS = ("tools/cc", LEDGER, LEDGER_DIR)
+LEDGER_ROWS = LEDGER_DIR + "/"
 #: The child that counts the base's ledger: a cold interpreter loading two
 #: modules over a few hundred row texts.
 BASE_COUNT_TIMEOUT = 60.0

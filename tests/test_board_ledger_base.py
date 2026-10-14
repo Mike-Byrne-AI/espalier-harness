@@ -46,7 +46,7 @@ def board():
 
 def _git(root: Path, *args: str) -> str:
     done = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, encoding="utf-8",
-                          timeout=60, check=True)
+                          timeout=30, check=True)
     return done.stdout.strip()
 
 
