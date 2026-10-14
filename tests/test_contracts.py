@@ -1019,9 +1019,9 @@ _SPAWN_TREES_OUTSIDE_TOOLS_CC = (
 #: ``# spawn: ok <reason>`` marker on the call line or the line above.
 _BOUNDED_SPAWN_OWN = frozenset({"run_bounded", "_end_tree"})
 #: Timed calls through ``run_bounded`` at the reroute (DEF-3004, 2026-10-14):
-#: 43 in the engine, 15 in scripts/, 14 in bench/, 2 in tools/. A walk that
+#: 43 in the engine, 18 in scripts/, 14 in bench/, 2 in tools/. A walk that
 #: finds fewer broke, or sites went back to ``subprocess.run``.
-_ROUTED_TIMED_FLOOR = 74
+_ROUTED_TIMED_FLOOR = 77
 
 
 def _spawn_sites_outside_tools_cc(root: Path) -> list[dict]:
