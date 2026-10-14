@@ -102,7 +102,8 @@ const PRE =
   'that ships this scaffold declares itself a workflow toolbelt, not a security boundary: the threat model is ' +
   'operator/AI *mistakes*, not malice. A finding that only bites under adversarial malice, or is ' +
   'workflow-friction / a false-positive dressed as a bug, is NOT a blocker.\n\n' +
-  'DEDUP (mandatory): before emitting, grep task-packs/FORWARD_LEDGER.md (if that file is absent, as on a repository that keeps no such ledger, ' +
+  'DEDUP (mandatory): before emitting, grep task-packs/FORWARD_LEDGER.md and, where the repository keeps rows as files, task-packs/ledger.d/ ' +
+  '(`python tools/cc/_record_fragments.py ledger` prints both as one text) (if that file is absent, as on a repository that keeps no such ledger, ' +
   'write ABSENT-LEDGER in verification.negative and mark the finding UN-DEDUPED, not new; live rows + the section-6 ' +
   'do-not-rediscover list). Do NOT re-raise a live row; do NOT reopen a section-6 entry without NEW evidence. Only emit a ' +
   'genuinely NEW finding (id it "LR:<label>"; say "extends <existing-id>" in violated_invariant for a variant).\n\n' +
@@ -211,7 +212,7 @@ const refutePrompt = (f) =>
   '1. Read the exact location (path:line) on HEAD (git show HEAD:<path> or Read the file). If the cited ' +
   'code/behavior is not actually there, or says otherwise -> refuted.\n' +
   '2. If minimal_repro is a command, RUN it. If it does not reproduce the claimed bug -> refuted.\n' +
-  '3. Check task-packs/FORWARD_LEDGER.md (if the repository keeps one; otherwise skip this step): if this duplicates a live row or known entry (not a genuine new ' +
+  '3. Check task-packs/FORWARD_LEDGER.md and task-packs/ledger.d/ (if the repository keeps one; otherwise skip this step): if this duplicates a live row or known entry (not a genuine new ' +
   'variant) -> refuted; if it reopens a section-6 do-not-rediscover entry without NEW evidence -> refuted.\n' +
   '4. GOVERNING FRAME: the threat model this repository declares; the harness that ships this scaffold is a workflow toolbelt, not a security boundary (threat model = ' +
   'operator/AI mistakes, not malice). A finding that only bites under adversarial malice, or is ' +

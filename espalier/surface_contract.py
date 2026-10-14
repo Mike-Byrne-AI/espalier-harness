@@ -645,6 +645,12 @@ SHIPPED_TASK_PACK_FILES: tuple[str, ...] = (
     "task-packs/FORWARD_LEDGER.md",
     "task-packs/LEDGER_PROBES.json",
 )
+# The forward ledger's rows and probes as one file each (2026-10-13), where a
+# repository opts in: they complete the ledger and the roster above, so every
+# file directly under them ships with those two (the self-host `.gitignore`
+# re-includes the same two directories whole). One level only: a file nested
+# deeper is nobody's record.
+SHIPPED_TASK_PACK_DIRS: tuple[str, ...] = ("task-packs/ledger.d/", "task-packs/probes.d/")
 # The two locations whose packs SHIP: a `TP-*.md` directly under `task-packs/`
 # (active) or `task-packs/Deferred/` (drafted and held). Everything else a pack
 # can be -- landed in `Done/`, folded in `Merged/`, abandoned in `Scrapped/`, or
@@ -685,9 +691,13 @@ def is_shipped_pack(rel_path: str) -> bool:
 
 def is_shipped_task_pack_surface(rel_path: str) -> bool:
     """True if ``rel_path`` is any member of the task-pack ship set: one of
-    :data:`SHIPPED_TASK_PACK_FILES` or a pack :func:`is_shipped_pack` accepts."""
+    :data:`SHIPPED_TASK_PACK_FILES`, a file directly under one of
+    :data:`SHIPPED_TASK_PACK_DIRS`, or a pack :func:`is_shipped_pack` accepts."""
     p = _normalize(rel_path)
-    return p in SHIPPED_TASK_PACK_FILES or is_shipped_pack(p)
+    return (p in SHIPPED_TASK_PACK_FILES
+            or any(p.startswith(d) and p[len(d):] and "/" not in p[len(d):]
+                   for d in SHIPPED_TASK_PACK_DIRS)
+            or is_shipped_pack(p))
 
 
 def is_internal_release_leak(rel_path: str) -> bool:

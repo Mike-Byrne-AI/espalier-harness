@@ -498,9 +498,14 @@ class TestBypassRosterCarriers:
         from tests._git_oracle import require_tracked_paths
 
         callers = _maintenance_bypass_callers()
+        from tests._record_paths import is_dated_fragment
+
+        # The dated records kept one file per change are records like the two
+        # files they came from (ESPALIER_MEMORY.md, CHANGELOG.md).
         tracked = [
             rel for rel in require_tracked_paths(_REPO_ROOT, "*.md", what="tracked markdown")
             if not rel.startswith(_NOT_SWEPT_PREFIXES) and rel not in _NOT_SWEPT_FILES
+            and not is_dated_fragment(rel)
         ]
         assert "docs/HOOKS.md" in tracked and "memory/hook-authoring.md" in tracked, tracked[:5]
         partial: list[str] = []
@@ -788,11 +793,16 @@ class TestCmdExeRelaunchIsQuoted:
         session `v ` with a trailing space."""
         from tests._git_oracle import require_tracked_paths
 
+        from tests._record_paths import is_dated_fragment, is_ledger_record
+
+        # The ledger's record wherever a row lives, and the dated records kept
+        # one file per change, as the files they came from.
         tracked = [
             rel for rel in require_tracked_paths(
                 _REPO_ROOT, "*.md", "*.py", minimum=200, what="tracked md/py"
             )
             if rel not in _CMD_SET_NOT_SWEPT and not rel.startswith(_CMD_SET_NOT_SWEPT_PREFIXES)
+            and not is_ledger_record(rel) and not is_dated_fragment(rel)
         ]
         assert "docs/HOOKS.md" in tracked and "espalier/cli.py" in tracked, tracked[:5]
         offenders = [

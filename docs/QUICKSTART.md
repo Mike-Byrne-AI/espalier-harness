@@ -218,6 +218,8 @@ __pycache__/
 !/task-packs/CLAUDE.md
 !/task-packs/FORWARD_LEDGER.md
 !/task-packs/LEDGER_PROBES.json
+!/task-packs/ledger.d/
+!/task-packs/probes.d/
 ```
 <!-- required-gitignore: END generated region -->
 

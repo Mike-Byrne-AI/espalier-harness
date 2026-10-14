@@ -1028,7 +1028,8 @@ def _render_ledger_parser(tool_name: str, tool_input: dict, root: Path) -> "str 
     if rel.endswith("hooks/_reinject.py"):
         return None   # the rule's own defining module names both files; a detector exempts itself
     text = _written_text(tool_input, base, rel)
-    if "FORWARD_LEDGER.md" not in text and "LEDGER_PROBES.json" not in text:
+    if not any(name in text for name in ("FORWARD_LEDGER.md", "LEDGER_PROBES.json",
+                                         "task-packs/ledger.d", "task-packs/probes.d")):
         return None
     if not _PIPE_SPLIT_RE.search(text):
         return None
@@ -1036,8 +1037,10 @@ def _render_ledger_parser(tool_name: str, tool_input: dict, root: Path) -> "str 
         f"`{rel}` splits the ledger's markdown tables on `|`: split on UNESCAPED pipes only "
         "(`re.split(r\"(?<!\\\\)\\|\", ...)`) and refuse a row that is not the cell count you "
         "expect -- the ledger escapes a literal pipe as `\\|`, dozens of rows carry one, and "
-        "tools/cc/generate_ledger_regions.py owns the member-row parsers. Recall: "
-        "docs/SHARP_EDGES.md :: Markdown Escaped Pipes Silently Drop Matrix Rows."
+        "tools/cc/generate_ledger_regions.py owns the member-row parsers. Read the ledger's "
+        "VIEW, not the file: tools/cc/_record_fragments.py's `ledger_view_at` places the row "
+        "files under task-packs/ledger.d/ in it, and a reader of the file alone reads less and "
+        "passes. Recall: docs/SHARP_EDGES.md :: Markdown Escaped Pipes Silently Drop Matrix Rows."
     )
 
 

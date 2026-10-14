@@ -30,6 +30,7 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -47,10 +48,14 @@ except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (
 
 #: The fragment directories, repo-relative with forward slashes, no trailing
 #: slash. ``FRAGMENT_DIRS`` spells them with one, the form the record-file
-#: lists use for a directory entry.
+#: lists use for a directory entry. The forward ledger's two (its rows and its
+#: probes) are defined with the ledger section below.
 SESSION_LOG_DIR = "memory/session-log.d"
 CHANGELOG_DIR = "changelog.d"
-FRAGMENT_DIRS: tuple[str, ...] = (SESSION_LOG_DIR + "/", CHANGELOG_DIR + "/")
+LEDGER_DIR = "task-packs/ledger.d"
+PROBES_DIR = "task-packs/probes.d"
+FRAGMENT_DIRS: tuple[str, ...] = (SESSION_LOG_DIR + "/", CHANGELOG_DIR + "/",
+                                  LEDGER_DIR + "/", PROBES_DIR + "/")
 
 MEMORY_FILE = "ESPALIER_MEMORY.md"
 CHANGELOG_FILE = "CHANGELOG.md"
@@ -333,7 +338,13 @@ def changelog_fragments_setting(root: Path) -> tuple[bool, str]:
     of ``<root>/espalier.toml``. Only the bare word ``true`` turns it on; any
     other reading is off, with the reason named, the contract of
     ``ship.handoff_push_setting`` (a test pins the two agreeing)."""
-    key_name = CHANGELOG_FRAGMENTS_KEY
+    return _top_level_switch(root, CHANGELOG_FRAGMENTS_KEY)
+
+
+def _top_level_switch(root: Path, key_name: str) -> tuple[bool, str]:
+    """``(on, how it was read)`` for a top-level ``key_name = true`` in
+    ``<root>/espalier.toml``, by a line scan (the 3.10 floor has no tomllib):
+    the one reader for both fragment switches."""
     try:
         text = decode((root / "espalier.toml").read_bytes())
     except FileNotFoundError:
@@ -451,6 +462,446 @@ def _branch(root: Path) -> str:
         return ""
 
 
+# ---------------------------------------------------------------- forward ledger
+#
+# One file per ledger row and one per probe, where espalier.toml opts in. Two
+# lanes that each file a row into one class wrote neighbouring lines of the
+# ledger and the probe roster's tail, and GitHub's merge, which honours no
+# merge driver, read the pair as conflicting until a seat caught up (driven
+# 2026-10-13: two filings after one anchor met on the member row, its Appendix
+# B index row and the roster's tail). A row file holds its class, its member
+# line and its index lines; a probe file holds one roster entry.
+#
+# Readers take the VIEW: the ledger's own text with each row file's lines
+# placed where the verbs used to write them, and the roster with each probe
+# file's entry after its own. The view is built in memory on every read and
+# never written back -- a stored copy is what two lanes would both rewrite.
+# The legacy rows in the two files are read as before; on this repository a
+# later fold moves them into files, and an adopter's tree keeps the file form.
+#
+# The grammar below is a copy of tools/cc/generate_ledger_regions.py's (this
+# module is loaded by path from the engine and from scripts, so it imports no
+# sibling); tests/test_ledger_fragments.py pins each copy equal to its home.
+
+LEDGER_FILE = "task-packs/FORWARD_LEDGER.md"
+PROBES_FILE = "task-packs/LEDGER_PROBES.json"
+#: Each directory (``LEDGER_DIR``, ``PROBES_DIR``, above) sits beside its
+#: file: the verbs take the two file paths and find the directories from them.
+LEDGER_FRAGMENTS_KEY = "ledger_fragments"
+
+#: ``generate_ledger_regions._ID_SHAPE``: ``DEF-536``, ``LG-1``, ``DEF-371a``.
+_ID_SHAPE = r"[A-Z]{2,5}-\d+[a-z]*"
+LEDGER_NAME_RE = re.compile(rf"^({_ID_SHAPE})\.md$")
+PROBE_NAME_RE = re.compile(rf"^({_ID_SHAPE})\.json$")
+#: The one other name either directory may hold: its own README, which no
+#: reader takes as a record and no gate calls a stray.
+DIRECTORY_README = "README.md"
+#: A directory's own documents, in any case: its README and the folder
+#: ``CLAUDE.md`` this repository writes beside the files it governs.
+_DIRECTORY_DOCS = frozenset(name.lower() for name in (DIRECTORY_README, "CLAUDE.md"))
+#: Names an operating system or an editor leaves in any directory it opens.
+_OS_DROPPINGS = frozenset({"Thumbs.db", "desktop.ini"})
+#: A byte-order mark, spelled by code point so no editor folds it away.
+_BOM = chr(0xFEFF)
+
+
+def never_a_record(name: str) -> bool:
+    """Whether a name under a fragment directory is one no writer here makes
+    and no reader takes as a record, so it is skipped without a word: a
+    dotfile (Finder's ``.DS_Store``, a macOS ``._`` file, a vim swap file,
+    ``.gitkeep``), an editor's backup (``name~``, ``#name#``), Windows's
+    ``Thumbs.db``, or the directory's own README or ``CLAUDE.md``. The
+    repository's ``.gitignore`` already ignores the droppings, so CI never sees
+    one; counted as strays, one Finder visit stopped every ledger verb on the
+    box (review, driven 2026-10-13). Any other name that is not a record's is
+    a stray, and the views name it."""
+    return (name.startswith(".") or name.endswith("~") or (len(name) > 1 and name[0] == name[-1] == "#")
+            or name in _OS_DROPPINGS or name.lower() in _DIRECTORY_DOCS)
+#: The name a writer gives a file under each fragment directory: a dated name
+#: for the Session Log and the changelog, the row's or probe's id for the
+#: ledger's two. The record-file lists' copies (``ci_guard``, ``_hook_utils``,
+#: ``record_merge``) read one pattern per directory and are pinned to these,
+#: so another tool's file in a directory of the same name is not a record file.
+FRAGMENT_NAMES: dict[str, "re.Pattern[str]"] = {
+    SESSION_LOG_DIR + "/": SESSION_LOG_NAME_RE,
+    CHANGELOG_DIR + "/": CHANGELOG_NAME_RE,
+    LEDGER_DIR + "/": LEDGER_NAME_RE,
+    PROBES_DIR + "/": PROBE_NAME_RE,
+}
+#: ``generate_ledger_regions._SECTION_HEADING``.
+_SECTION_HEADING_RE = re.compile(r"^### (§C\d+)\b")
+#: ``generate_ledger_regions._MEMBER_ROW``: a table row opening with an id.
+_MEMBER_ROW_RE = re.compile(r"^\|\s*(~~)?`")
+#: ``generate_ledger_regions._APPENDIX_B_ROW``.
+_APPENDIX_B_ROW_RE = re.compile(r"^\|\s*(~~)?`([^`]+)`(~~)?\s*\|\s*(§C\d+)\s*\|")
+#: A row file's first line: the class its row belongs to.
+_CLASS_LINE_RE = re.compile(r"^<!-- class: (§C\d+) -->[ \t]*$")
+_CELL_ID_RE = re.compile(r"`([^`]+)`")
+_ID_SHAPE_RE = re.compile(rf"^{_ID_SHAPE}$")
+_ID_PARTS_RE = re.compile(r"^([A-Z]+)-(\d+)([a-z]*)$")
+
+
+def is_ledger_record(rel: str) -> bool:
+    """Whether a repo-relative path (either slash) is the forward ledger's
+    record wherever a row lives: the ledger, its roster, or a file under one of
+    their two directories. The one answer for a rule that exempts (or reads)
+    the ledger by name, so a row in its own file is held the same way."""
+    rel = rel.replace("\\", "/")
+    return rel in (LEDGER_FILE, PROBES_FILE) or rel.startswith((LEDGER_DIR + "/", PROBES_DIR + "/"))
+
+
+def is_dated_fragment(rel: str) -> bool:
+    """Whether a repo-relative path (either slash) is under the Session Log's
+    or the changelog's fragment directory: the dated records a rule that
+    exempts ``ESPALIER_MEMORY.md`` or ``CHANGELOG.md`` exempts too."""
+    rel = rel.replace("\\", "/")
+    return rel.startswith((SESSION_LOG_DIR + "/", CHANGELOG_DIR + "/"))
+
+
+def ledger_fragments_setting(root: Path) -> tuple[bool, str]:
+    """``(on, how it was read)`` for ``ledger_fragments`` at the top level of
+    ``<root>/espalier.toml``: on, the ledger verbs write row and probe files;
+    off (the default), they write the two files as before. The loader reads
+    both forms either way."""
+    return _top_level_switch(root, LEDGER_FRAGMENTS_KEY)
+
+
+def _id_key(rid: str) -> tuple[str, int, str]:
+    """An id's sort key: kind, number, suffix (``DEF-9`` before ``DEF-10``)."""
+    m = _ID_PARTS_RE.match(rid)
+    return (m.group(1), int(m.group(2)), m.group(3)) if m else (rid, 0, "")
+
+
+def row_ids(line: str) -> list[str]:
+    """Every id in a member row's FIRST cell, in cell order: the ids the row
+    is addressed by (``generate_ledger_regions.cell_ids``)."""
+    if not _MEMBER_ROW_RE.match(line):
+        return []
+    first = re.split(r"(?<!\\)\|", line.strip()[1:], maxsplit=1)[0]
+    return [tok for tok in _CELL_ID_RE.findall(first) if _ID_SHAPE_RE.match(tok)]
+
+
+@dataclass(frozen=True)
+class LedgerFragment:
+    """One row file: its name, its class, its member line and its index
+    lines (one per id the row carries)."""
+
+    name: str
+    section: str
+    member: str
+    index: tuple[str, ...]
+
+    @property
+    def rid(self) -> str:
+        return self.name[: -len(".md")]
+
+
+@dataclass
+class LedgerView:
+    """The ledger as its readers see it. ``problems`` are row files the view
+    could not place (a gate reports them; nothing is dropped silently), and
+    ``skipped`` the names under the directory that are not row-file names."""
+
+    text: str
+    fragments: list[LedgerFragment]
+    skipped: list[str]
+    problems: list[str]
+
+
+def parse_ledger_fragment(name: str, text: str) -> LedgerFragment | str:
+    """A row file's parts, or why it cannot be read: its first line names a
+    class, its second is a member row whose first id is the file's name, and
+    every later table line is an index line for one of the row's ids."""
+    # A byte-order mark is not part of the class line, whether the text came
+    # from a file (``strict_text`` drops it) or from a blob a trend reader
+    # decoded as plain UTF-8.
+    text = text[1:] if text.startswith(_BOM) else text
+    lines = [ln for ln in text.replace("\r\n", "\n").split("\n") if ln.strip()]
+    if len(lines) < 2:
+        return f"{name}: a row file holds a class line and a member row"
+    m = _CLASS_LINE_RE.match(lines[0])
+    if not m:
+        return f"{name}: its first line is not '<!-- class: §Cn -->'"
+    member = lines[1]
+    ids = row_ids(member)
+    if not ids or ids[0] != name[: -len(".md")]:
+        return f"{name}: its member row's first id is {ids[0] if ids else 'missing'}, not its name"
+    index = tuple(lines[2:])
+    for ln in index:
+        im = _APPENDIX_B_ROW_RE.match(ln)
+        if not im or im.group(2) not in ids or im.group(4) != m.group(1):
+            return f"{name}: {ln[:60]!r} is not an index line for this row and class"
+    return LedgerFragment(name, m.group(1), member, index)
+
+
+def _table_end(lines: list[str], start: int, end: int, row_re: "re.Pattern[str]") -> int | None:
+    """The line index after the last ``row_re`` line in ``[start, end)``, or
+    after the first table rule before any heading when no row matches: where
+    the verbs append a row (``ledger_row._first_row_slot`` and
+    ``_appendix_b_slot``)."""
+    rows = [j for j in range(start, end) if row_re.match(lines[j])]
+    if rows:
+        return rows[-1] + 1
+    for j in range(start, end):
+        if lines[j].startswith(("### ", "## ")):
+            return None
+        if lines[j].startswith("|---"):
+            return j + 1
+    return None
+
+
+def _section_bounds(lines: list[str]) -> dict[str, tuple[int, int]]:
+    """``{'§C1': (first line after the heading, end)}``: a section ends at the
+    next class heading, the last one at the next ``## `` (the bounds of
+    ``generate_ledger_regions.ledger_sections``)."""
+    heads = [(i, m.group(1)) for i, ln in enumerate(lines) if (m := _SECTION_HEADING_RE.match(ln))]
+    out: dict[str, tuple[int, int]] = {}
+    for k, (i, name) in enumerate(heads):
+        if k + 1 < len(heads):
+            end = heads[k + 1][0]
+        else:
+            end = next((j for j in range(i + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
+        out[name] = (i + 1, end)
+    return out
+
+
+def ledger_view_from_texts(ledger_text: str, fragments: "Sequence[tuple[str, str | None]]") -> LedgerView:
+    """The view over texts already in hand: the ledger file's text and
+    ``(name, text)`` for each file under ``task-packs/ledger.d/``, in any
+    order. For a reader of another commit and for a writer's pending view."""
+    parsed: list[LedgerFragment] = []
+    skipped: list[str] = []
+    problems: list[str] = []
+    seen: dict[str, str] = {}
+    for name, text in sorted(fragments, key=lambda pair: pair[0]):
+        if not LEDGER_NAME_RE.match(name):
+            skipped.append(name)
+            if not never_a_record(name):
+                # A verb writes a row file through <name>.tmp and retires its
+                # probe first, so a .tmp is a write that never finished: the
+                # verb, run again, writes it whole.
+                problems.append(f"{name}: not a row-file name (<id>.md) -- a mis-cased id: rename it to "
+                                "<id>.md; a crashed write's .tmp: delete it and run the verb again; a backup "
+                                f"(a merge tool's .orig): delete it or move it out of {LEDGER_DIR}/")
+            continue
+        if text is None:
+            problems.append(f"{name}: unreadable, or not UTF-8")
+            continue
+        frag = parse_ledger_fragment(name, text)
+        if isinstance(frag, str):
+            problems.append(frag)
+            continue
+        for rid in row_ids(frag.member):
+            if rid in seen:
+                problems.append(f"{name}: {rid} also has a row in {seen[rid]}")
+            seen[rid] = name
+        parsed.append(frag)
+    lines = ledger_text.replace("\r\n", "\n").split("\n")
+    bounds = _section_bounds(lines)
+    for start, end in bounds.values():
+        for j in range(start, end):
+            for rid in row_ids(lines[j]):
+                if rid in seen:
+                    problems.append(f"{seen[rid]}: {rid} also has a row in {LEDGER_FILE}")
+    app = next((i for i, ln in enumerate(lines) if ln.startswith("## Appendix B")), None)
+    inserts: list[tuple[int, list[str]]] = []
+    placed: list[LedgerFragment] = []
+    by_class: dict[str, list[LedgerFragment]] = {}
+    for frag in sorted(parsed, key=lambda f: _id_key(f.rid)):
+        by_class.setdefault(frag.section, []).append(frag)
+    for section, frags in by_class.items():
+        at = _table_end(lines, *bounds[section], _MEMBER_ROW_RE) if section in bounds else None
+        if at is None:
+            why = "has no section" if section not in bounds else "has no member table"
+            problems.extend(f"{f.name}: class {section} {why} in {LEDGER_FILE}" for f in frags)
+            continue
+        inserts.append((at, [f.member for f in frags]))
+        placed.extend(frags)
+    index_lines = [ln for f in sorted(placed, key=lambda f: _id_key(f.rid)) for ln in f.index]
+    if index_lines:
+        end = len(lines) if app is None else next(
+            (j for j in range(app + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
+        at = None if app is None else _table_end(lines, app + 1, end, _APPENDIX_B_ROW_RE)
+        if at is None:
+            # One problem per row file, named: a verb's refusal keys on the
+            # rows it touches, and one line for every file named none of them.
+            problems.extend(f"{f.name}: {LEDGER_FILE} has no Appendix B table for its index lines"
+                            for f in placed if f.index)
+        else:
+            inserts.append((at, index_lines))
+    for at, block in sorted(inserts, key=lambda p: p[0], reverse=True):
+        lines[at:at] = block
+    return LedgerView("\n".join(lines), parsed, skipped, problems)
+
+
+def ledger_text_from_texts(ledger_text: str, fragments: "Sequence[tuple[str, str | None]]") -> str:
+    """``ledger_view_from_texts(...).text``."""
+    return ledger_view_from_texts(ledger_text, fragments).text
+
+
+def strict_text(path: Path) -> str:
+    """A ledger record's text, decoded strictly. The ledger's readers fail
+    CLOSED on bytes that are not UTF-8 (a structured answer, never a reading
+    with a replaced character: ``DEF-829``), unlike the Session Log's, which
+    are only shown. Raises ``OSError`` or ``UnicodeDecodeError``."""
+    # Plain utf-8, as every verb reads the two files: a reader that dropped a
+    # byte-order mark the verbs' own reads keep passed a marked roster in CI
+    # while every verb crashed on it (failure-mode review, driven 2026-10-13). A
+    # row or probe file's mark is dropped where the file is parsed.
+    return path.read_bytes().decode("utf-8").replace("\r\n", "\n")
+
+
+def fragment_texts(base: Path) -> list[tuple[str, str | None]]:
+    """``(name, text)`` for each file under ``base``; the text is None for a
+    file that cannot be read or is not UTF-8, which the view names."""
+    if not base.is_dir():
+        return []
+    out: list[tuple[str, str | None]] = []
+    for p in sorted(base.iterdir()):
+        if not p.is_file():
+            continue
+        try:
+            out.append((p.name, strict_text(p)))
+        except (OSError, UnicodeDecodeError):
+            out.append((p.name, None))
+    return out
+
+
+def ledger_fragment_dir(ledger: Path) -> Path:
+    """The row-file directory beside a ledger file."""
+    return ledger.parent / LEDGER_DIR.rsplit("/", 1)[1]
+
+
+def probe_fragment_dir(probes: Path) -> Path:
+    """The probe-file directory beside a roster file."""
+    return probes.parent / PROBES_DIR.rsplit("/", 1)[1]
+
+
+def ledger_view_at(ledger: Path, ledger_text: str | None = None) -> LedgerView:
+    """The view of the ledger at ``ledger`` and the row files beside it.
+    ``ledger_text`` is the caller's own read of the file, when it has one, so
+    each reader keeps its own policy for a file it cannot read."""
+    if ledger_text is None:
+        ledger_text = strict_text(ledger)
+    texts = fragment_texts(ledger_fragment_dir(ledger))
+    return ledger_view_from_texts(ledger_text, texts)
+
+
+def ledger_text(root: Path) -> str:
+    """The ledger's view at ``root``: ``task-packs/FORWARD_LEDGER.md`` with
+    ``task-packs/ledger.d/`` placed in it. Raises ``OSError`` when the file
+    cannot be read and ``UnicodeDecodeError`` when it is not UTF-8, as the
+    file's own strict read did."""
+    return ledger_view_at(root / LEDGER_FILE).text
+
+
+def fragment_for(ledger: Path, rid: str) -> Path | None:
+    """The row file whose member row carries ``rid`` anywhere in its id cell,
+    or None: a co-id row is addressed by any of its ids, as a legacy row is."""
+    base = ledger_fragment_dir(ledger)
+    if not base.is_dir():
+        return None
+    for p in sorted(base.iterdir()):
+        if not (p.is_file() and LEDGER_NAME_RE.match(p.name)):
+            continue
+        try:
+            frag = parse_ledger_fragment(p.name, strict_text(p))
+        except (OSError, UnicodeDecodeError):
+            continue
+        if not isinstance(frag, str) and rid in row_ids(frag.member):
+            return p
+    return None
+
+
+@dataclass
+class ProbeRoster:
+    """The probe roster as its readers see it: the file's object with each
+    probe file's entry after the file's own, and what could not be read."""
+
+    data: dict
+    skipped: list[str]
+    problems: list[str]
+
+
+def probe_roster_from_texts(roster_text: str | None,
+                            fragments: "Sequence[tuple[str, str | None]]") -> ProbeRoster:
+    """The roster over texts in hand: the roster file's text (None when there
+    is no file: an empty legacy list) and ``(name, text)`` for each file under
+    ``task-packs/probes.d/``. Raises ``ValueError`` on a roster file that is
+    not JSON, as a reader of the file alone did."""
+    import json  # stdlib, imported here: the Session Log readers never need it
+
+    data = json.loads(roster_text) if roster_text is not None else {"probes": []}
+    if not isinstance(data, dict):
+        raise ValueError(f"{PROBES_FILE} is JSON but not an object")
+    data = dict(data)
+    # A missing or renamed `probes` key reads as an empty legacy list, as a
+    # reader's `.get("probes", [])` always did: whether an empty roster beside
+    # live rows was LOST is the reader's rule to apply, not the loader's.
+    legacy = data.get("probes")
+    data["probes"] = list(legacy) if isinstance(legacy, list) else []
+    skipped: list[str] = []
+    problems: list[str] = []
+    # One probe per id, wherever it lives: a second entry for an id in the file,
+    # or a probe file for an id the file already carries, is a second home --
+    # a re-pin would stamp one and leave the other stale, unseen.
+    homes: dict[str, str] = {}
+    for entry in data["probes"]:
+        rid = entry.get("id") if isinstance(entry, dict) else None
+        if not rid:
+            # A verb looks every entry up by its id; one without stopped every
+            # strike with a KeyError while every reader passed it (failure-mode review).
+            problems.append(f"{PROBES_FILE}: an entry carries no id -- give it its row's id, or delete it")
+            continue
+        if rid in homes:
+            problems.append(f"{PROBES_FILE}: {rid} has two entries -- keep one")
+        homes[rid] = PROBES_FILE
+    entries: list[tuple[tuple[str, int, str], dict]] = []
+    for name, text in sorted(fragments, key=lambda pair: pair[0]):
+        m = PROBE_NAME_RE.match(name)
+        if not m:
+            skipped.append(name)
+            if not never_a_record(name):
+                # A filing writes its probe file last: a .tmp here is a filing
+                # that died after its row, which no verb finishes yet (the
+                # probe runner names the row as having no probe).
+                problems.append(f"{name}: not a probe-file name (<id>.json) -- a mis-cased id: rename it to "
+                                "<id>.json; a crashed write's .tmp: delete it (a filing that died here left "
+                                "its row with no probe, which the probe runner names); a backup: delete it "
+                                f"or move it out of {PROBES_DIR}/")
+            continue
+        if m.group(1) in homes:
+            problems.append(f"{name}: {m.group(1)} also has a probe in {homes[m.group(1)]} -- keep one: "
+                            "delete this file, or the entry there")
+        if text is None:
+            problems.append(f"{name}: unreadable, or not UTF-8")
+            continue
+        try:
+            entry = json.loads(text[1:] if text.startswith(_BOM) else text)
+        except json.JSONDecodeError as exc:
+            problems.append(f"{name}: not JSON ({exc.msg})")
+            continue
+        if not isinstance(entry, dict) or entry.get("id") != m.group(1):
+            problems.append(f"{name}: its entry's id is not {m.group(1)}")
+            continue
+        entries.append((_id_key(m.group(1)), entry))
+    data["probes"].extend(e for _k, e in sorted(entries, key=lambda p: p[0]))
+    return ProbeRoster(data, skipped, problems)
+
+
+def probe_roster_at(probes: Path) -> ProbeRoster:
+    """The roster at ``probes`` and the probe files beside it; a missing
+    roster file is an empty legacy list."""
+    roster_text = strict_text(probes) if probes.is_file() else None
+    return probe_roster_from_texts(roster_text, fragment_texts(probe_fragment_dir(probes)))
+
+
+def probe_roster(root: Path) -> dict:
+    """The roster's view at ``root``: ``task-packs/LEDGER_PROBES.json`` with
+    ``task-packs/probes.d/`` after it."""
+    return probe_roster_at(root / PROBES_FILE).data
+
+
 # ---------------------------------------------------------------- CLI
 
 
@@ -467,6 +918,10 @@ def main(argv: list[str] | None = None) -> int:
     new.add_argument("--seat", help="the seat for a Session Log fragment (default: git config espalier.machine)")
     new.add_argument("--branch", help="the lane for a changelog fragment (default: the current branch)")
     sub.add_parser("rows", help="print the Session Log rows, newest first, as the readers see them")
+    sub.add_parser("ledger", help="print the forward ledger as its readers see it: the file with "
+                                  "task-packs/ledger.d/ placed in it (never written back)")
+    sub.add_parser("probes", help="print the probe roster as its readers see it: the file's entries, "
+                                  "then task-packs/probes.d/ (never written back)")
     prune = sub.add_parser("prune", help="archive and delete the Session Log fragments beyond the cap")
     prune.add_argument("--keep", type=int, default=SESSION_LOG_CAP)
     prune.add_argument("--dry-run", action="store_true")
@@ -503,6 +958,33 @@ def main(argv: list[str] | None = None) -> int:
         if skipped:
             print(f"(skipped, not fragment names: {', '.join(skipped)})", file=sys.stderr)
         return 0
+    if args.verb == "ledger":
+        try:
+            view = ledger_view_at(root / LEDGER_FILE)
+        except OSError as exc:
+            print(f"cannot read {LEDGER_FILE}: {exc.strerror or type(exc).__name__}", file=sys.stderr)
+            return 2
+        sys.stdout.write(view.text if view.text.endswith("\n") else view.text + "\n")
+        if view.skipped:
+            print(f"(skipped, not row-file names: {', '.join(view.skipped)})", file=sys.stderr)
+        for problem in view.problems:
+            print(f"(not placed: {problem})", file=sys.stderr)
+        return 1 if view.problems else 0
+    if args.verb == "probes":
+        import json  # stdlib, imported here as the roster's reader does
+
+        try:
+            roster = probe_roster_at(root / PROBES_FILE)
+        except OSError as exc:
+            print(f"cannot read {PROBES_FILE}: {exc.strerror or type(exc).__name__}", file=sys.stderr)
+            return 2
+        except ValueError as exc:  # not JSON, or not UTF-8 (the strict decode)
+            print(f"cannot read {PROBES_FILE}: {type(exc).__name__}", file=sys.stderr)
+            return 2
+        sys.stdout.write(json.dumps(roster.data, indent=1, ensure_ascii=False) + "\n")
+        for problem in roster.problems:
+            print(f"(not read: {problem})", file=sys.stderr)
+        return 1 if roster.problems else 0
     rows = prune_session_log(root, keep=args.keep, dry_run=args.dry_run)
     verb = "would prune" if args.dry_run else "pruned"
     if rows:

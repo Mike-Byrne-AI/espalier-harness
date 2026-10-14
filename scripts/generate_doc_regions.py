@@ -202,7 +202,7 @@ def seed_is_ignored(rel: str) -> bool:
     from espalier.cli import (
         REINCLUDED_PATHS, REQUIRED_GITIGNORE, _gitignore_key, _ignore_pattern_matches,
     )
-    if rel in REINCLUDED_PATHS:
+    if rel in REINCLUDED_PATHS or any(rel.startswith(p) for p in REINCLUDED_PATHS if p.endswith("/")):
         return False
     return any(
         _ignore_pattern_matches(entry, rel)

@@ -59,6 +59,21 @@ def _load_tools_cc(name: str):
     spec.loader.exec_module(mod)
     return mod
 
+def _live_roster_probes() -> list[dict]:
+    """Every live probe, wherever it lives: the roster file's entries and the
+    probe files under ``task-packs/probes.d/`` (this repository files probes
+    as files since it set ``ledger_fragments``), read through the loader. A
+    ratchet over the roster file alone would never see a probe filed since."""
+    loader = _load_tools_cc("_record_fragments")
+    roster = loader.probe_roster_at(REPO_ROOT / "task-packs" / "LEDGER_PROBES.json")
+    # A roster read with problems is not every probe: a corrupt probe file is
+    # left out, and a second entry for one id is kept beside the first.
+    assert not roster.problems, f"the live roster has problems: {roster.problems}"
+    rows = roster.data["probes"]
+    assert rows, "the live roster read as empty: the ratchet below would pass over nothing"
+    return rows
+
+
 if not (REPO_ROOT / "tools" / "cc" / "check_ledger_probes.py").is_file():  # pragma: no cover
     pytest.skip("tools/cc/check_ledger_probes.py is absent", allow_module_level=True)
 
@@ -531,8 +546,12 @@ class TestTheRunnerNamesLiveRowsWithNoRosterEntry:
         assert "no roster entry: DEF-1" in capsys.readouterr().out
 
 
+@pytest.mark.contract
 class TestTheLiveProbeFile:
-    """Contracts on the shipped data, not just the runner."""
+    """Contracts on the shipped data, not just the runner: every live probe,
+    the roster file's and each probe file's under ``task-packs/probes.d/``
+    (``_live_roster_probes``), since a contract over the file alone passes a
+    probe filed as a file without ever reading it."""
 
     _LIVE = REPO_ROOT / "task-packs" / "LEDGER_PROBES.json"
 
@@ -543,7 +562,7 @@ class TestTheLiveProbeFile:
     def test_every_probe_declares_a_subject(self):
         """Without a subject the three-way verdict collapses to two, and the
         branch that collapses is the one that destroys work."""
-        probes = json.loads(self._LIVE.read_text(encoding="utf-8"))["probes"]
+        probes = _live_roster_probes()
         missing = [p["id"] for p in probes if p.get("cmd") and not p.get("subject")]
         assert not missing, (
             f"{len(missing)} probe(s) carry a command but no subject, so a moved "
@@ -571,7 +590,7 @@ class TestTheLiveProbeFile:
         by the landing checklist's own `mkdir -p` -- lets it answer over nothing
         (`DEF-858`, both measured 2026-09-22). Keyed on the probes file alone, so
         the verdict is the same on the seed tree."""
-        probes = json.loads(self._LIVE.read_text(encoding="utf-8"))["probes"]
+        probes = _live_roster_probes()
         readers = [
             p for p in probes
             if p.get("cmd") and any(line in p["cmd"] for line in self._LANDING_LINT_LINES)
@@ -638,7 +657,7 @@ class TestTheLiveProbeFile:
         the ratchet above."""
         from tests._git_oracle import require_tracked_paths  # never a silently empty set
 
-        probes = json.loads(self._LIVE.read_text(encoding="utf-8"))["probes"]
+        probes = _live_roster_probes()
         tracked = set(require_tracked_paths(REPO_ROOT, minimum=200, what="tracked files"))
 
         def is_tracked(rel: str) -> bool:
@@ -678,7 +697,7 @@ class TestTheLiveProbeFile:
         `--strikes` never moves on UNRESOLVED, so a typo would retire a row's
         measurement silently (failure-mode pass). On the tree that carries the
         local-only folders every member resolves and holds something."""
-        probes = json.loads(self._LIVE.read_text(encoding="utf-8"))["probes"]
+        probes = _live_roster_probes()
         # DEC-33 (2026-09-26): the public checkout is the development tree, and the
         # 2026-09-25 seed withheld the maintainers' export-ignored files from it, so a
         # declared input naming one of them is not a typo -- it is a probe whose oracle
@@ -731,7 +750,7 @@ class TestTheLiveProbeFile:
     def test_every_declared_inputs_list_has_the_shape_the_gate_reads(self):
         """A bare string here is UNRESOLVED by shape on every tree -- a probe
         that can never answer. The verb writes a list; pin that nothing else did."""
-        probes = json.loads(self._LIVE.read_text(encoding="utf-8"))["probes"]
+        probes = _live_roster_probes()
         malformed = [
             p["id"] for p in probes
             if "inputs" in p and not (
@@ -749,7 +768,7 @@ class TestTheLiveProbeFile:
         """A line-anchored probe false-STRIKES on any edit above its subject.
         Measured 2026-08-20: two did, and one of them belonged to the row whose
         own fix is 'cite by section heading rather than by line'."""
-        probes = json.loads(self._LIVE.read_text(encoding="utf-8"))["probes"]
+        probes = _live_roster_probes()
         import re
 
         offenders = [
@@ -1290,11 +1309,7 @@ class TestProbeShapesAreRatcheted:
     )
     @pytest.mark.contract
     def test_no_new_probe_is_satisfiable_by_its_own_fixs_paperwork(self):
-        data = json.loads(
-            (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8")
-        )
-        rows = data["probes"]
-        rows = list(rows.values()) if isinstance(rows, dict) else rows
+        rows = _live_roster_probes()
         trapped = {r["id"] for r in rows if self._is_trap_shaped(r)}
         new = sorted(trapped - self._TEXT_OVER_OWN_SUBJECT)
         assert not new, (
@@ -1319,11 +1334,7 @@ class TestProbeShapesAreRatcheted:
 
     @pytest.mark.contract
     def test_no_new_probe_spawns_a_literal_interpreter_inside_its_program(self):
-        data = json.loads(
-            (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8")
-        )
-        rows = data["probes"]
-        rows = list(rows.values()) if isinstance(rows, dict) else rows
+        rows = _live_roster_probes()
         spawning = {r["id"] for r in rows if self._LITERAL_SPAWN_RE.search(r.get("cmd") or "")}
         new = sorted(spawning - self._SPAWNS_A_LITERAL_INTERPRETER)
         assert not new, (
@@ -1419,12 +1430,7 @@ class TestProbeShapesAreRatcheted:
     @pytest.mark.contract
     def test_the_baseline_has_no_dead_entries(self):
         """A baselined id that no longer exists is bookkeeping rot, not safety."""
-        data = json.loads(
-            (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").read_text(encoding="utf-8")
-        )
-        rows = data["probes"]
-        rows = list(rows.values()) if isinstance(rows, dict) else rows
-        live = {r["id"] for r in rows}
+        live = {r["id"] for r in _live_roster_probes()}
         dead = sorted(self._TEXT_OVER_OWN_SUBJECT - live)
         assert not dead, (
             f"{len(dead)} baselined probe id(s) are gone from LEDGER_PROBES.json. "

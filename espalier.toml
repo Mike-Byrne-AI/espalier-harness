@@ -45,6 +45,13 @@ handoff_push = true
 # lanes merge in parallel, and one file per lane never conflicts.
 changelog_fragments = true
 
+# Whether the forward-ledger verbs (tools/cc/ledger_row.py) write a row as
+# task-packs/ledger.d/<id>.md and its probe as task-packs/probes.d/<id>.json
+# rather than into FORWARD_LEDGER.md and LEDGER_PROBES.json. Absent means off;
+# every reader takes both forms either way. This one does: two seats filing
+# into one class collided on neighbouring lines and the roster's tail.
+ledger_fragments = true
+
 # The dispatcher seat (root CLAUDE.md Core Rule 15): the one machine
 # name whose `assign` messages give jobs to seats, read by tools/cc/mail.py
 # and the board. A team setting, the same on every clone, so it is tracked;
@@ -65,4 +72,5 @@ dispatcher = "air"
 win = { DEF = "2000-2999", INV = "100-199", TP = "500-599" }
 win-2 = { DEF = "3000-3999", INV = "200-299", TP = "600-699" }
 air = { DEF = "4000-4999", INV = "300-399", TP = "700-799" }
+air-work = { DEF = "5000-5999", INV = "400-499", TP = "800-899" }
 _unnamed = { DEF = "1199-1999", INV = "32-99", TP = "479-499" }

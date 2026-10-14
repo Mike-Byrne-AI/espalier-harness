@@ -399,7 +399,6 @@ _FULL_SET_COPIES = {
     "tools/cc/ci_guard.py": "_RECORD_FILES",
     "tools/cc/hooks/_hook_utils.py": "RECORD_FILES",
     "tools/cc/record_merge.py": "FRAGMENT_DIRS",
-    "scripts/symbol_census.py": "_RECORD_DIRS",
     "scripts/merge_cost_census.py": "RECORD_DIRS",
 }
 #: Modules that name one directory by its literal, each with why it cannot read
@@ -412,14 +411,21 @@ _ONE_DIRECTORY_SITES = {
     "espalier/cli.py": "the memory prune's note on a folded section (the engine imports nothing from tools/cc)",
     "tools/cc/ship.py": "the row question's pathspec, read without loading the loader on every ship",
     "espalier/surface_contract.py": "the ship decision (the engine imports nothing from tools/cc)",
+    "scripts/symbol_census.py": ("a subset on purpose: the two dated records are records, while the "
+                                 "ledger's row files are live text with a struck row's line a record"),
+    "tools/cc/hooks/_reinject.py": ("the ledger-parser hint's trigger and text, in a hook that loads "
+                                    "no sibling beyond its own"),
 }
 #: Each fragment directory's release bucket, decided once. A new directory
 #: reds here until someone decides whether it ships.
 _SHIP_DECISIONS = {
     "memory/session-log.d/": ("internal", "the dev log, which ships in no artifact, as ESPALIER_MEMORY.md does not"),
     "changelog.d/": ("public", "unreleased changelog entries, which the release fold reads"),
+    "task-packs/ledger.d/": ("public", "the forward ledger's rows, which ship with the ledger"),
+    "task-packs/probes.d/": ("public", "the ledger's probes, which ship with the roster"),
 }
-_DIR_TOKEN_RE = re.compile(r"(?<![\w.-])((?:[\w.-]+/)*(?:session-log|changelog)\.d)(?=/|$|[^\w.-])")
+_DIR_TOKEN_RE = re.compile(
+    r"(?<![\w.-])((?:[\w.-]+/)*(?:session-log|changelog|ledger|probes)\.d)(?=/|$|[^\w.-])")
 
 
 def _dir_literals(root: Path) -> dict[str, list[str]]:
@@ -433,7 +439,7 @@ def _dir_literals(root: Path) -> dict[str, list[str]]:
             if "/_vendor/" in rel or "/assets/" in rel:
                 continue
             text = p.read_text(encoding="utf-8", errors="replace")
-            if "session-log.d" not in text and "changelog.d" not in text:
+            if not any(f"{name}.d" in text for name in ("session-log", "changelog", "ledger", "probes")):
                 continue
             tree = ast.parse(text)
             docs = set()

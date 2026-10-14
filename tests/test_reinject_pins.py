@@ -131,6 +131,17 @@ class TestLedgerParser:
                               "content": 'text = open("task-packs/FORWARD_LEDGER.md").read()\ncells = line.split("|")\n'}, tmp_path)
         assert "UNESCAPED" in out and "generate_ledger_regions.py" in out
         assert "Markdown Escaped Pipes Silently Drop Matrix Rows" in out
+        assert "ledger_view_at" in out   # the reader is sent to the view, not the file
+
+    def test_fires_on_a_pipe_split_over_the_row_files(self, tmp_path):
+        """A reader of the ledger's row files (``ledger_fragments``) splits the
+        same table rows. Dies to: the trigger naming the two files alone."""
+        (tmp_path / "scripts").mkdir()
+        (tmp_path / "scripts" / "zzz.py").write_text("x", encoding="utf-8")
+        out = _fire("Write", {"file_path": "scripts/zzz.py",
+                              "content": 'rows = Path("task-packs/ledger.d").glob("*.md")\ncells = line.split("|")\n'},
+                    tmp_path)
+        assert "UNESCAPED" in out and "ledger_view_at" in out
 
     def test_silent_without_the_ledger_or_without_the_split(self, tmp_path):
         (tmp_path / "scripts").mkdir()

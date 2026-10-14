@@ -1497,7 +1497,10 @@ validates the result:
 - Root governance docs (`CLAUDE.md`, `ESPALIER_MEMORY.md`, etc.) → placeholder scan
 - Any non-allowlisted write in a protected zone → integrity drift check
 - The record files (`ESPALIER_MEMORY.md`, `task-packs/FORWARD_LEDGER.md`,
-  `task-packs/LEDGER_PROBES.json`) → scans the written file for a leftover
+  `task-packs/LEDGER_PROBES.json`, and the record files kept one per change under
+  four fragment directories: `memory/session-log.d/`, `changelog.d/`, and the
+  ledger's rows and probes under `task-packs/ledger.d/` and
+  `task-packs/probes.d/`, a probe file's JSON included) → scans the written file for a leftover
   merge-conflict marker (a line opening with git's seven-character head and
   a space, or nothing). The finding names the file and the lines on the tool
   result, like every finding of this hook (below), and the catch belongs at

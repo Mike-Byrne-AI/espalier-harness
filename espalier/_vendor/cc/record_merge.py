@@ -78,26 +78,38 @@ from _json_safe import decode_text_or_problem, os_error_text, run_bounded  # noq
 MEMORY = "ESPALIER_MEMORY.md"
 LEDGER = "task-packs/FORWARD_LEDGER.md"
 PROBES = "task-packs/LEDGER_PROBES.json"
-#: The two fragment directories (``_record_fragments.FRAGMENT_DIRS``):
-#: on the roster, so the conflict-marker scans read every file under them, but
-#: never resolved by shape -- a fragment is written once, so a conflict on one
-#: is two writers on one name, and the merge refuses it by name.
-FRAGMENT_DIRS: tuple[str, ...] = ("memory/session-log.d/", "changelog.d/")
+#: The fragment directories (``_record_fragments.FRAGMENT_DIRS``): the Session
+#: Log's, the changelog's, and the forward ledger's rows and probes. On the
+#: roster, so the conflict-marker scans read every file under them, but never
+#: resolved by shape -- a fragment is written by the one verb that owns its
+#: name, so a conflict on one is two writers on one name (two lanes striking
+#: one row), and the merge refuses it by name.
+FRAGMENT_DIRS: tuple[str, ...] = ("memory/session-log.d/", "changelog.d/",
+                                  "task-packs/ledger.d/", "task-packs/probes.d/")
 ROSTER: tuple[str, ...] = (MEMORY, LEDGER, PROBES, *FRAGMENT_DIRS)
 
 
-#: A fragment this harness writes, ``<YYYY-MM-DD>-...md`` directly under a
-#: fragment directory (ci_guard._FRAGMENT_NAME_RE's pattern, pinned equal).
-#: Another tool's file in an adopter's ``changelog.d/`` is off the roster, so
-#: its conflict is the hand's, never refused as two writers on one name.
+#: A dated fragment, ``<YYYY-MM-DD>-...md`` (the Session Log's and the
+#: changelog's: ci_guard._FRAGMENT_NAME_RE's pattern, pinned equal).
 _FRAGMENT_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9._-]*\.md$")
+#: The name this harness writes under each fragment directory (a hand copy of
+#: ``_record_fragments.FRAGMENT_NAMES``'s rule; ci_guard and _hook_utils keep
+#: the same map, pinned equal). Another tool's file in an adopter's
+#: ``changelog.d/`` is off the roster, so its conflict is the hand's, never
+#: refused as two writers on one name.
+_FRAGMENT_NAMES: dict[str, "re.Pattern[str]"] = {
+    "memory/session-log.d/": _FRAGMENT_NAME_RE,
+    "changelog.d/": _FRAGMENT_NAME_RE,
+    "task-packs/ledger.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.md$"),
+    "task-packs/probes.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.json$"),
+}
 
 
 def is_fragment(path: str) -> bool:
     """Whether a repo-relative path is a fragment: a file directly under a
     fragment directory with a name this harness writes (review of #179)."""
     path = path.replace("\\", "/")
-    return any(path.startswith(d) and bool(_FRAGMENT_NAME_RE.match(path[len(d):])) for d in FRAGMENT_DIRS)
+    return any(path.startswith(d) and bool(_FRAGMENT_NAMES[d].match(path[len(d):])) for d in FRAGMENT_DIRS)
 
 
 def on_roster(path: str) -> bool:
@@ -626,20 +638,33 @@ def regenerate_ledger(text: str, gen, probes_path: Path) -> str:
     refuse if anything still drifts: a merged ledger the generator cannot
     converge is not one to commit. The generator's probes path is pointed at
     this tree for the call and put back after, as the generator's own verbs
-    do with their path globals."""
+    do with their path globals.
+
+    The check reads the merged ledger's VIEW: ``text`` with the row files the
+    merge left beside the roster placed in it (the merge runs in the merging
+    checkout, so the files on disk are the merge's own), and the roster's ids
+    with its probe files. The one repair, a stored total's removal, rewrites
+    ``text`` itself, never the view."""
+    loader = gen.record_fragments()
+    rows = loader.fragment_texts(loader.ledger_fragment_dir(probes_path.parent / Path(LEDGER).name))
     was = getattr(gen, "_PROBES", None)
     gen._PROBES = probes_path
     try:
-        drift = gen.find_drift(text)
-        text, _applied = gen.apply_writable(text, drift)
-        residual = gen.find_drift(text)
+        if gen.stored_counts(text):
+            text, _applied = gen.apply_writable(text, [{"region": "stored-count"}])
+        view = loader.ledger_view_from_texts(text, rows)
+        # The roster's own problems too (a second probe for one id, a probe
+        # file that does not parse, a stray name): a merge that lands one stops
+        # every ledger verb that touches the id, so it is no merge to commit.
+        residual = gen.find_drift(view.text) + gen.view_problems(view.problems + gen.roster_problems())
     finally:
         gen._PROBES = was
     if residual:
-        shown = "; ".join(f"{d.get('region')} at line {d.get('line')}" for d in residual[:5])
+        shown = "; ".join(f"[{d.get('region')}] {d.get('detail')}" for d in residual[:5])
         more = f" (+{len(residual) - 5} more)" if len(residual) > 5 else ""
-        raise Unresolvable(f"{LEDGER}: the merged ledger does not converge ({shown}{more}) -- "
-                           "resolve by hand, then `python tools/cc/generate_ledger_regions.py --write`")
+        raise Unresolvable(f"{LEDGER}: the merged ledger does not converge: {shown}{more} -- resolve by "
+                           "hand (`python tools/cc/generate_ledger_regions.py --check` names each; its "
+                           "`--write` repairs a stored total only)")
     return text
 
 
@@ -754,7 +779,7 @@ def settle_probes_count(root: Path, gen, *, say: Callable[[str], None] = print) 
     probes_path = root / PROBES
     if not probes_path.is_file():
         return [], None
-    text, problem = decode_text_or_problem(probes_path.read_bytes())
+    text, problem = decode_text_or_problem(probes_path.read_bytes())  # ledger-read: a stored total lives in the roster file itself
     if problem:
         say(f"note: {PROBES}: {problem}; a stored count was not checked for")
         return [], None
@@ -1061,8 +1086,9 @@ def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
                            f"(git merge {ref})")
     twice = [p for p in unmerged if is_fragment(p)]
     if twice:
-        raise Unresolvable(f"a fragment is written once, so a conflict on one is two writers on one "
-                           f"name: {', '.join(twice)} -- keep one by hand (git merge {ref})")
+        raise Unresolvable(f"a fragment has one writer per name (a dated file, or one ledger row or probe "
+                           f"the verb that owns its id writes), so a conflict on one is two writers on "
+                           f"one name: {', '.join(twice)} -- keep one by hand (git merge {ref})")
     rc, listing, err = run(["git", "ls-files", "-u", "--", *unmerged], cwd=str(root))
     if rc != 0:
         raise Unresolvable(f"git ls-files -u failed: {err.strip()[:160]}")
@@ -1148,7 +1174,7 @@ def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
                 elif PROBES in versions and (root / LEDGER).is_file():
                     # The roster changed under a ledger git merged clean; the
                     # derived regions read that roster, so re-derive them too.
-                    before, problem = decode_text_or_problem((root / LEDGER).read_bytes())
+                    before, problem = decode_text_or_problem((root / LEDGER).read_bytes())  # ledger-read: handed to regenerate_ledger, which checks the view
                     if problem:
                         raise Unresolvable(f"{LEDGER}: {problem}")
                     after = regenerate_ledger(before, gen, root / PROBES)

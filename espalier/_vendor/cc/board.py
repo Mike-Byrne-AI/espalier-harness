@@ -172,8 +172,11 @@ def read_suspects(root: Path, green_sha: str, red_sha: str, *, run_: Runner = ru
 
 def read_ledger_live(root: Path) -> int | None:
     """The ledger's live member rows, through the generator's own parser
-    (loaded by path under a private alias, as record_merge loads it); None
-    where the tree keeps no ledger."""
+    (loaded by path under a private alias, as record_merge loads it), over
+    the ledger's view (the file with any row files beside it placed in it,
+    the generator's ``record_fragments`` loader); None where the tree keeps
+    no ledger. The file stays after a repository's rows move to files (it
+    holds the prose and the headers), so its absence still means no ledger."""
     ledger = root / LEDGER
     if not ledger.is_file():
         return None
@@ -185,7 +188,7 @@ def read_ledger_live(root: Path) -> int | None:
     sys.modules[spec.name] = gen
     spec.loader.exec_module(gen)
     text = ledger.read_bytes().decode("utf-8", errors="replace")
-    return len(gen.live_member_ids(text))
+    return len(gen.live_member_ids(gen.record_fragments().ledger_view_at(ledger, ledger_text=text).text))
 
 
 def read_stale(root: Path, base: str, pr: dict, *, run_: Runner = run) -> str:

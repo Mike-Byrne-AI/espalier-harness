@@ -126,7 +126,8 @@ not repo specialists who can't un-know the codebase.
 
 **Known weakness (fix in the next variant):** the workflow did **not** persist
 survivors to a corpus or dedup against the shared findings corpus of the time
-(retired 2026-09-21; dedup against `task-packs/FORWARD_LEDGER.md` now) — so the
+(retired 2026-09-21; dedup against the forward ledger now, `task-packs/FORWARD_LEDGER.md`
+and its row files under `task-packs/ledger.d/`) — so the
 findings live only in the run journal + TP-264, invisible to future dedup. A
 reusable adopter-friction variant should add the two-hop persist bridge (see
 `_fanout_audit.js`) with a bounce-severity sibling field, so friction findings

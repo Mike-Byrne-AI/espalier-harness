@@ -752,10 +752,13 @@ class TestMergeRefInRefusals:
         """TP-479 Wave C: a fragment directory is on the roster (so the marker
         scans read it) but is never resolved by shape: a conflict there is two
         writers on one name, refused before any git call. Mutation seen red:
-        the fragment passed to the shape resolvers."""
+        the fragment passed to the shape resolvers. TP-479a 0-E: two lanes
+        striking or re-pinning one ledger row (or its probe) meet on that row's
+        own file, and the refusal names it."""
         fake = _Fake({})
-        for path in ("changelog.d/2026-10-10-x.md", "memory/session-log.d/2026-10-10-120000-win.md"):
-            with pytest.raises(rm.Unresolvable, match=r"written once.*two writers on one name"):
+        for path in ("changelog.d/2026-10-10-x.md", "memory/session-log.d/2026-10-10-120000-win.md",
+                     "task-packs/ledger.d/DEF-9.md", "task-packs/probes.d/DEF-9.json"):
+            with pytest.raises(rm.Unresolvable, match=r"one writer per name.*two writers on one name: " + path):
                 rm._resolve_unmerged(tmp_path, "origin/main", [path], run=fake, say=lambda _s: None)
         assert fake.calls == []
 
@@ -1453,7 +1456,7 @@ class TestLiveWitness:
         assert ledger.count("| `DEF-1125` |") == 2 and ledger.count("| `DEF-1126` |") == 2  # member row + index row each
         gen._PROBES = clone / "task-packs" / "LEDGER_PROBES.json"
         assert gen.find_drift(ledger) == []
-        probes = json.loads(gen._PROBES.read_text(encoding="utf-8"))
+        probes = json.loads(gen._PROBES.read_text(encoding="utf-8"))  # ledger-read: gen._PROBES is the scratch clone's roster here, pinned as a file
         ids = {p["id"] for p in probes["probes"]}
         assert {"DEF-1125", "DEF-1126"} <= ids and "_count" not in probes
         changelog = (clone / "CHANGELOG.md").read_text(encoding="utf-8")
