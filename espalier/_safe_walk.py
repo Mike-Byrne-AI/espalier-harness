@@ -169,6 +169,43 @@ def has_git_entry(path: Path) -> bool:
     return os.path.lexists(path / ".git")
 
 
+def linked_worktree_main(path: Path) -> Path | None:
+    """The main checkout of the linked worktree rooted at ``path``, or None.
+
+    A linked worktree's ``.git`` is a FILE, ``gitdir: <main>/.git/worktrees/<name>``,
+    and the worktree checks out tracked files only: its gitignored per-checkout
+    records (the surface gate's result, the integrity manifest) are absent until
+    something in it writes them, which is not damage (driven 2026-10-13 on a
+    seat of this repository). None for a main checkout (a ``.git`` directory),
+    a submodule (its gitlink names ``.git/modules/...``), a gitlink whose admin
+    directory is gone (an export that carried one, a moved main checkout), a
+    worktree of a bare repository (no main checkout to judge against), and
+    anything unreadable. A
+    relative gitdir (git 2.48's ``worktree.useRelativePaths``) is read against
+    ``path``, never the process's directory. No git is run.
+
+    The same rule as ``tools/cc/session_resume.py::_linked_worktree_main`` and
+    the hooks' ``_integrity._linked_worktree_main`` -- one copy per side of the
+    import walls -- held to each other by tests/test_worktree_seat.py.
+    """
+    marker = path / ".git"
+    try:
+        if not os.path.isfile(marker):
+            return None
+        lines = marker.read_text(encoding="utf-8", errors="replace").splitlines()
+    except (OSError, ValueError):
+        return None
+    first = lines[0].strip() if lines else ""
+    if not first.startswith("gitdir:"):
+        return None
+    target = Path(os.path.normpath(path / first[len("gitdir:"):].strip()))
+    if target.parent.name != "worktrees" or target.parent.parent.name != ".git":
+        return None
+    if not os.path.isdir(target):
+        return None
+    return target.parent.parent.parent
+
+
 def safe_rglob(
     root: Path,
     pattern: str = "*",

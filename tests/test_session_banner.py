@@ -1519,7 +1519,12 @@ class TestIntegrityReachesTheBanner:
         redeploy the harness into the seat (2026-10-12). Dies to: the one
         message for both shapes."""
         mod = _load()
-        (tmp_path / ".git").write_text("gitdir: /x/main/.git/worktrees/seat\n", encoding="utf-8")
+        # The admin directory `git worktree add` creates: a gitlink naming one
+        # that is gone (an export, a moved main checkout) is no seat
+        # (tests/test_worktree_seat.py).
+        admin = tmp_path / "m" / ".git" / "worktrees" / "seat"
+        admin.mkdir(parents=True)
+        (tmp_path / ".git").write_text(f"gitdir: {admin}\n", encoding="utf-8")
         _mod, summary = self._summary(
             monkeypatch, ok=False, mismatched=[mod._integrity.MANIFEST_ABSENT], root=tmp_path
         )
