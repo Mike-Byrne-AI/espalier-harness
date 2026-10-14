@@ -832,6 +832,31 @@ class TestInitNamesARetiredDenyRule:
         assert "Delete that line by hand" in err, err[-1500:]
         assert (tmp_path / ".claude" / "settings.json").read_bytes() == before
 
+    def test_a_disarmed_install_is_not_told_to_delete_the_rule(self, tmp_path, capsys, monkeypatch):
+        """Hooks wired to an interpreter this host cannot run (a settings.json
+        from another machine) fail open, so write_guard is not there to stand
+        in for the retired rule, and "delete that line" would take away the
+        only guard left. The re-run names the disarmed hooks and leaves the
+        rule to the re-run after the repair."""
+        import json
+
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        self._plant(root)
+        settings = root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        for entries in data["hooks"].values():
+            for entry in entries:
+                for hook in entry["hooks"]:
+                    hook["command"] = "no-such-python-w0"
+        settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        capsys.readouterr()
+        assert self._init(root) == 0
+        captured = capsys.readouterr()
+        assert "Hooks are NOT yet active" in captured.out, captured.out[-2500:]
+        assert "retired deny rule" not in captured.err, captured.err[-2500:]
+        assert "Delete that line" not in captured.err, captured.err[-2500:]
+
     def test_a_hand_written_rule_is_said_to_match_never_to_be_inits(self, tmp_path, capsys, monkeypatch):
         """The registry matches by rule text, so a rule the operator wrote by
         hand on an install this engine made (which never wrote it) reads the
@@ -847,12 +872,12 @@ class TestInitNamesARetiredDenyRule:
         self._plant(root)
         ((rule, why),) = settings_stale_denies(settings)
         assert rule == self.RULE
-        assert "matches a deny rule the init command wrote through 0.8.0b2" in why, why
+        assert "this line matches a deny rule the init command wrote through 0.8.0b2" in why, why
         assert "wrote it" not in why, why
         capsys.readouterr()
         assert self._init(root) == 0
         err = capsys.readouterr().err
-        assert "matches a deny rule the init command wrote through 0.8.0b2" in err, err[-1500:]
+        assert "this line matches a deny rule the init command wrote through 0.8.0b2" in err, err[-1500:]
         assert "wrote it" not in err, err[-1500:]
 
     def test_a_plain_rerun_over_a_minimal_install_lists_no_allow_rules(self, tmp_path, capsys, monkeypatch):

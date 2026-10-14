@@ -1286,7 +1286,7 @@ def _stale_denies(existing: dict) -> tuple[tuple[str, str], ...]:
     # command-not-found in a fusion, where the engine runs as `python -m
     # espalier`), and tests/test_no_bare_espalier_hints.py reds on it.
     return tuple(
-        (rule, f"{why}; it matches a deny rule the init command wrote through {shipped}")
+        (rule, f"{why}; this line matches a deny rule the init command wrote through {shipped}")
         for rule, shipped, why in retired_deny_rules() if rule in present
     )
 
@@ -3112,6 +3112,9 @@ def _reconcile_existing_settings(
             profile_name=profile_name, repo_root=repo_root,
         )
     py = _remedy_py()  # the interpreter to spell in a remedy (DEF-758)
+    # The armament read, when case (a)'s retired-rule report needs it first.
+    armament: list[str] | None = None
+    armament_read = False
     if isinstance(existing, dict) and not has_espalier_hooks:
         # Case (b): new adopter — governance is NOT active. Offer to arm now,
         # but ONLY interactively. Off a TTY (CI, pytest, a captured subprocess)
@@ -3242,17 +3245,23 @@ def _reconcile_existing_settings(
         # retired Read() rule is not running, and "delete that line" would take
         # away an adopter's only guard on a secret file. That branch's WARN
         # sends them to merge-settings or --wire-hooks, which wire the hooks and
-        # name the rule in the same run.
+        # name the rule in the same run. The same holds here when the wiring
+        # does not run (an interpreter this host lacks, a neutered gate): the
+        # re-run names the disarmed hooks, and the rule waits for the re-run
+        # after the repair.
         if not caller_reports_permissions:
             stale = settings_stale_denies(settings_path) or ()
             if stale:
-                _report_allow_gaps(
-                    missing=(), added=(), note="", stale=stale, prefix="[init]",
-                    # Read for allow gaps only, and none are passed.
-                    profile=profile_name or "workflow",
-                    hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
-                    stream=sys.stderr,
-                )
+                armament = _enforcement_claim_blockers(repo_root, settings_path)
+                armament_read = True
+                if armament == []:
+                    _report_allow_gaps(
+                        missing=(), added=(), note="", stale=stale, prefix="[init]",
+                        # Read for allow gaps only, and none are passed.
+                        profile=profile_name or "workflow",
+                        hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
+                        stream=sys.stderr,
+                    )
     # Render the fresh template alongside so the operator can diff the existing
     # file against what a fresh init would emit. The only case that suppresses
     # this — a wired-in-place --wire-hooks merge — already returned above.
@@ -3268,8 +3277,10 @@ def _reconcile_existing_settings(
     # because there is nothing to find fault with. That is the brought-your-own
     # adopter (case b), the single most common disarmed state there is, and
     # reading it as armed is a fail-open. The discriminator supplies the other
-    # half: is anything wired at all.
-    blockers = _enforcement_claim_blockers(repo_root, settings_path)
+    # half: is anything wired at all. A read made for the retired-rule report
+    # above is reused: the .new render writes beside the file, never into it,
+    # and the probe spawns each wired interpreter.
+    blockers = armament if armament_read else _enforcement_claim_blockers(repo_root, settings_path)
     return SettingsOutcome(
         settings_hooks_wired=(has_espalier_hooks and blockers == []),
         skipped_reason=skipped_reason,

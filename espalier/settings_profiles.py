@@ -116,8 +116,10 @@ _DENY_DEFAULTS: tuple[str, ...] = (
 #
 # Each row is `(rule, last version whose init wrote it, why)`. The version is
 # the provenance contract: a rule goes here only if `init` SHIPPED it, so the
-# reporters can say so; a merely bad rule an operator wrote themselves is
-# theirs, never "retired", and does not belong here.
+# reporters can name the version; a merely bad rule an operator wrote themselves
+# is theirs, never "retired", and does not belong here. The reporters match by
+# text, so the same line written by hand reads the same: they say a line
+# matches a rule init wrote, never that init wrote it (cli._stale_denies).
 RETIRED_DENY_RULES: tuple[tuple[str, str, str], ...] = (
     (
         "Bash(rm -rf /*)",
