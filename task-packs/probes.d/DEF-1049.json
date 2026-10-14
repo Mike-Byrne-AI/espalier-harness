@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1049",
+ "subject": "tests/test_portability_contract.py",
+ "cmd": "python -c 'import sys, tempfile, pathlib; from concurrent.futures import ThreadPoolExecutor as E; sys.path.insert(0, \"tests\"); import test_portability_contract as m; d = pathlib.Path(tempfile.mkdtemp()); s = d / \".claude\" / \"skills\" / \"probe-skill\"; s.mkdir(parents=True); (s / \"SKILL.md\").write_text(\"Members derived by: `python3 tools/cc/sister_site_probe.py --json`\", encoding=\"utf-8\"); m.REPO_ROOT = d; c = m.TestOperatorDocsPortability(); print(any(\"probe-skill\" in str(E().submit(getattr(c, n)).exception()) for n in dir(c) if n.startswith(\"test\")))'",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "0b745ae477c8",
+ "text_sha": "32cfaee6a475",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

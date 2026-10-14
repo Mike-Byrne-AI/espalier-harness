@@ -1,0 +1,11 @@
+{
+ "id": "DEF-1159",
+ "subject": "scripts/check_pack_fences.py",
+ "cmd": "python -c 'import subprocess,sys,tempfile,pathlib;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);p=pathlib.Path(T.name)/\"TP-999-probe.md\";q=chr(96)*3;p.write_text(\"# TP-999\"+chr(10)*2+\"## Implementation\"+chr(10)*2+q+\"python target=tools/cc/zz_probe_new_module.py\"+chr(10)+\"VALUE = 1\"+chr(10)+\"print(VALUE)\"+chr(10)+q+chr(10)*2+\"## Affected symbols\"+chr(10)*2+\"### Added-paths\"+chr(10)*2+\"- \"+chr(96)+\"tools/cc/zz_probe_new_module.py\"+chr(96)+chr(10),encoding=\"utf-8\");pathlib.Path(\"tools/cc/zz_probe_new_module.py\").exists() and 1/0;r=subprocess.run([sys.executable,\"scripts/check_pack_fences.py\",str(p)],capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\");print(\"added_path_target_blocks=\"+str(r.returncode!=0 and \"declared target is missing\" in r.stdout+r.stderr))'",
+ "open_value": "added_path_target_blocks=True",
+ "why_not": null,
+ "row_sha": "e46359fc0e36",
+ "text_sha": "d1e0c1ea9fc9",
+ "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)",
+ "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: text re-pin only: the stack-registry lane reworded the row on 2026-10-07 (918e0946, then 66502b1b for the archive commit) to say its pack had landed; the claim is unchanged and the probe still prints its open value)"
+}

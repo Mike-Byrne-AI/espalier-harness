@@ -1,0 +1,11 @@
+{
+ "id": "DEF-1181",
+ "subject": "tools/cc/hooks/_reinject.py",
+ "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc/hooks');import _reinject as r;print(bool(r._TEST_PATH_RE.search('test/widget.test.js')), bool(r._TEST_LOOSEN_RE.search('test.skip(')))\"",
+ "open_value": "False False",
+ "why_not": null,
+ "row_sha": "648946510419",
+ "text_sha": "9ce688ebf7ea",
+ "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)",
+ "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: the pack it cited landed 2026-10-08 on lane/generic-systems-fire-off-self-host and moved to Done/; the citation now names the lane and date, the claim and its open state unchanged)"
+}

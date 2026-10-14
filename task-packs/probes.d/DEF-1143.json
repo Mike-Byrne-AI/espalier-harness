@@ -1,0 +1,11 @@
+{
+ "id": "DEF-1143",
+ "subject": "tests/test_nested_repo_skip.py",
+ "cmd": "python -c 'import ast,subprocess; M=(\"_skip_nested_repos\",\"has_git_entry\",\"is_own_git_repo\"); fs=[f for f in subprocess.run([\"git\",\"ls-files\",\"tools/cc\"],capture_output=True,text=True).stdout.split() if f.endswith(\".py\")]; print(sum(1 for f in fs for s in [open(f,encoding=\"utf-8\").read()] for L in [s.splitlines()] for x in ast.walk(ast.parse(s)) if isinstance(x,ast.For) and isinstance(x.iter,ast.Call) and isinstance(x.iter.func,ast.Attribute) and x.iter.func.attr==\"walk\" and getattr(x.iter.func.value,\"id\",\"\")==\"os\" and not any(\"nested-repo-ok\" in L[i] for i in (x.iter.lineno-1,x.iter.lineno-2) if 0<=i<len(L)) and not any((isinstance(m,ast.Name) and m.id in M) or (isinstance(m,ast.Attribute) and m.attr in M) for b in x.body for m in ast.walk(b))))'",
+ "open_value": "6",
+ "why_not": null,
+ "row_sha": "0ccae2515bd2",
+ "text_sha": "9e0a5f2ef4bf",
+ "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)",
+ "verified_2026_10_09": "STILL_OPEN (re-pinned '4' -> '6' on 2026-10-09: two unpruned os.walk loops joined tools/cc since filing: _recall.py::_safe_rglob (the recall-corpus lane, 15a35f15, 2026-10-08) and _zone_watch.py::take (the zone after-check, 95dcf032, 2026-10-09); the census gap the row names is unchanged, so the count moved from 4 to 6 and the claim stands)"
+}

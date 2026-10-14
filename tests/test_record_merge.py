@@ -579,79 +579,6 @@ class TestProbesThreeWay:
             rm.resolve_probes(self._text("A"), self._text("A"), "{not json")
 
 
-class TestSettleProbesCount:
-    """The roster stores no total since 2026-10-12, and a merge can bring one
-    back as text from a lane branched before then; the settle step drops it
-    after ANY merge. (It re-derived the count until then: ``DEF-1128``.)"""
-
-    def _roster(self, root: Path, *ids: str, count: int | None = None) -> Path:
-        doc = _probes_doc(*ids)
-        if count is not None:
-            doc["_count"] = count
-        (root / "task-packs").mkdir(exist_ok=True)
-        p = root / "task-packs" / "LEDGER_PROBES.json"
-        p.write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
-        return p
-
-    def test_a_stored_count_is_dropped_byte_stably_and_named(self, rm, gen, tmp_path):
-        p = self._roster(tmp_path, "DEF-1", "DEF-2", "DEF-3", count=5)
-        said: list[str] = []
-        rewritten, note = rm.settle_probes_count(tmp_path, gen, say=said.append)
-        assert rewritten == ["task-packs/LEDGER_PROBES.json"]
-        assert "the stored _count (5) dropped over 3 probes" in note
-        assert p.read_text(encoding="utf-8") == (
-            json.dumps(_probes_doc("DEF-1", "DEF-2", "DEF-3"), indent=1, ensure_ascii=False) + "\n")
-        assert said == []
-
-    def test_a_roster_storing_no_count_leaves_the_bytes_alone(self, rm, gen, tmp_path):
-        p = self._roster(tmp_path, "DEF-1", "DEF-2")
-        before = p.read_bytes()
-        assert rm.settle_probes_count(tmp_path, gen) == ([], None)
-        assert p.read_bytes() == before
-
-    def test_a_stored_count_that_agrees_with_its_list_is_dropped_too(self, rm, gen, tmp_path):
-        """Agreeing today is no reason to keep it: the next lane to change
-        the list rewrites it, and two such lanes conflict on that line."""
-        p = self._roster(tmp_path, "DEF-1", "DEF-2", count=2)
-        assert rm.settle_probes_count(tmp_path, gen)[0] == ["task-packs/LEDGER_PROBES.json"]
-        assert "_count" not in json.loads(p.read_text(encoding="utf-8"))
-
-    def test_no_roster_is_nothing_to_settle(self, rm, gen, tmp_path):
-        assert rm.settle_probes_count(tmp_path, gen) == ([], None)
-
-    def test_a_roster_this_tool_cannot_read_is_a_note_never_a_refusal(self, rm, gen, tmp_path):
-        """The probes checker names a broken roster next; a clean merge is not
-        the place to refuse over a file this tool did not write."""
-        p = self._roster(tmp_path, "DEF-1")
-        p.write_text("{not json", encoding="utf-8")
-        said: list[str] = []
-        assert rm.settle_probes_count(tmp_path, gen, say=said.append) == ([], None)
-        assert len(said) == 1 and "LEDGER_PROBES.json" in said[0] and "not checked for" in said[0]
-
-    def test_the_ledger_is_left_as_the_merge_made_it(self, rm, gen, tmp_path):
-        """Dropping the key moves no probe id, the one thing the generator reads
-        from the roster, so the ledger is not re-derived here: a catch-up never
-        rewrites it for a reason of the roster's. Dies to: the re-derivation the
-        step ran while it moved a count, which rewrote a drifted ledger."""
-        self._roster(tmp_path, "DEF-1", "DEF-2", count=1)
-        ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
-        drifted = _ledger(stored=STORED_ALL, count=1)  # two rows, the stored totals say one
-        ledger.write_text(drifted, encoding="utf-8", newline="\n")
-        rewritten, _note = rm.settle_probes_count(tmp_path, gen)
-        assert rewritten == ["task-packs/LEDGER_PROBES.json"]
-        assert ledger.read_text(encoding="utf-8") == drifted
-
-    def test_a_ledger_still_in_conflict_is_not_touched(self, rm, gen, tmp_path):
-        self._roster(tmp_path, "DEF-1", "DEF-2", count=1)
-        ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
-        ledger.write_text("<<<<<<< ours\nconflict\n=======\n>>>>>>> theirs\n", encoding="utf-8")
-        rewritten, _note = rm.settle_probes_count(tmp_path, gen)
-        assert rewritten == ["task-packs/LEDGER_PROBES.json"]
-        assert ledger.read_text(encoding="utf-8").startswith("<<<<<<< ours")
-
-
-# ── orchestration on a recording fake ────────────────────────────────────────
-
 class _Fake:
     """argv-prefix -> answer; every call recorded; an undescribed spawn fails."""
 
@@ -799,97 +726,18 @@ class TestMergeRefInRefusals:
         p.write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
         return p
 
-    def test_a_clean_merge_bringing_back_a_stored_count_drops_it_in_the_merge_commit(self, rm, tmp_path):
-        """The roster merged clean as text with a ``_count`` a lane branched
-        before 2026-10-12 wrote; the settle step drops it and amends the merge
-        commit git just made (HEAD^2 exists), so the push carries no stored
-        total for the next two lanes to conflict on."""
-        p = self._stale_roster(tmp_path, "DEF-1", count=5)
-        fake = _Fake({**self._base(tmp_path),
-                      ("git", "merge", "--no-edit"): (0, "Merge made\n", ""),
-                      ("git", "add", "--", "task-packs/LEDGER_PROBES.json"): (0, "", ""),
-                      ("git", "rev-parse", "HEAD"): (0, "m1\n", ""),
-                      ("git", "rev-parse", "origin/main"): (0, "t1\n", ""),
-                      ("git", "rev-parse", "-q", "--verify", "HEAD^2"): (0, "abc\n", ""),
-                      ("git", "commit", "--amend", "--no-edit"): (0, "", "")})
-        report = rm.merge_ref_in(tmp_path, "origin/main", run=fake)
-        assert report.merged is True and report.resolved == ["task-packs/LEDGER_PROBES.json"]
-        assert "_count" not in json.loads(p.read_text(encoding="utf-8"))
-        assert fake.has("git", "commit", "--amend", "--no-edit")
-        assert any("the stored _count (5) dropped" in n and "merge commit" in n for n in report.notes), report.notes
-        assert not (tmp_path / "task-packs" / "FORWARD_LEDGER.md.lock").exists()
-
-    def test_a_fast_forward_with_a_stale_roster_commits_the_settle_on_its_own(self, rm, tmp_path):
-        """A fast-forward made no merge commit (HEAD^2 is absent) and HEAD is
-        the base's own commit, which an amend would rewrite; the settle rides
-        a commit of its own instead."""
-        self._stale_roster(tmp_path, "DEF-1", count=5)
-        fake = _Fake({**self._base(tmp_path),
-                      ("git", "merge", "--no-edit"): (0, "Fast-forward\n", ""),
-                      ("git", "add", "--"): (0, "", ""),
-                      ("git", "rev-parse", "HEAD"): (0, "t1\n", ""),
-                      ("git", "rev-parse", "origin/main"): (0, "t1\n", ""),
-                      ("git", "rev-parse", "-q", "--verify", "HEAD^2"): (128, "", ""),
-                      ("git", "commit", "-m"): (0, "", "")})
-        report = rm.merge_ref_in(tmp_path, "origin/main", run=fake)
-        assert report.resolved == ["task-packs/LEDGER_PROBES.json"]
-        assert fake.has("git", "commit", "-m") and not fake.has("git", "commit", "--amend")
-
-    def test_a_fast_forward_onto_a_merge_commit_tip_is_not_amended(self, rm, tmp_path):
-        """The base's tip is a merged pull request, so after a fast-forward
-        HEAD^2 exists; HEAD equal to the ref says no merge commit was made here,
-        and the base's own commit is never amended onto the lane. Dies to: the
-        HEAD^2-only test (failure-mode review, driven 2026-10-12)."""
-        self._stale_roster(tmp_path, "DEF-1", count=5)
-        fake = _Fake({**self._base(tmp_path),
-                      ("git", "merge", "--no-edit"): (0, "Fast-forward\n", ""),
-                      ("git", "add", "--"): (0, "", ""),
-                      ("git", "rev-parse", "HEAD"): (0, "t1\n", ""),
-                      ("git", "rev-parse", "origin/main"): (0, "t1\n", ""),
-                      ("git", "rev-parse", "-q", "--verify", "HEAD^2"): (0, "p2\n", ""),
-                      ("git", "commit", "-m"): (0, "", "")})
-        rm.merge_ref_in(tmp_path, "origin/main", run=fake)
-        assert fake.has("git", "commit", "-m") and not fake.has("git", "commit", "--amend")
-        subject = next(c for c in fake.calls if c[:3] == ["git", "commit", "-m"])[3]
-        assert len(subject) <= 72, subject  # the landing check's subject cap
-
-    def test_a_settle_that_cannot_take_the_ledger_lock_puts_the_merge_back(self, rm, tmp_path):
-        """The settle refuses under a held lock, and a refusal must leave what
-        the operator had: the merge git already committed is undone to
-        ORIG_HEAD, the pre-merge HEAD, which the clean-tree precondition makes
-        safe to return to."""
-        self._stale_roster(tmp_path, "DEF-1", count=5)
-        (tmp_path / "task-packs" / "FORWARD_LEDGER.md.lock").write_text("pid 1\n", encoding="utf-8")
-        fake = _Fake({**self._base(tmp_path),
-                      ("git", "merge", "--no-edit"): (0, "Merge made\n", ""),
-                      ("git", "reset", "--hard", "ORIG_HEAD"): (0, "", "")})
-        with pytest.raises(rm.Unresolvable, match="another ledger verb holds"):
-            rm.merge_ref_in(tmp_path, "origin/main", run=fake)
-        assert fake.has("git", "reset", "--hard", "ORIG_HEAD")
-        assert not fake.has("git", "commit")
-
-    def test_a_settle_whose_generator_is_missing_puts_the_merge_back_too(self, rm, tmp_path, monkeypatch):
-        """Failure-mode review, 2026-10-05: the generator load sat outside the
-        undo's reach, so a deploy set without it left the merge committed and
-        unsettled with no reset -- the one shape the docstring promised against."""
-        self._stale_roster(tmp_path, "DEF-1", count=5)
-
-        def absent(name):
-            raise rm.Unresolvable(f"{name}.py is not beside this script: the deploy set is incomplete")
-
-        monkeypatch.setattr(rm, "_load_sibling", absent)
-        fake = _Fake({**self._base(tmp_path),
-                      ("git", "merge", "--no-edit"): (0, "Merge made\n", ""),
-                      ("git", "reset", "--hard", "ORIG_HEAD"): (0, "", "")})
-        with pytest.raises(rm.Unresolvable, match="deploy set is incomplete"):
-            rm.merge_ref_in(tmp_path, "origin/main", run=fake)
-        assert fake.has("git", "reset", "--hard", "ORIG_HEAD")
-
-    def test_a_clean_merge_with_a_roster_storing_no_count_spawns_nothing_more(self, rm, tmp_path):
-        self._stale_roster(tmp_path, "DEF-1", count=None)
+    @pytest.mark.parametrize("count", [None, 5])
+    def test_a_clean_merge_spawns_nothing_after_gits_own_merge(self, rm, tmp_path, count):
+        """The settle step that dropped a stored probes total after a clean
+        merge retired with the fold (TP-479a Wave C): no writer has written the
+        key since 2026-10-12, and a roster that still stores one is left as git
+        merged it, for the checker to name. Dies to: the settle step restored."""
+        p = self._stale_roster(tmp_path, "DEF-1", count=count)
+        before = p.read_bytes()
         fake = _Fake({**self._base(tmp_path), ("git", "merge", "--no-edit"): (0, "Merge made\n", "")})
         report = rm.merge_ref_in(tmp_path, "origin/main", run=fake)
-        assert report.resolved == [] and not fake.has("git", "commit")
+        assert report.resolved == [] and not fake.has("git", "commit") and not fake.has("git", "add")
+        assert p.read_bytes() == before
 
     def test_a_conflict_off_the_roster_aborts_and_names_the_path(self, rm, tmp_path):
         fake = _Fake({**self._base(tmp_path),
@@ -1163,39 +1011,12 @@ class TestTwoMachines:
         doc["_count"] = count
         p.write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
 
-    def test_a_stored_count_merged_clean_is_dropped_in_the_merge_commit(self, rm, gen, two_machines):
-        """Main carries a roster with a stored ``_count``; the lane touched only
-        the memory file, so git merges the roster clean as text, and without
-        the settle step the key would ride into the merge commit (the
-        ``DEF-1128`` shape, when the step re-derived the count)."""
-        mac, win = two_machines["mac"], two_machines["win"]
-        _file_rows(mac, "DEF-3", "DEF-1", "DEF-2")
-        self._bring_back_a_stored_count(mac, 2)
-        _git(mac, "commit", "--quiet", "-am", "ledger: a hand merge left the count behind")
-        _git(mac, "push", "--quiet", "origin", "main")
-        _git(win, "switch", "--quiet", "-c", "lane/win")
-        _handoff(win, "THE WINDOWS BOX LANDED A LANE", "2026-10-05")
-        _git(win, "fetch", "--quiet", "origin")
-        assert _git(win, "merge-tree", "--write-tree", "origin/main", "HEAD", check=False).returncode == 0
-
-        report = rm.merge_ref_in(win, "origin/main", run=_real_run(rm))
-
-        assert report.merged and report.resolved == ["task-packs/LEDGER_PROBES.json"], report
-        assert any("the stored _count (2) dropped over 3 probes" in n for n in report.notes), report.notes
-        committed = _git(win, "show", "HEAD:task-packs/LEDGER_PROBES.json").stdout
-        assert "_count" not in json.loads(committed)
-        assert _git(win, "rev-parse", "-q", "--verify", "HEAD^2", check=False).returncode == 0  # still a merge commit
-        assert _git(win, "log", "--merges", "--oneline").stdout.count("\n") == 1
-        assert _git(win, "status", "--porcelain").stdout == ""
-        assert not (win / "task-packs" / "FORWARD_LEDGER.md.lock").exists()
-        ledger = (win / "task-packs" / "FORWARD_LEDGER.md").read_text(encoding="utf-8")
-        gen._PROBES = win / "task-packs" / "LEDGER_PROBES.json"
-        assert gen.find_drift(ledger) == []
-
-    def test_a_stored_count_beside_a_memory_conflict_is_dropped_under_the_one_merge_commit(self, rm, two_machines):
-        """The conflicted path: the memory rows collide, the roster merges
-        clean with a stored count, and the settle step runs under the ledger
-        lock before the one merge commit."""
+    def test_a_stored_count_beside_a_memory_conflict_is_left_as_git_merged_it(self, rm, two_machines):
+        """The conflicted path: the memory rows collide and the roster merges
+        clean with a stored count. The settle step that dropped it here retired
+        with the fold (TP-479a Wave C), so the memory file is the one thing
+        resolved and the roster keeps main's bytes. Dies to: the settle step
+        restored in the unmerged path."""
         mac, win = two_machines["mac"], two_machines["win"]
         _file_rows(mac, "DEF-3", "DEF-1", "DEF-2")
         self._bring_back_a_stored_count(mac, 2)
@@ -1208,36 +1029,10 @@ class TestTwoMachines:
 
         report = rm.merge_ref_in(win, "origin/main", run=_real_run(rm))
 
-        assert set(report.resolved) == {"ESPALIER_MEMORY.md", "task-packs/LEDGER_PROBES.json"}, report
-        assert "_count" not in json.loads(_git(win, "show", "HEAD:task-packs/LEDGER_PROBES.json").stdout)
+        assert report.resolved == ["ESPALIER_MEMORY.md"], report
+        main_roster = _git(win, "show", "origin/main:task-packs/LEDGER_PROBES.json").stdout
+        assert _git(win, "show", "HEAD:task-packs/LEDGER_PROBES.json").stdout == main_roster
         assert _git(win, "log", "--merges", "--oneline").stdout.count("\n") == 1
-        assert _git(win, "status", "--porcelain").stdout == ""
-
-    def test_a_fast_forward_onto_a_merged_pull_request_keeps_the_bases_commit(self, rm, two_machines):
-        """Main's tip is a merged pull request that brought a stored count back;
-        a lane strictly behind it fast-forwards there, so HEAD^2 exists and HEAD
-        is the base's own commit. The settle rides a commit of its own on top,
-        and the base's commit stays the lane's parent. Earned red: the HEAD^2-only
-        test amended main's merge commit into a rewritten copy (failure-mode
-        review, driven 2026-10-12)."""
-        mac, win = two_machines["mac"], two_machines["win"]
-        _git(mac, "switch", "--quiet", "-c", "pr")
-        probes = mac / "task-packs" / "LEDGER_PROBES.json"
-        self._bring_back_a_stored_count(mac, len(json.loads(probes.read_text(encoding="utf-8"))["probes"]))
-        _git(mac, "commit", "--quiet", "-am", "ledger: a lane on older code wrote the key")
-        _git(mac, "switch", "--quiet", "main")
-        _git(mac, "merge", "--quiet", "--no-ff", "--no-edit", "pr")
-        _git(mac, "push", "--quiet", "origin", "main")
-        tip = _git(mac, "rev-parse", "HEAD").stdout.strip()
-        _git(win, "switch", "--quiet", "-c", "lane/win")
-        _git(win, "fetch", "--quiet", "origin")
-
-        report = rm.merge_ref_in(win, "origin/main", run=_real_run(rm))
-
-        assert report.merged and report.resolved == ["task-packs/LEDGER_PROBES.json"], report
-        assert _git(win, "rev-parse", "HEAD^").stdout.strip() == tip
-        assert _git(win, "log", "-1", "--format=%s").stdout.startswith("chore(ledger): drop the stored probes count")
-        assert "_count" not in json.loads(_git(win, "show", "HEAD:task-packs/LEDGER_PROBES.json").stdout)
         assert _git(win, "status", "--porcelain").stdout == ""
 
     def test_a_path_with_a_merge_attribute_changed_on_both_sides_is_merged_first_not_read_clean(self, rm, two_machines):
@@ -1431,10 +1226,10 @@ class TestLiveWitness:
     def test_the_memory_row_collision_resolves_to_both_rows_under_the_cap(self, rm, tmp_path):
         clone = _scratch_clone(tmp_path, WITNESS_MEMORY["lane"])
         report = rm.merge_ref_in(clone, WITNESS_MEMORY["base"], run=_real_run(rm))
-        # The witness roster predates 2026-10-12 and stores a `_count`, which
-        # the settle step drops into the same merge commit.
-        assert report.merged and report.resolved == ["task-packs/LEDGER_PROBES.json", "ESPALIER_MEMORY.md"], report
-        assert any("the stored _count" in n and "dropped" in n for n in report.notes), report.notes
+        # The witness roster predates 2026-10-12 and stores a `_count`; the
+        # settle step that dropped it retired with the fold (TP-479a Wave C),
+        # so the roster stays as git merged it and the memory file is resolved.
+        assert report.merged and report.resolved == ["ESPALIER_MEMORY.md"], report
         text = (clone / "ESPALIER_MEMORY.md").read_text(encoding="utf-8")
         assert "THE README LANE LANDED" in text and "THE OVERNIGHT SESSION'S FOUR LANES" in text
         cap = rm.memory_cap(clone)

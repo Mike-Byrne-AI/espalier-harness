@@ -1,0 +1,14 @@
+{
+ "id": "DEF-1001",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import json, os, tempfile, pathlib; from espalier.doctor import run_doctor_check as rd; import espalier.cli as ec; ec._retired_rules_to_name = lambda s, **k: tuple(s); h = {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"python tools/cc/hooks/stop_gate.py\"}]}]}; rm = json.dumps({\"permissions\": {\"deny\": [\"Bash(rm -rf /*)\"]}}); home = pathlib.Path(tempfile.mkdtemp()); os.environ[\"HOME\"] = os.environ[\"USERPROFILE\"] = str(home); t = lambda: (lambda d: ((d / \".claude\").mkdir(), (d / \".claude\" / \"settings.json\").write_text(json.dumps({\"hooks\": h, \"permissions\": {\"deny\": []}})), d)[2])(pathlib.Path(tempfile.mkdtemp())); n = lambda d: any(\"rm -rf /*\" in str(x) for r in [rd(d, mode=\"initialized_consumer_repo\")] for x in r[\"warnings\"] + r[\"info\"]); a = t(); (a / \".claude\" / \"settings.local.json\").write_text(rm); local = n(a); (home / \".claude\").mkdir(); (home / \".claude\" / \"settings.json\").write_text(rm); print(local and n(t()))'",
+ "open_value": "False",
+ "why_not": null,
+ "inputs": [
+  "espalier/doctor.py"
+ ],
+ "row_sha": "aedb5e78d529",
+ "text_sha": "8a3453e4875b",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
+ "verified_2026_10_14": "STILL_OPEN (re-pinned value unchanged on 2026-10-14: DEF-4017 added a reader (the init re-run) and an armament gate every reader passes; the probe opens the gate so it still measures the multi-file read, and reads False as before)"
+}

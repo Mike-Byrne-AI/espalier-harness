@@ -32,6 +32,7 @@ from espalier._python_floor import (
     is_python3_banner,
 )
 from espalier._report_io import load_harness_plan, report_is_json_object
+from espalier._spawn import run_bounded
 from espalier.audit_accuracy import extract_count_for_label
 from espalier.diffing import diff_repo
 from espalier.managed_markers import seed_is_untouched
@@ -492,7 +493,7 @@ def _interpreter_is_python3(path: "str | None") -> bool:
     except OSError:
         pass
     try:
-        result = subprocess.run(
+        result = run_bounded(
             [path, "--version"], capture_output=True, text=True,
             encoding="utf-8", timeout=2,
         )
@@ -1024,7 +1025,7 @@ def _probe_deployed_stop_gate(repo_root: Path) -> dict | None:
     if not candidate.is_file():
         return None
     try:
-        proc = subprocess.run(  # spawn: ok a bounded read-only probe of the deployed hook
+        proc = run_bounded(  # a read-only probe of the deployed hook
             [_sys.executable, "-c", _STOP_GATE_PROBE, str(candidate.parent), str(repo_root)],
             cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=20,
@@ -1070,7 +1071,7 @@ def _probe_recall_corpus(repo_root: Path) -> dict | None:
     if not candidate.is_file():
         return None
     try:
-        proc = subprocess.run(  # spawn: ok a bounded read-only probe of the deployed hook
+        proc = run_bounded(  # a read-only probe of the deployed hook
             [_sys.executable, "-c", _RECALL_FACTS_PROBE, str(candidate.parent), str(repo_root)],
             cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=20,
@@ -1141,7 +1142,7 @@ def _run_start_probe(repo_root: Path, hooks_dir: Path, scripts: list[str]) -> di
     import subprocess
     import sys as _sys
     try:
-        proc = subprocess.run(  # spawn: ok a bounded read-only probe of the deployed hooks
+        proc = run_bounded(  # a read-only probe of the deployed hooks
             [_sys.executable, "-c", _HOOK_START_PROBE, str(hooks_dir), *scripts],
             cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=_HOOK_START_BUDGET_S,
@@ -2254,6 +2255,7 @@ def run_doctor_check(
     # in the hint runs only when there is a gap, never on the healthy path.
     if os.path.isfile(settings_path):
         from espalier.cli import (  # lazy: cli imports doctor at top level
+            _retired_rules_to_name,
             installed_settings_profile,
             settings_allow_gaps,
             settings_foreign_read_denies,
@@ -2292,7 +2294,14 @@ def run_doctor_check(
         # rule still blocks. A WARNING, never a failure -- permissions are
         # theirs -- read-only and BOM-tolerant through the twin the merge's
         # own report uses (`settings_profiles.RETIRED_DENY_RULES` has the record).
-        for rule, why in settings_stale_denies(settings_path) or ():
+        # Only where the hooks run: the hook layer stands in for every retired
+        # rule, so on a tree with none wired, or wired but not running, the
+        # delete advice would take away the only guard left; the hook checks
+        # above name that state, and the doctor run after the repair names the
+        # rule (cli._retired_rules_to_name).
+        stale = _retired_rules_to_name(settings_stale_denies(settings_path) or (),
+                                       repo_root=repo_root, settings_path=settings_path)
+        for rule, why in stale:
             # Name all three settings files: a deny rule in the local or the
             # user-level file blocks the same way, and the self-host host carried
             # the retired line in the project AND the user file (2026-09-29).

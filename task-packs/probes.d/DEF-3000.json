@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3000",
+ "subject": "espalier/scanners/freshness.py",
+ "cmd": "python -c \"import tempfile,pathlib as P;from espalier.scanners.freshness import discover_fragments as D;from espalier.artifact_parity import stage_build_tree as S;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=P.Path(T.name)/'r';w=r/'.claude'/'worktrees';(w/'w').mkdir(parents=True);(w/'w'/'.git').write_text('gitdir: /elsewhere',encoding='utf-8');(w/'x'/'docs').mkdir(parents=True);(w/'x'/'docs'/'y.md').write_text('<!-- espalier:fragment id=y bound=a.py policy=weekly -->',encoding='utf-8');a=any('worktrees' in f.source_path for f in D(r));b=(S(r,P.Path(T.name)/'s')/'.claude'/'worktrees'/'w').is_dir();print(f'scanner={a} staged={b}')\"",
+ "open_value": "scanner=True staged=True",
+ "why_not": null,
+ "inputs": [
+  "espalier/artifact_parity.py"
+ ],
+ "row_sha": "4de6163a0890",
+ "text_sha": "08a0f7afe408",
+ "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
+}

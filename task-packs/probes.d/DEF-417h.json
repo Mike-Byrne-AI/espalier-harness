@@ -1,0 +1,11 @@
+{
+ "id": "DEF-417h",
+ "subject": "espalier/release_pack.py",
+ "cmd": "python3 -c \"import ast; s=open('espalier/release_pack.py').read(); f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='to_dict'][0]; src=ast.get_source_segment(s,f); print('pruned' not in src and 'skipped_self' not in src)\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "d2ec6d9567c9",
+ "text_sha": "18fcb49e95b1",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

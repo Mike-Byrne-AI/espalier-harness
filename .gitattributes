@@ -90,15 +90,13 @@ docs/session-archive.md  export-ignore
 # The workflow scaffolds are the fourth mirrored .claude kind (TP-459) and
 # never got the *.md pin above: scripts/sync_claude_mirrors.py compares raw
 # bytes, so on a core.autocrlf=true checkout a CRLF source beside an LF mirror
-# reads as drift. The probes file is rewritten by every ledger verb with
-# newline="\n"; pin it so the verbs' LF writes agree with what git checks
-# out. Both found 2026-09-28 on Windows; zero churn, every tracked .js and
-# the probes file were already LF in the index.
+# reads as drift. Found 2026-09-28 on Windows; zero churn, every tracked .js
+# was already LF in the index.
 *.js text eol=lf
 *.ini text eol=lf
-task-packs/LEDGER_PROBES.json text eol=lf
 # The same for the ledger's rows and probes kept one file each (2026-10-13,
-# ledger_fragments): the verbs write them with newline="\n" too.
+# ledger_fragments): the verbs write them with newline="\n" too. The probes
+# file's own row went with the file at the fold (2026-10-14).
 task-packs/ledger.d/*.md text eol=lf
 task-packs/probes.d/*.json text eol=lf
 # Two machines' lanes each prepend a bullet under `## [Unreleased]`, so the

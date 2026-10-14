@@ -1,0 +1,11 @@
+{
+ "id": "DEF-818",
+ "subject": "tools/cc/hooks/_protected_zones.py",
+ "cmd": "python3 -c \"import ast;s=open('tools/cc/hooks/_protected_zones.py',encoding='utf-8').read();f=[n for n in ast.walk(ast.parse(s)) if isinstance(n,ast.FunctionDef) and n.name=='_encloses_protected'][0];d=ast.get_docstring(f) or '';print('answer True' in d and 'answer FALSE' in d)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "64351fa86bdc",
+ "text_sha": "cf7c6b6c6728",
+ "verified_2026_09_15": "OPEN (filed 2026-09-15; probe driven at filing)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

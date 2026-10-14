@@ -1,0 +1,10 @@
+{
+ "id": "DEF-996",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import argparse, json, pathlib, tempfile; from espalier.cli import build_parser, _disarmed_diagnosis_shape as d; p = build_parser(); sp = [a for a in p._actions if isinstance(a, argparse._SubParsersAction)][0]; r = pathlib.Path(tempfile.mkdtemp()); (r / \".claude\").mkdir(); (r / \".claude\" / \"settings.json\").write_text(json.dumps({\"permissions\": {\"allow\": [\"Read\"]}})); print(sum(s.format_help().count(\".bak\") for s in [p, *{id(s): s for s in sp.choices.values()}.values()]), \".bak\" in \" \".join(d(r)[1]))'",
+ "open_value": "7 True",
+ "why_not": null,
+ "row_sha": "b0ce19c5ac61",
+ "text_sha": "9c3a92feafbc",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

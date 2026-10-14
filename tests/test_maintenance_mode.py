@@ -498,7 +498,7 @@ class TestBypassRosterCarriers:
         from tests._git_oracle import require_tracked_paths
 
         callers = _maintenance_bypass_callers()
-        from tests._record_paths import is_dated_fragment
+        from tests._record_paths import is_dated_fragment, is_ledger_record
 
         # The dated records kept one file per change are records like the two
         # files they came from (ESPALIER_MEMORY.md, CHANGELOG.md).
@@ -518,7 +518,11 @@ class TestBypassRosterCarriers:
                 named = {n for n in callers if re.search(rf"\b{re.escape(n)}\b", unit)}
                 if len(named) < 2 or named == callers:
                     continue
-                excl = next(((p, sub) for p, sub in _NOT_A_ROSTER_CLAIM if p == rel and sub in unit), None)
+                # An exclusion naming the ledger file covers its rows wherever
+                # they live (a file each under task-packs/ledger.d/ since the fold).
+                excl = next(((p, sub) for p, sub in _NOT_A_ROSTER_CLAIM
+                             if (p == rel or (p == "task-packs/FORWARD_LEDGER.md" and is_ledger_record(rel)))
+                             and sub in unit), None)
                 if excl:
                     matched.add(excl)
                     continue

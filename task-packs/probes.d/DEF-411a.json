@@ -1,0 +1,16 @@
+{
+ "id": "DEF-411a",
+ "subject": "scripts/check_pack_landing.py",
+ "cmd": "python3 -c \"import subprocess,re,sys; o=subprocess.run(['python3','scripts/check_pack_landing.py'],capture_output=True,text=True).stdout; sys.exit(2) if 'SCANNED NOTHING' in o else print(bool(re.search(r'ROADMAP packs in Done/ [(][1-9]',o)) or bool(re.search(r'incomplete Landing stanza [(][1-9]',o)))\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "note": "⚠ REWRITTEN 2026-08-26. The old probe pinned the exact pair '5:2'. It reported STRIKE_CANDIDATE on 2026-08-26 because the count had moved to 5:3 -- one MORE item owed, i.e. the row got WORSE, and a count-equality probe reads that as 'fixed'. Pinning a count is the line-number anti-pattern in another costume: it false-strikes on any movement, in either direction. Now a predicate over the CLAIM ('the tool still prints owed follow-up'), which only flips when the chore is actually drained.",
+ "row_sha": "05182b05e09b",
+ "text_sha": "10df4162259e",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: first stamp of a co-id probe the verbs could not address before DEF-863's fix landed at 75b87fd; the claim stands)",
+ "inputs": [
+  "task-packs/Done"
+ ],
+ "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['task-packs/Done'] on 2026-09-22: the command shells out to check_pack_landing.py, whose two tiers read task-packs/Done/, local-only: the public checkout struck this row on it (measured 2026-09-22 in a --shared clone); declared, and the predicate exits 2 with no stdout when the lint says SCANNED NOTHING, so a Done/ that exists but holds no pack is UNRESOLVED, not a strike (DEF-858))"
+}

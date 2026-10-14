@@ -91,6 +91,23 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    holds on Windows, where ``run`` waits on a grandchild holding its pipe
+    (DEF-3004)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_reachability_differential", REPO_ROOT / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
+
 #: Assembled rather than written whole: this file is scanned by the repo's own
 #: census and vocabulary gates, and a bare copy of the spelling is exactly the
 #: thing the guards under test key on.
@@ -675,9 +692,11 @@ def run_bash_group(argv: list[str], *, cwd: Path | str | None = None,
     full-suite runs and two review agents, from exactly that call shape. Every
     BASH probe in this bench and its suite-side twins goes through here; the
     PowerShell twin (``powershell_reachability_differential.powershell_reaches``)
-    keeps ``subprocess.run(timeout=)`` because a surviving ``pwsh`` grandchild
-    could not be reproduced (driven 2026-09-06) -- convention gap, not a
-    demonstrated leak.
+    spawns through ``run_bounded``, which ends the whole tree at its timeout
+    on Windows (a surviving ``pwsh`` grandchild could not be reproduced,
+    driven 2026-09-06). On Windows there is no process group, so this function
+    kills the child alone: no pipe is held, so the wait still ends, but a
+    grandchild can outlive it.
 
     The group is also WAITED FOR after bash returns. bash does not wait for a
     process-substitution child (``> >(sh)``), so the group can still be at
@@ -692,10 +711,12 @@ def run_bash_group(argv: list[str], *, cwd: Path | str | None = None,
         kwargs["start_new_session"] = True
     if env is not None:
         kwargs["env"] = env
+    # spawn: ok the group runner -- the splat carries the session and env only; the bound is the communicate below
     proc = subprocess.Popen(argv, cwd=cwd, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
                             **kwargs)
     try:
+        # spawn: ok no pipe to hold -- all three streams are DEVNULL, so this wait ends with the child, and on POSIX the group kill below ends the rest
         proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         if hasattr(os, "killpg"):
@@ -840,7 +861,7 @@ def guard_denies(cmd: str, hooks_dir: Path, project_dir: str) -> bool:
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = project_dir
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
-    result = subprocess.run(
+    result = run_bounded(
         [sys.executable, str(hooks_dir / "write_guard.py")],
         input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
@@ -870,14 +891,14 @@ def assert_baseline_is_live(hooks_dir: Path, project_dir: str) -> None:
 
 def materialise_baseline(ref: str, dest: Path) -> Path:
     """Extract the WHOLE tools/ tree at `ref` -- siblings included (see above)."""
-    archive = subprocess.run(
+    archive = run_bounded(
         ["git", "-C", str(REPO_ROOT), "archive", ref, "tools/"],
         capture_output=True, timeout=60,
     )
     if archive.returncode != 0:
         raise RuntimeError(f"git archive {ref} failed: {archive.stderr[:300]!r}")
-    subprocess.run(["tar", "-x", "-C", str(dest)], input=archive.stdout,
-                   check=True, timeout=60)
+    run_bounded(["tar", "-x", "-C", str(dest)], input=archive.stdout,
+                check=True, timeout=60)
     return dest / "tools" / "cc" / "hooks"
 
 

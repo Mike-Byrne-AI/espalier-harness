@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1134",
+ "subject": "espalier/reflect_protocol.py",
+ "cmd": "python -c 'import pathlib,tempfile; from espalier.reflect_protocol import run_reflect_pass as r; n=chr(10); b=chr(96); t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); (d/\"docs\").mkdir(); (d/\"CLAUDE.md\").write_text(\"# P\"+n+n+\"See [x](docs/zqexample.md) and [y](docs/zqspan.md).\"+n,encoding=\"utf-8\"); (d/\"docs/zqexample.md\").write_text(n.join([\"# Example\",\"\",\"~~~markdown\",\"```markdown\",\"See [the guide](zq-not-there.md).\",\"```\",\"~~~\",\"\"]),encoding=\"utf-8\"); (d/\"docs/zqspan.md\").write_text(n.join([\"# Span\",\"\",\"Write \"+b+\"[the guide](zq-span-missing.md)\"+b+\" in prose.\",\"\"]),encoding=\"utf-8\"); f=r(d).findings; print(sum(\"zq-not-there\" in x.description for x in f), sum(\"zq-span-missing\" in x.description for x in f))'",
+ "open_value": "1 1",
+ "why_not": null,
+ "row_sha": "b6ada84a84d2",
+ "text_sha": "50ccb98105d2",
+ "verified_2026_10_06": "STILL_OPEN (re-pinned '1' -> '1 1' on 2026-10-06: widened 2026-10-06 to fold in the code-span half, one oracle and one method with the nested-fence half: no link reader strips inline code before its link match, driven on all four readers (the engine pass, reflect_repo, the hook twin and tests/_artifact_links.py::dangling_links); the probe now prints the nested-fence count, then the code-span count, so fixing one half cannot read as the whole row closing)"
+}

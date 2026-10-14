@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1072",
+ "subject": "bench/run_benchmark.py",
+ "cmd": "python -c 'import ast,pathlib as p;t=ast.parse(p.Path(\"bench/run_benchmark.py\").read_text(encoding=\"utf-8\"));b=any(isinstance(n,ast.Call) and n.args and isinstance(n.args[0],ast.List) and n.args[0].elts and isinstance(n.args[0].elts[0],ast.Constant) and n.args[0].elts[0].value==\"bash\" for n in ast.walk(t));s=p.Path(\"bench/baselines/espalier/setup.sh\").read_text(encoding=\"utf-8\");print(int(b or any(l.startswith(\"python3 \") for l in s.splitlines())))'",
+ "open_value": "1",
+ "why_not": null,
+ "inputs": [
+  "bench/baselines/espalier/setup.sh"
+ ],
+ "row_sha": "abeb8bdaa172",
+ "text_sha": "ff9b08ec7594",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

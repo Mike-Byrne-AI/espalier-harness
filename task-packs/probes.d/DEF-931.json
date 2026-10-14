@@ -1,0 +1,15 @@
+{
+ "id": "DEF-931",
+ "subject": "docs/QUICKSTART.md",
+ "cmd": "python3 -c \"import pathlib;docs=[pathlib.Path(p).read_text(encoding='utf-8') for p in ('docs/QUICKSTART.md','README.md','docs/SURFACE_SUPPORT_MATRIX.md')];print(any('twins the file lacks' in t or 'twins an older file lacks' in t for t in docs) and 'lacking[:3]' in pathlib.Path('espalier/doctor.py').read_text(encoding='utf-8'))\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "README.md",
+  "docs/SURFACE_SUPPORT_MATRIX.md",
+  "espalier/doctor.py"
+ ],
+ "row_sha": "89a116fcd869",
+ "text_sha": "19bb7e444897",
+ "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged; inputs ['README.md', 'docs/SURFACE_SUPPORT_MATRIX.md'] -> ['README.md', 'docs/SURFACE_SUPPORT_MATRIX.md', 'espalier/doctor.py'] on 2026-09-26: 5-A review: the probe recomputed the slice from the allow list and never read doctor.py, so the row's first fix arm (widen the slice) could not flip it and an unrelated re-ordering of the allow list could; it now reads the slice's shape from its owner beside the three sentences, so either arm flips it)"
+}

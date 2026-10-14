@@ -35,6 +35,7 @@ from espalier._python_floor import (
     meets_python_floor,
 )
 from espalier._safe_walk import safe_rglob, visible, is_own_git_repo as _is_own_git_repo
+from espalier._spawn import run_bounded
 from espalier._text import os_error_text, pin_utf8_streams, plural, quoted_if_spaced
 from espalier._venv import (
     after_head_index,
@@ -673,7 +674,7 @@ def _resolves_only_inside_a_virtualenv(name: str, resolved: str) -> bool:
     """
     import subprocess
     try:
-        probe = subprocess.run(
+        probe = run_bounded(
             [resolved, "-c", "import sys,json;"
              "print('ESPALIER_PROBE'+json.dumps([sys.prefix,sys.base_prefix]))"],
             capture_output=True, text=True, encoding="utf-8", timeout=5,
@@ -936,7 +937,7 @@ def _detect_python_command() -> str:
         if not path:
             continue
         try:
-            result = subprocess.run(
+            result = run_bounded(
                 [path, "--version"],
                 capture_output=True,
                 text=True, encoding="utf-8",
@@ -1263,7 +1264,11 @@ def _foreign_read_denies(existing: dict) -> tuple[str, ...]:
 def _stale_denies(existing: dict) -> tuple[tuple[str, str], ...]:
     """The retired deny rules ``existing`` still carries, as ``(rule, why)``
     pairs in the registry's order (``settings_profiles.retired_deny_rules``),
-    the reason closing with the last version whose ``init`` wrote the rule.
+    the reason closing with the last version whose ``init`` wrote a rule of
+    that text. A match by text cannot tell that rule from the same line the
+    operator wrote by hand, so the reason says the line matches one init
+    wrote, never that init wrote it -- every surface renders this sentence
+    (doctor, merge-settings, upgrade, an init re-run).
     Exact strings only, like the allow comparison; a malformed block is empty
     here and is named by the allow comparison's note. Read-only by contract:
     the merge never removes an operator's rule, so a stale one is named, not
@@ -1282,7 +1287,7 @@ def _stale_denies(existing: dict) -> tuple[tuple[str, str], ...]:
     # command-not-found in a fusion, where the engine runs as `python -m
     # espalier`), and tests/test_no_bare_espalier_hints.py reds on it.
     return tuple(
-        (rule, f"{why}; the init command wrote it through {shipped}")
+        (rule, f"{why}; this line matches a deny rule the init command wrote through {shipped}")
         for rule, shipped, why in retired_deny_rules() if rule in present
     )
 
@@ -1401,6 +1406,39 @@ def settings_superseded_allows(
                     "Python is the harness's vendored tools/cc/, which a formatter would rewrite"
                 )))
     return tuple(out)
+
+
+#: ``_retired_rules_to_name``'s "the caller made no armament read" default.
+_ARMAMENT_UNREAD: object = object()
+
+
+def _retired_rules_to_name(
+    stale: "Sequence[tuple[str, str]]", *, repo_root: Path, settings_path: Path,
+    blockers: object = _ARMAMENT_UNREAD,
+) -> tuple[tuple[str, str], ...]:
+    """The retired deny rules a surface may name, with their "delete that
+    line" advice: all of ``stale`` when the file wires Espalier hooks and they
+    run, else none. Every surface that names one asks here (init, doctor,
+    merge-settings, --wire-hooks, upgrade). For every row the hook layer is
+    what stands in for the rule -- write_guard's root-wipe wall, its
+    secret-path read check -- so where no Espalier hook runs (none wired, an
+    interpreter this host lacks, a neutered gate, a file that cannot be read)
+    deleting the line takes away the only guard left; the surface names the
+    disarmed hooks instead, and the run after the repair names the rule.
+    ``blockers`` is an armament read the caller already made
+    (:func:`_enforcement_claim_blockers`, which spawns each wired interpreter);
+    ``[]`` is armed, and ``None`` (unverifiable) is not."""
+    if not stale:
+        return ()
+    try:
+        existing = json.loads(surface_contract.decode_bom(Path(settings_path).read_bytes()))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return ()
+    if not _settings_has_espalier_hooks(existing):
+        return ()
+    if blockers is _ARMAMENT_UNREAD:
+        blockers = _enforcement_claim_blockers(repo_root, settings_path)
+    return tuple(stale) if blockers == [] else ()
 
 
 def settings_stale_denies(settings_path: Path) -> tuple[tuple[str, str], ...] | None:
@@ -1545,10 +1583,12 @@ def _merge_settings_hint(profile: str) -> str:
 
 def _report_allow_gaps_read_only(
     repo_root: Path, *, profile: str, prefix: str, stream: "TextIO | None" = None,
+    blockers: object = _ARMAMENT_UNREAD,
 ) -> bool:
     """Report the gap without touching the file (``upgrade`` in both modes).
     Returns whether the file lacks anything, so a "nothing to do" can be true
-    when it is said."""
+    when it is said. ``blockers`` is the caller's armament read, so one run
+    asks the interpreters once (:func:`_retired_rules_to_name`)."""
     settings_path = repo_root / ".claude" / "settings.json"
     gaps = settings_allow_gaps(settings_path, profile=profile, repo_root=repo_root)
     if gaps is None:
@@ -1557,7 +1597,9 @@ def _report_allow_gaps_read_only(
     _report_allow_gaps(
         missing=missing, added=(), note=note, profile=profile, prefix=prefix,
         hint_command=lambda: _merge_settings_hint(profile), stream=stream,
-        stale=settings_stale_denies(settings_path) or (),
+        stale=_retired_rules_to_name(settings_stale_denies(settings_path) or (),
+                                     repo_root=repo_root, settings_path=settings_path,
+                                     blockers=blockers),
         scoped=settings_scoped_allows(settings_path, profile=profile, repo_root=repo_root),
     )
     return bool(missing)
@@ -2759,7 +2801,7 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
                      else ["--probe-cmd", f'{_PROBE_PY} -c "{row["code"]}"',
                            "--open-value", row["open"]])
             try:
-                proc = subprocess.run(
+                proc = run_bounded(
                     argv, capture_output=True, text=True, encoding="utf-8",
                     errors="replace", check=False, timeout=120, env=env,
                 )
@@ -3048,6 +3090,7 @@ def _reconcile_existing_settings(
     wire_hooks: bool,
     profile_name: str | None,
     repo_root: Path,
+    caller_reports_permissions: bool = False,
 ) -> SettingsOutcome:
     """Reconcile a pre-existing ``.claude/settings.json``.
 
@@ -3058,6 +3101,13 @@ def _reconcile_existing_settings(
     arming path). The WARN/INFO prints and the atomic ``.new`` write are side
     effects; ``skipped_reason`` is returned for the caller to append
     (deploy_harness owns the single ``skipped`` list).
+
+    In case (a) a retired deny rule the file still carries is named, read-only,
+    as ``upgrade`` and ``doctor`` name it (DEF-4017). ``upgrade --execute``
+    deploys through here and then reports from its own merge, so it passes
+    ``caller_reports_permissions`` and the WARN is said once. The default is
+    to report: a caller that forgets the flag repeats a WARN, where the
+    opposite default would drop it unseen.
     """
     deployed: list[str] = []
     # An upgrade from an older deployment can keep a stale matcher (no
@@ -3100,6 +3150,9 @@ def _reconcile_existing_settings(
             profile_name=profile_name, repo_root=repo_root,
         )
     py = _remedy_py()  # the interpreter to spell in a remedy (DEF-758)
+    # The armament read, when case (a)'s retired-rule report needs it first.
+    armament: list[str] | None = None
+    armament_read = False
     if isinstance(existing, dict) and not has_espalier_hooks:
         # Case (b): new adopter — governance is NOT active. Offer to arm now,
         # but ONLY interactively. Off a TTY (CI, pytest, a captured subprocess)
@@ -3218,6 +3271,38 @@ def _reconcile_existing_settings(
                     "rendered .new template below (diff + merge).",
                     file=sys.stderr,
                 )
+        # A plain re-run of init is how TROUBLESHOOTING tells an adopter to
+        # repair an install, and it said nothing of a retired deny rule while
+        # upgrade, doctor, merge-settings and --wire-hooks named it (DEF-4017).
+        # The same WARN, read-only: nothing here removes a rule. The retired
+        # rules only, not the profile's allow gaps: a plain re-run has already
+        # recorded the default profile over a minimal or full install's, so a
+        # gap read here would name the default's rules, Write among them, with
+        # an append that widens permissions. Case (b) never gets it: no
+        # Espalier hook is wired there, so the write_guard check that replaces a
+        # retired Read() rule is not running, and "delete that line" would take
+        # away an adopter's only guard on a secret file. That branch's WARN
+        # sends them to merge-settings or --wire-hooks, which wire the hooks and
+        # name the rule in the same run. The same holds here when the wiring
+        # does not run (an interpreter this host lacks, a neutered gate): the
+        # re-run names the disarmed hooks, and the rule waits for the re-run
+        # after the repair.
+        if not caller_reports_permissions:
+            stale = settings_stale_denies(settings_path) or ()
+            if stale:
+                armament = _enforcement_claim_blockers(repo_root, settings_path)
+                armament_read = True
+                named = _retired_rules_to_name(
+                    stale, repo_root=repo_root, settings_path=settings_path, blockers=armament,
+                )
+                if named:
+                    _report_allow_gaps(
+                        missing=(), added=(), note="", stale=named, prefix="[init]",
+                        # Read for allow gaps only, and none are passed.
+                        profile=profile_name or "workflow",
+                        hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
+                        stream=sys.stderr,
+                    )
     # Render the fresh template alongside so the operator can diff the existing
     # file against what a fresh init would emit. The only case that suppresses
     # this — a wired-in-place --wire-hooks merge — already returned above.
@@ -3233,8 +3318,10 @@ def _reconcile_existing_settings(
     # because there is nothing to find fault with. That is the brought-your-own
     # adopter (case b), the single most common disarmed state there is, and
     # reading it as armed is a fail-open. The discriminator supplies the other
-    # half: is anything wired at all.
-    blockers = _enforcement_claim_blockers(repo_root, settings_path)
+    # half: is anything wired at all. A read made for the retired-rule report
+    # above is reused: the .new render writes beside the file, never into it,
+    # and the probe spawns each wired interpreter.
+    blockers = armament if armament_read else _enforcement_claim_blockers(repo_root, settings_path)
     return SettingsOutcome(
         settings_hooks_wired=(has_espalier_hooks and blockers == []),
         skipped_reason=skipped_reason,
@@ -3280,11 +3367,13 @@ def _wire_hooks_into_existing(
     # --wire-hooks appends hook events (and espalier's statusLine when that key
     # is absent), never allow rules, so say what it did not append -- after the
     # line that says what it did.
-    def _wire_hooks_gaps() -> None:
+    def _wire_hooks_gaps(blockers: "list[str] | None") -> None:
         _report_allow_gaps(
             missing=merge_result.missing_allows, added=(), note=merge_result.allow_note,
             profile=profile_name or "workflow", prefix="--wire-hooks:",
-            stale=merge_result.stale_denies, scoped=merge_result.scoped_allows,
+            stale=_retired_rules_to_name(merge_result.stale_denies, repo_root=repo_root,
+                                         settings_path=settings_path, blockers=blockers),
+            scoped=merge_result.scoped_allows,
             hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
             stream=sys.stderr,
         )
@@ -3313,7 +3402,7 @@ def _wire_hooks_into_existing(
             reporters_line = _dead_reporters_line(repo_root, _remedy_py())
             if reporters_line:
                 print("--wire-hooks: " + reporters_line, file=sys.stderr)
-        _wire_hooks_gaps()
+        _wire_hooks_gaps(blockers)
         deployed.append(".claude/settings.json")
         deployed.append(merge_result.detail)
         return SettingsOutcome(
@@ -3326,10 +3415,9 @@ def _wire_hooks_into_existing(
         # gets topped up.) "Every event is wired" is NOT "every gate fires":
         # ALREADY is exactly the branch that touches nothing, so an inert gate
         # survives it untouched. Ask the blockers, not the merge status.
-        settings_hooks_wired = (
-            _enforcement_claim_blockers(repo_root, settings_path) == []
-        )
-        _wire_hooks_gaps()
+        already_blockers = _enforcement_claim_blockers(repo_root, settings_path)
+        settings_hooks_wired = already_blockers == []
+        _wire_hooks_gaps(already_blockers)
     else:
         # Refusal (malformed file). Name the reason; preserve the file
         # (decision: never overwrite content).
@@ -3576,12 +3664,15 @@ def deploy_harness(
     *,
     profile_name: str | None = None,
     wire_hooks: bool = False,
+    caller_reports_permissions: bool = False,
 ) -> dict:
     """Deploy the mechanical harness layer into a target repo.
 
     ``profile_name`` selects the settings profile shape written
     to ``.claude/settings.json``. ``None`` resolves to the default
-    profile (``"workflow"``).
+    profile (``"workflow"``). ``caller_reports_permissions`` is for a caller
+    that names a retired deny rule itself (``upgrade --execute``;
+    ``_reconcile_existing_settings`` says why).
 
     Iteration invariant (BC-030/031): the asset set this function
     regenerates is derived from import-time enumeration of packaged
@@ -3688,6 +3779,7 @@ def deploy_harness(
             wire_hooks=wire_hooks,
             profile_name=profile_name,
             repo_root=repo_root,
+            caller_reports_permissions=caller_reports_permissions,
         )
         settings_hooks_wired = outcome.settings_hooks_wired
         deployed.extend(outcome.deployed)
@@ -4617,7 +4709,7 @@ def _git_covered_entries(
             prefix="espalier-check-ignore-", ignore_cleanup_errors=True,
         ) as scratch:
             scratch_root = Path(scratch)
-            init = subprocess.run(
+            init = run_bounded(
                 ["git", "init", "-q", "--template=", str(scratch_root)],
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", check=False, timeout=30, env=env,
@@ -4628,7 +4720,7 @@ def _git_covered_entries(
             stdin = "".join(
                 path + "\0" for paths in probes.values() for path in paths
             ) + _GITIGNORE_CONTROL_PROBE + "\0"
-            proc = subprocess.run(
+            proc = run_bounded(
                 ["git", "-C", str(scratch_root),
                  "-c", f"core.excludesFile={scratch_root / 'no-global-excludes'}",
                  "-c", f"core.ignorecase={'true' if fold else 'false'}",
@@ -4733,7 +4825,7 @@ def _git_ignorecase(repo_root: Path) -> bool:
     direction for a diagnostic that must never abort a completed deploy.
     """
     try:
-        proc = subprocess.run(
+        proc = run_bounded(
             ["git", "-C", str(repo_root), "config", "--type=bool",
              "core.ignorecase"],
             capture_output=True, text=True, encoding="utf-8",
@@ -4822,7 +4914,7 @@ def _untracked_conflicts(
     # platform most operators are sitting on.
     fold = _git_ignorecase(repo_root)
     try:
-        result = subprocess.run(
+        result = run_bounded(
             ["git", "ls-files", "--others", "--exclude-standard", "-z"],
             cwd=repo_root, capture_output=True, text=True,
             # errors= AND ValueError, together: a filename that is not valid
@@ -4923,7 +5015,7 @@ def _git_tracked(repo_root: Path) -> tuple[list[str], bool] | None:
     (``cleanup._retire_gitignore_block``): an ignore rule guards no tracked
     file, so a tracked one is never the reason to keep it."""
     try:
-        proc = subprocess.run(
+        proc = run_bounded(
             ["git", "-C", str(repo_root), "ls-files", "-z"],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", check=False, timeout=120,
@@ -4931,7 +5023,7 @@ def _git_tracked(repo_root: Path) -> tuple[list[str], bool] | None:
         # git itself is case-insensitive on macOS/Windows checkouts; match it,
         # or the check misses `Reports/q4.md` against `/reports/` and silently
         # creates the state it exists to prevent.
-        case_proc = subprocess.run(
+        case_proc = run_bounded(
             ["git", "-C", str(repo_root), "config", "--type=bool",
              "core.ignorecase"],
             capture_output=True, text=True, encoding="utf-8",
@@ -5366,7 +5458,7 @@ def _ignored_files_under(repo_root: Path, folder: str) -> list[str] | None:
     cannot answer. Nothing is fed to the child, so its stdin is closed (the
     DEF-928 shape)."""
     try:
-        proc = subprocess.run(
+        proc = run_bounded(
             ["git", "-C", str(repo_root), "ls-files", "-z", "--others", "--ignored",
              "--exclude-standard", "--", f"{folder}/"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -5639,7 +5731,7 @@ def _git_hides(repo_root: Path, rel: str) -> bool:
     catch-all such as ``.*`` would hide the include from every commit);
     False when it does not, or when git cannot be asked."""
     try:
-        done = subprocess.run(
+        done = run_bounded(
             ["git", "-C", str(repo_root), "check-ignore", "-q", "--", rel],
             capture_output=True, timeout=10, check=False,
         )
@@ -5660,7 +5752,7 @@ def _git_ignored(repo_root: Path, rels: Sequence[str]) -> set[str] | None:
         return set()
     try:
         # NUL-separated both ways (-z needs --stdin), so no path is quoted.
-        done = subprocess.run(
+        done = run_bounded(
             ["git", "-C", str(repo_root), "check-ignore", "--stdin", "-z"],
             input=b"\0".join(rel.encode("utf-8") for rel in rels) + b"\0",
             capture_output=True, timeout=10, check=False,
@@ -9191,15 +9283,16 @@ def _disarmed_diagnosis(repo_root: Path) -> tuple[str, list[str]]:
     return reason, remedies
 
 
-def _unverifiable_settings_warning(settings_path: Path) -> str:
+def _unverifiable_settings_warning(settings_path: Path, *, prefix: str = "merge-settings") -> str:
     """WARN for the case where the wired settings cannot be read back.
 
     Withholding the enforcement claim is the whole point: the operator gets a
     smaller, honest statement instead of a confident wrong one. Not a refusal --
     the merge itself already succeeded and the file on disk is correct.
+    ``prefix`` names the command the operator ran.
     """
     return (
-        "merge-settings: WARNING -- could not re-read "
+        f"{prefix}: WARNING -- could not re-read "
         f"{settings_path} to confirm the wired hooks resolve, so enforcement "
         "state is UNVERIFIED. The merge itself succeeded. Check the file is "
         f"valid JSON, then run `{_remedy_py()} -m espalier doctor .`"
@@ -9350,7 +9443,9 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
         _report_allow_gaps(
             missing=result.missing_allows, added=result.added_allows,
             note=result.allow_note, profile=profile, prefix="merge-settings:",
-            stale=result.stale_denies, scoped=result.scoped_allows,
+            stale=_retired_rules_to_name(result.stale_denies, repo_root=repo_root,
+                                         settings_path=settings_path, blockers=missing),
+            scoped=result.scoped_allows,
             hint_command=lambda: f"re-running with `--profile {profile} --add-allows`",
             announce_added=announce_added,
         )
@@ -9361,11 +9456,17 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
             if repaired else
             "merge-settings: Espalier hooks are already wired in .claude/settings.json"
         )
-        # "Nothing to do" only when it is true: a wired file can still lack
-        # the profile's allow rules, and those are reported right below.
-        tail = ("" if repaired and not result.missing_allows
-                else " Nothing to do." if not result.missing_allows
-                else " Hook events are current; the allow rules below are not.")
+        # "Nothing to do" only when it is whole (upgrade's rule, 2026-09-29): a
+        # wired file can still lack the profile's allow rules, carry a retired
+        # deny rule, or run no hooks, and each is reported right below.
+        named_stale = _retired_rules_to_name(result.stale_denies, repo_root=repo_root,
+                                             settings_path=settings_path, blockers=missing)
+        if result.missing_allows:
+            tail = " Hook events are current; the allow rules below are not."
+        elif repaired or named_stale or missing != []:
+            tail = ""
+        else:
+            tail = " Nothing to do."
         if unverified:
             print(head + "." + tail, flush=True)
             print(_unverifiable_settings_warning(settings_path), file=sys.stderr)
@@ -9972,16 +10073,29 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # and it was the one state that never heard the profile had moved.
             lacking = False
             stale_rules: tuple = ()
+            # One armament read for the whole branch: the retired-rule WARN, the
+            # sentence that points at it and the disarmed narration below must
+            # agree, and a flaky interpreter read three times can answer three
+            # ways (failure-mode review, 2026-10-14).
+            vc_blockers: list[str] | None = None
             if os.path.isfile(repo_root / ".claude" / "settings.json"):
+                vc_blockers = _enforcement_claim_blockers(
+                    repo_root, repo_root / ".claude" / "settings.json",
+                )
                 lacking = _report_allow_gaps_read_only(
                     repo_root, profile=installed_settings_profile(repo_root), prefix="[upgrade]",
+                    blockers=vc_blockers,
                 )
                 # The read-only report above WARNs about a retired deny rule the
                 # file still carries; the sentence below must not then say
                 # "nothing to do" (driven by the failure-mode review, 2026-09-29).
-                stale_rules = settings_stale_denies(
-                    repo_root / ".claude" / "settings.json",
-                ) or ()
+                # The same gate and read as the WARN, so the sentence never
+                # points at one a disarmed tree was not shown.
+                stale_rules = _retired_rules_to_name(
+                    settings_stale_denies(repo_root / ".claude" / "settings.json") or (),
+                    repo_root=repo_root, settings_path=repo_root / ".claude" / "settings.json",
+                    blockers=vc_blockers,
+                )
             # And once more for espalier's statusLine (DEF-798): a file wired
             # before the merge learned to add the key has none, and this branch
             # never merges -- name the state with the verb that does.
@@ -10001,7 +10115,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             disarmed = False
             settings_path = repo_root / ".claude" / "settings.json"
             if os.path.isfile(settings_path):
-                blockers = _enforcement_claim_blockers(repo_root, settings_path)
+                blockers = vc_blockers
                 if blockers is None or blockers:
                     disarmed = True
                     print(_disarmed_hook_tree_warning(
@@ -10250,7 +10364,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         config = _load_config(repo_root, args)
         fp = fingerprint_repo(repo_root, config)
         harness = build_harness_config(fp, config)
-        result = deploy_harness(repo_root, harness, fp)
+        # The merge below names a retired deny rule; the deploy must not too.
+        result = deploy_harness(repo_root, harness, fp, caller_reports_permissions=True)
         written = list(result["deployed"])
         # Every file, never truncated (DEF-1064), and the marker sentence on
         # the line that names them.
@@ -10358,21 +10473,56 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             if preview_stages and _statusline_key_absent(settings_path):
                 print("[upgrade] would add espalier's statusLine (the key is absent; "
                       "a statusLine of your own is never touched).")
-            _report_allow_gaps_read_only(repo_root, profile=profile, prefix="[upgrade]")
+            # A retired deny rule is named only where the hooks run
+            # (_retired_rules_to_name); when one is held back, say why, so the
+            # preview is not silent about a tree whose guards do not run.
+            preview_blockers: object = _ARMAMENT_UNREAD
+            preview_stale = settings_stale_denies(settings_path) or ()
+            if preview_stale:
+                preview_blockers = _enforcement_claim_blockers(repo_root, settings_path)
+                # Exactly when the gate holds the rule back (no Espalier hooks
+                # wired, or wired hooks that do not run), not merely when the
+                # armament read finds fault.
+                if not _retired_rules_to_name(preview_stale, repo_root=repo_root,
+                                              settings_path=settings_path,
+                                              blockers=preview_blockers):
+                    print(_disarmed_hook_tree_warning(
+                        repo_root, prefix="[upgrade]", wrote_settings=False,
+                    ), file=sys.stderr)
+            _report_allow_gaps_read_only(repo_root, profile=profile, prefix="[upgrade]",
+                                         blockers=preview_blockers)
         else:
             merge_result = merge_hooks_into_settings(
                 settings_path, profile=profile, repo_root=repo_root,
             )
+            # One armament read, shared with the retired-rule gate below.
+            exec_blockers: object = _ARMAMENT_UNREAD
             if merge_result.status == MERGE_WIRED:
                 print(f"[upgrade] {_merge_did_phrase(merge_result, noun='hook event')} "
                       f"into settings.json (backup {merge_result.detail}).")
                 marker_written.append(".claude/settings.json")
+                # Writing hook events does not arm a gate whose interpreter is
+                # missing: read the file back, as --wire-hooks does after the same
+                # merge, and name a tree whose hooks do not run. The read is also
+                # the retired-rule gate's below.
+                exec_blockers = _enforcement_claim_blockers(repo_root, settings_path)
+                if exec_blockers is None:
+                    print(_unverifiable_settings_warning(settings_path, prefix="[upgrade]"),
+                          file=sys.stderr)
+                elif exec_blockers:
+                    # "Wired anyway" only when this write wired hook events, not
+                    # a statusLine-only top-up.
+                    print(_disarmed_hook_tree_warning(
+                        repo_root, prefix="[upgrade]",
+                        wrote_settings=bool(merge_result.event_count),
+                    ), file=sys.stderr)
             elif merge_result.status == MERGE_ALREADY:
                 # "Current" is the merge's word for "every event carries an
                 # espalier entry"; a neutered or shell-form entry counts. Say
                 # so only when the enforcement claim holds, else narrate the
                 # disarmed tree the way init does (it names --repair).
-                if _enforcement_claim_blockers(repo_root, settings_path) == []:
+                exec_blockers = _enforcement_claim_blockers(repo_root, settings_path)
+                if exec_blockers == []:
                     print("[upgrade] settings.json hooks already current.")
                 else:
                     print(_disarmed_hook_tree_warning(
@@ -10385,7 +10535,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             _report_allow_gaps(
                 missing=merge_result.missing_allows, added=(), note=merge_result.allow_note,
                 profile=profile, prefix="[upgrade]",
-                stale=merge_result.stale_denies, scoped=merge_result.scoped_allows,
+                stale=_retired_rules_to_name(merge_result.stale_denies, repo_root=repo_root,
+                                             settings_path=settings_path, blockers=exec_blockers),
+                scoped=merge_result.scoped_allows,
                 hint_command=lambda: _merge_settings_hint(profile),
             )
 

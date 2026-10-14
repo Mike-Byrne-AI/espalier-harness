@@ -1,0 +1,14 @@
+{
+ "id": "DEF-4015",
+ "subject": "tools/cc/hooks/_reinject.py",
+ "cmd": "python3 -B -c \"import sys,pathlib;sys.path.insert(0,'tools/cc/hooks');import _reinject as r;r._locked_increment=lambda d,name='',**k:99 if name==r.REINJECT_COUNTER else 1;r._log_recall_event=lambda *a,**k:None;r._mark_once=lambda *a,**k:None;R=pathlib.Path('/nonexistent-probe-root');print(any(not r.check('PostToolUse','Edit',{'file_path':p},R) for p in ('tools/cc/ci_guard.py','docs/INSTALL-CI.md','.claude/commands/ship.md','task-packs/CLAUDE.md','.github/workflows/harness-guard.yml','espalier/_vendor/selfcheck_tests/conftest.py')))\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_hook_utils.py",
+  "tools/cc/hooks/_maintenance_mode.py"
+ ],
+ "row_sha": "002d29c10d6c",
+ "text_sha": "44d46bed416a",
+ "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+}

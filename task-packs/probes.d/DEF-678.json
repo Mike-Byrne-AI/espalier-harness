@@ -1,0 +1,11 @@
+{
+ "id": "DEF-678",
+ "subject": "tests/test_portability_contract.py",
+ "cmd": "python3 -c \"import sys,tempfile,pathlib;sys.path.insert(0,'.');sys.path.insert(0,'tests');import test_portability_contract as T;p=pathlib.Path(tempfile.mkdtemp())/'m.py';p.write_text('def f():\\n    a=[]\\n    a.append(chr(120))\\n    return chr(8212) + chr(10).join(a)\\n');print('return_expr_literal_uncollected='+str(not [s for _,s in T._all_operator_strings(p) if any(ord(c)>127 for c in s)]))\"",
+ "open_value": "return_expr_literal_uncollected=True",
+ "row_sha": "caaa336a4348",
+ "verified_2026_09_03": "STILL_OPEN",
+ "why_not": null,
+ "text_sha": "936debf1f3eb",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

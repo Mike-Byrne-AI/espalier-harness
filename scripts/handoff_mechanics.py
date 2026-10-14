@@ -65,6 +65,12 @@ def _load(path: Path, name: str):
     return mod
 
 
+#: ``subprocess.run`` whose timeout holds on Windows, where ``run`` waits on a
+#: grandchild holding its pipe (DEF-3004): this checkout's
+#: ``tools/cc/_json_safe.py``, loaded by path, never an installed engine's.
+run_bounded = _load(_ROOT / "tools" / "cc" / "_json_safe.py", "_json_safe_for_handoff_mechanics").run_bounded
+
+
 def linked_worktree_main(root: Path) -> Path | None:
     """The main checkout when ``root`` is a LINKED worktree of it; None for a main
     checkout and for a root that is no git checkout at all. The rule has one owner,
@@ -586,8 +592,8 @@ def after_goal(root: Path, *, dry_run: bool) -> int:
     probe = ["git", "ls-remote", "--exit-code", remote, record_ref]
     if _announce(probe, dry_run):
         try:
-            seen = subprocess.run(probe, cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                  timeout=_NETWORK_TIMEOUT_S, env=_no_prompt_env())
+            seen = run_bounded(probe, cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               timeout=_NETWORK_TIMEOUT_S, env=_no_prompt_env())
         except subprocess.TimeoutExpired:
             print(f"handoff_mechanics: record remote probe timed out after {_NETWORK_TIMEOUT_S}s; "
                   "stopping here", file=sys.stderr)
@@ -601,7 +607,7 @@ def after_goal(root: Path, *, dry_run: bool) -> int:
     argv = ["git", "push", remote, branch]
     if _announce(argv, dry_run):
         try:
-            proc = subprocess.run(argv, cwd=root, timeout=_NETWORK_TIMEOUT_S, env=_no_prompt_env())
+            proc = run_bounded(argv, cwd=root, timeout=_NETWORK_TIMEOUT_S, env=_no_prompt_env())
         except subprocess.TimeoutExpired:
             print(f"handoff_mechanics: record push timed out after {_NETWORK_TIMEOUT_S}s; "
                   "stopping here", file=sys.stderr)

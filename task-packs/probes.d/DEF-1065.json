@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1065",
+ "subject": "bench/demo/STORYBOARD.md",
+ "cmd": "python3 -c \"import ast,pathlib; p=pathlib.Path('bench/demo/rehearse.py'); print(int(p.exists() and any(isinstance(n,ast.FunctionDef) and n.name=='main' for n in ast.walk(ast.parse(p.read_text(encoding='utf-8'))))))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "ecea4a687655",
+ "text_sha": "9d4b98a4d389",
+ "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
+}

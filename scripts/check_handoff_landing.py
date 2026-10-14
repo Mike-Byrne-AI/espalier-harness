@@ -50,6 +50,23 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    holds on Windows, where ``run`` waits on a grandchild holding its pipe
+    (DEF-3004)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_check_handoff_landing", REPO_ROOT / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
+
 # The gates that have caught this class, each with the reason it is here. A
 # hand-written list CAN stale (docs/FAILURE_MODES.md 13.25 -- a guard whose
 # population silently drops to zero reports success forever), so
@@ -171,12 +188,12 @@ def _session_changed_paths() -> list[str] | None:
     # wants a pragma -- and that budget is a deliberate ratchet. Written out, each
     # call is pinnable and costs nothing.
     try:
-        committed = subprocess.run(
+        committed = run_bounded(
             ["git", "diff", "--name-only", "origin/HEAD...HEAD"],
             cwd=REPO_ROOT, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=30,
         )
-        working = subprocess.run(
+        working = run_bounded(
             ["git", "status", "--porcelain"],
             cwd=REPO_ROOT, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=30,
@@ -930,7 +947,7 @@ def _is_commit(token: str) -> bool:
     12-hex population a memory row cites. Any failure reads as "not a commit",
     so an unresolvable token is checked rather than waved through."""
     try:
-        return subprocess.run(
+        return run_bounded(
             ["git", "cat-file", "-e", f"{token}^{{commit}}"],
             cwd=REPO_ROOT, capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=30,

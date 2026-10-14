@@ -1784,7 +1784,10 @@ class TestDisarmedNarrationMatchesTheActualShape:
         result = _merge(target)
         combined = result.stdout + result.stderr
 
-        assert "Nothing to do" in combined, combined
+        # The ALREADY branch, on a tree whose gates run nothing: it may not say
+        # "Nothing to do" over the warning that names something to do (upgrade's
+        # rule since 2026-09-29, merge-settings' since this row).
+        assert "already wired" in combined and "Nothing to do" not in combined, combined
         assert "wired anyway" not in combined, (
             "the no-op branch claimed it had wired the settings:\n" + combined
         )
@@ -2471,7 +2474,10 @@ class TestProfileAllowRulesReachAnExistingInstall:
         assert "appended" in second.stdout and "Bash(python3 -m pytest *)" in second.stdout
         assert "Bash(python3 -m pytest *)" in json.loads(path.read_text(encoding="utf-8"))["permissions"]["allow"]
         third = run("--add-allows")
-        assert third.returncode == 0 and "Nothing to do" in third.stdout and "not in .claude/settings.json" not in third.stdout
+        # No gap left and nothing appended. ("Nothing to do" is not said here:
+        # this fixture deploys no hook script, so its hooks do not run.)
+        assert third.returncode == 0 and "not in .claude/settings.json" not in third.stdout
+        assert "appended" not in third.stdout and "already wired" in third.stdout, third.stdout
 
     def test_a_rule_the_operator_denied_or_asked_is_neither_reported_nor_appended(self, tmp_path):
         """A deny or ask of a profile rule is a judgement, not friction: it is
@@ -2587,7 +2593,7 @@ class TestProfileAllowRulesReachAnExistingInstall:
         )
         assert result.returncode == 0, result.stderr
         assert "not in .claude/settings.json" not in result.stdout, result.stdout
-        assert "Nothing to do" in result.stdout
+        assert "--add-allows" not in result.stdout and "already wired" in result.stdout, result.stdout
         # The core, asked for workflow explicitly, still reports -- the default is what changed.
         assert merge_hooks_into_settings(path, repo_root=tmp_path, profile="workflow").missing_allows
 

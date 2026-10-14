@@ -1,0 +1,12 @@
+{
+ "id": "DEF-720",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import ast, pathlib, pkgutil, espalier.scanners as s; tree=ast.parse(pathlib.Path(chr(101)+\\\"spalier/cli.py\\\").read_text(encoding=\\\"utf-8\\\")); keys=[len(n.value.keys) for n in ast.walk(tree) if isinstance(n, ast.Assign) and isinstance(n.value, ast.Dict) and any(isinstance(t, ast.Name) and t.id==\\\"_FIRES_KEY\\\" for t in n.targets)]; tests=sum(1 for p in pathlib.Path(\\\"tests\\\").glob(\\\"test_*.py\\\") if any(isinstance(n, ast.Name) and n.id==\\\"_FIRES_KEY\\\" for n in ast.walk(ast.parse(p.read_text(encoding=\\\"utf-8\\\"))))); print(str(keys[0] if keys else 0)+\\\":\\\"+str(tests)+\\\":\\\"+str(sum(1 for m in pkgutil.iter_modules(s.__path__) if not m.name.startswith(\\\"_\\\"))))\"",
+ "open_value": "11:0:13",
+ "why_not": null,
+ "row_sha": "d31e9a0d61f0",
+ "text_sha": "0f1fc5bfdfda",
+ "verified_2026_09_08": "OPEN (filed 2026-09-08; probe driven at filing)",
+ "verified_2026_09_14": "STILL_OPEN (re-pinned '10:0:12' -> '11:0:13' on 2026-09-14: the class bit again on the group-12 lane (2026-09-14): the eleventh scanner, encoding_contracts, was enrolled by hand in _FIRES_KEY, in test_scan_telemetry._SCANNERS and in the self-host gate test, and the code review found WORKFLOW.md's 'ten' only after the fact; still no test derives the roster from the package (11 of 13 modules now; the two absentees unchanged))",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

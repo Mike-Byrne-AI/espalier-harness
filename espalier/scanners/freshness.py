@@ -37,8 +37,11 @@ from __future__ import annotations
 import ast
 import fnmatch
 import json
+import os
 import re
 import subprocess
+import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,6 +51,96 @@ from typing import Any
 # espalier/scanners/ is stdlib-only (test_scanners_stdlib_only) and cannot import
 # a cross-module constant; a future rename flips this one value.
 _MEMORY_FILENAME = "ESPALIER_MEMORY.md"
+
+
+# The bounded spawn, an inline copy: every git read below goes through
+# run_bounded so its timeout holds on Windows, where subprocess.run waits on
+# the real git behind Git for Windows's launcher past the cap (DEF-3004). A
+# scanner imports nothing from espalier, so espalier/_spawn.py is copied here,
+# not called; tests/test_contracts.py::TestTheBoundedSpawnTwins holds the
+# bodies equal to it and to tools/cc/_json_safe.py. Change all three together.
+
+#: What :func:`run_bounded` adds to a timeout on Windows: one deadline for the
+#: tree kill, the drain of what was written and the reap of the child.
+SPAWN_KILL_GRACE_SECONDS = 2.0
+
+
+def run_bounded(
+    args: Any, *, timeout: float | None = None, input: Any = None,
+    capture_output: bool = False, check: bool = False, **kwargs: Any,
+) -> "subprocess.CompletedProcess[Any]":
+    """``subprocess.run``, whose ``timeout`` bounds the call on Windows too:
+    the copy of ``espalier/_spawn.py::run_bounded`` (its docstring says how)."""
+    import subprocess
+
+    if timeout is None or sys.platform != "win32" or not _is_stdlib_run(subprocess.run, subprocess):
+        return subprocess.run(args, timeout=timeout, input=input,  # spawn: ok the bounded spawn itself
+                              capture_output=capture_output, check=check, **kwargs)
+    if input is not None:
+        if kwargs.get("stdin") is not None:
+            raise ValueError("stdin and input arguments may not both be used.")
+        kwargs["stdin"] = subprocess.PIPE
+    if capture_output:
+        if kwargs.get("stdout") is not None or kwargs.get("stderr") is not None:
+            raise ValueError("stdout and stderr arguments may not be used with capture_output.")
+        kwargs["stdout"] = subprocess.PIPE
+        kwargs["stderr"] = subprocess.PIPE
+    proc = subprocess.Popen(args, **kwargs)  # spawn: ok the bounded spawn itself -- Windows with a timeout
+    try:
+        stdout, stderr = proc.communicate(input, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        end = time.monotonic() + SPAWN_KILL_GRACE_SECONDS
+        _end_tree(proc, end)
+        try:
+            exc.stdout, exc.stderr = proc.communicate(timeout=max(0.05, end - time.monotonic()))
+        except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a holder the tree kill missed keeps its pipe; the bound holds and the TimeoutExpired below says what happened
+            pass
+        try:
+            proc.wait(timeout=max(0.05, end - time.monotonic()))
+        except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a child that outlives TerminateProcess is the OS's now
+            pass
+        raise
+    except BaseException:  # noqa: BLE001 -- Ctrl-C or a write error mid-call: the tree ends under the grace and the error goes on, as run's own handler kills and re-raises
+        _end_tree(proc, time.monotonic() + SPAWN_KILL_GRACE_SECONDS)
+        try:
+            proc.wait(timeout=SPAWN_KILL_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- a child that outlives TerminateProcess is the OS's now; the original error is the one to raise
+            pass
+        raise
+    retcode = proc.wait()  # communicate() returned, so it reaped the child: this answers at once
+    if check and retcode:
+        raise subprocess.CalledProcessError(retcode, proc.args, output=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(proc.args, retcode, stdout, stderr)
+
+
+def _is_stdlib_run(run: Any, subprocess_module: Any) -> bool:
+    """Whether ``run`` is the standard library's own ``subprocess.run`` (the
+    copy of ``espalier/_spawn.py::_is_stdlib_run``)."""
+    code = getattr(run, "__code__", None)
+    origin = getattr(subprocess_module, "__file__", None)
+    if code is None or not origin:
+        return False
+    return os.path.normcase(os.path.abspath(code.co_filename)) == os.path.normcase(os.path.abspath(origin))
+
+
+def _end_tree(proc: "subprocess.Popen[Any]", end: float) -> None:
+    """End ``proc`` and every process below it on Windows (the copy of
+    ``espalier/_spawn.py::_end_tree``)."""
+    import subprocess
+
+    taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "taskkill.exe")
+    try:
+        subprocess.run(  # spawn: ok the bounded spawn's tree kill -- no pipes, its own timeout
+            [taskkill, "/T", "/F", "/PID", str(proc.pid)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=max(0.05, end - time.monotonic()),
+        )
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- the kill below still ends the child, and the drain's deadline holds either way
+        pass
+    try:
+        proc.kill()
+    except OSError:  # fail-open: ok deliberate -- the child already ended
+        pass
 
 
 def _skip_nested_repos(dirpath: str, dirnames: list[str]) -> None:
@@ -524,7 +617,7 @@ def _git_log_name_only(
         "--",
     ] + paths
     try:
-        result = subprocess.run(
+        result = run_bounded(
             cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
@@ -575,7 +668,7 @@ def _symbol_span(repo_root: Path, path: str, symbol: str) -> tuple[int, int] | N
     if not symbol or "." in symbol or "::" in symbol or not path.endswith(".py"):
         return None
     try:
-        shown = subprocess.run(
+        shown = run_bounded(
             ["git", "-C", str(repo_root), "show", f"HEAD:{path}"],
             capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
@@ -626,7 +719,7 @@ def _git_log_symbol_commits(
         "-L", f"{start},{end}:{path}", f"{since_sha}..HEAD",
     ]
     try:
-        result = subprocess.run(
+        result = run_bounded(
             cmd, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
@@ -714,7 +807,7 @@ def _git_status_dirty(repo_root: Path, paths: list[str]) -> dict[str, str]:
         "status", "--porcelain=v1", "-z", "--untracked-files=all", "--",
     ] + paths
     try:
-        result = subprocess.run(
+        result = run_bounded(
             cmd, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
@@ -750,7 +843,7 @@ def _git_diff_old_ranges(repo_root: Path, path: str) -> list[tuple[int, int]] | 
     as a change to the symbol (the conservative side)."""
     cmd = ["git", "-C", str(repo_root), "diff", "-U0", "--no-color", "HEAD", "--", path]
     try:
-        result = subprocess.run(
+        result = run_bounded(
             cmd, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
@@ -859,7 +952,7 @@ def _manifest_fragments_at_head(repo_root: Path) -> dict[str, Any] | None:
     through ``hand_edit_check_note``, wherever this returns ``None``."""
     cmd = ["git", "-C", str(repo_root), "show", f"HEAD:{MANIFEST_REL_PATH}"]
     try:
-        result = subprocess.run(
+        result = run_bounded(
             cmd, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
@@ -1180,7 +1273,7 @@ def scan_repo(repo_root: Path) -> list[FragmentState]:
 
 def _head_sha(repo_root: Path) -> str:
     try:
-        result = subprocess.run(
+        result = run_bounded(
             ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
             capture_output=True, text=True, encoding="utf-8", check=False, timeout=10,
         )

@@ -794,6 +794,506 @@ def test_upgrade_on_a_version_current_install_names_a_retired_deny_rule_and_is_n
     assert settings.read_bytes() == before
 
 
+class TestInitNamesARetiredDenyRule:
+    """DEF-4017: an adopter on 0.8.0b2 or earlier who refreshes by re-running
+    ``init .`` (QUICKSTART lists it beside ``upgrade --execute``) was told
+    nothing about the retired deny rule their settings.json still carries,
+    the one that refuses every recursive delete of an absolute path in every
+    permission mode, while ``upgrade``, ``doctor``, ``merge-settings`` and
+    ``init --wire-hooks`` each named it. The re-run now says it in the same
+    voice, read-only, and says nothing else about permissions."""
+
+    RULE = "Bash(rm -rf /*)"
+    WARN = "carries the retired deny rule Bash(rm -rf /*)"
+
+    @staticmethod
+    def _init(root: Path, **extra) -> int:
+        import argparse
+        from espalier.cli import cmd_init
+
+        return cmd_init(argparse.Namespace(repo=str(root), config=None, write_gitignore=True, **extra))
+
+    def _plant(self, root: Path) -> bytes:
+        import json
+
+        settings = root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["permissions"].setdefault("deny", []).append(self.RULE)
+        settings.write_bytes((json.dumps(data, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+        return settings.read_bytes()
+
+    def test_a_plain_init_rerun_names_the_rule_and_leaves_the_file_alone(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        before = self._plant(_initialized_tree(tmp_path))
+        capsys.readouterr()
+        assert self._init(tmp_path) == 0
+        err = capsys.readouterr().err
+        assert f"[init] WARN: .claude/settings.json {self.WARN}" in err, err[-1500:]
+        assert "Delete that line by hand" in err, err[-1500:]
+        assert (tmp_path / ".claude" / "settings.json").read_bytes() == before
+
+    def test_a_disarmed_install_is_not_told_to_delete_the_rule(self, tmp_path, capsys, monkeypatch):
+        """Hooks wired to an interpreter this host cannot run (a settings.json
+        from another machine) fail open, so write_guard is not there to stand
+        in for the retired rule, and "delete that line" would take away the
+        only guard left. The re-run names the disarmed hooks and leaves the
+        rule to the re-run after the repair."""
+        import json
+
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        self._plant(root)
+        settings = root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        for entries in data["hooks"].values():
+            for entry in entries:
+                for hook in entry["hooks"]:
+                    hook["command"] = "no-such-python-w0"
+        settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        capsys.readouterr()
+        assert self._init(root) == 0
+        captured = capsys.readouterr()
+        assert "Hooks are NOT yet active" in captured.out, captured.out[-2500:]
+        assert "retired deny rule" not in captured.err, captured.err[-2500:]
+        assert "Delete that line" not in captured.err, captured.err[-2500:]
+
+    def test_a_hand_written_rule_is_said_to_match_never_to_be_inits(self, tmp_path, capsys, monkeypatch):
+        """The registry matches by rule text, so a rule the operator wrote by
+        hand on an install this engine made (which never wrote it) reads the
+        same as one an old init wrote. The shared reason every surface renders
+        (doctor, merge-settings, upgrade, this re-run) says the text matches a
+        rule init wrote, never that init wrote this one."""
+        from espalier.cli import settings_stale_denies
+
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        settings = root / ".claude" / "settings.json"
+        assert self.RULE not in settings.read_text(encoding="utf-8")
+        self._plant(root)
+        ((rule, why),) = settings_stale_denies(settings)
+        assert rule == self.RULE
+        assert "this line matches a deny rule the init command wrote through 0.8.0b2" in why, why
+        assert "wrote it" not in why, why
+        capsys.readouterr()
+        assert self._init(root) == 0
+        err = capsys.readouterr().err
+        assert "this line matches a deny rule the init command wrote through 0.8.0b2" in err, err[-1500:]
+        assert "wrote it" not in err, err[-1500:]
+
+    def test_a_plain_rerun_over_a_minimal_install_lists_no_allow_rules(self, tmp_path, capsys, monkeypatch):
+        """A plain re-run records the default profile over the one the file was
+        rendered from, so a gap read here would list the workflow profile's
+        rules (Write among them) to a minimal install, with an append that
+        widens its permissions. The re-run names the retired rule only."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "README.md").write_text("# t\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir()
+        assert self._init(tmp_path, profile="minimal") == 0
+        self._plant(tmp_path)
+        capsys.readouterr()
+        assert self._init(tmp_path) == 0
+        err = capsys.readouterr().err
+        assert self.WARN in err, err[-1500:]
+        assert "allow rule" not in err and "--add-allows" not in err, err[-2500:]
+
+    def test_upgrade_execute_names_the_rule_once_not_once_per_layer(self, tmp_path, capsys, monkeypatch):
+        """``upgrade --execute`` runs the same deploy init does and then its own
+        report; the deploy's copy is init's alone, so the WARN is said once."""
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        self._plant(root)
+        (root / "docs" / "CHEAT-SHEET.md").unlink()  # drift, so --execute deploys
+        capsys.readouterr()
+        assert _upgrade(root, execute=True) == 0
+        captured = capsys.readouterr()
+        assert "[upgrade] re-deployed" in captured.out, captured.out[-1500:]
+        assert captured.err.count(self.WARN) == 1, captured.err[-2500:]
+
+    def test_init_never_calls_an_adopters_own_rule_retired(self, tmp_path, capsys, monkeypatch):
+        """Case (b): no Espalier hook is wired, so the write_guard check that
+        replaces a retired Read() rule is not running, and "delete that line"
+        would take away the adopter's only guard on the file; that branch's one
+        WARN sends them to merge-settings or --wire-hooks, which wire the hooks
+        and name the rule in the same run."""
+        import json
+
+        from espalier import cli
+
+        monkeypatch.chdir(tmp_path)
+        # Off a TTY the arming prompt is skipped; say so, or `pytest -s` in a
+        # terminal would stop at it.
+        monkeypatch.setattr(cli, "_stream_isatty", lambda _stream: False)
+        (tmp_path / "README.md").write_text("# t\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_bytes(
+            json.dumps({"permissions": {"deny": [self.RULE, "Read(./.env)"]}}).encode("utf-8"))
+        assert self._init(tmp_path) == 0
+        err = capsys.readouterr().err
+        assert "NO Espalier hooks wired" in err, err[-1500:]
+        assert "retired deny rule" not in err, err[-1500:]
+
+
+def _plant_retired_rule(root: Path) -> None:
+    import json
+
+    settings = root / ".claude" / "settings.json"
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    data["permissions"].setdefault("deny", []).append("Bash(rm -rf /*)")
+    settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+
+
+def _rewire_every_hook(root: Path, command: str | None) -> None:
+    """Every hook entry runs ``command``; ``None`` drops the hooks block."""
+    import json
+
+    settings = root / ".claude" / "settings.json"
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    if command is None:
+        data.pop("hooks", None)
+    else:
+        for entries in data["hooks"].values():
+            for entry in entries:
+                for hook in entry["hooks"]:
+                    hook["command"] = command
+    settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+
+
+def _what_the_surface_says(surface: str, root: Path, capsys) -> str:
+    import argparse
+
+    from espalier import cli
+    from espalier.doctor import run_doctor_check
+
+    capsys.readouterr()
+    if surface == "doctor":
+        result = run_doctor_check(root, skip_self_host=True)
+        return "\n".join(result["warnings"] + result["failures"] + result["next_steps"])
+    if surface == "init":
+        cli.cmd_init(argparse.Namespace(repo=str(root), config=None, write_gitignore=True))
+    elif surface == "init --wire-hooks":
+        cli.cmd_init(argparse.Namespace(repo=str(root), config=None, write_gitignore=True,
+                                        wire_hooks=True))
+    elif surface == "merge-settings":
+        cli.cmd_merge_settings(argparse.Namespace(repo=str(root), profile=None, add_allows=False,
+                                                  repair=False))
+    else:
+        cli.cmd_upgrade(argparse.Namespace(repo=str(root), execute="--execute" in surface,
+                                           config=None))
+    captured = capsys.readouterr()
+    return captured.out + captured.err
+
+
+# (surface, whether it needs drift to reach its report, whether the merge has an
+# event to add -- upgrade --execute's WIRED branch; the event is Stop, a blocking
+# gate, so a read taken before the merge would see a disarmed tree)
+_RETIRED_RULE_SURFACES = [
+    ("init", False, False), ("init --wire-hooks", False, False), ("merge-settings", False, False),
+    ("doctor", False, False), ("upgrade, version-current", False, False),
+    ("upgrade preview", True, False), ("upgrade --execute", True, False),
+    ("upgrade --execute, an event added", True, True),
+]
+_SURFACE_IDS = [s for s, _, _ in _RETIRED_RULE_SURFACES]
+# A word that names no interpreter, and one that reads as Python and never resolves:
+# the two arms of the armament read that a disarmed tree trips.
+_DISARMING_WORDS = ["no-such-python-w0", "python-no-such-w0"]
+
+
+class TestNoDeleteAdviceWhileTheHooksDoNotRun:
+    """Every surface that names a retired deny rule says "delete that line",
+    and for every row the hook layer is what stands in for the rule
+    (write_guard's root-wipe wall, its secret-path read check). Where the
+    file's Espalier hooks do not run -- wired to an interpreter this host
+    lacks, or not wired at all -- that advice takes away the only guard left,
+    so no surface gives it; each names the disarmed hooks, and the run after
+    the repair names the rule. The armed twin of each row holds the advice in
+    place, so the gate cannot pass by silencing everything."""
+
+    @staticmethod
+    def _tree(tmp_path: Path, monkeypatch, *, drift: bool, command: str | None,
+              drop_event: bool = False) -> Path:
+        import json
+
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        _plant_retired_rule(root)
+        _rewire_every_hook(root, command)
+        if drop_event:
+            settings = root / ".claude" / "settings.json"
+            data = json.loads(settings.read_text(encoding="utf-8"))
+            data["hooks"].pop("Stop")  # a blocking gate: armed after the merge, not before
+            settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        if drift:
+            (root / "docs" / "CHEAT-SHEET.md").unlink()
+        return root
+
+    @pytest.mark.parametrize("word", _DISARMING_WORDS)
+    @pytest.mark.parametrize("surface,drift,drop_event", _RETIRED_RULE_SURFACES, ids=_SURFACE_IDS)
+    def test_a_disarmed_install_is_not_told_to_delete_it(self, surface, drift, drop_event, word,
+                                                         tmp_path, capsys, monkeypatch):
+        """...and is told why: each surface names the hooks that do not run, so
+        holding the advice back never leaves the tree unexplained."""
+        root = self._tree(tmp_path, monkeypatch, drift=drift, command=word, drop_event=drop_event)
+        said = _what_the_surface_says(surface, root, capsys)
+        assert "retired deny rule" not in said and "Bash(rm -rf /*)" not in said, said[-2500:]
+        assert "runs no interpreter" in said or "does not resolve" in said, said[-2500:]
+
+    @pytest.mark.parametrize("surface,drift,drop_event", _RETIRED_RULE_SURFACES, ids=_SURFACE_IDS)
+    def test_an_armed_install_is_told(self, surface, drift, drop_event, tmp_path, capsys, monkeypatch):
+        from espalier.cli import _detect_python_command
+
+        root = self._tree(tmp_path, monkeypatch, drift=drift, command=_detect_python_command(),
+                          drop_event=drop_event)
+        said = _what_the_surface_says(surface, root, capsys)
+        assert "retired deny rule Bash(rm -rf /*)" in said, said[-2500:]
+
+    def test_doctor_does_not_tell_a_file_with_no_espalier_hooks(self, tmp_path, capsys, monkeypatch):
+        root = self._tree(tmp_path, monkeypatch, drift=False, command=None)
+        said = _what_the_surface_says("doctor", root, capsys)
+        assert "retired deny rule" not in said and "Bash(rm -rf /*)" not in said, said[-2500:]
+
+    def test_the_gate_holds_back_a_file_with_no_espalier_hooks_even_when_nothing_blocks(self, tmp_path):
+        """The "wires Espalier hooks" arm on its own: with no gate script on disk
+        the armament read finds nothing to fault, so only this arm withholds."""
+        import json
+
+        from espalier.cli import _retired_rules_to_name
+
+        settings = tmp_path / "settings.json"
+        settings.write_bytes(json.dumps({"permissions": {"deny": ["Bash(rm -rf /*)"]}}).encode("utf-8"))
+        stale = (("Bash(rm -rf /*)", "why"),)
+        assert _retired_rules_to_name(stale, repo_root=tmp_path, settings_path=settings,
+                                      blockers=[]) == ()
+
+    def test_version_current_upgrade_reads_the_armament_once(self, tmp_path, capsys, monkeypatch):
+        """The WARN, the sentence that points at it and the disarmed narration
+        share one read: three reads of a flaky interpreter can disagree, and
+        the rule adds no interpreter spawn to the run."""
+        from espalier import cli
+        from espalier.cli import _detect_python_command
+
+        root = self._tree(tmp_path, monkeypatch, drift=False, command=_detect_python_command())
+        real, calls = cli._enforcement_claim_blockers, []
+
+        def counting(*a, **k):
+            calls.append(1)
+            return real(*a, **k)
+
+        monkeypatch.setattr(cli, "_enforcement_claim_blockers", counting)
+        said = _what_the_surface_says("upgrade, version-current", root, capsys)
+        assert "retired deny rule Bash(rm -rf /*)" in said, said[-2500:]
+        assert len(calls) == 1, len(calls)
+
+
+class TestMergeSettingsSaysNothingToDoOnlyWhenItIsWhole:
+    """upgrade's rule since 2026-09-29, for merge-settings: on a file whose
+    hook events are current, "Nothing to do." printed above a retired-rule
+    WARN (armed tree) or above the not-armed warning (disarmed tree), each
+    of which is something to do."""
+
+    @staticmethod
+    def _said(root: Path, capsys) -> str:
+        return _what_the_surface_says("merge-settings", root, capsys)
+
+    def test_not_over_a_retired_rule_on_an_armed_tree(self, tmp_path, capsys, monkeypatch):
+        from espalier.cli import _detect_python_command
+
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        _plant_retired_rule(root)
+        _rewire_every_hook(root, _detect_python_command())
+        said = self._said(root, capsys)
+        assert "retired deny rule Bash(rm -rf /*)" in said, said[-2500:]
+        assert "Nothing to do" not in said, said[-2500:]
+
+    def test_not_over_hooks_that_do_not_run(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        _rewire_every_hook(root, "python-no-such-w0")
+        said = self._said(root, capsys)
+        assert "does not resolve" in said, said[-2500:]
+        assert "Nothing to do" not in said, said[-2500:]
+
+    def test_still_said_when_it_is_whole(self, tmp_path, capsys, monkeypatch):
+        from espalier.cli import _detect_python_command
+
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        _rewire_every_hook(root, _detect_python_command())
+        said = self._said(root, capsys)
+        assert "Nothing to do." in said, said[-2500:]
+
+
+class TestUpgradeExecuteReadsTheArmamentAfterItWires:
+    """``--wire-hooks`` reads the hooks back after its merge writes events;
+    ``upgrade --execute``'s same merge did not, and told a tree whose hooks
+    cannot run that it had wired them, and nothing more."""
+
+    @staticmethod
+    def _tree(tmp_path: Path, monkeypatch, command: str) -> Path:
+        import json
+
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        _rewire_every_hook(root, command)
+        settings = root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["hooks"].pop("Stop")  # a blocking gate: armed after the merge, not before
+        settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        (root / "docs" / "CHEAT-SHEET.md").unlink()
+        return root
+
+    def test_a_disarmed_tree_is_told_after_the_events_are_wired(self, tmp_path, capsys, monkeypatch):
+        root = self._tree(tmp_path, monkeypatch, "python-no-such-w0")
+        said = _what_the_surface_says("upgrade --execute", root, capsys)
+        assert "into settings.json" in said, said[-2500:]
+        assert "does not resolve" in said, said[-2500:]
+
+    def test_an_armed_tree_is_not(self, tmp_path, capsys, monkeypatch):
+        """Armed by the merge itself (the Stop gate it adds): read before the
+        write, this tree would be told its hooks are not active."""
+        from espalier.cli import _detect_python_command
+
+        root = self._tree(tmp_path, monkeypatch, _detect_python_command())
+        said = _what_the_surface_says("upgrade --execute", root, capsys)
+        assert "into settings.json" in said, said[-2500:]
+        assert "NOT yet active" not in said, said[-2500:]
+
+    def test_a_retired_rule_adds_no_armament_read(self, tmp_path, capsys, monkeypatch):
+        """The retired-rule gate reuses the read taken after the write, so a
+        run with the rule asks the interpreters no more often than one without."""
+        from espalier import cli
+        from espalier.cli import _detect_python_command
+
+        def reads(with_rule: bool, where: Path) -> int:
+            where.mkdir()
+            root = self._tree(where, monkeypatch, _detect_python_command())
+            if with_rule:
+                _plant_retired_rule(root)
+            real, calls = cli._enforcement_claim_blockers, []
+
+            def counting(*a, **k):
+                calls.append(1)
+                return real(*a, **k)
+
+            monkeypatch.setattr(cli, "_enforcement_claim_blockers", counting)
+            said = _what_the_surface_says("upgrade --execute", root, capsys)
+            monkeypatch.setattr(cli, "_enforcement_claim_blockers", real)
+            assert ("retired deny rule" in said) is with_rule, said[-2500:]
+            return len(calls)
+
+        assert reads(True, tmp_path / "with") == reads(False, tmp_path / "without")
+
+
+class TestEveryRetiredRuleReportGoesThroughTheGate:
+    """Derived from espalier/, so a reporter added later cannot skip the gate
+    by not being on a hand-written list: every ``stale=`` handed to the shared
+    reporter is the gate's output, and the WARN's text lives in the two places
+    that render it (the shared reporter, and doctor's loop over a gated list)."""
+
+    @staticmethod
+    def _engine_modules():
+        import ast
+
+        root = Path(__file__).resolve().parents[1] / "espalier"
+        for path in sorted(root.rglob("*.py")):
+            rel = path.relative_to(root).as_posix()
+            if rel.startswith(("_vendor/", "assets/")):
+                continue
+            yield rel, ast.parse(path.read_text(encoding="utf-8"))
+
+    @staticmethod
+    def _called(call, name: str) -> bool:
+        """``name(...)`` or ``module.name(...)``: doctor reaches cli by attribute."""
+        func = call.func
+        return getattr(func, "id", None) == name or getattr(func, "attr", None) == name
+
+    @classmethod
+    def _gated_names(cls, func) -> set[str]:
+        """Names bound from the gate and from nothing else in ``func``: a name
+        later rebound to the raw list is not gated."""
+        import ast
+
+        from_gate, from_other = set(), set()
+        for node in ast.walk(func):
+            targets = (node.targets if isinstance(node, ast.Assign)
+                       else [node.target] if isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.For))
+                       else [])
+            names = {t.id for t in targets if isinstance(t, ast.Name)}
+            if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                    and cls._called(node.value, "_retired_rules_to_name")):
+                from_gate |= names
+            else:
+                from_other |= names
+        return from_gate - from_other
+
+    @classmethod
+    def _is_gated(cls, value, gated: set[str]) -> bool:
+        import ast
+
+        if isinstance(value, ast.Call) and cls._called(value, "_retired_rules_to_name"):
+            return True
+        return isinstance(value, ast.Name) and value.id in gated
+
+    def test_every_stale_argument_is_the_gates_output(self):
+        import ast
+
+        seen, bad = 0, []
+        for rel, tree in self._engine_modules():
+            for func in ast.walk(tree):
+                if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                gated = self._gated_names(func)
+                for call in ast.walk(func):
+                    if isinstance(call, ast.Call) and self._called(call, "_report_allow_gaps"):
+                        for kw in call.keywords:
+                            if kw.arg is None:  # **kwargs could carry stale= past the census
+                                bad.append(f"{rel}:{call.lineno} (**)")
+                            elif kw.arg == "stale":
+                                seen += 1
+                                if not self._is_gated(kw.value, gated):
+                                    bad.append(f"{rel}:{kw.value.lineno}")
+        assert seen >= 5, seen
+        assert not bad, f"stale= not from _retired_rules_to_name at {sorted(set(bad))}"
+
+    def test_no_gate_call_hands_it_a_literal_armament(self):
+        """``blockers=[]`` written into the engine would wave every tree through."""
+        import ast
+
+        bad = []
+        for rel, tree in self._engine_modules():
+            for call in ast.walk(tree):
+                if isinstance(call, ast.Call) and self._called(call, "_retired_rules_to_name"):
+                    for kw in call.keywords:
+                        if kw.arg == "blockers" and isinstance(
+                                kw.value, (ast.List, ast.Tuple, ast.Constant)):
+                            bad.append(f"{rel}:{kw.value.lineno}")
+        assert not bad, bad
+
+    def test_the_warn_text_lives_in_two_places_and_doctor_loops_a_gated_list(self):
+        import ast
+
+        homes, doctor_loops = [], []
+        for rel, tree in self._engine_modules():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                        and "carries the retired deny rule" in node.value:
+                    homes.append(rel)
+            if rel == "doctor.py":
+                for func in ast.walk(tree):
+                    if not isinstance(func, ast.FunctionDef):
+                        continue
+                    gated = self._gated_names(func)
+                    for loop in ast.walk(func):
+                        if isinstance(loop, ast.For) and any(
+                                isinstance(n, ast.Constant) and isinstance(n.value, str)
+                                and "carries the retired deny rule" in n.value
+                                for n in ast.walk(loop)):
+                            doctor_loops.append(self._is_gated(loop.iter, gated))
+        assert sorted(homes) == ["cli.py", "doctor.py"], homes
+        assert doctor_loops == [True], doctor_loops
+
+
 def test_init_records_the_effective_settings_profile_and_refresh_keeps_it(tmp_path):
     """Every reader that compares settings.json against a profile needs the one
     init rendered it from; the per-machine file records nothing itself."""

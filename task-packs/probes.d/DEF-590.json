@@ -1,0 +1,11 @@
+{
+ "id": "DEF-590",
+ "subject": "scripts/wheel_smoke.py",
+ "cmd": "python3 -c \"s=open('scripts/wheel_smoke.py').read(); print('sorted(dist_dir.glob' in s and 'parse_wheel_filename' not in s)\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "0cde0894b13e",
+ "text_sha": "8d7f2ef7f0f0",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

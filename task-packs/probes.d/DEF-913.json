@@ -1,0 +1,11 @@
+{
+ "id": "DEF-913",
+ "subject": "espalier/claim_extractor.py",
+ "cmd": "python3 -c \"import ast,pathlib;S=[('espalier/claim_extractor.py','FROZEN_RECORD_DOCS'),('tests/test_doc_source_citations.py','_RECORD_SURFACE_DOCS'),('tests/test_doc_test_citations.py','_EXCLUDE_FILES'),('espalier/scanners/retired_vocab.py','EXEMPT_FILES'),('espalier/scanners/freshness.py','FRAGMENT_SURFACE_DENYLIST'),('espalier/scanners/canon_verifier.py','EXEMPT_PROSE_FILES')];g=lambda f,n:next({c.value for c in ast.walk(a.value) if isinstance(c,ast.Constant) and isinstance(c.value,str)} for a in ast.walk(ast.parse(pathlib.Path(f).read_text(encoding='utf-8'))) if isinstance(a,(ast.Assign,ast.AnnAssign)) and a.value is not None and any(isinstance(t,ast.Name) and t.id==n for t in (a.targets if isinstance(a,ast.Assign) else [a.target])));print(len(set.intersection(*[g(f,n) for f,n in S])))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "a43478518494",
+ "text_sha": "377a730908ed",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
+ "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged on 2026-09-22: the pack this text cites landed 2026-09-22 and left the shipped locations; the mention is re-keyed to the pack's title and landing date so a public reader is not sent to a file the archive does not carry (the dangling-id gate's own message); value unchanged)"
+}

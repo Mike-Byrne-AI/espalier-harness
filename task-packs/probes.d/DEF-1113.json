@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1113",
+ "subject": "tools/cc/hooks/_explain_path.py",
+ "cmd": "python -c 'import ast;t=ast.parse(open(\"tools/cc/hooks/_explain_path.py\",encoding=\"utf-8\").read());print(sum(isinstance(n,ast.Constant) and isinstance(n.value,str) and \"writes allowed (unprotected)\" in n.value for n in ast.walk(t)))'",
+ "open_value": "1",
+ "why_not": null,
+ "row_sha": "4ab330c3085e",
+ "text_sha": "6a8c83b9181e",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

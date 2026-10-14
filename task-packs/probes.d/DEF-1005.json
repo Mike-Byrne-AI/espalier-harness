@@ -1,0 +1,14 @@
+{
+ "id": "DEF-1005",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import ast,os; os.environ[\"COLUMNS\"]=\"400\"; from espalier import cli; from espalier._compat import tomllib; f=next(n for n in ast.walk(ast.parse(open(\"espalier/cli.py\",encoding=\"utf-8\").read())) if isinstance(n,ast.FunctionDef) and n.name==\"_print_init_summary\"); s=[n.value for n in ast.walk(f) if isinstance(n,ast.Constant) and isinstance(n.value,str)]; u=tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"urls\"][\"Documentation\"]; print(any(\"/blob/main/docs/\" in x for x in s+[cli.build_parser().format_help(),u,open(\"README.md\",encoding=\"utf-8\").read()]))'",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "pyproject.toml",
+  "README.md"
+ ],
+ "row_sha": "76a3ebd60cf9",
+ "text_sha": "64364ce7a069",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

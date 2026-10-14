@@ -63,7 +63,7 @@ _DENY_DEFAULTS: tuple[str, ...] = (
 # DELIBERATELY (after 0.8.0a13), and moved to the hook layer as
 # `write_guard.check_secret_path_access`; they are RETIRED rows of
 # `RETIRED_DENY_RULES` below, so a file that still carries one is named by
-# doctor, merge-settings and the upgrade preview. They were:
+# doctor, merge-settings, upgrade and a re-run of init. They were:
 #     Read(./.env)  Read(./.env.*)  Read(./secrets/**)
 #     Read(./**/.aws/credentials)  Read(./**/credentials.json)
 #
@@ -108,16 +108,18 @@ _DENY_DEFAULTS: tuple[str, ...] = (
 # `write_guard`'s catastrophic-rm classifier, which reads the root glob as the
 # root itself (pinned in tests/test_write_guard.py), so the rule was redundant
 # for its target and over-broad for everything else. It is RETIRED: `init` no
-# longer writes it, and `doctor`, `merge-settings` and the `upgrade` preview
-# name it on a settings.json that still carries it -- the merge never removes
+# longer writes it, and `doctor`, `merge-settings`, `upgrade` and a re-run of
+# `init` name it on a settings.json that still carries it -- the merge never removes
 # an operator's rule, so the delete is theirs. Pinned in
 # tests/test_settings_profiles.py: no deny default ends in a `*` or puts one
 # right after a `/`, and a retired rule is never also a default.
 #
 # Each row is `(rule, last version whose init wrote it, why)`. The version is
 # the provenance contract: a rule goes here only if `init` SHIPPED it, so the
-# reporters can say so; a merely bad rule an operator wrote themselves is
-# theirs, never "retired", and does not belong here.
+# reporters can name the version; a merely bad rule an operator wrote themselves
+# is theirs, never "retired", and does not belong here. The reporters match by
+# text, so the same line written by hand reads the same: they say a line
+# matches a rule init wrote, never that init wrote it (cli._stale_denies).
 RETIRED_DENY_RULES: tuple[tuple[str, str, str], ...] = (
     (
         "Bash(rm -rf /*)",
@@ -589,8 +591,9 @@ def retired_deny_rules() -> tuple[tuple[str, str, str], ...]:
     and no longer does, with the last version that wrote each.
 
     A settings.json that still carries one is named by ``doctor``,
-    ``merge-settings`` and the ``upgrade`` preview, with the reason and the
-    version; nothing removes it, because ``permissions`` is the operator's
-    (the note above ``RETIRED_DENY_RULES``).
+    ``merge-settings``, ``upgrade`` and a re-run of ``init`` over an install
+    (``--wire-hooks`` or not), with the reason and the version; nothing
+    removes it, because ``permissions`` is the operator's (the note above
+    ``RETIRED_DENY_RULES``).
     """
     return RETIRED_DENY_RULES

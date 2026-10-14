@@ -1,0 +1,13 @@
+{
+ "id": "DEF-841",
+ "subject": "bench/reachability_differential.py",
+ "cmd": "python3 -c 'import ast,pathlib;print(sum(1 for p in [\"bench/reachability_differential.py\",\"bench/powershell_reachability_differential.py\"] for n in ast.walk(ast.parse(pathlib.Path(p).read_text(encoding=\"utf-8\"))) if isinstance(n,ast.FunctionDef) and n.name==\"assert_safe_to_execute\"))'",
+ "open_value": "2",
+ "why_not": null,
+ "row_sha": "1aacc59de963",
+ "text_sha": "d9addb7cca75",
+ "verified_2026_09_17": "OPEN (filed 2026-09-17; probe driven at filing)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: 1-D 2026-09-20: the 1-B rewrite dropped the row's citation of its own drafted pack; restored so the active-pack orphan check resolves TP-450)",
+ "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: 1-H disposition recorded 2026-09-21: TP-450 ships at the root as forward work, execution post-cut; the probe's value (two definitions) is unchanged and the claim stands)",
+ "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged on 2026-09-22: the pack this text cites landed 2026-09-22 and left the shipped locations; the mention is re-keyed to the pack's title and landing date so a public reader is not sent to a file the archive does not carry (the dangling-id gate's own message); value unchanged)"
+}

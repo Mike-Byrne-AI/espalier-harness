@@ -1,0 +1,10 @@
+{
+ "id": "DEF-860",
+ "subject": "bench/powershell_guard_rehearsal.py",
+ "cmd": "python3 -c \"import pathlib;print(sum('rehearsal-results' in p.read_text(encoding='utf-8',errors='replace') for d in ('tests','scripts','.github') for p in pathlib.Path(d).rglob('*') if p.is_file()))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "4f08ce575f41",
+ "text_sha": "a4d0515e3f72",
+ "verified_2026_09_20": "OPEN (filed 2026-09-20; probe driven at filing)"
+}

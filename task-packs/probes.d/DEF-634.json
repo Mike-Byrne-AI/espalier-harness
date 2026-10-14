@@ -1,0 +1,13 @@
+{
+ "id": "DEF-634",
+ "subject": ".gitattributes",
+ "cmd": "python3 -c \"from espalier.surface_contract import classify_release_path as c;print(c('memory/CONVERGENCE_LEDGER.md'))\"; git check-attr export-ignore memory/CONVERGENCE_LEDGER.md",
+ "open_value": "public",
+ "why_not": null,
+ "row_sha": "fdbf776c9023",
+ "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
+ "text_sha": "4905eb687449",
+ "verified_2026_09_08": "STILL_OPEN (re-pinned value unchanged on 2026-09-08: re-tagged MAINTAINER 2026-09-08: this repo's public export set; an init tree never receives memory/CONVERGENCE_LEDGER.md, so the reader is the public-repo evaluator)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: decision recorded: internal, out of the public tree; execution owed to its own lane with the recall tables as the oracle; the value stands)"
+}

@@ -1,0 +1,12 @@
+{
+ "id": "DEF-751",
+ "subject": "tests/conftest.py",
+ "cmd": "python3 -c \"import subprocess,sys; r=subprocess.run([sys.executable,'-m','pytest','-p','no:cacheprovider','--collect-only','-q','-m','contract','tests/test_cli_commands.py','tests/test_release_denylist.py'],capture_output=True,text=True); sys.exit(2) if r.returncode not in (0,5) else print(sum(1 for l in r.stdout.splitlines() if 'TestArgparseErrorCuration' in l or 'TestEngineConsumerAllowlist' in l))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "fd4943317d3f",
+ "text_sha": "9e68b1f4ab5e",
+ "verified_2026_09_10": "OPEN (filed 2026-09-10; probe driven at filing)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "verified_2026_09_28": "STILL_OPEN (re-pinned value unchanged on 2026-09-28: a pytest that could not run (rc 1) printed 0, the open value, so a broken collector read as the open defect; the probe now exits 2 on any rc but 0 or 5 (UNRESOLVED) and runs with -p no:cacheprovider so it leaves no .pytest_cache)"
+}

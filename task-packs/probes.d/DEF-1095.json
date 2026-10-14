@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1095",
+ "subject": "tools/cc/hooks/_hook_utils.py",
+ "cmd": "python -c 'import ast;t=ast.parse(open(\"tools/cc/hooks/_hook_utils.py\",encoding=\"utf-8\").read());a=[n for n in t.body if isinstance(n,ast.Assign) and getattr(n.targets[0],\"id\",\"\")==\"EXEMPT_UNIVERSAL_PREFIXES\"][0];print(any(isinstance(c,ast.Constant) and c.value==\".claude/\" for c in ast.walk(a.value)))'",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "7ab01557b5de",
+ "text_sha": "5c3bd92579d4",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

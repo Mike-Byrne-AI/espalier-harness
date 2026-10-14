@@ -1,0 +1,13 @@
+{
+ "id": "DEF-664",
+ "subject": "tools/cc/hooks/_hook_utils.py",
+ "cmd": "python3 -c \"import inspect,sys;sys.path.insert(0,'tools/cc/hooks');import _hook_utils as h;s=inspect.getsource(h._project_root_spelling);print('raw is None or raw' in s, s.count('WARN'))\"; test -d tools/cc/hooks/.espalier-state && echo STRAY_STATE_DIR",
+ "open_value": "True 1",
+ "why_not": null,
+ "row_sha": "82e3d8d83178",
+ "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
+ "text_sha": "8a91fa7e33a3",
+ "verified_2026_09_10": "STILL_OPEN (re-pinned value unchanged on 2026-09-10: the DEF-731 lane split _project_root_spelling out of resolve_project_root and the branch the probe inspects moved with it; the claim stands unchanged (the unset-var path still prints nothing and falls back to cwd; the stray tools/cc/hooks/.espalier-state/ directory is still on this machine), so the probe is re-pointed at the function that now holds the branch)",
+ "verified_2026_09_14": "STILL_OPEN (re-pinned value unchanged on 2026-09-14: walk 3 (2026-09-14, W3-P35): the pair diverges on the Git Bash drive spelling too -- a second limb with two raw sites named and the hook-spawn mitigation stated; probe value unchanged)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

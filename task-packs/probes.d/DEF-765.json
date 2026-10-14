@@ -1,0 +1,15 @@
+{
+ "id": "DEF-765",
+ "subject": "tools/cc/reflect_protocol.py",
+ "cmd": "python3 -c \"import sys,pathlib; sys.path.insert(0,'tools/cc'); import reflect_protocol as r; print(any(str(p).replace(chr(92),'/').endswith('docs/session-archive.md') for p in r.iter_surface(pathlib.Path('.').resolve())))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "dea69e974f86",
+ "text_sha": "363f64782f00",
+ "verified_2026_09_11": "OPEN (filed 2026-09-11; probe driven at filing)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "inputs": [
+  "docs/session-archive.md"
+ ],
+ "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['docs/session-archive.md'] on 2026-09-22: the command asks reflect_protocol.iter_surface whether it reaches docs/session-archive.md, an untracked file; on a checkout without it the answer is False and the row struck (measured 2026-09-22 in a --shared clone); declared, that tree reads UNRESOLVED (DEF-858))"
+}

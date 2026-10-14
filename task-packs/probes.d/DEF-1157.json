@@ -1,0 +1,12 @@
+{
+ "id": "DEF-1157",
+ "subject": "espalier/analyze.py",
+ "cmd": "python -c 'import sys,tempfile,pathlib;sys.path.insert(0,\".\");from espalier.analyze import detect_tests;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);f=lambda n,lock: [(r/n/\"tests\").mkdir(parents=True),(r/n/\"pyproject.toml\").write_text(\"[project]\"+chr(10)+\"name = \\\"a\\\"\"+chr(10)+\"[tool.pytest.ini_options]\"+chr(10)),(r/n/lock).write_text(\"version = 1\"+chr(10)),(r/n/\"tests/test_a.py\").write_text(\"def test_a(): pass\"+chr(10)),detect_tests(r/n)][-1];print(\"uv=\"+\",\".join(f(\"u\",\"uv.lock\")),\"poetry=\"+\",\".join(f(\"p\",\"poetry.lock\")))'",
+ "open_value": "uv=pytest -q poetry=pytest -q",
+ "why_not": null,
+ "row_sha": "e3bbd6d16db5",
+ "text_sha": "94c8a7a01737",
+ "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)",
+ "verified_2026_10_08": "STILL_OPEN (re-pinned value unchanged on 2026-10-08: re-keyed: the recall-corpus pack landed 2026-10-08 in Done/ (0dfffcab); the decision and the probe stand)",
+ "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: re-keyed from the pack id to its lane and landing date: the install, upgrade and CI pack left the shipped locations for task-packs/Done/ at its last lane's landing, 2026-10-11)"
+}

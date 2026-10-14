@@ -31,6 +31,23 @@ import yaml
 from bench.end_to_end.transcript import Transcript, parse_stream_json
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    holds on Windows, where ``run`` waits on a grandchild holding its pipe
+    (DEF-3004)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_end_to_end_runner", REPO_ROOT / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
 TEMPLATES_DIR = REPO_ROOT / "bench" / "end_to_end" / "templates"
 DEFAULT_TIMEOUT_SECONDS = 300  # 5 minutes per scenario
 #: The exit code a run reports when the runner's timeout ended it (timeout(1)'s).
@@ -288,7 +305,7 @@ def run_scenario(
         env = _scenario_env()
 
         try:
-            proc = subprocess.run(
+            proc = run_bounded(
                 cmd,
                 input=stdin_payload,
                 capture_output=True,

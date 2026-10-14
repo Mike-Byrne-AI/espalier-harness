@@ -83,13 +83,29 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
+
+
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    holds on Windows, where ``run`` waits on a grandchild holding its pipe
+    (DEF-3004)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_guard_metamorphic", REPO_ROOT / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
 
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(HOOKS_DIR))
@@ -419,7 +435,7 @@ def guard_tier(command: str, tool: str) -> str:
             env = os.environ.copy()
             env["CLAUDE_PROJECT_DIR"] = str(project)
             env.pop("ESPALIER_MAINTENANCE_MODE", None)
-            proc = subprocess.run(
+            proc = run_bounded(
                 [sys.executable, str(HOOKS_DIR / "write_guard.py")],
                 input=json.dumps(
                     {"tool_name": tool, "tool_input": {"command": command}}

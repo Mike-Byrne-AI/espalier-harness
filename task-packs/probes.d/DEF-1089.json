@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1089",
+ "subject": "espalier/managed_paths.py",
+ "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/managed_paths.py\",encoding=\"utf-8\").read());a=[n for n in ast.walk(t) if isinstance(n,ast.Assign) and getattr(n.targets[0],\"id\",\"\")==\"STANDARD_MANAGED_TOOLS\"][0];print(\"tools/cc/memory_sort_audit.py\" in [c.value for c in a.value.elts if isinstance(c,ast.Constant)])'",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "6e90a27361bf",
+ "text_sha": "d0d57a2a2222",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

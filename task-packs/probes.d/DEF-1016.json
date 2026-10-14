@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1016",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import sys,tempfile,pathlib as P;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;f=getattr(b,\"bash_bases\",None);g=chr(62);q=chr(34);d=tempfile.TemporaryDirectory();t=P.Path(d.name);r=t/\"proj\";x=t/\"fx\";(r/\".claude\").mkdir(parents=True);(x/\".claude\").mkdir(parents=True);k=\".claude/\"+\"settings.json\";w=\" && printf x \"+g+\" \";s=q+x.as_posix()+q;y=q+(t/\"zz\").as_posix()+q;c=[(\"S=\"+s+\"; mkdir -p $S/.claude && cd \"+q+\"$S\"+q+w+k,k),(\"mkdir -p \"+y[:-1]+\"/.claude\"+q+\" && cd \"+y+w+k,k),(\"cd \"+q+\"$UNBOUND\"+q+w+k,k),(\"S=.claude; cd \"+q+\"$S\"+q+w+\"settings.json\",\"settings.json\")];print(\"MISSING_SYMBOL\" if f is None else [any((B/p).parent==r/\".claude\" for B in f(v,r,None)(p)) for v,p in c])'",
+ "open_value": "[True, True, True, False]",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_hook_utils.py"
+ ],
+ "row_sha": "13f1897f6f46",
+ "text_sha": "72fdc1d6b48e",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}
