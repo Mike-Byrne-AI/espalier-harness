@@ -150,6 +150,35 @@ stop and re-raise. W0-F and W0-I are design input for `TP-700a`.
 **Record** each probe's command, machine, Claude Code version (`claude --version`), the saved
 stream's path and the result here before closing W0.
 
+### W0 results
+
+**Mac** (`air-work` seat, 8 GB MacBook Air, macOS, Claude Code `2.1.296`, default model
+`claude-opus-5-5`; run 2026-10-14 01:26Z to 02:17Z). Every run: `claude -p --output-format
+stream-json --verbose --permission-mode <mode> "<prompt>"` in a throwaway linked worktree of the
+clone at `origin/main` (`cd4ce44`), the include files copied from the main checkout, stdin
+`/dev/null`, a new process group killed whole at the bound (`os.killpg`), the stream decoded as
+UTF-8; `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and `ESPALIER_MAINTENANCE_MODE` stripped (and
+`CLAUDE_PROJECT_DIR`, unset in the parent), maintenance mode set only where the row says so.
+Mode `bypassPermissions` (the seats' own) except W0-F. Streams, their summaries and stderr are
+kept on that seat under the gitignored `reports/w0-streams-mac/<probe>.jsonl`.
+
+| Probe | Prompt (mode) | Result |
+|---|---|---|
+| W0-A | `reply with the single word PONG` | **Holds.** A `result` event, subtype `success`, exit 0, 11.6 s; no survivor. |
+| W0-B | the W0-A run | **Holds.** During the run a session marker appeared under `.espalier-state/sessions/` and the blueprint store gained a node and moved `latest.json`. |
+| W0-C | `/status` | **Holds, by the transcript.** The stream-json output carries no expansion of the command: the expanded prompt is not echoed. The session's persisted transcript (`~/.claude/projects/<slug>/<session id>.jsonl`, the id from the stream's `init` event) carries `<command-name>/status</command-name>` and the body's text, and the session ran the body's own commands verbatim. The transcript is the CLI's record, not model output, so it meets the oracle header (dispatcher ack, 2026-10-14). Design input: the runner reads the transcript, so session persistence stays on. 95.8 s. |
+| W0-D | one `Agent` call, `general-purpose`, reply `SUBPONG` | **Holds.** An `Agent` tool call with the requested type and its `tool_result` hand-back. Cost: about 43k tokens for a one-word subagent. 45.5 s. |
+| W0-E | `mail.py assignments --no-fetch --json` and `board.py --no-fetch --json` as two Bash calls | **Holds.** Both `tool_result` payloads `is_error: false` and parse as JSON (16,735 and 23,209 bytes). 100.7 s. |
+| W0-F | edit `tools/cc/_paths.py`, commit on a local scratch branch, `gh pr list` (`auto`) | **No stall in either run.** Without maintenance mode: `write_guard` refused the protected-zone edit (the harness's guard, not a permission prompt), so the commit had nothing; `gh pr list` ran; the refusal is also data in the `result` event's `permission_denials` (the denied `Edit` with its input). With `ESPALIER_MAINTENANCE_MODE=1`: edit, commit and `gh pr list` all ran, nothing pushed. 53 s and 100 s. Side finding: a branch made in a throwaway worktree lives in the clone's shared refs and outlives the worktree. |
+| W0-G | `sleep 600` in Bash, bound 40 s | **Holds.** The group kill returned at 41.4 s (SIGTERM, exit 143), no process survived. Two inputs: the session ran the sleep in the background and emitted a `success` `result` at 10.7 s while it kept running, so process exit, not the `result` event, ends a session; and the next session's banner `Sessions:` line counted every finished and killed `-p` session as a live sibling (no pid check), so W1's live-session refusal checks pids itself. |
+| W0-H | `/implement-task add one sentence to the end of docs/CHEAT-SHEET.md ...` | **Refuted.** The session went from recall to `execution_plan.py create` to the `Edit` without presenting a plan or asking anything (no `AskUserQuestion` call); it then synced the twin, built a `.venv` and started a proof tier until the 480 s bound killed it. A headless `/implement-task` approves itself: this shapes `TP-700a` (W1), it does not end the pack. |
+| W0-I | `proof_tier.py --run --tier full` as one Bash call | **Completes inside `-p`, not in the foreground.** The session ran the call with `run_in_background` and a 7,200,000 ms timeout, emitted a first `result` at 14 s, and a second `result` with the receipt when the task notified; the process exited on its own at 29.9 min, exit 0, no survivor, about $0.90. The tier on clean `main` in the throwaway: 21,322 passed, 2 failed (`tests/test_session_banner.py::TestEngineLine`, sensitive to the throwaway's own `.venv`), 2 errors (the `reports/cc_surface_gate.json` live-tree race), serial leg 1,938 passed. Design input: the runner reads the last `result` after process exit, or the tier's own log, and expects a fresh throwaway's tier to carry these reds. |
+
+The nine Mac runs cost about $4.70 together by each run's last `result` (W0-H unpriced: killed
+before one).
+
+**Windows:** pending (`lane/seat-runner-w0-windows`, the `win` seat).
+
 ## Relevant memory
 
 Recent pattern: the unattended failures here were never crashes. They were runs that reported
