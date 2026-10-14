@@ -187,8 +187,10 @@ python3 tools/cc/generate_ledger_regions.py --write   # remove a stored total
 ```
 
 
-**2. Probes — every row can re-derive its own claim.** `task-packs/LEDGER_PROBES.json`
-holds a read-only one-liner per row plus the value it prints *while the defect is open*.
+**2. Probes — every row can re-derive its own claim.** Each row's probe, one file per probe
+under `task-packs/probes.d/` (`task-packs/LEDGER_PROBES.json` held them all until the fold of
+2026-10-14, and still does on a tree that keeps one), holds a read-only one-liner plus the
+value it prints *while the defect is open*.
 Run them:
 
 ```bash
@@ -223,13 +225,15 @@ lives. Two lanes filing into one class, or striking two neighbouring rows, then 
 different files and merge clean; they used to meet on neighbouring lines of this file and on
 the roster's tail, and GitHub read every such pair as conflicting until a catch-up (measured on
 the real verbs: two filings after one anchor conflicted on the member row, its index row and
-the roster). The rows already here stay here until a later fold. Every tool reads the ledger's
+the roster). Since the fold of 2026-10-14 every row and every probe lives in a file of its own:
+the class tables and Appendix B below keep their header and rule and hold no row, and the
+probes' former roster is `task-packs/probes.d/README.md`. Every tool reads the ledger's
 **view** -- this file with the row files placed in it, built on each read and never written
-back -- so this file alone no longer shows every row:
+back -- so this file alone shows no row:
 
 ```bash
 python3 tools/cc/_record_fragments.py ledger   # the whole ledger, as every tool reads it
-python3 tools/cc/_record_fragments.py probes   # every probe: the roster and task-packs/probes.d/
+python3 tools/cc/_record_fragments.py probes   # every probe, task-packs/probes.d/ as one roster
 ```
 
 Here a verb refuses only on a problem its own write would leave, or one about a row it

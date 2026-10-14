@@ -1,12 +1,17 @@
 {
  "id": "DEF-872",
- "subject": "task-packs/LEDGER_PROBES.json",
- "cmd": "python3 -c \"import json;K={'id','subject','cmd','open_value','why_not','note','row_sha','text_sha'};P=json.load(open('task-packs/LEDGER_PROBES.json'))['probes'];A=[p for p in P if 'not in' in (p.get('cmd') or '').replace('not in str(p)','') and 'LEDGER_PROBES' not in (p.get('cmd') or '')];print(any(not [k for k in p if k not in K and not k.startswith('verified')] for p in A))\"",
+ "subject": "tools/cc/check_ledger_probes.py",
+ "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc');import _record_fragments as f;from pathlib import Path;K={'id','subject','cmd','open_value','why_not','note','row_sha','text_sha'};S=('LEDGER_PROBES','probe_roster','probes.d');P=f.probe_roster(Path('.'))['probes'];A=[p for p in P if 'not in' in (p.get('cmd') or '').replace('not in str(p)','') and not any(s in (p.get('cmd') or '') for s in S)];print(any(not [k for k in p if k not in K and not k.startswith('verified')] for p in A))\"",
  "open_value": "True",
  "why_not": null,
  "row_sha": "aa485430acc2",
  "text_sha": "b9eab2b52c28",
  "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
  "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)",
- "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: the text cell's citation repointed from scripts/ to tools/cc/, where the verb has lived since 2026-10-01 (DEF-1036 lane, 2026-10-09); the claim and its probe are unchanged)"
+ "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: the text cell's citation repointed from scripts/ to tools/cc/, where the verb has lived since 2026-10-01 (DEF-1036 lane, 2026-10-09); the claim and its probe are unchanged)",
+ "inputs": [
+  "task-packs/probes.d",
+  "tools/cc/_record_fragments.py"
+ ],
+ "verified_2026_10_14": "STILL_OPEN (re-pinned value unchanged; subject 'task-packs/LEDGER_PROBES.json' -> 'tools/cc/check_ledger_probes.py'; inputs None -> ['task-packs/probes.d', 'tools/cc/_record_fragments.py'] on 2026-10-14: the fold (TP-479a Wave C) moved the probes from task-packs/LEDGER_PROBES.json into task-packs/probes.d/; the probe reads the roster through the loader, its population and its value unchanged; the claim stands)"
 }
