@@ -1,0 +1,10 @@
+{
+ "id": "DEF-906",
+ "subject": "espalier/verify_landing.py",
+ "cmd": "python3 -c \"import ast;t=ast.parse(open('espalier/verify_landing.py').read());g=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='_git_lines');c=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='classify_landing');swallows=any(isinstance(r,ast.Return) and isinstance(r.value,ast.List) and not r.value.elts for h in ast.walk(g) if isinstance(h,ast.ExceptHandler) for r in ast.walk(h));blind=not any(isinstance(n,ast.If) for n in ast.walk(c));print(swallows and blind)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "ec06f0b75f2f",
+ "text_sha": "56ba5b0e1dd8",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

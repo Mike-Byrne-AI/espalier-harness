@@ -1,0 +1,12 @@
+{
+ "id": "DEF-346c",
+ "subject": "docs/SHARP_EDGES.md",
+ "cmd": "python3 -c \"import pathlib; ps=[pathlib.Path('docs/SHARP_EDGES.md'),pathlib.Path('docs/FAILURE_MODES.md')]+list(pathlib.Path('docs/sharp-edges').rglob('*.md'))+list(pathlib.Path('memory').rglob('*.md')); print(sum(1 for p in ps if 'info/exclude' in p.read_text(encoding='utf-8',errors='replace')))\"",
+ "open_value": "1",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "543188ea0032",
+ "verified_2026_09_08": "STILL_OPEN (re-pinned 0 -> 1 by hand 2026-09-08: the one doc mention is SHARP_EDGES 'Two git-ignore oracles, opposite scoping, on purpose', which names .git/info/exclude as an input of require_is_gitignored -- not this row's lesson, that a git-status untracked scan is blind to exclude-listed paths; claim unchanged)",
+ "text_sha": "7bcf685a8677",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

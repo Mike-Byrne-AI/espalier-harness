@@ -1,0 +1,10 @@
+{
+ "id": "DEF-862",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python3 -c \"import ast;t=ast.parse(open('tools/cc/hooks/_bash_patterns.py').read());print(any(isinstance(n,ast.Name) and n.id=='_DO_BODY' for n in ast.walk(t)))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "650b014ed745",
+ "text_sha": "0daa6df6e990",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: re-pointed 2026-09-20 from a text read over the subject to an ast predicate the fix must satisfy (the probe-shape ratchet, 1-D session 3); the value is unchanged and the claim stands)"
+}

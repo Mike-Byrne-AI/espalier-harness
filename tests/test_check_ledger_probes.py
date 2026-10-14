@@ -74,13 +74,22 @@ def _live_roster_probes() -> list[dict]:
     return rows
 
 
+#: Whether this tree carries a live roster in either form: the file (an adopter
+#: tree's, and this one's until the fold of 2026-10-14) or the probe files under
+#: ``task-packs/probes.d/`` (this one's since). Keyed on the file alone, every
+#: live-roster contract below skipped once the fold removed it.
+_HAS_LIVE_ROSTER = ((REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").is_file()
+                    or (REPO_ROOT / "task-packs" / "probes.d").is_dir())
+
+
 if not (REPO_ROOT / "tools" / "cc" / "check_ledger_probes.py").is_file():  # pragma: no cover
     pytest.skip("tools/cc/check_ledger_probes.py is absent", allow_module_level=True)
 
-# full-tree-exempt: the two live-tree tests in TestTheLiveProbeFile read
-# `task-packs/LEDGER_PROBES.json`, which IS pruned from a release export
+# full-tree-exempt: the live-tree tests in TestTheLiveProbeFile read the live
+# roster (the probe files under `task-packs/probes.d/`, or an older tree's
+# `task-packs/LEDGER_PROBES.json`), which IS pruned from a release export
 # (.gitattributes `/task-packs/`), but each carries its own
-# `skipif(not (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").is_file())` so it
+# `skipif(not _HAS_LIVE_ROSTER)` so it
 # SKIPS rather than FileNotFoundErrors on an extracted archive. Every other test
 # in this file drives `run_probe`/`main` against tmp_path or a subject that ships
 # (README.md), so none of them touches dev-tree-only content at all.
@@ -553,11 +562,9 @@ class TestTheLiveProbeFile:
     (``_live_roster_probes``), since a contract over the file alone passes a
     probe filed as a file without ever reading it."""
 
-    _LIVE = REPO_ROOT / "task-packs" / "LEDGER_PROBES.json"
-
     @pytest.mark.skipif(
-        not (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").is_file(),
-        reason="self-host tooling: the probes file is absent on an adopter tree",
+        not _HAS_LIVE_ROSTER,
+        reason="self-host tooling: no probes file and no task-packs/probes.d/ (an adopter tree)",
     )
     def test_every_probe_declares_a_subject(self):
         """Without a subject the three-way verdict collapses to two, and the
@@ -578,8 +585,8 @@ class TestTheLiveProbeFile:
                            "carry a terminal State")
 
     @pytest.mark.skipif(
-        not (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").is_file(),
-        reason="self-host tooling: the probes file is absent on an adopter tree",
+        not _HAS_LIVE_ROSTER,
+        reason="self-host tooling: no probes file and no task-packs/probes.d/ (an adopter tree)",
     )
     def test_a_probe_that_reads_the_landing_lints_report_declares_done_and_reads_its_marker(self):
         """`scripts/check_pack_landing.py` is tracked and always present; the
@@ -642,8 +649,8 @@ class TestTheLiveProbeFile:
     )
 
     @pytest.mark.skipif(
-        not (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").is_file(),
-        reason="self-host tooling: the probes file is absent on an adopter tree",
+        not _HAS_LIVE_ROSTER,
+        reason="self-host tooling: no probes file and no task-packs/probes.d/ (an adopter tree)",
     )
     def test_every_untracked_path_a_command_names_is_declared_or_baselined(self):
         """The DIRECT shape of `DEF-858`, derived rather than listed: a path
@@ -744,8 +751,8 @@ class TestTheLiveProbeFile:
         )
 
     @pytest.mark.skipif(
-        not (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").is_file(),
-        reason="self-host tooling: the probes file is absent on an adopter tree",
+        not _HAS_LIVE_ROSTER,
+        reason="self-host tooling: no probes file and no task-packs/probes.d/ (an adopter tree)",
     )
     def test_every_declared_inputs_list_has_the_shape_the_gate_reads(self):
         """A bare string here is UNRESOLVED by shape on every tree -- a probe
@@ -761,8 +768,8 @@ class TestTheLiveProbeFile:
         assert not malformed, f"probe(s) carry an `inputs` that is not a non-empty list of paths: {malformed}"
 
     @pytest.mark.skipif(
-        not (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").is_file(),
-        reason="self-host tooling: the probes file is absent on an adopter tree",
+        not _HAS_LIVE_ROSTER,
+        reason="self-host tooling: no probes file and no task-packs/probes.d/ (an adopter tree)",
     )
     def test_no_probe_pins_a_line_number(self):
         """A line-anchored probe false-STRIKES on any edit above its subject.
@@ -1304,8 +1311,8 @@ class TestProbeShapesAreRatcheted:
         return any(marker in cmd for marker in cls._TEXT_READS)
 
     @pytest.mark.skipif(
-        not (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").is_file(),
-        reason="self-host only: task-packs/LEDGER_PROBES.json absent",
+        not _HAS_LIVE_ROSTER,
+        reason="self-host only: no probes file and no task-packs/probes.d/",
     )
     @pytest.mark.contract
     def test_no_new_probe_is_satisfiable_by_its_own_fixs_paperwork(self):
@@ -1424,8 +1431,8 @@ class TestProbeShapesAreRatcheted:
         assert self._is_trap_shaped(yes) and not self._is_trap_shaped(no)
 
     @pytest.mark.skipif(
-        not (REPO_ROOT / "task-packs" / "LEDGER_PROBES.json").is_file(),
-        reason="self-host only: task-packs/LEDGER_PROBES.json absent",
+        not _HAS_LIVE_ROSTER,
+        reason="self-host only: no probes file and no task-packs/probes.d/",
     )
     @pytest.mark.contract
     def test_the_baseline_has_no_dead_entries(self):
@@ -1433,7 +1440,7 @@ class TestProbeShapesAreRatcheted:
         live = {r["id"] for r in _live_roster_probes()}
         dead = sorted(self._TEXT_OVER_OWN_SUBJECT - live)
         assert not dead, (
-            f"{len(dead)} baselined probe id(s) are gone from LEDGER_PROBES.json. "
+            f"{len(dead)} baselined probe id(s) are gone from the live roster. "
             f"Drop them from _TEXT_OVER_OWN_SUBJECT -- a baseline that outlives "
             f"its population stops being a measurement.\n  {dead}"
         )

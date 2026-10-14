@@ -1,0 +1,10 @@
+{
+ "id": "DEF-910",
+ "subject": "tools/cc/hooks/_denial_reasons.py",
+ "cmd": "python3 -c \"import sys,string;sys.path.insert(0,'tools/cc/hooks');import write_guard as w,_denial_reasons as d;F=string.Formatter();fill=lambda t: t.format(**{n:(w._PROTECTED_ZONE_HINT if n=='hint' else '') for _,n,_,_ in F.parse(t) if n});print('bash_denies_name_relocate='+str(all('Relocate' in fill(t) for t in (d.PROTECTED_ZONE_WRITE_BASH,d.PROTECTED_ZONE_MUTATION_BASH))))\"",
+ "open_value": "bash_denies_name_relocate=False",
+ "why_not": null,
+ "row_sha": "cf0cc01dde92",
+ "text_sha": "c64c94e92136",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

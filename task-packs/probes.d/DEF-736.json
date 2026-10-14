@@ -1,0 +1,12 @@
+{
+ "id": "DEF-736",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import ast; from pathlib import Path; from espalier import cli; from espalier.managed_markers import apply_marker_to_text, has_managed_marker; r=[x for x in list(cli.INIT_HOOK_SCRIPTS)+list(cli.INIT_TOOL_SCRIPTS) if cli._deploy_source_path(x).is_file() and Path(x).is_file()]; bad=[x for x in r if Path(x).read_text(encoding='utf-8') != apply_marker_to_text(cli._deploy_source_path(x).read_text(encoding='utf-8')) and not has_managed_marker(Path(x).read_text(encoding='utf-8'))]; lit=any(isinstance(n,ast.Constant) and isinstance(n.value,str) and 'differs from packaged' in n.value for n in ast.walk(ast.parse(Path('espalier/cli.py').read_text(encoding='utf-8')))); print(bool(bad) and len(bad)==len(r) and lit)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "0b0744a8f473",
+ "text_sha": "fb63f1e3f134",
+ "verified_2026_09_09": "STILL_OPEN (re-pinned value unchanged on 2026-09-09: the warning-text half now reads a string Constant (AST), not the file text; value unchanged)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: sibling site appended 2026-09-26: cmd_upgrade --execute reaches the same deploy_harness narrator cmd_init does and emits the same 38 drift lines (walk 4 selfhost/, W4-P8 second half; driven here the same day); the probe is caller-insensitive, so the value is unchanged)"
+}

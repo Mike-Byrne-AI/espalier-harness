@@ -1,0 +1,12 @@
+{
+ "id": "DEF-886",
+ "subject": "tools/cc/check_ledger_probes.py",
+ "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc');import check_ledger_probes as c;g={'c':c,'p':{'id':'X','cmd':7,'open_value':'1'}};exec('try:\\n c.run_probe(p)\\n r=False\\nexcept Exception:\\n r=True\\n',g);print('run_probe_raises_on_nonstring_cmd='+str(g['r']))\"",
+ "open_value": "run_probe_raises_on_nonstring_cmd=True",
+ "why_not": null,
+ "row_sha": "3673153c3d5b",
+ "text_sha": "0dd995b7f910",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
+ "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged; subject 'scripts/check_ledger_probes.py' -> 'tools/cc/check_ledger_probes.py' on 2026-09-30: the verb scripts moved from scripts/ to tools/cc/ so they ship to adopters; the claim is unchanged, and the site and probe now name the file where it lives)",
+ "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: the text cell's citation repointed from scripts/ to tools/cc/, where the verb has lived since 2026-10-01 (DEF-1036 lane, 2026-10-09); the claim and its probe are unchanged)"
+}

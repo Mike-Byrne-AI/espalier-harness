@@ -1,0 +1,10 @@
+{
+ "id": "DEF-977",
+ "subject": ".github/workflows/test.yml",
+ "cmd": "python3 -c \"import yaml;d=yaml.safe_load(open('.github/workflows/test.yml',encoding='utf-8'));print(sum(1 for j in d['jobs'].values() if 'windows' in str(j.get('runs-on',''))+str((j.get('strategy') or {}).get('matrix') or {})))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "4a5e1fb684c6",
+ "text_sha": "a6c0f05b6040",
+ "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the voice pack landed 2026-09-30; the row cited it by id, which resolves nowhere once the pack moves to Done/)"
+}

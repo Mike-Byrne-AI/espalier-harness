@@ -1,0 +1,13 @@
+{
+ "id": "DEF-997",
+ "subject": "tests/test_ship_driver.py",
+ "cmd": "python -c 'import ast; print(sum(1 for f in (\"tests/test_ship_driver.py\",\"tests/test_ci_guard.py\") for t in [ast.parse(open(f,encoding=\"utf-8\").read())] for s in [{id(x) for g in ast.walk(t) if isinstance(g,ast.FunctionDef) and (g.name==\"_live_gate\" or any(getattr(getattr(c,\"func\",None),\"id\",None)==\"_live_gate\" for c in ast.walk(g))) for x in ast.walk(g)}] for n in ast.walk(t) if id(n) not in s and \"LIVE_READ_STEP\" in (getattr(n,\"attr\",None),getattr(n,\"id\",None),getattr(n,\"name\",None),getattr(n,\"value\",None))))'",
+ "open_value": "0",
+ "why_not": null,
+ "inputs": [
+  "tests/test_ci_guard.py"
+ ],
+ "row_sha": "c37cb41964a2",
+ "text_sha": "0dd6b386e088",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

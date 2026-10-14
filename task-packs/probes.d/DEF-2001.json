@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2001",
+ "subject": "tools/cc/hooks/post_write_check.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "a design gap gated on a measurement: Task 0 reads the after-check's audit records and decides whether a latch is built at all, so no structure it must satisfy can be named before then",
+ "row_sha": "b02c759ac57e",
+ "text_sha": "4a4b2771fc64",
+ "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+}

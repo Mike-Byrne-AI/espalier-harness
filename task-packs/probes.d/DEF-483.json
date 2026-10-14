@@ -1,0 +1,11 @@
+{
+ "id": "DEF-483",
+ "subject": "tests/_artifact_links.py",
+ "cmd": "python3 -c \"s=open('tests/_artifact_links.py').read(); print('blob/main' not in s)\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "a016d1df86b7",
+ "text_sha": "e25c1ab369f7",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

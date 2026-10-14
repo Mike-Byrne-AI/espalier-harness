@@ -1,0 +1,11 @@
+{
+ "id": "DEF-486",
+ "subject": "tests/README.md",
+ "cmd": "python3 -c \"import re; s=open('tests/README.md').read(); b=s.split('The trap this section exists to expose')[1].split('Counts are deliberately absent')[0]; print(len(set(re.findall(r'tests/test_[a-z_]+[.]py', b))))\"",
+ "open_value": "4",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "aefc72a43155",
+ "text_sha": "8bd2a34edec3",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

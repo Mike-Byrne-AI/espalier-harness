@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1024",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": "python -c 'import sys,io,re,json,shutil,tempfile,pathlib;sys.path.insert(0,\"tools/cc/hooks\");import _hook_utils as h,session_start as s;h.interpreter_meets_floor=lambda p:False;h.interpreter_is_python3=lambda p:False;d=pathlib.Path(tempfile.mkdtemp());(d/\".claude\").mkdir();q=chr(34);E=lambda c,*a:dict(type=\"command\",command=c,**({\"args\":list(a)} if a else {}));cs=[E(\"npx prettier --write\"),E(\"node x.js\"),E(\"bash x.sh\"),E(q+\"$CLAUDE_PROJECT_DIR\"+q+\"/.claude/hooks/x.sh\"),E(\"powershell.exe\",\"-File\",\"x.ps1\"),E(\"powershell.exe -Command x\"),E(\"./.claude/hooks/notify\"),E(\"python9 x.py\")];(d/\".claude\"/\"settings.json\").write_text(json.dumps({\"hooks\":{\"PostToolUse\":[{\"hooks\":cs}]}}));o=sys.stderr;sys.stderr=io.StringIO();s._warn_if_hook_interpreter_unresolved(d);t=sys.stderr.getvalue();sys.stderr=o;shutil.rmtree(d);print(sorted(set(re.findall(\"interpreter `([^`]*)`\",t))))'",
+ "open_value": "['$CLAUDE_PROJECT_DIR', './.claude/hooks/notify', 'bash', 'node', 'npx', 'powershell.exe', 'python9']",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_hook_utils.py"
+ ],
+ "row_sha": "5cb13800e9ae",
+ "text_sha": "961e75f81bc9",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

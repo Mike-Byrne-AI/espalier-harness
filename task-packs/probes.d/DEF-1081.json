@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1081",
+ "subject": ".claude/workflows/_convergence_review_template.js",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The defect is prompt prose inside a JavaScript template literal; no AST or runtime value in the .js file separates the unconditional frame from a conditional one without reading the prompt text itself, which would be a text trap.",
+ "row_sha": "b11c6e1be47a",
+ "text_sha": "2f34ca777f18",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

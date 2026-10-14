@@ -281,4 +281,84 @@ form is in `docs/SHARP_EDGES.md`.
   degradation that still self-attests — the receipt gate catches a *missing* receipt
   but not a run that degraded *after* the sentinel passed yet wrote a receipt claiming
   it ran; and foreground-subagent dispatch is still re-checked only by the manual
-  probe. Re-run the probe after any CC upgrade.
+  probe. Re-run the probe after any CC upgrade. The 2026-10-14 channel probes (§8)
+  re-ran both by hand on two machines: they sent a bare `/status`, not the
+  sentinel's prose-prefixed form, and found the dispatch in the session transcript,
+  not in the output the sentinel reads.
+
+---
+
+## 8. Channel probes on both machines (2026-10-14)
+
+Nine probes of `claude -p` ran on the Mac seat (macOS, Claude Code 2.1.296) and on
+the Windows seat (Windows 11, Claude Code 2.1.299), each in a throwaway worktree of
+that machine's clone, never a seat's own tree. Every run used `--output-format
+stream-json --verbose` with its stream saved, a wall clock that killed the whole
+process tree, and UTF-8 decoding. `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`,
+`CLAUDE_PROJECT_DIR` and `ESPALIER_MAINTENANCE_MODE` were stripped (the Windows seat
+stripped every `CLAUDE*` and `ESPALIER_*` variable), so maintenance mode was off
+except in one stall probe that set it on purpose; unlike the driver in §1, which runs
+with it on. The Mac ran under `--permission-mode bypassPermissions` except the stall
+probe, which ran under `auto`; Windows ran every probe under `auto`, with `--model
+opus` because that box defaults to another model. The oracle was the saved stream,
+the session's transcript or the filesystem, never a token the model printed. The
+probe-by-probe record (each prompt, version, stream path and result) is under the
+`### W0 results` heading of the seat runner's plan in `task-packs/`; the Windows rows
+are that seat's own report. *Verified* below means observed in a saved stream,
+transcript or file on both machines.
+
+- **A headless session runs and its hooks fire.** *(verified)* A one-word prompt
+  ended with a `result` event and exit 0 (11.6 s, 15.8 s); during the run the session
+  marker appeared under `.espalier-state/sessions/` and the blueprint store moved —
+  side-effect evidence of the kind §2 used, now on Windows too.
+- **A slash command dispatches, and the transcript is the place to see it.**
+  *(verified by the transcript; the stream itself shows no expansion)* The probes
+  sent a bare `/status`; the driver's sentinel and goals send a prose-prefixed form
+  (`Run the real slash command: /status`), which they did not try. The stream-json
+  output does not echo the expanded command; the
+  persisted transcript (`~/.claude/projects/<slug>/<session id>.jsonl`, the id from
+  the stream's `init` event) carries the command-name tag and the command body, and
+  the session ran the body's commands verbatim. A runner that checks dispatch reads
+  the transcript, so session persistence stays on. Two cautions for the §4 sentinel,
+  which reads a banner token in the output: that token is model-printed text, and on
+  Windows one run's `/status` argument was rewritten by Git Bash's MSYS path
+  conversion into `C:/Program Files/Git/status` while the model still called the
+  `status` skill. So a skill call is no proof of dispatch either, and a slash goal is
+  never passed through an MSYS argv.
+- **A foreground subagent runs.** *(verified)* An `Agent` call of the requested type
+  and its hand-back appear in the stream; a one-word subagent cost about 43-44k
+  tokens on each machine. Where the reply lands differed by version (the call's
+  `tool_result` on 2.1.296, a hand-back event's input on 2.1.299), so a runner
+  records `claude --version` beside every stream.
+- **The dispatch tools work inside `-p`.** *(verified)* `tools/cc/mail.py
+  assignments` and `tools/cc/board.py` ran as tool calls and their JSON parsed.
+- **No step stalled under `--permission-mode auto`** for an edit under `tools/cc/`, a
+  commit on a scratch branch and `gh pr list`. *(verified, for those surfaces only)*
+  Without maintenance mode `write_guard` refused the edit — the harness's guard, not a
+  permission prompt — and the refusal is also data in the `result` event's
+  `permission_denials`; with it, every step ran. This narrows §7's open question; it
+  does not close it.
+- **The `result` event does not end a session; the process exiting does.**
+  *(verified)* A session that backgrounds a long command emits a `result` while the
+  command still runs, stays up, and emits another `result` carrying the output when
+  the background task finishes. A runner reads the **last** `result` after the
+  process exits. A kill of the whole process tree at the bound left no survivor on
+  either machine. This refines §6's deferred-gate stall: on these versions the process
+  did not exit at the first `result`.
+- **A full proof tier inside `-p` runs in the background, not the foreground.**
+  *(verified)* On both machines the session backgrounded the tier itself. On the Mac
+  it finished in 29.9 minutes and the process exited on its own; on Windows the
+  75-minute bound killed it at 89 percent of the parallel leg, with another pytest on
+  the box. Design input: the runner, not the session, runs the tier, under a bound
+  no probe has measured yet, since the Windows run never finished. On the Mac
+  `claude` exited 0 while the tier was red (two failures, two errors), so the verdict
+  is the tier's own receipt, never the session's exit code.
+- **A headless `/implement-task` approves its own plan.** *(verified)* On both
+  machines the session created the plan and went on to the edit without presenting
+  the plan or asking anything, so the step that waits for an approval is skipped
+  silently in `-p` (one run on each machine). A runner cannot take that approval
+  from the session; whether any headless form of the procedure keeps it is open.
+- **The banner's `Sessions:` line counts ended `-p` sessions as live siblings.**
+  *(verified)* After the probes, the next banner listed every finished and killed
+  `-p` session; a runner checks process ids itself before refusing to start beside
+  another session.

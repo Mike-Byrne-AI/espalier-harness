@@ -373,6 +373,12 @@ class TestTheSeatPredicatesAgree:
         relative to the seat; read against the process's directory, the main
         checkout named would be wrong wherever the reader runs from."""
         main, seat = _seat(tmp_path)
-        (seat / ".git").write_text("gitdir: ../main/.git/worktrees/seat\n", encoding="utf-8")
+        relative = "gitdir: ../main/.git/worktrees/seat\n"
+        # Git for Windows marks the .git it writes hidden, and a "w" open
+        # (create-truncate) of a hidden file is access-denied: rewrite in place.
+        with (seat / ".git").open("r+", encoding="utf-8") as gitlink:
+            gitlink.write(relative)
+            gitlink.truncate()
+        assert (seat / ".git").read_text(encoding="utf-8") == relative, "precondition: the gitlink is relative"
         monkeypatch.chdir(tmp_path.parent)
         assert _resolved(_predicates()[copy](seat)) == main.resolve()

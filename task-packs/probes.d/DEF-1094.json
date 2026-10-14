@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1094",
+ "subject": "espalier/models.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The fix is a design this row proposes but does not settle (an adopter gate slot in the lifecycle commands), so no structure it must satisfy can be named before it is built; a key on a guessed identifier would stay open under any other name and flip on an unrelated one.",
+ "row_sha": "5c1795776d73",
+ "text_sha": "164b1a8d39ad",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

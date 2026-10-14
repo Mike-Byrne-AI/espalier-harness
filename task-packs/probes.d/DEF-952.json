@@ -1,0 +1,10 @@
+{
+ "id": "DEF-952",
+ "subject": "tools/cc/hooks/plan_guard.py",
+ "cmd": "python3 -c \"import sys,tempfile,pathlib,shutil;sys.path.insert(0,'tools/cc/hooks');import plan_guard as pg;from espalier.models import HarnessConfig;q=chr(34);d=pathlib.Path(tempfile.mkdtemp()).resolve();(d/'espalier.toml').write_text('plan_required_prefixes = ['+q+'docs/decision-log.md'+q+', '+q+'tests/'+q+']\\n',encoding='utf-8');r=(pg._is_exempt('docs/decision-log.md',d),pg._is_exempt('tests/site.test.mjs',d),'plan_required_prefixes' in HarnessConfig.__dataclass_fields__);shutil.rmtree(d,ignore_errors=True);print(r)\"",
+ "open_value": "(True, True, False)",
+ "why_not": null,
+ "row_sha": "24c828b71489",
+ "text_sha": "303c31bde2bb",
+ "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
+}

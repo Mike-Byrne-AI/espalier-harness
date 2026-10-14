@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1105",
+ "subject": "espalier/assets/docs/WORKFLOW.md",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The defect is a label in prose (WORKFLOW.md and a command body) plus a missing opt-in verb; a text search of the subject is the trap shape, and no structural predicate separates a reworded label from a decorated one.",
+ "row_sha": "72ecf1b6d966",
+ "text_sha": "4bb315a15a3c",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

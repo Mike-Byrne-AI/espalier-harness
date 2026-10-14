@@ -1,0 +1,10 @@
+{
+ "id": "DEF-900",
+ "subject": "espalier/artifact_parity.py",
+ "cmd": "python3 -c \"import ast;print(any(not any(k.arg=='cwd' for k in c.keywords) for f in ('espalier/artifact_parity.py','tests/test_wheel_install_surface_parity.py') for c in ast.walk(ast.parse(open(f).read())) if isinstance(c,ast.Call) and any(isinstance(a,ast.Constant) and a.value=='espalier.cli' for a in ast.walk(c)) and any(isinstance(a,ast.Name) and a.id=='vpython' for a in ast.walk(c))))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "a3030146aa84",
+ "text_sha": "593a9ac8cbbc",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

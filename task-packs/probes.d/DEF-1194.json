@@ -1,0 +1,15 @@
+{
+ "id": "DEF-1194",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import sys,pathlib,tempfile,argparse,re,subprocess;sys.path.insert(0,'tests');from _adopter_tree import build_adopter_tree as B;from espalier.cli import cmd_init;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=B(pathlib.Path(T.name)/'t',stack='node',tree='git');(t/'espalier.toml').write_text('[extra_actions]\\ntest = [\\\"pnpm test\\\"]\\n',encoding='utf-8');cmd_init(argparse.Namespace(repo=str(t),config=None));tools=re.search(r'^tools:.*$',(t/'.claude'/'agents'/'test-writer.md').read_text(encoding='utf-8'),re.M).group(0);declared=subprocess.run([sys.executable,'-c','from espalier.harness_config import preflight_command; print(preflight_command(\\\"test\\\"))'],cwd=t,capture_output=True,text=True).stdout.strip();print('pnpm' in declared and 'pnpm' not in tools)\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tests/_adopter_tree.py",
+  "tests/_stack_trees.py",
+  "espalier/harness_config.py"
+ ],
+ "row_sha": "af420b0b8f8d",
+ "text_sha": "cb9a0309c3c8",
+ "verified_2026_10_08": "OPEN (filed 2026-10-08; probe driven at filing)"
+}

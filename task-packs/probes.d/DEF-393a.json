@@ -1,0 +1,12 @@
+{
+ "id": "DEF-393a",
+ "subject": "docs/RELEASE_CHECKLIST.md",
+ "cmd": "python3 -c \"import subprocess; s=open('docs/RELEASE_CHECKLIST.md').read(); print(sum(1 for h in ('89fd68b','bdf600f','6cecec3') if h in s and subprocess.run(['git','cat-file','-e',h+chr(94)+chr(123)+'commit'+chr(125)],capture_output=True).returncode!=0))\"",
+ "open_value": "3",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "92fe7c6c5455",
+ "text_sha": "4adbefa00f8d",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: the subject docs/RELEASE_CHECKLIST.md resolves again (TP-457 1-A, 2026-09-26); the three dead hashes in the hotfix worked example are untouched by that pack's 1-B sentence pass and stay the row's own work; the anchor's line numbers predate the adopted copy)"
+}

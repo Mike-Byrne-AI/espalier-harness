@@ -1395,7 +1395,8 @@ def test_the_probes_file_is_byte_stable_under_its_own_serializer():
     lane, 2026-09-21)."""
     p = REPO_ROOT / "task-packs" / "LEDGER_PROBES.json"
     if not p.is_file():
-        pytest.skip("self-host only: the probes file is absent on this tree")
+        pytest.skip("no roster file: this tree folded it into task-packs/probes.d/ on 2026-10-14, "
+                    "whose files the twin pin below holds to the same serializer")
     text = p.read_text(encoding="utf-8")  # ledger-read: the roster file's own bytes (the probe files' twin pin is below)
     assert json.dumps(json.loads(text), indent=1, ensure_ascii=False) + "\n" == text, (
         "task-packs/LEDGER_PROBES.json is not byte-stable under ledger_row.py's own "

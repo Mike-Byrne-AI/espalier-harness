@@ -74,9 +74,10 @@ input, and a heredoc edit through Bash carries none.
    probe commands for the symbol before a fix, a rename or a delete --
    `python tools/cc/_record_fragments.py ledger | grep -n <symbol>` and
    `python tools/cc/_record_fragments.py probes | grep -n <symbol>`, which read
-   `task-packs/FORWARD_LEDGER.md` and `task-packs/LEDGER_PROBES.json` with the
-   rows and probes kept one file each under `task-packs/ledger.d/` and
-   `task-packs/probes.d/` (since 2026-10-13); and key a probe on the
+   the ledger and its probes as every tool does: each row and each probe in a
+   file of its own under `task-packs/ledger.d/` and `task-packs/probes.d/`
+   (since the fold of 2026-10-14), placed in `task-packs/FORWARD_LEDGER.md`'s
+   tables; and key a probe on the
    claim (a population, a predicate over the tree), never on a function's
    name, because a name-keyed probe flips on every rename.
 

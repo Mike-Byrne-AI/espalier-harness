@@ -1,0 +1,10 @@
+{
+ "id": "DEF-946",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python3 -c \"import io,os,sys,json; os.environ['CLAUDE_PROJECT_DIR']=os.getcwd(); sys.stdin=io.TextIOWrapper(io.BytesIO(json.dumps({'hook_event_name':'PreToolUse','tool_name':'Read','tool_input':{'file_path':'README.md'}}).encode())); sys.path.insert(0,'tools/cc/hooks'); import write_guard as w; rc=w._run_main(); print(rc, '_bash_patterns' in sys.modules, '_speedbump' in sys.modules)\"",
+ "open_value": "0 True True",
+ "why_not": null,
+ "row_sha": "76324671db72",
+ "text_sha": "eef884c7aca1",
+ "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
+}

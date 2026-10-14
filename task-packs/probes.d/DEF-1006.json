@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1006",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import argparse,os,re; os.environ[\"COLUMNS\"]=\"400\"; from espalier import cli, managed_inventory as m; p=cli.build_parser(); s=next(a for a in p._actions if isinstance(a,argparse._SubParsersAction)); h=re.sub(\"blob/v[^/ ]+/docs/CLI_EXIT_CODES[.]md\",\"\",p.format_help()+s.choices[\"audit\"].format_help()); print(\"docs/CLI_EXIT_CODES.md\" in h and \"docs/CLI_EXIT_CODES.md\" not in m.get_seed_docs())'",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "espalier/managed_inventory.py"
+ ],
+ "row_sha": "eaa0903d8051",
+ "text_sha": "42fb1f901eeb",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

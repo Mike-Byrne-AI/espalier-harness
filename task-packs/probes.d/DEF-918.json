@@ -1,0 +1,10 @@
+{
+ "id": "DEF-918",
+ "subject": "scripts/final_release_matrix.py",
+ "cmd": "python3 -c \"import sys; sys.path.insert(0,'scripts'); import final_release_matrix as m; H={'tier_argvs','FULL_COMMANDS','_TIER_ARGVS','proof_tier'}; print('serial_legs=' + str(sum(('-n' not in f.__code__.co_consts) and not (H & set(f.__code__.co_names)) for f in (m.stage_source_checkout, m.stage_source_archive))))\"",
+ "open_value": "serial_legs=2",
+ "why_not": null,
+ "row_sha": "a5510730a390",
+ "text_sha": "19bf5b71d3a5",
+ "verified_2026_09_23": "OPEN (filed 2026-09-23; probe driven at filing)"
+}

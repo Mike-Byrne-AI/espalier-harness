@@ -1,0 +1,11 @@
+{
+ "id": "DEF-1125",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "A driven probe needs a Windows host whose TEMP is presented in 8.3 form; the compare in _below_a_scratch_root has no structural key the fix would move, and a probe keyed on a realpath call there would guess the fix's shape and stay open forever.",
+ "row_sha": "fc05809c04ce",
+ "text_sha": "4963172e95ad",
+ "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)",
+ "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the two example paths in the claim named the Windows runner's home and now use a placeholder user; the claim, its site and its declared-unmeasurable probe are unchanged)"
+}

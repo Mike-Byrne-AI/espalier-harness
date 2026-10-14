@@ -1,0 +1,14 @@
+{
+ "id": "DEF-991",
+ "subject": "tools/cc/hooks/_hook_utils.py",
+ "cmd": "python -c 'import os,sys,io,json,tempfile,pathlib,shutil; sys.dont_write_bytecode=True; t=tempfile.mkdtemp(); os.environ[\"ESPALIER_AUDIT_DIR\"]=t; sys.path.insert(0,\"tools/cc/hooks\"); import _hook_utils as h; L=lambda k,v: k+\" = \"+json.dumps([v]); C=[([L(\"exclude_paths\",\"vendor/\")],False),([L(\"generated_paths\",\"out_zz/\"),L(\"protect_paths\",\"data/\")],True),([L(\"protected_paths\",\"data/\"),L(\"generated_path\",\"out_zz/\")],True),([L(\"protected_path\",\"data/\")],True),([L(\"protected_paths\",\"data/\"),L(\"exclude_paths\",\"vendor/\")],False)]; D=[pathlib.Path(t,str(i)) for i in range(len(C))]; [(d.mkdir(),(d/\"espalier.toml\").write_text(chr(10).join(c[0])+chr(10),encoding=\"utf-8\")) for d,c in zip(D,C)]; E=[io.StringIO() for _ in C]; [(setattr(sys,\"stderr\",e),h._SAID_THIS_PROCESS.clear(),h.adopter_protected_prefixes(d)) for d,e in zip(D,E)]; sys.stderr=sys.__stderr__; r=any((\"did you mean\" in e.getvalue())!=c[1] for e,c in zip(E,C)); shutil.rmtree(t,ignore_errors=True); print(r)'",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/_json_safe.py",
+  "tools/cc/hooks/_integrity.py"
+ ],
+ "row_sha": "95ca0d9cb00d",
+ "text_sha": "3d854b640bd3",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}
