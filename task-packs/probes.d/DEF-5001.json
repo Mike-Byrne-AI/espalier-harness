@@ -1,0 +1,14 @@
+{
+ "id": "DEF-5001",
+ "subject": "bench/end_to_end/run.py",
+ "cmd": "python3 -c 'import contextlib,io,types,bench.end_to_end.run as r;from bench.end_to_end.transcript import Transcript;n=[0];f=lambda p,**k:(n.__setitem__(0,n[0]+1),types.SimpleNamespace(transcript=Transcript([]),cost_tokens=0,cost_usd_estimate=0.0,exit_code=0,error=None,cli_version=None,model=None))[1];r.run_scenario=f;r._archive_transcript=lambda *a:None;o=io.StringIO();c=contextlib.redirect_stdout(o);c.__enter__();rc=r.main([\"--scenario\",\"BCE-001-write-guard-deny-reaches-agent\",\"--json\"]);c.__exit__(None,None,None);print(n[0],rc)'",
+ "open_value": "1 0",
+ "why_not": null,
+ "inputs": [
+  "bench/end_to_end/assertions.py",
+  "bench/end_to_end/scenarios/BCE-001-write-guard-deny-reaches-agent.yaml"
+ ],
+ "row_sha": "48f13c0f68a3",
+ "text_sha": "515bc58a5d71",
+ "verified_2026_10_14": "OPEN (filed 2026-10-14; probe driven at filing)"
+}
