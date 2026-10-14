@@ -372,14 +372,17 @@ def _hook_denials(e: TranscriptEvent) -> list[tuple[str | None, str]]:
     a hook's source carries every marker). Without a record (an older CLI), a
     block counts when it is itself an error AND carries a marker -- the flag and
     the marker on the same block, never one block's flag and another's text."""
-    meta = {m.get("id"): m for m in e.metadata.get("tool_result_meta") or [] if isinstance(m, dict)}
+    records = e.metadata.get("tool_result_meta")
+    meta = {m.get("id"): m for m in records or [] if isinstance(m, dict)}
     out: list[tuple[str | None, str]] = []
     for block in _result_blocks(e):
         tid = block.get("tool_use_id")
         text = _flatten_tool_result_content(block)
-        record = meta.get(tid, {}).get("permission_decision") if tid in meta else None
-        if isinstance(record, dict):
-            if record.get("source") == "hook" and record.get("decision") == "reject":
+        if isinstance(records, list):
+            # The CLI records its calls here: a block it did not record as a
+            # hook's reject is not one, whatever its text or error flag.
+            record = meta.get(tid, {}).get("permission_decision")
+            if isinstance(record, dict) and record.get("source") == "hook" and record.get("decision") == "reject":
                 out.append((tid, text))
         elif block.get("is_error") is True and _marker_in(text):
             out.append((tid, text))

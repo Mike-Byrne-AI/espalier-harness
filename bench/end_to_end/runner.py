@@ -16,6 +16,7 @@ The runner does not embed or read keys from disk.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -345,7 +346,7 @@ def _cost_of_run(events) -> tuple[int, float]:
         tokens = sum(_count(usage.get(k)) for k in (
             "input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
         cost = result.get("total_cost_usd")
-        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool) and math.isfinite(cost):
             return tokens, float(cost)
         if tokens:
             # The result's usage is the whole run's; summing the messages' usage
@@ -362,7 +363,7 @@ def _count(value: Any) -> int:
         return 0
     try:
         return max(0, int(value or 0))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # json.loads accepts Infinity and NaN
         return 0
 
 

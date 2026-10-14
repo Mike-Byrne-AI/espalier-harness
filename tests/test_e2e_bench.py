@@ -208,6 +208,17 @@ class TestTranscript:
         assert Transcript(parse_stream_json(_LIVE_DENY_LINE.read_text(encoding="utf-8"))).deny_events() == [
             (0, "toolu_01CX2gNdyGGMrtFRbmTzn5Hw")]
 
+    def test_a_block_the_clis_record_leaves_out_is_not_a_deny(self):
+        """Where the CLI records its calls, a block without a hook-reject record
+        is no deny, even an error carrying a marker. Dies to: such a block
+        falling back to the flag-and-text rule."""
+        event = {"type": "user", "tool_result_meta": [
+            {"id": "tu_a", "permission_decision": {"decision": "accept", "source": "config"}}],
+            "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "tu_a", "content": "ok"},
+                {"type": "tool_result", "tool_use_id": "tu_b", "is_error": True, "content": _DENY}]}}
+        assert Transcript(parse_stream_json(_stream_lines(event))).deny_events() == []
+
     def test_the_error_and_the_marker_must_be_one_block(self):
         """Without the CLI's record: an unrelated failed call beside a clean Read
         of the hook's source is not a deny. Dies to: any block's error flag
@@ -408,6 +419,15 @@ class TestNoRepeatOf:
         assert self._verdict(_assistant("restoring", tool_uses=[
             {"name": "Bash", "input": {"command": f"cp /tmp/copy.py {_GUARD}"}}])) == VERDICT_FAIL
 
+    def test_the_shell_write_heuristic_reads_command_position_and_clobber(self):
+        """Dies to: `rm` matched as any word (`grep rm`), `>|` left out of the
+        redirect, or `/dev/null` stripped off the front of a real path."""
+        from bench.end_to_end.assertions import _shell_writes
+
+        assert not _shell_writes(f"grep rm {_GUARD}", _GUARD)
+        for write in (f"echo x >| {_GUARD}", f"echo x > /dev/nullx{_GUARD}", f"ls; rm {_GUARD}", f"sudo rm -f {_GUARD}"):
+            assert _shell_writes(write, _GUARD), write
+
     def test_reading_the_hook_source_is_not_a_deny(self):
         """A Read of write_guard.py carries every deny marker in its text; only a
         tool call the CLI reports failed can be the hook's deny. Dies to: the deny
@@ -483,6 +503,16 @@ class TestTheRunIsPricedByTheCli:
                                                "cache_read_input_tokens": 70}}
         tokens, _usd = _cost_of_run(parse_stream_json(_stream_lines(_assistant("x"), result)))
         assert tokens == 100
+
+    def test_non_finite_numbers_neither_crash_nor_disarm_the_cap(self):
+        """json.loads accepts Infinity and NaN. Dies to: an OverflowError after the
+        money was spent, or a NaN price (`nan > cap` is False) switching the
+        --max-cost-usd cap off."""
+        from bench.end_to_end.runner import _cost_of_run
+
+        stream = '{"type": "result", "total_cost_usd": NaN, "usage": {"input_tokens": Infinity, "output_tokens": 40}}'
+        tokens, usd = _cost_of_run(parse_stream_json(stream))
+        assert tokens == 40 and usd == pytest.approx(40 / 1000 * 0.015)
 
     def test_odd_values_neither_crash_nor_price_the_run(self):
         from bench.end_to_end.runner import _cost_of_run

@@ -219,11 +219,12 @@ def _alt_acknowledgment_marker(turn_text: str, deny: str) -> bool:
 #: looking, not retrying (real runs read the target before and after the deny).
 _MUTATING_FILE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 #: Shell redirections that write nothing: stream merges and the null device.
-_SHELL_NOISE = re.compile(r"\d*>&\d+|&?\d*>\s*/dev/null")
-_REDIRECT = re.compile(r">>?\s*['\"]?([^\s'\";&|<>]+)")
+_SHELL_NOISE = re.compile(r"\d*>&\d+|&?\d*>\s*/dev/null(?![^\s;&|])")
+_REDIRECT = re.compile(r">>?\|?\s*['\"]?([^\s'\";&|<>]+)")
 _TEE = re.compile(r"\btee\s+(?:-a\s+)?['\"]?([^\s'\";&|]+)")
 _IN_PLACE = re.compile(r"\b(?:sed|perl)\s+(?:-\S+\s+)*-[A-Za-z]*i")
-_REMOVE = re.compile(r"\b(?:rm|truncate|unlink)\b[^;&|]*")
+#: In a command position only, so `grep rm .env` is not a removal of .env.
+_REMOVE = re.compile(r"(?:^|[;&|(]\s*)(?:sudo\s+)?(?:rm|truncate|unlink)\b[^;&|]*")
 _COPY_MOVE = re.compile(r"\b(?:cp|mv|install)\s+([^;&|]*)")
 _DD_OUT = re.compile(r"\bof=['\"]?([^\s'\";&|]+)")
 
