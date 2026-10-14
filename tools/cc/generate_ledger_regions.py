@@ -22,6 +22,16 @@ the list's length; the verbs and the record merge drop a key they find, and
 ``tests/test_forward_ledger_completeness.py`` pins the live file free of one
 (a lane branched before the change writes it back at its own catch-up).
 
+Rows in files (since 2026-10-13)
+--------------------------------
+Where ``espalier.toml`` sets ``ledger_fragments = true`` the verbs write a row
+as ``task-packs/ledger.d/<id>.md`` and its probe as
+``task-packs/probes.d/<id>.json``. Every check here reads the loader's VIEW
+(``_record_fragments.ledger_view_at``: the file with those rows placed in it),
+and ``--write`` repairs the file's own text only: the view is never written
+back, or two lanes would both rewrite it. A row file the view cannot place is
+the ``row-files`` region, never dropped silently.
+
 Why this exists
 ---------------
 The ledger asserts, in four separate places, that its summary regions are
@@ -212,6 +222,27 @@ def json_safe():
         spec.loader.exec_module(mod)
         _JSON_SAFE = mod
     return _JSON_SAFE
+
+
+_RECORD_FRAGMENTS = None
+
+
+def record_fragments():
+    """``tools/cc/_record_fragments.py``, loaded by path on first use (as
+    ``json_safe``): the loader whose view every reader of the ledger and the
+    roster takes, where a repository keeps rows and probes as one file each."""
+    global _RECORD_FRAGMENTS
+    if _RECORD_FRAGMENTS is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_ledger_record_fragments", Path(__file__).resolve().parent / "_record_fragments.py")
+        mod = importlib.util.module_from_spec(spec)
+        # Registered before it runs: its dataclasses resolve their module by
+        # name (Python 3.14 refuses a module missing from sys.modules).
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        _RECORD_FRAGMENTS = mod
+    return _RECORD_FRAGMENTS
 
 
 _ROOT = find_root()
@@ -903,24 +934,50 @@ def render_counts(text: str) -> str:
     return "\n".join(out)
 
 
+def roster_problems() -> list[str]:
+    """What the roster's view at ``_PROBES`` could not read: a probe file that
+    does not parse, a second probe for one id, a stray name beside the probe
+    files. Empty when there is neither a roster file nor a probe directory,
+    and when the roster file itself cannot be read (its own reader refuses
+    that, by name)."""
+    if not _PROBES.is_file() and not record_fragments().probe_fragment_dir(_PROBES).is_dir():
+        return []
+    try:
+        return list(record_fragments().probe_roster_at(_PROBES).problems)
+    except (OSError, ValueError):  # strict decode: the probe runner refuses the file itself (DEF-829)
+        return []
+
+
 def _probe_ids() -> set[str]:
-    """Ids carried by ``LEDGER_PROBES.json``, or an empty set when absent."""
-    if not _PROBES.is_file():
+    """Ids carried by the roster's view at ``_PROBES`` (the file's entries and
+    the probe files beside it), or an empty set when there is neither."""
+    if not _PROBES.is_file() and not record_fragments().probe_fragment_dir(_PROBES).is_dir():
         return set()
     try:
-        doc = json.loads(_PROBES.read_text(encoding="utf-8"))
+        doc = record_fragments().probe_roster_at(_PROBES).data
     except (OSError, ValueError):  # strict decode: a structured answer (DEF-829)
         return set()
-    if not isinstance(doc, dict):
-        return set()
-    return {p.get("id") for p in doc.get("probes", []) if p.get("id")}
+    return {str(p["id"]) for p in doc.get("probes", []) if isinstance(p, dict) and p.get("id")}
 
 
-def find_drift(text: str) -> list[dict[str, object]]:
+def view_problems(problems: list[str]) -> list[dict[str, object]]:
+    """A ledger view's row files that could not be placed (its ``problems``),
+    as drift: a row file the view cannot read is never dropped silently, and
+    no repair touches one (only the verb that owns its id writes it)."""
+    return [{"region": "row-files", "detail": p} for p in problems]
+
+
+def find_drift(text: str, probe_ids: "set[str] | None" = None) -> list[dict[str, object]]:
     """Every region whose stated value disagrees with the member rows.
 
+    ``text`` is the ledger's VIEW where the repository keeps row files (the
+    file alone is not every row). ``probe_ids`` is the roster's ids, which a
+    writer converging against a roster it has not written yet passes in; left
+    out, the roster's view at ``_PROBES`` is read.
+
     Each entry carries ``region``, ``detail``, and -- where the repair is a
-    literal substitution -- ``line`` (1-indexed), ``old`` and ``new``.
+    literal substitution -- ``line`` (1-indexed), ``old`` and ``new``. A
+    ``line`` counts lines of ``text``, so on a view it is for display only.
     """
     d = derive(text)
     lines = text.splitlines()
@@ -958,7 +1015,7 @@ def find_drift(text: str) -> list[dict[str, object]]:
     #    (a co-id's orphan probe used to surface only as a STRIKE_CANDIDATE in
     #    check_ledger_probes; its retired filter now reads the whole cell, so
     #    this region is the one place that reports it).
-    stale_probes = sorted(_probe_ids() & struck_ids)
+    stale_probes = sorted((_probe_ids() if probe_ids is None else probe_ids) & struck_ids)
     for ident in stale_probes:
         drift.append({
             "region": "probe-roster",
@@ -1172,7 +1229,20 @@ def _run_unlocked(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        text = _LEDGER.read_text(encoding="utf-8")
+        record_fragments()
+    except OSError as exc:
+        # Named as itself: read as the ledger's own error, the operator was
+        # told the LEDGER could not be read while it was the loader beside us.
+        print(f"cannot load _record_fragments.py beside this script "
+              f"({json_safe().os_error_text(exc)}); the ledger's readers need it -- restore "
+              "it with the rest of tools/cc", file=sys.stderr)
+        return 1
+    try:
+        file_text = _LEDGER.read_text(encoding="utf-8")
+        # Every check reads the VIEW (the file with any row files placed in
+        # it); a repair rewrites the file's own text, never the view, since a
+        # stored copy of a row file's lines is what two lanes would both edit.
+        view = record_fragments().ledger_view_at(_LEDGER, ledger_text=file_text)
     except (OSError, ValueError) as exc:  # strict decode: a structured answer (DEF-829)
         # Fail CLOSED and LOUD. An unreadable ledger must never report "no
         # drift" -- that is a clean green over a file nobody parsed.
@@ -1180,6 +1250,7 @@ def _run_unlocked(args: argparse.Namespace) -> int:
         print("refusing to report -- an unparseable ledger is not an honest null",
               file=sys.stderr)
         return 1
+    text = view.text
 
     sections = ledger_sections(text)
     n_sections, n_rows = len(sections), sum(len(v) for v in sections.values())
@@ -1210,10 +1281,10 @@ def _run_unlocked(args: argparse.Namespace) -> int:
         print(render_counts(text))
         return 0
 
-    drift = find_drift(text)
+    drift = find_drift(text) + view_problems(view.problems + roster_problems())
 
     if args.write and drift:
-        new_text, applied = apply_writable(text, drift)
+        new_text, applied = apply_writable(file_text, drift)
         if applied:
             _atomic_write(_LEDGER, new_text)   # under the lock _run holds for --write
         remaining = [d for d in drift if d["region"] not in _WRITABLE]

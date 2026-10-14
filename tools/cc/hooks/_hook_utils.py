@@ -3702,15 +3702,26 @@ RECORD_FILES: tuple[str, ...] = (
     "task-packs/LEDGER_PROBES.json",
     "memory/session-log.d/",
     "changelog.d/",
+    "task-packs/ledger.d/",
+    "task-packs/probes.d/",
 )
 
 
-#: A fragment this harness writes, ``<YYYY-MM-DD>-...md`` directly under a
-#: fragment directory: ci_guard._FRAGMENT_NAME_RE's pattern, pinned equal to it
-#: and to record_merge's. Another tool's entry in an adopter's own
-#: ``changelog.d/`` (scriv, towncrier) is not a record file, so its setext
-#: underline is never called a conflict marker (review of #179).
+#: A dated fragment, ``<YYYY-MM-DD>-...md``: ci_guard._FRAGMENT_NAME_RE's
+#: pattern, pinned equal to it and to record_merge's.
 _FRAGMENT_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9._-]*\.md$")
+#: The name this harness writes under each fragment directory (dated for the
+#: Session Log and the changelog, the row's or probe's id for the forward
+#: ledger's two): ci_guard's and record_merge's map, pinned equal. Another
+#: tool's entry in an adopter's own ``changelog.d/`` (scriv, towncrier) is not
+#: a record file, so its setext underline is never called a conflict marker
+#: (review of #179).
+_FRAGMENT_NAMES: "dict[str, re.Pattern[str]]" = {
+    "memory/session-log.d/": _FRAGMENT_NAME_RE,
+    "changelog.d/": _FRAGMENT_NAME_RE,
+    "task-packs/ledger.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.md$"),
+    "task-packs/probes.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.json$"),
+}
 
 
 def is_record_file(rel: str) -> bool:
@@ -3718,7 +3729,7 @@ def is_record_file(rel: str) -> bool:
     RECORD_FILES, or a fragment under one of its fragment directories."""
     rel = rel.replace("\\", "/")
     return any(
-        (rel.startswith(entry) and bool(_FRAGMENT_NAME_RE.match(rel[len(entry):])))
+        (rel.startswith(entry) and bool(_FRAGMENT_NAMES[entry].match(rel[len(entry):])))
         if entry.endswith("/") else rel == entry
         for entry in RECORD_FILES
     )

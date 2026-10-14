@@ -280,8 +280,9 @@ else
 fi
 ```
 **Never stops the run.** Re-derives every live forward-ledger row's claim
-(`task-packs/FORWARD_LEDGER.md`, one probe per row in the probes file its verbs keep
-beside it) against the live tree -- about 13s over the Espalier source tree's 220-odd probes
+(`task-packs/FORWARD_LEDGER.md` and any rows kept one file each under
+`task-packs/ledger.d/`, one probe per row in the probes file or the probe files its
+verbs keep beside it) against the live tree -- about 13s over the Espalier source tree's 220-odd probes
 (an earlier note said ~90s), seconds on a new ledger.
 
 **Why this step exists at all.** The runner has existed since the 2026-08-20

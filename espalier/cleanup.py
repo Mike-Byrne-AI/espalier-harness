@@ -450,6 +450,10 @@ def _entry_still_guards(
                 # `task-packs/Deferred/` drafts are guarded by `/task-packs/*`.
                 # Counting files alone dropped the rule on uninstall and left
                 # them stageable (failure-mode review, driven 2026-09-30).
+                # A directory the block re-includes (the ledger's row and probe
+                # files) is tracked work, not a draft the rule guards.
+                if child.is_dir() and f"{rel}/" in REINCLUDED_PATHS:
+                    continue
                 witness = _dir_has_survivor(child, repo_root, doomed)
                 if witness is not None:
                     return witness
@@ -891,11 +895,15 @@ def clean_generated_surface(
     # the adopter's (a seed they -- and init's own filing -- have edited). It is
     # the other half of that ledger, the pins its rows are checked against, so
     # it stays with it and is named. Derived: the files the .gitignore block
-    # re-includes as tracked work that are not themselves seeds.
+    # re-includes as tracked work that are not themselves seeds, and its two
+    # directories (the ledger's rows and probes as one file each) when they
+    # hold any.
     from espalier.cli import REINCLUDED_PATHS  # lazy: cli imports this module at load
 
     for rel in sorted(REINCLUDED_PATHS - set(get_seed_docs())):
-        if (repo_root / rel).is_file():
+        target = repo_root / rel
+        if target.is_file() or (rel.endswith("/") and target.is_dir()
+                                and any(p.is_file() for p in target.iterdir())):
             preserved_user.append(rel)
 
     # install-ci (cli.py::cmd_install_ci) writes ci_guard.py + harness-guard.yml

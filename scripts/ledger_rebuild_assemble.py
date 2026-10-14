@@ -892,8 +892,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"--date must be YYYY-MM-DD, got {args.date!r}", file=sys.stderr)
         return 2
     try:
-        text = args.ledger.read_text(encoding="utf-8")
-        probes = load_probes(_read_json(args.probes), args.probes.name)
+        text = args.ledger.read_text(encoding="utf-8")  # ledger-read: a one-off rebuild of a staged legacy file, by design
+        probes = load_probes(_read_json(args.probes), args.probes.name)  # ledger-read: a one-off rebuild of a staged legacy roster, by design
         final = load_final(_read_json(args.final))
         if not args.lanes.is_dir():
             raise ValueError(f"{args.lanes}: not a directory")

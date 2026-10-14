@@ -72,7 +72,7 @@ import re
 import subprocess
 import sys
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 _HERE = Path(__file__).resolve()
 _ROOT = _HERE.parents[1]
@@ -102,12 +102,19 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
                           encoding="utf-8", errors="replace", check=False)
 
 
+def _row_dir(path: str) -> str:
+    """The row-file directory beside the ledger at ``path`` (where a
+    repository keeps its rows as files), as the loader names it."""
+    return _gen().record_fragments().ledger_fragment_dir(PurePosixPath(path)).as_posix()
+
+
 def _log(repo: Path, ref: str, path: str, first_parent: bool) -> list[tuple[str, str]]:
-    """``[(hash, date)]`` of the commits on ``ref`` that touched ``path``, oldest
-    first: the ref's first-parent line, or every commit in the order the plain
-    log gives them."""
+    """``[(hash, date)]`` of the commits on ``ref`` that touched ``path`` or the
+    row-file directory beside it, oldest first: the ref's first-parent line, or
+    every commit in the order the plain log gives them. A commit that only
+    filed or struck a row file changed the ledger as its readers see it."""
     args = ["log"] + (["--first-parent"] if first_parent else []) + [
-        "--format=%H %ad", "--date=short", ref, "--", path]
+        "--format=%H %ad", "--date=short", ref, "--", path, _row_dir(path)]
     run = _git(repo, *args)
     if run.returncode != 0:
         return []
@@ -150,9 +157,34 @@ def snapshots(repo: Path, ref: str, path: str, since: str | None = None,
     return out
 
 
+def _row_files_at(repo: Path, commit: str, directory: str) -> list[tuple[str, str]]:
+    """``(name, text)`` of every file directly under ``directory`` at
+    ``commit``: one ``ls-tree`` and one ``cat-file --batch`` (measured
+    2026-10-13: 83 snapshots of 781 files in about 10 s)."""
+    ls = _git(repo, "ls-tree", commit, "--", directory + "/")
+    entries = [ln.split("\t", 1) for ln in ls.stdout.splitlines() if "\t" in ln] if ls.returncode == 0 else []
+    blobs = [(meta.split()[2], name.rsplit("/", 1)[-1]) for meta, name in entries if meta.split()[1] == "blob"]
+    if not blobs:
+        return []
+    run = subprocess.run(["git", "-C", str(repo), "cat-file", "--batch"], capture_output=True, check=False,
+                         input="".join(sha + "\n" for sha, _name in blobs).encode("ascii"))
+    out, at, files = run.stdout, 0, []
+    for _sha, name in blobs:
+        nl = out.index(b"\n", at)
+        size = int(out[at:nl].split()[2])
+        files.append((name, out[nl + 1:nl + 1 + size].decode("utf-8", errors="replace")))
+        at = nl + 1 + size + 1
+    return files
+
+
 def ledger_at(repo: Path, commit: str, path: str) -> str | None:
+    """The ledger as its readers saw it at ``commit``: the file with the row
+    files beside it then placed in it (the loader's view, from texts)."""
     run = _git(repo, "show", f"{commit}:{path}")
-    return run.stdout if run.returncode == 0 else None
+    if run.returncode != 0:
+        return None
+    rows = _row_files_at(repo, commit, _row_dir(path))
+    return _gen().record_fragments().ledger_text_from_texts(run.stdout, rows) if rows else run.stdout
 
 
 def state(gen, text: str) -> dict[str, dict[str, object]]:

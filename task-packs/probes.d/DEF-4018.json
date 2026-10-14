@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4018",
+ "subject": "tests/test_ledger_fragments.py",
+ "cmd": "python3 -c \"import subprocess,pathlib,re;fs=subprocess.run(['git','ls-files','.claude','memory','docs','README.md','CONTRIBUTING.md','CLAUDE.md','task-packs/CLAUDE.md'],capture_output=True,text=True).stdout.split();print(sum(1 for f in fs if f.endswith(('.md','.js')) and '/session-log.d/' not in f and re.search(r'FORWARD_LEDGER[.]md|LEDGER_PROBES[.]json',t:=pathlib.Path(f).read_text(encoding='utf-8',errors='replace')) and not re.search(r'ledger[.]d|probes[.]d|_record_fragments[.]py',t)))\"",
+ "open_value": "12",
+ "why_not": null,
+ "row_sha": "c9d8dca16d91",
+ "text_sha": "6f5b4dbe57bb",
+ "verified_2026_10_13": "OPEN (filed 2026-10-13; probe driven at filing)"
+}
