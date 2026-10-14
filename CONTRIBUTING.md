@@ -159,9 +159,10 @@ to render.
    verify the fold is *complete*: `[Unreleased]` legitimately carries the
    dev record between releases, and the check runs on every push to `main`,
    so an emptiness assertion there would red `main` for the whole
-   pre-release period (see `DEF-669`; a `DEF-NNN` names a row of
-   `task-packs/FORWARD_LEDGER.md`, the forward-work tracker, which ships in
-   the public repository and is not deployed by `init`). The footer
+   pre-release period (see `DEF-669`; a `DEF-NNN` names a row of the
+   forward-work tracker, `task-packs/FORWARD_LEDGER.md` with its newer rows one
+   file each under `task-packs/ledger.d/`, which ships in the public
+   repository and is not deployed by `init`). The footer
    compare-link is covered by `tests/test_changelog_footer.py`. Steps 3-4
    remain a human check.
 3. Run the final proof matrix:

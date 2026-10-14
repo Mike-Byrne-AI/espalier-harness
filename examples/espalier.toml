@@ -157,6 +157,12 @@
 # my-laptop = { DEF = "2000-2999", INV = "100-199", TP = "500-599" }
 # _unnamed = { DEF = "1000-1999", INV = "32-99", TP = "100-499" }
 
+# Write each forward-ledger row and its probe as a file of its own under
+# task-packs/ledger.d/ and task-packs/probes.d/ (tools/cc/ledger_row.py),
+# so seats filing in parallel never conflict on the ledger. Off when absent:
+# the verbs write the two files, and every reader takes both forms.
+# ledger_fragments = true
+
 # ── Extra actions (TABLE — keep last; everything below belongs to it) ──────
 # Extra actions to add beyond what fingerprinting infers
 # [extra_actions]

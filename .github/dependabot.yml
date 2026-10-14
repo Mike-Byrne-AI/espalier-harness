@@ -6,9 +6,13 @@ updates:
       interval: "weekly"
     # Collapse routine minor/patch bumps into one PR; major bumps stay
     # ungrouped so a breaking upgrade gets its own isolated review.
+    # The two finding gates (ruff, mypy) stay out of the group: the dev extra
+    # pins each to one exact version, and a bump of either can change what the
+    # required cells report, so each gets a pull request of its own.
     groups:
       python-minor-patch:
         patterns: ["*"]
+        exclude-patterns: ["ruff", "mypy"]
         update-types: ["minor", "patch"]
   - package-ecosystem: "github-actions"
     directory: "/"

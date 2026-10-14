@@ -816,19 +816,31 @@ def scan_unreadable_settings(cwd: str | None = None) -> list[str]:
 #: forward slashes. A hand copy of ``record_merge.ROSTER`` (this file imports
 #: nothing from its siblings, so it cannot read the resolver's); the parity
 #: pin is ``tests/test_ci_guard.py::TestRecordFileMarkers``. An entry ending
-#: in ``/`` is a fragment directory: every ``*.md`` under it is
-#: read.
+#: in ``/`` is a fragment directory: every file under it with a name
+#: ``_FRAGMENT_NAMES`` gives that directory is read.
 _RECORD_FILES: tuple[str, ...] = (
     "ESPALIER_MEMORY.md",
     "task-packs/FORWARD_LEDGER.md",
     "task-packs/LEDGER_PROBES.json",
     "memory/session-log.d/",
     "changelog.d/",
+    "task-packs/ledger.d/",
+    "task-packs/probes.d/",
 )
-#: A fragment this harness writes: ``<YYYY-MM-DD>-...md`` under either
-#: directory (``_record_fragments.SESSION_LOG_NAME_RE`` and
-#: ``CHANGELOG_NAME_RE`` both open this way; this file imports nothing).
+#: A dated fragment: ``<YYYY-MM-DD>-...md`` (``_record_fragments.SESSION_LOG_NAME_RE``
+#: and ``CHANGELOG_NAME_RE`` both open this way; this file imports nothing).
 _FRAGMENT_NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-[a-z0-9][a-z0-9._-]*\.md$")
+#: The name this harness writes under each fragment directory: dated for the
+#: Session Log and the changelog, the row's or probe's id for the forward
+#: ledger's two (a probe file is ``.json``). A copy of
+#: ``_record_fragments.FRAGMENT_NAMES``'s rule, pinned equal to record_merge's
+#: and _hook_utils'.
+_FRAGMENT_NAMES: dict[str, "re.Pattern[str]"] = {
+    "memory/session-log.d/": _FRAGMENT_NAME_RE,
+    "changelog.d/": _FRAGMENT_NAME_RE,
+    "task-packs/ledger.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.md$"),
+    "task-packs/probes.d/": re.compile(r"^([A-Z]{2,5}-\d+[a-z]*)\.json$"),
+}
 #: Git's conflict-marker heads at the default marker size (the opener, the
 #: separator, the closer and diff3's base line): a line whose first seven
 #: characters are one of these, followed by a space or the end of the line,
@@ -874,14 +886,15 @@ def check_record_file_markers(cwd: str | None = None) -> list[str]:
     files: list[str] = []
     for entry in _RECORD_FILES:
         if entry.endswith("/"):
-            # Only the files this harness names (both fragment names open with
-            # a date): an adopter's own tool may keep its fragments in a
-            # directory of the same name, and a markdown underline of seven
-            # `=` there would red a merge this gate cannot be told to allow.
+            # Only the files this harness names (each directory's own name
+            # rule, a probe file's `.json` among them): an adopter's own tool
+            # may keep its fragments in a directory of the same name, and a
+            # markdown underline of seven `=` there would red a merge this
+            # gate cannot be told to allow.
             base = root / entry
             if base.is_dir():
-                files.extend(f"{entry}{p.name}" for p in sorted(base.glob("*.md"))
-                             if p.is_file() and _FRAGMENT_NAME_RE.match(p.name))
+                files.extend(f"{entry}{p.name}" for p in sorted(base.iterdir())
+                             if p.is_file() and _FRAGMENT_NAMES[entry].match(p.name))
         else:
             files.append(entry)
     for rel in files:

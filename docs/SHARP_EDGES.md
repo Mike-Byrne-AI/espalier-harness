@@ -5840,8 +5840,11 @@ does not exist yet (the probe-shape ratchet in
 2026-10-03 audit filing re-filed from HEAD after each red for want of it.
 
 **How to avoid it:** sequence ledger verbs in one shell script, or one per
-turn, and verify after any batch: `command grep -c '<id>'
-task-packs/FORWARD_LEDGER.md` per id, then `python3
+turn, and verify after any batch: `python tools/cc/_record_fragments.py
+ledger | command grep -c '<id>'` per id (the ledger as its readers see it: a
+row filed as its own file under `task-packs/ledger.d/`, where `espalier.toml`
+sets `ledger_fragments = true`, is in the count; a grep of the ledger file
+alone reads that filing as lost), then `python3
 tools/cc/check_ledger_probes.py`, which names in a NOTE every live row with no
 roster entry — the mechanical trace a lost probe write leaves. Until 2026-10-12
 the trace was a stored `_count` that disagreed with its rows, which fired only

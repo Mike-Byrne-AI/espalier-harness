@@ -97,6 +97,10 @@ docs/session-archive.md  export-ignore
 *.js text eol=lf
 *.ini text eol=lf
 task-packs/LEDGER_PROBES.json text eol=lf
+# The same for the ledger's rows and probes kept one file each (2026-10-13,
+# ledger_fragments): the verbs write them with newline="\n" too.
+task-packs/ledger.d/*.md text eol=lf
+task-packs/probes.d/*.json text eol=lf
 # Two machines' lanes each prepend a bullet under `## [Unreleased]`, so the
 # changelog conflicts whenever two lanes land between syncs (three times on
 # 2026-10-05 alone). `union` keeps both sides' lines in a LOCAL merge, which is

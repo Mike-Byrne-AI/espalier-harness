@@ -580,7 +580,13 @@ Sequence (each step verifies the previous):
    ```bash
    unzip -l dist/espalier-harness-*-release.zip | grep -c 'task-packs/FORWARD_LEDGER.md'   # expect: 1
    unzip -l dist/espalier-harness-*-release.zip | grep -c 'task-packs/LEDGER_PROBES.json'  # expect: 1
+   unzip -l dist/espalier-harness-*-release.zip | grep -c -e 'task-packs/ledger.d/' -e 'task-packs/probes.d/'  # expect: the count below
+   git ls-files task-packs/ledger.d task-packs/probes.d | wc -l
    ```
+
+   The rows and probes filed one file each (`ledger_fragments`, 2026-10-13) are
+   the tracker too: a zip that carries the two files but not the row files ships
+   a ledger missing every row filed since.
 
    ⚠ **If `ESPALIER_MEMORY.md` or either release doc appears in the zip, STOP** —
    the two exclusion boundaries (classify and export-ignore) have disagreed, which

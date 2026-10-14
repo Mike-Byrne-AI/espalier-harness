@@ -74,6 +74,22 @@ class TestSettingsNewArtifactCleanup:
         assert ".claude/settings.json.new" in result["preserved_user_files"]
 
 
+class TestLedgerRowFilesAreTheAdopters:
+    """The ledger's rows and probes as one file each (``ledger_fragments``)
+    are the adopter's tracked work, as the ledger and its roster are: an
+    uninstall keeps them and names their directory."""
+
+    def test_a_row_file_directory_is_named_and_kept(self, harness_repo):
+        """Dies to: the preserved list reading files alone, so a directory the
+        block re-includes goes unnamed."""
+        row = harness_repo / "task-packs" / "ledger.d" / "DEF-1.md"
+        row.parent.mkdir(parents=True)
+        row.write_text("<!-- class: §C1 -->\n", encoding="utf-8")
+        result = clean_generated_surface(harness_repo, dry_run=False)
+        assert "task-packs/ledger.d/" in result["preserved_user_files"]
+        assert row.exists() and "task-packs/ledger.d/DEF-1.md" not in result["deleted"]
+
+
 class TestExecute:
     def test_execute_removes_marked_managed_files(self, harness_repo):
         """TP-04: execute removes files carrying the espalier:managed marker.
@@ -1176,6 +1192,23 @@ class TestKeptEntriesNameTheirWitness:
 
         assert sorted(result["removed"]) == sorted((REINCLUDED_UNDER, *GITIGNORE_REINCLUDES))
         assert result["kept"] == [] and result["file_deleted"] is True
+
+    def test_a_ledger_row_file_is_no_witness_either(self, tmp_path):
+        """The ledger's rows as files (``ledger_fragments``) sit in a directory
+        the block re-includes, so they are tracked work too: ``/task-packs/*``
+        guards nothing there. Dies to: the walk counting a re-included
+        directory's files as drafts."""
+        from espalier.cli import GITIGNORE_REINCLUDES, REINCLUDED_UNDER
+        from espalier.cleanup import _retire_gitignore_block
+        repo = tmp_path / "adopter"
+        (repo / "task-packs" / "ledger.d").mkdir(parents=True)
+        (repo / "task-packs" / "ledger.d" / "DEF-1.md").write_text("<!-- class: §C1 -->\n", encoding="utf-8")
+        self._new_block(repo, REINCLUDED_UNDER)
+
+        result = _retire_gitignore_block(repo, dry_run=True, doomed=set())
+
+        assert sorted(result["removed"]) == sorted((REINCLUDED_UNDER, *GITIGNORE_REINCLUDES))
+        assert result["kept"] == []
 
     def test_reincludes_in_another_block_follow_the_rule_kept_there(self, tmp_path):
         """A hand-split file: the rule in one harness block, its ``!`` lines in a
