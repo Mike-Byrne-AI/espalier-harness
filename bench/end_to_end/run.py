@@ -34,7 +34,7 @@ from bench.end_to_end.assertions import (
     ScenarioVerdict,
     evaluate,
 )
-from bench.end_to_end.runner import ScenarioRun, load_scenario, run_scenario
+from bench.end_to_end.runner import TIMEOUT_EXIT_CODE, ScenarioRun, load_scenario, run_scenario
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCENARIOS_DIR = REPO_ROOT / "bench" / "end_to_end" / "scenarios"
@@ -82,6 +82,13 @@ def _run_with_retry(
         run = run_scenario(scenario_path, keep_work_dir=keep_work_dir)
         verdict = evaluate(scenario, run.transcript, cost_tokens=run.cost_tokens)
         verdict.run_exit_code, verdict.run_error = run.exit_code, run.error
+        verdict.cli_version, verdict.model = run.cli_version, run.model
+        if run.exit_code == TIMEOUT_EXIT_CODE:
+            # A run the timeout ended is a FAIL, never a warn: a Stop gate that
+            # never releases, or an agent looping on a retry, shows up as exactly
+            # this, and the cost cap cannot see it (no result event, no price).
+            verdict.overall = VERDICT_FAIL
+            verdict.notes = (verdict.notes + "; " if verdict.notes else "") + "the run timed out"
         return run, verdict
 
     run, verdict = _do_run()
@@ -134,6 +141,8 @@ def render_markdown(verdicts: list[ScenarioVerdict],
             # The run itself failed: say how, so a rejected argv or a timeout
             # never reads as the friction layer failing.
             lines.append(f"- run: exit {v.run_exit_code}" + (f"; error: {v.run_error}" if v.run_error else ""))
+        if v.cli_version or v.model:
+            lines.append(f"- ran on: Claude Code {v.cli_version or '?'}, model {v.model or '?'}")
         for a in v.assertions:
             mark = {VERDICT_PASS: "\u2705", VERDICT_FAIL: "\u274c",
                     VERDICT_INCONCLUSIVE: "\u26a0\ufe0f"}.get(a.verdict, "?")

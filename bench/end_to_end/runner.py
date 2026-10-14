@@ -32,6 +32,8 @@ from bench.end_to_end.transcript import Transcript, parse_stream_json
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 TEMPLATES_DIR = REPO_ROOT / "bench" / "end_to_end" / "templates"
 DEFAULT_TIMEOUT_SECONDS = 300  # 5 minutes per scenario
+#: The exit code a run reports when the runner's timeout ended it (timeout(1)'s).
+TIMEOUT_EXIT_CODE = 124
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,10 @@ class ScenarioRun:
     cost_usd_estimate: float
     raw_stream_json: str
     error: str | None = None
+    #: From the run's `init` event: what it measured, so a report says which
+    #: CLI and model a verdict holds for (CI installs an unpinned CLI).
+    cli_version: str | None = None
+    model: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,6 +62,8 @@ class ScenarioRun:
             "cost_usd_estimate": round(self.cost_usd_estimate, 4),
             "error": self.error,
             "n_events": len(self.transcript.events),
+            "cli_version": self.cli_version,
+            "model": self.model,
         }
 
 
@@ -158,21 +166,30 @@ def _friction_bypass_vars() -> tuple[str, ...]:
     import ast
 
     src = (REPO_ROOT / "tools" / "cc" / "hooks" / "_maintenance_mode.py").read_text(encoding="utf-8")
-    return tuple(
+    found = tuple(
         node.value.value for node in ast.parse(src).body
-        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+        if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(node.value, ast.Constant)
         and isinstance(node.value.value, str)
-        and any(isinstance(t, ast.Name) and t.id == "ENV_VAR" for t in node.targets))
+        and any(isinstance(t, ast.Name) and t.id == "ENV_VAR"
+                for t in (node.targets if isinstance(node, ast.Assign) else [node.target])))
+    if not found:
+        # Never run a scenario with the bypass possibly still set.
+        raise RuntimeError("tools/cc/hooks/_maintenance_mode.py names no ENV_VAR; the bench cannot "
+                           "tell which variable switches the friction layer off")
+    return found
 
 
 def _scenario_env() -> dict[str, str]:
     """The nested CLI's environment: this process's, less what would make the
-    run measure something other than the scenario's own wiring -- a friction
-    bypass the operator's shell carries (the suite's own subprocess helpers drop
-    it: `tests/conftest.py::_isolate_maintenance_mode`) and a parent session's
-    variables. Other `ESPALIER_*` knobs pass through as the operator set them."""
+    run measure something other than the scenario's own wiring -- the friction
+    bypass (the suite's own subprocess helpers drop it:
+    `tests/conftest.py::_isolate_maintenance_mode`), every other `ESPALIER_*`
+    knob a maintainer's shell carries (`ESPALIER_STOP_GATE=full` would change
+    the stop gate a scenario tests; `ESPALIER_AUDIT_DIR` would send its audit
+    rows to the operator's pile), and a parent session's variables."""
+    bypass = _friction_bypass_vars()
     env = os.environ.copy()
-    for name in (*_friction_bypass_vars(), *_NESTED_SESSION_VARS):
+    for name in [k for k in env if k.startswith("ESPALIER_")] + [*bypass, *_NESTED_SESSION_VARS]:
         env.pop(name, None)
     return env
 
@@ -236,6 +253,8 @@ def run_scenario(
         # `--verbose` is not optional: with `--print`, the live CLI rejects
         # `--output-format stream-json` without it at arg-parse ("requires
         # --verbose", 2.1.274 on), so the pair is pinned in the same test.
+        # `--strict-mcp-config` loads no MCP server the scenario does not name
+        # (a maintainer's claude.ai connectors otherwise join the run).
         # `--setting-sources project` makes the scenario's own
         # .claude/settings.json the only settings the run loads: without it a
         # maintainer's user-scope hooks and permission mode ride along (driven
@@ -244,7 +263,7 @@ def run_scenario(
         cmd = [
             cli, "--print",
             "--output-format", "stream-json", "--verbose",
-            "--setting-sources", "project",
+            "--setting-sources", "project", "--strict-mcp-config",
         ]
 
         stdin_payload = trigger.get("content") if trigger_type == "prompt" else None
@@ -282,12 +301,17 @@ def run_scenario(
             if proc.returncode != 0 and proc.stderr:
                 error = proc.stderr.strip()[:500]
         except subprocess.TimeoutExpired as exc:
-            raw = (exc.stdout or "") if isinstance(exc.stdout, str) else ""
-            exit_code = 124
+            # CPython hands a timeout its output as bytes even under text=True,
+            # so decode it: the events before the timeout are the evidence.
+            out = exc.stdout or b""
+            raw = out.decode("utf-8", "replace") if isinstance(out, bytes) else out
+            exit_code = TIMEOUT_EXIT_CODE
             error = f"timeout after {timeout_seconds}s"
 
         events = parse_stream_json(raw)
         cost_tokens, cost_usd = _cost_of_run(events)
+        init = next((e.metadata for e in events if e.metadata.get("type") == "system"
+                     and e.metadata.get("subtype") == "init"), {})
         ended_at = datetime.now(timezone.utc)
         return ScenarioRun(
             scenario_id=scenario["id"],
@@ -299,6 +323,8 @@ def run_scenario(
             cost_usd_estimate=cost_usd,
             raw_stream_json=raw,
             error=error,
+            cli_version=init.get("claude_code_version"),
+            model=init.get("model"),
         )
     finally:
         if cleanup_dir is not None and not keep_work_dir:
@@ -314,13 +340,30 @@ def _cost_of_run(events) -> tuple[int, float]:
     tokens and left out 44,848 cache-creation and 141,327 cache-read tokens --
     and the --max-cost-usd cap reads this number."""
     result = next((e.metadata for e in reversed(events) if e.metadata.get("type") == "result"), None)
-    if result is not None and isinstance(result.get("total_cost_usd"), (int, float)):
+    if result is not None:
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
-        tokens = sum(int(usage.get(k, 0) or 0) for k in (
+        tokens = sum(_count(usage.get(k)) for k in (
             "input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
-        return tokens, float(result["total_cost_usd"])
+        cost = result.get("total_cost_usd")
+        if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+            return tokens, float(cost)
+        if tokens:
+            # The result's usage is the whole run's; summing the messages' usage
+            # on top of it would count every token twice.
+            return tokens, _estimate_cost(tokens)
     tokens = _estimate_cost_tokens_from_events(events)
     return tokens, _estimate_cost(tokens)
+
+
+def _count(value: Any) -> int:
+    """A usage count, or 0 for anything that is not one (the run already spent
+    the money; a malformed field must not crash its report)."""
+    if isinstance(value, bool):
+        return 0
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _estimate_cost_tokens_from_events(events) -> int:

@@ -81,6 +81,18 @@ Run it with `python3 -m bench.end_to_end.run` from the repo root — the `-m`
 module form is required (the package resolves `bench.end_to_end` relative to the
 repo root, not the script's directory).
 
+A run measures its scenario, not your machine: the runner passes
+`--setting-sources project` and `--strict-mcp-config`, so your user-scope hooks,
+permission mode and MCP connectors stay out (a user-scope SessionStart hook once
+told the nested agent to make no edits), and it drops every `ESPALIER_*` variable
+and a parent Claude Code session's variables from the child's environment, so a
+run from inside a session or a maintenance-mode shell still exercises the
+scenario's hooks. The CLI authenticates however it finds (an API key, or your
+local login), and the model is your CLI's default; the report names the CLI
+version and model of each run. A run that produced no events reads as
+inconclusive with its exit code and error printed, never as a hook FAIL; a run
+the timeout ended fails.
+
 ## When to ignore failures
 
 **Never silently.** A flake is a real signal that needs triage:

@@ -34,6 +34,10 @@ expected_receiver_behavior:
     - "plan_guard"
   must_not_contain_any:
     - regex: "(?i)retry(ing)? the (edit|write)"
+  # The plan_guard deny itself must be in the stream: an agent that names "the
+  # execution plan" without the hook having fired passes must_contain_any alone.
+  block_acknowledgment:
+    required: true
   agent_actions_after:
     no_repeat_of: "src/app.py"
   # No max_turns: the CLI no longer caps turns, and how far the agent explores

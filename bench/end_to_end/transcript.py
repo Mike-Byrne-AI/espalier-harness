@@ -100,6 +100,10 @@ _DENY_REASON_MARKERS: tuple[str, ...] = (
 )
 
 
+#: The CLI's own prefix when it relays a hook to the agent in a user event.
+_HOOK_FEEDBACK = re.compile(r"\s*\w+ hook feedback:", re.IGNORECASE)
+
+
 @dataclass(frozen=True)
 class TranscriptEvent:
     """One event from Claude Code's stream-json transcript."""
@@ -149,14 +153,16 @@ def _event_from_obj(obj: dict[str, Any]) -> TranscriptEvent:
         # -- as `tool_result` blocks inside a `user` event, never as a top-level
         # `tool_result` event. A user event made only of those is a tool result,
         # so the deny check (which leaves the user's own prompt out) reads it.
-        if obj.get("isSynthetic") is True:
-            # A user event the CLI wrote itself, not the operator's prompt: a
-            # Stop hook's block arrives this way ("Stop hook feedback: ..."), so
-            # it is the harness speaking and the deny check reads it.
+        if obj.get("isSynthetic") is True and _HOOK_FEEDBACK.match(_flatten_user_content(obj)):
+            # A user event the CLI wrote itself to relay a hook ("Stop hook
+            # feedback: ..."): the harness speaking, so the deny check reads it.
+            # Other synthetic events (an interrupt notice) stay the user's.
             return TranscriptEvent(role="hook", content=_flatten_user_content(obj), metadata=obj)
-        blocks = _user_blocks(obj)
-        if blocks and all(isinstance(b, dict) and b.get("type") == "tool_result" for b in blocks):
-            text = "\n".join(_flatten_tool_result_content(b) for b in blocks)
+        results = [b for b in _user_blocks(obj) if isinstance(b, dict) and b.get("type") == "tool_result"]
+        if results:
+            # Any tool_result block makes this a tool result (a text block beside
+            # it must not hide a deny); only the result blocks are its text.
+            text = "\n".join(_flatten_tool_result_content(b) for b in results)
             return TranscriptEvent(role="tool_result", content=text, metadata=obj)
         text = _flatten_user_content(obj)
         return TranscriptEvent(role="user", content=text, metadata=obj)
@@ -301,50 +307,80 @@ class Transcript:
             return bool(pattern.search("\n".join(self.assistant_turns())))
         return pattern.lower() in haystack
 
-    def deny_event_index(self) -> int | None:
-        """The index of the first event that carries a deny from the harness
-        (a system message, an error tool result or a hook event -- never the
-        agent's own words), else None."""
+    def deny_events(self) -> list[tuple[int, str | None]]:
+        """``(event index, tool_use_id)`` for every deny the harness delivered,
+        in stream order: a hook's refusal of a tool call (its tool_use_id
+        names the call it answers), or a hook or system message carrying a
+        deny marker (no id). Never the agent's own words."""
+        out: list[tuple[int, str | None]] = []
         for i, e in enumerate(self._events):
-            if _carries_deny(e):
-                return i
-        return None
+            if e.role == "tool_result":
+                out += [(i, tid) for tid, _text in _hook_denials(e)]
+            elif e.role in {"system", "hook"} and _marker_in(e.content):
+                out.append((i, None))
+        return out
+
+    def deny_event_index(self) -> int | None:
+        """The index of the first deny the harness delivered, else None."""
+        events = self.deny_events()
+        return events[0][0] if events else None
 
     def deny_reason_received(self) -> str | None:
-        """Return the deny-reason text if the agent received one, else None.
+        """The deny marker the agent received from the harness, else None.
 
-        We treat 'received' as: any system message OR tool_result OR
-        assistant turn that contains a recognised deny-reason marker.
-        Substring match is intentionally permissive — Claude Code may
-        wrap, paraphrase, or quote the reason. The point is to know that
-        the *signal* arrived, not which exact wording carried it.
+        'Received' means a hook's refusal of a tool call (judged from the CLI's
+        own record of the call, below) or a hook or system message carrying a
+        recognised marker. The agent's own turns never count: an agent that
+        read a hook's source can quote every marker without any hook firing,
+        which once let a run PASS with the deny removed from its stream.
+        Substring match stays permissive about the wording that carried it.
         """
         for e in self._events:
-            if e.role not in {"system", "tool_result", "hook", "assistant"}:
+            if e.role == "tool_result":
+                texts = [text for _tid, text in _hook_denials(e)]
+            elif e.role in {"system", "hook"}:
+                texts = [e.content]
+            else:
                 continue
-            if e.role == "tool_result" and not _is_error_result(e):
-                # A Read or grep of a hook's own source carries every marker; only
-                # a tool call the CLI reports failed can be a hook's deny.
-                continue
-            for marker in _DENY_REASON_MARKERS:
-                if marker.lower() in e.content.lower():
+            for t in texts:
+                marker = _marker_in(t)
+                if marker:
                     return marker
         return None
 
 
-def _is_error_result(e: TranscriptEvent) -> bool:
-    """The CLI marks a refused or failed tool call `is_error: true` (on the
-    `tool_result` block of a user event, or on a top-level result event)."""
-    if e.metadata.get("is_error") is True:
-        return True
+def _marker_in(text: str) -> str | None:
+    lower = text.lower()
+    return next((m for m in _DENY_REASON_MARKERS if m.lower() in lower), None)
+
+
+def _result_blocks(e: TranscriptEvent) -> list[dict[str, Any]]:
+    """The tool_result blocks of a tool-result event (a user event's blocks, or
+    a top-level legacy `tool_result` event as its own single block)."""
+    if e.metadata.get("type") == "tool_result":
+        return [e.metadata]
     msg = e.metadata.get("message")
     blocks = msg.get("content") if isinstance(msg, dict) else None
-    return isinstance(blocks, list) and any(isinstance(b, dict) and b.get("is_error") is True for b in blocks)
+    return [b for b in blocks or [] if isinstance(b, dict) and b.get("type") == "tool_result"]
 
 
-def _carries_deny(e: TranscriptEvent) -> bool:
-    if e.role not in {"system", "tool_result", "hook"}:
-        return False
-    if e.role == "tool_result" and not _is_error_result(e):
-        return False
-    return any(m.lower() in e.content.lower() for m in _DENY_REASON_MARKERS)
+def _hook_denials(e: TranscriptEvent) -> list[tuple[str | None, str]]:
+    """``(tool_use_id, text)`` for each block that is a hook's refusal. Where
+    the CLI records the decision (`tool_result_meta[].permission_decision`,
+    CLI 2.1.299), that record decides: `decision: reject, source: hook` is a
+    hook's deny, and anything else is not, whatever its text (a failed grep of
+    a hook's source carries every marker). Without a record (an older CLI), a
+    block counts when it is itself an error AND carries a marker -- the flag and
+    the marker on the same block, never one block's flag and another's text."""
+    meta = {m.get("id"): m for m in e.metadata.get("tool_result_meta") or [] if isinstance(m, dict)}
+    out: list[tuple[str | None, str]] = []
+    for block in _result_blocks(e):
+        tid = block.get("tool_use_id")
+        text = _flatten_tool_result_content(block)
+        record = meta.get(tid, {}).get("permission_decision") if tid in meta else None
+        if isinstance(record, dict):
+            if record.get("source") == "hook" and record.get("decision") == "reject":
+                out.append((tid, text))
+        elif block.get("is_error") is True and _marker_in(text):
+            out.append((tid, text))
+    return out
