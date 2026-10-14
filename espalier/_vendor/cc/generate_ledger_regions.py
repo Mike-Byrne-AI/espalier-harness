@@ -18,9 +18,11 @@ The probes file (``task-packs/LEDGER_PROBES.json``) holds the same rule since
 2026-10-12: it stored a ``_count`` every row verb re-derived, which was the
 only conflict in 4 of the 8 conflicted catch-ups over #180-#192 (``python
 scripts/merge_cost_census.py --prs 14 --per-pr conflicts``). Its readers take
-the list's length; the verbs and the record merge drop a key they find, and
-``tests/test_forward_ledger_completeness.py`` pins the live file free of one
-(a lane branched before the change writes it back at its own catch-up).
+the list's length, and the verbs and the record merge drop a key they find. On
+this repository the probes are one file each under ``task-packs/probes.d/``
+since 2026-10-14 (a probe file holds one probe and no total), and
+``tests/test_ledger_fragments.py::TestTheFold`` pins the roster file gone; an
+adopter's roster file keeps the rule above.
 
 Rows in files (since 2026-10-13)
 --------------------------------

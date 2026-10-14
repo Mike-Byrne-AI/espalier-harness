@@ -2254,6 +2254,7 @@ def run_doctor_check(
     # in the hint runs only when there is a gap, never on the healthy path.
     if os.path.isfile(settings_path):
         from espalier.cli import (  # lazy: cli imports doctor at top level
+            _retired_rules_to_name,
             installed_settings_profile,
             settings_allow_gaps,
             settings_foreign_read_denies,
@@ -2292,7 +2293,14 @@ def run_doctor_check(
         # rule still blocks. A WARNING, never a failure -- permissions are
         # theirs -- read-only and BOM-tolerant through the twin the merge's
         # own report uses (`settings_profiles.RETIRED_DENY_RULES` has the record).
-        for rule, why in settings_stale_denies(settings_path) or ():
+        # Only where the hooks run: the hook layer stands in for every retired
+        # rule, so on a tree with none wired, or wired but not running, the
+        # delete advice would take away the only guard left; the hook checks
+        # above name that state, and the doctor run after the repair names the
+        # rule (cli._retired_rules_to_name).
+        stale = _retired_rules_to_name(settings_stale_denies(settings_path) or (),
+                                       repo_root=repo_root, settings_path=settings_path)
+        for rule, why in stale:
             # Name all three settings files: a deny rule in the local or the
             # user-level file blocks the same way, and the self-host host carried
             # the retired line in the project AND the user file (2026-09-29).

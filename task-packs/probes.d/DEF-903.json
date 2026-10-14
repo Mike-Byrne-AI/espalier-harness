@@ -1,0 +1,10 @@
+{
+ "id": "DEF-903",
+ "subject": "MANIFEST.in",
+ "cmd": "python3 -c \"import subprocess;from setuptools._distutils.filelist import FileList;from setuptools._distutils.text_file import TextFile;f=FileList();f.allfiles=subprocess.run(['git','ls-files'],capture_output=True,text=True).stdout.split();t=TextFile('MANIFEST.in',strip_comments=1,skip_blanks=1,join_lines=1,lstrip_ws=1,rstrip_ws=1,collapse_join=1);[f.process_template_line(l) for l in iter(t.readline,None)];m=set(f.files);print(sum(p not in m for p in ('docs/schemas/scaffolding_canon.schema.json','docs/schemas/repo_fingerprint.schema.json','tools/cc/pack_artifact_checklist.md','tools/cc/reasoning_review_checklist.md','espalier.toml','examples/espalier.toml')))\"",
+ "open_value": "6",
+ "why_not": null,
+ "row_sha": "8aed5299c1ca",
+ "text_sha": "0c1ae38d8eba",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

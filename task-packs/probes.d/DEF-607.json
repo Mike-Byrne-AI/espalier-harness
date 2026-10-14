@@ -1,0 +1,11 @@
+{
+ "id": "DEF-607",
+ "subject": "espalier/surface_impact.py",
+ "cmd": "python3 -c \"from espalier import surface_impact as si; print(si._HYGIENE_SCAN_PREFIXES)\"",
+ "open_value": "('.claude/', 'espalier/assets/', 'docs/', 'memory/')",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "6eaf95bfa84d",
+ "text_sha": "7bbd28b438fd",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

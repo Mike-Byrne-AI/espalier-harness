@@ -1,0 +1,12 @@
+{
+ "id": "DEF-644",
+ "subject": "scripts/run_pack_chain.sh",
+ "cmd": "python3 -c \"import re;fs=['scripts/run_pack_chain.sh'];print(sum(len(re.findall(r'TRIAGE|triage_file',open(f,encoding='utf-8',errors='replace').read(),0)) for f in fs))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "a16f35624d0f",
+ "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
+ "text_sha": "4eae595a4338",
+ "verified_2026_09_08": "STILL_OPEN (re-pinned value unchanged on 2026-09-08: re-tagged MAINTAINER 2026-09-08: scripts/run_pack_chain.sh is self-host only (the row says so))",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

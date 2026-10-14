@@ -1,0 +1,10 @@
+{
+ "id": "DEF-936",
+ "subject": "tests/test_rmtree.py",
+ "cmd": "python3 -c \"import ast;s=open('tests/test_rmtree.py').read();print(sum(1 for n in ast.walk(ast.parse(s)) for d in getattr(n,'decorator_list',[]) if 'the sibling row above' in ast.unparse(d)))\"",
+ "open_value": "2",
+ "why_not": null,
+ "row_sha": "ae541a8dc5e7",
+ "text_sha": "61a785c7215f",
+ "verified_2026_09_26": "OPEN (filed 2026-09-26; probe driven at filing)"
+}

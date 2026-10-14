@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1079",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/cli.py\",encoding=\"utf-8\").read());v=[n.value for n in ast.walk(t) if isinstance(n,ast.Assign) and any(getattr(x,\"id\",\"\")==\"REQUIRED_GITIGNORE\" for x in n.targets)];print(any(isinstance(c,ast.Constant) and c.value==\"/task-packs/*\" for x in v for c in ast.walk(x)))'",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "767a4cabb82a",
+ "text_sha": "5059caf812a5",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

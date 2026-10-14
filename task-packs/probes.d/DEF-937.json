@@ -1,0 +1,10 @@
+{
+ "id": "DEF-937",
+ "subject": ".github/workflows/test.yml",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the row asks for a CI fixture that does not exist; an absence has no structural signature a probe can read without keying on the name the fix would choose (the DEF-838 shape)",
+ "row_sha": "39fddb87fb12",
+ "text_sha": "2d6b96abef9c",
+ "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: 5-A review: the file a dirty-machine install job would join is portability.yml's OS matrix, not test.yml; anchor and subject re-pointed, a missing relative pronoun restored in the fix shape; no probe (why_not unchanged) (the subject stays test.yml: a why_not row's subject cannot be re-pointed, since nothing drives it))"
+}

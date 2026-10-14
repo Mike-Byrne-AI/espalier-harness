@@ -1,0 +1,12 @@
+{
+ "id": "DEF-415h",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"s=open('espalier/cli.py').read(); b=s.split('p_pre = sub.add_parser(')[1].split('p_pre.set_defaults')[0]; print(not any(x in b for x in ('--summary','--quiet','--json')))\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "7ac8e1248d54",
+ "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
+ "text_sha": "9f393979c21e",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

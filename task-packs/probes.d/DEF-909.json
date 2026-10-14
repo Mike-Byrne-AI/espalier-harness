@@ -1,0 +1,10 @@
+{
+ "id": "DEF-909",
+ "subject": "scripts/check_pack_landing.py",
+ "cmd": "python3 -c \"import importlib.util as u;s=u.spec_from_file_location('c','scripts/check_pack_landing.py');m=u.module_from_spec(s);s.loader.exec_module(m);nl=chr(10);a=nl.join(['# TP-900','','## Status','','- **State:** LANDED']);b=nl.join(['# TP-901','','## Status','','- State: **DRAFT**']);print(m.landed_state(a) is not None or m.bold_value_state(b) is not None)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "93f084c17d9e",
+ "text_sha": "8807c8b2832d",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

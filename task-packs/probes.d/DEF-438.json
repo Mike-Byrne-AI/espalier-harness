@@ -1,0 +1,11 @@
+{
+ "id": "DEF-438",
+ "subject": "espalier/surface_impact.py",
+ "cmd": "python3 -c \"a=open('espalier/surface_impact.py').read(); b=open('tools/cc/hooks/_reinject.py').read(); print('overwrites the edit' in a and 'refuses unless' in b)\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "61c7c61d08f4",
+ "text_sha": "b5ae0fe65d21",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

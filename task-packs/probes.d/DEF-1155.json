@@ -1,0 +1,11 @@
+{
+ "id": "DEF-1155",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import io,json,subprocess,sys,tempfile,pathlib,contextlib;sys.path.insert(0,\".\");from espalier import cli;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=pathlib.Path(T.name);[(d/p).mkdir() for p in (\".git\",\"reports\",\".claude\")];(d/\"reports/repo_fingerprint.json\").write_text(json.dumps(dict(languages=[\"javascript\"],test_commands=[\"npm test\"],inferred_actions=dict(test=[\"npm test\"]))));(d/\"reports/harness_config.json\").write_text(json.dumps(dict(settings_profile=\"workflow\")));(d/\".claude/settings.json\").write_text(json.dumps(dict(permissions=dict(allow=[\"Bash(npm *)\"]))));doc=bool(cli.settings_superseded_allows(d/\".claude/settings.json\",profile=\"workflow\",repo_root=d));b=io.StringIO();c1=contextlib.redirect_stdout(b);c2=contextlib.redirect_stderr(b);c1.__enter__();c2.__enter__();cli._report_allow_gaps_read_only(d,profile=\"workflow\",prefix=\"[upgrade]\");c2.__exit__(None,None,None);c1.__exit__(None,None,None);m=subprocess.run([sys.executable,\"-m\",\"espalier\",\"merge-settings\",str(d),\"--profile\",\"workflow\"],capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\");print(\"doctor_names=\"+str(doc),\"upgrade_names=\"+str(\"Bash(npm *)\" in b.getvalue()),\"merge_settings_names=\"+str(\"Bash(npm *)\" in m.stdout+m.stderr))'",
+ "open_value": "doctor_names=True upgrade_names=False merge_settings_names=False",
+ "why_not": null,
+ "row_sha": "cd1ae133be62",
+ "text_sha": "4bfe34687999",
+ "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)",
+ "verified_2026_10_14": "STILL_OPEN (re-pinned value unchanged on 2026-10-14: DEF-4017 made the init re-run a caller of the one voice (retired rules only); the probe's value is unchanged)"
+}

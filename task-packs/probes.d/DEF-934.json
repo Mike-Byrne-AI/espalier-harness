@@ -1,0 +1,10 @@
+{
+ "id": "DEF-934",
+ "subject": "tests/test_rmtree.py",
+ "cmd": "python3 -c \"import ast;s=open('tests/test_rmtree.py').read();print(sum(1 for n in ast.walk(ast.parse(s)) for d in getattr(n,'decorator_list',[]) if 'skipif' in ast.unparse(d) and ('os.name != ' in ast.unparse(d) or 'platform != ' in ast.unparse(d))))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "67512e9b1ede",
+ "text_sha": "a2c5641a8f95",
+ "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: 5-A review: the windows-latest cell is portability.yml's, not test.yml's (test.yml runs ubuntu only), and it is paths-filtered and not a required check; anchor and text corrected; value unchanged)"
+}

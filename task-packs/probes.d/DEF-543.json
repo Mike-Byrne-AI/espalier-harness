@@ -1,0 +1,11 @@
+{
+ "id": "DEF-543",
+ "subject": "tests/conftest.py",
+ "cmd": "python3 -c \"import ast; s=open('tests/conftest.py').read(); n=[x for x in ast.walk(ast.parse(s)) if isinstance(x,ast.Assign) and getattr(x.targets[0],'id',None)=='_LIVE_TREE_WATCH'][0]; print(ast.literal_eval(n.value))\"",
+ "open_value": "('bench/results', 'reports')",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "f766f593b0cd",
+ "text_sha": "c27938683a57",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

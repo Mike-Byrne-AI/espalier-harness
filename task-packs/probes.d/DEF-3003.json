@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3003",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import espalier,json,pathlib,shutil,subprocess,sys,tempfile;d=pathlib.Path(tempfile.mkdtemp());subprocess.run([\"git\",\"init\",\"-q\",str(d)],capture_output=True);(d/\"README.md\").write_text(\"# x\"+chr(10),encoding=\"utf-8\");e=lambda *a:subprocess.run([sys.executable,\"-m\",\"espalier.cli\",*a],capture_output=True);e(\"init\",str(d));p=d/\"task-packs\"/\"LEDGER_PROBES.json\";g=lambda:[r for r in json.loads(p.read_bytes())[\"probes\"] if r[\"id\"]==\"ONB-1\"][0];j=json.loads(p.read_bytes());o=[r for r in j[\"probes\"] if r[\"id\"]==\"ONB-1\"][0];c=o[\"cmd\"];o[\"cmd\"]=c.replace(\"(not set\",\"(not set \",1);p.write_bytes(json.dumps(j,indent=1).encode());m=d/\"cc\"/\"PACK_MANIFEST.txt\";m.write_bytes(m.read_bytes().replace(espalier.__version__.encode(),b\"0.0.1\"));e(\"upgrade\",str(d),\"--execute\");print(g()[\"cmd\"]!=c);shutil.rmtree(d,ignore_errors=True)'",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "84ec9a376a83",
+ "text_sha": "9fc9652e301b",
+ "verified_2026_10_11": "OPEN (filed 2026-10-11; probe driven at filing)"
+}

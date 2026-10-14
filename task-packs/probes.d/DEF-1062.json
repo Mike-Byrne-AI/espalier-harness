@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1062",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import json, os, pathlib, subprocess as s, sys, tempfile; t = tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d = pathlib.Path(t.name); e = {k: v for k, v in os.environ.items() if not k.startswith(\"CLAUDE\")}; s.run([\"git\", \"init\", \"-q\", str(d)]); f = d / \".claude\" / \"settings.json\"; f.parent.mkdir(); o = (json.dumps({\"permissions\": {\"allow\": [\"Read(/home/jörg/**)\"]}}, indent=2, ensure_ascii=False).replace(\"\\n\", \"\\r\\n\") + \"\\r\\n\").encode(); f.write_bytes(o); r = lambda *a: s.run([sys.executable, \"-m\", \"espalier\", *a, str(d)], capture_output=True, env=e).returncode; i = r(\"init\", \"--wire-hooks\"); w = f.read_bytes(); a = b\"\\r\\n\" in w and \"ö\".encode() in w; c = r(\"clean-generated\", \"--execute\"); sys.exit(2) if i or c else print(a, f.read_bytes() == o)'",
+ "open_value": "False False",
+ "why_not": null,
+ "inputs": [
+  "espalier/cleanup.py"
+ ],
+ "row_sha": "3ac2327e8510",
+ "text_sha": "d6f45025a504",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

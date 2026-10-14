@@ -1,0 +1,16 @@
+{
+ "id": "DEF-1057",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import subprocess as s,sys,os,json,shutil,tempfile,pathlib as P;d=P.Path(tempfile.mkdtemp()).resolve();g=lambda *a:s.run([\"git\",\"-C\",str(d),*a],check=True,capture_output=True);g(\"init\",\"-q\",\"-b\",\"main\");(d/\"cc\").mkdir();(d/\"app.py\").write_text(\"x = 1\");(d/\"cc\"/\"charge.py\").write_text(\"def charge(): pass\");(d/\"cc\"/\"README.md\").write_text(\"# card module\");g(\"add\",\"-A\");e={k:v for k,v in os.environ.items() if not k.startswith(\"CLAUDE\")};e[\"ESPALIER_AUDIT_DIR\"]=str(d/\"audit\");r=lambda c,*v:s.run([sys.executable,\"-m\",\"espalier\",*v,str(d)],capture_output=True,text=True,env=e,check=c);i=r(True,\"init\");o=r(False,\"doctor\");r(True,\"clean-generated\",\"--execute\");u=r(False,\"doctor\");shutil.rmtree(d,ignore_errors=True);print((\"cc/charge.py\" in i.stdout+i.stderr,\"cc/charge.py\" in o.stdout+o.stderr,\"cc/README.md\" in json.loads(o.stdout)[\"ownership\"][\"managed_cc_docs\"],u.returncode))'",
+ "open_value": "(False, False, False, 0)",
+ "why_not": null,
+ "inputs": [
+  "espalier/managed_paths.py",
+  "espalier/doctor.py"
+ ],
+ "row_sha": "002dd0e9f4fd",
+ "text_sha": "bff0f8ae9e61",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
+ "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: the probe ran clean-generated --execute with the launching session's CLAUDECODE=1 in its env, so from inside a Claude Code session the command unwired only and the probe graded UNRESOLVED (2026-10-05); the probe now strips CLAUDE keys itself, and check_ledger_probes.run_probe strips CLAUDECODE for every probe)",
+ "verified_2026_10_10": "STILL_OPEN (re-pinned '(False, False, True, 1)' -> '(False, False, False, 0)' on 2026-10-10: TP-474 2-C landed in #177 (lane/walk-and-guard, 2026-10-10): the uninstall predicate reads the managed marker, so the probe's third and fourth values flipped (the unmarked cc/README.md is no longer claimed, the leftover count is 0); the init and doctor WARN half of the row is not driven there and keeps it open, as the pack's Reach table says (NOT CLOSED: its predicate half lands in 2-C))"
+}

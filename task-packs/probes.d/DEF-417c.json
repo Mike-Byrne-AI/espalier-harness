@@ -1,0 +1,11 @@
+{
+ "id": "DEF-417c",
+ "subject": "espalier/release_pack.py",
+ "cmd": "python3 -c \"from espalier import release_pack as rp; print(rp._is_pruned_from_walk('pkg/__pycache__/x.pyc'))\"",
+ "open_value": "False",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "969416ba5d69",
+ "text_sha": "202e15337340",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

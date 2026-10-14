@@ -1,0 +1,10 @@
+{
+ "id": "DEF-901",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import ast;F=chr(96)*3;N={'_skip_non_prose_block','_read_body_description'};t=ast.parse(open('espalier/cli.py').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='_opening_paragraph');print(not any((isinstance(n,ast.Constant) and n.value in ('>','<!--',F)) or (isinstance(n,ast.Name) and n.id in N) or (isinstance(n,ast.Attribute) and n.attr in N) for n in ast.walk(f)))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "84987df57519",
+ "text_sha": "613f536ce672",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

@@ -459,8 +459,8 @@ flag (`the argument '--no-cache' cannot be used multiple times`, ruff 0.16.8),
 so an inferred line carrying that flag, right for the adopter, would have
 crashed the probe; the fix carried only the exclude (2026-10-07). Read the
 row's `cmd` before choosing a fix's flags: `python tools/cc/_record_fragments.py
-probes` prints `LEDGER_PROBES.json` and the probe files under
-`task-packs/probes.d/` as one roster.
+probes` prints the probe files under `task-packs/probes.d/` as one roster (with a
+`LEDGER_PROBES.json`'s entries first, on a tree that still keeps one).
 
 ## Landing mechanics the verbs do not do for you (2026-10-08)
 

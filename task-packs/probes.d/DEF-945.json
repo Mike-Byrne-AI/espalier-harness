@@ -1,0 +1,10 @@
+{
+ "id": "DEF-945",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import argparse,espalier.cli as c;p=c.build_parser();s=[a for a in p._actions if isinstance(a,argparse._SubParsersAction)][0];o=lambda n:sorted(x for a in s.choices[n]._actions for x in a.option_strings if x not in ('-h','--help'));print((o('install-ci'),'--no-ci' in o('fuse'),'pull_request' in c.INSTALL_CI_INSTRUCTIONS))\"",
+ "open_value": "(['--config'], False, False)",
+ "why_not": null,
+ "row_sha": "9427ddc18d15",
+ "text_sha": "e46a87b21b60",
+ "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
+}

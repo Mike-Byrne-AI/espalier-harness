@@ -1,0 +1,10 @@
+{
+ "id": "DEF-933",
+ "subject": "docs/sharp-edges/protected-zone-path-equivalence.md",
+ "cmd": "python3 -c \"import pathlib;print('the hook cannot compute statically' in pathlib.Path('docs/sharp-edges/protected-zone-path-equivalence.md').read_text(encoding='utf-8'))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "ce4b19871eb9",
+ "text_sha": "2816516c4367",
+ "verified_2026_09_26": "OPEN (filed 2026-09-26; probe driven at filing)"
+}

@@ -1,0 +1,16 @@
+{
+ "id": "DEF-415b",
+ "subject": "espalier/CLAUDE.md",
+ "cmd": "python3 -c \"import json; cm=open('espalier/CLAUDE.md').read(); f=json.load(open('.espalier/integrity.json'))['files']; print('Refresh the integrity manifest' in cm and sum(1 for k in f if k.startswith('espalier/'))==0)\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "6cd6d0c00138",
+ "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
+ "text_sha": "824da4b3db08",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "inputs": [
+  ".espalier/integrity.json"
+ ],
+ "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['.espalier/integrity.json'] on 2026-09-22: the command json.loads the gitignored integrity manifest; a checkout without it read UNRESOLVED only through the rc guard's no-stdout conjunction (DEF-881); declared, it is UNRESOLVED by design (DEF-858 census, 2026-09-22))"
+}

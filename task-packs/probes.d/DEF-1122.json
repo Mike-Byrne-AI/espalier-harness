@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1122",
+ "subject": "espalier/doctor.py",
+ "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/doctor.py\",encoding=\"utf-8\").read());print(sum(isinstance(n,ast.If) and any(isinstance(c,ast.Attribute) and c.attr==\"is_self_host_repo\" for c in ast.walk(n.test)) and any(isinstance(f,ast.For) and \"_LOAD_BEARING_EXTERNAL_TOOLS\" in ast.dump(f.iter) for f in n.body) for n in ast.walk(t)))'",
+ "open_value": "1",
+ "why_not": null,
+ "row_sha": "581b2f75add2",
+ "text_sha": "5e3f43802023",
+ "verified_2026_10_04": "OPEN (filed 2026-10-04; probe driven at filing)"
+}

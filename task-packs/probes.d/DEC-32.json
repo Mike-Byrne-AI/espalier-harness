@@ -1,0 +1,11 @@
+{
+ "id": "DEC-32",
+ "subject": "espalier/mirror_registry.py",
+ "cmd": "python3 -c \"import espalier.mirror_registry as m;print(sum(1 for r in m.MIRROR_ROWS if r.direction==m.SOT_IS_SOURCE_TREE and r.name in ('vendor-cc','claude-asset','asset-docs','task-packs-router','selfcheck-tests')))\"",
+ "open_value": "5",
+ "why_not": null,
+ "row_sha": "ef3d6ddf856b",
+ "verified_2026_09_07": "OPEN (filed 2026-09-07; probe driven at filing)",
+ "note": "An operator fork: deciding to KEEP the tracked mirrors also closes it, with the five rows still present, so a strike with a note is the expected end for that branch.",
+ "text_sha": "7cce8977693c"
+}

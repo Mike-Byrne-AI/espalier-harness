@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1067",
+ "subject": "bench/demo/STORYBOARD.md",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the deliverable is two things, a reworded prompt and a fresh rate measured on it, and the second has no predictable value; a wording-keyed probe would close the row while the quoted rate still belonged to the retired prompt",
+ "row_sha": "684d6f9955d7",
+ "text_sha": "3a76b4941444",
+ "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
+}

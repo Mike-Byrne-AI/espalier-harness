@@ -1,0 +1,11 @@
+{
+ "id": "DEF-585",
+ "subject": "tests/_json_key_paths.py",
+ "cmd": "python3 -c \"import importlib.util as u; sp=u.spec_from_file_location('jk','tests/_json_key_paths.py'); m=u.module_from_spec(sp); sp.loader.exec_module(m); print(sorted(m.key_paths({'checks': {'presence': 'pass'}})))\"",
+ "open_value": "['checks', 'checks.presence']",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "16d0238382e3",
+ "text_sha": "a662581a2c8e",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

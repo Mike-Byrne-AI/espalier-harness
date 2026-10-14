@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1007",
+ "subject": "docs/QUICKSTART.md",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The defect is a sentence of install prose with no behaviour behind it, so nothing short of the class's contract test (the marker-gated requirement read from pyproject's dependencies and checked against every front-door doc) can tell it is fixed, and the fix lands with that test.",
+ "row_sha": "fd8a6c104783",
+ "text_sha": "a47ca25256be",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

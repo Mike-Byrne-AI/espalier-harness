@@ -331,12 +331,16 @@ EXPECTED_MEMORY_CAP_SITES: dict[str, int] = {  # class: literal
     # re-derive "they are meant to differ" from the absence of a pin, which is
     # how the false version got written.
     "espalier/assets/memory/README.md": 1,
-    # The forward ledger, tracked and shipping since 2026-09-21: three live rows
-    # (DEF-671, DEF-650, DEF-18) state the 120-line cap as a fact their claim
-    # rests on, so when the cap moves those texts are stale and this census is
-    # what says so; each row's own probe measures its defect, not the number.
-    # Re-pin a row through scripts/ledger_row.py, never a hand edit.
-    "task-packs/FORWARD_LEDGER.md": 3,
+    # The forward ledger, tracked and shipping since 2026-09-21, states the
+    # 120-line cap as a fact its text rests on, so when the cap moves those texts
+    # are stale and this census is what says so: once in the ledger file's own
+    # prose, and once in each of two rows, which live as files under
+    # task-packs/ledger.d/ since the fold (2026-10-14). Each row's own probe
+    # measures its defect, not the number. Re-pin a row through
+    # tools/cc/ledger_row.py, never a hand edit.
+    "task-packs/FORWARD_LEDGER.md": 1,
+    "task-packs/ledger.d/DEF-650.md": 1,
+    "task-packs/ledger.d/DEF-675.md": 1,
 }
 
 # memory/**/*.md restates the cap in some notes' `**Linked from:**` line.

@@ -2526,10 +2526,12 @@ the machine, so removing it from the project file alone changed nothing.
 `write_guard`'s catastrophic-rm classifier walls the root glob wipe at the hook
 layer, where a wall carries a reason. An install that predates the retirement
 keeps the line -- `merge-settings` never removes a rule -- so `doctor`,
-`merge-settings` and the `upgrade` preview name it with the fix: delete that one
+`merge-settings`, `upgrade` and a re-run of `init` name it with the fix: delete that one
 line from `permissions.deny`, then check `.claude/settings.local.json` and the
-user-level file (the reporters name all three). Never end a deny rule in a `*`,
-and never put one right after a `/`; `tests/test_settings_profiles.py` pins
+user-level file (the reporters name all three). They name it only where the
+hooks run: the hook is what replaces the rule, so on a tree whose hooks are not
+wired, or not running, the delete would leave nothing in its place. Never end
+a deny rule in a `*`, and never put one right after a `/`; `tests/test_settings_profiles.py` pins
 both for the defaults, and `settings_profiles.RETIRED_DENY_RULES` is where a
 retired rule goes, with the last version that shipped it, so the reporters can
 name it. The general shape: when a permission
@@ -5887,7 +5889,7 @@ were guarded. Operator-facing text is held to neither literal by the two portabi
 in `tests/test_portability_contract.py` (`python3` is absent on many Windows installs,
 `python` on a stock Mac), and `settings.json` gets the name `cli._detect_python_command`
 validated on the host. The third surface is command text stored as data and executed later
-as written: every probe in `task-packs/LEDGER_PROBES.json` (each command opens with
+as written: every probe of the forward ledger (`task-packs/probes.d/`; each command opens with
 `python3`), the persist command the three workflow scaffolds hand their persist agent, headed
 the same way, and a probe whose own program spawned `['python3', '-m', 'pytest', ...]`. No
 guard read any of it, because a probe

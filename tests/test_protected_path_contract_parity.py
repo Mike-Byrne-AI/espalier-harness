@@ -867,9 +867,15 @@ class TestCIGatedSetIsDerivedNotRestated:
             "would pass vacuously over every doc in the repo."
         )
 
+        from tests._record_paths import is_ledger_record
+
         offenders: list[str] = []
         for rel in _tracked("*.md", minimum=_TRACKED_MD_FLOOR):
             if rel.startswith("tests/") or rel in self._ENUMERATION_EXEMPT:
+                continue
+            # The ledger's exemption covers its rows wherever they live: since
+            # the fold (2026-10-14) each row is a file under task-packs/ledger.d/.
+            if "task-packs/FORWARD_LEDGER.md" in self._ENUMERATION_EXEMPT and is_ledger_record(rel):
                 continue
             path = REPO_ROOT / rel
             # Tracked but absent from the worktree (a plain `mv` before the

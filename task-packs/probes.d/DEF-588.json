@@ -1,0 +1,11 @@
+{
+ "id": "DEF-588",
+ "subject": "tools/cc/reflect_protocol.py",
+ "cmd": "python3 -c \"fs=['tools/cc/cognitive_blueprint.py','espalier/cognitive_blueprint.py','tools/cc/reflect_protocol.py','espalier/scaffolding_canon.py']; print(sum(1 for f in fs if '[subagent:' in open(f).read()))\"",
+ "open_value": "4",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "6d1a35febbf2",
+ "text_sha": "625e9754b5d4",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

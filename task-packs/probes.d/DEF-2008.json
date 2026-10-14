@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2008",
+ "subject": "tests/test_verify_pins.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "nondeterministic: the failure needs two writes inside one mtime tick, so a probe would flake as the test does",
+ "row_sha": "71976ec8e42f",
+ "text_sha": "29115c567384",
+ "verified_2026_10_14": "OPEN (filed 2026-10-14; probe driven at filing)"
+}
