@@ -23,6 +23,7 @@ from espalier._safe_walk import is_own_git_repo, safe_rglob, visible
 from espalier.release_noise import SECRET_FILES
 from espalier.release_pack import ReleasePackSummary, _is_pruned_from_walk, create_release_zip
 from espalier.scan_composition import REPORT_FILES
+from espalier._spawn import run_bounded
 from espalier._text import os_error_text
 
 
@@ -767,7 +768,7 @@ def _run_command(
     t0 = _now()
     try:
         # subprocess-contract: ok generic-command-runner-callers-pin-each-CLI-surface
-        result = subprocess.run(
+        result = run_bounded(
             command, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
             check=False, timeout=timeout_seconds,
         )
@@ -799,7 +800,7 @@ def _run_command(
 def _parity_runnable() -> bool:
     """True only when `python -m build` can be executed here (needed for parity)."""
     try:
-        result = subprocess.run(
+        result = run_bounded(
             [sys.executable, "-m", "build", "--help"],
             capture_output=True, text=True, encoding="utf-8", timeout=10, check=False,
         )

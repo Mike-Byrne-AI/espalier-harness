@@ -272,14 +272,29 @@ def _kill_process_tree(proc: subprocess.Popen) -> None:
     """SIGKILL the child's whole process group on POSIX -- the child was started
     in its own session, so ``-n N`` workers die with it instead of reparenting
     to PID 1 and spinning (one such orphan spun 45 hours on one core,
-    2026-09-10); a plain kill on Windows."""
+    2026-09-10). On Windows ``taskkill /T /F`` ends the tree, then a plain kill:
+    a venv's ``python.exe`` is a redirector, so pytest is a grandchild, and a
+    kill of the child alone left it holding the streamed pipe until the suite
+    ended (DEF-3004; ``tests/test_bounded_spawn.py::TestAWatchdogEndsTheTree``)."""
     if sys.platform != "win32":
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
             return
         except (ProcessLookupError, PermissionError, OSError):
             pass
-    proc.kill()
+    else:
+        taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "taskkill.exe")
+        try:
+            subprocess.run(  # spawn: ok the tree kill -- no pipes, every stream to the null device
+                [taskkill, "/T", "/F", "/PID", str(proc.pid)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- the kill below still ends the child
+            pass
+    try:
+        proc.kill()
+    except OSError:  # fail-open: ok deliberate -- the child already ended
+        pass
 
 
 def run_pytest(

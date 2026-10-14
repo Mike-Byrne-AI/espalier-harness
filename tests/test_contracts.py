@@ -930,6 +930,405 @@ class TestSpawnWrappersReadEverywhere:
         copies = {rel: _wrapper_set_in(rel, name) for rel, name in _SPAWN_WRAPPER_COPIES}
         assert all(v == set(_SPAWN_WRAPPERS) for v in copies.values()), copies
 
+
+# ---------------------------------------------------------------------------
+# The bounded spawn's three copies (DEF-3004)
+# ---------------------------------------------------------------------------
+#
+# ``run_bounded`` is ``subprocess.run`` whose ``timeout`` holds on Windows,
+# where ``run`` waits on any grandchild holding its pipe past the cap
+# (``docs/SHARP_EDGES.md``, "On Windows, ``subprocess.run(timeout=...)`` waits
+# for a grandchild that holds the pipe"). ``tools/cc`` cannot import the engine
+# and the stdlib-only scanners cannot import either, so it has three homes.
+
+#: Each home of the bounded spawn, its code held equal across them.
+_BOUNDED_SPAWN_HOMES = (
+    "tools/cc/_json_safe.py",
+    "espalier/_spawn.py",
+    "espalier/scanners/freshness.py",
+)
+_BOUNDED_SPAWN_ENTRY = "run_bounded"
+_BUILTIN_NAMES = frozenset(dir(__import__("builtins")))
+
+
+def _module_bindings(tree: ast.Module) -> dict[str, ast.AST]:
+    """Each name the module binds at top level (an ``if TYPE_CHECKING:``
+    import binds nothing at run time, so it is not one)."""
+    out: dict[str, ast.AST] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            out[node.name] = node
+        elif isinstance(node, ast.Assign):
+            out.update({t.id: node for t in node.targets if isinstance(t, ast.Name)})
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            out[node.target.id] = node
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            out.update({(a.asname or a.name.split(".")[0]): node for a in node.names})
+    return out
+
+
+def _free_names(fn: ast.FunctionDef) -> set[str]:
+    """The names ``fn`` reads that it does not bind itself and that are not
+    builtins: what it takes from its module."""
+    a = fn.args
+    bound = {x.arg for x in (*a.posonlyargs, *a.args, *a.kwonlyargs, a.vararg, a.kwarg) if x}
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            bound.add(node.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            bound.update(x.asname or x.name.split(".")[0] for x in node.names)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            bound.add(node.name)
+    loaded = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    return loaded - bound - _BUILTIN_NAMES
+
+
+def _describe_binding(node: ast.AST | None, name: str) -> str | None:
+    """A binding as comparable text: a function's code less its docstring
+    (each copy says where it lives in its own words), an assignment's value,
+    an import's source."""
+    if node is None:
+        return None
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        body = node.body[1:] if ast.get_docstring(node) is not None else node.body
+        return "\n".join([ast.dump(node.args), ast.dump(node.returns) if node.returns else "",
+                          *(ast.dump(d) for d in node.decorator_list), *(ast.dump(s) for s in body)])
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        return ast.dump(node.value) if node.value else None
+    if isinstance(node, ast.Import):
+        return next(f"import {a.name}" for a in node.names if (a.asname or a.name.split(".")[0]) == name)
+    if isinstance(node, ast.ImportFrom):
+        return next(f"from {node.module} import {a.name}" for a in node.names if (a.asname or a.name) == name)
+    return ast.dump(node)
+
+
+def _bounded_spawn_parts(rel: str) -> dict[str, str | None]:
+    """Everything ``run_bounded`` reaches in ``rel``'s module, closed over:
+    the entry point, each helper and constant it reads, and each import those
+    read, as comparable text. Derived from the code, so a helper factored out
+    of the body, or an import a copy drops, is compared too."""
+    tree = ast.parse((REPO_ROOT / rel).read_text(encoding="utf-8"))
+    bindings = _module_bindings(tree)
+    parts: dict[str, str | None] = {}
+    todo = [_BOUNDED_SPAWN_ENTRY]
+    while todo:
+        name = todo.pop()
+        if name in parts:
+            continue
+        node = bindings.get(name)
+        parts[name] = _describe_binding(node, name)
+        if isinstance(node, ast.FunctionDef):
+            todo.extend(_free_names(node))
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+            todo.extend(n.id for n in ast.walk(node.value) if isinstance(n, ast.Name))
+    return parts
+
+
+class TestTheBoundedSpawnTwins:
+    """The bounded spawn's copies are one function three times: a fix to one
+    that the others miss would bound the call in one tree and not the next."""
+
+    def test_the_closure_is_the_known_one(self):
+        """The derivation's own floor: today ``run_bounded`` reaches its two
+        helpers, the grace constant and three imports. A closure that shrank
+        means the walk broke, not that the code got simpler."""
+        assert set(_bounded_spawn_parts(_BOUNDED_SPAWN_HOMES[0])) >= {
+            "run_bounded", "_is_stdlib_run", "_end_tree", "SPAWN_KILL_GRACE_SECONDS", "os", "sys", "time"}
+
+    def test_the_copies_are_equal(self):
+        source, *copies = _BOUNDED_SPAWN_HOMES
+        want = _bounded_spawn_parts(source)
+        for rel in copies:
+            got = _bounded_spawn_parts(rel)
+            drifted = sorted(name for name in {*want, *got} if got.get(name) != want.get(name))
+            assert not drifted, (
+                f"{rel} differs from {source} in {drifted}: change every copy in "
+                f"_BOUNDED_SPAWN_HOMES together (docstrings may differ, code may not)"
+            )
+
+    def test_the_parity_reads_a_one_token_change(self, tmp_path, monkeypatch):
+        """The comparison's own control: a copy whose grace constant or whose
+        drain deadline moves by one token, or that drops an import the body
+        reads, is read as drifted."""
+        src = (REPO_ROOT / "espalier/_spawn.py").read_text(encoding="utf-8")
+        for old, new in (("SPAWN_KILL_GRACE_SECONDS = 2.0", "SPAWN_KILL_GRACE_SECONDS = 3.0"),
+                         ("max(0.05, end - time.monotonic())", "max(0.5, end - time.monotonic())"),
+                         ("\nimport time\n", "\n")):
+            assert old in src, old
+            (tmp_path / "espalier").mkdir(exist_ok=True)
+            (tmp_path / "espalier" / "_spawn.py").write_bytes(src.replace(old, new, 1).encode("utf-8"))
+            monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+            mutated = _bounded_spawn_parts("espalier/_spawn.py")
+            monkeypatch.undo()
+            assert mutated != _bounded_spawn_parts("espalier/_spawn.py"), new
+
+    def test_a_helper_the_entry_reaches_is_compared(self, tmp_path, monkeypatch):
+        """A helper factored out of ``run_bounded``, and what the helper reads
+        in turn, join the compared set; a function nothing reaches does not."""
+        (tmp_path / "m.py").write_bytes((
+            "import time\nimport json\nGRACE = 2\n"
+            "def run_bounded(a):\n    return _helper(a)\n"
+            "def _helper(a):\n    return time.monotonic() + GRACE\n"
+            "def _unreached():\n    return json\n").encode("ascii"))
+        monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+        assert set(_bounded_spawn_parts("m.py")) == {"run_bounded", "_helper", "time", "GRACE"}
+
+
+#: Where a raw timed spawn may stand outside ``tools/cc``: inside the bounded
+#: spawn's own two functions, in each copy, and nowhere else by name. Any other
+#: raw timed spawn needs the ``# spawn: ok <reason>`` marker on the call line or
+#: the line above, and holds no pipe.
+_BOUNDED_SPAWN_OWN = frozenset(
+    (rel, name) for rel in _BOUNDED_SPAWN_HOMES if not rel.startswith("tools/cc/")
+    for name in ("run_bounded", "_end_tree"))
+#: Timed calls through ``run_bounded`` at the reroute (DEF-3004, 2026-10-14):
+#: 43 in the engine, 18 in scripts/, 14 in bench/, 2 in tools/. A walk that
+#: finds fewer broke, or sites went back to ``subprocess.run``.
+_ROUTED_TIMED_FLOOR = 77
+
+
+def _in_census(rel: str) -> bool:
+    """Production code outside ``tools/cc`` (which has its own census,
+    ``tests/test_spawn_chokepoint.py::TestEveryTimedSpawnIsBounded``): not test
+    code, not the engine's two byte mirrors."""
+    return (rel.endswith(".py") and not rel.startswith(("tools/cc/", *_SUBPROC_SKIP_PREFIXES))
+            and not _is_test_file(rel))
+
+
+def _census_files() -> list[str]:
+    """The census's population, derived from ``git ls-files`` by
+    ``_iter_production_py`` below (which skips, never passes, when git cannot
+    enumerate), so a new top-level directory or a ``tools/<x>/`` folder is in
+    the census the day it lands."""
+    return [rel for rel, _ in _iter_production_py() if _in_census(rel)]
+
+
+def _spawn_sites_in(root: Path, rels: list[str]) -> list[dict]:
+    """Every spawn site in ``rels`` under ``root``, each tagged with its
+    root-relative ``path``; the walk is ``spawn_sites``, the one
+    ``TestEveryTimedSpawnIsBounded`` runs, read here and never copied."""
+    from tests.test_spawn_chokepoint import spawn_sites
+
+    out: list[dict] = []
+    for rel in rels:
+        where = Path(rel)
+        out.extend({**site, "path": rel} for site in spawn_sites(root / where.parent, where.name))
+    return out
+
+
+def _unbounded_timed_spawns(sites: list[dict]) -> list[dict]:
+    return [s for s in sites if s["raw"] and s["timed"]
+            and (s["path"], s["function"]) not in _BOUNDED_SPAWN_OWN and not s["declared"]]
+
+
+def _function_at(tree: ast.Module, name: str, lineno: int) -> ast.AST:
+    """The innermost function named ``name`` spanning ``lineno`` (the module
+    for ``<module>``)."""
+    found: ast.AST = tree
+    for node in ast.walk(tree):
+        if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name
+                and node.lineno <= lineno <= (node.end_lineno or node.lineno)):
+            found = node
+    return found
+
+
+def _opens_a_pipe(scope: ast.AST) -> bool:
+    """Whether ``scope`` asks for a pipe anywhere: ``capture_output=True`` or a
+    ``PIPE`` (``subprocess.PIPE`` or a bare imported ``PIPE``)."""
+    for node in ast.walk(scope):
+        if isinstance(node, ast.keyword) and node.arg == "capture_output" and not (
+                isinstance(node.value, ast.Constant) and node.value.value is False):
+            return True
+        if (isinstance(node, ast.Attribute) and node.attr == "PIPE") or (
+                isinstance(node, ast.Name) and node.id == "PIPE"):
+            return True
+    return False
+
+
+def _marker_problems(root: Path, sites: list[dict]) -> list[str]:
+    """Each ``# spawn: ok`` marker that lets a raw timed spawn stand, read: it
+    gives a reason, and the function it stands in asks for no pipe -- a call
+    that holds no pipe is the one shape the marker may cover."""
+    problems = []
+    trees: dict[str, tuple[list[str], ast.Module]] = {}
+    for site in sites:
+        if not (site["raw"] and site["timed"] and site["declared"]):
+            continue
+        if (site["path"], site["function"]) in _BOUNDED_SPAWN_OWN:
+            continue  # the bounded spawn's own body: it opens the pipes it bounds
+
+        if site["path"] not in trees:
+            text = (root / site["path"]).read_text(encoding="utf-8")
+            trees[site["path"]] = (text.splitlines(), ast.parse(text))
+        lines, tree = trees[site["path"]]
+        where = f"{site['path']}:{site['lineno']}"
+        marked = [lines[i] for i in (site["lineno"] - 1, site["lineno"] - 2)
+                  if 0 <= i < len(lines) and "# spawn: ok" in lines[i]]
+        if not any(re.search(r"# spawn: ok \S+ \S+ \S+", line) for line in marked):
+            problems.append(f"{where}: the marker gives no reason")
+        if _opens_a_pipe(_function_at(tree, site["function"], site["lineno"])):
+            problems.append(f"{where}: marked, but {site['function']} asks for a pipe")
+    return problems
+
+
+def _bounded_spawn_defined_outside_its_homes(root: Path, rels: list[str]) -> list[str]:
+    """Each census file that defines ``run_bounded`` or ``_end_tree`` -- at top
+    level, in an ``except ImportError`` fallback, anywhere -- but is not one of
+    the homes the twin test compares: a fourth copy nobody holds equal."""
+    homes = {rel for rel, _ in _BOUNDED_SPAWN_OWN}
+    out = []
+    for rel in rels:
+        tree = ast.parse((root / rel).read_text(encoding="utf-8"))
+        if rel not in homes and any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                    and n.name in ("run_bounded", "_end_tree") for n in ast.walk(tree)):
+            out.append(rel)
+    return out
+
+
+#: Loads each named file by path in a child whose working directory is not the
+#: checkout, and prints where the ``run_bounded`` it bound was compiled from.
+#: The checkout's root goes on ``sys.path``, as ``python -m bench...`` from the
+#: root puts it, so a package import resolves; the working directory does not.
+_ORIGIN_PROBE = (
+    "import importlib.util, json, sys\n"
+    "sys.path.insert(0, sys.argv[1])\n"
+    "out = {}\n"
+    "for rel in sys.argv[2:]:\n"
+    "    name = '_origin_' + rel.replace('/', '_').replace('.', '_')\n"
+    "    spec = importlib.util.spec_from_file_location(name, sys.argv[1] + '/' + rel)\n"
+    "    mod = importlib.util.module_from_spec(spec)\n"
+    "    sys.modules[name] = mod\n"
+    "    try:\n"
+    "        spec.loader.exec_module(mod)\n"
+    "        out[rel] = mod.run_bounded.__code__.co_filename\n"
+    "    except BaseException as exc:\n"
+    "        out[rel] = 'load failed: ' + type(exc).__name__ + ': ' + str(exc)\n"
+    "print(json.dumps(out))\n"
+)
+
+
+class TestEveryTimedSpawnOutsideToolsCcIsBounded:
+    """In every tracked production ``.py`` outside ``tools/cc`` -- the engine,
+    ``scripts/``, ``bench/``, the top-level ``tools/`` and any directory added
+    later -- a spawn with a ``timeout`` goes through ``run_bounded``: the
+    engine's ``espalier/_spawn.py``, the freshness scanner's inline copy, or
+    the ``tools/cc`` one, which ``scripts/``, ``bench/`` and ``tools/`` load by
+    path from their own checkout. A call that holds no pipe may instead stay
+    raw under ``# spawn: ok <reason>``. On Windows a raw ``subprocess.run``
+    kills only the child at its timeout and then waits on any grandchild
+    holding its pipe, so an adopter's ``init`` or ``doctor`` probing an
+    interpreter through a ``.bat`` shim, or a local git read, waited on that
+    program instead of its cap (DEF-3004). Test code is out of scope (it is not
+    shipped, and its own spawns carry the suite's ceilings). The sibling census
+    for ``tools/cc`` is
+    ``tests/test_spawn_chokepoint.py::TestEveryTimedSpawnIsBounded``; a
+    watchdog thread that streams a child's pipe is the shape neither census
+    reads (``tests/test_bounded_spawn.py::TestAWatchdogEndsTheTree``)."""
+
+    def test_no_raw_spawn_carries_a_timeout_outside_the_bounded_spawn(self):
+        stray = _unbounded_timed_spawns(_spawn_sites_in(REPO_ROOT, _census_files()))
+        assert not stray, (
+            "a raw subprocess call with a timeout (or the ** splat that can carry one) "
+            "waits on any grandchild holding its pipe on Windows, past its cap; call "
+            "run_bounded (espalier/_spawn.py in the engine; tools/cc/_json_safe.py loaded "
+            "by path in scripts/, bench/ and tools/), or mark a call that holds no pipe "
+            "`# spawn: ok <reason>`:\n  "
+            + "\n  ".join(f"{s['path']}:{s['lineno']} in {s['function']}" for s in stray)
+        )
+
+    def test_the_routed_population_holds_its_floor(self):
+        routed = [s for s in _spawn_sites_in(REPO_ROOT, _census_files()) if s["bounded"] and s["timed"]]
+        assert len(routed) >= _ROUTED_TIMED_FLOOR, (
+            f"{len(routed)} timed run_bounded calls outside tools/cc, below the floor "
+            f"{_ROUTED_TIMED_FLOOR} recorded at the reroute: the walk broke, or sites went "
+            "back to subprocess.run -- lower the floor on purpose, naming it"
+        )
+
+    def test_a_marked_spawn_holds_no_pipe_and_says_why(self):
+        problems = _marker_problems(REPO_ROOT, _spawn_sites_in(REPO_ROOT, _census_files()))
+        assert not problems, problems
+
+    def test_no_routed_spawn_keeps_a_marker(self):
+        """A marker on a call that already goes through ``run_bounded`` is
+        stale: it would let the call go back to ``subprocess.run`` unread."""
+        stale = [f"{s['path']}:{s['lineno']}" for s in _spawn_sites_in(REPO_ROOT, _census_files())
+                 if s["bounded"] and s["declared"]]
+        assert not stale, f"drop the `# spawn: ok` marker from these routed calls: {stale}"
+
+    def test_the_bounded_spawn_is_defined_only_in_its_homes(self):
+        extra = _bounded_spawn_defined_outside_its_homes(REPO_ROOT, _census_files())
+        assert not extra, (
+            f"{extra} define run_bounded or _end_tree: a copy the twin test does not hold "
+            "equal, and whose raw spawns the census would read as unbounded -- import or "
+            "load an existing copy, or add the file to _BOUNDED_SPAWN_HOMES"
+        )
+
+    def test_every_script_takes_the_tools_cc_copy_from_its_own_checkout(self, tmp_path):
+        """Each file outside the engine with a routed call binds the ``tools/cc``
+        copy of this checkout, never an installed engine's (which can be
+        another checkout's) or one found through the working directory."""
+        import json
+        import os
+        import subprocess as _sp
+
+        rels = sorted({s["path"] for s in _spawn_sites_in(REPO_ROOT, _census_files())
+                       if s["bounded"] and not s["path"].startswith("espalier/")})
+        assert rels, "no file outside the engine routes a spawn: the census broke"
+        child = _sp.run([sys.executable, "-c", _ORIGIN_PROBE, REPO_ROOT.as_posix(), *rels],
+                        cwd=str(tmp_path), capture_output=True, text=True, encoding="utf-8",
+                        errors="replace", timeout=45)  # about 1 s measured; under the 60 s ceiling
+        assert child.returncode == 0, child.stderr
+        want = os.path.normcase(str((REPO_ROOT / "tools" / "cc" / "_json_safe.py").resolve()))
+        wrong = {rel: origin for rel, origin in json.loads(child.stdout).items()
+                 if os.path.normcase(origin) != want}
+        assert not wrong, f"these bind a run_bounded that is not {want}: {wrong}"
+
+    def test_the_census_reads_each_shape_it_rules_on(self, tmp_path):
+        """The census's own control, on a planted tree: a raw timed spawn in the
+        engine, in each other tree, in a new ``tools/`` folder and a new
+        top-level directory is stray, and so is a fallback that defines
+        ``run_bounded`` outside a home; the bounded spawn's own body, a marked
+        call and a routed call are not; ``tools/cc``, the engine's mirrors and
+        test code are outside the census. A marked call that asks for a pipe,
+        and a marked call that gives no reason, are named."""
+        raw = "import subprocess\ndef probe():\n    subprocess.run(['git'], timeout=5)\n"
+        planted = {
+            "espalier/_spawn.py": "import subprocess\ndef run_bounded(a, **kw):\n    return subprocess.run(a, **kw)\n",
+            "espalier/raw.py": raw,
+            "espalier/_vendor/cc/x.py": raw,
+            "espalier/routed.py": "from espalier._spawn import run_bounded\ndef probe():\n    run_bounded(['git'], timeout=5)\n",
+            "scripts/raw.py": raw,
+            "scripts/fallback.py": ("import subprocess\ntry:\n    run_bounded = load()\nexcept ImportError:\n"
+                                    "    def run_bounded(a, **kw):\n        return subprocess.run(a, **kw)\n"),
+            "bench/marked.py": ("import subprocess\ndef probe():\n"
+                                "    # spawn: ok no pipe to hold -- all streams DEVNULL\n"
+                                "    subprocess.run(['git'], timeout=5, stdout=subprocess.DEVNULL)\n"),
+            "bench/piped.py": ("import subprocess\ndef probe():\n"
+                               "    # spawn: ok no pipe to hold -- all streams DEVNULL\n"
+                               "    subprocess.run(['git'], timeout=5, capture_output=True)\n"),
+            "bench/bare.py": ("import subprocess\ndef probe():\n"
+                              "    subprocess.run(['git'], timeout=5, stdout=subprocess.DEVNULL)  # spawn: ok\n"),
+            "bench/sub/raw.py": raw,
+            "tools/raw.py": raw,
+            "tools/x/raw.py": raw,
+            "tools/cc/raw.py": raw,
+            "ci/raw.py": raw,
+            "tests/test_raw.py": raw,
+        }
+        for rel, src in planted.items():
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_bytes(src.encode("ascii"))
+        rels = [rel for rel in planted if _in_census(rel)]
+        sites = _spawn_sites_in(tmp_path, rels)
+        assert sorted(s["path"] for s in _unbounded_timed_spawns(sites)) == [
+            "bench/sub/raw.py", "ci/raw.py", "espalier/raw.py", "scripts/fallback.py",
+            "scripts/raw.py", "tools/raw.py", "tools/x/raw.py"]
+        assert [s["path"] for s in sites if s["bounded"] and s["timed"]] == ["espalier/routed.py"]
+        assert _bounded_spawn_defined_outside_its_homes(tmp_path, rels) == ["scripts/fallback.py"]
+        assert sorted(_marker_problems(tmp_path, sites)) == [
+            "bench/bare.py:3: the marker gives no reason",
+            "bench/piped.py:4: marked, but probe asks for a pipe"]
+
 # The scan surface is DERIVED from `git ls-files` (the repo's tracked-code
 # source of truth), NOT a hardcoded root list — so a NEW dir that ships to or
 # runs for an adopter is gated automatically and the bench/ + top-level tools/
