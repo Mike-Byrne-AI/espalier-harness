@@ -528,6 +528,34 @@ class TestTheRunIsPricedByTheCli:
         assert tokens == 150 and usd == pytest.approx(150 / 1000 * 0.015)
 
 
+class TestTheSmokeScenarioCatchesCliDrift:
+    """A CLI that renames the init event or the result's price would otherwise
+    read as a hook verdict or a free run; the smoke scenario reds first."""
+
+    _INIT = {"type": "system", "subtype": "init", "claude_code_version": "2.1.299", "model": "claude-opus-5-5"}
+    _RESULT = {"type": "result", "subtype": "success", "total_cost_usd": 0.0486}
+
+    def _overall(self, *events):
+        s = _scenario(expected_receiver_behavior={"must_contain_any": ["4"], "stream_well_formed": True})
+        return evaluate(s, Transcript(parse_stream_json(_stream_lines(*events))))
+
+    def test_a_well_formed_stream_passes(self):
+        assert self._overall(self._INIT, _assistant("4"), self._RESULT).overall == VERDICT_PASS
+
+    def test_a_stream_missing_either_event_fails(self):
+        """Dies to: the canary dropped, or reading only one of the two events."""
+        unpriced = {k: v for k, v in self._RESULT.items() if k != "total_cost_usd"}
+        for name, events in (("no init", (_assistant("4"), self._RESULT)),
+                             ("no price", (self._INIT, _assistant("4"), unpriced))):
+            v = self._overall(*events)
+            assert v.overall == VERDICT_FAIL, name
+            assert any(a.name == "stream_well_formed" and a.verdict == VERDICT_FAIL for a in v.assertions), name
+
+    def test_the_smoke_scenario_sets_the_canary(self):
+        smoke = yaml.safe_load((SCENARIOS_DIR / "BCE-000-smoke-test.yaml").read_text(encoding="utf-8"))
+        assert smoke["expected_receiver_behavior"].get("stream_well_formed") is True
+
+
 class TestADeadRunIsNotAHookVerdict:
     """A run the CLI refused, or one that timed out before any output, produces
     no events; it must say so rather than print the FAIL a real channel

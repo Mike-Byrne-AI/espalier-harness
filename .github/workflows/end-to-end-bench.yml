@@ -8,7 +8,10 @@ name: end-to-end-bench
 # allows ad-hoc runs (e.g. before a release).
 #
 # Cost discipline:
-#   3 scenarios x ~$0.05/run x weekly  = ~$10/year
+#   4 scenarios, about $0.67 a pass at Opus prices (measured 2026-10-14,
+#   one run each on Claude Code 2.1.299 with claude-opus-5-5; the table in
+#   bench/end_to_end/README.md), so a weekly run is about $35/year. A key
+#   whose default model is cheaper costs less.
 #   Budget cap: --max-cost-usd 5.00 (catches runaway loops).
 #
 # Authentication:

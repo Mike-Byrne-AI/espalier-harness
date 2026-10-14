@@ -24,6 +24,9 @@ expected_receiver_behavior:
   must_contain_any:
     - "4"
   max_turns: 2
+  # The CLI-drift canary: the stream still carries the init event and the
+  # priced result event the bench reads, so a renamed field reds here first.
+  stream_well_formed: true
 
 flakiness_handling:
   retry_on_inconclusive: 0

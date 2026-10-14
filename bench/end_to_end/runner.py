@@ -85,7 +85,8 @@ def load_scenario(path: Path) -> dict[str, Any]:
     # (note: no_repeat_of is nested under agent_actions_after, not a top-level key).
     behavior = data.get("expected_receiver_behavior") or {}
     recognized = {"must_contain_any", "must_not_contain_any",
-                  "block_acknowledgment", "agent_actions_after", "max_turns"}
+                  "block_acknowledgment", "agent_actions_after", "max_turns",
+                  "stream_well_formed"}
     if not (isinstance(behavior, dict) and recognized & set(behavior)):
         raise ValueError(
             f"{path.name}: expected_receiver_behavior has no recognized keys "

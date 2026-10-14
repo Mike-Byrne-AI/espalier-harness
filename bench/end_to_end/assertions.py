@@ -17,6 +17,7 @@ Verdict aggregation (per scenario):
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -308,6 +309,31 @@ def _check_no_repeat_of(
     )
 
 
+def _check_stream_well_formed(
+    behavior: dict[str, Any], transcript: Transcript,
+) -> AssertionResult | None:
+    """The two events the bench depends on are there: the `init` event (the
+    version and model a report names) and a `result` event with a finite
+    `total_cost_usd` (what the --max-cost-usd cap reads). The smoke scenario
+    sets this, so a CLI that renames either reds the harness canary first
+    instead of reading as a hook verdict or a cost of zero."""
+    if not behavior.get("stream_well_formed"):
+        return None
+    events = [e.metadata for e in transcript.events]
+    has_init = any(m.get("type") == "system" and m.get("subtype") == "init" for m in events)
+    result = next((m for m in reversed(events) if m.get("type") == "result"), {})
+    cost = result.get("total_cost_usd")
+    priced = isinstance(cost, (int, float)) and not isinstance(cost, bool) and math.isfinite(cost)
+    missing = [what for what, ok in (("an init event", has_init), ("a priced result event", priced)) if not ok]
+    if missing:
+        return AssertionResult(
+            name="stream_well_formed", verdict=VERDICT_FAIL,
+            evidence=(f"the stream has no {' and no '.join(missing)}: the CLI's stream format has "
+                      "drifted from what the bench reads (the version line, the cost cap)"))
+    return AssertionResult(name="stream_well_formed", verdict=VERDICT_PASS,
+                           evidence="an init event and a priced result event")
+
+
 def _check_max_turns(
     behavior: dict[str, Any], transcript: Transcript,
 ) -> AssertionResult | None:
@@ -360,6 +386,7 @@ def evaluate(scenario: dict[str, Any], transcript: Transcript,
         _check_block_acknowledgment,
         _check_no_repeat_of,
         _check_max_turns,
+        _check_stream_well_formed,
     )
     results: list[AssertionResult] = []
     notes = ""
