@@ -1263,7 +1263,11 @@ def _foreign_read_denies(existing: dict) -> tuple[str, ...]:
 def _stale_denies(existing: dict) -> tuple[tuple[str, str], ...]:
     """The retired deny rules ``existing`` still carries, as ``(rule, why)``
     pairs in the registry's order (``settings_profiles.retired_deny_rules``),
-    the reason closing with the last version whose ``init`` wrote the rule.
+    the reason closing with the last version whose ``init`` wrote a rule of
+    that text. A match by text cannot tell that rule from the same line the
+    operator wrote by hand, so the reason says the line matches one init
+    wrote, never that init wrote it -- every surface renders this sentence
+    (doctor, merge-settings, upgrade, an init re-run).
     Exact strings only, like the allow comparison; a malformed block is empty
     here and is named by the allow comparison's note. Read-only by contract:
     the merge never removes an operator's rule, so a stale one is named, not
@@ -1282,7 +1286,7 @@ def _stale_denies(existing: dict) -> tuple[tuple[str, str], ...]:
     # command-not-found in a fusion, where the engine runs as `python -m
     # espalier`), and tests/test_no_bare_espalier_hints.py reds on it.
     return tuple(
-        (rule, f"{why}; the init command wrote it through {shipped}")
+        (rule, f"{why}; it matches a deny rule the init command wrote through {shipped}")
         for rule, shipped, why in retired_deny_rules() if rule in present
     )
 
@@ -3233,11 +3237,12 @@ def _reconcile_existing_settings(
         # rules only, not the profile's allow gaps: a plain re-run has already
         # recorded the default profile over a minimal or full install's, so a
         # gap read here would name the default's rules, Write among them, with
-        # an append that widens permissions. Case (b) never gets it: that
-        # branch's WARN already sends the operator to merge-settings or
-        # --wire-hooks, which name a retired rule, and a file with no Espalier
-        # hooks may be the adopter's own, where "the init command wrote it"
-        # would be false of a Read(./.env) they wrote themselves.
+        # an append that widens permissions. Case (b) never gets it: no
+        # Espalier hook is wired there, so the write_guard check that replaces a
+        # retired Read() rule is not running, and "delete that line" would take
+        # away an adopter's only guard on a secret file. That branch's WARN
+        # sends them to merge-settings or --wire-hooks, which wire the hooks and
+        # name the rule in the same run.
         if not caller_reports_permissions:
             stale = settings_stale_denies(settings_path) or ()
             if stale:

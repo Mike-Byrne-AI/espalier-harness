@@ -832,6 +832,29 @@ class TestInitNamesARetiredDenyRule:
         assert "Delete that line by hand" in err, err[-1500:]
         assert (tmp_path / ".claude" / "settings.json").read_bytes() == before
 
+    def test_a_hand_written_rule_is_said_to_match_never_to_be_inits(self, tmp_path, capsys, monkeypatch):
+        """The registry matches by rule text, so a rule the operator wrote by
+        hand on an install this engine made (which never wrote it) reads the
+        same as one an old init wrote. The shared reason every surface renders
+        (doctor, merge-settings, upgrade, this re-run) says the text matches a
+        rule init wrote, never that init wrote this one."""
+        from espalier.cli import settings_stale_denies
+
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        settings = root / ".claude" / "settings.json"
+        assert self.RULE not in settings.read_text(encoding="utf-8")
+        self._plant(root)
+        ((rule, why),) = settings_stale_denies(settings)
+        assert rule == self.RULE
+        assert "matches a deny rule the init command wrote through 0.8.0b2" in why, why
+        assert "wrote it" not in why, why
+        capsys.readouterr()
+        assert self._init(root) == 0
+        err = capsys.readouterr().err
+        assert "matches a deny rule the init command wrote through 0.8.0b2" in err, err[-1500:]
+        assert "wrote it" not in err, err[-1500:]
+
     def test_a_plain_rerun_over_a_minimal_install_lists_no_allow_rules(self, tmp_path, capsys, monkeypatch):
         """A plain re-run records the default profile over the one the file was
         rendered from, so a gap read here would list the workflow profile's
@@ -862,10 +885,11 @@ class TestInitNamesARetiredDenyRule:
         assert captured.err.count(self.WARN) == 1, captured.err[-2500:]
 
     def test_init_never_calls_an_adopters_own_rule_retired(self, tmp_path, capsys, monkeypatch):
-        """Case (b): a settings.json with no Espalier hooks may be the adopter's
-        own, where "the init command wrote it" would be false (a Read(./.env)
-        they wrote is on the retired list too); that branch's one WARN sends
-        them to merge-settings or --wire-hooks, which name a retired rule."""
+        """Case (b): no Espalier hook is wired, so the write_guard check that
+        replaces a retired Read() rule is not running, and "delete that line"
+        would take away the adopter's only guard on the file; that branch's one
+        WARN sends them to merge-settings or --wire-hooks, which wire the hooks
+        and name the rule in the same run."""
         import json
 
         from espalier import cli

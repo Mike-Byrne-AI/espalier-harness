@@ -12,6 +12,13 @@
   delete by hand, in the project, local and user settings files. Nothing is
   removed. It names the retired rules only: a plain re-run records the default
   settings profile over the one the file was rendered from, so it does not list
-  profile allow rules. A settings.json that wires no Espalier hooks is never
-  told a rule is retired, since it may be the adopter's own, and
-  `upgrade --execute`, which deploys through the same path, still says it once.
+  profile allow rules. Over a settings.json that wires no Espalier hooks the
+  re-run says nothing of retired rules: none of the hooks run there yet, so the
+  hook that replaces a retired `Read()` rule is not there to take over. `upgrade --execute`, which
+  deploys through the same path, still says it once.
+- **The retired-rule WARN no longer says `init` wrote a rule it may never have
+  written.** The list matches by rule text, so a line the operator wrote by
+  hand read the same as one an old `init` wrote, and `doctor`,
+  `merge-settings`, `upgrade` and the re-run all said "the init command wrote
+  it". They now say the line matches a deny rule `init` wrote through that
+  version.
