@@ -1148,6 +1148,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # the base since a CI run, and which file imports which, is git's
             # answer (fast; slow-exempt).
             "test_stale_base",
+            # Drives tools/cc/board.py's ledger line through real git in a
+            # scratch repo whose checkout sits behind origin/main, and the base
+            # tree's own generator as a child interpreter: what a ref holds is
+            # git's answer, so no mock stands in for it.
+            "test_board_ledger_base",
             "test_symbol_census",
             # Seven cases in TestTheContaminationPopulationIsActuallyDerived
             # build throwaway `git init` repos and plant duplicate files in
@@ -1309,6 +1314,9 @@ _SLOW_FILES: set[str] = {
     # A launcher whose child holds the pipe and sleeps, and real git against an
     # origin whose upload-pack sleeps: each case waits out a 3 s cap.
     "test_bounded_spawn",
+    # Builds a scratch repo per case (this checkout's tools/cc committed twice)
+    # and runs the board's base read: git archive plus a child interpreter.
+    "test_board_ledger_base",
     # The drift matrix drives real `git init` / `commit` in throwaway trees so
     # the commit-subject and ratio census is the detector's own reading, not a
     # string fixture. It lives in its own file so the pure normalizer rows in
