@@ -309,6 +309,41 @@
 {"shape": "echo \"$(echo \"$(echo \"$(echo \"$(echo 'a; rm @T')\")\")\")\"", "want": false, "from": "round-6 batch"}
 {"shape": "echo \"it is; rm @T", "want": true, "from": "round-6 batch", "note": "an unclosed quote is left as it is: the costlier mistake is a missed write"}
 {"shape": "echo 'it is; rm @T", "want": true, "from": "round-6 batch", "note": "an unclosed quote is left as it is: the costlier mistake is a missed write"}
+{"shape": "sed -i 's/a/b/' $(git ls-files | grep -x @T)", "want": true, "from": "round-7 regressions"}
+{"shape": "echo @T | parallel sed -i s/a/b/ {}", "want": true, "from": "round-7 regressions"}
+{"shape": "ls @T | parallel perl -pi -e s/a/b/", "want": true, "from": "round-7 regressions"}
+{"shape": "sed -i s/a/b/ $(find . -name \"*.py\" | grep @T)", "want": true, "from": "round-7 regressions"}
+{"shape": "perl -pi -e s/a/b/ `git ls-files | grep @T`", "want": true, "from": "round-7 regressions"}
+{"shape": "find $(ls -d . | head -1) -path ./@T -delete", "want": true, "from": "round-7 regressions"}
+{"shape": "echo go && bash <<EOF\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "set -e; bash <<'EOF'\nrm -f @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "{ bash <<EOF\nrm @T\nEOF\n}", "want": true, "from": "round-7 regressions"}
+{"shape": "if true; then bash <<EOF\nrm @T\nEOF\nfi", "want": true, "from": "round-7 regressions"}
+{"shape": "( sh <<EOF\nrm @T\nEOF\n)", "want": true, "from": "round-7 regressions"}
+{"shape": "env -i bash <<EOF\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "bash <<'EOF'\necho it's\nEOF\nrm @T\necho 'done'", "want": true, "from": "round-7 regressions"}
+{"shape": "bash ./setup.sh <<EOF\nrm @T\nEOF", "want": false, "from": "round-7 regressions"}
+{"shape": "sudo bash <<EOF\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "cat <<EOF | sh -s\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "cat <<EOF | ssh host bash\nrm @T\nEOF", "want": false, "from": "round-7 regressions"}
+{"shape": "cd /tmp && bash <<'EOF'\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "echo go; sh <<EOF\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "sudo -u nobody bash <<EOF\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "(bash <<EOF\nrm @T\nEOF\n)", "want": true, "from": "round-7 regressions"}
+{"shape": "bash a.sh; cat <<'EOF'\nrm @T\nEOF", "want": false, "from": "round-7 regressions"}
+{"shape": "bash a.sh && cat <<'EOF'\nrm @T\nEOF", "want": false, "from": "round-7 regressions"}
+{"shape": "cat <<'EOF' > /tmp/x; bash a.sh\nrm @T\nEOF", "want": false, "from": "round-7 regressions"}
+{"shape": "echo $(ls @T | xargs rm)", "want": true, "from": "round-7 regressions"}
+{"shape": "(cd d && ls @T | xargs rm)", "want": true, "from": "round-7 regressions"}
+{"shape": "echo $((1 + \\\n2 <<x))\nrm @T", "want": true, "from": "round-7 regressions"}
+{"shape": "echo $(pwd)#x; rm @T", "want": true, "from": "round-7 regressions"}
+{"shape": "v=$(date)#tag; rm @T", "want": true, "from": "round-7 regressions"}
+{"shape": "(cd /tmp)#c\nrm @T", "want": true, "from": "round-7 regressions"}
+{"shape": "echo x | tee 2>/tmp/err @T", "want": true, "from": "round-7 regressions"}
+{"shape": "sed -i 's/a/b/' $(cd . && ls @T)", "want": true, "from": "round-7 regressions"}
+{"shape": "bash -c 'echo hi' <<EOF\nrm @T\nEOF", "want": false, "from": "round-7 regressions"}
+{"shape": "cat > /tmp/fix.sh <<'EOF'\nrm @T\nEOF\nbash /tmp/fix.sh", "want": true, "from": "round-7 regressions", "unseen": "a script a heredoc writes and a later command runs"}
+{"shape": "{ bash; } <<EOF\nrm @T\nEOF", "want": true, "from": "round-7 regressions", "unseen": "a heredoc on a group or a subshell"}
 {"shape": "bash -c 'rm @T'", "want": true, "from": "round-6 batch", "unseen": "a nested shell string"}
 {"shape": "python3 -c \"import os; os.remove('@T')\"", "want": true, "from": "round-6 batch", "unseen": "an interpreter's write"}
 {"shape": "FOO=1 rm @T", "want": true, "from": "round-6 batch", "unseen": "a removal behind another wrapper"}
