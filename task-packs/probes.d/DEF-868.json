@@ -1,0 +1,11 @@
+{
+ "id": "DEF-868",
+ "subject": "scripts/check_handoff_landing.py",
+ "cmd": "python3 -c \"import ast;t=ast.parse(open('scripts/check_handoff_landing.py').read());print(any(isinstance(k,ast.Constant) and k.value=='tests/test_recall_eval.py' for n in ast.walk(t) if isinstance(n,ast.Dict) for k in n.keys))\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "916db7a35c9a",
+ "text_sha": "175b15ad8656",
+ "verified_2026_09_20": "OPEN (filed 2026-09-20; probe driven at filing)",
+ "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: closing sentence hedged (the operator has not chosen a shape; the probe keys on (a) until one is), the projection tagged as a three-point extrapolation, the 09-04 reading attributed, the prose pin's coverage named; probe still prints False)"
+}

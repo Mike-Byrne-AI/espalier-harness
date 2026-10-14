@@ -1,0 +1,12 @@
+{
+ "id": "DEF-449",
+ "subject": ".github/workflows/publish.yml",
+ "cmd": "python3 -c \"from pathlib import Path; t=Path('.github/workflows/publish.yml').read_text(); print('repository-url' in t)\"",
+ "open_value": "False",
+ "why_not": null,
+ "note": "The row's real gap is the absence of an upload target that cannot burn the PyPI namespace. `repository-url` is how a TestPyPI target would be spelled, so its absence IS the open state.",
+ "verified_2026_08_26": "STILL_OPEN",
+ "row_sha": "a32daf265950",
+ "text_sha": "656a1afff459",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

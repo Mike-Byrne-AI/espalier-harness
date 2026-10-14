@@ -1,0 +1,11 @@
+{
+ "id": "DEF-549",
+ "subject": "tests/test_forced_copy_parity.py",
+ "cmd": "python3 -c \"import pathlib; names=['LOCAL_LINK_RE','MAX_FRESHNESS_MANIFEST_BYTES','STATE_CACHE_MAX_AGE_HOURS','_AJ_PROSE_FIELDS','_ANCESTOR_WINDOW_COMMITS','_ATX_HEADING','_MD_LINK_TEXT','_SLUG_DROP']; blob=chr(10).join(p.read_text(encoding='utf-8',errors='replace') for p in pathlib.Path('tests').rglob('*.py')); print(sum(1 for n in names if n in blob))\"",
+ "open_value": "0",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "b4baf5bfc5d2",
+ "text_sha": "daf67c51201a",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

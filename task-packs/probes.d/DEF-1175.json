@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1175",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import os,sys,uuid,pathlib,tempfile;os.name==\"nt\" or sys.exit(\"windows-only: Git for Windows mounts /tmp on the user temp directory\");sys.path.insert(0,\"tools/cc/hooks\");[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);b=pathlib.Path(T.name);repo=b/\"repo\";sc=b/\"scratch\";repo.mkdir();n=\"probe-clone-\"+uuid.uuid4().hex[:8];(sc/n/\".git\").mkdir(parents=True);[os.environ.__setitem__(v,str(sc)) for v in (\"TEMP\",\"TMP\",\"TMPDIR\")];os.environ[\"CLAUDE_PROJECT_DIR\"]=str(repo);os.environ[\"ESPALIER_AUDIT_DIR\"]=str(repo);import _speedbump as s;t=lambda c:\"nudge\" if s._pred_rmrf(\"Bash\",{\"command\":c},repo,repo) else \"pass\";print(t(\"rm -rf /tmp/\"+n),t(\"cd /tmp && rm -rf \"+n))'",
+ "open_value": "nudge pass",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_speedbump.py"
+ ],
+ "row_sha": "55d3ca139899",
+ "text_sha": "2205d441fb84",
+ "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)"
+}

@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1132",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":\"Bash\",\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));print(\"redirect=\"+r(\"cat < .env\")+\" glued=\"+r(\"cat <.env\")+\" head=\"+r(\"head -3 < config/.env.local\"))'",
+ "open_value": "redirect=allow glued=allow head=allow",
+ "why_not": null,
+ "row_sha": "ed2a587cab51",
+ "text_sha": "3c05bb218686",
+ "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)"
+}

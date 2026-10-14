@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1150",
+ "subject": "espalier/selfcheck.py",
+ "cmd": "python -c 'import os,sys,pathlib,tempfile; sys.path.insert(0,\".\"); from espalier.selfcheck import run_selfcheck; t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); s=d/\"bt\"/\"popen-gw0\"/\"test_x0\"/\"in-use.txt\"; s.parent.mkdir(parents=True); s.write_text(\"x\",encoding=\"utf-8\"); os.environ[\"PYTEST_ADDOPTS\"]=\"--basetemp=\"+(d/\"bt\").as_posix(); sys.stdout.flush(); o=os.dup(1); n=os.open(os.devnull,os.O_WRONLY); os.dup2(n,1); rc=run_selfcheck(d); sys.stdout.flush(); os.dup2(o,1); print(s.exists())'",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "a06181399a2c",
+ "text_sha": "a32881c6ac1c",
+ "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
+}

@@ -1,0 +1,11 @@
+{
+ "id": "DEF-419e",
+ "subject": "tools/cc/hooks/_reinject.py",
+ "cmd": "python3 -c \"s=open('tools/cc/hooks/_reinject.py').read(); print('Flat by construction' in s)\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "78dfeb3c0872",
+ "text_sha": "5cf973e1da90",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

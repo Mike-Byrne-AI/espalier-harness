@@ -1,0 +1,11 @@
+{
+ "id": "DEF-419b",
+ "subject": "tools/cc/hooks/_reinject.py",
+ "cmd": "python3 -c \"import ast; s=open('tools/cc/hooks/_reinject.py').read(); n=[x for x in ast.walk(ast.parse(s)) if isinstance(x,ast.Assign) and getattr(x.targets[0],'id',None)=='_VENDOR_MIRROR_RE'][0]; print('_vendor' not in ast.get_source_segment(s,n))\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "bdf63ca49144",
+ "text_sha": "7f97e77a7fc7",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

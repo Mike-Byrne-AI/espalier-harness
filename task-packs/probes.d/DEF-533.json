@@ -1,0 +1,11 @@
+{
+ "id": "DEF-533",
+ "subject": "espalier/surface_impact.py",
+ "cmd": "python3 -c \"from espalier import surface_impact as si; print(si.classify_surface('tools/review_agent_audit.py'))\"",
+ "open_value": "None",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "511a5de10524",
+ "text_sha": "9031c7542f1b",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

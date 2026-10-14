@@ -1,0 +1,10 @@
+{
+ "id": "DEF-928",
+ "subject": "espalier/analyze.py",
+ "cmd": "python3 -c \"import ast,pathlib;C=[n for p in sorted(pathlib.Path('espalier').glob('*.py')) for n in ast.walk(ast.parse(p.read_text(encoding='utf-8'))) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and isinstance(n.func.value,ast.Name) and n.func.value.id=='subprocess' and n.func.attr in ('run','Popen','check_output','check_call','call')];print(sum(1 for n in C if not {k.arg for k in n.keywords}&{'stdin','input'})>0)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "1b7b47e766f4",
+ "text_sha": "2f521ffa80ed",
+ "verified_2026_09_26": "STILL_OPEN (re-pinned '39' -> 'True' on 2026-09-26: 5-A review: a count over a growing population reads STRIKE_CANDIDATE on unrelated growth (40 != 39) while the defect stands; the probe now prints the boolean the row text promises (closes at zero); the 39-of-41 figure stays in the prose and the manifest)"
+}

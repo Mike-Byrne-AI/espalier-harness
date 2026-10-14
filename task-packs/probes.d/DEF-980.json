@@ -1,0 +1,10 @@
+{
+ "id": "DEF-980",
+ "subject": "tools/cc/hooks/_speedbump.py",
+ "cmd": "python3 -c \"import sys,pathlib; sys.path.insert(0,'tools/cc/hooks'); import _speedbump as m; r=pathlib.Path('.').resolve(); print(sum(1 for n in dir(m) if n.startswith('_pred_') and getattr(m,n)('Bash', {'command': 'git commit --amend --no-edit'}, r)))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "9dcfcfc0cc28",
+ "text_sha": "b48c2792230a",
+ "verified_2026_09_30": "STILL_OPEN (re-pinned '1' -> '0' on 2026-09-30: the filing probe counted a token in its own subject file, which the fix's paperwork could satisfy; re-pointed at the mechanism: the count of speed-bump predicates that fire on a rewrite command, zero while none does)"
+}

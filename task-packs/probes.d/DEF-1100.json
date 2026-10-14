@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1100",
+ "subject": "tools/cc/hooks/subagent_stop.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The fix is a design this row proposes but does not settle (a per-subagent baseline of the markdown it wrote), so no structure it must satisfy can be named before it is built; a key on a guessed identifier would stay open under any other name and flip on an unrelated one.",
+ "row_sha": "ae9ad0dd884a",
+ "text_sha": "804f04b51163",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

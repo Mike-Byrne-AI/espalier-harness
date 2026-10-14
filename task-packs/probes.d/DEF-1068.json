@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1068",
+ "subject": "bench/demo/RECORDING.md",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the two stale references are already corrected, so a count probe reads 0 while the row is open; the only other key is the binding identifier inside the file its fix edits",
+ "row_sha": "5698499d4b70",
+ "text_sha": "f401df7d4f24",
+ "verified_2026_10_02": "OPEN (filed 2026-10-02; probe driven at filing)"
+}

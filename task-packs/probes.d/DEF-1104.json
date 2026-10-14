@@ -1,0 +1,12 @@
+{
+ "id": "DEF-1104",
+ "subject": "espalier/render_surface.py",
+ "cmd": "python -c 'import tempfile,pathlib;from espalier.render_surface import render_pack_manifest as r;t=r(pathlib.Path(tempfile.mkdtemp()));print(any(l.startswith(\"# espalier-\") and not l.startswith(\"# espalier-version:\") for l in t.splitlines()))'",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "2f467ed869ed",
+ "text_sha": "ccc1b515a33b",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)",
+ "verified_2026_10_10": "STILL_OPEN (re-pinned value unchanged on 2026-10-10: TP-474 lane 2 red-team: the ordering refusal now covers install-ci and fingerprint, the two sister verbs the failure-mode review drove; the row text names them, the deliberate rollback route, and keeps the explicit override open beside the build identity. The probe and its open value are unchanged (False: no build identity stamped yet).)",
+ "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: re-keyed from the pack id to its lane and landing date: the install, upgrade and CI pack left the shipped locations for task-packs/Done/ at its last lane's landing, 2026-10-11)"
+}

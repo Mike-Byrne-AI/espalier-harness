@@ -1,0 +1,4 @@
+<!-- class: §C46 -->
+| `DEF-411a` `DEF-412h` | scripts/check_pack_landing.py::_report_secondary_tiers | The pack-landing checker prints the same seven items of owed follow-up on every run (five ROADMAP packs in Done/ whose children are not verified drained; two LANDED packs whose Landing stanza is missing Commits or Suite) and nobody has worked through them, so a maintainer running the check at a handoff reads seven standing lines as nothing new and an eighth, real one hides among them. Who is hurt: the maintainer who runs the landing check before a cut. Fix: work the seven (drain or mark each roadmap pack; fill the two stanzas) so the tool prints only its one green line, then keep it there. | minor | OPERATOR_ACTION | MAINTAINER |
+| `DEF-411a` | §C46 | scripts/check_pack_landing.py::_report_secondary_tiers |
+| `DEF-412h` | §C46 | scripts/check_pack_landing.py::_report_secondary_tiers |

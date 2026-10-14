@@ -1,0 +1,12 @@
+{
+ "id": "DEF-629",
+ "subject": "tests/test_required_status_checks.py",
+ "cmd": "python3 -c \"s=open('tests/test_required_status_checks.py').read();print('spec.get(\\\"if\\\")' not in s and \\\"spec.get('if')\\\" not in s)\"",
+ "open_value": "True",
+ "why_not": null,
+ "note": "True == open: the resolver never reads a job-level `if:` in either quoting style. Asks whether the CODE consults the key, not whether some job happens to carry one -- a population probe would flip the moment a workflow dropped its last conditional job, which says nothing about the resolver.",
+ "row_sha": "d31e83b72955",
+ "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
+ "text_sha": "b2f72228c709",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

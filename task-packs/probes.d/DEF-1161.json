@@ -1,0 +1,15 @@
+{
+ "id": "DEF-1161",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import sys,os,io,tempfile,pathlib;sys.path.insert(0,\"tools/cc/hooks\");[os.environ.pop(k) for k in list(os.environ) if k.startswith(\"ESPALIER\")];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);[(r/d).mkdir() for d in (\"build\",\"cc\")];os.environ[\"CLAUDE_PROJECT_DIR\"]=str(r);os.environ[\"ESPALIER_AUDIT_DIR\"]=str(r);import _speedbump as s,write_guard as g;H=[\"rm.exe\",\"RM.EXE\",\"/usr/bin/rm.exe\"];Z=lambda c:(setattr(sys,\"stdout\",io.StringIO()),g.check_bash_for_protected_mutations(c,r,r),sys.stdout.getvalue(),setattr(sys,\"stdout\",sys.__stdout__));n=sum(bool(s._pred_rmrf(\"Bash\",{\"command\":h+\" -r build\"},r,r)) for h in H);z=sum(not(t[1] or t[2].strip()) for t in [Z(h+\" -r cc\") for h in H]);print(n,z)'",
+ "open_value": "3 3",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_speedbump.py",
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "7ad9b8ea4f6f",
+ "text_sha": "76cc72740ce5",
+ "verified_2026_10_07": "OPEN (filed 2026-10-07; probe driven at filing)",
+ "verified_2026_10_11": "STILL_OPEN (re-pinned value unchanged on 2026-10-11: examined at TP-476 wave C-1: not a location row, its zone half is cc/ which the after-check excludes; stays as filed, probe unchanged)"
+}

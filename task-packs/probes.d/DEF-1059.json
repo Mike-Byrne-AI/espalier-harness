@@ -1,0 +1,18 @@
+{
+ "id": "DEF-1059",
+ "subject": ".claude/agents/code-reviewer.md",
+ "cmd": "python -c \"import pathlib,re,shutil,subprocess as s;B=shutil.which('bash');F=chr(96)*3;q=chr(34);E=lambda c:bool(re.search('(?i)grep: (unknown|invalid|illegal) option|usage: grep',s.run([B,'-c',c],capture_output=True,input=b'').stderr.decode(errors='replace')));assert E('grep -c '+q+'-> '+q+' -') and not E('grep -c -e '+q+'-> '+q+' -');L=[re.sub(r'^\\s*(&&|\\|\\|)','true &&',l) for p in sorted(pathlib.Path('.claude/agents').iterdir()) if p.suffix=='.md' for t in [p.read_text(encoding='utf-8').replace(chr(92)+chr(10),' ').split(chr(10))] for i,l in enumerate(t) if re.search(r'\\bgrep\\b',l) and not l.lstrip().startswith('#') and sum(x.lstrip().startswith(F) for x in t[:i])%2];print(any(E(re.sub(r'[0-9&]?>[ ]*(&[0-9]|/dev/null)','',l)) for l in L))\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  ".claude/agents/architecture-analyst.md",
+  ".claude/agents/docs-maintainer.md",
+  ".claude/agents/failure-mode-reviewer.md",
+  ".claude/agents/harness-config-advisor.md",
+  ".claude/agents/repo-analyst.md",
+  ".claude/agents/test-writer.md"
+ ],
+ "row_sha": "82d537e70da8",
+ "text_sha": "00425c8423cc",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

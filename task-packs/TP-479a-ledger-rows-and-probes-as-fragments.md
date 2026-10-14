@@ -41,6 +41,16 @@
   tree keeps rows as files; the prose check and the reader census hold the shapes they can
   decide and say so; the recovery verb is filed, not built. Earn-the-red: 62 named
   mutations over the three fix batches, each red alone.
+- Wave B landed 2026-10-14 as #207 (`10a3b23`), repaired and caught up by win-2.
+- Wave C built 2026-10-14 by win-2 on `lane/ledger-fragments-fold` (assign `5345f0`), the
+  gate read live first (no open pull request touching either record). The fold is one
+  commit, the data move alone: 503 legacy member rows (8 co-id, 512 ids) in 58 classes
+  became row files, 281 legacy probes became probe files, the roster's prose became
+  `task-packs/probes.d/README.md`. The views before and after are equal row for row, not
+  byte for byte (the Wave C line below is corrected to match its Pass line). After it:
+  `settle_probes_count` retired, eight live-roster gates that keyed their skip on the
+  roster file read either form, the fold pinned (`tests/test_ledger_fragments.py::TestTheFold`),
+  and this tree's own references swept.
 
 ## Motivation
 
@@ -113,6 +123,13 @@ recompute.
 
 Read live at each wave's start (`python3 tools/cc/board.py`, `python3 tools/cc/mail.py
 claims`); the lines below are 2026-10-13's reading, not the population.
+
+- `TP-475` Task 2-A plans a top-level `_lineage` map in `task-packs/LEDGER_PROBES.json`,
+  written by `ledger_row.py::file_row`. Since the fold this tree keeps no roster file, and on
+  an opted-in tree `file_row` writes probe files and never the roster, so a map put there
+  would be dropped while the verb reports success. Lineage is stored per id (a field in the
+  row's own probe file, or beside its row file), never in one shared map, which would bring
+  back the single shared file the fold removed (failure-mode review of Wave C, 2026-10-14).
 
 - win-2's `lane/bounded-probe-spawn` routes every timed spawn under `tools/cc` through one
   bounded helper. Its claim names call-site edits in `record_merge.py`,
@@ -533,13 +550,18 @@ Every bullet below is a **fix shape, untested**, except where a measurement is c
   loader's view supplies (never written back: Wave B's in-memory rule, operator
   2026-10-13); `LEDGER_PROBES.json` becomes `task-packs/probes.d/README.md` carrying the
   roster's `_README` and `_note` prose. The rows read the same before and after through
-  the loader (a test compares the two views byte for byte at the fold commit). Whether a
+  the loader (a test compares the two views row for row at the fold commit: each class
+  table and Appendix B as a multiset, every other line exact, each probe by id). Corrected
+  2026-10-14 at the fold: this line first said byte for byte, which cannot hold, since 21
+  class tables, Appendix B and the roster were not in id order and the view places row
+  files in id order; the Pass criteria always said row for row. Whether a
   person reading the file on GitHub needs more than the contract section's pointer is
   re-raised at the fold, not decided here.
 - Gated on `python tools/cc/board.py` showing no open pull request whose files include
   either record; the fold is one commit by one seat. The record merge's legacy arms
-  stay (adopter trees keep one file, Scope (out)); only Wave A's
-  `record_merge.py::settle_probes_count` shim retires here.
+  stay (adopter trees keep one file, Scope (out): an adopter that never sets
+  `ledger_fragments` writes the legacy forms, and its catch-ups merge them through those
+  arms); only Wave A's `record_merge.py::settle_probes_count` shim retires here.
 - The roster's removal is this tree's alone: an adopter keeps `LEDGER_PROBES.json`, so the
   engine's and `tools/cc`'s references to it stay (`grep -rn LEDGER_PROBES espalier
   tools/cc --include='*.py'` derives them: `cli.py::GITIGNORE_REINCLUDES`,
@@ -668,8 +690,8 @@ day, not this table).
   completeness test's population, the structural pins of `tests/test_check_ledger_probes.py`
   and `tests/test_ledger_row.py` keep their strength; a fixture may change shape, never
   what it refuses.
-- **The fold is byte-faithful:** the loader's view before and after the fold commit is
-  equal row for row, pinned at that commit.
+- **The fold is faithful row for row:** the loader's view before and after the fold commit
+  is equal row for row, pinned at that commit.
 - **The three lists agree:** the parity pins over `_RECORD_FILES`, `RECORD_FILES` and
   `ROSTER` pass with the two directories.
 - **Wave D:** 5 or fewer conflicted catch-ups over the 30 merges after the fold, by the
@@ -726,7 +748,7 @@ day, not this table).
    sweep left. Checkpoint: the census test green, the two-lane tests green, the full
    tier, the marker in the title.
 3. **Wave C**, the fold, gated on the board; same day where the gate allows.
-   Checkpoint: the byte-faithful view test at the fold commit, the full tier.
+   Checkpoint: the row-for-row view test at the fold commit, the full tier.
 4. **Red-team** both reviewers on a snapshot clone at each pull request; the failure-mode
    lens goes first to the reader sweep (the parent's own blocker was there).
 5. **Wave D**, the re-measure, over the following 30 merges; written into this pack's

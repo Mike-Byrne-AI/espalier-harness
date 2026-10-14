@@ -1,0 +1,10 @@
+{
+ "id": "DEF-880",
+ "subject": "tests/test_release_checklist_contract.py",
+ "cmd": "python3 -c \"import ast;fs=['tests/test_release_checklist_contract.py','tests/test_publish_workflow.py'];print(sorted(f for f in fs if (lambda c: any('RELEASE_CHECKLIST' in s for s in c) and any('publish.yml' in s for s in c))([n.value for n in ast.walk(ast.parse(open(f,encoding='utf-8').read())) if isinstance(n,ast.Constant) and isinstance(n.value,str)])))\"",
+ "open_value": "[]",
+ "why_not": null,
+ "row_sha": "d3a2e74d424a",
+ "text_sha": "8c69c0dc0880",
+ "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: wording corrected at filing 2026-09-21 on the checker's note: the clause about the hand re-pin was garbled; the mechanism, the value and the probe are unchanged)"
+}

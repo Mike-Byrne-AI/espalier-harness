@@ -1,0 +1,17 @@
+{
+ "id": "DEF-450",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": "python3 -c \"import re,operator; n=sum(1 for _ in open('tools/cc/hooks/session_start.py')); d=open('docs/RELEASE_DECISIONS.md').read(); print(operator.gt(n,1500) and not re.search(r'session_start\\.py[^\\n]*\\b[1-9],[0-9]{3}\\b', d))\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "dd6080c5da9b",
+ "text_sha": "7c4d5d7ebaf6",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: re-pointed 2026-09-21 (corpus entry 302): the probe keyed on the bare literal '1748' while docs/RELEASE_DECISIONS.md writes every count comma-grouped ('1,500 lines', 'at 1,490'), so a superseding decision written in house style could never close it; it now keys on a line naming session_start.py together with a comma-grouped count, which is what the superseding decision the row asks for must write. Value unchanged (the module is over the threshold and no such line exists); the claim stands.)",
+ "inputs": [
+  "docs/RELEASE_DECISIONS.md"
+ ],
+ "verified_2026_09_22": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['docs/RELEASE_DECISIONS.md'] on 2026-09-22: the command reads docs/RELEASE_DECISIONS.md, a tracked doc the release archive classifies internal (export-ignore), so the seed tree of the 1-I rehearsal (2026-09-22) read UNRESOLVED only through the rc guard's no-stdout conjunction (DEF-881), a FileNotFoundError at rc 1; declared, it is UNRESOLVED by design naming the input. The tracked-internal sibling of the DEF-858 census, which a --shared clone without Done/ could only measure over untracked paths; the archive extract is the fuller census oracle and found one row)",
+ "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: the declared input docs/RELEASE_DECISIONS.md resolves again: the decision log is tracked in the public repository since TP-457 1-A (2026-09-26); the verdict moved UNRESOLVED to STILL_OPEN, the value did not move, and writing the superseding decision stays the row's own work)"
+}

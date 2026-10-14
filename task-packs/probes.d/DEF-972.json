@@ -1,0 +1,10 @@
+{
+ "id": "DEF-972",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python3 -c \"import sys;sys.path.insert(0,'tools/cc/hooks');import write_guard as w;g='ESPALIER_STOP_GATE';print([(bool(w._bash_dangerous_reason('export '+n+'=x',None)),bool(w._ps_dangerous_reason(chr(36)+'env:'+n+'=1',None))) for n in (g,g+'_TEST_CMD')])\"",
+ "open_value": "[(True, True), (False, False)]",
+ "why_not": null,
+ "row_sha": "572dabcec2f5",
+ "text_sha": "bbfb653c4b94",
+ "verified_2026_09_29": "OPEN (filed 2026-09-29; probe driven at filing)"
+}

@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1120",
+ "subject": "tools/cc/ship.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the fix's site is open (ship driver or a declared pre-push step), so a structural probe would key on an identifier that does not exist yet; reproducing needs a commit and a push",
+ "row_sha": "08f20e33ce3b",
+ "text_sha": "25bfa00f06d8",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

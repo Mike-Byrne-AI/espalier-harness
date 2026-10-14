@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1025",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import write_guard as w;c=lambda L:sum(any(w._secret_pattern_for(t) for t in w._secret_read_targets(s)) for s in L);S=[\"if [ -f .env ]; then cat .env; fi\",\"if false; then :; else cat .env; fi\",\"time cat .env\",\"! cat .env\",\"for i in 1; do cat .env; done\",\"{ cat .env; }\",\"if true; then head -5 .env; fi\",\"while true; do cat .env; break; done\",\"command cat .env\",\"builtin source .env\",\"until false; do cat .env; break; done\",\"FOO=1 cat .env\",\"case x in x) cat .env;; esac\",\"case x in\\n x) cat .env;;\\nesac\",\"case x in a) :;; b) cat .env;; esac\"];C=[\"[ -f .env ] && cat .env\",\"cat .env\",\"if true; then\\n  cat .env; fi\",\"(cat .env)\"];N=[\"cp .env.example .env\",\"echo cat .env\",\"grep -rn .env docs/\"];print(\"shapes=%d/%d controls=%d/%d negatives=%d/%d\"%(c(S),len(S),c(C),len(C),c(N),len(N)))'",
+ "open_value": "shapes=0/15 controls=4/4 negatives=0/3",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_bash_patterns.py"
+ ],
+ "row_sha": "a18b664016ae",
+ "text_sha": "7c139ab484ed",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

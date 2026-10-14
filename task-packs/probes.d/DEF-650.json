@@ -1,0 +1,13 @@
+{
+ "id": "DEF-650",
+ "subject": "docs/SECURITY_TAXONOMY.md",
+ "cmd": "python3 -c \"import re,pathlib;p=re.compile(r'ESPALIER_MEMORY\\.md row [0-9]+');print(sum(len(p.findall(f.read_text(encoding='utf-8',errors='replace'))) for r in ('docs','memory') for f in pathlib.Path(r).rglob('*.md')))\"",
+ "open_value": "2",
+ "why_not": null,
+ "row_sha": "38c27eba8366",
+ "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
+ "verified_2026_09_08": "STILL_OPEN (re-pinned 4 -> 3 by hand 2026-09-08: docs/SECURITY_TAXONOMY.md:26 was repaired since filing; chmod-444-decision.md:4 and git-artifact-hygiene.md:19,:62 remain; row prose and site re-measured, row_sha re-pinned)",
+ "text_sha": "b796867fe802",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "verified_2026_09_21": "STILL_OPEN (re-pinned '3' -> '2' on 2026-09-21: one of the three ESPALIER_MEMORY.md row-NN citations left memory/git-artifact-hygiene.md when its task-pack table row was rewritten at the shipping-boundary lane; two remain and the shape is still uncaught)"
+}
