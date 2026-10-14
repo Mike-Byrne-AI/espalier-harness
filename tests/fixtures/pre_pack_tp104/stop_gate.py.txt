@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+"""Stop hook — lightweight session hygiene by default.
+
+Mode is read from ESPALIER_STOP_GATE (default: "light"):
+  - "light": skip Gate 1 (pytest). Run hygiene gates 2–5 only.
+  - "full":  run Gate 1 (pytest) before the hygiene gates.
+  - other:   warn to stderr and fall back to "light".
+
+Heavy proof (full pytest, lint, type) belongs in `espalier pre-release`
+and CI. Local Stop should not spend the inner pytest budget on every turn.
+
+Gate 1: Core pytest           — Opt-in via ESPALIER_STOP_GATE=full. Fail → BLOCK.
+Gate 2: Docs refresh          — write_count >= 10, no docs_refreshed flag → BLOCK.
+Gate 3: Code review           — write_count >= 10, no review_requested flag → BLOCK.
+Gate 4: Auto-finalize         — Run cognitive_blueprint.py finalize (silent, always passes).
+
+(Pre-TP-70 there was a Gate 5 "session state saved" that blocked Stop on
+dirty trees with no MEMORY/blueprint touch. Removed -- the gate was
+unreachable-by-design because cc/blueprints/ is gitignored, so Gate 4's
+auto-finalize output never appeared in `git status` to satisfy the
+check. Coverage falls back to /handoff, git status, IDE gutters, and
+Gate 4 itself.)
+
+Exit 0 with no JSON = allow stop.
+Exit 0 + decision="block" = block stop, CC continues working.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+# Import timing constants from the co-located copy (_hook_contract.py).
+# tools/cc/ cannot import from espalier/ (isolation rule), so _hook_contract.py
+# is a standalone copy of espalier/hook_contract.py kept in sync by tests.
+sys.path.insert(0, str(Path(__file__).parent))
+from _hook_contract import STOP_INNER_BUDGET  # noqa: E402
+import _maintenance_mode  # noqa: E402
+import _hook_utils  # noqa: E402
+
+STATE_DIR = ".espalier-state"
+
+# TP-73 — host-repo fallback. The harness's own three test files don't
+# exist on a consumer repo, so a literal hard-coded CORE_TESTS list made
+# Gate 1 silently no-op there. ``_resolve_core_tests`` reads
+# ``reports/repo_fingerprint.json::test_commands`` when present (host
+# repos after a fingerprint run); falls back to the harness defaults
+# when missing (self-host before first analyze, or any pre-fingerprint
+# state). The fallback list MUST stay stdlib-only — no espalier imports.
+_HARNESS_DEFAULT_TESTS: tuple[str, ...] = (
+    "tests/test_fingerprint.py",
+    "tests/test_hooks.py",
+    "tests/test_scanners.py",
+)
+
+
+# Pytest flags that consume the NEXT token as their value. Without
+# this denylist, the naive "tok for tok in rest if not tok.startswith('-')"
+# filter drops `-m` but keeps `security` (the marker value), and pytest
+# then treats `security` as a positional file path -- "ERROR: file or
+# directory not found: security". Same shape as TP-74 BC-041 (test
+# fabricates fixture data the producer never writes) on a different
+# wire format: TP-74 fixed shell-strings-as-paths; this fixes
+# flag-values-as-paths. See bench/corpus/BC-041b-pytest-marker-as-path.json.
+#
+# Long forms with `=` (e.g., `--override-ini=foo=bar`) are single tokens
+# already caught by startswith("-") -- only separated short forms +
+# `--override-ini` (the documented pytest long form) need the skip.
+_PYTEST_FLAGS_WITH_ARG: frozenset[str] = frozenset({
+    "-m",   # marker expression: `-m "security and not slow"`
+    "-k",   # keyword filter: `-k test_foo`
+    "-p",   # plugin name: `-p no:cacheprovider`
+    "-c",   # config file path: `-c pytest.ini`
+    "-o",   # ini override: `-o cache_dir=/tmp/x`
+    "-r",   # short test summary chars: `-r fEsxX`
+    "-W",   # warning filter: `-W error::DeprecationWarning`
+    "--override-ini",  # long form of -o (separated arg shape)
+})
+
+
+def _parse_pytest_positional_args(commands: list) -> list[str]:
+    """Extract pytest positional args from a list of shell command strings.
+
+    Recognizes ``pytest ...`` and ``python|python3 -m pytest ...`` forms.
+    Non-pytest commands (``npm test``, ``go test ./...``, ``cargo test``,
+    ``make test``) are skipped with a one-line stderr advisory; Gate 1
+    is semantically a pytest gate (see TP-74 sec. 5-B rationale).
+
+    Token-by-token state machine:
+      - Tokens in ``_PYTEST_FLAGS_WITH_ARG`` consume the FOLLOWING token
+        as their value (the next token is dropped, not kept).
+      - Other tokens starting with ``-`` are boolean flags or long
+        forms with ``=`` -- dropped as before.
+      - Anything else is a positional arg (file path, ``dir/``,
+        ``file.py::test`` selector).
+
+    BC-041b: pre-fix, the naive filter let marker values (``security``
+    in ``pytest -m security``), keyword exprs (``test_foo`` in
+    ``pytest -k test_foo``), plugin names (``no:cacheprovider`` in
+    ``pytest -p no:cacheprovider``), config paths, ini overrides, and
+    warning filters slip through as positional args. Gate 1 then ran
+    pytest against those literal strings, producing
+    ``ERROR: file or directory not found: <value>``.
+    """
+    positional: list[str] = []
+    for cmd in commands:
+        cmd_str = str(cmd).strip()
+        if not cmd_str:
+            continue
+        tokens = cmd_str.split()
+        if tokens[0] == "pytest":
+            rest = tokens[1:]
+        elif (
+            len(tokens) >= 3
+            and tokens[0] in ("python", "python3")
+            and tokens[1] == "-m"
+            and tokens[2] == "pytest"
+        ):
+            rest = tokens[3:]
+        else:
+            sys.stderr.write(
+                f"(stop_gate) skipping non-pytest test_command: {cmd_str}\n"
+            )
+            continue
+
+        skip_next = False
+        for tok in rest:
+            if skip_next:
+                skip_next = False
+                continue
+            if tok in _PYTEST_FLAGS_WITH_ARG:
+                skip_next = True
+                continue
+            if tok.startswith("-"):
+                continue
+            positional.append(tok)
+    return positional
+
+
+def _resolve_core_tests(repo_root: Path) -> list[str]:
+    """Return Gate 1 runnable pytest positional args.
+
+    ``reports/repo_fingerprint.json::test_commands`` is the canonical
+    SoT, written by ``espalier.analyze.detect_tests``. **The fingerprint
+    stores SHELL COMMAND STRINGS** (e.g., ``"pytest -q"``,
+    ``"npm test"``, ``"go test ./..."``), **NOT file paths.** TP-74
+    fixed a silent no-op where shell strings were passed verbatim to
+    pytest as positional args.
+
+    Shape contract (Shape B per TP-74 §5-B): for each command in
+    ``test_commands``, if it begins with ``pytest`` or ``python -m
+    pytest``, parse its trailing positional args (short/long flags
+    dropped). Non-pytest commands skipped with stderr advisory. If the
+    resulting list is empty (canonical case — ``"pytest -q"`` has no
+    positional args), fall back to ``_HARNESS_DEFAULT_TESTS`` so Gate
+    1 still produces signal on self-host. Empty Gate 1 was the silent
+    no-op this function exists to prevent.
+
+    Stdlib-only — no espalier imports (tools/cc/ isolation rule).
+    """
+    fingerprint_path = repo_root / "reports" / "repo_fingerprint.json"
+    if fingerprint_path.is_file():
+        try:
+            data = json.loads(fingerprint_path.read_text(encoding="utf-8"))
+            cmds = data.get("test_commands")
+            if isinstance(cmds, list) and cmds:
+                parsed = _parse_pytest_positional_args(cmds)
+                if parsed:
+                    return parsed
+        except (json.JSONDecodeError, OSError):
+            pass
+    return list(_HARNESS_DEFAULT_TESTS)
+
+STOP_GATE_MODE_ENV = "ESPALIER_STOP_GATE"
+STOP_GATE_LIGHT = "light"
+STOP_GATE_FULL = "full"
+
+
+def _stop_gate_mode() -> str:
+    """Resolve Stop gate mode from env. Default light; unknown values warn."""
+    raw = os.environ.get(STOP_GATE_MODE_ENV, STOP_GATE_LIGHT).strip().lower()
+    if raw in {STOP_GATE_LIGHT, STOP_GATE_FULL}:
+        return raw
+    _hook_utils.warn(f"unknown {STOP_GATE_MODE_ENV}={raw!r}; using light")
+    return STOP_GATE_LIGHT
+
+
+def _project_root() -> Path:
+    return Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+
+
+def block(reason: str) -> int:
+    """Print Stop block JSON and return a truthy sentinel for gate control flow.
+
+    Stop event schema differs from PreToolUse: top-level `decision` and
+    `reason`, not nested under hookSpecificOutput. Per protocol: JSON only
+    processed on exit 0. See docs/SHARP_EDGES.md "Hook Exit Codes — Channel XOR".
+
+    Channel-XOR: stdout JSON is the structured channel. We do NOT mirror to
+    stderr (Claude Code renders ``reason`` to the operator from the JSON).
+    Earlier versions dual-channeled for terminal visibility; dropped to
+    preserve forward compatibility if CC ever feeds stderr-on-exit-0 back
+    as advisory context.
+
+    Returns 1 as an internal sentinel so callers can check `if result:`.
+    main() always translates any blocked result to sys.exit(0).
+    """
+    output = {
+        "decision": "block",
+        "reason": reason,
+    }
+    print(json.dumps(output))
+    return 1  # Internal sentinel; main() exits 0.
+
+
+def _read_write_count(root: Path) -> int:
+    """Read the session write counter."""
+    counter_path = root / STATE_DIR / "write_count"
+    if not counter_path.exists():
+        return 0
+    try:
+        return int(counter_path.read_text().strip())
+    except (ValueError, OSError):
+        return 0
+
+
+def _flag_exists(root: Path, flag: str) -> bool:
+    return (root / STATE_DIR / flag).exists()
+
+
+# ── Gate 1: pytest ─────────────────────────────────────────────────────────────────
+
+def _gate_pytest(root: Path) -> int:
+    """Run core test suite. DENY if any tests fail. Opt-in via STOP_GATE_FULL."""
+    # TP-73 — resolve via fingerprint so host repos run their own tests,
+    # not the harness's hard-coded list. Falls back to harness defaults
+    # when fingerprint is absent.
+    test_args = [t for t in _resolve_core_tests(root) if (root / t).exists()]
+    if not test_args:
+        return 0  # No test files found — skip gate
+
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest"] + test_args + ["-q", "--tb=short"],
+            capture_output=True,
+            text=True,
+            timeout=STOP_INNER_BUDGET,
+            cwd=str(root),
+        )
+        if result.returncode != 0:
+            output = (result.stdout + result.stderr).strip()
+            lines = output.splitlines()
+            tail = "\n".join(lines[-20:]) if len(lines) > 20 else output
+            return block(
+                f"Tests are failing. Fix these failures before stopping:\n{tail}"
+            )
+        return 0
+    except (subprocess.TimeoutExpired, OSError) as e:
+        # Don't block on test infrastructure failure. Surface the error
+        # type so the operator can tell a timeout (raise STOP_INNER_BUDGET)
+        # from a missing interpreter (fix PATH) at a glance.
+        cls = type(e).__name__
+        print(
+            f"[WARN] stop_gate: pytest did not run ({cls}: {e}). "
+            f"Gate 1 skipped. To investigate: python -m pytest tests/ -q",
+            file=sys.stderr,
+        )
+        return 0
+
+
+# ── Gate 2: docs refresh ──────────────────────────────────────────────────────
+
+def _gate_docs_refresh(root: Path, write_count: int) -> int:
+    """DENY if long session with no docs refresh."""
+    if write_count < 10:
+        return 0
+    if _flag_exists(root, "docs_refreshed"):
+        return 0
+    return block(
+        "Run @docs-maintainer to refresh governance docs (MEMORY.md, docs/CONVENTIONS.md, "
+        "docs/SHARP_EDGES.md, docs/CHEAT-SHEET.md) before stopping. This session had significant "
+        "changes that may require doc updates."
+    )
+
+
+# ── Gate 3: code review ───────────────────────────────────────────────────────
+
+def _gate_code_review(root: Path, write_count: int) -> int:
+    """DENY if long session with no code review. Sets flag on first encounter."""
+    if write_count < 10:
+        return 0
+    if _flag_exists(root, "review_requested"):
+        return 0
+    # Write the flag so the next stop attempt passes this gate. If the
+    # write fails (read-only FS, permissions issue), surface it to stderr
+    # so the operator understands why Stop keeps re-blocking — pre-R10
+    # this OSError was swallowed silently, producing an unbreakable loop.
+    flag_write_failed = False
+    try:
+        state_dir = root / STATE_DIR
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "review_requested").write_text("")
+    except OSError as e:
+        flag_write_failed = True
+        print(
+            f"[WARN] stop_gate: could not persist review_requested flag: "
+            f"{type(e).__name__}: {e}. Subsequent Stop attempts will re-block "
+            f"until the flag can be written or the session ends.",
+            file=sys.stderr,
+        )
+    reason = (
+        "Before Claude Code stops: run /review to invoke the code-reviewer "
+        "agent on this change, then retry the Stop event. The review_requested "
+        "flag is set once per session so subsequent stops in the same session "
+        "pass this gate."
+    )
+    if flag_write_failed:
+        reason += (
+            " (The flag write failed — see stderr above. You may need to "
+            "fix permissions or close the session.)"
+        )
+    return block(reason)
+
+
+# ── Gate 4: auto-finalize blueprint ────────────────────────────────────────────
+
+def _gate_finalize_blueprint(root: Path) -> None:
+    """Run cognitive_blueprint.py finalize. Always passes — never blocks."""
+    blueprint_script = root / "tools" / "cc" / "cognitive_blueprint.py"
+    if not blueprint_script.exists():
+        return
+    # env= pins CLAUDE_PROJECT_DIR to root so Gate 4 finalizes the session
+    # in the right repo. cognitive_blueprint._repo_root() prefers the env
+    # var over cwd; inherited values from the parent shell would silently
+    # finalize in a different repo.
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
+    try:
+        subprocess.run(
+            [sys.executable, str(blueprint_script), "finalize"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(root),
+            env=env,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+
+def main() -> int:
+    data = _hook_utils.read_stdin_safely()
+
+    root = _project_root()
+    write_count = _read_write_count(root)
+    mode = _stop_gate_mode()
+
+    # Gate 1: pytest — opt-in via ESPALIER_STOP_GATE=full. Always runs even
+    # under MAINTENANCE_MODE: tests are signal, not friction.
+    if mode == STOP_GATE_FULL:
+        if _gate_pytest(root):
+            return 0
+
+    maintenance = _maintenance_mode.is_active(
+        "stop_gate", action="docs/review gates bypassed"
+    )
+
+    # Gates 2 and 3 are session-hygiene friction. MAINTENANCE_MODE skips them.
+    if not maintenance:
+        # Gate 2: docs refresh
+        if _gate_docs_refresh(root, write_count):
+            return 0
+
+        # Gate 3: code review
+        if _gate_code_review(root, write_count):
+            return 0
+
+    # Gate 4: auto-finalize blueprint (silent, always passes — preserves
+    # session continuity even under MAINTENANCE_MODE).
+    _gate_finalize_blueprint(root)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

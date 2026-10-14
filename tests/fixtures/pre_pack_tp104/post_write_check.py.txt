@@ -1,0 +1,314 @@
+#!/usr/bin/env python3
+"""PostToolUse hook — validates writes to harness infrastructure files.
+
+Advisory only (always exits 0). Prints warnings to stderr.
+Triggers on: .claude/settings.json, .claude/agents/*.md, .claude/commands/*.md,
+             tools/cc/**/*.py, root .md files (CLAUDE.md, MEMORY.md, etc.)
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import _integrity  # noqa: E402
+from _hook_utils import warn  # noqa: E402
+
+PLACEHOLDERS = ["<repo>", "<fill>", "INSERT HERE", "TEMPLATE_ONLY"]
+
+# TP-86 — MEMORY.md autoprune contract.
+# Pinned to ``tests/test_documented_claims.py``'s ``MEMORY.md line cap``
+# NumericContract (expected_value=80). If the cap changes, update that
+# contract — this constant binds to it. ``_AUTOPRUNE_HEADROOM`` keeps
+# the file at ``cap - headroom`` after a prune so a subsequent single-row
+# append doesn't immediately re-trip the cap.
+_MEMORY_MD_CAP = 80
+_AUTOPRUNE_HEADROOM = 1
+
+ALLOWLISTED_WRITE_PATHS = {
+    "MEMORY.md",
+    "cc/COMMANDS.md",
+    "cc/LIVE_SURFACE.md",
+    "cc/PACK_MANIFEST.txt",
+    "cc/execution_plan.json",
+}
+ALLOWLISTED_WRITE_PREFIXES = (
+    "cc/blueprints/",
+    "reports/",
+    "tests/",
+)
+
+
+def _is_allowlisted(rel_path: str) -> bool:
+    if rel_path in ALLOWLISTED_WRITE_PATHS:
+        return True
+    for prefix in ALLOWLISTED_WRITE_PREFIXES:
+        if rel_path.startswith(prefix):
+            return True
+    return False
+
+
+def _integrity_spot_check(repo_root: Path, rel_path: str) -> None:
+    """Re-run integrity verification and warn on drift. Never blocks."""
+    ok, mismatched = _integrity.verify_integrity(repo_root)
+    if ok:
+        return
+    # Suppress the noisy "<manifest missing>" case — absent manifest just means
+    # the user hasn't initialized integrity yet.
+    if mismatched == ["<manifest missing>"]:
+        return
+    _integrity.append_audit(
+        repo_root,
+        {"event_type": "post_write_integrity_drift",
+         "details": {"triggered_by": rel_path, "mismatched": mismatched}},
+    )
+    warn(f"integrity drift after write to {rel_path}: {', '.join(mismatched)}")
+
+
+def _maybe_autoprune_memory(repo_root: Path, rel_path: str) -> None:
+    """If the just-written file is MEMORY.md and now exceeds the cap,
+    invoke ``espalier memory prune`` to archive the oldest Session Log
+    row(s). Never blocks; logs the action to stderr.
+
+    Tries ``shutil.which("espalier")`` first (production speed), then
+    falls back to ``sys.executable -m espalier.cli`` for environments
+    where the PATH binary resolves to a Python without the espalier
+    module installed (documented in docs/SHARP_EDGES.md under "macOS
+    python resolver gap"). Subprocess only — no espalier IMPORT here,
+    per the ``tools/cc/`` isolation rule.
+    """
+    import shutil
+    import subprocess
+
+    if rel_path != "MEMORY.md":
+        return
+
+    memory_path = repo_root / "MEMORY.md"
+    if not memory_path.is_file():
+        return
+
+    text = memory_path.read_text(encoding="utf-8")
+    line_count = len(text.splitlines())
+    if line_count <= _MEMORY_MD_CAP:
+        return
+
+    excess = line_count - _MEMORY_MD_CAP + _AUTOPRUNE_HEADROOM
+    invocations: list[list[str]] = []
+    espalier_bin = shutil.which("espalier")
+    if espalier_bin is not None:
+        invocations.append([espalier_bin])
+    invocations.append([sys.executable, "-m", "espalier.cli"])
+
+    # Self-host bridge: when this hook lives co-located with an
+    # ``espalier/`` source tree (the espalier-harness repo itself), add
+    # that source root to PYTHONPATH so ``python -m espalier.cli`` finds
+    # the package even when the running Python lacks espalier in its
+    # site-packages. Production adopters do not have ``espalier/`` next
+    # to ``tools/cc/`` -> branch is a no-op for them.
+    #
+    # Drop any inherited ``PYTHONPATH`` first: a developer with multiple
+    # espalier checkouts open (each Claude session under one repo) could
+    # otherwise resolve ``espalier`` from an unrelated checkout's source
+    # tree. The hook must run the espalier shipped with this repo, not
+    # whichever one happens to be on the parent shell's PYTHONPATH.
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    self_host_root = Path(__file__).resolve().parents[3]
+    if (self_host_root / "espalier" / "__init__.py").is_file():
+        env["PYTHONPATH"] = str(self_host_root)
+
+    last_error = ""
+    for base in invocations:
+        cmd = base + [
+            "memory", "prune",
+            "--rows", str(excess),
+            "--root", str(repo_root),
+            # TP-91: hook context is non-blocking by design; never refuse
+            # to fix an over-cap MEMORY.md just because Session Log has
+            # only 1 row. Direct CLI users keep the safety default.
+            "--allow-empty",
+        ]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=10, env=env
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+            continue
+        if result.returncode == 0:
+            new_count = len(
+                memory_path.read_text(encoding="utf-8").splitlines()
+            )
+            print(
+                f"[post_write_check] MEMORY.md autoprune: "
+                f"{line_count} -> {new_count} lines "
+                f"(archived {excess} row(s) to docs/session-archive.md)",
+                file=sys.stderr,
+            )
+            return
+        last_error = (
+            f"rc={result.returncode} stderr={result.stderr.strip()}"
+        )
+
+    warn(
+        f"MEMORY.md autoprune failed: {last_error} "
+        f"(file remains at {line_count} lines, cap={_MEMORY_MD_CAP}; "
+        f"run `espalier memory prune --rows {excess}` manually)"
+    )
+
+
+def _project_root() -> Path:
+    return Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+
+
+def _normalize_rel(file_path: str, root: Path) -> str:
+    """Get path relative to project root, resolving `..` traversals.
+
+    R12 W4/W5: expand ``~`` and strip ``$CLAUDE_PROJECT_DIR/`` prefix
+    so Write tool_input paths in either form match the prefix check.
+    """
+    cleaned = os.path.expanduser(file_path) if file_path else file_path
+    if cleaned.startswith("$CLAUDE_PROJECT_DIR/"):
+        cleaned = cleaned[len("$CLAUDE_PROJECT_DIR/"):]
+    elif cleaned.startswith("${CLAUDE_PROJECT_DIR}/"):
+        cleaned = cleaned[len("${CLAUDE_PROJECT_DIR}/"):]
+    p = Path(cleaned)
+    try:
+        if p.is_absolute():
+            return str(p.resolve().relative_to(root)).replace("\\", "/")
+        return str((root / p).resolve().relative_to(root)).replace("\\", "/")
+    except (ValueError, OSError):
+        return cleaned.replace("\\", "/")
+
+
+def check_json(content: str, rel_path: str) -> None:
+    """Validate JSON parses cleanly."""
+    try:
+        json.loads(content)
+    except json.JSONDecodeError as e:
+        warn(f"{rel_path} contains invalid JSON: {e}")
+
+
+def check_placeholders(content: str, rel_path: str) -> None:
+    """Scan for placeholder values."""
+    found = [p for p in PLACEHOLDERS if p in content]
+    if found:
+        warn(f"{rel_path} contains placeholders: {', '.join(found)}")
+
+
+def check_python_syntax(content: str, rel_path: str) -> None:
+    """Basic Python syntax check via compile()."""
+    try:
+        compile(content, rel_path, "exec")
+    except SyntaxError as e:
+        warn(f"{rel_path} has a Python syntax error: {e}")
+
+
+def _is_harness_file(rel_path: str) -> bool:
+    """Return True if this path is in the harness infrastructure zones.
+
+    R13 B1: lowercase comparison so case-varied paths (e.g.,
+    ``.CLAUDE/AGENTS/evil.md`` on macOS HFS+ or Windows NTFS) still
+    trigger the validation pipeline. R12 lowercased write_guard +
+    plan_guard; this site was a missed sister-site.
+    """
+    rel_lc = rel_path.lower()
+    return (
+        rel_lc == ".claude/settings.json"
+        or rel_lc.startswith(".claude/agents/")
+        or rel_lc.startswith(".claude/commands/")
+        or rel_lc.startswith("tools/cc/")
+    )
+
+
+def _is_root_md(rel_path: str) -> bool:
+    """Return True if this is a managed governance .md file (root-level or docs/)."""
+    managed_docs = {
+        "CLAUDE.md", "MEMORY.md",
+        "docs/CONVENTIONS.md", "docs/SHARP_EDGES.md",
+        "docs/CHEAT-SHEET.md", "docs/TASK_RECIPES.md",
+    }
+    return rel_path in managed_docs
+
+
+def main() -> int:
+    # TP-53: PostToolUse runs AFTER the tool call has already executed —
+    # it cannot block. Every print here is advisory; the gate is the
+    # `# stop_gate.py` (Stop event) or PreToolUse hooks. Failures land
+    # as stderr warnings + audit-log entries, never as a denied tool call.
+    from _hook_utils import read_stdin_safely  # noqa: E402
+
+    data = read_stdin_safely()
+    if not data:
+        return 0
+
+    tool_name = data.get("tool_name", "")
+    tool_input = data.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+
+    # R11 W: include MCP write tools so post-write JSON / Python / placeholder
+    # checks still fire when the agent uses `mcp__filesystem__write_file`
+    # instead of the native Write tool. Pre-fix, MCP writes bypassed
+    # validation entirely.
+    is_native_write = tool_name in ("Write", "Edit", "NotebookEdit")
+    is_mcp_write = (
+        tool_name.startswith("mcp__")
+        and any(
+            verb in tool_name.lower()
+            for verb in ("write", "edit", "create", "patch", "append", "save")
+        )
+    )
+    if not (is_native_write or is_mcp_write):
+        return 0
+
+    # MCP tool_input uses `path` more than `file_path`. Sweep both.
+    file_path = tool_input.get("file_path", "") or tool_input.get("path", "")
+    root = _project_root()
+    rel_path = _normalize_rel(file_path, root)
+
+    # Only activate for harness infrastructure or root managed docs
+    if not _is_harness_file(rel_path) and not _is_root_md(rel_path):
+        return 0
+
+    full_path = root / rel_path
+    if not full_path.exists():
+        return 0
+
+    try:
+        content = full_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+
+    # .claude/settings.json → JSON validation
+    if rel_path == ".claude/settings.json":
+        check_json(content, rel_path)
+
+    # .claude/agents/*.md or .claude/commands/*.md → placeholder check
+    if rel_path.startswith(".claude/agents/") or rel_path.startswith(".claude/commands/"):
+        check_placeholders(content, rel_path)
+
+    # tools/cc/**/*.py → Python syntax check
+    if rel_path.startswith("tools/cc/") and rel_path.endswith(".py"):
+        check_python_syntax(content, rel_path)
+
+    # Root .md files → placeholder check
+    if _is_root_md(rel_path):
+        check_placeholders(content, rel_path)
+
+    # Integrity spot-check for non-allowlisted writes in protected zones.
+    if not _is_allowlisted(rel_path):
+        _integrity_spot_check(root, rel_path)
+
+    # TP-86: auto-prune MEMORY.md when the just-completed write pushes
+    # the file past the line cap. Always last (advisory action; never
+    # blocks).
+    _maybe_autoprune_memory(root, rel_path)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

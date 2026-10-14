@@ -68,6 +68,13 @@ docs/session-archive.md  export-ignore
 # the hashed bytes and break self-host detection. The pinned hash is computed
 # against LF, which this rule now makes deterministic on every platform.
 *.py text eol=lf
+# The sister-site probe's calibration corpus: nine hook sources from the
+# private pre-pack-TP-104 history, kept as .py.txt so ruff and mypy never read
+# them, and pinned by their sha256 in tests/test_sister_site_probe_regression.py.
+# `*.py`'s eol rule above does not match `.py.txt`, so without this row a
+# core.autocrlf=true checkout would rewrite their bytes and red the pin; -text
+# stores and checks them out verbatim (they carry no CR).
+tests/fixtures/pre_pack_tp104/*.py.txt -text
 # The Windows statusline shim (tools/cc/statusline.cmd, DEF-729) is a deploy
 # source the vendor mirror byte-pins like the .py files, so it takes the same
 # LF pin; the shim performs no label search (no goto, no call to a label),
