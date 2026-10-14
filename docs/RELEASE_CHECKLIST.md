@@ -579,7 +579,6 @@ Sequence (each step verifies the previous):
    is the development tree from the seed on). Read the listing; do not assume:
    ```bash
    unzip -l dist/espalier-harness-*-release.zip | grep -c 'task-packs/FORWARD_LEDGER.md'   # expect: 1
-   unzip -l dist/espalier-harness-*-release.zip | grep -c 'task-packs/LEDGER_PROBES.json'  # expect: 1
    unzip -l dist/espalier-harness-*-release.zip | grep -c -e 'task-packs/ledger.d/' -e 'task-packs/probes.d/'  # expect: the count below
    git ls-files task-packs/ledger.d task-packs/probes.d | wc -l
    ```
