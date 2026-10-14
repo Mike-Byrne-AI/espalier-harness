@@ -50,7 +50,12 @@ whose default model is cheaper will cost less, so treat these as one sample:
 
 One pass of all four is about **$0.67** at these figures, so a weekly run is
 about $35 a year. The hard cap is `--max-cost-usd 5.00` per workflow
-invocation. (The table this replaced, about 3,000 tokens a scenario under a
+invocation. A run the timeout cuts off sends no `result` event, so the cap prices
+its messages' usage instead, each token class at the rates the CLI's own prices
+of these runs solve to (4, 20, 8 and 0.20 USD a million input, output,
+cache-write and cache-read tokens); that reads 80 to 89 percent of the billed
+price on the captured runs, since the stream's per-message output count is the
+one each message opened with. (The table this replaced, about 3,000 tokens a scenario under a
 3-turn cap, came from a runner whose own estimate left the cache tokens out and
 that never reached the CLI: it lacked `--verbose`.)
 
@@ -92,10 +97,12 @@ scenario's hooks. Any other setting a parent session exports (an effort level, a
 subagent model) still reaches the child. The CLI authenticates however it finds
 (an API key, or your local login), and the model is your CLI's default; the
 report names the CLI version and model of each run. A run that itself failed
-before any event (the CLI refused the argv, or found no login) fails with its
-exit code and error printed beside the verdict, which no hook verdict carries; a
-run that exited 0 with no events is inconclusive, which a wiring scenario
-reports as a warn; a run the timeout ended fails.
+before any model turn (the CLI refused the argv, or found no login or a bad key,
+when it sends only its own error message and an error result) fails with its
+exit code and error printed beside the verdict and no assertion under it, which
+is how it reads apart from a hook verdict; a run that exited 0 with no events is
+inconclusive, which a wiring scenario reports as a warn; a run the timeout ended
+fails.
 
 ## When to ignore failures
 

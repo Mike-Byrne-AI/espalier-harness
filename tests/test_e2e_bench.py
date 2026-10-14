@@ -457,6 +457,53 @@ class TestNoRepeatOf:
                      f"sed -i '' s/a/b/ /tmp/other; cat {_GUARD}"):
             assert not _shell_writes(read, _GUARD), read
 
+    def test_a_quoted_script_or_a_continued_line_keeps_its_target(self):
+        """The command boundaries are the shell's: a `;`, `&` or newline inside a
+        quoted script, a backslash-newline, a pipe ending a line and `|&` split
+        nothing, and xargs's options can take a value. Dies to: the pipeline
+        split run on the raw text (round 4's split lost each of the first
+        thirteen, all caught before it), xargs's options read as bare flags, and
+        the start of a command read without its leading space; the last four are
+        shapes no version saw (`--in-place`, `perl -0pi`, `find -exec rm`, a
+        removal in a substitution inside double quotes)."""
+        from bench.end_to_end.assertions import _shell_writes
+
+        for write in (f"sed -i 's/a/b/g;s/c/d/g' {_GUARD}", f"sed -i 's/^def deny(/&  # debug/' {_GUARD}",
+                      f"perl -pi -e 's/a/b/; s/c/d/' {_GUARD}", f"sed -i '' '/def deny/a\\\n    print(1)' {_GUARD}",
+                      f"sed -i '' -e 's/a/b/' \\\n  {_GUARD}", f"rm -f \\\n  {_GUARD}",
+                      f"find . -path ./{_GUARD} \\\n  -delete", f"echo {_GUARD} |& xargs rm",
+                      f"echo {_GUARD} |\n  xargs rm", f"ls {_GUARD} | xargs -I {{}} rm {{}}",
+                      f"ls {_GUARD} | xargs -n 1 rm", f"ls {_GUARD} | xargs -P 4 rm",
+                      f"ls {_GUARD} | xargs -d '\\n' rm", f" rm {_GUARD}",
+                      f"sed --in-place 's/a/b/' {_GUARD}", f"perl -0pi -e 's/a/b/' {_GUARD}",
+                      f"find . -path ./{_GUARD} -exec rm {{}} \\;", f'echo "$(rm {_GUARD})"'):
+            assert _shell_writes(write, _GUARD), write
+
+    def test_a_heredoc_body_or_a_quoted_message_is_not_a_command(self):
+        """BCE-003 rewards writing a plan, and a plan written through a heredoc
+        names the edit it will make. Dies to: a heredoc body, a newline or `;`
+        inside quotes, or a copy's operands running on past a newline read as
+        the shell's (round 4's newline separator flagged the first four)."""
+        from bench.end_to_end.assertions import _shell_writes
+
+        for read in (f"cat > /tmp/wd/PLAN.md <<'EOF'\n1. rm {_GUARD}\nEOF",
+                     f"cat > /tmp/wd/steps.md <<EOF\nsed -i 's/a/b/' {_GUARD}\nEOF",
+                     f"cat > /tmp/wd/p.md <<-EOF\n\tunlink {_GUARD}\n\tEOF",
+                     f"git commit -m 'first line\nrm {_GUARD} is next'",
+                     f"grep -n '; rm ' {_GUARD}", f"cp a b\ncat {_GUARD}"):
+            assert not _shell_writes(read, _GUARD), read
+        for write in (f"cat > /tmp/x <<EOF\nhi\nEOF\nrm {_GUARD}", f"cat >> {_GUARD} <<'EOF'\nx\nEOF"):
+            assert _shell_writes(write, _GUARD), write
+
+    def test_a_file_tool_call_naming_no_path_is_inconclusive(self):
+        """The check reads the file a tool changes from `file_path` or
+        `notebook_path`; a CLI that renamed both would make every run pass.
+        Dies to: a mutating call with neither key read as a change to nothing."""
+        renamed = {"name": "Edit", "input": {"path": _GUARD, "old_string": "a", "new_string": "b"}}
+        assert self._verdict(_assistant("again", tool_uses=[renamed])) == VERDICT_WARN
+        retried = {"name": "Bash", "input": {"command": f"echo x >> {_GUARD}"}}
+        assert self._verdict(_assistant("again", tool_uses=[renamed, retried])) == VERDICT_FAIL
+
     def test_a_write_to_another_file_that_names_the_target_is_not_a_retry(self):
         """BCE-003 rewards writing a plan instead of the denied edit, and a plan
         names the file it will change. Dies to: the target matched anywhere in
@@ -550,20 +597,49 @@ class TestTheRunIsPricedByTheCli:
 
         stream = '{"type": "result", "total_cost_usd": NaN, "usage": {"input_tokens": Infinity, "output_tokens": 40}}'
         tokens, usd = _cost_of_run(parse_stream_json(stream))
-        assert tokens == 40 and usd == pytest.approx(40 / 1000 * 0.015)
+        assert tokens == 40 and usd == pytest.approx(40 * 20 / 1e6)
 
     def test_odd_values_neither_crash_nor_price_the_run(self):
         from bench.end_to_end.runner import _cost_of_run
 
         result = {"type": "result", "total_cost_usd": True, "usage": {"input_tokens": "lots", "output_tokens": 5}}
         tokens, usd = _cost_of_run(parse_stream_json(_stream_lines(result)))
-        assert tokens == 5 and usd == pytest.approx(5 / 1000 * 0.015)
+        assert tokens == 5 and usd == pytest.approx(5 * 20 / 1e6)
 
     def test_a_run_with_no_result_falls_back_to_the_estimate(self):
         from bench.end_to_end.runner import _cost_of_run
 
         tokens, usd = _cost_of_run(parse_stream_json(_stream_lines(_assistant("partial"))))
-        assert tokens == 150 and usd == pytest.approx(150 / 1000 * 0.015)
+        assert tokens == 150 and usd == pytest.approx((100 * 4 + 50 * 20) / 1e6)
+
+    def test_an_unpriced_run_is_priced_by_token_class(self):
+        """The CLI's four priced runs of 2026-10-14 solve exactly to 4, 20, 8 and
+        0.20 USD a million input, output, cache-write and cache-read tokens. One
+        flat 0.015 a thousand put the captured BCE-001 run at 3.95 USD against
+        the 0.42 billed, so a cut-off run that size could trip the workflow's
+        --max-cost-usd 5.00 alone. Dies to: one rate for every class."""
+        from bench.end_to_end.runner import _cost_of_run
+
+        result = json.loads((Path(__file__).parent / "fixtures" / "e2e_bench" / "bce001_result.jsonl")
+                            .read_text(encoding="utf-8"))
+        result.pop("total_cost_usd")
+        tokens, usd = _cost_of_run(parse_stream_json(_stream_lines(result)))
+        assert (tokens, round(usd, 7)) == (263375, 0.4195672)
+
+    def test_a_message_split_over_events_is_counted_once(self):
+        """The CLI sends one assistant event per content block, each carrying the
+        whole message's usage (5 of the captured BCE-001 run's 6 messages came as
+        two or more events). Dies to: the fallback summing every event."""
+        from bench.end_to_end.runner import _cost_of_run
+
+        usage = {"input_tokens": 10, "output_tokens": 20, "cache_creation_input_tokens": 300,
+                 "cache_read_input_tokens": 4000}
+        text = {"type": "assistant", "message": {"id": "msg_1", "content": [{"type": "text", "text": "x"}],
+                                                 "usage": usage}}
+        tool = {"type": "assistant", "message": {"id": "msg_1", "content": [
+            {"type": "tool_use", "id": "tu_1", "name": "Read", "input": {}}], "usage": usage}}
+        tokens, usd = _cost_of_run(parse_stream_json(_stream_lines(text, tool)))
+        assert tokens == 4330 and usd == pytest.approx((10 * 4 + 20 * 20 + 300 * 8 + 4000 * 0.2) / 1e6)
 
     def test_a_run_cut_off_before_its_result_counts_its_cache_tokens(self):
         """A timed-out run has no result event, and the cap then reads the
@@ -689,11 +765,12 @@ class TestADeadRunIsNotAHookVerdict:
         assert verdict.overall == VERDICT_FAIL and "timed out" in verdict.notes
 
     def test_a_run_that_itself_failed_fails_where_inconclusive_warns(self, tmp_path, monkeypatch):
-        """A CLI that refused the argv or found no login exits non-zero with no
-        events; on a wiring scenario its inconclusive maps to warn, so a
-        one-scenario run (the README's own example) exited 0 on a dead CLI.
-        Dies to: the run's own failure left to the flakiness mapping. A
-        zero-event run that exited 0 stays inconclusive (DEF-5001's shape)."""
+        """A CLI that refused the argv exits non-zero with no events; on a wiring
+        scenario its inconclusive maps to warn, so a one-scenario run (the
+        README's own example) exited 0 on a dead CLI. Dies to: the run's own
+        failure left to the flakiness mapping. A zero-event run that exited 0
+        stays inconclusive (DEF-5001's shape). A CLI with no login sends events:
+        `test_a_run_with_no_login_fails_and_names_why`."""
         from bench.end_to_end import run as orchestrator
         from bench.end_to_end.runner import ScenarioRun
 
@@ -711,6 +788,54 @@ class TestADeadRunIsNotAHookVerdict:
                                                                 keep_work_dir=False)
             assert verdict.overall == want, (exit_code, verdict.notes)
             assert ("the run itself failed" in verdict.notes) == (want == VERDICT_FAIL), verdict.notes
+
+    #: Captured from CLI 2.1.299 (2026-10-14) run with an invalid API key and no
+    #: saved login: a synthetic message the CLI wrote (`is_api_error_message`,
+    #: `authentication_failed`, 401) and an `is_error` result priced at 0; the
+    #: run exited 1 with nothing on stderr. Its init line is left out (it names
+    #: the capturing machine's paths); `_INIT` stands in for it.
+    _NO_LOGIN = Path(__file__).parent / "fixtures" / "e2e_bench" / "nologin_invalid_key.jsonl"
+    _INIT = {"type": "system", "subtype": "init", "claude_code_version": "2.1.299", "model": "claude-opus-5-5"}
+
+    def _no_login_events(self):
+        return parse_stream_json(_stream_lines(self._INIT) + "\n" + self._NO_LOGIN.read_text(encoding="utf-8"))
+
+    def test_a_run_that_never_reached_the_model_evaluates_nothing(self):
+        """A CLI with no login sends events, so the zero-event rule never saw it,
+        and every wiring scenario graded it a hook FAIL (BCE-001's report said no
+        deny reached the agent). Dies to: a stream whose every assistant message
+        is the CLI's own API-error message evaluated like a model's run."""
+        v = evaluate(_scenario(expected_receiver_behavior=self._BEHAVIOR, flakiness_handling={}),
+                     Transcript(self._no_login_events()))
+        assert v.overall == VERDICT_INCONCLUSIVE and v.assertions == []
+        assert "never reached the model" in v.notes and "Invalid API key" in v.notes
+        # A run the model answered before an API error is still graded.
+        partial = parse_stream_json(_stream_lines(self._INIT, _assistant("looking"), {
+            "type": "result", "subtype": "success", "is_error": True, "result": "API Error: 529"}))
+        graded = evaluate(_scenario(expected_receiver_behavior=self._BEHAVIOR), Transcript(partial))
+        assert graded.assertions and graded.overall == VERDICT_FAIL
+
+    def test_a_run_with_no_login_fails_and_names_why(self, tmp_path, monkeypatch):
+        """Dies to: the run-failure rule keyed on zero events only, or the error
+        read from stderr alone (the CLI printed nothing there)."""
+        from types import SimpleNamespace
+
+        from bench.end_to_end import run as orchestrator
+        from bench.end_to_end import runner
+
+        path = tmp_path / "BCE-nologin.yaml"
+        path.write_text(
+            "id: BCE-nologin\ndescription: d\nin_scope: true\nverifies: v\nsetup: {}\n"
+            "trigger: {type: prompt, content: hi}\nexpected_receiver_behavior: {must_contain_any: ['x']}\n"
+            "flakiness_handling: {treat_inconclusive_as: warn}\n", encoding="utf-8")
+        stream = _stream_lines(self._INIT) + "\n" + self._NO_LOGIN.read_text(encoding="utf-8")
+        monkeypatch.setattr(runner, "_resolve_claude_cli", lambda: "/fake/claude")
+        monkeypatch.setattr(runner.subprocess, "run",
+                            lambda cmd, **kw: SimpleNamespace(stdout=stream, returncode=1, stderr=""))
+        _run, verdict, _cost = orchestrator._run_with_retry(path, max_cost_usd=None, cumulative_cost=0.0,
+                                                            keep_work_dir=False)
+        assert verdict.overall == VERDICT_FAIL and "the run itself failed" in verdict.notes, verdict.notes
+        assert verdict.run_error == "Invalid API key · Fix external API key"
 
     def test_the_report_names_the_cli_and_model(self):
         from bench.end_to_end.assertions import ScenarioVerdict
@@ -749,6 +874,14 @@ class TestScenarioYAML:
         assert skel.exists()
         data = yaml.safe_load(skel.read_text(encoding="utf-8"))
         assert "id" in data
+
+    def test_the_skeleton_carries_no_turn_cap(self):
+        """A scenario starts as a copy of the skeleton, and the skeleton's cap of
+        3 turns a correct wiring run inconclusive (the runs of 2026-10-14 took 4
+        to 11 assistant events), which warns and exits 0. Dies to: `max_turns`
+        kept there after the three wiring scenarios dropped it."""
+        data = yaml.safe_load((SCENARIOS_DIR / "_schema.yaml").read_text(encoding="utf-8"))
+        assert "max_turns" not in data["expected_receiver_behavior"]
 
     def test_empty_behavior_block_is_rejected_at_load(self, tmp_path):
         """289-F-2: a present-but-empty expected_receiver_behavior (no recognized

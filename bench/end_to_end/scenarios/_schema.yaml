@@ -27,10 +27,16 @@ expected_receiver_behavior:
     required: true
   agent_actions_after:
     no_repeat_of: "tools/cc/hooks/write_guard.py"
-  max_turns: 3
+  # No max_turns in a wiring scenario: the CLI no longer caps turns, and the
+  # correct runs of 2026-10-14 took 4 to 11 assistant events, so a cap only
+  # turns a correct run inconclusive. --max-cost-usd and the runner's timeout
+  # bound a runaway.
 
 flakiness_handling:
   retry_on_inconclusive: 1
   treat_inconclusive_as: warn
 
-cost_budget_tokens: 5000
+# Advisory, not enforced (SCHEMA.md). Set it from a measured run: the wiring
+# scenarios measured 54,926 to 263,375 tokens each, most of them cache reads,
+# on 2026-10-14 (Claude Code 2.1.299, claude-opus-5-5).
+cost_budget_tokens: 300000

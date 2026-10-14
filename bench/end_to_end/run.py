@@ -90,14 +90,17 @@ def _run_with_retry(
             # event, so no price: the messages' usage stands in).
             verdict.overall = VERDICT_FAIL
             verdict.notes = (verdict.notes + "; " if verdict.notes else "") + "the run timed out"
-        elif not run.transcript.events and (run.exit_code not in (0, None) or run.error):
-            # The CLI refused the argv, found no login, or never started: no hook
-            # was measured, and the wiring scenarios' inconclusive-to-warn mapping
-            # would show that green. It fails with the run's exit code and error
-            # beside it, which is how a report tells it from a hook verdict.
+        elif ((not run.transcript.events or run.transcript.unreached_model_error() is not None)
+              and (run.exit_code not in (0, None) or run.error)):
+            # The CLI refused the argv or never started (no events), or found no
+            # login or a bad key (its own API-error message and an is_error
+            # result, no model turn): no hook was measured, and the wiring
+            # scenarios' inconclusive-to-warn mapping would show that green. It
+            # fails with the run's exit code and error beside it and no
+            # assertion under it, which is how a report tells it from a hook verdict.
             verdict.overall = VERDICT_FAIL
             verdict.notes = ((verdict.notes + "; " if verdict.notes else "")
-                             + f"the run itself failed (exit {run.exit_code}) before any event")
+                             + f"the run itself failed (exit {run.exit_code}) before any model turn")
         return run, verdict
 
     run, verdict = _do_run()

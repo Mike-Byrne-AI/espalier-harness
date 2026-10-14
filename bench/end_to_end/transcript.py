@@ -307,6 +307,22 @@ class Transcript:
             return bool(pattern.search("\n".join(self.assistant_turns())))
         return pattern.lower() in haystack
 
+    def unreached_model_error(self) -> str | None:
+        """The run's error when it never reached the model, else None: its
+        `result` event is an error and every assistant message in it is the
+        CLI's own API-error message, never a model's. CLI 2.1.299 with no
+        usable login sends an init, one such message (`is_api_error_message`,
+        `error: authentication_failed`, `api_error_status: 401`) and an
+        `is_error` result, then exits 1 with nothing on stderr; no hook can
+        fire before a model turn, so such a run measured none."""
+        result = next((e.metadata for e in reversed(self._events) if e.metadata.get("type") == "result"), None)
+        if result is None or result.get("is_error") is not True:
+            return None
+        if any(e.role == "assistant" and not _is_api_error_message(e.metadata) for e in self._events):
+            return None
+        text = result.get("result")
+        return text if isinstance(text, str) and text else str(result.get("terminal_reason") or "is_error")
+
     def deny_events(self) -> list[tuple[int, str | None]]:
         """``(event index, tool_use_id)`` for every deny the harness delivered,
         in stream order: a hook's refusal of a tool call (its tool_use_id
@@ -347,6 +363,12 @@ class Transcript:
                 if marker:
                     return marker
         return None
+
+
+def _is_api_error_message(event: dict[str, Any]) -> bool:
+    """An assistant event the CLI wrote for a failed API call, not the model."""
+    msg = event.get("message")
+    return event.get("is_api_error_message") is True or (isinstance(msg, dict) and msg.get("model") == "<synthetic>")
 
 
 def _marker_in(text: str) -> str | None:

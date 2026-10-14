@@ -215,11 +215,24 @@ def _scenario_env() -> dict[str, str]:
     return env
 
 
-def _estimate_cost(cost_tokens: int, *, usd_per_1k_tokens: float = 0.015) -> float:
-    """Rough sonnet-tier estimate. Real billing is per-input/output tokens
-    and per-cache-tier; this is a first-order approximation suitable for
-    the budget cap, not for reporting."""
-    return (cost_tokens / 1000.0) * usd_per_1k_tokens
+#: USD per token for each usage class, fitted to the CLI's own price of the four
+#: runs of 2026-10-14 (Claude Code 2.1.299, claude-opus-5-5, `costBasis: list`):
+#: they solve exactly to 4, 20, 8 and 0.20 USD a million. A cheaper model is
+#: overstated, the safe side for the --max-cost-usd cap this feeds.
+_USD_PER_TOKEN = {"input_tokens": 4e-6, "output_tokens": 20e-6,
+                  "cache_creation_input_tokens": 8e-6, "cache_read_input_tokens": 0.2e-6}
+
+
+def _price(usage: dict[str, Any]) -> tuple[int, float]:
+    """``(tokens, USD)`` for one usage record, each class at its own rate."""
+    counts = {k: _count(usage.get(k)) for k in _USD_PER_TOKEN}
+    return sum(counts.values()), sum(n * _USD_PER_TOKEN[k] for k, n in counts.items())
+
+
+def _estimate_cost(cost_tokens: int) -> float:
+    """Tokens whose class is unknown (no usage record), priced as output, the
+    dearest class: an estimate for the budget cap, not for reporting."""
+    return cost_tokens * _USD_PER_TOKEN["output_tokens"]
 
 
 def run_scenario(
@@ -330,6 +343,10 @@ def run_scenario(
             error = f"timeout after {timeout_seconds}s"
 
         events = parse_stream_json(raw)
+        if exit_code not in (0, TIMEOUT_EXIT_CODE) and error is None:
+            # The CLI reports a failed API call (no login, a bad key) in its
+            # result event and prints nothing on stderr (2.1.299).
+            error = _result_error(events)
         cost_tokens, cost_usd = _cost_of_run(events)
         init = next((e.metadata for e in events if e.metadata.get("type") == "system"
                      and e.metadata.get("subtype") == "init"), {})
@@ -354,26 +371,25 @@ def run_scenario(
 
 def _cost_of_run(events) -> tuple[int, float]:
     """``(tokens, USD)`` for the run, from the CLI's own `result` event when it
-    sent one: its `total_cost_usd`, and its usage with the cache tokens counted.
-    The estimate below is the fallback for a run that ended before one (a
-    timeout). Driven 2026-10-14: a run the result priced at 0.43 USD the
-    estimate put at 0.036 (2,410 tokens), since it summed input and output
-    tokens and left out 44,848 cache-creation and 141,327 cache-read tokens --
-    and the --max-cost-usd cap reads this number."""
+    sent one: its `total_cost_usd`, and its usage with the cache tokens counted;
+    a result with no price has its usage priced by class (`_USD_PER_TOKEN`).
+    The messages' usage is the fallback for a run that ended before its result
+    (a timeout), and the --max-cost-usd cap reads this number. Driven
+    2026-10-14: input and output alone put a run the result priced at 0.43 USD
+    at 0.036, leaving out 44,848 cache-creation and 141,327 cache-read tokens;
+    one flat rate for all four classes put the 0.42 USD BCE-001 run at 3.95."""
     result = next((e.metadata for e in reversed(events) if e.metadata.get("type") == "result"), None)
     if result is not None:
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
-        tokens = sum(_count(usage.get(k)) for k in (
-            "input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+        tokens, usd = _price(usage)
         cost = result.get("total_cost_usd")
         if isinstance(cost, (int, float)) and not isinstance(cost, bool) and math.isfinite(cost):
             return tokens, float(cost)
         if tokens:
             # The result's usage is the whole run's; summing the messages' usage
             # on top of it would count every token twice.
-            return tokens, _estimate_cost(tokens)
-    tokens = _estimate_cost_tokens_from_events(events)
-    return tokens, _estimate_cost(tokens)
+            return tokens, usd
+    return _cost_from_messages(events)
 
 
 def _count(value: Any) -> int:
@@ -387,29 +403,33 @@ def _count(value: Any) -> int:
         return 0
 
 
-def _estimate_cost_tokens_from_events(events) -> int:
-    """Pull a usage/total-tokens count out of stream-json metadata when
-    Claude Code surfaces it; otherwise approximate from text length.
+def _result_error(events) -> str | None:
+    """The text of the run's `result` event when the CLI marked it an error."""
+    result = next((e.metadata for e in reversed(events) if e.metadata.get("type") == "result"), {})
+    text = result.get("result")
+    return text.strip()[:500] if result.get("is_error") is True and isinstance(text, str) and text.strip() else None
 
-    The approximation is intentionally crude — the cost is only used for
-    the budget cap, not for billing."""
-    total = 0
-    saw_usage = False
-    for e in events:
+
+def _cost_from_messages(events) -> tuple[int, float]:
+    """``(tokens, USD)`` from the messages' usage, each message once and each
+    class at its own rate; otherwise approximated from text length.
+
+    The CLI sends one assistant event per content block, each carrying its
+    message's whole usage (5 of the captured BCE-001 run's 6 messages came as
+    two or more events), so a message is counted by its id. Its output count
+    there is the one the message opened with (55 of the 2,590 the result
+    billed), so this reads low: 80 to 89 percent of the billed price on the
+    four captured runs."""
+    by_message: dict[Any, dict[str, Any]] = {}
+    for n, e in enumerate(events):
         meta = e.metadata
-        if isinstance(meta, dict):
-            usage = meta.get("usage") or meta.get("message", {}).get("usage") if isinstance(meta.get("message"), dict) else meta.get("usage")
-            if isinstance(usage, dict):
-                # Cache reads are most of a real run's tokens (220,316 of the
-                # captured 0.42 USD run's 263,375), and a run cut off before its
-                # result is the runaway the cap is for. The estimate prices every
-                # token at one rate, so it overstates a cache-heavy run: the safe
-                # side for a cap.
-                total += sum(_count(usage.get(k)) for k in (
-                    "input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
-                saw_usage = True
-    if saw_usage:
-        return total
+        msg = meta.get("message") if isinstance(meta.get("message"), dict) else {}
+        usage = meta.get("usage") or msg.get("usage")
+        if isinstance(usage, dict):
+            by_message[msg.get("id") or ("event", n)] = usage
+    if by_message:
+        priced = [_price(u) for u in by_message.values()]
+        return sum(t for t, _ in priced), sum(usd for _, usd in priced)
     # Fallback: ~4 chars/token approximation. tool_use events carry no
     # `content` (it's stubbed to "" by the parser) but their inputs are
     # billable input tokens — count the metadata size as a rough proxy
@@ -420,7 +440,8 @@ def _estimate_cost_tokens_from_events(events) -> int:
         chars += len(e.content)
         if e.role == "tool_use":
             chars += len(repr(e.metadata))
-    return max(1, chars // 4)
+    tokens = max(1, chars // 4)
+    return tokens, _estimate_cost(tokens)
 
 
 def main(argv: list[str] | None = None) -> int:
