@@ -6294,16 +6294,36 @@ also works and needs no tree kill (`tools/cc/checkout_sync.py::spawn`, the Sessi
 catch-up). `tests/test_spawn_chokepoint.py::TestEveryTimedSpawnIsBounded` refuses a raw timed
 spawn anywhere under `tools/cc` but the bounded spawn itself, its import fallbacks, and the CI
 guard: CI runs `ci_guard.py` from the pull request's own tree and `_json_safe.py` is not a
-gated path, so the guard imports no sibling a pull request could rewrite under it. The
-engine, `scripts/` and `bench/` are not swept yet (`DEF-3004`). A detector that recognises a spawn by its spelling must read the wrappers too:
+gated path, so the guard imports no sibling a pull request could rewrite under it. In the
+engine, call `espalier/_spawn.py::run_bounded`, the engine's copy (it cannot import
+`tools/cc`); the stdlib-only freshness scanner keeps a third copy inline, and
+`tests/test_contracts.py::TestTheBoundedSpawnTwins` holds the three equal. `scripts/`,
+`bench/` and the top-level `tools/` load the `tools/cc` copy by path from their own checkout,
+never the engine's, which may be another checkout's. A call that holds no pipe (every stream
+to the null device or a file) may stay raw under `# spawn: ok <reason>`;
+`tests/test_contracts.py::TestEveryTimedSpawnOutsideToolsCcIsBounded` refuses any other raw
+timed spawn in the tracked production code outside `tools/cc`, a marker on a call or in a
+function that asks for a pipe, and a marker left on a routed call. Its census reads spellings,
+so an alias (`run = subprocess.run`, a `functools.partial` of it) slips past it, as it slips
+past the `tools/cc` census. So does a parent that streams its child's pipe line by line under a
+watchdog thread: a watchdog that kills only the child leaves the read going while a
+grandchild holds the pipe, on POSIX as well as Windows, so it must end the tree (the
+fresh-clone gate's leg bound and the archive probe's suite bound, 2026-10-14,
+`tests/test_bounded_spawn.py::TestAWatchdogEndsTheTree`). A test that swapped a module's own `subprocess` name for a
+stand-in no longer reaches a call routed through `run_bounded`: patch `subprocess.run`, or the
+module's `run_bounded` (2026-10-14, four tests). A detector that recognises a spawn by its spelling must read the wrappers too:
 `tests/test_contracts.py::TestSpawnWrappersReadEverywhere` derives the wrapper set from the
 code and holds the scanners' and contracts' copies to it, because the reroute onto
-`run_bounded` would otherwise have hidden 48 sites from the UTF-8, decode and env gates.
+`run_bounded` would otherwise have hidden 48 sites from the UTF-8, decode and env gates; a
+test that parses source for `subprocess.run(` text is the same detector (the release check's
+env census was one, 2026-10-14).
 
 **Backed by:** `tests/test_bounded_spawn.py`, whose oracle is an order, not a clock: each
 holder writes a marker when its 20 s sleep ends, and the bounded call returns before it
 exists (on the pre-lane shape both cases returned only after it, at 20.2 s and 20.1 s on a
-3 s cap; a child-only kill reds its tree-kill assertion); and
+3 s cap; a child-only kill reds its tree-kill assertion; the engine's own case, through
+`pre_release`'s command runner, returned at 20.3 s on a 3 s cap before the engine had its
+copy); and
 `tests/test_spawn_chokepoint.py`, which also drives the Windows branch on every OS with a
 stand-in `Popen`, so a Linux-only required gate still pins the tree kill, the drain and the
 reap.

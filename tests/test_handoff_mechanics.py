@@ -424,6 +424,7 @@ class TestTheMemoryCommitTakesOnlyItsOwnPaths:
             run=run, CompletedProcess=subprocess.CompletedProcess,
             TimeoutExpired=subprocess.TimeoutExpired,
         ))
+        monkeypatch.setattr(hm, "run_bounded", run)  # the timed spawns' name (DEF-3004)
         monkeypatch.setattr(hm, "_load", lambda _p, _n: types.SimpleNamespace(
             canonical_trailer=lambda: _CANON, _MEMORY_MD_CAP=120,
             linked_worktree_main=lambda _root: None,  # a plain scratch root is no worktree
@@ -611,6 +612,7 @@ class TestAfterGoalPushesTheRecord:
         monkeypatch.setattr(hm, "subprocess", types.SimpleNamespace(
             run=fake_run, TimeoutExpired=subprocess.TimeoutExpired,
         ))
+        monkeypatch.setattr(hm, "run_bounded", fake_run)  # the timed spawns' name (DEF-3004)
         # the owners the phase reads: read_summary's header, record_snapshot's ref
         # and its record-remote resolver (DEC-31: the phase reads the answer once
         # and never restates `origin`; the real resolver has its own rows in
@@ -785,6 +787,7 @@ class TestAfterGoalRefusesALinkedWorktree:
         monkeypatch.setattr(hm, "subprocess", types.SimpleNamespace(
             run=fake_run, TimeoutExpired=subprocess.TimeoutExpired,
         ))
+        monkeypatch.setattr(hm, "run_bounded", fake_run)  # the timed spawns' name (DEF-3004)
         return calls
 
     def test_the_oracle_names_the_main_checkout_from_a_worktree_only(self, hm, tmp_path):

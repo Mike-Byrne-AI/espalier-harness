@@ -131,6 +131,21 @@ from pathlib import Path
 
 REPO_DEFAULT = Path(__file__).resolve().parent.parent
 
+
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    holds on Windows, where ``run`` waits on a grandchild holding its pipe
+    (DEF-3004)."""
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_verify_pins", REPO_DEFAULT / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
+
 PINNED = "PINNED"
 UNPINNED = "UNPINNED"
 NOT_APPLICABLE = "NOT_APPLICABLE"
@@ -697,7 +712,7 @@ def run_pytest(clone: Path, selection: list[str], timeout: int) -> RunResult:
     # never terminated. The depth counter is read by that test module, which
     # skips its cloning controls (and ONLY those) at depth >= 1.
     env[DEPTH_ENV] = str(int(os.environ.get(DEPTH_ENV, "0")) + 1)
-    proc = subprocess.run(
+    proc = run_bounded(
         [sys.executable, "-m", "pytest", *selection, "-q", "--tb=no", "-rfE",
          "-p", "no:cacheprovider", "--continue-on-collection-errors"],
         cwd=str(clone), capture_output=True, text=True,

@@ -655,8 +655,6 @@ class TestFuseInitFailure:
         out = tmp_path / "f"
         out.mkdir()
 
-        import types
-
         self._stage_workflow(out, commit=False)  # on disk, so absence is not the reason
         real_run = subprocess.run
 
@@ -665,11 +663,9 @@ class TestFuseInitFailure:
                 raise FileNotFoundError("git")
             return real_run(argv, *a, **k)
 
-        # fuse's own view of the module, not the shared stdlib attribute
-        monkeypatch.setattr(fuse, "subprocess", types.SimpleNamespace(
-            run=_no_git, SubprocessError=subprocess.SubprocessError,
-            TimeoutExpired=subprocess.TimeoutExpired,
-        ))
+        # fuse's own view of the spawn, not the shared stdlib attribute: its
+        # timed spawns go through its `run_bounded` name (DEF-3004)
+        monkeypatch.setattr(fuse, "run_bounded", _no_git)
         assert fuse._workflow_tracked(out) is None
         assert self._unwired_active_gate(tmp_path, monkeypatch, out) == 0
         captured = capsys.readouterr().out

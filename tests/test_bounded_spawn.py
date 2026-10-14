@@ -145,3 +145,191 @@ class TestTheTimeoutIsABound:
             f"its {HOLD_SECONDS} s sleep ({took:.1f} s): git's own processes held the pipe past it, "
             "so the banner waits on the network, not its cap"
         )
+
+    def test_an_engine_command_runner_is_bounded_by_its_cap(self, tmp_path):
+        """The engine-level case (DEF-3004): ``espalier/pre_release.py``'s
+        command runner, which ``espalier pre-release`` runs each gate command
+        through, on the same holder. Before the engine had its own bounded
+        spawn (``espalier/_spawn.py``) its call was ``subprocess.run``'s, and on
+        Windows it returned only after the holder ended."""
+        from espalier import pre_release
+
+        argv, pidfile, done = _holder(tmp_path)
+        start = time.monotonic()
+        try:
+            result = pre_release._run_command(argv, tmp_path, timeout_seconds=int(CAP_SECONDS))
+            returned_first = not done.exists()
+            took = time.monotonic() - start
+            assert pidfile.exists(), "the holder never started inside the cap, so the case did not run"
+        finally:
+            _end_holder(pidfile)
+        assert result["timed_out"], result
+        assert returned_first, (
+            f"the engine's {CAP_SECONDS:.0f} s command cap returned only after the holder finished "
+            f"its {HOLD_SECONDS} s sleep ({took:.1f} s): the grandchild holding the pipe set the bound"
+        )
+
+
+def _load_script(rel: str):
+    """A ``scripts/`` module by path, registered so its dataclasses resolve."""
+    name = "_bound_" + rel.replace("/", "_").removesuffix(".py")
+    spec = importlib.util.spec_from_file_location(name, str(TOOLS_CC.parents[1] / rel))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestAWatchdogEndsTheTree:
+    """The same defect in the shape no census reads: a parent that streams its
+    child's pipe line by line under a watchdog thread. A watchdog that kills
+    only the child leaves the loop reading while a grandchild holds the pipe,
+    on Windows (a venv's ``python.exe`` is a redirector, so the real
+    interpreter is already a grandchild) and on POSIX (the tier's pytest
+    outlives a killed parent). Both watchdogs end the whole tree."""
+
+    def test_the_fresh_clone_gates_leg_bound_ends_the_tier(self, tmp_path):
+        """``scripts/fresh_clone_gate.py::run_tier``: a leg past
+        ``--leg-timeout`` is refused at the bound, not when the tier ends."""
+        gate = _load_script("scripts/fresh_clone_gate.py")
+        argv, pidfile, done = _holder(tmp_path)
+        clone = tmp_path / "clone"
+        (clone / "scripts").mkdir(parents=True)
+        (clone / "scripts" / "proof_tier.py").write_bytes(
+            f"import subprocess\nsubprocess.call({argv!r})\n".encode("utf-8"))
+        start = time.monotonic()
+        try:
+            with pytest.raises(gate.GateRefusal, match="--leg-timeout"):
+                gate.run_tier(Path(sys.executable), clone, dict(os.environ), tmp_path / "tier.log",
+                              echo=lambda _line: None, timeout_s=CAP_SECONDS)
+            returned_first = not done.exists()
+            took = time.monotonic() - start
+            assert pidfile.exists(), "the holder never started inside the bound, so the case did not run"
+        finally:
+            _end_holder(pidfile)
+        assert returned_first, (
+            f"the gate's {CAP_SECONDS:.0f} s leg bound returned only after the holder finished its "
+            f"{HOLD_SECONDS} s sleep ({took:.1f} s): the watchdog ended the child, not the tree"
+        )
+
+    def test_the_archive_probes_suite_bound_ends_pytest(self, tmp_path):
+        """``scripts/archive_probe.py::run_pytest``: pytest past the suite bound
+        is ended with everything it started."""
+        probe = _load_script("scripts/archive_probe.py")
+        argv, pidfile, done = _holder(tmp_path)
+        target = tmp_path / "target"
+        target.mkdir()
+        (target / "test_hold.py").write_bytes(
+            f"import subprocess\n\ndef test_hold():\n    subprocess.call({argv!r})\n".encode("utf-8"))
+        bound = 3 * CAP_SECONDS  # pytest's own start-up comes first
+        start = time.monotonic()
+        try:
+            rc = probe.run_pytest(Path(sys.executable), target,
+                                  ["-q", "-s", "-p", "no:cacheprovider", "test_hold.py"],
+                                  dict(os.environ), timeout_s=bound, echo=lambda _line: None)
+            returned_first = not done.exists()
+            took = time.monotonic() - start
+            assert pidfile.exists(), "the holder never started inside the bound, so the case did not run"
+        finally:
+            _end_holder(pidfile)
+        assert rc == probe.EXIT_TIMEOUT, rc
+        assert returned_first, (
+            f"the probe's {bound:.0f} s suite bound returned only after the holder finished its "
+            f"{HOLD_SECONDS} s sleep ({took:.1f} s): the watchdog ended pytest, not its tree"
+        )
+
+
+#: The bounded spawn's three copies (``tests/test_contracts.py::
+#: TestTheBoundedSpawnTwins`` holds their code equal; this drives each).
+_COPIES = ("tools/cc/_json_safe.py", "espalier/_spawn.py", "espalier/scanners/freshness.py")
+
+
+def _load_copy(rel: str):
+    if rel == "espalier/_spawn.py":
+        from espalier import _spawn
+        return _spawn
+    if rel == "espalier/scanners/freshness.py":
+        from espalier.scanners import freshness
+        return freshness
+    spec = importlib.util.spec_from_file_location("json_safe_for_every_copy", str(TOOLS_CC / "_json_safe.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestEveryCopysWindowsBranch:
+    """Each copy's Windows branch, driven on every OS with a stand-in ``Popen``
+    and the platform read as ``win32`` (the required cells are Linux, where the
+    call is ``subprocess.run``), the tree kill recorded rather than made."""
+
+    @pytest.fixture(params=_COPIES)
+    def windows(self, request, monkeypatch):
+        mod = _load_copy(request.param)
+        calls: list[tuple] = []
+
+        class StandInPopen:
+            plan: list = []
+
+            def __init__(self, args, **kw):
+                calls.append(("popen", args, kw))
+                self.args, self.pid, self.returncode = args, 4242, None
+
+            def communicate(self, input=None, timeout=None):
+                calls.append(("communicate", input, timeout))
+                step = StandInPopen.plan.pop(0)
+                if isinstance(step, BaseException):
+                    raise step
+                if step == "timeout":
+                    raise subprocess.TimeoutExpired(self.args, timeout)
+                self.returncode = step
+                return ("out", "err")
+
+            def wait(self, timeout=None):
+                calls.append(("wait", timeout))
+                return self.returncode if self.returncode is not None else 1
+
+            def kill(self):
+                calls.append(("kill",))
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(subprocess, "Popen", StandInPopen)
+        monkeypatch.setattr(mod, "_end_tree", lambda proc, end: calls.append(("end_tree", proc.pid)))
+        return mod, StandInPopen, calls
+
+    def test_at_the_timeout_the_tree_ends_then_the_pipes_drain_then_the_child_is_reaped(self, windows):
+        mod, popen, calls = windows
+        popen.plan = ["timeout", 0]
+        with pytest.raises(subprocess.TimeoutExpired) as caught:
+            mod.run_bounded(["git", "log"], timeout=3, capture_output=True, text=True, encoding="utf-8")
+        assert [c[0] for c in calls] == ["popen", "communicate", "end_tree", "communicate", "wait"], calls
+        assert calls[0][2]["stdout"] is subprocess.PIPE and calls[0][2]["stderr"] is subprocess.PIPE
+        assert calls[1][2] == 3 and calls[3][2] <= mod.SPAWN_KILL_GRACE_SECONDS, calls
+        assert (caught.value.stdout, caught.value.stderr) == ("out", "err")
+
+    def test_check_and_the_argument_errors_are_runs_own(self, windows):
+        mod, popen, calls = windows
+        popen.plan = [2]
+        with pytest.raises(subprocess.CalledProcessError) as caught:
+            mod.run_bounded(["git"], timeout=3, capture_output=True, check=True)
+        assert (caught.value.returncode, caught.value.output) == (2, "out")
+        with pytest.raises(ValueError, match="stdin and input"):
+            mod.run_bounded(["git"], timeout=3, input="x", stdin=subprocess.PIPE)
+
+    def test_an_interrupt_mid_call_ends_the_tree_and_goes_on(self, windows):
+        mod, popen, calls = windows
+        popen.plan = [KeyboardInterrupt()]
+        with pytest.raises(KeyboardInterrupt):
+            mod.run_bounded(["git"], timeout=3)
+        assert [c[0] for c in calls] == ["popen", "communicate", "end_tree", "wait"], calls
+
+    def test_a_stand_in_run_is_honoured(self, windows, monkeypatch):
+        mod, popen, calls = windows
+        seen: list = []
+
+        def fake(args, **kw):
+            seen.append(args)
+            return subprocess.CompletedProcess(args, 0, "", "")
+
+        monkeypatch.setattr(subprocess, "run", fake)
+        mod.run_bounded(["git"], timeout=3)
+        assert seen == [["git"]] and calls == [], (seen, calls)
