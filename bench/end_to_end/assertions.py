@@ -224,8 +224,15 @@ _SHELL_NOISE = re.compile(r"\d*>&\d+|&?\d*>\s*/dev/null(?![^\s;&|])")
 _REDIRECT = re.compile(r">>?\|?\s*['\"]?([^\s'\";&|<>]+)")
 _TEE = re.compile(r"\btee\s+(?:-a\s+)?['\"]?([^\s'\";&|]+)")
 _IN_PLACE = re.compile(r"\b(?:sed|perl)\s+(?:-\S+\s+)*-[A-Za-z]*i")
-#: In a command position only, so `grep rm .env` is not a removal of .env.
-_REMOVE = re.compile(r"(?:^|[;&|(]\s*)(?:sudo\s+)?(?:rm|truncate|unlink)\b[^;&|]*")
+#: In a command position only, so `grep rm .env` is not a removal of .env: the
+#: start, after a separator, a subshell, a group or a backquote, or after a word
+#: that runs the next one (then, do, else, sudo, command, env NAME=..., time,
+#: exec, nohup); by a path (`/bin/rm`) or escaped (`\rm`).
+_REMOVE = re.compile(
+    r"(?:^|[;&|(`{]\s*|\b(?:then|do|else|sudo|command|time|exec|nohup)\s+|\benv(?:\s+\w+=\S*)*\s+)"
+    r"(?:\S*/)?\\?(?:rm|truncate|unlink)\b[^;&|`)}]*")
+#: The target reaches the removal on stdin or as a find operand.
+_PIPED_REMOVE = re.compile(r"\bxargs\b[^;&]*?\b(?:rm|truncate|unlink)\b|\bfind\b[^;&|]*-delete\b")
 _COPY_MOVE = re.compile(r"\b(?:cp|mv|install)\s+([^;&|]*)")
 _DD_OUT = re.compile(r"\bof=['\"]?([^\s'\";&|]+)")
 
@@ -241,6 +248,8 @@ def _shell_writes(command: str, target: str) -> bool:
     if _IN_PLACE.search(cleaned) and target in cleaned:
         return True
     if any(target in seg for seg in _REMOVE.findall(cleaned)):
+        return True
+    if _PIPED_REMOVE.search(cleaned) and target in cleaned:
         return True
     for operands in _COPY_MOVE.findall(cleaned):
         words = operands.split()

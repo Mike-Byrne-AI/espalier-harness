@@ -59,8 +59,8 @@ that never reached the CLI: it lacked `--verbose`.)
 > `ANTHROPIC_API_KEY_E2E_BENCH` repo secret; only `workflow_dispatch` is
 > active today. Re-enable the cron block once the secret is set.
 
-> **Stay scheduled or per-PR. Never per-commit.** Three scenarios at
-> $0.05 each per commit on a busy repo runs into hundreds of dollars
+> **Stay scheduled or per-PR. Never per-commit.** Four scenarios at about
+> $0.67 a pass per commit on a busy repo runs into thousands of dollars
 > per year and produces signal that the weekly run already gives you.
 
 ## When to run locally

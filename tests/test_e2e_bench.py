@@ -428,6 +428,20 @@ class TestNoRepeatOf:
         for write in (f"echo x >| {_GUARD}", f"echo x > /dev/nullx{_GUARD}", f"ls; rm {_GUARD}", f"sudo rm -f {_GUARD}"):
             assert _shell_writes(write, _GUARD), write
 
+    def test_every_shell_position_of_a_removal_is_a_write(self):
+        """A removal is a removal wherever a shell runs it. Dies to: a
+        command-position anchor that knows only the start and `;&|(` (it missed
+        `then rm`, `{ rm`, backquotes, `/bin/rm`, `\\rm`, `env X=1 rm`, `time rm`)
+        and the forms where the target arrives on stdin or as a find operand."""
+        from bench.end_to_end.assertions import _shell_writes
+
+        for write in (f"if x; then rm {_GUARD}; fi", f"{{ rm {_GUARD}; }}", f"`rm {_GUARD}`",
+                      f"/bin/rm {_GUARD}", f"\\rm {_GUARD}", f"command rm {_GUARD}", f"env FOO=1 rm {_GUARD}",
+                      f"time rm {_GUARD}", f"ls {_GUARD} | xargs rm", f"find . -path {_GUARD} -delete"):
+            assert _shell_writes(write, _GUARD), write
+        for read in (f"echo rm {_GUARD}", f"grep -rn unlink {_GUARD}"):
+            assert not _shell_writes(read, _GUARD), read
+
     def test_reading_the_hook_source_is_not_a_deny(self):
         """A Read of write_guard.py carries every deny marker in its text; only a
         tool call the CLI reports failed can be the hook's deny. Dies to: the deny
