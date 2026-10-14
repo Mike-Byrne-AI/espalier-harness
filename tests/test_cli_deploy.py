@@ -934,6 +934,105 @@ class TestInitNamesARetiredDenyRule:
         assert "retired deny rule" not in err, err[-1500:]
 
 
+def _plant_retired_rule(root: Path) -> None:
+    import json
+
+    settings = root / ".claude" / "settings.json"
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    data["permissions"].setdefault("deny", []).append("Bash(rm -rf /*)")
+    settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+
+
+def _rewire_every_hook(root: Path, command: str | None) -> None:
+    """Every hook entry runs ``command``; ``None`` drops the hooks block."""
+    import json
+
+    settings = root / ".claude" / "settings.json"
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    if command is None:
+        data.pop("hooks", None)
+    else:
+        for entries in data["hooks"].values():
+            for entry in entries:
+                for hook in entry["hooks"]:
+                    hook["command"] = command
+    settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+
+
+def _what_the_surface_says(surface: str, root: Path, capsys) -> str:
+    import argparse
+
+    from espalier import cli
+    from espalier.doctor import run_doctor_check
+
+    capsys.readouterr()
+    if surface == "doctor":
+        result = run_doctor_check(root, skip_self_host=True)
+        return "\n".join(result["warnings"] + result["failures"] + result["next_steps"])
+    if surface == "init":
+        cli.cmd_init(argparse.Namespace(repo=str(root), config=None, write_gitignore=True))
+    elif surface == "init --wire-hooks":
+        cli.cmd_init(argparse.Namespace(repo=str(root), config=None, write_gitignore=True,
+                                        wire_hooks=True))
+    elif surface == "merge-settings":
+        cli.cmd_merge_settings(argparse.Namespace(repo=str(root), profile=None, add_allows=False,
+                                                  repair=False))
+    else:
+        cli.cmd_upgrade(argparse.Namespace(repo=str(root), execute=surface == "upgrade --execute",
+                                           config=None))
+    captured = capsys.readouterr()
+    return captured.out + captured.err
+
+
+# (surface, whether it needs drift to reach its report)
+_RETIRED_RULE_SURFACES = [
+    ("init", False), ("init --wire-hooks", False), ("merge-settings", False), ("doctor", False),
+    ("upgrade, version-current", False), ("upgrade preview", True), ("upgrade --execute", True),
+]
+
+
+class TestNoDeleteAdviceWhileTheHooksDoNotRun:
+    """Every surface that names a retired deny rule says "delete that line",
+    and for every row the hook layer is what stands in for the rule
+    (write_guard's root-wipe wall, its secret-path read check). Where the
+    file's Espalier hooks do not run -- wired to an interpreter this host
+    lacks, or not wired at all -- that advice takes away the only guard left,
+    so no surface gives it; each names the disarmed hooks, and the run after
+    the repair names the rule. The armed twin of each row holds the advice in
+    place, so the gate cannot pass by silencing everything."""
+
+    @staticmethod
+    def _tree(tmp_path: Path, monkeypatch, *, drift: bool, command: str | None) -> Path:
+        monkeypatch.chdir(tmp_path)
+        root = _initialized_tree(tmp_path)
+        _plant_retired_rule(root)
+        _rewire_every_hook(root, command)
+        if drift:
+            (root / "docs" / "CHEAT-SHEET.md").unlink()
+        return root
+
+    @pytest.mark.parametrize("surface,drift", _RETIRED_RULE_SURFACES,
+                             ids=[s for s, _ in _RETIRED_RULE_SURFACES])
+    def test_a_disarmed_install_is_not_told_to_delete_it(self, surface, drift, tmp_path, capsys, monkeypatch):
+        root = self._tree(tmp_path, monkeypatch, drift=drift, command="no-such-python-w0")
+        said = _what_the_surface_says(surface, root, capsys)
+        assert "retired deny rule" not in said and "Bash(rm -rf /*)" not in said, said[-2500:]
+
+    @pytest.mark.parametrize("surface,drift", _RETIRED_RULE_SURFACES,
+                             ids=[s for s, _ in _RETIRED_RULE_SURFACES])
+    def test_an_armed_install_is_told(self, surface, drift, tmp_path, capsys, monkeypatch):
+        from espalier.cli import _detect_python_command
+
+        root = self._tree(tmp_path, monkeypatch, drift=drift, command=_detect_python_command())
+        said = _what_the_surface_says(surface, root, capsys)
+        assert "retired deny rule Bash(rm -rf /*)" in said, said[-2500:]
+
+    def test_doctor_does_not_tell_a_file_with_no_espalier_hooks(self, tmp_path, capsys, monkeypatch):
+        root = self._tree(tmp_path, monkeypatch, drift=False, command=None)
+        said = _what_the_surface_says("doctor", root, capsys)
+        assert "retired deny rule" not in said and "Bash(rm -rf /*)" not in said, said[-2500:]
+
+
 def test_init_records_the_effective_settings_profile_and_refresh_keeps_it(tmp_path):
     """Every reader that compares settings.json against a profile needs the one
     init rendered it from; the per-machine file records nothing itself."""

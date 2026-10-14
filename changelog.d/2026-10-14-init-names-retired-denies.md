@@ -12,10 +12,17 @@
   delete by hand, in the project, local and user settings files. Nothing is
   removed. It names the retired rules only: a plain re-run records the default
   settings profile over the one the file was rendered from, so it does not list
-  profile allow rules. Over a settings.json that wires no Espalier hooks the
-  re-run says nothing of retired rules: none of the hooks run there yet, so the
-  hook that replaces a retired `Read()` rule is not there to take over. `upgrade --execute`, which
-  deploys through the same path, still says it once.
+  profile allow rules. `upgrade --execute`, which deploys through the same
+  path, still says it once.
+- **No command tells the operator to delete a retired deny rule while the
+  hooks do not run.** The hook layer is what stands in for every retired rule
+  (write_guard's root-wipe wall, its secret-path read check), so on a
+  settings.json that wires no Espalier hooks, or wires them to an interpreter
+  the host lacks, "delete that line" took away the only guard left. `init`,
+  `init --wire-hooks`, `merge-settings`, `upgrade` (preview, version-current
+  and `--execute`) and `doctor` now name the rule only where the hooks run;
+  elsewhere they name the disarmed hooks, as before, and the run after the
+  repair names the rule.
 - **The retired-rule WARN no longer says `init` wrote a rule it may never have
   written.** The list matches by rule text, so a line the operator wrote by
   hand read the same as one an old `init` wrote, and `doctor`,

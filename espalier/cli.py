@@ -1407,6 +1407,39 @@ def settings_superseded_allows(
     return tuple(out)
 
 
+#: ``_retired_rules_to_name``'s "the caller made no armament read" default.
+_ARMAMENT_UNREAD: object = object()
+
+
+def _retired_rules_to_name(
+    stale: "Sequence[tuple[str, str]]", *, repo_root: Path, settings_path: Path,
+    blockers: object = _ARMAMENT_UNREAD,
+) -> tuple[tuple[str, str], ...]:
+    """The retired deny rules a surface may name, with their "delete that
+    line" advice: all of ``stale`` when the file wires Espalier hooks and they
+    run, else none. Every surface that names one asks here (init, doctor,
+    merge-settings, --wire-hooks, upgrade). For every row the hook layer is
+    what stands in for the rule -- write_guard's root-wipe wall, its
+    secret-path read check -- so where no Espalier hook runs (none wired, an
+    interpreter this host lacks, a neutered gate, a file that cannot be read)
+    deleting the line takes away the only guard left; the surface names the
+    disarmed hooks instead, and the run after the repair names the rule.
+    ``blockers`` is an armament read the caller already made
+    (:func:`_enforcement_claim_blockers`, which spawns each wired interpreter);
+    ``[]`` is armed, and ``None`` (unverifiable) is not."""
+    if not stale:
+        return ()
+    try:
+        existing = json.loads(surface_contract.decode_bom(Path(settings_path).read_bytes()))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return ()
+    if not _settings_has_espalier_hooks(existing):
+        return ()
+    if blockers is _ARMAMENT_UNREAD:
+        blockers = _enforcement_claim_blockers(repo_root, settings_path)
+    return tuple(stale) if blockers == [] else ()
+
+
 def settings_stale_denies(settings_path: Path) -> tuple[tuple[str, str], ...] | None:
     """Read-only twin of the merge's ``stale_denies`` for ``doctor`` and the
     ``upgrade`` preview: ``None`` when the file is absent, unreadable,
@@ -1561,7 +1594,8 @@ def _report_allow_gaps_read_only(
     _report_allow_gaps(
         missing=missing, added=(), note=note, profile=profile, prefix=prefix,
         hint_command=lambda: _merge_settings_hint(profile), stream=stream,
-        stale=settings_stale_denies(settings_path) or (),
+        stale=_retired_rules_to_name(settings_stale_denies(settings_path) or (),
+                                     repo_root=repo_root, settings_path=settings_path),
         scoped=settings_scoped_allows(settings_path, profile=profile, repo_root=repo_root),
     )
     return bool(missing)
@@ -3254,9 +3288,12 @@ def _reconcile_existing_settings(
             if stale:
                 armament = _enforcement_claim_blockers(repo_root, settings_path)
                 armament_read = True
-                if armament == []:
+                named = _retired_rules_to_name(
+                    stale, repo_root=repo_root, settings_path=settings_path, blockers=armament,
+                )
+                if named:
                     _report_allow_gaps(
-                        missing=(), added=(), note="", stale=stale, prefix="[init]",
+                        missing=(), added=(), note="", stale=named, prefix="[init]",
                         # Read for allow gaps only, and none are passed.
                         profile=profile_name or "workflow",
                         hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
@@ -3326,11 +3363,13 @@ def _wire_hooks_into_existing(
     # --wire-hooks appends hook events (and espalier's statusLine when that key
     # is absent), never allow rules, so say what it did not append -- after the
     # line that says what it did.
-    def _wire_hooks_gaps() -> None:
+    def _wire_hooks_gaps(blockers: "list[str] | None") -> None:
         _report_allow_gaps(
             missing=merge_result.missing_allows, added=(), note=merge_result.allow_note,
             profile=profile_name or "workflow", prefix="--wire-hooks:",
-            stale=merge_result.stale_denies, scoped=merge_result.scoped_allows,
+            stale=_retired_rules_to_name(merge_result.stale_denies, repo_root=repo_root,
+                                         settings_path=settings_path, blockers=blockers),
+            scoped=merge_result.scoped_allows,
             hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
             stream=sys.stderr,
         )
@@ -3359,7 +3398,7 @@ def _wire_hooks_into_existing(
             reporters_line = _dead_reporters_line(repo_root, _remedy_py())
             if reporters_line:
                 print("--wire-hooks: " + reporters_line, file=sys.stderr)
-        _wire_hooks_gaps()
+        _wire_hooks_gaps(blockers)
         deployed.append(".claude/settings.json")
         deployed.append(merge_result.detail)
         return SettingsOutcome(
@@ -3372,10 +3411,9 @@ def _wire_hooks_into_existing(
         # gets topped up.) "Every event is wired" is NOT "every gate fires":
         # ALREADY is exactly the branch that touches nothing, so an inert gate
         # survives it untouched. Ask the blockers, not the merge status.
-        settings_hooks_wired = (
-            _enforcement_claim_blockers(repo_root, settings_path) == []
-        )
-        _wire_hooks_gaps()
+        already_blockers = _enforcement_claim_blockers(repo_root, settings_path)
+        settings_hooks_wired = already_blockers == []
+        _wire_hooks_gaps(already_blockers)
     else:
         # Refusal (malformed file). Name the reason; preserve the file
         # (decision: never overwrite content).
@@ -9400,7 +9438,9 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
         _report_allow_gaps(
             missing=result.missing_allows, added=result.added_allows,
             note=result.allow_note, profile=profile, prefix="merge-settings:",
-            stale=result.stale_denies, scoped=result.scoped_allows,
+            stale=_retired_rules_to_name(result.stale_denies, repo_root=repo_root,
+                                         settings_path=settings_path, blockers=missing),
+            scoped=result.scoped_allows,
             hint_command=lambda: f"re-running with `--profile {profile} --add-allows`",
             announce_added=announce_added,
         )
@@ -10029,9 +10069,12 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 # The read-only report above WARNs about a retired deny rule the
                 # file still carries; the sentence below must not then say
                 # "nothing to do" (driven by the failure-mode review, 2026-09-29).
-                stale_rules = settings_stale_denies(
-                    repo_root / ".claude" / "settings.json",
-                ) or ()
+                # The same gate as the WARN, so the sentence never points at one
+                # a disarmed tree was not shown.
+                stale_rules = _retired_rules_to_name(
+                    settings_stale_denies(repo_root / ".claude" / "settings.json") or (),
+                    repo_root=repo_root, settings_path=repo_root / ".claude" / "settings.json",
+                )
             # And once more for espalier's statusLine (DEF-798): a file wired
             # before the merge learned to add the key has none, and this branch
             # never merges -- name the state with the verb that does.
@@ -10436,7 +10479,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             _report_allow_gaps(
                 missing=merge_result.missing_allows, added=(), note=merge_result.allow_note,
                 profile=profile, prefix="[upgrade]",
-                stale=merge_result.stale_denies, scoped=merge_result.scoped_allows,
+                stale=_retired_rules_to_name(merge_result.stale_denies, repo_root=repo_root,
+                                             settings_path=settings_path),
+                scoped=merge_result.scoped_allows,
                 hint_command=lambda: _merge_settings_hint(profile),
             )
 
