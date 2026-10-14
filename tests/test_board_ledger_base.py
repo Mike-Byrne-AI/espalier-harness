@@ -50,12 +50,14 @@ def _git(root: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
-def _behind_its_base(tmp_path: Path, *, base_generator_tail: str = "") -> tuple[Path, str]:
+def _behind_its_base(tmp_path: Path, *, base_generator_tail: str = "", base_loader_tail: str = "",
+                     base_attributes: str = "", base_drops_ledger: bool = False) -> tuple[Path, str]:
     """A checkout on a branch one commit behind ``origin/main``. Both commits
     carry this checkout's ``tools/cc`` and the fixture ledger; the first holds
     one row file (three live rows with the fixture's two), the second adds
-    another (four) and, given ``base_generator_tail``, changes the base's own
-    generator. The remote-tracking ref names the second commit."""
+    another (four) and, as asked, appends to the base's own generator or
+    fragment loader, writes the base's ``.gitattributes``, or deletes the
+    base's ledger. The remote-tracking ref names the second commit."""
     root = tmp_path / "work"
     root.mkdir()
     _git(root, "init", "-q", "-b", "main")
@@ -70,9 +72,14 @@ def _behind_its_base(tmp_path: Path, *, base_generator_tail: str = "") -> tuple[
     _git(root, "commit", "-q", "-m", "one row file")
     _git(root, "branch", "lane")
     (rows / "DEF-9.md").write_bytes(_row_file("DEF-9").encode("utf-8"))
-    if base_generator_tail:
-        gen = root / "tools" / "cc" / "generate_ledger_regions.py"
-        gen.write_bytes(gen.read_bytes() + base_generator_tail.encode("utf-8"))
+    for module, tail in (("generate_ledger_regions.py", base_generator_tail), ("_record_fragments.py", base_loader_tail)):
+        if tail:
+            path = root / "tools" / "cc" / module
+            path.write_bytes(path.read_bytes() + tail.encode("utf-8"))
+    if base_attributes:
+        (root / ".gitattributes").write_bytes(base_attributes.encode("utf-8"))
+    if base_drops_ledger:
+        _git(root, "rm", "-q", "-r", "task-packs")
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "a second row file")
     tip = _git(root, "rev-parse", "HEAD")
@@ -149,3 +156,80 @@ class TestTheLedgerLineReadsTheBase:
         calls.clear()
         board.collect(root, fetch=False, run_=_runner(board, calls))
         assert fetches(calls) == []
+
+    def test_the_line_says_when_the_base_is_as_last_fetched(self, board, monkeypatch, tmp_path):
+        """Dies to: a failed or skipped fetch printed as the base's tip, the
+        defect again under a label that reads as live (failure-mode review)."""
+        root, tip = _behind_its_base(tmp_path)
+        _stub(monkeypatch, board)
+
+        def ledger_line(fetch: bool) -> str:
+            text = board.render(board.collect(root, fetch=fetch, run_=_runner(board, [])))
+            return next(ln for ln in text.splitlines() if ln.startswith("ledger:"))
+
+        assert ledger_line(True).startswith(f"ledger:   4 live rows at origin/main ({tip[:7]}), as last fetched "
+                                            "(the fetch failed: "), "this scratch clone has no origin to fetch"
+        assert ledger_line(False) == f"ledger:   4 live rows at origin/main ({tip[:7]}), as last fetched (--no-fetch)"
+        _git(root, "remote", "add", "origin", str(root))
+        assert ledger_line(True) == f"ledger:   4 live rows at origin/main ({tip[:7]})"
+
+    def test_an_export_ignored_row_directory_reads_the_working_tree_and_says_so(self, board, monkeypatch,
+                                                                                 tmp_path):
+        """Dies to: git archive's export-ignore dropping the rows, so the base
+        reads as its ledger file alone (two rows here, zero on the live tree)
+        under a label that says it is the base's (failure-mode review)."""
+        root, _tip = _behind_its_base(tmp_path, base_attributes="task-packs/ledger.d export-ignore\n")
+        _stub(monkeypatch, board)
+        collected = board.collect(root, fetch=False, run_=_runner(board, []))
+        assert collected["ledger_live"] == 3
+        line = next(ln for ln in board.render(collected).splitlines() if ln.startswith("ledger:"))
+        assert line.startswith("ledger:   3 live rows in this working tree (git archive of origin/main leaves out "), line
+        assert "export-ignore" in line, line
+
+    def test_a_base_without_a_ledger_says_so(self, board, monkeypatch, tmp_path):
+        """Dies to: the line vanishing when the base keeps no ledger (a tree
+        before its first push of one, a fork)."""
+        root, tip = _behind_its_base(tmp_path, base_drops_ledger=True)
+        _stub(monkeypatch, board)
+        text = board.render(board.collect(root, fetch=False, run_=_runner(board, [])))
+        assert f"ledger:   no ledger at origin/main ({tip[:7]})" in text, text
+
+    def test_a_base_whose_loader_moved_the_rows_is_refused_by_name(self, board, monkeypatch, tmp_path):
+        """Dies to: a parked checkout cutting the archive by its own names and
+        counting a base that moved its rows as the ledger file alone."""
+        root, _tip = _behind_its_base(tmp_path, base_loader_tail="\nLEDGER_DIR = 'task-packs/rows.d'\n")
+        _stub(monkeypatch, board)
+        text = board.render(board.collect(root, fetch=False, run_=_runner(board, [])))
+        line = next(ln for ln in text.splitlines() if ln.startswith("ledger:"))
+        assert line.startswith("ledger:   unread (") and "task-packs/rows.d" in line and "catch this checkout up" in line, line
+
+    def test_an_unreadable_archive_costs_only_the_ledger_line(self, board, monkeypatch, tmp_path):
+        """Dies to: a tar error escaping ``collect`` and taking the whole board
+        with it (both reviews)."""
+        root, _tip = _behind_its_base(tmp_path)
+        _stub(monkeypatch, board)
+
+        def broken(*a, **k):
+            raise board.tarfile.ReadError("planted: not a tar")
+
+        monkeypatch.setattr(board.tarfile, "open", broken)
+        text = board.render(board.collect(root, fetch=False, run_=_runner(board, [])))
+        assert "ledger:   unread (the archive of origin/main could not be read: ReadError: planted" in text, text
+        assert "open PRs:" in text
+
+
+class TestTheChildsContract:
+    @pytest.mark.contract
+    def test_the_names_the_child_calls_are_this_trees_ledger_tools(self, board):
+        """The child calls the base's generator and loader by name, and the
+        archive is cut by this checkout's names for the ledger and its rows: a
+        rename lands by expand, then contract (root CLAUDE.md Core Rule 15), or
+        every parked checkout reads the line as unread until it moves."""
+        gen = _load("generate_ledger_regions", "gen_for_board_child_contract")
+        rf = gen.record_fragments()
+        for name in ("record_fragments", "live_member_ids"):
+            assert callable(getattr(gen, name, None)), name
+        assert callable(getattr(rf, "ledger_view_from_texts", None))
+        for name in ("record_fragments", "ledger_view_from_texts", "live_member_ids", "LEDGER_FILE", "LEDGER_DIR"):
+            assert name in board._BASE_COUNT, name
+        assert (board.LEDGER, board.LEDGER_DIR) == (rf.LEDGER_FILE, rf.LEDGER_DIR)

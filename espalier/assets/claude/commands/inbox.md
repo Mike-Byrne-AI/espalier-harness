@@ -165,9 +165,12 @@ own, and one that cannot be read says so on its own line:
   one import away -- gets a `stale:` line under it: its seat runs `catch-up`,
   so CI tests the combination before it merges. A move elsewhere says nothing.
 - **jobs**, **claims** and the ledger's live row count, counted at the base
-  branch's tip with the base's own ledger tools and naming the commit it read,
-  so a checkout that stops moving still reads what the base holds; a clone
-  without the base's remote-tracking ref counts its working tree and says so.
+  branch's remote-tracking ref with the base's own ledger tools and naming the
+  commit it read, so a checkout that stops moving still reads what the base
+  holds. The line says `as last fetched` when the fetch failed or `--no-fetch`
+  skipped it. It counts the working tree, and says why, on a clone without that
+  ref or a base whose archive leaves the ledger out (an `export-ignore`), and
+  reads unread when the base keeps its ledger where this checkout does not look.
 
 If the board and your own account disagree, the board is the one that read
 GitHub just now.
