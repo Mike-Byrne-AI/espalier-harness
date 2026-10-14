@@ -2526,10 +2526,12 @@ the machine, so removing it from the project file alone changed nothing.
 `write_guard`'s catastrophic-rm classifier walls the root glob wipe at the hook
 layer, where a wall carries a reason. An install that predates the retirement
 keeps the line -- `merge-settings` never removes a rule -- so `doctor`,
-`merge-settings` and the `upgrade` preview name it with the fix: delete that one
+`merge-settings`, `upgrade` and a re-run of `init` name it with the fix: delete that one
 line from `permissions.deny`, then check `.claude/settings.local.json` and the
-user-level file (the reporters name all three). Never end a deny rule in a `*`,
-and never put one right after a `/`; `tests/test_settings_profiles.py` pins
+user-level file (the reporters name all three). They name it only where the
+hooks run: the hook is what replaces the rule, so on a tree whose hooks are not
+wired, or not running, the delete would leave nothing in its place. Never end
+a deny rule in a `*`, and never put one right after a `/`; `tests/test_settings_profiles.py` pins
 both for the defaults, and `settings_profiles.RETIRED_DENY_RULES` is where a
 retired rule goes, with the last version that shipped it, so the reporters can
 name it. The general shape: when a permission

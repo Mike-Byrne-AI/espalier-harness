@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2006",
+ "subject": "espalier/cli.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the state is a deployed tree whose write_guard entry is a commented legacy shell form, and the oracle the fix needs (the strict wiring read) is the decision the fixing lane makes; the reviewer's drive is the repro",
+ "row_sha": "b000e6131153",
+ "text_sha": "9c48329abd1a",
+ "verified_2026_10_14": "OPEN (filed 2026-10-14; probe driven at filing)"
+}
