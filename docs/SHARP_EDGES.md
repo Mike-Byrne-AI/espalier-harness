@@ -2530,8 +2530,8 @@ keeps the line -- `merge-settings` never removes a rule -- so `doctor`,
 line from `permissions.deny`, then check `.claude/settings.local.json` and the
 user-level file (the reporters name all three). They name it only where the
 hooks run: the hook is what replaces the rule, so on a tree whose hooks are not
-wired, or not running, the delete would leave nothing in its place. Never end a deny rule in a `*`,
-and never put one right after a `/`; `tests/test_settings_profiles.py` pins
+wired, or not running, the delete would leave nothing in its place. Never end
+a deny rule in a `*`, and never put one right after a `/`; `tests/test_settings_profiles.py` pins
 both for the defaults, and `settings_profiles.RETIRED_DENY_RULES` is where a
 retired rule goes, with the last version that shipped it, so the reporters can
 name it. The general shape: when a permission

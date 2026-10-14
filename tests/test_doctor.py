@@ -240,6 +240,8 @@ class TestDoctorRetiredDenyRule:
         assert any("Bash(rm -rf /*)" in step for step in result["next_steps"]), result["next_steps"]
 
     def test_no_retired_deny_warning_on_clean_wired_settings(self, harness_repo):
+        # Armed, or the gate's silence would pass this whatever the file holds.
+        self._armed(harness_repo)
         result = run_doctor_check(harness_repo, skip_self_host=True)
         assert not any("retired deny rule" in w for w in result["warnings"]), result["warnings"]
 

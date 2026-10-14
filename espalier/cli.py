@@ -1582,10 +1582,12 @@ def _merge_settings_hint(profile: str) -> str:
 
 def _report_allow_gaps_read_only(
     repo_root: Path, *, profile: str, prefix: str, stream: "TextIO | None" = None,
+    blockers: object = _ARMAMENT_UNREAD,
 ) -> bool:
     """Report the gap without touching the file (``upgrade`` in both modes).
     Returns whether the file lacks anything, so a "nothing to do" can be true
-    when it is said."""
+    when it is said. ``blockers`` is the caller's armament read, so one run
+    asks the interpreters once (:func:`_retired_rules_to_name`)."""
     settings_path = repo_root / ".claude" / "settings.json"
     gaps = settings_allow_gaps(settings_path, profile=profile, repo_root=repo_root)
     if gaps is None:
@@ -1595,7 +1597,8 @@ def _report_allow_gaps_read_only(
         missing=missing, added=(), note=note, profile=profile, prefix=prefix,
         hint_command=lambda: _merge_settings_hint(profile), stream=stream,
         stale=_retired_rules_to_name(settings_stale_denies(settings_path) or (),
-                                     repo_root=repo_root, settings_path=settings_path),
+                                     repo_root=repo_root, settings_path=settings_path,
+                                     blockers=blockers),
         scoped=settings_scoped_allows(settings_path, profile=profile, repo_root=repo_root),
     )
     return bool(missing)
@@ -10062,18 +10065,28 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # and it was the one state that never heard the profile had moved.
             lacking = False
             stale_rules: tuple = ()
+            # One armament read for the whole branch: the retired-rule WARN, the
+            # sentence that points at it and the disarmed narration below must
+            # agree, and a flaky interpreter read three times can answer three
+            # ways (failure-mode review, 2026-10-14).
+            vc_blockers: list[str] | None = None
             if os.path.isfile(repo_root / ".claude" / "settings.json"):
+                vc_blockers = _enforcement_claim_blockers(
+                    repo_root, repo_root / ".claude" / "settings.json",
+                )
                 lacking = _report_allow_gaps_read_only(
                     repo_root, profile=installed_settings_profile(repo_root), prefix="[upgrade]",
+                    blockers=vc_blockers,
                 )
                 # The read-only report above WARNs about a retired deny rule the
                 # file still carries; the sentence below must not then say
                 # "nothing to do" (driven by the failure-mode review, 2026-09-29).
-                # The same gate as the WARN, so the sentence never points at one
-                # a disarmed tree was not shown.
+                # The same gate and read as the WARN, so the sentence never
+                # points at one a disarmed tree was not shown.
                 stale_rules = _retired_rules_to_name(
                     settings_stale_denies(repo_root / ".claude" / "settings.json") or (),
                     repo_root=repo_root, settings_path=repo_root / ".claude" / "settings.json",
+                    blockers=vc_blockers,
                 )
             # And once more for espalier's statusLine (DEF-798): a file wired
             # before the merge learned to add the key has none, and this branch
@@ -10094,7 +10107,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             disarmed = False
             settings_path = repo_root / ".claude" / "settings.json"
             if os.path.isfile(settings_path):
-                blockers = _enforcement_claim_blockers(repo_root, settings_path)
+                blockers = vc_blockers
                 if blockers is None or blockers:
                     disarmed = True
                     print(_disarmed_hook_tree_warning(
@@ -10452,21 +10465,44 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             if preview_stages and _statusline_key_absent(settings_path):
                 print("[upgrade] would add espalier's statusLine (the key is absent; "
                       "a statusLine of your own is never touched).")
-            _report_allow_gaps_read_only(repo_root, profile=profile, prefix="[upgrade]")
+            # A retired deny rule is named only where the hooks run
+            # (_retired_rules_to_name); when one is held back, say why, so the
+            # preview is not silent about a tree whose guards do not run.
+            preview_blockers: object = _ARMAMENT_UNREAD
+            if settings_stale_denies(settings_path):
+                preview_blockers = _enforcement_claim_blockers(repo_root, settings_path)
+                if preview_blockers != []:
+                    print(_disarmed_hook_tree_warning(
+                        repo_root, prefix="[upgrade]", wrote_settings=False,
+                    ), file=sys.stderr)
+            _report_allow_gaps_read_only(repo_root, profile=profile, prefix="[upgrade]",
+                                         blockers=preview_blockers)
         else:
             merge_result = merge_hooks_into_settings(
                 settings_path, profile=profile, repo_root=repo_root,
             )
+            # One armament read, shared with the retired-rule gate below.
+            exec_blockers: object = _ARMAMENT_UNREAD
             if merge_result.status == MERGE_WIRED:
                 print(f"[upgrade] {_merge_did_phrase(merge_result, noun='hook event')} "
                       f"into settings.json (backup {merge_result.detail}).")
                 marker_written.append(".claude/settings.json")
+                # A retired rule is named only where the hooks run; this branch
+                # reads no armament of its own, so when the gate holds a rule
+                # back, say why, as --wire-hooks does after the same merge.
+                if merge_result.stale_denies:
+                    exec_blockers = _enforcement_claim_blockers(repo_root, settings_path)
+                    if exec_blockers != []:
+                        print(_disarmed_hook_tree_warning(
+                            repo_root, prefix="[upgrade]", wrote_settings=True,
+                        ), file=sys.stderr)
             elif merge_result.status == MERGE_ALREADY:
                 # "Current" is the merge's word for "every event carries an
                 # espalier entry"; a neutered or shell-form entry counts. Say
                 # so only when the enforcement claim holds, else narrate the
                 # disarmed tree the way init does (it names --repair).
-                if _enforcement_claim_blockers(repo_root, settings_path) == []:
+                exec_blockers = _enforcement_claim_blockers(repo_root, settings_path)
+                if exec_blockers == []:
                     print("[upgrade] settings.json hooks already current.")
                 else:
                     print(_disarmed_hook_tree_warning(
@@ -10480,7 +10516,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 missing=merge_result.missing_allows, added=(), note=merge_result.allow_note,
                 profile=profile, prefix="[upgrade]",
                 stale=_retired_rules_to_name(merge_result.stale_denies, repo_root=repo_root,
-                                             settings_path=settings_path),
+                                             settings_path=settings_path, blockers=exec_blockers),
                 scoped=merge_result.scoped_allows,
                 hint_command=lambda: _merge_settings_hint(profile),
             )

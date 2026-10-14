@@ -21,8 +21,11 @@
   the host lacks, "delete that line" took away the only guard left. `init`,
   `init --wire-hooks`, `merge-settings`, `upgrade` (preview, version-current
   and `--execute`) and `doctor` now name the rule only where the hooks run;
-  elsewhere they name the disarmed hooks, as before, and the run after the
-  repair names the rule.
+  elsewhere each names the hooks that do not run (the `upgrade` preview and
+  an `--execute` that adds a hook event now say so too, where they said
+  nothing), and the run after the repair names the rule. A run asks the hook
+  interpreters once, so the warning and the "nothing to do" sentence cannot
+  disagree.
 - **The retired-rule WARN no longer says `init` wrote a rule it may never have
   written.** The list matches by rule text, so a line the operator wrote by
   hand read the same as one an old `init` wrote, and `doctor`,
