@@ -79,10 +79,25 @@ import json
 import os
 import platform
 import posixpath
-import subprocess
 import sys
 import tempfile
 from pathlib import Path, PurePath
+
+
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    holds on Windows, where ``run`` waits on a grandchild holding its pipe
+    (DEF-3004)."""
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_powershell_guard_rehearsal",
+        Path(__file__).resolve().parents[1] / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
 
 R = "Remove-Item -Recurse -Force"
 #: The harness env var, assembled rather than spelled -- a literal here is
@@ -894,7 +909,7 @@ def _invoke(hook: Path, tool: str, command: str, project: Path) -> bool:
     # Measure what an ADOPTER sees. This tier is not maintenance-bypassable
     # anyway, but a developer's ambient shell must not colour the result.
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
-    proc = subprocess.run(
+    proc = run_bounded(
         [sys.executable, str(hook)],
         input=json.dumps({"tool_name": tool, "tool_input": {"command": command}}),
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, env=env,
@@ -1064,9 +1079,9 @@ def tree_facts(root: Path) -> tuple[str, bool]:
         # encoding pinned explicitly: text mode without it decodes with the
         # locale codec, which is cp1252 on a default Windows shell -- and this
         # script exists to be run on Windows.
-        sha = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-                             capture_output=True, text=True, encoding="utf-8",
-                             timeout=15).stdout.strip() or "unknown"
+        sha = run_bounded(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                          capture_output=True, text=True, encoding="utf-8",
+                          timeout=15).stdout.strip() or "unknown"
     except Exception:
         sha = "unknown"
     return sha, has_fixes

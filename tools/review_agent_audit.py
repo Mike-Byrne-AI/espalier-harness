@@ -27,6 +27,22 @@ ESPALIER_IMPORT_PATTERN = ("espalier",)
 HOOKS_DIR = Path("tools/cc/hooks")
 
 
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path beside this file: ``subprocess.run`` whose timeout holds on
+    Windows, where ``run`` waits on a grandchild holding its pipe (DEF-3004)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_review_agent_audit", Path(__file__).resolve().parent / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
+
+
 # ---------------------------------------------------------------------------
 # File discovery
 # ---------------------------------------------------------------------------
@@ -34,11 +50,11 @@ HOOKS_DIR = Path("tools/cc/hooks")
 def _changed_files() -> list[Path]:
     """Return Python files changed vs HEAD or staged."""
     try:
-        r1 = subprocess.run(
+        r1 = run_bounded(
             ["git", "diff", "--name-only", "HEAD"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10
         ).stdout.splitlines()
-        r2 = subprocess.run(
+        r2 = run_bounded(
             ["git", "diff", "--cached", "--name-only"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10
         ).stdout.splitlines()

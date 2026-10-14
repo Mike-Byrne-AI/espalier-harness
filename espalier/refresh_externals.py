@@ -39,6 +39,7 @@ from espalier.external_diff import (
 )
 from espalier.external_fetch import FetchResult, fetch_url
 from espalier.external_pins import ExternalPin, _frontmatter_block, list_pins
+from espalier._spawn import run_bounded
 from espalier._text import os_error_text
 
 
@@ -137,7 +138,7 @@ def run_bound_tests(repo_root: Path, pins: list[ExternalPin] | None = None) -> t
         return "skipped", note
     cmd = [sys.executable, "-m", "pytest", *present, "-q", "--tb=short"]
     try:
-        result = subprocess.run(
+        result = run_bounded(
             cmd, cwd=str(repo_root),
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, check=False,
         )

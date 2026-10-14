@@ -26,6 +26,7 @@ from pathlib import Path
 from espalier import fusion_manifest, surface_contract
 from espalier._atomic_io import atomic_write_text
 from espalier._rmtree import remove_file, remove_tree
+from espalier._spawn import run_bounded
 from espalier._text import os_error_text, plural
 
 # Noise never copied even from a non-git host (mirrors the gitignored set).
@@ -140,7 +141,7 @@ def _overlay_categories(rels) -> list[str]:
 def _tracked_files(repo: Path) -> list[str] | None:
     """git-tracked repo-relative paths, or None if ``repo`` is not a git repo."""
     try:
-        r = subprocess.run(
+        r = run_bounded(
             ["git", "ls-files", "-z"],
             cwd=str(repo), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=120, check=False,
@@ -470,7 +471,7 @@ def _workflow_tracked(out: Path) -> bool | None:
     try:
         if not (out / _WORKFLOW_REL).is_file():
             return None
-        r = subprocess.run(
+        r = run_bounded(
             ["git", "-C", str(out), "ls-files", "--error-unmatch", "--", _WORKFLOW_REL],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30, check=False,
@@ -825,9 +826,9 @@ def _run_in_fusion(out: Path, argv: list[str], *, timeout: int = 180) -> int | N
     env = {**os.environ, "PYTHONPATH": str(out)}
     try:
         # subprocess-contract: ok dynamic-argv-runner; the only caller passes espalier's own in-tree `-m espalier fingerprint <out>` CLI, pinned end-to-end by tests/test_fuse.py::TestFuseEndToEnd::test_analyze_fingerprint_refreshed_post_overlay
-        r = subprocess.run(argv, cwd=str(out), env=env, capture_output=True,
-                           text=True, encoding="utf-8", errors="replace",
-                           timeout=timeout, check=False)
+        r = run_bounded(argv, cwd=str(out), env=env, capture_output=True,
+                        text=True, encoding="utf-8", errors="replace",
+                        timeout=timeout, check=False)
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
     return r.returncode
