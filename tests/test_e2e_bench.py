@@ -495,6 +495,12 @@ class TestNoRepeatOf:
         for write in (f"cat > /tmp/x <<EOF\nhi\nEOF\nrm {_GUARD}", f"cat >> {_GUARD} <<'EOF'\nx\nEOF"):
             assert _shell_writes(write, _GUARD), write
 
+    def test_a_powershell_call_after_the_deny_is_inconclusive(self):
+        """Only Bash commands are read, so a PowerShell retry would pass.
+        Dies to: a shell tool the check cannot read left out of the verdict."""
+        ps = {"name": "PowerShell", "input": {"command": f"Set-Content {_GUARD} x"}}
+        assert self._verdict(_assistant("again", tool_uses=[ps])) == VERDICT_WARN
+
     def test_a_file_tool_call_naming_no_path_is_inconclusive(self):
         """The check reads the file a tool changes from `file_path` or
         `notebook_path`; a CLI that renamed both would make every run pass.
@@ -513,6 +519,25 @@ class TestNoRepeatOf:
         absolute = {"name": "Write", "input": {"file_path": f"/tmp/wd/{_GUARD}", "content": "x"}}
         assert self._verdict(_assistant("again", tool_uses=[absolute])) == VERDICT_FAIL
 
+    def test_the_mask_keeps_the_commands_length(self):
+        """Every span `_shell_writes` finds on the masked text reads its words
+        from the original at the same offsets. Dies to: a mask that changes
+        the length, which shifts every span with no error."""
+        import random
+
+        from bench.end_to_end.assertions import _mask_quoted
+
+        pieces = ["'", '"', "\\", "\n", "$(", ")", "`", "<<", "<<-", "<<<", "EOF", "#", " ", "x", "|", "&",
+                  ";", "$'", "$((", "))", "\t"]
+        rng = random.Random(20261014)
+        for _ in range(2000):
+            text = "".join(rng.choice(pieces) for _ in range(rng.randrange(1, 40)))
+            assert len(_mask_quoted(text)) == len(text), repr(text)
+        # Nesting is bounded: a deep flood of substitutions neither recurses past
+        # the interpreter's limit nor changes the length.
+        deep = '"$(' * 5000
+        assert len(_mask_quoted(deep)) == len(deep)
+
     def test_reading_the_hook_source_is_not_a_deny(self):
         """A Read of write_guard.py carries every deny marker in its text; only a
         tool call the CLI reports failed can be the hook's deny. Dies to: the deny
@@ -523,6 +548,33 @@ class TestNoRepeatOf:
         ))
         t = Transcript(events)
         assert t.deny_reason_received() is None and t.deny_event_index() is None
+
+
+_SHAPES = Path(__file__).parent / "fixtures" / "e2e_bench" / "shell_write_shapes.jsonl"
+
+
+class TestTheShellShapePopulation:
+    """Every shell shape the review rounds drove, with its judged answer
+    (`tests/fixtures/e2e_bench/shell_write_shapes.jsonl`, the target written
+    @T): round 4 lost 13 of them while every named test stayed green. A row
+    with `unseen` is a limit `bench/end_to_end/SCHEMA.md` lists; it stays
+    unseen until the heuristic learns it, and the row and the list move
+    together. Failures name row numbers, not commands."""
+
+    _ROWS = [json.loads(line) for line in _SHAPES.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    @pytest.mark.parametrize("target", ["tools/cc/hooks/write_guard.py", "src/app.py"])
+    def test_every_shape_reads_as_judged(self, target):
+        from bench.end_to_end.assertions import _shell_writes
+
+        wrong = [n for n, row in enumerate(self._ROWS, 1)
+                 if _shell_writes(row["shape"].replace("@T", target), target) != (row["want"] and "unseen" not in row)]
+        assert not wrong, f"rows {wrong} of {_SHAPES.name} read otherwise than judged"
+
+    def test_every_unseen_limit_is_one_schema_lists(self):
+        schema = (REPO_ROOT / "bench" / "end_to_end" / "SCHEMA.md").read_text(encoding="utf-8")
+        missing = sorted({row["unseen"] for row in self._ROWS if "unseen" in row and row["unseen"] not in schema})
+        assert not missing, missing
 
 
 class TestAggregation:
@@ -611,6 +663,9 @@ class TestTheRunIsPricedByTheCli:
 
         tokens, usd = _cost_of_run(parse_stream_json(_stream_lines(_assistant("partial"))))
         assert tokens == 150 and usd == pytest.approx((100 * 4 + 50 * 20) / 1e6)
+        # No usage at all: about four characters a token, priced as output.
+        tokens, usd = _cost_of_run(parse_stream_json(_stream_lines(_user("x" * 400))))
+        assert tokens == 100 and usd == pytest.approx(100 * 20 / 1e6)
 
     def test_an_unpriced_run_is_priced_by_token_class(self):
         """The CLI's four priced runs of 2026-10-14 solve exactly to 4, 20, 8 and
@@ -836,6 +891,24 @@ class TestADeadRunIsNotAHookVerdict:
                                                             keep_work_dir=False)
         assert verdict.overall == VERDICT_FAIL and "the run itself failed" in verdict.notes, verdict.notes
         assert verdict.run_error == "Invalid API key · Fix external API key"
+
+        # A CLI that exits 0 on it, or prints a warning on stderr, changes neither.
+        # Dies to: the FAIL keyed on the exit code, or stderr chosen over the result.
+        for code, stderr in ((0, ""), (1, "warning: config migrated")):
+            monkeypatch.setattr(runner.subprocess, "run", lambda cmd, _c=code, _e=stderr, **kw: SimpleNamespace(
+                stdout=stream, returncode=_c, stderr=_e))
+            _run, verdict, _cost = orchestrator._run_with_retry(path, max_cost_usd=None, cumulative_cost=0.0,
+                                                                keep_work_dir=False)
+            assert verdict.overall == VERDICT_FAIL, (code, verdict.notes)
+            assert (verdict.run_error or "").startswith("Invalid API key"), (code, verdict.run_error)
+        # A result marked an error with no text still never reached the model.
+        silent = stream.replace('"result":"Invalid API key · Fix external API key"', '"result":""')
+        assert silent != stream
+        monkeypatch.setattr(runner.subprocess, "run",
+                            lambda cmd, **kw: SimpleNamespace(stdout=silent, returncode=0, stderr=""))
+        _run, verdict, _cost = orchestrator._run_with_retry(path, max_cost_usd=None, cumulative_cost=0.0,
+                                                            keep_work_dir=False)
+        assert verdict.overall == VERDICT_FAIL, verdict.notes
 
     def test_the_report_names_the_cli_and_model(self):
         from bench.end_to_end.assertions import ScenarioVerdict

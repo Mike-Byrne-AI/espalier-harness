@@ -343,10 +343,12 @@ def run_scenario(
             error = f"timeout after {timeout_seconds}s"
 
         events = parse_stream_json(raw)
-        if exit_code not in (0, TIMEOUT_EXIT_CODE) and error is None:
+        result_error = _result_error(events)
+        if result_error:
             # The CLI reports a failed API call (no login, a bad key) in its
-            # result event and prints nothing on stderr (2.1.299).
-            error = _result_error(events)
+            # result event, not on stderr (2.1.299 prints nothing there), so
+            # that text leads and anything on stderr follows it.
+            error = "; ".join(e for e in (result_error, error) if e)[:500]
         cost_tokens, cost_usd = _cost_of_run(events)
         init = next((e.metadata for e in events if e.metadata.get("type") == "system"
                      and e.metadata.get("subtype") == "init"), {})

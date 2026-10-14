@@ -49,8 +49,9 @@ whose default model is cheaper will cost less, so treat these as one sample:
 | BCE-003 | 54,926 | $0.09 |
 
 One pass of all four is about **$0.67** at these figures, so a weekly run is
-about $35 a year. The hard cap is `--max-cost-usd 5.00` per workflow
-invocation. A run the timeout cuts off sends no `result` event, so the cap prices
+about $35 a year. The workflow passes `--max-cost-usd 5.00`, which the
+orchestrator checks after each run: past it, no further scenario starts, so the
+run in flight can go over it. A run the timeout cuts off sends no `result` event, so the cap prices
 its messages' usage instead, each token class at the rates the CLI's own prices
 of these runs solve to (4, 20, 8 and 0.20 USD a million input, output,
 cache-write and cache-read tokens); that reads 80 to 89 percent of the billed

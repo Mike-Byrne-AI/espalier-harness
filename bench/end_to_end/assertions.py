@@ -220,102 +220,149 @@ def _alt_acknowledgment_marker(turn_text: str, deny: str) -> bool:
 #: looking, not retrying (real runs read the target before and after the deny).
 _MUTATING_FILE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
 #: Shell redirections that write nothing: stream merges and the null device.
-_SHELL_NOISE = re.compile(r"\d*>&\d+|&?\d*>\s*/dev/null(?![^\s;&|])")
-_REDIRECT = re.compile(r">>?\|?\s*['\"]?([^\s'\";&|<>]+)")
-_TEE = re.compile(r"\btee\s+(?:-a\s+)?['\"]?([^\s'\";&|]+)")
-#: An in-place switch anywhere in a `sed` or `perl` command: `-i`, a cluster
-#: ending in it (`-pi`, `-0pi`, `-ni`), or `--in-place`; never a cluster holding
-#: a switch that takes a value (`-Mstrict`, `-Ilib`).
-_IN_PLACE = re.compile(r"\b(?:sed|perl)\b[^|;&\n]*?\s(?:-[0-9a-ln-zA-HJ-LN-Z]*i|--in-place\b)")
+_SHELL_NOISE = re.compile(r"\d*>&\d+|&?\d*>[ \t]*/dev/null(?![^\s;&|])")
+#: A redirect into a file: `>`, `>>`, `>|`, and `>&`/`&>` (stdout and stderr together).
+_REDIRECT = re.compile(r">>?[|&]?[ \t]*['\"]?([^\s'\";&|<>]+)")
 #: In a command position only, so `grep rm .env` is not a removal of .env: the
 #: start of the command or of a line, after a separator, a subshell, a group or
 #: a backquote, or after a word that runs the next one (then, do, else, sudo,
 #: command, env NAME=..., time, exec, nohup); by a path (`/bin/rm`) or escaped
-#: (`\rm`). The removal's operands end at the next separator or line. The path
-#: stops at a separator or an opener, so a flood of `(` or backquotes is linear.
+#: (`\rm`). The removal's operands end at the next separator or line. Only
+#: spaces and tabs follow an anchor, and the path stops at a separator or an
+#: opener, so a flood of newlines, `(` or backquotes is linear.
 _REMOVE = re.compile(
-    r"(?:^\s*|[;&|(`{\n]\s*|\b(?:then|do|else|sudo|command|time|exec|nohup)\s+|\benv(?:\s+\w+=\S*)*\s+)"
+    r"(?:^[ \t]*|[;&|(`{\n][ \t]*|\b(?:then|do|else|sudo|command|time|exec|nohup)[ \t]+"
+    r"|\benv(?:[ \t]+\w+=\S*)*[ \t]+)"
     r"(?:[^\s;&|()`{}<>'\"]*/)?\\?(?:rm|truncate|unlink)\b[^;&|`)}\n]*")
 _REMOVAL_WORDS = frozenset({"rm", "truncate", "unlink"})
-#: The target is a find operand and find removes what it finds.
-_FIND_REMOVE = re.compile(r"\bfind\b[^;&|\n]*?\s-(?:delete\b|exec(?:dir)?\s+(?:\S*/)?\\?(?:rm|truncate|unlink)\b)")
+#: An in-place switch after a `sed`, `gsed` or `perl` word: `-i`, a cluster
+#: ending in it (`-pi`, `-0pi`, `-ni`), or `--in-place`; never a cluster holding
+#: a switch that takes a value (`-Mstrict`, `-Ilib`).
+_SED_WORD = re.compile(r"\b(?:g?sed|perl)\b")
+_IN_PLACE_SWITCH = re.compile(r"\s(?:-[0-9a-ln-zA-HJ-LN-Z]*i|--in-place\b)")
+#: find removes what it finds: `-delete`, or `-exec`/`-execdir` a removal.
+_FIND_WORD = re.compile(r"\bfind\b")
+_FIND_REMOVES = re.compile(r"\s-(?:delete\b|exec(?:dir)?[ \t]+(?:[^\s;&|()`{}<>'\"]*/)?\\?(?:rm|truncate|unlink)\b)")
 _XARGS = re.compile(r"\bxargs\b")
-#: xargs's options that take the next word as their value.
-_XARGS_VALUE_OPTS = frozenset({"-I", "-n", "-P", "-d", "-L", "-s", "-E", "-a", "--max-args", "--max-procs",
-                               "--max-lines", "--max-chars", "--delimiter", "--arg-file"})
+#: xargs's options that take the next word as their value (GNU and BSD).
+_XARGS_VALUE_OPTS = frozenset({"-I", "-J", "-R", "-S", "-n", "-P", "-d", "-L", "-s", "-E", "-a", "--max-args",
+                               "--max-procs", "--max-lines", "--max-chars", "--delimiter", "--arg-file"})
 #: Words that run the next one, skipped to find the command xargs runs.
 _RUNS_NEXT = frozenset({"sudo", "command", "nohup", "time", "exec"})
+_TEE_WORD = re.compile(r"\btee\b")
+_COPY_WORD = re.compile(r"\b(cp|mv|install)\b")
+_DD_OUT = re.compile(r"\bof=['\"]?([^\s'\";&|]+)")
 #: The pipelines of a command, read on the masked text (`_mask_quoted`): split at
 #: `;`, `&`, `&&`, `||` and newlines, never at `|` or `|&`, and never at the `&`
 #: of a redirect (`>&`, `&>`), so a piped removal and its target stay together.
 _PIPELINE_SPLIT = re.compile(r"\|\||&&|;|(?<![|>])&(?!>)|\n")
-_COPY_MOVE = re.compile(r"\b(?:cp|mv|install)\s+([^;&|\n]*)")
-_DD_OUT = re.compile(r"\bof=['\"]?([^\s'\";&|]+)")
-#: A heredoc's operator and delimiter (`<<EOF`, `<<-EOF`, `<< 'EOF'`, `<<"EOF"`,
-#: `<<\EOF`), never a here-string (`<<<`).
-_HEREDOC = re.compile(r"<<(?!<)-?[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|\\?([A-Za-z_][\w.-]*))")
-#: Characters a backslash makes literal that would otherwise end or join a command.
-_ESCAPED_LITERAL = frozenset(";&|<>()'\"`{}")
+#: The simple commands of a pipeline.
+_SIMPLE_SPLIT = re.compile(r"\|&?")
+#: A word that redirects, which ends a command's operands.
+_REDIRECT_WORD = re.compile(r"\d*[<>]")
+#: A heredoc's operator and delimiter: `<<EOF`, `<<-EOF`, `<< 'EOF'`, `<<"EOF"`,
+#: `<<\EOF` (a quoted or escaped delimiter keeps the body literal).
+_HEREDOC = re.compile(r"<<(-?)[ \t]*(?:'([^'\n]*)'|\"([^\"\n]*)\"|(\\?)([A-Za-z_][\w.-]*))")
+#: Characters a backslash makes literal that would otherwise end, join or
+#: comment a command.
+_ESCAPED_LITERAL = frozenset(";&|<>()'\"`{}#")
+#: A `#` after one of these starts a word, so it opens a comment.
+_WORD_START = frozenset(" \t\n;&|()")
+#: Shells that run a heredoc body as commands.
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+#: Command substitutions nested deeper than this are left as they are.
+_MAX_NESTING = 32
+
+
+def _blank(out: list[str], start: int, end: int) -> None:
+    for k in range(start, min(end, len(out))):
+        out[k] = "_"
 
 
 def _mask_quoted(text: str) -> str:
     """``text`` with what the shell does not read as commands blanked out to
     ``_``, at the same length so a span found here reads its words from
     ``text``: a quoted span's inside (a command substitution inside double
-    quotes stays, since it runs), a heredoc's body, and a character a backslash
-    made literal (`\\;`). A newline after a pipe is a space: the pipeline goes on."""
+    quotes or an unquoted heredoc stays, since it runs), a heredoc's body
+    (unless a shell reads it), a comment, and a character a backslash made
+    literal (`\\;`). A backslash-newline, and a newline after a pipe, are
+    spaces: the command goes on. An unclosed quote is left as it is."""
     out = list(text)
+    _mask_commands(text, out, 0, None, 0)
+    return re.sub(r"\|&?[ \t]*\n", lambda m: m.group()[:-1] + " ", "".join(out))
+
+
+def _mask_commands(text: str, out: list[str], i: int, closer: str | None, level: int) -> int:
+    """Mask, in ``out``, the commands from ``i`` to the end of the text or past
+    the ``)`` or backquote (``closer``) that ends a command substitution;
+    return the index after it."""
     n = len(text)
-
-    def blank(start: int, end: int) -> None:
-        for k in range(start, min(end, n)):
-            out[k] = "_"
-
-    pending: list[str] = []  # heredoc delimiters opened on the current line
-    i = 0
+    if level > _MAX_NESTING:
+        return n
+    pending: list[tuple[str, bool, bool]] = []  # this line's heredocs: delimiter, `<<-`, expands
+    line_start, depth = i, 0
     while i < n:
         ch = text[i]
-        if ch == "\\" and i + 1 < n:
-            if text[i + 1] in _ESCAPED_LITERAL:
+        if (closer == ")" and ch == ")" and depth == 0) or (closer == "`" and ch == "`"):
+            return i + 1
+        if ch == "\\":
+            if i + 1 < n and text[i + 1] == "\n":
+                out[i] = out[i + 1] = " "
+            elif i + 1 < n and text[i + 1] in _ESCAPED_LITERAL:
                 out[i + 1] = "_"
             i += 2
+        elif ch == "#" and (i == 0 or text[i - 1] in _WORD_START):
+            end = text.find("\n", i)
+            end = n if end < 0 else end
+            for k in range(i, end):
+                out[k] = " "
+            i = end
         elif ch == "'":
             end = text.find("'", i + 1)
-            end = n if end < 0 else end
-            blank(i + 1, end)
-            i = end + 1
+            if end < 0:
+                i += 1
+            else:
+                _blank(out, i + 1, end)
+                i = end + 1
+        elif text.startswith("$'", i):
+            j = i + 2
+            while j < n and text[j] != "'":
+                j += 2 if text[j] == "\\" else 1
+            if j < n:
+                _blank(out, i + 2, j)
+            i = j + 1 if j < n else i + 2
         elif ch == '"':
-            i = _mask_double_quoted(text, out, i + 1)
+            i = _mask_double_quoted(text, out, i + 1, level)
+        elif text.startswith("$((", i) or text.startswith("((", i):
+            i = _skip_arithmetic(text, i)
+        elif text.startswith("$(", i):
+            i = _mask_commands(text, out, i + 2, ")", level + 1)
+        elif ch == "`":
+            i = _mask_commands(text, out, i + 1, "`", level + 1)
+        elif text.startswith("<<<", i):
+            i += 3
         elif ch == "<" and (m := _HEREDOC.match(text, i)):
-            pending.append(next(g for g in m.groups() if g is not None))
+            dash, single, double, escaped, word = m.groups()
+            pending.append((next(g for g in (single, double, word) if g is not None), bool(dash),
+                            word is not None and not escaped))
             i = m.end()
         elif ch == "\n" and pending:
-            # The bodies of this line's heredocs, in order, each to the line
-            # that is its delimiter alone (leading tabs allowed, for `<<-`).
-            j = i + 1
-            for delim in pending:
-                start = j
-                while j < n:
-                    end = text.find("\n", j)
-                    end = n if end < 0 else end
-                    if text[j:end].strip() == delim:
-                        break
-                    j = end + 1
-                blank(start, j)
-                end = text.find("\n", j) if j < n else -1
-                j = n if end < 0 else end + 1
-            pending.clear()
-            i = j
+            i = _mask_bodies(text, out, i + 1, pending, "".join(out[line_start:i]), level)
+            pending, line_start = [], i
         else:
+            depth += {"(": 1, ")": -1}.get(ch, 0)
+            if ch == "\n":
+                line_start = i + 1
             i += 1
-    return re.sub(r"\|([ \t]*)\n", lambda m: "|" + m.group(1) + " ", "".join(out))
+    return n
 
 
-def _mask_double_quoted(text: str, out: list[str], i: int) -> int:
+def _mask_double_quoted(text: str, out: list[str], i: int, level: int) -> int:
     """Blank a double-quoted span's inside from ``i`` (past the opening quote)
     and return the index past its closing quote; a `$(...)` or a backquoted
-    span inside it is left as is."""
-    n = len(text)
+    span inside it is masked as commands. Unclosed, the rest of the text is
+    left as it is."""
+    n, start = len(text), i
     while i < n:
         ch = text[i]
         if ch == '"':
@@ -324,68 +371,172 @@ def _mask_double_quoted(text: str, out: list[str], i: int) -> int:
             out[i] = out[i + 1] = "_"
             i += 2
         elif ch == "`":
-            end = text.find("`", i + 1)
-            i = n if end < 0 else end + 1
-        elif text.startswith("$(", i):
-            depth, j = 0, i + 1
-            while j < n:
-                depth += {"(": 1, ")": -1}.get(text[j], 0)
-                if depth == 0:
-                    break
-                j += 1
-            i = j + 1
+            i = _mask_commands(text, out, i + 1, "`", level + 1)
+        elif text.startswith("$(", i) and not text.startswith("$((", i):
+            i = _mask_commands(text, out, i + 2, ")", level + 1)
         else:
             out[i] = "_"
             i += 1
+    out[start:] = text[start:]
     return n
 
 
-def _xargs_removes(masked: str) -> bool:
-    """xargs, in this pipeline, runs a removal: its options skipped (with the
-    value of each that takes one), then a word that runs the next one, then
-    `rm`, `truncate` or `unlink` (by a path or escaped). `xargs echo rm` and
-    `xargs grep rm` do not remove."""
-    for m in _XARGS.finditer(masked):
-        words = masked[m.end():].split("|", 1)[0].split()
-        k = 0
-        while k < len(words) and words[k].startswith("-"):
-            k += 2 if words[k] in _XARGS_VALUE_OPTS else 1
-        while k < len(words) and words[k] in _RUNS_NEXT:
-            k += 1
-        if k < len(words) and words[k].lstrip("\\").rsplit("/", 1)[-1] in _REMOVAL_WORDS:
+def _skip_arithmetic(text: str, i: int) -> int:
+    """The index past an arithmetic `$((...))` or `((...))` starting at ``i``
+    (left as it is: its `<<` is a shift, not a heredoc), or its line's end."""
+    depth, j, n = 0, text.index("(", i), len(text)
+    while j < n and text[j] != "\n":
+        depth += {"(": 1, ")": -1}.get(text[j], 0)
+        if depth == 0:
+            return j + 1
+        j += 1
+    return j
+
+
+def _mask_bodies(text: str, out: list[str], j: int, pending: list[tuple[str, bool, bool]], line: str,
+                 level: int) -> int:
+    """The bodies of the heredocs ``line`` opened, in order from ``j``, each to
+    the line that is its delimiter exactly (leading tabs dropped for `<<-`).
+    A body is blanked, but an unquoted delimiter's keeps its command
+    substitutions (they run), and a body a shell reads (`bash <<EOF`,
+    `cat <<EOF | sh`) is left to be read as commands. Returns where the
+    scan goes on."""
+    if any(_command_word(stage) in _SHELLS for stage in _SIMPLE_SPLIT.split(line)):
+        return j
+    n = len(text)
+    for delim, strip_tabs, expands in pending:
+        start = j
+        while j < n:
+            end = text.find("\n", j)
+            end = n if end < 0 else end
+            if (text[j:end].lstrip("\t") if strip_tabs else text[j:end]) == delim:
+                break
+            j = end + 1
+        if expands:
+            _mask_expanding(text, out, start, min(j, n), level)
+        else:
+            _blank(out, start, j)
+        end = text.find("\n", j) if j < n else -1
+        j = n if end < 0 else end + 1
+    return j
+
+
+def _mask_expanding(text: str, out: list[str], i: int, end: int, level: int) -> None:
+    """Blank ``text[i:end]`` but its command substitutions (an unquoted
+    heredoc's body)."""
+    while i < end:
+        ch = text[i]
+        if ch == "\\" and i + 1 < end:
+            out[i] = out[i + 1] = "_"
+            i += 2
+        elif text.startswith("$(", i) and not text.startswith("$((", i):
+            i = _mask_commands(text, out, i + 2, ")", level + 1)
+        elif ch == "`":
+            i = _mask_commands(text, out, i + 1, "`", level + 1)
+        else:
+            out[i] = "_"
+            i += 1
+
+
+def _command_word(masked: str) -> str:
+    """The command a simple command runs: its first word after assignments and
+    the words that run the next one, by its basename."""
+    for word in masked.split():
+        if "=" in word or word in _RUNS_NEXT or word == "env":
+            continue
+        return word.lstrip("\\").rsplit("/", 1)[-1]
+    return ""
+
+
+def _operands(text: str, masked: str, pos: int) -> list[str]:
+    """The operands from ``pos`` on, as ``text`` spells them without their
+    quotes: every word but an option, up to a redirect."""
+    words: list[str] = []
+    options_end = False
+    for m in re.finditer(r"\S+", masked[pos:]):
+        word = m.group()
+        if _REDIRECT_WORD.match(word):
+            break
+        if word == "--" and not options_end:
+            options_end = True
+        elif options_end or not word.startswith("-"):
+            words.append(text[pos + m.start():pos + m.end()].strip("'\""))
+    return words
+
+
+def _xargs_runs_removal(words: list[str]) -> bool:
+    """The command xargs runs, after its options (with the value of each that
+    takes one) and the words that run the next one, is a removal. `xargs echo
+    rm` and `xargs grep rm` do not remove."""
+    k = 0
+    while k < len(words) and words[k].startswith("-"):
+        k += 2 if words[k] in _XARGS_VALUE_OPTS else 1
+    while k < len(words) and words[k] in _RUNS_NEXT:
+        k += 1
+    return k < len(words) and words[k].lstrip("\\").rsplit("/", 1)[-1] in _REMOVAL_WORDS
+
+
+def _spans(rx: re.Pattern[str], masked: str, start: int, end: int) -> list[tuple[int, int]]:
+    """The pieces of ``masked[start:end]`` between ``rx``'s separators."""
+    out = []
+    for sep in rx.finditer(masked, start, end):
+        out.append((start, sep.start()))
+        start = sep.end()
+    out.append((start, end))
+    return out
+
+
+def _simple_command_writes(text: str, masked: str, start: int, end: int, target: str, pipeline: str) -> bool:
+    """One simple command changes ``target``: an in-place `sed`/`perl` naming
+    it (or run by xargs on a pipeline that names it), a find naming it that
+    removes what it finds, a removal xargs runs on a pipeline that names it, a
+    `tee` into it, a `cp`/`mv`/`install` onto it, or a `mv` out of it."""
+    sm, st = masked[start:end], text[start:end]
+    here = target in st
+    m = _SED_WORD.search(sm)
+    if m and _IN_PLACE_SWITCH.search(sm, m.end()) and (
+            here or (target in pipeline and _XARGS.search(sm, 0, m.start()))):
+        return True
+    m = _FIND_WORD.search(sm)
+    if m and here and _FIND_REMOVES.search(sm, m.end()):
+        return True
+    m = _XARGS.search(sm)
+    if m and target in pipeline and _xargs_runs_removal(sm[m.end():].split()):
+        return True
+    m = _TEE_WORD.search(sm)
+    if m and any(target in w for w in _operands(st, sm, m.end())):
+        return True
+    m = _COPY_WORD.search(sm)
+    if m:
+        words = _operands(st, sm, m.end())
+        if words and target in words[-1]:
+            return True
+        if m.group(1) == "mv" and any(_is_target_path(w, target) for w in words[:-1]):
             return True
     return False
 
 
 def _shell_writes(command: str, target: str) -> bool:
-    """The command changes ``target``: a redirect or `tee` into it, an in-place
-    `sed`/`perl` naming it in the same pipeline, an `rm`/`truncate`/`unlink` of
-    it in a command position, a removal xargs runs or `find -delete`/`-exec rm`
-    in the same pipeline, a `cp`/`mv` onto it (the last operand) or a `dd of=`
-    it. The command's structure is read with its quoted spans and heredoc
-    bodies blanked out (`_mask_quoted`) and its backslash-newlines joined, and
-    each span found there is checked for the target in the original text. A
-    heuristic over common shapes; `bench/end_to_end/SCHEMA.md` lists what it
-    does not see (a write after `cd` by the bare name, an interpreter's write,
-    a nested shell string, a removal behind another wrapper)."""
-    text = _SHELL_NOISE.sub(lambda m: " " * len(m.group()), command.replace("\\\n", "  "))
+    """The command changes ``target``: a redirect into it, a `dd of=` it, an
+    `rm`/`truncate`/`unlink` of it in a command position, or one of its simple
+    commands writing it (`_simple_command_writes`). The command's structure is
+    read with its quoted spans, heredoc bodies and comments blanked out
+    (`_mask_quoted`), and each span found there is checked for the target in
+    the original text. A heuristic over common shapes; the shapes it was
+    judged on are `tests/fixtures/e2e_bench/shell_write_shapes.jsonl`, and
+    `bench/end_to_end/SCHEMA.md` lists what it does not see."""
+    text = _SHELL_NOISE.sub(lambda m: " " * len(m.group()), command)
     masked = _mask_quoted(text)
-    for rx in (_REDIRECT, _TEE, _DD_OUT):
+    if len(masked) != len(text):
+        raise ValueError("the shell mask changed the command's length, which would shift every span")
+    for rx in (_REDIRECT, _DD_OUT):
         if any(target in text[m.start(1):m.end(1)] for m in rx.finditer(masked)):
             return True
     if any(target in text[m.start():m.end()] for m in _REMOVE.finditer(masked)):
         return True
-    start = 0
-    for sep in [*_PIPELINE_SPLIT.finditer(masked), None]:
-        end = sep.start() if sep else len(masked)
-        pipeline = masked[start:end]
-        if target in text[start:end] and (
-                _IN_PLACE.search(pipeline) or _FIND_REMOVE.search(pipeline) or _xargs_removes(pipeline)):
-            return True
-        start = sep.end() if sep else end
-    for m in _COPY_MOVE.finditer(masked):
-        words = text[m.start(1):m.end(1)].split()
-        if words and target in words[-1].strip("'\""):
+    for a, b in _spans(_PIPELINE_SPLIT, masked, 0, len(masked)):
+        if any(_simple_command_writes(text, masked, c, d, target, text[a:b])
+               for c, d in _spans(_SIMPLE_SPLIT, masked, a, b)):
             return True
     return False
 
@@ -413,6 +564,10 @@ def _mutates(block: dict[str, Any], target: str) -> bool:
     if name == "Bash":
         return _shell_writes(str(inp.get("command", "")), target)
     return False
+
+
+#: Shell tools whose commands the check does not read (only Bash's are).
+_UNREAD_SHELL_TOOLS = frozenset({"PowerShell"})
 
 
 def _names_no_path(block: dict[str, Any]) -> bool:
@@ -474,6 +629,14 @@ def _check_no_repeat_of(
             verdict=VERDICT_INCONCLUSIVE,
             evidence=(f"a {'/'.join(unread)} call names no {' or '.join(_PATH_KEYS)}, so which file it "
                       "changed cannot be read (the CLI's tool input may have changed shape)"),
+        )
+    shells = sorted({str(b.get("name")) for i, b in uses
+                     if b.get("name") in _UNREAD_SHELL_TOOLS and (anchor is None or i > anchor)})
+    if shells:
+        return AssertionResult(
+            name="agent_actions_after.no_repeat_of",
+            verdict=VERDICT_INCONCLUSIVE,
+            evidence=f"a {'/'.join(shells)} call after the deny, whose command this check does not read",
         )
     return AssertionResult(
         name="agent_actions_after.no_repeat_of",
