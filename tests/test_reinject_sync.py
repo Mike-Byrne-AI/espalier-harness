@@ -227,7 +227,10 @@ def test_postttooluse_sync_rules_form_a_distinct_priority_ladder():
     assert len(set(prios)) == len(sync)  # distinct => deterministic drop-order
     assert sorted(prios, reverse=True) == [
         80, 78, 76, 74, 72,   # the once-per-session pointers outrank the sync ladder
-        70, 68, 66, 62, 60, 58, 56, 54, 52, 50, 48, 46, 44, 42, 40
+        70, 68, 66, 62, 60, 58,
+        56, 54, 52, 50, 48, 46, 44,   # the mirror rows' generated sides (DEF-4015)
+        42,                           # the generated doc regions
+        40, 38, 36, 34, 32, 30, 28,   # the mirror rows' source sides
     ]
 
 
@@ -1232,6 +1235,14 @@ _SELF_HOST_ROWS: dict[str, str] = {
     "REINJECT-PACK-CHECKLIST-REGION": "names scripts/sync_checklist_regions.py and its generated regions",
     "REINJECT-GENERATED-DOC-REGION": "names the generated-region sync under scripts/ and the dogfooding mirror",
 }
+# A mirror row's generated side is derived from the same table as its source side
+# (DEF-4015), so its roster line is derived too: a reason per row, never a second
+# hand list of generated ids.
+_SELF_HOST_ROWS.update({
+    generated.id: f"the generated side of {source.id}, derived from the same table row"
+    for source, generated in getattr(_reinject, "SYNC_RULE_PAIRS", ())
+    if generated.id not in _SELF_HOST_ROWS
+})
 
 
 def test_every_scope_is_a_declared_keyword():
@@ -1263,3 +1274,120 @@ def test_the_rows_other_hooks_offer_declare_any():
     registry-wide and nobody 'finishes the job' by gating those call sites."""
     other = [r for r in _reinject.REINJECTS if r.event != "PostToolUse"]
     assert other and all(r.scope == "any" for r in other), [(r.id, r.scope) for r in other]
+
+
+# ── DEF-4015: the mirror-sync advisories leave the shared session cap ─────────
+
+class TestSyncAdvisoriesLeaveTheSessionCap:
+    """Root CLAUDE.md promises an edit-time advisory for every mirror row, and the
+    rows shared the recall engine's five-fire session budget with every other
+    non-exempt row: on the Windows box's logs 83% of their fires were capped. Each
+    row now splits into a source-side and a generated-side rule, derived from one
+    table, each cap_exempt with its scarcity in a once-per-session flag of its own
+    (so at most fourteen a session), and the per-turn slice orders by priority
+    alone, so an exempt sync row never displaces a correctness nudge."""
+
+    @staticmethod
+    def _sides(r, session: Path) -> tuple[str, str, str]:
+        """The row's source probe, its generated twin (made on disk under
+        ``session``: the selfcheck source side stats it), and the content that
+        reaches the twin's rule (the pack-checklist region is content-gated)."""
+        probe = TestMirrorCensusCoverage._probe(r)
+        twin = mirror_registry.counterpart(r, probe) or ""
+        if twin:
+            dest = session / twin
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.touch()
+        content = next((f"{name}:" for _sot, target, name in _reinject._CHECKLIST_REGIONS
+                        if twin.endswith(target)), "x")
+        return probe, twin, content
+
+    @staticmethod
+    def _edit(path: str, session: Path, content: str = "x") -> str:
+        out = _reinject.check(
+            "PostToolUse", "Edit", {"file_path": f"/r/{path}", "new_string": content}, session,
+        )
+        return "\n".join(out)
+
+    def _fresh(self, tmp_path: Path, name: str) -> Path:
+        session = tmp_path / name
+        session.mkdir()
+        return session
+
+    def test_every_side_of_every_row_warns_past_the_session_cap(self, tmp_path, monkeypatch):
+        """The row's own probe, as a test: with the session counter past the cap,
+        every mirror row's source side still names its mirror, and every
+        generated side that warns at all still warns."""
+        baseline = {}
+        for i, r in enumerate(mirror_registry.MIRROR_ROWS):
+            session = self._fresh(tmp_path, f"base{i}")
+            _probe, twin, content = self._sides(r, session)
+            baseline[r.name] = bool(twin) and bool(self._edit(twin, session, content))
+        monkeypatch.setattr(_reinject, "_locked_increment", lambda *a, **k: 99)
+        silent = []
+        for i, r in enumerate(mirror_registry.MIRROR_ROWS):
+            session = self._fresh(tmp_path, f"src{i}")
+            probe, twin, content = self._sides(r, session)
+            if r.mirrors[0].rstrip("/") not in self._edit(probe, session):
+                silent.append(f"{r.name} source ({probe})")
+            session = self._fresh(tmp_path, f"gen{i}")
+            self._sides(r, session)
+            if baseline[r.name] and not self._edit(twin, session, content):
+                silent.append(f"{r.name} generated ({twin})")
+        assert baseline and any(baseline.values()), baseline
+        assert not silent, f"silent past the session cap: {silent}"
+
+    def test_a_source_edit_does_not_spend_the_generated_warning(self, tmp_path):
+        """The order an agent most often walks: edit the source, then follow a grep
+        hit into the mirror. The benign "run the sync" reminder must not spend the
+        flag of the warning that the mirror edit will be DISCARDED (one flag per
+        row would; air b717a6)."""
+        two_sided, lost = [], []
+        for i, r in enumerate(mirror_registry.MIRROR_ROWS):
+            session = self._fresh(tmp_path, f"alone{i}")
+            _probe, twin, content = self._sides(r, session)
+            if not twin or not self._edit(twin, session, content):
+                continue
+            two_sided.append(r.name)
+            session = self._fresh(tmp_path, f"walk{i}")
+            probe, twin, content = self._sides(r, session)
+            assert self._edit(probe, session), f"{r.name}: the source side is silent"
+            if not self._edit(twin, session, content):
+                lost.append(r.name)
+        assert len(two_sided) >= 5, two_sided
+        assert not lost, f"the source reminder spent the generated warning: {lost}"
+
+    def test_a_mirrored_test_that_loosens_keeps_both_correctness_nudges(self, tmp_path):
+        """The drop-order contract under the per-turn cap of two: a mirrored test
+        file whose edit also adds a skip marker and a raw managed-marker substring
+        test trips three rules; the two correctness nudges keep their slots, and
+        the mirror advisory waits (its once flag unspent) for the next edit."""
+        session = self._fresh(tmp_path, "s")
+        (session / "espalier/_vendor/selfcheck_tests").mkdir(parents=True)
+        (session / "espalier/_vendor/selfcheck_tests/test_config.py").touch()
+        loosen = '@pytest.mark.skip(reason="x")\nif "x MANAGED y" in text:\n    pass\n'
+        first = self._edit("tests/test_config.py", session, loosen)
+        assert "skip/xfail marker" in first, first
+        assert "raw substring membership test" in first, first
+        assert "selfcheck_tests" not in first, first
+        later = self._edit("tests/test_config.py", session, "x = 1\n")
+        assert "sync_selfcheck_tests.py" in later, later
+
+    def test_the_generated_rules_are_derived_from_the_source_table(self):
+        """One table, two rules a row: every pair is cap_exempt with a once flag of
+        its own, the generated side outranks its source side, and both sit below
+        the correctness nudges (the drop-order contract)."""
+        pairs = getattr(_reinject, "SYNC_RULE_PAIRS", ())
+        assert len(pairs) == 7, [s.id for s, _g in pairs]
+        registry = {r.id: r for r in _reinject.REINJECTS}
+        correctness = min(registry["REINJECT-TEST-LOOSENING"].priority,
+                          registry["REINJECT-MARKER-SUBSTRING"].priority)
+        for source, generated in pairs:
+            for rule in (source, generated):
+                assert registry.get(rule.id) is rule, rule.id
+                assert rule.cap_exempt and rule.once_per_session, rule.id
+                assert rule.priority < correctness, rule.id
+            assert generated.id != source.id
+            assert generated.priority > source.priority, (source.id, generated.id)
+        flags = [r.id.casefold() for pair in pairs for r in pair]
+        assert len(set(flags)) == len(flags) == 14

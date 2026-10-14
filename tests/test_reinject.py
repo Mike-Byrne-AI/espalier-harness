@@ -117,19 +117,26 @@ def test_per_turn_ceiling_is_the_limiter(tmp_path, monkeypatch):
     assert out == ["HI", "MID", "LO"]
 
 
-def test_cap_exempt_counts_against_per_turn_slice(tmp_path):
-    # §6 criterion: CAP+1 non-exempt + 1 exempt on one event -> exactly CAP
-    # payloads, the exempt among them, and exactly CAP-1 non-exempt. Proves the
-    # exempt row consumes a slot in the slice (it is not a bonus); registering
-    # >CAP exempt rows on one event would starve all non-exempt rows.
+def test_priority_alone_cuts_the_per_turn_slice(tmp_path):
+    # cap_exempt is the SESSION cap only (DEF-4015): the per-turn slice is cut by
+    # priority, so a low-priority exempt row waits behind higher-priority rows on
+    # that event (its once flag stays unspent, so it fires on the next one), and
+    # an exempt row whose priority earns a slot consumes it (it is not a bonus).
+    # Exempt-first was a latent inversion: the first exempt rows with a priority
+    # below the correctness nudges (the mirror-sync rows) would have displaced them.
+    low, mid = tmp_path / "low", tmp_path / "mid"
+    low.mkdir()
+    mid.mkdir()
     rules = (
         _rule("N1", priority=90), _rule("N2", priority=85), _rule("N3", priority=80),
-        _rule("EXEMPT", cap_exempt=True, priority=10),  # low priority, still sorts first
+        _rule("EXEMPT", cap_exempt=True, priority=10),
     )
-    out = _reinject.check("SessionStart", "", {}, tmp_path, rules=rules)
+    assert _reinject.check("SessionStart", "", {}, low, rules=rules) == ["N1", "N2"]
+    rules = (_rule("N1", priority=90), _rule("EXEMPT", cap_exempt=True, priority=88),
+             _rule("N3", priority=80))
+    out = _reinject.check("SessionStart", "", {}, mid, rules=rules)
+    assert out == ["N1", "EXEMPT"]
     assert len(out) == _reinject.REINJECT_PER_TURN_CAP  # 2
-    assert "EXEMPT" in out                              # exempt sorts ahead of priority
-    assert sum(1 for x in out if x.startswith("N")) == _reinject.REINJECT_PER_TURN_CAP - 1
 
 
 def test_session_cap_suppresses_nonexempt(tmp_path):
