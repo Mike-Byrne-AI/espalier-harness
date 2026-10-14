@@ -807,9 +807,14 @@ MARKER_SUBSTRING_RULE = ReinjectRule(
 # Windows box's logs 83% of their fires were capped), and each takes its scarcity
 # from a once-per-session flag of its OWN: one flag per row would let the benign
 # source reminder spend the warning a later mirror edit needs -- the order an agent
-# most often walks (edit the source, then follow a grep hit into the mirror). At
-# most fourteen a session. The generated band outranks the source band, and both
-# sit below the correctness nudges above (the drop-order contract
+# most often walks (edit the source, then follow a grep hit into the mirror). Each
+# side is said at most once a session per advisory, and an advisory can serve two
+# registry rows (the two claude mirrors, the two checklists, the stack table beside
+# the vendored tools/cc/), which then share its flags; the vendored
+# espalier/_vendor/cc/ copy has no edit-time warning. The flags live under the
+# checkout's state dir and the PostToolUse payload names no agent, so a subagent's
+# edit spends a side for its parent too. The generated band outranks the source
+# band, and both sit below the correctness nudges above (the drop-order contract
 # tests/test_reinject_sync.py::test_mirror_advisories_rank_below_correctness_nudges
 # holds); the per-turn slice is cut by priority alone (``check``).
 class _SyncRow(NamedTuple):
@@ -831,7 +836,7 @@ def _one_side(row: _SyncRow, generated: bool) -> Callable[[str, dict, Path], "st
     on_generated = row.on_generated
 
     def render(tool_name: str, tool_input: dict, root: Path) -> "str | None":
-        if on_generated is None or on_generated(_fp(tool_input)) is not generated:
+        if on_generated is None or bool(on_generated(_fp(tool_input))) != generated:
             return None
         return row.render(tool_name, tool_input, root)
     return render
@@ -1321,12 +1326,19 @@ def check(
     matched.sort(key=lambda m: (-m[0], not m[1]))
     # ``budget`` is the caller's remaining per-turn slots (the Bash bridge asks
     # once per written path); the slice is never wider than the module cap.
-    # Cutting it HERE, where the once-flag is marked, is what keeps a marked
+    # Filling it HERE, where the once-flag is marked, is what keeps a marked
     # row and an emitted row the same set -- a caller that trims the returned
     # list would spend flags on text nobody saw (failure-mode pass, driven).
+    # A slot is filled by a row that SPEAKS: a session-capped row emits nothing
+    # and takes no slot, so past the cap a lower-priority exempt row still gets
+    # the slot it would otherwise wait behind (DEF-4015 review, driven).
     slice_n = REINJECT_PER_TURN_CAP if budget is None else max(0, min(budget, REINJECT_PER_TURN_CAP))
     out: list[str] = []
-    for _prio, exempt, text, rid, once in matched[:slice_n]:
+    waiting: list[tuple[bool, str]] = []
+    for _prio, exempt, text, rid, once in matched:
+        if len(out) >= slice_n:
+            waiting.append((exempt, rid))
+            continue
         if exempt:
             out.append(text)
             if once:
@@ -1356,7 +1368,7 @@ def check(
     # This loop runs AFTER the emit loop, never fused into it: fusing would change
     # when _locked_increment fires relative to the log write, making session-cap
     # accounting depend on log-write success.
-    for _prio, exempt, _text, rid, _once in matched[slice_n:]:
+    for exempt, rid in waiting:
         _log_recall_event(root, side="push", rid=rid, event=event,
                           disposition="per_turn_capped", exempt=exempt)
     return out

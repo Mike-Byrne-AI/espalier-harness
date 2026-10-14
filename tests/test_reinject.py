@@ -139,6 +139,17 @@ def test_priority_alone_cuts_the_per_turn_slice(tmp_path):
     assert len(out) == _reinject.REINJECT_PER_TURN_CAP  # 2
 
 
+def test_a_session_capped_row_takes_no_slot(tmp_path, monkeypatch):
+    # Past the session cap a non-exempt row emits nothing, so it must not hold a
+    # per-turn slot a lower-priority exempt row would speak in: the slice fills
+    # with rows that speak (DEF-4015 failure-mode review, driven on a Write of
+    # tools/cc/hooks/_integrity.py with the counter spent).
+    monkeypatch.setattr(_reinject, "_locked_increment", lambda *a, **k: 99)
+    rules = (_rule("N1", priority=90), _rule("N2", priority=85),
+             _rule("E", cap_exempt=True, priority=10))
+    assert _reinject.check("SessionStart", "", {}, tmp_path, rules=rules) == ["E"]
+
+
 def test_session_cap_suppresses_nonexempt(tmp_path):
     # One always-firing non-exempt rule fired SESSION_CAP+1 times (distinct check()
     # calls sharing tmp_path -> shared flocked counter): the first CAP emit, the

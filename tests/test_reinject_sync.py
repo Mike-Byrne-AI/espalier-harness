@@ -1314,47 +1314,81 @@ class TestSyncAdvisoriesLeaveTheSessionCap:
         session.mkdir()
         return session
 
+    #: Registry rows whose GENERATED side has no edit-time warning, each with its
+    #: reason. Named, so a new row with a source-side advisory only reds below
+    #: instead of being skipped.
+    _GENERATED_SIDE_SILENT = {
+        "vendor-cc": "espalier/_vendor/cc/ is write-guarded on the harness's own tree, "
+                     "and its mirror side was silent before DEF-4015 too",
+    }
+
+    @staticmethod
+    def _emitted(monkeypatch) -> list[str]:
+        """The rule ids each ``check`` emits, read from its own telemetry call."""
+        seen: list[str] = []
+        real = _reinject._log_recall_event
+
+        def spy(root, **kw):
+            if kw.get("disposition") == "emitted":
+                seen.append(kw.get("rid"))
+            return real(root, **kw)
+        monkeypatch.setattr(_reinject, "_log_recall_event", spy)
+        return seen
+
+    @staticmethod
+    def _side_ids() -> tuple[set[str], set[str]]:
+        pairs = getattr(_reinject, "SYNC_RULE_PAIRS", ())
+        return {s.id for s, _g in pairs}, {g.id for _s, g in pairs}
+
     def test_every_side_of_every_row_warns_past_the_session_cap(self, tmp_path, monkeypatch):
         """The row's own probe, as a test: with the session counter past the cap,
-        every mirror row's source side still names its mirror, and every
-        generated side that warns at all still warns."""
-        baseline = {}
-        for i, r in enumerate(mirror_registry.MIRROR_ROWS):
-            session = self._fresh(tmp_path, f"base{i}")
-            _probe, twin, content = self._sides(r, session)
-            baseline[r.name] = bool(twin) and bool(self._edit(twin, session, content))
+        every mirror row's source side names its mirror through a source-side rule
+        and says nothing is discarded, and every generated side not named silent
+        warns through a generated-side rule."""
         monkeypatch.setattr(_reinject, "_locked_increment", lambda *a, **k: 99)
-        silent = []
+        seen = self._emitted(monkeypatch)
+        source_ids, generated_ids = self._side_ids()
+        wrong = []
         for i, r in enumerate(mirror_registry.MIRROR_ROWS):
             session = self._fresh(tmp_path, f"src{i}")
             probe, twin, content = self._sides(r, session)
-            if r.mirrors[0].rstrip("/") not in self._edit(probe, session):
-                silent.append(f"{r.name} source ({probe})")
+            seen.clear()
+            said = self._edit(probe, session)
+            if (r.mirrors[0].rstrip("/") not in said or not set(seen) & source_ids
+                    or "DISCARDED" in said):
+                wrong.append(f"{r.name} source ({probe}): {seen}")
+            if r.name in self._GENERATED_SIDE_SILENT:
+                continue
             session = self._fresh(tmp_path, f"gen{i}")
             self._sides(r, session)
-            if baseline[r.name] and not self._edit(twin, session, content):
-                silent.append(f"{r.name} generated ({twin})")
-        assert baseline and any(baseline.values()), baseline
-        assert not silent, f"silent past the session cap: {silent}"
+            seen.clear()
+            self._edit(twin, session, content)
+            if not set(seen) & generated_ids:
+                wrong.append(f"{r.name} generated ({twin}): {seen}")
+        assert not wrong, f"not warned past the session cap, or by the wrong side: {wrong}"
 
-    def test_a_source_edit_does_not_spend_the_generated_warning(self, tmp_path):
+    def test_a_source_edit_does_not_spend_the_generated_warning(self, tmp_path, monkeypatch):
         """The order an agent most often walks: edit the source, then follow a grep
         hit into the mirror. The benign "run the sync" reminder must not spend the
         flag of the warning that the mirror edit will be DISCARDED (one flag per
-        row would; air b717a6)."""
-        two_sided, lost = [], []
+        row would; air b717a6). Keyed on the generated rule's own id, not on any
+        output: a mirror that is also a .claude/ source would otherwise pass on the
+        claude reminder, the advice the region warning exists to replace."""
+        seen = self._emitted(monkeypatch)
+        _source_ids, generated_ids = self._side_ids()
+        walked, lost = [], []
         for i, r in enumerate(mirror_registry.MIRROR_ROWS):
-            session = self._fresh(tmp_path, f"alone{i}")
-            _probe, twin, content = self._sides(r, session)
-            if not twin or not self._edit(twin, session, content):
+            if r.name in self._GENERATED_SIDE_SILENT:
                 continue
-            two_sided.append(r.name)
             session = self._fresh(tmp_path, f"walk{i}")
             probe, twin, content = self._sides(r, session)
             assert self._edit(probe, session), f"{r.name}: the source side is silent"
-            if not self._edit(twin, session, content):
-                lost.append(r.name)
-        assert len(two_sided) >= 5, two_sided
+            seen.clear()
+            self._edit(twin, session, content)
+            walked.append(r.name)
+            if not set(seen) & generated_ids:
+                lost.append(f"{r.name}: {seen}")
+        assert len(walked) == len(mirror_registry.MIRROR_ROWS) - len(self._GENERATED_SIDE_SILENT)
         assert not lost, f"the source reminder spent the generated warning: {lost}"
 
     def test_a_mirrored_test_that_loosens_keeps_both_correctness_nudges(self, tmp_path):
@@ -1391,3 +1425,21 @@ class TestSyncAdvisoriesLeaveTheSessionCap:
             assert generated.priority > source.priority, (source.id, generated.id)
         flags = [r.id.casefold() for pair in pairs for r in pair]
         assert len(set(flags)) == len(flags) == 14
+        # The bands, not only each pair: every generated side outranks the
+        # generated-doc-region warning, which outranks every source reminder.
+        doc_region = registry["REINJECT-GENERATED-DOC-REGION"].priority
+        assert min(g.priority for _s, g in pairs) > doc_region > max(s.priority for s, _g in pairs)
+
+    def test_every_table_row_names_its_generated_side(self):
+        """A row with neither a side predicate nor a generated render would yield
+        two rules that never speak."""
+        bare = [row.id for row in getattr(_reinject, "_SYNC_ROWS", ())
+                if row.on_generated is None and row.generated_render is None]
+        assert getattr(_reinject, "_SYNC_ROWS", ()) and not bare, bare
+
+    def test_no_generated_rule_is_written_outside_the_table(self):
+        """A hand-written ``*-GENERATED`` rule would escape every band pin above."""
+        derived = {g.id for _s, g in getattr(_reinject, "SYNC_RULE_PAIRS", ())}
+        stray = [r.id for r in _reinject.REINJECTS
+                 if r.id.endswith("-GENERATED") and r.id not in derived]
+        assert derived and not stray, stray
