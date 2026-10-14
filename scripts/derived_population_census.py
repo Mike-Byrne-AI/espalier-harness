@@ -411,7 +411,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
     ),
     "tests/test_adopter_pointer_resolution.py": (
-        4, "a66bcc57d3e4d4beb59228dfdc2d1d6917d9206c31c5a9e8c4845cc949ffcf6d",
+        6, "900d813a9cb450fbd4f9baf9410ac69000f4e582e6178bc320ac1aa51959ff9c",
         "MIXED_WITH_PRIOR_PASS",
         "tests/test_managed_inventory.py:252 — `assert get_seed_docs() == (...)` against a hand-writte... "
         "2026-09-30: the fourth row, the comprehension over "
@@ -419,7 +419,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "test_the_runtime_exemption_is_not_the_local_only_set, replaced a single "
         "named path (cc/GOAL.md, which init now seeds) with the derived "
         "discriminating set; it shrinks legitimately when a local-only path gains "
-        "a creating call, and `assert discriminating` reds if it ever empties.",
+        "a creating call, and `assert discriminating` reds if it ever empties. "
+        "2026-10-14 (DEF-4015): two more, the comprehensions over "
+        "`_reinject.SYNC_RULE_PAIRS` and `_reinject._SYNC_ROWS` in "
+        "test_every_sync_table_render_is_a_gated_span. CORRECT_BY_PROPERTY: each "
+        "rule and each render must satisfy the gate (a per-row invariant), "
+        "`assert renders` reds on an empty table, and test_reinject_sync.py pins "
+        "seven pairs; driven red against the classifier before it read the "
+        "table's `_SyncRow` calls.",
     ),
     "tests/test_canon_verifier_contract.py": (
         4, "31db2af8c583411d205117b3e1478df6bd3d225ab7e05882b52c163ae3fce217",
@@ -1145,9 +1152,9 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "same >= 55 floor this test repeats). Adjudicated 2026-10-03 when the row was added; graded by reading, not mutation.",
     ),
     "tests/test_reinject_sync.py": (
-        22, "a6fd02168fda8d66c611085d8604843451169d2bf8e1fb7e9db2d81e51bf2cb2",
+        30, "f6c9f54621ff530a6ee24bcc623f6dda76af8c5e9019db519669073b4e3e234e",
         "MIXED_WITH_PRIOR_PASS",
-        "tests/test_reinject_sync.py:528+:578 — len(MIRROR_ROWS) is asserted equal to the number-word ... (5) FOUR MORE rows over `_reinject.REINJECTS` in the priority-ladder test (2026-09-06): the once-per-session <-> cap_exempt pairing, the rule-id charset and the case-folded uniqueness of ids. CORRECT_BY_PROPERTY: each is an invariant every registered row must satisfy (a smaller registry makes a smaller, still-true claim), and the registry cannot shrink unnoticed because the same test pins the exact priority ladder. FIVE MORE rows (2026-10-08, the scope census): the scope keyword set over REINJECTS, the any-id and self-host-id comprehensions set-equal to two hand rosters with a reason per row, the other-hooks all-any, and the union check. CORRECT_BY_PROPERTY: the rosters are hand-written and compared both ways, so a new PostToolUse row reds until it is placed, a row moved between scopes moves its roster line, and the registry cannot shrink unnoticed; three pins driven red by mutation in that lane.",
+        "tests/test_reinject_sync.py:528+:578 — len(MIRROR_ROWS) is asserted equal to the number-word ... (5) FOUR MORE rows over `_reinject.REINJECTS` in the priority-ladder test (2026-09-06): the once-per-session <-> cap_exempt pairing, the rule-id charset and the case-folded uniqueness of ids. CORRECT_BY_PROPERTY: each is an invariant every registered row must satisfy (a smaller registry makes a smaller, still-true claim), and the registry cannot shrink unnoticed because the same test pins the exact priority ladder. FIVE MORE rows (2026-10-08, the scope census): the scope keyword set over REINJECTS, the any-id and self-host-id comprehensions set-equal to two hand rosters with a reason per row, the other-hooks all-any, and the union check. CORRECT_BY_PROPERTY: the rosters are hand-written and compared both ways, so a new PostToolUse row reds until it is placed, a row moved between scopes moves its roster line, and the registry cannot shrink unnoticed; three pins driven red by mutation in that lane. EIGHT MORE rows (2026-10-14, DEF-4015, the sync advisories leaving the session cap): the self-host roster's generated-side lines derived from `SYNC_RULE_PAIRS` (a generated rule moved to scope any reds the both-ways roster compare, since its derived line stays in the self-host roster), the two walks over `MIRROR_ROWS` in `TestSyncAdvisoriesLeaveTheSessionCap` (the canonical registry, its size pinned by the number-word row above; the walk test asserts its own count), the region-name lookup over `_CHECKLIST_REGIONS` (a fixture input whose fallback content fails the region rule loudly), the `REINJECTS` id map, the bare-row check over `_SYNC_ROWS`, and the derived-ids set and stray check over `SYNC_RULE_PAIRS` and `REINJECTS`. CORRECT_BY_PROPERTY: each is a per-row invariant or a membership lookup, and the table cannot shrink unnoticed because the derivation test pins seven pairs and fourteen distinct flags. Graded by reading; the two walks were driven red by mutation in that lane (one flag per row through `_once_flag`, and a stale silent-side exemption).",
     ),
     "tests/test_release_noise_parity.py": (
         2, "6a450daa35131de5202e220afa565b78e8d218792b40ca8ad1a141265626a3fb",

@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2011",
+ "subject": "tools/cc/hooks/_reinject.py",
+ "cmd": "python -c \"import sys, tempfile, pathlib; sys.path.insert(0, 'tools/cc/hooks'); import _reinject as r; root = pathlib.Path(tempfile.mkdtemp()); (root / 'README.md').touch(); r._locked_increment = lambda *a, **k: 99; print(not r.check('PostToolUse', 'Edit', {'file_path': str(root / 'README.md'), 'new_string': 'deploy-inventory: x'}, root))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "aff89161aff5",
+ "text_sha": "dc13f91e0570",
+ "verified_2026_10_14": "OPEN (filed 2026-10-14; probe driven at filing)"
+}

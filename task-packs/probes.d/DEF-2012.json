@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2012",
+ "subject": "tools/cc/hooks/_reinject.py",
+ "cmd": "python -c \"import sys, tempfile, pathlib; sys.path.insert(0, 'tools/cc/hooks'); import _reinject as r; root = pathlib.Path(tempfile.mkdtemp()); print(not r.check('PostToolUse', 'Edit', {'file_path': '/r/espalier/_vendor/cc/hooks/_reinject.py', 'new_string': 'x'}, root))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "159fff33e952",
+ "text_sha": "3bd25b946acf",
+ "verified_2026_10_14": "OPEN (filed 2026-10-14; probe driven at filing)"
+}
