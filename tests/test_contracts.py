@@ -1276,7 +1276,7 @@ class TestEveryTimedSpawnOutsideToolsCcIsBounded:
         assert rels, "no file outside the engine routes a spawn: the census broke"
         child = _sp.run([sys.executable, "-c", _ORIGIN_PROBE, REPO_ROOT.as_posix(), *rels],
                         cwd=str(tmp_path), capture_output=True, text=True, encoding="utf-8",
-                        errors="replace", timeout=120)
+                        errors="replace", timeout=45)  # about 1 s measured; under the 60 s ceiling
         assert child.returncode == 0, child.stderr
         want = os.path.normcase(str((REPO_ROOT / "tools" / "cc" / "_json_safe.py").resolve()))
         wrong = {rel: origin for rel, origin in json.loads(child.stdout).items()
