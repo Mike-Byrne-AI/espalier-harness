@@ -58,7 +58,7 @@ class ReinjectRule(NamedTuple):
     event: str                                         # SessionStart | UserPromptSubmit | PreToolUse | PostToolUse | PostToolUseFailure
     render: Callable[[str, dict, Path], "str | None"]  # -> advisory text, or None (silent)
     face: str = "defensive"                            # orientation | defensive | generative | sync
-    cap_exempt: bool = False                           # safety rules: never session-cap-suppressed
+    cap_exempt: bool = False                           # outside the session cap; still takes a per-turn slot
     priority: int = 50                                 # per-turn-ceiling ordering (higher = kept first)
     # Generative-face rail: a face=="generative" rule may auto-inject ONLY if
     # push_eligible AND parity-tested; else it is /recall pull-only (never auto-pushed).
@@ -818,7 +818,7 @@ MARKER_SUBSTRING_RULE = ReinjectRule(
 # tests/test_reinject_sync.py::test_mirror_advisories_rank_below_correctness_nudges
 # holds); the per-turn slice is cut by priority alone (``check``).
 class _SyncRow(NamedTuple):
-    """One mirror row: ``render`` answers both sides and ``on_generated`` says
+    """One sync advisory (it can cover more than one mirror row): ``render`` answers both sides and ``on_generated`` says
     which side a path is on (the predicate the render tests first). A row whose
     generated side has a render of its own (the pack checklist's content-gated
     region) names it in ``generated_render`` and keeps its rule id."""
@@ -861,7 +861,7 @@ _SYNC_ROWS: tuple[_SyncRow, ...] = (
 _SYNC_GENERATED_TOP = 56   # the generated band: an edit there is LOST
 _SYNC_SOURCE_TOP = 40      # the source band: the "run the sync" reminder
 
-#: ``(source rule, generated rule)`` per mirror row, derived from ``_SYNC_ROWS``.
+#: ``(source rule, generated rule)`` per sync advisory, derived from ``_SYNC_ROWS``.
 SYNC_RULE_PAIRS: tuple[tuple[ReinjectRule, ReinjectRule], ...] = tuple(
     (
         ReinjectRule(id=row.id, event="PostToolUse", render=_one_side(row, False),
@@ -1277,9 +1277,10 @@ def check(
 ) -> list[str]:
     """Return the additionalContext payloads to inject for ``event``, ceiling-capped.
 
-    ``cap_exempt`` rules bypass the session cap but STILL count against the
-    per-turn slice (they are inside the same ``[:REINJECT_PER_TURN_CAP]`` window);
-    non-exempt rules consume one flocked session slot per fire. A render that
+    ``cap_exempt`` rules bypass the session cap but STILL take a per-turn slot
+    when they speak (``REINJECT_PER_TURN_CAP`` slots a call, filled by priority);
+    non-exempt rules consume one flocked session slot per fire, and only once a
+    per-turn slot is theirs. A render that
     raises is swallowed (a reporter never crashes the hook). The ``rules`` keyword
     mirrors ``_speedbump.check(..., bumps=)`` so the registry-injection canary test
     can inject a synthetic registry without monkeypatching the module global.
@@ -1316,11 +1317,11 @@ def check(
     matched = live
     if not matched:
         return []
-    # Priority alone cuts the per-turn slice; cap_exempt means the SESSION cap
-    # only (DEF-4015). An exempt row COUNTS AGAINST the slice like any other (it
-    # is inside the same [:CAP] window, not a bonus), and a low-priority exempt
-    # row waits behind higher-priority rows on that event -- its once flag stays
-    # unspent, so it fires on the next. Exempt-first was a latent inversion: the
+    # Priority alone orders the per-turn fill; cap_exempt means the SESSION cap
+    # only (DEF-4015). An exempt row takes a slot like any other (not a bonus),
+    # and a low-priority exempt row waits when higher-priority rows that speak
+    # have filled the slots on that event -- its once flag stays unspent, so it
+    # fires on the next. Exempt-first was a latent inversion: the
     # mirror-sync rows, the first exempt rows ranked below the correctness
     # nudges, would have displaced them. Exempt breaks a priority tie.
     matched.sort(key=lambda m: (-m[0], not m[1]))
@@ -1336,6 +1337,9 @@ def check(
     out: list[str] = []
     waiting: list[tuple[bool, str]] = []
     for _prio, exempt, text, rid, once in matched:
+        # The slot check comes BEFORE the session counter's increment, so a row
+        # that waits never spends a session slot (pinned by
+        # tests/test_reinject.py::test_one_call_spends_only_the_session_slots_it_fills).
         if len(out) >= slice_n:
             waiting.append((exempt, rid))
             continue

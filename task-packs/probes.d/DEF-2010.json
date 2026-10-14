@@ -1,0 +1,14 @@
+{
+ "id": "DEF-2010",
+ "subject": "tools/cc/hooks/_denial_reasons.py",
+ "cmd": "python -c \"import json, os, shutil, subprocess, sys, tempfile, pathlib; t = pathlib.Path(tempfile.mkdtemp()); shutil.copytree('tools/cc', t / 'tools' / 'cc'); h = t / 'tools' / 'cc' / 'hooks'; p = h / '_reinject.py'; p.write_bytes(p.read_bytes() + b'\\nraise KeyError(1)\\n'); env = {k: v for k, v in os.environ.items() if not k.startswith('CLAUDE')}; r = subprocess.run([sys.executable, str(h / 'write_guard.py')], input=json.dumps({'tool_name': 'Read', 'tool_input': {'file_path': 'x'}}), capture_output=True, text=True, cwd=t, env=env, timeout=60); print('upgrade --execute' in r.stdout)\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py",
+  "tools/cc/hooks/_reinject.py"
+ ],
+ "row_sha": "76a59ec6c888",
+ "text_sha": "4c81553dea59",
+ "verified_2026_10_14": "OPEN (filed 2026-10-14; probe driven at filing)"
+}

@@ -3894,7 +3894,8 @@ DOES add a push exemplar it must also intent-anchor the prompt predicate with a 
 test (UserPromptSubmit fires on EVERY prompt — a bare keyword false-fires on meta-prompts
 that merely quote the trigger and trains the model to ignore the channel) and account for
 the SHARED `REINJECT_SESSION_CAP` (a non-exempt generative fire consumes a session slot
-shared with the sync witnesses).
+shared with every other non-exempt row, the sync-face witnesses that still count among
+them; the mirror-sync advisories left that budget in DEF-4015).
 
 ## A pull-recall engine must SUPPRESS on no-match — and THIS one does not (DEF-609)
 

@@ -19,5 +19,8 @@
   by priority, so a correctness nudge (a loosened test, a raw marker substring
   test) is never displaced by a sync reminder, and an advisory that waits is
   said on a later edit. An advisory the session budget has already silenced no
-  longer holds a slot it says nothing in. The rules are defined in code only,
-  so no adopter configuration changes meaning.
+  longer holds a slot it says nothing in, so the recall log now records it as
+  capped by the session budget where it used to record it as waiting for a
+  slot: counts of the two in that log are not comparable across this change.
+  The rules are defined in code only, so no adopter configuration changes
+  meaning.

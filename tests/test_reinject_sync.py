@@ -1282,10 +1282,11 @@ class TestSyncAdvisoriesLeaveTheSessionCap:
     """Root CLAUDE.md promises an edit-time advisory for every mirror row, and the
     rows shared the recall engine's five-fire session budget with every other
     non-exempt row: on the Windows box's logs 83% of their fires were capped. Each
-    row now splits into a source-side and a generated-side rule, derived from one
-    table, each cap_exempt with its scarcity in a once-per-session flag of its own
-    (so at most fourteen a session), and the per-turn slice orders by priority
-    alone, so an exempt sync row never displaces a correctness nudge."""
+    sync advisory (seven, some covering two registry rows) now splits into a
+    source-side and a generated-side rule, derived from one table, each cap_exempt
+    with its scarcity in a once-per-session flag of its own (so at most fourteen a
+    session), and the per-turn slice orders by priority alone, so an exempt sync
+    row never displaces a correctness nudge."""
 
     @staticmethod
     def _sides(r, session: Path) -> tuple[str, str, str]:
@@ -1316,10 +1317,13 @@ class TestSyncAdvisoriesLeaveTheSessionCap:
 
     #: Registry rows whose GENERATED side has no edit-time warning, each with its
     #: reason. Named, so a new row with a source-side advisory only reds below
-    #: instead of being skipped.
+    #: instead of being skipped, and the test below reds on an entry whose
+    #: generated side has started to warn, so the entry retires itself.
     _GENERATED_SIDE_SILENT = {
-        "vendor-cc": "espalier/_vendor/cc/ is write-guarded on the harness's own tree, "
-                     "and its mirror side was silent before DEF-4015 too",
+        "vendor-cc": "espalier/_vendor/cc/ is write-guarded on the harness's own tree "
+                     "except under maintenance mode, where an Edit of it is neither "
+                     "refused nor warned and the next sync discards it (DEF-2012); "
+                     "its mirror side was silent before DEF-4015 too",
     }
 
     @staticmethod
@@ -1344,7 +1348,7 @@ class TestSyncAdvisoriesLeaveTheSessionCap:
         """The row's own probe, as a test: with the session counter past the cap,
         every mirror row's source side names its mirror through a source-side rule
         and says nothing is discarded, and every generated side not named silent
-        warns through a generated-side rule."""
+        warns through a generated-side rule, while one named silent does not."""
         monkeypatch.setattr(_reinject, "_locked_increment", lambda *a, **k: 99)
         seen = self._emitted(monkeypatch)
         source_ids, generated_ids = self._side_ids()
@@ -1357,13 +1361,16 @@ class TestSyncAdvisoriesLeaveTheSessionCap:
             if (r.mirrors[0].rstrip("/") not in said or not set(seen) & source_ids
                     or "DISCARDED" in said):
                 wrong.append(f"{r.name} source ({probe}): {seen}")
-            if r.name in self._GENERATED_SIDE_SILENT:
-                continue
             session = self._fresh(tmp_path, f"gen{i}")
             self._sides(r, session)
             seen.clear()
             self._edit(twin, session, content)
-            if not set(seen) & generated_ids:
+            warned = bool(set(seen) & generated_ids)
+            if r.name in self._GENERATED_SIDE_SILENT:
+                if warned:
+                    wrong.append(f"{r.name} generated ({twin}) warns now: "
+                                 f"retire its _GENERATED_SIDE_SILENT entry")
+            elif not warned:
                 wrong.append(f"{r.name} generated ({twin}): {seen}")
         assert not wrong, f"not warned past the session cap, or by the wrong side: {wrong}"
 

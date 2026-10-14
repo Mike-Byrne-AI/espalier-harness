@@ -108,7 +108,7 @@ def test_per_turn_ceiling_caps_emit(tmp_path):
 
 
 def test_per_turn_ceiling_is_the_limiter(tmp_path, monkeypatch):
-    # Inject-and-restore: the [:CAP] slice (NOT some other mechanism) is what caps
+    # Inject-and-restore: the per-turn cap (NOT some other mechanism) is what caps
     # the emit. Raise the ceiling and all 3 rows emit -> proves the ceiling earns
     # its place (removing/loosening it changes the result).
     monkeypatch.setattr(_reinject, "REINJECT_PER_TURN_CAP", 10)
@@ -139,15 +139,39 @@ def test_priority_alone_cuts_the_per_turn_slice(tmp_path):
     assert len(out) == _reinject.REINJECT_PER_TURN_CAP  # 2
 
 
-def test_a_session_capped_row_takes_no_slot(tmp_path, monkeypatch):
+def test_a_session_capped_row_takes_no_slot(tmp_path, monkeypatch, telemetry_on):
     # Past the session cap a non-exempt row emits nothing, so it must not hold a
     # per-turn slot a lower-priority exempt row would speak in: the slice fills
     # with rows that speak (DEF-4015 failure-mode review, driven on a Write of
-    # tools/cc/hooks/_integrity.py with the counter spent).
+    # tools/cc/hooks/_integrity.py with the counter spent). The capped rows are
+    # logged as session-capped, never as waiting, and the exempt row that spoke
+    # spends its once flag.
     monkeypatch.setattr(_reinject, "_locked_increment", lambda *a, **k: 99)
-    rules = (_rule("N1", priority=90), _rule("N2", priority=85),
-             _rule("E", cap_exempt=True, priority=10))
+    exempt = _reinject.ReinjectRule(id="E", event="SessionStart", render=lambda *_: "E",
+                                    cap_exempt=True, once_per_session=True, priority=10)
+    rules = (_rule("N1", priority=90), _rule("N2", priority=85), exempt)
     assert _reinject.check("SessionStart", "", {}, tmp_path, rules=rules) == ["E"]
+    logged = {r["rid"]: r["disposition"] for r in _recall_rows(tmp_path)}
+    assert logged == {"N1": "session_capped", "N2": "session_capped", "E": "emitted"}
+    assert _reinject._once_flag(tmp_path, "E").exists()
+
+
+def test_one_call_spends_only_the_session_slots_it_fills(tmp_path, telemetry_on):
+    # A row waiting for a slot never spends a session slot: the slot check comes
+    # before the counter's increment. Checking the cap first would spend three of
+    # the five slots on an edit that shows two (DEF-4015 review round 2, driven:
+    # counter 3 -> 6). The real counter, not a stub, so the order is what's pinned.
+    rules = (_rule("N1", priority=90), _rule("N2", priority=85), _rule("N3", priority=80))
+    assert _reinject.check("SessionStart", "", {}, tmp_path, rules=rules) == ["N1", "N2"]
+    state = tmp_path / _reinject.STATE_DIR
+    assert _hook_utils._read_counter(state, _reinject.REINJECT_COUNTER) == 2
+    waiting = [r["rid"] for r in _recall_rows(tmp_path) if r["disposition"] == "per_turn_capped"]
+    assert waiting == ["N3"]
+    # A caller with no slots left asks, and spends nothing.
+    idle = tmp_path / "idle"
+    idle.mkdir()
+    assert _reinject.check("SessionStart", "", {}, idle, rules=rules, budget=0) == []
+    assert _hook_utils._read_counter(idle / _reinject.STATE_DIR, _reinject.REINJECT_COUNTER) == 0
 
 
 def test_session_cap_suppresses_nonexempt(tmp_path):
