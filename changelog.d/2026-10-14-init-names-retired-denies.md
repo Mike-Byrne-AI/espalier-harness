@@ -23,20 +23,19 @@
   and `--execute`) and `doctor` now name the rule only where the hooks run;
   elsewhere each names the hooks that do not run (the `upgrade` preview and
   an `--execute` that adds a hook event now say so too, where they said
-  nothing), and the run after the repair names the rule. A run asks the hook
-  interpreters once, so the warning and the "nothing to do" sentence cannot
-  disagree.
+  nothing), and the run after the repair names the rule. The warning, the
+  sentence that points at it and "nothing to do" share one read of the hooks,
+  so they cannot disagree.
 - **The retired-rule WARN no longer says `init` wrote a rule it may never have
   written.** The list matches by rule text, so a line the operator wrote by
   hand read the same as one an old `init` wrote, and `doctor`,
   `merge-settings`, `upgrade` and the re-run all said "the init command wrote
   it". They now say the line matches a deny rule `init` wrote through that
   version.
-- **`merge-settings` says "Nothing to do." only when there is nothing to do.**
-  On a file whose hook events were already current it printed the sentence
-  above a retired-rule warning, and above the warning that the hooks do not
-  run; `upgrade` has kept the sentence whole since 2026-09-29, and now
-  `merge-settings` does too.
+- **`merge-settings` no longer says "Nothing to do." above a retired-rule
+  warning or above the warning that the hooks do not run.** On a file whose
+  hook events were already current it printed the sentence above both;
+  `upgrade` stopped doing so on 2026-09-29, and now `merge-settings` has too.
 - **`upgrade --execute` reads the hooks back after it wires new events.** It
   said it had wired them and nothing more, even where the hooks cannot run
   (an interpreter the host lacks); like `init --wire-hooks` after the same

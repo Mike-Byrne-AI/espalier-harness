@@ -985,7 +985,8 @@ def _what_the_surface_says(surface: str, root: Path, capsys) -> str:
 
 
 # (surface, whether it needs drift to reach its report, whether the merge has an
-# event to add -- upgrade --execute's WIRED branch, which reads no armament of its own)
+# event to add -- upgrade --execute's WIRED branch; the event is Stop, a blocking
+# gate, so a read taken before the merge would see a disarmed tree)
 _RETIRED_RULE_SURFACES = [
     ("init", False, False), ("init --wire-hooks", False, False), ("merge-settings", False, False),
     ("doctor", False, False), ("upgrade, version-current", False, False),
@@ -1020,7 +1021,7 @@ class TestNoDeleteAdviceWhileTheHooksDoNotRun:
         if drop_event:
             settings = root / ".claude" / "settings.json"
             data = json.loads(settings.read_text(encoding="utf-8"))
-            data["hooks"].pop("SubagentStart")
+            data["hooks"].pop("Stop")  # a blocking gate: armed after the merge, not before
             settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
         if drift:
             (root / "docs" / "CHEAT-SHEET.md").unlink()
@@ -1137,7 +1138,7 @@ class TestUpgradeExecuteReadsTheArmamentAfterItWires:
         _rewire_every_hook(root, command)
         settings = root / ".claude" / "settings.json"
         data = json.loads(settings.read_text(encoding="utf-8"))
-        data["hooks"].pop("SubagentStart")
+        data["hooks"].pop("Stop")  # a blocking gate: armed after the merge, not before
         settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
         (root / "docs" / "CHEAT-SHEET.md").unlink()
         return root
@@ -1149,12 +1150,39 @@ class TestUpgradeExecuteReadsTheArmamentAfterItWires:
         assert "does not resolve" in said, said[-2500:]
 
     def test_an_armed_tree_is_not(self, tmp_path, capsys, monkeypatch):
+        """Armed by the merge itself (the Stop gate it adds): read before the
+        write, this tree would be told its hooks are not active."""
         from espalier.cli import _detect_python_command
 
         root = self._tree(tmp_path, monkeypatch, _detect_python_command())
         said = _what_the_surface_says("upgrade --execute", root, capsys)
         assert "into settings.json" in said, said[-2500:]
         assert "NOT yet active" not in said, said[-2500:]
+
+    def test_a_retired_rule_adds_no_armament_read(self, tmp_path, capsys, monkeypatch):
+        """The retired-rule gate reuses the read taken after the write, so a
+        run with the rule asks the interpreters no more often than one without."""
+        from espalier import cli
+        from espalier.cli import _detect_python_command
+
+        def reads(with_rule: bool, where: Path) -> int:
+            where.mkdir()
+            root = self._tree(where, monkeypatch, _detect_python_command())
+            if with_rule:
+                _plant_retired_rule(root)
+            real, calls = cli._enforcement_claim_blockers, []
+
+            def counting(*a, **k):
+                calls.append(1)
+                return real(*a, **k)
+
+            monkeypatch.setattr(cli, "_enforcement_claim_blockers", counting)
+            said = _what_the_surface_says("upgrade --execute", root, capsys)
+            monkeypatch.setattr(cli, "_enforcement_claim_blockers", real)
+            assert ("retired deny rule" in said) is with_rule, said[-2500:]
+            return len(calls)
+
+        assert reads(True, tmp_path / "with") == reads(False, tmp_path / "without")
 
 
 class TestEveryRetiredRuleReportGoesThroughTheGate:
@@ -1175,21 +1203,35 @@ class TestEveryRetiredRuleReportGoesThroughTheGate:
             yield rel, ast.parse(path.read_text(encoding="utf-8"))
 
     @staticmethod
-    def _gated_names(func) -> set[str]:
+    def _called(call, name: str) -> bool:
+        """``name(...)`` or ``module.name(...)``: doctor reaches cli by attribute."""
+        func = call.func
+        return getattr(func, "id", None) == name or getattr(func, "attr", None) == name
+
+    @classmethod
+    def _gated_names(cls, func) -> set[str]:
+        """Names bound from the gate and from nothing else in ``func``: a name
+        later rebound to the raw list is not gated."""
         import ast
 
-        names = set()
+        from_gate, from_other = set(), set()
         for node in ast.walk(func):
+            targets = (node.targets if isinstance(node, ast.Assign)
+                       else [node.target] if isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.For))
+                       else [])
+            names = {t.id for t in targets if isinstance(t, ast.Name)}
             if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
-                    and getattr(node.value.func, "id", None) == "_retired_rules_to_name"):
-                names.update(t.id for t in node.targets if isinstance(t, ast.Name))
-        return names
+                    and cls._called(node.value, "_retired_rules_to_name")):
+                from_gate |= names
+            else:
+                from_other |= names
+        return from_gate - from_other
 
     @classmethod
     def _is_gated(cls, value, gated: set[str]) -> bool:
         import ast
 
-        if isinstance(value, ast.Call) and getattr(value.func, "id", None) == "_retired_rules_to_name":
+        if isinstance(value, ast.Call) and cls._called(value, "_retired_rules_to_name"):
             return True
         return isinstance(value, ast.Name) and value.id in gated
 
@@ -1203,14 +1245,30 @@ class TestEveryRetiredRuleReportGoesThroughTheGate:
                     continue
                 gated = self._gated_names(func)
                 for call in ast.walk(func):
-                    if isinstance(call, ast.Call) and getattr(call.func, "id", None) == "_report_allow_gaps":
+                    if isinstance(call, ast.Call) and self._called(call, "_report_allow_gaps"):
                         for kw in call.keywords:
-                            if kw.arg == "stale":
+                            if kw.arg is None:  # **kwargs could carry stale= past the census
+                                bad.append(f"{rel}:{call.lineno} (**)")
+                            elif kw.arg == "stale":
                                 seen += 1
                                 if not self._is_gated(kw.value, gated):
                                     bad.append(f"{rel}:{kw.value.lineno}")
         assert seen >= 5, seen
         assert not bad, f"stale= not from _retired_rules_to_name at {sorted(set(bad))}"
+
+    def test_no_gate_call_hands_it_a_literal_armament(self):
+        """``blockers=[]`` written into the engine would wave every tree through."""
+        import ast
+
+        bad = []
+        for rel, tree in self._engine_modules():
+            for call in ast.walk(tree):
+                if isinstance(call, ast.Call) and self._called(call, "_retired_rules_to_name"):
+                    for kw in call.keywords:
+                        if kw.arg == "blockers" and isinstance(
+                                kw.value, (ast.List, ast.Tuple, ast.Constant)):
+                            bad.append(f"{rel}:{kw.value.lineno}")
+        assert not bad, bad
 
     def test_the_warn_text_lives_in_two_places_and_doctor_loops_a_gated_list(self):
         import ast

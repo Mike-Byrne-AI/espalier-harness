@@ -9282,15 +9282,16 @@ def _disarmed_diagnosis(repo_root: Path) -> tuple[str, list[str]]:
     return reason, remedies
 
 
-def _unverifiable_settings_warning(settings_path: Path) -> str:
+def _unverifiable_settings_warning(settings_path: Path, *, prefix: str = "merge-settings") -> str:
     """WARN for the case where the wired settings cannot be read back.
 
     Withholding the enforcement claim is the whole point: the operator gets a
     smaller, honest statement instead of a confident wrong one. Not a refusal --
     the merge itself already succeeded and the file on disk is correct.
+    ``prefix`` names the command the operator ran.
     """
     return (
-        "merge-settings: WARNING -- could not re-read "
+        f"{prefix}: WARNING -- could not re-read "
         f"{settings_path} to confirm the wired hooks resolve, so enforcement "
         "state is UNVERIFIED. The merge itself succeeded. Check the file is "
         f"valid JSON, then run `{_remedy_py()} -m espalier doctor .`"
@@ -10475,9 +10476,15 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # (_retired_rules_to_name); when one is held back, say why, so the
             # preview is not silent about a tree whose guards do not run.
             preview_blockers: object = _ARMAMENT_UNREAD
-            if settings_stale_denies(settings_path):
+            preview_stale = settings_stale_denies(settings_path) or ()
+            if preview_stale:
                 preview_blockers = _enforcement_claim_blockers(repo_root, settings_path)
-                if preview_blockers != []:
+                # Exactly when the gate holds the rule back (no Espalier hooks
+                # wired, or wired hooks that do not run), not merely when the
+                # armament read finds fault.
+                if not _retired_rules_to_name(preview_stale, repo_root=repo_root,
+                                              settings_path=settings_path,
+                                              blockers=preview_blockers):
                     print(_disarmed_hook_tree_warning(
                         repo_root, prefix="[upgrade]", wrote_settings=False,
                     ), file=sys.stderr)
@@ -10499,10 +10506,14 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 # the retired-rule gate's below.
                 exec_blockers = _enforcement_claim_blockers(repo_root, settings_path)
                 if exec_blockers is None:
-                    print(_unverifiable_settings_warning(settings_path), file=sys.stderr)
+                    print(_unverifiable_settings_warning(settings_path, prefix="[upgrade]"),
+                          file=sys.stderr)
                 elif exec_blockers:
+                    # "Wired anyway" only when this write wired hook events, not
+                    # a statusLine-only top-up.
                     print(_disarmed_hook_tree_warning(
-                        repo_root, prefix="[upgrade]", wrote_settings=True,
+                        repo_root, prefix="[upgrade]",
+                        wrote_settings=bool(merge_result.event_count),
                     ), file=sys.stderr)
             elif merge_result.status == MERGE_ALREADY:
                 # "Current" is the merge's word for "every event carries an
