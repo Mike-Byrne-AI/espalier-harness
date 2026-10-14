@@ -1,11 +1,16 @@
 {
  "id": "DEF-682",
- "subject": "tools/cc/hooks/_reinject.py",
- "cmd": "python3 -c \"import sys,pathlib;sys.path.insert(0,'tools/cc/hooks');import _reinject as R;root=pathlib.Path('.');b=R._render_docs_asset_sync('Bash',{'command':'python3 patch.py docs/FAILURE_MODES.md'},root);e=R._render_docs_asset_sync('Edit',{'file_path':'docs/FAILURE_MODES.md'},root);print('bash_write_advisory='+str(b is not None)+' edit_advisory='+str(e is not None)+' cap_exempt='+str(R.DOCS_ASSET_SYNC_RULE.cap_exempt))\"",
- "open_value": "bash_write_advisory=False edit_advisory=True cap_exempt=False",
- "row_sha": "8cc6d8f5191e",
+ "subject": "tools/cc/hooks/post_write_check.py",
+ "cmd": "python -c \"import sys, tempfile, pathlib, subprocess; sys.path.insert(0, 'tools/cc/hooks'); import post_write_check as p; root = pathlib.Path(tempfile.mkdtemp()); (root / 'docs').mkdir(); (root / 'docs' / 'FAILURE_MODES.md').write_text('x', encoding='utf-8'); subprocess.run(['git', 'init', '-q', str(root)], check=True); print(not p._bash_derived_payloads({'command': 'python3 patch.py docs/FAILURE_MODES.md'}, root, already=0))\"",
+ "open_value": "True",
+ "row_sha": "5f73fd7d57b9",
  "verified_2026_09_04": "STILL_OPEN (driven: Edit renders, Bash write renders None, rule not cap_exempt)",
  "why_not": null,
- "text_sha": "828426f4074f",
- "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+ "text_sha": "f0fbd3655fc8",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "inputs": [
+  "tools/cc/hooks/_bash_patterns.py",
+  "tools/cc/hooks/_reinject.py"
+ ],
+ "verified_2026_10_14": "STILL_OPEN (re-pinned 'bash_write_advisory=False edit_advisory=True cap_exempt=False' -> 'True'; subject 'tools/cc/hooks/_reinject.py' -> 'tools/cc/hooks/post_write_check.py'; inputs None -> ['tools/cc/hooks/_bash_patterns.py', 'tools/cc/hooks/_reinject.py'] on 2026-10-14: DEF-4015 made DOCS_ASSET_SYNC_RULE cap_exempt (the old probe's third field moved from False to True), closing the cap half; the Bash half stands for a script's writes, now measured through post_write_check's Bash bridge, which carries redirects, heredocs and sed -i but not a path handed to a script, so the probe drives the bridge instead of the render)"
 }
