@@ -64,6 +64,58 @@ _COMMITTED_SURFACE: tuple[str, ...] = (
     _paths.PACK_MANIFEST_REL,
     "tools/cc/cognitive_blueprint.py",
 )
+# The required paths a linked worktree is given a copy of: the gitignored
+# entries of init's `.worktreeinclude` (espalier.cli.WORKTREE_INCLUDE_ENTRIES,
+# which this module cannot import; tests/test_worktree_seat.py holds the two
+# equal). A seat that lacks one while its main checkout has it is told to copy
+# it from there.
+_COPIED_INTO_A_SEAT: tuple[str, ...] = (
+    ".claude/settings.json",
+    "reports/repo_fingerprint.json",
+    "reports/harness_config.json",
+)
+# The gitignored required paths a linked worktree never receives a copy of, each
+# with what writes it: the surface gate's RESULT, a verdict about the tree it was
+# written on. A copy would show the main checkout's verdict as the seat's own, so
+# in a seat its absence reads "not generated in this worktree yet", with its
+# writer (driven 2026-10-13: /status called every fresh seat DEGRADED). Named by
+# its slash command, not the bare `espalier` console script, which runs whichever
+# checkout the install names. Every gitignored required path is in exactly one
+# of these two rosters (pinned in tests/test_worktree_seat.py).
+_NOT_COPIED_INTO_A_SEAT: "dict[str, str]" = {
+    "reports/cc_surface_gate.json": "/smoke (its `-m espalier audit .` step)",
+}
+
+
+def _linked_worktree_main(repo_root: Path) -> "Path | None":
+    """The main checkout of the linked worktree rooted at ``repo_root``, or None.
+
+    A linked worktree's ``.git`` is a FILE, ``gitdir: <main>/.git/worktrees/<name>``.
+    None for a main checkout (a ``.git`` directory), a submodule (its gitlink
+    names ``.git/modules/...``), a gitlink whose admin directory is gone (an
+    export that carried one), and anything unreadable. A relative gitdir is read
+    against ``repo_root``, never the process's directory. No git is run. A
+    worktree of a bare repository has no main checkout to judge against and is
+    None too. The same rule as ``espalier._safe_walk.linked_worktree_main`` and
+    the hooks' ``_integrity._linked_worktree_main`` -- this module imports
+    neither -- held to both by tests/test_worktree_seat.py.
+    """
+    marker = repo_root / ".git"
+    try:
+        if not os.path.isfile(marker):
+            return None
+        lines = marker.read_text(encoding="utf-8", errors="replace").splitlines()
+    except (OSError, ValueError):
+        return None
+    first = lines[0].strip() if lines else ""
+    if not first.startswith("gitdir:"):
+        return None
+    target = Path(os.path.normpath(repo_root / first[len("gitdir:"):].strip()))
+    if target.parent.name != "worktrees" or target.parent.parent.name != ".git":
+        return None
+    if not os.path.isdir(target):
+        return None
+    return target.parent.parent.parent
 
 
 def _load_json_safe(path: Path) -> "dict[str, Any] | None":
@@ -224,9 +276,38 @@ def assess_repo_state(repo_root: Path) -> "dict[str, Any]":
     # repo_mode.detect_repo_mode's source_checkout branch. An *uninitialized*
     # repo (no committed surface either) is NOT a source checkout and still
     # DEGRADEs, preserving test_empty_repo_surface_is_degraded.
-    has_runtime = any((repo_root / m).exists() for m in _RUNTIME_MARKERS)
+    #
+    # A linked worktree checks out tracked files only, and its runtime files
+    # are copies of its main checkout's (`.worktreeinclude`), so it is
+    # initialized where its main checkout is. Judged on its own files, a seat
+    # whose copies never arrived read as a fresh clone: healthy, and told to
+    # run `espalier init .`, which redeploys the harness into the seat.
+    seat_main = _linked_worktree_main(repo_root)
+    has_runtime = any((repo_root / m).exists() for m in _RUNTIME_MARKERS) or (
+        seat_main is not None
+        and any(os.path.exists(seat_main / m) for m in _RUNTIME_MARKERS)
+    )
     has_committed = any((repo_root / s).exists() for s in _COMMITTED_SURFACE)
     is_source_checkout = has_committed and not has_runtime
+
+    # In an initialized seat, a required record no worktree is ever given is
+    # this checkout's own and not written yet: a note with its command, never
+    # damage. A required file the seat lacks while its main checkout has it is
+    # a copy that never arrived, named from there. A corrupt record the seat
+    # did write still fails below (it is `present`, so the unreadable checks
+    # see it).
+    not_generated_here: list[str] = []
+    copy_from_main: list[str] = []
+    if seat_main is not None and not is_source_checkout:
+        not_generated_here = [p for p in missing if p in _NOT_COPIED_INTO_A_SEAT]
+        missing = [p for p in missing if p not in _NOT_COPIED_INTO_A_SEAT]
+        manifest_missing = [p for p in manifest_missing if p not in _NOT_COPIED_INTO_A_SEAT]
+        # The include's own entries only: a TRACKED file missing here was
+        # deleted in the seat, and its fix is git's, not a copy.
+        copy_from_main = [
+            p for p in missing
+            if p in _COPIED_INTO_A_SEAT and os.path.exists(seat_main / p)
+        ]
 
     # F7 (CV2): a present-but-corrupt required JSON report (repo_fingerprint /
     # harness_config / settings) is counted in `present`, not `missing`, and — unlike
@@ -290,7 +371,24 @@ def assess_repo_state(repo_root: Path) -> "dict[str, Any]":
             "the expected pre-init state, not a degraded surface."
         )
     elif missing:
-        recommendations.append("rebuild or re-audit the CC surface before continuing")
+        if copy_from_main:
+            # The words are checkout_wiring_notice's (tools/cc/hooks/_integrity.py),
+            # which SessionStart, ship and execution_plan print for the same
+            # state, so two tools never give two fixes for one seat.
+            copy_line = (
+                "a linked worktree checks out tracked files only: copy "
+                + ", ".join(str(seat_main / p) for p in copy_from_main)
+                + " here (.worktreeinclude copies them into a worktree Claude Code "
+                "creates, not into one that already exists)"
+            )
+            if ".claude/settings.json" in copy_from_main:
+                copy_line += (
+                    "; until the settings file is here, a session launched in this "
+                    "worktree loads none of the harness's hooks"
+                )
+            recommendations.append(copy_line)
+        if len(copy_from_main) < len(missing):
+            recommendations.append("rebuild or re-audit the CC surface before continuing")
     if plan_missing:
         recommendations.append("regenerate docs promised by reports/harness_config.json")
     if manifest_missing:
@@ -306,6 +404,15 @@ def assess_repo_state(repo_root: Path) -> "dict[str, Any]":
             "surface looks coherent; read ESPALIER_MEMORY.md, cc/LIVE_SURFACE.md, "
             "cc/COMMANDS.md, and cc/SURFACE_HANDOFF.md if present before resuming"
         )
+    # After the coherent-surface line, never before it: /context-load prints
+    # the first recommendation as NEXT, and a seat's next step is still the
+    # orientation reads; the audit is a note beside them.
+    for rel in not_generated_here:
+        recommendations.append(
+            f"this worktree's {rel} is not generated yet (per checkout, never "
+            f"copied into a worktree): {_NOT_COPIED_INTO_A_SEAT[rel]} run here "
+            "writes it"
+        )
 
     return {
         "status": status,
@@ -313,6 +420,9 @@ def assess_repo_state(repo_root: Path) -> "dict[str, Any]":
         "repo_root": str(repo_root),
         "present": present,
         "missing": missing,
+        # A seat's own records not written yet (see _NOT_COPIED_INTO_A_SEAT):
+        # absent, but neither `missing` nor a fail reason.
+        "not_generated_here": not_generated_here,
         "plan_missing_docs": plan_missing,
         "manifest_missing_docs": manifest_missing,
         "surface_gate_status": surface_gate_status,
@@ -361,6 +471,14 @@ def render_status_report(report: "dict[str, Any]") -> str:
     missing = report.get("missing", [])
     if missing:
         lines.append(f"MISSING:  {', '.join(missing[:3])}{'...' if len(missing) > 3 else ''}")
+    not_here = report.get("not_generated_here", [])
+    if not_here:
+        # Under an `if`, like MISSING: a conditional label, which
+        # tests/test_demo_end_to_end.py derives from this shape and holds to
+        # bench/demo/RECORDING.md's troubleshooting table.
+        for rel in not_here:
+            writer = _NOT_COPIED_INTO_A_SEAT.get(rel, "its generator")
+            lines.append(f"PENDING:  {rel} (this worktree's own; {writer} writes it)")
     return "\n".join(lines) + "\n"
 
 

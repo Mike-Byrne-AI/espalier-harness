@@ -1204,6 +1204,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # worktree (its .git a gitlink file) reads as a checkout of its own
             # is a fact about real `git init` and `git worktree add` output.
             "test_repo_mode",
+            # The same fact read by resume, `integrity verify` and the hooks'
+            # banner: what a fresh seat holds is what real git checks out.
+            "test_worktree_seat",
         ),
         "integration",
     ),

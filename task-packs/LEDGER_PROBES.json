@@ -3093,16 +3093,6 @@
    "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
   },
   {
-   "id": "DEF-3001",
-   "subject": "espalier/repo_mode.py",
-   "cmd": "python -c \"import tempfile,subprocess,pathlib as P;from espalier.repo_mode import list_tracked_or_walked_files as L;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);m=P.Path(T.name)/'main';g=lambda *a,c=m:subprocess.run(['git','-C',str(c),*a],check=True,capture_output=True);m.mkdir();g('init','-q');(m/'.gitignore').write_text('ignored.log\\n',encoding='utf-8');(m/'kept.txt').write_text('x',encoding='utf-8');g('add','.');g('-c','user.email=t@t','-c','user.name=t','commit','-q','-m','x');w=P.Path(T.name)/'wt';g('worktree','add','-q','--detach',str(w));(w/'ignored.log').write_text('local',encoding='utf-8');n='ignored.log';files,src=L(w);print('source='+src+' ignored_listed='+str(n in files))\"",
-   "open_value": "source=filesystem ignored_listed=True",
-   "why_not": null,
-   "row_sha": "b56df90a6248",
-   "text_sha": "655fa606e8a8",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
-  },
-  {
    "id": "DEF-4010",
    "subject": "scripts/derived_population_census.py",
    "cmd": null,
