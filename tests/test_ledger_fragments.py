@@ -2004,6 +2004,23 @@ def _git_here(*args: str) -> subprocess.CompletedProcess:
                           encoding="utf-8", errors="replace", timeout=45, check=False)
 
 
+#: The fold's commit: the data move alone, 2026-10-14. Named, never found as
+#: "the latest commit that deleted the roster": a later commit that deletes it
+#: again (a pre-fold lane's catch-up repaired by a new commit) would stand in
+#: for it and compare two folded trees.
+_FOLD_COMMIT = "5b04f16a9d7a4907607530db524643333fd75325"
+
+
+def _folded() -> bool | None:
+    """Whether this tree's history holds the fold: True or False, or None when
+    git cannot say (no git, a shallow clone, a release export's seeded history,
+    an adopter's repository). Decided by history, never by the
+    ``ledger_fragments`` setting, whose flip the live pin exists to catch."""
+    if _git_here("cat-file", "-e", f"{_FOLD_COMMIT}^{{commit}}").returncode != 0:
+        return None
+    return _git_here("merge-base", "--is-ancestor", _FOLD_COMMIT, "HEAD").returncode == 0
+
+
 def _parts_at(frag, trend, commit: str):
     """The view's parts at ``commit``: the two files (the roster absent after
     the fold) and the row and probe files beside them, read from git."""
@@ -2025,16 +2042,14 @@ class TestTheFold:
     files by id."""
 
     def test_the_views_at_the_fold_commit_are_equal_row_for_row(self, frag, trend):
-        if (REPO_ROOT / _ROSTER_REL).is_file():
-            pytest.skip("this tree keeps its roster file: it has not folded (an adopter tree)")
-        found = _git_here("log", "--diff-filter=D", "--format=%H", "-1", "--", _ROSTER_REL)
-        fold = found.stdout.strip()
-        if not fold:
-            shallow = _git_here("rev-parse", "--is-shallow-repository").stdout.strip()
-            pytest.skip("no commit in reach deleted the roster file "
-                        + ("(a shallow clone: the fold is past its history)" if shallow == "true"
-                           else "(a tree that never had one, or a release export's seeded history)"))
-        before, after = _parts_at(frag, trend, f"{fold}^"), _parts_at(frag, trend, fold)
+        folded = _folded()
+        if folded is None:
+            pytest.skip("git cannot reach the fold's commit here (no git, a shallow clone, a release "
+                        "export's seeded history, or another repository)")
+        if not folded:
+            pytest.skip("this tree's history does not hold the fold (a lane branched before it)")
+        before = _parts_at(frag, trend, f"{_FOLD_COMMIT}^")
+        after = _parts_at(frag, trend, _FOLD_COMMIT)
         assert not before[3] and not after[3], (before[3][:5], after[3][:5])
         assert before[0] == after[0], "a line that is not a row moved or changed at the fold"
         assert before[1] == after[1], "a class table's rows or Appendix B's differ before and after the fold"
@@ -2062,22 +2077,33 @@ class TestTheFold:
         the roster file is gone, so a lane branched before the fold cannot bring
         a legacy row or the roster back unseen (the loader would read the row
         twice, or the roster beside its probe files). Each class table and
-        Appendix B keep the header and rule the view places rows under."""
-        on, _how = frag.ledger_fragments_setting(REPO_ROOT)
-        if not on or not (REPO_ROOT / "task-packs" / "probes.d" / "README.md").is_file():
-            pytest.skip("this tree keeps its rows in the ledger file (it has not opted in, or not folded)")
+        Appendix B keep the header and rule the view places rows under. Whether
+        the tree has folded is read from history, so turning
+        ``ledger_fragments`` off, which sends the verbs back to the big files,
+        reds here instead of skipping (failure-mode review, driven 2026-10-14)."""
+        folded = _folded()
+        if folded is None:
+            pytest.skip("git cannot reach the fold's commit here (no git, a shallow clone, a release "
+                        "export's seeded history, or another repository)")
+        if not folded:
+            pytest.skip("this tree's history does not hold the fold (a lane branched before it)")
+        on, how = frag.ledger_fragments_setting(REPO_ROOT)
+        assert on, (f"ledger_fragments is off ({how}), so the ledger verbs write rows and the roster back "
+                    "into the big files the fold emptied: set `ledger_fragments = true` in espalier.toml")
         assert not (REPO_ROOT / _ROSTER_REL).exists(), (
-            f"{_ROSTER_REL} is back: a lane branched before the fold brought it in. Its probes live "
-            "in task-packs/probes.d/ now; delete the file")
+            f"{_ROSTER_REL} is back: a lane branched before the fold kept it at its catch-up. Its probes "
+            "live in task-packs/probes.d/ now: `git rm` the file and amend the catch-up merge, then re-run "
+            "that lane's ledger verb (file, strike, repin) on the merged tree")
         text = (REPO_ROOT / _LEDGER_REL).read_bytes().decode("utf-8").replace("\r\n", "\n")  # ledger-read: the file's own lines, which must hold no row after the fold
         lines = text.split("\n")
         bounds = frag._section_bounds(lines)
-        legacy =[lines[j][:60] for start, end in bounds.values() for j in range(start, end) if frag.row_ids(lines[j])]
+        legacy = [lines[j][:60] for start, end in bounds.values() for j in range(start, end) if frag.row_ids(lines[j])]
         app = next(i for i, ln in enumerate(lines) if ln.startswith("## Appendix B"))
         end = next((j for j in range(app + 1, len(lines)) if lines[j].startswith("## ")), len(lines))
         legacy += [lines[j][:60] for j in range(app + 1, end) if frag._APPENDIX_B_ROW_RE.match(lines[j])]
         assert not legacy, (f"{len(legacy)} row(s) in {_LEDGER_REL} itself: every row lives in "
-                            f"task-packs/ledger.d/ since the fold; move them there: {legacy[:3]}")
+                            "task-packs/ledger.d/ since the fold; take main's side for the file in the "
+                            f"catch-up merge and re-run that lane's ledger verb on the merged tree: {legacy[:3]}")
         unplaceable = [s for s, (start, end) in bounds.items()
                        if frag._table_end(lines, start, end, frag._MEMBER_ROW_RE) is None]
         assert not unplaceable, f"class sections with no table for the view to place rows in: {unplaceable}"
