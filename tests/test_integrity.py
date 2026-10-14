@@ -1580,6 +1580,10 @@ class TestCheckoutWiringNotice:
         root = tmp_path / "wt"
         write_wired_settings(root, settings=False)
         main = tmp_path / "main"
+        # The admin directory `git worktree add` creates: a gitlink naming one
+        # that is gone (an export, a moved main checkout) is no seat, and the
+        # generic copy line would stand without it (tests/test_worktree_seat.py).
+        (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
         (root / ".git").write_text(f"gitdir: {main / '.git' / 'worktrees' / 'wt'}\n", encoding="utf-8")
         line = _integrity.checkout_wiring_notice(root)
         assert line is not None

@@ -31,7 +31,12 @@ import os
 from pathlib import Path
 
 from espalier import surface_contract
-from espalier._safe_walk import DEPENDENCY_TREE_DIRS, dependency_dirs_for, has_git_entry
+from espalier._safe_walk import (
+    DEPENDENCY_TREE_DIRS,
+    dependency_dirs_for,
+    has_git_entry,
+    linked_worktree_main,
+)
 
 
 # Repo mode classifier. The four modes have different validation
@@ -76,6 +81,31 @@ def runtime_marker_paths() -> tuple[str, ...]:
     markers an uninstall leaves behind (``doctor``, DEF-770) reads the same
     tuple the detector does rather than a copy."""
     return _RUNTIME_MARKERS
+
+
+def initialized_seat(repo_root: Path) -> tuple[Path, bool] | None:
+    """``(main checkout, wired)`` when ``repo_root`` is a linked worktree of an
+    initialized checkout, else None. ``wired`` says whether the seat holds its
+    own copy of the project settings file, without which a Claude Code session
+    launched there loads none of the hooks.
+
+    A worktree checks out tracked files only, so its runtime files are copies of
+    its main checkout's and it is initialized where it or that checkout is --
+    the rule ``tools/cc/session_resume.py`` reads a seat by (a seat holding its
+    copies reads initialized whatever its main checkout holds now; driven
+    2026-10-13 on a seat of a checkout with none). :func:`detect_repo_mode`
+    still reads the seat's own files (a seat whose settings were copied reads
+    initialized, correctly; pinned in tests/test_worktree_seat.py); this answers
+    the seat question beside it, so a seat whose copies never arrived is not
+    read as a fresh clone and sent to ``espalier init``, which would redeploy
+    the harness into it. ``os.path`` throughout (DEF-763).
+    """
+    main = linked_worktree_main(repo_root)
+    if main is None or not any(
+        os.path.exists(root / m) for root in (repo_root, main) for m in _RUNTIME_MARKERS
+    ):
+        return None
+    return main, os.path.exists(repo_root / ".claude" / "settings.json")
 
 
 def detect_repo_mode(repo_root: Path) -> str:

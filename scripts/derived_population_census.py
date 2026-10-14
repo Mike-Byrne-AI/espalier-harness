@@ -1503,6 +1503,33 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "MIXED",
         "scripts/wheel_smoke.py:443-457 — `extra_helpers = helper_names - set(EXPECTED_HOOK_HELPERS)` ...",
     ),
+    "tests/test_worktree_seat.py": (
+        5, "edb59aaf00d73300bb5965a62702e14e7fa468246487aa4d2ca696e629fdd1f7",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-10-13 (lane/worktree-seat-resume). The comprehension over "
+        "WORKTREE_INCLUDE_ENTRIES (TestTheSeatRosters.test_the_copied_roster_is_"
+        "inits_include): CORRECT_BY_REMEDY -- it IS the pin, "
+        "tests/test_worktree_seat.py:123: tuple-equality of resume's hand-kept "
+        "_COPIED_INTO_A_SEAT against the engine's include roster filtered to "
+        "REQUIRED_PATHS, so a new include entry, or one dropped, reds here rather "
+        "than leaving a seat told to rebuild what it should copy. The for-assert "
+        "over REQUIRED_PATHS (test_every_gitignored_required_path_is_in_exactly_"
+        "one_roster, tests/test_worktree_seat.py:133): CORRECT_BY_REMEDY -- a "
+        "partition pin over the live tuple, "
+        "each member classified by init's REQUIRED_GITIGNORE, so a new gitignored "
+        "required path in neither roster reds (driven by the failure-mode review "
+        "2026-10-13 with reports/surface_index.json patched in); an empty "
+        "REQUIRED_PATHS would pass it vacuously, but resume's own suite asserts on "
+        "named members. The for-assert over _NOT_COPIED_INTO_A_SEAT.items(): "
+        "CORRECT_BY_PROPERTY -- every writer is a slash command, a property each "
+        "present member must hold; its membership is pinned by the partition row "
+        "above. The comprehension and for-plain over INCLUDED (_main_checkout): "
+        "CORRECT_BY_PROPERTY -- FIXTURES that write the include and the main "
+        "checkout's runtime files from the engine's roster, so the seat the rows "
+        "drive carries exactly what Claude Code copies; growth keeps that, and "
+        "an empty roster fails the rows' own asserts on the settings path rather "
+        "than passing.",
+    ),
     "tests/test_write_guard.py": (
         31, "266c49e166d363e66692a91241b88bed854db9e2b9dc5b2a61630c5523058ff2",
         "CORRECT_BY_REMEDY",
