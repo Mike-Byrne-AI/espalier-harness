@@ -42,12 +42,6 @@ EXEMPT: dict[tuple[str, str], str] = {
     ("test_python_floor.py", "test_a_lone_failed_probe_is_still_reported"):
         "a shebang naming no interpreter: the failed exec is its subject",
 }
-#: Writers in files #207's diff holds, converted when this lane catches up.
-PENDING_CATCH_UP: dict[tuple[str, str], str] = {
-    ("test_hooks.py", "test_interpreter_identity_two_copy_parity"): "tests/test_hooks.py is in #207's diff",
-    ("test_surface_contract.py", "test_one_unnameable_file_does_not_empty_the_index"):
-        "tests/test_surface_contract.py is in #207's diff",
-}
 
 _EXEC_BITS = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
 _EXEC_NAMES = re.compile(r"\bS_I(EXEC|XUSR|XGRP|XOTH|RWXU)\b")
@@ -132,7 +126,7 @@ class TestEveryStandInIsWarmed:
         """Dies to: a builder or a test that writes an executable stub and
         chmods it itself (the warm-up dropped)."""
         stray = [f"tests/{f}:{line} in {fn}" for f, fn, line in _census()
-                 if (f, fn) not in EXEMPT and (f, fn) not in PENDING_CATCH_UP]
+                 if (f, fn) not in EXEMPT]
         assert not stray, (
             "these write an executable stand-in without tests._stubs.write_stub, so a "
             "timed probe can meet it cold (its first exec crossed a 1.0 s cap under a "
@@ -142,7 +136,7 @@ class TestEveryStandInIsWarmed:
     def test_every_exemption_still_names_a_writer(self):
         """An exemption whose writer is gone is a hole waiting for a new one."""
         found = {(f, fn) for f, fn, _ in _census()}
-        stale = sorted(set(EXEMPT) - found) + sorted(set(PENDING_CATCH_UP) - found)
+        stale = sorted(set(EXEMPT) - found)
         assert not stale, f"exempted writers no longer write a stub: {stale}"
 
     def test_the_census_sees_the_writers_it_guards(self):
