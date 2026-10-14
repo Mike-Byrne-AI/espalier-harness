@@ -2559,16 +2559,20 @@ class TestReadmeDoctorExampleMatchesLiveOutput:
         )
         assert self._extract_top_level_keys_from_demo(only) >= {"status", "checks"}
 
-    def test_readme_doctor_keys_subset_of_live(self):
+    def test_readme_doctor_keys_subset_of_live(self, initialized_repo_root):
         text = _read(self.README)
         demo_keys = self._extract_top_level_keys_from_demo(text)
         assert demo_keys, (
             "Cannot locate or parse README doctor demo. If the demo was "
             "removed, delete this test."
         )
+        # On the init'd copy, as its QUICKSTART twin runs: doctor runs the
+        # surface gate whenever the surface is present, `--skip-self-host` or
+        # not, and on the live root that rewrites reports/cc_surface_gate.json
+        # under a sibling worker's live-tree guard (DEF-973).
         result = subprocess.run(
             [sys.executable, "-m", "espalier.cli", "doctor",
-             str(REPO_ROOT), "--skip-self-host"],
+             str(initialized_repo_root), "--skip-self-host"],
             capture_output=True,
             text=True, encoding="utf-8",
         )

@@ -70,17 +70,21 @@ class TestManagedPathsReadsFromContract:
 class TestDoctorReadsRequiredFromContract:
     """doctor must read required-init files from surface_contract, not hardcode."""
 
-    def test_doctor_required_includes_contract_required(self):
+    # Both rows run doctor on the init'd copy, never the live root: doctor runs
+    # the surface gate, which rewrites the live reports/ under a sibling xdist
+    # worker's live-tree guard (DEF-973; this class's first row errored that
+    # way in a fresh worktree's tier, 2026-10-14).
+    def test_doctor_required_includes_contract_required(self, initialized_repo_root):
         """Every file the contract marks as required-for-init appears in doctor's
         required list."""
-        report = doctor.run_doctor_check(REPO_ROOT)
+        report = doctor.run_doctor_check(initialized_repo_root)
         required = set(report["checks"]["presence"]["required"])
         for rel in surface_contract.get_required_init_files():
             assert rel in required, (
                 f"doctor required-list is missing contract-required file: {rel}"
             )
 
-    def test_doctor_follows_monkeypatched_contract(self, monkeypatch):
+    def test_doctor_follows_monkeypatched_contract(self, monkeypatch, initialized_repo_root):
         """Monkeypatch the contract and confirm doctor reports what the contract says.
 
         If doctor hardcoded its own required list, monkeypatching the contract
@@ -90,7 +94,7 @@ class TestDoctorReadsRequiredFromContract:
         monkeypatch.setattr(
             surface_contract, "get_required_init_files", lambda: sentinel
         )
-        report = doctor.run_doctor_check(REPO_ROOT)
+        report = doctor.run_doctor_check(initialized_repo_root)
         required = report["checks"]["presence"]["required"]
         assert "cc/__SENTINEL_REQUIRED__.md" in required, (
             "doctor ignored monkeypatched contract — it is not reading from "

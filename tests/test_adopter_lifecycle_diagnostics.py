@@ -978,10 +978,9 @@ def _run_smoke_check_with_python(number: int, tree: Path, shim_dir: Path) -> str
     may answer only to ``python3`` (the DEF-999 ledger probe shims it the
     same way)."""
     shim_dir.mkdir(parents=True, exist_ok=True)
-    shim = shim_dir / "python"
-    shim.write_text(
-        "#!/bin/sh\nexec \"%s\" \"$@\"\n" % sys.executable.replace("\\", "/"), encoding="utf-8")
-    shim.chmod(0o755)
+    from tests._stubs import write_stub
+    shim = write_stub(shim_dir / "python",
+                      "#!/bin/sh\nexec \"%s\" \"$@\"\n" % sys.executable.replace("\\", "/"))
     env = dict(os.environ)
     env["PATH"] = str(shim_dir) + os.pathsep + env.get("PATH", "")
     result = subprocess.run(

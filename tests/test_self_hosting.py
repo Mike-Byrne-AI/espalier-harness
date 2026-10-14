@@ -30,8 +30,14 @@ REPO_ROOT = Path(__file__).parent.parent
 
 
 class TestRunSelfHostCheck:
-    def test_returns_dict(self):
-        result = run_self_host_check(REPO_ROOT)
+    # The live-root calls in this class and TestMainExitCode run on the
+    # `initialized_repo_root` fixture (an init'd copy of this tree), never on
+    # REPO_ROOT: on an initialized checkout auto mode runs the surface gate,
+    # which rewrites reports/cc_surface_gate.json through a temp file beside it,
+    # and a sibling xdist worker's live-tree guard watching reports/ errors at
+    # teardown (DEF-973; tests/test_live_root_gate_writers.py pins it).
+    def test_returns_dict(self, initialized_repo_root):
+        result = run_self_host_check(initialized_repo_root)
         assert isinstance(result, dict)
 
     @pytest.mark.parametrize(
@@ -43,22 +49,22 @@ class TestRunSelfHostCheck:
             ("gate_details", dict),
         ],
     )
-    def test_required_field_present_with_expected_type(self, key, expected_type):
+    def test_required_field_present_with_expected_type(self, key, expected_type, initialized_repo_root):
         """Every required field is present and carries the documented type."""
-        result = run_self_host_check(REPO_ROOT)
+        result = run_self_host_check(initialized_repo_root)
         assert key in result, f"required field {key!r} missing"
         assert isinstance(result[key], expected_type), (
             f"field {key!r} expected {expected_type.__name__}, got "
             f"{type(result[key]).__name__}"
         )
 
-    def test_profiles_non_empty_and_all_strings(self):
+    def test_profiles_non_empty_and_all_strings(self, initialized_repo_root):
         """TP-174b R17: ``profiles`` must be a non-empty list of strings on
         the live repo. The isinstance-only parametrize above passes on an
         empty/garbage list, silently disarming profile detection. Stay
         value-agnostic (so the R16 languages→profiles swap doesn't break
         this) — only assert non-empty + all-string."""
-        result = run_self_host_check(REPO_ROOT)
+        result = run_self_host_check(initialized_repo_root)
         profiles = result["profiles"]
         assert isinstance(profiles, list) and profiles, (
             f"expected a non-empty profiles list on the live repo, got {profiles!r}"
@@ -67,31 +73,31 @@ class TestRunSelfHostCheck:
             f"every profile must be a string: {profiles!r}"
         )
 
-    def test_profiles_key_emits_profiles_not_languages(self):
+    def test_profiles_key_emits_profiles_not_languages(self, initialized_repo_root):
         """TP-174b R16: the 'profiles' key must carry fp.profiles, not the
         raw fp.languages list (the two differ — languages=['python', ...]
         vs profiles=['python_library', ...])."""
         from espalier.analyze import fingerprint_repo
-        result = run_self_host_check(REPO_ROOT)
-        fp = fingerprint_repo(REPO_ROOT)
+        result = run_self_host_check(initialized_repo_root)
+        fp = fingerprint_repo(initialized_repo_root)
         assert result["profiles"] == list(fp.profiles), (
             f"profiles key emitted {result['profiles']!r}, "
             f"expected fp.profiles {list(fp.profiles)!r}"
         )
 
-    def test_repo_root_value_is_absolute(self):
-        result = run_self_host_check(REPO_ROOT)
+    def test_repo_root_value_is_absolute(self, initialized_repo_root):
+        result = run_self_host_check(initialized_repo_root)
         assert Path(result["repo_root"]).is_absolute()
 
-    def test_resolves_relative_path(self, monkeypatch):
+    def test_resolves_relative_path(self, monkeypatch, initialized_repo_root):
         # Pass a genuinely RELATIVE path so the relative→absolute resolve
         # (self_hosting.py:42, repo_root = repo_root.resolve()) is actually
         # exercised. The old test passed an already-absolute REPO_ROOT, so
         # deleting that resolve() stayed green.
-        monkeypatch.chdir(REPO_ROOT)
+        monkeypatch.chdir(initialized_repo_root)
         result = run_self_host_check(Path("."))
         assert Path(result["repo_root"]).is_absolute()
-        assert result["repo_root"] == str(REPO_ROOT.resolve())
+        assert result["repo_root"] == str(initialized_repo_root.resolve())
 
     def test_uninitialized_is_not_a_failure_and_keeps_its_reason(self):
         """`run_self_host_check` returns `uninitialized` as a deliberate
@@ -273,8 +279,8 @@ class TestRunSelfHostCheck:
             + "\n  ".join(offenders)
         )
 
-    def test_surface_gate_status_not_unknown_on_live_repo(self):
-        result = run_self_host_check(REPO_ROOT)
+    def test_surface_gate_status_not_unknown_on_live_repo(self, initialized_repo_root):
+        result = run_self_host_check(initialized_repo_root)
         # The degradation this guards is the "unknown" fallback
         # (self_hosting.py:72, str(gate.get("status", "unknown"))). The old
         # `!= ""` could not discriminate that — the SUT never emits "".
@@ -290,13 +296,13 @@ class TestRunSelfHostCheck:
 
 
 class TestMainExitCode:
-    def test_main_returns_int(self):
+    def test_main_returns_int(self, initialized_repo_root):
         # main() should return 0 or 1, never raise
-        ret = main([str(REPO_ROOT)])
+        ret = main([str(initialized_repo_root)])
         assert isinstance(ret, int)
         assert ret in (0, 1)
 
-    def test_main_zero_on_passing_gate(self):
+    def test_main_zero_on_passing_gate(self, initialized_repo_root):
         """`main` exits 0 on a non-failing gate -- routed through the SAME
         classifier `main` uses, not a private re-statement of it.
 
@@ -313,20 +319,20 @@ class TestMainExitCode:
         everywhere; only this test's private definition of "not a failure" was
         dev-tree-specific. Found by the adversarial pass, not by the suite.
         """
-        result = run_self_host_check(REPO_ROOT)
+        result = run_self_host_check(initialized_repo_root)
         expected_rc = 0 if sh.gate_failure_reason(result) is None else 1
-        actual_rc = main([str(REPO_ROOT)])
+        actual_rc = main([str(initialized_repo_root)])
         assert actual_rc == expected_rc
 
-    def test_main_prints_json_to_stdout(self, capsys):
-        main([str(REPO_ROOT)])
+    def test_main_prints_json_to_stdout(self, capsys, initialized_repo_root):
+        main([str(initialized_repo_root)])
         captured = capsys.readouterr()
         # Output must be valid JSON
         parsed = json.loads(captured.out)
         assert isinstance(parsed, dict)
 
-    def test_main_json_contains_expected_keys(self, capsys):
-        main([str(REPO_ROOT)])
+    def test_main_json_contains_expected_keys(self, capsys, initialized_repo_root):
+        main([str(initialized_repo_root)])
         captured = capsys.readouterr()
         parsed = json.loads(captured.out)
         for key in ("repo_root", "profiles", "surface_gate_status", "gate_details"):
@@ -619,12 +625,13 @@ class TestSelfHostModeAwareness:
         # The stand-down is a success exit, mirroring 'uninitialized'.
         assert self_host_main([str(target), "--mode", "source-checkout"]) == 0
 
-    def test_mode_auto_resolves_for_self_host_repo(self):
-        """On the live self-host repo with runtime files present, auto
-        mode resolves to initialized_self_host."""
-        # The live repo has reports/ and .espalier/, so it resolves
-        # to an initialized state. Auto mode follows.
-        report = run_self_host_check(REPO_ROOT, mode="auto")
+    def test_mode_auto_resolves_for_self_host_repo(self, initialized_repo_root):
+        """On the self-host repo with runtime files present, auto mode
+        resolves to initialized_self_host."""
+        # The init'd copy has reports/ and .espalier/, so it resolves to an
+        # initialized state (and runs the gate, which is why it is not the
+        # live root: DEF-973). Auto mode follows.
+        report = run_self_host_check(initialized_repo_root, mode="auto")
         assert report["mode_requested"] == "auto"
         assert report["mode_resolved"] in (
             "initialized_self_host",

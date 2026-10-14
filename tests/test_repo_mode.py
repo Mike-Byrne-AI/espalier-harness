@@ -303,10 +303,9 @@ class TestGitPrintsANameTheDecoderRefuses:
             pytest.skip("the git shim is a /bin/sh script")
         bindir = tmp_path / "bin"
         bindir.mkdir()
-        shim = bindir / "git"
+        from tests._stubs import write_stub
         # \351 is 0xE9: 'é' in latin-1, an invalid lone continuation in UTF-8.
-        shim.write_text(f"#!/bin/sh\nprintf 'caf\\351.txt{terminator}'\n", encoding="utf-8")
-        shim.chmod(0o755)
+        write_stub(bindir / "git", f"#!/bin/sh\nprintf 'caf\\351.txt{terminator}'\n")
         monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
         repo = tmp_path / "repo"
         (repo / ".git").mkdir(parents=True)
