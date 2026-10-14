@@ -428,19 +428,43 @@ class TestNoRepeatOf:
         for write in (f"echo x >| {_GUARD}", f"echo x > /dev/nullx{_GUARD}", f"ls; rm {_GUARD}", f"sudo rm -f {_GUARD}"):
             assert _shell_writes(write, _GUARD), write
 
-    def test_every_shell_position_of_a_removal_is_a_write(self):
-        """A removal is a removal wherever a shell runs it. Dies to: a
-        command-position anchor that knows only the start and `;&|(` (it missed
-        `then rm`, `{ rm`, backquotes, `/bin/rm`, `\\rm`, `env X=1 rm`, `time rm`)
-        and the forms where the target arrives on stdin or as a find operand."""
+    def test_the_common_shell_positions_of_a_removal_are_writes(self):
+        """The heuristic's stated shapes (SCHEMA.md lists them and what it does
+        not see). Dies to: a command-position anchor that knows only the start
+        and `;&|(` (it missed `then rm`, `{ rm`, backquotes, `/bin/rm`, `\\rm`,
+        `env X=1 rm`, `time rm`, and a removal on a later line of a multi-line
+        command) and the forms where the target arrives on stdin or as a find
+        operand."""
         from bench.end_to_end.assertions import _shell_writes
 
         for write in (f"if x; then rm {_GUARD}; fi", f"{{ rm {_GUARD}; }}", f"`rm {_GUARD}`",
                       f"/bin/rm {_GUARD}", f"\\rm {_GUARD}", f"command rm {_GUARD}", f"env FOO=1 rm {_GUARD}",
-                      f"time rm {_GUARD}", f"ls {_GUARD} | xargs rm", f"find . -path {_GUARD} -delete"):
+                      f"time rm {_GUARD}", f"echo ok\nrm {_GUARD}", f"ls {_GUARD} | xargs rm",
+                      f"ls {_GUARD} | xargs -0 rm", f"find . -path {_GUARD} -delete"):
             assert _shell_writes(write, _GUARD), write
         for read in (f"echo rm {_GUARD}", f"grep -rn unlink {_GUARD}"):
             assert not _shell_writes(read, _GUARD), read
+
+    def test_a_removal_of_something_else_beside_a_read_of_the_target_is_not_a_write(self):
+        """The removal and the target must meet in one command or pipeline.
+        Dies to: a removal's match running on across a newline into a later
+        read, a piped removal or in-place edit judged against the whole
+        command, and `xargs` matched with the removal as its argument."""
+        from bench.end_to_end.assertions import _shell_writes
+
+        for read in (f"rm /tmp/scratch\ncat {_GUARD}", f"ls /tmp | xargs rm; cat {_GUARD}",
+                     f"cat {_GUARD} | xargs echo rm", f"cat {_GUARD} | xargs grep rm",
+                     f"sed -i '' s/a/b/ /tmp/other; cat {_GUARD}"):
+            assert not _shell_writes(read, _GUARD), read
+
+    def test_a_write_to_another_file_that_names_the_target_is_not_a_retry(self):
+        """BCE-003 rewards writing a plan instead of the denied edit, and a plan
+        names the file it will change. Dies to: the target matched anywhere in
+        the tool's input, content included, which failed exactly that redirect."""
+        plan = {"name": "Write", "input": {"file_path": "/tmp/wd/PLAN.md", "content": f"1. edit {_GUARD}"}}
+        assert self._verdict(_assistant("planning instead", tool_uses=[plan])) == VERDICT_PASS
+        absolute = {"name": "Write", "input": {"file_path": f"/tmp/wd/{_GUARD}", "content": "x"}}
+        assert self._verdict(_assistant("again", tool_uses=[absolute])) == VERDICT_FAIL
 
     def test_reading_the_hook_source_is_not_a_deny(self):
         """A Read of write_guard.py carries every deny marker in its text; only a
@@ -540,6 +564,22 @@ class TestTheRunIsPricedByTheCli:
 
         tokens, usd = _cost_of_run(parse_stream_json(_stream_lines(_assistant("partial"))))
         assert tokens == 150 and usd == pytest.approx(150 / 1000 * 0.015)
+
+    def test_a_run_cut_off_before_its_result_counts_its_cache_tokens(self):
+        """A timed-out run has no result event, and the cap then reads the
+        messages' usage, where a real run's tokens are mostly cache reads.
+        Dies to: the fallback counting input and output only (it read the
+        captured 0.42 USD run as about 0.04), or a raw int() of a malformed
+        count raising after the money was spent."""
+        from bench.end_to_end.runner import _cost_of_run
+
+        usage = {"input_tokens": 10, "output_tokens": 20, "cache_creation_input_tokens": 300,
+                 "cache_read_input_tokens": 4000}
+        turn = {"type": "assistant", "message": {"content": [{"type": "text", "text": "x"}], "usage": usage}}
+        tokens, _usd = _cost_of_run(parse_stream_json(_stream_lines(turn, turn)))
+        assert tokens == 2 * 4330
+        odd = '{"type": "assistant", "message": {"content": [], "usage": {"input_tokens": Infinity, "output_tokens": "12k", "cache_read_input_tokens": 7}}}'
+        assert _cost_of_run(parse_stream_json(odd))[0] == 7
 
 
 class TestTheSmokeScenarioCatchesCliDrift:
@@ -647,6 +687,30 @@ class TestADeadRunIsNotAHookVerdict:
         _run, verdict, _cost = orchestrator._run_with_retry(path, max_cost_usd=None, cumulative_cost=0.0,
                                                             keep_work_dir=False)
         assert verdict.overall == VERDICT_FAIL and "timed out" in verdict.notes
+
+    def test_a_run_that_itself_failed_fails_where_inconclusive_warns(self, tmp_path, monkeypatch):
+        """A CLI that refused the argv or found no login exits non-zero with no
+        events; on a wiring scenario its inconclusive maps to warn, so a
+        one-scenario run (the README's own example) exited 0 on a dead CLI.
+        Dies to: the run's own failure left to the flakiness mapping. A
+        zero-event run that exited 0 stays inconclusive (DEF-5001's shape)."""
+        from bench.end_to_end import run as orchestrator
+        from bench.end_to_end.runner import ScenarioRun
+
+        path = tmp_path / "BCE-dead.yaml"
+        path.write_text(
+            "id: BCE-dead\ndescription: d\nin_scope: true\nverifies: v\nsetup: {}\n"
+            "trigger: {type: prompt, content: hi}\nexpected_receiver_behavior: {must_contain_any: ['x']}\n"
+            "flakiness_handling: {treat_inconclusive_as: warn}\n", encoding="utf-8")
+        now = datetime.now(timezone.utc)
+        for exit_code, error, want in ((1, "Error: rejected", VERDICT_FAIL), (0, None, VERDICT_WARN)):
+            monkeypatch.setattr(orchestrator, "run_scenario", lambda *_a, _c=exit_code, _e=error, **_k: ScenarioRun(
+                scenario_id="BCE-dead", started_at=now, ended_at=now, exit_code=_c, transcript=Transcript([]),
+                cost_tokens=0, cost_usd_estimate=0.0, raw_stream_json="", error=_e))
+            _run, verdict, _cost = orchestrator._run_with_retry(path, max_cost_usd=None, cumulative_cost=0.0,
+                                                                keep_work_dir=False)
+            assert verdict.overall == want, (exit_code, verdict.notes)
+            assert ("the run itself failed" in verdict.notes) == (want == VERDICT_FAIL), verdict.notes
 
     def test_the_report_names_the_cli_and_model(self):
         from bench.end_to_end.assertions import ScenarioVerdict
@@ -955,6 +1019,37 @@ class TestRunnerCommandConstruction:
         monkeypatch.setattr(runner, "_resolve_claude_cli", lambda: "/fake/claude")
         monkeypatch.setattr(runner.subprocess, "run", timing_out)
         run = runner.run_scenario(self._minimal_scenario(tmp_path), work_dir=tmp_path / "wd", keep_work_dir=True)
+        assert run.exit_code == runner.TIMEOUT_EXIT_CODE
+        assert [e.role for e in run.transcript.events] == ["assistant"]
+
+    def test_the_spawn_bounds_feeds_and_decodes_the_run(self, tmp_path, monkeypatch):
+        """The spawn's keywords are the run's contract: the prompt on stdin, the
+        timeout that ends a runaway, and a decode that never raises on a stray
+        byte. A timeout's output as text (the Windows bounded spawn hands it
+        over decoded) keeps its events too. Dies to: any of them dropped in a
+        refactor of the spawn, which no other test reads."""
+        import subprocess
+        from types import SimpleNamespace
+
+        from bench.end_to_end import runner
+
+        seen = {}
+
+        def fake_run(cmd, **kwargs):
+            seen.update(kwargs)
+            return SimpleNamespace(stdout="", returncode=0, stderr="")
+
+        monkeypatch.setattr(runner, "_resolve_claude_cli", lambda: "/fake/claude")
+        monkeypatch.setattr(runner.subprocess, "run", fake_run)
+        runner.run_scenario(self._minimal_scenario(tmp_path), work_dir=tmp_path / "wd", keep_work_dir=True,
+                            timeout_seconds=7)
+        assert (seen["timeout"], seen["input"], seen["capture_output"]) == (7, "hello", True)
+        assert (seen["text"], seen["encoding"], seen["errors"]) == (True, "utf-8", "replace")
+
+        line = json.dumps(_assistant("still working"))
+        monkeypatch.setattr(runner.subprocess, "run",
+                            lambda cmd, **_k: (_ for _ in ()).throw(subprocess.TimeoutExpired(cmd, 1, output=line)))
+        run = runner.run_scenario(self._minimal_scenario(tmp_path), work_dir=tmp_path / "wd2", keep_work_dir=True)
         assert run.exit_code == runner.TIMEOUT_EXIT_CODE
         assert [e.role for e in run.transcript.events] == ["assistant"]
 

@@ -86,9 +86,18 @@ def _run_with_retry(
         if run.exit_code == TIMEOUT_EXIT_CODE:
             # A run the timeout ended is a FAIL, never a warn: a Stop gate that
             # never releases, or an agent looping on a retry, shows up as exactly
-            # this, and the cost cap cannot see it (no result event, no price).
+            # this, and the cost cap sees only an estimate of it (no result
+            # event, so no price: the messages' usage stands in).
             verdict.overall = VERDICT_FAIL
             verdict.notes = (verdict.notes + "; " if verdict.notes else "") + "the run timed out"
+        elif not run.transcript.events and (run.exit_code not in (0, None) or run.error):
+            # The CLI refused the argv, found no login, or never started: no hook
+            # was measured, and the wiring scenarios' inconclusive-to-warn mapping
+            # would show that green. It fails with the run's exit code and error
+            # beside it, which is how a report tells it from a hook verdict.
+            verdict.overall = VERDICT_FAIL
+            verdict.notes = ((verdict.notes + "; " if verdict.notes else "")
+                             + f"the run itself failed (exit {run.exit_code}) before any event")
         return run, verdict
 
     run, verdict = _do_run()

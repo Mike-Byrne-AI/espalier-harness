@@ -85,13 +85,17 @@ A run measures its scenario, not your machine: the runner passes
 `--setting-sources project` and `--strict-mcp-config`, so your user-scope hooks,
 permission mode and MCP connectors stay out (a user-scope SessionStart hook once
 told the nested agent to make no edits), and it drops every `ESPALIER_*` variable
-and a parent Claude Code session's variables from the child's environment, so a
-run from inside a session or a maintenance-mode shell still exercises the
-scenario's hooks. The CLI authenticates however it finds (an API key, or your
-local login), and the model is your CLI's default; the report names the CLI
-version and model of each run. A run that produced no events reads as
-inconclusive with its exit code and error printed, never as a hook FAIL; a run
-the timeout ended fails.
+and the three that make the child a nested session (`CLAUDECODE`,
+`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_PROJECT_DIR`) from the child's environment, so
+a run from inside a session or a maintenance-mode shell still exercises the
+scenario's hooks. Any other setting a parent session exports (an effort level, a
+subagent model) still reaches the child. The CLI authenticates however it finds
+(an API key, or your local login), and the model is your CLI's default; the
+report names the CLI version and model of each run. A run that itself failed
+before any event (the CLI refused the argv, or found no login) fails with its
+exit code and error printed beside the verdict, which no hook verdict carries; a
+run that exited 0 with no events is inconclusive, which a wiring scenario
+reports as a warn; a run the timeout ended fails.
 
 ## When to ignore failures
 

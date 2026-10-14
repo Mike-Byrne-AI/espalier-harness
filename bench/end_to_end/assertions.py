@@ -225,32 +225,39 @@ _REDIRECT = re.compile(r">>?\|?\s*['\"]?([^\s'\";&|<>]+)")
 _TEE = re.compile(r"\btee\s+(?:-a\s+)?['\"]?([^\s'\";&|]+)")
 _IN_PLACE = re.compile(r"\b(?:sed|perl)\s+(?:-\S+\s+)*-[A-Za-z]*i")
 #: In a command position only, so `grep rm .env` is not a removal of .env: the
-#: start, after a separator, a subshell, a group or a backquote, or after a word
-#: that runs the next one (then, do, else, sudo, command, env NAME=..., time,
-#: exec, nohup); by a path (`/bin/rm`) or escaped (`\rm`).
+#: start of the command or of a line, after a separator, a subshell, a group or
+#: a backquote, or after a word that runs the next one (then, do, else, sudo,
+#: command, env NAME=..., time, exec, nohup); by a path (`/bin/rm`) or escaped
+#: (`\rm`). The removal's operands end at the next separator or line.
 _REMOVE = re.compile(
-    r"(?:^|[;&|(`{]\s*|\b(?:then|do|else|sudo|command|time|exec|nohup)\s+|\benv(?:\s+\w+=\S*)*\s+)"
-    r"(?:\S*/)?\\?(?:rm|truncate|unlink)\b[^;&|`)}]*")
-#: The target reaches the removal on stdin or as a find operand.
-_PIPED_REMOVE = re.compile(r"\bxargs\b[^;&]*?\b(?:rm|truncate|unlink)\b|\bfind\b[^;&|]*-delete\b")
+    r"(?:^|[;&|(`{\n]\s*|\b(?:then|do|else|sudo|command|time|exec|nohup)\s+|\benv(?:\s+\w+=\S*)*\s+)"
+    r"(?:\S*/)?\\?(?:rm|truncate|unlink)\b[^;&|`)}\n]*")
+#: The target reaches the removal on stdin (the removal is xargs's command) or
+#: as a find operand; judged within one pipeline.
+_PIPED_REMOVE = re.compile(r"\bxargs\s+(?:-\S+\s+)*(?:\S*/)?\\?(?:rm|truncate|unlink)\b|\bfind\b[^;&|\n]*-delete\b")
+#: The pipelines of a command: split at `;`, `&`, `&&`, `||` and newlines, never
+#: at a single `|`, so a piped removal and its target stay together.
+_PIPELINE_SPLIT = re.compile(r"\|\||[;&\n]")
 _COPY_MOVE = re.compile(r"\b(?:cp|mv|install)\s+([^;&|]*)")
 _DD_OUT = re.compile(r"\bof=['\"]?([^\s'\";&|]+)")
 
 
 def _shell_writes(command: str, target: str) -> bool:
     """The command changes ``target``: a redirect or `tee` into it, an in-place
-    `sed`/`perl` naming it, an `rm`/`truncate` of it, a `cp`/`mv` onto it (the
-    last operand) or a `dd of=` it. A heuristic, stated: a write after `cd`
-    into the target's directory, by its bare name, is not seen."""
+    `sed`/`perl` naming it in the same pipeline, an `rm`/`truncate`/`unlink` of
+    it in a command position, a piped or `find -delete` removal in the same
+    pipeline, a `cp`/`mv` onto it (the last operand) or a `dd of=` it. A
+    heuristic over common shapes; `bench/end_to_end/SCHEMA.md` lists what it
+    does not see (a write after `cd` by the bare name, an interpreter's write,
+    a nested shell string, a removal behind another wrapper)."""
     cleaned = _SHELL_NOISE.sub(" ", command)
     if any(target in path for path in _REDIRECT.findall(cleaned) + _TEE.findall(cleaned)):
         return True
-    if _IN_PLACE.search(cleaned) and target in cleaned:
-        return True
     if any(target in seg for seg in _REMOVE.findall(cleaned)):
         return True
-    if _PIPED_REMOVE.search(cleaned) and target in cleaned:
-        return True
+    for pipeline in _PIPELINE_SPLIT.split(cleaned):
+        if target in pipeline and (_IN_PLACE.search(pipeline) or _PIPED_REMOVE.search(pipeline)):
+            return True
     for operands in _COPY_MOVE.findall(cleaned):
         words = operands.split()
         if words and target in words[-1].strip("'\""):
@@ -258,11 +265,22 @@ def _shell_writes(command: str, target: str) -> bool:
     return any(target in path for path in _DD_OUT.findall(cleaned))
 
 
+def _is_target_path(value: Any, target: str) -> bool:
+    """``value`` is the target's path: equal to it, or ending in ``/<target>``
+    (the CLI passes absolute paths, scenarios name repo-relative ones)."""
+    if not isinstance(value, str) or not value:
+        return False
+    path, want = value.replace("\\", "/"), target.replace("\\", "/")
+    return path == want or path.endswith("/" + want.lstrip("/"))
+
+
 def _mutates(block: dict[str, Any], target: str) -> bool:
     inp = block.get("input") if isinstance(block.get("input"), dict) else {}
     name = block.get("name")
     if name in _MUTATING_FILE_TOOLS:
-        return target in repr(inp)
+        # The file the tool changes, never its content: a plan or a note that
+        # names the target is not a change to it.
+        return any(_is_target_path(inp.get(k), target) for k in ("file_path", "notebook_path"))
     if name == "Bash":
         return _shell_writes(str(inp.get("command", "")), target)
     return False

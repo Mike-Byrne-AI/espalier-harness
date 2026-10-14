@@ -205,7 +205,9 @@ def _scenario_env() -> dict[str, str]:
     `tests/conftest.py::_isolate_maintenance_mode`), every other `ESPALIER_*`
     knob a maintainer's shell carries (`ESPALIER_STOP_GATE=full` would change
     the stop gate a scenario tests; `ESPALIER_AUDIT_DIR` would send its audit
-    rows to the operator's pile), and a parent session's variables."""
+    rows to the operator's pile), and the three variables that make the child
+    a nested session (`_NESTED_SESSION_VARS`). Any other setting a parent
+    session exports (an effort level, a subagent model) still reaches the child."""
     bypass = _friction_bypass_vars()
     env = os.environ.copy()
     for name in [k for k in env if k.startswith("ESPALIER_")] + [*bypass, *_NESTED_SESSION_VARS]:
@@ -398,9 +400,13 @@ def _estimate_cost_tokens_from_events(events) -> int:
         if isinstance(meta, dict):
             usage = meta.get("usage") or meta.get("message", {}).get("usage") if isinstance(meta.get("message"), dict) else meta.get("usage")
             if isinstance(usage, dict):
-                input_tokens = int(usage.get("input_tokens", 0) or 0)
-                output_tokens = int(usage.get("output_tokens", 0) or 0)
-                total += input_tokens + output_tokens
+                # Cache reads are most of a real run's tokens (220,316 of the
+                # captured 0.42 USD run's 263,375), and a run cut off before its
+                # result is the runaway the cap is for. The estimate prices every
+                # token at one rate, so it overstates a cache-heavy run: the safe
+                # side for a cap.
+                total += sum(_count(usage.get(k)) for k in (
+                    "input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
                 saw_usage = True
     if saw_usage:
         return total
