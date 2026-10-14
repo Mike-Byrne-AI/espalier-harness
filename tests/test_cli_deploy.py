@@ -801,10 +801,17 @@ class TestInitNamesARetiredDenyRule:
     the one that refuses every recursive delete of an absolute path in every
     permission mode, while ``upgrade``, ``doctor``, ``merge-settings`` and
     ``init --wire-hooks`` each named it. The re-run now says it in the same
-    voice, read-only."""
+    voice, read-only, and says nothing else about permissions."""
 
     RULE = "Bash(rm -rf /*)"
     WARN = "carries the retired deny rule Bash(rm -rf /*)"
+
+    @staticmethod
+    def _init(root: Path, **extra) -> int:
+        import argparse
+        from espalier.cli import cmd_init
+
+        return cmd_init(argparse.Namespace(repo=str(root), config=None, write_gitignore=True, **extra))
 
     def _plant(self, root: Path) -> bytes:
         import json
@@ -816,17 +823,30 @@ class TestInitNamesARetiredDenyRule:
         return settings.read_bytes()
 
     def test_a_plain_init_rerun_names_the_rule_and_leaves_the_file_alone(self, tmp_path, capsys, monkeypatch):
-        import argparse
-        from espalier.cli import cmd_init
-
         monkeypatch.chdir(tmp_path)
         before = self._plant(_initialized_tree(tmp_path))
         capsys.readouterr()
-        assert cmd_init(argparse.Namespace(repo=str(tmp_path), config=None, write_gitignore=True)) == 0
+        assert self._init(tmp_path) == 0
         err = capsys.readouterr().err
-        assert f"init: WARN: .claude/settings.json {self.WARN}" in err, err[-1500:]
+        assert f"[init] WARN: .claude/settings.json {self.WARN}" in err, err[-1500:]
         assert "Delete that line by hand" in err, err[-1500:]
         assert (tmp_path / ".claude" / "settings.json").read_bytes() == before
+
+    def test_a_plain_rerun_over_a_minimal_install_lists_no_allow_rules(self, tmp_path, capsys, monkeypatch):
+        """A plain re-run records the default profile over the one the file was
+        rendered from, so a gap read here would list the workflow profile's
+        rules (Write among them) to a minimal install, with an append that
+        widens its permissions. The re-run names the retired rule only."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "README.md").write_text("# t\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir()
+        assert self._init(tmp_path, profile="minimal") == 0
+        self._plant(tmp_path)
+        capsys.readouterr()
+        assert self._init(tmp_path) == 0
+        err = capsys.readouterr().err
+        assert self.WARN in err, err[-1500:]
+        assert "allow rule" not in err and "--add-allows" not in err, err[-2500:]
 
     def test_upgrade_execute_names_the_rule_once_not_once_per_layer(self, tmp_path, capsys, monkeypatch):
         """``upgrade --execute`` runs the same deploy init does and then its own
@@ -842,19 +862,24 @@ class TestInitNamesARetiredDenyRule:
         assert captured.err.count(self.WARN) == 1, captured.err[-2500:]
 
     def test_init_never_calls_an_adopters_own_rule_retired(self, tmp_path, capsys, monkeypatch):
-        """Case (b): a settings.json the adopter brought, with no Espalier hooks,
-        is theirs; the same rule there is their choice, never one init wrote."""
-        import argparse
+        """Case (b): a settings.json with no Espalier hooks may be the adopter's
+        own, where "the init command wrote it" would be false (a Read(./.env)
+        they wrote is on the retired list too); that branch's one WARN sends
+        them to merge-settings or --wire-hooks, which name a retired rule."""
         import json
-        from espalier.cli import cmd_init
+
+        from espalier import cli
 
         monkeypatch.chdir(tmp_path)
+        # Off a TTY the arming prompt is skipped; say so, or `pytest -s` in a
+        # terminal would stop at it.
+        monkeypatch.setattr(cli, "_stream_isatty", lambda _stream: False)
         (tmp_path / "README.md").write_text("# t\n", encoding="utf-8")
         (tmp_path / ".git").mkdir()
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".claude" / "settings.json").write_bytes(
-            json.dumps({"permissions": {"deny": [self.RULE]}}).encode("utf-8"))
-        assert cmd_init(argparse.Namespace(repo=str(tmp_path), config=None, write_gitignore=True)) == 0
+            json.dumps({"permissions": {"deny": [self.RULE, "Read(./.env)"]}}).encode("utf-8"))
+        assert self._init(tmp_path) == 0
         err = capsys.readouterr().err
         assert "NO Espalier hooks wired" in err, err[-1500:]
         assert "retired deny rule" not in err, err[-1500:]

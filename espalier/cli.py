@@ -3048,7 +3048,7 @@ def _reconcile_existing_settings(
     wire_hooks: bool,
     profile_name: str | None,
     repo_root: Path,
-    name_permission_gaps: bool = False,
+    caller_reports_permissions: bool = False,
 ) -> SettingsOutcome:
     """Reconcile a pre-existing ``.claude/settings.json``.
 
@@ -3060,11 +3060,12 @@ def _reconcile_existing_settings(
     effects; ``skipped_reason`` is returned for the caller to append
     (deploy_harness owns the single ``skipped`` list).
 
-    ``name_permission_gaps`` is ``init``'s: in case (a) it adds the read-only
-    permissions report ``upgrade`` and ``doctor`` give -- a retired deny rule
-    the file still carries, the profile's allow rules it lacks (DEF-4017).
-    ``upgrade --execute`` deploys through here too and then reports from its
-    own merge, so it leaves this off and the WARN is said once.
+    In case (a) a retired deny rule the file still carries is named, read-only,
+    as ``upgrade`` and ``doctor`` name it (DEF-4017). ``upgrade --execute``
+    deploys through here and then reports from its own merge, so it passes
+    ``caller_reports_permissions`` and the WARN is said once. The default is
+    to report: a caller that forgets the flag repeats a WARN, where the
+    opposite default would drop it unseen.
     """
     deployed: list[str] = []
     # An upgrade from an older deployment can keep a stale matcher (no
@@ -3225,17 +3226,28 @@ def _reconcile_existing_settings(
                     "rendered .new template below (diff + merge).",
                     file=sys.stderr,
                 )
-        # A plain re-run of init is how QUICKSTART tells an adopter to refresh,
-        # and it said nothing of a retired deny rule while upgrade, doctor,
-        # merge-settings and --wire-hooks named it (DEF-4017). Same voice,
-        # read-only: nothing here removes a rule. Case (b) never gets it -- a
-        # file with no Espalier hooks is the adopter's, and the same rule there
-        # is their own choice, not one init wrote.
-        if name_permission_gaps:
-            _report_allow_gaps_read_only(
-                repo_root, profile=profile_name or installed_settings_profile(repo_root),
-                prefix="init:", stream=sys.stderr,
-            )
+        # A plain re-run of init is how TROUBLESHOOTING tells an adopter to
+        # repair an install, and it said nothing of a retired deny rule while
+        # upgrade, doctor, merge-settings and --wire-hooks named it (DEF-4017).
+        # The same WARN, read-only: nothing here removes a rule. The retired
+        # rules only, not the profile's allow gaps: a plain re-run has already
+        # recorded the default profile over a minimal or full install's, so a
+        # gap read here would name the default's rules, Write among them, with
+        # an append that widens permissions. Case (b) never gets it: that
+        # branch's WARN already sends the operator to merge-settings or
+        # --wire-hooks, which name a retired rule, and a file with no Espalier
+        # hooks may be the adopter's own, where "the init command wrote it"
+        # would be false of a Read(./.env) they wrote themselves.
+        if not caller_reports_permissions:
+            stale = settings_stale_denies(settings_path) or ()
+            if stale:
+                _report_allow_gaps(
+                    missing=(), added=(), note="", stale=stale, prefix="[init]",
+                    # Read for allow gaps only, and none are passed.
+                    profile=profile_name or "workflow",
+                    hint_command=lambda: _merge_settings_hint(profile_name or "workflow"),
+                    stream=sys.stderr,
+                )
     # Render the fresh template alongside so the operator can diff the existing
     # file against what a fresh init would emit. The only case that suppresses
     # this — a wired-in-place --wire-hooks merge — already returned above.
@@ -3594,14 +3606,15 @@ def deploy_harness(
     *,
     profile_name: str | None = None,
     wire_hooks: bool = False,
-    name_permission_gaps: bool = False,
+    caller_reports_permissions: bool = False,
 ) -> dict:
     """Deploy the mechanical harness layer into a target repo.
 
     ``profile_name`` selects the settings profile shape written
     to ``.claude/settings.json``. ``None`` resolves to the default
-    profile (``"workflow"``). ``name_permission_gaps`` is ``init``'s
-    (``_reconcile_existing_settings`` says why ``upgrade`` leaves it off).
+    profile (``"workflow"``). ``caller_reports_permissions`` is for a caller
+    that names a retired deny rule itself (``upgrade --execute``;
+    ``_reconcile_existing_settings`` says why).
 
     Iteration invariant (BC-030/031): the asset set this function
     regenerates is derived from import-time enumeration of packaged
@@ -3708,7 +3721,7 @@ def deploy_harness(
             wire_hooks=wire_hooks,
             profile_name=profile_name,
             repo_root=repo_root,
-            name_permission_gaps=name_permission_gaps,
+            caller_reports_permissions=caller_reports_permissions,
         )
         settings_hooks_wired = outcome.settings_hooks_wired
         deployed.extend(outcome.deployed)
@@ -7052,7 +7065,6 @@ def cmd_init(args: argparse.Namespace) -> int:
         repo_root, harness, fp,
         profile_name=profile_name,
         wire_hooks=getattr(args, "wire_hooks", False),
-        name_permission_gaps=True,
     )
 
     # Record the README deploys (already done above-fingerprint) in the deploy
@@ -10272,7 +10284,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         config = _load_config(repo_root, args)
         fp = fingerprint_repo(repo_root, config)
         harness = build_harness_config(fp, config)
-        result = deploy_harness(repo_root, harness, fp)
+        # The merge below names a retired deny rule; the deploy must not too.
+        result = deploy_harness(repo_root, harness, fp, caller_reports_permissions=True)
         written = list(result["deployed"])
         # Every file, never truncated (DEF-1064), and the marker sentence on
         # the line that names them.
