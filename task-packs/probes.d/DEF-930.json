@@ -1,0 +1,10 @@
+{
+ "id": "DEF-930",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import ast;s=open('espalier/cli.py').read();f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='cmd_init'][0];src=ast.get_source_segment(s,f);print(src.rfind('harness_config.json')<src.find('deploy_harness(') and '_refresh_fingerprint_derivatives' not in src)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "3155da52f355",
+ "text_sha": "bdad9424115d",
+ "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: 5-A review: cmd_init names the plan file twice and str.find read the first, so the row's second offered fix left the probe True; keyed on the last write now, and conjoined with the W2-6 half (cmd_init never reaches _refresh_fingerprint_derivatives) so an order-only fix cannot strike the row and lose that half a third time)"
+}

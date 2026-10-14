@@ -1,0 +1,10 @@
+{
+ "id": "DEF-994",
+ "subject": "docs/QUICKSTART.md",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the four lines are doc text a person pastes into a shell and no program in the repo runs, so nothing short of a text predicate over the four docs can tell, and this ledger keeps that shape out of probes (docs/FAILURE_MODES.md 5.23); the fix lands with a test beside tests/test_onboarding_doc_honesty.py::TestRelaunchLinesArePortable that names all four files and reds a `.venv/bin/activate` line lacking `.venv/Scripts/activate`",
+ "row_sha": "013798117ddc",
+ "text_sha": "f4eb615431ca",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

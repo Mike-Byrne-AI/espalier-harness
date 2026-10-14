@@ -1,0 +1,12 @@
+{
+ "id": "DEF-768",
+ "subject": "tools/cc/hooks/_speedbump.py",
+ "cmd": "python3 -c \"import ast; t=ast.parse(open('tools/cc/hooks/_speedbump.py').read()); print(sum(1 for n in ast.walk(t) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr=='insert' and isinstance(n.func.value, ast.Attribute) and n.func.value.attr=='path'))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "ca67b1f73817",
+ "text_sha": "550b5f149bf7",
+ "verified_2026_09_11": "OPEN (filed 2026-09-11; probe driven at filing)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: citation form: three bare line anchors on module-level bootstrap lines de-anchored to the file; the claim stands)"
+}

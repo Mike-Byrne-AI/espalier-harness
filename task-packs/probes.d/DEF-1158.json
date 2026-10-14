@@ -1,0 +1,11 @@
+{
+ "id": "DEF-1158",
+ "subject": "espalier/assets/claude/agents/repo-analyst.md",
+ "cmd": "python -c 'import re,shutil,subprocess,sys,tempfile,pathlib;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=pathlib.Path(T.name);[(d/p).mkdir(parents=True) for p in (\"src/pkg\",\".venv/lib/dep\",\"node_modules/dep\")];(d/\"src/pkg/mod.py\").write_text(\"x = 1\"+chr(10));(d/\".venv/lib/dep/big.py\").write_text((\"y = 2\"+chr(10))*500);(d/\"node_modules/dep/index.js\").write_text((\"var z = 3;\"+chr(10))*700);subprocess.run([\"git\",\"init\",\"-q\",str(d)],capture_output=True);subprocess.run([sys.executable,\"-m\",\"espalier\",\"init\",str(d)],capture_output=True);t=(d/\".claude/agents/repo-analyst.md\").read_text(encoding=\"utf-8\");f=re.search(r\"```bash\\n(.*?)```\",t[t.index(\"### 3. ARCHITECTURE ANALYSIS\"):],re.S).group(1);o=subprocess.run([shutil.which(\"bash\"),\"-c\",f],cwd=d,capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\").stdout;n=int(re.findall(r\"(\\d+)\\s+total\",o.split(\"=== Size ===\")[-1])[-1]);v=sum(len(p.read_text(encoding=\"utf-8\",errors=\"replace\").splitlines()) for p in (d/\"tools/cc\").rglob(\"*.py\"));v>1000 or 1/0;print(\"size_counts_vendored=\"+str(n>=v),\"size_counts_dependencies=\"+str(n-(v if n>=v else 0)>=1200))'",
+ "open_value": "size_counts_vendored=True size_counts_dependencies=True",
+ "why_not": null,
+ "row_sha": "de9edafd0fe7",
+ "text_sha": "aeabb4a80a91",
+ "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)",
+ "verified_2026_10_09": "STILL_OPEN (re-pinned value unchanged on 2026-10-09: text re-pin only: the stack-registry lane reworded the row on 2026-10-07 (918e0946) to say its pack had landed; the claim is unchanged and the probe still prints its open value)"
+}

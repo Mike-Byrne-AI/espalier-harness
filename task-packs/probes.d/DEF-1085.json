@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1085",
+ "subject": "espalier/cli.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The fix is a design this row proposes but does not settle (a role or namespace check before a seed is written), so no structure it must satisfy can be named before it is built; a key on a guessed identifier would stay open under any other name and flip on an unrelated one.",
+ "row_sha": "9eb2e591dffd",
+ "text_sha": "5f9fe0715ab2",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

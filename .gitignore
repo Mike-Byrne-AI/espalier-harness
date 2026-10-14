@@ -168,6 +168,9 @@ TP-*/
 task-packs/*
 !task-packs/CLAUDE.md
 !task-packs/FORWARD_LEDGER.md
+# This tree folded its probes into task-packs/probes.d/ (2026-10-14); the line
+# stays because the classifier still ships an adopter's roster file and a pin
+# holds this allow-list equal to the classifier's carve-out.
 !task-packs/LEDGER_PROBES.json
 !task-packs/ledger.d/
 !task-packs/probes.d/

@@ -1,0 +1,11 @@
+{
+ "id": "DEF-649",
+ "subject": "tools/cc/memory_sort_audit.py",
+ "cmd": "python3 -c \"import re;fs=['tools/cc/memory_sort_audit.py'];print(sum(len(re.findall(r'session-archive|session_archive',open(f,encoding='utf-8',errors='replace').read(),0)) for f in fs))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "6372e3af378b",
+ "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
+ "text_sha": "deafebc6a9cc",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

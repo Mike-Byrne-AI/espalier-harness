@@ -1,0 +1,11 @@
+{
+ "id": "DEF-835",
+ "subject": "tests/test_contracts.py",
+ "cmd": "python3 -c 'import sys,importlib.util;sys.path.insert(0,\"tests\");sys.path.insert(0,\".\");s=importlib.util.spec_from_file_location(\"tc\",\"tests/test_contracts.py\");m=importlib.util.module_from_spec(s);sys.modules[\"tc\"]=m;s.loader.exec_module(m);src=\"import json\\nfrom espalier.surface_contract import decode_bom\\ndef f(p):\\n    try:\\n        return json.loads(decode_bom(p.read_bytes()))\\n    except OSError:\\n        return None\\n\";print(len(m._text_reads_under_a_handler_that_lets_the_decode_error_past(\"syn.py\",src)))'",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "1e45ff3665fb",
+ "text_sha": "682318b87548",
+ "verified_2026_09_17": "STILL_OPEN (re-pinned value unchanged on 2026-09-17: reconciled into docs/FAILURE_MODES.md 18.15's second direction: premise re-driven, severity story corrected (the CLI catch-all handles ValueError and the hooks' three callers all catch), scope corrected upward (60 derived helpers not 7, 252 functions to 6 frames, MANIFEST ships two scripts/bench files), three defects found in the existing census, fix re-shaped by the architecture read)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

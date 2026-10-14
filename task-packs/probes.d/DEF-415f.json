@@ -1,0 +1,11 @@
+{
+ "id": "DEF-415f",
+ "subject": "docs/SHARP_EDGES.md",
+ "cmd": "python3 -c \"s=open('docs/SHARP_EDGES.md').read(); print('label-vs-fact' not in s and 'label, not the fact' not in s)\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "8e3984e6548f",
+ "text_sha": "7bea54a5040b",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

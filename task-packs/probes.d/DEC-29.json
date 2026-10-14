@@ -1,0 +1,12 @@
+{
+ "id": "DEC-29",
+ "subject": "tools/cc/hooks/task_router.py",
+ "cmd": "python3 -c \"import re;fs=['tools/cc/hooks/task_router.py'];print(sum(len(re.findall(r'premise',open(f,encoding='utf-8',errors='replace').read(),re.I)) for f in fs))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "6579beb6a461",
+ "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
+ "text_sha": "59662c7e3198",
+ "verified_2026_10_04": "STILL_OPEN (text sha re-pinned by hand on 2026-10-04, 'd1a8903db13c' -> '59662c7e3198': the verbs refuse the three-cell decision shape (DEF-869), the precedent of this row's 2026-09-20 note. edcf339 (2026-10-02, the two retired packs moved out of the shipped root) re-keyed the text's mention of a landed pack to its title and date, the dangling-id gate's own rule; the probe still prints 0; the claim stands)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands -- pinned through the checker's own row_sha/text_sha with the probe driven, because the verbs address member rows only and refuse the three-cell decision shape (DEF-869))"
+}

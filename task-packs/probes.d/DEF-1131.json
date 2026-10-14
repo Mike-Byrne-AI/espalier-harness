@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1131",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda t,c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":t,\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));q=chr(34);print(\"bash_eval=\"+r(\"Bash\",\"eval \"+q+\"cat .env\"+q)+\" ps_iex=\"+r(\"PowerShell\",\"iex \"+q+\"Get-Content .env\"+q)+\" ps_pwsh=\"+r(\"PowerShell\",\"pwsh -Command \"+q+\"Get-Content .env\"+q))'",
+ "open_value": "bash_eval=allow ps_iex=allow ps_pwsh=allow",
+ "why_not": null,
+ "row_sha": "ff433ffc0b8a",
+ "text_sha": "ca4e967c8559",
+ "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)"
+}

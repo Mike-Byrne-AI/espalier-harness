@@ -1,0 +1,11 @@
+{
+ "id": "DEF-838",
+ "subject": "tests/test_test_suite_contract.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the row asks for an instrument that does not exist; an absence has no structural signature a probe can read without keying on the name the fix would choose",
+ "row_sha": "e770a53c53ed",
+ "text_sha": "e15e7f803b1f",
+ "verified_2026_09_17": "STILL_OPEN (re-pinned value unchanged on 2026-09-17: softening the softest claim: over-credit population-invariance now cites all three rows' recorded figures and is marked an observation over three fixes rather than a property of the direction, with the counterexample that would restore the population-keyed candidate stated inline)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1146",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import sys,os,json,tempfile,pathlib; sys.path.insert(0,\".\"); import espalier.cli as c; n=chr(10); q=chr(34); t=tempfile.TemporaryDirectory(ignore_cleanup_errors=True); d=pathlib.Path(t.name); f=d/\"fwd.py\"; f.write_text(n.join([\"import sys,subprocess\",\"a=sys.argv[1:]\",\"if a[:1]==[chr(45)+chr(51)]: raise SystemExit(subprocess.run([sys.executable]+a[1:]).returncode)\",\"print(chr(80)+chr(121)+chr(116)+chr(104)+chr(111)+chr(110)+chr(32)+chr(50)+chr(46)+chr(55)+chr(46)+chr(49)+chr(56))\",\"raise SystemExit(0 if a==[chr(45)+chr(45)+chr(118)+chr(101)+chr(114)+chr(115)+chr(105)+chr(111)+chr(110)] else 1)\",\"\"]),encoding=\"utf-8\"); p=d/(\"py.cmd\" if os.name==\"nt\" else \"py\"); p.write_text((\"@\"+q+sys.executable+q+\" \"+q+str(f)+q+\" %*\") if os.name==\"nt\" else (\"#!/bin/sh\"+n+\"exec \"+q+sys.executable+q+\" \"+q+str(f)+q+\" \"+q+\"$@\"+q+n),encoding=\"utf-8\"); os.chmod(p,0o755); os.environ[\"PATH\"]=str(d); s=d/\"settings.json\"; s.write_text(json.dumps({\"hooks\":{\"PreToolUse\":[{\"matcher\":\"*\",\"hooks\":[{\"type\":\"command\",\"command\":\"py\",\"args\":[\"-3\",\"${CLAUDE_PROJECT_DIR}/tools/cc/hooks/write_guard.py\"]}]}]}}),encoding=\"utf-8\"); print(sorted(c._wired_interpreters_not_python3(s) or {}))'",
+ "open_value": "['py']",
+ "why_not": null,
+ "row_sha": "8a8a566ffaf4",
+ "text_sha": "ab87a69ff193",
+ "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
+}

@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1040",
+ "subject": "tests/test_documented_claims.py",
+ "cmd": "python -c 'import sys,tempfile,pathlib,shutil;sys.path.insert(0,\"tests\");import test_documented_claims as m;R=m.REPO_ROOT;P=m.TestHookProtocolStaleForms.PUBLIC_SCAN_PATHS;S=\"The channel-XOR rule forbids returning a non-zero exit code while also writing JSON to stdout (Claude Code ignores the JSON in that case).\";B=\"the hook protocol bug where exit-2-plus-stdout-JSON silently dropped reasons.\";exec(\"def red(rel,txt):\\n d=pathlib.Path(tempfile.mkdtemp());a=d/\\\".claude\\\"/\\\"agents\\\";a.mkdir(parents=True);(a/\\\"ok.md\\\").write_text(\\\"ok\\\",encoding=\\\"utf-8\\\");f=d/rel;f.parent.mkdir(parents=True,exist_ok=True);f.write_text(txt,encoding=\\\"utf-8\\\");m.REPO_ROOT=d;m.TestAgentDefinitionsMatchProtocol.AGENTS_DIR=a;m.TestHookProtocolStaleForms.PUBLIC_SCAN_PATHS=tuple(d/p.relative_to(R) for p in P);h=[]\\n for C in (m.TestAgentDefinitionsMatchProtocol,m.TestAgentDocsMatchProtocol,m.TestHookProtocolStaleForms):\\n  o=C()\\n  for n in dir(o):\\n   if n.startswith(\\\"test_\\\"):\\n    try: getattr(o,n)()\\n    except AssertionError: h.append(n)\\n shutil.rmtree(d);return bool(h)\");print(red(\".claude/agents/x.md\",S) and red(\"bench/end_to_end/scenarios/x.yaml\",B) and red(\"memory/x.md\",S) and not red(\"memory/CONVERGENCE_LEDGER.md\",S))'",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "ef559f499331",
+ "text_sha": "70d868ade9de",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

@@ -5887,7 +5887,7 @@ were guarded. Operator-facing text is held to neither literal by the two portabi
 in `tests/test_portability_contract.py` (`python3` is absent on many Windows installs,
 `python` on a stock Mac), and `settings.json` gets the name `cli._detect_python_command`
 validated on the host. The third surface is command text stored as data and executed later
-as written: every probe in `task-packs/LEDGER_PROBES.json` (each command opens with
+as written: every probe of the forward ledger (`task-packs/probes.d/`; each command opens with
 `python3`), the persist command the three workflow scaffolds hand their persist agent, headed
 the same way, and a probe whose own program spawned `['python3', '-m', 'pytest', ...]`. No
 guard read any of it, because a probe

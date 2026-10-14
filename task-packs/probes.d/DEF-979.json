@@ -1,0 +1,14 @@
+{
+ "id": "DEF-979",
+ "subject": ".github/workflows/portability.yml",
+ "cmd": "python3 -c \"import yaml;d=yaml.safe_load(open('.github/workflows/portability.yml',encoding='utf-8'));s=next(x for x in d['jobs']['portability']['steps'] if x.get('name')=='Test');print(sum(1 for l in str(s['run']).split(chr(10)) if 'python -m pytest' in l and ' -n ' in l+' '))\"",
+ "open_value": "0",
+ "why_not": null,
+ "inputs": [
+  "scripts/proof_tier.py"
+ ],
+ "row_sha": "a2002bc3f277",
+ "text_sha": "e53ac694df4d",
+ "verified_2026_09_30": "STILL_OPEN (re-pinned value unchanged on 2026-09-30: the filing probe used splitlines, a text-read marker of the paperwork gate; the predicate is unchanged (invocation lines of the parsed Test step carrying -n), spelled with split(chr(10)))",
+ "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: folds a second harm the same fix serves: a ceiling crossing on the serial Windows cell ends the run with no test named (run 37617404924); the probe and its value are unchanged)"
+}

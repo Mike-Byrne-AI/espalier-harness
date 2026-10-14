@@ -328,13 +328,20 @@ class TestMailSections:
 class TestDerivedNotRestated:
     @pytest.mark.contract
     def test_the_ledger_count_is_the_generators(self, board, monkeypatch, tmp_path):
-        """The count comes from the generator's own parser, never a second one."""
-        ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
-        ledger.parent.mkdir(parents=True)
-        ledger.write_text((REPO_ROOT / "task-packs" / "FORWARD_LEDGER.md").read_text(encoding="utf-8"),  # ledger-read: copied into a scratch tree with no row files; compared there
-                          encoding="utf-8")
+        """The count comes from the generator's own parser over the view, never a
+        second one. The scratch tree carries the row files: since the fold
+        (2026-10-14) the ledger file alone holds no row, and the comparison read
+        0 against 0 (review, 2026-10-14)."""
+        import shutil
+
+        packs = tmp_path / "task-packs"
+        packs.mkdir(parents=True)
+        shutil.copy(REPO_ROOT / "task-packs" / "FORWARD_LEDGER.md", packs / "FORWARD_LEDGER.md")
+        if (REPO_ROOT / "task-packs" / "ledger.d").is_dir():
+            shutil.copytree(REPO_ROOT / "task-packs" / "ledger.d", packs / "ledger.d")
         gen = _load("generate_ledger_regions", "gen_for_board_test")
-        expected = len(gen.live_member_ids(ledger.read_text(encoding="utf-8")))
+        expected = len(gen.live_member_ids(gen.record_fragments().ledger_text(tmp_path)))
+        assert expected >= 100, f"the scratch ledger reads {expected} live rows: the copy or the view broke"
         assert board.read_ledger_live(tmp_path) == expected
         assert board.read_ledger_live(tmp_path / "nowhere") is None
 

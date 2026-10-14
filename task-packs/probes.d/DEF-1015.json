@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1015",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;f=getattr(b,\"_candidate_paths_from_bash\",None);g=chr(62);a=chr(39);z=\"tools/\"+\"cc\";m=lambda w:a+w+\" \"+g+\" \"+z+\"/a\"+a;c=[\"if true; then echo \"+m(\"moved\")+\"; fi\",\"while read -r l; do echo \"+m(\"x\")+\"; done \"+chr(60)+\" list.txt\",\"for i in 1 2; do echo \"+m(\"copy\")+\"; done\",\"{ echo \"+m(\"x\")+\"; } \"+g+\" notes.md\",\"(echo \"+m(\"x\")+\")\",\"if true; then echo \"+m(\"echo x\")+\"; fi | bash\"];print(\"MISSING_SYMBOL\" if f is None else [any(p.startswith(z) for p in f(x)) for x in c])'",
+ "open_value": "[True, True, True, True, True, True]",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_hook_utils.py"
+ ],
+ "row_sha": "687addc644aa",
+ "text_sha": "046ccf72aa25",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

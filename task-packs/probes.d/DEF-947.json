@@ -1,0 +1,10 @@
+{
+ "id": "DEF-947",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import subprocess,sys,tempfile,pathlib,shutil,os,json;d=pathlib.Path(tempfile.mkdtemp()).resolve();subprocess.run(['git','init','-q','-b','main',str(d)],check=True);(d/'src').mkdir();(d/'src'/'app.js').write_text('export const x = 1;\\n');(d/'package.json').write_text('{}');(d/'.devcontainer').mkdir();(d/'.devcontainer'/'devcontainer.json').write_text(json.dumps({'image':'mcr.microsoft.com/devcontainers/base:bookworm','features':{'ghcr.io/devcontainers/features/node:1':{}}}));e=dict(os.environ,ESPALIER_AUDIT_DIR=str(d/'audit'));i=subprocess.run([sys.executable,'-m','espalier','init',str(d)],capture_output=True,text=True,env=e,check=True);o=subprocess.run([sys.executable,'-m','espalier','doctor',str(d)],capture_output=True,text=True,env=e);shutil.rmtree(d,ignore_errors=True);print(('container' in i.stdout.lower(),'container' in (o.stdout+o.stderr).lower()))\"",
+ "open_value": "(False, False)",
+ "why_not": null,
+ "row_sha": "4a06e55dbd20",
+ "text_sha": "9d44313f530d",
+ "verified_2026_09_28": "OPEN (filed 2026-09-28; probe driven at filing)"
+}

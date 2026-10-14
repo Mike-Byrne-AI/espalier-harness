@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1195",
+ "subject": "espalier/surface_contract.py",
+ "cmd": "python -c \"from espalier.surface_contract import _hook_object_schema_error as f; print(f({'type': 'http', 'url': 'x'}) is not None)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "bf2eec8c03fe",
+ "text_sha": "5c2a0a77b965",
+ "verified_2026_10_08": "OPEN (filed 2026-10-08; probe driven at filing)"
+}

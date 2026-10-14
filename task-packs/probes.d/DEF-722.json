@@ -1,0 +1,12 @@
+{
+ "id": "DEF-722",
+ "subject": "tools/cc/hooks/post_write_check.py",
+ "cmd": "python3 -c \"import ast; s=open('tools/cc/hooks/post_write_check.py').read(); print(any((getattr(n,'name',None) or '').startswith('check_hook_sibling') for n in ast.walk(ast.parse(s)) if isinstance(n, ast.FunctionDef)))\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "e3964fbe5eb7",
+ "text_sha": "cd1bed37ae11",
+ "verified_2026_09_08": "OPEN (filed 2026-09-08; probe driven at filing)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "verified_2026_10_06": "STILL_OPEN (re-pinned value unchanged on 2026-10-06: note: the fix shape's print was stderr, the debug log on an exit-0 PostToolUse hook; it now names the seen channel)"
+}

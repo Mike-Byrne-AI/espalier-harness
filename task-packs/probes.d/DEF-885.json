@@ -1,0 +1,11 @@
+{
+ "id": "DEF-885",
+ "subject": "docs/RELEASE_CHECKLIST.md",
+ "cmd": "python3 -c \"f=chr(96)*3;tok=('PIPESTATUS',chr(36)+'?');b=[s for s in open('docs/RELEASE_CHECKLIST.md').read().split(f) if '--dry-run --follow-tags' in s and 'grep -c' in s];c=[l.strip() for s in b for l in s.splitlines() if l.strip() and not l.strip().startswith('#')];i=[k for k,l in enumerate(c) if '--dry-run --follow-tags' in l];print('measure_status_unread='+str(bool(i) and 'grep -c' in c[i[0]] and not any(t in ''.join(c[i[0]:i[0]+2]) for t in tok)))\"",
+ "open_value": "measure_status_unread=True",
+ "why_not": null,
+ "row_sha": "451d41e361d2",
+ "text_sha": "166cfe6d4991",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)",
+ "verified_2026_09_26": "STILL_OPEN (re-pinned value unchanged on 2026-09-26: the subject docs/RELEASE_CHECKLIST.md resolves again (TP-457 1-A, 2026-09-26); the measure-first block and branch 2a are untouched except the count sentence's 27, which 1-B corrected to the public repository's one reachable tag; the missing enforcer stays the row's own work)"
+}

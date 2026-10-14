@@ -2206,6 +2206,12 @@ def test_appendix_b_assigns_each_id_exactly_once():
 # What is forbidden is silence.
 
 _PROBE_FILE = _LEDGER.parent / "LEDGER_PROBES.json"
+#: The probe files, one per probe, that hold this tree's roster since the fold of
+#: 2026-10-14 (TP-479a Wave C); an adopter tree keeps the file.
+_PROBE_DIR = _LEDGER.parent / "probes.d"
+#: Whether a live roster is here in either form. Keyed on the file alone, the
+#: gates below skipped silently once the fold removed it.
+_HAS_ROSTER = _PROBE_FILE.is_file() or _PROBE_DIR.is_dir()
 
 
 def _probe_index() -> dict[str, dict]:
@@ -2222,7 +2228,7 @@ def _probe_index() -> dict[str, dict]:
 
 
 @pytest.mark.skipif(not _LEDGER.is_file(), reason="FORWARD_LEDGER.md is self-host only")
-@pytest.mark.skipif(not _PROBE_FILE.is_file(), reason="LEDGER_PROBES.json is self-host only")
+@pytest.mark.skipif(not _HAS_ROSTER, reason="the probe roster is self-host only")
 def test_every_live_row_is_probed_or_declared():
     """No live row may be silently un-re-measurable. The population is every id
     a live row carries (`live_cell_ids`): a co-id owns its own probe, and keyed
@@ -2238,8 +2244,9 @@ def test_every_live_row_is_probed_or_declared():
     live = _live_cell_ids(text)
     unprobed = sorted(live - set(probes))
     assert not unprobed, (
-        f"{len(unprobed)} live ledger row(s) have no entry in "
-        f"{_PROBE_FILE.name}: {unprobed}.\nEvery row states a claim about this "
+        f"{len(unprobed)} live ledger row(s) have no probe (task-packs/probes.d/<id>.json, "
+        f"or an entry in {_PROBE_FILE.name} on a tree that keeps one): {unprobed}.\n"
+        "Every row states a claim about this "
         "tree, and nothing re-measures a row that has no probe -- that is the "
         "DEF-546 stale-shape class, and it has a live instance every time this "
         "list is non-empty. Add a probe with `cmd` + `open_value`, or declare "
@@ -2256,7 +2263,10 @@ def test_every_live_row_is_probed_or_declared():
     )
 
 
-@pytest.mark.skipif(not _PROBE_FILE.is_file(), reason="LEDGER_PROBES.json is self-host only")
+@pytest.mark.skipif(not _PROBE_FILE.is_file(), reason=(
+    "no roster file: this tree folded it into task-packs/probes.d/ on 2026-10-14, where each probe "
+    "file holds one probe and no total, and tests/test_ledger_fragments.py pins that the file "
+    "stays gone; an adopter tree with the file runs this pin"))
 def test_the_live_roster_stores_no_total():
     """The probes roster stores no `_count` since 2026-10-12: two lanes that each
     re-derived it conflicted on that line at every catch-up GitHub merged. A lane
@@ -2278,16 +2288,13 @@ def test_the_live_roster_stores_no_total():
     doc = json.loads(_PROBE_FILE.read_text(encoding="utf-8"), object_pairs_hook=no_repeats)  # ledger-read: the roster file's own bytes
     assert "_count" not in doc, (
         f"{_PROBE_FILE.name} stores `_count` ({doc['_count']}) again: a lane branched before "
-        "2026-10-12 wrote it back at its catch-up. Drop it with the record merge's own step, "
-        "from the repository root (python3, else python, else py -3), then commit the file:\n"
-        "  python3 -c \"import sys; sys.path.insert(0, 'tools/cc'); import record_merge as rm, "
-        "generate_ledger_regions as g; from pathlib import Path; "
-        "print(rm.settle_probes_count(Path('.'), g)[1])\""
+        "2026-10-12 wrote it back. Delete the `_count` line from the file and commit it; any "
+        "`tools/cc/ledger_row.py` verb also drops the key on its next write"
     )
 
 
 @pytest.mark.skipif(not _LEDGER.is_file(), reason="FORWARD_LEDGER.md is self-host only")
-@pytest.mark.skipif(not _PROBE_FILE.is_file(), reason="LEDGER_PROBES.json is self-host only")
+@pytest.mark.skipif(not _HAS_ROSTER, reason="the probe roster is self-host only")
 def test_every_probed_live_row_carries_a_row_hash():
     """Tier 3's drift signal is only as complete as its coverage.
 

@@ -1,0 +1,14 @@
+{
+ "id": "DEF-441",
+ "subject": "espalier/mirror_registry.py",
+ "cmd": "python3 -c \"import pathlib,re; ps=[p for p in list(pathlib.Path('espalier').rglob('*.py'))+list(pathlib.Path('tools').rglob('*.py'))+list(pathlib.Path('scripts').rglob('*.py')) if p.name != 'mirror_registry.py']; print(sum(1 for p in ps if re.search(r'(?m)^\\s*(from espalier(\\.mirror_registry)? import[^\\n]*mirror_registry|import espalier\\.mirror_registry|from \\.?mirror_registry import)', (t:=p.read_text(encoding='utf-8',errors='replace'))) and re.search(r'\\.(direction|comparator)\\b|is_inverted', t)))\"",
+ "open_value": "0",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "afe24797f5ea",
+ "verified_2026_09_06": "STILL_OPEN -- probe re-keyed from 'any import of mirror_registry' to 'a non-test reader of .direction / .comparator / is_inverted': scripts/symbol_census.py and scripts/handoff_mechanics.py now import the registry for mirrors/sync/covers/counterpart, which is not the claim; no reader of the direction fields exists outside its tests, so the row stands",
+ "text_sha": "a3c3fc6dd255",
+ "verified_2026_09_11": "STILL_OPEN (re-pinned value unchanged on 2026-09-11: the text probe conjoined a MENTION of mirror_registry with any .direction attribute; surface_impact.py gained Obligation.direction (DEF-410j) beside a comment citing the registry, so it counted 1 while no reader of the registry exists -- the probe now requires an import of the registry, driven at 0; the claim stands)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "verified_2026_09_21": "STILL_OPEN (re-pinned value unchanged on 2026-09-21: citation form: two bare line anchors converted to the symbols they named; the claim stands)"
+}

@@ -1,0 +1,19 @@
+{
+ "id": "DEF-1107",
+ "subject": "tests/test_agent_frontmatter_contract.py",
+ "cmd": "python -c 'import pathlib;print(sum(any(l.startswith(\"tools:\") and \"Bash(\" in l for l in p.read_text(encoding=\"utf-8\").splitlines()) for p in pathlib.Path(\"espalier/assets/claude/agents\").glob(\"*.md\")))'",
+ "open_value": "7",
+ "why_not": null,
+ "inputs": [
+  "espalier/assets/claude/agents/architecture-analyst.md",
+  "espalier/assets/claude/agents/code-reviewer.md",
+  "espalier/assets/claude/agents/docs-maintainer.md",
+  "espalier/assets/claude/agents/failure-mode-reviewer.md",
+  "espalier/assets/claude/agents/harness-config-advisor.md",
+  "espalier/assets/claude/agents/repo-analyst.md",
+  "espalier/assets/claude/agents/test-writer.md"
+ ],
+ "row_sha": "b1b0d8aa9df3",
+ "text_sha": "8c0f4d78d4bf",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

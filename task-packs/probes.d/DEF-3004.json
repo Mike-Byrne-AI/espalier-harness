@@ -1,0 +1,15 @@
+{
+ "id": "DEF-3004",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import ast,pathlib; F={'run','Popen','call','check_output','check_call'}; n=sum(1 for p in pathlib.Path('espalier').rglob('*.py') if not {'_vendor','assets'}&set(p.parts) for c in ast.walk(ast.parse(p.read_text(encoding='utf-8'))) if isinstance(c,ast.Call) and isinstance(c.func,ast.Attribute) and c.func.attr in F and isinstance(c.func.value,ast.Name) and c.func.value.id=='subprocess' and any(k.arg=='timeout' for k in c.keywords)); print(n>0)\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "espalier/doctor.py",
+  "espalier/freshness.py",
+  "espalier/scanners/freshness.py"
+ ],
+ "row_sha": "421c53e4539a",
+ "text_sha": "9fa8025ec489",
+ "verified_2026_10_13": "STILL_OPEN (re-pinned value unchanged on 2026-10-13: text only, same lane as the filing: the CI guard's three reads stay on subprocess.run after the review, so the row now names that exception; the probe and its value are unchanged)"
+}

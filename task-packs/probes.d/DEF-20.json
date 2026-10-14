@@ -1,0 +1,12 @@
+{
+ "id": "DEF-20",
+ "subject": "tools/cc/sister_site_probe.py",
+ "cmd": "python3 -c \"import ast; s=open('tools/cc/sister_site_probe.py').read(); f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='_self_host_scan_targets'][0]; src=ast.get_source_segment(s,f); print(src.count('glob(') == 2 and 'rglob' not in src)\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "690f2805e7e3",
+ "verified_2026_09_05": "STILL_OPEN (probe re-anchored to _self_host_scan_targets after DEF-673 split the dispatcher out; the two shallow globs are unchanged)",
+ "text_sha": "a06c437d9481",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

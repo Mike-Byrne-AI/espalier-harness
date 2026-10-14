@@ -1,0 +1,11 @@
+{
+ "id": "DEF-759",
+ "subject": "tests/test_hook_contracts.py",
+ "cmd": "python3 -c \"import pathlib,re; print('rejoin_gate=' + str(any(re.search(r'def test_\\w*rejoin', p.read_text(encoding='utf-8')) for p in pathlib.Path('tests').glob('test_*.py'))))\"",
+ "open_value": "rejoin_gate=False",
+ "why_not": null,
+ "row_sha": "c9cbdf8cddfb",
+ "text_sha": "5905a3a4e878",
+ "verified_2026_09_10": "OPEN (filed 2026-09-10; probe driven at filing)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

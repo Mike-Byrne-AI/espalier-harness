@@ -1,0 +1,15 @@
+{
+ "id": "DEF-1021",
+ "subject": ".claude/commands/handoff.md",
+ "cmd": "python -c 'import importlib.resources as R,pathlib as p;from espalier.cli import render_canonical_template as r;n=chr(10);row=[l for l in r(\"claude\").split(n) if l.startswith(\"|\") and \"/handoff\" in l.split(\"|\")[1]][0];rb=p.Path(\"README.md\").read_text(encoding=\"utf-8\").split(\"- **`/handoff`**\",1)[1].split(n+\"- **\",1)[0];al=[l for l in R.files(\"espalier\").joinpath(\"assets/claude/agents/harness-config-advisor.md\").read_text(encoding=\"utf-8\").split(n) if l.startswith(\"- `/handoff`\")][0];ok=lambda s:\"push\" in s and \"auto-merge\" in s;print(not (ok(row) and ok(rb) and \"push\" in al and \"commit staged work\" not in al))'",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "espalier/assets/claude/commands/handoff.md",
+  "espalier/assets/claude/agents/harness-config-advisor.md",
+  "README.md"
+ ],
+ "row_sha": "3a0d434a25e9",
+ "text_sha": "66f08e99479c",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

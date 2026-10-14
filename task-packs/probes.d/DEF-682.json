@@ -1,0 +1,11 @@
+{
+ "id": "DEF-682",
+ "subject": "tools/cc/hooks/_reinject.py",
+ "cmd": "python3 -c \"import sys,pathlib;sys.path.insert(0,'tools/cc/hooks');import _reinject as R;root=pathlib.Path('.');b=R._render_docs_asset_sync('Bash',{'command':'python3 patch.py docs/FAILURE_MODES.md'},root);e=R._render_docs_asset_sync('Edit',{'file_path':'docs/FAILURE_MODES.md'},root);print('bash_write_advisory='+str(b is not None)+' edit_advisory='+str(e is not None)+' cap_exempt='+str(R.DOCS_ASSET_SYNC_RULE.cap_exempt))\"",
+ "open_value": "bash_write_advisory=False edit_advisory=True cap_exempt=False",
+ "row_sha": "8cc6d8f5191e",
+ "verified_2026_09_04": "STILL_OPEN (driven: Edit renders, Bash write renders None, rule not cap_exempt)",
+ "why_not": null,
+ "text_sha": "828426f4074f",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}
