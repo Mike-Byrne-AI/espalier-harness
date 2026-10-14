@@ -145,6 +145,19 @@ def _event_from_obj(obj: dict[str, Any]) -> TranscriptEvent:
         text = _flatten_assistant_content(obj)
         return TranscriptEvent(role="assistant", content=text, metadata=obj)
     if kind == "user":
+        # The live CLI delivers every tool's result -- a hook's deny among them
+        # -- as `tool_result` blocks inside a `user` event, never as a top-level
+        # `tool_result` event. A user event made only of those is a tool result,
+        # so the deny check (which leaves the user's own prompt out) reads it.
+        if obj.get("isSynthetic") is True:
+            # A user event the CLI wrote itself, not the operator's prompt: a
+            # Stop hook's block arrives this way ("Stop hook feedback: ..."), so
+            # it is the harness speaking and the deny check reads it.
+            return TranscriptEvent(role="hook", content=_flatten_user_content(obj), metadata=obj)
+        blocks = _user_blocks(obj)
+        if blocks and all(isinstance(b, dict) and b.get("type") == "tool_result" for b in blocks):
+            text = "\n".join(_flatten_tool_result_content(b) for b in blocks)
+            return TranscriptEvent(role="tool_result", content=text, metadata=obj)
         text = _flatten_user_content(obj)
         return TranscriptEvent(role="user", content=text, metadata=obj)
     if kind == "system":
@@ -176,6 +189,12 @@ def _flatten_assistant_content(obj: dict[str, Any]) -> str:
                     out.append(f"[tool_use: {block.get('name', '?')}]")
         return "\n".join(out)
     return ""
+
+
+def _user_blocks(obj: dict[str, Any]) -> list[Any]:
+    msg = obj.get("message", obj)
+    content = msg.get("content") if isinstance(msg, dict) else obj.get("content")
+    return content if isinstance(content, list) else []
 
 
 def _flatten_user_content(obj: dict[str, Any]) -> str:
@@ -282,6 +301,15 @@ class Transcript:
             return bool(pattern.search("\n".join(self.assistant_turns())))
         return pattern.lower() in haystack
 
+    def deny_event_index(self) -> int | None:
+        """The index of the first event that carries a deny from the harness
+        (a system message, an error tool result or a hook event -- never the
+        agent's own words), else None."""
+        for i, e in enumerate(self._events):
+            if _carries_deny(e):
+                return i
+        return None
+
     def deny_reason_received(self) -> str | None:
         """Return the deny-reason text if the agent received one, else None.
 
@@ -294,7 +322,29 @@ class Transcript:
         for e in self._events:
             if e.role not in {"system", "tool_result", "hook", "assistant"}:
                 continue
+            if e.role == "tool_result" and not _is_error_result(e):
+                # A Read or grep of a hook's own source carries every marker; only
+                # a tool call the CLI reports failed can be a hook's deny.
+                continue
             for marker in _DENY_REASON_MARKERS:
                 if marker.lower() in e.content.lower():
                     return marker
         return None
+
+
+def _is_error_result(e: TranscriptEvent) -> bool:
+    """The CLI marks a refused or failed tool call `is_error: true` (on the
+    `tool_result` block of a user event, or on a top-level result event)."""
+    if e.metadata.get("is_error") is True:
+        return True
+    msg = e.metadata.get("message")
+    blocks = msg.get("content") if isinstance(msg, dict) else None
+    return isinstance(blocks, list) and any(isinstance(b, dict) and b.get("is_error") is True for b in blocks)
+
+
+def _carries_deny(e: TranscriptEvent) -> bool:
+    if e.role not in {"system", "tool_result", "hook"}:
+        return False
+    if e.role == "tool_result" and not _is_error_result(e):
+        return False
+    return any(m.lower() in e.content.lower() for m in _DENY_REASON_MARKERS)

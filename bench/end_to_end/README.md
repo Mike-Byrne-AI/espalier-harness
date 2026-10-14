@@ -35,17 +35,24 @@ the hook *emitted*.
 
 ## Cost
 
-Per-scenario rough estimate (Sonnet-tier, 3-turn cap):
+Measured 2026-10-14, one run each, on a maintainer's Mac with Claude Code
+2.1.299 and its default model (`claude-opus-5-5`), with the run's cost read
+from the CLI's own `result` event (`total_cost_usd`; tokens include the cache
+tokens, which are most of them). Runs vary with the model's path, and a CI key
+whose default model is cheaper will cost less, so treat these as one sample:
 
-| Scenario | Avg tokens | Avg cost |
+| Scenario | Tokens | Cost |
 |---|---|---|
-| BCE-000 (smoke) | ~500 | ~$0.01 |
-| BCE-001 | ~3,000 | ~$0.04 |
-| BCE-002 | ~3,500 | ~$0.05 |
-| BCE-003 | ~3,000 | ~$0.04 |
+| BCE-000 (smoke) | 16,373 | $0.05 |
+| BCE-001 | 263,375 | $0.42 |
+| BCE-002 | 78,866 | $0.11 |
+| BCE-003 | 54,926 | $0.09 |
 
-Weekly CI cost: ~$0.15/run × 52 = **~$8/year**. The hard cap is
-`--max-cost-usd 5.00` per workflow invocation.
+One pass of all four is about **$0.67** at these figures, so a weekly run is
+about $35 a year. The hard cap is `--max-cost-usd 5.00` per workflow
+invocation. (The table this replaced, about 3,000 tokens a scenario under a
+3-turn cap, came from a runner whose own estimate left the cache tokens out and
+that never reached the CLI: it lacked `--verbose`.)
 
 > **Schedule is manual pre-launch.** The weekly `schedule:` trigger is
 > currently commented out in `end-to-end-bench.yml` pending the

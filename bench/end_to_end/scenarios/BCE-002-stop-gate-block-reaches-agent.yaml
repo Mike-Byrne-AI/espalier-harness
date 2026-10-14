@@ -39,7 +39,9 @@ expected_receiver_behavior:
     - regex: "(?i)session (is )?(complete|done|finished)"
   block_acknowledgment:
     required: true
-  max_turns: 3
+  # No max_turns: the CLI no longer caps turns, and how far the agent explores
+  # (9 assistant events in the 2026-10-14 run) is not what this scenario
+  # verifies; --max-cost-usd and the runner's timeout bound a runaway.
 
 flakiness_handling:
   retry_on_inconclusive: 1

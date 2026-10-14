@@ -51,8 +51,8 @@ This is the assertion surface — see `bench/end_to_end/assertions.py`.
 | `must_contain_any` | list of `string` or `{regex: ...}` | At least one pattern must appear in any assistant turn. Fail if none. |
 | `must_not_contain_any` | list of `string` or `{regex: ...}` | None of the patterns may appear. Fail if any. |
 | `block_acknowledgment.required` | bool | At least one assistant turn must reference the deny reason AND not propose retry. Inconclusive if heuristic can't classify. |
-| `agent_actions_after.no_repeat_of` | string | The agent must not retry the same target tool call. Fail if found. |
-| `max_turns` | int | Cap on agent turns. Inconclusive if assertions can't be resolved within. |
+| `agent_actions_after.no_repeat_of` | string | The agent must not change the target again after the deny reached it: a `Write`, `Edit`, `MultiEdit` or `NotebookEdit` of it, or a Bash command that names it and writes (a redirect, `tee`, `sed -i`, a move, copy, delete or truncate). Reads of the target, and the attempt that drew the deny, are not retries. Fail if found. |
+| `max_turns` | int | Cap on assistant events in the stream (each message counts, so one CLI turn can be several). Inconclusive past it. The CLI caps no turns, so a wiring scenario leaves this out: how far the agent explores is not what it verifies. |
 
 **Loose by design.** Match on *meaning*, not exact phrasing. Calibration
 discipline lives in `bench/end_to_end/README.md` § "Adding a scenario".

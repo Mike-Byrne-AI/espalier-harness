@@ -81,6 +81,7 @@ def _run_with_retry(
     def _do_run() -> tuple[ScenarioRun, ScenarioVerdict]:
         run = run_scenario(scenario_path, keep_work_dir=keep_work_dir)
         verdict = evaluate(scenario, run.transcript, cost_tokens=run.cost_tokens)
+        verdict.run_exit_code, verdict.run_error = run.exit_code, run.error
         return run, verdict
 
     run, verdict = _do_run()
@@ -129,6 +130,10 @@ def render_markdown(verdicts: list[ScenarioVerdict],
         }.get(v.overall, "?")
         lines.append(f"## {v.scenario_id} \u2192 {emoji} {v.overall.upper()}")
         lines.append("")
+        if v.run_exit_code not in (None, 0) or v.run_error:
+            # The run itself failed: say how, so a rejected argv or a timeout
+            # never reads as the friction layer failing.
+            lines.append(f"- run: exit {v.run_exit_code}" + (f"; error: {v.run_error}" if v.run_error else ""))
         for a in v.assertions:
             mark = {VERDICT_PASS: "\u2705", VERDICT_FAIL: "\u274c",
                     VERDICT_INCONCLUSIVE: "\u26a0\ufe0f"}.get(a.verdict, "?")

@@ -145,6 +145,38 @@ def _resolve_claude_cli() -> str:
     return cli
 
 
+#: Set by a parent Claude Code session: inherited, they make the child a nested
+#: session and root its hooks at the parent's project, not the scenario's tmpdir.
+_NESTED_SESSION_VARS = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_PROJECT_DIR")
+
+
+def _friction_bypass_vars() -> tuple[str, ...]:
+    """The variables that switch the friction layer off, read from the hook
+    module that defines them (`tools/cc/hooks/_maintenance_mode.py`'s
+    `ENV_VAR`), so a rename there follows here. Parsed, not imported: the bench
+    never executes a hook module to configure itself."""
+    import ast
+
+    src = (REPO_ROOT / "tools" / "cc" / "hooks" / "_maintenance_mode.py").read_text(encoding="utf-8")
+    return tuple(
+        node.value.value for node in ast.parse(src).body
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+        and any(isinstance(t, ast.Name) and t.id == "ENV_VAR" for t in node.targets))
+
+
+def _scenario_env() -> dict[str, str]:
+    """The nested CLI's environment: this process's, less what would make the
+    run measure something other than the scenario's own wiring -- a friction
+    bypass the operator's shell carries (the suite's own subprocess helpers drop
+    it: `tests/conftest.py::_isolate_maintenance_mode`) and a parent session's
+    variables. Other `ESPALIER_*` knobs pass through as the operator set them."""
+    env = os.environ.copy()
+    for name in (*_friction_bypass_vars(), *_NESTED_SESSION_VARS):
+        env.pop(name, None)
+    return env
+
+
 def _estimate_cost(cost_tokens: int, *, usd_per_1k_tokens: float = 0.015) -> float:
     """Rough sonnet-tier estimate. Real billing is per-input/output tokens
     and per-cache-tier; this is a first-order approximation suitable for
@@ -201,9 +233,18 @@ def run_scenario(
         # the live CLI's surface may be added here (see the allowlist test in
         # tests/test_e2e_bench.py). A future turn/budget cap would use
         # `--max-budget-usd`, which needs an explicit dollar amount.
+        # `--verbose` is not optional: with `--print`, the live CLI rejects
+        # `--output-format stream-json` without it at arg-parse ("requires
+        # --verbose", 2.1.274 on), so the pair is pinned in the same test.
+        # `--setting-sources project` makes the scenario's own
+        # .claude/settings.json the only settings the run loads: without it a
+        # maintainer's user-scope hooks and permission mode ride along (driven
+        # 2026-10-14: a user-scope SessionStart hook told the agent to make no
+        # edits, so the protected write the scenario exists to test never ran).
         cmd = [
             cli, "--print",
-            "--output-format", "stream-json",
+            "--output-format", "stream-json", "--verbose",
+            "--setting-sources", "project",
         ]
 
         stdin_payload = trigger.get("content") if trigger_type == "prompt" else None
@@ -223,8 +264,7 @@ def run_scenario(
                 error="tool_call trigger not supported in this runner version",
             )
 
-        env = os.environ.copy()
-        env.setdefault("ESPALIER_E2E_BENCH", "1")
+        env = _scenario_env()
 
         try:
             proc = subprocess.run(
@@ -247,8 +287,7 @@ def run_scenario(
             error = f"timeout after {timeout_seconds}s"
 
         events = parse_stream_json(raw)
-        cost_tokens = _estimate_cost_tokens_from_events(events)
-        cost_usd = _estimate_cost(cost_tokens)
+        cost_tokens, cost_usd = _cost_of_run(events)
         ended_at = datetime.now(timezone.utc)
         return ScenarioRun(
             scenario_id=scenario["id"],
@@ -264,6 +303,24 @@ def run_scenario(
     finally:
         if cleanup_dir is not None and not keep_work_dir:
             shutil.rmtree(cleanup_dir, ignore_errors=True)
+
+
+def _cost_of_run(events) -> tuple[int, float]:
+    """``(tokens, USD)`` for the run, from the CLI's own `result` event when it
+    sent one: its `total_cost_usd`, and its usage with the cache tokens counted.
+    The estimate below is the fallback for a run that ended before one (a
+    timeout). Driven 2026-10-14: a run the result priced at 0.43 USD the
+    estimate put at 0.036 (2,410 tokens), since it summed input and output
+    tokens and left out 44,848 cache-creation and 141,327 cache-read tokens --
+    and the --max-cost-usd cap reads this number."""
+    result = next((e.metadata for e in reversed(events) if e.metadata.get("type") == "result"), None)
+    if result is not None and isinstance(result.get("total_cost_usd"), (int, float)):
+        usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+        tokens = sum(int(usage.get(k, 0) or 0) for k in (
+            "input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+        return tokens, float(result["total_cost_usd"])
+    tokens = _estimate_cost_tokens_from_events(events)
+    return tokens, _estimate_cost(tokens)
 
 
 def _estimate_cost_tokens_from_events(events) -> int:
