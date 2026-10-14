@@ -124,6 +124,13 @@ recompute.
 Read live at each wave's start (`python3 tools/cc/board.py`, `python3 tools/cc/mail.py
 claims`); the lines below are 2026-10-13's reading, not the population.
 
+- `TP-475` Task 2-A plans a top-level `_lineage` map in `task-packs/LEDGER_PROBES.json`,
+  written by `ledger_row.py::file_row`. Since the fold this tree keeps no roster file, and on
+  an opted-in tree `file_row` writes probe files and never the roster, so a map put there
+  would be dropped while the verb reports success. Lineage is stored per id (a field in the
+  row's own probe file, or beside its row file), never in one shared map, which would bring
+  back the single shared file the fold removed (failure-mode review of Wave C, 2026-10-14).
+
 - win-2's `lane/bounded-probe-spawn` routes every timed spawn under `tools/cc` through one
   bounded helper. Its claim names call-site edits in `record_merge.py`,
   `check_ledger_probes.py`, `_record_fragments.py`, `ci_guard.py` and `ship.py`, among
