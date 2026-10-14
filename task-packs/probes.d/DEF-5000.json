@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5000",
+ "subject": "tests/test_python_floor.py",
+ "cmd": "python3 -c \"print('\\\"python3 -m espalier\\\" not in' in open('tests/test_python_floor.py',encoding='utf-8').read())\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "aa443c56d1b7",
+ "text_sha": "3879a0cc61f1",
+ "verified_2026_10_14": "OPEN (filed 2026-10-14; probe driven at filing)"
+}
