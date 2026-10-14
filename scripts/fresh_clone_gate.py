@@ -448,6 +448,36 @@ def verify_engine(vpy: Path, clone: Path, env: Mapping[str, str]) -> Path:
     return engine
 
 
+def _end_tier_tree(proc: subprocess.Popen) -> None:
+    """End the tier and everything it started: the whole process group on POSIX
+    (the tier runs in its own session), ``taskkill /T /F`` on Windows, then the
+    child itself. A kill of the child alone left the leg's line loop reading
+    while a grandchild held the pipe -- the venv's real interpreter behind its
+    ``python.exe`` redirector, pytest behind ``proof_tier`` -- so the leg bound
+    held only when the tier ended on its own (DEF-3004;
+    ``tests/test_bounded_spawn.py::TestAWatchdogEndsTheTree``)."""
+    if sys.platform != "win32":
+        import signal
+
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except OSError:  # fail-open: ok deliberate -- the group is gone; the kill below covers the child
+            pass
+    else:
+        taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "taskkill.exe")
+        try:
+            subprocess.run(  # spawn: ok the tree kill -- no pipes, every stream to the null device
+                [taskkill, "/T", "/F", "/PID", str(proc.pid)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- the kill below still ends the child
+            pass
+    try:
+        proc.kill()
+    except OSError:  # fail-open: ok deliberate -- the child already ended
+        pass
+
+
 def run_tier(vpy: Path, clone: Path, env: Mapping[str, str], log_path: Path,
              echo: Callable[[str], None] = say, timeout_s: float = DEFAULT_LEG_TIMEOUT_S,
              heavy: bool = False) -> int:
@@ -463,11 +493,12 @@ def run_tier(vpy: Path, clone: Path, env: Mapping[str, str], log_path: Path,
             [str(vpy), "scripts/proof_tier.py", "--run", "--tier", "full"] + (["--heavy"] if heavy else []),
             cwd=str(clone), env=dict(env), stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+            start_new_session=(sys.platform != "win32"),
         )
 
         def _kill() -> None:
             timed_out.set()
-            proc.kill()
+            _end_tier_tree(proc)
 
         watchdog = threading.Timer(timeout_s, _kill)
         watchdog.daemon = True
@@ -478,6 +509,9 @@ def run_tier(vpy: Path, clone: Path, env: Mapping[str, str], log_path: Path,
                 log.write(line)
                 echo(line.rstrip("\n"))
             rc = proc.wait()
+        except BaseException:  # noqa: BLE001 -- Ctrl-C mid-leg: the tier is in its own session, so end it here
+            _end_tier_tree(proc)
+            raise
         finally:
             watchdog.cancel()
     if timed_out.is_set():

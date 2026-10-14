@@ -9,13 +9,15 @@ and ``_end_tree`` -- and the grace constant are held equal by
 ``tests/test_contracts.py::TestTheBoundedSpawnTwins``: change one copy and
 the others in the same commit, and never dedup them.
 
-Every timed spawn in ``espalier/``, ``scripts/``, ``bench/`` and ``tools/``
-outside ``tools/cc`` calls one of the copies (``scripts/``, ``bench/`` and
-``tools/`` load the ``tools/cc`` one by path from their own checkout), and
-``tests/test_contracts.py::TestEveryTimedSpawnOutsideToolsCcIsBounded``
-refuses a raw ``subprocess.*`` call with a ``timeout`` anywhere else;
+Every timed spawn in the production code outside ``tools/cc`` -- the engine,
+``scripts/``, ``bench/``, the top-level ``tools/`` -- calls one of the copies
+(``scripts/``, ``bench/`` and ``tools/`` load the ``tools/cc`` one by path from
+their own checkout), or is a call that holds no pipe, marked
+``# spawn: ok <reason>``. ``tests/test_contracts.py::
+TestEveryTimedSpawnOutsideToolsCcIsBounded`` refuses any other raw
+``subprocess.*`` call with a ``timeout``;
 ``tests/test_spawn_chokepoint.py::TestEveryTimedSpawnIsBounded`` holds
-``tools/cc`` the same way.
+``tools/cc`` the same way. Test code is out of scope.
 """
 from __future__ import annotations
 

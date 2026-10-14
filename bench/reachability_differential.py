@@ -692,9 +692,11 @@ def run_bash_group(argv: list[str], *, cwd: Path | str | None = None,
     full-suite runs and two review agents, from exactly that call shape. Every
     BASH probe in this bench and its suite-side twins goes through here; the
     PowerShell twin (``powershell_reachability_differential.powershell_reaches``)
-    keeps ``subprocess.run(timeout=)`` because a surviving ``pwsh`` grandchild
-    could not be reproduced (driven 2026-09-06) -- convention gap, not a
-    demonstrated leak.
+    spawns through ``run_bounded``, which ends the whole tree at its timeout
+    on Windows (a surviving ``pwsh`` grandchild could not be reproduced,
+    driven 2026-09-06). On Windows there is no process group, so this function
+    kills the child alone: no pipe is held, so the wait still ends, but a
+    grandchild can outlive it.
 
     The group is also WAITED FOR after bash returns. bash does not wait for a
     process-substitution child (``> >(sh)``), so the group can still be at
@@ -714,7 +716,7 @@ def run_bash_group(argv: list[str], *, cwd: Path | str | None = None,
                             stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
                             **kwargs)
     try:
-        # spawn: ok no pipe to hold -- all three streams are DEVNULL, so this wait ends with the child, and the group kill below ends the rest
+        # spawn: ok no pipe to hold -- all three streams are DEVNULL, so this wait ends with the child, and on POSIX the group kill below ends the rest
         proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         if hasattr(os, "killpg"):

@@ -6300,7 +6300,14 @@ engine, call `espalier/_spawn.py::run_bounded`, the engine's copy (it cannot imp
 never the engine's, which may be another checkout's. A call that holds no pipe (every stream
 to the null device or a file) may stay raw under `# spawn: ok <reason>`;
 `tests/test_contracts.py::TestEveryTimedSpawnOutsideToolsCcIsBounded` refuses any other raw
-timed spawn in those trees. A test that swapped a module's own `subprocess` name for a
+timed spawn in the tracked production code outside `tools/cc`, a marker on a call or in a
+function that asks for a pipe, and a marker left on a routed call. Its census reads spellings,
+so an alias (`run = subprocess.run`, a `functools.partial` of it) slips past it, as it slips
+past the `tools/cc` census. So does a parent that streams its child's pipe line by line under a
+watchdog thread: a watchdog that kills only the child leaves the read going while a
+grandchild holds the pipe, on POSIX as well as Windows, so it must end the tree (the
+fresh-clone gate's leg bound and the archive probe's suite bound, 2026-10-14,
+`tests/test_bounded_spawn.py::TestAWatchdogEndsTheTree`). A test that swapped a module's own `subprocess` name for a
 stand-in no longer reaches a call routed through `run_bounded`: patch `subprocess.run`, or the
 module's `run_bounded` (2026-10-14, four tests). A detector that recognises a spawn by its spelling must read the wrappers too:
 `tests/test_contracts.py::TestSpawnWrappersReadEverywhere` derives the wrapper set from the
