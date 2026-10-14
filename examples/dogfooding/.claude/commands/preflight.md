@@ -125,9 +125,15 @@ manifest that goes stale mid-session is this step's to catch.
 
 Exit codes: `0` clean — **or a repo that was never `espalier init`'d**, which is
 guidance, not a failure, matching what `audit` and `doctor` already do on a fresh
-checkout · `1` real drift, or a manifest that is missing from an *initialized* repo,
-or one that is unreadable · `2` a kill-switch setting is live. Each non-zero case
-prints its own remediation on stderr.
+checkout — **or a linked worktree of an initialized checkout with no manifest
+yet**: the manifest is per checkout and gitignored, so a worktree has none until
+it writes one, and the note on stdout names the `-m espalier integrity refresh .`
+that does (the banner's `Integrity:` line says the same), after a line naming the
+main checkout's settings file to copy when the worktree has none (a session
+launched there loads no hooks). Until the refresh runs, this step checks no hashes
+in that worktree · `1` real drift, or a manifest that is missing
+from an initialized main checkout, or one that is unreadable · `2` a kill-switch
+setting is live. Each non-zero case prints its own remediation on stderr.
 
 For drift you legitimately caused — you edited `espalier/` or a hook — the fix is to
 refresh the manifest. That needs maintenance mode set in the **parent shell before

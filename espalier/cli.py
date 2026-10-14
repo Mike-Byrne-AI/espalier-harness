@@ -11584,7 +11584,36 @@ def cmd_integrity(args: argparse.Namespace) -> int:
                     REPO_MODE_SOURCE_CHECKOUT,
                     REPO_MODE_UNINITIALIZED,
                     detect_repo_mode,
+                    initialized_seat,
                 )
+                # A linked worktree of an initialized checkout checks out
+                # tracked files only, so it has no manifest even where its main
+                # checkout does: nothing was removed. Asked BEFORE the mode
+                # branch, which reads the seat's own files and would send a seat
+                # whose settings copy never arrived to `init` (redeploying the
+                # harness into it). The words are the SessionStart banner's, so
+                # the two never give two fixes for one state; spelled as a module
+                # run from the worktree's root, so THIS tree's engine hashes this
+                # tree's hooks (driven on a seat 2026-10-13: exit 1 here turned
+                # every fresh seat's /preflight red).
+                seat = initialized_seat(repo_root)
+                if seat is not None:
+                    main_checkout, wired = seat
+                    if not wired:
+                        # First, because it is the one to act on first.
+                        print(
+                            "A Claude Code session launched in this worktree loads none "
+                            "of the harness's hooks: copy "
+                            f"{main_checkout / '.claude' / 'settings.json'} here first "
+                            "(.worktreeinclude copies it into a worktree Claude Code "
+                            "creates, not into one that already exists).",
+                        )
+                    print(
+                        f"{repo_root.name}: no manifest in this worktree (per checkout, "
+                        f"gitignored)  ->  from its root, run `{py} -m espalier integrity "
+                        "refresh .` to write one.",
+                    )
+                    return 0
                 try:
                     mode = detect_repo_mode(repo_root)
                 except OSError:

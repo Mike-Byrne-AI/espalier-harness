@@ -1210,18 +1210,28 @@ def read_project_settings(repo_root: Path) -> tuple[str, object]:
 def _linked_worktree_main(repo_root: Path) -> Path | None:
     """The main checkout a linked worktree's ``.git`` FILE names (``gitdir:
     <main>/.git/worktrees/<name>``), or None when the file is not that shape
-    (a submodule's ``modules`` directory, an unreadable file): the generic copy
-    instruction then stands. No git is run."""
+    (a submodule's ``modules`` directory, an unreadable file), a gitlink whose
+    admin directory is gone (an export that carried one, a moved main checkout)
+    and a worktree of a bare repository: the generic copy instruction then
+    stands. A relative gitdir (git 2.48's ``worktree.useRelativePaths``) is read
+    against ``repo_root``. No git is run. The same rule as
+    ``espalier._safe_walk.linked_worktree_main`` and
+    ``tools/cc/session_resume.py::_linked_worktree_main``, so the banner,
+    ``/status`` and ``integrity verify`` read one seat one way; held to both by
+    tests/test_worktree_seat.py."""
     try:
-        text = (repo_root / ".git").read_text(encoding="utf-8", errors="replace")
+        lines = (repo_root / ".git").read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:  # fail-open: ok deliberate -- a reporter's detail: the generic instruction stands
         return None
-    if not text.startswith("gitdir:"):
+    first = lines[0].strip() if lines else ""
+    if not first.startswith("gitdir:"):
         return None
-    target = Path(text[len("gitdir:"):].strip())
-    if target.parent.name == "worktrees" and target.parent.parent.name == ".git":
-        return target.parent.parent.parent
-    return None
+    target = Path(os.path.normpath(repo_root / first[len("gitdir:"):].strip()))
+    if target.parent.name != "worktrees" or target.parent.parent.name != ".git":
+        return None
+    if not os.path.isdir(target):
+        return None
+    return target.parent.parent.parent
 
 
 def checkout_wiring_notice(repo_root: Path) -> str | None:
