@@ -926,7 +926,9 @@ class TestOptInEnvCensus:
         -- and the comment would still claim coverage.
         """
         src = (REPO_ROOT / "scripts" / "release_check.py").read_text(encoding="utf-8")
-        blocks = re.findall(r"subprocess\.run\((.*?)\n    \)", src, re.S)
+        # Both spellings of a spawn: the timed sites call `run_bounded` since
+        # DEF-3004 (subprocess.run whose timeout holds on Windows).
+        blocks = re.findall(r"(?:subprocess\.run|run_bounded)\((.*?)\n    \)", src, re.S)
         # Only children that can re-enter the gate matter: another interpreter
         # running repo code. A `git` or `ruff` child cannot recurse.
         risky = [b for b in blocks if "sys.executable" in b]

@@ -55,6 +55,7 @@ from importlib.resources import as_file, files
 from pathlib import Path
 
 from espalier._safe_walk import safe_rglob
+from espalier._spawn import run_bounded
 from espalier.managed_markers import has_managed_marker
 
 
@@ -149,7 +150,7 @@ def _run_deployed_write_guard(
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
     if extra_env:
         env.update(extra_env)
-    proc = subprocess.run(
+    proc = run_bounded(
         [sys.executable, str(script)],
         input=json.dumps(payload),
         capture_output=True,

@@ -32,6 +32,7 @@ from espalier._python_floor import (
     is_python3_banner,
 )
 from espalier._report_io import load_harness_plan, report_is_json_object
+from espalier._spawn import run_bounded
 from espalier.audit_accuracy import extract_count_for_label
 from espalier.diffing import diff_repo
 from espalier.managed_markers import seed_is_untouched
@@ -492,7 +493,7 @@ def _interpreter_is_python3(path: "str | None") -> bool:
     except OSError:
         pass
     try:
-        result = subprocess.run(
+        result = run_bounded(
             [path, "--version"], capture_output=True, text=True,
             encoding="utf-8", timeout=2,
         )
@@ -1024,7 +1025,7 @@ def _probe_deployed_stop_gate(repo_root: Path) -> dict | None:
     if not candidate.is_file():
         return None
     try:
-        proc = subprocess.run(  # spawn: ok a bounded read-only probe of the deployed hook
+        proc = run_bounded(  # a read-only probe of the deployed hook
             [_sys.executable, "-c", _STOP_GATE_PROBE, str(candidate.parent), str(repo_root)],
             cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=20,
@@ -1070,7 +1071,7 @@ def _probe_recall_corpus(repo_root: Path) -> dict | None:
     if not candidate.is_file():
         return None
     try:
-        proc = subprocess.run(  # spawn: ok a bounded read-only probe of the deployed hook
+        proc = run_bounded(  # a read-only probe of the deployed hook
             [_sys.executable, "-c", _RECALL_FACTS_PROBE, str(candidate.parent), str(repo_root)],
             cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=20,
@@ -1141,7 +1142,7 @@ def _run_start_probe(repo_root: Path, hooks_dir: Path, scripts: list[str]) -> di
     import subprocess
     import sys as _sys
     try:
-        proc = subprocess.run(  # spawn: ok a bounded read-only probe of the deployed hooks
+        proc = run_bounded(  # a read-only probe of the deployed hooks
             [_sys.executable, "-c", _HOOK_START_PROBE, str(hooks_dir), *scripts],
             cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=_HOOK_START_BUDGET_S,

@@ -56,6 +56,23 @@ sys.path.insert(0, str(REPO_ROOT))
 from espalier._archive_safety import safe_extract_tar, safe_extract_zip  # noqa: E402
 from espalier.artifact_parity import clear_stale_packaging_state  # noqa: E402
 
+
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    holds on Windows, where ``run`` waits on a grandchild holding its pipe
+    (DEF-3004)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_final_release_matrix", REPO_ROOT / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
+
 OUTPUT_ROOT = REPO_ROOT / "dist" / "final-release-matrix"
 
 # release_check.py Tier-1 opt-ins: they tell release_check to actually shell
@@ -228,7 +245,7 @@ def _run(
         full_env.pop(key, None)
     try:
         # subprocess-contract: ok release-matrix-generic-runner-callers-pin-each-CLI
-        result = subprocess.run(
+        result = run_bounded(
             cmd,
             cwd=str(cwd),
             env=full_env,

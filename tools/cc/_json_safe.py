@@ -347,7 +347,11 @@ def run_bounded(
     Lives here, beside ``lock_file``, because both ``tools/cc/*.py`` and the
     hooks import this module; ``_hook_utils.spawn_checked`` is built on it, and
     ``tests/test_spawn_chokepoint.py`` holds every timed spawn under
-    ``tools/cc`` to one of the two.
+    ``tools/cc`` to one of the two. ``scripts/``, ``bench/`` and the top-level
+    ``tools/`` load this copy by path. Twin of ``espalier/_spawn.py`` (this
+    tree cannot import ``espalier``) and of the inline copy in the stdlib-only
+    ``espalier/scanners/freshness.py``; ``tests/test_contracts.py::
+    TestTheBoundedSpawnTwins`` holds the three equal, so change them together.
     """
     import subprocess
 
