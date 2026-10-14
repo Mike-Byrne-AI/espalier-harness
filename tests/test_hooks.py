@@ -4377,6 +4377,10 @@ class TestPostWriteCheckRecordFileMarkers:
         ci = _load("_ci_guard_for_names", tools_cc / "ci_guard.py")
         rm = _load("_record_merge_for_names", tools_cc / "record_merge.py")
         assert hu._FRAGMENT_NAME_RE.pattern == ci._FRAGMENT_NAME_RE.pattern == rm._FRAGMENT_NAME_RE.pattern
+        # One name rule per directory (the ledger's rows and probes are named by
+        # id, a probe file is JSON): the three maps agree entry for entry.
+        maps = [{d: p.pattern for d, p in m._FRAGMENT_NAMES.items()} for m in (hu, ci, rm)]
+        assert maps[0] == maps[1] == maps[2]
 
     def test_the_roster_names_the_loaders_fragment_directories(self):
         """The directory entries are the loader's own, not a third spelling."""

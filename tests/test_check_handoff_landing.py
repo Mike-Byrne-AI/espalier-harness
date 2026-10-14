@@ -484,7 +484,7 @@ class TestTheLiveOwedProbesAreSound:
         if not probes.is_file():
             pytest.skip("cc/GOAL_OWED.json is local session state")
         import json as _json
-        for item in _json.loads(probes.read_text(encoding="utf-8"))["owed"]:
+        for item in _json.loads(probes.read_text(encoding="utf-8"))["owed"]:  # ledger-read: cc/GOAL_OWED.json, the owed list, not the roster
             cmd = item.get("cmd") or ""
             if "subprocess.run" not in cmd:
                 continue

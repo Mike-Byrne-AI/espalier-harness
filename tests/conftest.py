@@ -1204,6 +1204,13 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # worktree (its .git a gitlink file) reads as a checkout of its own
             # is a fact about real `git init` and `git worktree add` output.
             "test_repo_mode",
+            # Drives the real ledger verbs on two branches of a scratch repo and
+            # asks `git merge-tree` whether the two lanes' row files merge: what
+            # conflicts is git's answer, so no mock stands in for it.
+            "test_ledger_fragments",
+            # The same fact read by resume, `integrity verify` and the hooks'
+            # banner: what a fresh seat holds is what real git checks out.
+            "test_worktree_seat",
         ),
         "integration",
     ),

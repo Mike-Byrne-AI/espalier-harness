@@ -553,9 +553,13 @@ class TestSegmentHelper:
             if hasattr(node, "lineno"):
                 assert census._segment(lines, node) == ast.get_source_segment(text, node)
 
-    def test_the_census_never_calls_the_stdlib_segment_per_node(self) -> None:
-        """The stdlib call may not return: one call per node is the 3.10 red."""
-        tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    @pytest.mark.parametrize(
+        "path", [SCRIPT, REPO_ROOT / "tests" / "test_ledger_fragments.py"], ids=lambda p: p.name)
+    def test_the_census_never_calls_the_stdlib_segment_per_node(self, path: Path) -> None:
+        """The stdlib call may not return: one call per node is the 3.10 red.
+        The ledger's reader census slices through these helpers too, after it
+        timed out on the 3.10 cell alone the same way (2026-10-13)."""
+        tree = ast.parse(path.read_text(encoding="utf-8"))
         name = "get_source_segment"
         # Every spelling: `ast.get_source_segment(...)`, a bare name after
         # `from ast import get_source_segment`, and the import itself.
@@ -571,7 +575,7 @@ class TestSegmentHelper:
             )
         )
         assert calls == [], (
-            f"ast.get_source_segment reaches the census at lines {calls}: it "
+            f"ast.get_source_segment reaches {path.name} at lines {calls}: it "
             "re-splits the whole file on every call, and on Python 3.10 that split "
             "is a per-character loop -- DEF-762: 31,098 calls took ~186 s on the "
             "3.10 CI cell against a 60 s per-test timeout. Use _segment over "

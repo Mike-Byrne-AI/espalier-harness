@@ -2726,12 +2726,10 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
     """
     import tempfile
 
-    from espalier.managed_markers import seed_is_untouched
-
     outcome: dict[str, list[str]] = {"filed": [], "satisfied": [], "failed": []}
     ledger, verb = repo_root / _LEDGER_REL, repo_root / _LEDGER_VERB_REL
     try:
-        if not verb.is_file() or not seed_is_untouched(ledger.read_text(encoding="utf-8")):
+        if not verb.is_file() or not _ledger_is_the_untouched_seed(ledger):
             return outcome
     except (OSError, ValueError):
         return outcome
@@ -2782,21 +2780,44 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
             else:
                 why = (proc.stderr.strip().splitlines() or [f"exit {proc.returncode}"])[-1]
                 outcome["failed"].append(f"{row['id']} ({why[:160]})")
+    # Where the rows went is the deployed verb's call (the repository's
+    # ledger_fragments setting, which tools/cc reads): read it off the tree, so
+    # the sentence names a file each under ledger.d/ when that is what it made.
+    rows_dir = ledger.parent / "ledger.d"
+    if any((rows_dir / f"{rid}.md").is_file() for rid in outcome["filed"]):
+        outcome["into"] = [f"{_LEDGER_REL.rsplit('/', 1)[0]}/ledger.d/ (a file each)"]
     return outcome
 
 
 def _onboarding_would_file(repo_root: Path) -> bool:
     """Whether an install would file the onboarding rows here: the ledger is
     absent (its seed would be created) or still the untouched seed."""
-    from espalier.managed_markers import seed_is_untouched
-
     ledger = repo_root / _LEDGER_REL
     if not ledger.exists():
         return True
     try:
-        return seed_is_untouched(ledger.read_text(encoding="utf-8"))
+        return _ledger_is_the_untouched_seed(ledger)
     except (OSError, ValueError):
         return False
+
+
+def _ledger_is_the_untouched_seed(ledger: Path) -> bool:
+    """Whether nothing has been filed into the adopter's ledger yet: its file
+    is still the seed init wrote, and no row lives in a file of its own
+    beside it (``task-packs/ledger.d/``, where the repository sets
+    ``ledger_fragments = true``). Read the file alone, a tree that opted in
+    before its first filing kept an untouched seed for good, and every upgrade
+    re-ran the onboarding filings and reported them as failed (failure-mode
+    review, 2026-10-13). Raises ``OSError``/``ValueError`` as the read does."""
+    from espalier.managed_markers import seed_is_untouched
+
+    rows = ledger.parent / "ledger.d"
+    # A row file's name; never a dotfile an editor left, or the directory's
+    # own README or CLAUDE.md (the loader's never_a_record, by the same names).
+    if rows.is_dir() and any(p.suffix == ".md" and not p.name.startswith(".")
+                             and p.name.lower() not in ("readme.md", "claude.md") for p in rows.iterdir()):
+        return False
+    return seed_is_untouched(ledger.read_text(encoding="utf-8"))  # ledger-read: the seed file's own bytes; the row files are asked about above
 
 
 def _onboarding_sentence(outcome: dict[str, list[str]]) -> str | None:
@@ -2805,7 +2826,7 @@ def _onboarding_sentence(outcome: dict[str, list[str]]) -> str | None:
     parts = []
     if outcome["filed"]:
         parts.append(f"filed {plural(len(outcome['filed']), 'onboarding row')} "
-                     f"({', '.join(outcome['filed'])}) into {_LEDGER_REL}")
+                     f"({', '.join(outcome['filed'])}) into {(outcome.get('into') or [_LEDGER_REL])[0]}")
     if outcome["satisfied"]:
         parts.append(f"{', '.join(outcome['satisfied'])} already satisfied by this tree, not filed")
     if outcome["failed"]:
@@ -4007,6 +4028,13 @@ _FOREIGN_KEY_SENTENCES: dict[str, tuple[str, str]] = {
         "# so a changelog.d/ another changelog tool keeps (scriv, towncrier) stays its.",
         "changelog_fragments = true",
     ),
+    "ledger_fragments": (
+        "Write each forward-ledger row and its probe as a file of its own under\n"
+        "# task-packs/ledger.d/ and task-packs/probes.d/ (tools/cc/ledger_row.py),\n"
+        "# so seats filing in parallel never conflict on the ledger. Off when absent:\n"
+        "# the verbs write the two files, and every reader takes both forms.",
+        "ledger_fragments = true",
+    ),
     "handoff_push": (
         "Let /handoff push the lane after it commits the memory row (through\n"
         "# tools/cc/ship.py: a pull request with auto-merge armed). Off when absent:\n"
@@ -4383,11 +4411,17 @@ REQUIRED_GITIGNORE = (
 #: of ``REQUIRED_GITIGNORE`` on purpose: every reader of that tuple -- the
 #: coverage probe, the tracked- and untracked-conflict checks, doctor, the
 #: retire on uninstall -- reads its members as paths to IGNORE, and a ``!``
-#: member would read as "ignore the ledger" in all of them.
+#: member would read as "ignore the ledger" in all of them. The two directory
+#: entries hold the ledger's rows and probes as one file each, where a
+#: repository sets ``ledger_fragments = true``: without them each file the
+#: verbs write is silently untracked. A member ending in ``/`` is a directory,
+#: matched by prefix (``_is_reincluded``).
 GITIGNORE_REINCLUDES = (
     "!/task-packs/CLAUDE.md",
     "!/task-packs/FORWARD_LEDGER.md",
     "!/task-packs/LEDGER_PROBES.json",
+    "!/task-packs/ledger.d/",
+    "!/task-packs/probes.d/",
 )
 #: The rule the re-includes sit under, and the one spelling of it a tree
 #: initialised before they existed carries in the harness block.
@@ -4712,11 +4746,12 @@ def _git_ignorecase(repo_root: Path) -> bool:
 
 def _is_reincluded(rel: str, *, fold: bool) -> bool:
     """True when ``rel`` is one of the paths ``GITIGNORE_REINCLUDES`` keeps
-    tracked beneath ``/task-packs/*`` -- under the block it is not ignored."""
+    tracked beneath ``/task-packs/*``, or a path under one of its directory
+    entries -- under the block it is not ignored."""
     rel = rel.replace("\\", "/")
-    if fold:
-        return rel.casefold() in {p.casefold() for p in REINCLUDED_PATHS}
-    return rel in REINCLUDED_PATHS
+    paths = {p.casefold() for p in REINCLUDED_PATHS} if fold else REINCLUDED_PATHS
+    key = rel.casefold() if fold else rel
+    return key in paths or any(key.startswith(p) for p in paths if p.endswith("/"))
 
 
 def _is_harness_owned(rel: str, managed: set[str], *, fold: bool) -> bool:
@@ -6062,6 +6097,11 @@ def _ignore_snippet_lines(repo_root: Path) -> list[str]:
     for rel in ("task-packs/FORWARD_LEDGER.md", "task-packs/LEDGER_PROBES.json"):
         if (repo_root / rel).is_file():
             lines.add(rel)
+    # The ledger's rows and probes as one file each, where a repository opts in
+    # (ledger_fragments): the verbs rewrite them as they rewrite the two files.
+    for d in ("task-packs/ledger.d", "task-packs/probes.d"):
+        if (repo_root / d).is_dir():
+            lines.add(d + "/")
     return sorted(lines)
 
 
@@ -10084,7 +10124,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         if preview_stages and _onboarding_would_file(repo_root):
             print(f"[upgrade] would file the {len(_ONBOARDING_ROWS)} onboarding rows into "
                   f"{_LEDGER_REL} (each probe driven first; a row this tree already "
-                  "satisfies is skipped), creating task-packs/LEDGER_PROBES.json.")
+                  "satisfies is skipped), creating task-packs/LEDGER_PROBES.json; where "
+                  "espalier.toml sets ledger_fragments = true, a file each under "
+                  "task-packs/ledger.d/ and task-packs/probes.d/ instead.")
     else:
         done = _deploy_seed_docs(repo_root)
         print("[upgrade] re-deployed init-seeded docs: "
@@ -11542,7 +11584,36 @@ def cmd_integrity(args: argparse.Namespace) -> int:
                     REPO_MODE_SOURCE_CHECKOUT,
                     REPO_MODE_UNINITIALIZED,
                     detect_repo_mode,
+                    initialized_seat,
                 )
+                # A linked worktree of an initialized checkout checks out
+                # tracked files only, so it has no manifest even where its main
+                # checkout does: nothing was removed. Asked BEFORE the mode
+                # branch, which reads the seat's own files and would send a seat
+                # whose settings copy never arrived to `init` (redeploying the
+                # harness into it). The words are the SessionStart banner's, so
+                # the two never give two fixes for one state; spelled as a module
+                # run from the worktree's root, so THIS tree's engine hashes this
+                # tree's hooks (driven on a seat 2026-10-13: exit 1 here turned
+                # every fresh seat's /preflight red).
+                seat = initialized_seat(repo_root)
+                if seat is not None:
+                    main_checkout, wired = seat
+                    if not wired:
+                        # First, because it is the one to act on first.
+                        print(
+                            "A Claude Code session launched in this worktree loads none "
+                            "of the harness's hooks: copy "
+                            f"{main_checkout / '.claude' / 'settings.json'} here first "
+                            "(.worktreeinclude copies it into a worktree Claude Code "
+                            "creates, not into one that already exists).",
+                        )
+                    print(
+                        f"{repo_root.name}: no manifest in this worktree (per checkout, "
+                        f"gitignored)  ->  from its root, run `{py} -m espalier integrity "
+                        "refresh .` to write one.",
+                    )
+                    return 0
                 try:
                     mode = detect_repo_mode(repo_root)
                 except OSError:

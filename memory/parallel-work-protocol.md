@@ -123,7 +123,11 @@ remembered. A red `main` is reverted before anything lands on it.
    form while still reading the old; then writers switch; then the old form
    goes. Never a flag day while other lanes are open. win-2's derived-totals
    change (`TP-478` 2-B) is the model: every parser reads both forms, and the
-   next verb heals an old file.
+   next verb heals an old file. The ledger's rows and probes as one file each
+   (`TP-479a` Wave B) followed it: the loader's view and every reader took both
+   forms (a census test holds each reader to the view), and only then did the
+   writers switch, on a repository that sets `ledger_fragments = true`; the
+   legacy rows stay in the file until the fold.
 7. **A red `main` is reverted first and diagnosed second.** The post-merge
    proof (`.github/workflows/post-merge.yml`) runs after merges, and the ship
    preflight and the board name a red one. A newer push cancels an older run,

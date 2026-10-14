@@ -36,8 +36,8 @@ dev = [
     "build>=1.0.0",  # tests/test_wheel_payload.py — _built_sdist fixture (TP-103 E1)
     "setuptools>=68.0",  # build backend for `build --no-isolation`; 3.12+ venvs no longer bundle it (W0-2)
     "wheel",  # wheel-format backend dep, pairs with setuptools (W0-2)
-    "ruff>=0.5,<1.0",  # TP-147 147-B — load-bearing per `[tool.ruff.lint]` pinned rule set (TP-146 146-G)
-    "mypy>=2.3,<3.0",  # near-strict type gate on tools/cc/hooks (see [tool.mypy]); pinned — annotations drift with mypy releases
+    "ruff==0.17.0",  # TP-147 147-B — load-bearing per `[tool.ruff.lint]` pinned rule set (TP-146 146-G). One exact version: a ruff release changes findings, so a range let one red every required cell with no change here (DEF-4014); bump it in its own pull request. Every CI job that runs ruff installs this extra (tests/test_external_tool_contract.py).
+    "mypy==2.4.0",  # near-strict type gate on tools/cc/hooks (see [tool.mypy]); one exact version for the same reason as ruff — annotations drift with mypy releases
 ]
 release = [
     "build>=1.0.0",

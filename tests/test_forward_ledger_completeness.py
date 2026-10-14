@@ -37,6 +37,26 @@ _PACKS = _ROOT / "task-packs"
 _DEFERRED = _PACKS / "Deferred"
 _LEDGER = _PACKS / "FORWARD_LEDGER.md"
 _DONE = _PACKS / "Done"
+
+
+def _record_fragments():
+    """``tools/cc/_record_fragments.py``, the loader whose view every ledger
+    and roster read here takes (loaded by path, registered before it runs)."""
+    name = "_completeness_record_fragments"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, _ROOT / "tools" / "cc" / "_record_fragments.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+    return sys.modules[name]
+
+
+def _view(ledger: Path) -> str:
+    """The ledger as its readers see it: the file with the row files beside it
+    placed in it. Read through the loader, never the file alone: a row that
+    lives in its own file (``ledger_fragments``) is a row these gates hold.
+    Raises as the file's own strict read did, so an absent ledger is an error."""
+    return _record_fragments().ledger_view_at(ledger).text
 #: The orphan guard's population: every folder whose packs are ACTIVE and ship.
 #: Never Done/, Merged/ or Scrapped/ -- landed and dead work leaves the ledger
 #: by contract rule 3, and the reverse guard (TestLandedRowLingering) is the
@@ -105,7 +125,7 @@ def _orphans(pack_dirs: Path | Iterable[Path], ledger: Path) -> list[str]:
     token at all is itself un-trackable, so it is reported by name rather than
     silently skipped (nothing escapes the net).
     """
-    text = ledger.read_text(encoding="utf-8")  # first: an absent ledger is an error, never an empty answer
+    text = _view(ledger)  # first: an absent ledger is an error, never an empty answer
     missing: list[str] = []
     # Population = every markdown file named on the TP- convention directly
     # under each folder, scanned case-INSENSITIVELY across .md/.markdown. A bare
@@ -243,7 +263,7 @@ def _landed_still_listed(done: Path, ledger: Path) -> list[str]:
     so a genuine open follow-up (fresh id, unlanded owner) never REDs. Factored (like
     ``_orphans``) so the earn-the-red drives a synthetic tmp tree, never the live folder.
     """
-    text = ledger.read_text(encoding="utf-8")
+    text = _view(ledger)
     stale: list[str] = []
     if "LANDED (TP-" in text:
         stale.append("LANDED (TP-... literal present -- landed rows must be removed, not marked")
@@ -362,7 +382,7 @@ def _dangling_id_references(packs: Path, ledger: Path) -> dict[str, list[int]]:
 
     Returns ``{id: [line numbers]}`` so the failure message can point at rows.
     """
-    lines = ledger.read_text(encoding="utf-8").splitlines()
+    lines = _view(ledger).splitlines()
     exempt = _exempt_ledger_lines(lines)
     found: dict[str, list[int]] = {}
     for i, line in enumerate(lines, 1):
@@ -434,6 +454,20 @@ def _make_tree(tmp_path: Path, pack_names: list[str], ledger_text: str) -> tuple
 
 
 class TestOrphanDetection:
+    def test_a_pack_cited_only_by_a_row_file_is_pinned(self, tmp_path):
+        """A row that lives in its own file (``ledger_fragments``) pins its
+        pack as a ledger row does. Dies to: the guard reading the ledger file
+        alone, which names the pack an orphan."""
+        from tests.test_generate_ledger_regions import _ledger
+
+        deferred, ledger = _make_tree(tmp_path, ["TP-999-orphan.md"], _ledger())
+        rows = ledger.parent / "ledger.d"
+        rows.mkdir()
+        (rows / "DEF-9.md").write_text(
+            "<!-- class: §C1 -->\n| `DEF-9` | site | tracked by TP-999 | nit |\n| `DEF-9` | §C1 | site |\n",
+            encoding="utf-8")
+        assert _orphans(deferred, ledger) == []
+
     def test_orphan_detected_on_synthetic_tree(self, tmp_path):
         # Earn-the-red: a known-orphan Deferred pack + an empty ledger. The
         # helper names the orphan (RED-equivalent) -- the sole deterministic
@@ -841,7 +875,7 @@ def _pack_led_rows_off_the_active_set(
         for p in _pack_files(pack_dirs)
         if (m := re.match(r"(TP-\d+[a-z]*)", p.name, re.IGNORECASE))
     }
-    lines = ledger.read_text(encoding="utf-8").splitlines()
+    lines = _view(ledger).splitlines()
     return [
         f"L{n} {m.group(1)}"
         for n, line in enumerate(lines, 1)
@@ -1202,7 +1236,7 @@ def _unresolved_scope_out_deferrals(
     drafted-pack index also open ``| `TP-...` |`` and would keep resolving a pack
     after it lands (code review, 2026-09-21).
     """
-    text = ledger.read_text(encoding="utf-8")
+    text = _view(ledger)
     live_ids: set[str] = set()
     for rows in _ledger_sections(text).values():
         for row in rows:
@@ -1425,7 +1459,7 @@ def test_the_class_index_and_the_sections_name_the_same_classes():
     row. The index stores no member count since 2026-10-09 (``--print``
     derives one); what it still owns is each class's tags, so a class missing
     from it is a class whose rows nothing counts."""
-    text = _LEDGER.read_text(encoding="utf-8")
+    text = _view(_LEDGER)
     declared = _declared_class_tags(text)
     sections = _ledger_sections(text)
     assert len(declared) >= _FLOOR_SECTIONS and sum(len(v) for v in sections.values()) >= _FLOOR_ROWS, (
@@ -1462,7 +1496,7 @@ def test_every_live_row_has_a_population_and_an_audience_and_each_is_counted_onc
     (every row counted exactly once). The generator's `--check` gate holds
     the printed tables to these numbers.
     """
-    d = _derive(_LEDGER.read_text(encoding="utf-8"))
+    d = _derive(_view(_LEDGER))
     assert d["live_total"] >= _FLOOR_ROWS, "live-row floor collapsed; the parser has broken"
     assert d["tag_problems"] == [], (
         "live rows that resolve to no population or audience:\n  "
@@ -1622,7 +1656,7 @@ def test_the_two_member_row_predicates_do_not_diverge_further():
     Without this the divergence is invisible: each predicate has its own tests,
     both pass, and nothing compares them.
     """
-    rows = [r for v in _ledger_sections(_LEDGER.read_text(encoding="utf-8")).values() for r in v]
+    rows = [r for v in _ledger_sections(_view(_LEDGER)).values() for r in v]
     disagreements = [r for r in rows if not _is_member_row(r)]
     assert rows, "no member rows parsed at all -- the matcher broke"
     assert len(disagreements) <= _PREDICATE_DISAGREEMENT_CEILING, (
@@ -2010,7 +2044,7 @@ def test_every_member_row_assigns_at_least_one_id():
     an id makes that failure loud instead. Do not exempt a row here; fix the
     regex, or the ledger row whose first cell is malformed.
     """
-    text = _LEDGER.read_text(encoding="utf-8")
+    text = _view(_LEDGER)
     rows = [r for v in _ledger_sections(text).values() for r in v]
     assert rows, "no member rows parsed at all -- the matcher broke"
     idless = [r[:90] for r in rows if not _owned_ids(r)]
@@ -2043,7 +2077,7 @@ def test_every_ledger_id_names_exactly_one_row():
     Worse than a dead pointer: a dead one announces itself, a collided one reads
     as a successful lookup. See Appendix A4 for the two that shipped.
     """
-    homes = _id_homes(_LEDGER.read_text(encoding="utf-8"))
+    homes = _id_homes(_view(_LEDGER))
     collisions = {k: v for k, v in homes.items() if len(v) > 1}
     assert not collisions, (
         f"ids assigned to more than one member row, id -> sections: {collisions}. "
@@ -2074,7 +2108,7 @@ def test_appendix_b_resolves_every_id_to_the_section_that_holds_it():
     red was earned by mutation (mispoint, dropped entry, strikethrough-blind
     regex, and a parser matching nothing) -- not by the defect that motivated it.
     """
-    text = _LEDGER.read_text(encoding="utf-8")
+    text = _view(_LEDGER)
     # The open forks are homes too: their table is not a member table, and
     # without it every §4A entry reads as dangling and every unindexed fork
     # as fine.
@@ -2119,7 +2153,7 @@ def test_every_id_leading_appendix_b_row_parses():
     """A row that opens with an id but fails `_APPENDIX_B_ROW` is dropped from
     every check above with nothing said; on 2026-10-08 twelve §4A entries were
     dropped that way. Read it or fix it, never skip it."""
-    rejected = _rejected_index_rows(_LEDGER.read_text(encoding="utf-8"))
+    rejected = _rejected_index_rows(_view(_LEDGER))
     assert not rejected, (
         f"{len(rejected)} Appendix B row(s) open with an id the index parser "
         f"cannot read: {[r[:60] for r in rejected[:5]]}. Give the row a section "
@@ -2139,7 +2173,7 @@ def test_appendix_b_assigns_each_id_exactly_once():
     re-keying, which is the natural move, and a later one repairing only the row
     it happened to read first.
     """
-    rows = _appendix_b_rows(_LEDGER.read_text(encoding="utf-8"))
+    rows = _appendix_b_rows(_view(_LEDGER))
     assert len(rows) >= _FLOOR_ROWS, (
         f"only {len(rows)} Appendix B assignments parsed -- _APPENDIX_B_ROW has "
         "broken and the assertion below would pass vacuously."
@@ -2175,9 +2209,13 @@ _PROBE_FILE = _LEDGER.parent / "LEDGER_PROBES.json"
 
 
 def _probe_index() -> dict[str, dict]:
-    import json
-    return {p["id"]: p for p in json.loads(
-        _PROBE_FILE.read_text(encoding="utf-8"))["probes"] if p.get("id")}
+    """The roster's view: the file's entries and every probe file beside it.
+    A roster the view could not read whole (a second probe for one id, a probe
+    file that does not parse) is no index to judge rows by: the dict would
+    keep one of two entries, or none, and pass over the other."""
+    roster = _record_fragments().probe_roster_at(_PROBE_FILE)
+    assert not roster.problems, f"the probe roster has problems: {roster.problems}"
+    return {p["id"]: p for p in roster.data["probes"] if p.get("id")}
 
 
 # _live_member_ids is imported above from the generator (single home).
@@ -2190,7 +2228,7 @@ def test_every_live_row_is_probed_or_declared():
     a live row carries (`live_cell_ids`): a co-id owns its own probe, and keyed
     on first ids a co-id's lost entry passed this gate (failure-mode review,
     driven 2026-10-12, once the roster's stored count no longer caught it)."""
-    text = _LEDGER.read_text(encoding="utf-8")
+    text = _view(_LEDGER)
     rows, probes = _live_member_ids(text), _probe_index()
     assert len(rows) >= _FLOOR_ROWS, (
         f"only {len(rows)} live member ids parsed -- the section walker has "
@@ -2235,7 +2273,9 @@ def test_the_live_roster_stores_no_total():
         assert not repeated, f"{_PROBE_FILE.name} repeats the key(s) {repeated}"
         return dict(pairs)
 
-    doc = json.loads(_PROBE_FILE.read_text(encoding="utf-8"), object_pairs_hook=no_repeats)
+    # The roster FILE itself, not its view: this pins the file's own bytes (a
+    # stored total, a repeated key), which no probe file can carry for it.
+    doc = json.loads(_PROBE_FILE.read_text(encoding="utf-8"), object_pairs_hook=no_repeats)  # ledger-read: the roster file's own bytes
     assert "_count" not in doc, (
         f"{_PROBE_FILE.name} stores `_count` ({doc['_count']}) again: a lane branched before "
         "2026-10-12 wrote it back at its catch-up. Drop it with the record merge's own step, "
@@ -2254,7 +2294,7 @@ def test_every_probed_live_row_carries_a_row_hash():
     A probe with no `row_sha` can never report STALE_CLAIM, so an un-stamped
     entry is a silent hole in the staleness axis rather than a loud one.
     """
-    text = _LEDGER.read_text(encoding="utf-8")
+    text = _view(_LEDGER)
     # The population is every id a live row carries (`live_cell_ids`), not the
     # first id of each row: a co-id owns its own probe, and a probe with no hash
     # is the hole whichever id it hangs on.

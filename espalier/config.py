@@ -28,6 +28,7 @@ FOREIGN_KEYS: dict[str, str] = {
     "dispatcher": "tools/cc/mail.py",
     "id_blocks": "tools/cc/ledger_row.py",
     "changelog_fragments": "tools/cc/_record_fragments.py",
+    "ledger_fragments": "tools/cc/_record_fragments.py",
 }
 
 

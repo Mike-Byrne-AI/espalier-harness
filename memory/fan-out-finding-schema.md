@@ -217,8 +217,10 @@ carry no `description` key at all in the SoT.
 
 ## The cross-pack dedup corpus (TP-185 W2; retired to the record branch 2026-09-21)
 
-_Retired 2026-09-21: the tracked corpus moved to the record branch and
-`task-packs/FORWARD_LEDGER.md` is the dedup source. What follows is the history of
+_Retired 2026-09-21: the tracked corpus moved to the record branch and the
+forward ledger is the dedup source (`task-packs/FORWARD_LEDGER.md` and its row
+files under `task-packs/ledger.d/`, read as one by
+`python tools/cc/_record_fragments.py ledger`). What follows is the history of
 how it was seeded and shaped, kept because the seeding decisions still explain the
 schema._
 

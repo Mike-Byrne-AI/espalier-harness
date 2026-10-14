@@ -70,8 +70,13 @@ input, and a heredoc edit through Bash carries none.
    grep that skipped the ledger left four ledger sites citing the old name and
    flipped `DEF-646`'s probe, which AST-searched for that exact name, to
    STRIKE_CANDIDATE for the wrong reason (symbol gone, not defect fixed); the
-   failure-mode lane caught it. Two rules: `grep task-packs/FORWARD_LEDGER.md`
-   for the symbol before a fix, a rename or a delete; and key a probe on the
+   failure-mode lane caught it. Two rules: search the ledger's rows and its
+   probe commands for the symbol before a fix, a rename or a delete --
+   `python tools/cc/_record_fragments.py ledger | grep -n <symbol>` and
+   `python tools/cc/_record_fragments.py probes | grep -n <symbol>`, which read
+   `task-packs/FORWARD_LEDGER.md` and `task-packs/LEDGER_PROBES.json` with the
+   rows and probes kept one file each under `task-packs/ledger.d/` and
+   `task-packs/probes.d/` (since 2026-10-13); and key a probe on the
    claim (a population, a predicate over the tree), never on a function's
    name, because a name-keyed probe flips on every rename.
 

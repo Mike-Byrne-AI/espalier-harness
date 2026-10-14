@@ -3093,16 +3093,6 @@
    "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
   },
   {
-   "id": "DEF-3001",
-   "subject": "espalier/repo_mode.py",
-   "cmd": "python -c \"import tempfile,subprocess,pathlib as P;from espalier.repo_mode import list_tracked_or_walked_files as L;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);m=P.Path(T.name)/'main';g=lambda *a,c=m:subprocess.run(['git','-C',str(c),*a],check=True,capture_output=True);m.mkdir();g('init','-q');(m/'.gitignore').write_text('ignored.log\\n',encoding='utf-8');(m/'kept.txt').write_text('x',encoding='utf-8');g('add','.');g('-c','user.email=t@t','-c','user.name=t','commit','-q','-m','x');w=P.Path(T.name)/'wt';g('worktree','add','-q','--detach',str(w));(w/'ignored.log').write_text('local',encoding='utf-8');n='ignored.log';files,src=L(w);print('source='+src+' ignored_listed='+str(n in files))\"",
-   "open_value": "source=filesystem ignored_listed=True",
-   "why_not": null,
-   "row_sha": "b56df90a6248",
-   "text_sha": "655fa606e8a8",
-   "verified_2026_10_10": "OPEN (filed 2026-10-10; probe driven at filing)"
-  },
-  {
    "id": "DEF-4010",
    "subject": "scripts/derived_population_census.py",
    "cmd": null,
@@ -3143,19 +3133,6 @@
    ],
    "row_sha": "cfd93df1785e",
    "text_sha": "f14be7ecc4ba",
-   "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
-  },
-  {
-   "id": "DEF-4014",
-   "subject": "pyproject.toml",
-   "cmd": "python3 -B -c \"from espalier._compat import tomllib;import ast;d=tomllib.load(open('pyproject.toml','rb'));r=[x.replace(' ','') for x in d['project']['optional-dependencies']['dev'] if x.replace(' ','').lower().startswith('ruff')];p=any('==' in x or ('~=' in x and x.count('.')>=2) for x in r) or 'required-version' in d.get('tool',{}).get('ruff',{});e=any(isinstance(n,ast.Constant) and n.value=='--version' for n in ast.walk(ast.parse(open('scripts/proof_tier.py',encoding='utf-8').read())));print(not p and not e)\"",
-   "open_value": "True",
-   "why_not": null,
-   "inputs": [
-    "scripts/proof_tier.py"
-   ],
-   "row_sha": "f87223a7a0ad",
-   "text_sha": "41b50d4e3edf",
    "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
   },
   {
@@ -3229,6 +3206,16 @@
    "why_not": null,
    "row_sha": "c3931bba4756",
    "text_sha": "a4ca3c974b33",
+   "verified_2026_10_13": "OPEN (filed 2026-10-13; probe driven at filing)"
+  },
+  {
+   "id": "DEF-2003",
+   "subject": "tools/cc/hooks/session_start.py",
+   "cmd": null,
+   "open_value": null,
+   "why_not": "the defect is the run order of the catch-up and module loading inside one hook process; a one-line probe can read only text, and any text it keys on prescribes one fix. The oracle is a scratch clone one commit behind an origin whose head adds a name to tools/cc/_json_safe.py that a by-path-loaded module imports, and one SessionStart run there.",
+   "row_sha": "6981045483f2",
+   "text_sha": "aa95b488419e",
    "verified_2026_10_13": "OPEN (filed 2026-10-13; probe driven at filing)"
   }
  ],

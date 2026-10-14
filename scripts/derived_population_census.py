@@ -229,7 +229,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        24, "7a11e3bf3f3da82190027d29bc978c3910a26f707f70924506a836fb9ee72cb0",
+        25, "d399fc45625607db4d68ab48ed2b8a29d220bc025e10d65faa46845df651c12f",
         "MIXED",
         "Lane 6 (DEF-806). Seven rows walk `PLAN_READERS`, the engine's hand-kept "
         "pair of plan-reading cc/ docs, asserting per member that a plan writer "
@@ -284,7 +284,11 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "its silent drop is inert, while the direction that hurts, a group the census would never "
         "run, reds by name); and the gated subset of `SELF_HOST_PIN_CARRIERS` is held EQUAL to the "
         "gated paths git sees the pin refresh change, so a carrier the roster drops while the verb "
-        "still writes it reds as surely as one the verb stops writing.",
+        "still writes it reds as surely as one the verb stops writing."
+        " The twenty-fifth (2026-10-13, the row-files lane: an opted-in install files its "
+        "onboarding rows as files) holds the stems of the row files the install wrote EQUAL to "
+        "`_ONBOARDING_ROWS`' ids, both directions: a row filed into the big file instead, or one "
+        "missing, reds by name; a row dropped from the tuple is a design change, same verdict.",
     ),
     # 1 row(s), shapes: for-assert
     "tests/test_fuse.py": (
@@ -1503,6 +1507,33 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "MIXED",
         "scripts/wheel_smoke.py:443-457 — `extra_helpers = helper_names - set(EXPECTED_HOOK_HELPERS)` ...",
     ),
+    "tests/test_worktree_seat.py": (
+        5, "edb59aaf00d73300bb5965a62702e14e7fa468246487aa4d2ca696e629fdd1f7",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-10-13 (lane/worktree-seat-resume). The comprehension over "
+        "WORKTREE_INCLUDE_ENTRIES (TestTheSeatRosters.test_the_copied_roster_is_"
+        "inits_include): CORRECT_BY_REMEDY -- it IS the pin, "
+        "tests/test_worktree_seat.py:123: tuple-equality of resume's hand-kept "
+        "_COPIED_INTO_A_SEAT against the engine's include roster filtered to "
+        "REQUIRED_PATHS, so a new include entry, or one dropped, reds here rather "
+        "than leaving a seat told to rebuild what it should copy. The for-assert "
+        "over REQUIRED_PATHS (test_every_gitignored_required_path_is_in_exactly_"
+        "one_roster, tests/test_worktree_seat.py:133): CORRECT_BY_REMEDY -- a "
+        "partition pin over the live tuple, "
+        "each member classified by init's REQUIRED_GITIGNORE, so a new gitignored "
+        "required path in neither roster reds (driven by the failure-mode review "
+        "2026-10-13 with reports/surface_index.json patched in); an empty "
+        "REQUIRED_PATHS would pass it vacuously, but resume's own suite asserts on "
+        "named members. The for-assert over _NOT_COPIED_INTO_A_SEAT.items(): "
+        "CORRECT_BY_PROPERTY -- every writer is a slash command, a property each "
+        "present member must hold; its membership is pinned by the partition row "
+        "above. The comprehension and for-plain over INCLUDED (_main_checkout): "
+        "CORRECT_BY_PROPERTY -- FIXTURES that write the include and the main "
+        "checkout's runtime files from the engine's roster, so the seat the rows "
+        "drive carries exactly what Claude Code copies; growth keeps that, and "
+        "an empty roster fails the rows' own asserts on the settings path rather "
+        "than passing.",
+    ),
     "tests/test_write_guard.py": (
         31, "266c49e166d363e66692a91241b88bed854db9e2b9dc5b2a61630c5523058ff2",
         "CORRECT_BY_REMEDY",
@@ -1868,7 +1899,9 @@ def _segment(lines: list[str], node: ast.AST) -> str | None:
     when the node carries no end position; offsets are BYTE offsets into the
     UTF-8 encoding of the line, because ``col_offset`` counts bytes, not
     characters. Pinned equal to the stdlib on the live suite by
-    ``tests/test_derived_population_census.py``.
+    ``tests/test_derived_population_census.py``. A second user loads this
+    pair by path, ``tests/test_ledger_fragments.py``'s reader census: a
+    rename or a move changes it too.
     """
     try:
         if node.end_lineno is None or node.end_col_offset is None:

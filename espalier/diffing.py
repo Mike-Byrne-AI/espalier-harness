@@ -113,6 +113,13 @@ FINGERPRINT_REDUCTIONS: tuple[str, ...] = (
 #: The fingerprint fields compared as they are: each reads the kind of repo
 #: (a provider, a framework, a command, a presence, a profile). A field added
 #: to `RepoFingerprint` must join this roster or the registry above.
+#: `test_commands` stays on this roster with its order: its first entry is
+#: the test action (`analyze.detect_actions`, `harness_config._detect_actions`)
+#: and the command `/preflight` runs, so a reorder changes what runs. The stack
+#: table's row move of 2026-10-07 (go before rust) reorders it on a Go and Rust
+#: root, and that drift is real; sorting it the way `package_systems` is sorted
+#: would hide it. Drop an order only where it carries nothing; where it is a
+#: signal, keep it or name the signal, as `languages[0]` is named.
 FINGERPRINT_SIGNAL_FIELDS: frozenset[str] = frozenset({
     'package_roots', 'ci_providers', 'entrypoints',
     'test_commands', 'inferred_actions', 'runtime_surface', 'api_surface',

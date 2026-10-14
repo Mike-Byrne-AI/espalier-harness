@@ -211,8 +211,10 @@ there to bound the allowance to the shape Dependabot actually produces.
 marker never overrode it either. The same holds for the gate's other
 unconditional checks: a dropped governance event, an unreadable settings
 file, and a merge-conflict marker left in a record file (`ESPALIER_MEMORY.md`,
-`task-packs/FORWARD_LEDGER.md`, `task-packs/LEDGER_PROBES.json` -- read whole,
-the red named by file and line). A half-merged record is a corrupt record,
+`task-packs/FORWARD_LEDGER.md`, `task-packs/LEDGER_PROBES.json`, and the
+record files kept one per change under `memory/session-log.d/`, `changelog.d/`,
+`task-packs/ledger.d/` and `task-packs/probes.d/` -- read whole, the red named
+by file and line). A half-merged record is a corrupt record,
 not a harness change anyone meant to approve; resolve the hunk and commit the
 file whole. The rule is column zero, so a line that only quotes a marker (a
 fenced example in the memory file) is read as one too: indent the quote by one

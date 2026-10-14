@@ -267,10 +267,13 @@ class TestPostCompactDocsTruth:
     def test_no_tracked_doc_claims_post_compact_reinjects(self):
         from espalier.cli import render_canonical_template
 
+        from tests._record_paths import is_dated_fragment, is_ledger_record
+
         tracked = require_tracked_paths(REPO_ROOT, "*.md", minimum=50, what="tracked Markdown")
         found = {}
         for rel in tracked:
-            if rel in self._NOT_SWEPT:
+            # The records kept one file per change are records like their files.
+            if rel in self._NOT_SWEPT or is_ledger_record(rel) or is_dated_fragment(rel):
                 continue
             claims = self._claims((REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace"))
             if claims:

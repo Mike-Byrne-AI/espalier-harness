@@ -234,6 +234,10 @@ def _without_heavy_filter(argv: tuple[str, ...]) -> tuple[str, ...]:
 #: head with one literal call per runner, so the receipt line (shlex.join of the
 #: argv) and the spawned binary are the same token by construction -- a widened
 #: allowlist over a hard-coded ["pytest"] would print one and run the other.
+#: ``version_lines`` reads each runner's version the same way, and both refuse
+#: a runner with no branch of its own. tests/test_external_tool_contract.py
+#: holds this roster closed: a new runner is pinned in the dev extra or named
+#: there as ranged with its reason.
 _RUNNERS: tuple[str, ...] = ("mypy", "ruff", "pytest")
 
 
@@ -292,6 +296,75 @@ def commands(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = False,
     return tuple(shlex.join(argv) for argv in tier_argvs(which, changed, root, heavy=heavy, leg=leg))
 
 
+#: The flag each runner answers with its version. The receipt prints one
+#: ``version:`` line per runner before the commands, read from the binary the
+#: command spawns, because the dev extra pins the finding gates to one exact
+#: version (tests/test_external_tool_contract.py) and a local ruff or mypy off
+#: that pin lints differently from CI: a red there read as an ordinary
+#: finding while the local tier stayed green (DEF-4014).
+_VERSION_FLAG = "--version"
+
+
+def dev_extra_pins(root: Path) -> dict[str, str]:
+    """``{name: version}`` for each exact ``name==version`` spec in the dev
+    extra. Empty when ``pyproject.toml`` cannot be read or no TOML reader is
+    importable (3.10 without ``tomli``): the receipt then prints the versions
+    and skips the comparison, never the run."""
+    try:
+        import tomllib
+    except ImportError:  # Python 3.10: the base dependencies install tomli there
+        try:
+            import tomli as tomllib  # type: ignore[no-redef]
+        except ImportError:
+            return {}
+    try:
+        data = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # TOMLDecodeError is a ValueError
+        return {}
+    pins: dict[str, str] = {}
+    for spec in data.get("project", {}).get("optional-dependencies", {}).get("dev", []):
+        name, sep, version = str(spec).replace(" ", "").partition("==")
+        if sep and version and not any(c in version for c in ",;<>=!~"):
+            pins[name.lower()] = version
+    return pins
+
+
+def version_lines(argvs, root: Path) -> list[str]:
+    """One ``version:`` line per distinct runner, in first-use order, each read
+    by the same literal call per runner that ``run_commands`` dispatches, so
+    the version and the binary that runs are one token. A runner whose version
+    is not the dev extra's exact pin is named with the reinstall line; the
+    line is a diagnosis and never changes the verdict."""
+    pins = dev_extra_pins(root)
+    lines: list[str] = []
+    for head in dict.fromkeys(argv[0] for argv in argvs):
+        try:
+            if head == "mypy":
+                done = subprocess.run(["mypy", _VERSION_FLAG], cwd=root, capture_output=True,
+                                      text=True, encoding="utf-8", errors="replace")
+            elif head == "ruff":
+                done = subprocess.run(["ruff", _VERSION_FLAG], cwd=root, capture_output=True,
+                                      text=True, encoding="utf-8", errors="replace")
+            elif head == "pytest":
+                done = subprocess.run(["pytest", _VERSION_FLAG], cwd=root, capture_output=True,
+                                      text=True, encoding="utf-8", errors="replace")
+            else:
+                raise ValueError(f"no version read for runner {head!r}: give it its own branch here")
+        except FileNotFoundError:
+            lines.append(f"version: {head} not installed")
+            continue
+        said = (done.stdout or done.stderr or "").strip().splitlines()
+        first = said[0].strip() if said else f"{head} printed no version (exit {done.returncode})"
+        line = f"version: {first}"
+        pinned = pins.get(head)
+        if pinned and pinned not in first.split():
+            # The tool alone, at the pin: `pip install -e '.[dev]'` would also
+            # re-point the interpreter's espalier at the checkout it runs in.
+            line += f" -- the dev extra pins {head}=={pinned}, which CI runs: python -m pip install {head}=={pinned}"
+        lines.append(line)
+    return lines
+
+
 def run_commands(argvs, root: Path) -> int:
     """Run every command in order, one receipt line each, return the worst exit.
 
@@ -300,24 +373,29 @@ def run_commands(argvs, root: Path) -> int:
     ``_RUNNERS`` (OS binaries the subprocess-contract scanner skips), and the
     dispatch below is one literal call per runner. A runner that is not
     installed is exit 127 with the install hint, never a silently skipped
-    line."""
+    line. Each runner's version prints first (``version_lines``)."""
     worst = 0
+    for argv in argvs:
+        if argv[0] not in _RUNNERS:
+            raise ValueError(f"proof commands lead with one of {_RUNNERS}, got {argv[0]!r}")
     if not argvs:
         # Emptiness-keyed, whatever leg or tier produced it: a receipt that
         # counts zero of zero is a reportable green that proves nothing, and
         # the sentence says so beside it (failure-mode review, 2026-09-30).
         print("no commands on this run -- the receipt below proves nothing", flush=True)
+    for line in version_lines(argvs, root):
+        print(line, flush=True)
     for argv in argvs:
         head, *rest = argv
-        if head not in _RUNNERS:
-            raise ValueError(f"proof commands lead with one of {_RUNNERS}, got {head!r}")
         try:
             if head == "mypy":
                 rc = subprocess.run(["mypy"] + rest, cwd=root).returncode
             elif head == "ruff":
                 rc = subprocess.run(["ruff"] + rest, cwd=root).returncode
-            else:
+            elif head == "pytest":
                 rc = subprocess.run(["pytest"] + rest, cwd=root).returncode
+            else:
+                raise ValueError(f"no dispatch for runner {head!r}: give it its own branch here")
         except FileNotFoundError:
             rc = 127
             print(f"{head}: not installed -- {INSTALL_HINT}", flush=True)
