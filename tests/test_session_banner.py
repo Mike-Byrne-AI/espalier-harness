@@ -2777,11 +2777,12 @@ class TestEngineLine:
         monkeypatch.setattr(mod.subprocess, "run", _never)
 
     def _fake_python(self, tmp_path: Path, name: str, *lines: str) -> str:
-        """A stand-in interpreter (POSIX): prints ``lines`` whatever it is asked."""
-        exe = tmp_path / name
-        exe.write_text("#!/bin/sh\n" + "".join(f"echo '{ln}'\n" for ln in lines), encoding="utf-8")
-        exe.chmod(0o755)
-        return str(exe)
+        """A stand-in interpreter (POSIX): prints ``lines`` whatever it is asked.
+        Warmed by :func:`tests._stubs.write_stub`: the engine probe gives an
+        interpreter 1.0 s, and a cold stub's first exec crossed it under a
+        loaded tier (two reds in a fresh worktree's tier, 2026-10-14)."""
+        from tests._stubs import write_stub
+        return str(write_stub(tmp_path / name, "#!/bin/sh\n" + "".join(f"echo '{ln}'\n" for ln in lines)))
 
     def test_an_adopter_tree_spawns_nothing(self, tmp_path, monkeypatch):
         """Dies to: the probe run on an adopter tree, whose engine always comes

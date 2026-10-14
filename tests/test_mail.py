@@ -727,9 +727,8 @@ class TestTwoMachines:
     @pytest.mark.skipif(sys.platform == "win32", reason="a shell pre-receive hook on the bare origin needs sh")
     def test_a_push_origin_refuses_is_rolled_back_so_the_next_send_starts_clean(self, mail, machines):
         mac, origin = machines["mac"], machines["origin"]
-        hook = origin / "hooks" / "pre-receive"
-        hook.write_text("#!/bin/sh\necho 'no mail today' >&2\nexit 1\n", encoding="utf-8")
-        hook.chmod(0o755)
+        from tests._stubs import write_stub
+        hook = write_stub(origin / "hooks" / "pre-receive", "#!/bin/sh\necho 'no mail today' >&2\nexit 1\n")
         with pytest.raises(mail.Unresolvable, match="refused the push.*no mail today"):
             mail.send(mac, _msg(mail, "mac", "note", "x"), run=_real_run(mail), say=lambda _s: None)
         assert _git(mac, "rev-parse", "-q", "--verify", "refs/heads/mail/mac", check=False).returncode != 0

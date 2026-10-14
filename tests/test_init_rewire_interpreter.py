@@ -20,13 +20,13 @@ must keep, and that these tests exist to pin:
 from __future__ import annotations
 
 import json
-import stat
 import sys
 from pathlib import Path
 
 import pytest
 
 from espalier import cli
+from tests._stubs import write_stub
 
 # The sh stubs below are POSIX-only, so every class built on them skips on
 # Windows. TestTheLauncherRewiresWithItsFlag is built on the cross-platform
@@ -41,10 +41,7 @@ def _stub(tmp_path: Path, name: str, says: str) -> str:
     """An executable that answers `--version` with `says`."""
     d = tmp_path / "bin"
     d.mkdir(exist_ok=True)
-    stub = d / name
-    stub.write_text(f"#!/bin/sh\necho '{says}'\n", encoding="utf-8")
-    stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
-    return str(stub)
+    return str(write_stub(d / name, f"#!/bin/sh\necho '{says}'\n"))
 
 
 def _settings(tmp_path: Path, interpreter: str) -> Path:

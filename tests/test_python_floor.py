@@ -33,6 +33,7 @@ from pathlib import Path
 import pytest
 
 from espalier import _python_floor
+from tests._stubs import write_stub
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -337,10 +338,7 @@ class TestFloorAtTheThreeDecisionSites:
 
     @staticmethod
     def _stub(tmp_path: Path, name: str, says: str) -> Path:
-        stub = tmp_path / name
-        stub.write_text(f"#!/bin/sh\necho '{says}'\n", encoding="utf-8")
-        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
-        return stub
+        return write_stub(tmp_path / name, f"#!/bin/sh\necho '{says}'\n")
 
     @pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
     def test_detect_python_command_refuses_a_below_floor_host(
@@ -702,12 +700,10 @@ class TestFloorAtTheThreeDecisionSites:
         interpreter in one run. All three read the banner through one rule."""
         from espalier import doctor as doctor_module
 
-        stub = tmp_path / "python"
-        stub.write_text(
+        stub = write_stub(
+            tmp_path / "python",
             "#!/bin/sh\necho 'Activating environment...'\necho 'Python 3.9.6'\n",
-            encoding="utf-8",
         )
-        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
         banner = subprocess.run(
             [str(stub), "--version"], capture_output=True, text=True, timeout=10, encoding="utf-8",
         ).stdout.strip()
@@ -1167,10 +1163,7 @@ class TestSessionStartWarnDistinguishesTheTwoFailures:
 
     @staticmethod
     def _stub(tmp_path: Path, name: str, says: str) -> str:
-        stub = tmp_path / name
-        stub.write_text(f"#!/bin/sh\necho '{says}'\n", encoding="utf-8")
-        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
-        return str(stub)
+        return str(write_stub(tmp_path / name, f"#!/bin/sh\necho '{says}'\n"))
 
     @pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
     def test_below_floor_gets_the_below_floor_words(self, tmp_path):
@@ -1237,9 +1230,7 @@ class TestAPythonTwoHostIsToldTheTruth:
     def _host(tmp_path: Path, says: str) -> tuple[Path, dict]:
         stubs = tmp_path / "bin"
         stubs.mkdir()
-        stub = stubs / "python"
-        stub.write_text(f"#!/bin/sh\necho '{says}'\n", encoding="utf-8")
-        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+        write_stub(stubs / "python", f"#!/bin/sh\necho '{says}'\n")
         import shutil as _shutil
         git = _shutil.which("git")
         assert git, "git is needed to drive init"

@@ -25,7 +25,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -191,10 +190,8 @@ class TestInterpreterResolution:
 
 def _plant(bin_dir: Path, name: str) -> Path:
     bin_dir.mkdir(parents=True, exist_ok=True)
-    exe = bin_dir / name
-    exe.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    exe.chmod(exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    return exe
+    from tests._stubs import write_stub
+    return write_stub(bin_dir / name, "#!/bin/sh\nexit 0\n")
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="planted POSIX executables")
