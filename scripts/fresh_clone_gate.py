@@ -83,6 +83,21 @@ from typing import Callable, Mapping
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    holds on Windows, where ``run`` waits on a grandchild holding its pipe
+    (DEF-3004)."""
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_fresh_clone_gate", REPO_ROOT / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
+
 #: The gate's own refusal code -- outside pytest's 0..5.
 GATE_REFUSED = 70
 
@@ -405,7 +420,7 @@ def make_venv(exe: Path, venv_dir: Path) -> Path:
 
 
 def install_dev(vpy: Path, clone: Path) -> None:
-    proc = subprocess.run(
+    proc = run_bounded(
         [str(vpy), "-m", "pip", "install", "-q", "-e", ".[dev]"], cwd=str(clone), timeout=1800, capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if proc.returncode != 0:

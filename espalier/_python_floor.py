@@ -207,6 +207,8 @@ def interpreter_start_failure(argv: "list[str] | tuple[str, ...]") -> str | None
     import os
     import subprocess
     import sys
+
+    from espalier._spawn import run_bounded
     rescued = os.environ.get("PYTHONHOME") or os.environ.get("PYTHONPATH")
     if len(argv) == 1 and sys.executable and not rescued:
         def _as_invoked(path: str) -> str:
@@ -219,7 +221,7 @@ def interpreter_start_failure(argv: "list[str] | tuple[str, ...]") -> str | None
             # The tail is a literal, the one spelling of the probe, so the
             # subprocess-contract scanner resolves this argv as it does the
             # banner probe's below, rather than reading it as all-dynamic.
-            result = subprocess.run(
+            result = run_bounded(
                 [*argv, "-I", "-c", "import sys"], capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=2,
             )
@@ -281,6 +283,8 @@ def interpreter_meets_floor(name_or_path: str | None) -> bool:
     import shutil
     import subprocess
     from pathlib import Path as _Path
+
+    from espalier._spawn import run_bounded
     head, *flags = interpreter_argv(name_or_path)
     resolved = shutil.which(head) or (
         head if _Path(head).is_file() else None
@@ -288,7 +292,7 @@ def interpreter_meets_floor(name_or_path: str | None) -> bool:
     if not resolved:
         return False
     try:
-        result = subprocess.run(
+        result = run_bounded(
             [resolved, *flags, "--version"], capture_output=True, text=True,
             encoding="utf-8", timeout=2,
         )

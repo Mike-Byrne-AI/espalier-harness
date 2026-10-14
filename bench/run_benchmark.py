@@ -45,6 +45,23 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path, never an installed engine's: ``subprocess.run`` whose timeout
+    holds on Windows, where ``run`` waits on a grandchild holding its pipe
+    (DEF-3004)."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_run_benchmark", REPO_ROOT / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
 BENCH_DIR = REPO_ROOT / "bench"
 CORPUS_DIR = BENCH_DIR / "corpus"
 BASELINE_DIR = BENCH_DIR / "baselines"
@@ -118,7 +135,7 @@ def _invoke_hook_stdin(
     for _k, _v in (attempt_env or {}).items():
         env[str(_k)] = str(_v)
     t0 = time.perf_counter()
-    proc = subprocess.run(
+    proc = run_bounded(
         [sys.executable, str(script)],
         input=json.dumps(payload),
         capture_output=True,
@@ -270,7 +287,7 @@ def invoke_killswitch_under_maintenance(attempt: dict, tmp_project: Path) -> Ver
         env[str(k)] = str(v)
     payload = {"tool_name": attempt.get("tool_name", ""), "tool_input": attempt.get("tool_input", {})}
     t0 = time.perf_counter()
-    proc = subprocess.run(
+    proc = run_bounded(
         [sys.executable, str(HOOK_SCRIPT)],
         input=json.dumps(payload),
         capture_output=True,
@@ -485,7 +502,7 @@ def invoke_real_integrity_verify(attempt: dict, tmp_project: Path) -> VerifierRe
 
     try:
         t0 = time.perf_counter()
-        proc = subprocess.run(
+        proc = run_bounded(
             [sys.executable, "-m", "espalier.cli", "integrity", "verify", str(tmp_project)],
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",
@@ -1572,7 +1589,7 @@ def invoke_release_check_validate_archive(
         zf.writestr(member, "payload")
 
     try:
-        proc = subprocess.run(
+        proc = run_bounded(
             [
                 sys.executable,
                 str(release_check),
@@ -1924,7 +1941,7 @@ def setup_baseline(name: str, tmp_project: Path) -> None:
     setup_sh = BASELINE_DIR / name / "setup.sh"
     if not setup_sh.exists():
         raise FileNotFoundError(f"missing setup.sh for baseline {name}")
-    proc = subprocess.run(
+    proc = run_bounded(
         ["bash", str(setup_sh), str(tmp_project)],
         capture_output=True,
         text=True, encoding="utf-8", errors="replace",

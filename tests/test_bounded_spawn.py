@@ -145,3 +145,26 @@ class TestTheTimeoutIsABound:
             f"its {HOLD_SECONDS} s sleep ({took:.1f} s): git's own processes held the pipe past it, "
             "so the banner waits on the network, not its cap"
         )
+
+    def test_an_engine_command_runner_is_bounded_by_its_cap(self, tmp_path):
+        """The engine-level case (DEF-3004): ``espalier/pre_release.py``'s
+        command runner, which ``espalier pre-release`` runs each gate command
+        through, on the same holder. Before the engine had its own bounded
+        spawn (``espalier/_spawn.py``) its call was ``subprocess.run``'s, and on
+        Windows it returned only after the holder ended."""
+        from espalier import pre_release
+
+        argv, pidfile, done = _holder(tmp_path)
+        start = time.monotonic()
+        try:
+            result = pre_release._run_command(argv, tmp_path, timeout_seconds=int(CAP_SECONDS))
+            returned_first = not done.exists()
+            took = time.monotonic() - start
+            assert pidfile.exists(), "the holder never started inside the cap, so the case did not run"
+        finally:
+            _end_holder(pidfile)
+        assert result["timed_out"], result
+        assert returned_first, (
+            f"the engine's {CAP_SECONDS:.0f} s command cap returned only after the holder finished "
+            f"its {HOLD_SECONDS} s sleep ({took:.1f} s): the grandchild holding the pipe set the bound"
+        )
