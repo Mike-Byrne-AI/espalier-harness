@@ -151,10 +151,8 @@ def _fences(tree: Path) -> list[str]:
 
 
 def _stub(bin_dir: Path, name: str, body: str) -> None:
-    path = bin_dir / name
-    with open(path, "w", encoding="utf-8", newline="") as fh:
-        fh.write("#!/bin/sh\n" + body + "\n")
-    path.chmod(0o755)
+    from tests._stubs import write_stub
+    write_stub(bin_dir / name, "#!/bin/sh\n" + body + "\n")
 
 
 def _run_fence(tree: Path, fence: str, scratch: Path) -> tuple[subprocess.CompletedProcess, list[str]]:

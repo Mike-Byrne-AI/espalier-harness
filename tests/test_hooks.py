@@ -4024,7 +4024,7 @@ class TestHookUtils:
         this repo gets pinned rather than noted.
         """
         import shutil
-        import stat
+        from tests._stubs import write_stub
         monkeypatch.syspath_prepend(str(HOOKS_DIR))
         import _hook_utils
         from espalier import doctor as doctor_module
@@ -4036,9 +4036,7 @@ class TestHookUtils:
         # 3.")` to `startswith("Python")` in either copy survived the whole
         # suite. A stub that reports Python 2 is the only case that separates
         # them, so it is the one the parity test most needs.
-        py2 = tmp_path / "python2stub"
-        py2.write_text("#!/bin/sh\necho 'Python 2.7.18' >&2\n", encoding="utf-8")
-        py2.chmod(py2.stat().st_mode | stat.S_IEXEC)
+        py2 = write_stub(tmp_path / "python2stub", "#!/bin/sh\necho 'Python 2.7.18' >&2\n")
 
         cases = [
             ("a real python3", shutil.which("python3")),

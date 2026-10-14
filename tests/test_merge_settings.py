@@ -12,7 +12,6 @@ import json
 import os
 import re
 import shutil
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -1293,10 +1292,8 @@ class TestEnforcementClaimBlockersComposeThreeOracles:
         tell what it answers."""
         stubs = tmp_path / "stubs"
         stubs.mkdir(exist_ok=True)
-        stub = stubs / "python"
-        stub.write_text(f"#!/bin/sh\necho '{says}'\n", encoding="utf-8")
-        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
-        return str(stub)
+        from tests._stubs import write_stub
+        return str(write_stub(stubs / "python", f"#!/bin/sh\necho '{says}'\n"))
 
     def _other_two_arms_read_clean(self, target: Path) -> None:
         """Precondition for every identity-arm test: the existence arm and the
@@ -1430,9 +1427,9 @@ class TestEnforcementClaimBlockersComposeThreeOracles:
         settings_path = target / ".claude" / "settings.json"
         stubs = tmp_path / "stubs"
         stubs.mkdir(exist_ok=True)
-        wrapper = stubs / "python_wrap.sh"   # python-shaped word, declined shape
-        wrapper.write_text("#!/bin/sh\necho 'not a python'\n", encoding="utf-8")
-        wrapper.chmod(wrapper.stat().st_mode | stat.S_IEXEC)
+        from tests._stubs import write_stub
+        wrapper = write_stub(stubs / "python_wrap.sh",   # python-shaped word, declined shape
+                             "#!/bin/sh\necho 'not a python'\n")
         self._rewire_every_espalier_entry(settings_path, str(wrapper))
         self._other_two_arms_read_clean(target)
         assert self._blockers(target), "precondition: the identity arm must block"

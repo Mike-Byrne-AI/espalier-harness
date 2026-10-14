@@ -1,0 +1,430 @@
+#!/usr/bin/env python3
+"""SessionStart hook — visibility-only context loader.
+
+Always exits 0. Emits bounded context as structured JSON on stdout so Claude
+Code can inject it into the conversation context window. Warnings and
+non-fatal errors go to stderr only.
+
+SessionStart cannot block Claude Code execution per the official hook
+protocol (docs/external/cc-hook-protocol.md). Kill-switch findings are
+audited and surfaced to stderr for the user; actual blocking lives in the
+PreToolUse (write_guard) and ConfigChange (config_guard) hooks while those
+hooks are active, and in CI for merge-time enforcement.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from _hook_utils import atomic_write_text, warn, warn_exc  # noqa: E402
+import _integrity  # noqa: E402
+from _freshness_cache import (  # noqa: E402
+    _is_state_cache_stale,
+    _read_state_cache_safe,
+)
+
+# Hard cap on additionalContext bytes to avoid flooding Claude's context window.
+# TP-71: bumped from 3000 to fit SHARP_EDGES TOC (~2000 bytes) + orientation
+# instructions (~400 bytes) + the existing 6-field block (~600 bytes) + growth
+# headroom. The output is a system-reminder block, not main context window —
+# heavier than pre-TP-71 but well-bounded, and the truncation fallback below
+# still fires if the budget overflows.
+_MAX_CONTEXT_BYTES = 16_000
+
+# TP-71: SHARP_EDGES TOC recency window. Headings whose words overlap with
+# tokens extracted from recently-touched file paths get a [recent: ...]
+# annotation so Claude reads those sections preferentially.
+_RECENT_DAYS = 14
+_RECENT_MAX_MARKS = 3
+
+# TP-71: orientation instructions Claude follows on first response,
+# replacing the typed `/context-load` invocation. The slash command stays
+# available for explicit mid-session re-orient / PostCompact recovery /
+# DEGRADED-surface recovery.
+_ORIENTATION_INSTRUCTIONS = """\
+Orientation tasks (perform on first response):
+1. Read MEMORY.md -- project context, harness decisions, patterns learned.
+2. Read docs/SHARP_EDGES.md sections relevant to your task (TOC above; full
+   bodies on demand). Entries marked [recent: ...] match files touched in
+   the last 14 days and are higher-priority.
+3. Do NOT re-litigate prior blueprint decisions unless new evidence appears.
+4. Emit a 6-line REPO/SURFACE/LAST/BRANCH/STATUS/NEXT report before
+   proceeding with the user's request.\
+"""
+
+
+def _project_root() -> Path:
+    return Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+
+
+def _safe_read(path: Path, max_lines: int = 0) -> str:
+    """Read file content, optionally limited to max_lines.
+
+    Absent file -> silent empty string (normal). Present but unreadable -> warn.
+    """
+    if not path.exists():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if max_lines > 0:
+            lines = text.splitlines()[:max_lines]
+            return "\n".join(lines)
+        return text
+    except OSError as e:
+        warn(f"could not read {path.name}: {e}")
+        return ""
+
+
+def _repo_name(root: Path) -> str:
+    """Get repo name from pyproject.toml, package.json, or directory name."""
+    for config in ["pyproject.toml", "package.json", "Cargo.toml", "go.mod"]:
+        config_path = root / config
+        if not config_path.exists():
+            continue
+        try:
+            content = config_path.read_text(encoding="utf-8", errors="replace")
+            if config == "package.json":
+                data = json.loads(content)
+                return data.get("name", root.name)
+            for line in content.splitlines():
+                if line.strip().startswith("name"):
+                    parts = line.split("=", 1) if "=" in line else line.split(":", 1)
+                    if len(parts) == 2:
+                        return parts[1].strip().strip('"').strip("'").strip(",")
+        except json.JSONDecodeError as e:
+            warn_exc(f"session_start: malformed {config}", e)
+        except OSError:
+            pass
+    return root.name
+
+
+def _check_branch(root: Path) -> str:
+    """Get current git branch."""
+    try:
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            capture_output=True, text=True, timeout=5, cwd=str(root),
+        )
+        branch = result.stdout.strip()
+        return branch if branch else "detached HEAD"
+    except (subprocess.TimeoutExpired, OSError):
+        return "unknown"
+
+
+def _check_dirty(root: Path) -> str:
+    """Report uncommitted changes count."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--short"],
+            capture_output=True, text=True, timeout=5, cwd=str(root),
+        )
+        lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
+        if not lines:
+            return "clean"
+        return f"{len(lines)} uncommitted changes"
+    except (subprocess.TimeoutExpired, OSError):
+        return "unknown"
+
+
+def _check_surface(root: Path) -> str:
+    """Verify core harness infrastructure exists."""
+    missing = []
+    if not (root / "CLAUDE.md").exists():
+        missing.append("CLAUDE.md")
+    if not (root / ".claude" / "settings.json").exists():
+        missing.append(".claude/settings.json")
+    if not (root / "tools" / "cc").exists():
+        missing.append("tools/cc/")
+    if missing:
+        return f"DEGRADED: missing {', '.join(missing)}"
+    return "healthy"
+
+
+def _summarize_memory(root: Path) -> str:
+    """Read MEMORY.md and produce a compact summary."""
+    memory_path = root / "MEMORY.md"
+    text = _safe_read(memory_path)
+    if not text.strip():
+        return "No MEMORY.md found"
+
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            lines.append(stripped)
+        if len(lines) >= 10:
+            break
+    return " | ".join(lines[:5]) if lines else "MEMORY.md is empty"
+
+
+def _recent_touched_files(root: Path, days: int = _RECENT_DAYS) -> set[str]:
+    """Return the set of file paths touched in the last ``days`` days.
+
+    TP-71. Used to surface recency hints in the SHARP_EDGES TOC. Git
+    timeout / OSError degrades to an empty set so the hook never
+    crashes the session.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", f"--since={days}.days.ago",
+             "--name-only", "--pretty=format:"],
+            capture_output=True, text=True, timeout=5, cwd=str(root),
+        )
+        return {
+            line.strip() for line in result.stdout.splitlines()
+            if line.strip()
+        }
+    except (subprocess.TimeoutExpired, OSError):
+        return set()
+
+
+def _sharp_edges_toc_with_recency(root: Path) -> str:
+    """Build the SHARP_EDGES table of contents, annotating headings whose
+    text overlaps tokens from recently-touched files.
+
+    TP-71. Returns the empty string if ``docs/SHARP_EDGES.md`` is missing;
+    callers should suppress the surrounding section header in that case.
+    The overlap is a hint, not a directive -- false positives are
+    acceptable since Claude reads section bodies lazily.
+    """
+    sharp = root / "docs" / "SHARP_EDGES.md"
+    if not sharp.exists():
+        return ""
+    try:
+        text = sharp.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    headings = [line for line in text.splitlines() if line.startswith("## ")]
+    recent_files = _recent_touched_files(root)
+    recent_tokens: set[str] = set()
+    for f in recent_files:
+        parts = (
+            f.lower()
+             .replace("/", " ")
+             .replace(".", " ")
+             .replace("_", " ")
+             .replace("-", " ")
+             .split()
+        )
+        recent_tokens.update(p for p in parts if len(p) >= 4)
+    lines = []
+    for heading in headings:
+        heading_words = {
+            w.strip(".,()[]:`*-") for w in heading.lower().split()
+        }
+        matches = sorted(heading_words & recent_tokens)[:_RECENT_MAX_MARKS]
+        if matches:
+            lines.append(f"{heading}  [recent: {', '.join(matches)}]")
+        else:
+            lines.append(heading)
+    return "\n".join(lines)
+
+
+def _load_blueprint(root: Path) -> str:
+    """Load latest blueprint, or auto-start a new session if none exists."""
+    blueprint_script = root / "tools" / "cc" / "cognitive_blueprint.py"
+    if not blueprint_script.exists():
+        return "No blueprint system"
+
+    # env= pins CLAUDE_PROJECT_DIR to root: cognitive_blueprint._repo_root()
+    # prefers the env var over cwd, so an inherited value would silently
+    # route reads/writes to the wrong repo. See docs/SHARP_EDGES.md
+    # "Subprocesses Inheriting CLAUDE_PROJECT_DIR".
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
+    try:
+        result = subprocess.run(
+            [sys.executable, str(blueprint_script), "load"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(root),
+            env=env,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            lines = result.stdout.strip().splitlines()
+            return lines[0][:120] if lines else "Blueprint loaded (empty)"
+
+        # No active blueprint — auto-start a new session
+        start_result = subprocess.run(
+            [sys.executable, str(blueprint_script), "start"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(root),
+            env=env,
+        )
+        if start_result.returncode == 0:
+            return "Auto-started new blueprint session"
+        return "No active blueprint (auto-start failed)"
+    except (subprocess.TimeoutExpired, OSError) as e:
+        warn_exc("session_start: blueprint load failed", e)
+        return "Blueprint load failed"
+
+
+def _clean_state_flags(root: Path) -> None:
+    """Clean stop-gate flags from previous session."""
+    state_dir = root / ".espalier-state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    # Write session start timestamp (atomic — TP-46: consistent with the
+    # project's atomic-write convention; SIGINT mid-write doesn't leave a
+    # half-written flag behind).
+    atomic_write_text(
+        state_dir / "session_started",
+        datetime.now(timezone.utc).isoformat(),
+    )
+
+    # Clean flags from previous session
+    for flag in ["review_requested", "docs_refreshed", "write_count"]:
+        flag_path = state_dir / flag
+        if flag_path.exists():
+            flag_path.unlink()
+
+
+def _report_freshness(root: Path) -> None:
+    """Stderr banner when the manifest's state cache shows
+    critical>0 OR stale>=3. Silent when the cache is missing
+    or stale (cache-staleness is its own surface)."""
+    cache = _read_state_cache_safe(root)
+    if cache is None:
+        return
+    if _is_state_cache_stale(cache, repo_root=root):
+        return
+    counts = cache.get("counts", {})
+    critical = counts.get("critical", 0)
+    stale = counts.get("stale", 0)
+    if critical == 0 and stale < 3:
+        return
+    fresh = counts.get("fresh", 0)
+    print(
+        f"[freshness] {fresh} fresh / {stale} stale / {critical} critical "
+        f"-- run `espalier freshness check`",
+        file=sys.stderr,
+    )
+
+
+def _report_integrity_state(root: Path) -> None:
+    """Audit + warn on kill-switch and drift findings. Always returns None.
+
+    SessionStart cannot block Claude Code execution. This function records
+    findings and surfaces ASCII warnings to stderr for visibility. Blocking
+    enforcement lives in PreToolUse (write_guard.py), ConfigChange
+    (config_guard.py), and CI (ci_guard.py).
+    """
+    findings = _integrity.scan_for_kill_switches(root)
+    if findings:
+        _integrity.append_audit(
+            root,
+            {"event_type": "session_kill_switch_detected",
+             "details": {"findings": findings}},
+        )
+        msg = "\n  ".join(findings)
+        print(
+            "[WARN] Espalier-Harness detected kill-switch setting(s) during "
+            "SessionStart. SessionStart cannot block Claude Code execution. "
+            "If hooks are still active, PreToolUse/ConfigChange guards will "
+            "deny unsafe actions; tracked protected changes are enforced by "
+            f"CI.\n  Findings:\n  {msg}",
+            file=sys.stderr,
+        )
+
+    try:
+        ok, mismatched = _integrity.verify_integrity(root)
+    except Exception as e:  # noqa: BLE001 — bounded warn, do not crash session
+        warn_exc("session_start: integrity verify failed", e)
+        return
+    if not ok and mismatched != ["<manifest missing>"]:
+        _integrity.append_audit(
+            root,
+            {"event_type": "session_integrity_drift",
+             "details": {"mismatched": mismatched}},
+        )
+        msg = "\n  ".join(mismatched)
+        print(
+            "[WARN] Espalier-Harness integrity drift (session continues; SessionStart "
+            "cannot block):\n"
+            f"  {msg}\n"
+            "Run `espalier integrity refresh .` if this is expected.",
+            file=sys.stderr,
+        )
+
+
+def main() -> int:
+    from _hook_utils import read_stdin_safely  # noqa: E402
+
+    data = read_stdin_safely()
+
+    root = _project_root()
+
+    _clean_state_flags(root)
+
+    try:
+        _report_integrity_state(root)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        warn_exc("session_start: integrity check failed", e)
+
+    try:
+        _report_freshness(root)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        warn_exc("session_start: freshness banner failed", e)
+
+    try:
+        _integrity._prune_old_audit_logs()
+    except Exception as e:  # noqa: BLE001 — best-effort, never block session
+        warn_exc("session_start: audit log pruning failed", e)
+
+    name = _repo_name(root)
+    branch = _check_branch(root)
+    status = _check_dirty(root)
+    memory = _summarize_memory(root)
+    blueprint = _load_blueprint(root)
+    surface = _check_surface(root)
+    sharp_toc = _sharp_edges_toc_with_recency(root)
+
+    parts = [
+        "=== Espalier-Harness === Session Start ===\n",
+        f"Repo:      {name}\n",
+        f"Branch:    {branch}\n",
+        f"Status:    {status}\n",
+        f"Memory:    {memory}\n",
+        f"Blueprint: {blueprint}\n",
+        f"Surface:   {surface}\n",
+        "Commands: /accomplish /implement-task /commit /handoff /status\n",
+        "Run /status to verify harness state.\n",
+    ]
+    if sharp_toc:
+        parts.extend([
+            "\n--- SHARP_EDGES TOC (read full sections lazily) ---\n",
+            sharp_toc,
+            "\n",
+        ])
+    parts.extend([
+        "\n",
+        _ORIENTATION_INSTRUCTIONS,
+        "\n\n",
+        "(/context-load remains available for explicit mid-session re-orient.)",
+    ])
+    context = "".join(parts)
+
+    # Enforce size budget — truncate rather than flood context window.
+    encoded = context.encode("utf-8")
+    if len(encoded) > _MAX_CONTEXT_BYTES:
+        context = encoded[:_MAX_CONTEXT_BYTES].decode("utf-8", errors="replace") + "\n[context truncated]"
+
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": context,
+        }
+    }))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
