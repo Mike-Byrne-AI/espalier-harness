@@ -29,9 +29,10 @@ The shapes are known, so the resolution is mechanical:
   and lands only where they all agree, never against git's stage 1, which
   there is a virtual base carrying ``Temporary merge branch`` markers neither
   side wrote (DEF-1133); a disagreement is refused naming the bases;
-* after ANY merge, clean or conflicted, a ``_count`` the probes file still
-  stores is dropped (a lane branched before the key went can bring it back as
-  text that git merges clean) and the rewrite rides the same merge commit.
+* a ``_count`` the probes file still stores is dropped where the probes file
+  conflicted and is merged by shape; a merge git made clean leaves it, for the
+  verbs to drop at their next write (the settle step that dropped it after any
+  merge retired on 2026-10-14, when this repository's probes became files).
 
 Anything else -- a prose edit on both sides, a row changed on both sides, an
 id filed on both machines, a path off the roster, an add/add or delete/modify
@@ -956,8 +957,8 @@ def merge_ref_in(root: Path, ref: str, *, run: Runner = run,
     rc, out, err = run(["git", "merge", "--no-edit", ref], cwd=str(root))
     if rc == 0:
         # Nothing follows a merge git made itself: the settle step that dropped
-        # a stored probes total retired with the fold (TP-479a Wave C), since no
-        # writer has written the key since 2026-10-12.
+        # a stored probes total retired on 2026-10-14, when this repository's
+        # probes became files; no writer has written the key since 2026-10-12.
         return MergeReport(True, notes=[f"merged {ref} cleanly"])
     rc2, unmerged_out, _ = run(["git", "diff", "--name-only", "--diff-filter=U"], cwd=str(root))
     unmerged = [ln.strip().replace("\\", "/") for ln in unmerged_out.splitlines() if ln.strip()]
@@ -1037,7 +1038,7 @@ def _resolve_unmerged(root: Path, ref: str, unmerged: list[str], *, run: Runner,
         report.notes.append("git could not name the merge bases (merge-base --all failed); resolved against "
                             "stage 1, as before the criss-cross rule")
     new_rows: list[str] = []
-    if PROBES in versions or LEDGER in versions or (root / PROBES).is_file():
+    if PROBES in versions or LEDGER in versions:
         # One lock across both files, the ledger verbs' own discipline: the
         # pair tore once when the roster was written outside it (2026-09-30).
         try:
