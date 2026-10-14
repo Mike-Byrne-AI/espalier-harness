@@ -8,95 +8,69 @@ contributor raises the threshold, broadens the DIVERGENT exemption, or
 rewrites ``_hash_body``, the assertions here fail because the 9-clique on
 ``_project_root`` must remain detectable in the pre-pack hook tree.
 
+The pre-pack hook tree is ``tests/fixtures/pre_pack_tp104/``: the nine hooks
+as they stood at the ``pre-pack-TP-104`` tag (``8e138f6``), extracted byte for
+byte with ``git show`` and kept as ``.py.txt`` so ruff and mypy never read
+them. The tag is private-only history, so while this test read it from git it
+skipped on every public clone, CI included (DEF-938); the fixture runs
+everywhere, and its sha256 is the pin a rebuilt or edited copy fails, as the
+tag SHA once was.
+
 Prevents silent calibration drift on the probe's design target.
 
 Test naming follows ``test_{specific_behavior}`` per docs/CONVENTIONS.md.
 """
 from __future__ import annotations
 
+import hashlib
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
-from tests._git_oracle import owns_its_worktree
 
 REPO_ROOT = Path(__file__).parent.parent
 PROBE_PATH = REPO_ROOT / "tools" / "cc"
 sys.path.insert(0, str(PROBE_PATH))
 from sister_site_probe import probe_compression_debt  # noqa: E402
 
-EXPECTED_TAG = "pre-pack-TP-104"
-EXPECTED_SHA = "8e138f6"  # Pin matches memory/sister-site-compression.md (repointed after the TP-181 identity history-rewrite)
 PRE_PACK_HOOKS = (
     "config_guard", "plan_guard", "post_compact", "post_write_check",
     "reflect_trigger", "session_start", "stop_gate", "subagent_stop",
     "write_guard",
 )
+FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures" / "pre_pack_tp104"
+#: sha256 of the nine fixtures concatenated in PRE_PACK_HOOKS order: the bytes
+#: the operator approved on 2026-10-12 (prefix 5846d53e86e8ddb4), read from
+#: the pre-pack-TP-104 tag (8e138f6) with git show.
+FIXTURE_SHA256 = "5846d53e86e8ddb46dc0d62294bb6e1acf2666d56cfd7c39aa67232ab94e055d"
 
 
-def _tag_present(tag: str) -> bool:
-    """True if ``tag`` resolves in this checkout. A shallow / tagless clone
-    (fresh ``git clone``, or espalier's first push without ``fetch-depth: 0``)
-    lacks the historical calibration tag, and both tests below resolve it with
-    ``check=True`` — a hard CalledProcessError rather than a graceful skip.
-
-    §C21 (2026-08-14): "in this checkout" is the load-bearing phrase, and asking
-    git alone does not deliver it. A release archive extracted under this repo's
-    gitignored ``dist/`` has no tags of its own, but every git call there answers
-    about the PARENT — so the tag resolved, the module ran, and it validated the
-    parent's history while reporting that the ARTIFACT had passed. Measured: 4
-    tests here passed inside ``dist/`` and skipped outside any worktree, on the
-    same archive. Tags are the fourth git verb to exhibit this after ls-files,
-    ls-tree and check-ignore."""
-    if not owns_its_worktree(REPO_ROOT):
-        return False
-    return subprocess.run(
-        ["git", "rev-parse", "-q", "--verify", f"refs/tags/{tag}"],
-        cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8",
-    ).returncode == 0
-
-
-# TP-181 W1-2: skip the calibration class when the pinned tag is absent, which
-# keeps a fresh contributor / adopter clone green instead of red. It was a
-# module-level skip, and the public repository's origin has never carried this
-# tag (read 2026-10-08: four tags, none of them this one), so CI skipped the
-# doc-parity class below too, though it reads only the live probe and the doc.
-_CALIBRATION_TAG_ABSENT = pytest.mark.skipif(
-    not _tag_present(EXPECTED_TAG),
-    reason=f"{EXPECTED_TAG} tag absent (shallow / tagless clone) — the "
-    f"calibration corpus is unavailable",
-)
+def _fixture(hook: str) -> Path:
+    return FIXTURE_DIR / f"{hook}.py.txt"
 
 
 @pytest.mark.security
-@_CALIBRATION_TAG_ABSENT
 class TestProbeAgainstPrePackTP104:
-    def test_tag_sha_matches_pin(self):
-        """The pre-pack-TP-104 tag must point at 8e138f6.
+    def test_fixture_bytes_match_the_approved_pin(self):
+        """The fixture must be the pre-pack-TP-104 hooks, byte for byte.
 
-        Tag drift breaks the calibration corpus; the assertion catches
-        rebases, deletions, and force-moves.
+        A rebuilt, re-encoded or edited copy breaks the calibration corpus (a
+        CRLF checkout among them, which the fixture's `-text` row in
+        `.gitattributes` forecloses); the hash catches each one.
         """
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", EXPECTED_TAG],
-            cwd=REPO_ROOT,
-            capture_output=True, text=True, check=True, encoding="utf-8",
-        )
-        actual = result.stdout.strip()
-        assert actual.startswith(EXPECTED_SHA), (
-            f"Tag {EXPECTED_TAG} moved: expected prefix {EXPECTED_SHA}, "
-            f"got {actual!r}. The probe's 'earn the gate' validation "
-            f"receipt is broken."
+        digest = hashlib.sha256(b"".join(_fixture(h).read_bytes() for h in PRE_PACK_HOOKS)).hexdigest()
+        assert digest == FIXTURE_SHA256, (
+            f"tests/fixtures/pre_pack_tp104/ hashes to {digest}, not the approved "
+            f"{FIXTURE_SHA256}. The probe's 'earn the gate' validation receipt is "
+            f"broken; restore the bytes from the pre-pack-TP-104 tag with git show."
         )
 
     def test_probe_fires_9_clique_on_pre_pack_hooks(self, tmp_path):
         """Probe must surface the 9-clique on _project_root in pre-pack state.
 
         Earn-the-gate proof: if this stops firing, the probe has drifted
-        from its design target. Materialize each hook from git history
+        from its design target. Materialize each hook from the fixture
         into tmp_path/tools/cc/hooks/ and run the probe against tmp_path.
         """
         hooks_dir = tmp_path / "tools" / "cc" / "hooks"
@@ -106,12 +80,7 @@ class TestProbeAgainstPrePackTP104:
         # adopter's and their 9-clique would land in the advisory sub-report.
         (tmp_path / "espalier").mkdir()
         for hook in PRE_PACK_HOOKS:
-            content = subprocess.run(
-                ["git", "show", f"{EXPECTED_TAG}:tools/cc/hooks/{hook}.py"],
-                cwd=REPO_ROOT,
-                capture_output=True, text=True, check=True, encoding="utf-8",
-            ).stdout
-            (hooks_dir / f"{hook}.py").write_text(content, encoding="utf-8")
+            (hooks_dir / f"{hook}.py").write_bytes(_fixture(hook).read_bytes())
 
         report = probe_compression_debt([tmp_path])
         project_root_cliques = [

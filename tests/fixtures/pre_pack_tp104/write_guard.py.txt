@@ -1,0 +1,432 @@
+#!/usr/bin/env python3
+"""PreToolUse hook -- friction layer for protected-zone writes.
+
+This layer raises the cost of casual bypass. It is NOT a sandbox.
+
+After TP-79: bash + powershell path-extraction primitives live in the
+sibling `_bash_patterns` module; protected-zone classification +
+path normalization live in `_protected_zones`. This file is the
+dispatcher: it composes those modules with the kill-switch gate,
+dangerous-pattern checks, maintenance-mode bypass policy, and the
+per-tool routing in `_run_main`.
+
+Bypass scope, three levels (see `_bash_patterns` for the regex grammar):
+
+(1) IN SCOPE -- caught by the pre-pass + path-extraction regexes:
+    literal protected paths, single-variable substitution, common
+    write verbs (redirect, tee, cp/mv, sed -i, git checkout/restore,
+    inline interpreter -c source).
+
+(2) DOCUMENTED OUT OF SCOPE -- not caught, by design: two-step
+    subprocess, multi-step variable indirection, runtime path
+    construction, ``$(...)`` command substitution.
+
+(3) OUT OF SCOPE AND WON'T BE -- cannot be statically determined.
+
+Real enforcement lives in:
+  - .github/workflows/harness-guard.yml + branch protection (Task 5-C)
+  - Claude Code managed-settings tier (out of scope for this project)
+
+Matcher: "*" (all tools). Script filters internally via MUTATION_TOOLS.
+Protected zone writes: DENY (exit 0 + permissionDecision="deny").
+Dangerous bash/powershell patterns: DENY (exit 0 + permissionDecision="deny").
+Protected-path Bash-write patterns: DENY (exit 0 + permissionDecision="deny").
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+from pathlib import Path
+from typing import NamedTuple
+
+# Co-located helper modules -- same zero-espalier-import pattern as other hooks.
+sys.path.insert(0, str(Path(__file__).parent))
+import _hook_utils  # noqa: E402
+import _integrity  # noqa: E402
+import _maintenance_mode  # noqa: E402
+import _bash_patterns  # noqa: E402
+import _protected_zones  # noqa: E402
+
+MUTATION_TOOLS = {"Write", "Edit", "NotebookEdit", "Bash", "PowerShell"}
+
+# Public re-exports for tests that pin the friction-layer surface
+# (tests/test_redos.py, tests/test_contract_consumers.py,
+# tests/test_write_guard.py). Don't reach into _bash_patterns or
+# _protected_zones from tests directly -- keep the import path stable
+# at the dispatcher boundary so future internal reshuffles stay
+# test-transparent.
+_REDIRECT_RE = _bash_patterns._REDIRECT_RE
+_HEREDOC_RE = _bash_patterns._HEREDOC_RE
+_TEE_RE = _bash_patterns._TEE_RE
+_SED_INPLACE_RE = _bash_patterns._SED_INPLACE_RE
+_CP_MV_RE = _bash_patterns._CP_MV_RE
+_GIT_CHECKOUT_DASHDASH_RE = _bash_patterns._GIT_CHECKOUT_DASHDASH_RE
+_GIT_CHECKOUT_BARE_RE = _bash_patterns._GIT_CHECKOUT_BARE_RE
+_GIT_RESTORE_RE = _bash_patterns._GIT_RESTORE_RE
+_LN_S_RE = _bash_patterns._LN_S_RE
+_PYTHON_DASH_C_RE = _bash_patterns._PYTHON_DASH_C_RE
+_NODE_DASH_E_RE = _bash_patterns._NODE_DASH_E_RE
+_RUBY_DASH_E_RE = _bash_patterns._RUBY_DASH_E_RE
+_PERL_DASH_E_RE = _bash_patterns._PERL_DASH_E_RE
+
+PROTECTED_PREFIXES = _protected_zones.PROTECTED_PREFIXES
+PROTECTED_FILES = _protected_zones.PROTECTED_FILES
+ALLOWED_IN_PROTECTED = _protected_zones.ALLOWED_IN_PROTECTED
+ALLOWED_PREFIXES_IN_PROTECTED = _protected_zones.ALLOWED_PREFIXES_IN_PROTECTED
+
+_normalize_path = _protected_zones._normalize_path
+_normalize_bash_path = _protected_zones._normalize_bash_path
+_is_protected = _protected_zones._is_protected
+_is_allowed = _protected_zones._is_allowed
+
+# TP-55 BC-028: Bash tool inline-assignment of harness env vars.
+# Contract: set in parent shell BEFORE launching `claude`. Inline
+# assignment via a Bash tool call sets the var for the immediate
+# child process only -- it does NOT reach already-running hooks --
+# so the syntax is pedagogically harmful (teaches the wrong mental
+# model, ends up in committed scripts). Block at the friction layer.
+#
+# Known limitation (BC-007 generic-shell-expansion class):
+# `$'\x45SPALIER_...'`, IFS-indirection, and command substitution
+# bypass the \b-anchored regex. Documented in docs/SHARP_EDGES.md
+# and bench/corpus/BC-028c-shell-expansion-env-prefix.json. The
+# defense is friction for habit-formation, not adversary-proof.
+_HARNESS_ENV_PREFIX_RE = re.compile(
+    r"\b(?:ESPALIER_MAINTENANCE_MODE|ESPALIER_STOP_GATE)\s*=",
+)
+
+# TP-100: pattern + message paired in one record. Pre-refactor, a
+# parallel `dict[re.Pattern, str]` keyed messages by *object identity*
+# of the compiled regex, so a future entry that re-compiled the same
+# source inline would silently miss the dict lookup and fall through
+# to the auto-generated form. The record shape forecloses that bug:
+# the message travels with the pattern.
+class BashPatternRecord(NamedTuple):
+    pid: str  # short slug for debugging / future test reference
+    pattern: re.Pattern[str]
+    message: str = ""  # empty => use auto-generated default at deny time
+
+
+# Dangerous bash patterns -- hard block (deny). Custom messages on
+# entries that need them; the rest fall back to the
+# "Dangerous command blocked: matches pattern '<source>'" default
+# generated in check_bash_dangerous_patterns.
+DANGEROUS_BASH_PATTERNS: tuple[BashPatternRecord, ...] = (
+    BashPatternRecord("rm-rf-root", re.compile(r"rm\s+-rf\s+/")),
+    BashPatternRecord("rm-rf-star", re.compile(r"rm\s+-rf\s+\*")),
+    # Block `git reset --hard` unless followed by `<ref> -- <pathspec>` (scoped restore)
+    BashPatternRecord(
+        "git-reset-hard",
+        re.compile(r"git\s+reset\s+--hard(?!\s+\S+\s+--\s+)"),
+    ),
+    BashPatternRecord(
+        "harness-env-prefix",
+        _HARNESS_ENV_PREFIX_RE,
+        "Harness env vars (ESPALIER_MAINTENANCE_MODE, ESPALIER_STOP_GATE) "
+        "must be set in the parent shell BEFORE launching `claude`; "
+        "mid-session inline assignment via a Bash tool call does not "
+        "affect already-running hooks. See docs/CLAUDE.md Maintenance "
+        "Mode section.",
+    ),
+)
+
+# Dangerous PowerShell patterns -- mirrors DANGEROUS_BASH_PATTERNS shape.
+# TP-103 NIT1: pre-emptive structural fix. Pre-refactor this was a plain
+# list[re.Pattern] with no per-entry message. A future PS pattern needing
+# a custom message would have reached for a parallel dict[re.Pattern, str]
+# -- exactly the bug class TP-100 closed on the Bash side. Tuple-of-records
+# forecloses the reintroduction by making pattern + message structurally
+# paired.
+DANGEROUS_PS_PATTERNS: tuple[BashPatternRecord, ...] = (
+    BashPatternRecord(
+        "ps-remove-item-recurse-force-prefix",
+        re.compile(r"Remove-Item\s+-Recurse\s+-Force", re.IGNORECASE),
+    ),
+    BashPatternRecord(
+        "ps-remove-item-recurse-force-mixed",
+        re.compile(r"Remove-Item\s+.*-Recurse.*-Force", re.IGNORECASE),
+    ),
+)
+
+
+def _project_root() -> Path:
+    return Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+
+
+def deny(reason: str) -> int:
+    """Print deny JSON and return exit 0.
+
+    Per Claude Code hook protocol: JSON on stdout is only processed on exit 0.
+    Exit 2 would be ignored. See docs/SHARP_EDGES.md "Hook Exit Codes -- Channel XOR".
+    """
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+    print(json.dumps(output))
+    return 0
+
+
+# Adopter escape hint appended to protected-zone denies. Names the legitimate
+# bypass (ESPALIER_MAINTENANCE_MODE) and the precondition (parent-shell env
+# at launch). Mid-session export does not propagate to already-running hook
+# subprocesses; the env var is read at the parent shell that spawns Claude
+# Code. See docs/QUICKSTART.md "Maintenance mode" and CLAUDE.md.
+# TP-99 B4: closes the discoverability gap.
+_PROTECTED_ZONE_HINT = (
+    " Harness self-edits: exit and relaunch with "
+    "`ESPALIER_MAINTENANCE_MODE=1 claude` "
+    "(env read at launch; mid-session export is ignored)."
+)
+
+def check_write_edit(tool_input: dict, root: Path) -> int:
+    """Check Write/Edit/NotebookEdit tool calls.
+
+    C1: missing or empty-string `file_path` is allowed (no path to act
+    on, matches v0.6.x behavior). Truthy non-str payloads (int, list,
+    dict, bool, None) are malformed and fail-closed via deny() -- the
+    pre-fix shape raised TypeError, exited 1, and let the tool through
+    per the Claude Code hook protocol (BC-023).
+    """
+    if "file_path" not in tool_input:
+        return 0
+    file_path = tool_input["file_path"]
+    if file_path == "":
+        return 0
+    if not isinstance(file_path, str):
+        return deny(
+            f"Malformed Write/Edit payload: file_path must be str, "
+            f"got {type(file_path).__name__}"
+        )
+
+    rel_path = _normalize_path(file_path, root)
+
+    if _is_protected(rel_path, root) and not _is_allowed(rel_path):
+        return deny(f"Write to protected harness zone blocked: {rel_path}.{_PROTECTED_ZONE_HINT}")
+
+    return 0
+
+
+def check_bash_for_protected_writes(command: str, root: Path) -> int:
+    """Deny Bash commands that write to protected paths via common patterns."""
+    for raw in _bash_patterns._candidate_paths_from_bash(command):
+        rel = _normalize_bash_path(raw, root)
+        if _is_protected(rel, root) and not _is_allowed(rel):
+            return deny(
+                f"Bash write to protected harness zone blocked: {rel}.{_PROTECTED_ZONE_HINT}"
+            )
+    return 0
+
+
+def check_bash_for_protected_symlinks(command: str, root: Path) -> int:
+    """Deny ``ln -s <target> <linkname>`` where ``linkname`` lands in a
+    governed zone -- protected OR allowed-in-protected.
+
+    Symlink creation is special: an allowlisted destination like
+    ``cc/blueprints/`` legitimately accepts JSON file writes, but a
+    SYMLINK at that path is an attack shape (it lets the reader follow
+    the link to attacker-controlled content). The general bash-write
+    check honors the allowlist (legitimate session_id JSON files land
+    in ``cc/blueprints/``); this check explicitly bypasses the
+    allowlist so a symlink can NEVER land in a governed zone.
+
+    Caught by Round 3 adversarial review -- corpus row BC-015.
+    """
+    for m in _LN_S_RE.finditer(command):
+        rel = _normalize_bash_path(m.group(1), root)
+        if _is_protected(rel, root):
+            return deny(
+                f"Bash symlink creation into protected harness zone blocked: "
+                f"{rel} (symlinks bypass the file-path allowlist by design)"
+            )
+    return 0
+
+
+def check_bash_dangerous_patterns(tool_input: dict) -> int:
+    """Check Bash for dangerous patterns ONLY.
+
+    Separated from protected-path checks (see ``check_bash_for_protected_writes``)
+    so the MAINTENANCE_MODE bypass scopes only to friction (protected zones),
+    not safety (rm -rf, fork bombs, etc.).
+    """
+    command = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
+    for entry in DANGEROUS_BASH_PATTERNS:
+        if entry.pattern.search(command):
+            message = entry.message or (
+                f"Dangerous command blocked: matches pattern '{entry.pattern.pattern}'"
+            )
+            return deny(message)
+    return 0
+
+
+def check_bash(tool_input: dict, root: Path) -> int:
+    """Convenience wrapper combining dangerous-pattern + protected-path checks."""
+    rc = check_bash_dangerous_patterns(tool_input)
+    if rc:
+        return rc
+    command = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
+    rc = check_bash_for_protected_symlinks(command, root)
+    if rc:
+        return rc
+    return check_bash_for_protected_writes(command, root)
+
+
+def check_powershell(tool_input: dict) -> int:
+    """Check PowerShell tool calls for dangerous patterns."""
+    command = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
+    for entry in DANGEROUS_PS_PATTERNS:
+        if entry.pattern.search(command):
+            reason = entry.message or (
+                f"Dangerous PowerShell command blocked: "
+                f"matches pattern '{entry.pattern.pattern}'"
+            )
+            return deny(reason)
+    return 0
+
+
+def check_powershell_for_protected_writes(command: str, root: Path) -> int:
+    """Deny PowerShell commands that write to protected paths via
+    Set-Content / Out-File / Add-Content / redirect / etc."""
+    for raw in _bash_patterns._candidate_paths_from_powershell(command):
+        rel = _normalize_bash_path(raw, root)
+        if _is_protected(rel, root) and not _is_allowed(rel):
+            return deny(f"Write to protected harness zone blocked: {rel}.{_PROTECTED_ZONE_HINT}")
+    return 0
+
+
+def main() -> int:
+    """Public entry-point. Umbrella try/except catches any uncaught
+    exception in _run_main and converts it to a deny() -- the Claude
+    Code hook protocol treats exit 1 as a non-blocking script error,
+    so we MUST fail-closed inside the hook process itself.
+    """
+    try:
+        return _run_main()
+    except BaseException as exc:  # noqa: BLE001 -- fail-closed crash guard
+        # [broad-except] fail-closed: any unhandled error here would
+        # otherwise raise to sys.exit(1) per the protocol, which Claude
+        # Code treats as non-blocking. We must deny on internal error.
+        # TP-58 sub-task 1-B exempts BaseException at hook entrypoints
+        # from check_exception_policy.py; this noqa is documentary.
+        print(
+            f"[ERROR] write_guard crashed: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return deny("write_guard internal error; failing closed")
+
+
+def _run_main() -> int:
+    data = _hook_utils.read_stdin_safely()
+
+    tool_name = data.get("tool_name", "")
+    tool_input = data.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    root = _project_root()
+
+    # Kill-switch gate -- runs ALWAYS, including under MAINTENANCE_MODE. The
+    # maintenance bypass exists to reduce friction during harness self-edits,
+    # NOT to defeat the integrity check that flags a tampered settings file.
+    # Per Claude Code hook protocol, SessionStart cannot block; this is the
+    # first surface that can.
+    try:
+        kill_switch_findings = _integrity.scan_for_kill_switches(root)
+    except Exception:  # noqa: BLE001 -- never crash on integrity scan
+        kill_switch_findings = []
+    if kill_switch_findings:
+        try:
+            _integrity.append_audit(
+                root,
+                {"event_type": "pretooluse_blocked_kill_switch",
+                 "details": {"findings": kill_switch_findings,
+                             "tool_name": tool_name}},
+            )
+        except Exception:  # noqa: BLE001 -- audit best-effort
+            pass
+        return deny(
+            "Espalier-Harness kill-switch setting detected: "
+            f"{kill_switch_findings}. Remove the setting and run "
+            "`espalier integrity verify .` before continuing."
+        )
+
+    # Pass read-only tools immediately
+    if tool_name not in MUTATION_TOOLS and not tool_name.startswith("mcp__"):
+        return 0
+
+    # Dangerous-command patterns -- fire ALWAYS, even under MAINTENANCE_MODE.
+    # These guard against operations that are dangerous regardless of whether
+    # the harness is in maintenance: rm -rf /, fork bombs, hostile PowerShell.
+    if tool_name == "Bash":
+        rc = check_bash_dangerous_patterns(tool_input)
+        if rc:
+            return rc
+    elif tool_name == "PowerShell":
+        rc = check_powershell(tool_input)
+        if rc:
+            return rc
+
+    # Protected-zone path checks -- BYPASSED under MAINTENANCE_MODE so harness
+    # self-edits work without ceremony. Kill-switch + dangerous patterns above
+    # ran regardless. See _maintenance_mode.py for env-var contract and
+    # tests/test_maintenance_mode.py for the coherence contract.
+    if _maintenance_mode.is_active("write_guard", action="protected-zone check bypassed"):
+        return 0
+
+    if tool_name in ("Write", "Edit", "NotebookEdit"):
+        return check_write_edit(tool_input, root)
+
+    if tool_name == "Bash":
+        command = tool_input.get("command", "")
+        # Round 3: symlink-creation check FIRST so it isn't masked by the
+        # allowlist-aware general write check (legitimate JSON writes to
+        # ``cc/blueprints/`` are allowed; symlinks to that prefix are not).
+        rc = check_bash_for_protected_symlinks(command, root)
+        if rc:
+            return rc
+        return check_bash_for_protected_writes(command, root)
+
+    if tool_name == "PowerShell":
+        command = tool_input.get("command", "")
+        return check_powershell_for_protected_writes(command, root)
+
+    # MCP tools that match mutation pattern -- check every path-shaped field.
+    # R11 W: pre-fix, the branch checked only ``path`` and ``file_path``.
+    # ``mcp__filesystem__move_file`` uses ``source`` + ``destination`` instead;
+    # a move of a protected file to an external location bypassed the
+    # protected-zone check because neither known field was set. Sweep all
+    # known path-shaped fields and deny on any one being protected.
+    if tool_name.startswith("mcp__") and isinstance(tool_input, dict):
+        candidate_fields = (
+            "path", "file_path", "destination", "new_path", "source",
+            "src", "dst", "target", "uri", "target_uri",
+        )
+        for field_name in candidate_fields:
+            field_value = tool_input.get(field_name, "")
+            # Empty / missing -- no path to check (next field).
+            if not field_value:
+                continue
+            # Truthy non-str = malformed payload. Parity with
+            # check_write_edit (BC-023): deny rather than silently skip.
+            if not isinstance(field_value, str):
+                return deny(
+                    f"Malformed MCP payload: field {field_name!r} on "
+                    f"{tool_name} must be str, got "
+                    f"{type(field_value).__name__}"
+                )
+            rel_path = _normalize_path(field_value, root)
+            if _is_protected(rel_path, root) and not _is_allowed(rel_path):
+                return deny(
+                    f"Write to protected harness zone blocked: {rel_path} "
+                    f"(via mcp tool {tool_name}, field {field_name}).{_PROTECTED_ZONE_HINT}"
+                )
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

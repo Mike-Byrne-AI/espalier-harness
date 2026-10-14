@@ -286,9 +286,13 @@ clique. Without this "earn the gate" step, the probe could ship with a
 false-positive default tuned to current HEAD and silently miss the next
 9-clique it was supposed to catch.
 
-`tests/test_sister_site_probe_regression.py::test_tag_sha_matches_pin`
-mechanically pins the tag SHA so a rebase / force-move / deletion is
-caught by the test suite, not by silent calibration drift.
+The tag is private-only history, so a test that read it skipped on every
+public clone, CI included. Since 2026-10-14 the nine hooks are a fixture,
+`tests/fixtures/pre_pack_tp104/<hook>.py.txt`, extracted from the tag byte
+for byte, and
+`tests/test_sister_site_probe_regression.py::TestProbeAgainstPrePackTP104::test_fixture_bytes_match_the_approved_pin`
+pins their sha256, so an edited or re-encoded copy is caught by the test
+suite on every clone, not by silent calibration drift.
 
 ## Related contracts
 
