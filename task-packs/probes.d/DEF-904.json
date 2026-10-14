@@ -1,0 +1,10 @@
+{
+ "id": "DEF-904",
+ "subject": "espalier/_safe_walk.py",
+ "cmd": "python3 -c \"import sys,tempfile;sys.path.insert(0,'.');from pathlib import Path;from espalier._safe_walk import safe_glob;from espalier.scanners.freshness import _safe_glob;d=Path(tempfile.mkdtemp());(d/'docs'/'sub').mkdir(parents=True);(d/'docs'/'sub'/'x.md').write_text('x');p='docs/**/sub/*.md';g=lambda it:sorted(q.relative_to(d).as_posix() for q in it);w=g(d.glob(p));print(bool(w) and (g(safe_glob(d,p))!=w or g(_safe_glob(d,p))!=w))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "93e41c527e38",
+ "text_sha": "dd6871f60efc",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

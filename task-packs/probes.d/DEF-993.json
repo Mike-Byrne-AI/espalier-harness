@@ -1,0 +1,10 @@
+{
+ "id": "DEF-993",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import os, re, argparse; from espalier.cli import build_parser; ps = [build_parser()]; [ps.extend(a.choices.values()) for p in ps for a in p._actions if isinstance(a, argparse._SubParsersAction)]; us = [u.rstrip(\".\") for u in re.findall(r\"https://\\S+\", ps[0].epilog)]; hits = [w for w in (60, 80, 100, 120) for p in ps if os.environ.update(COLUMNS=str(w)) or re.search(r\"[A-Za-z0-9_./`]-$\", p.format_help(), re.M) or not all(any(u in s for s in p.format_help().splitlines()) for u in us if p is ps[0])]; print(bool(hits), len(us))'",
+ "open_value": "True 2",
+ "why_not": null,
+ "row_sha": "dd990da4bdbe",
+ "text_sha": "61293e4a2681",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

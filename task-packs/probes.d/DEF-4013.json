@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4013",
+ "subject": "tools/cc/_record_fragments.py",
+ "cmd": "python3 -c \"import json,importlib.util,sys;d=json.load(open(\\\"task-packs/LEDGER_PROBES.json\\\",encoding=\\\"utf-8\\\"));s=importlib.util.spec_from_file_location(\\\"_f\\\",\\\"tools/cc/_record_fragments.py\\\");m=importlib.util.module_from_spec(s);sys.modules[\\\"_f\\\"]=m;s.loader.exec_module(m);print(\\\"_count\\\" in d or not hasattr(m,\\\"ledger_rows\\\"))\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "task-packs/LEDGER_PROBES.json"
+ ],
+ "row_sha": "cfd93df1785e",
+ "text_sha": "f14be7ecc4ba",
+ "verified_2026_10_12": "OPEN (filed 2026-10-12; probe driven at filing)"
+}

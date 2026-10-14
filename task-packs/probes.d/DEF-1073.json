@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1073",
+ "subject": "bench/run_benchmark.py",
+ "cmd": "python -c 'import ast;t=ast.parse(open(\"bench/run_benchmark.py\",encoding=\"utf-8\").read());print(sum(isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr==\"fnmatch\" and isinstance(n.func.value,ast.Name) and n.func.value.id==\"fnmatch\" for n in ast.walk(t)))'",
+ "open_value": "1",
+ "why_not": null,
+ "row_sha": "20d9014619f4",
+ "text_sha": "e68fdff462a7",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

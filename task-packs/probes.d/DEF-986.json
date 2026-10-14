@@ -1,0 +1,13 @@
+{
+ "id": "DEF-986",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python3 -c \"import ast;t=ast.parse(open('tools/cc/hooks/write_guard.py',encoding='utf-8').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='_run_main');C=[c for c in ast.walk(f) if isinstance(c,ast.Call)];b=min(c.lineno for c in C if isinstance(c.func,ast.Attribute) and c.func.attr=='check_fired');z=min(c.lineno for c in C if isinstance(c.func,ast.Name) and c.func.id=='check_bash_for_protected_mutations');print('bump_before_zone='+str(b<z))\"",
+ "open_value": "bump_before_zone=True",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_speedbump.py"
+ ],
+ "row_sha": "dc05e3c00975",
+ "text_sha": "5938d054f05b",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

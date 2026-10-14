@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1001",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import json, os, tempfile, pathlib; from espalier.doctor import run_doctor_check as rd; h = {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"python tools/cc/hooks/stop_gate.py\"}]}]}; rm = json.dumps({\"permissions\": {\"deny\": [\"Bash(rm -rf /*)\"]}}); home = pathlib.Path(tempfile.mkdtemp()); os.environ[\"HOME\"] = os.environ[\"USERPROFILE\"] = str(home); t = lambda: (lambda d: ((d / \".claude\").mkdir(), (d / \".claude\" / \"settings.json\").write_text(json.dumps({\"hooks\": h, \"permissions\": {\"deny\": []}})), d)[2])(pathlib.Path(tempfile.mkdtemp())); n = lambda d: any(\"rm -rf /*\" in str(x) for r in [rd(d, mode=\"initialized_consumer_repo\")] for x in r[\"warnings\"] + r[\"info\"]); a = t(); (a / \".claude\" / \"settings.local.json\").write_text(rm); local = n(a); (home / \".claude\").mkdir(); (home / \".claude\" / \"settings.json\").write_text(rm); print(local and n(t()))'",
+ "open_value": "False",
+ "why_not": null,
+ "inputs": [
+  "espalier/doctor.py"
+ ],
+ "row_sha": "01a497c71a5b",
+ "text_sha": "aa09a8779f4e",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

@@ -1,0 +1,11 @@
+{
+ "id": "DEF-653",
+ "subject": "bench/run_benchmark.py",
+ "cmd": "python3 -c \"import subprocess,pathlib;fs=subprocess.run(['git','ls-files','*.py'],capture_output=True,text=True).stdout.split();print(sum(1 for f in fs if 'expected_block_reason' in pathlib.Path(f).read_text(encoding='utf-8',errors='replace')))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "781da5618cb3",
+ "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
+ "text_sha": "6808a6417b4a",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

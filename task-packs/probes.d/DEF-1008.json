@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1008",
+ "subject": "espalier/fusion_manifest.py",
+ "cmd": "python -c 'import espalier.fusion_manifest as m; print(any(\"tomli\" in s for s in m.FINISH_UP_STEPS))'",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "d2c44fe0f1c6",
+ "text_sha": "a20fc4e18eb1",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

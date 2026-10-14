@@ -1,0 +1,12 @@
+{
+ "id": "DEF-510",
+ "subject": "tools/cc/sister_site_probe.py",
+ "cmd": "python3 -c \"import sys, inspect; sys.path.insert(0,'tools/cc'); import sister_site_probe as s; print('for node in tree.body' in inspect.getsource(s._collect_constant_sites))\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "9b8dcec4805e",
+ "text_sha": "c399c16997af",
+ "verified_2026_09_17": "STILL_OPEN (re-pinned value unchanged on 2026-09-17: Re-derived 2026-09-17 by the ledger severity re-audit and driven on four adopter-shaped fixture trees: audience is ADOPTER not MAINTAINER (the 2026-09-05 class move was right for DEF-20 and wrong for this row), the reach is three ordinary spellings rather than loops and comprehensions, and both prior line anchors were rotted (:583/:602 -> :962/:981). Audience cell cannot move until Section C15 becomes MIXED; recorded in the text and scoped to the C15 lane.)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

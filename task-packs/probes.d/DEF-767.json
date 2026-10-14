@@ -1,0 +1,11 @@
+{
+ "id": "DEF-767",
+ "subject": "espalier/_python_floor.py",
+ "cmd": "python3 -c \"import pathlib; print(not any(pathlib.Path('tests').glob('test_*agreement*')))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "933cd7da3d42",
+ "text_sha": "0f2c44735ff1",
+ "verified_2026_09_11": "OPEN (filed 2026-09-11; probe driven at filing)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

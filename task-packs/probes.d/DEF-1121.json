@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1121",
+ "subject": "tools/cc/ledger_row.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "which rules the verb runs is a design choice, and a probe feeding the verb a rule-breaking row would put that text in the probes file the same rules scan",
+ "row_sha": "c2430937d137",
+ "text_sha": "8cdb22558235",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

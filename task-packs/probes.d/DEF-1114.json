@@ -1,0 +1,10 @@
+{
+ "id": "DEF-1114",
+ "subject": "espalier/reflect_protocol.py",
+ "cmd": "python -c 'import ast;t=ast.parse(open(\"espalier/reflect_protocol.py\",encoding=\"utf-8\").read());f=[n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name==\"_iter_surface_files\"][0];print(sum(isinstance(n,ast.List) and any(isinstance(e,ast.Constant) and e.value==\"CLAUDE.md\" for e in n.elts) for n in ast.walk(f)))'",
+ "open_value": "1",
+ "why_not": null,
+ "row_sha": "907c464c2bcc",
+ "text_sha": "1f21425f3922",
+ "verified_2026_10_03": "OPEN (filed 2026-10-03; probe driven at filing)"
+}

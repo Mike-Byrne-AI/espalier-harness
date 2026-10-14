@@ -1,0 +1,11 @@
+{
+ "id": "DEF-721",
+ "subject": "pyproject.toml",
+ "cmd": "python3 -c \"import tomllib; d=tomllib.load(open('pyproject.toml','rb')); print(any('scm' in r for r in d['build-system']['requires']))\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "c75ba6cb4e80",
+ "text_sha": "2b1dfe3c87bf",
+ "verified_2026_09_08": "OPEN (filed 2026-09-08; probe driven at filing)",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

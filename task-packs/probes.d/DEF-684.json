@@ -1,0 +1,12 @@
+{
+ "id": "DEF-684",
+ "subject": "scripts/derived_population_census.py",
+ "cmd": "python3 -c \"import ast,sys; sys.path.insert(0,\\\".\\\"); import scripts.derived_population_census as c; src=\\\"import _hook_utils\\\\ndef test_x():\\\\n    bodies = _hook_utils.SEEDED_PLACEHOLDER_BODIES\\\\n    assert {t for t, b in bodies.items()}\\\\n\\\"; tree=ast.parse(src); b=c._source_bindings(tree, src, c._hook_module_stems()); print(sum(1 for shape, it, ln in c._iter_populations(tree, src) if not c._is_loop_bound(it) and c._root_name(it) in b))\"",
+ "open_value": "0",
+ "why_not": null,
+ "verified_2026_09_04": "OPEN (filed at DEF-560's closure; the probe drives the census helpers on a synthetic function-local alias)",
+ "row_sha": "d2ef9fee1806",
+ "verified_2026_09_08": "STILL_OPEN (row_sha re-pinned 2026-09-08: the §C0 table gained its `pop | aud` cells; the claim text is unchanged)",
+ "text_sha": "386ef1ff52c4",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

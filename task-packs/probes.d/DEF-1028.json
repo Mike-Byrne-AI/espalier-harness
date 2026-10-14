@@ -1,0 +1,14 @@
+{
+ "id": "DEF-1028",
+ "subject": "tests/test_documented_claims.py",
+ "cmd": "python -c 'import sys; sys.path.insert(0, \"tests\"); import test_documented_claims as t; c = next(x for x in t.NUMERIC_CONTRACTS if x.name == \"review workflow count\"); print(\"README.md\" in [p for p, _ in c.sources])'",
+ "open_value": "False",
+ "why_not": null,
+ "inputs": [
+  "tests/_contracts.py",
+  "tests/_surface_expected.py"
+ ],
+ "row_sha": "a0b53a897f0a",
+ "text_sha": "140245cff65d",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

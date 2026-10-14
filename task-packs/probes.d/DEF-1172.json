@@ -1,0 +1,15 @@
+{
+ "id": "DEF-1172",
+ "subject": "tools/cc/ledger_row.py",
+ "cmd": "python -c 'import sys,json,shutil,subprocess,tempfile,pathlib;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=pathlib.Path(T.name);(d/\"task-packs\").mkdir();(d/\"tests\").mkdir();[shutil.copy(\"task-packs/\"+n,d/\"task-packs\"/n) for n in (\"FORWARD_LEDGER.md\",\"LEDGER_PROBES.json\")];rid=json.load(open(\"task-packs/LEDGER_PROBES.json\",encoding=\"utf-8\"))[\"probes\"][0][\"id\"];t=d/\"tests\"/\"test_check_ledger_probes.py\";t.write_text(\"class TestTheLiveProbeFile:\\n    _NAMED_NOT_READ = {\"+json.dumps(rid)+\": {\\\"x\\\"}}\\n\",encoding=\"utf-8\");(d/\"t.md\").write_text(\"probe\",encoding=\"utf-8\");p=subprocess.run([sys.executable,\"tools/cc/ledger_row.py\",\"--root\",str(d),\"strike\",rid,\"--text-file\",str(d/\"t.md\")],capture_output=True,text=True,encoding=\"utf-8\",errors=\"replace\");print(p.returncode==0 and rid.encode() in t.read_bytes())'",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "task-packs/FORWARD_LEDGER.md",
+  "task-packs/LEDGER_PROBES.json",
+  "tools/cc/generate_ledger_regions.py"
+ ],
+ "row_sha": "88eb3d0136e5",
+ "text_sha": "2024957e803c",
+ "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: code review of the filing: wording made precise against HEAD; the claim and its open value stand)"
+}

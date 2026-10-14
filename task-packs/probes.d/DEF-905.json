@@ -1,0 +1,10 @@
+{
+ "id": "DEF-905",
+ "subject": "espalier/pack_manifest.py",
+ "cmd": "python3 -c \"import sys;sys.path.insert(0,'.');from espalier.pack_manifest import _looks_like_path as p;from espalier.surface_impact import _looks_like_path as s;print(any(not (p(n) and s(n)) for n in ('Makefile','Procfile','Vagrantfile')))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "0ebba4dbd9ef",
+ "text_sha": "4063acbb7c62",
+ "verified_2026_09_21": "OPEN (filed 2026-09-21; probe driven at filing)"
+}

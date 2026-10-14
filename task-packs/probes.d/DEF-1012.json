@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1012",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c 'import sys;sys.path.insert(0,\"tools/cc/hooks\");import _bash_patterns as b;f=getattr(b,\"_candidate_paths_from_bash\",None);g=chr(62);n=chr(10);H=chr(60)*2+chr(39)+\"EOF\"+chr(39);z=\"tools/\"+\"cc\";w=lambda t:n+\"echo x \"+g+\" \"+z+\"/\"+t+n+\"EOF\";c=[\"V=$(date -u); cat \"+g+\" n.md \"+H+n+\"x \"+g+\" cc/charge.py\"+n+\"EOF\",\"L=$(cat p.txt); cat \"+g+\" notes.json \"+H+n+\"hooks -\"+g+\" \"+z+\"/hooks\"+n+\"EOF\",\"x=$(cat \"+H+w(\"a\")+n+\"); eval $x\",\"cat \"+H+\" \"+g+\" \"+g+\"(bash); ls\"+w(\"b\"),g+\" \"+g+\"(bash) cat \"+H+w(\"c\"),\"x=\"+chr(96)+\"true; cat \"+H+w(\"d\")+n+chr(96)+\"; eval $x\"];print(\"MISSING_SYMBOL\" if f is None else [any(p.startswith((\"cc/\",z)) for p in f(x)) for x in c])'",
+ "open_value": "[True, True, True, True, True, True]",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_hook_utils.py"
+ ],
+ "row_sha": "7f88f68aa8af",
+ "text_sha": "fddf9c63d015",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

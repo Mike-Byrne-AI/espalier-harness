@@ -1,0 +1,13 @@
+{
+ "id": "DEC-28",
+ "subject": "cc/GOAL.md",
+ "inputs": [
+  "docs/RELEASE_DECISIONS.md"
+ ],
+ "cmd": "python3 -c \"import pathlib;p=pathlib.Path('docs/RELEASE_DECISIONS.md');print(p.read_text(encoding='utf-8',errors='replace').count('DEC-28'))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "462edaabfd59",
+ "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing. ⚠ RE-POINTED 2026-09-02: the first form was satisfied by the act of FILING this row (it grepped the ledger, which then contained the row's own text). That is the DEF-583 trap -- a predicate a fix's own paperwork keeps true. It now reads the SUBJECT.",
+ "text_sha": "9c876dcac7ce"
+}

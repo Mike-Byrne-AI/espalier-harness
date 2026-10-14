@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1179",
+ "subject": "scripts/verify_pins.py",
+ "cmd": "python -c 'import ast;G={\"start_new_session\",\"process_group\",\"creationflags\",\"preexec_fn\"};K=lambda p:bool(G&{k.arg for c in ast.walk(ast.parse(open(p,encoding=\"utf-8\").read())) if isinstance(c,ast.Call) for k in c.keywords});print(K(\"scripts/verify_pins.py\"),K(\"tests/test_verify_pins.py\"))'",
+ "open_value": "False False",
+ "why_not": null,
+ "inputs": [
+  "tests/test_verify_pins.py"
+ ],
+ "row_sha": "7e53a643d2ea",
+ "text_sha": "55b7756c1049",
+ "verified_2026_10_07": "STILL_OPEN (re-pinned value unchanged on 2026-10-07: #136 and #137 merged under this row: its text described them as unmerged; re-driven on the merged tree, the claim and its open value stand)"
+}

@@ -1,0 +1,11 @@
+{
+ "id": "DEF-392d",
+ "subject": "tests/test_catalog_self_consistency.py",
+ "cmd": "python3 -c \"import ast; s=open('tests/test_catalog_self_consistency.py').read(); t=ast.parse(s); vals=[ast.get_source_segment(s,n) for n in ast.walk(t) if isinstance(n,ast.Assign) and getattr(n.targets[0],'id',None) in ('_BARE_LINE_ANCHOR_RE','_LINE_ANCHOR_RE')]; print(len(vals)==2 and all(chr(92)+'.py' in v for v in vals))\"",
+ "open_value": "True",
+ "why_not": null,
+ "verified_2026_08_20": "STILL_OPEN",
+ "row_sha": "750dcdfa3e0e",
+ "text_sha": "8f510a4f94a9",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+}

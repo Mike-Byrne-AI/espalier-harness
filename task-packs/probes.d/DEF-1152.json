@@ -1,0 +1,14 @@
+{
+ "id": "DEF-1152",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": "python -c 'import json,os,pathlib,subprocess,sys,tempfile,datetime as D;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);d=pathlib.Path(T.name).resolve();a=d/\"audit\";e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e.update(CLAUDE_PROJECT_DIR=str(d),ESPALIER_AUDIT_DIR=str(a));os.environ[\"ESPALIER_AUDIT_DIR\"]=str(a);sys.path.insert(0,\"tools/cc/hooks\");import _integrity as I;y=D.datetime.now(D.timezone.utc)-D.timedelta(days=1);a.mkdir();I.audit_path(d,y).write_text(json.dumps(dict(timestamp=y.isoformat(),event_type=\"stop_failed_open_pytest_did_not_run\",repo_path=str(d),details=dict(hook=\"stop_gate\",key=\"pytest-did-not-run-TimeoutExpired\",fault=\"TimeoutExpired\")))+chr(10),encoding=\"utf-8\");I.append_audit(d,dict(event_type=\"configchange_policy_settings_kill_switch_detected\",details=dict(source=\"policy_settings\",findings=[\"managed-settings.json: disableAllHooks: true\"])));b=subprocess.run([sys.executable,os.path.abspath(\"tools/cc/hooks/session_start.py\")],input=json.dumps(dict(source=\"startup\",hook_event_name=\"SessionStart\")),capture_output=True,encoding=\"utf-8\",env=e,cwd=d).stdout;s=subprocess.run([sys.executable,os.path.abspath(\"tools/cc/session_resume.py\"),\"--log\",\"50\",str(d)],capture_output=True,encoding=\"utf-8\",env=e,cwd=d);t=s.stdout+s.stderr;print(\"banner_names_yesterdays_fail_open=\"+str(any(w in b for w in (\"did_not_run\",\"did-not-run\",\"Gate 1 skipped\",\"fail-open\"))),\"status_log_names_policy_kill_switch=\"+str(\"policy\" in t))'",
+ "open_value": "banner_names_yesterdays_fail_open=False status_log_names_policy_kill_switch=False",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/session_resume.py",
+  "tools/cc/hooks/_integrity.py"
+ ],
+ "row_sha": "e96d24f7f9c3",
+ "text_sha": "462465daa857",
+ "verified_2026_10_06": "OPEN (filed 2026-10-06; probe driven at filing)"
+}

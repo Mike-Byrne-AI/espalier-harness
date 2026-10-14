@@ -1,0 +1,12 @@
+{
+ "id": "DEF-669",
+ "subject": "scripts/release_check.py",
+ "cmd": "python3 -c \"import ast;t=ast.parse(open('scripts/release_check.py').read());f=next(n for n in ast.walk(t) if isinstance(n,ast.FunctionDef) and n.name=='check_version_consistent');conds=[n.test for n in ast.walk(f) if isinstance(n,(ast.If,ast.Assert,ast.While))];print(not any(('substantive_entries' in ast.dump(c)) or ('_UNRELEASED_BODY_RE' in ast.dump(c)) or ('staged' in ast.dump(c)) for c in conds))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "e689eef864af",
+ "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
+ "text_sha": "edd4fb2e5c0a",
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: 1-D 2026-09-20: the cut retired §C47, which this row cited as a site; the claim stands, the site cell and the sentence now point at the record)",
+ "verified_2026_09_22": "STILL_OPEN (re-pinned '1' -> 'True' on 2026-09-22: the CONTRIBUTING half closed 2026-09-22 (:149 cites this row and says what the gate checks); the row narrows to the gate half with an AST probe that reads True while no If/Assert/While in the function keys on the unreleased section's size, and flips the day one does)"
+}

@@ -1,0 +1,14 @@
+{
+ "id": "DEF-1004",
+ "subject": "espalier/render_surface.py",
+ "cmd": "python -c 'import json, pathlib, tempfile; from espalier.render_surface import render_live_surface as r; t = tempfile.TemporaryDirectory(); d = pathlib.Path(t.name); (d / \".claude\").mkdir(); h = [{\"type\": \"command\", \"command\": \"python tools/cc/hooks/\" + n} for n in (\"write_guard.py\", \"my_hook.py\")]; (d / \".claude\" / \"settings.json\").write_text(json.dumps({\"hooks\": {\"PreToolUse\": [{\"matcher\": \"Edit|Write\", \"hooks\": h}]}})); s = r(d); w = \" \".join(x for x in s.split(chr(10)) if \"write_guard.py\" in x); print(chr(96) + \"?\" + chr(96) in s or \"*\" in w or \"canonical events\" in s)'",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "espalier/surface_contract.py",
+  "espalier/harness_config.py"
+ ],
+ "row_sha": "0d085777e80e",
+ "text_sha": "a8d89a8fd98f",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}

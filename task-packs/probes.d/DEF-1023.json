@@ -1,0 +1,13 @@
+{
+ "id": "DEF-1023",
+ "subject": "espalier/cli.py",
+ "cmd": "python -c 'import tempfile,pathlib,subprocess,sys,json;t=tempfile.TemporaryDirectory();d=pathlib.Path(t.name);(d/\".claude\").mkdir();(d/\".claude\"/\"settings.json\").write_text(\"{disableAllHooks: true}\");r=subprocess.run([sys.executable,\"-m\",\"espalier\",\"integrity\",\"verify\",str(d)],capture_output=True,text=True);print(json.loads(r.stdout)[\"kill_switches\"],\"settings.json\" in r.stdout+r.stderr);t.cleanup()'",
+ "open_value": "[] False",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_integrity.py"
+ ],
+ "row_sha": "cbcdc7bd5716",
+ "text_sha": "3cbf7d7aeba6",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+}
