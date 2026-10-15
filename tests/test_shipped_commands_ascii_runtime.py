@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 
 from espalier._safe_walk import visible
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMMAND_ROOT = REPO_ROOT / "espalier" / "assets" / "claude" / "commands"
@@ -59,7 +60,7 @@ def _non_ascii_chars(text: str) -> list[tuple[int, str]]:
 
 @pytest.mark.parametrize(
     "cmd_path",
-    visible(COMMAND_ROOT.glob("*.md"), COMMAND_ROOT),
+    visible(checkout_glob(COMMAND_ROOT, "*.md"), COMMAND_ROOT),
     ids=lambda p: p.name,
 )
 def test_command_bash_blocks_are_ascii(cmd_path):

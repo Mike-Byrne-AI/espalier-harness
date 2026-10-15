@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from tests._corpus_ref_resolver import _resolve_test_ref
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CORPUS_DIR = REPO_ROOT / "bench" / "corpus"
@@ -37,7 +38,7 @@ class TestCorpusDocumentedIn:
 
     @pytest.mark.parametrize(
         "corpus_path",
-        sorted(p for p in CORPUS_DIR.glob("BC-*.json") if "OOS" not in p.name),
+        sorted(p for p in checkout_glob(CORPUS_DIR, "BC-*.json") if "OOS" not in p.name),
         ids=lambda p: p.name,
     )
     def test_documented_in_resolves(self, corpus_path: Path) -> None:

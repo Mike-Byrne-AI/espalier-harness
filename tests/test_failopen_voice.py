@@ -64,6 +64,7 @@ import ast
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 HOOKS_DIR = Path(__file__).resolve().parents[1] / "tools" / "cc" / "hooks"
 
@@ -342,7 +343,7 @@ def census(path: Path) -> list[dict]:
 
 def _population() -> list[dict]:
     sites: list[dict] = []
-    for f in sorted(HOOKS_DIR.glob("*.py")):
+    for f in sorted(checkout_glob(HOOKS_DIR, "*.py")):
         sites.extend(census(f))
     return sites
 
@@ -460,7 +461,7 @@ def stderr_sites(path: Path) -> list[dict]:
 
 def _stderr_population() -> list[dict]:
     sites: list[dict] = []
-    for f in sorted(HOOKS_DIR.glob("*.py")):
+    for f in sorted(checkout_glob(HOOKS_DIR, "*.py")):
         sites.extend(stderr_sites(f))
     return sites
 
@@ -564,7 +565,7 @@ class TestFailOpenVoice:
         coarsen a match and never disarm a decision -- and a second one would
         turn the gate off for a whole hook without a red."""
         declared_files = {
-            f.name for f in HOOKS_DIR.glob("*.py")
+            f.name for f in checkout_glob(HOOKS_DIR, "*.py")
             if (lines := f.read_text(encoding="utf-8").splitlines()) and _pragma_kind(lines[0]) is not None
         }
         assert declared_files == {"_bash_patterns.py"}, declared_files
@@ -719,7 +720,7 @@ class TestCollectedAdvisoriesAreRendered:
 
     def test_every_hook_that_collects_renders(self):
         unrendered = sorted(
-            f.name for f in HOOKS_DIR.glob("*.py")
+            f.name for f in checkout_glob(HOOKS_DIR, "*.py")
             if not f.name.startswith("_") and _calls_in(f) & COLLECTED and not _renders(f)
         )
         assert not unrendered, (
@@ -746,7 +747,7 @@ class TestCollectedAdvisoriesAreRendered:
         object; an advisory object beside it is a second stdout JSON line, and
         two lines fail the whole parse -- the decision with them. A blocking
         hook speaks through say_once."""
-        deciding = [f for f in HOOKS_DIR.glob("*.py") if not f.name.startswith("_") and _defines(f) & DECISION_EMITTERS]
+        deciding = [f for f in checkout_glob(HOOKS_DIR, "*.py") if not f.name.startswith("_") and _defines(f) & DECISION_EMITTERS]
         assert len(deciding) >= 4, sorted(f.name for f in deciding)
         offenders = sorted(f.name for f in deciding if _calls_in(f) & (COLLECTED | RENDERERS))
         assert not offenders, f"{offenders} decide AND collect or emit advisories: two stdout JSON lines"
@@ -754,7 +755,7 @@ class TestCollectedAdvisoriesAreRendered:
     def test_a_hook_that_emits_prints_nothing_else_to_stdout(self):
         """emit_advisories prints the run's ONE object; any other stdout print in
         the same hook is a second line."""
-        emitting = [f for f in HOOKS_DIR.glob("*.py") if not f.name.startswith("_") and "emit_advisories" in _calls_in(f)]
+        emitting = [f for f in checkout_glob(HOOKS_DIR, "*.py") if not f.name.startswith("_") and "emit_advisories" in _calls_in(f)]
         assert emitting, "no hook emits advisories: the PostToolUse repair is gone"
         stray = {f.name: _stdout_prints(f) for f in emitting if _stdout_prints(f)}
         assert not stray, f"stdout prints beside emit_advisories (line numbers): {stray}"
@@ -764,7 +765,7 @@ class TestCollectedAdvisoriesAreRendered:
         those hooks render nothing: a collected line there is a debug-log line
         in a write_guard process. The collector's own home is the exception."""
         helpers = sorted(
-            f.name for f in HOOKS_DIR.glob("_*.py")
+            f.name for f in checkout_glob(HOOKS_DIR, "_*.py")
             if f.name != "_hook_utils.py" and _calls_in(f) & COLLECTED
         )
         assert not helpers, f"{helpers} call _hook_utils.advise from a shared helper"

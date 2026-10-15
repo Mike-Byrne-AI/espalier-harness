@@ -44,7 +44,7 @@ from espalier.changelog import category_label
 
 from tests._export_guard import pruned_from_this_tree
 from tests._git_oracle import owns_its_worktree, require_tracked_paths
-from tests._live_tree import checkout_glob, checkout_rglob
+from tests._live_tree import checkout_glob, checkout_iterdir, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXTERNAL_DIR = REPO_ROOT / "docs" / "external"
@@ -187,7 +187,7 @@ class TestClaudeMdHookCounts:
     def _actual_hook_file_count(self) -> int:
         hooks_dir = REPO_ROOT / "tools" / "cc" / "hooks"
         return len([
-            p for p in hooks_dir.glob("*.py")
+            p for p in checkout_glob(hooks_dir, "*.py")
             if p.name != "__init__.py" and not p.name.startswith("_")
         ])
 
@@ -365,7 +365,7 @@ class TestAgentDefinitionsMatchProtocol:
     AGENTS_DIR = REPO_ROOT / ".claude" / "agents"
 
     def _agent_files(self) -> list[Path]:
-        return sorted(self.AGENTS_DIR.glob("*.md"))
+        return sorted(checkout_glob(self.AGENTS_DIR, "*.md"))
 
     def test_agents_dir_has_files(self):
         # Sanity: the test corpus must not silently be empty.
@@ -674,7 +674,7 @@ class TestSecurityMarkerCoverage:
 
     def _security_relevant_test_stems(self) -> list[str]:
         return sorted(
-            p.stem for p in self.TESTS_DIR.glob("test_*.py")
+            p.stem for p in checkout_glob(self.TESTS_DIR, "test_*.py")
             if any(token in p.stem for token in self.SECURITY_TOKENS)
             and p.stem not in self.EXEMPT_STEMS
         )
@@ -1083,7 +1083,7 @@ class TestAgentDocsMatchProtocol:
     def test_agents_dir_clean(self):
         findings: list[str] = []
         agents_dir = REPO_ROOT / ".claude" / "agents"
-        for agent in visible(agents_dir.glob("*.md"), agents_dir):
+        for agent in visible(checkout_glob(agents_dir, "*.md"), agents_dir):
             findings.extend(_check_doc_for_wrong_protocol(agent))
         assert not findings, (
             "Hook protocol drift in .claude/agents/:\n"
@@ -1322,7 +1322,7 @@ from espalier.release_noise import RELEASE_NOISE_PATTERNS as _RELEASE_NOISE_PATT
 #: In-scope bypass classes, counted with the glob `espalier/doctor.py` and
 #: `scripts/release_check.py` use (tests/test_corpus_count_parity.py holds
 #: those two to one pattern; this is that pattern).
-_BENCH_IN_SCOPE_CLASSES = len(list((REPO_ROOT / "bench" / "corpus").glob("BC-[0-9]*.json")))
+_BENCH_IN_SCOPE_CLASSES = len(list(checkout_glob(REPO_ROOT / "bench" / "corpus", "BC-[0-9]*.json")))
 
 # TP-104: bind multi-surface numeric SoT here too — `ESPALIER_MEMORY.md line cap`
 # consumers read from `_surface_expected.py` rather than literals in this
@@ -2971,9 +2971,9 @@ class TestDogfoodingRosterCount:
         stated = tuple(int(g) for g in m.groups())
         base = REPO_ROOT / "examples" / "dogfooding" / ".claude"
         actual = (
-            len(visible((base / "agents").glob("*.md"), base / "agents")),
-            len(visible((base / "commands").glob("*.md"), base / "commands")),
-            len([p for p in visible((base / "skills").iterdir(), base / "skills") if p.is_dir()]),
+            len(visible(checkout_glob(base / "agents", "*.md"), base / "agents")),
+            len(visible(checkout_glob(base / "commands", "*.md"), base / "commands")),
+            len([p for p in visible(checkout_iterdir(base / "skills"), base / "skills") if p.is_dir()]),
         )
         assert stated == actual, (
             f"dogfooding README says {stated} (agents, commands, skills) "

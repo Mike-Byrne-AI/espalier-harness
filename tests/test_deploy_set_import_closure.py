@@ -30,6 +30,7 @@ import ast
 from pathlib import Path
 
 from espalier.cli import INIT_HOOK_SCRIPTS, INIT_TOOL_SCRIPTS
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -43,8 +44,8 @@ _VENDOR_HOOKS = _VENDOR_CC / "hooks"
 # hooks/ script reaches hooks-dir modules via its own dir; a tools/cc/ script
 # reaches tools/cc-dir modules via its own dir. Crossing dirs needs a sys.path
 # shim (see closure_violations).
-_HOOKS_MODULES = {p.stem for p in _VENDOR_HOOKS.glob("*.py")}
-_TOOLS_MODULES = {p.stem for p in _VENDOR_CC.glob("*.py")}
+_HOOKS_MODULES = {p.stem for p in checkout_glob(_VENDOR_HOOKS, "*.py")}
+_TOOLS_MODULES = {p.stem for p in checkout_glob(_VENDOR_CC, "*.py")}
 _LOCAL_MODULES = _HOOKS_MODULES | _TOOLS_MODULES
 
 # Basenames actually shipped by `espalier init`, partitioned by deploy dir.
@@ -253,6 +254,6 @@ def test_closure_guard_analyzes_vendored_ship_surface_not_dev_tree():
     assert "/tools/cc/" not in posix, posix
     assert p.exists()
     # The module universe is drawn from the vendored tree, partitioned by dir.
-    assert _HOOKS_MODULES == {q.stem for q in _VENDOR_HOOKS.glob("*.py")}
-    assert _TOOLS_MODULES == {q.stem for q in _VENDOR_CC.glob("*.py")}
+    assert _HOOKS_MODULES == {q.stem for q in checkout_glob(_VENDOR_HOOKS, "*.py")}
+    assert _TOOLS_MODULES == {q.stem for q in checkout_glob(_VENDOR_CC, "*.py")}
     assert "_hook_utils" in _HOOKS_MODULES  # a hooks-only module, in the universe

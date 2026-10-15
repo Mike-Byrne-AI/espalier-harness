@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from espalier._safe_walk import visible
+from tests._live_tree import checkout_glob
 from _wired_settings import write_wired_settings
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -969,7 +970,7 @@ class TestPushClaimsInShippedBodiesNameTheSetting:
 
     @pytest.mark.contract
     def test_every_handoff_push_claim_names_the_setting(self):
-        paths = visible((ROOT / "espalier" / "assets" / "claude" / "commands").glob("*.md"), ROOT / "espalier" / "assets" / "claude" / "commands")
+        paths = visible(checkout_glob(ROOT / "espalier" / "assets" / "claude" / "commands", "*.md"), ROOT / "espalier" / "assets" / "claude" / "commands")
         assert len(paths) >= 10, "the deployed command bodies were not found"
         bodies = [(p.name, p.read_text(encoding="utf-8")) for p in paths]
         assert self.bare_claims(bodies) == []

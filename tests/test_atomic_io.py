@@ -247,7 +247,7 @@ _SKIPPED_TREES = ("espalier/_vendor/", "espalier/scanners/")
 
 def _raw_writes_under(root: Path, prefixes: tuple[str, ...]) -> Counter[tuple[str, str, str]]:
     found: Counter[tuple[str, str, str]] = Counter()
-    for py in sorted((root / "espalier").rglob("*.py")):
+    for py in sorted(checkout_rglob(root / "espalier", "*.py")):
         rel = py.relative_to(root).as_posix()
         if not rel.startswith(prefixes):
             continue
@@ -263,7 +263,7 @@ def _engine_raw_writes(root: Path) -> Counter[tuple[str, str, str]]:
     atomically -- pinned by ``test_the_scanners_write_only_from_main``) and
     the helper itself."""
     found: Counter[tuple[str, str, str]] = Counter()
-    for py in sorted((root / "espalier").rglob("*.py")):
+    for py in sorted(checkout_rglob(root / "espalier", "*.py")):
         rel = py.relative_to(root).as_posix()
         if rel.startswith(_SKIPPED_TREES) or rel == "espalier/_atomic_io.py":
             continue

@@ -20,6 +20,7 @@ from espalier._safe_walk import visible
 
 import re
 from pathlib import Path
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # The deploy SOURCE for ALL shipped asset bodies -- what reaches an adopter via
@@ -47,7 +48,7 @@ def _shipped_asset_bodies() -> list[Path]:
     """
     from espalier import managed_inventory
 
-    bodies = set(visible((_ASSET_DIR / "claude").rglob("*.md"), _ASSET_DIR / "claude"))
+    bodies = set(visible(checkout_rglob(_ASSET_DIR / "claude", "*.md"), _ASSET_DIR / "claude"))
     for rel in managed_inventory.get_seed_docs():
         src = _ASSET_DIR / managed_inventory.get_seed_asset_source(rel)
         if src.suffix == ".md" and src.is_file():

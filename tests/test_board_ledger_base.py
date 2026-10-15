@@ -23,6 +23,7 @@ import pytest
 from tests.test_board import _GREEN_RUNS, _stub_channel
 from tests.test_generate_ledger_regions import _ledger
 from tests.test_ledger_fragments import _row_file
+from tests._live_tree import copy_checkout
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
@@ -64,7 +65,7 @@ def _behind_its_base(tmp_path: Path, *, base_generator_tail: str = "", base_load
     _git(root, "init", "-q", "-b", "main")
     for key, value in (("user.email", "t@example.com"), ("user.name", "t"), ("core.autocrlf", "false")):
         _git(root, "config", key, value)
-    shutil.copytree(TOOLS_CC, root / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
+    copy_checkout(TOOLS_CC, root / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
     rows = root / "task-packs" / "ledger.d"
     rows.mkdir(parents=True)
     (root / "task-packs" / "FORWARD_LEDGER.md").write_bytes(_ledger().encode("utf-8"))

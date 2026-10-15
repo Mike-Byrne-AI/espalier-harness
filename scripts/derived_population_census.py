@@ -722,6 +722,22 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "CORRECT_BY_SHAPE",
         "derives the EXPECTATION and compares it against an independently obtained actual -- the corre...",
     ),
+    # 3 row(s), shapes: comprehension, for-assert
+    "tests/test_freshness_semantic_fragments.py": (
+        3, "a8eb5e3f172ed533513630980b527ab2029a1aa23d950f2435016bef5a52b476",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-10-15 (DEF-2013 lane two): visible since the scanner's own FRAGMENT_SURFACE_ALLOWLIST "
+        "became the innermost first argument (`_root_name` follows it through every call; it was the "
+        "test's REPO_ROOT before). _verify_on_touch_fragments derives the verify-on-touch sweep, floored "
+        "by the six hand-written SEEDED_SEMANTIC_FRAGMENTS at "
+        "tests/test_freshness_semantic_fragments.py:94 (test_the_derived_set_holds_every_seeded_fragment); "
+        "past those six a fragment whose marker is lost leaves the sweep silently. "
+        "test_all_seeded_fragments_discoverable compares that set with a second discovery over the same "
+        "cached copy, so it reds only when its own call narrows the surface (driven: that call's patterns "
+        "emptied), never on a lost marker; the same floor is its remedy. "
+        "test_marker_contract_has_bound_closure_true looks marker-contract up by name and raises when it "
+        "is absent: a pin, not a population.",
+    ),
     "tests/test_hook_authoring_skill_parity.py": (
         3, "c506c8d29657aac4b748beb2c69adf326c6cc6d7d1835428f8bcd83602f534b1",
         "CORRECT_BY_REMEDY",

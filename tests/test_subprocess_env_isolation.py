@@ -30,6 +30,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
@@ -560,7 +561,7 @@ def _collect_blueprint_subprocess_calls(
     ``"unresolved"`` or ``"literal"`` (see ``_call_reaches_target``).
     """
     results: list[tuple[str, int, str, bool, str]] = []
-    for hook_file in sorted(hooks_dir.glob("*.py")):
+    for hook_file in sorted(checkout_glob(hooks_dir, "*.py")):
         source = hook_file.read_text(encoding="utf-8")
         tree = ast.parse(source)
         for node in ast.walk(tree):

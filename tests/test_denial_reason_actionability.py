@@ -88,8 +88,8 @@ def _slash_commands() -> frozenset[str]:
     """The ``/name`` commands the harness ships: one per command file and one per
     skill, which Claude Code also exposes as a slash command. Derived, so a deny
     that names a command the roster does not have fails element 4 by name."""
-    names = {p.stem for p in visible(_COMMANDS_DIR.glob("*.md"), _COMMANDS_DIR)}
-    names |= {p.parent.name for p in visible(_SKILLS_DIR.glob("*/SKILL.md"), _SKILLS_DIR)}
+    names = {p.stem for p in visible(checkout_glob(_COMMANDS_DIR, "*.md"), _COMMANDS_DIR)}
+    names |= {p.parent.name for p in visible(checkout_glob(_SKILLS_DIR, "*/SKILL.md"), _SKILLS_DIR)}
     assert names, f"no commands under {_COMMANDS_DIR} or {_SKILLS_DIR}"
     return frozenset(names)
 
@@ -153,7 +153,7 @@ def _roster() -> frozenset[str]:
     ``agent_type`` carries, and the only thing a dispatch can name. Derived,
     so a renamed agent reds the template that still spells the old name."""
     names: set[str] = set()
-    for path in visible(_AGENTS_DIR.glob("*.md"), _AGENTS_DIR):
+    for path in visible(checkout_glob(_AGENTS_DIR, "*.md"), _AGENTS_DIR):
         match = _NAME_LINE_RE.search(_frontmatter(path.read_text(encoding="utf-8")))
         if match:
             names.add(match.group(1))

@@ -37,6 +37,7 @@ from __future__ import annotations
 import ast
 import functools
 from pathlib import Path
+from tests._live_tree import checkout_glob, checkout_rglob
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -67,7 +68,7 @@ def gate_writers() -> frozenset[str]:
     name. `main` is left out (a dozen modules define one); `self_hosting.main`
     is matched by its import instead."""
     calls: dict[str, set[str]] = {}
-    for p in sorted((ROOT / "espalier").rglob("*.py")):
+    for p in sorted(checkout_rglob(ROOT / "espalier", "*.py")):
         if {"_vendor", "assets"} & set(p.relative_to(ROOT).parts):
             continue
         for fn in ast.walk(ast.parse(p.read_text(encoding="utf-8"))):
@@ -300,7 +301,7 @@ def find_live_root_gate_calls(source: str, path: str = "<src>") -> list[str]:
 
 def _test_sources() -> list[Path]:
     tests = ROOT / "tests"
-    return sorted(p for p in tests.glob("*.py") if p.name != Path(__file__).name)
+    return sorted(p for p in checkout_glob(tests, "*.py") if p.name != Path(__file__).name)
 
 
 class TestNoTestRunsTheGateOnTheLiveRoot:

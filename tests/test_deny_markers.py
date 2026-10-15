@@ -32,6 +32,7 @@ import warnings
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 # bench/end_to_end/ is dev tooling and is intentionally NOT included in
 # the sdist (per MANIFEST.in). Skip this contract test when bench/end_to_end
@@ -293,7 +294,7 @@ def _collect_deny_sites() -> tuple[list[tuple[Path, int, str]], list[tuple[Path,
     # Funnel signatures may be defined in any hook; collect them all first.
     arg_index: dict[str, int] = {"deny": 0, "block": 0}
     trees: dict[Path, ast.Module] = {}
-    for hook in sorted(HOOKS_DIR.glob("*.py")):
+    for hook in sorted(checkout_glob(HOOKS_DIR, "*.py")):
         trees[hook] = ast.parse(hook.read_text(encoding="utf-8"))
         arg_index.update(_reason_arg_index(trees[hook]))
 
@@ -592,7 +593,7 @@ def test_composed_fragments_are_still_composed():
     there beyond the declaring assignment; 2026-10-07).
     """
     referenced: set[str] = set()
-    for hook in sorted(HOOKS_DIR.glob("*.py")):
+    for hook in sorted(checkout_glob(HOOKS_DIR, "*.py")):
         text = hook.read_text(encoding="utf-8")
         for name in _NOT_STANDALONE_REASONS:
             uses = len(re.findall(rf"\b{re.escape(name)}\b", text))

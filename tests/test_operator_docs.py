@@ -23,6 +23,7 @@ from espalier.surface_contract import (
 )
 from tests._git_oracle import require_tracked_paths
 from tests._surface_expected import CONTRACT_CEILINGS
+from tests._live_tree import checkout_glob
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -100,7 +101,7 @@ CURRENT_FACING_FILES = [
 class TestDiskSurfaceCounts:
     def test_agent_count_on_disk(self):
         from tests._surface_expected import EXPECTED_AGENT_COUNT_MIN
-        agents = visible((REPO_ROOT / ".claude" / "agents").glob("*.md"), REPO_ROOT / ".claude" / "agents")
+        agents = visible(checkout_glob(REPO_ROOT / ".claude" / "agents", "*.md"), REPO_ROOT / ".claude" / "agents")
         assert len(agents) >= EXPECTED_AGENT_COUNT_MIN, (
             f"Expected at least {EXPECTED_AGENT_COUNT_MIN} agent files (universal floor), "
             f"found {len(agents)}: {[a.name for a in agents]}"
@@ -108,7 +109,7 @@ class TestDiskSurfaceCounts:
 
     def test_command_count_on_disk(self):
         from tests._surface_expected import EXPECTED_COMMAND_COUNT
-        commands = visible((REPO_ROOT / ".claude" / "commands").glob("*.md"), REPO_ROOT / ".claude" / "commands")
+        commands = visible(checkout_glob(REPO_ROOT / ".claude" / "commands", "*.md"), REPO_ROOT / ".claude" / "commands")
         assert len(commands) == EXPECTED_COMMAND_COUNT, (
             f"Expected {EXPECTED_COMMAND_COUNT} command files, found {len(commands)}: "
             f"{[c.name for c in commands]}"
@@ -120,8 +121,8 @@ class TestReadmeSurfaceClaims:
         return (REPO_ROOT / "README.md").read_text(encoding="utf-8")
 
     def _actual_counts(self) -> tuple[int, int]:
-        agents = len(visible((REPO_ROOT / ".claude" / "agents").glob("*.md"), REPO_ROOT / ".claude" / "agents"))
-        commands = len(visible((REPO_ROOT / ".claude" / "commands").glob("*.md"), REPO_ROOT / ".claude" / "commands"))
+        agents = len(visible(checkout_glob(REPO_ROOT / ".claude" / "agents", "*.md"), REPO_ROOT / ".claude" / "agents"))
+        commands = len(visible(checkout_glob(REPO_ROOT / ".claude" / "commands", "*.md"), REPO_ROOT / ".claude" / "commands"))
         return agents, commands
 
     def test_readme_reports_correct_agent_count(self):

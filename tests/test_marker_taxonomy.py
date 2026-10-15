@@ -19,6 +19,7 @@ import tokenize
 from pathlib import Path
 
 import pytest
+from tests._live_tree import LISTING_HELPERS, checkout_glob
 
 TESTS_DIR = Path(__file__).parent
 
@@ -60,7 +61,7 @@ class TestMarkerTaxonomyMembership:
         """
         from tests.conftest import _MARKER_RULES
 
-        all_stems = {f.stem for f in TESTS_DIR.glob("test_*.py")}
+        all_stems = {f.stem for f in checkout_glob(TESTS_DIR, "test_*.py")}
         classified = {stem for tup, _marker in _MARKER_RULES for stem in tup}
         unclassified = all_stems - classified
 
@@ -125,9 +126,13 @@ class TestMarkerTaxonomyMembership:
 # --- doc readers run in the tier a docs-only change earns ---------------------
 
 #: A tree-wide markdown sweep over the repository, not a fixture directory.
+#: The last branch is the routed spelling (`checkout_rglob(REPO_ROOT, "*.md")`),
+#: which passes the root first: the live-tree census routes every tests/ walk
+#: through `LISTING_HELPERS` (DEF-2013), and the method branch alone missed it.
 _DOC_SWEEP = re.compile(
     r"require_tracked_paths\([^)]*\*\.md|_tracked\(\s*[\"']\*\.md|ls-files[^\n]*\.md"
     r"|(?:REPO_ROOT|_REPO_ROOT|ROOT)\b[^\n]*\.r?glob\(\s*[\"'](?:\*\*/)?\*\.md"
+    r"|\b(?:" + "|".join(LISTING_HELPERS) + r")\(\s*(?:REPO_ROOT|_REPO_ROOT|ROOT)\b[^\n]*?,\s*[\"'](?:\*\*/)?\*\.md"
 )
 #: A read of one named repository doc, rooted at the repo (not at tmp_path) --
 #: or of the SHIPPED copy of one under `espalier/assets/`, rooted at the repo
@@ -270,7 +275,7 @@ class TestDocReadersRunInTheContractTier:
     def test_every_doc_reading_test_is_in_the_contract_tier(self):
         from tests.conftest import _primary_marker
 
-        missing = _unmarked_doc_readers(sorted(TESTS_DIR.glob("test_*.py")), _primary_marker)
+        missing = _unmarked_doc_readers(sorted(checkout_glob(TESTS_DIR, "test_*.py")), _primary_marker)
         assert not missing, (
             "tests that read repository docs but run outside the contract tier "
             "(add @pytest.mark.contract):\n  " + "\n  ".join(missing)
@@ -296,6 +301,24 @@ class TestDocReadersRunInTheContractTier:
         assert _unmarked_doc_readers([bare], unit) == ["test_bare_reader.py::test_reads_a_doc"]
         assert _unmarked_doc_readers([marked], unit) == []
         assert _unmarked_doc_readers([bare], lambda stem: "contract") == []
+
+    @pytest.mark.parametrize("sweep", [
+        '(REPO_ROOT / "docs").glob("*.md")',
+        'checkout_glob(REPO_ROOT / "docs", "*.md")',
+        'checkout_rglob(REPO_ROOT, "*.md")',
+    ], ids=["method", "routed-glob", "routed-rglob"])
+    def test_a_markdown_sweep_is_a_doc_read_in_either_spelling(self, sweep, tmp_path):
+        """The live-tree census routes every tests/ walk through
+        `tests/_live_tree.py`'s listings (DEF-2013), so the sweep a new test
+        writes is the routed spelling; a gate that knew only `.glob(` passed it."""
+        mod = tmp_path / "test_sweeper.py"
+        mod.write_text(
+            "from pathlib import Path\n"
+            "REPO_ROOT = Path(__file__).parent\n"
+            "def test_sweeps_the_docs():\n"
+            f"    assert list({sweep})\n", encoding="utf-8")
+        unit = lambda stem: "unit"  # noqa: E731
+        assert _unmarked_doc_readers([mod], unit) == ["test_sweeper.py::test_sweeps_the_docs"]
 
     @pytest.mark.parametrize("read", [
         '(REPO_ROOT / "espalier" / "assets" / "docs" / "HOOKS.md").read_text()',

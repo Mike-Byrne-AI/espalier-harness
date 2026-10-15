@@ -38,6 +38,7 @@ import pytest
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._interpreter_hosts import HOOK_PYTHON
 from tests._symlink_support import requires_symlink
+from tests._live_tree import copy_checkout
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 
@@ -1149,7 +1150,7 @@ class TestKillSwitchTextsNameOnlyTheCIGateThisTreeHas:
         out and the banner must still name the kill-switch (review: the first cut
         read the clause unguarded, and the banner fell to `unverified`)."""
         hooks = tmp_path / "copy" / "tools" / "cc"
-        shutil.copytree(HOOKS_DIR.parent, hooks, ignore=shutil.ignore_patterns("__pycache__"))
+        copy_checkout(HOOKS_DIR.parent, hooks, ignore=shutil.ignore_patterns("__pycache__"))
         reasons = hooks / "hooks" / "_denial_reasons.py"
         reasons.write_bytes(reasons.read_bytes() + b"\ndel kill_switch_ci_clause\n")
         tree = self._tree(tmp_path / "tree", gate=False)

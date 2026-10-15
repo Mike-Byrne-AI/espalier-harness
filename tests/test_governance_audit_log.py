@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from _site_path import site_path
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -559,7 +560,7 @@ def _emitted_denial_event_types() -> set[str]:
     hook except ``_integrity.py`` -- the set's own home, excluded so the
     comparison cannot be a tautology."""
     found: set[str] = set()
-    for hook in sorted(HOOKS_DIR.glob("*.py")):
+    for hook in sorted(checkout_glob(HOOKS_DIR, "*.py")):
         if hook.name == "_integrity.py":
             continue
         tree = ast.parse(hook.read_text(encoding="utf-8"))
@@ -724,7 +725,7 @@ def _exemption_offenders(exemptions: dict[str, str], defining: set[str]) -> list
 
 def _hook_trees() -> dict[str, ast.Module]:
     """hook filename -> its parsed module, every hook under ``HOOKS_DIR``."""
-    return {hook.name: ast.parse(hook.read_text(encoding="utf-8")) for hook in sorted(HOOKS_DIR.glob("*.py"))}
+    return {hook.name: ast.parse(hook.read_text(encoding="utf-8")) for hook in sorted(checkout_glob(HOOKS_DIR, "*.py"))}
 
 
 def _unbacked_audit_writers(roster: frozenset[str], trees: dict[str, ast.Module]) -> list[str]:
@@ -761,7 +762,7 @@ def _hooks_defining_an_emitter() -> dict[str, set[str]]:
     top level. Derived: a new blocking hook joins the population the moment it
     defines one, instead of waiting to be typed into a list."""
     out: dict[str, set[str]] = {}
-    for hook in sorted(HOOKS_DIR.glob("*.py")):
+    for hook in sorted(checkout_glob(HOOKS_DIR, "*.py")):
         tree = ast.parse(hook.read_text(encoding="utf-8"))
         names = {
             n.name for n in tree.body
@@ -1333,7 +1334,7 @@ class TestNoHookCallsTheReasonOnlySpeedBumpView:
     def test_no_hook_calls_check_and_write_guard_calls_check_fired(self):
         offenders: list[str] = []
         fired_callers: list[str] = []
-        for hook in sorted(HOOKS_DIR.glob("*.py")):
+        for hook in sorted(checkout_glob(HOOKS_DIR, "*.py")):
             if hook.name == "_speedbump.py":
                 continue
             tree = ast.parse(hook.read_text(encoding="utf-8"))
@@ -1680,7 +1681,7 @@ def _emitted_bypass_event_types() -> set[str]:
     """Every ``<event>_bypassed_<what>`` literal that reaches an audit writer in
     any hook -- the same derivation as the blocked types, on the bypass shape."""
     found: set[str] = set()
-    for hook in sorted(HOOKS_DIR.glob("*.py")):
+    for hook in sorted(checkout_glob(HOOKS_DIR, "*.py")):
         if hook.name == "_integrity.py":
             continue
         tree = ast.parse(hook.read_text(encoding="utf-8"))
@@ -1787,7 +1788,7 @@ class TestMaintenanceBypassIsRecorded:
         assert not any(_BLOCKED_EVENT_RE.fullmatch(t) for t in emitted)
         # The three writers, by name -- one per hook the flag switches a check off in.
         writers = {
-            hook.stem for hook in HOOKS_DIR.glob("*.py")
+            hook.stem for hook in checkout_glob(HOOKS_DIR, "*.py")
             if hook.name != "_integrity.py" and "_bypassed_maintenance_mode" in hook.read_text(encoding="utf-8")
         }
         assert writers == {"write_guard", "plan_guard", "stop_gate"}, sorted(writers)
@@ -1824,7 +1825,7 @@ def _crash_guard_writers() -> list[tuple[str, str]]:
     blocking hook joins the proof the moment it copies a crash guard, and the
     ``hook=`` literal it copied is checked against its own file name."""
     out: list[tuple[str, str]] = []
-    for hook in sorted(HOOKS_DIR.glob("*.py")):
+    for hook in sorted(checkout_glob(HOOKS_DIR, "*.py")):
         if hook.name == "_integrity.py":
             continue
         found = sorted(set(re.findall(r'"([a-z]+_blocked_internal_error)"', hook.read_text(encoding="utf-8"))))
@@ -1926,7 +1927,7 @@ class TestFailOpenRecordsReachTheStatusLog:
         assert not integ.is_fail_open_event(None)
         # Every say_once site in the hooks names a type the predicate admits.
         import ast as _ast
-        for hook in HOOKS_DIR.glob("*.py"):
+        for hook in checkout_glob(HOOKS_DIR, "*.py"):
             tree = _ast.parse(hook.read_text(encoding="utf-8"))
             for node in _ast.walk(tree):
                 callee = getattr(node.func, "attr", getattr(node.func, "id", "")) if isinstance(node, _ast.Call) else ""

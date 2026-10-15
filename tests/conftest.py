@@ -215,6 +215,7 @@ def _no_live_once_flags():
 
     def _flags() -> set[str]:
         try:
+            # live-tree: ok -- the say-once flags live in the gitignored .espalier-state/, the state this guard watches
             return {f.name for f in state.glob("once_*")}
         except OSError:
             return set()
@@ -330,6 +331,7 @@ def _live_tree_fingerprint(root: Path = REPO_ROOT, watch=_LIVE_TREE_WATCH):
     for rel in watch:
         d = root / rel
         try:
+            # live-tree: ok -- a guard of writes into the live tree sees every entry, the ones git ignores included
             out[rel] = frozenset(os.listdir(d))
         except OSError:
             out[rel] = None
@@ -438,6 +440,7 @@ def _live_session_markers(d: Path = _LIVE_SESSIONS_DIR) -> dict[str, int]:
     the directory is absent (every clone and CI)."""
     out: dict[str, int] = {}
     try:
+        # live-tree: ok -- the session markers live in the gitignored .espalier-state/sessions/, the state this guard watches
         with os.scandir(d) as it:
             for entry in it:
                 try:
@@ -2313,33 +2316,20 @@ def harness_repo(python_repo):
     return python_repo
 
 
-@pytest.fixture(scope="session")
-def initialized_repo_root(tmp_path_factory):
-    """Session-scoped fresh-clone of REPO_ROOT with `espalier init` applied.
+def _copy_isolated_tree(src: Path, dst: Path) -> Path:
+    """The isolated-repo fixture's copy of ``src`` at ``dst``.
 
-    The runtime artifacts the live self-host surface depends on
-    (`.claude/settings.json`, `reports/repo_fingerprint.json`,
-    `reports/harness_config.json`, `.espalier/integrity.json`) are
-    gitignored — a fresh clone (and CI) lacks them. This fixture clones
-    REPO_ROOT into a tmp directory and runs `init` against the copy so
-    the artifacts exist.
+    Mirror the source tree's *working state* (not HEAD) so the fixture
+    works during in-flight renames where the working tree has changes
+    not yet committed. Git's view (tracked plus untracked, not ignored),
+    so the tree shape matches a fresh clone; the lists below keep their own
+    exclusions. Where git ignores case (Windows, macOS by default), the
+    copy's `git add -A` still leaves out the tracked files an ignore pattern
+    matches only case-blind (`espalier_*.md` takes ESPALIER_MEMORY.md and its
+    template), so the copy's commit lacks them there and holds them on Linux."""
+    from espalier._safe_walk import is_own_git_repo
+    from tests._live_tree import copy_checkout
 
-    Use this fixture, not REPO_ROOT, for tests that exercise the
-    self-host surface (doctor, release_check, surface_contract.discover_*,
-    current_surface_report). Reserve REPO_ROOT for tests
-    whose intent is "this must hold of the source tree as committed"
-    (e.g. version-truth, no-tracked-release-noise).
-    """
-    import shutil
-
-    from espalier._safe_walk import is_own_git_repo, visible
-    src = Path(__file__).resolve().parent.parent
-    dst = tmp_path_factory.mktemp("initialized_repo") / "tree"
-
-    # Mirror the source tree's *working state* (not HEAD) so the fixture
-    # works during in-flight renames where the working tree has changes
-    # not yet committed. Excludes gitignored runtime artifacts so the
-    # tree shape still matches a fresh clone.
     _excluded_top = {
         ".git", ".venv", "venv", "env", "dist", "build", "node_modules",
         "zDone", "Finished Tasks", "receiver-test",
@@ -2389,7 +2379,31 @@ def initialized_repo_root(tmp_path_factory):
                 skip.add(n)
         return skip
 
-    shutil.copytree(src, dst, ignore=_ignore)
+    return copy_checkout(src, dst, ignore=_ignore)
+
+
+@pytest.fixture(scope="session")
+def initialized_repo_root(tmp_path_factory):
+    """Session-scoped fresh-clone of REPO_ROOT with `espalier init` applied.
+
+    The runtime artifacts the live self-host surface depends on
+    (`.claude/settings.json`, `reports/repo_fingerprint.json`,
+    `reports/harness_config.json`, `.espalier/integrity.json`) are
+    gitignored — a fresh clone (and CI) lacks them. This fixture clones
+    REPO_ROOT into a tmp directory and runs `init` against the copy so
+    the artifacts exist.
+
+    Use this fixture, not REPO_ROOT, for tests that exercise the
+    self-host surface (doctor, release_check, surface_contract.discover_*,
+    current_surface_report). Reserve REPO_ROOT for tests
+    whose intent is "this must hold of the source tree as committed"
+    (e.g. version-truth, no-tracked-release-noise).
+    """
+    from espalier._safe_walk import visible
+    src = Path(__file__).resolve().parent.parent
+    dst = tmp_path_factory.mktemp("initialized_repo") / "tree"
+
+    _copy_isolated_tree(src, dst)
     # TP-88: bootstrap categorized-memory folders so the convention test
     # passes under the isolated-repo fixture even before content migrates.
     (dst / "memory").mkdir(exist_ok=True)

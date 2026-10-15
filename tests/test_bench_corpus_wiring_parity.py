@@ -27,6 +27,7 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / "bench" / "run_benchmark.py"
@@ -70,7 +71,7 @@ def _espalier_wiring() -> dict[str, str]:
 def _in_scope_blocked_verifiers() -> set[str]:
     """Every verifier name used by an in-scope attempt expecting 'blocked'."""
     names: set[str] = set()
-    for path in sorted(CORPUS_DIR.glob("BC-*.json")):
+    for path in sorted(checkout_glob(CORPUS_DIR, "BC-*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         if not data.get("in_scope", True):
             continue
@@ -132,7 +133,7 @@ def test_earn_the_red_pre_fix_wiring_fails():
 def _all_corpus_verifiers() -> set[str]:
     """Every verifier name used by ANY corpus attempt (in-scope + OOS)."""
     names: set[str] = set()
-    for path in sorted(CORPUS_DIR.glob("BC-*.json")):
+    for path in sorted(checkout_glob(CORPUS_DIR, "BC-*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         for attempt in data.get("canonical_attempts", []):
             names.add(attempt["verifier"])

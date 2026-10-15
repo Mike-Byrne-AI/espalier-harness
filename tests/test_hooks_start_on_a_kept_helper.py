@@ -55,6 +55,7 @@ from pathlib import Path
 import pytest
 
 from espalier.harness_config import CANONICAL_HOOK_WIRING, GOVERNANCE_BLOCKING_HOOKS
+from tests._live_tree import checkout_glob, copy_checkout
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CC_DIR = REPO_ROOT / "tools" / "cc"
@@ -274,7 +275,7 @@ class Cell:
 
 
 def _copy_cc(root: Path) -> None:
-    shutil.copytree(CC_DIR, root / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
+    copy_checkout(CC_DIR, root / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
 
 
 def _run_hook(root: Path, hook: str, event: str, timeout: int = 45) -> subprocess.CompletedProcess:
@@ -364,7 +365,7 @@ class TestTheDerivation:
         assert all(defines_an_emitter(h) for h in deny_hooks()), deny_hooks()
         # The cross-check both ways: a hook defining an emitter that the roster
         # does not list would be guarded by nothing here.
-        emitters = {p.name for p in HOOKS_DIR.glob("*.py") if p.name in CANONICAL_HOOK_WIRING and defines_an_emitter(p.name)}
+        emitters = {p.name for p in checkout_glob(HOOKS_DIR, "*.py") if p.name in CANONICAL_HOOK_WIRING and defines_an_emitter(p.name)}
         assert emitters == set(deny_hooks()), sorted(emitters ^ set(deny_hooks()))
 
     def test_every_reached_name_is_bound_by_todays_helper(self):
@@ -405,7 +406,7 @@ class TestTheDerivation:
         # on 2026-10-10 (two budget names now read by getattr). A body-only walk
         # read 12 and 35: the function-level imports it dropped are why ast.walk.
         per = {p.stem: helper_names_imported(_parse(p.stem)) | helper_getattr_strings(_parse(p.stem))
-               for p in HOOKS_DIR.glob("*.py")}
+               for p in checkout_glob(HOOKS_DIR, "*.py")}
         per = {k: v for k, v in per.items() if v}
         assert len(per) >= 13 and len(set().union(*per.values())) >= 40, (len(per), len(set().union(*per.values())))
 

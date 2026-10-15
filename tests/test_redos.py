@@ -45,6 +45,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 sys.path.insert(
     0, str(Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks")
@@ -2785,7 +2786,7 @@ def test_every_dynamic_compile_exemption_is_live():
     removed or turned literal is a stale hole, so it reds here."""
     live = {
         (path.name, arg)
-        for path in sorted(_HOOKS_DIR.glob("*.py"))
+        for path in sorted(checkout_glob(_HOOKS_DIR, "*.py"))
         for _, pattern, arg in _iter_hook_compiled_patterns(path, with_arg=True)
         if pattern is None
     }
@@ -2820,7 +2821,7 @@ def test_no_unreviewed_dotstar_in_hook_regexes():
     remains and the gate passes."""
     offenders: list[str] = []
     unresolved: list[str] = []
-    hook_files = sorted(_HOOKS_DIR.glob("*.py"))
+    hook_files = sorted(checkout_glob(_HOOKS_DIR, "*.py"))
     assert hook_files, f"no hook files found under {_HOOKS_DIR}"
     for path in hook_files:
         for lineno, pattern, arg in _iter_hook_compiled_patterns(path, with_arg=True):

@@ -24,6 +24,7 @@ from espalier._safe_walk import visible
 import pytest
 
 from espalier.artifact_parity import clear_stale_packaging_state
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -77,7 +78,7 @@ class TestPackagedCommandsMatchDeclaredSurface:
     """
 
     def test_packaged_commands_match_commands_md_table(self):
-        packaged = {p.stem for p in visible((ASSETS_CLAUDE / "commands").glob("*.md"), ASSETS_CLAUDE / "commands")}
+        packaged = {p.stem for p in visible(checkout_glob(ASSETS_CLAUDE / "commands", "*.md"), ASSETS_CLAUDE / "commands")}
         declared = {
             m.group(1)
             for line in CC_COMMANDS_MD.read_text(encoding="utf-8").splitlines()
@@ -123,7 +124,7 @@ class TestExpectedCountsMatchPackagedAssets:
             assert wheel_smoke.EXPECTED_AGENT_COUNT_MIN == 0
             return
         rich_agents = [
-            p for p in visible(agents_dir.glob("*.md"), agents_dir)
+            p for p in visible(checkout_glob(agents_dir, "*.md"), agents_dir)
             if p.stat().st_size >= wheel_smoke.RICH_AGENT_MIN_BYTES
         ]
         assert wheel_smoke.EXPECTED_AGENT_COUNT_MIN <= len(rich_agents), (
@@ -135,7 +136,7 @@ class TestExpectedCountsMatchPackagedAssets:
         """Hook entry scripts live in tools/cc/hooks/ (not under
         espalier/assets/), so derive from there directly."""
         hook_entries = [
-            p for p in (REPO_ROOT / "tools" / "cc" / "hooks").glob("*.py")
+            p for p in checkout_glob(REPO_ROOT / "tools" / "cc" / "hooks", "*.py")
             if not p.name.startswith("_") and p.name != "__init__.py"
         ]
         assert wheel_smoke.EXPECTED_HOOK_ENTRY_COUNT == len(hook_entries), (
@@ -145,7 +146,7 @@ class TestExpectedCountsMatchPackagedAssets:
 
     def test_expected_hook_helper_count_matches_packaged_helpers(self):
         helpers = [
-            p for p in (REPO_ROOT / "tools" / "cc" / "hooks").glob("_*.py")
+            p for p in checkout_glob(REPO_ROOT / "tools" / "cc" / "hooks", "_*.py")
             if p.name != "__init__.py"
         ]
         assert wheel_smoke.EXPECTED_HOOK_HELPER_COUNT == len(helpers), (

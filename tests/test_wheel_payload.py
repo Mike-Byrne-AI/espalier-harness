@@ -41,6 +41,7 @@ from pathlib import Path
 import pytest
 
 from espalier.artifact_parity import build_sdist, build_wheel
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -234,7 +235,7 @@ class TestWheelPayloadExclusion:
         vendor_src = REPO_ROOT / "espalier" / "_vendor" / "cc"
         expected = {
             f"espalier/_vendor/cc/{p.relative_to(vendor_src).as_posix()}"
-            for p in vendor_src.rglob("*")
+            for p in checkout_rglob(vendor_src, "*")
             if p.is_file() and p.suffix in (".py", ".cmd") and "__pycache__" not in p.parts
         }
         assert "espalier/_vendor/cc/statusline.cmd" in expected, sorted(expected)[:5]

@@ -18,7 +18,7 @@ import pytest
 
 from _stack_census import SEED_DEPENDENCY_DIRS
 from espalier._safe_walk import DEPENDENCY_TREE_DIRS, has_git_entry, is_own_git_repo, safe_glob, safe_rglob
-from tests._live_tree import checkout_rglob
+from tests._live_tree import checkout_glob, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -341,7 +341,7 @@ def test_every_safe_rglob_prune_set_under_the_engine_is_the_one_sanctioned_call(
     they see). Held non-vacuous at the four callers that exist today."""
     offenders: list[str] = []
     sites = 0
-    for path in sorted((REPO_ROOT / "espalier").glob("*.py")):
+    for path in sorted(checkout_glob(REPO_ROOT / "espalier", "*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for func in ast.walk(tree):
             if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
