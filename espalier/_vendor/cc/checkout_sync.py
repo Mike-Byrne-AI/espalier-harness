@@ -795,7 +795,7 @@ def occupancy(path: Path, *, sessions: list[dict[str, object]] | None = None,
               own_session_id: str = "", checkouts: list[Path] | None = None,
               markers: MarkerReader | None = None,
               deadline: float | None = None, runner: Runner = run) -> Occupancy:
-    """The one answer to "is a session live in this checkout" (TP-701 B-1):
+    """The one answer to "is a session live in this checkout":
     every session :func:`sessions_in` places at ``path``, the caller's own
     included, plus every live marker (:func:`marker_sessions`) -- in ``path``
     or in the clone's main checkout -- whose cwd is placed there: a session

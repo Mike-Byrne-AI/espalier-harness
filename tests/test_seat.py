@@ -32,13 +32,22 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE = REPO_ROOT / "tools" / "cc" / "seat.py"
 
 
-@pytest.fixture(scope="module")
-def seat():
-    spec = importlib.util.spec_from_file_location("seat_under_test", MODULE)
+def _load(alias: str):
+    """The importlib dance ``tests/CLAUDE.md`` mandates for a ``tools/cc`` module."""
+    spec = importlib.util.spec_from_file_location(alias, MODULE)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+@pytest.fixture(scope="module")
+def seat():
+    # Bound by name through the loader so the derived-population census can
+    # read this file (its loader-function rule); a dance inlined in the fixture
+    # binds only ``spec``/``mod``, which the census reads as unresolved.
+    driver = _load("seat_under_test")
+    return driver
 
 
 @pytest.fixture(autouse=True)

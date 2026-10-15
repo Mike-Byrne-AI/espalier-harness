@@ -602,6 +602,7 @@ def run_session(argv: list[str], *, cwd: Path, env: dict[str, str]) -> int:
     """The operator's own session: interactive, stdio inherited, no timeout
     (it ends when they end it); the one spawn here not bounded through
     checkout_sync. Tests replace this function, never ``subprocess``."""
+    # subprocess-contract: ok the operator's own interactive claude session: argv is the resolved claude plus the operator's arguments passed through unchanged, stdio inherited, no capture and no timeout by design; tests/test_seat.py pins the argv through command_line and replaces this function
     return subprocess.call(argv, cwd=str(cwd), env=env)
 
 

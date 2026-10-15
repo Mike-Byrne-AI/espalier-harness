@@ -726,8 +726,8 @@ def _shared_checkout_words(who: list[str], hints: str) -> str:
 
 
 def _refuse_a_shared_checkout(root: Path) -> None:
-    """Stop a push from a checkout two or more live sessions share (TP-701
-    B-3), before anything here moves. A registry that cannot place them is a
+    """Stop a push from a checkout two or more live sessions share, before
+    anything here moves. A registry that cannot place them is a
     note, never a refusal: a push is reversible, and a false refusal under an
     unreadable registry would stop every seat at once. Asked once a run."""
     if _SHARED["asked"]:

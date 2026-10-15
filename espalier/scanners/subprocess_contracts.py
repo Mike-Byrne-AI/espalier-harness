@@ -135,7 +135,13 @@ PRAGMA_RE = re.compile(r"^#\s*subprocess-contract:\s*ok\s+(.{12,})$")
 # wrappers are read as run here (SPAWN_WRAPPERS), so each routed call site
 # keeps its own descriptor or pragma, and a wrapper's spawn of its own first
 # parameter is skipped as the caller's argv (_wrapper_forwarding_calls).
-MAX_PRAGMA_COUNT: int = 12
+# Raised 12 -> 13 (2026-10-15) for tools/cc/seat.py::run_session, the seat
+# driver's one spawn of the operator's own interactive claude session: argv is
+# the resolved claude plus the operator's arguments passed through unchanged,
+# stdio inherited, no capture and no timeout by design (it ends when they end
+# it), so there is no literal to pin; tests/test_seat.py pins the argv through
+# command_line and replaces the function, never subprocess.
+MAX_PRAGMA_COUNT: int = 13
 
 # Sister-site protection: fixture files contain intentional positives.
 EXEMPT_PREFIXES: tuple[str, ...] = (
