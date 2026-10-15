@@ -485,6 +485,23 @@ class TestRetire:
             seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=False)
         assert feat.is_dir()
 
+    def test_an_unread_name_in_the_seat_is_named_as_unread(self, seat, tmp_path, monkeypatch):
+        """A name read that failed in the seat's worktree (a timeout, a config
+        git cannot parse) was refused as "does not answer the name", which
+        sends the operator to rename a seat that may be named. Dies to: the
+        unread reason folded into the wrong-name refusal."""
+        unread = f"{seat.mail.MACHINE_UNREAD} (git config took longer than 10s), so no machine is named"
+        monkeypatch.setattr(seat.mail, "machine_setting", lambda path, **kw: (None, unread))
+        with pytest.raises(seat.Refused) as refused:
+            seat._send_releases(tmp_path, "box-feat", ["x-1"], "retired")
+        said = str(refused.value)
+        assert "could not be read" in said and "took longer than 10s" in said, said
+        assert "does not answer the name" not in said and "run retire again" in said and said.isascii()
+        unset = "git config espalier.machine is not set, so the channel is off (the default)"
+        monkeypatch.setattr(seat.mail, "machine_setting", lambda path, **kw: (None, unset))
+        with pytest.raises(seat.Refused, match="does not answer the name box-feat"):
+            seat._send_releases(tmp_path, "box-feat", ["x-1"], "retired")   # an unset name: no wait helps
+
     def test_a_dead_holders_lock_is_released_and_said(self, seat, clone, registry, capsys):
         feat = _worktree(clone, "feat", name="box-feat")
         gone = _dead_pid()

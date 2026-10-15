@@ -624,7 +624,14 @@ def _send_releases(path: Path, seat: str, ids: list[str], text: str) -> None:
     never by lane, since a lane release from a seat also closes a job the
     dispatcher gave it on that lane. Each sent line is said as it goes, so a
     failure part way leaves an exact account."""
-    if mail.machine_setting(path)[0] != seat:
+    named, how = mail.machine_setting(path)
+    unread = getattr(mail, "MACHINE_UNREAD", None)  # a kept mail.py from before the phrase has none
+    if named is None and unread and str(how).startswith(unread):
+        # A read that failed is not another name: renaming the seat would not help.
+        raise Refused(f"{path}'s machine name could not be read ({how}), so the releases stop here (what was "
+                      "sent stays sent); run retire again once git answers (a config git cannot parse never "
+                      "will: fix it first)")
+    if named != seat:
         raise Refused(f"{path} does not answer the name {seat}, so a release sent from it would not close "
                       f"{seat}'s messages")
     for n, mid in enumerate(ids):

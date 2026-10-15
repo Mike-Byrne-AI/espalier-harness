@@ -365,6 +365,142 @@ def _bare_str_path_call_sites(source: str, filename: str = "<src>") -> list[int]
     return sites
 
 
+class TestEveryNameReaderSaysWhichItIs:
+    """Every call of ``mail.machine_setting`` under ``tools/cc`` (subfolders
+    included) tells a name read that failed -- its reason opens with
+    ``MACHINE_UNREAD``: a timeout, a config git cannot parse -- from a clone
+    that names no machine, by the predicate in ``tests/_name_readers.py``:
+    per call, that call's own binding of the reason is tested before the name
+    is bound again, or a ``# unread-name: ok <why>`` comment sits on the call's
+    line or the line above; an alias of the reader (an import under another
+    name, an assignment, a ``getattr`` by name) is refused outright. The
+    population is derived, never listed: each fold that closed the readers in
+    hand left another, and one more arrived with a later lane after the class
+    was filed (DEF-5002). The same predicate is the ledger probe for the
+    readers that bypass ``machine_setting``: DEF-5003 (``clone_machine``) and
+    DEF-5004 (raw config reads)."""
+
+    def test_no_reader_takes_an_unread_name_for_none(self):
+        """Dies to: a reader whose ``machine is None`` branch goes silent, or
+        answers as if the clone named no machine, without asking whether the
+        read failed; a renamed ``machine_setting``, which finds no caller (the
+        floor below)."""
+        from tests._name_readers import calls, tools_cc_files
+        found, silent, aliases = calls(tools_cc_files(REPO_ROOT), REPO_ROOT)
+        assert len(found) >= 10, f"only {len(found)} calls of machine_setting: did it move or rename? {found}"
+        assert aliases == [], f"an alias of machine_setting hides its callers from this pin: {aliases}"
+        assert silent == [], ("these calls take a name read that failed for 'no machine is named': unpack the "
+                              "reason and test it against MACHINE_UNREAD before the name is bound again, or mark "
+                              f"the intended silence on the call's line with `# unread-name: ok <why>`: {silent}")
+
+    def test_the_predicate_tells_each_shape_apart(self, tmp_path):
+        """The pin's own red, on a planted tree (subfolder included). Dies to: a
+        predicate that passes every caller, judges per function rather than per
+        call or per binding of the reason, takes a bare or a prose marker, reads
+        a marker off a nested function, misses a conditional unpack, a
+        discarded reason, an unused phrase, a top-level call or an alias."""
+        from tests._name_readers import calls
+        planted = tmp_path / "tools" / "cc" / "deep"
+        planted.mkdir(parents=True)
+        (planted / "readers.py").write_text(
+            "from mail import machine_setting as read_name\n"
+            "bound = mail.machine_setting\n"
+            "read_it = getattr(mail, 'machine_setting', None)\n"
+            "TOP = machine_setting(ROOT)\n"
+            "def says(root):\n"
+            "    machine, how = machine_setting(root)\n"
+            "    if machine is None and how.startswith(MACHINE_UNREAD):\n"
+            "        return ['unread']\n"
+            "def says_by_getattr(root):\n"
+            "    unread = getattr(mail, 'MACHINE_UNREAD', None)\n"
+            "    machine, how = mail.machine_setting(root) if ok else (None, '')\n"
+            "    return unread and str(how).startswith(unread)\n"
+            "def says_by_off_reason(root):\n"
+            "    machine, how = machine_setting(root)\n"
+            "    raise Unresolvable(_off_reason(how))\n"
+            "def silent(root):\n"
+            "    machine, _how = machine_setting(root)\n"
+            "    return [] if machine is None else [machine]\n"
+            "def discarded(root):\n"
+            "    machine, _ = machine_setting(root)\n"
+            "    return MACHINE_UNREAD\n"
+            "def unused_phrase(root):\n"
+            "    unread = getattr(mail, 'MACHINE_UNREAD', None)\n"
+            "    machine, how = machine_setting(root)\n"
+            "    return how.startswith('git')\n"
+            "def second_call(root, other):\n"
+            "    a, how = machine_setting(root)\n"
+            "    b, other_how = machine_setting(other)\n"
+            "    return how.startswith(MACHINE_UNREAD)\n"
+            "def reused_name(root, other):\n"
+            "    a, how = machine_setting(root)\n"
+            "    if how.startswith(MACHINE_UNREAD):\n"
+            "        return a\n"
+            "    b, how = machine_setting(other)\n"
+            "    return b\n"
+            "def main_style(root):\n"
+            "    machine, how = machine_setting(root)\n"
+            "    if machine is None:\n"
+            "        raise Unresolvable(_off_reason(how))\n"
+            "    dispatcher, how = dispatcher_setting(root)\n"
+            "    return how\n"
+            "def subscript(root):\n"
+            "    return machine_setting(root)[0]\n"
+            "def marked(root):\n"
+            "    # unread-name: ok the caller prints the reason it is handed\n"
+            "    return machine_setting(root)\n"
+            "def bare(root):\n"
+            "    # unread-name: ok\n"
+            "    return machine_setting(root)[0]\n"
+            "def nested_marker(root):\n"
+            "    def inner():\n"
+            "        # unread-name: ok the inner helper reports its own read\n"
+            "        return machine_setting(root)\n"
+            "    return machine_setting(root)[0]\n"
+            "def prose_marker(root):\n"
+            "    \"\"\"unread-name: ok but this is prose, not a marker\"\"\"\n"
+            "    return machine_setting(root)[0]\n",
+            encoding="utf-8")
+        found, silent, aliases = calls(sorted((tmp_path / "tools" / "cc").rglob("*.py")), tmp_path)
+        assert len(found) == 18, found
+        assert sorted(silent) == sorted(f"tools/cc/deep/readers.py::{w}" for w in (
+            "<module>", "silent", "discarded", "unused_phrase", "second_call", "reused_name", "subscript", "bare",
+            "nested_marker", "prose_marker")), silent
+        assert aliases == [f"tools/cc/deep/readers.py::{n}" for n in (1, 2, 3)], aliases
+
+    def test_raw_reads_count_each_read_and_take_only_a_line_marker(self, tmp_path):
+        """DEF-5004's probe predicate, on a planted tree. Dies to: judging per
+        function (one marked read closing its unmarked neighbour), counting a
+        write or another key, missing the ``MACHINE_KEY`` spelling, or taking a
+        mention of the phrase for a fix."""
+        from tests._name_readers import raw_reads
+        planted = tmp_path / "tools" / "cc"
+        planted.mkdir(parents=True)
+        (planted / "raw.py").write_text(
+            "def two_reads(here, other):\n"
+            "    # unread-name: ok the first read is said by the caller\n"
+            "    seat = here.out('config', '--worktree', '--get', 'espalier.machine')\n"
+            "    theirs = other.out('config', '--worktree', '--get', 'espalier.machine')\n"
+            "    return seat, theirs\n"
+            "def by_key(path):\n"
+            "    unread = mail.MACHINE_UNREAD\n"
+            "    return _git(path, 'config', '--worktree', '--get', mail.MACHINE_KEY) or ''\n"
+            "def by_list(root):\n"
+            "    return run(['git', 'config', '--get', MACHINE_KEY])\n"
+            "def a_write(root, name):\n"
+            "    return run(['git', 'config', '--worktree', MACHINE_KEY, name])\n"
+            "def another_key(root):\n"
+            "    return run(['git', 'config', '--get', 'extensions.worktreeConfig'])\n"
+            "def machine_setting(root):\n"
+            "    return run(['git', 'config', '--get', MACHINE_KEY])\n",
+            encoding="utf-8")
+        found, silent = raw_reads([planted / "raw.py"], tmp_path)
+        assert found == ["tools/cc/raw.py::by_key:8", "tools/cc/raw.py::by_list:10",
+                         "tools/cc/raw.py::two_reads:3", "tools/cc/raw.py::two_reads:4"], found
+        assert silent == ["tools/cc/raw.py::by_key:8", "tools/cc/raw.py::by_list:10",
+                          "tools/cc/raw.py::two_reads:4"], silent
+
+
 class TestPathNormalization:
     def test_managed_paths_use_forward_slashes(self):
         """Path comparisons in espalier/ must use .replace('\\\\', '/') for Windows compat."""

@@ -275,15 +275,21 @@ def _mail_unread_line(root: Path, mail: Any = None, timeout: float = 3.0) -> str
     """``N unread (a from <machine>, ...) -- /inbox`` from the LOCAL refs and
     the cursor, no fetch: a compaction is mid-session, and the fetch is
     SessionStart's. '' where no machine is named here, nothing is unread, or
-    the channel module is not deployed. Reporter: a failure costs the line
+    the channel module is not deployed; where the name could not be read, the
+    line says so. Reporter: a failure costs the line
     and is recorded once a session; ``timeout`` bounds each local git read under the hook's own
     ceiling. ``mail`` is the channel module, injectable for tests."""
     try:
         mail = mail if mail is not None else _load_mail()
         if mail is None:
             return ""
-        machine, _how = mail.machine_setting(root, timeout=timeout)
+        machine, how = mail.machine_setting(root, timeout=timeout)
         if machine is None:
+            unread = getattr(mail, "MACHINE_UNREAD", None)  # a channel module from before the phrase has none
+            if unread and str(how).startswith(unread):
+                # Not "no machine is named here": an empty line reads as nothing unread.
+                said = str(how).encode("ascii", "replace").decode("ascii")[:160]
+                return f"(this checkout's machine name could not be read: {said}; /inbox reads the mail once git answers)"
             return ""
         by_machine, _skipped = mail.read_mail(root, timeout=timeout)
         pending = mail.unread(by_machine, mail.read_cursor(root), exclude_machine=machine)
