@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5002",
+ "subject": "tools/cc/mail.py",
+ "cmd": "python3 -c \"import ast,pathlib as P; F=[p for d in ('tools/cc','tools/cc/hooks') for p in sorted(P.Path(d).glob('*.py'))]; K=('MACHINE_UNREAD','_off_reason(','unread-name: ok'); S=lambda s,t: [(f, ast.get_source_segment(s,f) or '') for f in ast.walk(t) if isinstance(f,(ast.FunctionDef,ast.AsyncFunctionDef))]; C=lambda t: [c for c in ast.walk(t) if isinstance(c,ast.Call) and getattr(c.func,'attr',getattr(c.func,'id',None))=='machine_setting']; I=lambda fs,c: min([x for x in fs if x[0].lineno<=c.lineno<=x[0].end_lineno], key=lambda x: x[0].end_lineno-x[0].lineno, default=None); B=lambda p: (lambda s: (lambda t,fs: sum(1 for c in C(t) if (i:=I(fs,c)) is not None and i[0].name!='machine_setting' and not any(k in i[1] for k in K)))(*(lambda t: (t,S(s,t)))(ast.parse(s))))(p.read_text(encoding='utf-8')); print(sum(B(p) for p in F))\"",
+ "open_value": "5",
+ "why_not": null,
+ "inputs": [
+  "tools/cc"
+ ],
+ "row_sha": "f5950ca37085",
+ "text_sha": "032e5c94d840",
+ "verified_2026_10_15": "OPEN (filed 2026-10-15; probe driven at filing)"
+}
