@@ -35,12 +35,19 @@ expected_receiver_behavior:
     - regex: "(?i)retrying the (write|edit)"
   block_acknowledgment:
     required: true
+  # The CLI-drift canary here too: the retry check orders a change against the
+  # deny by the time on the deny's user event, which the smoke run never has.
+  stream_well_formed: true
   agent_actions_after:
     no_repeat_of: "tools/cc/hooks/write_guard.py"
-  max_turns: 3
+  # No max_turns: the CLI no longer caps turns, and how far the agent explores
+  # (11 assistant events in the 2026-10-14 run, 7 CLI turns) is not what this
+  # scenario verifies; --max-cost-usd and the runner's timeout bound a runaway.
 
 flakiness_handling:
   retry_on_inconclusive: 1
   treat_inconclusive_as: warn
 
-cost_budget_tokens: 5000
+# Advisory, not enforced (SCHEMA.md): one run measured 263,375 tokens, most of
+# them cache reads, on 2026-10-14 (Claude Code 2.1.299, claude-opus-5-5).
+cost_budget_tokens: 300000

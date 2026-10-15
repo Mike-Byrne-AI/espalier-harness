@@ -34,7 +34,7 @@ from bench.end_to_end.assertions import (
     ScenarioVerdict,
     evaluate,
 )
-from bench.end_to_end.runner import ScenarioRun, load_scenario, run_scenario
+from bench.end_to_end.runner import TIMEOUT_EXIT_CODE, ScenarioRun, load_scenario, run_scenario
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCENARIOS_DIR = REPO_ROOT / "bench" / "end_to_end" / "scenarios"
@@ -80,7 +80,29 @@ def _run_with_retry(
 
     def _do_run() -> tuple[ScenarioRun, ScenarioVerdict]:
         run = run_scenario(scenario_path, keep_work_dir=keep_work_dir)
-        verdict = evaluate(scenario, run.transcript, cost_tokens=run.cost_tokens)
+        verdict = evaluate(scenario, run.transcript, cost_tokens=run.cost_tokens, target_state=run.target_state)
+        verdict.run_exit_code, verdict.run_error = run.exit_code, run.error
+        verdict.cli_version, verdict.model = run.cli_version, run.model
+        verdict.permission_mode = run.permission_mode
+        if run.exit_code == TIMEOUT_EXIT_CODE:
+            # A run the timeout ended is a FAIL, never a warn: a Stop gate that
+            # never releases, or an agent looping on a retry, shows up as exactly
+            # this, and the cost cap sees only an estimate of it (no result
+            # event, so no price: the messages' usage stands in).
+            verdict.overall = VERDICT_FAIL
+            verdict.notes = (verdict.notes + "; " if verdict.notes else "") + "the run timed out"
+        elif (run.transcript.unreached_model_error() is not None
+              or (not run.transcript.events and (run.exit_code not in (0, None) or run.error))):
+            # The CLI found no login or a bad key (its own API-error message and
+            # an is_error result, no model turn), whatever its exit code, or
+            # refused the argv or never started (no events, a failed exit): no
+            # hook was measured, and the wiring scenarios' inconclusive-to-warn
+            # mapping would show that green. It fails with the run's exit code
+            # and error beside it and no assertion under it, which is how a
+            # report tells it from a hook verdict.
+            verdict.overall = VERDICT_FAIL
+            verdict.notes = ((verdict.notes + "; " if verdict.notes else "")
+                             + f"the run itself failed (exit {run.exit_code}) before any model turn")
         return run, verdict
 
     run, verdict = _do_run()
@@ -129,6 +151,13 @@ def render_markdown(verdicts: list[ScenarioVerdict],
         }.get(v.overall, "?")
         lines.append(f"## {v.scenario_id} \u2192 {emoji} {v.overall.upper()}")
         lines.append("")
+        if v.run_exit_code not in (None, 0) or v.run_error:
+            # The run itself failed: say how, so a rejected argv or a timeout
+            # never reads as the friction layer failing.
+            lines.append(f"- run: exit {v.run_exit_code}" + (f"; error: {v.run_error}" if v.run_error else ""))
+        if v.cli_version or v.model:
+            lines.append(f"- ran on: Claude Code {v.cli_version or '?'}, model {v.model or '?'}"
+                         + (f", permission mode {v.permission_mode}" if v.permission_mode else ""))
         for a in v.assertions:
             mark = {VERDICT_PASS: "\u2705", VERDICT_FAIL: "\u274c",
                     VERDICT_INCONCLUSIVE: "\u26a0\ufe0f"}.get(a.verdict, "?")

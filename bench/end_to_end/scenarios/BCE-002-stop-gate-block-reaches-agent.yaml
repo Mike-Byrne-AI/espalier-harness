@@ -39,10 +39,14 @@ expected_receiver_behavior:
     - regex: "(?i)session (is )?(complete|done|finished)"
   block_acknowledgment:
     required: true
-  max_turns: 3
+  # No max_turns: the CLI no longer caps turns, and how far the agent explores
+  # (9 assistant events in the 2026-10-14 run) is not what this scenario
+  # verifies; --max-cost-usd and the runner's timeout bound a runaway.
 
 flakiness_handling:
   retry_on_inconclusive: 1
   treat_inconclusive_as: warn
 
-cost_budget_tokens: 5000
+# Advisory, not enforced (SCHEMA.md): one run measured 78,866 tokens on
+# 2026-10-14 (Claude Code 2.1.299, claude-opus-5-5).
+cost_budget_tokens: 100000
