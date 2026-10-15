@@ -1458,6 +1458,29 @@ class TestTheSmokeScenarioCatchesCliDrift:
                 _materialize_setup({"files": [{"path": rel, "content": "x"}]}, work)
         assert not (tmp_path / "escape.txt").exists()
 
+    def test_a_target_either_host_family_reads_as_leaving_the_tree_is_refused(self, tmp_path):
+        """A scenario is written on one host family and run on both (DEF-3007).
+        Dies to: asking the host's own Path alone, which lets `/etc/hosts`
+        through on Windows (rooted, no drive: not absolute there) and a drive,
+        a share or a backslash climb through on POSIX (all relative there)."""
+        from bench.end_to_end.runner import _inside, load_scenario
+
+        work = tmp_path / "wd"
+        work.mkdir()
+        leaving = ("/etc/hosts", "\\etc\\hosts", "C:\\Windows\\x", "C:x", "\\\\server\\share\\x", "a/../../x",
+                   "a\\..\\..\\x")
+        for target in leaving:
+            path = tmp_path / "BCE-out.yaml"
+            path.write_text(
+                "id: BCE-out\ndescription: d\nin_scope: true\nverifies: v\nsetup: {}\n"
+                f"trigger: {{type: prompt, content: hi}}\nexpected_receiver_behavior: "
+                f"{{agent_actions_after: {{no_repeat_of: '{target}'}}}}\n", encoding="utf-8")
+            with pytest.raises(ValueError, match="no_repeat_of must name a path inside the work dir"):
+                load_scenario(path)
+            assert not _inside(work, target), target
+        for target in ("src/app.py", "tools/cc/hooks/write_guard.py"):
+            assert _inside(work, target), target
+
 
 class TestADeadRunIsNotAHookVerdict:
     """A run the CLI refused, or one that timed out before any output, produces

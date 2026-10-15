@@ -24,7 +24,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 import yaml
@@ -105,9 +105,27 @@ def _no_repeat_target(scenario: dict[str, Any]) -> str | None:
     return str(target) if target else None
 
 
+def _leaves_the_tree(rel: str) -> bool:
+    """True when ``rel`` is not a plain relative path on EITHER host family:
+    anchored (a root, a drive, a share) or climbing with ``..`` anywhere. A
+    scenario is written on one family and run on both (DEF-3007): the host's
+    ``Path`` alone lets ``/etc/hosts`` through on Windows (rooted, no drive:
+    not absolute there) and ``C:\\x`` or ``\\\\server\\share`` through on
+    POSIX. ``PureWindowsPath`` reads both separators and every root, drive and
+    share a POSIX reading has, so it is the one judge. Sister site, held equal
+    by ``tests/test_archive_probe.py``: ``scripts/archive_probe.py::_leaves_the_tree``.
+    Two more judges read both families and differ on ``~``:
+    ``tools/cc/mail.py::_repo_relative`` and the probe ``inputs`` check in
+    ``tools/cc/check_ledger_probes.py``."""
+    path = PureWindowsPath(rel)
+    return bool(path.anchor) or ".." in path.parts
+
+
 def _inside(work_dir: Path, target: str) -> bool:
-    """``target`` is a relative path that stays inside the work dir."""
-    if Path(target).is_absolute():
+    """``target`` is a plain relative path -- no anchor on either host family
+    and no ``..`` part, even one that would come back inside -- that resolves
+    inside the work dir."""
+    if _leaves_the_tree(target):
         return False
     try:
         return (work_dir / target).resolve().is_relative_to(work_dir.resolve())
@@ -189,8 +207,9 @@ def load_scenario(path: Path) -> dict[str, Any]:
             f"(need at least one of {sorted(recognized)})"
         )
     target = _no_repeat_target(data)
-    if target is not None and (Path(target).is_absolute() or ".." in Path(target).parts):
-        raise ValueError(f"{path.name}: no_repeat_of must name a path inside the work dir, not {target!r}")
+    if target is not None and _leaves_the_tree(target):
+        raise ValueError(f"{path.name}: no_repeat_of must name a path inside the work dir, not {target!r} (an "
+                         "anchor on either host family or a .. part is refused)")
     return data
 
 
@@ -200,7 +219,7 @@ def _materialize_setup(setup: dict[str, Any], work_dir: Path) -> None:
     for entry in setup.get("files") or []:
         rel = entry["path"]
         if not _inside(work_dir, rel):
-            raise ValueError(f"setup file {rel!r} is outside the work dir")
+            raise ValueError(f"setup file {rel!r} is outside the work dir (or names it with an anchor or a .. part)")
         target = work_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         if "content" in entry:
