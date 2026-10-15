@@ -371,18 +371,61 @@ class TestNamingSteps:
         steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "false"}))
         assert steps == "git config extensions.worktreeConfig true, then git config --worktree espalier.machine <name>"
 
-    def test_a_bare_clone_moves_core_bare_first(self, mail, tmp_path):
-        """Dies to: the steps given without the core.bare move."""
+    def test_a_bare_clone_gets_gits_order_and_a_pointer_not_a_paste(self, mail, tmp_path):
+        """git help worktree (CONFIGURATION FILE): turn the extension on, THEN
+        move core.bare (or core.worktree) into the main worktree's
+        config.worktree; git refuses `config --worktree` before the extension
+        is on (failure-mode review, r6; read on git 2.39.5). Dies to: the move
+        ordered first, or the pointer to git's own page dropped."""
         steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "true"}))
-        assert steps.startswith("move core.bare out of the clone's shared config into the main worktree's "
-                                "config.worktree first (git help worktree), then git config extensions."), steps
+        assert steps.index("extensions.worktreeConfig") < steps.index("move core.bare"), steps
+        assert "git help worktree" in steps and "main worktree's config.worktree" in steps, steps
         assert "core.worktree" in mail.naming_steps(tmp_path, run=self._git({"core.worktree": "/x"}))
 
     def test_the_assign_refusal_carries_the_steps(self, mail, tmp_path, monkeypatch):
         (tmp_path / "espalier.toml").write_text('dispatcher = "win"\n', encoding="utf-8")
         monkeypatch.setattr(mail, "worktree_name_inherited", lambda root, run=None: True)
         refusal = mail.assign_refusal(tmp_path, "win", run=self._git({"core.bare": "true"})) or ""
-        assert "name it first: move core.bare out of the clone's shared config" in refusal, refusal
+        assert refusal.endswith(mail.naming_steps(tmp_path, run=self._git({"core.bare": "true"}))), refusal
+
+    @staticmethod
+    def _worktree_git(root, toplevel, bare: bool):
+        """The git reads name_this_worktree makes in a linked worktree that
+        still answers its clone's name `air`."""
+        answers = {
+            ("rev-parse", "--git-dir"): (0, f"{root / 'gitdir'}\n", ""),
+            ("rev-parse", "--git-common-dir"): (0, f"{root / 'common'}\n", ""),
+            ("config", "--get", "extensions.worktreeConfig"): (1, "", ""),
+            ("config", "--get", "espalier.machine"): (0, "air\n", ""),
+            ("rev-parse", "--show-toplevel"): (0, f"{toplevel}\n", ""),
+            ("config", "--get", "core.bare"): (0, "true\n" if bare else "false\n", ""),
+            ("config", "--get", "core.worktree"): (1, "", ""),
+            ("worktree", "list", "--porcelain"): (0, "", ""),
+        }
+
+        def run(argv, **kw):
+            key = tuple(argv[1:])
+            if key not in answers:
+                raise AssertionError(f"unexpected call {argv}")
+            return answers[key]
+        return run
+
+    def test_name_this_worktree_prints_the_one_owners_steps(self, mail, tmp_path):
+        """A worktree whose directory derives no name got its own copy of the
+        steps, without the core.bare step on a bare clone (failure-mode
+        review, r6, driven). Dies to: name_this_worktree spelling its own."""
+        (tmp_path / ".git").write_text("gitdir: x\n", encoding="utf-8")
+        run = self._worktree_git(tmp_path, tmp_path / "___", bare=True)
+        name, said = mail.name_this_worktree(tmp_path, run=run)
+        assert name is None and mail.naming_steps(tmp_path, run=run) in said, said
+        assert "core.bare" in said
+
+    def test_name_this_worktrees_core_bare_refusal_states_gits_order(self, mail, tmp_path):
+        """Dies to: the refusal saying git wants the move before the extension."""
+        (tmp_path / ".git").write_text("gitdir: x\n", encoding="utf-8")
+        name, said = mail.name_this_worktree(tmp_path, run=self._worktree_git(tmp_path, tmp_path / "wt", bare=True))
+        assert name is None and "git help worktree" in said, said
+        assert "move before per-worktree config is turned on" not in said, said
 
 
 class TestLiveRequests:

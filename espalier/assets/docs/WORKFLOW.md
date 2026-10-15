@@ -471,10 +471,11 @@ bare clone, in the repository). A linked worktree of a named clone is given a
 name of its own at SessionStart (`<clone>-<directory>`; the banner's `Seat:`
 line says so); to set one by hand, run `git config extensions.worktreeConfig
 true` once, then `git -C <worktree> config --worktree espalier.machine
-<name>`. On a bare clone, first move `core.bare` out of the shared config into
-the main worktree's `config.worktree`, which git requires before that
-extension (`git help worktree`); SessionStart will not name a bare clone's
-worktrees for that reason. A plain `git config espalier.machine` run inside a
+<name>`. On a bare clone there is a step between the two: once that extension is
+on, `core.bare` in the shared config applies to every worktree, so it moves
+into the main worktree's `config.worktree`, as `git help worktree` describes
+under CONFIGURATION FILE; SessionStart will not name a bare clone's worktrees
+for that reason. A plain `git config espalier.machine` run inside a
 worktree renames the clone and its main checkout instead. Seats coordinate
 through the mail channel (`/inbox`): a seat claims the files it works so
 another does not duplicate them, a dispatcher seat (the `dispatcher` key in

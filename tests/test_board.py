@@ -538,8 +538,9 @@ class TestSeats:
 
         local = board.read_sessions(main, run_=run, config_dir=_registry(tmp_path, work), inside_session=False)
         text = self._text(board, board.seat_rows({}, local, _NOW))
-        assert "air [" in text and "core.bare" in text, text
+        assert "air [" in text and "core.bare" in text and "git help worktree" in text, text
         assert "extensions.worktreeConfig true &&" not in text, text
+        assert "before per-worktree names" not in text, "git turns the extension on first, then the move (r6)"
 
     def test_the_flag_reads_the_clones_name_not_the_main_checkouts(self, board, tmp_path):
         """The board runs in the main checkout, and a naming command pasted

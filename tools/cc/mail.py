@@ -762,15 +762,20 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
             return None, ""
         rc, top, _ = run(["git", "rev-parse", "--show-toplevel"], cwd=str(root), env=git_env(), timeout=timeout)
         name = worktree_seat_name(clone, Path(top.strip()).name) if rc == 0 else None
-        by_hand = (f"git config extensions.worktreeConfig true, then git config --worktree {MACHINE_KEY} "
-                   f"<name>, in {root}")
+        def by_hand() -> str:
+            # naming_steps is the one owner of these steps (git's core.bare
+            # order included); read only on a refusal path.
+            return f"{naming_steps(root, run=run, timeout=timeout)}, in {root}"
+
         if name is None:
-            return None, f"this worktree answers the clone's name {clone!r} and no name derives from its directory; {by_hand}"
+            return None, f"this worktree answers the clone's name {clone!r} and no name derives from its directory; {by_hand()}"
         for key in ("core.worktree", "core.bare"):
             rc, value, _ = run(["git", "config", "--get", key], cwd=str(root), env=git_env(), timeout=timeout)
             if rc == 0 and value.strip() and value.strip() != "false":
-                return None, (f"this worktree answers the clone's name {clone!r}, and the clone's config sets {key}, "
-                              f"which git says to move before per-worktree config is turned on; {by_hand}")
+                return None, (f"this worktree answers the clone's name {clone!r}, and the clone's shared config sets "
+                              f"{key}, which must move into the main worktree's config.worktree once per-worktree "
+                              f"config is on (git help worktree, CONFIGURATION FILE), a step SessionStart will not "
+                              f"take; {by_hand()}")
         rc, listing, _ = run(["git", "worktree", "list", "--porcelain"], cwd=str(root), env=git_env(), timeout=timeout)
         here = Path(top.strip()).resolve()
         for line in listing.splitlines() if rc == 0 else []:
@@ -783,7 +788,7 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
                                  env=git_env(), timeout=timeout)
             if rc2 == 0 and theirs.strip() == name:
                 return None, (f"this worktree answers the clone's name {clone!r}, and the name it derives, `{name}`, "
-                              f"is taken by {other}; {by_hand}")
+                              f"is taken by {other}; {by_hand()}")
         rc, flag, _ = run(["git", "config", "--get", "extensions.worktreeConfig"], cwd=str(root), env=git_env(),
                           timeout=timeout)
         # The extension lives in the clone's shared config: written only when
@@ -793,7 +798,7 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
         for argv in (*writes, ["git", "config", "--worktree", MACHINE_KEY, name]):
             rc, _, err = run(argv, cwd=str(root), env=git_env(), timeout=timeout)
             if rc != 0:
-                return None, f"`{' '.join(argv)}` failed ({err.strip()[:160]}); {by_hand}"
+                return None, f"`{' '.join(argv)}` failed ({err.strip()[:160]}); {by_hand()}"
         rc, back, _ = run(["git", "config", "--worktree", "--get", MACHINE_KEY], cwd=str(root), env=git_env(),
                           timeout=timeout)
     except Unresolvable as exc:
@@ -808,11 +813,14 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
 def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0) -> str:
     """The by-hand steps that give the linked worktree at ``root`` a name of
     its own, run in it: ``git config extensions.worktreeConfig true``, then
-    ``git config --worktree espalier.machine <name>`` -- after moving
-    ``core.bare`` (or ``core.worktree``) out of the clone's shared config where
-    it sets one, which git says must move before the extension is turned on
-    (``git help worktree``) and which SessionStart refuses to do itself. The
-    one owner of these steps for every refusal that prints them."""
+    ``git config --worktree espalier.machine <name>``. Where the clone's shared
+    config sets ``core.bare`` (or ``core.worktree``), git's order sits between
+    them: with the extension on, that key no longer applies to the main
+    worktree alone, so it moves into the main worktree's ``config.worktree``
+    (``git help worktree``, CONFIGURATION FILE). That step is pointed at, not
+    spelled as commands to paste, and SessionStart will not take it. The one
+    owner of these steps for every refusal that prints them
+    (``name_this_worktree``, ``assign_refusal``, the ledger's mint refusal)."""
     steps = f"git config extensions.worktreeConfig true, then git config --worktree {MACHINE_KEY} <name>"
     for key in ("core.bare", "core.worktree"):
         try:
@@ -820,8 +828,9 @@ def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0) -> str
         except Unresolvable:
             continue
         if rc == 0 and value.strip() and value.strip() != "false":
-            return (f"move {key} out of the clone's shared config into the main worktree's config.worktree "
-                    f"first (git help worktree), then {steps}")
+            return (f"turn the extension on (git config extensions.worktreeConfig true), then move {key} out of "
+                    "the clone's shared config into the main worktree's config.worktree as git help worktree "
+                    f"describes (CONFIGURATION FILE), then git config --worktree {MACHINE_KEY} <name>")
     return steps
 
 

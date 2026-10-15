@@ -554,11 +554,14 @@ def seat_rows(by_machine: dict[str, list[dict]], local: dict, now: datetime | No
             first = rows[key]["checkout"] if held else ("the main checkout" if name == main_seat else "the clone")
             key = f"{key} [{where}]"
             if bare:
-                # git: core.bare must move out of the shared config before
-                # extensions.worktreeConfig is turned on, and SessionStart
-                # refuses to name these worktrees for that reason.
-                remedy = ("name it after core.bare moves out of the clone's shared config, which git requires "
-                          "before per-worktree names (extensions.worktreeConfig; git help worktree)")
+                # git help worktree (CONFIGURATION FILE): once
+                # extensions.worktreeConfig is on, core.bare in the shared
+                # config applies to every worktree, so it moves into the main
+                # worktree's config.worktree; SessionStart will not take that
+                # step, so the board points at git's page, nothing to paste.
+                remedy = ("name it by git help worktree (CONFIGURATION FILE): on this bare clone, turning "
+                          "extensions.worktreeConfig on means moving core.bare into the main worktree's "
+                          "config.worktree, then config --worktree espalier.machine <name> in this worktree")
             else:
                 # git -C, quoted: the board is read in another checkout, where
                 # a bare --worktree command would rename that checkout instead.

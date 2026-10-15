@@ -433,7 +433,13 @@ def minting_seat(root: Path) -> tuple[str, str | None]:
                              "so the seat's name cannot be read") from None
     if mail is None:
         raise SeatUnreadable("tools/cc/mail.py is not beside this script, so the seat's name cannot be read")
-    machine, _how = mail.machine_setting(root)
+    machine, how = mail.machine_setting(root)
+    unread = getattr(mail, "MACHINE_UNREAD", None)
+    if machine is None and unread and str(how).startswith(unread):
+        # A read that failed (a timeout, a config git cannot parse) is not
+        # "no name": that answer would offer `git config espalier.machine`,
+        # which in a worktree renames the clone, or mint from the shared range.
+        raise SeatUnreadable(str(how))
     if machine is None:
         # The shared range is safe for one clone (its worktrees share the
         # record) and unsafe across machines, which each keep their own.
@@ -446,9 +452,9 @@ def minting_seat(root: Path) -> tuple[str, str | None]:
         return UNNAMED_SEAT, ("this clone sets no git config espalier.machine, so it mints from the shared "
                               f"range ({UNNAMED_SEAT}); name the box to mint from its own block")
     if mail.worktree_name_inherited(root):
-        # mail.naming_steps is the one owner of the by-hand steps (core.bare
-        # moves first on a bare clone); an older mail.py without it keeps the
-        # two commands.
+        # mail.naming_steps is the one owner of the by-hand steps (git's
+        # core.bare step on a bare clone); an older mail.py without it keeps
+        # the two commands.
         steps = (mail.naming_steps(root) if hasattr(mail, "naming_steps") else
                  "git config extensions.worktreeConfig true, then git config --worktree espalier.machine <name>")
         raise MintRefused(f"this linked worktree answers its clone's name {machine!r}, so a mint here would take "

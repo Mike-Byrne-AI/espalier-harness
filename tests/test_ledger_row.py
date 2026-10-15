@@ -1723,6 +1723,25 @@ class TestIdsAreMintedFromTheSeatsBlock:
         assert _mint(lr, t, "TP") == 0
         assert capsys.readouterr().out.strip() == "TP-502"
 
+    def test_a_seat_name_read_that_failed_refuses_the_mint_by_name(self, lr, tmp_path, monkeypatch, capsys):
+        """A timeout, or a config git cannot parse, is not "this clone names no
+        machine": that answer offered `git config espalier.machine <name>`,
+        which in a worktree renames the clone, or minted from the shared range
+        under a false note (both reviewers, TP-701 r6, driven). Dies to: the
+        unread read taken for unnamed."""
+        t = _seat_tree(tmp_path)
+        channel = _seat_channel(_mail_module(), "win", others=("air",))
+        channel.MACHINE_UNREAD = "git config could not be read"
+        channel.machine_setting = lambda root, **kw: (
+            None, "git config could not be read (git config took longer than 10s), so no machine is named")
+        monkeypatch.setattr(lr, "_MAIL", channel)
+        before = t["ledger"].read_text(encoding="utf-8")
+        assert _file_minted(lr, t) == 2
+        err = capsys.readouterr().err
+        assert "could not be read" in err and "names no machine" not in err, err
+        assert "git config espalier.machine <name>" not in err
+        assert t["ledger"].read_text(encoding="utf-8") == before
+
     def test_the_refusal_names_the_steps_the_channel_gives(self, lr, tmp_path, monkeypatch, capsys):
         """The mint refusal prints mail.naming_steps, the one owner of the
         by-hand steps (core.bare first on a bare clone; TP-701 r5). Dies to:
