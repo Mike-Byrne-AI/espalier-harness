@@ -95,6 +95,7 @@ tools/cc/mail.py
 tools/cc/read_summary.py
 tools/cc/record_merge.py
 tools/cc/reflect_protocol.py
+tools/cc/seat.py
 tools/cc/session_resume.py
 tools/cc/session_summary.py
 tools/cc/ship.py

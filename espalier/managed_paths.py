@@ -118,6 +118,12 @@ STANDARD_MANAGED_TOOLS = [
     # and it imports _json_safe.py (in this set); without it an adopter's
     # `session_catch_up = true` gets a warning and nothing else.
     "tools/cc/checkout_sync.py",
+    # The seat driver: lists a clone's seats, launches a session in one (a
+    # worktree created and named first, an occupied checkout refused) and
+    # retires one (its claims released under its own name, then the removal
+    # under checkout_sync's rules). Imports checkout_sync.py and mail.py, both
+    # in this set; an operator verb, run by hand and named in the protocol.
+    "tools/cc/seat.py",
     # Sibling-module mirror of espalier/_blueprint_limits.py. Imported by
     # cognitive_blueprint.py AND tools/cc/hooks/post_compact.py; both raise
     # ModuleNotFoundError on a fresh init if it is not deployed alongside.
