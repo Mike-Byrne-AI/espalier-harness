@@ -656,6 +656,67 @@ def _release_claims(root: Path, lane: str, text: str) -> None:
               f"`python tools/cc/mail.py send --type release --lane {lane}` closes them")
 
 
+#: The liveness oracle (``tools/cc/checkout_sync.py``), loaded by path on first
+#: use and never at import, as the mail channel is: a tree without it ships as
+#: it did before. Tests stand an oracle in here.
+_SYNC = None
+
+
+def _sync_module():
+    global _SYNC
+    if _SYNC is None:
+        path = Path(__file__).resolve().parent / "checkout_sync.py"
+        if not path.is_file():
+            return None
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_ship_checkout_sync", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["_ship_checkout_sync"] = module  # registered before exec (3.14)
+        spec.loader.exec_module(module)
+        _SYNC = module
+    return _SYNC
+
+
+def shared_checkout(root: Path) -> tuple[list[str] | None, str]:
+    """``(the live sessions in this checkout, in words; why not)``: the list
+    is None when no oracle can place them by Claude Code's session registry
+    (the markers alone outlive a closed window by hours, so they never stop
+    a push), with the reason. Never raises."""
+    try:
+        sync = _sync_module()
+        if sync is None:
+            return [], ""
+        occ = sync.occupancy(root)
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the reason is said by the caller
+        return None, f"the session registry was not read ({os_error_text(exc)})"
+    if occ.sessions is None or occ.oracle != "registry":
+        return None, occ.note or "only the session markers answered"
+    return [sync.describe_session(row) for row in occ.sessions], ""
+
+
+def _shared_checkout_words(who: list[str]) -> str:
+    return (f"{len(who)} live sessions share this checkout ({'; '.join(who)}): two sessions in one checkout are "
+            "one seat (root CLAUDE.md Core Rule 15), and a push from it ships whatever the other has committed "
+            "here too. End one, or give it a worktree of its own (`python tools/cc/seat.py launch <seat>`), "
+            "then push")
+
+
+def _refuse_a_shared_checkout(root: Path) -> None:
+    """Stop a push from a checkout two or more live sessions share (TP-701
+    B-3). A registry that cannot place them is a note, never a refusal: a push
+    is reversible, and a false refusal under an unreadable registry would stop
+    every seat at once."""
+    who, why = shared_checkout(root)
+    if who is None:
+        _note(f"who else works in this checkout cannot be told ({why}); the push goes ahead -- two sessions "
+              "in one checkout are one seat (Core Rule 15), and only you can see whether that is so here")
+        return
+    if len(who) >= 2:
+        raise Refused(_shared_checkout_words(who))
+
+
 def _refuse_a_marked_record(root: Path) -> None:
     """Stop a push the gate would red in every required cell: a record file
     that carries a merge-conflict marker. Named by file and line, with the
@@ -737,6 +798,11 @@ def preflight() -> int:
     if marked:
         _note(f"`open` will refuse this lane: a record file carries a merge-conflict marker "
               f"({'; '.join(marked)}); resolve the hunk and commit the file whole")
+    who, why = shared_checkout(root)
+    if who is None:
+        _note(f"who else works in this checkout cannot be told ({why}); `open` will push anyway")
+    elif len(who) >= 2:
+        _note(f"`open` will refuse this lane: {_shared_checkout_words(who)}")
     rc, untracked, _ = _git("status", "--porcelain", "--untracked-files=all", cwd=str(root))
     scratch = [ln[3:] for ln in untracked.splitlines() if ln.startswith("?? ")]
     if scratch:
@@ -852,6 +918,7 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         raise Refused(f"origin/{branch} has {behind} commit(s) this HEAD does not reach: merge them in "
                       f"(git merge origin/{branch}); never rebase or force-push a pushed lane")
     _refuse_a_marked_record(root)
+    _refuse_a_shared_checkout(root)
     prs = _open_prs(str(root))
     refusal = red_base_refusal(base, branch, prs, str(root))
     if refusal:
@@ -1123,7 +1190,8 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
         raise Refused(f"origin/{branch} has {behind} commit(s) this HEAD does not reach: merge them in "
                       f"(git merge origin/{branch}); never rebase or force-push a pushed lane")
     # Before this path's push; the no-pull-request path above returns through
-    # open_pr, which asks itself, and the rebind below asks and stands down.
+    # open_pr, which asks both itself, and the rebind below asks and stands down.
+    _refuse_a_shared_checkout(root)
     _wiring_note(root)
     # The handoff's push should leave the pull request mergeable, the same as a
     # first push would: merge ITS base in first when the lane would conflict.
@@ -1151,6 +1219,7 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
 
 def catch_up() -> int:
     root = repo_root()
+    _refuse_a_shared_checkout(root)   # both paths below change this checkout's lane and push or pull it
     _wiring_note(root)
     branch = current_branch()
     pr = _require_open_pr(branch)

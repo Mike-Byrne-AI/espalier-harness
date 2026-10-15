@@ -311,8 +311,8 @@ def _refuse_occupied(target: Target, *, unchecked: bool) -> None:
 def _include_entries(root: Path) -> list[str]:
     """The paths ``.worktreeinclude`` names (comments and blanks left out)."""
     try:
-        text = (root / INCLUDE_FILE).read_text(encoding="utf-8")
-    except OSError:  # fail-open: ok deliberate -- no list, nothing beyond the tracked files is copied (Claude Code's own behaviour without it)
+        text = (root / INCLUDE_FILE).read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):  # fail-open: ok deliberate -- no list, nothing beyond the tracked files is copied (Claude Code's own behaviour without it)
         return []
     return [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
 

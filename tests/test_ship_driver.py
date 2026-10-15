@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -53,10 +54,23 @@ def _load():
     return mod
 
 
+def _oracle(rows: list[dict], *, oracle: str = "registry", note: str = ""):
+    """A stand-in for checkout_sync's occupancy oracle: ``rows`` are the
+    sessions it places in the checkout (None: it cannot tell)."""
+    return types.SimpleNamespace(
+        occupancy=lambda root: types.SimpleNamespace(sessions=rows, oracle=oracle, note=note),
+        describe_session=lambda row: f"pid {row['pid']} ({row['entrypoint']})",
+    )
+
+
 @pytest.fixture
 def ship():
-    """A fresh copy of the script per row: each row replaces its runner."""
-    return _load()
+    """A fresh copy of the script per row: each row replaces its runner, and
+    the liveness oracle reads nobody else in the checkout unless a row says so
+    (the real one reads the box's own session registry)."""
+    mod = _load()
+    mod._SYNC = _oracle([])
+    return mod
 
 
 @pytest.fixture
@@ -2327,6 +2341,94 @@ class TestAShippedLaneReleasesItsClaims:
         with pytest.raises(ship.Refused, match="gh pr create failed"):
             ship.open_pr()
         assert calls == [(tmp_path, "lane/x", "Lane pushed; claims closed.")]
+
+
+# ── TP-701 B-3: a push from a checkout two live sessions share is refused ────
+
+def _two_sessions() -> list[dict]:
+    return [{"pid": 4242, "entrypoint": "cli"}, {"pid": 4343, "entrypoint": "claude-vscode"}]
+
+
+class TestASharedCheckoutStopsThePush:
+    """Two live sessions in one checkout are one seat (root CLAUDE.md Core
+    Rule 15): they share its HEAD, and a push from either ships the other's
+    commits too. ``open``, ``handoff`` onto an open pull request and
+    ``catch-up`` refuse that state before anything moves; ``preflight`` says
+    it. Only Claude Code's own registry can refuse: an unreadable one, or the
+    session markers alone, is a note and the push goes ahead."""
+
+    def test_two_sessions_refuse_open_before_anything_moves(self, ship, tmp_path, forget_guard):
+        _write_guard(tmp_path)
+        ship._SYNC = _oracle(_two_sessions())
+        spawns = _arm(ship, _open_answers(tmp_path))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        said = str(stop.value)
+        assert said.startswith("2 live sessions share this checkout (pid 4242 (cli); pid 4343 (claude-vscode))")
+        assert "Core Rule 15" in said and "seat.py launch <seat>" in said
+        assert spawns.mutations == []
+
+    def test_the_caller_alone_ships(self, ship, tmp_path, forget_guard, capsys):
+        _write_guard(tmp_path)
+        ship._SYNC = _oracle(_two_sessions()[:1])
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert spawns.count(("git", "push")) == 1
+        assert "cannot be told" not in capsys.readouterr().out
+
+    @pytest.mark.parametrize("oracle", [
+        _oracle(None, oracle="", note="Claude Code's session registry could not be read in full"),
+        _oracle(_two_sessions(), oracle="markers", note="Claude Code's session registry could not be read in full"),
+    ], ids=["nobody-can-tell", "markers-alone"])
+    def test_an_answer_the_registry_cannot_give_is_a_note_and_the_push_goes_ahead(
+            self, ship, tmp_path, forget_guard, capsys, oracle):
+        """Dies to: refusing on the markers, which outlive a closed window by
+        hours and would stop every seat at once."""
+        _write_guard(tmp_path)
+        ship._SYNC = oracle
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert spawns.count(("git", "push")) == 1
+        out = capsys.readouterr().out
+        assert "note: who else works in this checkout cannot be told (Claude Code's session registry" in out
+
+    def test_handoff_onto_an_open_pull_request_refuses_before_its_push(self, ship, tmp_path):
+        _toml(tmp_path, "handoff_push = true\n")
+        ship._SYNC = _oracle(_two_sessions())
+        spawns = _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
+        with pytest.raises(ship.Refused, match="2 live sessions share this checkout"):
+            ship.handoff()
+        assert spawns.mutations == []
+
+    def test_catch_up_refuses_before_it_moves_the_lane(self, ship, tmp_path):
+        ship._SYNC = _oracle(_two_sessions())
+        spawns = _arm(ship, _catch_up_answers(tmp_path))
+        with pytest.raises(ship.Refused, match="2 live sessions share this checkout"):
+            ship.catch_up()
+        assert spawns.mutations == []
+
+    def test_preflight_says_open_will_refuse(self, ship, tmp_path, capsys):
+        ship._SYNC = _oracle(_two_sessions())
+        _arm(ship, _preflight_answers(tmp_path))
+        assert ship.preflight() == 0
+        assert "note: `open` will refuse this lane: 2 live sessions share this checkout" in capsys.readouterr().out
+
+    def test_the_real_oracle_is_loaded_by_path_and_reads_the_registry(self, ship, tmp_path, monkeypatch):
+        """No stand-in: the deployed checkout_sync.py beside the script, a
+        registry of two live entries in this checkout. Dies to: an oracle
+        import that fails on a fresh deploy, or a reader of another shape."""
+        ship._SYNC = None
+        monkeypatch.delenv("CLAUDECODE", raising=False)
+        sync = ship._sync_module()
+        assert sync is not None and sync.__file__ == str(SHIP.parent / "checkout_sync.py")
+        cfg = tmp_path / "cfg"
+        (cfg / "sessions").mkdir(parents=True)
+        for pid, entry in ((os.getpid(), "cli"), (os.getppid(), "sdk-cli")):
+            (cfg / "sessions" / f"{pid}.json").write_text(json.dumps(
+                {"pid": pid, "sessionId": f"s{pid}", "cwd": str(tmp_path), "entrypoint": entry}), encoding="utf-8")
+        monkeypatch.setattr(sync, "claude_config_dirs", lambda: [cfg])
+        who, why = ship.shared_checkout(tmp_path)
+        assert why == "" and sorted(who) == sorted([f"pid {os.getpid()} (cli)", f"pid {os.getppid()} (sdk-cli)"])
 
 
 # ── TP-479 B-3: a red base, one open pull request per seat, a stale base ──────
