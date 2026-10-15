@@ -225,11 +225,17 @@ lives. Two lanes filing into one class, or striking two neighbouring rows, then 
 different files and merge clean; they used to meet on neighbouring lines of this file and on
 the roster's tail, and GitHub read every such pair as conflicting until a catch-up (measured on
 the real verbs: two filings after one anchor conflicted on the member row, its index row and
-the roster). Since the fold of 2026-10-14 every row and every probe lives in a file of its own:
-the class tables and Appendix B below keep their header and rule and hold no row, and the
-probes' former roster is `task-packs/probes.d/README.md`. Every tool reads the ledger's
-**view** -- this file with the row files placed in it, built on each read and never written
-back -- so this file alone shows no row:
+the roster). Since the fold of 2026-10-14 every §C class row and every probe lives in a file
+of its own: the class tables below keep their header and rule and hold no row, Appendix B
+holds no class row's index line, and the probes' former roster's prose is
+`task-packs/probes.d/README.md`. A row file names its §C class on its first line, so the rows
+outside the classes -- §1 and §3 to §6 -- stay in this file, and so do the Appendix B index
+lines that remain (§4A's).
+The ledger's tools read its **view** -- this file with the row files placed in it, built on
+each read and never written back -- so this file alone shows no class row. A reader in prose
+is held to the view only where it spells a record's file
+(`tests/test_documented_claims.py::TestEveryDocNamingAFoldedRecordNamesItsFolder`), and a
+reader in code more than one helper away by no check:
 
 ```bash
 python3 tools/cc/_record_fragments.py ledger   # the whole ledger, as every tool reads it

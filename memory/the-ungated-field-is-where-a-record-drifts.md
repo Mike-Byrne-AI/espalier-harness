@@ -68,3 +68,4 @@ its own direct twin walls, on an adopter-reachable path.
    independent audit lanes reached for it and both had to go find a session note
    to do it — which is §C21's lesson again: *a rule whose only home is a tracker
    is a rule that gets re-learned.*
+   <!-- folded-record: ok -- history: a dated session note in the then single file -->

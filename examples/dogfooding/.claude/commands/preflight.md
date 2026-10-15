@@ -272,6 +272,8 @@ costs about Step 2's runtime on each side.
 
 ## Step 8: Ledger claim check (advisory)
 ```bash
+# The ledger file marks a repository that keeps one; the checker reads its rows
+# through the ledger's view, row files under task-packs/ledger.d/ included.
 if [ -f task-packs/FORWARD_LEDGER.md ] && [ -f tools/cc/check_ledger_probes.py ]; then
   PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ answered to python3, python or py -3' >&2; exit 1; }
   $PY tools/cc/check_ledger_probes.py || true   # advisory; see below

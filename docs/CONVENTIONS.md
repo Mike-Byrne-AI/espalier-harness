@@ -2006,7 +2006,10 @@ inventory. Counts are pinned by `tests/_surface_expected.py`
 
 `ESPALIER_MEMORY.md` is the *hot* surface — loaded into every session by
 SessionStart, capped at 120 lines, autopruned. It carries the
-load-bearing index of decisions, patterns, and recent session log.
+load-bearing index of decisions and patterns. The recent session log is one
+file per row under `memory/session-log.d/`, read through
+`tools/cc/_record_fragments.py` and pruned to its own count; the SessionStart
+digest reads it from there.
 
 `memory/` is the *cool* surface — categorized long-form entries that
 don't need to be in the orientation prompt every session.

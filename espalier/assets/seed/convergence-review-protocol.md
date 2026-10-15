@@ -20,8 +20,10 @@ anti-bloat dataflow — verbose rationales never reach the orchestrator chat). T
 machinery lives in `espalier.fan_out_findings` (`FINDING_SCHEMA` +
 `aggregate_findings` + `append_findings_to_corpus`); the cross-round dedup
 source is your repository's forward ledger (`task-packs/FORWARD_LEDGER.md`,
-which `init` seeds: its live rows plus its do-not-rediscover entries), or your
-issue tracker where you keep the work there instead.
+which `init` seeds: its live rows plus its do-not-rediscover entries, with each
+class row a file of its own under `task-packs/ledger.d/` where `espalier.toml`
+sets `ledger_fragments = true`; `python tools/cc/_record_fragments.py ledger`
+prints both as one), or your issue tracker where you keep the work there instead.
 
 ## When to run it
 

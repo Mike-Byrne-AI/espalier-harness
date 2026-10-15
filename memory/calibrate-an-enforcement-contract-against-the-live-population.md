@@ -69,6 +69,7 @@ its verdicts touched none of those rows: **a smoke run over the live artifact pr
 the parsers at scale, it does not prove the branches.** Drive one verdict of every
 kind the tool can emit BEFORE the reviewers see it, then give the fixture every shape
 that drive found — all three blockers were reachable from the author's own chair.
+<!-- folded-record: ok -- history: a 2026-09-20 measurement of the then single file -->
 
 Related: [[skipif-to-marker-drops-filterless-consumers]] (the marker lives in
 conftest, not source) · [[a-packs-prescribed-fix-code-is-a-claim]] ·

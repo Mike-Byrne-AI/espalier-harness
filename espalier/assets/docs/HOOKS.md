@@ -332,8 +332,10 @@ says what it would do; `--apply` does it now.
 continuity surface -- each section gated on the artifact it describes,
 never on repo identity: a one-line `/recall` pointer to whichever
 footgun/failure-mode catalogs the tree actually has, a MEMORY digest
-(identity line + recent-session headlines) once `ESPALIER_MEMORY.md`
-carries dated Session Log rows, and the standing-principles index on the
+(identity line + recent-session headlines) once the Session Log has dated
+rows (one file per row under `memory/session-log.d/` where
+`tools/cc/_record_fragments.py` is deployed, else the table in
+`ESPALIER_MEMORY.md`), and the standing-principles index on the
 self-host repo. The full
 `docs/SHARP_EDGES.md` TOC is no longer injected -- pull sections on
 demand with `/recall <topic>`. The orientation instructions tell Claude
@@ -370,7 +372,7 @@ plan_guard reads this as an open mutation window on source files.
   Yours? Continue it: `<python> tools/cc/execution_plan.py status`
   A finished task's? Clear it: `<python> tools/cc/execution_plan.py reset` (the record is demoted beside the blueprint cold store)
 
---- MEMORY (recent sessions -- headlines only; read ESPALIER_MEMORY.md for full rows) ---
+--- MEMORY (recent sessions -- headlines only; read memory/session-log.d/ for full rows) ---
 - <date> <your last session's headline> ...
 
 --- STANDING PRINCIPLES (hold these; bodies in docs/STANDING_PRINCIPLES.md) ---
@@ -408,7 +410,8 @@ family whose gate is closed on their tree is never advertised; the list leads
 with the adopter's own text: the root `CLAUDE.md`'s `## ` sections and every
 `.claude/rules/**/*.md`, indexed without configuration wherever the files
 exist, then the documents `recall_sources` declares in `espalier.toml`. The MEMORY digest renders once the
-Session Log has dated rows, so an adopter sees their OWN recent sessions
+Session Log has dated rows (files under `memory/session-log.d/`, or the table),
+so an adopter sees their OWN recent sessions
 from their first `/handoff` on; until then the orientation carries a
 "Consult ESPALIER_MEMORY.md" fallback line instead. STANDING PRINCIPLES
 renders wherever `docs/STANDING_PRINCIPLES.md` has sections, which `init`

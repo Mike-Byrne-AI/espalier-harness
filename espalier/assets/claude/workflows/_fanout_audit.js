@@ -267,8 +267,9 @@ const persistPayload = JSON.stringify({
 // reports/) is this round's record, immutable and cited by the convergence ledger;
 // finding_ledger.append_summary writes the per-run structured row the convergence-critic
 // reads. The shared cross-round dedup corpus was retired 2026-09-21: a survivor reaches
-// task-packs/FORWARD_LEDGER.md only through a verify pass that files a row, a section-6
-// do-not-rediscover entry, or nothing -- never by append.
+// the forward ledger (task-packs/FORWARD_LEDGER.md, or a row file under task-packs/ledger.d/
+// where the repository keeps rows as files) only through a verify pass that files a row,
+// a section-6 do-not-rediscover entry, or nothing -- never by append.
 const persistCmd =
   `PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }\n` +
   `$PY -c '\n` +

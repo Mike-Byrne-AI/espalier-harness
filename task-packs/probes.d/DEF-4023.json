@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4023",
+ "subject": "tests/test_contracts.py",
+ "cmd": "python3 -c \"import ast,pathlib; t=ast.parse(pathlib.Path('tests/test_contracts.py').read_text(encoding='utf-8')); print(sum(1 for n in ast.walk(t) if isinstance(n,ast.ClassDef) and ('ImportTests' in n.name or 'ImportsTests' in n.name)))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "39daca72c739",
+ "text_sha": "0098170d1d23",
+ "verified_2026_10_15": "STILL_OPEN (re-pinned value unchanged on 2026-10-15: the filing probe counted a class name as text in its own subject file, the paperwork-satisfiable shape the probe ratchet refuses; re-pointed at the AST's class definitions)"
+}

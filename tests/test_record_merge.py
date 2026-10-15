@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -1089,6 +1090,226 @@ class TestTwoMachines:
         assert rm.probe_conflicts(win, "origin/main", run=_real_run(rm)) == ["ESPALIER_MEMORY.md"]
         assert _git(win, "rev-parse", "HEAD").stdout == before
         assert _git(win, "status", "--porcelain").stdout == ""
+
+
+# ── real git: /ship's record-finish line, as the body spells it ──────────────
+
+SHIP_BODY = REPO_ROOT / ".claude" / "commands" / "ship.md"
+
+
+def _ship_finish_code() -> str:
+    """The code of the one ``python -c`` line ship.md hands a session whose
+    catch-up conflicts on a hand file and a record file, split as a POSIX shell
+    splits it: the instruction itself is what runs, never a retyped copy."""
+    import shlex
+
+    lines = [ln.strip() for ln in SHIP_BODY.read_text(encoding="utf-8").splitlines()
+             if ln.strip().startswith("python -c ") and "record_merge" in ln]
+    assert len(lines) == 1, f"ship.md should carry exactly one record-finish line, found {len(lines)}: {lines}"
+    argv = shlex.split(lines[0])
+    assert argv[:2] == ["python", "-c"] and len(argv) == 3, argv
+    return argv[2]
+
+
+def _hand_plus_record(rm, two_machines, *, roster: bool) -> tuple[Path, str, str]:
+    """A lane and its base that conflict on a hand file (``README.md``, added
+    on both sides) and one record file (two handoffs into the memory file),
+    with ``merge origin/main`` left in progress, this checkout's ``tools/cc``
+    beside it as the line's import expects. ``roster=False`` is this tree
+    since the 2026-10-14 fold: no probes roster file on either side."""
+    mac, win = two_machines["mac"], two_machines["win"]
+    if not roster:
+        _git(mac, "rm", "--quiet", "task-packs/LEDGER_PROBES.json")
+        _git(mac, "commit", "--quiet", "-m", "the fold: the roster becomes files")
+        _git(mac, "push", "--quiet", "origin", "main")
+        _git(win, "pull", "--quiet", "--ff-only", "origin", "main")
+    _git(win, "switch", "--quiet", "-c", "lane/win")
+    for repo, side in ((mac, "mac"), (win, "win")):
+        (repo / "README.md").write_bytes(f"{side}\n".encode("utf-8"))
+        _git(repo, "add", "README.md")
+        _git(repo, "commit", "--quiet", "-m", f"readme on {side}")
+    mac_row = _handoff(mac, "THE MAC LANDED A LANE", "2026-10-05")
+    _git(mac, "push", "--quiet", "origin", "main")
+    win_row = _handoff(win, "THE WINDOWS BOX LANDED A LANE", "2026-10-05")
+    _git(win, "fetch", "--quiet", "origin")
+    # The body's precondition: catch-up refuses the hand file by name.
+    with pytest.raises(rm.Unresolvable, match=r"outside the record files: README\.md"):
+        rm.merge_ref_in(win, "origin/main", run=_real_run(rm))
+    assert _begin_merge(win) == ["ESPALIER_MEMORY.md", "README.md"]
+    return win, mac_row, win_row
+
+
+def _begin_merge(win: Path) -> list[str]:
+    """``git merge origin/main`` left in progress, this checkout's ``tools/cc``
+    beside it (the line's import is relative to the checkout it runs in, and
+    the copy is excluded so status stays strict); the paths git left unmerged."""
+    shutil.copytree(REPO_ROOT / "tools" / "cc", win / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
+    with (win / ".git" / "info" / "exclude").open("a", encoding="utf-8") as fh:
+        fh.write("tools/\n")
+    assert _git(win, "merge", "origin/main", check=False).returncode == 1
+    return sorted(_git(win, "diff", "--name-only", "--diff-filter=U").stdout.split())
+
+
+def _set_heading(repo: Path, heading: str) -> None:
+    """Edit the memory file's prose (its first line), outside every row."""
+    path = repo / "ESPALIER_MEMORY.md"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines[0] = heading
+    path.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+    _git(repo, "commit", "--quiet", "-am", f"memory prose: {heading}")
+
+
+def _no_markers(repo: Path, *rels: str) -> bool:
+    return not any(ln.startswith(("<<<<<<<", ">>>>>>>")) for rel in rels
+                   for ln in _git(repo, "show", f"HEAD:{rel}").stdout.splitlines())
+
+
+def _run_finish_line(repo: Path) -> subprocess.CompletedProcess:
+    code = _ship_finish_code().replace("<base>", "main")
+    return subprocess.run([sys.executable, "-c", code], cwd=repo, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", env=_git_env(), timeout=45)
+
+
+@pytest.mark.contract
+class TestTheShipBodysRecordFinish:
+    """/ship's Step 3, a catch-up that conflicts on a hand file and a record
+    file: resolve the hand file, ``git add`` it, and the body's one line lets
+    the record resolver conclude the merge with the hand resolution in it.
+
+    Red earned on 7afe323: the line listed ``[rm.MEMORY, rm.LEDGER,
+    rm.PROBES]`` whatever conflicted, and ``_resolve_unmerged`` refuses a
+    listed path that is not a content conflict, so with the memory file the
+    only record conflict it raised ``task-packs/FORWARD_LEDGER.md: not a
+    content conflict`` before it reached the roster the fold deleted -- and
+    the body's next step, ``git merge --abort``, threw the staged hand
+    resolution away (DEF-4018). Contract-marked: a later edit to ship.md
+    alone earns the contract slice, which must still run the line."""
+
+    def test_the_line_is_one_argument_in_posix_shells_and_powershell(self):
+        code = _ship_finish_code()
+        # PowerShell 5.1 re-splits a native argument at an embedded double quote,
+        # $ and a backtick expand inside double quotes, a POSIX double quote eats
+        # a backslash, and ! is bash history expansion.
+        assert not [ch for ch in '"$`\\!' if ch in code], code
+        assert code.count("<base>") == 1, code
+
+    @pytest.mark.parametrize("roster", [False, True], ids=["roster-folded", "roster-kept"])
+    def test_a_staged_hand_resolution_rides_the_merge_the_line_concludes(self, rm, two_machines, roster):
+        win, mac_row, win_row = _hand_plus_record(rm, two_machines, roster=roster)
+        (win / "README.md").write_bytes(b"mac\nwin\n")
+        _git(win, "add", "README.md")
+
+        proc = _run_finish_line(win)
+
+        assert proc.returncode == 0, proc.stderr[-800:]
+        assert not (win / ".git" / "MERGE_HEAD").exists()
+        assert _git(win, "rev-parse", "HEAD^2").stdout == _git(win, "rev-parse", "origin/main").stdout
+        assert _git(win, "show", "HEAD:README.md").stdout == "mac\nwin\n"  # the hand resolution kept
+        memory = _git(win, "show", "HEAD:ESPALIER_MEMORY.md").stdout.splitlines()
+        assert mac_row in memory and win_row in memory
+        assert not any(ln.startswith(("<<<<<<<", "=======", ">>>>>>>")) for ln in memory)
+        assert _git(win, "status", "--porcelain").stdout == ""
+
+    def test_an_unstaged_hand_file_is_refused_by_name_and_the_merge_kept(self, rm, two_machines):
+        win, _mac_row, _win_row = _hand_plus_record(rm, two_machines, roster=False)
+
+        proc = _run_finish_line(win)
+
+        assert proc.returncode != 0 and "outside the record files: README.md" in proc.stderr, proc.stderr[-800:]
+        assert (win / ".git" / "MERGE_HEAD").exists()
+        assert sorted(_git(win, "diff", "--name-only", "--diff-filter=U").stdout.split()) == [
+            "ESPALIER_MEMORY.md", "README.md"]
+        # Settled by hand and staged, the same line then concludes it.
+        (win / "README.md").write_bytes(b"mac\nwin\n")
+        _git(win, "add", "README.md")
+        assert _run_finish_line(win).returncode == 0
+        assert not (win / ".git" / "MERGE_HEAD").exists()
+
+    def test_a_record_file_staged_with_its_markers_is_refused_until_unresolved(self, rm, two_machines):
+        """``git add -A`` after the hand file stages the memory file with its
+        markers, so git no longer reports it unmerged: the line must refuse,
+        not commit the markers (failure-mode review, driven)."""
+        win, mac_row, win_row = _hand_plus_record(rm, two_machines, roster=False)
+        head = _git(win, "rev-parse", "HEAD").stdout
+        (win / "README.md").write_bytes(b"mac\nwin\n")
+        _git(win, "add", "-A")
+
+        proc = _run_finish_line(win)
+
+        assert proc.returncode != 0 and "staged with a conflict marker: ESPALIER_MEMORY.md" in proc.stderr, \
+            proc.stderr[-800:]
+        assert (win / ".git" / "MERGE_HEAD").exists() and _git(win, "rev-parse", "HEAD").stdout == head
+        _git(win, "update-index", "--unresolve", "--", "ESPALIER_MEMORY.md")
+        assert _run_finish_line(win).returncode == 0
+        memory = _git(win, "show", "HEAD:ESPALIER_MEMORY.md").stdout.splitlines()
+        assert mac_row in memory and win_row in memory and _no_markers(win, "ESPALIER_MEMORY.md")
+        assert _git(win, "show", "HEAD:README.md").stdout == "mac\nwin\n"
+
+    def test_a_shape_refusal_after_a_rewrite_keeps_the_merge_and_the_next_run_concludes(self, rm, two_machines):
+        """The resolver writes the roster and the ledger before it reads the
+        memory file's prose conflict and refuses it. The merge, the staged hand
+        file and the two rewritten files' conflicts must all survive, so the
+        memory file merged by hand and staged alone lets the next run conclude
+        with both lanes' rows (the body's third refusal kind)."""
+        mac, win = two_machines["mac"], two_machines["win"]
+        _git(win, "switch", "--quiet", "-c", "lane/win")
+        for repo, side, ids in ((mac, "mac", ("DEF-1", "DEF-2", "DEF-3")), (win, "win", ("DEF-1", "DEF-2", "DEF-4"))):
+            (repo / "README.md").write_bytes(f"{side}\n".encode("utf-8"))
+            _git(repo, "add", "README.md")
+            _git(repo, "commit", "--quiet", "-m", f"readme on {side}")
+            _file_rows(repo, *ids)
+            _set_heading(repo, f"# Project Memory ({side})")
+        _git(mac, "push", "--quiet", "origin", "main")
+        _git(win, "fetch", "--quiet", "origin")
+        assert _begin_merge(win) == ["ESPALIER_MEMORY.md", "README.md", "task-packs/FORWARD_LEDGER.md",
+                                     "task-packs/LEDGER_PROBES.json"]
+        (win / "README.md").write_bytes(b"mac\nwin\n")
+        _git(win, "add", "README.md")
+
+        proc = _run_finish_line(win)
+
+        assert proc.returncode != 0 and "ESPALIER_MEMORY.md" in proc.stderr, proc.stderr[-800:]
+        assert (win / ".git" / "MERGE_HEAD").exists()
+        assert "README.md" in _git(win, "diff", "--cached", "--name-only").stdout.split()
+        assert "task-packs/FORWARD_LEDGER.md" in _git(win, "diff", "--name-only", "--diff-filter=U").stdout.split()
+        (win / "ESPALIER_MEMORY.md").write_bytes(_git(win, "show", ":2:ESPALIER_MEMORY.md").stdout.encode("utf-8"))
+        _git(win, "add", "ESPALIER_MEMORY.md")
+        assert _run_finish_line(win).returncode == 0
+        assert not (win / ".git" / "MERGE_HEAD").exists()
+        ledger = _git(win, "show", "HEAD:task-packs/FORWARD_LEDGER.md").stdout
+        assert "`DEF-3`" in ledger and "`DEF-4`" in ledger
+        assert _no_markers(win, "ESPALIER_MEMORY.md", "task-packs/FORWARD_LEDGER.md", "task-packs/LEDGER_PROBES.json")
+        assert _git(win, "show", "HEAD:README.md").stdout == "mac\nwin\n"
+
+    def test_a_row_file_both_sides_wrote_is_refused_by_name_and_one_side_kept(self, rm, two_machines):
+        """Two writers on one row file: the resolver refuses it by name before
+        it writes anything; one side kept by hand, the line concludes (the
+        body's second refusal kind)."""
+        mac, win = two_machines["mac"], two_machines["win"]
+        _git(win, "switch", "--quiet", "-c", "lane/win")
+        row = "task-packs/ledger.d/DEF-9.md"
+        for repo, side in ((mac, "mac"), (win, "win")):
+            (repo / "task-packs" / "ledger.d").mkdir()
+            (repo / row).write_bytes(f"{side}\n".encode("utf-8"))
+            _git(repo, "add", row)
+            _git(repo, "commit", "--quiet", "-m", f"a row file on {side}")
+        mac_row = _handoff(mac, "THE MAC LANDED A LANE", "2026-10-05")
+        _git(mac, "push", "--quiet", "origin", "main")
+        win_row = _handoff(win, "THE WINDOWS BOX LANDED A LANE", "2026-10-05")
+        _git(win, "fetch", "--quiet", "origin")
+        assert _begin_merge(win) == ["ESPALIER_MEMORY.md", row]
+
+        proc = _run_finish_line(win)
+
+        assert proc.returncode != 0 and "one writer per name" in proc.stderr and row in proc.stderr, \
+            proc.stderr[-800:]
+        assert (win / ".git" / "MERGE_HEAD").exists()
+        _git(win, "checkout", "--ours", "--", row)
+        _git(win, "add", row)
+        assert _run_finish_line(win).returncode == 0
+        assert _git(win, "show", f"HEAD:{row}").stdout == "win\n"
+        memory = _git(win, "show", "HEAD:ESPALIER_MEMORY.md").stdout.splitlines()
+        assert mac_row in memory and win_row in memory
 
 
 # ── real git: two lanes writing fragments (TP-479 Wave C) ─────────────────────
