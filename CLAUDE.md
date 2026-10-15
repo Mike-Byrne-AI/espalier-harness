@@ -30,7 +30,8 @@ read of the handoff (pulling full MEMORY/footgun detail on demand via
 `/recall`), not a full-file read. Run `/context-load` explicitly only
 to re-orient mid-session, after PostCompact, or to recover from a
 DEGRADED surface state (per `tools/cc/session_resume.py`). ESPALIER_MEMORY.md
-has project context and session history.
+has project context; the session history is one file per row under
+`memory/session-log.d/`.
 
 **No banner means no hooks.** If this session did not open with the SessionStart
 banner, the hooks did not load: say so in your first reply and make no edits

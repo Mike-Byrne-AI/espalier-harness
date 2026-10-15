@@ -57,12 +57,16 @@ Flag hooks referencing paths that no longer exist.
 - ESPALIER_MEMORY.md lean and current (the harness caps it at 120 lines)
 - docs/CONVENTIONS.md matches actual code patterns (run `/analyze` if uncertain)
 - docs/SHARP_EDGES.md covers real footguns (not generic advice)
-- Session log current (last 5 rows)
+- Session log current: its newest rows are recent (one file per row under
+  `memory/session-log.d/` where `tools/cc/_record_fragments.py` is deployed, else
+  the Session Log table in ESPALIER_MEMORY.md; `python tools/cc/_record_fragments.py rows`
+  prints either newest first)
 
 ```bash
 for f in ESPALIER_MEMORY.md docs/CONVENTIONS.md docs/SHARP_EDGES.md docs/CHEAT-SHEET.md docs/TASK_RECIPES.md; do
   [ -f "$f" ] && echo "$f: $(git log -1 --format='%ar' -- $f 2>/dev/null)" || echo "$f: MISSING"
 done
+[ -d memory/session-log.d ] && echo "memory/session-log.d/: $(git log -1 --format='%ar' -- memory/session-log.d 2>/dev/null)"
 wc -l ESPALIER_MEMORY.md 2>/dev/null
 ```
 

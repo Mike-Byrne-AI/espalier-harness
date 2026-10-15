@@ -20,6 +20,7 @@ mechanistic, and had survived several convergence rounds unchallenged. Driven, i
 problems at all: a right-hand anchor on one literal, five target character-class
 narrowings, and a **tier-placement policy decision**. Two members matched *correctly* —
 no parser change reaches a correct match.
+<!-- folded-record: ok -- history: the section C9 row as it stood in the file -->
 
 **Why the ledger's own structure did not catch it.** The class stanza asks *"what single
 change closes every member?"*, which is the right question, and a plausible answer to it

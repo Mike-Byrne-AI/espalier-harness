@@ -269,6 +269,7 @@ A pack backlog with **no hard `Depends on:` lines** is still not order-free. A m
 A **file-overlap map + a source-reading judge** catches all four; the symbol map missed every one (07-24 runbook `wf_28216ecc`: 1 MUST-order + 5 shared-container pairs found, 0 by the symbol map). Discipline: for any shared-container pair, **reconcile-on-second-land** — re-read the shared file at HEAD and integrate; never author pack N+1 against a base that predates pack N's landed edit. Rebase-blind authoring is exactly what unattended / maintenance-mode runs skip. This is a **class, not an instance**: TP-131's "no file-overlap with TP-130/132/133/134" claim was itself false (a reframe-sentence collision the mechanical check couldn't see), two waves before the 07-24 finding.
 
 **The data-loss face — a wholesale-REPLACE pack drops concurrent APPENDs.** A pack that REPLACES a gitignored tracked-state file wholesale from a pre-staged snapshot (TP-349's `FORWARD_LEDGER.md` reflatten) silently drops every APPEND that landed after the snapshot was cut — and there is **no git undo** because `task-packs/` is gitignored+local. Such a pack must (1) land STRICTLY LAST, (2) re-derive from the LIVE file, not the snapshot, (3) carry a mandatory concurrency-reconciliation step + a presence-grep pass criterion. Both faces trace to the same root: "independently landable" describes each pack as a valid standalone commit, not the order in which they may safely land.
+<!-- folded-record: ok -- history: TP-349's reflatten of the then single file -->
 
 **Authoring corollary — number collisions are routine; key deps on FILENAME.** Two `TP-337`s and two `TP-328`s have both existed. The driver halts mechanically on an ambiguous token (`docs/AUTONOMOUS_EXECUTION.md` "Ambiguous-token halt") and `task-packs/CLAUDE.md` pins the `TP-<n>-<slug>` filename format — but that mechanical guard fires only at driver *dispatch*. At *authoring* time it is on you: when a pack's prose cites "TP-316" as a dependency it may resolve to two files, so write every dep/chain reference by filename.
 
@@ -310,9 +311,12 @@ inside the unit that was reading that runbook. It surfaced only because the
 operator asked whether the findings had actually been *filed*.
 
 **The rule:** the moment a finding is durable, write it to a tracked home —
-`FORWARD_LEDGER.md` for owed work, `memory/` for accumulated judgment,
-`docs/FAILURE_MODES.md` for an adopter-facing class, `CHANGELOG.md` for what
-shipped. Keep using the pack for working state, but treat anything you would be
+the forward ledger for owed work (`python tools/cc/ledger_row.py file`, which mints
+the id and, where `ledger_fragments = true`, writes the row to
+`task-packs/ledger.d/<id>.md` and its probe to `task-packs/probes.d/`; never a row
+typed into `FORWARD_LEDGER.md` by hand), `memory/` for accumulated judgment,
+`docs/FAILURE_MODES.md` for an adopter-facing class, the changelog for what
+shipped (a lane's own file under `changelog.d/` where `changelog_fragments = true`). Keep using the pack for working state, but treat anything you would be
 sorry to lose as *not yet recorded* until it lands somewhere `git` can see.
 
 ## Pack pre-flights are tree-sensitive — a batched unit pre-flight measures a tree that will not exist

@@ -32,12 +32,15 @@ README so OSS visitors can preview exactly what `init` produces:
   build commands.
 - [`ESPALIER_MEMORY.template.md`](ESPALIER_MEMORY.template.md) — the project-memory
   skeleton (~30 lines): repo context, decisions table (empty), patterns
-  table (empty), session log with pruning policy.
+  table (empty), session log with pruning policy (a table that stays frozen
+  where `tools/cc/_record_fragments.py` is deployed: `/handoff` then writes each
+  row as a file of its own under `memory/session-log.d/`).
 
 These differ deliberately from the espalier-harness repo's own root
 `CLAUDE.md` and `ESPALIER_MEMORY.md`, which are the harness's working documents
 for self-hosting (richer hook tables, full agent roster, maintenance
-mode docs, session log entries). The deploy templates are a clean
+mode docs; its session log entries are files of their own under
+`memory/session-log.d/`). The deploy templates are a clean
 starting point for *user* repos using espalier as a tool.
 
 To preview the templates without going through `init`:

@@ -7,7 +7,9 @@ Session resume and degraded-state recovery guidance.
 The SessionStart hook auto-runs the equivalent of this command at every
 session begin: the context block carries a one-line `/recall` pointer to
 whichever footgun/failure-mode catalogs **this repo actually has**, a MEMORY
-digest once `ESPALIER_MEMORY.md` carries dated Session Log rows, and the
+digest once the Session Log has dated rows (one file per row under
+`memory/session-log.d/`, or the table in `ESPALIER_MEMORY.md` on a tree that
+still keeps one), and the
 standing-principles index on the self-host repo — plus orientation
 instructions. Each section is gated on its own artifact, so the banner
 describes your tree rather than the harness's. And Claude
@@ -31,8 +33,10 @@ prints recovery information and safe next actions.
 2. Re-orient from whatever continuity the banner actually injected — the
    blueprint always, plus a GOAL section and a MEMORY digest **if this repo
    keeps them** (the goal snapshot is local and gitignored; the digest renders
-   once `ESPALIER_MEMORY.md` has dated Session Log rows). Pull full MEMORY
-   rows or a relevant footgun section on demand with `/recall <topic>` — do NOT
+   once the Session Log has dated rows -- files under `memory/session-log.d/`,
+   or the `ESPALIER_MEMORY.md` table where a tree keeps one). Pull full Session
+   Log rows with `python tools/cc/_record_fragments.py rows` (newest first), and
+   a relevant footgun section on demand with `/recall <topic>` — do NOT
    full-read ESPALIER_MEMORY.md or the SHARP_EDGES / FAILURE_MODES catalogs.
 3. Do NOT re-litigate prior blueprint decisions unless new evidence appears.
 4. Open with a brief, provisional first-thoughts read of the continuity — what
