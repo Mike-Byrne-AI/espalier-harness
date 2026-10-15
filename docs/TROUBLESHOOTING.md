@@ -447,7 +447,7 @@ file makes `espalier audit .` report it as divergent, so prefer
 
 Claude Code's Bash sandbox is a boundary the operating system enforces around
 the shell commands Claude runs and every process they start. It is off by
-default, it covers shell commands only (the `Write`, `Edit` and
+default, it covers shell commands only (the `Read`, `Write`, `Edit` and
 `NotebookEdit` tools, MCP servers and hooks run outside it), it runs on
 macOS, Linux and WSL2, and there is none on native Windows. Where it is on,
 the harness can stand behind it, and this is what that posture refuses.
@@ -482,22 +482,33 @@ path, by any process: a `sed -i` on a hook, a `git pull`, `merge`, `rebase`
 or `checkout` that touches `tools/cc/` (it stops with `unable to unlink old`,
 measured on macOS), `espalier upgrade --execute` over the hook files or
 `.claude/settings.json`, and on the source tree the two `sync_*` scripts.
-Any read of a secret path, by any process: your own test suite's dotenv
-loader included. The dotenv template files (`.env.example` and the other
-suffixes the guard allows) are re-opened by `allowRead` entries derived from
-the guard's own suffix tuple, under the sandbox's narrower-allow rule for
-reads; that pairing is not yet driven on a live sandbox, and if an exact
-allow turns out not to narrow a glob deny, the glob stays and this page says
-so instead.
+Any read of a secret path by its name, by any process: your own test
+suite's dotenv loader included. The dotenv template files (`.env.example`
+and the other suffixes the guard allows) are re-opened by `allowRead`
+entries derived from the guard's own suffix tuple, under the sandbox's
+narrower-allow rule for reads.
+
+Measured on macOS (Claude Code 2.1.299, reading with `head` and `cat`):
+every path on the guard's secret list was refused at the project root and
+one directory down (the dotenv file three down as well), including a dotenv
+file created after the session started, and the template files read with
+the `allowRead` entries and were refused without them. Not measured: Linux
+and WSL2, where Claude Code expands a read entry to the paths it matches, so
+a secret file created after that may be readable; and a command that
+renames or links a secret file before reading it.
+
 Outside the project tree the posture reaches nothing (`~/.aws/credentials`
 is Claude Code's own `sandbox.credentials` setting). Run the refused
 command from a terminal outside the session, or let the unsandboxed retry
-take it: with the default `allowUnsandboxedCommands`, Claude re-runs a
-refused command outside the sandbox without a prompt under
-`bypassPermissions`, which makes the posture a one-retry speed bump; set it
-to `false` in your user settings (`~/.claude/settings.json`) to make the
-refusal hold, and then run those commands outside the session. A user-scope
-`false` holds against a project's `true`.
+take it: with the default `allowUnsandboxedCommands`, a command Claude asks
+to run outside the sandbox, first or after a refusal, runs without a prompt
+under `bypassPermissions` (measured on macOS for writes and for reads), so
+the posture is a speed bump Claude can step around in one call. Set it to
+`false` in your user settings (`~/.claude/settings.json`) to make the
+refusal hold (measured with `--settings`, which ranks with user settings:
+Claude Code then ignores the request to run outside the sandbox), and then
+run those commands outside the session. A user-scope `false` holds against
+a project's `true`.
 
 **Reading it.** `python -m espalier doctor .` says which state the tree is
 in: no sandbox on native Windows (the after-check and the guard's path check
@@ -511,7 +522,9 @@ Doctor reads the project, local and user files; a managed settings file or
 **What it is not.** A replacement for `write_guard`. Measured on macOS, a
 `denyWrite` path refuses shell writes and `git checkout` and not the `Write`
 tool, so the guard's path check on the file tools stays the layer there.
-`denyRead` itself has not been driven yet.
+Measured the same way, `denyRead` refuses shell reads and not the `Read`
+tool, which read a denied dotenv file with the sandbox on, so the guard's
+read deny stays the layer for `Read`.
 
 ---
 
