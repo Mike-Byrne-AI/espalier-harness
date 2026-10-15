@@ -4,8 +4,8 @@
  "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda t,c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":t,\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));q=chr(34);print(\"bash_eval=\"+r(\"Bash\",\"eval \"+q+\"cat .env\"+q)+\" ps_iex=\"+r(\"PowerShell\",\"iex \"+q+\"Get-Content .env\"+q)+\" ps_pwsh=\"+r(\"PowerShell\",\"pwsh -Command \"+q+\"Get-Content .env\"+q))'",
  "open_value": "bash_eval=allow ps_iex=allow ps_pwsh=allow",
  "why_not": null,
- "row_sha": "419030164f7e",
- "text_sha": "f9187b212d61",
+ "row_sha": "dde2a7facc8a",
+ "text_sha": "bcfb08cbc201",
  "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)",
- "verified_2026_10_15": "STILL_OPEN (re-pinned value unchanged on 2026-10-15: re-pinned to name native Windows as the remaining surface now that the sandbox posture (TP-476 wave B-1, lane/sandbox-posture) lands denyRead for the dotenv paths on macOS, Linux and WSL2 where the sandbox is on; the parser gap stays open for native Windows and for a host with the sandbox off or the posture unwritten; the probe and its value unchanged (wave C-1's deferred half))"
+ "verified_2026_10_15": "STILL_OPEN (re-pinned value unchanged on 2026-10-15: both reviews of lane/sandbox-posture found the first re-pin overclaiming: it said the sandbox refuses the read where only denyWrite was measured, and named no condition; the sentence now names the retry setting, the project-tree limit, the template-suffix divergence and that denyRead is not yet driven, so a reader sees the surface still live on macOS and Linux under default settings; the probe and its value unchanged)"
 }
