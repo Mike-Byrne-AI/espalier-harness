@@ -253,7 +253,9 @@ class TestLaunch:
         assert _out(path, "config", "--worktree", "--get", "espalier.machine") == "box-new"
         assert (path / ".claude" / "settings.json").read_bytes() == b'{"hooks": {}}\n'
         (call,) = no_claude
-        assert call["argv"] == ["/fake/bin/claude", "--model", "x"] and Path(call["cwd"]) == path
+        # The operator's arguments pass through unchanged; the first message rides last.
+        assert call["argv"][:3] == ["/fake/bin/claude", "--model", "x"] and Path(call["cwd"]) == path
+        assert call["argv"][3:] == [seat.compose_brief(clone, "box-new", path).text]
         env = call["env"]
         assert "ESPALIER_MAINTENANCE_MODE" not in env and "CLAUDE_CODE_SESSION_ID" not in env
         assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
@@ -278,8 +280,9 @@ class TestLaunch:
         monkeypatch.chdir(clone)
         assert seat.main(["launch", "box", "--print", "--", "--model", "o p"]) == 0
         assert no_claude == []
-        out = capsys.readouterr().out.strip().splitlines()[-1]
-        assert "claude" in out and ("'o p'" in out)
+        # The first message spans two lines inside its quotes; claude's line is its first.
+        out = next(line for line in capsys.readouterr().out.splitlines() if "claude" in line)
+        assert "'o p'" in out and "You are seat box" in out
         assert seat.split_claude_args(["launch", "x", "--", "--print"]) == (["launch", "x"], ["--print"])
 
     def test_names_that_are_no_seat_are_refused(self, seat, clone, tmp_path):
@@ -402,6 +405,136 @@ class TestLaunch:
         registry(feat)
         with pytest.raises(seat.Refused, match="is occupied"):
             seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=True, print_only=True)
+
+
+# -- brief ---------------------------------------------------------------------------
+
+#: The worker tick as the operator pasted it on 2026-10-15 18:56Z (mail note
+#: 215fbb, verbatim): the self-host render must reproduce it byte for byte.
+_OPERATOR_TICK = (
+    "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
+    "yours, in this order: your own open PR red, in conflict or stale (fix it, or ship.py catch-up); a new "
+    "assign or note from air; continue your current lane through its full procedure (plan, red-team both "
+    "reviewers on a snapshot clone, one fix batch, the tier the diff earns with --base origin/main, one open PR "
+    "per seat, every step listed with its evidence in the PR body; a skipped step is a stop); then your next "
+    "assigned job. STOP and send air one request, then only re-read mail until it is answered, on anything not "
+    "green: a red you cannot fix in two attempts, a choice the assign does not settle, a refusal you cannot "
+    "resolve, a conflict outside your own files, anything that is the operator's decision. Never unassigned "
+    "work, never another seat's branch. A quiet tick is one line."
+)
+
+
+def _dispatcher(clone: Path, value: str) -> None:
+    (clone / "espalier.toml").write_text(f"dispatcher = {value}\n", encoding="utf-8")
+
+
+def _holds(path: Path, *rels: str) -> None:
+    for rel in rels:
+        (path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (path / rel).write_bytes(b"x\n")
+
+
+class TestBrief:
+    """B-7: a seat's first message is composed by the tool, never pasted.
+    Dies to: the self-host render drifting from the operator's tick, a form
+    naming a protocol home its checkout does not hold, or a double quote
+    (Windows PowerShell 5.1 splits a native argument there)."""
+
+    def test_a_worker_on_this_repository_gets_the_operators_tick_verbatim(self, seat, clone):
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "memory/parallel-work-protocol.md", "docs/WORKFLOW.md", "scripts/proof_tier.py")
+        brief = seat.compose_brief(clone, "box-feat", feat)
+        first, loop = brief.text.split("\n")
+        assert brief.role == "worker" and loop == brief.loop == _OPERATOR_TICK
+        assert first.startswith("You are seat box-feat, a worker under the dispatcher air (Core Rule 15, "
+                                "memory/parallel-work-protocol.md). Orient from the banner, then run /inbox")
+        assert first.endswith("Then start the worker loop on the next line with no further message from the operator.")
+
+    def test_an_adopter_worker_is_pointed_at_what_its_checkout_holds(self, seat, clone):
+        _dispatcher(clone, '"hub"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "docs/WORKFLOW.md")
+        seeded = seat.compose_brief(clone, "box-feat", feat)
+        assert "a worker under the dispatcher hub (docs/WORKFLOW.md, Parallel seats)." in seeded.text
+        assert "the proof the change earns (/implement-task, step 7)" in seeded.loop and "--base" not in seeded.text
+        assert "note from hub;" in seeded.loop and "send hub one request" in seeded.loop
+        assert "memory/" not in seeded.text and "Core Rule" not in seeded.text
+        bare = seat.compose_brief(clone, "box-feat", clone / "no-such-checkout")   # the clone holds neither
+        assert "(the /inbox command's body)" in bare.text
+
+    def test_with_no_dispatcher_named_a_worker_answers_to_the_operator(self, seat, clone):
+        brief = seat.compose_brief(clone, "box", clone)
+        assert brief.role == "worker"
+        assert "a worker under the operator (espalier.toml names no dispatcher)" in brief.text
+        assert "note from the operator;" in brief.loop and "send the operator one request" in brief.loop
+
+    def test_the_dispatcher_seat_gets_the_board_loop_and_its_duties(self, seat, clone):
+        _dispatcher(clone, '"box"')
+        _holds(clone, "memory/parallel-work-protocol.md")
+        brief = seat.compose_brief(clone, "box", clone)
+        first, loop = brief.text.split("\n")
+        assert brief.role == "dispatcher" and loop == brief.loop == "/loop 15m /inbox board"
+        assert first.startswith("You are the dispatcher seat box (Core Rule 15, memory/parallel-work-protocol.md). "
+                                "Orient from the banner, then run /inbox (mark read) and /inbox board.")
+        assert "revert first on a red main" in first and "Decisions stay the operator's." in first
+        assert "model" not in first   # the operator's own setting, never the template's
+        _holds(clone, "cc/GOAL.md")
+        assert "Orient from the banner and cc/GOAL.md's notes, then" in seat.compose_brief(clone, "box", clone).text
+
+    def test_an_unusable_dispatcher_setting_refuses_the_brief_and_launch_names_the_way_past(self, seat, clone,
+                                                                                            registry, no_claude):
+        _dispatcher(clone, '"Not A Name"')   # not lowercase letters, digits and hyphens
+        with pytest.raises(seat.Refused, match="the brief names the dispatcher, and "):
+            seat.compose_brief(clone, "box", clone)
+        _worktree(clone, "feat", name="box-feat")
+        with pytest.raises(seat.Refused, match="--no-brief launches without the first message"):
+            seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=False)
+        assert seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=False,
+                               brief=False) == 0
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude"]
+
+    def test_every_form_is_ascii_with_no_double_quote_and_survives_both_shells(self, seat, clone, tmp_path):
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        worker = seat.compose_brief(clone, "box-feat", clone)
+        _holds(feat, "memory/parallel-work-protocol.md", "scripts/proof_tier.py")
+        self_host = seat.compose_brief(clone, "box-feat", feat)
+        _dispatcher(clone, '"box"')
+        _holds(clone, "cc/GOAL.md")
+        dispatcher = seat.compose_brief(clone, "box", clone)
+        target = seat.Target("box-feat", feat, True, False)
+        for brief in (worker, self_host, dispatcher):
+            assert brief.text.isascii() and '"' not in brief.text, brief.text
+            assert not set(brief.text) & set(seat._PS_DOUBLE)
+            # Both --print forms quote it whole, so it reaches claude as one argument.
+            assert seat.command_line(target, [brief.text], maintenance=False, shell="powershell")
+            line = seat.command_line(target, [brief.text], maintenance=False, shell="posix")
+            assert seat.shlex.split(line.split(" claude ", 1)[1]) == [brief.text]
+
+    def test_launch_passes_the_brief_last_and_no_brief_drops_it(self, seat, clone, registry, no_claude, monkeypatch,
+                                                                capsys):
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        monkeypatch.chdir(clone)
+        assert seat.main(["launch", "box-feat", "--", "--model", "x"]) == 0
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", "--model", "x",
+                                         seat.compose_brief(clone, "box-feat", feat).text]
+        assert seat.main(["launch", "box-feat", "--no-brief", "--", "--model", "x"]) == 0
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", "--model", "x"]
+        assert "no first message" in capsys.readouterr().out
+        assert seat.main(["brief", "box-feat"]) == 0
+        assert capsys.readouterr().out == seat.compose_brief(clone, "box-feat", feat).text + "\n"
+
+    def test_the_banner_line_is_the_short_form_of_the_same_brief(self, seat, clone):
+        _dispatcher(clone, '"box"')
+        worker = seat.compose_brief(clone, "box-feat", None)
+        dispatcher = seat.compose_brief(clone, "box", None)
+        assert seat.brief_line(worker, "box-feat", "py -3") == (
+            "worker seat box-feat: /inbox, then /inbox board, then the worker tick every 10m; "
+            "py -3 tools/cc/seat.py brief box-feat prints the first message")
+        assert seat.brief_line(dispatcher, "box") == (
+            "dispatcher seat box: /inbox, then /inbox board, then the board read every 15m")
 
 
 # -- retire --------------------------------------------------------------------------
