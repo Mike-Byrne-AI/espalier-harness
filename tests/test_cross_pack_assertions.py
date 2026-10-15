@@ -100,6 +100,15 @@ _LOCATION_DIRS = {
     #              population SILENTLY. test_every_pack_subfolder_is_classified
     #              reds if a sibling folder appears that is not named here.
     "Scrapped": ("Scrapped",),
+    # ledger.d/ and probes.d/ -> not pack locations: the forward ledger's row and
+    #              probe fragments, one file per row since the 2026-10-14 fold
+    #              (TP-479a Wave C). Named so the sibling-folder guard knows them;
+    #              the population scan matches TP-* stems only, so a DEF-*.md or a
+    #              probe JSON there adds nothing, and nothing is enforceable there.
+    #              Unlisted, this test was red on every self-host checkout that
+    #              carries the gitignored Done/ from the fold on, and skipped in CI.
+    "ledger.d": ("ledger.d",),
+    "probes.d": ("probes.d",),
 }
 _ENFORCEABLE_LOCATIONS = frozenset({"in-flight"})
 
