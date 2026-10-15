@@ -64,9 +64,10 @@ one clone share its `.git/config` and so its name, and a box is never warned
 about its own claims. So a second session in a worktree of this clone needs
 its own name, through git's per-worktree config. A fresh session in a
 worktree of a named clone gets one at SessionStart (`<name>-<worktree
-directory>`, on the banner's `Seat:` line). On a bare clone, move `core.bare`
-out of the shared config into the main worktree's `config.worktree` (the
-refusal prints its path); a fresh session then names the worktree, turning
+directory>`, on the banner's `Seat:` line). On a bare clone, or one whose
+shared config sets `core.worktree`, move `core.bare` (or `core.worktree`) out
+of the shared config into the main worktree's `config.worktree` (the refusal
+prints its path); a fresh session then names the worktree, turning
 per-worktree config on itself. Elsewhere, by hand, run `git config
 extensions.worktreeConfig true` once, then `git -C <worktree> config
 --worktree espalier.machine <name>-2`. Or run the second session from a clone
@@ -178,8 +179,10 @@ own, and one that cannot be read says so on its own line:
   row of its own, `<name> [<checkout>]`, saying the two write one mail ref and
   giving the two `git -C <worktree>` commands that name it (run anywhere: a
   bare `git config --worktree` run in the checkout the board was read in
-  would rename that one; on a bare clone, no commands for the two config
-  changes, only what they are and git's pages, then the name by its path). A
+  would rename that one; on a bare clone, or one whose shared config sets
+  `core.worktree`, no commands: the one change, that key moved into the main
+  worktree's `config.worktree` at its path, then a fresh session in the
+  worktree, named by its path). A
   main checkout
   answering a name other than its
   clone's says so. A

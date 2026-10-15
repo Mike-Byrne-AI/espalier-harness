@@ -423,22 +423,33 @@ def _registry(tmp_path: Path, *cwds: Path) -> Path:
     return config
 
 
-def _git_for(main: Path, *worktrees: Path, clone: str | None = "air", names: dict | None = None):
+def _git_for(main: Path, *worktrees: Path, clone: str | None = "air", names: dict | None = None,
+             shared: dict | None = None, listing: str | None = None):
     """A runner answering the git reads the seats line makes: this clone's
-    checkouts (``worktree list --porcelain``), the clone's machine name, and
-    the name each checkout answers (``config --get`` with it as cwd; by
-    default the clone's for the main checkout and ``<clone>-<directory>``,
-    SessionStart's naming, for a worktree)."""
+    checkouts (``worktree list --porcelain``, or ``listing``), the clone's
+    machine name, the name each checkout answers (``config --get
+    espalier.machine`` with it as cwd; by default the clone's for the main
+    checkout and ``<clone>-<directory>``, SessionStart's naming, for a
+    worktree), and what ``mail.naming_steps`` reads there: ``shared`` gives
+    the clone's core.bare / core.worktree (unset by default) and
+    ``--git-common-dir`` (``<main>/.git`` by default)."""
     if names is None:
         names = {str(main): clone, **{str(w): f"{clone}-{w.name}" for w in worktrees}} if clone else {}
+    shared = {"--git-common-dir": str(main / ".git"), **(shared or {})}
 
     def run(argv, **kw):
         if argv[1:3] == ["worktree", "list"]:
+            if listing is not None:
+                return 0, listing, ""
             blocks = [f"worktree {main}\nHEAD {'1' * 40}\nbranch refs/heads/main\n"]
             blocks += [f"worktree {w}\nHEAD {'2' * 40}\nbranch refs/heads/lane/{w.name}\n" for w in worktrees]
             return 0, "\n".join(blocks), ""
         if argv[1:3] == ["config", "--local"]:
             return (0, clone + "\n", "") if clone else (1, "", "")
+        if argv[1:] in (["rev-parse", "--git-common-dir"], ["config", "--get", "core.bare"],
+                        ["config", "--get", "core.worktree"]):
+            value = shared.get(argv[-1])
+            return (0, value + "\n", "") if value else (1, "", "")
         if argv[1:3] == ["config", "--get"]:
             cwd = str(kw.get("cwd"))
             if not Path(cwd).is_dir():
@@ -530,20 +541,42 @@ class TestSeats:
         its path, since the board is read in another checkout (code review
         r7). Dies to: a command, a second change, or "this worktree"."""
         main, work = self._clone(tmp_path)
-
-        def run(argv, **kw):
-            if argv[1:3] == ["worktree", "list"]:
-                return 0, f"worktree {main}\nbare\n\nworktree {work}\nHEAD {'2' * 40}\nbranch refs/heads/x\n", ""
-            if argv[1:3] in (["config", "--local"], ["config", "--get"]):
-                return 0, "air\n", ""
-            raise AssertionError(f"unexpected call {argv}")
-
+        run = _git_for(main, work, names={str(work): "air"}, shared={"core.bare": "true", "--git-common-dir": str(main)},
+                       listing=f"worktree {main}\nbare\n\nworktree {work}\nHEAD {'2' * 40}\nbranch refs/heads/x\n")
         local = board.read_sessions(main, run_=run, config_dir=_registry(tmp_path, work), inside_session=False)
         text = self._text(board, board.seat_rows({}, local, _NOW))
         assert "air [" in text and "core.bare" in text, text
-        assert f"main worktree's config.worktree ({main / 'config.worktree'})" in text, text
+        assert f"main worktree's config.worktree ({main.resolve() / 'config.worktree'})" in text, text
         assert f"a fresh session in {work}" in text and "this worktree" not in text, text
         assert "extensions.worktreeConfig" not in text and "git config" not in text and "git -C" not in text, text
+
+    def test_a_core_worktree_clone_gets_the_one_change_though_its_listing_is_not_bare(self, board, tmp_path):
+        """A clone whose shared config sets core.worktree lists no bare entry,
+        and the pair pasted there points the worktree at the main checkout's
+        files (failure-mode review r9, measured on git 2.39.5); the one owner,
+        mail.naming_steps, reads both keys. Dies to: the board deciding from
+        the listing's bare line."""
+        main, work = self._clone(tmp_path)
+        run = _git_for(main, work, names={str(main): "air", str(work): "air"}, shared={"core.worktree": str(main)})
+        local = board.read_sessions(main, run_=run, config_dir=_registry(tmp_path, work), inside_session=False)
+        text = self._text(board, board.seat_rows({}, local, _NOW))
+        assert "air [.claude/worktrees/work]" in text and "sets core.worktree" in text, text
+        assert f"a fresh session in {work}" in text, text
+        assert "extensions.worktreeConfig" not in text and "git -C" not in text, text
+
+    def test_the_config_worktree_path_is_gits_common_dir_not_the_listings(self, board, tmp_path):
+        """A bare repository whose directory is named .git is listed as its
+        parent, whose config.worktree git never reads (code review r9); the
+        path is --git-common-dir's, read in the worktree, as the banner's is.
+        Dies to: the path taken from the listing."""
+        main, work = self._clone(tmp_path)
+        common = main / ".git"
+        run = _git_for(main, work, names={str(work): "air"}, shared={"core.bare": "true", "--git-common-dir": str(common)},
+                       listing=f"worktree {main}\nbare\n\nworktree {work}\nHEAD {'2' * 40}\nbranch refs/heads/x\n")
+        local = board.read_sessions(main, run_=run, config_dir=_registry(tmp_path, work), inside_session=False)
+        text = self._text(board, board.seat_rows({}, local, _NOW))
+        assert f"({common.resolve() / 'config.worktree'})" in text, text
+        assert f"({main.resolve() / 'config.worktree'})" not in text, text
 
     def test_the_flag_reads_the_clones_name_not_the_main_checkouts(self, board, tmp_path):
         """The board runs in the main checkout, and a naming command pasted
@@ -621,16 +654,8 @@ class TestSeats:
 
     def test_a_bare_main_entry_is_no_checkout(self, board, tmp_path):
         main, work = self._clone(tmp_path)
-
-        def run(argv, **kw):
-            if argv[1:3] == ["worktree", "list"]:
-                return 0, f"worktree {main}\nbare\n\nworktree {work}\nHEAD {'2' * 40}\nbranch refs/heads/x\n", ""
-            if argv[1:3] == ["config", "--local"]:
-                return 0, "air\n", ""
-            if argv[1:3] == ["config", "--get"]:
-                return 0, "air-work\n", ""
-            raise AssertionError(f"unexpected call {argv}")
-
+        run = _git_for(main, work, names={str(work): "air-work"},
+                       listing=f"worktree {main}\nbare\n\nworktree {work}\nHEAD {'2' * 40}\nbranch refs/heads/x\n")
         local = board.read_sessions(main, run_=run, config_dir=_registry(tmp_path, work), inside_session=False)
         assert [c["path"] for c in local["checkouts"]] == [str(work)]
 

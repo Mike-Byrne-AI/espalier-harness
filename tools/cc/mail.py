@@ -826,10 +826,14 @@ def _main_config_worktree(root: Path, *, run: Runner, timeout: float) -> str | N
 
 
 def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0,
-                 known: tuple[str, str] | None = None, in_dir: Path | None = None) -> str:
+                 known: tuple[str, str] | None = None, in_dir: Path | None = None,
+                 at: str | None = None) -> str:
     """The by-hand steps that give the linked worktree at ``root`` a name of
     its own: ``git config extensions.worktreeConfig true``, then ``git config
-    --worktree espalier.machine <name>`` (with ``in_dir``, said to run there).
+    --worktree espalier.machine <name>`` (with ``in_dir``, said to run there;
+    with ``at``, for a reader in another checkout such as the board, as two
+    quoted ``git -C <at>`` commands and the fresh session by that path, since a
+    bare ``--worktree`` command run where it was read renames that checkout).
     Where the clone's shared config sets ``core.bare`` (or ``core.worktree``),
     it is ONE change and no command: the key moved out of the shared config
     into the main worktree's ``config.worktree``, at the absolute path read
@@ -842,8 +846,15 @@ def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0,
     command breaks every worktree of a bare clone. ``known`` is a ``(key,
     value)`` the caller already read, so a second read cannot contradict it.
     The one owner of these steps for every refusal that prints them
-    (``name_this_worktree``, ``assign_refusal``, the ledger's mint refusal)."""
-    steps = f"git config extensions.worktreeConfig true, then git config --worktree {MACHINE_KEY} <name>"
+    (``name_this_worktree``, ``assign_refusal``, the ledger's mint refusal)
+    and for the board's remedy (a core.worktree clone read there as not bare
+    was handed the pair, which pointed the worktree at the main checkout's
+    files, measured in round 9)."""
+    if at is not None:
+        steps = (f'git -C "{at}" config extensions.worktreeConfig true && git -C "{at}" '
+                 f"config --worktree {MACHINE_KEY} <name>")
+    else:
+        steps = f"git config extensions.worktreeConfig true, then git config --worktree {MACHINE_KEY} <name>"
     for key in ("core.bare", "core.worktree"):
         if known is not None and known[0] == key:
             rc, value = 0, known[1]
@@ -857,8 +868,9 @@ def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0,
                         "printed; docs/HOOKS.md says what naming a worktree takes")
         if rc == 0 and value.strip() and value.strip() != "false":
             where = _main_config_worktree(root, run=run, timeout=timeout) or "its path could not be read here"
+            session = f"in {at}" if at is not None else "(/clear) in this worktree"
             return (f"this clone's shared config sets {key}: move it out of the shared config into the main "
-                    f"worktree's config.worktree ({where}); then a fresh session (/clear) in this worktree names "
+                    f"worktree's config.worktree ({where}); then a fresh session {session} names "
                     "it, SessionStart turning per-worktree config on itself")
     return f"{steps}, in {in_dir}" if in_dir is not None else steps
 

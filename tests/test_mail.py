@@ -466,33 +466,85 @@ class TestNamingSteps:
         assert len(reads) == 1, reads
 
 
-class TestNamingProse:
-    """Every tracked doc that gives the command turning per-worktree config on
-    names a bare clone shortly before it, so a reader on one does not run it
-    first (both reviewers, TP-701 r8: four prose readers led with it). The
-    population is derived from the tree, never listed by hand."""
+_NAMING_COMMAND = "extensions.worktreeConfig true"
+_NAMING_SCOPES = ("lsewhere", "other clone", "not bare")
 
-    COMMAND = "extensions.worktreeConfig true"
-    WINDOW = 700
+
+def _naming_prose_offenders(repo_root: Path, window: int = 700) -> tuple[int, list[str]]:
+    """``(occurrences, offenders)`` of the command turning per-worktree config
+    on, in the markdown under docs/, .claude/ and memory/ -- less Claude Code's
+    worktrees under .claude/worktrees/, other checkouts on other commits
+    (DEF-1196, ``tests/_live_tree.py``). An occurrence offends unless the
+    nearest "bare clone" before it, within ``window`` characters, is followed
+    by the other case that takes the one change ("core.worktree") and by
+    words scoping the command away from both ("Elsewhere", "any other clone",
+    "not bare")."""
+    import re
+
+    from espalier._safe_walk import visible
+    from tests._live_tree import exclude_worktrees
+    seen, bad = 0, []
+    for root in (repo_root / d for d in ("docs", ".claude", "memory")):
+        if not root.is_dir():
+            continue
+        for path in visible(exclude_worktrees(root.rglob("*.md"), repo_root), root):
+            rel = path.relative_to(repo_root).as_posix()
+            if rel.startswith("memory/session-log.d/"):
+                continue   # a record: an old row is not rewritten
+            text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
+            for m in re.finditer(re.escape(_NAMING_COMMAND), text):
+                seen += 1
+                before = text[max(0, m.start() - window):m.start()]
+                at = before.rfind("bare clone")
+                if at < 0 or "core.worktree" not in before[at:] or not any(
+                        word in before[at:] for word in _NAMING_SCOPES):
+                    bad.append(f"{rel}: ...{text[max(0, m.start() - 120):m.end()]}")
+    return seen, bad
+
+
+class TestNamingProse:
+    """Every doc under docs/, .claude/ and memory/ that gives the command
+    turning per-worktree config on names a bare clone shortly before it and
+    then scopes the command away from one, so a reader on one does not run it
+    first (both reviewers, TP-701 r8: four prose readers led with it; r9: any
+    mention let the pre-fold WORKFLOW.md through, and a clone whose shared
+    config sets core.worktree was told to run it). The population is derived
+    from the tree, never listed by hand."""
 
     def test_the_command_is_preceded_by_its_bare_clone_condition(self):
-        import re
-
-        from espalier._safe_walk import visible
-        roots = [REPO_ROOT / d for d in ("docs", ".claude", "memory")]
-        seen, bad = 0, []
-        for root in roots:
-            for path in visible(root.rglob("*.md"), root):
-                rel = path.relative_to(REPO_ROOT).as_posix()
-                if rel.startswith("memory/session-log.d/"):
-                    continue   # a record: an old row is not rewritten
-                text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
-                for m in re.finditer(re.escape(self.COMMAND), text):
-                    seen += 1
-                    if "bare clone" not in text[max(0, m.start() - self.WINDOW):m.start()]:
-                        bad.append(f"{rel}: ...{text[max(0, m.start() - 120):m.end()]}")
+        seen, bad = _naming_prose_offenders(REPO_ROOT)
         assert seen >= 4, f"only {seen} occurrences found: the walk lost its population"
-        assert not bad, "the command with no bare-clone condition before it:\n" + "\n".join(bad)
+        assert not bad, "the command with no bare-clone condition scoping it:\n" + "\n".join(bad)
+
+    def test_a_linked_worktrees_copy_is_not_this_trees_prose(self, tmp_path):
+        """A Claude Code worktree under .claude/worktrees/ is another checkout
+        (DEF-1196); the doc beside it is read (both reviewers, r9: a seat at
+        any commit holding the packs reds the walk). Dies to: the walk without
+        exclude_worktrees."""
+        line = "Run `git config extensions.worktreeConfig true` once.\n"
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "real.md").write_text(line, encoding="utf-8")
+        planted = tmp_path / ".claude" / "worktrees" / "probe" / "docs"
+        planted.mkdir(parents=True)
+        (planted / "old.md").write_text(line, encoding="utf-8")
+        seen, bad = _naming_prose_offenders(tmp_path)
+        assert seen == 1 and len(bad) == 1 and bad[0].startswith("docs/real.md: "), bad
+
+    def test_a_bare_clone_mention_must_scope_the_command_away(self, tmp_path):
+        """Dies to: any mention of a bare clone nearby taken for the condition
+        (the pre-fold WORKFLOW.md passed so, code review r9, measured), or the
+        core.worktree case left out of it (failure-mode review r9)."""
+        (tmp_path / "docs").mkdir()
+        doc = tmp_path / "docs" / "w.md"
+        doc.write_text("Name the clone (in a bare clone, in the repository; mind core.worktree). Run `git config "
+                       "extensions.worktreeConfig true` once.\n", encoding="utf-8")
+        assert _naming_prose_offenders(tmp_path)[1], "a mention alone passed"
+        doc.write_text("On a bare clone, move core.bare out. Elsewhere, run `git config "
+                       "extensions.worktreeConfig true` once.\n", encoding="utf-8")
+        assert _naming_prose_offenders(tmp_path)[1], "the core.worktree case left out passed"
+        doc.write_text("On a bare clone, or one whose shared config sets core.worktree, move that key out. "
+                       "Elsewhere, run `git config extensions.worktreeConfig true` once.\n", encoding="utf-8")
+        assert _naming_prose_offenders(tmp_path) == (1, [])
 
 
 class TestLiveRequests:

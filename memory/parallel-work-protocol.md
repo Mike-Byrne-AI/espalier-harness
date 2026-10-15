@@ -103,9 +103,11 @@ remembered. A red `main` is reverted before anything lands on it.
    - **Refusals:**
      - A linked worktree still answering its clone's name is refused, for a
        mint and for an explicit id. SessionStart names Claude Code's
-       worktrees. On a bare clone, the one change is `core.bare` moved into
-       the main worktree's `config.worktree` (the refusal prints its path),
-       after which a fresh session names the worktree. Elsewhere, name one by
+       worktrees. On a bare clone, or one whose shared config sets
+       `core.worktree`, the one change is `core.bare` (or `core.worktree`)
+       moved into the main worktree's `config.worktree` (the refusal prints
+       its path), after which a fresh session names the worktree. Elsewhere,
+       name one by
        hand with `git config extensions.worktreeConfig true`, then
        `git config --worktree espalier.machine <name>`, run in it. The
        refusals print `mail.naming_steps`, the one owner of these steps.

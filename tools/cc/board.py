@@ -424,10 +424,11 @@ def fetch_base(root: Path, base: str, *, run_: Runner = run) -> tuple[bool, str]
 def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = None,
                   inside_session: bool | None = None) -> dict:
     """This clone's checkouts with the live Claude Code sessions in each:
-    ``{"checkouts": [{"path", "main", "seat", "gone", "name_unread",
-    "sessions"}], "unread": "", "checked", "registry", "clone", "bare"}``
-    (``bare``: the path of the main entry where it is a bare repository, whose
-    worktrees are named once core.bare moves into its config.worktree), or no
+    ``{"checkouts": [{"path", "main", "seat", "gone", "name_unread", "naming",
+    "sessions"}], "unread": "", "checked", "registry", "clone"}``
+    (``naming``: what naming a present linked worktree takes, read there by
+    ``mail.naming_steps``, the one owner, in its form for a reader in another
+    checkout; '' for the main checkout and a folder that is gone), or no
     checkouts and ``unread`` naming why. The sessions are Claude Code's own
     registry (``checkout_sync.live_sessions``: an entry whose process is
     alive), each counted for the DEEPEST checkout that holds its cwd, since a
@@ -475,25 +476,29 @@ def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = N
         # there answers its own name, or none (a name the channel refuses turns
         # the channel off there), and none is no seat name, never a derived one.
         gone = not Path(path).is_dir()
-        name_unread = ""
+        name_unread = naming = ""
         if gone:
             seat = clone if i == 0 else ((mail.worktree_seat_name(clone, Path(path).name) or "") if clone else "")
         else:
             named, how = mail.machine_setting(Path(path), run=run_)
             seat = named or ""
             name_unread = how if named is None and how.startswith(mail.MACHINE_UNREAD) else ""
+            if i:
+                # Read in the worktree itself: whether its clone's shared config
+                # sets core.bare or core.worktree is the one owner's call, as is
+                # the config.worktree path (--git-common-dir; the listing strips
+                # a trailing /.git from a bare repository's path).
+                naming = mail.naming_steps(Path(path), run=run_, at=path)
         checkouts.append({"path": path, "main": i == 0, "seat": seat, "gone": gone, "name_unread": name_unread,
-                          "sessions": []})
+                          "naming": naming, "sessions": []})
     for session in sessions:
         cwd = str(session.get("cwd") or "")
         holders = [c for c in checkouts if checkout_sync.within(cwd, c["path"])]
         if holders:
             deepest = max(holders, key=lambda c: len(Path(c["path"]).parts))
             deepest["sessions"].append({"pid": session.get("pid"), "session_id": session.get("session_id") or ""})
-    # The bare repository's own path, its config.worktree the main worktree's.
-    bare = next((b.get("worktree") or "" for b in checkout_sync.parse_worktrees(listing) if "bare" in b), "")
     return {"checkouts": checkouts, "unread": "", "checked": bool(inside_session), "registry": registry,
-            "clone": clone, "bare": bare}
+            "clone": clone}
 
 
 def unread_names(local: dict) -> list[dict]:
@@ -515,9 +520,10 @@ def seat_rows(by_machine: dict[str, list[dict]], local: dict, now: datetime | No
     worktree answering a name another checkout holds -- one shown already,
     the clone's own (it was never named), or the main checkout's -- gets a
     row of its own, keyed ``<name> [<checkout>]`` with ``name_shared_with``
-    (the two write one mail ref) and ``remedy`` (the two quoted ``git -C``
-    commands that name it, or on a bare clone the one change, core.bare moved
-    into the main worktree's config.worktree, then a fresh session), and only
+    (the two write one mail ref) and ``remedy`` (the checkout's ``naming``: the
+    two quoted ``git -C`` commands that name it, or, where the clone's shared
+    config sets core.bare or core.worktree, the one change, that key moved into
+    the main worktree's config.worktree, then a fresh session), and only
     while it holds a session: it never overwrites the
     first. A main checkout answering other than its clone's name gets a
     ``note``; ``name_unread`` carries why a checkout's name could not be read."""
@@ -530,7 +536,6 @@ def seat_rows(by_machine: dict[str, list[dict]], local: dict, now: datetime | No
                              "age_s": mail.age_seconds(last, now)}}
     checkouts = local.get("checkouts") or []
     clone = str(local.get("clone") or "")
-    bare = str(local.get("bare") or "")
     main = next((c["path"] for c in checkouts if c.get("main")), "")
     main_seat = next((c.get("seat") or "" for c in checkouts if c.get("main")), "")
     for checkout in checkouts:
@@ -555,22 +560,11 @@ def seat_rows(by_machine: dict[str, list[dict]], local: dict, now: datetime | No
         if held or inherited:
             first = rows[key]["checkout"] if held else ("the main checkout" if name == main_seat else "the clone")
             key = f"{key} [{where}]"
-            if bare:
-                # A bare clone's worktree takes ONE change, core.bare moved into
-                # the main worktree's config.worktree (the bare repository's own,
-                # whose path the listing gave), then a fresh session names it,
-                # SessionStart turning per-worktree config on itself; no commands
-                # (mail.naming_steps says the same; docs/HOOKS.md keeps the
-                # measurement), and the worktree by its path, since the board is
-                # read in another checkout.
-                remedy = ("name it: on this bare clone, move core.bare out of the shared config into the main "
-                          f"worktree's config.worktree ({Path(bare) / 'config.worktree'}); then a fresh session in "
-                          f"{path} names it, SessionStart turning per-worktree config on itself")
-            else:
-                # git -C, quoted: the board is read in another checkout, where
-                # a bare --worktree command would rename that checkout instead.
-                remedy = (f'name it: git -C "{path}" config extensions.worktreeConfig true && git -C "{path}" '
-                          f"config --worktree {mail.MACHINE_KEY} <name>")
+            # The steps mail.naming_steps read in that worktree (read_sessions):
+            # a second owner here once handed a core.worktree clone the pair,
+            # which points the worktree at the main checkout's files (round 9).
+            naming = checkout.get("naming") or ""
+            remedy = f"name it: {naming}" if naming else ""
             row = rows.setdefault(key, {"seat": key, "last_mail": None, "name_shared_with": first, "remedy": remedy})
         else:
             row = rows.setdefault(key, {"seat": key, "last_mail": None})
