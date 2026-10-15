@@ -103,24 +103,59 @@ def _no_repeat_target(scenario: dict[str, Any]) -> str | None:
     return str(target) if target else None
 
 
+def _inside(work_dir: Path, target: str) -> bool:
+    """``target`` is a relative path that stays inside the work dir."""
+    if Path(target).is_absolute():
+        return False
+    try:
+        return (work_dir / target).resolve().is_relative_to(work_dir.resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def _changed_at(work_dir: Path, path: Path) -> float | None:
+    """When ``path`` last changed, as epoch seconds: the later of its mtime and
+    its inode's ctime (a file moved or copied onto it keeps an old mtime; the
+    ctime moves), or, once it is removed, its nearest directory's."""
+    for candidate in (path, *path.parents):
+        try:
+            st = candidate.stat()
+        except OSError:
+            if candidate == work_dir:
+                return None
+            continue
+        return max(st.st_mtime, st.st_ctime)
+    return None
+
+
+def _plans(work_dir: Path) -> list[dict[str, Any]]:
+    """The plans the agent opened: `cc/execution_plan.json`, and those a reset
+    demoted to `cc/_cold/`, each with its `created` and `status`."""
+    found = [(work_dir / "cc" / "execution_plan.json", False)]
+    found += [(p, True) for p in sorted((work_dir / "cc" / "_cold").glob("*execution_plan*.json"))]
+    plans = []
+    for path, cold in found:
+        try:
+            plan = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(plan, dict) and isinstance(plan.get("created"), str):
+            plans.append({"created": plan["created"],
+                          "status": plan.get("status") if isinstance(plan.get("status"), str) else None,
+                          "cold": cold})
+    return plans
+
+
 def _target_state(work_dir: Path, target: str, before: str | None) -> dict[str, Any]:
     """The target's ground truth after the run: its bytes before the trigger
-    (``before``) and now, its last change (mtime, epoch seconds) and the
-    execution plan the agent opened, if any (`cc/execution_plan.json`'s
-    `created` and `status`), all from the work dir this runner made."""
+    (``before``) and now, when it last changed (`_changed_at`), and the plans
+    the agent opened (`_plans`), all from the work dir this runner made. A
+    target outside it is not read."""
+    if not _inside(work_dir, target):
+        return {"path": target, "before": None, "after": None, "changed_at": None, "plans": [], "outside": True}
     path = work_dir / target
-    try:
-        mtime: float | None = path.stat().st_mtime
-    except OSError:
-        mtime = None
-    try:
-        plan = json.loads((work_dir / "cc" / "execution_plan.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        plan = {}
-    plan = plan if isinstance(plan, dict) else {}
-    return {"path": target, "before": before, "after": _digest(path), "mtime": mtime,
-            "plan_created": plan.get("created") if isinstance(plan.get("created"), str) else None,
-            "plan_status": plan.get("status") if isinstance(plan.get("status"), str) else None}
+    return {"path": target, "before": before, "after": _digest(path), "changed_at": _changed_at(work_dir, path),
+            "plans": _plans(work_dir)}
 
 
 def load_scenario(path: Path) -> dict[str, Any]:
@@ -300,7 +335,7 @@ def run_scenario(
         _materialize_setup(scenario.get("setup") or {}, work_dir)
         # The retry check's ground truth: the target's bytes before the trigger.
         target = _no_repeat_target(scenario)
-        before = _digest(work_dir / target) if target else None
+        before = _digest(work_dir / target) if target and _inside(work_dir, target) else None
 
         trigger = scenario.get("trigger") or {}
         trigger_type = trigger.get("type", "prompt")
