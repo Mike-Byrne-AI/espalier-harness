@@ -71,6 +71,10 @@ def _stub_channel(monkeypatch, board, by_machine=None, dispatcher="air", fetch=(
         "main", 0, json.dumps({"strict": False, "contexts": ["a", "b"]})))
     # The stale-base section's git reads; TestStaleBaseSection drives the real one.
     monkeypatch.setattr(board, "read_stale_section", lambda *a, **k: None)
+    # The base fetch and the ledger count at the base: git and a child
+    # interpreter, which tests/test_board_ledger_base.py drives for real.
+    monkeypatch.setattr(board, "fetch_base", lambda *a, **k: (True, ""))
+    monkeypatch.setattr(board, "read_ledger_at_base", lambda *a, **k: None)
 
 
 def _run(status: str, conclusion: str, sha: str) -> dict:
