@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4023",
+ "subject": "tests/test_contracts.py",
+ "cmd": "python3 -c \"import pathlib; print(pathlib.Path('tests/test_contracts.py').read_text(encoding='utf-8').count('class TestShippedRootsDoNotImportTests'))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "3227ce6a666d",
+ "text_sha": "292baff4e449",
+ "verified_2026_10_15": "OPEN (filed 2026-10-15; probe driven at filing)"
+}

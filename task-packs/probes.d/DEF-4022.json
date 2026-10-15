@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4022",
+ "subject": ".claude/commands/implement-task.md",
+ "cmd": "python3 -c \"import re,pathlib; t=pathlib.Path('.claude/commands/implement-task.md').read_text(encoding='utf-8'); print(t.count('--base') + len(re.findall(r'(?i)earn(ed|s)? the red|mutation', t)))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "bae5a57bbe0f",
+ "text_sha": "d75815ff2dc6",
+ "verified_2026_10_15": "OPEN (filed 2026-10-15; probe driven at filing)"
+}
