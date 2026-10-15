@@ -31,8 +31,17 @@ session) and every channel fact from ``mail.py``'s local refs:
   one whose occupancy cannot be told unless ``--unchecked``; set the
   maintenance switch only with ``--maintenance``; put the seat's own ``.venv``
   first on ``PATH``; then run ``claude`` there with the operator's arguments
-  after ``--`` passed through unchanged, or with ``--print`` print the one
-  command line. The driver adds no permission flag of its own.
+  after ``--`` passed through unchanged and the seat's first message (``brief``)
+  as its prompt after a ``--``, unless ``--no-brief``, or with ``--print``
+  print the command line (the first message spans two lines inside its
+  quotes). The brief is refused beside a flag that does not start a fresh
+  session (``-p``, ``--resume`` and the like), a prompt of the operator's own,
+  or a ``claude`` that is a ``.cmd`` shim. The driver adds no permission flag
+  of its own.
+* ``brief <seat>`` -- print the seat's first message, the one ``launch`` passes:
+  a worker's (its dispatcher, the reads to start with, its jobs, the worker
+  loop) or the dispatcher's (its duties, the board loop), as the ``dispatcher``
+  line of ``espalier.toml`` decides, so no operator pastes it.
 * ``retire <seat>`` -- from the clone: refuse an occupied worktree; judge the
   removal first (``checkout_sync``'s rules for that one worktree: clean,
   merged, no plan in progress, nothing ignored it would lose), so a seat that
@@ -44,7 +53,9 @@ session) and every channel fact from ``mail.py``'s local refs:
 Verbs::
 
     python tools/cc/seat.py list [--json] [--no-fetch]
-    python tools/cc/seat.py launch <seat> [--maintenance] [--unchecked] [--print [--shell S]] [-- <claude args>]
+    python tools/cc/seat.py launch <seat> [--maintenance] [--unchecked] [--no-brief] [--print [--shell S]]
+                                          [-- <claude args>]
+    python tools/cc/seat.py brief <seat>
     python tools/cc/seat.py retire <seat> [--dry-run] [--return-jobs] [--unchecked] [--no-fetch]
 
 Stdlib-only (``tools/cc/`` runs standalone, zero espalier imports); imports
@@ -553,17 +564,169 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
     return f"cd {shlex.quote(str(target.path))} && env {' '.join(env)} claude {' '.join(shlex.quote(a) for a in args)}".rstrip()
 
 
+# -- brief ---------------------------------------------------------------------------
+
+#: A seat's first message is composed here, never pasted: one template per role
+#: (``espalier.toml``'s ``dispatcher`` line decides which a seat gets), filled
+#: with the seat, the dispatcher, the base branch and what the seat's checkout
+#: holds. Its last line is the seat's loop: driven on Claude Code 2.1.301
+#: (2026-10-15), a first message whose last line is a ``/loop`` line starts that
+#: loop with no second message, and the loop survives ``/clear``. No double
+#: quote (Windows PowerShell 5.1 splits a native argument there), no ``%``
+#: (cmd.exe expands it) and 7-bit ASCII; ``tests/test_seat.py`` pins all three.
+#: On this repository the worker loop renders to the tick the operator ran by
+#: hand, byte for byte (``tests/test_seat.py::_OPERATOR_TICK``): a change to it
+#: changes what every worker seat does, which is the operator's decision.
+WORKER_BRIEF = (
+    "You are seat {seat}, a worker under {dispatcher_phrase} ({protocol}). Orient from the banner, then run "
+    "/inbox (mark read) and /inbox board, and read live state before you state it. Your jobs are the live "
+    "assigns for this seat that /inbox board lists; take no other work. Then start the worker loop on the "
+    "next line with no further message from the operator."
+)
+WORKER_TICK = (
+    "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
+    "yours, in this order: your own open PR red, in conflict or stale (fix it, or ship.py catch-up); a new "
+    "assign or note from {dispatcher}; continue your current lane through its full procedure (plan, {review}, "
+    "one fix batch, {tier}, one open PR per seat, every step listed with "
+    "its evidence in the PR body; a skipped step is a stop); then your next assigned job. STOP and send "
+    "{dispatcher} one request, then only re-read mail until it is answered, on anything not green: a red you "
+    "cannot fix in two attempts, a choice the assign does not settle, a refusal you cannot resolve, a "
+    "conflict outside your own files, anything that is the operator's decision. Never unassigned work, never "
+    "another seat's branch. A quiet tick is one line."
+)
+DISPATCHER_BRIEF = (
+    "You are the dispatcher seat {seat} ({protocol}). Orient from the banner{goal}, then run /inbox (mark "
+    "read) and /inbox board. Your duties: read the board every 15 minutes (the loop on the next line), answer "
+    "every worker request within the hour with facts, propose assigns and releases to the operator and send "
+    "them on a yes, {red}, write the Landing lines of the packs in flight from the "
+    "seats' merged PR bodies. Decisions stay the operator's. Start the loop on the next line with no further "
+    "message from the operator."
+)
+DISPATCHER_TICK = "/loop 15m /inbox board"
+#: Where the seat procedure lives, the first a checkout holds: this
+#: repository's protocol, else the seeded workflow guide's section.
+PROTOCOL_HOMES = (
+    ("memory/parallel-work-protocol.md", "Core Rule 15, memory/parallel-work-protocol.md"),
+    ("docs/WORKFLOW.md", "docs/WORKFLOW.md, Parallel seats"),
+)
+PROTOCOL_FALLBACK = "the /inbox command's body"
+#: The proof a worker's lane runs: the tier script where the checkout has one,
+#: else the change command's own proof step.
+TIER_SCRIPT = "scripts/proof_tier.py"
+GOAL_NOTES = "cc/GOAL.md"
+#: The phrases that differ where the checkout holds this repository's own
+#: protocol (its first home above) from an adopter's: the review procedure
+#: (a snapshot clone is defined here only) and a red base (reverting first is
+#: this repository's rule; an adopter's dispatcher proposes it).
+SELF_HOST_REVIEW = "red-team both reviewers on a snapshot clone"
+ADOPTER_REVIEW = "both reviewers at once with your edits frozen per /implement-task step 6"
+SELF_HOST_RED = "revert first on a red {base}"
+ADOPTER_RED = "propose the revert to the operator on a red {base}"
+#: Flags after which claude is not starting a fresh session from a first
+#: message (a one-shot, a resumed or a continued conversation, a session
+#: brought over): the brief is refused beside them, never passed.
+SESSION_MODE_FLAGS = frozenset({"-p", "--print", "-c", "--continue", "-r", "--resume", "--from-pr", "--teleport"})
+
+
+@dataclass
+class Brief:
+    """A seat's first message: its role, the whole text, and the loop line."""
+    role: str
+    text: str
+    loop: str
+
+
+def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
+    """The first message for ``seat``: the dispatcher form when
+    ``espalier.toml`` names this seat as the dispatcher, else the worker form
+    under the dispatcher it names (or under the operator where none is named).
+    ``checkout`` is the seat's own checkout when it exists (its
+    ``espalier.toml`` names the dispatcher, as its banner's reads do, and
+    what it holds picks the protocol's home and the phrases), else the clone.
+    Refused where the dispatcher setting is there but unusable: the brief
+    would name a dispatcher no seat is."""
+    where = checkout if checkout is not None and checkout.is_dir() else root
+    dispatcher, how = mail.dispatcher_setting(where)
+    if dispatcher == mail.DISPATCHER_UNUSABLE:
+        raise Refused(f"the brief names the dispatcher, and {how}")
+    home = next(((rel, words) for rel, words in PROTOCOL_HOMES if (where / rel).is_file()), ("", PROTOCOL_FALLBACK))
+    protocol, self_host = home[1], home[0] == PROTOCOL_HOMES[0][0]
+    base = sync.default_branch(sync._Git(root, None)) or "main"
+    if dispatcher is not None and dispatcher == seat:
+        goal = f" and {GOAL_NOTES}'s notes" if (where / GOAL_NOTES).is_file() else ""
+        red = (SELF_HOST_RED if self_host else ADOPTER_RED).format(base=base)
+        text = DISPATCHER_BRIEF.format(seat=seat, protocol=protocol, goal=goal, red=red)
+        return Brief("dispatcher", text + "\n" + DISPATCHER_TICK, DISPATCHER_TICK)
+    tier = (f"the tier the diff earns with --base origin/{base}" if (where / TIER_SCRIPT).is_file()
+            else "the proof the change earns per /implement-task step 7")
+    phrase = f"the dispatcher {dispatcher}" if dispatcher else "the operator (espalier.toml names no dispatcher)"
+    loop = WORKER_TICK.format(dispatcher=dispatcher or "the operator", tier=tier,
+                              review=SELF_HOST_REVIEW if self_host else ADOPTER_REVIEW)
+    return Brief("worker", WORKER_BRIEF.format(seat=seat, dispatcher_phrase=phrase, protocol=protocol) + "\n" + loop,
+                 loop)
+
+
+def brief_line(role: str, seat: str, python: str = "") -> str:
+    """The short form of the same brief, for the SessionStart banner's
+    ``Orders:`` line: the two reads to start with, the loop it ends with and
+    its interval, and the command that prints the whole message (``python``
+    is the interpreter spelling the caller resolved; '' leaves the command
+    out). Read from the templates alone, with no git, so a hook can afford it."""
+    loop = DISPATCHER_TICK if role == "dispatcher" else WORKER_TICK
+    every = loop.split(" ", 2)[1]
+    what = "the board loop" if role == "dispatcher" else "the worker loop"
+    tail = f"; {python} tools/cc/seat.py brief {seat} prints the first message" if python else ""
+    return f"run /inbox, then /inbox board, then start {what} (/loop {every}){tail}"
+
+
+def cmd_brief(root: Path, seat: str) -> int:
+    target = resolve(root, seat)
+    print(compose_brief(root, seat, target.path if target.exists else None).text)
+    return 0
+
+
+def brief_refusal(args: list[str], claude: str | None, root: Path, checkout: Path | None) -> str:
+    """Why the first message cannot ride with these arguments ('' when it
+    can), checked before anything is created. Beside a flag that makes the
+    session a one-shot, a resumed or continued one, or one brought over
+    (:data:`SESSION_MODE_FLAGS`), or a prompt of the operator's own (a second
+    ``--``, or a bare first argument, which no flag can be taking: a bare word
+    later may be a list flag's value, ``--add-dir a b``, so it is not read as
+    one), claude would get two prompts or none; through a ``.cmd``/``.bat``
+    shim (an npm install on Windows) cmd.exe
+    cuts an argument at its line break, so the loop line would never arrive;
+    an unusable dispatcher setting names no dispatcher."""
+    hint = "; --no-brief launches without the first message (`seat.py brief` prints it to paste)"
+    flags = sorted({a.split("=", 1)[0] for a in args} & SESSION_MODE_FLAGS)
+    if flags:
+        return f"{', '.join(flags)} does not start a fresh session, so the first message has nowhere to go{hint}"
+    bare = args[:1] if args and not args[0].startswith("-") else []
+    if "--" in args or bare:
+        return f"the arguments carry a prompt of their own ({(bare or ['--'])[0]!r}), beside the first message{hint}"
+    if claude is not None and Path(claude).suffix.lower() in (".cmd", ".bat"):
+        return (f"claude resolves to {claude}, a script cmd.exe runs, which cuts an argument at its line break, "
+                f"so the first message's loop line would be lost{hint}, or install the native claude")
+    where = checkout if checkout is not None and checkout.is_dir() else root
+    if mail.dispatcher_setting(where)[0] == mail.DISPATCHER_UNUSABLE:
+        return f"the brief names the dispatcher, and {mail.dispatcher_setting(where)[1]}{hint}"
+    return ""
+
+
 def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unchecked: bool,
-               print_only: bool, shell: str | None = None) -> int:
+               print_only: bool, shell: str | None = None, brief: bool = True) -> int:
     target = resolve(root, seat)
     claude = None
     if not print_only:
         why = session_refusal()
         if why:
             raise Refused(why)
-        claude = shutil.which("claude", path=child_env(target, maintenance=maintenance).get("PATH"))
-        if claude is None:
-            raise Refused("claude is not on PATH; --print gives the line to run where it is")
+    claude = shutil.which("claude", path=child_env(target, maintenance=maintenance).get("PATH"))
+    if claude is None and not print_only:
+        raise Refused("claude is not on PATH; --print gives the line to run where it is")
+    if brief:
+        why = brief_refusal(args, claude, root, target.path if target.exists else None)
+        if why:
+            raise Refused(why)
     if target.exists:
         _refuse_occupied(seat, target.path, unchecked=unchecked, verb="launch")
     elif print_only:
@@ -589,14 +752,25 @@ def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unc
     if venv_bindir(target.path) is None and (target.path / "espalier" / "__init__.py").is_file():
         say(f"note: {target.path} has no .venv, so a test run there imports espalier from wherever `python` "
             "finds it (the banner's Engine: line); a .venv of its own with an editable install fixes it")
+    argv = list(args)
+    if brief:
+        # The first message rides as claude's prompt after a `--`, so no option
+        # the operator passed can take it as a value: driven on 2.1.301,
+        # `--add-dir <dir> <prompt>` read the prompt as a second directory and
+        # started with none, while `--add-dir <dir> -- <prompt>` answered it.
+        try:
+            argv += ["--", compose_brief(root, seat, target.path).text]
+        except Refused as exc:
+            raise Refused(f"{exc}; --no-brief launches without the first message") from None
     if print_only:
-        say(command_line(target, args, maintenance=maintenance, shell=shell))
+        say(command_line(target, argv, maintenance=maintenance, shell=shell))
         return 0
     env = child_env(target, maintenance=maintenance)
-    say(f"launching seat {seat} in {target.path}" + (" (maintenance mode)" if maintenance else ""))
+    say(f"launching seat {seat} in {target.path}" + (" (maintenance mode)" if maintenance else "")
+        + ("" if brief else ", no first message"))
     sys.stdout.flush()
     assert claude is not None
-    return run_session([claude, *args], cwd=target.path, env=env)
+    return run_session([claude, *argv], cwd=target.path, env=env)
 
 
 def run_session(argv: list[str], *, cwd: Path, env: dict[str, str]) -> int:
@@ -624,7 +798,14 @@ def _send_releases(path: Path, seat: str, ids: list[str], text: str) -> None:
     never by lane, since a lane release from a seat also closes a job the
     dispatcher gave it on that lane. Each sent line is said as it goes, so a
     failure part way leaves an exact account."""
-    if mail.machine_setting(path)[0] != seat:
+    named, how = mail.machine_setting(path)
+    unread = getattr(mail, "MACHINE_UNREAD", None)  # a kept mail.py from before the phrase has none
+    if named is None and unread and str(how).startswith(unread):
+        # A read that failed is not another name: renaming the seat would not help.
+        raise Refused(f"{path}'s machine name could not be read ({how}), so the releases stop here (what was "
+                      "sent stays sent); run retire again once git answers (a config git cannot parse never "
+                      "will: fix it first)")
+    if named != seat:
         raise Refused(f"{path} does not answer the name {seat}, so a release sent from it would not close "
                       f"{seat}'s messages")
     for n, mid in enumerate(ids):
@@ -726,6 +907,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="launch when the occupancy cannot be told, or only a session marker names a session")
     p.add_argument("--print", dest="print_only", action="store_true", help="print the command line instead")
     p.add_argument("--shell", choices=("powershell", "posix"), help="the shell --print writes for")
+    p.add_argument("--no-brief", dest="brief", action="store_false",
+                   help="start the session without the composed first message (`brief` prints it)")
+    p = sub.add_parser("brief", help="print a seat's first message: its role, the reads to start with, its loop")
+    p.add_argument("seat")
     p = sub.add_parser("retire", help="release a worktree seat's claims, then remove its worktree")
     p.add_argument("seat")
     p.add_argument("--dry-run", action="store_true")
@@ -757,7 +942,9 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_list(root, as_json=args.json, fetch=not args.no_fetch)
         if args.verb == "launch":
             return cmd_launch(root, args.seat, claude_args, maintenance=args.maintenance, unchecked=args.unchecked,
-                              print_only=args.print_only, shell=args.shell)
+                              print_only=args.print_only, shell=args.shell, brief=args.brief)
+        if args.verb == "brief":
+            return cmd_brief(root, args.seat)
         return cmd_retire(root, args.seat, dry_run=args.dry_run, fetch=not args.no_fetch,
                           return_jobs=args.return_jobs, unchecked=args.unchecked)
     except (Refused, mail.Unresolvable) as exc:

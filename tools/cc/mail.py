@@ -904,12 +904,20 @@ def release_lane(root: Path, lane: str, text: str = "", *, run: Runner = run,
     """Close this machine's live claims on ``lane`` with one release, and
     return its commit; ``None``, with nothing sent, when the box is unnamed or
     holds no live claim on the lane (a release that closes nothing is noise
-    in the other box's inbox). The ship driver calls this after a lane's push
-    lands, so a claim's lifetime is the lane's time on this machine and a
-    claim nobody released no longer warns forever. Reads the local refs only:
-    this machine's own ref is the authority on its own claims."""
-    machine, _how = machine_setting(root, run=run)
+    in the other box's inbox), or when its name could not be read, which is
+    said with the release to send by hand. The ship driver calls this after a
+    lane's push lands, so a claim's lifetime is the lane's time on this
+    machine and a claim nobody released no longer warns forever. Reads the
+    local refs only: this machine's own ref is the authority on its own
+    claims."""
+    machine, how = machine_setting(root, run=run)
     if machine is None:
+        if how.startswith(MACHINE_UNREAD):
+            # Not an unnamed box: the lane's claims stay live, and every other
+            # seat's plan keeps warning on them until a release goes out.
+            say(f"no release sent for {lane}: {how}; once git answers, python tools/cc/mail.py send "
+                f"--type release --lane {lane}, run in this checkout, closes this machine's claims on it (a "
+                "config git cannot parse never answers: fix it first)")
         return None
     by_machine, _skipped = read_mail(root, run=run)
     if not own_live_claims(by_machine, machine, lane):

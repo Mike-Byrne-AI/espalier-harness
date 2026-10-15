@@ -937,6 +937,37 @@ class TestPieces:
         for launcher in ("python.exe", "pythonw.exe", "py.exe", "Python3.12.exe"):
             assert cs.window_pid({100: (300, launcher)}) == 300, launcher
 
+    def test_a_leftover_entry_that_is_not_this_process_names_no_window(self, cs, monkeypatch, tmp_path):
+        """A marker's window pid is now read by its exit, so a crashed
+        session's file must not make a reused pid (a launcher) a window
+        (failure-mode review, S3). Dies to: counting the file alone."""
+        directory = tmp_path / "cfg" / "sessions"
+        directory.mkdir(parents=True)
+        monkeypatch.setattr(cs, "claude_config_dirs", lambda: [tmp_path / "cfg"])
+        monkeypatch.setattr(cs.os, "getppid", lambda: 4242)
+        monkeypatch.setattr(cs, "_process_table_windows", lambda: {})
+        (directory / "4242.json").write_text(json.dumps({"pid": 99, "cwd": "x"}), encoding="utf-8")
+        assert cs.window_pid() is None                                    # another pid's entry
+        (directory / "4242.json").write_text("{not json", encoding="utf-8")
+        assert cs.window_pid() is None                                    # no answer
+        (directory / "4242.json").write_text(json.dumps({"pid": 4242, "cwd": "x"}), encoding="utf-8")
+        assert cs.window_pid() == 4242
+
+    @pytest.mark.skipif(os.name != "nt", reason="procStart is measured against the Windows creation FILETIME")
+    def test_an_entry_whose_creation_time_is_another_process_names_no_window(self, cs, monkeypatch, tmp_path):
+        directory = tmp_path / "cfg" / "sessions"
+        directory.mkdir(parents=True)
+        monkeypatch.setattr(cs, "claude_config_dirs", lambda: [tmp_path / "cfg"])
+        me = os.getpid()
+        monkeypatch.setattr(cs.os, "getppid", lambda: me)
+        record = {"pid": me, "cwd": "x", "procStart": "1"}
+        (directory / f"{me}.json").write_text(json.dumps(record), encoding="utf-8")
+        monkeypatch.setattr(cs, "_process_table_windows", lambda: {})
+        assert cs.window_pid() is None
+        record["procStart"] = cs._proc_start_windows(me)
+        (directory / f"{me}.json").write_text(json.dumps(record), encoding="utf-8")
+        assert cs.window_pid() == me
+
     def test_the_window_never_walks_past_one_step(self, cs, monkeypatch, tmp_path):
         """A hook a test suite spawns sits under pytest and a shell, with the
         session running the suite further up: a walk to the nearest
@@ -1063,8 +1094,13 @@ class TestTheOneLivenessOracle:
         seen = cs.occupancy(tmp_path, markers=lambda tree: [live])
         assert seen.oracle == "markers" and _ids(seen.sessions) == ["m1"]
         assert seen.sessions[0]["source"] == "marker" and seen.from_registry() == []
-        gone = cs.occupancy(tmp_path, markers=lambda tree: [{**live, "pid": _dead_pid()}])
-        assert gone.sessions is None, "a marker whose window pid exited names nobody"
+        gone = cs.occupancy(tmp_path, markers=lambda tree: [{**live, "pid": _dead_pid(), "alive": False}])
+        assert gone.sessions is None, "a marker whose registry-named window pid exited names nobody"
+        # A pid the registry did not name (the hook's fallback parent, a launcher
+        # that exits with the hook on Windows) says nothing by its exit, so the
+        # marker still counts. Dies to: asking pid_alive about any recorded pid.
+        fallback = cs.occupancy(tmp_path, markers=lambda tree: [{**live, "pid": _dead_pid(), "alive": None}])
+        assert fallback.oracle == "markers" and _ids(fallback.sessions) == ["m1"]
         broken = cs.occupancy(tmp_path, markers=lambda tree: 1 / 0)
         assert broken.sessions is None and broken.oracle == ""
 
@@ -1108,7 +1144,8 @@ class TestTheOneLivenessOracle:
         clone_session = _row(work, pid=os.getpid(), sid="clone")
         moved = {"session_id": "clone", "pid": os.getpid(), "cwd": str(feat)}
         visitor = {"session_id": "visitor", "pid": os.getppid(), "cwd": str(feat / "src")}
-        gone = {"session_id": "gone", "pid": _dead_pid(), "cwd": str(feat)}
+        # The hooks' reader judges liveness (alive False: a registry-named pid that exited).
+        gone = {"session_id": "gone", "pid": _dead_pid(), "cwd": str(feat), "alive": False}
         in_root = {"session_id": "root-only", "pid": os.getppid(), "cwd": ""}
         own_marker = {"session_id": "clone", "pid": os.getpid(), "cwd": ""}
         by_tree = {cs._norm(work): [moved, visitor, gone, in_root, own_marker], cs._norm(feat): []}

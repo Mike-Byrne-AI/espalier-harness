@@ -104,6 +104,8 @@ def _worktree(work: Path, folder: str, *, name: str | None = None) -> Path:
     _git(work, "worktree", "add", "--quiet", "-b", f"lane/{folder}", str(path), "origin/main")
     if name:
         _git(path, "config", "--worktree", "espalier.machine", name)
+    if (work / "espalier.toml").is_file():   # tracked on a real tree, so every checkout holds it
+        (path / "espalier.toml").write_bytes((work / "espalier.toml").read_bytes())
     return path
 
 
@@ -253,7 +255,9 @@ class TestLaunch:
         assert _out(path, "config", "--worktree", "--get", "espalier.machine") == "box-new"
         assert (path / ".claude" / "settings.json").read_bytes() == b'{"hooks": {}}\n'
         (call,) = no_claude
-        assert call["argv"] == ["/fake/bin/claude", "--model", "x"] and Path(call["cwd"]) == path
+        # The operator's arguments pass through unchanged; the first message rides last.
+        assert call["argv"][:3] == ["/fake/bin/claude", "--model", "x"] and Path(call["cwd"]) == path
+        assert call["argv"][3:] == ["--", seat.compose_brief(clone, "box-new", path).text]
         env = call["env"]
         assert "ESPALIER_MAINTENANCE_MODE" not in env and "CLAUDE_CODE_SESSION_ID" not in env
         assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
@@ -278,8 +282,9 @@ class TestLaunch:
         monkeypatch.chdir(clone)
         assert seat.main(["launch", "box", "--print", "--", "--model", "o p"]) == 0
         assert no_claude == []
-        out = capsys.readouterr().out.strip().splitlines()[-1]
-        assert "claude" in out and ("'o p'" in out)
+        # The first message spans two lines inside its quotes; claude's line is its first.
+        out = next(line for line in capsys.readouterr().out.splitlines() if "claude" in line)
+        assert "'o p'" in out and "You are seat box" in out
         assert seat.split_claude_args(["launch", "x", "--", "--print"]) == (["launch", "x"], ["--print"])
 
     def test_names_that_are_no_seat_are_refused(self, seat, clone, tmp_path):
@@ -404,6 +409,211 @@ class TestLaunch:
             seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=True, print_only=True)
 
 
+# -- brief ---------------------------------------------------------------------------
+
+#: The worker tick as the operator pasted it on 2026-10-15 18:56Z (mail note
+#: 215fbb, verbatim): the self-host render must reproduce it byte for byte.
+_OPERATOR_TICK = (
+    "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
+    "yours, in this order: your own open PR red, in conflict or stale (fix it, or ship.py catch-up); a new "
+    "assign or note from air; continue your current lane through its full procedure (plan, red-team both "
+    "reviewers on a snapshot clone, one fix batch, the tier the diff earns with --base origin/main, one open PR "
+    "per seat, every step listed with its evidence in the PR body; a skipped step is a stop); then your next "
+    "assigned job. STOP and send air one request, then only re-read mail until it is answered, on anything not "
+    "green: a red you cannot fix in two attempts, a choice the assign does not settle, a refusal you cannot "
+    "resolve, a conflict outside your own files, anything that is the operator's decision. Never unassigned "
+    "work, never another seat's branch. A quiet tick is one line."
+)
+
+
+def _dispatcher(clone: Path, value: str) -> None:
+    """The ``dispatcher`` line, written where a tracked espalier.toml would be:
+    the clone and every worktree of it (the brief reads the seat's own copy)."""
+    homes = [clone, *sorted((clone / ".claude" / "worktrees").glob("*"))]
+    for home in homes:
+        (home / "espalier.toml").write_text(f"dispatcher = {value}\n", encoding="utf-8")
+
+
+def _holds(path: Path, *rels: str) -> None:
+    for rel in rels:
+        (path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (path / rel).write_bytes(b"x\n")
+
+
+class TestBrief:
+    """B-7: a seat's first message is composed by the tool, never pasted.
+    Dies to: the self-host render drifting from the operator's tick, a form
+    naming a protocol home its checkout does not hold, or a double quote
+    (Windows PowerShell 5.1 splits a native argument there)."""
+
+    def test_a_worker_on_this_repository_gets_the_operators_tick_verbatim(self, seat, clone):
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "memory/parallel-work-protocol.md", "docs/WORKFLOW.md", "scripts/proof_tier.py")
+        brief = seat.compose_brief(clone, "box-feat", feat)
+        first, loop = brief.text.split("\n")
+        assert brief.role == "worker" and loop == brief.loop == _OPERATOR_TICK
+        assert first.startswith("You are seat box-feat, a worker under the dispatcher air (Core Rule 15, "
+                                "memory/parallel-work-protocol.md). Orient from the banner, then run /inbox")
+        assert first.endswith("Then start the worker loop on the next line with no further message from the operator.")
+
+    def test_an_adopter_worker_is_pointed_at_what_its_checkout_holds(self, seat, clone):
+        _dispatcher(clone, '"hub"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "docs/WORKFLOW.md")
+        seeded = seat.compose_brief(clone, "box-feat", feat)
+        assert "a worker under the dispatcher hub (docs/WORKFLOW.md, Parallel seats)." in seeded.text
+        assert "the proof the change earns per /implement-task step 7" in seeded.loop and "--base" not in seeded.text
+        assert "both reviewers at once with your edits frozen per /implement-task step 6" in seeded.loop
+        assert "snapshot clone" not in seeded.text   # defined on this repository only
+        assert "note from hub;" in seeded.loop and "send hub one request" in seeded.loop
+        assert "memory/" not in seeded.text and "Core Rule" not in seeded.text
+        bare = seat.compose_brief(clone, "box-feat", clone / "no-such-checkout")   # the clone holds neither
+        assert "(the /inbox command's body)" in bare.text
+
+    def test_with_no_dispatcher_named_a_worker_answers_to_the_operator(self, seat, clone):
+        brief = seat.compose_brief(clone, "box", clone)
+        assert brief.role == "worker"
+        assert "a worker under the operator (espalier.toml names no dispatcher)" in brief.text
+        assert "note from the operator;" in brief.loop and "send the operator one request" in brief.loop
+
+    def test_the_dispatcher_seat_gets_the_board_loop_and_its_duties(self, seat, clone):
+        _dispatcher(clone, '"box"')
+        _holds(clone, "memory/parallel-work-protocol.md")
+        brief = seat.compose_brief(clone, "box", clone)
+        first, loop = brief.text.split("\n")
+        assert brief.role == "dispatcher" and loop == brief.loop == "/loop 15m /inbox board"
+        assert first.startswith("You are the dispatcher seat box (Core Rule 15, memory/parallel-work-protocol.md). "
+                                "Orient from the banner, then run /inbox (mark read) and /inbox board.")
+        assert "revert first on a red main" in first and "Decisions stay the operator's." in first
+        assert "model" not in first   # the operator's own setting, never the template's
+        _holds(clone, "cc/GOAL.md")
+        assert "Orient from the banner and cc/GOAL.md's notes, then" in seat.compose_brief(clone, "box", clone).text
+
+    def test_an_unusable_dispatcher_setting_refuses_the_brief_and_launch_names_the_way_past(self, seat, clone,
+                                                                                            registry, no_claude):
+        _dispatcher(clone, '"Not A Name"')   # not lowercase letters, digits and hyphens
+        with pytest.raises(seat.Refused, match="the brief names the dispatcher, and "):
+            seat.compose_brief(clone, "box", clone)
+        _worktree(clone, "feat", name="box-feat")
+        with pytest.raises(seat.Refused, match="--no-brief launches without the first message"):
+            seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=False)
+        with pytest.raises(seat.Refused, match="the brief names the dispatcher"):   # before the worktree is made
+            seat.cmd_launch(clone, "box-new", [], maintenance=False, unchecked=False, print_only=False)
+        assert not (clone / ".claude" / "worktrees" / "new").exists()
+        assert seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=False,
+                               brief=False) == 0
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude"]
+
+    def test_every_form_is_ascii_with_no_double_quote_and_survives_both_shells(self, seat, clone, tmp_path):
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        worker = seat.compose_brief(clone, "box-feat", clone)
+        _holds(feat, "memory/parallel-work-protocol.md", "scripts/proof_tier.py")
+        self_host = seat.compose_brief(clone, "box-feat", feat)
+        _dispatcher(clone, '"box"')
+        _holds(clone, "cc/GOAL.md")
+        dispatcher = seat.compose_brief(clone, "box", clone)
+        target = seat.Target("box-feat", feat, True, False)
+        for brief in (worker, self_host, dispatcher):
+            assert brief.text.isascii() and '"' not in brief.text and "%" not in brief.text, brief.text
+            assert not set(brief.text) & set(seat._PS_DOUBLE)
+            # Both --print forms quote it whole, so it reaches claude as one argument.
+            assert seat.command_line(target, [brief.text], maintenance=False, shell="powershell")
+            line = seat.command_line(target, [brief.text], maintenance=False, shell="posix")
+            assert seat.shlex.split(line.split(" claude ", 1)[1]) == [brief.text]
+
+    def test_launch_passes_the_brief_last_and_no_brief_drops_it(self, seat, clone, registry, no_claude, monkeypatch,
+                                                                capsys):
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        monkeypatch.chdir(clone)
+        assert seat.main(["launch", "box-feat", "--", "--model", "x"]) == 0
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", "--model", "x", "--",
+                                         seat.compose_brief(clone, "box-feat", feat).text]
+        assert seat.main(["launch", "box-feat", "--no-brief", "--", "--model", "x"]) == 0
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", "--model", "x"]
+        assert "no first message" in capsys.readouterr().out
+        assert seat.main(["brief", "box-feat"]) == 0
+        assert capsys.readouterr().out == seat.compose_brief(clone, "box-feat", feat).text + "\n"
+
+    def test_an_adopters_dispatcher_proposes_the_revert_and_this_repository_reverts_first(self, seat, clone):
+        """Reverting first on a red base is this repository's rule; an
+        adopter's dispatcher loop must not do it unasked. Dies to: the
+        self-host duty rendered for every tree."""
+        _dispatcher(clone, '"box"')
+        _holds(clone, "docs/WORKFLOW.md")
+        adopter = seat.compose_brief(clone, "box", clone).text
+        assert "propose the revert to the operator on a red main" in adopter and "revert first" not in adopter
+        _holds(clone, "memory/parallel-work-protocol.md")
+        assert "revert first on a red main" in seat.compose_brief(clone, "box", clone).text
+
+    @pytest.mark.contract   # it reads a shipped command body (tests/test_marker_taxonomy.py)
+    def test_the_adopter_phrases_name_steps_the_shipped_command_body_holds(self, seat):
+        """The adopter tick points at /implement-task's steps by number: a
+        step inserted into the shipped body would re-point every adopter
+        seat. Dies to: a renumbered body with the phrases left behind."""
+        body = (REPO_ROOT / "espalier" / "assets" / "claude" / "commands" / "implement-task.md").read_text(
+            encoding="utf-8")
+        steps = body.splitlines()
+        assert seat.ADOPTER_REVIEW.endswith("per /implement-task step 6")
+        assert any(s.startswith("6. **Review before the one full run.") for s in steps)
+        assert any(s.startswith("7. **Run the proof tier once") for s in steps)
+
+    @pytest.mark.parametrize("args", [["-p"], ["--print"], ["--resume"], ["--resume=abc"], ["-c"], ["--continue"],
+                                      ["--teleport"], ["fix this"], ["--model", "x", "--", "fix this"]])
+    def test_the_brief_is_refused_beside_a_mode_flag_or_a_prompt_of_its_own(self, seat, clone, registry, no_claude,
+                                                                           args):
+        """Dies to: passing the brief beside them (two prompts, or a resumed
+        session that never reads it)."""
+        _worktree(clone, "feat", name="box-feat")
+        with pytest.raises(seat.Refused, match="--no-brief launches without the first message"):
+            seat.cmd_launch(clone, "box-feat", args, maintenance=False, unchecked=False, print_only=False)
+        assert no_claude == []
+        assert seat.cmd_launch(clone, "box-feat", args, maintenance=False, unchecked=False, print_only=False,
+                               brief=False) == 0
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *args]
+
+    def test_a_list_option_keeps_its_values_and_the_brief_follows_a_dashdash(self, seat, clone, registry, no_claude):
+        """Driven on 2.1.301: a prompt after `--add-dir <dir>` was read as a
+        second directory and the session had no prompt; after a `--` it was
+        answered. Dies to: the brief appended bare."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        args = ["--add-dir", "a", "b"]
+        assert seat.cmd_launch(clone, "box-feat", args, maintenance=False, unchecked=False, print_only=False) == 0
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *args, "--",
+                                         seat.compose_brief(clone, "box-feat", feat).text]
+
+    def test_a_cmd_shim_refuses_the_brief_because_cmd_cuts_it_at_its_line_break(self, seat, clone, registry,
+                                                                                no_claude, monkeypatch):
+        """Driven by the failure-mode review on this host: a .cmd given the
+        two-line brief received only its first line, so the loop never
+        arrived. Dies to: launching through the shim with the brief."""
+        _worktree(clone, "feat", name="box-feat")
+        real = seat.shutil.which
+        monkeypatch.setattr(seat.shutil, "which", lambda name, path=None:
+                            "C:/npm/claude.CMD" if name == "claude" else real(name, path=path))
+        for print_only in (False, True):
+            with pytest.raises(seat.Refused, match="a script cmd.exe runs, which cuts an argument at its line break"):
+                seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=print_only)
+        assert seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=False,
+                               brief=False) == 0
+
+    def test_the_banner_line_is_the_short_form_of_the_same_brief(self, seat, clone):
+        """Its interval is read from the loop each form ends with, so the two
+        cannot drift. Dies to: an interval spelled apart from the template."""
+        _dispatcher(clone, '"box"')
+        worker = seat.compose_brief(clone, "box-feat", None)
+        dispatcher = seat.compose_brief(clone, "box", None)
+        assert seat.brief_line(worker.role, "box-feat", "py -3") == (
+            "run /inbox, then /inbox board, then start the worker loop (/loop 10m); "
+            "py -3 tools/cc/seat.py brief box-feat prints the first message")
+        assert worker.loop.startswith("/loop 10m ")
+        assert seat.brief_line(dispatcher.role, "box") == (
+            "run /inbox, then /inbox board, then start the board loop (/loop 15m)")
+        assert dispatcher.loop.startswith("/loop 15m ")
+
+
 # -- retire --------------------------------------------------------------------------
 
 class TestRetire:
@@ -484,6 +694,23 @@ class TestRetire:
         with pytest.raises(seat.Refused, match="the mail channel could not be read .* nothing is released or removed"):
             seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=False)
         assert feat.is_dir()
+
+    def test_an_unread_name_in_the_seat_is_named_as_unread(self, seat, tmp_path, monkeypatch):
+        """A name read that failed in the seat's worktree (a timeout, a config
+        git cannot parse) was refused as "does not answer the name", which
+        sends the operator to rename a seat that may be named. Dies to: the
+        unread reason folded into the wrong-name refusal."""
+        unread = f"{seat.mail.MACHINE_UNREAD} (git config took longer than 10s), so no machine is named"
+        monkeypatch.setattr(seat.mail, "machine_setting", lambda path, **kw: (None, unread))
+        with pytest.raises(seat.Refused) as refused:
+            seat._send_releases(tmp_path, "box-feat", ["x-1"], "retired")
+        said = str(refused.value)
+        assert "could not be read" in said and "took longer than 10s" in said, said
+        assert "does not answer the name" not in said and "run retire again" in said and said.isascii()
+        unset = "git config espalier.machine is not set, so the channel is off (the default)"
+        monkeypatch.setattr(seat.mail, "machine_setting", lambda path, **kw: (None, unset))
+        with pytest.raises(seat.Refused, match="does not answer the name box-feat"):
+            seat._send_releases(tmp_path, "box-feat", ["x-1"], "retired")   # an unset name: no wait helps
 
     def test_a_dead_holders_lock_is_released_and_said(self, seat, clone, registry, capsys):
         feat = _worktree(clone, "feat", name="box-feat")

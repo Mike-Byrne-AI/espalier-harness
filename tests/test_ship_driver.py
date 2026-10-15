@@ -2579,6 +2579,30 @@ class TestOneOpenPullRequestPerSeat:
         assert ship.open_pr() == 0
         assert "already has an open pull request" not in capsys.readouterr().out
 
+    def test_an_unread_seat_name_is_said_never_read_as_no_seat(self, ship, tmp_path, forget_guard, monkeypatch,
+                                                              capsys):
+        """A name read that failed (a timeout, a config git cannot parse) is not
+        an unnamed box: the one-per-seat check was skipped in silence, so a
+        seat's second open pull request opened unremarked. Still an advisory:
+        the lane opens. Dies to: the unread reason taken for an unset name."""
+        _write_guard(tmp_path)
+        monkeypatch.setattr(ship, "_MAIL", None)
+        phrase = ship._mail_module().MACHINE_UNREAD   # the real one: a stub that copied it would not drift
+        channel = self._channel("win", {"lane/y": "win"})
+        channel.MACHINE_UNREAD = phrase
+        channel.machine_setting = lambda root, **kw: (
+            None, f"{phrase} (git config took longer than 10s), so no machine is named")
+        monkeypatch.setattr(ship, "_MAIL", channel)
+        spawns = _arm(ship, _open_answers(tmp_path, open_prs=self._OTHERS))
+        assert ship.open_pr() == 0
+        out = capsys.readouterr().out
+        assert "machine name could not be read" in out and "took longer than 10s" in out, out
+        assert "open pull requests were not checked" in out
+        assert spawns.count(("gh", "pr", "create")) == 1
+        channel.machine_setting = lambda root, **kw: (None, "git config espalier.machine is not set")
+        assert ship.seat_open_prs(tmp_path, "lane/x", json.loads(self._OTHERS)) == ("", [])
+        assert "could not be read" not in capsys.readouterr().out   # an unset name stays silent
+
 
 class TestStaleBaseInStatus:
     """With the up-to-date rule off, `status` says when the base moved near

@@ -1196,3 +1196,18 @@ class TestReleaseLane:
         fake = _Fake({("git", "config", "--get", "espalier.machine"): (1, "", "")})
         assert mail.release_lane(tmp_path, "lane/x", run=fake) is None
         assert not fake.has("git", "push") and not fake.has("git", "for-each-ref")
+
+    def test_an_unread_name_is_said_and_sends_nothing(self, mail, tmp_path):
+        """A name read that failed (a config git cannot parse, a timeout) is not
+        an unnamed box: the lane's claims stayed live with no word at the push,
+        and every other seat's plan kept warning on them. Dies to: the unread
+        reason taken for an unset name."""
+        broken = (128, "", "fatal: bad config line 3 in file .git/config")
+        fake = _Fake({("git", "config", "--get", "espalier.machine"): broken})
+        said: list[str] = []
+        assert mail.release_lane(tmp_path, "lane/x", run=fake, say=said.append) is None
+        assert len(said) == 1, said
+        assert "could not be read" in said[0] and "bad config line 3" in said[0], said[0]
+        assert "send --type release --lane lane/x" in said[0] and said[0].isascii()
+        assert "turns it on" not in said[0]
+        assert not fake.has("git", "push") and not fake.has("git", "for-each-ref")
