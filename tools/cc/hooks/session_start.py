@@ -999,7 +999,7 @@ def _asks_count(root: Path, mail: Any, machine: str, by_machine: dict) -> str:
     """On the dispatcher seat (``dispatcher`` in espalier.toml names the
     machine this checkout answers; the dispatcher clone's other worktree seats
     get nothing), how many requests no ack names, from any seat, its own
-    outgoing ones included, and how old the oldest is (TP-701 Wave A-1); ''
+    outgoing ones included, and how old the oldest is; ''
     on any other seat, with none open, or where the deployed mail.py predates
     the reader. Every machine's ref is counted, this one's own included,
     since the dispatcher's acks live there. No spawn: the refs were read

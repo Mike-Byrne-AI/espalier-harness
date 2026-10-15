@@ -241,7 +241,7 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     if type_ == "ack" and not ack:
         # Only an id closes anything an ack answers (live_requests pairs on it);
         # a lane closes claims and jobs through a release. A lane-only ack was
-        # accepted and answered nothing (failure-mode review, TP-701 r1).
+        # accepted and answered nothing.
         raise Unresolvable("an ack names the message it answers (--ack <id>); a lane is closed by a release")
     seat = (seat or "").strip()
     if seat and type_ != "assign":
@@ -838,10 +838,10 @@ def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0,
     it is ONE change and no command: the key moved out of the shared config
     into the main worktree's ``config.worktree``, at the absolute path read
     here, after which a fresh session turns per-worktree config on and names
-    the worktree itself (``name_this_worktree``). Rounds 6 to 8 failed a
-    two-change wording three ways (an order git's pages do not give, a place
-    the wrong file also met); round 8 measured the one change on git 2.39.5,
-    every worktree healthy (``docs/HOOKS.md`` keeps the measurement). A key
+    the worktree itself (``name_this_worktree``). A two-change wording failed
+    three ways (an order git's pages do not give, a place the wrong file also
+    met); the one change was measured on git 2.39.5, every worktree healthy
+    (``docs/HOOKS.md`` keeps the measurement). A key
     that could not be read prints no steps, since the plain pair's first
     command breaks every worktree of a bare clone. ``known`` is a ``(key,
     value)`` the caller already read, so a second read cannot contradict it.
@@ -849,7 +849,7 @@ def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0,
     (``name_this_worktree``, ``assign_refusal``, the ledger's mint refusal)
     and for the board's remedy (a core.worktree clone read there as not bare
     was handed the pair, which pointed the worktree at the main checkout's
-    files, measured in round 9)."""
+    files, measured)."""
     if at is not None:
         steps = (f'git -C "{at}" config extensions.worktreeConfig true && git -C "{at}" '
                  f"config --worktree {MACHINE_KEY} <name>")

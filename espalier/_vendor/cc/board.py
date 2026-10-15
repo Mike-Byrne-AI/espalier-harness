@@ -562,7 +562,7 @@ def seat_rows(by_machine: dict[str, list[dict]], local: dict, now: datetime | No
             key = f"{key} [{where}]"
             # The steps mail.naming_steps read in that worktree (read_sessions):
             # a second owner here once handed a core.worktree clone the pair,
-            # which points the worktree at the main checkout's files (round 9).
+            # which points the worktree at the main checkout's files.
             naming = checkout.get("naming") or ""
             remedy = f"name it: {naming}" if naming else ""
             row = rows.setdefault(key, {"seat": key, "last_mail": None, "name_shared_with": first, "remedy": remedy})
@@ -610,7 +610,7 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
         local = read_sessions(root, run_=run_)
     except Unresolvable as exc:
         local = {"checkouts": [], "unread": str(exc)}
-    except Exception as exc:  # fail-open: ok deliberate -- each section is read on its own; the line says unread and why
+    except Exception as exc:  # noqa: BLE001 -- each section is read on its own; the seats line says unread and why
         local = {"checkouts": [], "unread": f"{type(exc).__name__}: {os_error_text(exc)}"}
     board["seats"] = {"rows": seat_rows(by_machine, local, now), "unread": local.get("unread") or "",
                       "checked": local.get("checked", True), "registry": local.get("registry", ""),

@@ -355,7 +355,7 @@ class SeatNameUnread(SeatUnreadable):
     """``mail.py`` is here, and git could not answer for the seat's name (a
     timeout, a config git cannot parse). A mint and an explicit id are both
     refused by name: an id checked against no block is the collision the
-    channel exists to refuse (dispatcher, TP-701 c160d6 (A))."""
+    channel exists to refuse."""
 
 
 def read_id_blocks(root: Path) -> dict[str, dict[str, tuple[int, int]]] | None:
