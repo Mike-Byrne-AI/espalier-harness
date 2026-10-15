@@ -1891,10 +1891,12 @@ def _source_lines(text: str) -> list[str]:
     census made 31,098 such calls over 1.85 GB of re-split text, so on the
     3.10 CI cell the health test spent about 186 s inside the splitter and
     died on the 60 s per-test timeout while every newer interpreter finished
-    the same walk in 19 s (`DEF-762`). The pattern is the one 3.11+ ships: it
-    splits on ``\\r\\n``, ``\\n`` and ``\\r`` only, never on the form feed or
-    the other separators ``str.splitlines`` honours, so the line numbers agree
-    with the parser's ``lineno``.
+    the same walk in 19 s (`DEF-762`). The pattern is the one 3.13 ships as
+    ``ast._line_pattern`` (3.10.21 and 3.11.9 still split with the
+    per-character loop, read 2026-10-15): it splits on ``\\r\\n``, ``\\n`` and
+    ``\\r`` only, never on the form feed or the other separators
+    ``str.splitlines`` honours, so the line numbers agree with the parser's
+    ``lineno``.
     """
     return [m[0] for m in _LINE_RE.finditer(text)]
 
@@ -1906,9 +1908,11 @@ def _segment(lines: list[str], node: ast.AST) -> str | None:
     when the node carries no end position; offsets are BYTE offsets into the
     UTF-8 encoding of the line, because ``col_offset`` counts bytes, not
     characters. Pinned equal to the stdlib on the live suite by
-    ``tests/test_derived_population_census.py``. A second user loads this
-    pair by path, ``tests/test_ledger_fragments.py``'s reader census: a
-    rename or a move changes it too.
+    ``tests/test_derived_population_census.py``. ``tests/_source_segment.py``
+    loads this pair by path, and every slicer under ``tests/`` goes through
+    it: a rename or a move breaks them all, loudly at first use (`DEF-3005`).
+    Both by-path loaders run this module without registering it in
+    ``sys.modules``, so a module-level ``@dataclass`` here would break both.
     """
     try:
         if node.end_lineno is None or node.end_col_offset is None:

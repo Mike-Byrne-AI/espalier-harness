@@ -39,6 +39,7 @@ from espalier.models import (
     ReflectFinding,
     ReflectPass,
 )
+from tests._source_segment import segment, source_lines
 
 
 def _make_blueprint(session_id: str = "test-session-001") -> CognitiveBlueprint:
@@ -1446,14 +1447,13 @@ class TestPrimingSanitizerParity:
 
     def test_every_description_emission_routes_through_sanitizer(self):
         violations = []
+        lines = source_lines(HOOK_SIDE_SCRIPT.read_text(encoding="utf-8"))
         for stmt in self._cmd_load_body():
             touches_description = any(
                 self._accesses_description(sub) for sub in ast.walk(stmt)
             )
             if touches_description and not self._calls_sanitizer(stmt):
-                seg = (ast.get_source_segment(
-                    HOOK_SIDE_SCRIPT.read_text(encoding="utf-8"), stmt
-                ) or "")[:200]
+                seg = (segment(lines, stmt) or "")[:200]
                 violations.append(
                     f"line {stmt.lineno}: 'description' accessed without "
                     f"_sanitize_for_priming in enclosing statement: {seg.strip()}"

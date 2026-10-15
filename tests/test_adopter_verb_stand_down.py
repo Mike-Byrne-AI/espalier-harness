@@ -37,6 +37,7 @@ from pathlib import Path
 import pytest
 
 from espalier._safe_walk import visible
+from tests._source_segment import segment, source_lines
 
 from _adopter_tree import assert_is_adopter_tree
 
@@ -316,13 +317,14 @@ class TestHarmfulVerbsAreDeclaredAgainstTheHiddenCanon:
 
         source = (REPO_ROOT / "espalier" / "cli.py").read_text(encoding="utf-8")
         tree = ast.parse(source)
-        # Only the gated commands' bodies: `get_source_segment` re-splits the
-        # whole 13,000-line source on every call, so reading all 235 functions
+        lines = source_lines(source)
+        # Only the gated commands' bodies, each sliced from the one split above:
+        # reading every function with a per-call re-split of the whole source
         # cost 20 s here and 55 s on a CI runner, nine tenths of the per-test
-        # ceiling (2026-10-07).
+        # ceiling (2026-10-07; DEF-3005).
         wanted = {"cmd_" + verb.replace("-", "_") for verb in self.GATED}
         bodies = {
-            node.name: ast.get_source_segment(source, node) or ""
+            node.name: segment(lines, node) or ""
             for node in ast.walk(tree)
             if isinstance(node, ast.FunctionDef) and node.name in wanted
         }
@@ -349,8 +351,9 @@ class TestHarmfulVerbsAreDeclaredAgainstTheHiddenCanon:
         import ast
 
         source = (REPO_ROOT / "espalier" / "cli.py").read_text(encoding="utf-8")
+        lines = source_lines(source)
         body = next(
-            ast.get_source_segment(source, node) or ""
+            segment(lines, node) or ""
             for node in ast.walk(ast.parse(source))
             if isinstance(node, ast.FunctionDef) and node.name == "cmd_refresh_self_host_pin"
         )

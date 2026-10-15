@@ -24,6 +24,7 @@ from espalier._safe_walk import visible
 from espalier.scanners.encoding_contracts import NON_FILE_OPENERS
 from _locked import locked
 from espalier.cli import _build_settings_json
+from tests._source_segment import segment, source_lines
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -1651,6 +1652,7 @@ class TestSubprocessEncodingPinned:
             encoding="utf-8"
         )
         tree = ast.parse(src)
+        lines = source_lines(src)
         fn = next(
             n for n in ast.walk(tree)
             if isinstance(n, ast.FunctionDef) and n.name == "write_required_surface"
@@ -1670,7 +1672,7 @@ class TestSubprocessEncodingPinned:
                 and not any(k.arg == "errors" for k in call.keywords)
                 and not _guarded(call)
             ):
-                offenders.append(ast.get_source_segment(src, call) or "read_text(...)")
+                offenders.append(segment(lines, call) or "read_text(...)")
         assert not offenders, (
             "write_required_surface has an unguarded bare-strict read_text — a "
             "non-UTF-8 pre-existing cc/ doc would abort `espalier init` (EA-2):\n  "
@@ -1950,11 +1952,12 @@ def _strict_text_read_spelling(call: ast.Call, tree: ast.AST | None = None) -> s
     return None if read is None or read[1] else read[0]
 
 
-def _reads_a_structured_file(call: ast.Call, tree: ast.AST, source: str) -> str | None:
+def _reads_a_structured_file(call: ast.Call, tree: ast.AST, lines: tuple[str, ...]) -> str | None:
     """The first ``_STRUCTURED_FILE_TOKENS`` word in the call's own text or the
-    enclosing function's name, or None."""
+    enclosing function's name, or None. ``lines`` is ``source_lines`` of the
+    module's text, split once by the caller."""
     fn = _enclosing_function(tree, call)
-    window = (ast.get_source_segment(source, call) or "") + " " + (fn.name if fn is not None else "")
+    window = (segment(lines, call) or "") + " " + (fn.name if fn is not None else "")
     return next((t for t in _STRUCTURED_FILE_TOKENS if t in window), None)
 
 
@@ -1970,6 +1973,7 @@ def _text_reads_under_a_handler_that_lets_the_decode_error_past(
     tree = ast.parse(source, filename=rel)
     tries = [t for t in ast.walk(tree) if isinstance(t, _TRY_TYPES)]
     out: list[tuple[int, str, str]] = []
+    lines: tuple[str, ...] | None = None  # split on the first tolerant read: most files have none
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -1978,7 +1982,9 @@ def _text_reads_under_a_handler_that_lets_the_decode_error_past(
             continue
         spelling, tolerant = read
         if tolerant:
-            token = _reads_a_structured_file(node, tree, source)
+            if lines is None:
+                lines = source_lines(source)
+            token = _reads_a_structured_file(node, tree, lines)
             if token is not None:
                 out.append((node.lineno, spelling, (
                     f"a tolerant errors= on a structured file ({token}) masks corruption "
