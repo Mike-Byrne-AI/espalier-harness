@@ -76,3 +76,4 @@ places, in this order:
 tracker at all -- the repo's most-edited forward surface had the least mechanical
 coverage. The ledger is tracked now and `_swept_docs` sweeps it; the packs beside it
 are dated plans and stay out by one predicate (`surface_contract.is_shipped_pack`).
+<!-- folded-record: ok -- history: the file's tracking gap, closed 2026-09-21 -->

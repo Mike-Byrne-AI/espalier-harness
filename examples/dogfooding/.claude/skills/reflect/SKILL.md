@@ -115,7 +115,8 @@ printed for it, and a disposition
   keep local for a note about a person; the Espalier source repo has its own
   table, because its docs ship to adopters. The pass never writes without your
   approval, and never touches the hot `ESPALIER_MEMORY.md` index (that stays
-  the Session-Log's job).
+  the job of the handoff and its Session Log row, a file under
+  `memory/session-log.d/` where the loader is deployed).
 
 After acting on fixes, run reflect again if more than 3 files were
 modified — the second pass catches issues introduced by the fixes.

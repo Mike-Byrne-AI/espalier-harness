@@ -114,6 +114,7 @@ mechanism classes** (`§C0` holds the standalone remainder; `task-packs/FORWARD_
 §2 is the source of record and sums itself). The backlog was not large because the project
 had many separate problems. It was large because ~25 classes had been closed one instance
 at a time, and each unclosed class kept regenerating rows.
+<!-- folded-record: ok -- history: a 2026-08-05 measurement of the then single file -->
 
 *(This paragraph has been wrong twice. It first read "225 of 233 … only 11 standalone";
 the tables sum to 221 and 12. The correction fixed those two and left a third transcribed

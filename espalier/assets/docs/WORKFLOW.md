@@ -39,8 +39,10 @@ context instead of the auto-start notice.
 
 The SessionStart hook auto-orients Claude on every new session — it
 injects a one-line `/recall` pointer to whichever footgun catalogs your
-repo actually has, a MEMORY digest once `ESPALIER_MEMORY.md` carries
-dated Session Log rows, and orientation instructions. Each section is
+repo actually has, a MEMORY digest once the Session Log has dated rows (one
+file per row under `memory/session-log.d/` where `tools/cc/_record_fragments.py`
+is deployed, else the table in `ESPALIER_MEMORY.md`), and orientation
+instructions. Each section is
 gated on its own artifact, so the banner describes your tree rather than
 the harness's. Claude OPENS with a provisional first-thoughts read of
 the handoff (pulling full MEMORY/footgun detail on demand via `/recall`)
@@ -338,7 +340,9 @@ The clean shutdown sequence:
 
 1. Records durable reasoning (decisions, rejected alternatives,
    discovered patterns) into the cognitive blueprint.
-2. Updates ESPALIER_MEMORY.md with session-relevant operating knowledge.
+2. Records the session's row in the Session Log, with session-relevant
+   operating knowledge: a file of its own under `memory/session-log.d/` where
+   the loader is deployed, else a row of the table in ESPALIER_MEMORY.md.
 3. Finalizes the blueprint so the next `/context-load` picks it up.
 4. Emits a structured handoff summary: what changed, what's proven,
    what's next, what's risky.

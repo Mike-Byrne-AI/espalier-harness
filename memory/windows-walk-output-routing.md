@@ -95,7 +95,9 @@ does not exist and is `DEF-937`.
 mark a row fixed or unfixed when the walk ran, and nothing re-reads them afterwards: on 2026-09-26
 eight rows were relayed as still open that the landed changelog archive shows fixed and the live
 ledger no longer carries. Before relaying anything from a sheet as open, ask both questions -- is it
-a live row in `task-packs/FORWARD_LEDGER.md`, and does the archived changelog carry its fix line.
+a live row in the forward ledger as its tools read it (`python tools/cc/_record_fragments.py ledger`:
+since 2026-10-14 a class row is its own file under `task-packs/ledger.d/`, and
+`task-packs/FORWARD_LEDGER.md` alone shows none), and does the archived changelog carry its fix line.
 The sheets record what a walk saw; the ledger is the list of what is still owed.
 
 

@@ -3147,3 +3147,304 @@ class TestHooksDocNamesTheStopGateOverride:
         rows = [l for l in text.splitlines() if l.startswith("| `ESPALIER_STOP_GATE_TEST_CMD")]
         assert len(rows) >= 2, rows
         assert any("your" in r and "suite" in r for r in rows), rows
+
+
+# ── Folded records: a doc that names one names where its rows live ──────
+
+#: The instruction layer: bodies, memory rules, the docs a session is told to
+#: follow, the root documents a stranger reads, and the seeds `init` deploys.
+#: Packs are corrected when they run; records are skipped below (Core Rule 13),
+#: the two seeds that become an adopter's records among them.
+_FOLD_DIRS = (".claude", "memory", "docs", "espalier/assets/seed")
+_FOLD_FILES = ("README.md", "CONTRIBUTING.md", "CLAUDE.md", "task-packs/CLAUDE.md", "examples/README.md")
+_FOLD_RECORD_SEEDS = frozenset({"espalier/assets/seed/FORWARD_LEDGER.md", "espalier/assets/seed/CONVERGENCE_LEDGER.md"})
+_FOLD_FENCE = re.compile(r"(?m)^[ ]*```(?s:.*?)^[ ]*```.*$")
+#: Outside a fence a unit ends at a blank line and before every list item,
+#: table row and heading: one item naming the folder must not excuse the next.
+_FOLD_SPLIT = re.compile(r"(?m)^[ ]*$|^(?=[ ]*(?:[|#]|[-*+] |[0-9]+[.)] ))")
+#: Each folded record: how a unit spells its single-file home, what else the
+#: unit must say for that to be the record (the memory file is more than its
+#: Session Log: its name beside the log's, wrapped or not, or beside a verb that
+#: sends a row into it), and what names the rows where they live now (the
+#: folder, or the loader that reads both forms).
+_FOLDED = (
+    ("the forward ledger's file", re.compile(r"FORWARD_LEDGER\.md|\.LEDGER(?![A-Za-z_])"), None,
+     re.compile(r"ledger\.d|_record_fragments")),
+    ("the probes roster", re.compile(r"LEDGER_PROBES\.json|\.PROBES(?![A-Za-z_])"), None,
+     re.compile(r"probes\.d|_record_fragments")),
+    ("the memory file's Session Log", re.compile(r"ESPALIER_MEMORY\.md"),
+     re.compile(r"(?i:session[\s-]+log|\bprepend\w*|\bupdate ESPALIER_MEMORY\.md)"),
+     re.compile(r"session-log\.d|_record_fragments")),
+)
+#: A line anchor cites a past state of the file (``FORWARD_LEDGER.md:587``).
+_FOLD_ANCHOR = re.compile(r"(?:FORWARD_LEDGER\.md|LEDGER_PROBES\.json|ESPALIER_MEMORY\.md):\d")
+#: A provenance header cites where a note came from, not where to read.
+_FOLD_PROVENANCE = re.compile(r"\*\*(?:Status|Linked from):")
+#: A generated region says what its generator says (the deploy inventory lists
+#: the seeded ledger file), and its own drift check pins it. Only a region a
+#: generator declares (``name="<region>"`` in a script that writes generated
+#: regions) is honoured, so a hand-written BEGIN comment excuses nothing.
+_FOLD_GENERATED = re.compile(r"(?s)<!-- ([\w-]+): BEGIN generated region.*?<!-- \1: END generated region -->")
+_FOLD_REGION_NAME = re.compile(r"\bname=\"([\w-]+)\"")
+#: A marker: an HTML comment in markdown or a line comment in a script, its
+#: reason a kind (``history:`` a past state told as such, ``accurate:`` true on
+#: every tree as written) and three words or more.
+_FOLD_MARKER = re.compile(r"(?:<!--|//) folded-record: ok -- (?:history|accurate): (.+?)\s*(?:-->|$)", re.M)
+
+
+def _fold_marked(unit: str) -> bool:
+    return any(len(m.group(1).split()) >= 3 for m in _FOLD_MARKER.finditer(unit))
+
+
+def _fold_regions(root: Path, owners: list[str]) -> frozenset[str]:
+    """The region names a generator declares."""
+    names: set[str] = set()
+    for rel in owners:
+        text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        if "generated region" in text:
+            names.update(_FOLD_REGION_NAME.findall(text))
+    return frozenset(names)
+
+
+def _fold_units(text: str) -> list[tuple[int, str]]:
+    """``(offset, unit)``: each fenced block whole, then the rest split as
+    ``_FOLD_SPLIT`` says. A fence is blanked to spaces of its own length, so
+    offsets stay the text's and the fence reads as a break between units."""
+    units = [(m.start(), m.group(0)) for m in _FOLD_FENCE.finditer(text)]
+    rest = _FOLD_FENCE.sub(lambda m: " " * len(m.group(0)), text)
+    pos = 0
+    for m in [*_FOLD_SPLIT.finditer(rest), None]:
+        end = m.start() if m else len(rest)
+        if end > pos:
+            units.append((pos, rest[pos:end]))
+        if m:
+            pos = max(pos, m.end())
+    return units
+
+
+def _fold_population(root: Path, rels: list[str]) -> list[str]:
+    """The instruction-layer files the census reads: markdown and workflow
+    scripts, less the declared records, the record seeds and the Session Log
+    and changelog fragments, which say what was true on their day."""
+    from tests._record_paths import is_dated_fragment
+    from tests.test_doc_source_citations import _RECORD_SURFACE_DOCS
+
+    return sorted(rel for rel in rels
+                  if (rel in _FOLD_FILES or rel.startswith(tuple(d + "/" for d in _FOLD_DIRS)))
+                  and rel.endswith((".md", ".js")) and rel not in _RECORD_SURFACE_DOCS
+                  and rel not in _FOLD_RECORD_SEEDS and not is_dated_fragment(rel) and (root / rel).is_file())
+
+
+def _fold_offenders(root: Path, rels: list[str], owners: list[str]) -> list[str]:
+    """``path:line: record`` for each unit that spells a folded record's
+    single-file home and does not name where its rows live now. A declared
+    generated region is blanked first, so text glued after its END line is
+    still read."""
+    regions = _fold_regions(root, owners)
+    out = []
+    for rel in _fold_population(root, rels):
+        text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        text = _FOLD_GENERATED.sub(
+            lambda m: re.sub(r"[^\n]", " ", m.group(0)) if m.group(1) in regions else m.group(0), text)
+        for offset, unit in sorted(_fold_units(text)):
+            if _fold_marked(unit) or _FOLD_PROVENANCE.match(unit.lstrip()):
+                continue
+            plain = _FOLD_ANCHOR.sub("", unit)
+            for record, old, also, new in _FOLDED:
+                if not old.search(plain) or (also and not also.search(plain)) or new.search(unit):
+                    continue
+                at = next((m.start() for m in old.finditer(unit) if not re.match(r":\d", unit[m.end():])), 0)
+                out.append(f"{rel}:{text.count(chr(10), 0, offset + at) + 1}: {record}")
+    return out
+
+
+def _fold_bad_markers(root: Path, rels: list[str]) -> list[str]:
+    """``path:line`` of each ``folded-record: ok`` that is not a marker of the
+    declared form: a comment, a kind, a reason of three words or more."""
+    out = []
+    for rel in _fold_population(root, rels):
+        text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        good = [m.span() for m in _FOLD_MARKER.finditer(text) if len(m.group(1).split()) >= 3]
+        for m in re.finditer(r"folded-record: ok", text):
+            if not any(start <= m.start() < end for start, end in good):
+                out.append(f"{rel}:{text.count(chr(10), 0, m.start()) + 1}")
+    return out
+
+
+class TestEveryDocNamingAFoldedRecordNamesItsFolder:
+    """Three records left their single files: the forward ledger's class rows
+    for ``task-packs/ledger.d/`` and its probes roster for
+    ``task-packs/probes.d/`` (2026-10-14), the Session Log's rows for
+    ``memory/session-log.d/`` (2026-10-10). A doc that sends a session to the
+    old file alone sends it to a file that holds none of those rows: a row
+    filed by hand with a picked id, an open defect reported fixed because the
+    file had no row for it, a pruning check that counts 0, a hand catch-up
+    line that names a deleted file (DEF-4018).
+
+    What this holds: every unit a doc is read in -- a fenced block whole,
+    else a paragraph cut before each list item, table row and heading -- that
+    spells a record's old file, a record-path constant (``rm.LEDGER``,
+    ``rm.PROBES``), or the memory file beside its Session Log (or a verb that
+    sends a row into it) also names that record's folder or the loader
+    (``tools/cc/_record_fragments.py``), or carries a marker of the declared
+    form. A line anchor and a ``**Status:**`` or ``**Linked from:**`` header
+    cite a past state, and a region a generator declares says what its
+    generator says; all three are skipped. What it does not hold: an English
+    noun that names no file ("the ledger", "Read it"), the declared limit (the
+    operator's call of 2026-10-13); a unit of a workflow script, which runs
+    to the next blank line however long its prompt; the packs; nor whether
+    the sentence is right, only that it names both."""
+
+    def _rels(self) -> list[str]:
+        return require_tracked_paths(REPO_ROOT, *_FOLD_DIRS, *_FOLD_FILES, minimum=100,
+                                     what="instruction-layer files")
+
+    def _owners(self) -> list[str]:
+        return [p for p in require_tracked_paths(REPO_ROOT, "scripts", minimum=10, what="tracked scripts")
+                if p.endswith(".py")]
+
+    def test_no_doc_names_a_folded_record_without_its_folder(self):
+        found = _fold_offenders(REPO_ROOT, self._rels(), self._owners())
+        assert not found, (
+            f"{len(found)} unit(s) name a folded record's single file and not where its rows live "
+            "(task-packs/ledger.d/, task-packs/probes.d/, memory/session-log.d/, or "
+            "tools/cc/_record_fragments.py); name it, or mark a citation of the past "
+            "`<!-- folded-record: ok -- history: <why> -->`:\n  " + "\n  ".join(found))
+
+    def test_the_live_tree_declares_the_regions_it_skips(self):
+        """The skip is not vacuous, and a generator rename does not silently
+        turn it off: every generated region in the population is declared."""
+        regions = _fold_regions(REPO_ROOT, self._owners())
+        seen = {m.group(1) for rel in _fold_population(REPO_ROOT, self._rels())
+                for m in _FOLD_GENERATED.finditer((REPO_ROOT / rel).read_text(encoding="utf-8", errors="replace"))}
+        assert seen and seen <= regions, (sorted(seen), sorted(regions))
+
+    def test_every_marker_says_why(self):
+        bad = _fold_bad_markers(REPO_ROOT, self._rels())
+        assert not bad, ("a `folded-record: ok` that is not `<!-- folded-record: ok -- history|accurate: "
+                         "<three words or more> -->`: " + ", ".join(bad))
+
+    def test_the_scan_sees_each_unit_shape_and_passes_honest_text(self, tmp_path):
+        """Dies to: a file-granular scan (the 2026-10-14 probe's blind spot), a
+        list read as one unit, a fence read line by line, the constant arm or
+        either order or wrapping of the Session Log arm dropped, a folder
+        accepted for the wrong record, a record or a fragment swept, a marker,
+        an anchor or a declared region not honoured, an undeclared region
+        honoured, a greedy region spanning the prose between two, or the region
+        skip reaching past its END line."""
+        files = {
+            # 1-3: the filing rule that slipped -- the folder named only in another paragraph
+            "memory/rule.md": ("Probes live under `task-packs/probes.d/`.\n"
+                               "\n"
+                               "Write owed work to `FORWARD_LEDGER.md` by hand.\n"),
+            # 1-4: the record-finish line that slipped -- a fence passing the constants
+            ".claude/commands/s.md": ("Then:\n"
+                                      "\n"
+                                      "```bash\n"
+                                      "python -c \"import record_merge as rm; rm.finish([rm.LEDGER, rm.PROBES])\"\n"
+                                      "```\n"),
+            # 1-2: one list item naming the folder does not excuse the next
+            "docs/list.md": ("- class rows live under `task-packs/ledger.d/`\n"
+                             "- read `task-packs/FORWARD_LEDGER.md` for the row\n"),
+            # the Session Log arm, each order, wrapped, and its row-home verb;
+            # then the right folder for the wrong record
+            "docs/log.md": ("Count the `ESPALIER_MEMORY.md` Session Log rows.\n"
+                            "\n"
+                            "Read the Session Log in `ESPALIER_MEMORY.md`.\n"
+                            "\n"
+                            "The newest Session\n"
+                            "Log row of `ESPALIER_MEMORY.md` comes first.\n"
+                            "\n"
+                            "Prepend the row to `ESPALIER_MEMORY.md`.\n"
+                            "\n"
+                            "Every `FORWARD_LEDGER.md` row is under `memory/session-log.d/`.\n"),
+            # honest: the folder on the next line of one paragraph, a fence that
+            # names both across a blank line, a provenance header, a line anchor,
+            # a reasoned marker of each kind, the memory file without its Session Log
+            "docs/ok.md": ("File the row in `task-packs/FORWARD_LEDGER.md`\n"
+                           "(a class row is its own file under `task-packs/ledger.d/`).\n"
+                           "\n"
+                           "```bash\n"
+                           "grep -n DEF-1 task-packs/FORWARD_LEDGER.md\n"
+                           "\n"
+                           "grep -n DEF-1 task-packs/ledger.d/*.md\n"
+                           "```\n"
+                           "\n"
+                           "**Linked from:** `task-packs/FORWARD_LEDGER.md` section C5.\n"
+                           "\n"
+                           "As `task-packs/FORWARD_LEDGER.md:587` read on its day.\n"
+                           "\n"
+                           "The 1.4 MB `FORWARD_LEDGER.md` then held every row.\n"
+                           "<!-- folded-record: ok -- history: the file before the fold -->\n"
+                           "\n"
+                           "`init` seeds `task-packs/FORWARD_LEDGER.md` on every tree.\n"
+                           "<!-- folded-record: ok -- accurate: the seeded file itself -->\n"
+                           "\n"
+                           "`ESPALIER_MEMORY.md` is loaded every session.\n"),
+            # a marker not of the declared form excuses nothing
+            "docs/fake.md": ("A `folded-record: ok` mention excuses `FORWARD_LEDGER.md` here.\n"
+                             "\n"
+                             "Read `FORWARD_LEDGER.md`. <!-- folded-record: ok -- because: it is fine -->\n"
+                             "\n"
+                             "Read `FORWARD_LEDGER.md`. <!-- folded-record: ok -- history: two words -->\n"),
+            # records and record seeds are skipped
+            "memory/CONVERGENCE_LEDGER.md": "A row of `FORWARD_LEDGER.md`.\n",
+            "memory/session-log.d/2026-10-14-000000-x.md": "| 2026-10-14 | read `FORWARD_LEDGER.md` |\n",
+            "espalier/assets/seed/FORWARD_LEDGER.md": "Rows of `FORWARD_LEDGER.md` live here.\n",
+            # declared regions are skipped (two of one name, so a greedy match
+            # would swallow the prose between them), the prose between and after
+            # an END line is not, and an undeclared region excuses nothing
+            "README.md": ("<!-- inv1: BEGIN generated region -- do not hand-edit. -->\n"
+                          "- **`task-packs/`**: `CLAUDE.md`, `FORWARD_LEDGER.md`\n"
+                          "<!-- inv1: END generated region -->\n"
+                          "\n"
+                          "Read `FORWARD_LEDGER.md` for the row.\n"
+                          "\n"
+                          "<!-- inv1: BEGIN generated region -- do not hand-edit. -->\n"
+                          "- **`task-packs/`**: `CLAUDE.md`, `FORWARD_LEDGER.md`\n"
+                          "<!-- inv1: END generated region -->\n"
+                          "Glued after the END line, `FORWARD_LEDGER.md` alone.\n"
+                          "\n"
+                          "<!-- fake: BEGIN generated region -->\n"
+                          "Read `FORWARD_LEDGER.md` for the row.\n"
+                          "<!-- fake: END generated region -->\n"),
+            "examples/README.md": "Count the `ESPALIER_MEMORY.md` session log rows.\n",
+            "scripts/gen.py": ("# writes each generated region\n"
+                               "REGIONS = (Region(name=\"inv1\"), Region(name=\"inv2\"))\n"),
+        }
+        for rel, body in files.items():
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_bytes(body.encode("utf-8"))
+        rels = [rel for rel in files if not rel.startswith("scripts/")]
+        assert _fold_offenders(tmp_path, rels, ["scripts/gen.py"]) == [
+            ".claude/commands/s.md:4: the forward ledger's file",
+            ".claude/commands/s.md:4: the probes roster",
+            "README.md:5: the forward ledger's file",
+            "README.md:10: the forward ledger's file",
+            "README.md:13: the forward ledger's file",
+            "docs/fake.md:1: the forward ledger's file",
+            "docs/fake.md:3: the forward ledger's file",
+            "docs/fake.md:5: the forward ledger's file",
+            "docs/list.md:2: the forward ledger's file",
+            "docs/log.md:1: the memory file's Session Log",
+            "docs/log.md:3: the memory file's Session Log",
+            "docs/log.md:6: the memory file's Session Log",
+            "docs/log.md:8: the memory file's Session Log",
+            "docs/log.md:10: the forward ledger's file",
+            "examples/README.md:1: the memory file's Session Log",
+            "memory/rule.md:3: the forward ledger's file",
+        ]
+
+    def test_a_marker_not_of_the_declared_form_is_named(self, tmp_path):
+        """Dies to: the reason count dropped, the kind vocabulary dropped, or a
+        prose mention read as a marker."""
+        body = ("<!-- folded-record: ok -->\n"
+                "<!-- folded-record: ok -- history: two words -->\n"
+                "<!-- folded-record: ok -- because: a reason of words -->\n"
+                "A `folded-record: ok` mention in prose.\n"
+                "<!-- folded-record: ok -- history: a past state told as such -->\n"
+                "// folded-record: ok -- accurate: true on every tree\n")
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "m.md").write_bytes(body.encode("utf-8"))
+        assert _fold_bad_markers(tmp_path, ["docs/m.md"]) == ["docs/m.md:1", "docs/m.md:2", "docs/m.md:3",
+                                                               "docs/m.md:4"]
