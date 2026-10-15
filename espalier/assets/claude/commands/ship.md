@@ -33,9 +33,11 @@ print a Python 3 version, try the other interpreter name, then the launcher's
   `/handoff` writes its row, commits, and runs the `handoff` verb as its last
   step, so the handoff's commit rides the same push as the work. Run `/ship`
   yourself before the handoff only when the next lane needs this merge: `open`
-  refuses a lane whose commits never touch `ESPALIER_MEMORY.md` unless given
-  `--early "<reason>"`, because the handoff's row then becomes a second push on
-  the lane (a check cycle restarted and a marker re-bound).
+  refuses a lane whose commits carry no Session Log row -- no new file under
+  `memory/session-log.d/` and no change to `ESPALIER_MEMORY.md` (its table, on a
+  tree that keeps one) -- unless given `--early "<reason>"`, because the
+  handoff's row then becomes a second push on the lane (a check cycle restarted
+  and a marker re-bound).
 - **Off:** `/handoff` commits its row and pushes nothing, and `/ship` is how a
   lane leaves the machine, whenever you choose.
 
@@ -63,12 +65,16 @@ banner's `Merged:` rule, the same states) -- so read that log
 (`gh run view <id> --log-failed`) before arming another lane on top of it. When
 the base's own post-merge proof is red, notes that `open` will refuse this lane
 (a `revert/` lane excepted). Where
-`handoff_push` is on, notes when this lane's commits never touch
-`ESPALIER_MEMORY.md`: the handoff has not run for it, and `open` will refuse
+`handoff_push` is on, notes when this lane's commits carry no Session Log row
+(no new file under `memory/session-log.d/` and no change to
+`ESPALIER_MEMORY.md`): the handoff has not run for it, and `open` will refuse
 it without `--early "<reason>"`. Prints the merge verdict against the base:
-clean; conflicts only on the record files (`ESPALIER_MEMORY.md`, the forward
-ledger and its probes roster), which `open` merges in first and resolves by
-shape; or conflicts elsewhere, which `open` notes and pushes past -- the pull
+clean; conflicts only on the record files (`ESPALIER_MEMORY.md`,
+`task-packs/FORWARD_LEDGER.md`, and `task-packs/LEDGER_PROBES.json` where a
+tree still keeps one), which `open` merges in first and resolves by shape; or
+conflicts elsewhere -- a row file under `task-packs/ledger.d/`,
+`task-packs/probes.d/`, `memory/session-log.d/` or `changelog.d/` written by
+both sides among them -- which `open` notes and pushes past -- the pull
 request then reads DIRTY until you merge by hand.
 
 ## Step 1: Put the commits on a lane branch
@@ -108,19 +114,22 @@ with it (`git merge-tree` is the probe, git 2.38 or newer; an older git is a
 note), and also when a path carrying a merge attribute changed on both sides
 -- the probe reads such a path clean because the local merge honours the
 attribute, and GitHub's merge does not. The record files two machines' lanes
-collide on by construction -- the
+collide on by construction where a tree keeps them as single files -- the
 memory file's session rows, the ledger's member rows and derived counts, the
 probes roster -- are resolved by shape (`tools/cc/record_merge.py`, deployed
 beside the driver): every row either side added is kept, every row either side
 evicted is dropped, the memory file is pruned back to its cap with the
 merged-in rows kept, the ledger's counts are re-derived, the probes roster is
-unioned by id. The merge commit rides the one push, so the pull request is born
+unioned by id. Where those rows are files of their own instead (the Session Log
+under `memory/session-log.d/`, the ledger's class rows and its probes under
+`task-packs/ledger.d/` and `task-packs/probes.d/`), two lanes add two files and
+nothing collides. The merge commit rides the one push, so the pull request is born
 mergeable. GitHub's own merge honours no merge driver, so a lane pushed
 conflicting sits `CONFLICTING` until a hand resolves it; this is that hand. A
 conflict the resolver cannot take -- prose edited on both sides, a row changed
-on both sides, one id filed on two machines, a path outside those three files
--- is a note, not a stop: the lane ships and reads DIRTY as it would have, and
-the note names the files and the way back.
+on both sides, one id filed on two machines, one row file written by both, a
+path outside those record files -- is a note, not a stop: the lane ships and
+reads DIRTY as it would have, and the note names the files and the way back.
 
 Then, in order: the diff against the base asked of the harness guard
 (`tools/cc/ci_guard.py`, loaded from the tree when it is there -- a tree
@@ -199,18 +208,34 @@ Six shapes to recognise:
   below makes it here: the base merged in with the record files resolved by
   shape, a push, a re-bind. A conflict outside the record files it refuses by
   name; then `git fetch origin && git merge origin/<base>`, resolve, commit,
-  push, `rebind`. When that same merge also conflicts on a record file (the
-  ledger, its probes file, the memory file), resolve only the other file by
-  hand and `git add` it; never hand-merge a record file, whose derived counts
-  read right and total wrong. Then let the record resolver finish the merge:
+  push, `rebind`. When that same merge also conflicts on a record file the
+  resolver takes by shape (`ESPALIER_MEMORY.md`, `task-packs/FORWARD_LEDGER.md`,
+  and `task-packs/LEDGER_PROBES.json` where a tree still keeps one), resolve
+  only the other files by hand and `git add` them; never hand-merge one of those,
+  whose derived counts read right and total wrong. A row file under
+  `memory/session-log.d/`, `changelog.d/`, `task-packs/ledger.d/` or
+  `task-packs/probes.d/` that conflicts is two writers on one name, which the
+  resolver refuses: keep one side by hand (`git checkout --ours -- <path>` or
+  `--theirs`) and `git add` it. Then let the record resolver finish the merge on
+  the paths git still reports unmerged:
 
   ```bash
-  python -c "import sys, pathlib; sys.path.insert(0, 'tools/cc'); import record_merge as rm; rm._resolve_unmerged(pathlib.Path('.').resolve(), 'origin/<base>', [rm.MEMORY, rm.LEDGER, rm.PROBES], run=rm.run, say=print)"
+  python -c "import sys, pathlib; sys.path.insert(0, 'tools/cc'); import record_merge as rm; u = rm.run(['git', 'diff', '--name-only', '--diff-filter=U'])[1].splitlines(); r = rm._resolve_unmerged(pathlib.Path('.').resolve(), 'origin/<base>', u, run=rm.run, say=print); print(*r.notes, sep=chr(10))"
   ```
 
   It resolves the record files by shape, stages them and concludes the merge
-  itself, so your staged hand resolution rides the same merge commit. It is a
-  private function: when it raises, run `git merge --abort` yourself. Check `python tools/cc/generate_ledger_regions.py --check` and
+  itself, so your staged hand resolution rides the same merge commit, and it
+  prints what it resolved. It is a private function, and it never aborts the
+  merge. A refusal that names a path -- a file you have not staged, a row file
+  both sides wrote, a record file added or deleted on one side -- comes before
+  it writes anything: the merge is still in progress and your hand resolution
+  still staged, so settle that path by hand, `git add` it and run the line
+  again. A refusal of a record file's shape (prose edited on both sides, one row
+  changed on both sides) can come after it rewrote another record file, which it
+  stages only once every one resolves: `git checkout -m -- <path>` puts that
+  file back as git conflicted it. `git merge --abort` gives the whole merge up
+  and throws your staged hand resolution away with it, so it is the last resort,
+  never the next step. Check `python tools/cc/generate_ledger_regions.py --check` and
   that no conflict markers remain, then push and `rebind`. Never a rebase of a
   pushed lane: a merge carries the same content without rewriting what was
   pushed.
