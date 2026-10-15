@@ -113,8 +113,9 @@ Write exactly **one** row to that path, in the table's grammar
 the verb says the file is already there (step 1b's promotion wrote this
 session's row to carry a back-link), edit that row rather than adding a second.
 Do not add a row to a `## Session Log` table in ESPALIER_MEMORY.md: where the
-loader is deployed the table is frozen (in this repository it was folded into
-the files on 2026-10-10), and every reader (the SessionStart digest, the
+loader (`tools/cc/_record_fragments.py`) is deployed the table is frozen (in this
+repository it was folded into the files under `memory/session-log.d/` on
+2026-10-10), and every reader (the SessionStart digest, the
 landing check, the cap) takes both forms. When the write leaves more than 30
 fragments, the `post_write_check` hook archives the oldest to
 `docs/session-archive.md` (generated on your tree; not deployed) and deletes
@@ -387,7 +388,8 @@ goal/progress snapshot unless one already existed. Update it to match
 where the build now stands — the current phase, what just shipped or moved, the
 next gate, and an honest "how close." It is the local, gitignored answer to
 "where are we?" that SessionStart surfaces near the top of the next session,
-distinct from ESPALIER_MEMORY.md's durable knowledge + session log. Refresh the
+distinct from ESPALIER_MEMORY.md's durable knowledge and the session log's rows
+(under `memory/session-log.d/` where the loader is deployed). Refresh the
 `_Updated: <date>_` line so staleness stays visible; keep it tight (it is
 byte-bounded in the banner) and honest — no "release-ready" without the evidence.
 
@@ -445,7 +447,7 @@ Step 7c drives these, so an item that has quietly landed is reported instead of 
 
 **Owed belongs HERE, not in the session record.** State what is outstanding in this
 file, which is rewritten every handoff and can therefore self-correct. A dated
-`ESPALIER_MEMORY.md` row is history and is frozen the moment it lands — an "OWED:"
+Session Log row is history and is frozen the moment it lands — an "OWED:"
 clause inside one cannot ever be corrected without falsifying the record, and it is
 the frozen copy that gets read forward. Narrative in the record; obligations here.
 
@@ -545,8 +547,9 @@ python scripts/check_handoff_landing.py
 ⚠ **This step exists because every step above it writes AFTER the session's last
 verification ran.** The suite ran before step 5's commit; steps 6, 7 and 7b then
 rewrote the working summary, the goal snapshot and the record. The
-`ESPALIER_MEMORY.md` row is the last thing a session writes, and nothing re-reads
-it.
+session's Session Log row (its file under `memory/session-log.d/`, or the
+`ESPALIER_MEMORY.md` row on a deploy without the loader) is the last thing a
+session writes, and nothing re-reads it.
 
 It also reads the new row's cited reflect-candidate keys against
 `.espalier/memory_candidate_log.jsonl`: a key with no log row is a claim about a

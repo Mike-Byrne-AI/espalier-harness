@@ -105,14 +105,20 @@ echo "=== tools/cc/ isolation check (documented sharp edge) ==="
   || echo "tools/cc/ MISSING — isolation audit not evaluated"
 ```
 
-**ESPALIER_MEMORY.md — check for pruning needs:**
+**The Session Log (`memory/session-log.d/`) and ESPALIER_MEMORY.md — check for pruning needs:**
 
 ```bash
 echo "=== Session log length ==="
-# Count data rows only — exclude header row and separator row
+# Where tools/cc/_record_fragments.py is deployed each row is a file of its own
+# under memory/session-log.d/, and its prune keeps the newest 30; elsewhere the
+# rows are the dated lines of the Session Log table in ESPALIER_MEMORY.md.
+frag_count=$(git ls-files --cached --others --exclude-standard memory/session-log.d 2>/dev/null | grep -c '\.md$')
+echo "  $frag_count session log fragment files (target: at most 30)"
+[ "$frag_count" -gt 30 ] && echo "  ⚠ NEEDS PRUNING: more than 30 fragment files (python tools/cc/_record_fragments.py prune)"
+# Table rows only — exclude header row and separator row
 row_count=$(grep "^| 20" ESPALIER_MEMORY.md 2>/dev/null | wc -l || echo "0")
-echo "  $row_count session log data rows (target: keep last 5)"
-[ "$row_count" -gt 7 ] && echo "  ⚠ NEEDS PRUNING: more than 7 data rows"
+echo "  $row_count session log table rows in ESPALIER_MEMORY.md (target: keep last 5)"
+[ "$row_count" -gt 7 ] && echo "  ⚠ NEEDS PRUNING: more than 7 table rows"
 
 echo "=== ESPALIER_MEMORY.md total lines ==="
 wc -l ESPALIER_MEMORY.md 2>/dev/null || echo "SURFACE MISSING"
@@ -218,8 +224,9 @@ file stops receiving upstream fixes.
 
 For each Espalier-specific surface, document your project's equivalent:
 
-- **Project-memory file** — Espalier-Harness uses `ESPALIER_MEMORY.md` (one-line
-  session log + categorized index, 120-line cap). YOUR project: name
+- **Project-memory file** — Espalier-Harness uses `ESPALIER_MEMORY.md` (categorized
+  index, 120-line cap), with the session log one file per row under
+  `memory/session-log.d/` (read by `tools/cc/_record_fragments.py`). YOUR project: name
   your equivalent (`PROJECT_NOTES.md`, `JOURNAL.md`, `CONTEXT.md`) or
   drop the audit if your team uses an external system (Linear, Notion).
 

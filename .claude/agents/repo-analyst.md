@@ -199,6 +199,9 @@ fi
 
 echo "=== ESPALIER_MEMORY.md drift check ==="
 [ -f ESPALIER_MEMORY.md ] && echo "ESPALIER_MEMORY.md present — check session log freshness" || echo "SURFACE MISSING: ESPALIER_MEMORY.md absent (skip drift check)"
+# The session rows: one file each under memory/session-log.d/ where the loader is
+# deployed, else the Session Log table in ESPALIER_MEMORY.md; the loader reads both.
+[ -f tools/cc/_record_fragments.py ] && python tools/cc/_record_fragments.py rows 2>/dev/null | head -3
 ```
 
 Compare findings against the saved fingerprint. Flag:

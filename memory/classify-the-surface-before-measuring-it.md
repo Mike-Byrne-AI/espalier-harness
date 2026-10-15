@@ -88,7 +88,9 @@ declaration before concluding there isn't one.
 ## When one file is both — the granularity trap
 
 The declared set is keyed on **file paths**, which works only where a file is wholly one
-thing. `task-packs/FORWARD_LEDGER.md` is not. Its `§C` member tables are a claim surface —
+thing. `task-packs/FORWARD_LEDGER.md` is not (and since the 2026-10-14 fold its `§C` member
+rows live one file each under `task-packs/ledger.d/`, so the mix spans the view
+`python tools/cc/_record_fragments.py ledger` builds rather than one file). Its `§C` member tables are a claim surface —
 a row asserts an open defect *now* — while its `<details>` carried-forward blocks are a
 record, each stanza stating what an investigation found on its `_Source:` date. One file,
 both kinds, adjacent. Membership in a path-keyed set cannot express that, so the file is

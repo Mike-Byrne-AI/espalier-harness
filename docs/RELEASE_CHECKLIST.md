@@ -522,6 +522,7 @@ before anything else. The unproven handshake is a real remaining gap, tracked as
 > a second remote; development moves into the public repo, and the forward-work
 > tracker (`task-packs/FORWARD_LEDGER.md`, its probes file and the active packs)
 > ships with it.
+> <!-- folded-record: ok -- history: the plan as executed on 2026-09-25, before the ledger's rows became files -->
 >
 > Reasons, measurements and the evidence behind every warning below live in
 > the `DEC-25` memo, `memory/publish-from-a-generated-public-repo.md`, kept in the

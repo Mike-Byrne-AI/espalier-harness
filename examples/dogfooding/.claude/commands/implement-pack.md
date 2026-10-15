@@ -538,9 +538,11 @@ reachability analysis. Both gates run before any sub-task executes.
 Auto-continue is the default. Stop and use `AskUserQuestion` ONLY when
 one of these fires:
 
-- **Test failure** — any pytest failure that isn't already documented in
-  `ESPALIER_MEMORY.md` as a known pre-existing unrelated failure. Don't auto-fix
-  test failures across packs; the user needs to triage.
+- **Test failure** — any pytest failure that isn't already documented as a
+  known pre-existing unrelated failure in the project memory: `ESPALIER_MEMORY.md`,
+  or a Session Log row (`python tools/cc/_record_fragments.py rows` prints them,
+  the files under `memory/session-log.d/` included, where the loader is deployed).
+  Don't auto-fix test failures across packs; the user needs to triage.
 - **The release gate fails.** `espalier pre-release` is the contract — on the
   Espalier-Harness source tree. Everywhere else it stands down at exit 0, so
   this stop condition never fires and it is not the interlock protecting your

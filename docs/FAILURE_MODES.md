@@ -11,9 +11,10 @@ Source paths in this document name files in the Espalier source repo
 that `init` does not seed — `docs/STANDING_PRINCIPLES.md` and
 `docs/POSITIONING.md` among them: they say where each pattern was
 found, and `init` does not deploy any of them. A `DEF-NNN` names a row of the
-source repo's `task-packs/FORWARD_LEDGER.md`, the forward-work tracker,
-which ships in the public repository; the ledger `init` seeds at the same path
-is this repository's own and carries none of those rows.
+source repo's forward-work tracker, `task-packs/FORWARD_LEDGER.md` with each
+class row a file of its own under `task-packs/ledger.d/`, which ships in the
+public repository; the ledger `init` seeds at the same path is this
+repository's own and carries none of those rows.
 
 ## How to read this
 

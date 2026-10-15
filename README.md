@@ -193,8 +193,9 @@ The harness is the working partner around your daily coding loop:
   whatever you're touching. It returns up to four candidates — the NEAREST matches
   from two rankers, alternating — for you to pick between, and goes quiet only when
   your query shares no vocabulary with the corpus; silence is not a relevance verdict.
-- **`/handoff`** — ends a session cleanly: finalizes the blueprint, updates
-  `ESPALIER_MEMORY.md`, and leaves the next session with usable continuity.
+- **`/handoff`** — ends a session cleanly: finalizes the blueprint, records the
+  session's row in the Session Log (a file of its own under `memory/session-log.d/`),
+  and leaves the next session with usable continuity.
 - **Code-quality scanners** (`/scan`, `/preflight`) — stdlib-only AST
   scanners that flag drift and smells, so the harness drops into any repo
   without extra dependencies.
@@ -306,7 +307,8 @@ Init (run directly, or by `fuse`) deploys the mechanical enforcement layer:
   `adversarial`, `analyze`, `arch-check`, `blueprint-authoring`,
   `debug`, `design`, `hook-authoring`, `reflect`, `review`.
 - **`CLAUDE.md`** with detected language/profile context
-- **`ESPALIER_MEMORY.md`** with a starter session log
+- **`ESPALIER_MEMORY.md`**, the project-memory index, whose session log is
+  written one row per file under `memory/session-log.d/`
 - **`.espalier/integrity.json`** hash manifest for tamper detection
 - Fingerprint and harness config in `reports/`
 

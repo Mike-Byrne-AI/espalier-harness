@@ -1147,7 +1147,7 @@ def _hand_plus_record(rm, two_machines, *, roster: bool) -> tuple[Path, str, str
 def _run_finish_line(repo: Path) -> subprocess.CompletedProcess:
     code = _ship_finish_code().replace("<base>", "main")
     return subprocess.run([sys.executable, "-c", code], cwd=repo, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", env=_git_env(), timeout=120)
+                          encoding="utf-8", errors="replace", env=_git_env(), timeout=45)
 
 
 @pytest.mark.contract

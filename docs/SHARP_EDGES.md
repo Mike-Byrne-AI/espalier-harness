@@ -953,7 +953,8 @@ If a test fixture directory looks exempt by name (`tests/src/`), renaming the di
      policy=verify-on-touch -->
 **What it is:** ESPALIER_MEMORY.md is loaded every session — it must stay at 120 lines or fewer.
 The cap has been raised three times (60 → 75 → 80 → 120) as headers and the
-permanent Decisions/Patterns tables crowded the Session Log.
+permanent Decisions/Patterns tables crowded the Session Log (then rows of this
+file; one file per row under `memory/session-log.d/` since 2026-10-10).
 
 **How you hit it:** Session log grows unbounded. After 10+ sessions the file
 bloats past the cap and wastes context on stale history. Or: a single rich
@@ -977,7 +978,10 @@ exactly the drift this section warns against.
 
 **What it is:** `post_write_check.py` fires `espalier memory prune` whenever a
 ESPALIER_MEMORY.md write pushes the file past the 120-line cap. Prune moves the *oldest*
-Session Log rows (by leading `| YYYY-MM-DD` date, ascending) to the archive.
+Session Log rows (by leading `| YYYY-MM-DD` date, ascending) to the archive. Where the
+Session Log is one file per row under `memory/session-log.d/` (this repository since
+2026-10-10), the file holds no rows to move and neither trigger below fires: the
+fragment prune keeps the rows to their own count.
 
 **✅ CLOSED 2026-08-20 for the primary trigger — kept because the reasoning is
 still load-bearing and the second trigger below is still live.** The hook now
@@ -998,6 +1002,7 @@ single-row log there is no "older" row to evict, so the row you just wrote was
 the one that left. The net effect: your handoff note silently landed in the
 gitignored archive instead of ESPALIER_MEMORY.md, and the file looked like
 nothing was written.
+<!-- folded-record: ok -- history: the Session Log as a table in the memory file -->
 
 **The same-date tiebreak used to be a second way in, and its sign is now
 load-bearing (2026-08-16b).** `/handoff` PREPENDS, so within one date the
@@ -4075,6 +4080,7 @@ the doc's own prose. The §7 row that did this auto-archived itself over the
 ESPALIER_MEMORY.md 80-line cap before the reword landed, so the red was cleared by
 *relocation*, not by fixing the mechanism — a footgun that would re-arm on the
 next such sentence.
+<!-- folded-record: ok -- history: a session-log sentence of the memory file's table -->
 
 A symbol-aware `_resolve_source` fixes this: on an ambiguous
 basename the candidate that actually *defines* the symbol wins, so a real
@@ -5257,7 +5263,9 @@ citation gate either. The intent rots in place until a human happens to re-read 
 paragraph.
 
 **How to avoid it:** Route deferred work to a *real* tracker at authoring time — a
-`FORWARD_LEDGER.md` row or a `TP-*` pack — never a named-but-nonexistent home. When the
+forward-ledger row (`tools/cc/ledger_row.py file`, which writes it as
+`task-packs/ledger.d/<id>.md` where `ledger_fragments = true`, else into
+`FORWARD_LEDGER.md`) or a `TP-*` pack — never a named-but-nonexistent home. When the
 follow-up lands, flip the citation to its live (non-negated) form AND `git add` the new
 file in the same change, so the phantom-citation gate resolves it instead of skipping it.
 Treat the negated-citation form as a blind spot by design: it is the one shape of
@@ -5399,7 +5407,8 @@ gates on `task-packs/Done/`; `tests/test_forward_ledger_completeness.py` gated o
 `task-packs/Deferred/` **and** `FORWARD_LEDGER.md` together while both were untracked,
 with the second conjunct present so a partial tree reached a clean skip rather than a
 `FileNotFoundError`; both ship since 2026-09-21 and its gate is the ledger alone, an
-absent `Deferred/` being an empty population. Confirm the discriminator mechanically — `git ls-files <dir>` must
+absent `Deferred/` being an empty population. <!-- folded-record: ok -- history: a test's gate, before the ledger's rows became files -->
+Confirm the discriminator mechanically — `git ls-files <dir>` must
 print nothing for whatever you key on.
 
 Then **extract the predicate into a named function** rather than inlining it in the
@@ -5768,6 +5777,7 @@ returns one file; the real binary returns six, one of which is
 `task-packs/FORWARD_LEDGER.md` — the file that defines the row. Exit code 0,
 well-formed output, no warning. An absence-proof is precisely the claim this shim
 manufactures falsely, and "X appears nowhere" is the shape of many ledger rows.
+<!-- folded-record: ok -- history: the 2026 measurement, when the row lived in the file -->
 
 **Do:** use `command grep` for any recursive search, census, or absence-proof.
 The blast radius is *recursive directory walks only* — an explicitly named
@@ -5815,8 +5825,10 @@ not only "did it succeed" but "did it search the thing I named".
 ## The ledger verbs refuse a second writer, but their content rules red only after they write
 
 **What it was:** `tools/cc/ledger_row.py file`, `strike` and `repin` each read
-`task-packs/FORWARD_LEDGER.md` and `task-packs/LEDGER_PROBES.json`, rewrite the
-row and the probe list in memory, and write both back (`_commit_both`). Until
+the ledger and its probes, rewrite the row and the probe in memory, and write them
+back (`_commit_both`): then `task-packs/FORWARD_LEDGER.md` and
+`task-packs/LEDGER_PROBES.json`, since the 2026-10-14 fold the row's and the
+probe's own files under `task-packs/ledger.d/` and `task-packs/probes.d/`. Until
 2026-09-30 they did it with no lock, so two verbs issued as parallel tool calls
 left the second writer's view as the only one: the first verb's row, probe entry
 and `_count` vanished, and the loser still printed `regions converged` (on
@@ -5856,10 +5868,13 @@ when the loss changed the count and then darkened the whole report until
 reporter's wholesale refusal); the roster stores no total since.
 
 **And the working tree is a weak witness.** Until 2026-09-21 `task-packs/*` was
-excluded with only the router re-included, so a filing never dirtied the tree at all;
-the ledger and its probes file are tracked now, so `git diff` shows that *something*
-changed, not that *your* row landed — a concurrent writer's row dirties the same file,
-and a refused verb leaves it clean either way. Read the two files by id, never the tree.
+excluded with only the router re-included, so a filing never dirtied the tree at all.
+Where `ledger_fragments = true` a filing adds its own `task-packs/ledger.d/<id>.md`
+and `task-packs/probes.d/<id>.json`, so `git status` names your row's files; on a tree
+that keeps one ledger file and one roster, `git diff` shows that *something* changed,
+not that *your* row landed — a concurrent writer's row dirties the same file — and a
+refused verb leaves the tree clean either way. Read the rows by id through the view
+(`python tools/cc/_record_fragments.py ledger`, and `probes`), never the tree.
 And `strike` prepends the `CLOSED <date> —` prefix itself: a closing text that opens
 with it lands doubled (2026-09-21, corrected by hand — a struck row carries no hash,
 so the hand edit stales nothing; the dry run shows the doubled head if you read it).
@@ -6140,7 +6155,10 @@ as long as it sits, auto-merge refuses to land it, and `gh pr update-branch` ans
 same conflict. Verified 2026-10-05 against GitHub's community discussion 9288 and three
 independent reports of the same shape.
 
-**How you hit it:** two machines' lanes land between syncs. Each `/handoff` prepends a
+**How you hit it:** two machines' lanes land between syncs on a tree that keeps these
+records in shared files (before the Session Log moved to `memory/session-log.d/`, and the
+ledger's rows and probes to `task-packs/ledger.d/` and `task-packs/probes.d/`). Each
+`/handoff` prepends a
 Session Log row under the same header of `ESPALIER_MEMORY.md`; each ledger verb files a row
 into the same first slot of a class and rewrites the same derived counts; both re-derived the
 probes roster's `_count` (until 2026-10-12, when it stopped being stored); both prepend a
@@ -6170,7 +6188,12 @@ a file of its own under `memory/session-log.d/`, and a lane's changelog entries 
 file under `changelog.d/`, read beside the frozen table and `[Unreleased]` by one loader
 (`tools/cc/_record_fragments.py`). Two lanes add two files, which GitHub merges with no
 driver at all. A lane opened before that still prepends to the table and still needs the
-catch-up above; the ledger and the probes roster are unchanged.
+catch-up above. **Since 2026-10-14 the ledger's class rows and its probes followed**
+(`ledger_fragments = true`): each class row is `task-packs/ledger.d/<id>.md` and each
+probe `task-packs/probes.d/<id>.json`, read through the same loader's `ledger` and
+`probes` views, and this repository keeps no probes roster file. The ledger file's prose
+and the rows outside the §C classes still merge by shape as above; a row file changed on
+both sides is two writers on one name, which the resolver refuses by name.
 
 ## A per-clone identity cannot live in a tracked config file
 
