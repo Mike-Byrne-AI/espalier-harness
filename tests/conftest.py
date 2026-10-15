@@ -1235,6 +1235,12 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # The same fact read by resume, `integrity verify` and the hooks'
             # banner: what a fresh seat holds is what real git checks out.
             "test_worktree_seat",
+            # Drives tools/cc/seat.py through real git in a bare-origin-plus-
+            # clone scratch repo: worktrees created, named and removed, claims
+            # sent and released on the scratch origin's mail refs, a fake
+            # session registry in a temp config dir. Real git and a real
+            # channel are the oracle for what a seat holds; claude never runs.
+            "test_seat",
         ),
         "integration",
     ),
@@ -1359,6 +1365,9 @@ _SLOW_FILES: set[str] = {
     # Builds a bare origin and clones per case and drives real `git fetch`,
     # `switch` and `worktree add/lock/remove` through them (plus the CLI once).
     "test_checkout_sync",
+    # Builds a bare origin and a named clone per case and drives real
+    # `worktree add/remove` and mail pushes through them.
+    "test_seat",
     # Runs `git ls-files` per census and the census over the real tree once.
     "test_symbol_census",
     # Drives the real post_write_check hook once as a subprocess; the rest is
