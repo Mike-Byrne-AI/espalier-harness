@@ -3078,7 +3078,10 @@ class TestMailLine:
         spec = importlib.util.spec_from_file_location("mail_for_banner_test", HOOKS_DIR.parent / "mail.py")
         real = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = real
-        spec.loader.exec_module(real)
+        try:
+            spec.loader.exec_module(real)
+        finally:
+            sys.modules.pop(spec.name, None)
         from datetime import datetime, timezone
         t = datetime(2026, 10, 1, 12, 0, 0, tzinfo=timezone.utc)
         asked = real.new_message("win", "request", "please look", now=t)

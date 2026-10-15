@@ -181,8 +181,11 @@ lists under the name each checkout answers: two in one checkout are flagged
 and named by pid (the state the `win-2` relaunch reached at 2026-10-15 02:00Z,
 caught then only by a seat reading its banner). A row with no checkout here
 is its last mail only, and may be another machine, another clone or a
-worktree since removed; so a quiet seat is asked, or, where its worktree is
-gone, its claims and jobs are released, never presumed dead or alive. Both
+worktree since removed; so a quiet seat is asked, never presumed dead or
+alive. Where its worktree is gone, the dispatcher releases its jobs (a
+release naming the assign, as the assigner); its claims stay live until that
+seat name releases them (item 5: a release from any other name is accepted
+and closes nothing), which `seat.py retire` (`TP-701` B-2) is to do. Both
 were read by hand before (an ad-hoc census over every mail ref; the pids
 checked one by one).
 

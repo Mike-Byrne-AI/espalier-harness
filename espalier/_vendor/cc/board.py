@@ -454,16 +454,25 @@ def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = N
     if inside_session and checkout_sync.own_entry(sessions) is None:
         return {"checkouts": [], "unread": "Claude Code's session registry does not list this session, so it is "
                                            "not the registry this session writes to"}
-    registry = str((config_dir or checkout_sync.claude_config_dir()) / "sessions")
+    dirs = [config_dir] if config_dir is not None else checkout_sync.claude_config_dirs()
+    registry = ", ".join(str(Path(d) / "sessions") for d in dirs)
     clone = mail.clone_machine(root, run=run_) or ""
     checkouts: list[dict] = []
     for i, block in enumerate(checkout_sync.parse_worktrees(listing)):
         path = block.get("worktree") or ""
-        if not path or "bare" in block or not Path(path).is_dir():
-            continue   # a bare repository, or a worktree whose folder is gone: no session can sit in it
-        named, _how = mail.machine_setting(Path(path), run=run_)
-        derived = clone if i == 0 else (mail.worktree_seat_name(clone, Path(path).name) if clone else None)
-        checkouts.append({"path": path, "main": i == 0, "seat": named or derived or "", "sessions": []})
+        if not path or "bare" in block:
+            continue
+        # A folder removed under a running session (Assumption 6's 2026-10-08
+        # cleanup) is still listed and still holds that session, so it stays;
+        # with no folder to ask, its seat is the derived name. A folder that is
+        # there answers its own name, or none (a name the channel refuses turns
+        # the channel off there), and none is no seat name, never a derived one.
+        gone = not Path(path).is_dir()
+        if gone:
+            seat = clone if i == 0 else ((mail.worktree_seat_name(clone, Path(path).name) or "") if clone else "")
+        else:
+            seat = mail.machine_setting(Path(path), run=run_)[0] or ""
+        checkouts.append({"path": path, "main": i == 0, "seat": seat, "gone": gone, "sessions": []})
     for session in sessions:
         cwd = str(session.get("cwd") or "")
         holders = [c for c in checkouts if checkout_sync.within(cwd, c["path"])]
@@ -480,37 +489,46 @@ def seat_rows(by_machine: dict[str, list[dict]], local: dict, now: datetime | No
     checkout for -- another machine, another clone, or a worktree since
     removed: the channel cannot tell which -- and on every row when the local
     read was unread. ``shared`` flags two or more live sessions in one
-    checkout. A checkout answering a name another checkout already holds gets
-    a row of its own, keyed ``<name> [<checkout>]`` with
-    ``name_shared_with`` (the two write one mail ref), and only while it
+    checkout. ``name`` is the bare name the row answers ('' for none). A
+    checkout answering a name another checkout holds -- one shown already, or
+    the main checkout's (a worktree still on its clone's name) -- gets a row
+    of its own, keyed ``<name> [<checkout>]`` with ``name_shared_with`` (the
+    two write one mail ref) and ``remedy`` (how to name it), and only while it
     holds a session: it never overwrites the first."""
     rows: dict[str, dict] = {}
     for machine, messages in by_machine.items():
         last = messages[-1] if messages else None
-        rows[machine] = {"seat": machine, "checkout": None, "path": None, "sessions": None, "shared": False,
-                         "last_mail": None if last is None else {
+        rows[machine] = {"seat": machine, "name": machine, "checkout": None, "path": None, "sessions": None,
+                         "shared": False, "last_mail": None if last is None else {
                              "id": last.get("id"), "type": last.get("type"), "at": last.get("at"),
                              "age_s": mail.age_seconds(last, now)}}
-    main = next((c["path"] for c in local.get("checkouts") or [] if c.get("main")), "")
-    for checkout in local.get("checkouts") or []:
+    checkouts = local.get("checkouts") or []
+    main = next((c["path"] for c in checkouts if c.get("main")), "")
+    main_seat = next((c.get("seat") or "" for c in checkouts if c.get("main")), "")
+    for checkout in checkouts:
         sessions = checkout.get("sessions") or []
         path = str(checkout.get("path") or "")
-        key = checkout.get("seat") or f"(no seat name) {path}"
+        name = checkout.get("seat") or ""
+        key = name or f"(no seat name) {path}"
         held = key in rows and rows[key].get("path") is not None
-        if not sessions and (held or key not in rows):
+        inherited = bool(name) and not checkout.get("main") and name == main_seat
+        if not sessions and (held or inherited or key not in rows):
             continue
         try:
             where = Path(path).relative_to(main).as_posix() if main else path
         except ValueError:
             where = path   # a worktree outside the main checkout's folder: its own path
-        label = "the main checkout" if checkout.get("main") else where.replace("\\", "/")
-        if held:
-            first = rows[key]["checkout"]
-            key = f"{key} [{label}]"
-            row = rows.setdefault(key, {"seat": key, "last_mail": None, "name_shared_with": first})
+        where = "the main checkout" if checkout.get("main") else where.replace("\\", "/")
+        label = where + (" (its folder is gone)" if checkout.get("gone") else "")
+        if held or inherited:
+            first = rows[key]["checkout"] if held else "the main checkout"
+            key = f"{key} [{where}]"
+            row = rows.setdefault(key, {"seat": key, "last_mail": None, "name_shared_with": first, "remedy": (
+                "name it: git config extensions.worktreeConfig true, then git config --worktree "
+                f"{mail.MACHINE_KEY} <name>, in {path}")})
         else:
             row = rows.setdefault(key, {"seat": key, "last_mail": None})
-        row.update(checkout=label, path=path, sessions=sessions, shared=len(sessions) >= 2)
+        row.update(name=name, checkout=label, path=path, sessions=sessions, shared=len(sessions) >= 2)
     return [rows[k] for k in sorted(rows)]
 
 
@@ -551,6 +569,11 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
         local = {"checkouts": [], "unread": f"{type(exc).__name__}: {os_error_text(exc)}"}
     board["seats"] = {"rows": seat_rows(by_machine, local, now), "unread": local.get("unread") or "",
                       "checked": local.get("checked", True), "registry": local.get("registry", "")}
+    # A seat a live claim or job names is never folded away as quiet.
+    busy = {str(c.get("from") or "") for c in claims} | {
+        str((a.get("re") or {}).get(mail.ASSIGN_SEAT_KEY) or "") for a in board["assignments"]}
+    for row in board["seats"]["rows"]:
+        row["busy"] = bool(row.get("name")) and row.get("name") in busy
     seat_of_lane = mail.lane_seats(by_machine)
     board["base_fetch"] = {"state": "skipped", "problem": ""}
     if fetch:
@@ -657,10 +680,12 @@ def _ago(seconds: object) -> str:
 
 
 def _quiet(row: dict) -> bool:
-    """No live session here and no mail for :data:`SEAT_QUIET_DAYS`; a row
-    whose stamp did not parse is never folded away."""
+    """No live session here, no live claim or job naming it (``busy``), and no
+    mail for :data:`SEAT_QUIET_DAYS`; a row whose stamp did not parse is never
+    folded away, and the caller folds nothing while the registry is unread."""
     age = (row.get("last_mail") or {}).get("age_s")
-    return not row.get("sessions") and isinstance(age, int) and age > SEAT_QUIET_DAYS * 86400
+    return (not row.get("sessions") and not row.get("busy") and isinstance(age, int)
+            and age > SEAT_QUIET_DAYS * 86400)
 
 
 def _seat_line(row: dict, mail_unread: bool) -> str:
@@ -682,10 +707,10 @@ def _seat_line(row: dict, mail_unread: bool) -> str:
         return text + f"; no live session in {row.get('checkout')}"
     n = len(sessions)
     text += f"; {n} live session{'s' if n != 1 else ''} in {row.get('checkout')}"
-    if not row.get("shared"):
-        return text
-    named = ", ".join(f"pid {s.get('pid')} session {str(s.get('session_id') or '?')[:8]}" for s in sessions)
-    return text + f" ({named}): {_SHARED}"
+    if row.get("shared"):
+        named = ", ".join(f"pid {s.get('pid')} session {str(s.get('session_id') or '?')[:8]}" for s in sessions)
+        text += f" ({named}): {_SHARED}"
+    return text + (f"; {row['remedy']}" if row.get("remedy") else "")
 
 
 def _job(re_: dict) -> str:
@@ -734,8 +759,8 @@ def render(board: dict) -> str:
         lines.append(f"mail:     {board['mail_note']}")
     seats = board.get("seats") or {}
     rows = seats.get("rows") or []
-    quiet = [row for row in rows if _quiet(row)]
-    seat_lines = [_seat_line(row, bool(board.get("mail_unread"))) for row in rows if not _quiet(row)]
+    quiet = [] if seats.get("unread") else [row for row in rows if _quiet(row)]
+    seat_lines = [_seat_line(row, bool(board.get("mail_unread"))) for row in rows if not any(row is q for q in quiet)]
     if quiet:
         seat_lines.append(f"and {len(quiet)} seat{'s' if len(quiet) != 1 else ''} with no mail in "
                           f"{SEAT_QUIET_DAYS} d and no live session here (--json lists them)")

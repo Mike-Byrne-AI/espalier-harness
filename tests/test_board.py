@@ -498,7 +498,78 @@ class TestSeats:
         work2.mkdir()
         first_only, _ = self._seats(board, main, work, _registry(tmp_path / "b", work), None, work2,
                                     names={str(main): "air", str(work): "air-x", str(work2): "air-x"})
-        assert "air-x: no mail; 1 live session in .claude/worktrees/work" in self._text(board, first_only)
+        text = self._text(board, first_only)
+        assert "air-x: no mail; 1 live session in .claude/worktrees/work" in text, text
+        assert "work2" not in text, "a second holder of a name gets a row only while it holds a session"
+
+    def test_a_worktree_answering_the_clones_name_is_flagged_with_its_remedy(self, board, tmp_path):
+        """The inherited-name state (docs/SHARP_EDGES.md, "The worktrees of one
+        clone share its machine name") is flagged even when the main checkout
+        has no row of its own, and the row says how to name it; the JSON keeps
+        the bare name beside the row's key (both reviewers, r2). Dies to: the
+        flag read only from a first row that happens to be shown."""
+        main, work = self._clone(tmp_path)
+        rows, _ = self._seats(board, main, work, _registry(tmp_path, work), names={str(main): "air", str(work): "air"})
+        [row] = rows
+        assert row["seat"] == "air [.claude/worktrees/work]" and row["name"] == "air"
+        text = self._text(board, rows)
+        assert ("air [.claude/worktrees/work]: the seat name of the main checkout too (one mail ref for both); "
+                "1 live session in .claude/worktrees/work; name it: git config extensions.worktreeConfig true, then "
+                f"git config --worktree espalier.machine <name>, in {work}") in text, text
+
+    def test_a_checkout_answering_no_usable_name_is_not_given_one(self, board, tmp_path):
+        """A hand-set name the channel refuses (`Air-2`) turns the channel off
+        there; the derived name is not one that checkout answers (failure-mode
+        review, r2). Dies to: the derived name as a fallback for a folder that
+        is there."""
+        main, work = self._clone(tmp_path)
+        rows, _ = self._seats(board, main, work, _registry(tmp_path, work), names={str(main): "air"})
+        text = self._text(board, rows)
+        assert f"(no seat name) {work}: no mail; 1 live session in .claude/worktrees/work" in text, text
+        assert "air-work" not in text
+
+    def test_a_session_in_a_worktree_whose_folder_is_gone_stays_with_it(self, board, tmp_path):
+        """A worktree's folder removed under a running session (Assumption 6's
+        2026-10-08 cleanup): git still lists it, and its session belongs to
+        it, not to the main checkout above it, which then read as TWO
+        SESSIONS (code review, r2: a regression of the r1 fold). Dies to: the
+        listed checkout skipped because its folder is gone."""
+        main = tmp_path / "repo"
+        main.mkdir()
+        gone = main / ".claude" / "worktrees" / "gone"
+        rows, _ = self._seats(board, main, gone, _registry(tmp_path, main, gone))
+        text = self._text(board, rows)
+        assert "air-gone: no mail; 1 live session in .claude/worktrees/gone (its folder is gone)" in text, text
+        assert "TWO SESSIONS" not in text
+
+    def test_a_bare_main_entry_is_no_checkout(self, board, tmp_path):
+        main, work = self._clone(tmp_path)
+
+        def run(argv, **kw):
+            if argv[1:3] == ["worktree", "list"]:
+                return 0, f"worktree {main}\nbare\n\nworktree {work}\nHEAD {'2' * 40}\nbranch refs/heads/x\n", ""
+            if argv[1:3] == ["config", "--local"]:
+                return 0, "air\n", ""
+            if argv[1:3] == ["config", "--get"]:
+                return 0, "air-work\n", ""
+            raise AssertionError(f"unexpected call {argv}")
+
+        local = board.read_sessions(main, run_=run, config_dir=_registry(tmp_path, work), inside_session=False)
+        assert [c["path"] for c in local["checkouts"]] == [str(work)]
+
+    def test_the_unchecked_row_names_every_registry_read(self, board, tmp_path, monkeypatch):
+        """With CLAUDE_CONFIG_DIR set, the registry read is that directory and
+        the home one; the row named only the first (code review, r2)."""
+        import importlib
+
+        main, work = self._clone(tmp_path)
+        board.read_sessions(main, run_=_git_for(main, work), config_dir=_registry(tmp_path, work), inside_session=False)
+        sync = importlib.import_module("checkout_sync")
+        monkeypatch.setattr(sync, "claude_config_dirs", lambda: [tmp_path / "cfg", tmp_path / "home"])
+        monkeypatch.setattr(sync, "live_sessions", lambda config_dir=None: [])
+        local = board.read_sessions(main, run_=_git_for(main, work), inside_session=False)
+        assert str(tmp_path / "cfg" / "sessions") in local["registry"]
+        assert str(tmp_path / "home" / "sessions") in local["registry"]
 
     def test_a_flagged_checkout_names_its_sessions(self, board, tmp_path):
         """The registry lists headless and editor sessions too, so the flag
@@ -522,6 +593,36 @@ class TestSeats:
         text = self._text(board, rows)
         assert "air-gone" not in text and "win: last mail" in text, text
         assert f"and 1 seat with no mail in {board.SEAT_QUIET_DAYS} d and no live session here" in text, text
+
+    def test_the_fold_never_hides_a_live_session_a_claim_or_a_job(self, board, monkeypatch, tmp_path):
+        """A seat with a live session, or one a live claim or job names, is
+        shown whatever its last mail's age (both reviewers, r2). Dies to: the
+        fold judged on the mail's age alone."""
+        old = 10 * 86400
+        live = {"seat": "air-old", "last_mail": {"type": "note", "age_s": old}, "checkout": "wt/a", "shared": False,
+                "sessions": [{"pid": 1, "session_id": "abc"}]}
+        assert "air-old: last mail 10 d 0 h ago (note); 1 live session in wt/a" in self._text(board, [live])
+        t = datetime(2026, 10, 5, 0, 0, 0, tzinfo=timezone.utc)
+        claim = board.mail.new_message("win-3", "claim", "", lane="lane/held", now=t)
+        _stub_channel(monkeypatch, board, {"win-3": [claim]})
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW)
+        assert "win-3: last mail 10 d 2 h ago (claim)" in board.render(collected)
+
+    def test_nothing_folds_while_the_registry_is_unread(self, board):
+        """The fold says "no live session here", which an unread registry
+        cannot support (both reviewers, r2). Dies to: the fold run anyway."""
+        row = {"seat": "air-old", "last_mail": {"type": "note", "age_s": 10 * 86400}, "sessions": None}
+        text = board.render({"seats": {"rows": [row], "unread": "the registry could not be read in full"}})
+        assert "air-old: last mail" in text and "no live session here" not in text, text
+
+    def test_other_seats_unread_sits_beside_the_local_rows(self, board, monkeypatch, tmp_path):
+        """Dies to: the unread-mail row printed only when no local row is."""
+        local = {"checkouts": [{"path": str(tmp_path), "main": True, "seat": "win",
+                                "sessions": [{"pid": 7, "session_id": "abcdef0123"}]}], "unread": "", "checked": True}
+        _stub_channel(monkeypatch, board, read_error="git for-each-ref failed", sessions=local)
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
+        assert "seats:    win: mail unread; 1 live session in the main checkout" in text, text
+        assert "          other seats unread (the mail could not be read: git for-each-ref failed)" in text, text
 
     def test_outside_a_session_the_registry_read_says_it_is_unchecked(self, board, tmp_path):
         """Run from a plain terminal, the own-entry check cannot run, so an

@@ -184,7 +184,8 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     """A message in the pinned shape, validated: the type is one of
     :data:`TYPES`, the text is bounded, every path is repo-relative, every id
     is a row id, a claim names at least a lane, a class, a path or an id, a
-    release or an ack names the id it answers or the lane it closes, and an
+    release names the id it answers or the lane it closes, an ack names the
+    id it answers (never a lane: nothing reads a lane-only ack), and an
     assign names a seat and a job (a lane, a class or an id) while nothing
     else names a seat. ``now`` is for tests."""
     if not _MACHINE_RE.match(machine or ""):
