@@ -245,7 +245,10 @@ Every fix below is a **fix shape (untested)**; its refutation is named with it.
 **W1 — runner core (`TP-700a`).** A Python script beside the driver it extends. Per seat:
 1. If the stop file exists, print why and exit 0.
 2. If `checkout_sync.live_sessions` lists a live session in this seat's worktree, refuse: the
-   runner and an interactive session would be two writers in one checkout.
+   runner and an interactive session would be two writers in one checkout. The oracle exists
+   since `TP-701` Wave B, so consume it rather than re-derive it: `checkout_sync.occupancy`, which
+   `seat.py launch` and `retire` refuse on (the registry first, the markers only adding, `None`
+   when it cannot tell), with `seat.py resolve` mapping a seat name to its checkout.
 3. Read jobs (`mail.py assignments --json`) and the board (`board.py --json`). Stop on any section
    the board could not read and on a red `post_merge`: an unread read is never treated as clean
    (`ship.py status` and `ship.seat_open_prs` are lenient on a failed read by design).
