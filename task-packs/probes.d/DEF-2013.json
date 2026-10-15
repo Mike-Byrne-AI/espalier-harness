@@ -1,0 +1,14 @@
+{
+ "id": "DEF-2013",
+ "subject": "tests/_live_tree_census.py",
+ "cmd": "python3 tests/_live_tree_census.py",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tests",
+  "espalier/scanners"
+ ],
+ "row_sha": "e920327b6c73",
+ "text_sha": "82c9d2662efe",
+ "verified_2026_10_15": "STILL_OPEN (re-pinned value unchanged on 2026-10-15: air ff2730: the remainder lane routes conftest's isolated-repo copy first, on two measured Windows kills inside that fixture)"
+}

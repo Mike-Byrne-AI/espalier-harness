@@ -25,7 +25,7 @@ import pytest
 
 
 from espalier._safe_walk import visible
-from tests._live_tree import exclude_worktrees
+from tests._live_tree import checkout_rglob
 from espalier.cli import _build_settings_json
 from espalier.managed_inventory import _SEED_DOC_REL_PATHS
 from espalier.self_hosting import SELF_HOST_EXAMPLE_LABEL
@@ -871,7 +871,7 @@ class TestOperatorStringsArePortable:
         for src in _RUNTIME_SOURCES:
             if not src.exists():
                 continue
-            for path in src.rglob("*.py"):
+            for path in checkout_rglob(src, "*.py"):
                 # Exclude by DIRECTORY, not by a substring of the filename.
                 # `"test" in path.name` dropped two live shipped modules:
                 # `espalier/scanners/test_loosening.py` (a /scan sub-mode, 11
@@ -1217,7 +1217,7 @@ class TestNoNonAsciiInRuntimePrints:
         for src in _RUNTIME_SOURCES:
             if not src.exists():
                 continue
-            for path in src.rglob("*.py"):
+            for path in checkout_rglob(src, "*.py"):
                 # Exclude by DIRECTORY, matching the sibling `_hits` rule 260
                 # lines up. `"test" in path.name` dropped two live SHIPPED
                 # modules -- `espalier/scanners/test_loosening.py` (a /scan
@@ -1271,7 +1271,7 @@ class TestNoNonAsciiInRuntimePrints:
         for src in _SH_SOURCES:
             if not src.exists():
                 continue
-            for path in src.rglob("*.sh"):
+            for path in checkout_rglob(src, "*.sh"):
                 for lineno, non_ascii in _collect_sh_emit_non_ascii(path):
                     rel = path.relative_to(REPO_ROOT)
                     offenders.append(f"  {rel}:{lineno}: {non_ascii}")
@@ -2318,9 +2318,9 @@ def _derivation_sites(prefix: str) -> list[tuple[str, int, str]]:
     """Every line under ``.claude/`` whose stripped text starts with ``prefix``."""
     sites = []
     claude = REPO_ROOT / ".claude"
-    # a linked worktree under .claude/worktrees/ is another checkout -- at another
-    # commit, its own resolver lines -- not this tree's text (DEF-1196)
-    for path in visible(exclude_worktrees(claude.rglob("*.md"), REPO_ROOT), claude):
+    # git's view: a linked worktree under .claude/worktrees/ is another checkout --
+    # at another commit, its own resolver lines -- not this tree's text (DEF-1196)
+    for path in visible(checkout_rglob(claude, "*.md"), claude):
         if not path.is_file():
             continue
         for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -114,7 +115,7 @@ def test_every_pin_carrier_is_refreshed() -> None:
     assign = re.compile(r'WRITE_GUARD_PREFIX_SHA256\s*=\s*\(?\s*"[0-9a-f]{64}"')
     found = set()
     for root in ("espalier", "tools", "scripts"):
-        for path in sorted((REPO_ROOT / root).rglob("*.py")):
+        for path in checkout_rglob(REPO_ROOT / root, "*.py"):
             rel = path.relative_to(REPO_ROOT).as_posix()
             if "/_vendor/" in f"/{rel}" or "__pycache__" in rel:
                 continue  # byte-mirrors; sync_vendor_cc.py carries them

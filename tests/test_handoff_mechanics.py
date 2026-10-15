@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._live_tree import live_tree_skip_names
+from tests._live_tree import copy_checkout, live_tree_skip_names
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = REPO_ROOT / "scripts" / "handoff_mechanics.py"
@@ -302,7 +302,6 @@ class TestDryRunOnThisTree:
         """Against this checkout: the plan names the prune decision, the
         finalize, the explicit-path add and the composed message, and writes
         nothing (the memory file is made 'modified' in a scratch copy only)."""
-        import shutil
         import subprocess
         r = tmp_path / "copy"
 
@@ -316,7 +315,7 @@ class TestDryRunOnThisTree:
             skip |= live_tree_skip_names(directory, names)
             return [n for n in names if n in skip]
 
-        shutil.copytree(REPO_ROOT, r, symlinks=True, ignore=_skip)
+        copy_checkout(REPO_ROOT, r, ignore=_skip)
         subprocess.run(["git", "-C", str(r), "init", "-q"], check=True)
         subprocess.run(["git", "-C", str(r), "add", "-A"], check=True, capture_output=True)
         # this repo's .gitignore carries `espalier_*.md`, which a case-insensitive

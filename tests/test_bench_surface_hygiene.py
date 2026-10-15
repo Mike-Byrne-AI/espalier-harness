@@ -38,6 +38,7 @@ import re
 from pathlib import Path
 
 from espalier._safe_walk import visible
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BENCH_DIR = REPO_ROOT / "bench"
@@ -67,7 +68,7 @@ def bench_docs(root: Path = BENCH_DIR) -> list[Path]:
     docs = [root / name for name in _AUTHORED_FILES if (root / name).is_file()]
     for sub in _AUTHORED_DIRS:
         if (root / sub).is_dir():
-            docs.extend((root / sub).rglob("*.md"))
+            docs.extend(checkout_rglob(root / sub, "*.md"))
     return sorted(docs)
 
 

@@ -27,6 +27,7 @@ import pytest
 
 from tests import _source_segment
 from tests._git_oracle import require_tracked_paths
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "derived_population_census.py"
@@ -818,7 +819,7 @@ def _segment_census(
     exempt = dict.fromkeys(_SEGMENT_EXEMPT, 0)
     needle = _SEGMENT_NAME.encode()
     for top in _SEGMENT_ROOTS:
-        for path in sorted((root / top).rglob("*.py")):
+        for path in checkout_rglob(root / top, "*.py"):
             rel = path.relative_to(root).as_posix()
             if rel.startswith(tuple(_SEGMENT_SKIP)):
                 continue

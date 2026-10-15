@@ -67,6 +67,7 @@ from espalier.claim_extractor import (
     _enumerate_files,
 )
 from tests._git_oracle import require_is_gitignored, require_tracked_paths
+from tests._live_tree import checkout_glob, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
@@ -273,7 +274,7 @@ def _scannable_docs() -> list[Path]:
 
     for path in _enumerate_files(REPO_ROOT, DEFAULT_DOC_GLOBS, EXCLUDED_DOC_GLOBS):
         _add(path)
-    for path in REPO_ROOT.joinpath("docs").rglob("*.md"):
+    for path in checkout_rglob(REPO_ROOT.joinpath("docs"), "*.md"):
         _add(path)
     return [seen[rel] for rel in sorted(seen)]
 
@@ -367,7 +368,7 @@ def _sources() -> list[tuple[str, str]]:
     # the one place no arm examined, which is the exact shape the population fix
     # was written to remove, one function below it.
     for root in ("espalier", "tools/cc"):
-        for path in sorted((REPO_ROOT / root).glob("*.py")):
+        for path in checkout_glob(REPO_ROOT / root, "*.py"):
             out.append((
                 str(path.relative_to(REPO_ROOT)).replace("\\", "/"),
                 path.read_text(encoding="utf-8"),

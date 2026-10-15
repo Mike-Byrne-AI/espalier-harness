@@ -25,6 +25,7 @@ from espalier.scanners.encoding_contracts import NON_FILE_OPENERS
 from _locked import locked
 from espalier.cli import _build_settings_json
 from tests._source_segment import segment, source_lines
+from tests._live_tree import checkout_glob, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -449,8 +450,8 @@ class TestPlanGuardExemptsPrescribedWrites:
         repo, which drops code tokens (`Path.write_text`, `json.dump`) that the
         backtick pattern would otherwise pick up.
         """
-        bodies = visible(REPO_ROOT.glob(".claude/commands/*.md"), REPO_ROOT / ".claude" / "commands")
-        bodies += visible(REPO_ROOT.glob(".claude/skills/*/SKILL.md"), REPO_ROOT / ".claude" / "skills")
+        bodies = visible(checkout_glob(REPO_ROOT, ".claude/commands/*.md"), REPO_ROOT / ".claude" / "commands")
+        bodies += visible(checkout_glob(REPO_ROOT, ".claude/skills/*/SKILL.md"), REPO_ROOT / ".claude" / "skills")
         found: dict[str, set[str]] = {}
         for body in bodies:
             for line in body.read_text(encoding="utf-8", errors="ignore").splitlines():
@@ -892,7 +893,7 @@ def _derived_spawn_wrappers() -> set[str]:
     paths = [
         path
         for top in ("tools/cc", "espalier", "scripts")
-        for path in sorted((REPO_ROOT / top).rglob("*.py"))
+        for path in checkout_rglob(REPO_ROOT / top, "*.py")
         if not {"_vendor", "assets"} & set(path.relative_to(REPO_ROOT).parts)
     ]
     for path in paths:

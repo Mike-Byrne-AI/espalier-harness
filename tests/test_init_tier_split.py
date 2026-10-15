@@ -25,6 +25,7 @@ from espalier.surface_hygiene import (
     FORBIDDEN_SELF_HOST_PATTERNS,
     SPECIFIC_ID_RE,
 )
+from tests._live_tree import checkout_glob, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -163,7 +164,7 @@ class TestCommonTierAssetHygiene:
         # Every kind by the owner's glob, so a `.js` workflow body is scanned too
         # (a `*.md` glob over three hand-named kinds saw zero of them).
         for kind, pattern in surface_contract.CLAUDE_KIND_GLOBS.items():
-            for path in visible((asset_root / kind).glob(pattern), asset_root / kind):
+            for path in visible(checkout_glob(asset_root / kind, pattern), asset_root / kind):
                 rel = path.relative_to(asset_root).as_posix()
                 hits = self._SPECIFIC_ID_RE.findall(
                     path.read_text(encoding="utf-8"),
@@ -184,7 +185,7 @@ class TestCommonTierAssetHygiene:
         # the only sweep that would have caught a pack-ID leak in them.
         assets_root = REPO_ROOT / "espalier" / "assets"
         for extra in ("docs", "memory", "seed"):
-            for path in (assets_root / extra).rglob("*.md"):
+            for path in checkout_rglob(assets_root / extra, "*.md"):
                 hits = self._SPECIFIC_ID_RE.findall(
                     path.read_text(encoding="utf-8"),
                 )

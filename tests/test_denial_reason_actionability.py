@@ -51,6 +51,7 @@ HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
 
 sys.path.insert(0, str(HOOKS_DIR))
 import _denial_reasons  # noqa: E402
+from tests._live_tree import checkout_glob
 
 # Operator-facing templates whose SUBJECT ("what was attempted") is named in fixed
 # prose rather than a ``{field}`` placeholder -- the block is categorical (no single
@@ -389,7 +390,7 @@ class TestAgentDispatchIsSpelledOneWay:
         unknown: list[str] = []
         seen = 0
         for pattern in _MENTION_SURFACES:
-            for path in sorted(REPO_ROOT.glob(pattern)):
+            for path in sorted(checkout_glob(REPO_ROOT, pattern)):
                 for name in _MENTION_RE.findall(path.read_text(encoding="utf-8")):
                     seen += 1
                     if name not in roster:

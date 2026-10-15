@@ -118,8 +118,12 @@ def vocabulary() -> Vocabulary:
 
 
 def production_files(root: Path = REPO):
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from tests._live_tree import checkout_rglob
+
     for top in ROOTS:
-        for path in sorted((root / top).rglob("*.py")):
+        for path in checkout_rglob(root / top, "*.py"):
             rel = path.relative_to(root).as_posix()
             if rel.startswith("espalier/_vendor/") or rel in TABLE_FILES:
                 continue

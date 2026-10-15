@@ -57,6 +57,7 @@ from pathlib import Path
 import pytest
 
 from tests import test_protected_path_contract_parity as _parity
+from tests._live_tree import live_tree_skip_names
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCRIPT = REPO_ROOT / "scripts" / "verify_pins.py"
@@ -776,6 +777,7 @@ class TestSelectionExistsWithExactCase:
         assert selection, "non-vacuity: this commit must select something"
         for rel in selection:
             parent, _, name = rel.rpartition("/")
+            # live-tree: ok -- a case-only existence check of one selected path, by its directory's on-disk names
             listing = {p.name for p in (REPO_ROOT / parent).iterdir()}
             assert name in listing, (
                 f"{rel} was selected but does not exist with that exact case "
@@ -897,10 +899,23 @@ def _fs_manifest(root: Path) -> dict[str, tuple[int, int]]:
     neutralisation against a TRACKED file reddened it, which is what proves the
     boundary was exactly "tracked paths only" rather than the control being
     inert.
+
+    What it does leave out is another checkout nested in this one -- a linked
+    worktree under `.claude/worktrees/`, a submodule, an embedded clone
+    (`tests/_live_tree.py::live_tree_skip_names`, pruned before the walk enters
+    it): a second seat's session writes its own `cc/blueprints/` and
+    `.espalier-state/` there between the two snapshots, which read as this
+    tool's mutation (observed once in a full tier, 2026-10-15). The tool clones
+    and carries from THIS checkout's root and never names that directory.
     """
     out: dict[str, tuple[int, int]] = {}
-    for path in root.rglob("*"):
-        if path.is_file() or path.is_symlink():
+    # live-tree: ok -- a mutation guard sees what git ignores on purpose (the 2026-08-21 measurement above)
+    for dirpath, dirnames, filenames in os.walk(root):
+        skip = live_tree_skip_names(dirpath, dirnames)
+        dirnames[:] = [d for d in dirnames if d not in skip]
+        here = Path(dirpath)
+        for name in [*filenames, *(d for d in dirnames if (here / d).is_symlink())]:
+            path = here / name
             rel = str(path.relative_to(root)).replace("\\", "/")
             if _is_session_churn(rel):
                 continue
@@ -978,6 +993,25 @@ class TestIsolation:
         assert _is_session_churn(".espalier-state/last_tool")
         assert _is_session_churn(".espalier-state\\tool_call_count")
         assert not _is_session_churn(".espalier/integrity.json")
+
+    def test_the_manifest_prunes_a_nested_checkout_and_keeps_what_git_ignores(self, tmp_path):
+        """DEF-2005 (struck by DEF-2013's first lane): a sibling seat's worktree
+        under `.claude/worktrees/` is another checkout, pruned before the walk
+        enters it, so its session's writes are not this tool's; and the guard
+        still looks past git -- the gitignored `reports/`, the `.git/` store,
+        the tree's own files -- which is its whole purpose."""
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        (tmp_path / "reports").mkdir()
+        (tmp_path / "reports" / "precious.md").write_text("p\n", encoding="utf-8")
+        (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
+        sibling = tmp_path / ".claude" / "worktrees" / "2"
+        (sibling / ".espalier-state").mkdir(parents=True)
+        (sibling / ".git").write_text("gitdir: /elsewhere\n", encoding="utf-8")
+        (sibling / ".espalier-state" / "last_tool").write_text("x\n", encoding="utf-8")
+        (tmp_path / "vendor" / "clone" / ".git").mkdir(parents=True)
+        (tmp_path / "vendor" / "clone" / "y.md").write_text("y\n", encoding="utf-8")
+        assert set(_fs_manifest(tmp_path)) == {".git/HEAD", "reports/precious.md", "a.txt"}
 
     def test_the_manifest_skips_session_churn_but_still_sees_everything_else(
         self, tmp_path

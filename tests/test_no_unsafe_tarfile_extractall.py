@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._live_tree import exclude_worktrees
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -47,9 +47,10 @@ SAFE_HELPER_NAMES = frozenset({
 
 
 def _iter_py_files():
-    # A linked worktree under .claude/worktrees/ is another checkout: 735 of
-    # 1447 files this walk read beside one were its copies (DEF-1196).
-    for p in exclude_worktrees(REPO_ROOT.rglob("*.py"), REPO_ROOT):
+    # Git's view of the checkout: a linked worktree under .claude/worktrees/ is
+    # another checkout (735 of 1447 files this walk read beside one were its
+    # copies, DEF-1196) and a gitignored script under reports/ is no commit's.
+    for p in checkout_rglob(REPO_ROOT, "*.py"):
         rel = p.relative_to(REPO_ROOT).as_posix()
         if any(rel.startswith(prefix) for prefix in EXEMPT_PREFIXES):
             continue

@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from espalier._safe_walk import visible
-from tests._live_tree import exclude_worktrees
+from tests._live_tree import checkout_rglob
 from tests import _interpreter_hosts as hosts
 
 def _posix_bash() -> str | None:
@@ -143,13 +143,14 @@ _JS_LINE_END = "\\n"
 
 def _shipped_claude_bodies() -> list[Path]:
     """Every markdown and workflow body under `.claude/` that is THIS tree's:
-    hidden names dropped by `visible`, a linked worktree's checkout dropped by
-    `exclude_worktrees` (DEF-1196: `.claude/worktrees/<name>/` is a second copy
-    of the tree and `worktrees` is not a hidden name -- five reds in this file
-    beside a live session, measured 2026-10-09)."""
+    hidden names dropped by `visible`, and git's view of the checkout read
+    through `checkout_rglob`, so a linked worktree's checkout is not among them
+    (DEF-1196: `.claude/worktrees/<name>/` is a second copy of the tree and
+    `worktrees` is not a hidden name -- five reds in this file beside a live
+    session, measured 2026-10-09) and neither is a body git ignores."""
     claude = _REPO_ROOT / ".claude"
     return [
-        path for path in visible(exclude_worktrees(claude.rglob("*"), _REPO_ROOT), claude)
+        path for path in visible(checkout_rglob(claude, "*", root=_REPO_ROOT), claude)
         if path.suffix in (".md", ".js") and path.is_file()
     ]
 

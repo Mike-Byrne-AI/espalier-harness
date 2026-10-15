@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from tests._live_tree import live_tree_copy_ignore
+from tests._live_tree import copy_checkout, live_tree_copy_ignore
 
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -83,11 +83,11 @@ class TestHookCountMigration:
         from espalier.freshness import scan_repo, pin_fragment
 
         test_repo = tmp_path / "repo"
-        shutil.copytree(
+        copy_checkout(
             REPO_ROOT, test_repo,
-            # A linked worktree under .claude/worktrees/ is left out whole: its
-            # gitlink .git goes with the `.git` pattern, and the scanner then
-            # read its docs as this tree's (DEF-1196, tests/_live_tree.py).
+            # Git's view of the checkout: a linked worktree under .claude/worktrees/
+            # (DEF-1196) and a gitignored doc such as a `docs/X (1).md` copy are not
+            # this tree's, and the scanner read either as a second fragment home.
             ignore=live_tree_copy_ignore(
                 ".git", ".venv", "__pycache__", "node_modules",
                 "dist", "build", ".pytest_cache", ".mypy_cache",

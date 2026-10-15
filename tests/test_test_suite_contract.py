@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from tests._surface_expected import CONTRACT_CEILINGS, PLUGIN_OWNED_MARKERS
+from tests._live_tree import checkout_rglob
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -1990,7 +1991,7 @@ def test_no_engine_or_hook_module_arms_sigalrm():
     only in comments (it lives in tests/test_redos.py)."""
     roots = [REPO_ROOT / "espalier", REPO_ROOT / "tools" / "cc"]
     modules = [(p.relative_to(REPO_ROOT).as_posix(), p.read_text(encoding="utf-8"))
-               for root in roots for p in sorted(root.rglob("*.py"))
+               for root in roots for p in checkout_rglob(root, "*.py")
                if "_vendor" not in p.parts]
     assert len(modules) >= 100, f"only {len(modules)} engine/hook modules read"
     armed, _ = _sigalrm_offenders(modules)
@@ -3340,7 +3341,7 @@ def _build_spawn_sites() -> dict[str, list[int]]:
     a derived population of the idiom the tree uses, not a proof."""
     sites: dict[str, list[int]] = {}
     for root in _BUILD_SPAWN_ROOTS:
-        for path in sorted((REPO_ROOT / root).rglob("*.py")):
+        for path in checkout_rglob(REPO_ROOT / root, "*.py"):
             rel = path.relative_to(REPO_ROOT).as_posix()
             if rel.startswith(_BUILD_SPAWN_SKIP):
                 continue

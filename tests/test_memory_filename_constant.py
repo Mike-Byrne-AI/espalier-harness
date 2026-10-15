@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from tests._live_tree import checkout_rglob
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SCAN_DIRS = ("espalier", "tools/cc")
@@ -68,7 +69,7 @@ class TestMemoryFilenameConstantAgreement:
     def test_all_per_file_constants_hold_one_value(self) -> None:
         found: list[tuple[str, str]] = []
         for rel in _SCAN_DIRS:
-            for py in sorted((_REPO_ROOT / rel).rglob("*.py")):
+            for py in checkout_rglob(_REPO_ROOT / rel, "*.py"):
                 text = py.read_text(encoding="utf-8")
                 for value in _memory_filename_values(text):
                     key = str(py.relative_to(_REPO_ROOT)).replace("\\", "/")

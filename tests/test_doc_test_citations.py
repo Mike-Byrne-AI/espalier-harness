@@ -46,6 +46,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -266,7 +267,7 @@ def _is_illustrative(lines: list[str], idx: int) -> bool:
 def _scan_surface_files():
     seen: set[Path] = set()
     for glob in _SCAN_GLOBS:
-        for path in REPO_ROOT.glob(glob):
+        for path in checkout_glob(REPO_ROOT, glob):
             if path in seen:
                 continue
             seen.add(path)

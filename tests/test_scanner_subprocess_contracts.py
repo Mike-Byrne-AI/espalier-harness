@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from espalier.scanners import subprocess_contracts as sc
+from tests._live_tree import keep_in_checkout
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -92,7 +93,7 @@ def test_does_not_trip_on_negatives() -> None:
 
 def test_pragma_count_within_cap() -> None:
     """Pragma usage across scanned scope must not exceed MAX_PRAGMA_COUNT."""
-    actual = sc.count_pragmas(REPO_ROOT)
+    actual = len(keep_in_checkout(sc.collect_pragmas(REPO_ROOT)))
     assert actual <= sc.MAX_PRAGMA_COUNT, (
         f"Subprocess-contract pragma count ({actual}) exceeds cap "
         f"({sc.MAX_PRAGMA_COUNT}). Either close pragmas via refactor, "
@@ -104,7 +105,7 @@ def test_no_unpinned_subprocess_contracts() -> None:
     """Live-repo zero-UNPINNED: every internal subprocess call in
     production scope (espalier/tools/scripts) must be pinned by
     SUBPROCESS_CONTRACTS, a sister test, or a pragma."""
-    findings = sc.scan_repo(REPO_ROOT)
+    findings = keep_in_checkout(sc.scan_repo(REPO_ROOT))
     unpinned = [
         f for f in findings
         if f.severity in {"UNPINNED", "UNRESOLVED"}
@@ -222,7 +223,7 @@ def test_a_spawn_wrapper_is_read_as_the_spawn_it_wraps(tmp_path) -> None:
 
 def test_build_report_shape() -> None:
     """build_report must return the dict-of-counts shape cmd_scan expects."""
-    report = sc.build_report(REPO_ROOT)
+    report = keep_in_checkout(sc.build_report(REPO_ROOT))
     assert isinstance(report, dict)
     assert "count" in report
     assert "findings" in report

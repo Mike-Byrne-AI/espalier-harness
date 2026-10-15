@@ -55,6 +55,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_iterdir
 
 _ROOT = Path(__file__).resolve().parent.parent
 _PACKS = _ROOT / "task-packs"
@@ -190,7 +191,7 @@ def _pack_index(packs_root: Path) -> dict[str, list[tuple[str, Path]]]:
         directory = packs_root.joinpath(*parts)
         if not directory.is_dir():
             continue
-        for path in sorted(directory.iterdir()):
+        for path in checkout_iterdir(directory):
             if not path.is_file() or path.suffix.lower() not in _MARKDOWN_SUFFIXES:
                 continue
             match = _PACK_FILE_RE.match(path.name)
@@ -368,7 +369,7 @@ def test_every_pack_subfolder_is_classified():
     the drain is silent for exactly as long as it takes to matter.
     """
     classified = {name for name in _LOCATION_DIRS if name != "in-flight"}
-    actual = {p.name for p in _PACKS.iterdir() if p.is_dir() and not p.name.startswith(".")}
+    actual = {p.name for p in checkout_iterdir(_PACKS) if p.is_dir() and not p.name.startswith(".")}
     unclassified = actual - classified
     assert not unclassified, (
         f"Pack subfolder(s) not named in _LOCATION_DIRS: {sorted(unclassified)}. "

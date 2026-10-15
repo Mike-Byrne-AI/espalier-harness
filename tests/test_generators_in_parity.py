@@ -35,6 +35,7 @@ from pathlib import Path
 import pytest
 
 from espalier.mirror_registry import MIRROR_ROWS
+from tests._live_tree import checkout_glob
 
 pytestmark = [pytest.mark.contract]
 
@@ -76,7 +77,7 @@ GENERATORS = _generators()
 def _check_flag_scripts() -> list[str]:
     found = []
     for folder in ("scripts", "tools/cc"):
-        for path in sorted((REPO_ROOT / folder).glob("*.py")):
+        for path in checkout_glob(REPO_ROOT / folder, "*.py"):
             if _CHECK_FLAG.search(path.read_text(encoding="utf-8", errors="replace")):
                 found.append(f"{folder}/{path.name}")
     return found

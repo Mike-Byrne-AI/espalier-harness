@@ -18,6 +18,7 @@ import pytest
 
 from espalier.scanners import canon_verifier as cv
 from pathlib import Path
+from tests._live_tree import keep_in_checkout
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,12 +37,12 @@ enforcing_only = pytest.mark.skipif(
 def test_verifier_runs_in_advisory_mode_by_default() -> None:
     """Always-on smoke: verifier imports cleanly and walks repo without
     raising. Does NOT assert on findings — that's the enforcement test."""
-    findings = cv.verify_repo(REPO_ROOT)
+    findings = keep_in_checkout(cv.verify_repo(REPO_ROOT))
     assert isinstance(findings, list)
 
 
 def test_no_unregistered_claim_surfaces() -> None:
-    findings = cv.verify_repo(REPO_ROOT)
+    findings = keep_in_checkout(cv.verify_repo(REPO_ROOT))
     unregistered = [f for f in findings if f.severity == "UNREGISTERED_SURFACE"]
     assert not unregistered, (
         f"{len(unregistered)} doc surface(s) contain canon annotations "
@@ -53,7 +54,7 @@ def test_no_unregistered_claim_surfaces() -> None:
 
 
 def test_no_missing_canons() -> None:
-    findings = cv.verify_repo(REPO_ROOT)
+    findings = keep_in_checkout(cv.verify_repo(REPO_ROOT))
     missing = [f for f in findings if f.severity == "MISSING_CANON"]
     assert not missing, (
         f"{len(missing)} claim(s) reference non-existent canon:\n" + "\n".join(
@@ -65,7 +66,7 @@ def test_no_missing_canons() -> None:
 
 
 def test_no_missing_claim_ids() -> None:
-    findings = cv.verify_repo(REPO_ROOT)
+    findings = keep_in_checkout(cv.verify_repo(REPO_ROOT))
     no_id = [f for f in findings if f.severity == "MISSING_CLAIM_ID"]
     assert not no_id, (
         f"{len(no_id)} claim(s) have `<!-- canon: -->` but no adjacent "
@@ -74,7 +75,7 @@ def test_no_missing_claim_ids() -> None:
 
 
 def test_no_missing_pins() -> None:
-    findings = cv.verify_repo(REPO_ROOT)
+    findings = keep_in_checkout(cv.verify_repo(REPO_ROOT))
     no_pins = [f for f in findings if f.severity == "MISSING_PINS"]
     assert not no_pins, (
         f"{len(no_pins)} test canon(s) lack `# pins: claim:<slug>` "
@@ -83,7 +84,7 @@ def test_no_missing_pins() -> None:
 
 
 def test_no_pins_mismatch() -> None:
-    findings = cv.verify_repo(REPO_ROOT)
+    findings = keep_in_checkout(cv.verify_repo(REPO_ROOT))
     mismatch = [f for f in findings if f.severity == "PINS_MISMATCH"]
     assert not mismatch, (
         f"{len(mismatch)} bidirectional slug mismatch(es):\n" + "\n".join(
@@ -157,7 +158,7 @@ def test_annotation_block_bounds_edges() -> None:
 def test_no_naked_claims() -> None:
     """v3 originating-failure-mode close: any claim discovered by a
     surface's ``CLAIM_DISCOVERERS`` entry but missing an annotation."""
-    findings = cv.verify_repo(REPO_ROOT)
+    findings = keep_in_checkout(cv.verify_repo(REPO_ROOT))
     naked = [f for f in findings if f.severity == "MISSING_ANNOTATION"]
     assert not naked, (
         f"{len(naked)} naked claim(s) on registered surfaces:\n" + "\n".join(
@@ -172,7 +173,7 @@ def test_pins_stub_count_within_budget() -> None:
     """Stubs are allowed (bootstrap reality) but capped. Raising
     MAX_PINS_STUB_COUNT is deliberate operator action that signals
     growing canon-vs-claim debt (same pattern as TP-138 MAX_PRAGMA_COUNT)."""
-    findings = cv.verify_repo(REPO_ROOT)
+    findings = keep_in_checkout(cv.verify_repo(REPO_ROOT))
     stubs = [f for f in findings if f.severity == "PINNED-STUB"]
     assert len(stubs) <= cv.MAX_PINS_STUB_COUNT, (
         f"PINNED-STUB count ({len(stubs)}) exceeds cap "

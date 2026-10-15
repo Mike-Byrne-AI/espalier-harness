@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from espalier import release_denylist
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -132,7 +133,7 @@ class TestEngineConsumerAllowlist:
             root = REPO_ROOT / root_name
             if not root.exists():
                 continue
-            for py in root.rglob("*.py"):
+            for py in checkout_rglob(root, "*.py"):
                 rel = py.relative_to(REPO_ROOT).as_posix()
                 if rel in self.ALLOWED_CONSUMERS:
                     continue

@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from espalier.scanners import magic_depth as md
+from tests._live_tree import keep_in_checkout
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -38,7 +39,7 @@ def test_earn_the_gate_detects_every_fixture_shape(monkeypatch) -> None:
     EXEMPT_PREFIXES monkeypatched off) -- every documented shape must
     surface."""
     monkeypatch.setattr(md, "EXEMPT_PREFIXES", ())
-    findings = md.scan_repo(REPO_ROOT)
+    findings = keep_in_checkout(md.scan_repo(REPO_ROOT))
     fixture_findings = [
         f for f in findings
         if str(f.path).replace("\\", "/") == FIXTURE_REL
@@ -70,7 +71,7 @@ def test_multiline_parents_attributes_to_parents_line(monkeypatch) -> None:
     expression-start line (sweep T5) — so a pragma/registry entry on the real
     line is honored. Uses the depth-4 multi-line fixture shape."""
     monkeypatch.setattr(md, "EXEMPT_PREFIXES", ())
-    findings = md.scan_repo(REPO_ROOT)
+    findings = keep_in_checkout(md.scan_repo(REPO_ROOT))
     src = (REPO_ROOT / FIXTURE_REL).read_text(encoding="utf-8").splitlines()
     parents_lines = {i for i, ln in enumerate(src, start=1) if ".parents[4]" in ln}
     cited = {
@@ -103,7 +104,7 @@ def test_does_not_trip_on_negatives() -> None:
 
 
 def test_pragma_count_within_cap() -> None:
-    actual = md.count_pragmas(REPO_ROOT)
+    actual = len(keep_in_checkout(md.collect_pragmas(REPO_ROOT)))
     assert actual <= md.MAX_PRAGMA_COUNT, (
         f"Magic-depth pragma count ({actual}) exceeds cap "
         f"({md.MAX_PRAGMA_COUNT}). Either close pragmas via refactor, "
@@ -159,7 +160,7 @@ def test_no_unpinned_magic_depth_sites() -> None:
 
     This is also the guard that makes the pragma non-optional: delete the comment
     above the post_write_check site and this reds immediately."""
-    findings = md.scan_repo(REPO_ROOT)
+    findings = keep_in_checkout(md.scan_repo(REPO_ROOT))
     unpinned = [
         f for f in findings
         if f.severity == "UNPINNED"
@@ -178,7 +179,7 @@ def test_no_unpinned_magic_depth_sites() -> None:
 
 
 def test_build_report_shape() -> None:
-    report = md.build_report(REPO_ROOT)
+    report = keep_in_checkout(md.build_report(REPO_ROOT))
     assert isinstance(report, dict)
     assert "count" in report
     assert "findings" in report

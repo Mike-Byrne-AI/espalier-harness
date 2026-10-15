@@ -18,6 +18,7 @@ import ast
 from pathlib import Path
 
 from espalier.scanners import freshness as scn
+from tests._live_tree import keep_in_checkout
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -64,7 +65,7 @@ def test_fixture_not_in_live_scan() -> None:
     """FRAGMENT_SURFACE_ALLOWLIST excludes tests/fixtures/ implicitly
     (no glob covers it). Confirm scan_repo does not surface any
     FragmentState for the fixture path."""
-    states = scn.scan_repo(REPO_ROOT)
+    states = keep_in_checkout(scn.scan_repo(REPO_ROOT))
     fixture_rel = "tests/fixtures/test_freshness_positives.md"
     fixture_states = [
         s for s in states

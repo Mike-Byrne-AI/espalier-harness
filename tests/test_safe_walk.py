@@ -18,6 +18,7 @@ import pytest
 
 from _stack_census import SEED_DEPENDENCY_DIRS
 from espalier._safe_walk import DEPENDENCY_TREE_DIRS, has_git_entry, is_own_git_repo, safe_glob, safe_rglob
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -660,7 +661,7 @@ def test_inline_safe_rglob_copies_match_canonical_oswalk_loop():
 
     copies: list[Path] = []
     for base in ("espalier", "tools"):
-        for py in safe_rglob(REPO_ROOT / base, "*.py"):
+        for py in checkout_rglob(REPO_ROOT / base, "*.py"):
             if py.name == "_safe_walk.py":
                 continue
             if "def _safe_rglob" in py.read_text(encoding="utf-8", errors="replace"):

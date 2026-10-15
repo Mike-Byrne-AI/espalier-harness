@@ -103,6 +103,7 @@ from check_ledger_probes import (  # noqa: E402
     UNRESOLVED,
     run_probe,
 )
+from tests._live_tree import checkout_iterdir
 
 # A subject that certainly exists in any source checkout, so the subject gate is
 # never the thing under test except where it IS the thing under test.
@@ -742,7 +743,7 @@ class TestTheLiveProbeFile:
             (p["id"], x) for p in probes for x in (p.get("inputs") or [])
             if isinstance(x, str) and norm(x) not in withheld and (
                 not (REPO_ROOT / norm(x)).exists()
-                or ((REPO_ROOT / norm(x)).is_dir() and not any((REPO_ROOT / norm(x)).iterdir()))
+                or ((REPO_ROOT / norm(x)).is_dir() and not any(checkout_iterdir(REPO_ROOT / norm(x))))
             )
         ]
         assert not dangling, (

@@ -23,7 +23,7 @@ import pytest
 from espalier import self_hosting as sh
 from espalier import surface_contract
 from espalier.self_hosting import main, run_self_host_check
-from tests._live_tree import live_tree_copy_ignore
+from tests._live_tree import checkout_glob, copy_checkout, live_tree_copy_ignore
 
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -222,7 +222,7 @@ class TestRunSelfHostCheck:
         owner = Path(sh.__file__).resolve()
         # This module is in the population deliberately -- see SCOPE above; the
         # fork that motivated the widening lived here, not in espalier/.
-        population = [*sorted(owner.parent.glob("*.py")), Path(__file__).resolve()]
+        population = [*checkout_glob(owner.parent, "*.py"), Path(__file__).resolve()]
         offenders: list[str] = []
         for path in population:
             tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -446,12 +446,11 @@ class TestSelfHostModeAwareness:
     def test_source_checkout_mode_does_not_require_runtime_files(self, tmp_path):
         """Source-checkout mode passes on a tree with committed surface
         but no init-generated runtime files."""
-        import shutil
 
         # Create a fresh-archive-like target by copying the repo root
         # minus runtime markers.
         target = tmp_path / "fresh"
-        shutil.copytree(
+        copy_checkout(
             REPO_ROOT,
             target,
             ignore=live_tree_copy_ignore(
@@ -486,10 +485,9 @@ class TestSelfHostModeAwareness:
         UnicodeDecodeError on a tree that was otherwise fine. The entries are
         names: read with a replacement character, the stray one is reported
         missing, which is the honest answer."""
-        import shutil
 
         target = tmp_path / "cp1252"
-        shutil.copytree(
+        copy_checkout(
             REPO_ROOT,
             target,
             ignore=live_tree_copy_ignore(
@@ -512,10 +510,9 @@ class TestSelfHostModeAwareness:
         (still in the manifest) instead of an agent file (no longer
         promised by the manifest).
         """
-        import shutil
 
         target = tmp_path / "broken"
-        shutil.copytree(
+        copy_checkout(
             REPO_ROOT,
             target,
             ignore=live_tree_copy_ignore(
@@ -549,7 +546,6 @@ class TestSelfHostModeAwareness:
         stage-02 `self-host --mode source-checkout` hit on the extracted
         archive.
         """
-        import shutil
 
         from espalier import surface_contract
         from espalier.self_hosting import main as self_host_main
@@ -604,7 +600,7 @@ class TestSelfHostModeAwareness:
             sentinels = {n for n in names if f"{prefix}{n}" in sentinel_rels}
             return sentinels | set(scaffold(dirpath, names))
 
-        shutil.copytree(REPO_ROOT, target, ignore=_ignore)
+        copy_checkout(REPO_ROOT, target, ignore=_ignore)
         settings = target / ".claude" / "settings.json"
         if settings.exists():
             settings.unlink()

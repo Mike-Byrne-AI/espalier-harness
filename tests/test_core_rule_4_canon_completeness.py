@@ -30,6 +30,7 @@ earlier claim-id-FIRST workaround for the parser's ±window asymmetry is retired
 from pathlib import Path
 
 from espalier.scanners import canon_verifier as cv
+from tests._live_tree import keep_in_checkout
 
 _REPO = Path(__file__).resolve().parents[1]
 _CLAUDE_MD = _REPO / "CLAUDE.md"
@@ -45,7 +46,7 @@ def _rule_4_pinned_canons() -> list[str]:
     """Canon strings that resolve PINNED for Core Rule #4's claim-id."""
     return [
         f.claim.canon
-        for f in cv.verify_repo(_REPO)
+        for f in keep_in_checkout(cv.verify_repo(_REPO))
         if f.claim.claim_id == _CLAIM_ID and f.severity == "PINNED"
     ]
 

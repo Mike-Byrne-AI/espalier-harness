@@ -19,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from espalier.scanners import convergence_theater as ct
+from tests._live_tree import keep_in_checkout
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -57,7 +58,7 @@ def test_earn_the_gate_detects_every_fixture_shape(monkeypatch) -> None:
     """
     monkeypatch.setattr(ct, "EXEMPT_FILES", frozenset())
     monkeypatch.setattr(ct, "EXEMPT_PREFIXES", ())
-    findings = ct.scan_repo(REPO_ROOT)
+    findings = keep_in_checkout(ct.scan_repo(REPO_ROOT))
     fixture_findings = [
         f for f in findings
         if str(f.path).replace("\\", "/")
@@ -104,7 +105,7 @@ def test_pragma_count_within_cap() -> None:
     """Pragma usage across tests/ must not exceed MAX_PRAGMA_COUNT.
     Growing past the cap requires a deliberate cap raise -- surfaces
     accumulating technical debt."""
-    actual = ct.count_pragmas(REPO_ROOT)
+    actual = len(keep_in_checkout(ct.collect_pragmas(REPO_ROOT)))
     assert actual <= ct.MAX_PRAGMA_COUNT, (
         f"Theater pragma count ({actual}) exceeds cap "
         f"({ct.MAX_PRAGMA_COUNT}). Either close pragmas via "
@@ -249,7 +250,7 @@ def test_scanner_no_espalier_import() -> None:
 def test_build_report_shape() -> None:
     """build_report must return the dict-of-counts shape that cmd_scan
     expects -- matches the existing scanner reports."""
-    report = ct.build_report(REPO_ROOT)
+    report = keep_in_checkout(ct.build_report(REPO_ROOT))
     assert isinstance(report, dict)
     assert "count" in report
     assert "theater_count" in report

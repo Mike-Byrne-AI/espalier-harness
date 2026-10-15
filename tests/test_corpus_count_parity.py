@@ -21,6 +21,7 @@ import pathlib
 import re
 
 import pytest
+from tests._live_tree import checkout_rglob
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -52,7 +53,7 @@ class TestDoctorReleaseCheckCorpusCountParity:
     def _in_scope_glob_sites(self) -> dict[str, list[str]]:
         sites: dict[str, list[str]] = {}
         for root in self._SITE_ROOTS:
-            for path in sorted((REPO_ROOT / root).rglob("*.py")):
+            for path in checkout_rglob(REPO_ROOT / root, "*.py"):
                 if "_vendor" in path.parts or "__pycache__" in path.parts:
                     continue
                 found = self._IN_SCOPE_GLOB_RE.findall(path.read_text(encoding="utf-8"))

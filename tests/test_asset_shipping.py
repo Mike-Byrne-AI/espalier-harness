@@ -26,6 +26,7 @@ from tests._surface_expected import (
     EXPECTED_SKILL_COUNT,
     EXPECTED_WORKFLOW_COUNT,
 )
+from tests._live_tree import checkout_glob
 
 CLAUDE_KINDS = list(surface_contract.CLAUDE_SURFACE_KINDS)  # the one owner of the kinds
 
@@ -92,7 +93,7 @@ class TestAssetParity:
         base = ASSETS_CLAUDE / kind
         if not base.is_dir():
             return set()
-        return {p.relative_to(base).as_posix() for p in visible(base.glob(surface_contract.CLAUDE_KIND_GLOBS[kind]), base)}
+        return {p.relative_to(base).as_posix() for p in visible(checkout_glob(base, surface_contract.CLAUDE_KIND_GLOBS[kind]), base)}
 
     def _deployed_rel_paths(self, target: Path, kind: str) -> set[str]:
         base = target / ".claude" / kind

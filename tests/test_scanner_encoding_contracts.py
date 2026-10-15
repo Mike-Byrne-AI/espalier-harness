@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from espalier.scanners import encoding_contracts as ec
+from tests._live_tree import keep_in_checkout
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_PATH = REPO_ROOT / "tests" / "fixtures" / "test_encoding_stealth_positives.py"
@@ -183,7 +184,7 @@ class TestTheWalk:
         """The class sweep pinned every site (DEF-792, 2026-09-14). A new one
         reds here with its path, line and shape; a file the scan could not
         read or parse reds too, because a silent skip is not a pass."""
-        findings, skipped = ec.scan_repo_with_skips(REPO_ROOT)
+        findings, skipped = keep_in_checkout(ec.scan_repo_with_skips(REPO_ROOT))
         assert findings == [], "\n".join(
             f"{f.path}:{f.lineno} {f.shape} {f.severity}" for f in findings
         )
@@ -194,6 +195,7 @@ class TestTheWalk:
         (the family-1 ``cc`` prune, a widened exemption) would pass the zero
         test above for free. The selfcheck mirror is a shipped TRANSFORM, not a
         byte copy, so it is walked; the cc byte-mirror is not."""
+        # live-tree: ok -- pins the scanner's own walk scope (an adopter's scan), not this tree's text
         rels = {rel for _path, rel in ec._iter_scoped_files(REPO_ROOT)}
         assert any(r.startswith("tools/cc/hooks/") for r in rels), sorted(rels)[:5]
         assert any(r.startswith("tests/test_") for r in rels)
@@ -246,7 +248,7 @@ class TestTheWalk:
 
 class TestPragmaRegistryIsTheAllowList:
     def test_pragma_count_within_cap(self) -> None:
-        actual = ec.count_pragmas(REPO_ROOT)
+        actual = len(keep_in_checkout(ec.collect_pragmas(REPO_ROOT)))
         assert actual <= ec.MAX_PRAGMA_COUNT, (
             f"{actual} encoding-locale-ok pragmas exceed MAX_PRAGMA_COUNT "
             f"({ec.MAX_PRAGMA_COUNT}). Pin encoding=\"utf-8\" at the site, or raise "
@@ -254,6 +256,7 @@ class TestPragmaRegistryIsTheAllowList:
         )
 
     def test_collect_and_count_agree(self) -> None:
+        # live-tree: ok -- compares the scanner's two readings of one walk; judges the scanner, not the tree
         assert len(ec.collect_pragmas(REPO_ROOT)) == ec.count_pragmas(REPO_ROOT)
 
     def test_every_pragma_is_live(self) -> None:
@@ -261,7 +264,7 @@ class TestPragmaRegistryIsTheAllowList:
         without it. A site later pinned to UTF-8 leaves its pragma dead, and a
         dead entry reds here so the allow-list cannot outlive its reason."""
         dead: list[str] = []
-        for rec in ec.collect_pragmas(REPO_ROOT):
+        for rec in keep_in_checkout(ec.collect_pragmas(REPO_ROOT)):
             source = ec._read_source(REPO_ROOT / rec["path"])
             below = {lineno for lineno, _shape, _sev in ec.sites_in_source(source)}
             if rec["line"] + 1 not in below:

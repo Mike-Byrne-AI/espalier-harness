@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCAN_DIRS = ("espalier", "tools/cc")
@@ -38,7 +39,7 @@ def _iter_py_files():
         root = REPO_ROOT / d
         if not root.is_dir():
             continue
-        for p in root.rglob("*.py"):
+        for p in checkout_rglob(root, "*.py"):
             yield p
 
 

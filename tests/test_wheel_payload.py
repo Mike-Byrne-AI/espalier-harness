@@ -101,6 +101,7 @@ def _packaging_litter(root: Path) -> dict[str, int]:
     isolation is the engine's staging and this is the witness for its
     residue; a red names the other possible writer too."""
     return {
+        # live-tree: ok -- looks for the build litter (build/, dist/, *.egg-info) git ignores, on purpose
         p.name: p.stat().st_mtime_ns for p in root.iterdir()
         if p.name in _PACKAGING_LITTER_NAMES or p.name.endswith(".egg-info")
         or p.name.startswith("espalier_harness-")

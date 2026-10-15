@@ -31,6 +31,7 @@ from espalier.pack_manifest import (
     parse_pack,
     parse_scope_in,
 )
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -1140,11 +1141,11 @@ class TestUnparseableBulletGuard:
         assert affected_symbols_diagnostics(text) == []
 
     @pytest.mark.skipif(
-        not list((REPO_ROOT / "task-packs").glob("TP-*.md")),
+        not list(checkout_glob(REPO_ROOT / "task-packs", "TP-*.md")),
         reason="self-host only: no active pack at the task-packs/ root on this tree",
     )
     def test_active_packs_declare_every_routed_bullet(self):
-        packs = sorted((REPO_ROOT / "task-packs").glob("TP-*.md"))
+        packs = sorted(checkout_glob(REPO_ROOT / "task-packs", "TP-*.md"))
         offenders = [
             (pack.name, note)
             for pack in packs

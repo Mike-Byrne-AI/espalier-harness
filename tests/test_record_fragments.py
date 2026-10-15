@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
@@ -434,7 +435,7 @@ def _dir_literals(root: Path) -> dict[str, list[str]]:
     Derived, so a copy added anywhere in that scope is seen on arrival."""
     out: dict[str, list[str]] = {}
     for base in ("tools/cc", "scripts", "espalier"):
-        for p in sorted((root / base).rglob("*.py")):
+        for p in checkout_rglob(root / base, "*.py"):
             rel = p.relative_to(root).as_posix()
             if "/_vendor/" in rel or "/assets/" in rel:
                 continue
@@ -536,8 +537,8 @@ def _table_home_prose(root: Path) -> list[str]:
     ``task-packs/``) say what was true on their day, and mirrors follow their
     sources."""
     files = [p for d in (".claude/agents", ".claude/commands", ".claude/skills", "docs")
-             for p in (root / d).rglob("*.md")]
-    files += [p for p in root.rglob("CLAUDE.md")]
+             for p in checkout_rglob(root / d, "*.md")]
+    files += [p for p in checkout_rglob(root, "CLAUDE.md")]
     files += [root / "README.md"]
     out = []
     for p in sorted(set(files)):
@@ -610,7 +611,7 @@ class TestEveryReaderTakesBothForms:
     def _readers() -> dict[str, list[str]]:
         out: dict[str, list[str]] = {}
         for base in ("tools/cc", "scripts", "espalier"):
-            for p in sorted((REPO_ROOT / base).rglob("*.py")):
+            for p in checkout_rglob(REPO_ROOT / base, "*.py"):
                 rel = p.relative_to(REPO_ROOT).as_posix()
                 if "/_vendor/" in rel or "/assets/" in rel:
                     continue

@@ -44,7 +44,7 @@ from espalier.changelog import category_label
 
 from tests._export_guard import pruned_from_this_tree
 from tests._git_oracle import owns_its_worktree, require_tracked_paths
-from tests._live_tree import exclude_worktrees
+from tests._live_tree import checkout_glob, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXTERNAL_DIR = REPO_ROOT / "docs" / "external"
@@ -977,7 +977,7 @@ class TestNoStaleBuilderReferences:
     def test_no_stale_builder_or_codex_references(self):
         violations: list[str] = []
         for glob in self.SCAN_GLOBS:
-            for path in REPO_ROOT.glob(glob):
+            for path in checkout_glob(REPO_ROOT, glob):
                 if not path.is_file():
                     continue
                 if not self._should_scan(path, REPO_ROOT):
@@ -1065,7 +1065,7 @@ class TestDocsDirMatchProtocol:
     def test_docs_dir_clean(self):
         findings: list[str] = []
         docs_dir = REPO_ROOT / "docs"
-        for doc in sorted(docs_dir.glob("*.md")):
+        for doc in sorted(checkout_glob(docs_dir, "*.md")):
             findings.extend(_check_doc_for_wrong_protocol(doc))
         assert not findings, (
             "Hook protocol drift in docs/:\n"
@@ -1955,7 +1955,7 @@ class TestMemoryCapPopulation:
         glob_covered = {
             p.relative_to(REPO_ROOT).as_posix()
             for pattern in MEMORY_CAP_POPULATION.glob_populations
-            for p in REPO_ROOT.glob(pattern)
+            for p in checkout_glob(REPO_ROOT, pattern)
         }
         accounted = set(EXPECTED_MEMORY_CAP_SITES) | glob_covered | set(_NOT_CAP_SURFACES)
         unaccounted = sorted(discovered - accounted)
@@ -2106,7 +2106,7 @@ class TestMemoryCapPopulation:
         total = 0
         per_file: list[str] = []
         for pattern in MEMORY_CAP_POPULATION.glob_populations:
-            for path in sorted(REPO_ROOT.glob(pattern)):
+            for path in sorted(checkout_glob(REPO_ROOT, pattern)):
                 relpath = path.relative_to(REPO_ROOT).as_posix()
                 hits = population_sites(REPO_ROOT, MEMORY_CAP_POPULATION, relpath)
                 if hits:
@@ -2700,16 +2700,16 @@ class TestSpecificStaleClaims:
 
 def _public_scan_files(roots: tuple[Path, ...], repo_root: Path) -> list[Path]:
     """The files `TestHookProtocolStaleForms` reads under its public roots: a root
-    that is a file, else its markdown and Python recursively -- minus a linked
-    worktree's checkout under `.claude/worktrees/` (DEF-1196: another copy of the
-    tree, which `rglob` descends; one red here beside a live session, measured
-    2026-10-09)."""
+    that is a file, else its markdown and Python recursively, in git's view of the
+    checkout -- so a linked worktree's checkout under `.claude/worktrees/`
+    (DEF-1196: one red here beside a live session, measured 2026-10-09) and a
+    gitignored doc such as `docs/session-archive.md` are not this tree's text."""
     files: list[Path] = []
     for root in roots:
         if not root.exists():
             continue
-        files += [root] if root.is_file() else exclude_worktrees(
-            list(root.rglob("*.md")) + list(root.rglob("*.py")), repo_root)
+        files += [root] if root.is_file() else (
+            list(checkout_rglob(root, "*.md", root=repo_root)) + list(checkout_rglob(root, "*.py", root=repo_root)))
     return files
 
 
@@ -2876,7 +2876,7 @@ class TestNoChmod444Recidivism:
     def test_no_chmod_444_in_production(self):
         offenders: list[tuple[str, int, str, str]] = []
         for prod_dir in self._PRODUCTION_DIRS:
-            for path in (REPO_ROOT / prod_dir).rglob("*.py"):
+            for path in checkout_rglob(REPO_ROOT / prod_dir, "*.py"):
                 rel = path.relative_to(REPO_ROOT).as_posix()
                 if rel in self._EXEMPT_PATHS:
                     continue
