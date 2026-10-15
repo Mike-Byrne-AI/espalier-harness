@@ -62,7 +62,8 @@ auto-merge has landed the lane and reports to nobody otherwise (the SessionStart
 banner's `Merged:` rule, the same states) -- so read that log
 (`gh run view <id> --log-failed`) before arming another lane on top of it. When
 the base's own post-merge proof is red, notes that `open` will refuse this lane
-(a `revert/` lane excepted). Where
+(a `revert/` lane excepted); likewise when two or more live sessions work in
+this checkout (Step 2). Where
 `handoff_push` is on, notes when this lane's commits never touch
 `ESPALIER_MEMORY.md`: the handoff has not run for it, and `open` will refuse
 it without `--early "<reason>"`. Prints the merge verdict against the base:
@@ -81,7 +82,9 @@ On the default branch: creates `lane/<slug of the head subject>` at HEAD,
 switches to it, and only then points the local default branch back at origin's
 -- every commit the default branch carried is reachable from the lane before
 the default branch moves, which is why the order is the tool's and not a
-sentence. On a lane already: says so, and nothing moves.
+sentence. On a lane already: says so, and nothing moves. Refuses, before
+anything moves, a checkout two or more live sessions work in (Step 2): the
+switch would move every one of them onto the lane.
 
 ## Step 2: Push once, open the pull request with the marker, arm auto-merge
 
@@ -102,6 +105,17 @@ on the red base, with `gh pr merge --disable-auto <n>`; a flake clears with a
 re-run of that run. It notes, without refusing, when this seat already has
 another open pull request (by the seat whose latest claim or release names its
 lane: every seat may push as one GitHub account).
+
+Refuses, before anything moves, when two or more live sessions work in this
+checkout -- Claude Code's own session registry places them, the session running
+the verb counted too when it acts here from a checkout of its own: they share
+its branch and index, so a push from here ships the other's commits. The
+refusal names each by pid and what launched it; close one, or give it a
+checkout of its own (`python tools/cc/seat.py launch <seat>` creates a worktree
+seat). `handoff` asks the same before its `lane` step, `lane` and `catch-up`
+ask it too. A registry that cannot place them, or the session markers alone, is
+a note and the push goes ahead; `ESPALIER_SHARED_CHECKOUT_OK=<reason>` lets a
+push past an entry the registry got wrong, and the note says the reason.
 
 Before anything is pushed, the base is merged in when the lane would conflict
 with it (`git merge-tree` is the probe, git 2.38 or newer; an older git is a

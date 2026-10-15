@@ -44,8 +44,10 @@ def seat():
 @pytest.fixture(autouse=True)
 def _outside_a_session(monkeypatch):
     """The suite may run inside a Claude session; the oracle then insists the
-    registry list it. These cases are about the seat, not the caller."""
-    monkeypatch.delenv("CLAUDECODE", raising=False)
+    registry list it, and finds the caller by the ids a session exports.
+    These cases are about the seat, not the caller."""
+    for name in ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID"):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -116,7 +118,9 @@ def registry(seat, tmp_path, monkeypatch):
 
 @pytest.fixture
 def no_claude(seat, monkeypatch):
-    """Record the one spawn instead of running claude."""
+    """Record the one spawn instead of running claude, as from a terminal of
+    the operator's own (the suite's stdin is no terminal)."""
+    monkeypatch.setattr(seat, "session_refusal", lambda: "", raising=False)
     calls: list[dict] = []
     real = seat.shutil.which
     # Only claude is faked: shutil.which is the one module every git runner shares.
@@ -201,8 +205,10 @@ class TestLaunch:
         pid = registry(feat / "src")
         with pytest.raises(seat.Refused) as refused:
             seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=True)
-        assert str(refused.value).startswith(f"seat box-feat is occupied: pid {pid} (cli, started 2026-10-15 06:30Z) "
-                                             f"is in {feat}")
+        said = str(refused.value)
+        assert said.startswith(f"seat box-feat is occupied: pid {pid} (cli, started 2026-10-15 06:30Z) (their "
+                               f"entries are under {registry.dir / 'sessions'}) is in {feat}")
+        assert "One checkout holds one session at a time" in said and "Core Rule" not in said
         (registry.dir / "sessions" / f"{pid}.json").unlink()
         registry(feat, pid=_dead_pid())
         assert seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=True) == 0
@@ -272,21 +278,121 @@ class TestLaunch:
             seat.resolve(clone, "nobody")
         stray = clone / ".claude" / "worktrees" / "stray"
         stray.mkdir(parents=True)
-        with pytest.raises(seat.Refused, match="git does not register it as a worktree answering 'box-stray'"):
+        with pytest.raises(seat.Refused, match="exists but git does not register it as a worktree: look at what is"):
             seat.resolve(clone, "box-stray")
+        _worktree(clone, "other", name="box-renamed")
+        with pytest.raises(seat.Refused, match=r"is a registered worktree that answers 'box-renamed', not 'box-other'"
+                                               r".*launch box-renamed"):
+            seat.resolve(clone, "box-other")
         _git(clone, "config", "--unset", "espalier.machine")
         with pytest.raises(seat.Refused, match="this clone names no machine"):
             seat.resolve(clone, "box")
 
     def test_the_command_line_is_quoted_for_each_shell(self, seat, tmp_path):
         target = seat.Target("box-x", tmp_path / "it's here", True, False)
-        ps = seat.command_line(target, ["--model", "o p"], maintenance=True, windows=True)
+        ps = seat.command_line(target, ["--model", "o p", "a\u2019b"], maintenance=True, shell="powershell")
         assert ps.startswith(f"Set-Location -LiteralPath '{str(tmp_path / 'it')}''s here'; ")
-        assert "$env:ESPALIER_MAINTENANCE_MODE = '1'" in ps and ps.endswith("claude '--model' 'o p'")
-        assert "Remove-Item Env:ESPALIER_MAINTENANCE_MODE" in seat.command_line(target, [], maintenance=False,
-                                                                                windows=True)
-        sh = seat.command_line(target, ["--model", "o p"], maintenance=False, windows=False)
-        assert sh.endswith("&& env -u ESPALIER_MAINTENANCE_MODE claude --model 'o p'")
+        assert "$env:ESPALIER_MAINTENANCE_MODE = '1'" in ps and ps.endswith("claude '--model' 'o p' 'a\u2019\u2019b'")
+        assert "Remove-Item Env:VIRTUAL_ENV" in ps
+        plain = seat.command_line(target, [], maintenance=False, shell="powershell")
+        assert "Remove-Item Env:ESPALIER_MAINTENANCE_MODE" in plain
+        with pytest.raises(seat.Refused, match="Windows PowerShell 5.1 splits"):
+            seat.command_line(target, ['say "hi"'], maintenance=False, shell="powershell")
+        sh = seat.command_line(target, ["--model", "o p"], maintenance=False, shell="posix")
+        assert sh.endswith("&& env -u ESPALIER_MAINTENANCE_MODE -u VIRTUAL_ENV claude --model 'o p'")
+        bindir = target.path / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+        bindir.mkdir(parents=True)
+        with_venv = seat.command_line(target, [], maintenance=False, shell="powershell")
+        assert f"$env:PATH = '{str(bindir).replace(chr(39), chr(39) * 2)};' + $env:PATH" in with_venv
+        posix_venv = seat.command_line(target, [], maintenance=True, shell="posix")
+        assert "env ESPALIER_MAINTENANCE_MODE=1 VIRTUAL_ENV=" in posix_venv and ':"$PATH" claude' in posix_venv
+
+    def test_the_childs_environment_drops_the_parent_sessions_and_names_the_seats_venv(self, seat, tmp_path):
+        """Read 2026-10-15: a session exports its pid, id and messaging token
+        to its children, and VIRTUAL_ENV named the main checkout's .venv in a
+        worktree seat's session. Dies to: dropping a name, or a prefix strip
+        that also drops a user's CLAUDE_CODE_USE_BEDROCK."""
+        base = {name: "x" for name in seat.SESSION_ENV}
+        base.update({"CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CONFIG_DIR": "/cfg", "VIRTUAL_ENV": "/other/.venv",
+                     "ESPALIER_MAINTENANCE_MODE": "1", "PATH": "/bin"})
+        target = seat.Target("box-x", tmp_path, True, False)
+        env = seat.child_env(target, maintenance=False, base=base)
+        assert not set(seat.SESSION_ENV) & set(env)
+        assert {"CLAUDECODE", "CLAUDE_CODE_MESSAGING_TOKEN", "AI_AGENT"} <= seat.SESSION_ENV
+        assert env["CLAUDE_CODE_USE_BEDROCK"] == "1" and env["CLAUDE_CONFIG_DIR"] == "/cfg"
+        assert "VIRTUAL_ENV" not in env and "ESPALIER_MAINTENANCE_MODE" not in env
+        bindir = tmp_path / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+        bindir.mkdir(parents=True)
+        env = seat.child_env(target, maintenance=True, base=base)
+        assert env["VIRTUAL_ENV"] == str(tmp_path / ".venv") and env["PATH"].split(os.pathsep)[0] == str(bindir)
+
+    def test_from_inside_a_session_nothing_is_created_or_started(self, seat, clone, registry, monkeypatch):
+        """Dies to: a launch an AI collaborator types under its Bash tool,
+        which would start a hidden child session (the stripped variables keep
+        Claude Code from even knowing it is nested)."""
+        monkeypatch.setattr(seat, "run_session", lambda *a, **k: pytest.fail("a session was started"))
+        monkeypatch.setenv("CLAUDECODE", "1")
+        with pytest.raises(seat.Refused, match="runs inside a Claude Code session"):
+            seat.cmd_launch(clone, "box-new", [], maintenance=False, unchecked=False, print_only=False)
+        assert not (clone / ".claude" / "worktrees" / "new").exists()
+        monkeypatch.delenv("CLAUDECODE")
+        with pytest.raises(seat.Refused, match="standard input is not a terminal"):
+            seat.cmd_launch(clone, "box-new", [], maintenance=False, unchecked=False, print_only=False)
+
+    def test_an_existing_seat_without_its_settings_gets_them_before_it_starts(self, seat, clone, registry,
+                                                                              no_claude, capsys):
+        """A worktree made by hand, or before .worktreeinclude, or left by a
+        failed create. Dies to: copying only on create, so the session starts
+        with no hook at all."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        assert not (feat / ".claude" / "settings.json").exists()
+        seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=False)
+        assert (feat / ".claude" / "settings.json").read_bytes() == b'{"hooks": {}}\n'
+        assert "copied .claude/settings.json from the clone" in capsys.readouterr().out
+
+    def test_include_entries_it_cannot_take_are_said_not_raised(self, seat, clone):
+        (clone / ".worktreeinclude").write_bytes(
+            b".claude/settings.json\n!negated.txt\n/anchored.json\nconf/\n/nonexistent*\n")
+        (clone / "anchored.json").write_bytes(b"{}\n")
+        (clone / ".gitignore").write_bytes(b".claude/settings.json\n.claude/worktrees/\nanchored.json\n")
+        target = clone / "plain-dir"
+        target.mkdir()
+        copied, skipped = seat.copy_includes(clone, target)
+        assert copied == [".claude/settings.json", "anchored.json"]
+        assert [s.split(" ")[0] for s in skipped] == ["!negated.txt", "conf/"]
+
+    def test_a_worktrees_folder_git_does_not_ignore_is_refused_before_anything_is_made(self, seat, clone, registry,
+                                                                                       no_claude):
+        (clone / ".gitignore").write_bytes(b".claude/settings.json\n")
+        with pytest.raises(seat.Refused, match=r"\.claude/worktrees/new/ is not ignored by git here"):
+            seat.cmd_launch(clone, "box-new", [], maintenance=False, unchecked=False, print_only=False)
+        assert not (clone / ".claude" / "worktrees" / "new").exists()
+
+    def test_a_leftover_merged_branch_is_reused_and_unmerged_work_is_not(self, seat, clone, registry, no_claude,
+                                                                        capsys):
+        _git(clone, "branch", "worktree-new", "origin/main")
+        seat.cmd_launch(clone, "box-new", [], maintenance=False, unchecked=False, print_only=False)
+        assert "deleted the leftover branch worktree-new" in capsys.readouterr().out
+        _git(clone, "worktree", "remove", "--force", str(clone / ".claude" / "worktrees" / "new"))
+        _git(clone, "switch", "--quiet", "worktree-new")
+        (clone / "w.txt").write_bytes(b"w\n")
+        _git(clone, "add", "w.txt")
+        _git(clone, "commit", "--quiet", "-m", "work")
+        _git(clone, "switch", "--quiet", "main")
+        with pytest.raises(seat.Refused, match="a branch worktree-new already exists with work origin/main lacks"):
+            seat.cmd_launch(clone, "box-new", [], maintenance=False, unchecked=False, print_only=False)
+
+    def test_a_session_only_a_marker_names_passes_with_unchecked(self, seat, clone, registry, monkeypatch):
+        feat = _worktree(clone, "feat", name="box-feat")
+        marker = {"session_id": "m1", "pid": os.getpid(), "cwd": str(feat)}
+        monkeypatch.setattr(seat.sync, "_default_marker_reader",
+                            lambda: (lambda tree: [marker] if seat.sync._norm(tree) == seat.sync._norm(feat) else []))
+        with pytest.raises(seat.Refused, match="only a session marker names it: --unchecked passes it"):
+            seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=True)
+        assert seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=True, print_only=True) == 0
+        registry(feat)
+        with pytest.raises(seat.Refused, match="is occupied"):
+            seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=True, print_only=True)
 
 
 # -- retire --------------------------------------------------------------------------
@@ -326,14 +432,49 @@ class TestRetire:
             seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True)
         assert feat.is_dir() and len(_live_claims_from(seat, clone, "box-feat")) == 1
 
-    def test_jobs_are_named_and_left_to_the_dispatcher(self, seat, clone, registry, capsys):
+    def test_a_seat_holding_jobs_is_refused_unless_they_are_handed_back(self, seat, clone, registry, capsys):
+        """The dispatcher's job and the seat's claim on ONE lane (the ordinary
+        case). Dies to: a release by lane, which closes the job too while the
+        driver says it left jobs alone (the failure-mode review drove it)."""
         feat = _worktree(clone, "feat", name="box-feat")
-        _send(seat, clone, "box", "assign", "build it", lane="lane/next", seat="box-feat")
-        assert seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True) == 0
-        assert "still assigned to box-feat: lane/next" in capsys.readouterr().out
+        assign = _send(seat, clone, "box", "assign", "build it", lane="lane/feat", seat="box-feat")
+        claim = _send(seat, feat, "box-feat", "claim", "the feature", lane="lane/feat")
+        with pytest.raises(seat.Refused, match=r"seat box-feat holds 1 job\(s\) from the dispatcher \(lane/feat\)"):
+            seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True)
         by_machine, _ = seat.mail.read_mail(clone)
-        assert [j["re"]["lane"] for j in seat.mail.live_assignments(by_machine)] == ["lane/next"]
-        assert not feat.exists()
+        assert [j["id"] for j in seat.mail.live_assignments(by_machine)] == [assign["id"]]
+        assert len(_live_claims_from(seat, clone, "box-feat")) == 1 and feat.is_dir()
+        assert seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True, return_jobs=True) == 0
+        origin_file = _out(clone.parent / "origin.git", "show", "refs/heads/mail/box-feat:mail.jsonl")
+        releases = [json.loads(ln) for ln in origin_file.splitlines() if json.loads(ln)["type"] == "release"]
+        assert [(r["ack"], r["re"]["lane"]) for r in releases] == [(claim["id"], ""), (assign["id"], "")]
+        assert "goes back to the dispatcher" in releases[1]["text"]
+        by_machine, _ = seat.mail.read_mail(clone)
+        assert seat.mail.live_assignments(by_machine) == [] and not feat.exists()
+
+    def test_a_worktree_that_must_stay_keeps_its_claims(self, seat, clone, registry):
+        """Live claims usually mean unpushed work. Dies to: releasing first and
+        judging the removal after, which leaves the work kept and unclaimed."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        _send(seat, feat, "box-feat", "claim", "the feature", lane="lane/feat")
+        (feat / "work.txt").write_bytes(b"unpushed\n")
+        _git(feat, "add", "work.txt")
+        _git(feat, "commit", "--quiet", "-m", "work not on main")
+        with pytest.raises(seat.Refused, match=r"would be kept \(1 commit\(s\) not in main \(lane/feat\)\), so "
+                                               r"nothing was released"):
+            seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=True)
+        assert len(_live_claims_from(seat, clone, "box-feat")) == 1 and feat.is_dir()
+
+    def test_a_channel_that_cannot_be_read_retires_nothing(self, seat, clone, registry, monkeypatch):
+        feat = _worktree(clone, "feat", name="box-feat")
+
+        def unreadable(root, **kw):
+            raise seat.mail.Unresolvable("git for-each-ref failed")
+
+        monkeypatch.setattr(seat.mail, "read_mail", unreadable)
+        with pytest.raises(seat.Refused, match="the mail channel could not be read .* nothing is released or removed"):
+            seat.cmd_retire(clone, "box-feat", dry_run=False, fetch=False)
+        assert feat.is_dir()
 
     def test_a_dead_holders_lock_is_released_and_said(self, seat, clone, registry, capsys):
         feat = _worktree(clone, "feat", name="box-feat")

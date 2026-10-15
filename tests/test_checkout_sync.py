@@ -1059,21 +1059,84 @@ class TestTheOneLivenessOracle:
         assert (blind.sessions, blind.oracle) == (None, "")
         assert blind.note == ("Claude Code's session registry could not be read in full; no session marker "
                               "answers either, so who is in it cannot be told")
-        seen = cs.occupancy(tmp_path, markers=lambda tree: [{"session_id": "m1", "pid": 77, "cwd": str(tmp_path)}])
+        live = {"session_id": "m1", "pid": os.getpid(), "cwd": str(tmp_path)}
+        seen = cs.occupancy(tmp_path, markers=lambda tree: [live])
         assert seen.oracle == "markers" and _ids(seen.sessions) == ["m1"]
+        assert seen.sessions[0]["source"] == "marker" and seen.from_registry() == []
+        gone = cs.occupancy(tmp_path, markers=lambda tree: [{**live, "pid": _dead_pid()}])
+        assert gone.sessions is None, "a marker whose window pid exited names nobody"
         broken = cs.occupancy(tmp_path, markers=lambda tree: 1 / 0)
         assert broken.sessions is None and broken.oracle == ""
 
     def test_a_registry_that_does_not_list_the_session_asking_is_not_trusted(self, cs, tmp_path, monkeypatch):
         rows = [_row(tmp_path, sid="someone")]
         monkeypatch.setenv("CLAUDECODE", "1")
+        monkeypatch.delenv("CLAUDE_PID", raising=False)
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
         monkeypatch.setattr(cs, "ancestor_pids", lambda depth=8: [999999])
         stranger = cs.occupancy(tmp_path, sessions=rows, checkouts=[tmp_path], markers=lambda tree: [])
         assert stranger.sessions is None
         assert stranger.note.startswith("this session is not in Claude Code's session registry")
         monkeypatch.setattr(cs, "ancestor_pids", lambda depth=8: [os.getpid()])
         listed = cs.occupancy(tmp_path, sessions=rows, checkouts=[tmp_path], markers=lambda tree: [])
-        assert listed.oracle == "registry" and listed.sessions == rows
+        assert listed.oracle == "registry" and listed.sessions == [{**rows[0], "source": "registry"}]
+        assert listed.caller is rows[0]
+
+    def test_the_caller_is_found_by_the_ids_a_session_exports(self, cs, tmp_path, monkeypatch):
+        """A session exports its registry pid and session id to its children
+        (CLAUDE_PID, CLAUDE_CODE_SESSION_ID; equal to the registry's, read
+        2026-10-15): no process walk needed. Dies to: an 8-deep walk that
+        misses a longer chain and leaves the registry untrusted."""
+        rows = [_row(tmp_path, pid=4242, sid="mine"), _row(tmp_path, pid=4343, sid="other")]
+        monkeypatch.setattr(cs, "ancestor_pids", lambda depth=8: [])
+        monkeypatch.setenv("CLAUDE_PID", "4242")
+        monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+        assert cs.caller_entry(rows) is rows[0]
+        monkeypatch.delenv("CLAUDE_PID")
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "other")
+        assert cs.caller_entry(rows) is rows[1]
+
+    def test_a_live_marker_names_a_session_that_moved_into_the_checkout(self, cs, repos, monkeypatch):
+        """A session that went into a worktree mid-session keeps its registry
+        cwd (the clone) and records the move in the clone's marker, the shape
+        SessionStart's reaper reads (session_start.py). Dies to: a readable
+        registry hiding every marker, so launch or retire acts on a worktree
+        a clone session is working in."""
+        monkeypatch.delenv("CLAUDECODE", raising=False)
+        work = repos["work"]
+        feat = _worktree(repos, "feat")
+        clone_session = _row(work, pid=os.getpid(), sid="clone")
+        moved = {"session_id": "clone", "pid": os.getpid(), "cwd": str(feat)}
+        visitor = {"session_id": "visitor", "pid": os.getppid(), "cwd": str(feat / "src")}
+        gone = {"session_id": "gone", "pid": _dead_pid(), "cwd": str(feat)}
+        in_root = {"session_id": "root-only", "pid": os.getppid(), "cwd": ""}
+        own_marker = {"session_id": "clone", "pid": os.getpid(), "cwd": ""}
+        by_tree = {cs._norm(work): [moved, visitor, gone, in_root, own_marker], cs._norm(feat): []}
+        occ = cs.occupancy(feat, sessions=[clone_session], markers=lambda tree: by_tree[cs._norm(tree)])
+        assert occ.oracle == "registry" and occ.from_registry() == []
+        assert _ids(occ.sessions) == ["clone", "visitor"] and {r["source"] for r in occ.sessions} == {"marker"}
+        here = cs.occupancy(work, sessions=[clone_session], markers=lambda tree: by_tree[cs._norm(tree)])
+        assert _ids(here.sessions) == ["clone", "root-only"], "the registry row and its own marker are one session"
+
+    @pytest.mark.skipif(os.name != "nt", reason="procStart is measured against the Windows creation FILETIME")
+    def test_an_entry_whose_pid_now_names_another_process_is_gone(self, cs, tmp_path):
+        """A crashed session's entry whose pid Windows handed to an unrelated
+        process: alive by pid, gone by procStart. Dies to: reading the pid
+        alone, which refuses a checkout for good."""
+        own = cs._proc_start_windows(os.getpid())
+        assert own and own.isdigit()
+        cfg = _registry(tmp_path, [
+            {"pid": os.getpid(), "sessionId": "real", "cwd": str(tmp_path), "procStart": own},
+            {"pid": os.getppid(), "sessionId": "ghost", "cwd": str(tmp_path), "procStart": "1"},
+        ])
+        assert _ids(cs.live_sessions(cfg)) == ["real"]
+
+    def test_a_start_time_of_no_real_moment_is_left_out_of_the_words(self, cs, tmp_path):
+        for raw in (float("inf"), float("nan"), 1e20, -5, True, "x"):
+            assert cs._started_at(raw) is None, raw
+        row = {**_row(tmp_path, pid=42), "started_at": float("inf"), "kind": "background", "entrypoint": "cli"}
+        assert cs.describe_session(row) == "pid 42 (cli, background)"
+        assert cs.describe_session({**_row(tmp_path, pid=7), "source": "marker"}) == "pid 7 (a session marker)"
 
     def test_reaping_one_named_worktree_leaves_the_rest_and_says_what_it_unlocked(self, cs, repos):
         """``seat.py retire``'s removal: the reaper's rules for one worktree. A

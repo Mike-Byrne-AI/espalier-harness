@@ -5,52 +5,54 @@ Why this exists
 ---------------
 A seat is one Claude Code session in its own checkout: the clone itself, or a
 worktree under ``.claude/worktrees/`` with a machine name of its own
-(``git config --worktree espalier.machine``; root CLAUDE.md Core Rule 15). The
-hand procedure for starting one was a terminal, a ``cd``, an environment
-variable and a ``claude`` that could land in a checkout another session was
-already in -- two sessions in one checkout are one seat, the state the rule
-exists to prevent, and nothing on the way in looked. Retiring one had a hole
-the protocol named: a worktree seat's claims can only be released under its
-own name, so removing the worktree first left them live, warning every other
-seat forever.
+(``git config --worktree espalier.machine``). Two sessions in one checkout
+share its branch and index, so each one's commits and pushes carry the
+other's. The hand procedure for starting a seat was a terminal, a ``cd``, an
+environment variable and a ``claude`` that could land in a checkout another
+session was already in, and nothing on the way in looked. Retiring one had a
+hole: a worktree seat's claims can only be released under its own name, so
+removing the worktree first left them live, warning every other seat forever.
 
 Three verbs, each reading occupancy from ``checkout_sync.occupancy`` (Claude
-Code's own session registry, the session markers only when it cannot be read)
-and every channel fact from ``mail.py``'s local refs:
+Code's own session registry, plus the session markers, which can only add a
+session) and every channel fact from ``mail.py``'s local refs:
 
 * ``list`` -- the clone and each of its worktrees under ``.claude/worktrees/``:
   the seat name (its own, or the one SessionStart would derive), the branch
   and head, the live sessions with what launched them, the live claims and
   jobs on the mail channel, and whether ``checkout_sync``'s removal rules
   would let the worktree go.
-* ``launch <seat>`` -- resolve the seat to the clone or its worktree; create a
-  missing worktree from ``origin/<base>`` with git (copying the gitignored
-  files ``.worktreeinclude`` names, which ``git worktree add`` does not) and
-  name it before the session starts; refuse a checkout a live session is in,
-  and one whose occupancy cannot be told unless ``--unchecked``; set the
+* ``launch <seat>`` -- run from a terminal of the operator's own, never from
+  inside a session. Resolve the seat to the clone or its worktree; create a
+  missing worktree from ``origin/<base>`` with git and name it before the
+  session starts; copy the gitignored files ``.worktreeinclude`` names into
+  it (``git worktree add`` does not, and without ``.claude/settings.json`` a
+  session there loads no hook); refuse a checkout a live session is in, and
+  one whose occupancy cannot be told unless ``--unchecked``; set the
   maintenance switch only with ``--maintenance``; put the seat's own ``.venv``
   first on ``PATH``; then run ``claude`` there with the operator's arguments
   after ``--`` passed through unchanged, or with ``--print`` print the one
   command line. The driver adds no permission flag of its own.
-* ``retire <seat>`` -- from the clone: refuse an occupied worktree; release
-  the seat's live claims from inside its worktree, under its own name, while
-  the worktree still exists; name its live jobs (the dispatcher's to release
-  or reassign); then remove the worktree under ``checkout_sync``'s rules for
-  that one worktree (clean, merged, no plan in progress, nothing ignored it
-  would lose; a lock whose holder exited is released and said).
+* ``retire <seat>`` -- from the clone: refuse an occupied worktree; judge the
+  removal first (``checkout_sync``'s rules for that one worktree: clean,
+  merged, no plan in progress, nothing ignored it would lose), so a seat that
+  must stay keeps its claims; refuse a seat that holds jobs unless
+  ``--return-jobs`` hands them back to the dispatcher; then release the
+  seat's live claims from inside its worktree, under its own name, each by
+  its id; then remove it (a lock whose holder exited is released and said).
 
 Verbs::
 
     python tools/cc/seat.py list [--json] [--no-fetch]
-    python tools/cc/seat.py launch <seat> [--maintenance] [--unchecked] [--print] [-- <claude args>]
-    python tools/cc/seat.py retire <seat> [--dry-run] [--no-fetch]
+    python tools/cc/seat.py launch <seat> [--maintenance] [--unchecked] [--print [--shell S]] [-- <claude args>]
+    python tools/cc/seat.py retire <seat> [--dry-run] [--return-jobs] [--unchecked] [--no-fetch]
 
 Stdlib-only (``tools/cc/`` runs standalone, zero espalier imports); imports
 its deployed siblings ``checkout_sync`` and ``mail``. Every git call is
 bounded through ``checkout_sync``; the one unbounded spawn is the operator's
 own ``claude`` session. Operator-facing text is 7-bit ASCII. Exit 0 on
-success, 1 on a named refusal, 2 on a usage error (``launch`` exits with
-``claude``'s own code).
+success, 1 on a named refusal, 2 on a usage error, 130 on an interrupt
+(``launch`` exits with ``claude``'s own code).
 """
 from __future__ import annotations
 
@@ -63,6 +65,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Callable
 
 # Sibling imports via this script's own directory (board.py's pattern): both
 # ship in the deploy set beside this file.
@@ -72,21 +75,31 @@ import mail  # noqa: E402  the seat names, the claims and jobs folds, the releas
 
 WORKTREES_REL = sync.WORKTREES_REL
 INCLUDE_FILE = ".worktreeinclude"
+SETTINGS_REL = ".claude/settings.json"
 #: Claude Code's own branch name for a worktree it creates (``claude
 #: --worktree <name>`` makes ``worktree-<name>``, read 2026-10-15), so a seat
 #: this driver creates looks like one Claude Code created.
 BRANCH_PREFIX = "worktree-"
 MAINTENANCE_KEY = "ESPALIER_MAINTENANCE_MODE"
-#: What a running session sets in its children (read 2026-10-15 on 2.1.300):
-#: carried into a session this driver starts, they would make it a nested
-#: child of the session that ran the driver, with that session's messaging
-#: token. Named, not a prefix: ``CLAUDE_CODE_*`` also holds user configuration
-#: (a Bedrock or Vertex switch) that the new session must keep.
+#: What a running session sets in its children: the eleven names read in a
+#: session's environment on 2.1.300 (2026-10-15) and the five more Claude Code
+#: strips from a child session of its own. Carried into a session this driver
+#: starts, they would make it a nested child of the session that ran the
+#: driver, with that session's messaging token. Named, never a prefix:
+#: ``CLAUDE_CODE_*`` also holds user configuration (a Bedrock or Vertex
+#: switch) that the new session must keep.
 SESSION_ENV = frozenset({
     "CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_ENTRYPOINT",
     "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN",
     "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_SSE_PORT",
+    "AI_AGENT", "TRACEPARENT", "CLAUDE_CODE_SESSION_ACCESS_TOKEN", "CLAUDE_CODE_BRIDGE_SESSION_ID",
+    "CLAUDE_CODE_WORKER_EPOCH",
 })
+#: PowerShell's single-quote characters (a typographic one closes a quoted
+#: string as surely as the ASCII one), each escaped by doubling.
+_PS_SINGLE = "'" + "".join(map(chr, (0x2018, 0x2019, 0x201A, 0x201B)))
+#: Double quotes Windows PowerShell 5.1 re-splits a native program's argument at.
+_PS_DOUBLE = '"' + "".join(map(chr, (0x201C, 0x201D, 0x201E)))
 CREATE_WAIT_S = 120.0    # a worktree checkout of the whole tree; never killed, said when still running
 FETCH_CAP_S = 20.0
 GIT_CAP_S = 10.0
@@ -94,6 +107,10 @@ GIT_CAP_S = 10.0
 
 class Refused(Exception):
     """A named stop: the message is what the operator reads; exit 1."""
+
+
+def say(text: str) -> None:
+    print(sync._ascii(text))
 
 
 # -- reading the clone --------------------------------------------------------------
@@ -155,10 +172,14 @@ def _seat_name(clone: str | None, path: Path) -> tuple[str, str]:
     return (derived, "derived") if derived else ("", "unnamed")
 
 
+CHANNEL_UNREAD = "the mail channel could not be read"
+
+
 def _read_channel(root: Path, *, fetch: bool) -> tuple[list[dict], list[dict], str]:
     """``(live claims, live jobs, note)`` from the local mail refs, after one
-    bounded fetch unless ``fetch`` is off. An unreadable channel is said,
-    never raised: the seats still list."""
+    bounded fetch unless ``fetch`` is off. An unreadable channel is said in
+    the note (opening :data:`CHANNEL_UNREAD`), never raised: the seats still
+    list, and ``retire`` refuses on it."""
     try:
         if fetch:
             ok, problem = mail.fetch_mail(root, timeout=FETCH_CAP_S)
@@ -169,7 +190,21 @@ def _read_channel(root: Path, *, fetch: bool) -> tuple[list[dict], list[dict], s
         dispatcher, _how = mail.dispatcher_setting(root)
         return mail.live_claims(by_machine), mail.live_assignments(by_machine, dispatcher), note
     except mail.Unresolvable as exc:
-        return [], [], f"the mail channel could not be read ({exc})"
+        return [], [], f"{CHANNEL_UNREAD} ({exc})"
+
+
+def reap_inputs(root: Path, registry: list[dict] | None) -> tuple[list[dict] | None, Callable[[Path], bool]]:
+    """The removal rules' inputs, as SessionStart's catch-up builds them: the
+    registry's rows plus each live marker in the clone's own state directory
+    (a session that moved into a worktree records the move only there), and a
+    check for a live marker in the worktree itself."""
+    def marker_live(tree: Path) -> bool:
+        return bool(sync.marker_sessions(tree))
+
+    if registry is None:
+        return None, marker_live
+    moved = [{"pid": m["pid"], "session_id": m["session_id"], "cwd": m["cwd"]} for m in sync.marker_sessions(root)]
+    return registry + moved, marker_live
 
 
 _READ = object()
@@ -181,8 +216,10 @@ def seats(root: Path, *, fetch: bool = True, sessions: object = _READ) -> tuple[
     clone = mail.clone_machine(root)
     blocks = _blocks(root)
     live = sync.live_sessions() if sessions is _READ else sessions
+    registry = live if isinstance(live, list) else None
     checkouts = [Path(b["worktree"]) for b in blocks if b.get("worktree") and "prunable" not in b]
     claims, jobs, channel_note = _read_channel(root, fetch=fetch) if clone else ([], [], "")
+    rows, marker_live = reap_inputs(root, registry)
     found: list[Seat] = []
     for index, block in enumerate(blocks):
         path = Path(block.get("worktree", ""))
@@ -195,18 +232,19 @@ def seats(root: Path, *, fetch: bool = True, sessions: object = _READ) -> tuple[
             continue
         seat.branch = block.get("branch", "").replace("refs/heads/", "") or ("detached" if "detached" in block else "")
         seat.head = block.get("HEAD", "")[:7]
-        occ = sync.occupancy(path, sessions=live if isinstance(live, list) else None, checkouts=checkouts)
+        occ = sync.occupancy(path, sessions=registry, checkouts=checkouts)
         seat.sessions, seat.oracle, seat.note = occ.sessions, occ.oracle, occ.note
         seat.claims = [c for c in claims if seat.name and c.get("from") == seat.name]
         seat.jobs = [j for j in jobs if seat.name and (j.get("re") or {}).get(mail.ASSIGN_SEAT_KEY) == seat.name]
         if index:
-            seat.removal = _removal_verdict(root, path, live if isinstance(live, list) else None)
+            seat.removal = _removal_verdict(root, path, rows, marker_live)
         found.append(seat)
     return found, channel_note
 
 
-def _removal_verdict(root: Path, path: Path, live: list[dict] | None) -> str:
-    report = sync.reap_worktrees(root, sessions=live, own_cwd=Path.cwd(), dry_run=True, only=path)
+def _removal_verdict(root: Path, path: Path, rows: list[dict] | None, marker_live: Callable[[Path], bool]) -> str:
+    report = sync.reap_worktrees(root, sessions=rows, own_cwd=Path.cwd(), marker_live=marker_live,
+                                 dry_run=True, only=path)
     if report.would_remove:
         return "removable"
     if report.note:
@@ -227,7 +265,7 @@ def _sessions_words(seat: Seat) -> str:
     if not seat.sessions:
         return "none"
     words = "; ".join(sync.describe_session(row) for row in seat.sessions)
-    return words + (" [session markers: the registry could not be read]" if seat.oracle == "markers" else "")
+    return words + (" [the registry could not be read: session markers only]" if seat.oracle == "markers" else "")
 
 
 def render(found: list[Seat], channel_note: str) -> str:
@@ -276,40 +314,83 @@ def resolve(root: Path, seat: str) -> Target:
                       "names it (lowercase letters, digits and hyphens)")
     if seat == clone:
         return Target(seat, root, True, True)
-    blocks = _blocks(root)
-    for block in blocks[1:]:
+    registered: dict[str, tuple[Path, str]] = {}
+    for block in _blocks(root)[1:]:
         path = Path(block.get("worktree", ""))
-        if not sync.within(path, _home(root)) or not path.is_dir():
+        if not sync.within(path, _home(root)):
             continue
-        name, _how = _seat_name(clone, path)
+        name, _how = _seat_name(clone, path) if path.is_dir() else ("", "gone")
         if name == seat:
             return Target(seat, path, True, False)
+        registered[sync._norm(path)] = (path, name)
     prefix = f"{clone}-"
     folder = seat[len(prefix):] if seat.startswith(prefix) else ""
     if not folder or mail.worktree_seat_name(clone, folder) != seat:
         raise Refused(f"no seat {seat!r} here: this clone is {clone!r}, and a worktree seat is named "
                       f"{clone}-<folder> for a folder under .claude/worktrees/ (`seat.py list` shows them)")
     path = _home(root) / folder
+    hit = registered.get(sync._norm(path))
+    if hit is not None:
+        answers = f"answers {hit[1]!r}" if hit[1] else "has no folder or no seat name"
+        raise Refused(f"{path} is a registered worktree that {answers}, not {seat!r}: "
+                      f"`seat.py list` shows what each answers ({hit[1] and f'launch {hit[1]}' or 'look at it first'})")
     if path.exists():
-        raise Refused(f"{path} exists but git does not register it as a worktree answering {seat!r}: "
-                      "look at it, then remove or repair it by hand (`git worktree repair`)")
+        raise Refused(f"{path} exists but git does not register it as a worktree: look at what is in it before "
+                      "anything else (`git worktree list`; `git worktree repair` if it should be one)")
     return Target(seat, path, False, False)
 
 
-def _refuse_occupied(target: Target, *, unchecked: bool) -> None:
-    occ = sync.occupancy(target.path)
-    if occ.sessions:
-        who = "; ".join(sync.describe_session(row) for row in occ.sessions)
-        raise Refused(f"seat {target.seat} is occupied: {who} is in {target.path}. One checkout, one session "
-                      "(root CLAUDE.md Core Rule 15): use that session, or end it first")
-    if occ.sessions is None and not unchecked:
-        raise Refused(f"who is in {target.path} cannot be told ({occ.note}); --unchecked launches anyway")
+def _occupants(occ: sync.Occupancy) -> str:
+    who = "; ".join(sync.describe_session(row) for row in occ.sessions or [])
+    hints = []
+    if any(row.get("kind") == "background" for row in occ.sessions or []):
+        hints.append("a background session is one Claude Code's daemon resumed: `claude daemon stop --any` ends it")
+    if occ.from_registry():
+        hints.append(f"their entries are under {sync.claude_config_dir() / 'sessions'}")
+    return who + (f" ({'; '.join(hints)})" if hints else "")
+
+
+def _refuse_occupied(seat: str, path: Path, *, unchecked: bool, verb: str) -> sync.Occupancy:
+    """Refuse a checkout a session is in. The registry's sessions always
+    refuse; a session only a marker names refuses unless ``--unchecked``
+    (a marker outlives its window when its pid cannot be read); an answer no
+    oracle can give refuses unless ``--unchecked`` for ``launch``, and always
+    for ``retire``, which deletes."""
+    occ = sync.occupancy(path)
+    if occ.sessions is None:
+        if unchecked and verb == "launch":
+            return occ
+        tail = "; --unchecked launches anyway" if verb == "launch" else ", so nothing is released or removed"
+        raise Refused(f"who is in {path} cannot be told ({occ.note}){tail}")
+    marked_only = bool(occ.sessions) and not occ.from_registry()
+    if occ.sessions and not (marked_only and unchecked):
+        tail = " (only a session marker names it: --unchecked passes it)" if marked_only else ""
+        raise Refused(f"seat {seat} is occupied: {_occupants(occ)} is in {path}{tail}. One checkout holds one "
+                      "session at a time: use that session, or close it first")
+    return occ
 
 
 # -- launch --------------------------------------------------------------------------
 
+def session_refusal() -> str:
+    """Why this process cannot start an interactive session, or ''. Inside a
+    session the new one would be a hidden child of it; without a terminal on
+    standard input nobody could type into it."""
+    if os.environ.get("CLAUDECODE"):
+        return ("this runs inside a Claude Code session, where the session it started would be a hidden child "
+                "of this one: run it from a terminal of your own, or take the line --print gives")
+    try:
+        tty = sys.stdin is not None and sys.stdin.isatty()
+    except (AttributeError, ValueError, OSError):  # fail-open: ok deliberate -- an unreadable stdin is no terminal (the refusal side)
+        tty = False
+    if not tty:
+        return ("standard input is not a terminal, so nobody could type into the session: run it from a "
+                "terminal, or take the line --print gives")
+    return ""
+
+
 def _include_entries(root: Path) -> list[str]:
-    """The paths ``.worktreeinclude`` names (comments and blanks left out)."""
+    """The entries ``.worktreeinclude`` lists (comments and blanks left out)."""
     try:
         text = (root / INCLUDE_FILE).read_text(encoding="utf-8", errors="replace")
     except (OSError, ValueError):  # fail-open: ok deliberate -- no list, nothing beyond the tracked files is copied (Claude Code's own behaviour without it)
@@ -317,44 +398,90 @@ def _include_entries(root: Path) -> list[str]:
     return [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
 
 
-def copy_includes(root: Path, worktree: Path) -> list[str]:
-    """Copy into a worktree ``git worktree add`` made the gitignored files
-    ``.worktreeinclude`` names, as Claude Code does for a worktree it creates:
-    without ``.claude/settings.json`` a session there loads no hook at all
-    (measured 2026-10-08). Only a path git ignores is copied, never over a
-    file. Returns what was copied, repo-relative."""
+def _include_sources(root: Path, entry: str) -> list[Path]:
+    """The root's files one entry names: a path relative to the root (a
+    leading ``/`` anchors it there, as in a gitignore file) or a glob, never
+    one inside another seat's worktree. Raises ValueError for an entry it
+    does not take (a directory, an absolute path)."""
+    pattern = entry.lstrip("/")
+    if not pattern or pattern.endswith("/") or Path(pattern).is_absolute() or Path(pattern).drive:
+        raise ValueError("a directory, an absolute path or an empty entry")
+    if any(ch in pattern for ch in "*?["):
+        home = _home(root)
+        return [p for p in sorted(root.glob(pattern)) if not sync.within(p, home)]
+    return [root / pattern]
+
+
+def copy_includes(root: Path, worktree: Path) -> tuple[list[str], list[str]]:
+    """Copy into ``worktree`` the gitignored files ``.worktreeinclude`` names,
+    as Claude Code does for a worktree it creates: without
+    ``.claude/settings.json`` a session there loads no hook at all (measured
+    2026-10-08). Only a path git ignores is copied, never over a file.
+    Returns ``(copied, skipped with why)``, repo-relative; an entry this
+    cannot take is skipped and said, never raised."""
     copied: list[str] = []
-    for entry in _include_entries(root):
-        sources = sorted(root.glob(entry)) if any(ch in entry for ch in "*?[") else [root / entry]
-        for src in sources:
-            rel = src.relative_to(root).as_posix()
-            dst = worktree / rel
-            if not src.is_file() or dst.exists():
-                continue
-            ignored = sync._Git(root, None).ask("check-ignore", "-q", "--", rel)
-            if ignored is None or ignored.returncode != 0:
-                continue
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-            copied.append(rel)
-    return copied
-
-
-def create(root: Path, target: Target) -> list[str]:
-    """``git worktree add -b worktree-<dir> <path> origin/<base>``, never
-    killed, then the ``.worktreeinclude`` copies and the seat's name."""
+    skipped: list[str] = []
     git = sync._Git(root, None)
+    for entry in _include_entries(root):
+        if entry.startswith("!"):
+            skipped.append(f"{entry} (a negation)")
+            continue
+        try:
+            for src in _include_sources(root, entry):
+                if not src.is_file():
+                    continue
+                rel = src.relative_to(root).as_posix()
+                dst = worktree / rel
+                if dst.exists():
+                    continue
+                ignored = git.ask("check-ignore", "-q", "--", rel)
+                if ignored is None or ignored.returncode != 0:
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                copied.append(rel)
+        except (ValueError, NotImplementedError, OSError) as exc:
+            skipped.append(f"{entry} ({sync._ascii(str(exc))[:80]})")
+    return copied, skipped
+
+
+def _settings_missing(root: Path, worktree: Path) -> bool:
+    """True when ``.worktreeinclude`` lists the hooks' settings file, the clone
+    has it, and the worktree does not: a session there would load no hook."""
+    listed = any(e.lstrip("/") == SETTINGS_REL for e in _include_entries(root))
+    return listed and (root / SETTINGS_REL).is_file() and not (worktree / SETTINGS_REL).is_file()
+
+
+def create(root: Path, target: Target) -> None:
+    """``git worktree add -b worktree-<dir> <path> origin/<base>``, never
+    killed. Refused where ``.claude/worktrees/`` is not gitignored (the new
+    checkout would show as untracked, and ``git add -A`` would commit it as a
+    gitlink), where origin cannot be fetched, and where the branch is taken by
+    unmerged work; a leftover branch already merged into the base is deleted
+    first and said."""
+    git = sync._Git(root, None)
+    rel = "/".join(WORKTREES_REL + (target.path.name,))
+    probe = git.ask("check-ignore", "-q", "--", f"{rel}/{INCLUDE_FILE}")
+    if probe is None or probe.returncode != 0:
+        raise Refused(f"{rel}/ is not ignored by git here, so a worktree there would show as untracked and "
+                      "`git add -A` would commit it: add `.claude/worktrees/` to .gitignore first")
     base = sync.default_branch(git) or "main"
-    branch = BRANCH_PREFIX + target.path.name
-    if git.yes("rev-parse", "-q", "--verify", f"refs/heads/{branch}"):
-        raise Refused(f"a branch {branch} already exists (a removed seat's?): look at it (`git log {branch}`), "
-                      f"then delete it (`git branch -d {branch}`) or launch a seat with another name")
     fetched = git.ask("-c", "credential.interactive=never", "fetch", "--quiet", "--no-tags", sync.REMOTE,
                       cap=FETCH_CAP_S)
     if fetched is None or fetched.returncode != 0:
         raise Refused(f"origin could not be fetched, so the new seat would start from a stale {base}: retry")
+    upstream = f"{sync.REMOTE}/{base}"
+    branch = BRANCH_PREFIX + target.path.name
+    if git.yes("rev-parse", "-q", "--verify", f"refs/heads/{branch}"):
+        listing = git.out("worktree", "list", "--porcelain") or ""
+        in_use = f"branch refs/heads/{branch}" in listing.splitlines()
+        if in_use or not git.yes("merge-base", "--is-ancestor", f"refs/heads/{branch}", upstream):
+            raise Refused(f"a branch {branch} already exists with work {upstream} lacks, or checked out elsewhere: "
+                          f"look at it (`git log {upstream}..{branch}`), then delete it or launch another seat name")
+        git.ask("branch", "-D", branch)
+        say(f"deleted the leftover branch {branch} (merged into {upstream}, checked out nowhere)")
     target.path.parent.mkdir(parents=True, exist_ok=True)
-    added = git.change("worktree", "add", "-b", branch, str(target.path), f"{sync.REMOTE}/{base}", wait=CREATE_WAIT_S)
+    added = git.change("worktree", "add", "-b", branch, str(target.path), upstream, wait=CREATE_WAIT_S)
     if added is None:
         raise Refused("git worktree add could not be started")
     if not added.done:
@@ -362,14 +489,22 @@ def create(root: Path, target: Target) -> list[str]:
     if added.returncode != 0 or not target.path.is_dir():
         raise Refused(f"git worktree add failed: {sync._err(added)}")
     target.exists = True
-    return copy_includes(root, target.path)
+    say(f"created {target.path} on {branch} from {upstream}")
+
+
+def venv_bindir(path: Path) -> Path | None:
+    bindir = path / ".venv" / ("Scripts" if os.name == "nt" else "bin")
+    return bindir if bindir.is_dir() else None
 
 
 def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None = None) -> dict[str, str]:
     """The session's environment: this one minus what a session it may be
     launched from sets in its children (:data:`SESSION_ENV`; the config dir and
     user settings stay), the maintenance switch only when asked for, and the
-    seat's own ``.venv`` first on ``PATH``."""
+    seat's own ``.venv`` first on ``PATH`` and named in ``VIRTUAL_ENV`` --
+    or no ``VIRTUAL_ENV`` at all, since the inherited one names another
+    checkout's (read 2026-10-15: a worktree session's named the main
+    checkout's, where a ``uv pip install`` would land)."""
     env = {k: v for k, v in (os.environ if base is None else base).items() if k not in SESSION_ENV}
     if maintenance:
         env[MAINTENANCE_KEY] = "1"
@@ -378,66 +513,88 @@ def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None 
     bindir = venv_bindir(target.path)
     if bindir is not None:
         env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
+        env["VIRTUAL_ENV"] = str(bindir.parent)
+    else:
+        env.pop("VIRTUAL_ENV", None)
     return env
 
 
-def venv_bindir(path: Path) -> Path | None:
-    bindir = path / ".venv" / ("Scripts" if os.name == "nt" else "bin")
-    return bindir if bindir.is_dir() else None
-
-
-def command_line(target: Target, args: list[str], *, maintenance: bool, windows: bool | None = None) -> str:
-    """The one line that launches the seat by hand, for this host's shell:
-    PowerShell on Windows, a POSIX shell elsewhere."""
-    windows = os.name == "nt" if windows is None else windows
+def command_line(target: Target, args: list[str], *, maintenance: bool, shell: str | None = None) -> str:
+    """The one line that launches the seat by hand: PowerShell (the default on
+    Windows) or a POSIX shell. Refused for PowerShell when an argument holds a
+    double quote, which Windows PowerShell 5.1 re-splits a native program's
+    argument at."""
+    shell = shell or ("powershell" if os.name == "nt" else "posix")
     bindir = venv_bindir(target.path)
-    if windows:
+    if shell == "powershell":
+        bad = [a for a in args if any(ch in a for ch in _PS_DOUBLE)]
+        if bad:
+            raise Refused(f"an argument holds a double quote ({bad[0]!r}), which Windows PowerShell 5.1 splits for "
+                          "a native program: launch without --print, or use --shell posix")
+
         def q(s: str) -> str:
-            return "'" + s.replace("'", "''") + "'"
+            return "'" + "".join(ch * 2 if ch in _PS_SINGLE else ch for ch in s) + "'"
         parts = [f"Set-Location -LiteralPath {q(str(target.path))}"]
         parts.append(f"$env:{MAINTENANCE_KEY} = '1'" if maintenance
                      else f"Remove-Item Env:{MAINTENANCE_KEY} -ErrorAction SilentlyContinue")
         if bindir is not None:
-            parts.append(f"$env:PATH = {q(str(bindir) + os.pathsep)} + $env:PATH")
+            parts.append(f"$env:VIRTUAL_ENV = {q(str(bindir.parent))}")
+            parts.append(f"$env:PATH = {q(str(bindir) + ';')} + $env:PATH")
+        else:
+            parts.append("Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue")
         parts.append(" ".join(["claude", *(q(a) for a in args)]))
         return "; ".join(parts)
     env = [f"{MAINTENANCE_KEY}=1"] if maintenance else [f"-u {MAINTENANCE_KEY}"]
     if bindir is not None:
-        env.append(f'PATH={shlex.quote(str(bindir))}:"$PATH"')
+        env += [f"VIRTUAL_ENV={shlex.quote(str(bindir.parent))}", f'PATH={shlex.quote(str(bindir))}:"$PATH"']
+    else:
+        env.append("-u VIRTUAL_ENV")
     return f"cd {shlex.quote(str(target.path))} && env {' '.join(env)} claude {' '.join(shlex.quote(a) for a in args)}".rstrip()
 
 
 def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unchecked: bool,
-               print_only: bool) -> int:
+               print_only: bool, shell: str | None = None) -> int:
     target = resolve(root, seat)
+    claude = None
+    if not print_only:
+        why = session_refusal()
+        if why:
+            raise Refused(why)
+        claude = shutil.which("claude", path=child_env(target, maintenance=maintenance).get("PATH"))
+        if claude is None:
+            raise Refused("claude is not on PATH; --print gives the line to run where it is")
     if target.exists:
-        _refuse_occupied(target, unchecked=unchecked)
+        _refuse_occupied(seat, target.path, unchecked=unchecked, verb="launch")
     elif print_only:
-        print(f"seat {seat} has no worktree yet: `seat.py launch {seat}` creates .claude/worktrees/"
-              f"{target.path.name} from origin before it starts the session")
+        say(f"seat {seat} has no worktree yet: `seat.py launch {seat}`, from a terminal, creates .claude/worktrees/"
+            f"{target.path.name} from origin before it starts the session")
         return 1
     else:
-        copied = create(root, target)
-        print(f"created {target.path} on {BRANCH_PREFIX}{target.path.name}"
-              + (f"; copied {', '.join(copied)}" if copied else ""))
+        create(root, target)
     if not target.is_clone:
+        copied, skipped = copy_includes(root, target.path)
+        if copied:
+            say(f"copied {', '.join(copied)} from the clone (.worktreeinclude)")
+        if skipped:
+            say(f"skipped .worktreeinclude entries: {'; '.join(skipped)}")
+        if _settings_missing(root, target.path):
+            raise Refused(f"{target.path} has no {SETTINGS_REL}, so a session there would load no hook: copy the "
+                          f"clone's into it, then launch again")
         name, said = mail.name_this_worktree(target.path)
         if said:
-            print(sync._ascii(said))
+            say(said)
         if name is None and _own_name(target.path) != seat:
             raise Refused(f"{target.path} does not answer {seat!r} and could not be named: {said or 'no reason given'}")
     if venv_bindir(target.path) is None and (target.path / "espalier" / "__init__.py").is_file():
-        print(f"note: {target.path} has no .venv, so a test run there imports espalier from wherever `python` "
-              "finds it (the banner's Engine: line); a .venv of its own with an editable install fixes it")
+        say(f"note: {target.path} has no .venv, so a test run there imports espalier from wherever `python` "
+            "finds it (the banner's Engine: line); a .venv of its own with an editable install fixes it")
     if print_only:
-        print(command_line(target, args, maintenance=maintenance))
+        say(command_line(target, args, maintenance=maintenance, shell=shell))
         return 0
     env = child_env(target, maintenance=maintenance)
-    claude = shutil.which("claude", path=env.get("PATH"))
-    if claude is None:
-        raise Refused("claude is not on PATH; --print gives the line to run where it is")
-    print(f"launching seat {seat} in {target.path}" + (" (maintenance mode)" if maintenance else ""))
+    say(f"launching seat {seat} in {target.path}" + (" (maintenance mode)" if maintenance else ""))
     sys.stdout.flush()
+    assert claude is not None
     return run_session([claude, *args], cwd=target.path, env=env)
 
 
@@ -450,100 +607,105 @@ def run_session(argv: list[str], *, cwd: Path, env: dict[str, str]) -> int:
 
 # -- retire --------------------------------------------------------------------------
 
-def by_hand_release(clone: str, seat: str, lanes: list[str]) -> str:
+def by_hand_release(root: Path, clone: str, seat: str, lanes: list[str]) -> str:
     folder = seat[len(clone) + 1:] if seat.startswith(clone + "-") else "<folder>"
-    return (f"its worktree is gone and only the name {seat} can release them (protocol item 5): "
-            f"git worktree add --detach .claude/worktrees/{folder} origin/main, then "
+    base = sync.default_branch(sync._Git(root, None)) or "main"
+    return (f"its worktree is gone, and only the name {seat} can release them: "
+            f"git worktree add --detach .claude/worktrees/{folder} {sync.REMOTE}/{base}, then "
             f"git -C .claude/worktrees/{folder} config --worktree {mail.MACHINE_KEY} {seat}, then in it "
             + ", ".join(f"python tools/cc/mail.py send --type release --lane {lane}" for lane in lanes or ["<lane>"])
             + f", then python tools/cc/seat.py retire {seat}")
 
 
-def release_claims(path: Path, seat: str, claims: list[dict], text: str) -> list[str]:
-    """Release ``claims`` from inside ``path`` under its own name: one release
-    per lane, one per claim that names no lane. Returns what was sent."""
+def _send_releases(path: Path, seat: str, ids: list[str], text: str) -> None:
+    """One release per id, from inside ``path`` under its own name: by id,
+    never by lane, since a lane release from a seat also closes a job the
+    dispatcher gave it on that lane. Each sent line is said as it goes, so a
+    failure part way leaves an exact account."""
     if mail.machine_setting(path)[0] != seat:
         raise Refused(f"{path} does not answer the name {seat}, so a release sent from it would not close "
-                      f"{seat}'s claims")
-    sent: list[str] = []
-    for lane in sorted({str((c.get("re") or {}).get("lane") or "") for c in claims} - {""}):
-        mail.send(path, mail.new_message(seat, "release", text, lane=lane), say=lambda s: sent.append(s))
-    for claim in claims:
-        if not (claim.get("re") or {}).get("lane"):
-            mail.send(path, mail.new_message(seat, "release", text, ack=str(claim.get("id"))),
-                      say=lambda s: sent.append(s))
-    return sent
+                      f"{seat}'s messages")
+    for n, mid in enumerate(ids):
+        try:
+            mail.send(path, mail.new_message(seat, "release", text, ack=mid), say=say)
+        except mail.Unresolvable as exc:
+            raise Refused(f"the release stopped after {n} of {len(ids)} ({exc}); the worktree is kept: run "
+                          "retire again (what was sent stays sent)") from None
 
 
-def cmd_retire(root: Path, seat: str, *, dry_run: bool, fetch: bool) -> int:
+def cmd_retire(root: Path, seat: str, *, dry_run: bool, fetch: bool, return_jobs: bool = False,
+               unchecked: bool = False) -> int:
     clone = mail.clone_machine(root) or ""
     if seat == clone:
         raise Refused(f"{seat} is the clone itself: its checkout is the repository, never retired")
     claims, jobs, note = _read_channel(root, fetch=fetch)
+    if note.startswith(CHANNEL_UNREAD):
+        raise Refused(f"{note}, so the seat's claims cannot be read: nothing is released or removed")
     if note:
-        print(f"({note})")
+        say(f"({note})")
     mine = [c for c in claims if c.get("from") == seat]
     held = [j for j in jobs if (j.get("re") or {}).get(mail.ASSIGN_SEAT_KEY) == seat]
+    lanes = sorted({str((c.get("re") or {}).get("lane") or "") for c in mine} - {""})
     try:
         target = resolve(root, seat)
     except Refused:
         if mine:
-            lanes = sorted({str((c.get("re") or {}).get("lane") or "") for c in mine} - {""})
-            raise Refused(f"seat {seat} holds {len(mine)} live claim(s) and {by_hand_release(clone, seat, lanes)}")
+            raise Refused(f"seat {seat} holds {len(mine)} live claim(s) and {by_hand_release(root, clone, seat, lanes)}")
         raise
     if not target.exists:
         if mine:
-            lanes = sorted({str((c.get("re") or {}).get("lane") or "") for c in mine} - {""})
-            raise Refused(f"seat {seat} holds {len(mine)} live claim(s) and {by_hand_release(clone, seat, lanes)}")
+            raise Refused(f"seat {seat} holds {len(mine)} live claim(s) and {by_hand_release(root, clone, seat, lanes)}")
         raise Refused(f"seat {seat} has no worktree and nothing on the channel: nothing to retire")
-    occ = sync.occupancy(target.path)
-    if occ.sessions:
-        who = "; ".join(sync.describe_session(row) for row in occ.sessions)
-        raise Refused(f"seat {seat} is occupied: {who} is in {target.path}; end that session first")
-    if occ.sessions is None:
-        raise Refused(f"who is in {target.path} cannot be told ({occ.note}), so nothing is released or removed")
-    if held:
-        print(f"still assigned to {seat}: {_lanes(held)} (the dispatcher releases or reassigns them; "
-              "retire leaves jobs alone)")
-    if mine and dry_run:
-        print(f"dry-run: would release {len(mine)} claim(s) of {seat} ({_lanes(mine)}) from {target.path}")
-    elif mine:
-        try:
-            sent = release_claims(target.path, seat, mine, "Seat retired; claims closed.")
-        except mail.Unresolvable as exc:
-            raise Refused(f"the release of {seat}'s claims was not sent ({exc}); the worktree is kept") from None
-        for line in sent:
-            print(sync._ascii(line))
-        if fetch:
-            mail.fetch_mail(root, timeout=FETCH_CAP_S)
-        left = [c for c in _read_channel(root, fetch=False)[0] if c.get("from") == seat]
-        if left:
-            raise Refused(f"{len(left)} claim(s) of {seat} are still live after the release ({_lanes(left)}); "
-                          "the worktree is kept")
-    sessions = occ_sessions_for_reap()
-    report = sync.reap_worktrees(root, sessions=sessions, own_cwd=Path.cwd(), only=target.path, dry_run=dry_run)
-    for name in report.unlocked:
-        print(f"unlocked {name}: the lock's holder has exited")
+    _refuse_occupied(seat, target.path, unchecked=unchecked, verb="retire")
+    if held and not return_jobs:
+        raise Refused(f"seat {seat} holds {len(held)} job(s) from the dispatcher ({_lanes(held)}): retired, nobody "
+                      "would work them. Ask the dispatcher to release or reassign them, or --return-jobs releases "
+                      "them with this retire (the release says why)")
+    git = sync._Git(root, None)
+    base = sync.default_branch(git) or "main"
+    if fetch:
+        fetched = git.ask("-c", "credential.interactive=never", "fetch", "--quiet", "--no-tags", sync.REMOTE, base,
+                          cap=FETCH_CAP_S)
+        if fetched is None or fetched.returncode != 0:
+            say(f"(origin could not be fetched: {sync.REMOTE}/{base} as last fetched)")
+    rows, marker_live = reap_inputs(root, sync.live_sessions())
+    verdict = sync.reap_worktrees(root, sessions=rows, own_cwd=Path.cwd(), marker_live=marker_live,
+                                  only=target.path, dry_run=True)
+    if not verdict.would_remove:
+        reason = verdict.note or (verdict.kept[0][1] if verdict.kept else "the removal was not reached")
+        if not reason.startswith(f"its seat {seat} holds "):
+            raise Refused(f"{target.path} would be kept ({reason}), so nothing was released: settle that, then "
+                          "retire again")
     if dry_run:
-        if report.would_remove:
-            print(f"dry-run: would remove {target.path}")
-        else:
-            reason = report.kept[0][1] if report.kept else (report.note or "the removal was not reached")
-            after = " (judged now; the release above comes first)" if mine else ""
-            print(sync._ascii(f"dry-run: {target.path} would be kept: {reason}{after}"))
+        say(f"dry-run: would release {len(mine)} claim(s) of {seat} ({_lanes(mine)}) from {target.path}, "
+            + (f"return {len(held)} job(s) ({_lanes(held)}), " if held else "") + f"then remove {target.path}")
         return 0
+    busy = sync.held_open(target.path)
+    if busy:
+        raise Refused(f"{target.path} is kept: {busy}; nothing was released")
+    _send_releases(target.path, seat, [str(c.get("id")) for c in mine], "Seat retired; claims closed.")
+    if held:
+        _send_releases(target.path, seat, [str(j.get("id")) for j in held],
+                       f"Seat {seat} retired; this job goes back to the dispatcher.")
+    if mine or held:
+        mail.fetch_mail(root, timeout=FETCH_CAP_S)
+        left_claims, left_jobs, _note = _read_channel(root, fetch=False)
+        left = [c for c in left_claims if c.get("from") == seat]
+        left += [j for j in left_jobs if (j.get("re") or {}).get(mail.ASSIGN_SEAT_KEY) == seat]
+        if left:
+            raise Refused(f"{len(left)} message(s) of {seat} are still live after the release ({_lanes(left)}); "
+                          "the worktree is kept")
+    rows, marker_live = reap_inputs(root, sync.live_sessions())
+    report = sync.reap_worktrees(root, sessions=rows, own_cwd=Path.cwd(), marker_live=marker_live,
+                                 only=target.path)
+    for name in report.unlocked:
+        say(f"unlocked {name}: the lock's holder has exited")
     if report.removed:
         saved = f"; its session notes saved under cc/blueprints/ ({len(report.saved)} file(s))" if report.saved else ""
-        print(f"retired {seat}: removed {target.path}{saved}")
+        say(f"retired {seat}: removed {target.path}{saved}")
         return 0
     reason = report.kept[0][1] if report.kept else (report.note or "the removal was not reached")
-    raise Refused(sync._ascii(f"{target.path} is kept: {reason}"))
-
-
-def occ_sessions_for_reap() -> list[dict] | None:
-    """The registry rows the removal re-checks against: read again at the
-    moment of removal, never carried from the occupancy read above."""
-    return sync.live_sessions()
+    raise Refused(f"{target.path} is kept: {reason} (its claims were released)")
 
 
 # -- the CLI -------------------------------------------------------------------------
@@ -557,11 +719,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("launch", help="start a session in a seat's checkout (creating a worktree seat when absent)")
     p.add_argument("seat")
     p.add_argument("--maintenance", action="store_true", help=f"set {MAINTENANCE_KEY}=1 for the session")
-    p.add_argument("--unchecked", action="store_true", help="launch when the occupancy cannot be told")
+    p.add_argument("--unchecked", action="store_true",
+                   help="launch when the occupancy cannot be told, or only a session marker names a session")
     p.add_argument("--print", dest="print_only", action="store_true", help="print the command line instead")
+    p.add_argument("--shell", choices=("powershell", "posix"), help="the shell --print writes for")
     p = sub.add_parser("retire", help="release a worktree seat's claims, then remove its worktree")
     p.add_argument("seat")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--return-jobs", action="store_true", help="release the seat's jobs back to the dispatcher too")
+    p.add_argument("--unchecked", action="store_true", help="pass a session only a session marker names")
     p.add_argument("--no-fetch", action="store_true")
     return parser
 
@@ -588,11 +754,14 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_list(root, as_json=args.json, fetch=not args.no_fetch)
         if args.verb == "launch":
             return cmd_launch(root, args.seat, claude_args, maintenance=args.maintenance, unchecked=args.unchecked,
-                              print_only=args.print_only)
-        return cmd_retire(root, args.seat, dry_run=args.dry_run, fetch=not args.no_fetch)
+                              print_only=args.print_only, shell=args.shell)
+        return cmd_retire(root, args.seat, dry_run=args.dry_run, fetch=not args.no_fetch,
+                          return_jobs=args.return_jobs, unchecked=args.unchecked)
     except (Refused, mail.Unresolvable) as exc:
         print(f"seat.py: {sync._ascii(str(exc))}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        return 130
 
 
 if __name__ == "__main__":
