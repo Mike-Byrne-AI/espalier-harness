@@ -70,6 +70,7 @@ class ScenarioRun:
     #: CLI and model a verdict holds for (CI installs an unpinned CLI).
     cli_version: str | None = None
     model: str | None = None
+    permission_mode: str | None = None
     #: The no_repeat_of target's ground truth, from the work dir (`_target_state`).
     target_state: dict[str, Any] | None = None
 
@@ -85,6 +86,7 @@ class ScenarioRun:
             "n_events": len(self.transcript.events),
             "cli_version": self.cli_version,
             "model": self.model,
+            "permission_mode": self.permission_mode,
             "target_state": self.target_state,
         }
 
@@ -383,6 +385,7 @@ def run_scenario(
             cli, "--print",
             "--output-format", "stream-json", "--verbose",
             "--setting-sources", "project", "--strict-mcp-config",
+            "--permission-mode", "default",
         ]
 
         stdin_payload = trigger.get("content") if trigger_type == "prompt" else None
@@ -450,6 +453,7 @@ def run_scenario(
             error=error,
             cli_version=init.get("claude_code_version"),
             model=init.get("model"),
+            permission_mode=init.get("permissionMode"),
             target_state=_target_state(work_dir, target, before) if target else None,
         )
     finally:

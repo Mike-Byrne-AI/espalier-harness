@@ -341,6 +341,36 @@ class Transcript:
                 out.append((i, None, e.content, stamp))
         return out
 
+    def permission_refusals(self) -> list[dict[str, Any]]:
+        """The calls the CLI's own permission layer refused, not a hook, in
+        stream order: ``{"index", "tool_use_id", "tool_name", "tool_input"}``.
+        Read from the CLI's records, never a refusal's prose: a tool result's
+        `tool_result_meta` entry (`permission_decision: {decision: reject,
+        source: config}`), and the result event's `permission_denials`, which
+        lists every refused call with its input (the meta alone is left when a
+        timeout cuts the run before its result). `permission_denials` lists a
+        hook's denials too, so a call a hook denied is left out."""
+        hooked = {tid for _i, tid, _text, _stamp in self.deny_records() if tid}
+        out: dict[str, dict[str, Any]] = {}
+        for i, e in enumerate(self._events):
+            for m in e.metadata.get("tool_result_meta") or []:
+                decision = m.get("permission_decision") if isinstance(m, dict) else None
+                if not isinstance(decision, dict) or not isinstance(m.get("id"), str):
+                    continue
+                if decision.get("source") == "hook":
+                    hooked.add(m["id"])
+                elif decision.get("source") == "config" and decision.get("decision") == "reject":
+                    out.setdefault(m["id"], {"index": i, "tool_use_id": m["id"], "tool_name": None, "tool_input": None})
+            if e.metadata.get("type") == "result":
+                for d in e.metadata.get("permission_denials") or []:
+                    if isinstance(d, dict) and isinstance(d.get("tool_use_id"), str):
+                        rec = out.setdefault(d["tool_use_id"], {"index": i, "tool_use_id": d["tool_use_id"],
+                                                                "tool_name": None, "tool_input": None})
+                        rec["tool_name"] = rec["tool_name"] or d.get("tool_name")
+                        if rec["tool_input"] is None and isinstance(d.get("tool_input"), dict):
+                            rec["tool_input"] = d["tool_input"]
+        return [rec for tid, rec in out.items() if tid not in hooked]
+
     def deny_events(self) -> list[tuple[int, str | None]]:
         """``(event index, tool_use_id)`` for every deny (`deny_records`)."""
         return [(i, tid) for i, tid, _text, _stamp in self.deny_records()]

@@ -83,6 +83,7 @@ def _run_with_retry(
         verdict = evaluate(scenario, run.transcript, cost_tokens=run.cost_tokens, target_state=run.target_state)
         verdict.run_exit_code, verdict.run_error = run.exit_code, run.error
         verdict.cli_version, verdict.model = run.cli_version, run.model
+        verdict.permission_mode = run.permission_mode
         if run.exit_code == TIMEOUT_EXIT_CODE:
             # A run the timeout ended is a FAIL, never a warn: a Stop gate that
             # never releases, or an agent looping on a retry, shows up as exactly
@@ -155,7 +156,8 @@ def render_markdown(verdicts: list[ScenarioVerdict],
             # never reads as the friction layer failing.
             lines.append(f"- run: exit {v.run_exit_code}" + (f"; error: {v.run_error}" if v.run_error else ""))
         if v.cli_version or v.model:
-            lines.append(f"- ran on: Claude Code {v.cli_version or '?'}, model {v.model or '?'}")
+            lines.append(f"- ran on: Claude Code {v.cli_version or '?'}, model {v.model or '?'}"
+                         + (f", permission mode {v.permission_mode}" if v.permission_mode else ""))
         for a in v.assertions:
             mark = {VERDICT_PASS: "\u2705", VERDICT_FAIL: "\u274c",
                     VERDICT_INCONCLUSIVE: "\u26a0\ufe0f"}.get(a.verdict, "?")

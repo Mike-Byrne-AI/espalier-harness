@@ -95,7 +95,17 @@ and the three that make the child a nested session (`CLAUDECODE`,
 `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_PROJECT_DIR`) from the child's environment, so
 a run from inside a session or a maintenance-mode shell still exercises the
 scenario's hooks. Any other setting a parent session exports (an effort level, a
-subagent model) still reaches the child. The CLI authenticates however it finds
+subagent model) still reaches the child. The runner also pins
+`--permission-mode default` (2.1.299 accepts it, though `--help` lists `manual`,
+and the run's `init` event reports `default`): without it a `-p` run's starting
+mode depends on whether the CLI fetched its feature flags (the Claude Code
+reference, as the dispatcher read it on 2026-10-15). In that mode, with no one
+to answer a prompt, the CLI refuses any write the hooks let through
+(`source: config` in its records), so a write never lands in a live run; the
+retry check reads those refusals (`SCHEMA.md`). The template's
+`permissions.allow` cannot change that: the same reference says a project's
+allow list is ignored in `-p` on an untrusted folder, so letting writes land
+would take an argv mode such as `acceptEdits`, an operator's call. The CLI authenticates however it finds
 (an API key, or your local login), and the model is your CLI's default; the
 report names the CLI version and model of each run. A run that itself failed
 before any model turn (the CLI refused the argv, or found no login or a bad key,
