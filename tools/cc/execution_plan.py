@@ -294,8 +294,10 @@ def _claim_overlaps(steps: str, mail=None) -> list[str]:
     is not deployed, no machine is named here, the steps name nothing, or the
     local refs cannot be read: a plan is created in scratch trees and on
     boxes with no channel, and a pre-flight that could hold it would be a
-    wall. Local refs only; the fetch is SessionStart's. ``mail`` is the
-    channel module, injectable for tests."""
+    wall. Where this box's name could not be read (a timeout, a config git
+    cannot parse), one warning says the plan was not checked, since silence
+    would read as a plan that meets no claim. Local refs only; the fetch is
+    SessionStart's. ``mail`` is the channel module, injectable for tests."""
     try:
         if mail is None:
             path = Path(__file__).resolve().parent / "mail.py"
@@ -315,8 +317,14 @@ def _claim_overlaps(steps: str, mail=None) -> list[str]:
         if not paths and not classes and not ids:
             return []
         root = _paths._repo_root()  # the plan file's own root, the single owner
-        machine, _how = mail.machine_setting(root)
+        machine, how = mail.machine_setting(root)
         if machine is None:
+            unread = getattr(mail, "MACHINE_UNREAD", None)  # a channel module from before the phrase has none
+            if unread and str(how).startswith(unread):
+                # Not an unnamed box: silence here reads as a plan that meets no claim.
+                return [f"WARN: this seat's machine name could not be read ({how}), so this plan was not "
+                        "checked against the other machines' live claims or the dispatcher's jobs; /inbox "
+                        "reads them once git answers"]
             return []
         by_machine, _skipped = mail.read_mail(root)
         found = mail.overlapping_claims(mail.live_claims(by_machine), paths=paths, classes=classes,
@@ -326,7 +334,7 @@ def _claim_overlaps(steps: str, mail=None) -> list[str]:
             dispatcher, _how = mail.dispatcher_setting(root)
             jobs = mail.overlapping_assignments(mail.live_assignments(by_machine, dispatcher),
                                                 classes=classes, ids=ids, seat=machine)
-    except Exception:  # noqa: BLE001 -- fail-open: ok advisory pre-flight; silent where the channel is absent or unreadable (a scratch tree, a box with no name), the plan is never held
+    except Exception:  # noqa: BLE001 -- fail-open: ok advisory pre-flight; silent where the channel's module or refs cannot be read (a scratch tree), the plan is never held; a name read that failed warns above
         return []
     lines: list[str] = []
     for claim, hits in found:

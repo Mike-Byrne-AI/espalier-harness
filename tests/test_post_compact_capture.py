@@ -222,6 +222,25 @@ class TestMailUnreadLine:
         monkeypatch.setattr(mod, "_load_mail", lambda: None)
         assert mod._mail_unread_line(Path(".")) == ""
 
+    def test_an_unread_name_is_said_never_read_as_no_machine(self, tmp_path):
+        """A name read that failed (a timeout, a config git cannot parse) is not
+        "no machine is named here": the line went empty and the re-orient read
+        as nothing unread. An older channel module, with no MACHINE_UNREAD to
+        tell the two apart by, keeps the empty line. Dies to: the unread reason
+        taken for an unset name; the phrase read off a module that lacks it."""
+        mod = _load_module()
+        phrase = mod._load_mail().MACHINE_UNREAD   # the real one: a stub that copied it would not drift
+        stub = self._stub([{"from": "win"}], machine=None)
+        stub.machine_setting = lambda root, timeout=None: (
+            None, f"{phrase} (git config took longer than 3s), so no machine is named")
+        stub.MACHINE_UNREAD = phrase
+        line = mod._mail_unread_line(tmp_path, mail=stub)
+        assert "machine name could not be read" in line and "took longer than 3s" in line, line
+        assert "/inbox reads the mail once git answers" in line and line.isascii()
+        del stub.MACHINE_UNREAD
+        assert mod._mail_unread_line(tmp_path, mail=stub) == ""
+        assert not (tmp_path / ".espalier-state").exists(), "the older module's case is no failure to record"
+
     def test_a_failure_costs_the_line_and_is_said(self, capsys, tmp_path):
         """Said as a once-a-session record (PostCompact has no channel to
         Claude, and its stderr reaches the debug log only), stderr its copy.

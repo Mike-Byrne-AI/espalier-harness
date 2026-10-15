@@ -256,9 +256,10 @@ def _claims_in_the_way(root: Path, ids: list[str], section: str | None, *,
     be friction with no merge-safety reason -- except for the ``class`` verb,
     which MINTS the class: the same section opened on two boxes is the id
     collision, so there a class claim refuses. Both empty, silently, where
-    the box is unnamed (``git config espalier.machine``), the channel is
-    absent, or the refs cannot be read: a verb that could not consult the
-    channel still writes, as it did before the channel existed. The loader
+    the box is unnamed (``git config espalier.machine``) or the channel is
+    absent, and with a note where the refs or the box's name cannot be read:
+    a verb that could not consult the channel still writes, as it did before
+    the channel existed. The loader
     runs inside the same try as the reads, the shape ``execution_plan``'s
     pre-flight uses: a ``mail.py`` present without its own sibling (a copied
     subset) is a note and a write, never a traceback (both reviews, driven
@@ -267,8 +268,13 @@ def _claims_in_the_way(root: Path, ids: list[str], section: str | None, *,
         mail = _mail_module()
         if mail is None:
             return [], []
-        machine, _how = mail.machine_setting(root)
+        machine, how = mail.machine_setting(root)
         if machine is None:
+            unread = getattr(mail, "MACHINE_UNREAD", None)  # a channel module from before the phrase has none
+            if unread and str(how).startswith(unread):
+                # Not an unnamed box: a skipped check must not read as a clear one.
+                print(f"ledger_row: note -- this seat's machine name could not be read ({how}), so the other "
+                      "machines' claims were not checked", file=sys.stderr)
             return [], []
         by_machine, _skipped = mail.read_mail(root)
         found = mail.overlapping_claims(mail.live_claims(by_machine), ids=list(ids),

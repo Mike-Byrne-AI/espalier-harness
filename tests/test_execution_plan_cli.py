@@ -104,7 +104,8 @@ class TestClaimOverlapPreflight:
     """`create` warns, on stderr and never as a refusal, when a step's
     `files:` or `classes:` meet another machine's live claim on the mail
     channel (tools/cc/mail.py); silent where no machine is named here, the
-    steps name nothing, or the channel cannot be read."""
+    steps name nothing, or the channel cannot be read; one warning where the
+    box's name could not be read."""
 
     _STEPS = ("Settle step; files: tools/cc/record_merge.py, tests/test_record_merge.py (new); proof: x; "
               "rollback: y|Docs; files: docs/HOOKS.md; classes: C13, C24; proof: z")
@@ -195,6 +196,26 @@ class TestClaimOverlapPreflight:
         lines = mod._claim_overlaps("s; files: ~/notes.md, tools/cc/mail.py (new), C:/x; proof: y", mail=stub)
         assert len(lines) == 1 and "path tools/cc/mail.py (their tools/cc)" in lines[0]
         assert mod._step_fields("s; files: a.py (also touches b.py, c.py), d.py") == (["a.py", "d.py"], [])
+
+    def test_an_unread_seat_name_is_one_warning_never_silence(self, monkeypatch, tmp_path):
+        """A name read that failed (a timeout, a config git cannot parse) is not
+        "no machine is named here": the pre-flight skipped every claim and job
+        in silence, and the plan read as clear. Dies to: the unread reason
+        taken for an unset name."""
+        mod = _load_plan_module()
+        mail = _load_mail_module()
+        claim = mail.new_message("win", "claim", "", lane="lane/w", paths=["tools/cc/"])
+        stub = self._mail(monkeypatch, tmp_path, None, [claim])
+        unread = f"{mail.MACHINE_UNREAD} (git config took longer than 10s), so no machine is named"
+        monkeypatch.setattr(stub, "machine_setting", lambda root, run=None: (None, unread))
+        lines = mod._claim_overlaps(self._STEPS, mail=stub)
+        assert len(lines) == 1, lines
+        assert lines[0].startswith("WARN: ") and "could not be read" in lines[0], lines[0]
+        assert "took longer than 10s" in lines[0] and "not checked" in lines[0] and lines[0].isascii()
+        assert "git config espalier.machine <name>" not in lines[0]
+        unset = "git config espalier.machine is not set, so the channel is off (the default)"
+        monkeypatch.setattr(stub, "machine_setting", lambda root, run=None: (None, unset))
+        assert mod._claim_overlaps(self._STEPS, mail=stub) == []   # an unset name stays silent
 
     def test_create_in_a_scratch_tree_prints_no_warning(self, tmp_path):
         result = _run(["create", "--task", "t", "--steps",

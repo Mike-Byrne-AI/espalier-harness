@@ -1521,6 +1521,26 @@ class TestTheVerbsReadTheClaims:
         rc = lr.main(_args(tree, "strike", "DEF-3", "--text-file", str(tree["closing"])))
         assert rc == 0 and "claims" not in capsys.readouterr().err
 
+    def test_an_unread_seat_name_is_a_note_never_a_silent_skip(self, lr, tree, monkeypatch, capsys):
+        """A name read that failed (a timeout, a config git cannot parse) is not
+        an unnamed box: the claims check was skipped in silence, so a strike of
+        a row another seat claims read as checked. The write goes ahead, as it
+        does when the channel cannot be read. Dies to: the unread reason taken
+        for an unset name."""
+        mail = _mail_module()
+        theirs = mail.new_message("win", "claim", "", lane="lane/c66", ids=["DEF-1"])
+        channel = _stub_channel(mail, theirs)
+        channel.MACHINE_UNREAD = mail.MACHINE_UNREAD
+        channel.machine_setting = lambda root, **kw: (
+            None, f"{mail.MACHINE_UNREAD} (git config took longer than 10s), so no machine is named")
+        monkeypatch.setattr(lr, "_MAIL", channel)
+        rc = lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"])))
+        err = capsys.readouterr().err
+        assert rc == 0, err
+        assert "machine name could not be read" in err and "took longer than 10s" in err, err
+        assert "claims were not checked" in err
+        assert "git config espalier.machine <name>" not in err
+
     def test_a_two_id_row_is_read_by_every_id_on_its_cell(self, lr, tree, monkeypatch, capsys):
         """A row addressed by one of its ids is the same row to a claim on the
         other (failure-mode review, driven: twenty-one live rows carry more

@@ -1,0 +1,14 @@
+{
+ "id": "DEF-5004",
+ "subject": "tools/cc/mail.py",
+ "cmd": "python3 tests/_name_readers.py --raw",
+ "open_value": "open=True",
+ "why_not": null,
+ "inputs": [
+  "tools/cc",
+  "tests/_name_readers.py"
+ ],
+ "row_sha": "c7db9ec3c653",
+ "text_sha": "5acc187cc53b",
+ "verified_2026_10_15": "OPEN (filed 2026-10-15; probe driven at filing)"
+}

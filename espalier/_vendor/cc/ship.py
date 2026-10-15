@@ -517,15 +517,20 @@ def seat_open_prs(root: Path, branch: str, prs: list[dict]) -> tuple[str, list[s
     lane (``mail.lane_seats``, the board's own attribution). Every seat may
     push as one GitHub account, so the author cannot tell seats apart; the
     mail can. ``("", [])`` where the box is unnamed or the channel absent; a
-    failed read is said and never stops the push."""
+    failed read, of the mail or of the box's name, is said and never stops
+    the push."""
     if not any(str(r.get("headRefName") or "") != branch for r in prs):
         return "", []   # no other open pull request: nothing to attribute, no mail read
     try:
         mail = _mail_module()
         if mail is None:
             return "", []
-        machine, _ = mail.machine_setting(root)
+        machine, how = mail.machine_setting(root)
         if not machine:
+            unread = getattr(mail, "MACHINE_UNREAD", None)  # a channel module from before the phrase has none
+            if unread and str(how).startswith(unread):
+                _note(f"this seat's machine name could not be read ({how}), so its other open pull requests "
+                      "were not checked (one open pull request per seat)")
             return "", []
         by_machine, _ = mail.read_mail(root)
         seats = mail.lane_seats(by_machine)
