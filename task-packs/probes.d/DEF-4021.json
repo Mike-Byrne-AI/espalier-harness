@@ -1,10 +1,10 @@
 {
  "id": "DEF-4021",
  "subject": "tools/cc/ship.py",
- "cmd": "python3 -c \"import re,pathlib; print(len(re.findall(r'## (Reviewers|Red|Tier|Landing|Claims)', pathlib.Path('tools/cc/ship.py').read_text(encoding='utf-8'))))\"",
- "open_value": "0",
+ "cmd": "python3 -c \"import ast,pathlib; t=ast.parse(pathlib.Path('tools/cc/ship.py').read_text(encoding='utf-8')); print(sum(1 for n in ast.walk(t) if isinstance(n,ast.Assign) and any(isinstance(x,ast.Name) and x.id=='body' for x in n.targets) and isinstance(n.value,ast.Name) and n.value.id=='log'))\"",
+ "open_value": "1",
  "why_not": null,
- "row_sha": "7ada3d24ecd1",
- "text_sha": "eaed9f812134",
- "verified_2026_10_15": "OPEN (filed 2026-10-15; probe driven at filing)"
+ "row_sha": "4c3cc3dfd246",
+ "text_sha": "35a5e8b3e2e3",
+ "verified_2026_10_15": "STILL_OPEN (re-pinned '0' -> '1' on 2026-10-15: the filing probe counted heading words in its own subject file, the paperwork-satisfiable shape the probe ratchet refuses; re-pointed at the AST: the body-equals-log assignment that makes the subjects the default)"
 }

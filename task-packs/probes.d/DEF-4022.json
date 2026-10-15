@@ -1,10 +1,13 @@
 {
  "id": "DEF-4022",
  "subject": ".claude/commands/implement-task.md",
- "cmd": "python3 -c \"import re,pathlib; t=pathlib.Path('.claude/commands/implement-task.md').read_text(encoding='utf-8'); print(t.count('--base') + len(re.findall(r'(?i)earn(ed|s)? the red|mutation', t)))\"",
+ "cmd": "python3 -c \"import re,shlex,pathlib; f=chr(96)*3; t=pathlib.Path('espalier/assets/claude/commands/implement-task.md').read_text(encoding='utf-8'); fences=re.findall(f+r'[a-z]*\\n(.*?)'+f, t, re.S); print(sum(1 for b in fences for l in b.splitlines() if 'proof_tier.py' in l and '--run' in l and '--base' in shlex.split(l.split('#')[0])))\"",
  "open_value": "0",
  "why_not": null,
- "row_sha": "bae5a57bbe0f",
- "text_sha": "d75815ff2dc6",
- "verified_2026_10_15": "OPEN (filed 2026-10-15; probe driven at filing)"
+ "row_sha": "bd0db14a1548",
+ "text_sha": "111ea4179d06",
+ "verified_2026_10_15": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['espalier/assets/claude/commands/implement-task.md'] on 2026-10-15: the filing probe counted words in its own subject file, the paperwork-satisfiable shape the probe ratchet refuses; re-pointed at the deploy-source mirror's fenced proof-tier command argv)",
+ "inputs": [
+  "espalier/assets/claude/commands/implement-task.md"
+ ]
 }
