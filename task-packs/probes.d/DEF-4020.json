@@ -1,10 +1,15 @@
 {
  "id": "DEF-4020",
  "subject": "tools/cc/hooks/_hook_utils.py",
- "cmd": "python3 -c \"import sys,json,tempfile,pathlib; sys.path.insert(0,'tools/cc/hooks'); import _hook_utils as h; d=pathlib.Path(tempfile.mkdtemp()); s=h.sessions_dir(d); s.mkdir(parents=True,exist_ok=True); (s/'dead.json').write_text(json.dumps({'session_id':'dead','started':'2026-10-15T00:00:00+00:00','pid':999999,'cwd':str(d),'source':'startup'})); print(len(h.other_live_sessions(d,'me')))\"",
+ "cmd": "python3 -c \"import sys,json,tempfile,pathlib; sys.path.insert(0,'tools/cc/hooks'); import session_start as s, _hook_utils as h; d=pathlib.Path(tempfile.mkdtemp()); m=h.sessions_dir(d); m.mkdir(parents=True,exist_ok=True); (m/'dead.json').write_text(json.dumps({'session_id':'dead','started':'2026-10-15T00:00:00+00:00','pid':999999,'window':True,'cwd':str(d),'source':'startup'})); print(1 if s._sessions_line(d,'me') else 0)\"",
  "open_value": "1",
  "why_not": null,
- "row_sha": "695be014937f",
- "text_sha": "5bfa14712736",
- "verified_2026_10_14": "OPEN (filed 2026-10-14; probe driven at filing)"
+ "row_sha": "e8050170b4d3",
+ "text_sha": "9ba9d226ac92",
+ "verified_2026_10_14": "OPEN (filed 2026-10-14; probe driven at filing)",
+ "inputs": [
+  "tools/cc/hooks/session_start.py",
+  "tools/cc/checkout_sync.py"
+ ],
+ "verified_2026_10_15": "STILL_OPEN (re-pinned value unchanged; inputs None -> ['tools/cc/hooks/session_start.py', 'tools/cc/checkout_sync.py'] on 2026-10-15: The pack's B-4 shape adds a field and drops no row from other_live_sessions, so the filed probe (the function's row count) could never read 0; and a marker's pid tells life only where SessionStart found it in the registry (the fallback parent is a launcher that exits on Windows), so the planted marker now carries window true, the shape a registry pid is recorded in, and the probe reads the Sessions line the defect is about. Settled with the dispatcher, ack 9a238b.)"
 }
