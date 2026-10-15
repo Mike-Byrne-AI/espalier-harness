@@ -158,9 +158,14 @@ def machine_setting(root: Path, *, run: Runner = run, timeout: float = 10.0) -> 
     ``how``, so a typo is visible instead of silently deciding. One local git
     call, no network, bounded by ``timeout``."""
     try:
-        rc, out, _err = run(["git", "config", "--get", MACHINE_KEY], cwd=str(root), env=git_env(), timeout=timeout)
+        rc, out, err = run(["git", "config", "--get", MACHINE_KEY], cwd=str(root), env=git_env(), timeout=timeout)
     except Unresolvable as exc:
         return None, f"{MACHINE_UNREAD} ({exc}), so no machine is named and the channel is off"
+    if rc not in (0, 1):
+        # 1 is git's "not set"; anything else (128: a config git cannot
+        # read, a repository it refuses) is a read that failed, not an answer.
+        detail = (err.strip().splitlines() or [f"git exited {rc}"])[-1][:160]
+        return None, f"{MACHINE_UNREAD} (git exited {rc}: {detail}), so no machine is named and the channel is off"
     value = out.strip()
     if rc != 0 or not value:
         return None, f"git config {MACHINE_KEY} is not set, so the channel is off (the default)"

@@ -519,33 +519,70 @@ class TestSeats:
         assert row["seat"] == "air [.claude/worktrees/work]" and row["name"] == "air"
         text = self._text(board, rows)
         assert ("air [.claude/worktrees/work]: the seat name of the main checkout too (one mail ref for both); "
-                f"1 live session in .claude/worktrees/work; name it: git -C {work} config extensions.worktreeConfig "
-                f"true && git -C {work} config --worktree espalier.machine <name>") in text, text
+                f'1 live session in .claude/worktrees/work; name it: git -C "{work}" config extensions.worktreeConfig '
+                f'true && git -C "{work}" config --worktree espalier.machine <name>') in text, text
+
+    def test_a_bare_clones_worktree_gets_the_core_bare_step_not_the_commands(self, board, tmp_path):
+        """git says core.bare must move before extensions.worktreeConfig is
+        turned on, and SessionStart refuses to name a bare clone's worktrees
+        for that reason; the board must not hand out the step it refuses (code
+        review, r4). Dies to: the paste-ready commands on a bare clone."""
+        main, work = self._clone(tmp_path)
+
+        def run(argv, **kw):
+            if argv[1:3] == ["worktree", "list"]:
+                return 0, f"worktree {main}\nbare\n\nworktree {work}\nHEAD {'2' * 40}\nbranch refs/heads/x\n", ""
+            if argv[1:3] in (["config", "--local"], ["config", "--get"]):
+                return 0, "air\n", ""
+            raise AssertionError(f"unexpected call {argv}")
+
+        local = board.read_sessions(main, run_=run, config_dir=_registry(tmp_path, work), inside_session=False)
+        text = self._text(board, board.seat_rows({}, local, _NOW))
+        assert "air [" in text and "core.bare" in text, text
+        assert "extensions.worktreeConfig true &&" not in text, text
 
     def test_the_flag_reads_the_clones_name_not_the_main_checkouts(self, board, tmp_path):
         """The board runs in the main checkout, and a naming command pasted
         there without `git -C` renames the MAIN checkout; the worktree still
-        answering the clone's name must stay flagged then (failure-mode
-        review, r3, case C). Dies to: the flag compared against the main
-        checkout's answer."""
+        answering the clone's name must stay flagged then, and the main
+        checkout answering another name is said (failure-mode review, r3 case
+        C and r4). Dies to: the flag compared against the main checkout's
+        answer, or the renamed main checkout left unsaid."""
         main, work = self._clone(tmp_path)
         rows, _ = self._seats(board, main, work, _registry(tmp_path, main, work),
                               names={str(main): "air-main", str(work): "air"})
         text = self._text(board, rows)
         assert "air [.claude/worktrees/work]: the seat name of the clone too (one mail ref for both)" in text, text
+        assert ("air-main: no mail; 1 live session in the main checkout; it answers air-main, not its clone's "
+                "name air (a --worktree name was set here)") in text, text
+
+    def test_the_flag_also_reads_the_main_checkouts_name(self, board, tmp_path):
+        """Dies to: the flag compared against the clone's name alone."""
+        main, work = self._clone(tmp_path)
+        rows, _ = self._seats(board, main, work, _registry(tmp_path, work),
+                              names={str(main): "air-x", str(work): "air-x"})
+        assert "air-x [.claude/worktrees/work]: the seat name of the main checkout too" in self._text(board, rows)
 
     def test_a_name_read_that_failed_is_unread_and_folds_nothing(self, board, tmp_path):
         """A timeout is not "no name": the real seat's row would fold into "no
-        live session here" while it holds one (both reviewers, r3). Dies to:
-        the failed read rendered as no seat name."""
+        live session here" while it holds one, so nothing folds and the board
+        says why, also when the checkout holds no session (both reviewers, r3
+        and r4). Dies to: the failed read rendered as no seat name, or the
+        reason dropped."""
         main, work = self._clone(tmp_path)
         old = board.mail.new_message("air-work", "note", "x", now=datetime(2026, 10, 1, 0, 0, 0, tzinfo=timezone.utc))
         timeout = board.Unresolvable("git config took longer than 10s")
-        rows, _ = self._seats(board, main, work, _registry(tmp_path, work), {"air-work": [old]},
-                              names={str(main): "air", str(work): timeout})
-        text = self._text(board, rows)
-        assert f"(seat name unread) {work}: no mail; 1 live session in .claude/worktrees/work" in text, text
-        assert "air-work: last mail 14 d 2 h ago (note)" in text and "no mail in 7 d" not in text, text
+        for registry in (_registry(tmp_path, work), _registry(tmp_path / "idle")):
+            rows, local = self._seats(board, main, work, registry, {"air-work": [old]},
+                                      names={str(main): "air", str(work): timeout})
+            text = self._text(board, rows, names_unread=board.unread_names(local))
+            assert "air-work: last mail 14 d 2 h ago (note)" in text and "no mail in 7 d" not in text, text
+            assert (f"nothing folds: the seat name of {work} is unread (git config could not be read "
+                    "(git config took longer than 10s)") in text, text
+        rows, local = self._seats(board, main, work, _registry(tmp_path / "busy", work), None,
+                                  names={str(main): "air", str(work): timeout})
+        text = self._text(board, rows, names_unread=board.unread_names(local))
+        assert f"(seat name unread) {work}: mail unknown; 1 live session in .claude/worktrees/work" in text, text
 
     def test_a_checkout_answering_no_usable_name_is_not_given_one(self, board, tmp_path):
         """A hand-set name the channel refuses (`Air-2`) turns the channel off
@@ -572,6 +609,11 @@ class TestSeats:
         assert ("air-gone: no mail; 1 live session in .claude/worktrees/gone (its folder is gone, so its seat name "
                 "is the derived one)") in text, text
         assert "TWO SESSIONS" not in text
+        text = self._text(board, board.seat_rows({}, board.read_sessions(
+            main, run_=_git_for(main, gone, clone=None), config_dir=_registry(tmp_path / "v", gone),
+            inside_session=False), _NOW))
+        assert f"(no seat name) {gone}: no mail; 1 live session in .claude/worktrees/gone (its folder is gone)" in text
+        assert "derived" not in text, "a row with no name says nothing of a derived one (r4)"
 
     def test_a_bare_main_entry_is_no_checkout(self, board, tmp_path):
         main, work = self._clone(tmp_path)
@@ -637,10 +679,13 @@ class TestSeats:
         claim = board.mail.new_message("win-3", "claim", "", lane="lane/held", now=t)
         note = board.mail.new_message("win-4", "note", "x", now=t)
         job = board.mail.new_message("air", "assign", "", seat="win-4", lane="lane/job", now=_T0)
-        _stub_channel(monkeypatch, board, {"win-3": [claim], "win-4": [note], "air": [job]})
+        fresh = board.mail.new_message("win-5", "claim", "", lane="lane/fresh", now=_T0)
+        _stub_channel(monkeypatch, board, {"win-3": [claim], "win-4": [note], "air": [job], "win-5": [fresh]})
         text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
-        assert "win-3: last mail 10 d 2 h ago (claim); kept: it holds a live claim" in text, text
+        assert "win-3: last mail 10 d 2 h ago (claim); kept: it holds a live claim (only win-3 can release it)" in text
         assert "win-4: last mail 10 d 2 h ago (note); kept: a live job names it" in text, text
+        row = next(ln for ln in text.splitlines() if "win-5:" in ln)
+        assert row.endswith("win-5: last mail 6 h 25 min ago (claim)"), "kept: is said only past the fold's age"
 
     def test_nothing_folds_while_the_registry_is_unread(self, board):
         """The fold says "no live session here", which an unread registry

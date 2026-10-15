@@ -175,10 +175,12 @@ own, and one that cannot be read says so on its own line:
   row of its own, `<name> [<checkout>]`, saying the two write one mail ref and
   giving the two `git -C <worktree>` commands that name it (run anywhere: a
   bare `git config --worktree` run in the checkout the board was read in
-  would rename that one). A checkout answering no usable name reads `(no seat
-  name) <path>`; one git could not be asked about reads `(seat name unread)
-  <path>`; a listed worktree whose folder is gone keeps its sessions under its
-  derived name and says so. A seat with no checkout here -- another machine,
+  would rename that one; on a bare clone, the core.bare step git requires
+  first). A main checkout answering a name other than its clone's says so. A
+  checkout answering no usable name reads `(no seat name) <path>`; one git
+  could not be asked about reads `(seat name unread) <path>`, and the line
+  says why nothing folded; a listed worktree whose folder is gone keeps its
+  sessions under its derived name and says so. A seat with no checkout here -- another machine,
   another clone, or a worktree since removed, which the channel cannot tell
   apart -- is its last mail and nothing more; one with no mail for a week, no
   session here and no live claim or job folds into a count, and one a live

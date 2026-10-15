@@ -322,6 +322,20 @@ class TestAssignments:
         assert mail.assign_refusal(tmp_path, "win-2") is None   # no dispatcher named: a lone operator assigns
 
 
+class TestMachineSettingReads:
+    def test_a_git_error_reads_as_unread_never_as_not_set(self, mail, tmp_path):
+        """`git config --get` exits 1 for a key that is not set and 128 for a
+        config git cannot read (a malformed file, a dubious-ownership refusal);
+        the board then said "(no seat name)" and folded the real seat (both
+        reviewers, TP-701 r4). Dies to: every nonzero exit read as not set."""
+        unset = lambda argv, **kw: (1, "", "")  # noqa: E731
+        broken = lambda argv, **kw: (128, "", "fatal: bad config line 3 in file .git/config")  # noqa: E731
+        assert mail.machine_setting(tmp_path, run=unset) == (None, mail.machine_setting(tmp_path, run=unset)[1])
+        assert not mail.machine_setting(tmp_path, run=unset)[1].startswith(mail.MACHINE_UNREAD)
+        name, how = mail.machine_setting(tmp_path, run=broken)
+        assert name is None and how.startswith(mail.MACHINE_UNREAD) and "bad config line 3" in how, how
+
+
 class TestLiveRequests:
     """TP-701 Wave A-1: the requests no ``ack`` answers, the dispatcher's
     unanswered asks. Pairing on the request's id, never on acks alone: on
