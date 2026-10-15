@@ -248,7 +248,7 @@ Every fix below is a **fix shape (untested)**; its refutation is named with it.
    runner and an interactive session would be two writers in one checkout. The oracle exists
    since `TP-701` Wave B, so consume it rather than re-derive it: `checkout_sync.occupancy`, which
    `seat.py launch` and `retire` refuse on (the registry first, the markers only adding, `None`
-   when it cannot tell), with `seat.py resolve` mapping a seat name to its checkout.
+   when it cannot tell), with `seat.resolve` (the function behind `launch`) mapping a seat name to its checkout.
 3. Read jobs (`mail.py assignments --json`) and the board (`board.py --json`). Stop on any section
    the board could not read and on a red `post_merge`: an unread read is never treated as clean
    (`ship.py status` and `ship.seat_open_prs` are lenient on a failed read by design).

@@ -1023,7 +1023,7 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None, read
     by_machine, _skipped = mail.read_mail(root, timeout=left)
     pending = mail.unread(by_machine, mail.read_cursor(root), exclude_machine=machine)
     if read is not None:
-        read.update(machine=machine, by_machine=by_machine, unread=len(pending))
+        read.update(machine=machine, by_machine=by_machine, unread=len(pending), fetched=not note)
     rows = [_ascii(mail.headline(m)) for m in reversed(pending)]
     try:
         asks = _asks_count(root, mail, machine, by_machine)
@@ -1076,10 +1076,13 @@ def _orders_line(root: Path, read: dict, mail: Any = None, seat: Any = None, pyt
     read (``read``) hold live assigns for this seat, its name, how many jobs
     with the first, its unread count, then the seat driver's short form of its
     first message (``seat.brief_line``: the reads to start with and the worker
-    loop, and the command that prints the whole message). '' anywhere else: on
-    the dispatcher seat, with no job, where nothing was read, or where the
-    dispatcher setting is unusable. Reporter only, and no read or spawn of its
-    own: the refs are the mail line's, the setting is one file. ``mail``,
+    loop, and the command that prints the whole message), and "(refs as last
+    fetched)" where the mail line's fetch did not go through. '' anywhere
+    else: on the dispatcher seat, with no job, where nothing was read, or
+    where the dispatcher setting is unusable. Reporter only, and no ref read
+    of its own: the refs are the mail line's, the setting is one file; the
+    interpreter spelling may cost one cached version probe. A seat driver
+    that does not load costs the short form, never the jobs. ``mail``,
     ``seat`` and ``python`` are injectable for tests."""
     machine, by_machine = read.get("machine"), read.get("by_machine")
     if not machine or not isinstance(by_machine, dict):
@@ -1092,14 +1095,21 @@ def _orders_line(root: Path, read: dict, mail: Any = None, seat: Any = None, pyt
     dispatcher = setting(root)[0]
     if not dispatcher or dispatcher in (getattr(mail, "DISPATCHER_UNUSABLE", None), machine):
         return ""
+    key = getattr(mail, "ASSIGN_SEAT_KEY", "seat")
     jobs = [a for a in jobs_of(by_machine, dispatcher)
-            if isinstance(a.get("re"), dict) and a["re"].get("seat") == machine]
+            if isinstance(a.get("re"), dict) and a["re"].get(key) == machine]
     if not jobs:
         return ""
     n, unread = len(jobs), int(read.get("unread") or 0)
+    stale = "" if read.get("fetched", True) else " (refs as last fetched)"
     head = (f"{_ascii(machine)}: {n} job{'s' if n != 1 else ''} from {_ascii(dispatcher)}, first "
-            f"{_ascii(_job_label(jobs[0]))[:80]}; {unread} unread")
-    seat = seat if seat is not None else _load_seat()
+            f"{_ascii(_job_label(jobs[0]))[:80]}; {unread} unread{stale}")
+    if seat is None:
+        try:
+            seat = _load_seat()
+        except Exception as e:  # noqa: BLE001 — a seat driver that does not load costs the short form, never the jobs
+            _hook_utils.advise_exc("session_start: seat driver load failed", e)
+            seat = None
     line = getattr(seat, "brief_line", None)
     spelled = _hook_utils.python_command_hint() if python is None else python
     hint = line("worker", machine, spelled) if callable(line) else "run /inbox, then /inbox board"
@@ -2889,8 +2899,10 @@ def _sync_checkout(
         other = f"pid {others[0].get('pid')}" if others else ""
     else:
         # The registry cannot be trusted: fall back to this tree's own
-        # markers. They outlive a closed window by hours, so the fallback
-        # holds more often than it must -- never a move under a live session.
+        # markers, counted by age and never by their alive (a closed window's
+        # marker holds the catch-up for hours, though the Sessions line may
+        # leave it out), so the fallback holds more often than it must --
+        # never a move under a live session.
         other = f"session {_hook_utils.safe_session_id(markers[0].get('session_id'))[:8]}" if markers else ""
     checkout = ""
     try:

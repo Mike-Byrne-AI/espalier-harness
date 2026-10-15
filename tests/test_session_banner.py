@@ -2807,12 +2807,41 @@ class TestOrdersLine:
         line = mod._orders_line(tmp_path, read, mail=mail, seat=types.SimpleNamespace(), python="py -3")
         assert line == "w: 1 job from hub, first C9; 1 unread; run /inbox, then /inbox board"
 
+    def test_a_seat_driver_that_does_not_load_costs_the_hint_and_never_the_jobs(self, tmp_path, monkeypatch):
+        """A skewed deploy (a seat.py whose own imports fail) lost the whole
+        line (code review, r1). Dies to: the load unguarded inside the line."""
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+
+        def broken():
+            raise ImportError("No module named '_json_safe'")
+
+        monkeypatch.setattr(mod, "_load_seat", broken)
+        mod._hook_utils.take_advisories()
+        read = {"machine": "w", "by_machine": {"hub": [self._assign(mail, "w", lane="lane/a")]}, "unread": 0}
+        assert mod._orders_line(tmp_path, read, mail=mail, python="py -3") == (
+            "w: 1 job from hub, first lane/a; 0 unread; run /inbox, then /inbox board")
+        said = mod._hook_utils.take_advisories()
+        assert any("seat driver load failed: ImportError" in s for s in said), said
+
+    def test_jobs_from_refs_a_failed_fetch_left_are_said_to_be_as_last_fetched(self, tmp_path):
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+        read = {"machine": "w", "by_machine": {"hub": [self._assign(mail, "w", lane="lane/a")]}, "unread": 0,
+                "fetched": False}
+        line = mod._orders_line(tmp_path, read, mail=mail, python="")
+        assert line.startswith("w: 1 job from hub, first lane/a; 0 unread (refs as last fetched); run /inbox")
+
     def test_the_mail_line_hands_over_what_it_read(self, tmp_path):
         mod = _load()
         stub = _mail_stub(read_mail=lambda root, timeout=None: ({"win": [_mail_message(1)]}, {}))
         read: dict = {}
         mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub, read=read)
         assert read["machine"] == "mac" and read["by_machine"] == {"win": [_mail_message(1)]} and read["unread"] == 1
+        assert read["fetched"] is True
+        failed = _mail_stub(fetch_mail=lambda root, timeout: (False, "could not read from remote"))
+        mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=failed, read=read)
+        assert read["fetched"] is False
 
     def test_both_banners_carry_the_line_after_the_mail_only_when_given(self, tmp_path):
         mod = _load()

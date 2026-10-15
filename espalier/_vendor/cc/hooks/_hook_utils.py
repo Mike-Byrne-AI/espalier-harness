@@ -2272,7 +2272,8 @@ def retire_same_window_markers(root: Path, sid: object, pid: object) -> list[str
     marker an older build wrote) the recorded number is a dead process's and
     nothing matches, so the line may name the predecessor; the one way a live
     sibling's marker is lost is a recycled number landing on a dead one's --
-    the pid is a window identity, never a liveness oracle. The own marker, by
+    here the pid is a window identity; it tells life only where the marker
+    records ``window`` (``other_live_sessions``). The own marker, by
     ``sid``, is never touched.
     Returns the stems removed. Never raises."""
     window = _window_pid(pid)

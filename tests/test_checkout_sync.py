@@ -937,6 +937,37 @@ class TestPieces:
         for launcher in ("python.exe", "pythonw.exe", "py.exe", "Python3.12.exe"):
             assert cs.window_pid({100: (300, launcher)}) == 300, launcher
 
+    def test_a_leftover_entry_that_is_not_this_process_names_no_window(self, cs, monkeypatch, tmp_path):
+        """A marker's window pid is now read by its exit, so a crashed
+        session's file must not make a reused pid (a launcher) a window
+        (failure-mode review, S3). Dies to: counting the file alone."""
+        directory = tmp_path / "cfg" / "sessions"
+        directory.mkdir(parents=True)
+        monkeypatch.setattr(cs, "claude_config_dirs", lambda: [tmp_path / "cfg"])
+        monkeypatch.setattr(cs.os, "getppid", lambda: 4242)
+        monkeypatch.setattr(cs, "_process_table_windows", lambda: {})
+        (directory / "4242.json").write_text(json.dumps({"pid": 99, "cwd": "x"}), encoding="utf-8")
+        assert cs.window_pid() is None                                    # another pid's entry
+        (directory / "4242.json").write_text("{not json", encoding="utf-8")
+        assert cs.window_pid() is None                                    # no answer
+        (directory / "4242.json").write_text(json.dumps({"pid": 4242, "cwd": "x"}), encoding="utf-8")
+        assert cs.window_pid() == 4242
+
+    @pytest.mark.skipif(os.name != "nt", reason="procStart is measured against the Windows creation FILETIME")
+    def test_an_entry_whose_creation_time_is_another_process_names_no_window(self, cs, monkeypatch, tmp_path):
+        directory = tmp_path / "cfg" / "sessions"
+        directory.mkdir(parents=True)
+        monkeypatch.setattr(cs, "claude_config_dirs", lambda: [tmp_path / "cfg"])
+        me = os.getpid()
+        monkeypatch.setattr(cs.os, "getppid", lambda: me)
+        record = {"pid": me, "cwd": "x", "procStart": "1"}
+        (directory / f"{me}.json").write_text(json.dumps(record), encoding="utf-8")
+        monkeypatch.setattr(cs, "_process_table_windows", lambda: {})
+        assert cs.window_pid() is None
+        record["procStart"] = cs._proc_start_windows(me)
+        (directory / f"{me}.json").write_text(json.dumps(record), encoding="utf-8")
+        assert cs.window_pid() == me
+
     def test_the_window_never_walks_past_one_step(self, cs, monkeypatch, tmp_path):
         """A hook a test suite spawns sits under pytest and a shell, with the
         session running the suite further up: a walk to the nearest

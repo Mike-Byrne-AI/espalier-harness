@@ -123,6 +123,9 @@ STANDARD_MANAGED_TOOLS = [
     # retires one (its claims released under its own name, then the removal
     # under checkout_sync's rules). Imports checkout_sync.py and mail.py, both
     # in this set; an operator verb, run by hand and named in the protocol.
+    # Also loaded BY PATH by hooks/session_start.py for the Orders: line's
+    # short form of a seat's first message (a load the import-closure test
+    # cannot see); without it that line keeps the jobs and drops the hint.
     "tools/cc/seat.py",
     # Sibling-module mirror of espalier/_blueprint_limits.py. Imported by
     # cognitive_blueprint.py AND tools/cc/hooks/post_compact.py; both raise

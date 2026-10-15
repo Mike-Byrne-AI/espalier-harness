@@ -65,8 +65,9 @@ with its jobs and the same short form, which a session started by hand reads
 there. Driven on Claude Code 2.1.301 (2026-10-15, win-2, a scratch worktree):
 a first message whose last line is a `/loop` line starts that loop with no
 second message, whether the session was launched with the checkout as its cwd
-or with `claude --worktree`, and the loop survives `/clear`, so a relaunch
-needs no second paste either. `claude --worktree` locks the worktree, in an
+or with `claude --worktree`, and the loop survives `/clear` (the same
+process); a relaunch is a new process and gets its loop from the brief, so
+it needs no second paste either. `claude --worktree` locks the worktree, in an
 interactive session as under `-p`; a killed session leaves the lock behind.
 
 1. **Work the jobs assigned to you**, and keep two or three queued, so the

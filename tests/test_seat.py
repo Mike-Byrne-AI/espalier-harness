@@ -104,6 +104,8 @@ def _worktree(work: Path, folder: str, *, name: str | None = None) -> Path:
     _git(work, "worktree", "add", "--quiet", "-b", f"lane/{folder}", str(path), "origin/main")
     if name:
         _git(path, "config", "--worktree", "espalier.machine", name)
+    if (work / "espalier.toml").is_file():   # tracked on a real tree, so every checkout holds it
+        (path / "espalier.toml").write_bytes((work / "espalier.toml").read_bytes())
     return path
 
 
@@ -255,7 +257,7 @@ class TestLaunch:
         (call,) = no_claude
         # The operator's arguments pass through unchanged; the first message rides last.
         assert call["argv"][:3] == ["/fake/bin/claude", "--model", "x"] and Path(call["cwd"]) == path
-        assert call["argv"][3:] == [seat.compose_brief(clone, "box-new", path).text]
+        assert call["argv"][3:] == ["--", seat.compose_brief(clone, "box-new", path).text]
         env = call["env"]
         assert "ESPALIER_MAINTENANCE_MODE" not in env and "CLAUDE_CODE_SESSION_ID" not in env
         assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
@@ -425,7 +427,11 @@ _OPERATOR_TICK = (
 
 
 def _dispatcher(clone: Path, value: str) -> None:
-    (clone / "espalier.toml").write_text(f"dispatcher = {value}\n", encoding="utf-8")
+    """The ``dispatcher`` line, written where a tracked espalier.toml would be:
+    the clone and every worktree of it (the brief reads the seat's own copy)."""
+    homes = [clone, *sorted((clone / ".claude" / "worktrees").glob("*"))]
+    for home in homes:
+        (home / "espalier.toml").write_text(f"dispatcher = {value}\n", encoding="utf-8")
 
 
 def _holds(path: Path, *rels: str) -> None:
@@ -457,7 +463,9 @@ class TestBrief:
         _holds(feat, "docs/WORKFLOW.md")
         seeded = seat.compose_brief(clone, "box-feat", feat)
         assert "a worker under the dispatcher hub (docs/WORKFLOW.md, Parallel seats)." in seeded.text
-        assert "the proof the change earns (/implement-task, step 7)" in seeded.loop and "--base" not in seeded.text
+        assert "the proof the change earns per /implement-task step 7" in seeded.loop and "--base" not in seeded.text
+        assert "both reviewers at once with your edits frozen per /implement-task step 6" in seeded.loop
+        assert "snapshot clone" not in seeded.text   # defined on this repository only
         assert "note from hub;" in seeded.loop and "send hub one request" in seeded.loop
         assert "memory/" not in seeded.text and "Core Rule" not in seeded.text
         bare = seat.compose_brief(clone, "box-feat", clone / "no-such-checkout")   # the clone holds neither
@@ -490,6 +498,9 @@ class TestBrief:
         _worktree(clone, "feat", name="box-feat")
         with pytest.raises(seat.Refused, match="--no-brief launches without the first message"):
             seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=False)
+        with pytest.raises(seat.Refused, match="the brief names the dispatcher"):   # before the worktree is made
+            seat.cmd_launch(clone, "box-new", [], maintenance=False, unchecked=False, print_only=False)
+        assert not (clone / ".claude" / "worktrees" / "new").exists()
         assert seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=False,
                                brief=False) == 0
         assert no_claude[-1]["argv"] == ["/fake/bin/claude"]
@@ -505,7 +516,7 @@ class TestBrief:
         dispatcher = seat.compose_brief(clone, "box", clone)
         target = seat.Target("box-feat", feat, True, False)
         for brief in (worker, self_host, dispatcher):
-            assert brief.text.isascii() and '"' not in brief.text, brief.text
+            assert brief.text.isascii() and '"' not in brief.text and "%" not in brief.text, brief.text
             assert not set(brief.text) & set(seat._PS_DOUBLE)
             # Both --print forms quote it whole, so it reaches claude as one argument.
             assert seat.command_line(target, [brief.text], maintenance=False, shell="powershell")
@@ -518,13 +529,74 @@ class TestBrief:
         feat = _worktree(clone, "feat", name="box-feat")
         monkeypatch.chdir(clone)
         assert seat.main(["launch", "box-feat", "--", "--model", "x"]) == 0
-        assert no_claude[-1]["argv"] == ["/fake/bin/claude", "--model", "x",
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", "--model", "x", "--",
                                          seat.compose_brief(clone, "box-feat", feat).text]
         assert seat.main(["launch", "box-feat", "--no-brief", "--", "--model", "x"]) == 0
         assert no_claude[-1]["argv"] == ["/fake/bin/claude", "--model", "x"]
         assert "no first message" in capsys.readouterr().out
         assert seat.main(["brief", "box-feat"]) == 0
         assert capsys.readouterr().out == seat.compose_brief(clone, "box-feat", feat).text + "\n"
+
+    def test_an_adopters_dispatcher_proposes_the_revert_and_this_repository_reverts_first(self, seat, clone):
+        """Reverting first on a red base is this repository's rule; an
+        adopter's dispatcher loop must not do it unasked. Dies to: the
+        self-host duty rendered for every tree."""
+        _dispatcher(clone, '"box"')
+        _holds(clone, "docs/WORKFLOW.md")
+        adopter = seat.compose_brief(clone, "box", clone).text
+        assert "propose the revert to the operator on a red main" in adopter and "revert first" not in adopter
+        _holds(clone, "memory/parallel-work-protocol.md")
+        assert "revert first on a red main" in seat.compose_brief(clone, "box", clone).text
+
+    def test_the_adopter_phrases_name_steps_the_shipped_command_body_holds(self, seat):
+        """The adopter tick points at /implement-task's steps by number: a
+        step inserted into the shipped body would re-point every adopter
+        seat. Dies to: a renumbered body with the phrases left behind."""
+        body = (REPO_ROOT / "espalier" / "assets" / "claude" / "commands" / "implement-task.md").read_text(
+            encoding="utf-8")
+        steps = body.splitlines()
+        assert seat.ADOPTER_REVIEW.endswith("per /implement-task step 6")
+        assert any(s.startswith("6. **Review before the one full run.") for s in steps)
+        assert any(s.startswith("7. **Run the proof tier once") for s in steps)
+
+    @pytest.mark.parametrize("args", [["-p"], ["--print"], ["--resume"], ["--resume=abc"], ["-c"], ["--continue"],
+                                      ["--teleport"], ["fix this"], ["--model", "x", "--", "fix this"]])
+    def test_the_brief_is_refused_beside_a_mode_flag_or_a_prompt_of_its_own(self, seat, clone, registry, no_claude,
+                                                                           args):
+        """Dies to: passing the brief beside them (two prompts, or a resumed
+        session that never reads it)."""
+        _worktree(clone, "feat", name="box-feat")
+        with pytest.raises(seat.Refused, match="--no-brief launches without the first message"):
+            seat.cmd_launch(clone, "box-feat", args, maintenance=False, unchecked=False, print_only=False)
+        assert no_claude == []
+        assert seat.cmd_launch(clone, "box-feat", args, maintenance=False, unchecked=False, print_only=False,
+                               brief=False) == 0
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *args]
+
+    def test_a_list_option_keeps_its_values_and_the_brief_follows_a_dashdash(self, seat, clone, registry, no_claude):
+        """Driven on 2.1.301: a prompt after `--add-dir <dir>` was read as a
+        second directory and the session had no prompt; after a `--` it was
+        answered. Dies to: the brief appended bare."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        args = ["--add-dir", "a", "b"]
+        assert seat.cmd_launch(clone, "box-feat", args, maintenance=False, unchecked=False, print_only=False) == 0
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *args, "--",
+                                         seat.compose_brief(clone, "box-feat", feat).text]
+
+    def test_a_cmd_shim_refuses_the_brief_because_cmd_cuts_it_at_its_line_break(self, seat, clone, registry,
+                                                                                no_claude, monkeypatch):
+        """Driven by the failure-mode review on this host: a .cmd given the
+        two-line brief received only its first line, so the loop never
+        arrived. Dies to: launching through the shim with the brief."""
+        _worktree(clone, "feat", name="box-feat")
+        real = seat.shutil.which
+        monkeypatch.setattr(seat.shutil, "which", lambda name, path=None:
+                            "C:/npm/claude.CMD" if name == "claude" else real(name, path=path))
+        for print_only in (False, True):
+            with pytest.raises(seat.Refused, match="a script cmd.exe runs, which cuts an argument at its line break"):
+                seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=print_only)
+        assert seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=False,
+                               brief=False) == 0
 
     def test_the_banner_line_is_the_short_form_of_the_same_brief(self, seat, clone):
         """Its interval is read from the loop each form ends with, so the two
