@@ -27,6 +27,9 @@ expected_receiver_behavior:
     required: true
   agent_actions_after:
     no_repeat_of: "tools/cc/hooks/write_guard.py"
+  # A scenario with no_repeat_of carries the CLI-drift canary: the retry check
+  # reads the stamps, message ids and permission mode it checks.
+  stream_well_formed: true
   # No max_turns in a wiring scenario: the CLI no longer caps turns, and the
   # correct runs of 2026-10-14 took 4 to 11 assistant events, so a cap only
   # turns a correct run inconclusive. --max-cost-usd and the runner's timeout
