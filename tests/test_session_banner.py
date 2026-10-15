@@ -2963,6 +2963,21 @@ class TestMailLine:
         assert "git config espalier.machine <name>" in line and "/inbox" in line
         assert stub.calls == []  # no fetch for a clone that is not opted in
 
+    def test_an_unread_machine_name_is_not_offered_the_opt_in(self, tmp_path):
+        """A name read that failed (a timeout, a config git cannot parse) is not
+        "this clone names no machine": the opt-in command would fail the same
+        way or rename a named seat (failure-mode review, TP-701 r5). Dies to:
+        the opt-in line on an unread name."""
+        mod = _load()
+        unread = "git config could not be read (took longer than 2s), so no machine is named and the channel is off"
+        stub = _mail_stub(MACHINE_UNREAD="git config could not be read",
+                          machine_setting=lambda root, timeout=None: (None, unread),
+                          local_mail_machines=lambda root, timeout=None: ["air", "win"])
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 8.0, mail=stub)
+        assert "turns it on" not in line and "names no machine" not in line, line
+        assert line.startswith("(this checkout's machine name could not be read:") and line.isascii(), line
+        assert stub.calls == []
+
     def test_the_line_is_omitted_where_the_module_is_not_deployed(self, tmp_path, monkeypatch):
         mod = _load()
         monkeypatch.setattr(mod, "_load_mail", lambda: None)

@@ -446,9 +446,13 @@ def minting_seat(root: Path) -> tuple[str, str | None]:
         return UNNAMED_SEAT, ("this clone sets no git config espalier.machine, so it mints from the shared "
                               f"range ({UNNAMED_SEAT}); name the box to mint from its own block")
     if mail.worktree_name_inherited(root):
+        # mail.naming_steps is the one owner of the by-hand steps (core.bare
+        # moves first on a bare clone); an older mail.py without it keeps the
+        # two commands.
+        steps = (mail.naming_steps(root) if hasattr(mail, "naming_steps") else
+                 "git config extensions.worktreeConfig true, then git config --worktree espalier.machine <name>")
         raise MintRefused(f"this linked worktree answers its clone's name {machine!r}, so a mint here would take "
-                          f"{machine}'s next id; name it first: git config extensions.worktreeConfig true, then "
-                          "git config --worktree espalier.machine <name>")
+                          f"{machine}'s next id; name it first: {steps}")
     return machine, None
 
 

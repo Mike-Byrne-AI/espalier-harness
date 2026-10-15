@@ -466,18 +466,22 @@ surfaces the active blueprint automatically; `/status` and
 
 When several Claude Code sessions work one repository at once, each runs as a
 **seat**: one session in its own checkout, under its own name. Name the clone
-once, in its main checkout, with `git config espalier.machine <name>`. A
-linked worktree of a named clone is given a name of its own at SessionStart
-(`<clone>-<directory>`; the banner's `Seat:` line says so); to set one by
-hand, run `git config extensions.worktreeConfig true` once, then `git -C
-<worktree> config --worktree espalier.machine <name>`. A plain `git config
-espalier.machine` run inside a worktree renames the clone and its main
-checkout instead. Seats coordinate through the mail channel (`/inbox`): a seat
-claims the files it works so another does not duplicate them, a dispatcher
-seat (the `dispatcher` key in `espalier.toml`) assigns the jobs, and a seat
-with a question sends a request, which the dispatcher answers. Two sessions in
-one checkout are one seat, which must not happen: they share its plan, its git
-index and its mail cursor.
+once with `git config espalier.machine <name>`, run in its main checkout (in a
+bare clone, in the repository). A linked worktree of a named clone is given a
+name of its own at SessionStart (`<clone>-<directory>`; the banner's `Seat:`
+line says so); to set one by hand, run `git config extensions.worktreeConfig
+true` once, then `git -C <worktree> config --worktree espalier.machine
+<name>`. On a bare clone, first move `core.bare` out of the shared config into
+the main worktree's `config.worktree`, which git requires before that
+extension (`git help worktree`); SessionStart will not name a bare clone's
+worktrees for that reason. A plain `git config espalier.machine` run inside a
+worktree renames the clone and its main checkout instead. Seats coordinate
+through the mail channel (`/inbox`): a seat claims the files it works so
+another does not duplicate them, a dispatcher seat (the `dispatcher` key in
+`espalier.toml`) assigns the jobs, and a seat with a question sends a request,
+which the dispatcher answers (or you, where no dispatcher is named). Two
+sessions in one checkout are one seat, which must not happen: they share its
+plan, its git index and its mail cursor.
 
 Before stating what is open, merging or blocked, read the board (`/inbox
 board`): it reads GitHub and the mail now, where the banner and a handoff note

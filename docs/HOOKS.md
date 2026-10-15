@@ -191,7 +191,10 @@ the banner); a fetch that could not be made is said in the line beside what
 was fetched before. No name, no fetch and no line -- except that a clone which
 names no machine but already holds another machine's mail ref (a plain `git
 fetch origin` brings them in) gets one line saying how to opt in, so the box
-that was never opted in is the one told the channel exists. On the dispatcher
+that was never opted in is the one told the channel exists; a checkout whose
+name could not be read at all (a timeout, a config git cannot parse) gets one
+line saying so instead, never the opt-in, whose command would fail the same
+way or rename a seat that has a name. On the dispatcher
 seat (the machine `dispatcher` in `espalier.toml` names) the line also carries
 how many requests no ack answers yet, from any seat, and how old the oldest is
 (`2 unanswered asks (requests no ack names), oldest 3 h ago: /inbox board

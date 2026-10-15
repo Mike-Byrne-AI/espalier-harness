@@ -425,7 +425,9 @@ def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = N
                   inside_session: bool | None = None) -> dict:
     """This clone's checkouts with the live Claude Code sessions in each:
     ``{"checkouts": [{"path", "main", "seat", "gone", "name_unread",
-    "sessions"}], "unread": "", "checked", "registry", "clone"}``, or no
+    "sessions"}], "unread": "", "checked", "registry", "clone", "bare"}``
+    (``bare``: the main entry is a bare repository, whose worktrees git will
+    not name until core.bare moves out of the shared config), or no
     checkouts and ``unread`` naming why. The sessions are Claude Code's own
     registry (``checkout_sync.live_sessions``: an entry whose process is
     alive), each counted for the DEEPEST checkout that holds its cwd, since a
@@ -581,7 +583,7 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
     board["base"] = base
     rules = _merge_rules.read(root, None, base)
     board["merging"] = _merge_rules.line(*rules)
-    machine, _how = mail.machine_setting(root, run=run_)
+    machine, machine_how = mail.machine_setting(root, run=run_)
     board["seat"] = machine or ""
     by_machine: dict = {}
     board["mail_note"] = ""
@@ -591,7 +593,9 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
             if not ok:
                 board["mail_note"] = f"the fetch failed ({problem}), so mail is the local refs as last fetched"
         elif fetch:
-            board["mail_note"] = "this clone names no machine, so the mail refs were not fetched"
+            board["mail_note"] = (f"this checkout's machine name could not be read ({machine_how}), so the mail refs "
+                                  "were not fetched" if machine_how.startswith(mail.MACHINE_UNREAD) else
+                                  "this clone names no machine, so the mail refs were not fetched")
         by_machine, _skipped = mail.read_mail(root, run=run_)
     except Unresolvable as exc:
         board["mail_unread"] = str(exc)

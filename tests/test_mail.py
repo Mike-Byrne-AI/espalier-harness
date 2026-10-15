@@ -334,6 +334,55 @@ class TestMachineSettingReads:
         assert not mail.machine_setting(tmp_path, run=unset)[1].startswith(mail.MACHINE_UNREAD)
         name, how = mail.machine_setting(tmp_path, run=broken)
         assert name is None and how.startswith(mail.MACHINE_UNREAD) and "bad config line 3" in how, how
+        quiet = lambda argv, **kw: (128, "", "")  # noqa: E731
+        assert "git exited 128: git exited 128" not in mail.machine_setting(tmp_path, run=quiet)[1]
+
+    def test_an_unread_name_is_not_answered_with_turn_it_on(self, mail, tmp_path, monkeypatch, capsys):
+        """`git config espalier.machine <name>` fails the same way on a config
+        git cannot read, and on a timeout it would rename a seat that has a
+        name (both reviewers, TP-701 r5). Dies to: the hint appended to an
+        unread reason."""
+        monkeypatch.setattr(mail, "machine_setting",
+                            lambda root, **kw: (None, f"{mail.MACHINE_UNREAD} (took longer than 10s), so the channel is off"))
+        assert mail.main(["--root", str(tmp_path), "claims", "--no-fetch"]) == 1
+        err = capsys.readouterr().err
+        assert mail.MACHINE_UNREAD in err and "turns it on" not in err, err
+        monkeypatch.setattr(mail, "machine_setting", lambda root, **kw: (None, "git config espalier.machine is not set"))
+        assert mail.main(["--root", str(tmp_path), "claims", "--no-fetch"]) == 1
+        assert "turns it on" in capsys.readouterr().err
+
+
+class TestNamingSteps:
+    """The by-hand steps that name a linked worktree, one owner for every
+    refusal that prints them: git says core.bare (and core.worktree) must move
+    out of the shared config before extensions.worktreeConfig is turned on,
+    and SessionStart refuses to name a bare clone's worktrees for that reason
+    (both reviewers, TP-701 r5: the board withheld the step, its siblings
+    still printed it)."""
+
+    @staticmethod
+    def _git(values: dict):
+        def run(argv, **kw):
+            value = values.get(argv[-1])
+            return (0, value + "\n", "") if value is not None else (1, "", "")
+        return run
+
+    def test_a_plain_clone_gets_the_two_commands(self, mail, tmp_path):
+        steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "false"}))
+        assert steps == "git config extensions.worktreeConfig true, then git config --worktree espalier.machine <name>"
+
+    def test_a_bare_clone_moves_core_bare_first(self, mail, tmp_path):
+        """Dies to: the steps given without the core.bare move."""
+        steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "true"}))
+        assert steps.startswith("move core.bare out of the clone's shared config into the main worktree's "
+                                "config.worktree first (git help worktree), then git config extensions."), steps
+        assert "core.worktree" in mail.naming_steps(tmp_path, run=self._git({"core.worktree": "/x"}))
+
+    def test_the_assign_refusal_carries_the_steps(self, mail, tmp_path, monkeypatch):
+        (tmp_path / "espalier.toml").write_text('dispatcher = "win"\n', encoding="utf-8")
+        monkeypatch.setattr(mail, "worktree_name_inherited", lambda root, run=None: True)
+        refusal = mail.assign_refusal(tmp_path, "win", run=self._git({"core.bare": "true"})) or ""
+        assert "name it first: move core.bare out of the clone's shared config" in refusal, refusal
 
 
 class TestLiveRequests:

@@ -734,6 +734,39 @@ class TestSeats:
         text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
         assert "          live sessions here unread: registry gone" in text, text
 
+    def test_collect_carries_an_idle_checkouts_unread_name(self, board, monkeypatch, tmp_path):
+        """A checkout holding no session gets no row, so only collect's
+        names_unread can stop the fold for it (code review r5, M1). Dies to:
+        collect dropping the list."""
+        old = board.mail.new_message("air-old", "note", "x", now=datetime(2026, 10, 1, 0, 0, 0, tzinfo=timezone.utc))
+        local = {"checkouts": [{"path": "/r/wt", "main": False, "seat": "", "sessions": [],
+                                "name_unread": "git config could not be read (took longer than 10s)"}],
+                 "unread": "", "checked": True}
+        _stub_channel(monkeypatch, board, {"air-old": [old]}, sessions=local)
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
+        assert "air-old: last mail 14 d 2 h ago (note)" in text and "nothing folds: the seat name of /r/wt" in text
+
+    def test_an_unread_machine_name_is_not_called_unnamed(self, board, monkeypatch, tmp_path):
+        """Dies to: the mail note saying the clone names no machine when the
+        name read failed (failure-mode review, r5)."""
+        _stub_channel(monkeypatch, board)
+        monkeypatch.setattr(board.mail, "machine_setting",
+                            lambda root, run=None: (None, f"{board.mail.MACHINE_UNREAD} (took longer than 10s)"))
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
+        assert "mail:     this checkout's machine name could not be read" in text, text
+        assert "names no machine" not in text
+
+    def test_the_main_checkouts_note_needs_a_name_other_than_the_clones(self, board, tmp_path):
+        """Dies to: either guard on the note (code review r5, M6/M7/M14)."""
+        main, work = self._clone(tmp_path)
+        note = board.mail.new_message("air-main", "note", "x", now=_T0)
+        rows, _ = self._seats(board, main, work, _registry(tmp_path), {"air-main": [note]},
+                              names={str(main): "air-main", str(work): "air-work"})
+        assert ("air-main: last mail 6 h 25 min ago (note); no live session in the main checkout; it answers "
+                "air-main, not its clone's name air") in self._text(board, rows)
+        plain, _ = self._seats(board, main, work, _registry(tmp_path / "p", main))
+        assert "it answers" not in self._text(board, plain)
+
     def test_a_seats_read_that_raises_costs_only_its_line(self, board, monkeypatch, tmp_path):
         """Each section is read on its own. Dies to: an exception other than
         Unresolvable taking the whole board down."""

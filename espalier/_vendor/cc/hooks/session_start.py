@@ -956,7 +956,13 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> s
     left = _seconds_left(deadline, _MAIL_READ_CAP_SECONDS)
     if left <= 0.2:
         return ""
-    machine, _how = mail.machine_setting(root, timeout=left)
+    machine, how = mail.machine_setting(root, timeout=left)
+    unread = getattr(mail, "MACHINE_UNREAD", None)
+    if machine is None and unread and str(how).startswith(unread):
+        # The name could not be read (a timeout, a config git cannot parse):
+        # not "names no machine", whose opt-in command would fail the same way
+        # or rename a seat that has a name. No fetch, no further read.
+        return f"(this checkout's machine name could not be read: {_ascii(str(how))[:160]}; /inbox reads the mail)"
     if machine is None:
         left = _seconds_left(deadline, _MAIL_READ_CAP_SECONDS)
         others = mail.local_mail_machines(root, timeout=left) if left > 0.2 else []

@@ -145,10 +145,18 @@ Runner = Callable[..., tuple[int, str, str]]
 
 # ------------------------------------------------------------- the setting --
 
-#: How :func:`machine_setting`'s answer opens when git could not be asked at
-#: all (a timeout, a spawn that failed), as opposed to a name not set or not
-#: usable: the board reads a checkout's seat name as unread on it, never as none.
+#: How :func:`machine_setting`'s answer opens when the read itself failed (a
+#: timeout, a spawn that failed, or git answering with an error rather than
+#: "not set"), as opposed to a name not set or not usable: the board reads a
+#: checkout's seat name as unread on it, and no reader offers the command that
+#: turns the channel on, which would fail the same way or rename a named seat.
 MACHINE_UNREAD = "git config could not be read"
+
+
+def _off_reason(how: str) -> str:
+    """Why the channel is off, with the command that turns it on, unless the
+    name could not be read at all: then the reason alone."""
+    return how if how.startswith(MACHINE_UNREAD) else f"{how}; `git config {MACHINE_KEY} <name>` turns it on"
 
 
 def machine_setting(root: Path, *, run: Runner = run, timeout: float = 10.0) -> tuple[str | None, str]:
@@ -162,10 +170,13 @@ def machine_setting(root: Path, *, run: Runner = run, timeout: float = 10.0) -> 
     except Unresolvable as exc:
         return None, f"{MACHINE_UNREAD} ({exc}), so no machine is named and the channel is off"
     if rc not in (0, 1):
-        # 1 is git's "not set"; anything else (128: a config git cannot
-        # read, a repository it refuses) is a read that failed, not an answer.
-        detail = (err.strip().splitlines() or [f"git exited {rc}"])[-1][:160]
-        return None, f"{MACHINE_UNREAD} (git exited {rc}: {detail}), so no machine is named and the channel is off"
+        # 1 is git's "not set"; anything else (128: a config file git cannot
+        # parse) is a read that failed, not an answer. A repository git refuses
+        # as of dubious ownership is not this: git config then reads only the
+        # global and system files and answers "not set" (measured, git 2.39.5).
+        lines = err.strip().splitlines()
+        detail = f"git exited {rc}" + (f": {lines[-1][:160]}" if lines else "")
+        return None, f"{MACHINE_UNREAD} ({detail}), so no machine is named and the channel is off"
     value = out.strip()
     if rc != 0 or not value:
         return None, f"git config {MACHINE_KEY} is not set, so the channel is off (the default)"
@@ -794,6 +805,26 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
                   f"{clone}'s other worktrees, unless espalier.toml [id_blocks] gives {name} a line of its own")
 
 
+def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0) -> str:
+    """The by-hand steps that give the linked worktree at ``root`` a name of
+    its own, run in it: ``git config extensions.worktreeConfig true``, then
+    ``git config --worktree espalier.machine <name>`` -- after moving
+    ``core.bare`` (or ``core.worktree``) out of the clone's shared config where
+    it sets one, which git says must move before the extension is turned on
+    (``git help worktree``) and which SessionStart refuses to do itself. The
+    one owner of these steps for every refusal that prints them."""
+    steps = f"git config extensions.worktreeConfig true, then git config --worktree {MACHINE_KEY} <name>"
+    for key in ("core.bare", "core.worktree"):
+        try:
+            rc, value, _ = run(["git", "config", "--get", key], cwd=str(root), env=git_env(), timeout=timeout)
+        except Unresolvable:
+            continue
+        if rc == 0 and value.strip() and value.strip() != "false":
+            return (f"move {key} out of the clone's shared config into the main worktree's config.worktree "
+                    f"first (git help worktree), then {steps}")
+    return steps
+
+
 def assign_refusal(root: Path, machine: str, *, run: Runner = run) -> str | None:
     """Why this seat may not send an ``assign``, or None. Only the dispatcher
     assigns; an unusable dispatcher setting refuses every assign until it is
@@ -807,8 +838,7 @@ def assign_refusal(root: Path, machine: str, *, run: Runner = run) -> str | None
                 f"(--type request) naming the job instead")
     if worktree_name_inherited(root, run=run):
         return (f"this linked worktree answers the clone's shared name {machine!r}, so an assign from it would "
-                f"read as {machine}'s; name it first: git config extensions.worktreeConfig true, then "
-                f"git config --worktree {MACHINE_KEY} <name>")
+                f"read as {machine}'s; name it first: {naming_steps(root, run=run)}")
     return None
 
 
@@ -971,7 +1001,7 @@ def send(root: Path, message: dict, *, run: Runner = run, say: Callable[[str], N
     root = Path(root)
     machine, how = machine_setting(root, run=run)
     if machine is None:
-        raise Unresolvable(f"{how}; `git config {MACHINE_KEY} <name>` turns it on")
+        raise Unresolvable(_off_reason(how))
     if message.get("from") != machine:
         raise Unresolvable(f"the message is from {message.get('from')!r}, this box is {machine!r}")
     hits = secret_hits(message)
@@ -1127,7 +1157,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{other}: {len(messages)} message(s) fetched")
             return 0
         if machine is None:
-            raise Unresolvable(f"{how}; `git config {MACHINE_KEY} <name>` turns it on")
+            raise Unresolvable(_off_reason(how))
         if args.verb == "send":
             text = _read_text_file(args.text_file) if args.text_file is not None else args.text
             message = new_message(machine, args.type, text, lane=args.lane, classes=args.classes,

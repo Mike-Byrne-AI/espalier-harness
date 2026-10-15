@@ -1723,6 +1723,17 @@ class TestIdsAreMintedFromTheSeatsBlock:
         assert _mint(lr, t, "TP") == 0
         assert capsys.readouterr().out.strip() == "TP-502"
 
+    def test_the_refusal_names_the_steps_the_channel_gives(self, lr, tmp_path, monkeypatch, capsys):
+        """The mint refusal prints mail.naming_steps, the one owner of the
+        by-hand steps (core.bare first on a bare clone; TP-701 r5). Dies to:
+        the refusal spelling its own copy of the commands."""
+        t = _seat_tree(tmp_path)
+        channel = _seat_channel(_mail_module(), "win", inherited=True)
+        channel.naming_steps = lambda root, **kw: "STEPS-FROM-THE-CHANNEL"
+        monkeypatch.setattr(lr, "_MAIL", channel)
+        assert _file_minted(lr, t) == 2
+        assert "name it first: STEPS-FROM-THE-CHANNEL" in capsys.readouterr().err
+
     def test_an_inherited_worktree_name_is_refused_with_the_commands(self, lr, tmp_path, monkeypatch, capsys):
         t = _seat_tree(tmp_path)
         monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win", inherited=True))
