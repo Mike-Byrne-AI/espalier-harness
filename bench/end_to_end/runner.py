@@ -337,7 +337,9 @@ def run_scenario(
     cleanup_dir: Path | None = None
     try:
         if work_dir is None:
-            work_dir = Path(tempfile.mkdtemp(prefix="cc-e2e-"))
+            # Resolved before the CLI starts in it, so the cwd the agent sees is
+            # the work dir the run records (no macOS /var alias).
+            work_dir = Path(tempfile.mkdtemp(prefix="cc-e2e-")).resolve()
             cleanup_dir = work_dir
         else:
             work_dir = Path(work_dir).resolve()
