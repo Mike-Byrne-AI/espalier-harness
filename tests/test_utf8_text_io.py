@@ -835,7 +835,6 @@ _PENDING_SITES: dict[str, int] = {
     "tests/test_bench_surface_hygiene.py::agent_names::glob::.claude/agents": 1,
     "tests/test_board.py::TestDerivedNotRestated.test_the_ledger_count_is_the_generators::copytree::task-packs/ledger.d": 1,
     "tests/test_board_ledger_base.py::_behind_its_base::copytree::tools/cc": 1,
-    "tests/test_check_pack_landing.py::test_live_done_tree_population_is_non_trivial::glob::task-packs/Done": 1,
     "tests/test_ci_yaml_hook_count.py::_yaml_files::glob::.github/workflows": 1,
     "tests/test_cli_deploy.py::<module>::glob::espalier": 1,
     "tests/test_cli_deploy.py::TestEveryRetiredRuleReportGoesThroughTheGate._engine_modules::rglob::espalier": 1,
@@ -897,7 +896,6 @@ _PENDING_SITES: dict[str, int] = {
     "tests/test_finding_ledger.py::TestStandingCallerLedgerWiring.test_no_scaffold_description_is_a_run_record::glob::.claude/workflows": 1,
     "tests/test_finding_ledger.py::TestStandingCallerLedgerWiring.test_no_workflow_references_the_retired_shared_corpus::glob::.claude/workflows": 1,
     "tests/test_finding_ledger.py::TestStandingCallerLedgerWiring.test_runnable_persisters_strip_every_private_lane_key::glob::.claude/workflows": 1,
-    "tests/test_forward_ledger_completeness.py::_pack_is_landed::glob::task-packs/Done": 1,
     # the freshness scanner raises before keep_in_checkout filters: scan a copy_checkout copy
     "tests/test_freshness_semantic_fragments.py::TestMarkerContractClosure.test_marker_contract_has_bound_closure_true::scanner:discover_fragments::<root>": 1,
     # the freshness scanner raises before keep_in_checkout filters: scan a copy_checkout copy
@@ -1067,6 +1065,15 @@ _MARKED_SITES: frozenset[str] = frozenset({
     "tests/test_verify_pins.py::_fs_manifest::os.walk::<root>",
     # the build litter (build/, dist/, *.egg-info) git ignores, looked for on purpose
     "tests/test_wheel_payload.py::_packaging_litter::iterdir::<root>",
+    # the self-host status folders git ignores by design (task-packs/Done/,
+    # Merged/, Scrapped/): read from disk where git ignores them, each by
+    # tests/_live_tree.py::ignored_by_git or because every one is the subject
+    "tests/test_check_ledger_probes.py::_input_dangles::iterdir::<computed>",
+    "tests/test_cross_pack_assertions.py::_pack_index::iterdir::task-packs/<computed>",
+    "tests/test_cross_pack_assertions.py::_pack_subfolders::iterdir::task-packs",
+    "tests/test_forward_ledger_completeness.py::_deferral_kind::rglob::task-packs",
+    "tests/test_check_pack_landing.py::test_live_done_tree_population_is_non_trivial::glob::task-packs/Done",
+    "tests/test_forward_ledger_completeness.py::_pack_is_landed::glob::task-packs/Done",
 })
 
 

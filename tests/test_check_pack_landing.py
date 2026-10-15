@@ -270,6 +270,7 @@ def test_live_done_tree_population_is_non_trivial():
     # still SEEING packs. Asserts the scan has a real population, not the exact
     # count (which moves every time a pack lands).
     done = REPO_ROOT / "task-packs" / "Done"
+    # live-tree: ok -- task-packs/Done/ is gitignored by design on the self-host tree, so the filesystem is its one view
     scanned = [p.name for p in done.glob("*.md") if check_pack_landing.is_pack_file(p.name)]
     assert len(scanned) > 20, (
         f"only {len(scanned)} packs classified in Done/ -- the population "
