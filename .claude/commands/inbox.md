@@ -170,16 +170,23 @@ own, and one that cannot be read says so on its own line:
   Two sessions in one checkout are flagged and named by pid and session id:
   they share its plan, index and mail cursor (one seat is one session in its
   own checkout), and the registry lists headless and editor sessions too.
-  A worktree answering a name another checkout of this clone answers (its
-  clone's own, when it was never named) gets a row of its own, `<name>
-  [<checkout>]`, saying the two write one mail ref and how to name it. A seat
-  with no checkout here -- another machine, another clone, or a worktree
-  since removed, which the channel cannot tell apart -- is its last mail and
-  nothing more; one with no mail for a week, no session here and no live
-  claim or job folds into a count. Where the registry cannot be read in full,
-  or does not list the session the board runs in, the line says the local
-  sessions are unread, never that there are none, and folds nothing; run
-  outside a session, it names every registry it read.
+  While it holds a session, a worktree answering a name another checkout of
+  this clone answers, or its clone's own name (it was never named), gets a
+  row of its own, `<name> [<checkout>]`, saying the two write one mail ref and
+  giving the two `git -C <worktree>` commands that name it (run anywhere: a
+  bare `git config --worktree` run in the checkout the board was read in
+  would rename that one). A checkout answering no usable name reads `(no seat
+  name) <path>`; one git could not be asked about reads `(seat name unread)
+  <path>`; a listed worktree whose folder is gone keeps its sessions under its
+  derived name and says so. A seat with no checkout here -- another machine,
+  another clone, or a worktree since removed, which the channel cannot tell
+  apart -- is its last mail and nothing more; one with no mail for a week, no
+  session here and no live claim or job folds into a count, and one a live
+  claim or job keeps on the line says so. Where the registry cannot be read
+  in full, or does not list the session the board runs in, the line says the
+  local sessions are unread, never that there are none, and nothing folds
+  while any local reading is unread; run outside a session, it names every
+  registry it read.
 - **asks:** the requests no `ack` names, from every seat, oldest first, each
   as its full id, its sender, its lane and its age. Only an `ack` naming the
   full id answers a request (a note, a release or an assign that names one

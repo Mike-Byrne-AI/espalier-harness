@@ -145,6 +145,12 @@ Runner = Callable[..., tuple[int, str, str]]
 
 # ------------------------------------------------------------- the setting --
 
+#: How :func:`machine_setting`'s answer opens when git could not be asked at
+#: all (a timeout, a spawn that failed), as opposed to a name not set or not
+#: usable: the board reads a checkout's seat name as unread on it, never as none.
+MACHINE_UNREAD = "git config could not be read"
+
+
 def machine_setting(root: Path, *, run: Runner = run, timeout: float = 10.0) -> tuple[str | None, str]:
     """``(machine, how it was read)`` for ``git config espalier.machine`` in
     the clone at ``root``: a word of lowercase letters, digits and hyphens (32
@@ -154,7 +160,7 @@ def machine_setting(root: Path, *, run: Runner = run, timeout: float = 10.0) -> 
     try:
         rc, out, _err = run(["git", "config", "--get", MACHINE_KEY], cwd=str(root), env=git_env(), timeout=timeout)
     except Unresolvable as exc:
-        return None, f"git config could not be read ({exc}), so no machine is named and the channel is off"
+        return None, f"{MACHINE_UNREAD} ({exc}), so no machine is named and the channel is off"
     value = out.strip()
     if rc != 0 or not value:
         return None, f"git config {MACHINE_KEY} is not set, so the channel is off (the default)"

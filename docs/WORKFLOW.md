@@ -462,6 +462,37 @@ mid-task, the plan survives. The next session's SessionStart hook
 surfaces the active blueprint automatically; `/status` and
 `/context-load` show pending steps explicitly.
 
+### Parallel seats
+
+When several Claude Code sessions work one repository at once, each runs as a
+**seat**: one session in its own checkout, named by `git config
+espalier.machine <name>`. A linked worktree of a named clone is given a name of
+its own at SessionStart (`<clone>-<directory>`; the banner's `Seat:` line says
+so). Seats coordinate through the mail channel (`/inbox`): a seat claims the
+files it works so another does not duplicate them, a dispatcher seat (the
+`dispatcher` key in `espalier.toml`) assigns the jobs, and a seat with a
+question sends the dispatcher a request. Two sessions in one checkout are one
+seat, which must not happen: they share its plan, its git index and its mail
+cursor.
+
+Before stating what is open, merging or blocked, read the board (`/inbox
+board`): it reads GitHub and the mail now, where the banner and a handoff note
+are snapshots. Two of its lines are about the seats themselves:
+
+- `seats:` gives each seat's last mail and its age, and for the checkouts of
+  this clone the live Claude Code sessions in each, from Claude Code's own
+  session registry. Two sessions in one checkout are flagged and named by pid.
+  A seat with no checkout here is its last mail and nothing more: the channel
+  cannot say whether a session elsewhere is running, so ask a quiet seat
+  rather than presume it gone.
+- `asks:` gives every request no ack answers yet, oldest first, with its full
+  id and age. Answer one with an ack naming that id (`python tools/cc/mail.py
+  send --type ack --ack <id> --text "<what was done>"`); the dispatcher seat
+  also sees the count on its banner's `Mail:` line.
+
+`/inbox` has the rest: the channel's verbs, claims and releases, and what each
+board line means.
+
 ---
 
 ## Advanced workflows
