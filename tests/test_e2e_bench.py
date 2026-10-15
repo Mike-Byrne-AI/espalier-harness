@@ -2077,20 +2077,21 @@ class TestRunnerCommandConstruction:
         without a time, the cold store left unread, or an absolute target
         joined onto the work dir."""
         import os
-        import time
 
         from bench.end_to_end.runner import _target_state
 
         (tmp_path / "src").mkdir()
         target = tmp_path / "src" / "app.py"
         target.write_text("x = 2", encoding="utf-8")
-        os.utime(target, (time.time() - 3600, time.time() - 3600))
-        started = time.time() - 60
+        # Back-dated to a fixed epoch (2001), long before this test made the
+        # file: no clock reading to compare against.
+        old = 1_000_000_000.0
+        os.utime(target, (old, old))
         back_dated = _target_state(tmp_path, "src/app.py", "aa")
-        assert back_dated["mtime"] < started < back_dated["ctime"]
+        assert back_dated["mtime"] == old < back_dated["ctime"]
         target.unlink()
         removed = _target_state(tmp_path, "src/app.py", "aa")
-        assert removed["after"] is None and removed["mtime"] is None and removed["ctime"] > started
+        assert removed["after"] is None and removed["mtime"] is None and removed["ctime"] > old
         (tmp_path / "cc" / "_cold").mkdir(parents=True)
         (tmp_path / "cc" / "_cold" / "20261014T120003Z-execution_plan.json").write_text(
             json.dumps({"created": "2026-10-14T12:00:02+00:00", "status": "in_progress"}), encoding="utf-8")
