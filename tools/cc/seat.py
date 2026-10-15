@@ -72,6 +72,7 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import checkout_sync as sync  # noqa: E402  occupancy, the worktree list, the removal rules
 import mail  # noqa: E402  the seat names, the claims and jobs folds, the release
+from _json_safe import os_error_text  # noqa: E402  an OSError's path spelled as a path
 
 WORKTREES_REL = sync.WORKTREES_REL
 INCLUDE_FILE = ".worktreeinclude"
@@ -441,7 +442,7 @@ def copy_includes(root: Path, worktree: Path) -> tuple[list[str], list[str]]:
                 shutil.copy2(src, dst)
                 copied.append(rel)
         except (ValueError, NotImplementedError, OSError) as exc:
-            skipped.append(f"{entry} ({sync._ascii(str(exc))[:80]})")
+            skipped.append(f"{entry} ({sync._ascii(os_error_text(exc))[:80]})")
     return copied, skipped
 
 
