@@ -2243,7 +2243,8 @@ def other_live_sessions(root: Path, sid: object, now: float | None = None) -> li
         record = _read_marker(path)
         started = record.get("started") if isinstance(record.get("started"), str) else ""
         started_at = _marker_time_s(started) if started else None
-        cwd = record.get("cwd") if isinstance(record.get("cwd"), str) else ""
+        held = record.get("cwd")
+        cwd: str = held if isinstance(held, str) else ""
         pid = _window_pid(record.get("pid"))
         window = record.get("window") is True
         rows.append({
