@@ -9,9 +9,13 @@ read now: the merge rules, the post-merge verdict on the base branch (and on a
 red one, the pull request that turned it red and the revert), every open pull
 request with its seat and what GitHub says holds it -- and, for one whose armed
 auto-merge would land it on its own green CI, whether the base has moved near
-its files since that CI ran -- the dispatcher's live
-assignments, the live claims, and the ledger's live row count at the base
-branch's tip (a checkout that stops moving would otherwise report its own).
+its files since that CI ran -- the seats (every machine's last mail, and for
+this clone's checkouts the live Claude Code sessions in each, two in one
+checkout flagged), the dispatcher's live assignments, the asks (requests no
+ack names, oldest first), the live claims, and the ledger's live row count at
+the base branch's tip (a checkout that stops moving would otherwise report
+its own). Another machine's seat is its last mail and nothing more: the
+channel is all this can read about another machine.
 
 Read-only: it writes nothing into the tree, sends nothing, and moves no ref
 beyond the mail fetch and the base branch's remote-tracking ref (both skipped
@@ -30,6 +34,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import re
 import sys
 import tarfile
@@ -106,11 +111,20 @@ _BASE_COUNT = (
     "        text = rf.ledger_view_from_texts(text, [tuple(r) for r in data['rows']]).text\n"
     "print(json.dumps({'live': len(gen.live_member_ids(text)), **where}))\n"
 )
-#: What GitHub's ``mergeStateStatus`` means for the seat reading it.
+#: How many unanswered requests the asks line names before "and N more".
+ASKS_SHOWN = 6
+#: What two live sessions in one checkout share (root CLAUDE.md Core Rule 15
+#: on the self-host tree: one seat is one session in its own checkout).
+_SHARED = ("TWO SESSIONS IN ONE CHECKOUT share its plan, index and mail cursor; one seat per checkout: "
+           "close one, or move it to a worktree of its own")
+#: What GitHub's ``mergeStateStatus`` means for the seat reading it. UNSTABLE
+#: is also what a check that is not required reads while it still runs:
+#: measured 2026-10-15 on a pull request with every other check green, five
+#: reads over twenty seconds while one optional check re-ran, then CLEAN.
 MERGE_STATES: dict[str, str] = {
     "CLEAN": "ready",
     "HAS_HOOKS": "ready",
-    "UNSTABLE": "ready; an optional check is red",
+    "UNSTABLE": "ready; an optional check is red or still running",
     "BEHIND": "behind the base (holds only under the up-to-date rule)",
     "BLOCKED": "blocked: a required check or a review holds it",
     "DIRTY": "CONFLICTS with the base: its seat runs `python tools/cc/ship.py catch-up`",
@@ -399,10 +413,90 @@ def fetch_base(root: Path, base: str, *, run_: Runner = run) -> tuple[bool, str]
     return True, ""
 
 
-def collect(root: Path, *, fetch: bool = True, run_: Runner = run) -> dict:
+def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = None,
+                  inside_session: bool | None = None) -> dict:
+    """This clone's checkouts with the live Claude Code sessions in each:
+    ``{"checkouts": [{"path", "main", "seat", "sessions"}], "unread": ""}``,
+    or no checkouts and ``unread`` naming why. The sessions are Claude Code's
+    own registry (``checkout_sync.live_sessions``: an entry whose process is
+    alive), each counted for the DEEPEST checkout that holds its cwd, since a
+    worktree sits inside the main checkout's folder. A seat is the clone's
+    machine name for the main checkout and ``<clone>-<directory>`` for a
+    worktree (``mail.worktree_seat_name``, the name SessionStart gives it).
+    Unread, never empty, where the registry cannot be read in full, or where
+    this runs inside a session the registry does not list (then it is not the
+    registry that session writes to: ``checkout_sync.main``'s own check).
+    ``inside_session`` None reads ``CLAUDECODE``; ``config_dir`` is for tests."""
+    try:
+        import checkout_sync   # lazily: a fixture that copies the board without it costs this read only
+    except ImportError as exc:
+        return {"checkouts": [], "unread": f"checkout_sync.py could not be loaded beside the board ({exc})"}
+    rc, listing, err = run_(["git", "worktree", "list", "--porcelain"], cwd=str(root), timeout=GH_TIMEOUT,
+                            env=_git_env())
+    if rc != 0:
+        return {"checkouts": [], "unread": f"git could not list this clone's checkouts: {err.strip()[:160]}"}
+    sessions = checkout_sync.live_sessions(config_dir)
+    if sessions is None:
+        return {"checkouts": [], "unread": "Claude Code's session registry could not be read in full"}
+    if inside_session is None:
+        inside_session = bool(os.environ.get("CLAUDECODE"))
+    if inside_session and checkout_sync.own_entry(sessions) is None:
+        return {"checkouts": [], "unread": "Claude Code's session registry does not list this session, so it is "
+                                           "not the registry this session writes to"}
+    clone = mail.clone_machine(root, run=run_) or ""
+    checkouts: list[dict] = []
+    for i, block in enumerate(checkout_sync.parse_worktrees(listing)):
+        path = block.get("worktree") or ""
+        if not path or "bare" in block:
+            continue
+        seat = clone if i == 0 else ((mail.worktree_seat_name(clone, Path(path).name) or "") if clone else "")
+        checkouts.append({"path": path, "main": i == 0, "seat": seat, "sessions": []})
+    for session in sessions:
+        cwd = str(session.get("cwd") or "")
+        holders = [c for c in checkouts if checkout_sync.within(cwd, c["path"])]
+        if holders:
+            deepest = max(holders, key=lambda c: len(Path(c["path"]).parts))
+            deepest["sessions"].append({"pid": session.get("pid"), "session_id": session.get("session_id") or ""})
+    return {"checkouts": checkouts, "unread": ""}
+
+
+def seat_rows(by_machine: dict[str, list[dict]], local: dict, now: datetime | None = None) -> list[dict]:
+    """One row per seat, by name: every machine with mail (its last message's
+    type and age) and every checkout of this clone holding a live session.
+    ``checkout`` and ``sessions`` are None on a row this clone holds no
+    checkout for -- another machine, whose state the channel cannot tell --
+    and on every row when the local read was unread. ``shared`` flags two or
+    more live sessions in one checkout."""
+    rows: dict[str, dict] = {}
+    for machine, messages in by_machine.items():
+        last = messages[-1] if messages else None
+        rows[machine] = {"seat": machine, "checkout": None, "path": None, "sessions": None, "shared": False,
+                         "last_mail": None if last is None else {
+                             "id": last.get("id"), "type": last.get("type"), "at": last.get("at"),
+                             "age_s": mail.age_seconds(last, now)}}
+    main = next((c["path"] for c in local.get("checkouts") or [] if c.get("main")), "")
+    for checkout in local.get("checkouts") or []:
+        sessions = checkout.get("sessions") or []
+        seat = checkout.get("seat") or ""
+        if not sessions and seat not in rows:
+            continue
+        path = str(checkout.get("path") or "")
+        try:
+            where = Path(path).relative_to(main).as_posix() if main else path
+        except ValueError:
+            where = path   # a worktree outside the main checkout's folder: its own path
+        key = seat or f"(no seat name) {path}"
+        row = rows.setdefault(key, {"seat": key, "last_mail": None})
+        row.update(checkout="the main checkout" if checkout.get("main") else where.replace("\\", "/"), path=path,
+                   sessions=sessions, shared=len(sessions) >= 2)
+    return [rows[k] for k in sorted(rows)]
+
+
+def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime | None = None) -> dict:
     """Every section, each read on its own: a section that cannot be read is
-    ``{"unread": reason}`` and the rest still come back."""
-    board: dict = {"read_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+    ``{"unread": reason}`` and the rest still come back. ``now`` is for tests."""
+    now = now or datetime.now(timezone.utc)
+    board: dict = {"read_at": now.strftime("%Y-%m-%dT%H:%M:%SZ")}
     base = _merge_rules.base_branch(root)
     board["base"] = base
     rules = _merge_rules.read(root, None, base)
@@ -426,6 +520,12 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run) -> dict:
     claims = mail.live_claims(by_machine)
     board["claims"] = claims
     board["assignments"] = mail.live_assignments(by_machine, dispatcher)
+    board["asks"] = mail.live_requests(by_machine, now=now)
+    try:
+        local = read_sessions(root, run_=run_)
+    except Unresolvable as exc:
+        local = {"checkouts": [], "unread": str(exc)}
+    board["seats"] = {"rows": seat_rows(by_machine, local, now), "unread": local.get("unread") or ""}
     seat_of_lane = mail.lane_seats(by_machine)
     board["base_fetch"] = {"state": "skipped", "problem": ""}
     if fetch:
@@ -512,6 +612,38 @@ def _red_line(pm: dict, base: str, prs: object) -> str:
     return text
 
 
+def _age(seconds: object) -> str:
+    """'4 min', '6 h 20 min', '2 d 3 h'; 'an unread time' where the stamp did
+    not parse."""
+    if not isinstance(seconds, int) or isinstance(seconds, bool):
+        return "an unread time"
+    m = max(0, seconds) // 60
+    if m < 60:
+        return f"{m} min"
+    if m < 24 * 60:
+        return f"{m // 60} h {m % 60} min"
+    return f"{m // (24 * 60)} d {m % (24 * 60) // 60} h"
+
+
+def _seat_line(row: dict, mail_unread: bool) -> str:
+    """One seat: its last mail (the only thing the channel says about another
+    machine, so a remote row says nothing of liveness), then, for a checkout
+    of this clone, its live sessions from Claude Code's registry."""
+    last = row.get("last_mail")
+    if last:
+        text = f"{row.get('seat')}: last mail {_age(last.get('age_s'))} ago ({last.get('type')})"
+    else:
+        text = f"{row.get('seat')}: " + ("mail unread" if mail_unread else "no mail")
+    sessions = row.get("sessions")
+    if sessions is None:
+        return text
+    if not sessions:
+        return text + f"; no live session in {row.get('checkout')}"
+    n = len(sessions)
+    text += f"; {n} live session{'s' if n != 1 else ''} in {row.get('checkout')}"
+    return text + (f": {_SHARED}" if row.get("shared") else "")
+
+
 def _job(re_: dict) -> str:
     parts = [str(re_.get("lane") or "")] + [str(c) for c in re_.get("classes") or []] + [
         str(i) for i in re_.get("ids") or []]
@@ -556,6 +688,12 @@ def render(board: dict) -> str:
         head = "jobs:     (no dispatcher named, so every seat's assigns count) "
     if board.get("mail_note"):
         lines.append(f"mail:     {board['mail_note']}")
+    seats = board.get("seats") or {}
+    seat_lines = [_seat_line(row, bool(board.get("mail_unread"))) for row in seats.get("rows") or []]
+    if seats.get("unread"):
+        seat_lines.append(f"live sessions here unread: {seats['unread']}")
+    for i, text in enumerate(seat_lines or ["none: no machine has mail and no checkout here holds a live session"]):
+        lines.append(("seats:    " if i == 0 else "          ") + text)
     if board.get("mail_unread"):
         lines.append(head + f"unread (the mail could not be read: {board['mail_unread']})")
     elif not jobs:
@@ -564,6 +702,19 @@ def render(board: dict) -> str:
         for i, a in enumerate(jobs):
             re_ = a.get("re") or {}
             lines.append((head if i == 0 else "          ") + f"{re_.get('seat')}: {_job(re_)} (since {a.get('at')}; assign {a.get('id')})")
+    asks = board.get("asks") or []
+    if board.get("mail_unread"):
+        lines.append(f"asks:     unread (the mail could not be read: {board['mail_unread']})")
+    elif not asks:
+        lines.append("asks:     none open (every request has an ack naming it)")
+    else:
+        rows = [f"{str(m.get('id') or '').rsplit('-', 1)[-1]} {m.get('from')} {(m.get('re') or {}).get('lane') or '-'}: "
+                f"{_age(m.get('age_s'))}" for m in asks[:ASKS_SHOWN]]
+        if len(asks) > ASKS_SHOWN:
+            rows.append(f"and {len(asks) - ASKS_SHOWN} more")
+        for i, text in enumerate(rows):
+            lines.append((f"asks:     {len(asks)} open (requests no ack names, oldest first): " if i == 0
+                          else "          ") + text)
     claims = board.get("claims") or []
     if board.get("mail_unread"):
         lines.append(f"claims:   unread ({board['mail_unread']})")

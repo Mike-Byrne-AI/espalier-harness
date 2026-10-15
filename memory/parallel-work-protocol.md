@@ -169,6 +169,19 @@ remembered. A red `main` is reverted before anything lands on it.
 A Claude session acts only when prompted. The design tolerates a dispatcher
 that is away: a seat with a queue does not need it in real time.
 
+**The dispatcher's first read is the board's `seats:` and `asks:` lines**
+(`python3 tools/cc/board.py`, `TP-701` Wave A). `asks:` is every request no
+`ack` names, oldest first with its age: the answers owed, and on the
+dispatcher's clone the banner's `Mail:` line carries the count and the oldest
+age. A request that went moot is closed with an ack saying so, or it stays on
+the line. `seats:` is each machine's last mail and, for this clone's
+checkouts, the live sessions Claude Code's registry lists: two in one checkout
+are flagged (the state the `win-2` relaunch reached at 2026-10-15 02:00Z,
+caught then only by a seat reading its banner). Another machine's row is its
+last mail only; whether its session runs is not something the channel can
+say, so a quiet seat is asked, not presumed dead. Both were read by hand before
+(an ad-hoc census over every mail ref; the pids checked one by one).
+
 **Compare a job's functions, not only its files, before assigning it.** Grep
 the pack task for the functions it edits and set them against what each seat's
 live and queued lanes edit: many lanes touch a shared module such as

@@ -310,6 +310,104 @@ class TestAssignments:
         assert mail.assign_refusal(tmp_path, "win-2") is None   # no dispatcher named: a lone operator assigns
 
 
+class TestLiveRequests:
+    """TP-701 Wave A-1: the requests no ``ack`` answers, the dispatcher's
+    unanswered asks. Pairing on the request's id, never on acks alone: on
+    every mail ref read 2026-10-15, 37 of 92 acks answered a note, an ack or a
+    claim (A-0 item 2), so "acks minus requests" is not the count."""
+
+    _T0 = datetime(2026, 10, 14, 20, 0, 0, tzinfo=timezone.utc)
+    _NOW = datetime(2026, 10, 15, 2, 30, 0, tzinfo=timezone.utc)
+
+    def test_a_request_an_ack_names_is_answered_and_one_no_ack_names_is_live(self, mail):
+        """Dies to: the ack pairing dropped (the answered request listed)."""
+        asked = _msg(mail, "win", "request", "a", lane="lane/a", now=self._T0)
+        open_ = _msg(mail, "win-2", "request", "b", now=self._T0.replace(minute=5))
+        answer = _msg(mail, "air", "ack", "done", ack=asked["id"], now=self._T0.replace(minute=9))
+        live = mail.live_requests({"win": [asked], "win-2": [open_], "air": [answer]}, now=self._NOW)
+        assert [m["id"] for m in live] == [open_["id"]]
+
+    def test_only_an_ack_answers_a_request(self, mail):
+        """A note or a release whose ``ack`` field names the request is not its
+        answer (one such note is on the live record). Dies to: any message
+        carrying the id read as the answer."""
+        asked = _msg(mail, "win", "request", "a", now=self._T0)
+        note = _msg(mail, "air", "note", "seen", ack=asked["id"], now=self._T0.replace(minute=1))
+        release = _msg(mail, "air", "release", "", ack=asked["id"], now=self._T0.replace(minute=2))
+        live = mail.live_requests({"win": [asked], "air": [note, release]}, now=self._NOW)
+        assert [m["id"] for m in live] == [asked["id"]]
+
+    def test_an_ack_on_the_askers_own_ref_closes_it(self, mail):
+        """The dispatcher's own acks live on its own ref, so a reader that
+        leaves out its own machine would list every request it answered. Dies
+        to: a machine's own ref excluded from the pairing."""
+        asked = _msg(mail, "air", "request", "operator: which?", now=self._T0)
+        closed = _msg(mail, "air", "ack", "answered in person", ack=asked["id"], now=self._T0.replace(minute=3))
+        assert mail.live_requests({"air": [asked, closed]}, now=self._NOW) == []
+
+    def test_oldest_first_across_machines_each_with_its_age(self, mail):
+        """Dies to: the order by machine, or the age read from anything but
+        the request's own stamp."""
+        late = _msg(mail, "air", "request", "late", now=self._T0.replace(hour=23))
+        early = _msg(mail, "win", "request", "early", now=self._T0)
+        live = mail.live_requests({"air": [late], "win": [early]}, now=self._NOW)
+        assert [(m["text"], m["age_s"]) for m in live] == [("early", 6 * 3600 + 1800), ("late", 3 * 3600 + 1800)]
+
+    def test_the_fold_leaves_the_messages_it_read_untouched(self, mail):
+        asked = _msg(mail, "win", "request", "a", now=self._T0)
+        before = dict(asked)
+        mail.live_requests({"win": [asked]}, now=self._NOW)
+        assert asked == before
+
+    def test_a_stamp_that_does_not_parse_has_no_age(self, mail):
+        asked = _msg(mail, "win", "request", "a", now=self._T0)
+        asked["at"] = "yesterday"
+        assert mail.live_requests({"win": [asked]}, now=self._NOW)[0]["age_s"] is None
+
+
+class TestTextFile:
+    """TP-701 Wave A-4: ``send --text-file`` takes the body from a file, so a
+    long or quote-heavy body never rides a shell string (an assign of 2,083
+    characters cost the dispatcher a round trip at the cap, 2026-10-14). The
+    whole file, UTF-8, exclusive with ``--text``; the dry run counts the body
+    against the cap, and the cap itself is unchanged."""
+
+    def _send(self, mail, monkeypatch, tmp_path, *args: str) -> int:
+        monkeypatch.setattr(mail, "machine_setting", lambda root, **kw: ("mac", "git config espalier.machine = mac"))
+        return mail.main(["--root", str(tmp_path), "send", "--type", "note", *args])
+
+    def test_the_body_is_the_whole_file_and_the_dry_run_counts_it(self, mail, monkeypatch, tmp_path, capsys):
+        """Dies to: the option missing, the file read in part, or the count left off."""
+        body = tmp_path / "body.txt"
+        text = "first line\nsecond line, \"quoted\" and `ticked` -- café\n"
+        body.write_bytes(text.encode("utf-8"))
+        assert self._send(mail, monkeypatch, tmp_path, "--text-file", str(body), "--dry-run") == 0
+        out, err = capsys.readouterr()
+        assert json.loads(out)["text"] == text.strip()
+        assert f"body: {len(text.strip())} of {mail.MAX_TEXT} characters" in err
+
+    def test_text_and_text_file_together_is_a_usage_error(self, mail, monkeypatch, tmp_path):
+        body = tmp_path / "body.txt"
+        body.write_text("x", encoding="utf-8")
+        with pytest.raises(SystemExit) as stop:
+            self._send(mail, monkeypatch, tmp_path, "--text", "y", "--text-file", str(body), "--dry-run")
+        assert stop.value.code == 2
+
+    def test_a_file_that_cannot_be_read_as_utf8_refuses_by_name(self, mail, monkeypatch, tmp_path, capsys):
+        latin = tmp_path / "latin.txt"
+        latin.write_bytes(b"caf\xe9\n")
+        assert self._send(mail, monkeypatch, tmp_path, "--text-file", str(latin), "--dry-run") == 1
+        assert "latin.txt" in capsys.readouterr().err
+        assert self._send(mail, monkeypatch, tmp_path, "--text-file", str(tmp_path / "gone.txt"), "--dry-run") == 1
+        assert "gone.txt" in capsys.readouterr().err
+
+    def test_the_cap_is_unchanged(self, mail, monkeypatch, tmp_path, capsys):
+        long = tmp_path / "long.txt"
+        long.write_text("x" * (mail.MAX_TEXT + 1), encoding="utf-8")
+        assert self._send(mail, monkeypatch, tmp_path, "--text-file", str(long), "--dry-run") == 1
+        assert f"the cap is {mail.MAX_TEXT}" in capsys.readouterr().err
+
+
 @pytest.mark.skipif(not __import__("shutil").which("git"), reason="git is the oracle for per-worktree config")
 class TestInheritedWorktreeName:
     """A linked worktree reads its clone's config, so without a `--worktree`

@@ -3020,6 +3020,44 @@ class TestMailLine:
         mod = _load()
         assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=_mail_stub()) == ""
 
+    _ASKS = [{"id": "r1", "age_s": 2 * 86400 + 60}, {"id": "r2", "age_s": 120}]
+
+    def _asks_stub(self, machine: str, **over):
+        seen: list = []
+        return _mail_stub(
+            machine_setting=lambda root, timeout=None: (machine, f"git config espalier.machine = {machine}"),
+            dispatcher_setting=lambda root: ("mac", "espalier.toml sets dispatcher = mac"),
+            live_requests=lambda by: seen.append(by) or self._ASKS, **over), seen
+
+    def test_the_dispatchers_clone_counts_the_unanswered_asks(self, tmp_path):
+        """TP-701 Wave A-1: the dispatcher's clone opens on how many requests no
+        ack names, every machine's own ref read (its own acks live there). Dies
+        to: the dispatcher check dropped (a worker seat would count too)."""
+        mod = _load()
+        stub, seen = self._asks_stub("mac", read_mail=lambda root, timeout=None: ({"mac": [], "win": []}, {}))
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        assert line == "2 unanswered asks (requests no ack names), oldest 2 d ago: /inbox board lists them"
+        assert seen and set(seen[0]) == {"mac", "win"}, "the fold reads every ref, this machine's own included"
+        worker, _ = self._asks_stub("win")
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=worker) == ""
+
+    def test_the_count_follows_the_headlines_and_their_tail(self, tmp_path):
+        mod = _load()
+        stub, _ = self._asks_stub("mac", read_mail=lambda root, timeout=None: ({"win": [_mail_message(1)]}, {}))
+        rows = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub).split("\n")
+        assert rows[0] == 'win: note -- "hello"' and rows[1] == mod._PR_INDENT + mod._MAIL_TAIL
+        assert rows[2] == mod._PR_INDENT + "2 unanswered asks (requests no ack names), oldest 2 d ago: /inbox board lists them"
+
+    def test_an_older_mail_module_costs_the_count_and_nothing_else(self, tmp_path):
+        """A deployed mail.py from before live_requests: the line renders as
+        it did. Dies to: the new reader called unguarded."""
+        mod = _load()
+        stub = _mail_stub(machine_setting=lambda root, timeout=None: ("mac", "named"),
+                          dispatcher_setting=lambda root: ("mac", "named"),
+                          read_mail=lambda root, timeout=None: ({"win": [_mail_message(1)]}, {}))
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        assert line == 'win: note -- "hello"\n' + mod._PR_INDENT + mod._MAIL_TAIL
+
     def test_the_banner_carries_the_line_after_merged_only_when_given(self, tmp_path):
         mod = _load()
         assert "Mail:" not in mod._build_context(tmp_path, False, False)

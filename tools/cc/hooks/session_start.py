@@ -976,9 +976,30 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> s
     by_machine, _skipped = mail.read_mail(root, timeout=left)
     pending = mail.unread(by_machine, mail.read_cursor(root), exclude_machine=machine)
     rows = [_ascii(mail.headline(m)) for m in reversed(pending)]
+    asks = _asks_count(root, mail, machine, by_machine)
     if not rows:
-        return note
-    return _render_rows(rows) + "\n" + _PR_INDENT + _MAIL_TAIL + (f" {note}" if note else "")
+        return " ".join(part for part in (asks, note) if part)
+    line = _render_rows(rows) + "\n" + _PR_INDENT + _MAIL_TAIL + (f" {note}" if note else "")
+    return line + (f"\n{_PR_INDENT}{asks}" if asks else "")
+
+
+def _asks_count(root: Path, mail: Any, machine: str, by_machine: dict) -> str:
+    """On the dispatcher's clone (``dispatcher`` in espalier.toml names this
+    machine), how many requests no ack names and how old the oldest is: the
+    asks it owes an answer (TP-701 Wave A-1); '' on any other seat, with none
+    open, or where the deployed mail.py predates the reader. Every machine's
+    ref is counted, this one's own included, since the dispatcher's acks live
+    there. No spawn: the refs were read above, the setting is one file."""
+    setting = getattr(mail, "dispatcher_setting", None)
+    reader = getattr(mail, "live_requests", None)
+    if setting is None or reader is None or setting(root)[0] != machine:
+        return ""
+    asks = reader(by_machine)
+    if not asks:
+        return ""
+    n = len(asks)
+    return (f"{n} unanswered ask{'s' if n != 1 else ''} (requests no ack names), "
+            f"oldest {_age_text(asks[0].get('age_s'))}: /inbox board lists them")
 
 
 def _latest_run_per_check(rows: list) -> list:

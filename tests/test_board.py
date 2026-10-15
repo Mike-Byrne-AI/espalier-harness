@@ -55,7 +55,11 @@ def _gh(answers: dict[str, object]):
     return run
 
 
-def _stub_channel(monkeypatch, board, by_machine=None, dispatcher="air", fetch=(True, ""), read_error=None):
+def _stub_channel(monkeypatch, board, by_machine=None, dispatcher="air", fetch=(True, ""), read_error=None,
+                  sessions=None):
+    # This clone's checkouts and their live sessions: git and Claude Code's
+    # registry, which TestSeats drives for real over a scratch registry.
+    monkeypatch.setattr(board, "read_sessions", lambda root, **kw: sessions or {"checkouts": [], "unread": ""})
     monkeypatch.setattr(board.mail, "machine_setting", lambda root, run=None: ("win", "stubbed"))
     monkeypatch.setattr(board.mail, "fetch_mail", lambda root, run=None: fetch)
 
@@ -119,6 +123,20 @@ class TestOpenPullRequests:
         assert "#7 lane/a [no seat's claim names this branch]: CONFLICTS with the base" in text
         assert "#8 lane/b [win-2]: behind the base (holds only under the up-to-date rule); auto-merge not armed" in text
         assert text.isascii()
+
+    def test_unstable_reads_red_or_still_running(self, board, monkeypatch, tmp_path):
+        """TP-701 A-3, measured 2026-10-15 on #211 (auto-merge off, every other
+        check green): with only the optional artifact-parity re-run going (run
+        38508632701), five reads from 05:36:13Z to 05:36:32Z said UNSTABLE, then
+        CLEAN once it passed. A pending optional check is UNSTABLE, so "red"
+        alone misread it (win-2's note 5f2ef0 on #207). The red half is not
+        measured here. Dies to: the old wording."""
+        _stub_channel(monkeypatch, board)
+        prs = [{"number": 211, "headRefName": "lane/a", "mergeStateStatus": "UNSTABLE", "isDraft": False,
+                "autoMergeRequest": None}]
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": prs, "run list": _GREEN_RUNS})))
+        assert "#211 lane/a [no seat's claim names this branch]: ready; an optional check is red or still " \
+               "running; auto-merge not armed" in text, text
 
     def test_a_shipped_pull_request_still_shows_its_seat(self, board, monkeypatch, tmp_path):
         """The board's first live run named no seat for win-2's just-shipped
@@ -327,6 +345,189 @@ class TestMailSections:
         _stub_channel(monkeypatch, board, dispatcher=board.mail.DISPATCHER_UNUSABLE)
         text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS})))
         assert "jobs:     (the dispatcher setting is unusable: stubbed reason)" in text
+
+
+_T0 = datetime(2026, 10, 14, 20, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 10, 15, 2, 25, 0, tzinfo=timezone.utc)
+
+
+def _suffix(message: dict) -> str:
+    return message["id"].rsplit("-", 1)[-1]
+
+
+class TestAsks:
+    """TP-701 Wave A-1: the requests no ack names, oldest first with their
+    ages: the dispatcher read them by hand from an ad-hoc census (2026-10-14).
+    Paired on the request's id; A-0 item 2 found acks answering notes, acks
+    and claims on the live record."""
+
+    def _board(self, board, monkeypatch, tmp_path, by_machine, **kw):
+        _stub_channel(monkeypatch, board, by_machine, **kw)
+        return board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW)
+
+    def test_the_line_lists_each_request_no_ack_names_with_its_age(self, board, monkeypatch, tmp_path):
+        """The wave's red. Dies to: the ack pairing dropped (the answered
+        request then appears)."""
+        mail = board.mail
+        answered = mail.new_message("win", "request", "a", lane="lane/a", now=_T0)
+        open_ = mail.new_message("win-2", "request", "b", now=_T0.replace(minute=5))
+        ack = mail.new_message("air", "ack", "done", ack=answered["id"], now=_T0.replace(minute=9))
+        collected = self._board(board, monkeypatch, tmp_path, {"win": [answered], "win-2": [open_], "air": [ack]})
+        assert [m["id"] for m in collected["asks"]] == [open_["id"]]
+        text = board.render(collected)
+        assert (f"asks:     1 open (requests no ack names, oldest first): {_suffix(open_)} win-2 -: 6 h 20 min"
+                in text), text
+        assert _suffix(answered) not in text
+
+    def test_the_line_names_the_lane_and_keeps_the_oldest_first(self, board, monkeypatch, tmp_path):
+        mail = board.mail
+        early = mail.new_message("win", "request", "a", lane="lane/a", now=_T0)
+        late = mail.new_message("air", "request", "b", lane="lane/b", now=_T0.replace(hour=23))
+        lines = board.render(self._board(board, monkeypatch, tmp_path, {"air": [late], "win": [early]})).splitlines()
+        at = next(i for i, ln in enumerate(lines) if ln.startswith("asks:"))
+        assert lines[at].endswith(f"{_suffix(early)} win lane/a: 6 h 25 min")
+        assert lines[at + 1] == f"          {_suffix(late)} air lane/b: 3 h 25 min"
+
+    def test_a_long_list_is_capped_with_a_count(self, board, monkeypatch, tmp_path):
+        mail = board.mail
+        asked = [mail.new_message("win", "request", f"r{i}", now=_T0.replace(minute=i)) for i in range(board.ASKS_SHOWN + 3)]
+        lines = board.render(self._board(board, monkeypatch, tmp_path, {"win": asked})).splitlines()
+        at = next(i for i, ln in enumerate(lines) if ln.startswith("asks:"))
+        assert lines[at].startswith(f"asks:     {board.ASKS_SHOWN + 3} open")
+        assert lines[at + board.ASKS_SHOWN] == "          and 3 more"
+
+    def test_none_open_and_unread_mail_read_differently(self, board, monkeypatch, tmp_path):
+        """Dies to: an unread mail printed as "none open", which reads as an answer."""
+        text = board.render(self._board(board, monkeypatch, tmp_path, {}))
+        assert "asks:     none open (every request has an ack naming it)" in text
+        text = board.render(self._board(board, monkeypatch, tmp_path, {}, read_error="git for-each-ref failed"))
+        assert "asks:     unread (the mail could not be read: git for-each-ref failed)" in text
+        assert "none open" not in text
+
+
+def _registry(tmp_path: Path, *cwds: Path) -> Path:
+    """A scratch Claude Code session registry: one entry per cwd, every pid
+    this process's own (alive), each its own session id."""
+    import os
+
+    config = tmp_path / "claude-config"
+    (config / "sessions").mkdir(parents=True)
+    for i, cwd in enumerate(cwds):
+        (config / "sessions" / f"{i}.json").write_text(
+            json.dumps({"pid": os.getpid(), "sessionId": f"session-{i}", "cwd": str(cwd)}), encoding="utf-8")
+    return config
+
+
+def _git_for(main: Path, *worktrees: Path, clone: str | None = "air"):
+    """A runner answering the two git reads the seats line makes: this clone's
+    checkouts (``worktree list --porcelain``) and its machine name."""
+    def run(argv, **kw):
+        if argv[1:3] == ["worktree", "list"]:
+            blocks = [f"worktree {main}\nHEAD {'1' * 40}\nbranch refs/heads/main\n"]
+            blocks += [f"worktree {w}\nHEAD {'2' * 40}\nbranch refs/heads/lane/{w.name}\n" for w in worktrees]
+            return 0, "\n".join(blocks), ""
+        if argv[1:3] == ["config", "--local"]:
+            return (0, clone + "\n", "") if clone else (1, "", "")
+        raise AssertionError(f"unexpected call {argv}")
+    return run
+
+
+class TestSeats:
+    """TP-701 Wave A-2: one row per seat. A remote seat is its last mail and
+    nothing more (the channel is all the board can read about another
+    machine); this clone's checkouts carry their live sessions from Claude
+    Code's own registry, and two in one checkout are flagged: the state the
+    win-2 relaunch reached on 2026-10-15 02:00Z, caught only by a seat
+    reading its banner."""
+
+    def _clone(self, tmp_path):
+        main = tmp_path / "repo"
+        work = main / ".claude" / "worktrees" / "work"
+        work.mkdir(parents=True)
+        return main, work
+
+    def _seats(self, board, main, work, config, by_machine=None):
+        local = board.read_sessions(main, run_=_git_for(main, work), config_dir=config, inside_session=False)
+        return board.seat_rows(by_machine or {}, local, _NOW), local
+
+    def test_two_sessions_in_one_checkout_are_flagged_and_one_is_not(self, board, tmp_path):
+        """The wave's red. Dies to: the grouping by checkout dropped, so two
+        sessions in one checkout read as two seats."""
+        main, work = self._clone(tmp_path)
+        rows, _ = self._seats(board, main, work, _registry(tmp_path, work, work))
+        [row] = rows
+        assert row["seat"] == "air-work" and len(row["sessions"]) == 2 and row["shared"] is True
+        text = board.render({"seats": {"rows": rows, "unread": ""}})
+        assert "seats:    air-work: no mail; 2 live sessions in .claude/worktrees/work: TWO SESSIONS IN ONE " \
+               "CHECKOUT" in text, text
+        single, _ = self._seats(board, main, work, _registry(tmp_path / "one", work))
+        assert single[0]["shared"] is False and "TWO SESSIONS" not in board.render({"seats": {"rows": single}})
+
+    def test_a_session_counts_for_the_deepest_checkout_that_holds_it(self, board, tmp_path):
+        """A worktree sits inside the main checkout's folder, so a prefix test
+        alone would count its session for both. Dies to: the first matching
+        checkout taken instead of the deepest."""
+        main, work = self._clone(tmp_path)
+        (work / "sub").mkdir()
+        rows, _ = self._seats(board, main, work, _registry(tmp_path, main, work / "sub"))
+        by_seat = {r["seat"]: r for r in rows}
+        assert len(by_seat["air"]["sessions"]) == 1 and by_seat["air"]["checkout"] == "the main checkout"
+        assert len(by_seat["air-work"]["sessions"]) == 1 and not by_seat["air-work"]["shared"]
+
+    def test_a_remote_seat_is_its_last_mail_and_never_live_or_dead(self, board, tmp_path):
+        """Dies to: a remote row worded as liveness the channel cannot support."""
+        main, work = self._clone(tmp_path)
+        mail = board.mail
+        first = mail.new_message("win", "note", "x", now=_T0)
+        last = mail.new_message("win", "claim", "", lane="lane/x", now=_T0.replace(hour=23, minute=25))
+        rows, _ = self._seats(board, main, work, _registry(tmp_path, work), {"win": [first, last]})
+        text = board.render({"seats": {"rows": rows, "unread": ""}})
+        row = next(ln for ln in text.splitlines() if "win:" in ln)
+        assert row.endswith("win: last mail 3 h 0 min ago (claim)"), row
+        assert "live" not in row and "dead" not in row
+
+    def test_a_local_seat_joins_its_mail_and_its_sessions(self, board, tmp_path):
+        main, work = self._clone(tmp_path)
+        note = board.mail.new_message("air", "note", "x", now=_T0.replace(hour=23, minute=25))
+        rows, _ = self._seats(board, main, work, _registry(tmp_path, work), {"air": [note]})
+        text = board.render({"seats": {"rows": rows, "unread": ""}})
+        assert "air: last mail 3 h 0 min ago (note); no live session in the main checkout" in text, text
+        assert "air-work: no mail; 1 live session in .claude/worktrees/work" in text, text
+
+    def test_an_unreadable_registry_is_unread_never_no_session(self, board, tmp_path):
+        """Dies to: a registry that cannot be read in full rendered as "no live
+        session" (live_sessions answers None for it, Assumption 6)."""
+        main, work = self._clone(tmp_path)
+        empty = tmp_path / "no-registry"
+        empty.mkdir()
+        note = board.mail.new_message("air", "note", "x", now=_T0)
+        rows, local = self._seats(board, main, work, empty, {"air": [note]})
+        assert "registry" in local["unread"]
+        text = board.render({"seats": {"rows": rows, "unread": local["unread"]}})
+        assert "no live session" not in text and "live sessions here unread" in text, text
+
+    def test_a_registry_that_does_not_list_this_session_is_unread(self, board, tmp_path):
+        """Run from inside a session, the registry must list it, or it is not
+        the registry this session writes to (checkout_sync.main's own check)."""
+        main, work = self._clone(tmp_path)
+        local = board.read_sessions(main, run_=_git_for(main, work), config_dir=_registry(tmp_path, work),
+                                    inside_session=True)
+        assert "does not list this session" in local["unread"]
+
+    def test_a_session_outside_this_clone_is_not_named(self, board, tmp_path):
+        main, work = self._clone(tmp_path)
+        elsewhere = tmp_path / "other-repo"
+        elsewhere.mkdir()
+        rows, _ = self._seats(board, main, work, _registry(tmp_path, elsewhere))
+        assert rows == []
+
+    def test_the_json_carries_both_new_keys(self, board, monkeypatch, tmp_path):
+        """The pass criterion: `board.py --json` carries asks and seats, and no
+        key an older reader keys on is gone."""
+        _stub_channel(monkeypatch, board)
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW)
+        assert {"asks", "seats", "open_prs", "post_merge", "assignments", "claims"} <= set(collected)
+        json.dumps(collected)
 
 
 class TestDerivedNotRestated:

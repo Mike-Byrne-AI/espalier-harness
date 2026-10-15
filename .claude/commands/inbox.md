@@ -15,7 +15,7 @@ Read the mail the other machines left on origin, list the live claims, or send o
 /inbox --all           — every message the other machines ever sent
 /inbox claims          — the live claims (claim minus release), every machine
 /inbox assignments     — the dispatcher's live assignments: which seat works which job
-/inbox board           — one live read before stating state: merge rules, the base's verdict, open PRs, jobs, claims
+/inbox board           — one live read before stating state: merge rules, the base's verdict, open PRs, seats, jobs, asks, claims
 /inbox send ...        — one message: a claim, a release, a note, a request, an ack, or (the dispatcher) an assign
 ```
 
@@ -164,6 +164,19 @@ own, and one that cannot be read says so on its own line:
   near its files since its CI ran -- a path both changed, or a Python module
   one import away -- gets a `stale:` line under it: its seat runs `catch-up`,
   so CI tests the combination before it merges. A move elsewhere says nothing.
+- **seats:** one row per seat: each machine's last mail and its age, and for
+  the checkouts of this clone the live Claude Code sessions in each, read from
+  Claude Code's own session registry. Two sessions in one checkout are flagged:
+  they share its plan, index and mail cursor, and one seat is one session in
+  its own checkout. Another machine's row is its last mail and nothing more,
+  since the channel cannot say whether a session there is running. Where the
+  registry cannot be read in full, or does not list the session the board runs
+  in, the line says the local sessions are unread, never that there are none.
+- **asks:** the requests no `ack` names, oldest first, each as the last six
+  characters of its id, its sender, its lane and its age. Only an `ack`
+  answers a request (a note or a release that names one does not), so a moot
+  request is closed with an ack that says so. The dispatcher's clone also
+  prints the count and the oldest age on the banner's `Mail:` line.
 - **jobs**, **claims** and the ledger's live row count, counted at the base
   branch's remote-tracking ref with the base's own ledger tools and naming the
   commit it read, so a checkout that stops moving still reads what the base
@@ -182,7 +195,13 @@ python tools/cc/mail.py send --type claim --lane lane/<name> --path <repo-relati
 python tools/cc/mail.py send --type release --ack <claim id>
 python tools/cc/mail.py send --type request --lane lane/<name> --path <path> --text "<what is asked>"
 python tools/cc/mail.py send --type ack --ack <request id> --text "<what was done>"
+python tools/cc/mail.py send --type request --lane lane/<name> --text-file <file> --dry-run
 ```
+
+`--text-file` takes the body from a file, the whole of it as UTF-8, in place
+of `--text`, so a long or quote-heavy body never rides a shell string. The cap
+is the same 2,000 characters; `--dry-run` prints the line it would send and,
+beside it, the body's count against the cap.
 
 The driver builds the commit under a scratch index from the message alone
 (the worktree, HEAD and the live index are never touched), moves this

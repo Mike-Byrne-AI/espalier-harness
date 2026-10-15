@@ -51,6 +51,7 @@ re-open it):
 Verbs::
 
     python tools/cc/mail.py send --type claim --lane lane/x --path tools/cc/x.py --text "..."
+    python tools/cc/mail.py send --type request --lane lane/x --text-file body.txt [--dry-run]
     python tools/cc/mail.py inbox [--all] [--mark-read] [--no-fetch] [--json]
     python tools/cc/mail.py claims [--no-fetch] [--json]
     python tools/cc/mail.py send --type assign --seat win --lane "the pack's wave B" --class C13
@@ -450,6 +451,37 @@ def lane_seats(by_machine: dict[str, list[dict]]) -> dict[str, str]:
             if lane not in latest or key[:3] > latest[lane][:3]:
                 latest[lane] = key
     return {lane: key[3] for lane, key in latest.items()}
+
+
+def age_seconds(message: dict, now: datetime | None = None) -> int | None:
+    """Whole seconds from the message's ``at`` stamp to ``now`` (UTC, the
+    clock when None), never negative; None where the stamp does not parse."""
+    try:
+        at = datetime.strptime(str(message.get("at") or ""), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return max(0, int(((now or datetime.now(timezone.utc)) - at).total_seconds()))
+
+
+def live_requests(by_machine: dict[str, list[dict]], *, now: datetime | None = None) -> list[dict]:
+    """The requests no ``ack`` message answers, oldest first, each a copy of
+    the request with ``age_s`` (:func:`age_seconds`): the unanswered asks. An
+    ack answers the request whose id its ``ack`` field names; a note or a
+    release carrying the id does not, and an ack naming anything else is no
+    one's answer here (on the live record 37 of 92 acks answered a note, an
+    ack or a claim, read 2026-10-15). Every machine's ref is read, the
+    asker's own included: an asker may close its own request, and the
+    dispatcher's acks live on its own ref. Ordered as the claims fold is: the
+    stamp, the machine, the position in its file."""
+    answered = {str(m.get("ack") or "") for messages in by_machine.values() for m in messages
+                if m.get("type") == "ack"}
+    asks: list[tuple[str, str, int, dict]] = []
+    for machine, messages in by_machine.items():
+        for i, m in enumerate(messages):
+            if m.get("type") == "request" and m.get("id") not in answered:
+                asks.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
+    asks.sort(key=lambda t: t[:3])
+    return [{**m, "age_s": age_seconds(m, now)} for _at, _who, _i, m in asks]
 
 
 def _touches(a: str, b: str) -> bool:
@@ -993,7 +1025,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("send", help="append one message to this machine's ref and push it")
     s.add_argument("--type", required=True, choices=TYPES)
-    s.add_argument("--text", default="", help="the body (a note or request needs one)")
+    body = s.add_mutually_exclusive_group()
+    body.add_argument("--text", default="", help="the body (a note or request needs one)")
+    body.add_argument("--text-file", default=None,
+                      help="the body from a file, the whole of it, UTF-8: a long or quote-heavy body never "
+                           "rides a shell string (the cap is the same)")
     s.add_argument("--lane", default=None, help="the lane this is about")
     s.add_argument("--class", dest="classes", action="append", default=[], help="a ledger class (repeatable)")
     s.add_argument("--path", dest="paths", action="append", default=[], help="a repo-relative path (repeatable)")
@@ -1021,6 +1057,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="this machine's name and the channel's refs")
     return parser
+
+
+def _read_text_file(path: str) -> str:
+    """``send --text-file``: the whole file as UTF-8 text (a byte-order mark is
+    read); a file that cannot be read, or is not UTF-8, refuses by its name."""
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        raise Unresolvable(f"--text-file could not be read: {os_error_text(exc)}") from None
+    text, problem = decode_text_or_problem(raw)
+    if problem:
+        raise Unresolvable(f"--text-file {path}: {problem}")
+    return text
 
 
 def _print_message(m: dict) -> None:
@@ -1060,7 +1109,8 @@ def main(argv: list[str] | None = None) -> int:
         if machine is None:
             raise Unresolvable(f"{how}; `git config {MACHINE_KEY} <name>` turns it on")
         if args.verb == "send":
-            message = new_message(machine, args.type, args.text, lane=args.lane, classes=args.classes,
+            text = _read_text_file(args.text_file) if args.text_file is not None else args.text
+            message = new_message(machine, args.type, text, lane=args.lane, classes=args.classes,
                                   paths=args.paths, ids=args.ids, ack=args.ack, seat=args.seat)
             if args.type == "assign":
                 refusal = assign_refusal(root, machine)
@@ -1071,6 +1121,7 @@ def main(argv: list[str] | None = None) -> int:
                 if hits:
                     raise Unresolvable("would not send, the guard reads a secret path in it: " + "; ".join(hits[:5]))
                 sys.stdout.write(encode(message))
+                print(f"body: {len(message['text'])} of {MAX_TEXT} characters", file=sys.stderr)
                 return 0
             send(root, message)
             return 0
