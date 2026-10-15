@@ -95,6 +95,18 @@ class TestMessageShape:
         assert _msg(mail, "mac", "ack", "", ack="some-id")["ack"] == "some-id"
         assert _msg(mail, "mac", "release", "", lane="lane/x")["ack"] == ""
 
+    def test_an_ack_names_the_message_it_answers_never_a_lane(self, mail):
+        """A lane closes claims and jobs through a release; nothing reads a
+        lane-only ack, so one was accepted and answered nothing, and the
+        refusal text pointed at it (failure-mode review, TP-701 r1; 0 of 123
+        acks on the live refs were lane-only, 2026-10-15). Dies to: a lane
+        accepted in place of the id."""
+        with pytest.raises(mail.Unresolvable, match=r"an ack names the message it answers \(--ack <id>\)"):
+            _msg(mail, "mac", "ack", "done", lane="lane/x")
+        with pytest.raises(mail.Unresolvable) as refused:
+            _msg(mail, "mac", "ack", "done")
+        assert "--lane" not in str(refused.value)
+
     def test_a_note_or_request_needs_text_and_the_text_is_capped(self, mail):
         with pytest.raises(mail.Unresolvable, match="needs text"):
             _msg(mail, "mac", "request", "   ")
@@ -308,6 +320,339 @@ class TestAssignments:
         assert "fix the dispatcher setting first" in (mail.assign_refusal(tmp_path, "air") or "")
         (tmp_path / "espalier.toml").unlink()
         assert mail.assign_refusal(tmp_path, "win-2") is None   # no dispatcher named: a lone operator assigns
+
+
+class TestMachineSettingReads:
+    def test_a_git_error_reads_as_unread_never_as_not_set(self, mail, tmp_path):
+        """`git config --get` exits 1 for a key that is not set and 128 for a
+        config git cannot read (a malformed file, a dubious-ownership refusal);
+        the board then said "(no seat name)" and folded the real seat (both
+        reviewers, TP-701 r4). Dies to: every nonzero exit read as not set."""
+        unset = lambda argv, **kw: (1, "", "")  # noqa: E731
+        broken = lambda argv, **kw: (128, "", "fatal: bad config line 3 in file .git/config")  # noqa: E731
+        assert mail.machine_setting(tmp_path, run=unset) == (None, mail.machine_setting(tmp_path, run=unset)[1])
+        assert not mail.machine_setting(tmp_path, run=unset)[1].startswith(mail.MACHINE_UNREAD)
+        name, how = mail.machine_setting(tmp_path, run=broken)
+        assert name is None and how.startswith(mail.MACHINE_UNREAD) and "bad config line 3" in how, how
+        quiet = lambda argv, **kw: (128, "", "")  # noqa: E731
+        assert "git exited 128: git exited 128" not in mail.machine_setting(tmp_path, run=quiet)[1]
+
+    def test_an_unread_name_is_not_answered_with_turn_it_on(self, mail, tmp_path, monkeypatch, capsys):
+        """`git config espalier.machine <name>` fails the same way on a config
+        git cannot read, and on a timeout it would rename a seat that has a
+        name (both reviewers, TP-701 r5). Dies to: the hint appended to an
+        unread reason."""
+        monkeypatch.setattr(mail, "machine_setting",
+                            lambda root, **kw: (None, f"{mail.MACHINE_UNREAD} (took longer than 10s), so the channel is off"))
+        assert mail.main(["--root", str(tmp_path), "claims", "--no-fetch"]) == 1
+        err = capsys.readouterr().err
+        assert mail.MACHINE_UNREAD in err and "turns it on" not in err, err
+        monkeypatch.setattr(mail, "machine_setting", lambda root, **kw: (None, "git config espalier.machine is not set"))
+        assert mail.main(["--root", str(tmp_path), "claims", "--no-fetch"]) == 1
+        assert "turns it on" in capsys.readouterr().err
+
+
+class TestNamingSteps:
+    """The by-hand steps that name a linked worktree, one owner for every
+    refusal that prints them. On a clone whose shared config sets core.bare
+    (or core.worktree), naming a worktree takes ONE change, the key moved out
+    of the shared config into the main worktree's config.worktree at the path
+    the refusal computes, after which a fresh session turns per-worktree config
+    on and names the worktree itself (dispatcher, f43314 (i'): rounds 6-8 each
+    failed a two-change wording a different way; round 8 measured on git
+    2.39.5 that the move alone, then SessionStart, names every worktree with
+    each one healthy)."""
+
+    @staticmethod
+    def _git(values: dict):
+        def run(argv, **kw):
+            value = values.get(argv[-1])
+            if isinstance(value, Exception):
+                raise value
+            if isinstance(value, tuple):
+                return value
+            return (0, value + "\n", "") if value is not None else (1, "", "")
+        return run
+
+    def test_a_plain_clone_gets_the_two_commands(self, mail, tmp_path):
+        steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "false"}))
+        assert steps == "git config extensions.worktreeConfig true, then git config --worktree espalier.machine <name>"
+
+    def test_a_bare_clone_gets_one_change_at_its_path_then_a_fresh_session(self, mail, tmp_path):
+        """Dies to: a second change, a command, the path not computed (the
+        clone-git-directory phrase was met by the wrong file, round 8), or the
+        fresh session dropped."""
+        common = tmp_path / "repo.git"
+        steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "true", "--git-common-dir": str(common)}))
+        assert f"main worktree's config.worktree ({common.resolve() / 'config.worktree'})" in steps, steps
+        assert "fresh session" in steps, steps
+        assert "extensions.worktreeConfig" not in steps and "git config" not in steps, steps
+        assert "core.worktree" in mail.naming_steps(tmp_path, run=self._git({"core.worktree": "/x"}))
+
+    def test_a_core_bare_read_that_fails_prints_no_steps(self, mail, tmp_path):
+        """A failed read fell through to the paste-ready pair, whose first
+        command breaks every worktree of a bare clone (failure-mode review,
+        r8, measured). Dies to: the failed read taken for "not bare"."""
+        for answer in (mail.Unresolvable("git config took longer than 10s"), (128, "", "fatal: bad config line 3")):
+            steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": answer}))
+            assert "no steps are printed" in steps, steps
+            assert "extensions.worktreeConfig true" not in steps and "--worktree" not in steps, steps
+
+    def test_the_assign_refusal_carries_the_steps(self, mail, tmp_path, monkeypatch):
+        (tmp_path / "espalier.toml").write_text('dispatcher = "win"\n', encoding="utf-8")
+        monkeypatch.setattr(mail, "worktree_name_inherited", lambda root, run=None: True)
+        refusal = mail.assign_refusal(tmp_path, "win", run=self._git({"core.bare": "true"})) or ""
+        assert refusal.endswith(mail.naming_steps(tmp_path, run=self._git({"core.bare": "true"}))), refusal
+
+    @staticmethod
+    def _worktree_git(root, toplevel, bare: bool):
+        """The git reads name_this_worktree makes in a linked worktree that
+        still answers its clone's name `air`."""
+        answers = {
+            ("rev-parse", "--git-dir"): (0, f"{root / 'gitdir'}\n", ""),
+            ("rev-parse", "--git-common-dir"): (0, f"{root / 'common'}\n", ""),
+            ("config", "--get", "extensions.worktreeConfig"): (1, "", ""),
+            ("config", "--get", "espalier.machine"): (0, "air\n", ""),
+            ("rev-parse", "--show-toplevel"): (0, f"{toplevel}\n", ""),
+            ("config", "--get", "core.bare"): (0, "true\n" if bare else "false\n", ""),
+            ("config", "--get", "core.worktree"): (1, "", ""),
+            ("worktree", "list", "--porcelain"): (0, "", ""),
+        }
+
+        def run(argv, **kw):
+            key = tuple(argv[1:])
+            if key not in answers:
+                raise AssertionError(f"unexpected call {argv}")
+            return answers[key]
+        return run
+
+    def test_name_this_worktree_prints_the_one_owners_steps(self, mail, tmp_path):
+        """A worktree whose directory derives no name got its own copy of the
+        steps, without the core.bare step on a bare clone (failure-mode
+        review, r6, driven). Dies to: name_this_worktree spelling its own."""
+        (tmp_path / ".git").write_text("gitdir: x\n", encoding="utf-8")
+        run = self._worktree_git(tmp_path, tmp_path / "___", bare=True)
+        name, said = mail.name_this_worktree(tmp_path, run=run)
+        assert name is None and mail.naming_steps(tmp_path, run=run) in said, said
+        assert "core.bare" in said
+
+    def test_name_this_worktrees_core_bare_refusal_gives_the_one_change(self, mail, tmp_path):
+        """Dies to: a second change or a command in the refusal, or ", in
+        <worktree>" covering the move (round 7: a move run in the linked
+        worktree lands in that worktree's own file)."""
+        (tmp_path / ".git").write_text("gitdir: x\n", encoding="utf-8")
+        name, said = mail.name_this_worktree(tmp_path, run=self._worktree_git(tmp_path, tmp_path / "wt", bare=True))
+        assert name is None and str((tmp_path / "common").resolve() / "config.worktree") in said, said
+        assert "fresh session" in said and "extensions.worktreeConfig" not in said, said
+        assert not said.endswith(f", in {tmp_path}"), said
+
+    def test_name_this_worktree_hands_the_steps_the_value_it_read(self, mail, tmp_path):
+        """A second read of core.bare that failed printed "sets core.bare" and
+        then the plain pair (failure-mode review, r8). Dies to: naming_steps
+        reading the key again."""
+        (tmp_path / ".git").write_text("gitdir: x\n", encoding="utf-8")
+        base = self._worktree_git(tmp_path, tmp_path / "wt", bare=True)
+        reads = []
+
+        def run(argv, **kw):
+            if argv[1:] == ["config", "--get", "core.bare"]:
+                reads.append(1)
+                if len(reads) > 1:
+                    raise mail.Unresolvable("git config took longer than 2s")
+            return base(argv, **kw)
+
+        name, said = mail.name_this_worktree(tmp_path, run=run)
+        assert name is None and "fresh session" in said and "no steps are printed" not in said, said
+        assert len(reads) == 1, reads
+
+
+_NAMING_COMMAND = "extensions.worktreeConfig true"
+_NAMING_SCOPES = ("lsewhere", "other clone", "not bare")
+
+
+def _naming_prose_offenders(repo_root: Path, window: int = 700) -> tuple[int, list[str]]:
+    """``(occurrences, offenders)`` of the command turning per-worktree config
+    on, in the markdown under docs/, .claude/ and memory/ -- less Claude Code's
+    worktrees under .claude/worktrees/, other checkouts on other commits
+    (DEF-1196, ``tests/_live_tree.py``). An occurrence offends unless the
+    nearest "bare clone" before it, within ``window`` characters, is followed
+    by the other case that takes the one change ("core.worktree") and by
+    words scoping the command away from both ("Elsewhere", "any other clone",
+    "not bare")."""
+    import re
+
+    from espalier._safe_walk import visible
+    from tests._live_tree import exclude_worktrees
+    seen, bad = 0, []
+    for root in (repo_root / d for d in ("docs", ".claude", "memory")):
+        if not root.is_dir():
+            continue
+        for path in visible(exclude_worktrees(root.rglob("*.md"), repo_root), root):
+            rel = path.relative_to(repo_root).as_posix()
+            if rel.startswith("memory/session-log.d/"):
+                continue   # a record: an old row is not rewritten
+            text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
+            for m in re.finditer(re.escape(_NAMING_COMMAND), text):
+                seen += 1
+                before = text[max(0, m.start() - window):m.start()]
+                at = before.rfind("bare clone")
+                if at < 0 or "core.worktree" not in before[at:] or not any(
+                        word in before[at:] for word in _NAMING_SCOPES):
+                    bad.append(f"{rel}: ...{text[max(0, m.start() - 120):m.end()]}")
+    return seen, bad
+
+
+class TestNamingProse:
+    """Every doc under docs/, .claude/ and memory/ that gives the command
+    turning per-worktree config on names a bare clone shortly before it and
+    then scopes the command away from one, so a reader on one does not run it
+    first (both reviewers, TP-701 r8: four prose readers led with it; r9: any
+    mention let the pre-fold WORKFLOW.md through, and a clone whose shared
+    config sets core.worktree was told to run it). The population is derived
+    from the tree, never listed by hand."""
+
+    def test_the_command_is_preceded_by_its_bare_clone_condition(self):
+        seen, bad = _naming_prose_offenders(REPO_ROOT)
+        assert seen >= 4, f"only {seen} occurrences found: the walk lost its population"
+        assert not bad, "the command with no bare-clone condition scoping it:\n" + "\n".join(bad)
+
+    def test_a_linked_worktrees_copy_is_not_this_trees_prose(self, tmp_path):
+        """A Claude Code worktree under .claude/worktrees/ is another checkout
+        (DEF-1196); the doc beside it is read (both reviewers, r9: a seat at
+        any commit holding the packs reds the walk). Dies to: the walk without
+        exclude_worktrees."""
+        line = "Run `git config extensions.worktreeConfig true` once.\n"
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "real.md").write_text(line, encoding="utf-8")
+        planted = tmp_path / ".claude" / "worktrees" / "probe" / "docs"
+        planted.mkdir(parents=True)
+        (planted / "old.md").write_text(line, encoding="utf-8")
+        seen, bad = _naming_prose_offenders(tmp_path)
+        assert seen == 1 and len(bad) == 1 and bad[0].startswith("docs/real.md: "), bad
+
+    def test_a_bare_clone_mention_must_scope_the_command_away(self, tmp_path):
+        """Dies to: any mention of a bare clone nearby taken for the condition
+        (the pre-fold WORKFLOW.md passed so, code review r9, measured), or the
+        core.worktree case left out of it (failure-mode review r9)."""
+        (tmp_path / "docs").mkdir()
+        doc = tmp_path / "docs" / "w.md"
+        doc.write_text("Name the clone (in a bare clone, in the repository; mind core.worktree). Run `git config "
+                       "extensions.worktreeConfig true` once.\n", encoding="utf-8")
+        assert _naming_prose_offenders(tmp_path)[1], "a mention alone passed"
+        doc.write_text("On a bare clone, move core.bare out. Elsewhere, run `git config "
+                       "extensions.worktreeConfig true` once.\n", encoding="utf-8")
+        assert _naming_prose_offenders(tmp_path)[1], "the core.worktree case left out passed"
+        doc.write_text("On a bare clone, or one whose shared config sets core.worktree, move that key out. "
+                       "Elsewhere, run `git config extensions.worktreeConfig true` once.\n", encoding="utf-8")
+        assert _naming_prose_offenders(tmp_path) == (1, [])
+
+
+class TestLiveRequests:
+    """TP-701 Wave A-1: the requests no ``ack`` answers, the dispatcher's
+    unanswered asks. Pairing on the request's id, never on acks alone: on
+    every mail ref read 2026-10-15, 37 of 92 acks answered a note, an ack or a
+    claim (A-0 item 2), so "acks minus requests" is not the count."""
+
+    _T0 = datetime(2026, 10, 14, 20, 0, 0, tzinfo=timezone.utc)
+    _NOW = datetime(2026, 10, 15, 2, 30, 0, tzinfo=timezone.utc)
+
+    def test_a_request_an_ack_names_is_answered_and_one_no_ack_names_is_live(self, mail):
+        """Dies to: the ack pairing dropped (the answered request listed)."""
+        asked = _msg(mail, "win", "request", "a", lane="lane/a", now=self._T0)
+        open_ = _msg(mail, "win-2", "request", "b", now=self._T0.replace(minute=5))
+        answer = _msg(mail, "air", "ack", "done", ack=asked["id"], now=self._T0.replace(minute=9))
+        live = mail.live_requests({"win": [asked], "win-2": [open_], "air": [answer]}, now=self._NOW)
+        assert [m["id"] for m in live] == [open_["id"]]
+
+    def test_only_an_ack_answers_a_request(self, mail):
+        """A note or a release whose ``ack`` field names the request is not its
+        answer (one such note is on the live record). Dies to: any message
+        carrying the id read as the answer."""
+        asked = _msg(mail, "win", "request", "a", now=self._T0)
+        note = _msg(mail, "air", "note", "seen", ack=asked["id"], now=self._T0.replace(minute=1))
+        release = _msg(mail, "air", "release", "", ack=asked["id"], now=self._T0.replace(minute=2))
+        live = mail.live_requests({"win": [asked], "air": [note, release]}, now=self._NOW)
+        assert [m["id"] for m in live] == [asked["id"]]
+
+    def test_an_ack_on_the_askers_own_ref_closes_it(self, mail):
+        """The dispatcher's own acks live on its own ref, so a reader that
+        leaves out its own machine would list every request it answered. Dies
+        to: a machine's own ref excluded from the pairing."""
+        asked = _msg(mail, "air", "request", "operator: which?", now=self._T0)
+        closed = _msg(mail, "air", "ack", "answered in person", ack=asked["id"], now=self._T0.replace(minute=3))
+        assert mail.live_requests({"air": [asked, closed]}, now=self._NOW) == []
+
+    def test_oldest_first_across_machines_each_with_its_age(self, mail):
+        """Dies to: the order by machine, or the age read from anything but
+        the request's own stamp."""
+        late = _msg(mail, "air", "request", "late", now=self._T0.replace(hour=23))
+        early = _msg(mail, "win", "request", "early", now=self._T0)
+        live = mail.live_requests({"air": [late], "win": [early]}, now=self._NOW)
+        assert [(m["text"], m["age_s"]) for m in live] == [("early", 6 * 3600 + 1800), ("late", 3 * 3600 + 1800)]
+
+    def test_the_fold_leaves_the_messages_it_read_untouched(self, mail):
+        asked = _msg(mail, "win", "request", "a", now=self._T0)
+        before = dict(asked)
+        mail.live_requests({"win": [asked]}, now=self._NOW)
+        assert asked == before
+
+    def test_a_stamp_that_does_not_parse_has_no_age(self, mail):
+        asked = _msg(mail, "win", "request", "a", now=self._T0)
+        asked["at"] = "yesterday"
+        assert mail.live_requests({"win": [asked]}, now=self._NOW)[0]["age_s"] is None
+
+
+class TestTextFile:
+    """TP-701 Wave A-4: ``send --text-file`` takes the body from a file, so a
+    long or quote-heavy body never rides a shell string (an assign of 2,083
+    characters cost the dispatcher a round trip at the cap, 2026-10-14). The
+    whole file, UTF-8, exclusive with ``--text``; the dry run counts the body
+    against the cap, and the cap itself is unchanged."""
+
+    def _send(self, mail, monkeypatch, tmp_path, *args: str) -> int:
+        monkeypatch.setattr(mail, "machine_setting", lambda root, **kw: ("mac", "git config espalier.machine = mac"))
+        return mail.main(["--root", str(tmp_path), "send", "--type", "note", *args])
+
+    def test_the_body_is_the_whole_file_and_the_dry_run_counts_it(self, mail, monkeypatch, tmp_path, capsys):
+        """Dies to: the option missing, the file read in part, or the count left off."""
+        body = tmp_path / "body.txt"
+        text = "first line\nsecond line, \"quoted\" and `ticked` -- café\n"
+        body.write_bytes(text.encode("utf-8"))
+        assert self._send(mail, monkeypatch, tmp_path, "--text-file", str(body), "--dry-run") == 0
+        out, err = capsys.readouterr()
+        assert json.loads(out)["text"] == text.strip()
+        assert f"body: {len(text.strip())} of {mail.MAX_TEXT} characters" in err
+
+    def test_text_and_text_file_together_is_a_usage_error(self, mail, monkeypatch, tmp_path):
+        body = tmp_path / "body.txt"
+        body.write_text("x", encoding="utf-8")
+        with pytest.raises(SystemExit) as stop:
+            self._send(mail, monkeypatch, tmp_path, "--text", "y", "--text-file", str(body), "--dry-run")
+        assert stop.value.code == 2
+
+    def test_a_file_that_cannot_be_read_as_utf8_refuses_by_name(self, mail, monkeypatch, tmp_path, capsys):
+        latin = tmp_path / "latin.txt"
+        latin.write_bytes(b"caf\xe9\n")
+        assert self._send(mail, monkeypatch, tmp_path, "--text-file", str(latin), "--dry-run") == 1
+        assert "latin.txt" in capsys.readouterr().err
+        assert self._send(mail, monkeypatch, tmp_path, "--text-file", str(tmp_path / "gone.txt"), "--dry-run") == 1
+        assert "gone.txt" in capsys.readouterr().err
+
+    def test_a_windows_saved_body_reads_with_lf_line_ends(self, mail, monkeypatch, tmp_path, capsys):
+        """Two seats are Windows boxes: a CRLF file carried every CR into the
+        body and paid one character per line against the cap (code review,
+        r1). Dies to: the line ends kept."""
+        body = tmp_path / "crlf.txt"
+        body.write_bytes(b"one\r\ntwo\r\n")
+        assert self._send(mail, monkeypatch, tmp_path, "--text-file", str(body), "--dry-run") == 0
+        out, err = capsys.readouterr()
+        assert json.loads(out)["text"] == "one\ntwo" and "body: 7 of" in err
+
+    def test_the_cap_is_unchanged(self, mail, monkeypatch, tmp_path, capsys):
+        long = tmp_path / "long.txt"
+        long.write_text("x" * (mail.MAX_TEXT + 1), encoding="utf-8")
+        assert self._send(mail, monkeypatch, tmp_path, "--text-file", str(long), "--dry-run") == 1
+        assert f"the cap is {mail.MAX_TEXT}" in capsys.readouterr().err
 
 
 @pytest.mark.skipif(not __import__("shutil").which("git"), reason="git is the oracle for per-worktree config")

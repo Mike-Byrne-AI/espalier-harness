@@ -6236,7 +6236,12 @@ collide), and expecting the claims that keep two *machines* apart to keep the tw
 sessions apart. They do not; the two sessions are one machine to the channel.
 
 **How to avoid it:** give each worktree its own name with git's per-worktree config,
-which the channel reads through the same key:
+which the channel reads through the same key. Not on a bare clone: there the first
+line turns every worktree bare until `core.bare` moves; move `core.bare` out of the
+shared config into the main worktree's `config.worktree` instead, and a fresh session
+names the worktree (`docs/HOOKS.md`). Nor where the shared config sets `core.worktree`:
+there the first line points every worktree at the main checkout's files; move
+`core.worktree` the same way. Elsewhere:
 
 ```bash
 git config extensions.worktreeConfig true          # once, in the clone

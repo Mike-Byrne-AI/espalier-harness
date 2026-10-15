@@ -15,7 +15,7 @@ Read the mail the other machines left on origin, list the live claims, or send o
 /inbox --all           — every message the other machines ever sent
 /inbox claims          — the live claims (claim minus release), every machine
 /inbox assignments     — the dispatcher's live assignments: which seat works which job
-/inbox board           — one live read before stating state: merge rules, the base's verdict, open PRs, jobs, claims
+/inbox board           — one live read before stating state: merge rules, the base's verdict, open PRs, seats, jobs, asks, claims
 /inbox send ...        — one message: a claim, a release, a note, a request, an ack, or (the dispatcher) an assign
 ```
 
@@ -64,7 +64,11 @@ one clone share its `.git/config` and so its name, and a box is never warned
 about its own claims. So a second session in a worktree of this clone needs
 its own name, through git's per-worktree config. A fresh session in a
 worktree of a named clone gets one at SessionStart (`<name>-<worktree
-directory>`, on the banner's `Seat:` line). By hand, run `git config
+directory>`, on the banner's `Seat:` line). On a bare clone, or one whose
+shared config sets `core.worktree`, move `core.bare` (or `core.worktree`) out
+of the shared config into the main worktree's `config.worktree` (the refusal
+prints its path); a fresh session then names the worktree, turning
+per-worktree config on itself. Elsewhere, by hand, run `git config
 extensions.worktreeConfig true` once, then `git -C <worktree> config
 --worktree espalier.machine <name>-2`. Or run the second session from a clone
 of its own.
@@ -164,6 +168,42 @@ own, and one that cannot be read says so on its own line:
   near its files since its CI ran -- a path both changed, or a Python module
   one import away -- gets a `stale:` line under it: its seat runs `catch-up`,
   so CI tests the combination before it merges. A move elsewhere says nothing.
+- **seats:** one row per seat name: its last mail and its age, and for the
+  checkouts of this clone the live Claude Code sessions in each, read from
+  Claude Code's own session registry, under the name each checkout answers.
+  Two sessions in one checkout are flagged and named by pid and session id:
+  they share its plan, index and mail cursor (one seat is one session in its
+  own checkout), and the registry lists headless and editor sessions too.
+  While it holds a session, a worktree answering a name another checkout of
+  this clone answers, or its clone's own name (it was never named), gets a
+  row of its own, `<name> [<checkout>]`, saying the two write one mail ref and
+  giving the two `git -C <worktree>` commands that name it (run anywhere: a
+  bare `git config --worktree` run in the checkout the board was read in
+  would rename that one; on a bare clone, or one whose shared config sets
+  `core.worktree`, no commands: the one change, that key moved into the main
+  worktree's `config.worktree` at its path, then a fresh session in the
+  worktree, named by its path). A
+  main checkout
+  answering a name other than its
+  clone's says so. A
+  checkout answering no usable name reads `(no seat name) <path>`; one git
+  could not be asked about reads `(seat name unread) <path>`, and the line
+  says why nothing folded; a listed worktree whose folder is gone keeps its
+  sessions under its derived name and says so. A seat with no checkout here -- another machine,
+  another clone, or a worktree since removed, which the channel cannot tell
+  apart -- is its last mail and nothing more; one with no mail for a week, no
+  session here and no live claim or job folds into a count, and one a live
+  claim or job keeps on the line says so. Where the registry cannot be read
+  in full, or does not list the session the board runs in, the line says the
+  local sessions are unread, never that there are none, and nothing folds
+  while any local reading is unread; run outside a session, it names every
+  registry it read.
+- **asks:** the requests no `ack` names, from every seat, oldest first, each
+  as its full id, its sender, its lane and its age. Only an `ack` naming the
+  full id answers a request (a note, a release or an assign that names one
+  does not), so a moot request is closed with an ack that says so. The
+  dispatcher seat also gets the count and the oldest age on the banner's
+  `Mail:` line.
 - **jobs**, **claims** and the ledger's live row count, counted at the base
   branch's remote-tracking ref with the base's own ledger tools and naming the
   commit it read, so a checkout that stops moving still reads what the base
@@ -182,7 +222,15 @@ python tools/cc/mail.py send --type claim --lane lane/<name> --path <repo-relati
 python tools/cc/mail.py send --type release --ack <claim id>
 python tools/cc/mail.py send --type request --lane lane/<name> --path <path> --text "<what is asked>"
 python tools/cc/mail.py send --type ack --ack <request id> --text "<what was done>"
+python tools/cc/mail.py send --type request --lane lane/<name> --text-file <file outside the checkout> --dry-run
 ```
+
+`--text-file` takes the body from a file, the whole of it as UTF-8 (CRLF read
+as LF), in place of `--text`, so a long or quote-heavy body never rides a
+shell string. Keep the file outside the checkout, where no `git add` picks it
+up. The cap is the same 2,000 characters; `--dry-run` prints the line it would
+send and, beside it, the body's count against the cap. An ack names the full
+id of what it answers; a lane is closed by a release, never an ack.
 
 The driver builds the commit under a scratch index from the message alone
 (the worktree, HEAD and the live index are never touched), moves this

@@ -103,9 +103,16 @@ remembered. A red `main` is reverted before anything lands on it.
    - **Refusals:**
      - A linked worktree still answering its clone's name is refused, for a
        mint and for an explicit id. SessionStart names Claude Code's
-       worktrees. Name one by hand with
-       `git config extensions.worktreeConfig true`, then
-       `git config --worktree espalier.machine <name>`.
+       worktrees. On a bare clone, or one whose shared config sets
+       `core.worktree`, the one change is `core.bare` (or `core.worktree`)
+       moved into the main worktree's `config.worktree` (the refusal prints
+       its path), after which a fresh session names the worktree. Elsewhere,
+       name one by
+       hand with `git config extensions.worktreeConfig true`, then
+       `git config --worktree espalier.machine <name>`, run in it. The
+       refusals print `mail.naming_steps`, the one owner of these steps.
+     - A seat whose machine name git could not read is refused a mint and an
+       explicit id alike; `--override` files the explicit id anyway.
      - An explicit new id outside the block you mint from is refused, and
        `--override` files it anyway. That covers an id in another seat's
        block, and a hand-picked "safe" number outside every block.
@@ -168,6 +175,26 @@ remembered. A red `main` is reverted before anything lands on it.
 
 A Claude session acts only when prompted. The design tolerates a dispatcher
 that is away: a seat with a queue does not need it in real time.
+
+**The dispatcher's first read is the board's `seats:` and `asks:` lines**
+(`python3 tools/cc/board.py`, `TP-701` Wave A). `asks:` is every request no
+`ack` names, from every seat (the dispatcher's own outgoing ones included: a
+request names no addressee), oldest first with its full id and age; on the
+dispatcher seat the banner's `Mail:` line carries the count and the oldest
+age. A request that went moot is closed with an ack naming its full id and
+saying so, or it stays on the line. `seats:` is each seat name's last mail
+and, for this clone's checkouts, the live sessions Claude Code's registry
+lists under the name each checkout answers: two in one checkout are flagged
+and named by pid (the state the `win-2` relaunch reached at 2026-10-15 02:00Z,
+caught then only by a seat reading its banner). A row with no checkout here
+is its last mail only, and may be another machine, another clone or a
+worktree since removed; so a quiet seat is asked, never presumed dead or
+alive. Where its worktree is gone, the dispatcher releases its jobs (a
+release naming the assign, as the assigner); its claims stay live until that
+seat name releases them (item 5: a release from any other name is accepted
+and closes nothing), which `seat.py retire` (`TP-701` B-2) is to do. Both
+were read by hand before (an ad-hoc census over every mail ref; the pids
+checked one by one).
 
 **Compare a job's functions, not only its files, before assigning it.** Grep
 the pack task for the functions it edits and set them against what each seat's

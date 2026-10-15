@@ -462,6 +462,49 @@ mid-task, the plan survives. The next session's SessionStart hook
 surfaces the active blueprint automatically; `/status` and
 `/context-load` show pending steps explicitly.
 
+### Parallel seats
+
+When several Claude Code sessions work one repository at once, each runs as a
+**seat**: one session in its own checkout, under its own name. Name the clone
+once with `git config espalier.machine <name>`, run in its main checkout (in a
+bare clone, in the repository). A linked worktree of a named clone is given a
+name of its own at SessionStart (`<clone>-<directory>`; the banner's `Seat:`
+line says so). To name one by hand on a bare clone, or on one whose shared
+config sets `core.worktree`, move `core.bare` (or `core.worktree`) out of the
+shared config into the main worktree's `config.worktree` (the refusal prints
+its path); a fresh session then names the worktree, turning per-worktree
+config on itself. On any other clone, run `git config
+extensions.worktreeConfig true` once, then `git -C <worktree> config
+--worktree espalier.machine <name>`. A plain `git config espalier.machine` run inside a
+worktree renames the clone and its main checkout instead. Seats coordinate
+through the mail channel (`/inbox`): a seat claims the files it works so
+another does not duplicate them, a dispatcher seat (the `dispatcher` key in
+`espalier.toml`) assigns the jobs, and a seat with a question sends a request,
+which the dispatcher answers (or you, where no dispatcher is named). Two
+sessions in one checkout are one seat, which must not happen: they share its
+plan, its git index and its mail cursor.
+
+Before stating what is open, merging or blocked, read the board (`/inbox
+board`): it reads GitHub and the mail now, where the banner and a handoff note
+are snapshots. Two of its lines are about the seats themselves:
+
+- `seats:` gives each seat's last mail and its age, and for the checkouts of
+  this clone the live Claude Code sessions in each, from Claude Code's own
+  session registry. Two sessions in one checkout are flagged and named by pid.
+  A seat with no checkout here is its last mail and nothing more: the channel
+  cannot say whether a session elsewhere is running, so ask a quiet seat
+  rather than presume it gone.
+- `asks:` gives every request no ack answers yet, oldest first, with its full
+  id and age. The dispatcher answers them, and another seat answers only a
+  request about the files it claims; any seat's ack closes a request, so a
+  worker never acks one meant for the dispatcher. Answer with an ack naming
+  that id (`python tools/cc/mail.py send --type ack --ack <id> --text "<what
+  was done>"`); the dispatcher seat also sees the count on its banner's
+  `Mail:` line.
+
+`/inbox` has the rest: the channel's verbs, claims and releases, and what each
+board line means.
+
 ---
 
 ## Advanced workflows

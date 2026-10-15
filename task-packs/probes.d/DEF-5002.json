@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5002",
+ "subject": "tools/cc/mail.py",
+ "cmd": "python3 -c \"import ast,re,pathlib as P; assert 'def machine_setting(' in P.Path('tools/cc/mail.py').read_text(encoding='utf-8'); F=[p for d in ('tools/cc','tools/cc/hooks') for p in sorted(P.Path(d).glob('*.py'))]; N=lambda n: getattr(n,'attr',getattr(n,'id',None)); E=lambda f,g: any((isinstance(n,(ast.Attribute,ast.Name)) and N(n)=='MACHINE_UNREAD') or (isinstance(n,ast.Constant) and n.value=='MACHINE_UNREAD') or (isinstance(n,ast.Call) and N(n.func)=='_off_reason') for n in ast.walk(f)) or re.search(r'unread-name: ok \\w{3}', g) is not None; B=lambda s: (lambda t: (lambda fs: sum(1 for c in ast.walk(t) if isinstance(c,ast.Call) and N(c.func)=='machine_setting' and (i:=min([f for f in fs if f.lineno<=c.lineno<=f.end_lineno], key=lambda f: f.end_lineno-f.lineno, default=None)) is not None and i.name!='machine_setting' and not E(i, ast.get_source_segment(s,i) or '')))([f for f in ast.walk(t) if isinstance(f,(ast.FunctionDef,ast.AsyncFunctionDef))]))(ast.parse(s)); print(sum(B(p.read_text(encoding='utf-8')) for p in F))\"",
+ "open_value": "5",
+ "why_not": null,
+ "inputs": [
+  "tools/cc"
+ ],
+ "row_sha": "f5950ca37085",
+ "text_sha": "032e5c94d840",
+ "verified_2026_10_15": "STILL_OPEN (re-pinned value unchanged on 2026-10-15: probe counts code-level evidence only (round-7 review): a comment or a reasonless marker no longer silences a caller, and a renamed machine_setting prints nothing; the count is unchanged at 5)"
+}

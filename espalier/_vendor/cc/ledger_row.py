@@ -346,8 +346,16 @@ class MintRefused(Exception):
 
 
 class SeatUnreadable(MintRefused):
-    """The seat's name could not be read at all (a copied subset without
-    ``mail.py``): a failed read, where an inherited name is evidence."""
+    """The seat's name could not be read at all: a copied subset without
+    ``mail.py`` (here), or git not answering (:class:`SeatNameUnread`). A
+    failed read, where an inherited name is evidence."""
+
+
+class SeatNameUnread(SeatUnreadable):
+    """``mail.py`` is here, and git could not answer for the seat's name (a
+    timeout, a config git cannot parse). A mint and an explicit id are both
+    refused by name: an id checked against no block is the collision the
+    channel exists to refuse."""
 
 
 def read_id_blocks(root: Path) -> dict[str, dict[str, tuple[int, int]]] | None:
@@ -433,7 +441,14 @@ def minting_seat(root: Path) -> tuple[str, str | None]:
                              "so the seat's name cannot be read") from None
     if mail is None:
         raise SeatUnreadable("tools/cc/mail.py is not beside this script, so the seat's name cannot be read")
-    machine, _how = mail.machine_setting(root)
+    machine, how = mail.machine_setting(root)
+    unread = getattr(mail, "MACHINE_UNREAD", None)
+    if machine is None and unread and str(how).startswith(unread):
+        # A read that failed (a timeout, a config git cannot parse) is not
+        # "no name": that answer would offer `git config espalier.machine`,
+        # which in a worktree renames the clone, or mint from the shared range.
+        raise SeatNameUnread(f"this seat's machine name could not be read ({how}); retry once git answers (a "
+                             "config git cannot parse never will: fix it first)")
     if machine is None:
         # The shared range is safe for one clone (its worktrees share the
         # record) and unsafe across machines, which each keep their own.
@@ -446,9 +461,13 @@ def minting_seat(root: Path) -> tuple[str, str | None]:
         return UNNAMED_SEAT, ("this clone sets no git config espalier.machine, so it mints from the shared "
                               f"range ({UNNAMED_SEAT}); name the box to mint from its own block")
     if mail.worktree_name_inherited(root):
+        # mail.naming_steps is the one owner of the by-hand steps (git's
+        # core.bare step on a bare clone); an older mail.py without it keeps
+        # the two commands.
+        steps = (mail.naming_steps(root) if hasattr(mail, "naming_steps") else
+                 "git config extensions.worktreeConfig true, then git config --worktree espalier.machine <name>")
         raise MintRefused(f"this linked worktree answers its clone's name {machine!r}, so a mint here would take "
-                          f"{machine}'s next id; name it first: git config extensions.worktreeConfig true, then "
-                          "git config --worktree espalier.machine <name>")
+                          f"{machine}'s next id; name it first: {steps}")
     return machine, None
 
 
@@ -644,9 +663,11 @@ def explicit_id_refusal(root: Path, rid: str) -> tuple[str | None, str | None]:
     id in another seat's block is that seat's next mint, and one outside every
     block is a hand-picked number two seats can both pick. A worktree still
     answering its clone's name is refused here as it is for a mint -- that is
-    evidence, not a failed read. A table that cannot be read, or a seat that
-    cannot be named at all, is a note and no refusal: the explicit path worked
-    before the blocks."""
+    evidence, not a failed read. A seat name git could not answer is refused
+    by name too, ``--override`` the way past: an id checked against no block
+    is the collision the channel refuses. A table that cannot be read, or a
+    copied subset without ``mail.py``, is a note and no refusal: the explicit
+    path worked before the blocks."""
     m = _ROW_ID_RE.fullmatch(rid)
     if not m:
         return None, None
@@ -655,6 +676,9 @@ def explicit_id_refusal(root: Path, rid: str) -> tuple[str | None, str | None]:
         if blocks is None:
             return None, None
         seat, _note = minting_seat(root)
+    except SeatNameUnread as exc:
+        return (f"{exc}; {rid}'s block cannot be checked until then, so it is refused (--override files it "
+                "anyway)"), None
     except SeatUnreadable as exc:
         print(f"ledger_row: note -- the id blocks were not checked ({exc})", file=sys.stderr)
         return None, None
@@ -1717,7 +1741,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--override", action="store_true",
                     help="write a row another machine's live claim names (the mail channel), naming the "
                          "holder; the claim stays theirs -- a release from them, or a request to them, is "
-                         "the ordinary way past")
+                         "the ordinary way past. Also files an explicit id outside this seat's block, and "
+                         "one whose block cannot be checked because the seat's name could not be read")
     ap.add_argument("--reconcile-count", action="store_true",
                     help="does nothing: the probe roster stores no total since 2026-10-12, so there "
                          "is no mismatch to accept; still accepted so an old command line runs")

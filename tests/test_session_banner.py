@@ -2963,6 +2963,21 @@ class TestMailLine:
         assert "git config espalier.machine <name>" in line and "/inbox" in line
         assert stub.calls == []  # no fetch for a clone that is not opted in
 
+    def test_an_unread_machine_name_is_not_offered_the_opt_in(self, tmp_path):
+        """A name read that failed (a timeout, a config git cannot parse) is not
+        "this clone names no machine": the opt-in command would fail the same
+        way or rename a named seat (failure-mode review, TP-701 r5). Dies to:
+        the opt-in line on an unread name."""
+        mod = _load()
+        unread = "git config could not be read (took longer than 2s), so no machine is named and the channel is off"
+        stub = _mail_stub(MACHINE_UNREAD="git config could not be read",
+                          machine_setting=lambda root, timeout=None: (None, unread),
+                          local_mail_machines=lambda root, timeout=None: ["air", "win"])
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 8.0, mail=stub)
+        assert "turns it on" not in line and "names no machine" not in line, line
+        assert line.startswith("(this checkout's machine name could not be read:") and line.isascii(), line
+        assert stub.calls == []
+
     def test_the_line_is_omitted_where_the_module_is_not_deployed(self, tmp_path, monkeypatch):
         mod = _load()
         monkeypatch.setattr(mod, "_load_mail", lambda: None)
@@ -3019,6 +3034,99 @@ class TestMailLine:
     def test_nothing_unread_after_a_fetch_that_went_through_is_no_line(self, tmp_path):
         mod = _load()
         assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=_mail_stub()) == ""
+
+    _ASKS = [{"id": "r1", "age_s": 2 * 86400 + 60}, {"id": "r2", "age_s": 120}]
+
+    def _asks_stub(self, machine: str, **over):
+        seen: list = []
+        fields = dict(
+            machine_setting=lambda root, timeout=None: (machine, f"git config espalier.machine = {machine}"),
+            dispatcher_setting=lambda root: ("mac", "espalier.toml sets dispatcher = mac"),
+            live_requests=lambda by: seen.append(by) or self._ASKS)
+        fields.update(over)
+        return _mail_stub(**fields), seen
+
+    def test_the_dispatchers_clone_counts_the_unanswered_asks(self, tmp_path):
+        """TP-701 Wave A-1: the dispatcher's clone opens on how many requests no
+        ack names, every machine's own ref read (its own acks live there). Dies
+        to: the dispatcher check dropped (a worker seat would count too)."""
+        mod = _load()
+        stub, seen = self._asks_stub("mac", read_mail=lambda root, timeout=None: ({"mac": [], "win": []}, {}))
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        assert line == "2 unanswered asks (requests no ack names), oldest 2 d ago: /inbox board lists them"
+        assert seen and set(seen[0]) == {"mac", "win"}, "the fold reads every ref, this machine's own included"
+        worker, _ = self._asks_stub("win")
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=worker) == ""
+
+    def test_the_count_follows_the_headlines_and_their_tail(self, tmp_path):
+        mod = _load()
+        stub, _ = self._asks_stub("mac", read_mail=lambda root, timeout=None: ({"win": [_mail_message(1)]}, {}))
+        rows = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub).split("\n")
+        assert rows[0] == 'win: note -- "hello"' and rows[1] == mod._PR_INDENT + mod._MAIL_TAIL
+        assert rows[2] == mod._PR_INDENT + "2 unanswered asks (requests no ack names), oldest 2 d ago: /inbox board lists them"
+
+    def test_a_count_that_raises_costs_the_count_and_never_the_headlines(self, tmp_path):
+        """A present reader that raises (a skewed deploy, a signature drift)
+        lost the unread headlines with it (code review, r1). Dies to: the
+        count read unguarded inside the line."""
+        mod = _load()
+
+        def broken(by):
+            raise TypeError("live_requests() missing 1 required positional argument: 'now'")
+
+        stub, _ = self._asks_stub("mac", live_requests=broken,
+                                  read_mail=lambda root, timeout=None: ({"win": [_mail_message(1)]}, {}))
+        mod._hook_utils.take_advisories()
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        assert line == 'win: note -- "hello"\n' + mod._PR_INDENT + mod._MAIL_TAIL
+        said = mod._hook_utils.take_advisories()
+        assert any("unanswered-asks count failed: TypeError" in s for s in said), said
+
+    def test_the_count_reads_the_real_modules_ages(self, tmp_path):
+        """The stubbed tests pin the rendering; this one feeds the real
+        mail.py's fold, so a rename of the age key cannot leave the banner
+        printing "oldest unknown" under green stubs (failure-mode review, r1)."""
+        import importlib.util
+        import re
+        import types
+
+        spec = importlib.util.spec_from_file_location("mail_for_banner_test", HOOKS_DIR.parent / "mail.py")
+        real = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = real
+        try:
+            spec.loader.exec_module(real)
+        finally:
+            sys.modules.pop(spec.name, None)
+        from datetime import datetime, timezone
+        t = datetime(2026, 10, 1, 12, 0, 0, tzinfo=timezone.utc)
+        asked = real.new_message("win", "request", "please look", now=t)
+        answered = real.new_message("win", "request", "done one", now=t)
+        ack = real.new_message("mac", "ack", "done", ack=answered["id"], now=t)
+        by_machine = {"win": [asked, answered], "mac": [ack]}
+        stub = types.SimpleNamespace(
+            machine_setting=lambda root, timeout=None: ("mac", "named"),
+            dispatcher_setting=lambda root: ("mac", "named"),
+            fetch_mail=lambda root, timeout: (True, ""),
+            read_mail=lambda root, timeout=None: (by_machine, {}),
+            read_cursor=lambda root: {}, unread=lambda by, cursor, exclude_machine: [],
+            headline=real.headline, live_requests=real.live_requests)
+        line = _load()._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        assert re.fullmatch(r"1 unanswered ask \(requests no ack names\), oldest \d+ d ago: /inbox board lists them",
+                            line), line
+
+    def test_an_older_mail_module_costs_the_count_and_nothing_else(self, tmp_path):
+        """A deployed mail.py from before live_requests: the line renders as
+        it did, and quietly (an expected older module is no fault to warn
+        about every session). Dies to: the new reader reached unguarded by
+        getattr, which the count's own guard would then report each session."""
+        mod = _load()
+        stub = _mail_stub(machine_setting=lambda root, timeout=None: ("mac", "named"),
+                          dispatcher_setting=lambda root: ("mac", "named"),
+                          read_mail=lambda root, timeout=None: ({"win": [_mail_message(1)]}, {}))
+        mod._hook_utils.take_advisories()
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        assert line == 'win: note -- "hello"\n' + mod._PR_INDENT + mod._MAIL_TAIL
+        assert mod._hook_utils.take_advisories() == []
 
     def test_the_banner_carries_the_line_after_merged_only_when_given(self, tmp_path):
         mod = _load()

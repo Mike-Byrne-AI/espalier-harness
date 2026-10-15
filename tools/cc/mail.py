@@ -51,6 +51,7 @@ re-open it):
 Verbs::
 
     python tools/cc/mail.py send --type claim --lane lane/x --path tools/cc/x.py --text "..."
+    python tools/cc/mail.py send --type request --lane lane/x --text-file /tmp/body.txt [--dry-run]
     python tools/cc/mail.py inbox [--all] [--mark-read] [--no-fetch] [--json]
     python tools/cc/mail.py claims [--no-fetch] [--json]
     python tools/cc/mail.py send --type assign --seat win --lane "the pack's wave B" --class C13
@@ -144,6 +145,20 @@ Runner = Callable[..., tuple[int, str, str]]
 
 # ------------------------------------------------------------- the setting --
 
+#: How :func:`machine_setting`'s answer opens when the read itself failed (a
+#: timeout, a spawn that failed, or git answering with an error rather than
+#: "not set"), as opposed to a name not set or not usable: the board reads a
+#: checkout's seat name as unread on it, and no reader offers the command that
+#: turns the channel on, which would fail the same way or rename a named seat.
+MACHINE_UNREAD = "git config could not be read"
+
+
+def _off_reason(how: str) -> str:
+    """Why the channel is off, with the command that turns it on, unless the
+    name could not be read at all: then the reason alone."""
+    return how if how.startswith(MACHINE_UNREAD) else f"{how}; `git config {MACHINE_KEY} <name>` turns it on"
+
+
 def machine_setting(root: Path, *, run: Runner = run, timeout: float = 10.0) -> tuple[str | None, str]:
     """``(machine, how it was read)`` for ``git config espalier.machine`` in
     the clone at ``root``: a word of lowercase letters, digits and hyphens (32
@@ -151,9 +166,17 @@ def machine_setting(root: Path, *, run: Runner = run, timeout: float = 10.0) -> 
     ``how``, so a typo is visible instead of silently deciding. One local git
     call, no network, bounded by ``timeout``."""
     try:
-        rc, out, _err = run(["git", "config", "--get", MACHINE_KEY], cwd=str(root), env=git_env(), timeout=timeout)
+        rc, out, err = run(["git", "config", "--get", MACHINE_KEY], cwd=str(root), env=git_env(), timeout=timeout)
     except Unresolvable as exc:
-        return None, f"git config could not be read ({exc}), so no machine is named and the channel is off"
+        return None, f"{MACHINE_UNREAD} ({exc}), so no machine is named and the channel is off"
+    if rc not in (0, 1):
+        # 1 is git's "not set"; anything else (128: a config file git cannot
+        # parse) is a read that failed, not an answer. A repository git refuses
+        # as of dubious ownership is not this: git config then reads only the
+        # global and system files and answers "not set" (measured, git 2.39.5).
+        lines = err.strip().splitlines()
+        detail = f"git exited {rc}" + (f": {lines[-1][:160]}" if lines else "")
+        return None, f"{MACHINE_UNREAD} ({detail}), so no machine is named and the channel is off"
     value = out.strip()
     if rc != 0 or not value:
         return None, f"git config {MACHINE_KEY} is not set, so the channel is off (the default)"
@@ -183,7 +206,8 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     """A message in the pinned shape, validated: the type is one of
     :data:`TYPES`, the text is bounded, every path is repo-relative, every id
     is a row id, a claim names at least a lane, a class, a path or an id, a
-    release or an ack names the id it answers or the lane it closes, and an
+    release names the id it answers or the lane it closes, an ack names the
+    id it answers (never a lane: nothing reads a lane-only ack), and an
     assign names a seat and a job (a lane, a class or an id) while nothing
     else names a seat. ``now`` is for tests."""
     if not _MACHINE_RE.match(machine or ""):
@@ -212,8 +236,13 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     ack = (ack or "").strip()
     if type_ == "claim" and not (lane or norm_paths or norm_classes or norm_ids):
         raise Unresolvable("a claim names a lane, a class, a path or a row id (--lane, --class, --path, --id)")
-    if type_ in ("release", "ack") and not (ack or lane):
-        raise Unresolvable(f"a {type_} names the message it answers (--ack <id>) or the lane it closes (--lane)")
+    if type_ == "release" and not (ack or lane):
+        raise Unresolvable("a release names the message it answers (--ack <id>) or the lane it closes (--lane)")
+    if type_ == "ack" and not ack:
+        # Only an id closes anything an ack answers (live_requests pairs on it);
+        # a lane closes claims and jobs through a release. A lane-only ack was
+        # accepted and answered nothing.
+        raise Unresolvable("an ack names the message it answers (--ack <id>); a lane is closed by a release")
     seat = (seat or "").strip()
     if seat and type_ != "assign":
         raise Unresolvable(f"a seat belongs to an assign, not a {type_}")
@@ -452,6 +481,38 @@ def lane_seats(by_machine: dict[str, list[dict]]) -> dict[str, str]:
     return {lane: key[3] for lane, key in latest.items()}
 
 
+def age_seconds(message: dict, now: datetime | None = None) -> int | None:
+    """Whole seconds from the message's ``at`` stamp to ``now`` (UTC, the
+    clock when None), never negative; None where the stamp does not parse."""
+    try:
+        at = datetime.strptime(str(message.get("at") or ""), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return max(0, int(((now or datetime.now(timezone.utc)) - at).total_seconds()))
+
+
+def live_requests(by_machine: dict[str, list[dict]], *, now: datetime | None = None) -> list[dict]:
+    """The requests no ``ack`` message answers, oldest first, each a copy of
+    the request with ``age_s`` (:func:`age_seconds`): the unanswered asks,
+    from every seat, the dispatcher's own outgoing ones included (a request
+    names no addressee). An ack answers the request whose FULL id its ``ack``
+    field names; a note, a release or an assign carrying the id does not, and
+    an ack naming anything else is no one's answer here (on the live record
+    37 of 92 acks answered a note, an ack or a claim, read 2026-10-15). Every
+    machine's ref is read, the asker's own included: an asker may close its
+    own request, and the dispatcher's acks live on its own ref. Ordered as
+    the claims fold is: the stamp, the machine, the position in its file."""
+    answered = {str(m.get("ack") or "") for messages in by_machine.values() for m in messages
+                if m.get("type") == "ack"}
+    asks: list[tuple[str, str, int, dict]] = []
+    for machine, messages in by_machine.items():
+        for i, m in enumerate(messages):
+            if m.get("type") == "request" and m.get("id") not in answered:
+                asks.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
+    asks.sort(key=lambda t: t[:3])
+    return [{**m, "age_s": age_seconds(m, now)} for _at, _who, _i, m in asks]
+
+
 def _touches(a: str, b: str) -> bool:
     a, b = a.rstrip("/"), b.rstrip("/")
     return a == b or a.startswith(b + "/") or b.startswith(a + "/")
@@ -686,8 +747,10 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
 
     The name is ``<clone>-<worktree directory>``. Refused, with the command, when
     another worktree of this clone already answers it, or when the clone's
-    shared config sets ``core.worktree`` or ``core.bare``, which git says must
-    move before ``extensions.worktreeConfig`` is turned on. The name is set with
+    shared config sets ``core.worktree`` or ``core.bare``, which must first move
+    into the main worktree's ``config.worktree`` (:func:`naming_steps` gives
+    the path); after that one change, a fresh session names the worktree here,
+    turning the extension on itself. The name is set with
     ``--worktree`` scope and read back: set without it, the clone itself would be
     renamed."""
     if not (root / ".git").is_file():
@@ -701,15 +764,19 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
             return None, ""
         rc, top, _ = run(["git", "rev-parse", "--show-toplevel"], cwd=str(root), env=git_env(), timeout=timeout)
         name = worktree_seat_name(clone, Path(top.strip()).name) if rc == 0 else None
-        by_hand = (f"git config extensions.worktreeConfig true, then git config --worktree {MACHINE_KEY} "
-                   f"<name>, in {root}")
+        def by_hand(known: tuple[str, str] | None = None) -> str:
+            # naming_steps is the one owner of these steps (a bare clone's one
+            # change included); read only on a refusal path, handed what this
+            # function already read so a second read cannot contradict it.
+            return naming_steps(root, run=run, timeout=timeout, known=known, in_dir=root)
+
         if name is None:
-            return None, f"this worktree answers the clone's name {clone!r} and no name derives from its directory; {by_hand}"
+            return None, f"this worktree answers the clone's name {clone!r} and no name derives from its directory; {by_hand()}"
         for key in ("core.worktree", "core.bare"):
             rc, value, _ = run(["git", "config", "--get", key], cwd=str(root), env=git_env(), timeout=timeout)
             if rc == 0 and value.strip() and value.strip() != "false":
-                return None, (f"this worktree answers the clone's name {clone!r}, and the clone's config sets {key}, "
-                              f"which git says to move before per-worktree config is turned on; {by_hand}")
+                return None, (f"this worktree answers the clone's name {clone!r}, and "
+                              f"{by_hand(known=(key, value.strip()))}")
         rc, listing, _ = run(["git", "worktree", "list", "--porcelain"], cwd=str(root), env=git_env(), timeout=timeout)
         here = Path(top.strip()).resolve()
         for line in listing.splitlines() if rc == 0 else []:
@@ -722,7 +789,7 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
                                  env=git_env(), timeout=timeout)
             if rc2 == 0 and theirs.strip() == name:
                 return None, (f"this worktree answers the clone's name {clone!r}, and the name it derives, `{name}`, "
-                              f"is taken by {other}; {by_hand}")
+                              f"is taken by {other}; {by_hand()}")
         rc, flag, _ = run(["git", "config", "--get", "extensions.worktreeConfig"], cwd=str(root), env=git_env(),
                           timeout=timeout)
         # The extension lives in the clone's shared config: written only when
@@ -732,7 +799,7 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
         for argv in (*writes, ["git", "config", "--worktree", MACHINE_KEY, name]):
             rc, _, err = run(argv, cwd=str(root), env=git_env(), timeout=timeout)
             if rc != 0:
-                return None, f"`{' '.join(argv)}` failed ({err.strip()[:160]}); {by_hand}"
+                return None, f"`{' '.join(argv)}` failed ({err.strip()[:160]}); {by_hand()}"
         rc, back, _ = run(["git", "config", "--worktree", "--get", MACHINE_KEY], cwd=str(root), env=git_env(),
                           timeout=timeout)
     except Unresolvable as exc:
@@ -742,6 +809,70 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
     return name, (f"named this worktree {name} (it answered its clone's name {clone}); its mail ref, claims "
                   f"and assignments are its own now, and it mints ids from {clone}'s block, shared with "
                   f"{clone}'s other worktrees, unless espalier.toml [id_blocks] gives {name} a line of its own")
+
+
+def _main_config_worktree(root: Path, *, run: Runner, timeout: float) -> str | None:
+    """The main worktree's ``config.worktree`` (``$GIT_COMMON_DIR/config.worktree``)
+    as an absolute path, read from ``root``; None where git cannot say."""
+    try:
+        rc, out, _ = run(["git", "rev-parse", "--git-common-dir"], cwd=str(root), env=git_env(), timeout=timeout)
+    except Unresolvable:
+        return None
+    common = out.strip()
+    if rc != 0 or not common:
+        return None
+    path = Path(common) if Path(common).is_absolute() else Path(root) / common
+    return str(path.resolve() / "config.worktree")
+
+
+def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0,
+                 known: tuple[str, str] | None = None, in_dir: Path | None = None,
+                 at: str | None = None) -> str:
+    """The by-hand steps that give the linked worktree at ``root`` a name of
+    its own: ``git config extensions.worktreeConfig true``, then ``git config
+    --worktree espalier.machine <name>`` (with ``in_dir``, said to run there;
+    with ``at``, for a reader in another checkout such as the board, as two
+    quoted ``git -C <at>`` commands and the fresh session by that path, since a
+    bare ``--worktree`` command run where it was read renames that checkout).
+    Where the clone's shared config sets ``core.bare`` (or ``core.worktree``),
+    it is ONE change and no command: the key moved out of the shared config
+    into the main worktree's ``config.worktree``, at the absolute path read
+    here, after which a fresh session turns per-worktree config on and names
+    the worktree itself (``name_this_worktree``). A two-change wording failed
+    three ways (an order git's pages do not give, a place the wrong file also
+    met); the one change was measured on git 2.39.5, every worktree healthy
+    (``docs/HOOKS.md`` keeps the measurement). A key
+    that could not be read prints no steps, since the plain pair's first
+    command breaks every worktree of a bare clone. ``known`` is a ``(key,
+    value)`` the caller already read, so a second read cannot contradict it.
+    The one owner of these steps for every refusal that prints them
+    (``name_this_worktree``, ``assign_refusal``, the ledger's mint refusal)
+    and for the board's remedy (a core.worktree clone read there as not bare
+    was handed the pair, which pointed the worktree at the main checkout's
+    files, measured)."""
+    if at is not None:
+        steps = (f'git -C "{at}" config extensions.worktreeConfig true && git -C "{at}" '
+                 f"config --worktree {MACHINE_KEY} <name>")
+    else:
+        steps = f"git config extensions.worktreeConfig true, then git config --worktree {MACHINE_KEY} <name>"
+    for key in ("core.bare", "core.worktree"):
+        if known is not None and known[0] == key:
+            rc, value = 0, known[1]
+        else:
+            try:
+                rc, value, _ = run(["git", "config", "--get", key], cwd=str(root), env=git_env(), timeout=timeout)
+            except Unresolvable as exc:
+                return f"whether this clone is bare is unknown here ({key}: {exc}), so no steps are printed; docs/HOOKS.md says what naming a worktree takes"
+            if rc not in (0, 1):
+                return (f"whether this clone is bare is unknown here ({key}: git exited {rc}), so no steps are "
+                        "printed; docs/HOOKS.md says what naming a worktree takes")
+        if rc == 0 and value.strip() and value.strip() != "false":
+            where = _main_config_worktree(root, run=run, timeout=timeout) or "its path could not be read here"
+            session = f"in {at}" if at is not None else "(/clear) in this worktree"
+            return (f"this clone's shared config sets {key}: move it out of the shared config into the main "
+                    f"worktree's config.worktree ({where}); then a fresh session {session} names "
+                    "it, SessionStart turning per-worktree config on itself")
+    return f"{steps}, in {in_dir}" if in_dir is not None else steps
 
 
 def assign_refusal(root: Path, machine: str, *, run: Runner = run) -> str | None:
@@ -757,8 +888,7 @@ def assign_refusal(root: Path, machine: str, *, run: Runner = run) -> str | None
                 f"(--type request) naming the job instead")
     if worktree_name_inherited(root, run=run):
         return (f"this linked worktree answers the clone's shared name {machine!r}, so an assign from it would "
-                f"read as {machine}'s; name it first: git config extensions.worktreeConfig true, then "
-                f"git config --worktree {MACHINE_KEY} <name>")
+                f"read as {machine}'s; name it first: {naming_steps(root, run=run)}")
     return None
 
 
@@ -921,7 +1051,7 @@ def send(root: Path, message: dict, *, run: Runner = run, say: Callable[[str], N
     root = Path(root)
     machine, how = machine_setting(root, run=run)
     if machine is None:
-        raise Unresolvable(f"{how}; `git config {MACHINE_KEY} <name>` turns it on")
+        raise Unresolvable(_off_reason(how))
     if message.get("from") != machine:
         raise Unresolvable(f"the message is from {message.get('from')!r}, this box is {machine!r}")
     hits = secret_hits(message)
@@ -993,7 +1123,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("send", help="append one message to this machine's ref and push it")
     s.add_argument("--type", required=True, choices=TYPES)
-    s.add_argument("--text", default="", help="the body (a note or request needs one)")
+    body = s.add_mutually_exclusive_group()
+    body.add_argument("--text", default="", help="the body (a note or request needs one)")
+    body.add_argument("--text-file", default=None,
+                      help="the body from a file, the whole of it, UTF-8: a long or quote-heavy body never "
+                           "rides a shell string (the cap is the same)")
     s.add_argument("--lane", default=None, help="the lane this is about")
     s.add_argument("--class", dest="classes", action="append", default=[], help="a ledger class (repeatable)")
     s.add_argument("--path", dest="paths", action="append", default=[], help="a repo-relative path (repeatable)")
@@ -1021,6 +1155,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="this machine's name and the channel's refs")
     return parser
+
+
+def _read_text_file(path: str) -> str:
+    """``send --text-file``: the whole file as UTF-8 text (a byte-order mark is
+    read), CRLF read as LF so a body saved on Windows carries no CR and pays
+    no extra character per line against the cap; a file that cannot be read,
+    or is not UTF-8, refuses by its name."""
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        raise Unresolvable(f"--text-file could not be read: {os_error_text(exc)}") from None
+    text, problem = decode_text_or_problem(raw)
+    if problem:
+        raise Unresolvable(f"--text-file {path}: {problem}")
+    return text.replace("\r\n", "\n")
 
 
 def _print_message(m: dict) -> None:
@@ -1058,9 +1207,10 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"{other}: {len(messages)} message(s) fetched")
             return 0
         if machine is None:
-            raise Unresolvable(f"{how}; `git config {MACHINE_KEY} <name>` turns it on")
+            raise Unresolvable(_off_reason(how))
         if args.verb == "send":
-            message = new_message(machine, args.type, args.text, lane=args.lane, classes=args.classes,
+            text = _read_text_file(args.text_file) if args.text_file is not None else args.text
+            message = new_message(machine, args.type, text, lane=args.lane, classes=args.classes,
                                   paths=args.paths, ids=args.ids, ack=args.ack, seat=args.seat)
             if args.type == "assign":
                 refusal = assign_refusal(root, machine)
@@ -1071,6 +1221,7 @@ def main(argv: list[str] | None = None) -> int:
                 if hits:
                     raise Unresolvable("would not send, the guard reads a secret path in it: " + "; ".join(hits[:5]))
                 sys.stdout.write(encode(message))
+                print(f"body: {len(message['text'])} of {MAX_TEXT} characters", file=sys.stderr)
                 return 0
             send(root, message)
             return 0

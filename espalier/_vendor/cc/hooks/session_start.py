@@ -939,8 +939,10 @@ def _engine_line(root: Path, deadline: float | None = None, *,
 def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> str:
     """The banner's `Mail:` value: the unread messages the other machines
     left, newest first, one headline per row (three, then "and N more"), with
-    the tail that says whose text it is -- or '' where nothing is unread after
-    a fetch that went through. A fetch that could not be made is said in the
+    the tail that says whose text it is, and on the dispatcher seat the count
+    of requests no ack names (``_asks_count``) -- or '' where nothing is
+    unread and no ask is counted after a fetch that went through. A fetch
+    that could not be made is said in the
     line, beside what was fetched before. Where this clone names no machine
     but already holds another machine's mail ref (a plain ``git fetch
     origin`` brings them in), the line says how to opt in; with no ref either,
@@ -954,7 +956,13 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> s
     left = _seconds_left(deadline, _MAIL_READ_CAP_SECONDS)
     if left <= 0.2:
         return ""
-    machine, _how = mail.machine_setting(root, timeout=left)
+    machine, how = mail.machine_setting(root, timeout=left)
+    unread = getattr(mail, "MACHINE_UNREAD", None)
+    if machine is None and unread and str(how).startswith(unread):
+        # The name could not be read (a timeout, a config git cannot parse):
+        # not "names no machine", whose opt-in command would fail the same way
+        # or rename a seat that has a name. No fetch, no further read.
+        return f"(this checkout's machine name could not be read: {_ascii(str(how))[:160]}; /inbox reads the mail)"
     if machine is None:
         left = _seconds_left(deadline, _MAIL_READ_CAP_SECONDS)
         others = mail.local_mail_machines(root, timeout=left) if left > 0.2 else []
@@ -976,9 +984,37 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> s
     by_machine, _skipped = mail.read_mail(root, timeout=left)
     pending = mail.unread(by_machine, mail.read_cursor(root), exclude_machine=machine)
     rows = [_ascii(mail.headline(m)) for m in reversed(pending)]
+    try:
+        asks = _asks_count(root, mail, machine, by_machine)
+    except Exception as e:  # noqa: BLE001 — the count costs itself, never the headlines read above
+        _hook_utils.advise_exc("session_start: unanswered-asks count failed", e)
+        asks = ""
     if not rows:
-        return note
-    return _render_rows(rows) + "\n" + _PR_INDENT + _MAIL_TAIL + (f" {note}" if note else "")
+        return " ".join(part for part in (asks, note) if part)
+    line = _render_rows(rows) + "\n" + _PR_INDENT + _MAIL_TAIL + (f" {note}" if note else "")
+    return line + (f"\n{_PR_INDENT}{asks}" if asks else "")
+
+
+def _asks_count(root: Path, mail: Any, machine: str, by_machine: dict) -> str:
+    """On the dispatcher seat (``dispatcher`` in espalier.toml names the
+    machine this checkout answers; the dispatcher clone's other worktree seats
+    get nothing), how many requests no ack names, from any seat, its own
+    outgoing ones included, and how old the oldest is; ''
+    on any other seat, with none open, or where the deployed mail.py predates
+    the reader. Every machine's ref is counted, this one's own included,
+    since the dispatcher's acks live there. No spawn: the refs were read
+    above, the setting is one file. The caller guards it, so a reader that
+    raises costs the count only."""
+    setting = getattr(mail, "dispatcher_setting", None)
+    reader = getattr(mail, "live_requests", None)
+    if setting is None or reader is None or setting(root)[0] != machine:
+        return ""
+    asks = reader(by_machine)
+    if not asks:
+        return ""
+    n = len(asks)
+    return (f"{n} unanswered ask{'s' if n != 1 else ''} (requests no ack names), "
+            f"oldest {_age_text(asks[0].get('age_s'))}: /inbox board lists them")
 
 
 def _latest_run_per_check(rows: list) -> list:
