@@ -2749,6 +2749,143 @@ def _mail_message(i: int, text: str = "hello") -> dict:
     return {"id": f"id-{i}", "type": "note", "from": "win", "at": f"2026-10-0{i}T00:00:00Z", "re": {}, "text": text}
 
 
+def _real_mail():
+    spec = importlib.util.spec_from_file_location("_mail_for_orders", HOOKS_DIR.parent / "mail.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_mail_for_orders"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestOrdersLine:
+    """TP-701 B-5: a worker seat's banner names its jobs from the refs the
+    mail line read, then the seat driver's short form of its first message,
+    so the operator's first paste is not needed. Read on the real mail.py
+    fold and a real espalier.toml, never a stub of either."""
+
+    @staticmethod
+    def _assign(mail, seat: str, *, frm: str = "hub", **job) -> dict:
+        return mail.new_message(frm, "assign", f"to {seat}", seat=seat, **job)
+
+    def test_a_worker_with_live_jobs_is_given_its_orders(self, tmp_path):
+        """Dies to: counting another seat's jobs (3), or a worker's own
+        assign counting where a dispatcher is named."""
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+        by = {"hub": [self._assign(mail, "w", lane="lane/a"), self._assign(mail, "w", ids=["DEF-1"]),
+                      self._assign(mail, "other", lane="lane/z")],
+              "w": [self._assign(mail, "w", frm="w", lane="lane/self")]}
+        line = mod._orders_line(tmp_path, {"machine": "w", "by_machine": by, "unread": 2}, mail=mail, python="py -3")
+        assert line == ("w: 2 jobs from hub, first lane/a; 2 unread; run /inbox, then /inbox board, then start the "
+                        "worker loop (/loop 10m); py -3 tools/cc/seat.py brief w prints the first message")
+        assert line.isascii()
+
+    def test_no_line_on_the_dispatcher_seat_without_a_job_or_a_read_or_a_named_dispatcher(self, tmp_path):
+        """Dies to: the dispatcher check dropped (the dispatcher's own clone
+        would be ordered about), or a line from an unusable setting."""
+        mod, mail = _load(), _real_mail()
+        toml = tmp_path / "espalier.toml"
+        by = {"hub": [self._assign(mail, "w", lane="lane/a"), self._assign(mail, "hub", lane="lane/h")]}
+        read = {"machine": "w", "by_machine": by, "unread": 0}
+        assert mod._orders_line(tmp_path, read, mail=mail, python="") == ""          # no dispatcher named
+        toml.write_text('dispatcher = "hub"\n', encoding="utf-8")
+        assert mod._orders_line(tmp_path, {**read, "machine": "hub"}, mail=mail, python="") == ""
+        assert mod._orders_line(tmp_path, {**read, "machine": "x"}, mail=mail, python="") == ""   # no job
+        assert mod._orders_line(tmp_path, {}, mail=mail, python="") == ""                      # nothing read
+        toml.write_text('dispatcher = "Not A Name"\n', encoding="utf-8")
+        assert mod._orders_line(tmp_path, read, mail=mail, python="") == ""
+        toml.write_text('dispatcher = "hub"\n', encoding="utf-8")
+        release = mail.new_message("hub", "release", "", lane="lane/a")
+        assert mod._orders_line(tmp_path, {**read, "by_machine": {"hub": [*by["hub"], release]}}, mail=mail,
+                                python="") == ""                                                # released
+
+    def test_without_the_seat_driver_the_line_still_names_the_two_reads(self, tmp_path):
+        import types
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+        read = {"machine": "w", "by_machine": {"hub": [self._assign(mail, "w", classes=["C9"])]}, "unread": 1}
+        line = mod._orders_line(tmp_path, read, mail=mail, seat=types.SimpleNamespace(), python="py -3")
+        assert line == "w: 1 job from hub, first C9; 1 unread; run /inbox, then /inbox board"
+
+    def test_a_seat_driver_that_does_not_load_costs_the_hint_and_never_the_jobs(self, tmp_path, monkeypatch):
+        """A skewed deploy (a seat.py whose own imports fail) lost the whole
+        line (code review, r1). Dies to: the load unguarded inside the line."""
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+
+        def broken():
+            raise ImportError("No module named '_json_safe'")
+
+        monkeypatch.setattr(mod, "_load_seat", broken)
+        mod._hook_utils.take_advisories()
+        read = {"machine": "w", "by_machine": {"hub": [self._assign(mail, "w", lane="lane/a")]}, "unread": 0}
+        assert mod._orders_line(tmp_path, read, mail=mail, python="py -3") == (
+            "w: 1 job from hub, first lane/a; 0 unread; run /inbox, then /inbox board")
+        said = mod._hook_utils.take_advisories()
+        assert any("seat driver load failed: ImportError" in s for s in said), said
+
+    def test_jobs_from_refs_a_failed_fetch_left_are_said_to_be_as_last_fetched(self, tmp_path):
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+        read = {"machine": "w", "by_machine": {"hub": [self._assign(mail, "w", lane="lane/a")]}, "unread": 0,
+                "fetched": False}
+        line = mod._orders_line(tmp_path, read, mail=mail, python="")
+        assert line.startswith("w: 1 job from hub, first lane/a; 0 unread (refs as last fetched); run /inbox")
+
+    def test_the_mail_line_hands_over_what_it_read(self, tmp_path):
+        mod = _load()
+        stub = _mail_stub(read_mail=lambda root, timeout=None: ({"win": [_mail_message(1)]}, {}))
+        read: dict = {}
+        mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub, read=read)
+        assert read["machine"] == "mac" and read["by_machine"] == {"win": [_mail_message(1)]} and read["unread"] == 1
+        assert read["fetched"] is True
+        failed = _mail_stub(fetch_mail=lambda root, timeout: (False, "could not read from remote"))
+        mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=failed, read=read)
+        assert read["fetched"] is False
+
+    def test_both_banners_carry_the_line_after_the_mail_only_when_given(self, tmp_path):
+        mod = _load()
+        assert "Orders:" not in mod._build_context(tmp_path, False, False, mail="m")
+        for source in ("startup", "compact"):
+            text = mod._build_context(tmp_path, False, False, source, mail="m", orders="w: 1 job")
+            assert "Orders:    w: 1 job\n" in text and text.index("Mail:") < text.index("Orders:"), source
+
+    def test_a_worker_clone_opens_on_its_orders_end_to_end(self, tmp_path):
+        """The wiring in main: the dispatcher clone sends an assign through a
+        scratch origin, and the worker clone's real SessionStart prints the
+        line. Dies to: main not passing the line to the builder, or the mail
+        line not handing over its read."""
+        from tests._git_oracle import _git_env
+        from tests._interpreter_hosts import HOOK_PYTHON
+
+        def git(cwd: Path, *args: str) -> None:
+            subprocess.run(["git", *args], cwd=cwd, env=_git_env(), check=True, capture_output=True, timeout=45)
+
+        origin = tmp_path / "origin.git"
+        git(tmp_path, "init", "--bare", "--quiet", "-b", "main", str(origin))
+        clones = {}
+        for name in ("hub", "w"):
+            path = tmp_path / name
+            git(tmp_path, "clone", "--quiet", str(origin), str(path))
+            for key, value in (("user.name", "t"), ("user.email", "t@example.invalid"),
+                               ("commit.gpgsign", "false"), ("espalier.machine", name)):
+                git(path, "config", key, value)
+            (path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+            clones[name] = path
+        mail = _real_mail()
+        mail.send(clones["hub"], self._assign(mail, "w", lane="lane/a"), say=lambda _s: None)
+        res = subprocess.run(
+            [HOOK_PYTHON, str(HOOKS_DIR / "session_start.py")],
+            input=json.dumps({"source": "startup", "session_id": "o-1"}), capture_output=True, text=True,
+            timeout=45, cwd=str(clones["w"]), check=False, encoding="utf-8",   # the hook's own ceiling is 15 s
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(clones["w"])},
+        )
+        assert res.returncode == 0, res.stderr
+        banner = json.loads(res.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert ("Orders:    w: 1 job from hub, first lane/a; 1 unread; run /inbox, then /inbox board, then start "
+                "the worker loop (/loop 10m)") in banner, banner
+
+
 class TestEngineLine:
     """The banner's `Engine:` line: in a linked worktree seat whose root holds
     the engine source, `python3` (the interpreter a tier runs) resolving
@@ -3530,7 +3667,8 @@ class TestSessionsLine:
         one = json.loads(hu.session_marker_path(tmp_path, "old-1").read_text(encoding="utf-8"))
         two = json.loads(hu.session_marker_path(tmp_path, "old-2").read_text(encoding="utf-8"))
         three = json.loads(garbage.read_text(encoding="utf-8"))
-        assert one == {"session_id": "old-1", "started": "", "pid": 4242, "cwd": "/now", "source": "heartbeat"}
+        assert one == {"session_id": "old-1", "started": "", "pid": 4242, "window": False, "cwd": "/now",
+                       "source": "heartbeat"}                                         # a bare pid: not registry-named
         assert two["pid"] == 4242 and two["started"] == "2026-10-05T20:00:00+00:00"
         assert two["cwd"] == "/kept" and two["source"] == "startup"                  # what the record held is kept
         assert three["pid"] == 4242 and three["started"] == "" and three["session_id"] == "old-3"
@@ -3680,6 +3818,122 @@ class TestSessionsLine:
 
         monkeypatch.setattr(hu, "load_checkout_sync", lambda: types.SimpleNamespace(window_pid=unreadable))
         assert hu.window_pid() == os.getppid()
+
+    def test_the_window_key_says_whether_the_registry_named_the_pid(self, monkeypatch):
+        """Only a pid the registry named can say by its exit that the session
+        ended: the fallback parent is a launcher that exits with the hook on
+        Windows. Dies to: reporting the fallback as found."""
+        import types
+        hu = _load_hook_utils()
+        monkeypatch.setattr(hu, "load_checkout_sync", lambda: types.SimpleNamespace(window_pid=lambda: 31337))
+        assert hu.window_key() == (31337, True)
+        for sync in (None, types.SimpleNamespace(window_pid=lambda: None)):
+            monkeypatch.setattr(hu, "load_checkout_sync", lambda sync=sync: sync)
+            assert hu.window_key() == (os.getppid(), False)
+
+    def test_a_marker_records_window_only_for_a_registry_pid(self, tmp_path):
+        hu = _load_hook_utils()
+
+        def window(sid):
+            return json.loads(hu.session_marker_path(tmp_path, sid).read_text(encoding="utf-8"))["window"]
+
+        hu.write_session_marker(tmp_path, "named", pid=4242, window=True)
+        hu.write_session_marker(tmp_path, "fallback", pid=4242)
+        hu.write_session_marker(tmp_path, "no-pid", pid=None, window=True)
+        assert (window("named"), window("fallback"), window("no-pid")) == (True, False, False)
+        # The heartbeat's write and its repair carry the pair a window_key gives.
+        assert hu.touch_session_marker(tmp_path, "beat", pid=lambda: (5150, True))
+        hu.write_session_marker(tmp_path, "stub", started="")
+        assert hu.touch_session_marker(tmp_path, "stub", pid=lambda: (5150, True))
+        assert hu.touch_session_marker(tmp_path, "bare", pid=lambda: 5150)
+        assert (window("beat"), window("stub"), window("bare")) == (True, True, False)
+
+    def _plant(self, hu, root, sid, *, pid, window=None, cwd=None, age_s=60.0, now):
+        record = {"session_id": sid, "started": "", "pid": pid, "cwd": str(root) if cwd is None else cwd,
+                  "source": "startup"}
+        if window is not None:
+            record["window"] = window
+        path = hu.session_marker_path(root, sid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+        os.utime(path, (now - age_s, now - age_s))
+
+    def test_the_line_leaves_out_a_window_whose_pid_has_exited_and_names_the_rest(self, tmp_path, monkeypatch):
+        """DEF-4020's red: a fresh marker whose registry-named pid is gone was
+        named as a live sibling. Each other row is a case whose exit cannot be
+        told, so it stays named. Dies to: ignoring ``alive`` in the line (7
+        named), judging a pid the registry did not name or one an older build
+        recorded (the fallback launcher's exit hides a live session: 4), or
+        dropping the this-tree check (a marker from another spelling: 5)."""
+        import types
+        mod = _load()
+        hu = mod._hook_utils
+        alive = {1001: False, 1002: True, 1003: None}
+        monkeypatch.setattr(hu, "load_checkout_sync", lambda: types.SimpleNamespace(pid_alive=alive.get))
+        monkeypatch.delenv("ESPALIER_SESSIONS_DEBUG", raising=False)
+        now = time.time()
+        self._plant(hu, tmp_path, "aaaa-gone", pid=1001, window=True, age_s=10, now=now)
+        self._plant(hu, tmp_path, "bbbb-live", pid=1002, window=True, now=now)
+        self._plant(hu, tmp_path, "cccc-fallback", pid=1001, window=False, now=now)
+        self._plant(hu, tmp_path, "dddd-older", pid=1001, now=now)
+        self._plant(hu, tmp_path, "eeee-nopid", pid=None, window=True, now=now)
+        self._plant(hu, tmp_path, "ffff-elsewhere", pid=1001, window=True, cwd="Q:/another/tree", now=now)
+        self._plant(hu, tmp_path, "gggg-cannot-tell", pid=1003, window=True, now=now)
+        rows = {r["session_id"]: r["alive"] for r in hu.other_live_sessions(tmp_path, "me", now)}
+        assert rows == {"aaaa-gone": False, "bbbb-live": True, "cccc-fallback": None, "dddd-older": None,
+                        "eeee-nopid": None, "ffff-elsewhere": None, "gggg-cannot-tell": None}
+        line = mod._sessions_line(tmp_path, "me", now=now)
+        assert line.startswith("6 other sessions in this tree: ") and "aaaa-gon" not in line
+        assert "gone" not in line.split(" -- ")[0]
+        monkeypatch.setenv("ESPALIER_SESSIONS_DEBUG", "1")
+        debug = mod._sessions_line(tmp_path, "me", now=now)
+        assert debug.startswith("7 other sessions in this tree: aaaa-gon (") and ", pid 1001 gone)" in debug
+
+    @staticmethod
+    def _spawn(script: str, payload: dict, root: Path, *, registry_names_parent: bool) -> dict:
+        """Run a real marker writer with a Claude Code config dir of its own
+        whose registry names this process (the hook's parent, spawned through
+        HOOK_PYTHON) or names nobody; return the marker it wrote."""
+        from tests._interpreter_hosts import HOOK_PYTHON
+        config = root / "claude-config"
+        (config / "sessions").mkdir(parents=True, exist_ok=True)
+        if registry_names_parent:
+            entry = {"pid": os.getpid(), "sessionId": payload["session_id"], "cwd": str(root)}
+            (config / "sessions" / f"{os.getpid()}.json").write_text(json.dumps(entry), encoding="utf-8")
+        res = subprocess.run(
+            [HOOK_PYTHON, str(HOOKS_DIR / script)], input=json.dumps(payload), capture_output=True, text=True,
+            timeout=45, cwd=str(root), check=False, encoding="utf-8",   # the hook's own ceiling is 15 s
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(root), "CLAUDE_CONFIG_DIR": str(config)},
+        )
+        assert res.returncode == 0, res.stderr
+        marker = root / ".espalier-state" / "sessions" / f"{payload['session_id']}.json"
+        return json.loads(marker.read_text(encoding="utf-8"))
+
+    @pytest.mark.parametrize("named", [True, False])
+    def test_both_writers_record_whether_the_registry_named_the_window(self, tmp_path, named):
+        """SessionStart's marker job and the prompt heartbeat each record the
+        window flag from the window key, so the Sessions line can trust an
+        exit only where the registry named the pid. Dies to: either writer
+        dropping the flag (no window marker is ever judged), or passing a bare
+        pid (the heartbeat's repair forgets it)."""
+        (tmp_path / "a").mkdir()
+        (tmp_path / "b").mkdir()
+        start = self._spawn("session_start.py", {"source": "startup", "session_id": "ss-1"}, tmp_path / "a",
+                            registry_names_parent=named)
+        beat = self._spawn("task_router.py", {"prompt": "hello", "session_id": "tr-1"}, tmp_path / "b",
+                           registry_names_parent=named)
+        assert (start["pid"], start["window"]) == (os.getpid(), named), start
+        assert (beat["pid"], beat["window"]) == (os.getpid(), named), beat
+
+    def test_the_this_tree_check_reads_a_tail_capped_cwd_and_folds_case_on_windows(self, tmp_path):
+        hu = _load_hook_utils()
+        root = tmp_path / "Repo"
+        assert hu._recorded_in_tree(str(root), root)
+        assert hu._recorded_in_tree(str(root / ".claude" / "worktrees" / "2"), root)
+        assert hu._recorded_in_tree("..." + str(root)[-20:], root)
+        assert not hu._recorded_in_tree(str(tmp_path / "Repo2"), root)
+        assert not hu._recorded_in_tree("", root)
+        assert hu._recorded_in_tree(str(root).swapcase(), root) is (os.name == "nt")
 
 
 class TestTheGovernanceWiringLine:

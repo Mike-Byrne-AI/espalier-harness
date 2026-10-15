@@ -640,7 +640,26 @@ def window_pid(table: dict[int, tuple[int, str]] | None = None) -> int | None:
     dirs = [base / "sessions" for base in claude_config_dirs()]
 
     def registered(pid: int) -> bool:
-        return pid > 0 and any((directory / f"{pid}.json").is_file() for directory in dirs)
+        # The entry must be this process's: a crashed session leaves its file
+        # behind, and Windows hands the pid out again (an interpreter launcher
+        # included). A marker records its window pid as one the registry
+        # named, which the Sessions line then reads by its exit, so a stale
+        # file must not count: the pid in it must match and its procStart
+        # must name the process holding the pid now (``_pid_reused``). An
+        # entry that does not read is no answer either.
+        if pid <= 0:
+            return False
+        for directory in dirs:
+            path = directory / f"{pid}.json"
+            if not path.is_file():
+                continue
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):  # fail-open: ok deliberate -- an unreadable entry names no window, so the marker's pid is not judged by its exit
+                continue
+            if isinstance(record, dict) and record.get("pid") == pid and not _pid_reused(pid, record):
+                return True
+        return False
 
     parent = os.getppid()
     if registered(parent):
@@ -737,11 +756,13 @@ def _default_marker_reader() -> MarkerReader | None:
 
 def marker_sessions(tree: Path, reader: MarkerReader | None = None) -> list[dict[str, object]]:
     """The session markers under ``tree``'s own state directory that may still
-    be live: touched within the hooks' window AND recording a window pid that
-    has not exited (an unknown pid counts: it cannot be ruled out). Rows in
-    the registry's shape with ``source`` ``marker``; a marker that records no
-    cwd stands for ``tree`` itself. [] when no reader is deployed or it
-    breaks."""
+    be live: touched within the hooks' window AND not read as exited by the
+    hooks' own reader (its ``alive`` is False only for a pid Claude Code's
+    registry named when the marker was written; a hook's fallback parent can
+    exit while its session runs on, so any other pid counts: it cannot be
+    ruled out). Rows in the registry's shape with ``source`` ``marker``; a
+    marker that records no cwd stands for ``tree`` itself. [] when no reader
+    is deployed or it breaks."""
     reader = reader if reader is not None else _default_marker_reader()
     if reader is None:
         return []
@@ -752,7 +773,7 @@ def marker_sessions(tree: Path, reader: MarkerReader | None = None) -> list[dict
     rows: list[dict[str, object]] = []
     for r in found:
         pid = r.get("pid")
-        if isinstance(pid, int) and not isinstance(pid, bool) and pid_alive(pid) is False:
+        if r.get("alive") is False:
             continue
         rows.append({"pid": pid if isinstance(pid, int) else None, "session_id": str(r.get("session_id") or ""),
                      "cwd": str(r.get("cwd") or "") or str(tree), "kind": "", "entrypoint": "",
@@ -1528,6 +1549,9 @@ def main(argv: list[str] | None = None) -> int:
     result = catch_up(root, other_session=other, plan_open=plan_open, dry_run=not args.apply)
     marker_live = None
     if hook_utils is not None:
+        # Counted by age, never by the rows' alive: a removal fails closed, so
+        # any recent marker keeps its worktree (the Sessions line drops exited
+        # windows; the reaper does not).
         marker_live = lambda tree: bool(hook_utils.other_live_sessions(tree, ""))  # type: ignore[attr-defined]  # noqa: E731
     reap = reap_worktrees(root, sessions=sessions, own_cwd=Path.cwd(), marker_live=marker_live,
                           held_by_other=other, unreadable_note=note, dry_run=not args.apply)

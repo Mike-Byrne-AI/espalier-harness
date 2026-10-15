@@ -50,6 +50,26 @@ remembered. A red `main` is reverted before anything lands on it.
 
 ## What a worker seat does
 
+**Start a seat with one command, from a terminal of the operator's own**
+(never from inside a session): `python tools/cc/seat.py launch <seat>`. It
+resolves the seat's checkout (creating a worktree seat from `origin` when it is
+absent), refuses one a live session is in, and starts `claude` there with the
+seat's first message as its prompt, so nothing is pasted. `seat.py brief
+<seat>` prints that message: the worker form names the dispatcher, the two
+reads to start with and the jobs, and ends with the worker loop (`/loop 10m`,
+the tick this repository's workers have run since 2026-10-15); the dispatcher
+form names its duties and ends with `/loop 15m /inbox board`. `espalier.toml`'s
+`dispatcher` line picks the form, and `--no-brief` launches without one. The
+banner check: a worker seat holding live assigns opens on an `Orders:` line
+with its jobs and the same short form, which a session started by hand reads
+there. Driven on Claude Code 2.1.301 (2026-10-15, win-2, a scratch worktree):
+a first message whose last line is a `/loop` line starts that loop with no
+second message, whether the session was launched with the checkout as its cwd
+or with `claude --worktree`, and the loop survives `/clear` (the same
+process); a relaunch is a new process and gets its loop from the brief, so
+it needs no second paste either. `claude --worktree` locks the worktree, in an
+interactive session as under `-p`; a killed session leaves the lock behind.
+
 1. **Work the jobs assigned to you**, and keep two or three queued, so the
    dispatcher's absence does not stall you. For a new job or a decision that
    crosses jobs, send the dispatcher one request. Never negotiate with another
@@ -123,9 +143,14 @@ remembered. A red `main` is reverted before anything lands on it.
      answer, which is how `DEF-1197` was minted twice.
    - **A new long-lived seat** gets the next free block from the dispatcher,
      as one line in `espalier.toml`.
-   - **Open:** a worktree's seat name outlives the worktree. Its unreleased
-     claims stay live, and only that name can release them. The worktree
-     clean-up does not release them yet.
+   - **Closed by `seat.py retire <seat>`** (`TP-701` B-2, 2026-10-15): a
+     worktree's seat name outlives the worktree, its unreleased claims stay
+     live, and only that name can release them. `retire` sends the releases
+     from inside the worktree under its own name before it removes the
+     worktree, and refuses to remove one whose claims it cannot release
+     (printing the by-hand release for a worktree already gone). The
+     SessionStart clean-up releases nothing: it keeps a worktree whose seat
+     still holds a live claim.
 6. **Change a record's format by expand, then contract.** Readers learn the new
    form while still reading the old; then writers switch; then the old form
    goes. Never a flag day while other lanes are open. win-2's derived-totals
@@ -192,7 +217,9 @@ worktree since removed; so a quiet seat is asked, never presumed dead or
 alive. Where its worktree is gone, the dispatcher releases its jobs (a
 release naming the assign, as the assigner); its claims stay live until that
 seat name releases them (item 5: a release from any other name is accepted
-and closes nothing), which `seat.py retire` (`TP-701` B-2) is to do. Both
+and closes nothing), which `seat.py retire` (`TP-701` B-2) does while the
+worktree is still there; a worktree already gone needs the release by hand,
+which `retire` prints. Both
 were read by hand before (an ad-hoc census over every mail ref; the pids
 checked one by one).
 
