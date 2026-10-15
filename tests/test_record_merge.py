@@ -1135,13 +1135,33 @@ def _hand_plus_record(rm, two_machines, *, roster: bool) -> tuple[Path, str, str
     # The body's precondition: catch-up refuses the hand file by name.
     with pytest.raises(rm.Unresolvable, match=r"outside the record files: README\.md"):
         rm.merge_ref_in(win, "origin/main", run=_real_run(rm))
+    assert _begin_merge(win) == ["ESPALIER_MEMORY.md", "README.md"]
+    return win, mac_row, win_row
+
+
+def _begin_merge(win: Path) -> list[str]:
+    """``git merge origin/main`` left in progress, this checkout's ``tools/cc``
+    beside it (the line's import is relative to the checkout it runs in, and
+    the copy is excluded so status stays strict); the paths git left unmerged."""
     shutil.copytree(REPO_ROOT / "tools" / "cc", win / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
     with (win / ".git" / "info" / "exclude").open("a", encoding="utf-8") as fh:
         fh.write("tools/\n")
     assert _git(win, "merge", "origin/main", check=False).returncode == 1
-    assert sorted(_git(win, "diff", "--name-only", "--diff-filter=U").stdout.split()) == [
-        "ESPALIER_MEMORY.md", "README.md"]
-    return win, mac_row, win_row
+    return sorted(_git(win, "diff", "--name-only", "--diff-filter=U").stdout.split())
+
+
+def _set_heading(repo: Path, heading: str) -> None:
+    """Edit the memory file's prose (its first line), outside every row."""
+    path = repo / "ESPALIER_MEMORY.md"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    lines[0] = heading
+    path.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+    _git(repo, "commit", "--quiet", "-am", f"memory prose: {heading}")
+
+
+def _no_markers(repo: Path, *rels: str) -> bool:
+    return not any(ln.startswith(("<<<<<<<", ">>>>>>>")) for rel in rels
+                   for ln in _git(repo, "show", f"HEAD:{rel}").stdout.splitlines())
 
 
 def _run_finish_line(repo: Path) -> subprocess.CompletedProcess:
@@ -1204,6 +1224,92 @@ class TestTheShipBodysRecordFinish:
         _git(win, "add", "README.md")
         assert _run_finish_line(win).returncode == 0
         assert not (win / ".git" / "MERGE_HEAD").exists()
+
+    def test_a_record_file_staged_with_its_markers_is_refused_until_unresolved(self, rm, two_machines):
+        """``git add -A`` after the hand file stages the memory file with its
+        markers, so git no longer reports it unmerged: the line must refuse,
+        not commit the markers (failure-mode review, driven)."""
+        win, mac_row, win_row = _hand_plus_record(rm, two_machines, roster=False)
+        head = _git(win, "rev-parse", "HEAD").stdout
+        (win / "README.md").write_bytes(b"mac\nwin\n")
+        _git(win, "add", "-A")
+
+        proc = _run_finish_line(win)
+
+        assert proc.returncode != 0 and "staged with a conflict marker: ESPALIER_MEMORY.md" in proc.stderr, \
+            proc.stderr[-800:]
+        assert (win / ".git" / "MERGE_HEAD").exists() and _git(win, "rev-parse", "HEAD").stdout == head
+        _git(win, "update-index", "--unresolve", "--", "ESPALIER_MEMORY.md")
+        assert _run_finish_line(win).returncode == 0
+        memory = _git(win, "show", "HEAD:ESPALIER_MEMORY.md").stdout.splitlines()
+        assert mac_row in memory and win_row in memory and _no_markers(win, "ESPALIER_MEMORY.md")
+        assert _git(win, "show", "HEAD:README.md").stdout == "mac\nwin\n"
+
+    def test_a_shape_refusal_after_a_rewrite_keeps_the_merge_and_the_next_run_concludes(self, rm, two_machines):
+        """The resolver writes the roster and the ledger before it reads the
+        memory file's prose conflict and refuses it. The merge, the staged hand
+        file and the two rewritten files' conflicts must all survive, so the
+        memory file merged by hand and staged alone lets the next run conclude
+        with both lanes' rows (the body's third refusal kind)."""
+        mac, win = two_machines["mac"], two_machines["win"]
+        _git(win, "switch", "--quiet", "-c", "lane/win")
+        for repo, side, ids in ((mac, "mac", ("DEF-1", "DEF-2", "DEF-3")), (win, "win", ("DEF-1", "DEF-2", "DEF-4"))):
+            (repo / "README.md").write_bytes(f"{side}\n".encode("utf-8"))
+            _git(repo, "add", "README.md")
+            _git(repo, "commit", "--quiet", "-m", f"readme on {side}")
+            _file_rows(repo, *ids)
+            _set_heading(repo, f"# Project Memory ({side})")
+        _git(mac, "push", "--quiet", "origin", "main")
+        _git(win, "fetch", "--quiet", "origin")
+        assert _begin_merge(win) == ["ESPALIER_MEMORY.md", "README.md", "task-packs/FORWARD_LEDGER.md",
+                                     "task-packs/LEDGER_PROBES.json"]
+        (win / "README.md").write_bytes(b"mac\nwin\n")
+        _git(win, "add", "README.md")
+
+        proc = _run_finish_line(win)
+
+        assert proc.returncode != 0 and "ESPALIER_MEMORY.md" in proc.stderr, proc.stderr[-800:]
+        assert (win / ".git" / "MERGE_HEAD").exists()
+        assert "README.md" in _git(win, "diff", "--cached", "--name-only").stdout.split()
+        assert "task-packs/FORWARD_LEDGER.md" in _git(win, "diff", "--name-only", "--diff-filter=U").stdout.split()
+        (win / "ESPALIER_MEMORY.md").write_bytes(_git(win, "show", ":2:ESPALIER_MEMORY.md").stdout.encode("utf-8"))
+        _git(win, "add", "ESPALIER_MEMORY.md")
+        assert _run_finish_line(win).returncode == 0
+        assert not (win / ".git" / "MERGE_HEAD").exists()
+        ledger = _git(win, "show", "HEAD:task-packs/FORWARD_LEDGER.md").stdout
+        assert "`DEF-3`" in ledger and "`DEF-4`" in ledger
+        assert _no_markers(win, "ESPALIER_MEMORY.md", "task-packs/FORWARD_LEDGER.md", "task-packs/LEDGER_PROBES.json")
+        assert _git(win, "show", "HEAD:README.md").stdout == "mac\nwin\n"
+
+    def test_a_row_file_both_sides_wrote_is_refused_by_name_and_one_side_kept(self, rm, two_machines):
+        """Two writers on one row file: the resolver refuses it by name before
+        it writes anything; one side kept by hand, the line concludes (the
+        body's second refusal kind)."""
+        mac, win = two_machines["mac"], two_machines["win"]
+        _git(win, "switch", "--quiet", "-c", "lane/win")
+        row = "task-packs/ledger.d/DEF-9.md"
+        for repo, side in ((mac, "mac"), (win, "win")):
+            (repo / "task-packs" / "ledger.d").mkdir()
+            (repo / row).write_bytes(f"{side}\n".encode("utf-8"))
+            _git(repo, "add", row)
+            _git(repo, "commit", "--quiet", "-m", f"a row file on {side}")
+        mac_row = _handoff(mac, "THE MAC LANDED A LANE", "2026-10-05")
+        _git(mac, "push", "--quiet", "origin", "main")
+        win_row = _handoff(win, "THE WINDOWS BOX LANDED A LANE", "2026-10-05")
+        _git(win, "fetch", "--quiet", "origin")
+        assert _begin_merge(win) == ["ESPALIER_MEMORY.md", row]
+
+        proc = _run_finish_line(win)
+
+        assert proc.returncode != 0 and "one writer per name" in proc.stderr and row in proc.stderr, \
+            proc.stderr[-800:]
+        assert (win / ".git" / "MERGE_HEAD").exists()
+        _git(win, "checkout", "--ours", "--", row)
+        _git(win, "add", row)
+        assert _run_finish_line(win).returncode == 0
+        assert _git(win, "show", f"HEAD:{row}").stdout == "win\n"
+        memory = _git(win, "show", "HEAD:ESPALIER_MEMORY.md").stdout.splitlines()
+        assert mac_row in memory and win_row in memory
 
 
 # ── real git: two lanes writing fragments (TP-479 Wave C) ─────────────────────

@@ -112,13 +112,16 @@ echo "=== Session log length ==="
 # Where tools/cc/_record_fragments.py is deployed each row is a file of its own
 # under memory/session-log.d/, and its prune keeps the newest 30; elsewhere the
 # rows are the dated lines of the Session Log table in ESPALIER_MEMORY.md.
-frag_count=$(git ls-files --cached --others --exclude-standard memory/session-log.d 2>/dev/null | grep -c '\.md$')
-echo "  $frag_count session log fragment files (target: at most 30)"
-[ "$frag_count" -gt 30 ] && echo "  ⚠ NEEDS PRUNING: more than 30 fragment files (python tools/cc/_record_fragments.py prune)"
-# Table rows only — exclude header row and separator row
-row_count=$(grep "^| 20" ESPALIER_MEMORY.md 2>/dev/null | wc -l || echo "0")
-echo "  $row_count session log table rows in ESPALIER_MEMORY.md (target: keep last 5)"
-[ "$row_count" -gt 7 ] && echo "  ⚠ NEEDS PRUNING: more than 7 table rows"
+if [ -f tools/cc/_record_fragments.py ]; then
+  frag_count=$(git ls-files --cached --others --exclude-standard memory/session-log.d 2>/dev/null | grep -c '/20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[^/]*\.md$')
+  echo "  $frag_count session log fragment files (target: at most 30)"
+  [ "$frag_count" -gt 30 ] && echo "  ⚠ NEEDS PRUNING: more than 30 fragment files (python tools/cc/_record_fragments.py prune)"
+else
+  # Table rows only — exclude header row and separator row
+  row_count=$(grep "^| 20" ESPALIER_MEMORY.md 2>/dev/null | wc -l || echo "0")
+  echo "  $row_count session log table rows in ESPALIER_MEMORY.md (target: keep last 5)"
+  [ "$row_count" -gt 7 ] && echo "  ⚠ NEEDS PRUNING: more than 7 table rows"
+fi
 
 echo "=== ESPALIER_MEMORY.md total lines ==="
 wc -l ESPALIER_MEMORY.md 2>/dev/null || echo "SURFACE MISSING"

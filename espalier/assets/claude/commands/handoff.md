@@ -121,7 +121,7 @@ fragments, the `post_write_check` hook archives the oldest to
 `docs/session-archive.md` (generated on your tree; not deployed) and deletes
 their files; commit those deletions with the row.
 
-**Without that file** (a deploy from before it): **prepend** the new Session
+**Without that file** (`tools/cc/_record_fragments.py`; a deploy from before it): **prepend** the new Session
 Log row to ESPALIER_MEMORY.md — newest-first, directly under the table header.
 (This said "append" for months while every session prepended; one row followed
 the doc and sits out of order at the bottom of the live file to this day.

@@ -229,7 +229,8 @@ the roster). Since the fold of 2026-10-14 every §C class row and every probe li
 of its own: the class tables below keep their header and rule and hold no row, Appendix B
 holds no class row's index line, and the probes' former roster's prose is
 `task-packs/probes.d/README.md`. A row file names its §C class on its first line, so the rows
-outside the classes -- §1, §3 to §6, with their Appendix B index lines -- stay in this file.
+outside the classes -- §1 and §3 to §6 -- stay in this file, and so do the Appendix B index
+lines that remain (§4A's).
 The ledger's tools read its **view** -- this file with the row files placed in it, built on
 each read and never written back -- so this file alone shows no class row. A reader in prose
 is held to the view only where it spells a record's file
