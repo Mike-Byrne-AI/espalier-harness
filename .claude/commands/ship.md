@@ -223,7 +223,7 @@ Six shapes to recognise:
   unmerged:
 
   ```bash
-  python -c "import sys, pathlib; sys.path.insert(0, 'tools/cc'); import record_merge as rm; u = rm.run(['git', 'diff', '--name-only', '--diff-filter=U'])[1].splitlines(); m = [p for p in rm.run(['git', 'diff', '--cached', '--name-only'])[1].splitlines() if rm.on_roster(p) and p not in u and pathlib.Path(p).is_file() and any(x[:7] in ('<<<<<<<', '>>>>>>>') for x in pathlib.Path(p).read_text(encoding='utf-8', errors='replace').splitlines())]; m and sys.exit('record_merge: refused -- staged with a conflict marker: ' + ', '.join(m)); r = rm._resolve_unmerged(pathlib.Path('.').resolve(), 'origin/<base>', u, run=rm.run, say=print); print(*r.notes, sep=chr(10))"
+  python -c "import sys, pathlib; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); sys.path.insert(0, 'tools/cc'); import record_merge as rm; u = rm.run(['git', 'diff', '--name-only', '--diff-filter=U'])[1].splitlines(); m = [p for p in rm.run(['git', 'diff', '--cached', '--name-only'])[1].splitlines() if rm.on_roster(p) and p not in u and pathlib.Path(p).is_file() and any(x[:7] in ('<' * 7, '>' * 7) for x in pathlib.Path(p).read_text(encoding='utf-8', errors='replace').splitlines())]; m and sys.exit('record_merge: refused -- staged with a conflict marker: ' + ', '.join(m)); r = rm._resolve_unmerged(pathlib.Path('.').resolve(), 'origin/<base>', u, run=rm.run, say=print); print(*r.notes, sep=chr(10))"
   ```
 
   It resolves the record files by shape, stages them and concludes the merge
