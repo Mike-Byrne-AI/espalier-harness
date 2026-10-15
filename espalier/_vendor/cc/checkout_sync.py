@@ -737,11 +737,13 @@ def _default_marker_reader() -> MarkerReader | None:
 
 def marker_sessions(tree: Path, reader: MarkerReader | None = None) -> list[dict[str, object]]:
     """The session markers under ``tree``'s own state directory that may still
-    be live: touched within the hooks' window AND recording a window pid that
-    has not exited (an unknown pid counts: it cannot be ruled out). Rows in
-    the registry's shape with ``source`` ``marker``; a marker that records no
-    cwd stands for ``tree`` itself. [] when no reader is deployed or it
-    breaks."""
+    be live: touched within the hooks' window AND not read as exited by the
+    hooks' own reader (its ``alive`` is False only for a pid Claude Code's
+    registry named when the marker was written; a hook's fallback parent can
+    exit while its session runs on, so any other pid counts: it cannot be
+    ruled out). Rows in the registry's shape with ``source`` ``marker``; a
+    marker that records no cwd stands for ``tree`` itself. [] when no reader
+    is deployed or it breaks."""
     reader = reader if reader is not None else _default_marker_reader()
     if reader is None:
         return []
@@ -752,7 +754,7 @@ def marker_sessions(tree: Path, reader: MarkerReader | None = None) -> list[dict
     rows: list[dict[str, object]] = []
     for r in found:
         pid = r.get("pid")
-        if isinstance(pid, int) and not isinstance(pid, bool) and pid_alive(pid) is False:
+        if r.get("alive") is False:
             continue
         rows.append({"pid": pid if isinstance(pid, int) else None, "session_id": str(r.get("session_id") or ""),
                      "cwd": str(r.get("cwd") or "") or str(tree), "kind": "", "entrypoint": "",

@@ -498,17 +498,21 @@ def _loose_processes_line(table: str | None = None) -> str:
 # head, the working summary, the per-session flags -- and nothing said so. Each
 # session writes a marker under .espalier-state/sessions/ at start and touches
 # it on every prompt (task_router); this line names the siblings touched within
-# the live window. Reporter only: it names the collision, it does not move the
-# files (a later wave keys them by session).
+# the live window, less those whose window pid (one Claude Code's registry
+# named) has exited. Reporter only: it names the collision, it does not move
+# the files (a later wave keys them by session).
 
 _SESSIONS_NAMED_MAX = 3
+#: ``=1`` names the left-out siblings too, each marked "pid gone".
+_SESSIONS_DEBUG_ENV = "ESPALIER_SESSIONS_DEBUG"
 _SESSIONS_TAIL = (
     "cc/ and .espalier-state/ are shared, so the plan, the blueprint head and the "
     "working summary are last-writer-wins. Keep one session per launched worktree "
     "(entering a worktree mid-session does not separate them: its hooks keep this "
-    "checkout). Reporter only: a window closed without /handoff keeps its marker "
-    "until it ages out, so a sibling that last prompted about when you did may be "
-    "your own previous window. (docs/SHARP_EDGES.md \"The live working-summary doc "
+    "checkout). Reporter only: a closed window is left out when Claude Code's "
+    "session registry named its pid; one it did not name keeps its marker until it "
+    "ages out, so a sibling that last prompted about when you did may be your own "
+    "previous window. (docs/SHARP_EDGES.md \"The live working-summary doc "
     "is last-writer-wins under parallel sessions\")"
 )
 
@@ -531,10 +535,18 @@ def _sessions_line(
     root: Path, sid: str, rows: list[dict[str, Any]] | None = None, now: float | None = None,
 ) -> str:
     """The banner's `Sessions:` value -- each other session whose marker was
-    touched within the live window: its id prefix, when it started, when it
-    last prompted; then what is shared and the sharp edge -- or '' when none.
-    ``rows`` is for tests; production reads the markers under ``root``."""
+    touched within the live window and whose window has not exited: its id
+    prefix, when it started, when it last prompted; then what is shared and
+    the sharp edge -- or '' when none. A row whose ``alive`` is False (its
+    window pid, one Claude Code's registry named, is gone) is left out; one
+    whose liveness cannot be told stays named. With
+    ``ESPALIER_SESSIONS_DEBUG=1`` the left-out rows are named too, each
+    marked "pid gone". ``rows`` is for tests; production reads the markers
+    under ``root``."""
     rows = _hook_utils.other_live_sessions(root, sid, now) if rows is None else rows
+    debug = os.environ.get(_SESSIONS_DEBUG_ENV) == "1"
+    if not debug:
+        rows = [row for row in rows if row.get("alive") is not False]
     if not rows:
         return ""
     here = str(root).replace("\\", "/").rstrip("/")
@@ -552,7 +564,8 @@ def _sessions_line(
         same = cwd == here or (cwd.startswith("...") and here.endswith(cwd[3:]))
         where = f", in {cwd}" if cwd and not same else ""
         where = where.encode("ascii", "replace").decode("ascii")
-        named.append(f"{ident} ({started}, last prompt {_age_text(row.get('last_seen_s'))}{where})")
+        gone = f", pid {row.get('pid')} gone" if row.get("alive") is False else ""
+        named.append(f"{ident} ({started}, last prompt {_age_text(row.get('last_seen_s'))}{where}{gone})")
     count = len(rows)
     head = f"{count} other session{'s' if count != 1 else ''} in this tree: " + ", ".join(named)
     more = count - len(named)
@@ -3732,8 +3745,9 @@ def _run_main() -> int:
     # (no id) writes no marker.
     sid = _hook_utils.safe_session_id(payload.get("session_id") if isinstance(payload, dict) else "")
     # The window's pid, read once: the marker records it and a clear retires
-    # the predecessor by it. Never raises; its fallback is the hook's parent.
-    window = _hook_utils.window_pid()
+    # the predecessor by it. Never raises; its fallback is the hook's parent,
+    # recorded as not named by the registry, so its exit says nothing.
+    window, window_found = _hook_utils.window_key()
 
     def _marker_job() -> None:
         # A compact or resume re-fires SessionStart mid-session; the session did
@@ -3743,7 +3757,7 @@ def _run_main() -> int:
         # with no id writes none by design, and says nothing).
         if sid and not _hook_utils.write_session_marker(
             root, sid, pid=window, cwd=str(_hook_cwd(payload) or ""), source=source,
-            keep_started=source in _CONTINUATION_SOURCES,
+            keep_started=source in _CONTINUATION_SOURCES, window=window_found,
         ):
             raise OSError("the session marker could not be written")
 

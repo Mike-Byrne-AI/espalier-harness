@@ -351,8 +351,8 @@ def test_the_flag_predicate_admits_each_family_and_rejects_a_stray(tmp_path: Pat
 
 
 def test_session_marker_shape_synthetic(tmp_path: Path) -> None:
-    """Pin the per-session marker's shape (TP-467 wave A): a JSON object with the
-    five keys, well under 1 KiB even with a long ``cwd``, written by the REAL
+    """Pin the per-session marker's shape (TP-467 wave A; ``window`` since TP-701
+    B-4): a JSON object with the six keys, well under 1 KiB even with a long ``cwd``, written by the REAL
     writer ``_hook_utils.write_session_marker`` -- RED if a hook author turns
     the marker into a payload channel or another encoding."""
     import json
@@ -363,5 +363,6 @@ def test_session_marker_shape_synthetic(tmp_path: Path) -> None:
     content = target.read_text(encoding="utf-8")
     _assert_marker_shape("sessions/sid-1.json", content, 1024)
     record = json.loads(content)
-    assert set(record) == {"session_id", "started", "pid", "cwd", "source"}
+    assert set(record) == {"session_id", "started", "pid", "window", "cwd", "source"}
+    assert record["window"] is False   # no registry named pid 1 here: a fallback key
     assert record["session_id"] == "sid-1" and record["source"] == "startup"

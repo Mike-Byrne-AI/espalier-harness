@@ -1955,14 +1955,17 @@ def _tail_capped(text: str, limit: int) -> str:
 def write_session_marker(
     root: Path, sid: object, *, pid: int | None = None, cwd: str = "",
     source: str = "", started: str | None = None, keep_started: bool = False,
+    window: bool = False,
 ) -> bool:
     """Write (or rewrite) ``sid``'s marker: a small JSON object -- the id, when
     it started (ISO UTC; ``started=None`` means now, ``''`` means unknown, as
-    the heartbeat's self-heal writes it), the window's pid (``window_pid``:
+    the heartbeat's self-heal writes it), the window's pid (``window_key``:
     the Claude Code process the hook runs under, which is what a ``clear``
-    uses to retire the predecessor's marker; never a liveness
-    oracle; anything but a positive int is recorded as None, the one rule
-    ``_window_pid`` holds for every reader), the payload's ``cwd`` (tail-capped, so the leaf that tells two
+    uses to retire the predecessor's marker; anything but a positive int is
+    recorded as None, the one rule ``_window_pid`` holds for every reader),
+    ``window`` (True only when Claude Code's session registry named that pid,
+    the one case its exit says the session ended: a fallback parent can exit
+    while the session runs on), the payload's ``cwd`` (tail-capped, so the leaf that tells two
     checkouts apart survives) and ``source``. ``keep_started`` carries the stamp a
     prior marker holds forward -- a mid-session ``compact`` or ``resume``
     re-fires SessionStart, and the session did not start again. Atomic; never
@@ -1979,6 +1982,7 @@ def write_session_marker(
         "session_id": safe_session_id(sid),
         "started": started,
         "pid": _window_pid(pid),
+        "window": window is True and _window_pid(pid) is not None,
         "cwd": _tail_capped(cwd, _SESSION_MARKER_CWD_MAX_CHARS) if isinstance(cwd, str) else "",
         "source": source[:32] if isinstance(source, str) else "",
     }
@@ -2048,18 +2052,28 @@ def _load_beside_hooks(filename: str, alias: str) -> Any:
     return mod
 
 
-def window_pid() -> int:
-    """The window's pid for the session markers: the Claude Code process this
-    hook runs under (``checkout_sync.window_pid``: the hook's parent, or on
-    Windows the parent of the venv launcher between them), else the hook's
-    parent, the key a deploy without ``checkout_sync.py`` had. Never raises."""
+def window_key() -> tuple[int, bool]:
+    """The window's pid for the session markers, and whether Claude Code's
+    session registry named it: the Claude Code process this hook runs under
+    (``checkout_sync.window_pid``: the hook's parent, or on Windows the parent
+    of the venv launcher between them), ``True``; else the hook's parent, the
+    key a deploy without ``checkout_sync.py`` had, ``False``. Only a pid the
+    registry named tells whether the session lives: the fallback parent can be
+    a launcher that exits with the hook while the session runs on. Never
+    raises."""
     try:
         sync = load_checkout_sync()
         pid = sync.window_pid() if sync is not None else None
     # fail-open: ok deliberate -- a registry or process table that cannot be read keeps the hook's parent, the key before the registry read
     except Exception:  # noqa: BLE001 -- an unreadable registry or process table keeps the hook's parent as the key
         pid = None
-    return _window_pid(pid) or os.getppid()
+    found = _window_pid(pid)
+    return (found, True) if found is not None else (os.getppid(), False)
+
+
+def window_pid() -> int:
+    """The window's pid alone (``window_key``'s first half). Never raises."""
+    return window_key()[0]
 
 
 def touch_session_marker(root: Path, sid: object, *, pid: object = None, cwd: str = "") -> bool:
@@ -2073,26 +2087,33 @@ def touch_session_marker(root: Path, sid: object, *, pid: object = None, cwd: st
     the pid, keeping the start, cwd and source it holds; a pid it already
     records is never overwritten (the SessionStart write is the authority), and
     a touch with no pid of its own repairs nothing. ``pid`` may be a
-    zero-argument callable (``window_pid``), called only when the marker is
-    written or repaired: the window key can read the process table, which a
-    prompt's heartbeat should not pay for on every prompt. Never raises."""
+    zero-argument callable (``window_key``, or ``window_pid``), called only
+    when the marker is written or repaired: the window key can read the
+    process table, which a prompt's heartbeat should not pay for on every
+    prompt. A ``(pid, found)`` pair records whether the registry named the
+    pid (``write_session_marker``'s ``window``); a bare pid records that it
+    did not. Never raises."""
     path = session_marker_path(root, sid)
     if path is None:
         return False
 
-    def window() -> int | None:
-        return _window_pid(pid() if callable(pid) else pid)
+    def window() -> tuple[int | None, bool]:
+        got = pid() if callable(pid) else pid
+        if isinstance(got, tuple) and len(got) == 2:
+            return _window_pid(got[0]), got[1] is True
+        return _window_pid(got), False
 
     try:
         os.utime(path, None)
     except FileNotFoundError:
-        return write_session_marker(root, sid, pid=window(), cwd=cwd, source="heartbeat", started="")
+        key, found = window()
+        return write_session_marker(root, sid, pid=key, cwd=cwd, source="heartbeat", started="", window=found)
     except OSError:  # fail-open: ok deliberate -- a heartbeat that cannot land costs the live window, never the prompt
         return False
     record = _read_marker(path)
     if _window_pid(record.get("pid")) is not None:
         return True
-    key = window()   # read only now, when the record needs it
+    key, found = window()   # read only now, when the record needs it
     if key is None:
         return True
     # Repair, once: the heartbeat landed, so the return is the touch's, and a
@@ -2105,7 +2126,7 @@ def touch_session_marker(root: Path, sid: object, *, pid: object = None, cwd: st
     held_source = record.get("source") if isinstance(record.get("source"), str) else ""
     held_started = record.get("started") if isinstance(record.get("started"), str) else ""
     write_session_marker(root, sid, pid=key, cwd=held_cwd or cwd,
-                         source=held_source or "heartbeat", started=held_started)
+                         source=held_source or "heartbeat", started=held_started, window=found)
     return True
 
 
@@ -2162,13 +2183,46 @@ def _marker_time_s(stamp: str) -> float | None:
     return parsed.timestamp()
 
 
+def _recorded_in_tree(cwd: str, root: Path) -> bool:
+    """Whether a marker's recorded ``cwd`` is ``root`` or a directory under it,
+    in this host's spelling (case folded on Windows): the pid beside it is then
+    one this host can ask about. A tail-capped cwd counts only where ``root``
+    itself ends with its tail; '' never counts."""
+    if not cwd:
+        return False
+    here = str(root).replace("\\", "/").rstrip("/")
+    there = cwd.replace("\\", "/").rstrip("/")
+    if os.name == "nt":
+        here, there = here.casefold(), there.casefold()
+    if there.startswith("..."):
+        return here.endswith(there[3:])
+    return there == here or there.startswith(here + "/")
+
+
+def _window_alive(pid: int) -> bool | None:
+    """``checkout_sync.pid_alive`` on a window pid: True, False, or None where
+    this host cannot tell or the module is not deployed. Never raises."""
+    try:
+        sync = load_checkout_sync()
+        alive = sync.pid_alive(pid) if sync is not None else None
+    # fail-open: ok deliberate -- a liveness read that breaks is "cannot tell", and the row stays named
+    except Exception:  # noqa: BLE001 -- a broken process read is "cannot tell", never an absence
+        return None
+    return alive if isinstance(alive, bool) else None
+
+
 def other_live_sessions(root: Path, sid: object, now: float | None = None) -> list[dict[str, Any]]:
     """The sibling markers touched within SESSION_MARKER_LIVE_S, most recently
     touched first: ``session_id``, ``started`` ('' when unreadable -- the mtime
     is the fact that counts a marker; its JSON is a courtesy), ``last_seen_s``
     and ``started_s`` (ages in seconds; ``started_s`` None when unknown),
-    ``cwd`` and ``pid`` as recorded ('' / None when unreadable). This
-    session's own marker, by ``sid``, is left out. Never raises."""
+    ``cwd`` and ``pid`` as recorded ('' / None when unreadable), ``window``
+    (the marker says Claude Code's registry named that pid) and ``alive``:
+    whether that pid still runs, asked only for a window pid recorded in this
+    tree (``_recorded_in_tree``), else None (cannot tell). The age window is
+    the fact that counts a row; ``alive`` is for the readers that name
+    sessions to leave out the ones whose window has exited. This session's
+    own marker, by ``sid``, is left out. Never raises."""
     now = time.time() if now is None else now
     own = safe_session_id(sid)
     rows: list[dict[str, Any]] = []
@@ -2190,7 +2244,8 @@ def other_live_sessions(root: Path, sid: object, now: float | None = None) -> li
         started = record.get("started") if isinstance(record.get("started"), str) else ""
         started_at = _marker_time_s(started) if started else None
         cwd = record.get("cwd") if isinstance(record.get("cwd"), str) else ""
-        pid = record.get("pid") if isinstance(record.get("pid"), int) else None
+        pid = _window_pid(record.get("pid"))
+        window = record.get("window") is True
         rows.append({
             "session_id": path.stem,
             "started": started,
@@ -2198,6 +2253,8 @@ def other_live_sessions(root: Path, sid: object, now: float | None = None) -> li
             "started_s": max(0.0, now - started_at) if started_at is not None else None,
             "cwd": cwd,
             "pid": pid,
+            "window": window,
+            "alive": _window_alive(pid) if window and pid is not None and _recorded_in_tree(cwd, root) else None,
         })
     rows.sort(key=lambda row: row["last_seen_s"])
     return rows

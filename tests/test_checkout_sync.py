@@ -1063,8 +1063,13 @@ class TestTheOneLivenessOracle:
         seen = cs.occupancy(tmp_path, markers=lambda tree: [live])
         assert seen.oracle == "markers" and _ids(seen.sessions) == ["m1"]
         assert seen.sessions[0]["source"] == "marker" and seen.from_registry() == []
-        gone = cs.occupancy(tmp_path, markers=lambda tree: [{**live, "pid": _dead_pid()}])
-        assert gone.sessions is None, "a marker whose window pid exited names nobody"
+        gone = cs.occupancy(tmp_path, markers=lambda tree: [{**live, "pid": _dead_pid(), "alive": False}])
+        assert gone.sessions is None, "a marker whose registry-named window pid exited names nobody"
+        # A pid the registry did not name (the hook's fallback parent, a launcher
+        # that exits with the hook on Windows) says nothing by its exit, so the
+        # marker still counts. Dies to: asking pid_alive about any recorded pid.
+        fallback = cs.occupancy(tmp_path, markers=lambda tree: [{**live, "pid": _dead_pid(), "alive": None}])
+        assert fallback.oracle == "markers" and _ids(fallback.sessions) == ["m1"]
         broken = cs.occupancy(tmp_path, markers=lambda tree: 1 / 0)
         assert broken.sessions is None and broken.oracle == ""
 
@@ -1108,7 +1113,8 @@ class TestTheOneLivenessOracle:
         clone_session = _row(work, pid=os.getpid(), sid="clone")
         moved = {"session_id": "clone", "pid": os.getpid(), "cwd": str(feat)}
         visitor = {"session_id": "visitor", "pid": os.getppid(), "cwd": str(feat / "src")}
-        gone = {"session_id": "gone", "pid": _dead_pid(), "cwd": str(feat)}
+        # The hooks' reader judges liveness (alive False: a registry-named pid that exited).
+        gone = {"session_id": "gone", "pid": _dead_pid(), "cwd": str(feat), "alive": False}
         in_root = {"session_id": "root-only", "pid": os.getppid(), "cwd": ""}
         own_marker = {"session_id": "clone", "pid": os.getpid(), "cwd": ""}
         by_tree = {cs._norm(work): [moved, visitor, gone, in_root, own_marker], cs._norm(feat): []}

@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hook_utils import has_active_plan, hook_cwd, say_crash, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_pid, STATE_DIR, COLD_OPEN_FLAG  # noqa: E402
+from _hook_utils import has_active_plan, hook_cwd, say_crash, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, STATE_DIR, COLD_OPEN_FLAG  # noqa: E402
 import _reinject  # noqa: E402  -- the UserPromptSubmit generative recall dispatch
 
 # Keywords that suggest a multi-step task
@@ -280,12 +280,13 @@ def _run_main() -> int:
     # one. Before the prompt's shape is checked, so a payload with no prompt
     # still beats. The window key rides along, read only if a marker the
     # heartbeat has to write itself (or repair) needs the window a `clear`
-    # retires by, and the cwd goes through the one resolver SessionStart's
-    # writer uses, so the banner's same-tree comparison reads one spelling.
-    # Best-effort inside the helper: a state dir that cannot be written costs
-    # the heartbeat, never the prompt.
+    # retires by (with whether the registry named it, which is what lets the
+    # banner read its exit), and the cwd goes through the one resolver
+    # SessionStart's writer uses, so the banner's same-tree comparison reads
+    # one spelling. Best-effort inside the helper: a state dir that cannot be
+    # written costs the heartbeat, never the prompt.
     touch_session_marker(root, safe_session_id(data.get("session_id")),
-                         pid=window_pid, cwd=str(hook_cwd(data) or ""))
+                         pid=window_key, cwd=str(hook_cwd(data) or ""))
 
     prompt = data.get("prompt", "")
     if not isinstance(prompt, str):
