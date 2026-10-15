@@ -278,10 +278,54 @@ def _base_is_ignored(root: Path, prefix: str) -> bool:
     return _IGNORED_BASE[key]
 
 
+def _ignored(root: Path, prefix: str) -> bool:
+    return bool(prefix) and has_git_entry(root) and _base_is_ignored(root, prefix)
+
+
+def ignored_by_git(path: Path, *, root: Path | None = None) -> bool:
+    """Whether git ignores ``path`` in its checkout, so that git's view holds
+    nothing under it. The self-host tree keeps folders out of git by design
+    (``task-packs/Done/``, ``Merged/`` and ``Scrapped/``); a walk of one reads
+    the filesystem, marked `# live-tree: ok -- <why>`, and every other folder
+    reads git's view. False for the checkout's root and on a tree with no git.
+
+    Only for a folder git ignores by design whose files are this tree's own
+    records. A folder of build or scratch output (``reports/``, ``build/``) is
+    never read this way: its walk refuses, which is what the refusal is for."""
+    return _ignored(*_root_of(path, root))
+
+
+def plant_self_host_packs(root: Path) -> Path:
+    """A repository at ``root`` whose ``task-packs/`` is shaped like a self-host
+    checkout's: an in-flight pack (tracked), an untracked draft beside it, a
+    deferred pack, and a landed pack in the gitignored ``Done/``. Returns
+    ``root / "task-packs"``.
+
+    Its ``.gitignore`` is this checkout's own, so the plant ignores what the
+    real tree ignores; where git cannot build it, or the real tree stops
+    ignoring ``Done/``, it raises instead of planting a shape that proves
+    nothing."""
+    root.mkdir(parents=True, exist_ok=True)
+    rules = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    (root / ".gitignore").write_bytes(("\n".join(rules) + "\n").encode("utf-8"))
+    packs = root / "task-packs"
+    for rel in ("TP-2-in-flight.md", "TP-3-draft.md", "Deferred/TP-4-parked.md", "Done/TP-1-landed.md"):
+        (packs / rel).parent.mkdir(parents=True, exist_ok=True)
+        (packs / rel).write_bytes(f"# {rel.rsplit('/', 1)[-1][:-3]}\n".encode("utf-8"))
+    for args in (("init", "-q"), ("add", ".gitignore", "task-packs/TP-2-in-flight.md", "task-packs/Deferred/TP-4-parked.md")):
+        done = _git(root, *args)
+        if done.returncode != 0:
+            raise RuntimeError(f"git {args[0]} failed planting {root}: {done.stderr!r}")
+    if not ignored_by_git(packs / "Done") or ignored_by_git(packs / "Deferred"):
+        raise RuntimeError(f"{REPO_ROOT / '.gitignore'} no longer ignores task-packs/Done/ while tracking "
+                           "Deferred/, so the self-host shape this plant reproduces is gone")
+    return packs
+
+
 def _members(base: Path, root: Path | None) -> tuple[Path, str, list[str]]:
     root, prefix = _root_of(base, root)
     view = _view(root)
-    if prefix and has_git_entry(root) and _base_is_ignored(root, prefix):
+    if _ignored(root, prefix):
         raise ValueError(
             f"{prefix}/ is ignored by git in {root}, so git's view holds nothing under it and a walk "
             "of it would judge nothing. A walk of gitignored state (a guard watching reports/, the "
