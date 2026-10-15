@@ -58,7 +58,7 @@ class ReinjectRule(NamedTuple):
     event: str                                         # SessionStart | UserPromptSubmit | PreToolUse | PostToolUse | PostToolUseFailure
     render: Callable[[str, dict, Path], "str | None"]  # -> advisory text, or None (silent)
     face: str = "defensive"                            # orientation | defensive | generative | sync
-    cap_exempt: bool = False                           # safety rules: never session-cap-suppressed
+    cap_exempt: bool = False                           # outside the session cap; still takes a per-turn slot
     priority: int = 50                                 # per-turn-ceiling ordering (higher = kept first)
     # Generative-face rail: a face=="generative" rule may auto-inject ONLY if
     # push_eligible AND parity-tested; else it is /recall pull-only (never auto-pushed).
@@ -796,47 +796,98 @@ MARKER_SUBSTRING_RULE = ReinjectRule(
     id="REINJECT-MARKER-SUBSTRING", event="PostToolUse",
     render=_render_marker_substring, face="sync", priority=58,
 )
-VENDOR_SYNC_RULE = ReinjectRule(
-    id="REINJECT-VENDOR-CC-SYNC", event="PostToolUse",
-    render=_render_vendor_sync, face="sync", priority=56,
+# The mirror-registry rows' edit-time advisories (root CLAUDE.md promises one for
+# every row). Coverage is judged against espalier/mirror_registry.py, never against
+# a count here: tests/test_reinject_sync.py::TestMirrorCensusCoverage drives this
+# hook once per registry row.
+#
+# Each row yields TWO rules from one table entry (DEF-4015): its source side ("run
+# the sync") and its generated side ("this edit will be DISCARDED"). Both are
+# cap_exempt, so the shared five-fire session cap no longer silences them (on the
+# Windows box's logs 83% of their fires were capped), and each takes its scarcity
+# from a once-per-session flag of its OWN: one flag per row would let the benign
+# source reminder spend the warning a later mirror edit needs -- the order an agent
+# most often walks (edit the source, then follow a grep hit into the mirror). Each
+# side is said at most once a session per advisory, and an advisory can serve two
+# registry rows (the two claude mirrors, the two checklists, the stack table beside
+# the vendored tools/cc/), which then share its flags; the vendored
+# espalier/_vendor/cc/ copy has no edit-time warning. The flags live under the
+# checkout's state dir and the PostToolUse payload names no agent, so a subagent's
+# edit spends a side for its parent too. The generated band outranks the source
+# band, and both sit below the correctness nudges above (the drop-order contract
+# tests/test_reinject_sync.py::test_mirror_advisories_rank_below_correctness_nudges
+# holds); the per-turn slice is cut by priority alone (``check``).
+class _SyncRow(NamedTuple):
+    """One sync advisory (it can cover more than one mirror row): ``render`` answers both sides and ``on_generated`` says
+    which side a path is on (the predicate the render tests first). A row whose
+    generated side has a render of its own (the pack checklist's content-gated
+    region) names it in ``generated_render`` and keeps its rule id."""
+    id: str
+    render: Callable[[str, dict, Path], "str | None"]
+    on_generated: "Callable[[str], bool] | None" = None
+    generated_render: "Callable[[str, dict, Path], str | None] | None" = None
+    generated_id: "str | None" = None
+
+
+def _one_side(row: _SyncRow, generated: bool) -> Callable[[str, dict, Path], "str | None"]:
+    """The row's render for one side only."""
+    if row.generated_render is not None:
+        return row.generated_render if generated else row.render
+    on_generated = row.on_generated
+
+    def render(tool_name: str, tool_input: dict, root: Path) -> "str | None":
+        if on_generated is None or bool(on_generated(_fp(tool_input))) != generated:
+            return None
+        return row.render(tool_name, tool_input, root)
+    return render
+
+
+_SYNC_ROWS: tuple[_SyncRow, ...] = (
+    _SyncRow("REINJECT-VENDOR-CC-SYNC", _render_vendor_sync,
+             lambda fp: bool(_STACK_TABLE_ENGINE_RE.search(fp))),
+    _SyncRow("REINJECT-DOCS-ASSET-SYNC", _render_docs_asset_sync, _on_generated_mirror),
+    _SyncRow("REINJECT-CLAUDE-SURFACE-SYNC", _render_claude_surface_sync,
+             lambda fp: bool(_CLAUDE_MIRROR_RE.search(fp))),
+    _SyncRow("REINJECT-TASK-PACKS-ROUTER-SYNC", _render_task_packs_router_sync,
+             _on_generated_mirror),
+    _SyncRow("REINJECT-SELFCHECK-MIRROR-SYNC", _render_selfcheck_mirror_sync,
+             lambda fp: bool(_SELFCHECK_MIRROR_RE.search(fp))),
+    _SyncRow("REINJECT-HARNESS-GUARD-SYNC", _render_harness_guard_sync,
+             lambda fp: fp.endswith(_HARNESS_GUARD_ROOT_TAIL)),
+    _SyncRow("REINJECT-PACK-CHECKLIST-SYNC", _render_pack_checklist_sync,
+             generated_render=_render_pack_checklist_region_edit,
+             generated_id="REINJECT-PACK-CHECKLIST-REGION"),
 )
-DOCS_ASSET_SYNC_RULE = ReinjectRule(
-    id="REINJECT-DOCS-ASSET-SYNC", event="PostToolUse",
-    render=_render_docs_asset_sync, face="sync", priority=54,
+_SYNC_GENERATED_TOP = 56   # the generated band: an edit there is LOST
+_SYNC_SOURCE_TOP = 40      # the source band: the "run the sync" reminder
+
+#: ``(source rule, generated rule)`` per sync advisory, derived from ``_SYNC_ROWS``.
+SYNC_RULE_PAIRS: tuple[tuple[ReinjectRule, ReinjectRule], ...] = tuple(
+    (
+        ReinjectRule(id=row.id, event="PostToolUse", render=_one_side(row, False),
+                     face="sync", cap_exempt=True, once_per_session=True,
+                     priority=_SYNC_SOURCE_TOP - 2 * i),
+        ReinjectRule(id=row.generated_id or f"{row.id}-GENERATED", event="PostToolUse",
+                     render=_one_side(row, True), face="sync", cap_exempt=True,
+                     once_per_session=True, priority=_SYNC_GENERATED_TOP - 2 * i),
+    )
+    for i, row in enumerate(_SYNC_ROWS)
 )
-# The remaining mirror-registry rows (added when the census found them with no
-# edit-time advisory). Coverage is judged against espalier/mirror_registry.py,
-# never against a count here: tests/test_reinject_sync.py::TestMirrorCensusCoverage
-# drives this hook once per registry row. Priorities continue the existing
-# even-numbered descent and stay clustered with the two mirror rules above, so the
-# per-turn ceiling drops the least-specific mirror advice first.
-CLAUDE_SURFACE_SYNC_RULE = ReinjectRule(
-    id="REINJECT-CLAUDE-SURFACE-SYNC", event="PostToolUse",
-    render=_render_claude_surface_sync, face="sync", priority=52,
-)
-TASK_PACKS_ROUTER_SYNC_RULE = ReinjectRule(
-    id="REINJECT-TASK-PACKS-ROUTER-SYNC", event="PostToolUse",
-    render=_render_task_packs_router_sync, face="sync", priority=50,
-)
-SELFCHECK_MIRROR_SYNC_RULE = ReinjectRule(
-    id="REINJECT-SELFCHECK-MIRROR-SYNC", event="PostToolUse",
-    render=_render_selfcheck_mirror_sync, face="sync", priority=48,
-)
-HARNESS_GUARD_SYNC_RULE = ReinjectRule(
-    id="REINJECT-HARNESS-GUARD-SYNC", event="PostToolUse",
-    render=_render_harness_guard_sync, face="sync", priority=46,
-)
-PACK_CHECKLIST_SYNC_RULE = ReinjectRule(
-    id="REINJECT-PACK-CHECKLIST-SYNC", event="PostToolUse",
-    render=_render_pack_checklist_sync, face="sync", priority=44,
-)
-PACK_CHECKLIST_REGION_RULE = ReinjectRule(
-    id="REINJECT-PACK-CHECKLIST-REGION", event="PostToolUse",
-    render=_render_pack_checklist_region_edit, face="sync", priority=42,
-)
+_SYNC_RULES: dict[str, ReinjectRule] = {r.id: r for pair in SYNC_RULE_PAIRS for r in pair}
+VENDOR_SYNC_RULE = _SYNC_RULES["REINJECT-VENDOR-CC-SYNC"]
+DOCS_ASSET_SYNC_RULE = _SYNC_RULES["REINJECT-DOCS-ASSET-SYNC"]
+CLAUDE_SURFACE_SYNC_RULE = _SYNC_RULES["REINJECT-CLAUDE-SURFACE-SYNC"]
+TASK_PACKS_ROUTER_SYNC_RULE = _SYNC_RULES["REINJECT-TASK-PACKS-ROUTER-SYNC"]
+SELFCHECK_MIRROR_SYNC_RULE = _SYNC_RULES["REINJECT-SELFCHECK-MIRROR-SYNC"]
+HARNESS_GUARD_SYNC_RULE = _SYNC_RULES["REINJECT-HARNESS-GUARD-SYNC"]
+PACK_CHECKLIST_SYNC_RULE = _SYNC_RULES["REINJECT-PACK-CHECKLIST-SYNC"]
+PACK_CHECKLIST_REGION_RULE = _SYNC_RULES["REINJECT-PACK-CHECKLIST-REGION"]
+# Between the bands: a generated region rendered from Python is not a mirror row, so
+# it stays on the session cap; it is the same lost-edit warning, so it ranks above
+# every source reminder.
 GENERATED_DOC_REGION_RULE = ReinjectRule(
     id="REINJECT-GENERATED-DOC-REGION", event="PostToolUse",
-    render=_render_generated_doc_region_edit, face="sync", priority=40,
+    render=_render_generated_doc_region_edit, face="sync", priority=42,
 )
 
 
@@ -1120,10 +1171,7 @@ REINJECTS: tuple[ReinjectRule, ...] = (
     OPERATOR_DOC_INTERPRETER_RULE, NEW_TEST_FILE_RULE, NEW_SCRIPT_RULE, LEDGER_PARSER_RULE,
     NEW_HOOK_RULE, ARTIFACT_PROXY_RULE, COMMAND_SYNC_RULE, INTEGRITY_PARITY_RULE,
     TEST_LOOSENING_RULE, MARKER_SUBSTRING_RULE,
-    VENDOR_SYNC_RULE, DOCS_ASSET_SYNC_RULE,
-    CLAUDE_SURFACE_SYNC_RULE, TASK_PACKS_ROUTER_SYNC_RULE,
-    SELFCHECK_MIRROR_SYNC_RULE, HARNESS_GUARD_SYNC_RULE,
-    PACK_CHECKLIST_SYNC_RULE, PACK_CHECKLIST_REGION_RULE,
+    *(rule for pair in SYNC_RULE_PAIRS for rule in pair),
     GENERATED_DOC_REGION_RULE,
 )
 
@@ -1229,9 +1277,10 @@ def check(
 ) -> list[str]:
     """Return the additionalContext payloads to inject for ``event``, ceiling-capped.
 
-    ``cap_exempt`` rules bypass the session cap but STILL count against the
-    per-turn slice (they are inside the same ``[:REINJECT_PER_TURN_CAP]`` window);
-    non-exempt rules consume one flocked session slot per fire. A render that
+    ``cap_exempt`` rules bypass the session cap but STILL take a per-turn slot
+    when they speak (``REINJECT_PER_TURN_CAP`` slots a call, filled by priority);
+    non-exempt rules consume one flocked session slot per fire, and only once a
+    per-turn slot is theirs. A render that
     raises is swallowed (a reporter never crashes the hook). The ``rules`` keyword
     mirrors ``_speedbump.check(..., bumps=)`` so the registry-injection canary test
     can inject a synthetic registry without monkeypatching the module global.
@@ -1268,19 +1317,32 @@ def check(
     matched = live
     if not matched:
         return []
-    # cap_exempt rows sort first; they COUNT AGAINST the per-turn slice (they are
-    # inside the same [:CAP] window). Registering >CAP exempt rows on ONE event
-    # would therefore starve every non-exempt row on that event -- a documented
-    # invariant for future-pack authors, exercised by the canary test.
-    matched.sort(key=lambda m: (not m[1], -m[0]))      # cap_exempt first, then priority
+    # Priority alone orders the per-turn fill; cap_exempt means the SESSION cap
+    # only (DEF-4015). An exempt row takes a slot like any other (not a bonus),
+    # and a low-priority exempt row waits when higher-priority rows that speak
+    # have filled the slots on that event -- its once flag stays unspent, so it
+    # fires on the next. Exempt-first was a latent inversion: the
+    # mirror-sync rows, the first exempt rows ranked below the correctness
+    # nudges, would have displaced them. Exempt breaks a priority tie.
+    matched.sort(key=lambda m: (-m[0], not m[1]))
     # ``budget`` is the caller's remaining per-turn slots (the Bash bridge asks
     # once per written path); the slice is never wider than the module cap.
-    # Cutting it HERE, where the once-flag is marked, is what keeps a marked
+    # Filling it HERE, where the once-flag is marked, is what keeps a marked
     # row and an emitted row the same set -- a caller that trims the returned
     # list would spend flags on text nobody saw (failure-mode pass, driven).
+    # A slot is filled by a row that SPEAKS: a session-capped row emits nothing
+    # and takes no slot, so past the cap a lower-priority exempt row still gets
+    # the slot it would otherwise wait behind (DEF-4015 review, driven).
     slice_n = REINJECT_PER_TURN_CAP if budget is None else max(0, min(budget, REINJECT_PER_TURN_CAP))
     out: list[str] = []
-    for _prio, exempt, text, rid, once in matched[:slice_n]:
+    waiting: list[tuple[bool, str]] = []
+    for _prio, exempt, text, rid, once in matched:
+        # The slot check comes BEFORE the session counter's increment, so a row
+        # that waits never spends a session slot (pinned by
+        # tests/test_reinject.py::test_one_call_spends_only_the_session_slots_it_fills).
+        if len(out) >= slice_n:
+            waiting.append((exempt, rid))
+            continue
         if exempt:
             out.append(text)
             if once:
@@ -1310,7 +1372,7 @@ def check(
     # This loop runs AFTER the emit loop, never fused into it: fusing would change
     # when _locked_increment fires relative to the log write, making session-cap
     # accounting depend on log-write success.
-    for _prio, exempt, _text, rid, _once in matched[slice_n:]:
+    for exempt, rid in waiting:
         _log_recall_event(root, side="push", rid=rid, event=event,
                           disposition="per_turn_capped", exempt=exempt)
     return out
