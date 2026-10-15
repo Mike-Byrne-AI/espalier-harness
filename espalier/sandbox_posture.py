@@ -619,9 +619,9 @@ def doctor_lines(state: SandboxState, *, remedy_py: str) -> tuple[list[str], lis
         info.append(
             f"sandbox: allowUnsandboxedCommands is not false in the user settings ({state.user_path}; "
             "the scope whose false holds against a project's true; a managed false holds too and is "
-            "not read here), so a command the sandbox refuses is retried outside it (under "
-            "bypassPermissions with no prompt; measured 2026-10-09); set it there yourself, doctor "
-            "never writes the user scope"
+            "not read here), so a command the sandbox refuses is retried outside it (with no prompt "
+            "in the permission mode that skips prompts; measured 2026-10-09); set it there yourself, "
+            "doctor never writes the user scope"
         )
     for note in state.notes:
         if note not in malformed:

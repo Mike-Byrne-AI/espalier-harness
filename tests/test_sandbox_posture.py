@@ -520,6 +520,10 @@ class TestDoctorsThreeStates:
                    for line in info), info
         assert any("shell layer" in line and "Write, Edit and NotebookEdit" in line for line in info), info
         assert any("managed settings file or --settings is not read" in line for line in info), info
+        # tests/test_doctor.py::TestDoctorFailures guards the report against a
+        # spurious bypass-mode info line from the kill-switch check by that
+        # token; the retry line must describe the mode without spelling it.
+        assert not any("bypassPermissions" in line for line in info), info
 
     def test_on_with_the_posture_present_is_reported_whole(self, tmp_path, monkeypatch):
         self._user(tmp_path, monkeypatch, {"sandbox": {"allowUnsandboxedCommands": False}})
