@@ -62,6 +62,8 @@ SCANNED_FILES = (
     "espalier/cli.py",
     "espalier/fuse.py",
     "espalier/doctor.py",
+    # The sandbox posture's print and doctor lines (init, upgrade, doctor).
+    "espalier/sandbox_posture.py",
 )
 
 # Markdown structure that marks a string as a generated DOCUMENT template (not an

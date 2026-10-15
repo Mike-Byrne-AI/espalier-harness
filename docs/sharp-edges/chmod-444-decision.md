@@ -54,6 +54,14 @@ remaining surface. Adopters who want OS-level enforcement on top of
 this can add it in their own init flow — the harness does not deploy
 it.
 
+> Superseded in part, 2026-10-15: `init --sandbox-posture` and `upgrade
+> --execute --sandbox-posture` now write Claude Code's own OS boundary for
+> shell commands (`sandbox.filesystem.denyWrite` for the harness zones,
+> `denyRead` for the secret paths; `docs/TROUBLESHOOTING.md`). It is the
+> sandbox's layer, not a file mode: opt-in, derived from the guard's rosters,
+> and a shell layer beside `write_guard`, never a replacement for its path
+> check on the file tools. The reasoning above against `chmod 444` stands.
+
 **Class signature:** "Friction layered on friction is still friction."
 A bypass-class catalog combined with a CI guarantee is structurally
 stronger than any number of local-machine permission bits.
