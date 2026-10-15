@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import subprocess
 import sys
 from datetime import date
@@ -28,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+from tests._git_oracle import _git_env
 from tests.test_generate_ledger_regions import _ledger
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -51,7 +51,9 @@ def lt():
     return _load()
 
 
-_ENV = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+# the repository-selecting overrides stripped: a hook's GIT_DIR would point these
+# writes (ref updates included) at the live clone
+_ENV = {**_git_env(), "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
         "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 
 
@@ -229,6 +231,56 @@ class TestTheReport:
         assert payload["window"]["replacement"] == ["DEF-4"] and payload["skipped_snapshots"] == []
         assert lt.main(["--repo", str(record_repo)]) == 0
         assert "replacement 1 (filed, still open)" in capsys.readouterr().out
+
+
+class TestTheDefaultRef:
+    """TP-701 Wave C, C-2: with no ``--ref`` the trend reads the base branch's
+    remote-tracking ref when the ledger is tracked there, and the ``record``
+    ref otherwise. The old fixed default read ``record`` and printed its last
+    step for 2026-09-21 on a clone whose main carried the ledger to the day."""
+
+    @staticmethod
+    def _point_origin_main(repo: Path, commit: str) -> None:
+        _git(repo, "update-ref", "refs/remotes/origin/main", commit)
+        _git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+
+    def test_a_base_branch_carrying_the_ledger_is_the_default(self, lt, record_repo, capsys):
+        self._point_origin_main(record_repo, _git(record_repo, "rev-parse", "record").strip())
+        assert lt.default_ref(record_repo, LEDGER) == "origin/main"
+        assert lt.main(["--repo", str(record_repo)]) == 0
+        assert capsys.readouterr().out.startswith("ledger trend on origin/main ")
+
+    def test_with_no_base_branch_the_record_ref_is_the_default(self, lt, record_repo):
+        assert lt.default_ref(record_repo, LEDGER) == "record"
+
+    def test_a_base_branch_keeping_only_the_row_files_still_carries_the_ledger(self, lt, record_repo):
+        """A base that retired the single file and keeps the rows as files under
+        the row-file directory is still where the ledger lives."""
+        row_dir = lt._row_dir(LEDGER)
+        blob = subprocess.run(["git", "-C", str(record_repo), "hash-object", "-w", "--stdin"], input=b"row\n",
+                              check=True, capture_output=True, env=_ENV).stdout.decode().strip()
+        tree = blob
+        for part in reversed([*row_dir.split("/"), "DEF-1.md"]):
+            # bytes in: a text-mode stdin writes CRLF on Windows and mktree keeps the \r in the name
+            entry = (f"100644 blob {tree}\t{part}\n" if tree == blob else f"040000 tree {tree}\t{part}\n")
+            tree = subprocess.run(["git", "-C", str(record_repo), "mktree"], input=entry.encode(), check=True,
+                                  capture_output=True, env=_ENV).stdout.decode().strip()
+        self._point_origin_main(record_repo, _git(record_repo, "commit-tree", tree, "-m", "rows only").strip())
+        assert lt.default_ref(record_repo, LEDGER) == "origin/main"
+
+    def test_a_fallback_to_record_beside_a_base_branch_says_so(self, lt, record_repo, capsys):
+        empty_tree = subprocess.run(["git", "-C", str(record_repo), "mktree"], input=b"", check=True,
+                                    capture_output=True, env=_ENV).stdout.decode().strip()
+        self._point_origin_main(record_repo, _git(record_repo, "commit-tree", empty_tree, "-m", "no ledger").strip())
+        assert lt.main(["--repo", str(record_repo)]) == 0
+        captured = capsys.readouterr()
+        assert "origin/main carries no ledger" in captured.err and captured.out.startswith("ledger trend on record ")
+
+    def test_a_base_branch_without_the_ledger_leaves_the_record_ref(self, lt, record_repo):
+        empty_tree = subprocess.run(["git", "-C", str(record_repo), "mktree"], input="", check=True,
+                                    capture_output=True, text=True, encoding="utf-8").stdout.strip()
+        self._point_origin_main(record_repo, _git(record_repo, "commit-tree", empty_tree, "-m", "no ledger").strip())
+        assert lt.default_ref(record_repo, LEDGER) == "record"
 
 
 class TestItFailsHonestly:

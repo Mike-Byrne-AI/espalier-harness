@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Read the forward ledger's history off the record branch: rows closed vs filed.
+"""Read the forward ledger's history off its snapshots: rows closed vs filed.
+
+Which ref
+---------
+Without ``--ref``, the base branch's remote-tracking ref (``origin/<base>``,
+read from the local ``origin/HEAD``) when the ledger is tracked there -- every
+merge that touched it is a snapshot -- else the ``record`` ref
+(:func:`default_ref`). The fixed ``record`` default went stale once the ledger
+was tracked on main: on 2026-10-14 it printed its last step for 2026-09-21.
 
 Why this exists
 ---------------
@@ -30,9 +38,10 @@ Per snapshot (against the one before it) and for the whole window:
   ``net == replacement - backlog_struck - dropped + reopened``
 * the same split by audience and by population, using each id's tags as the
   LATEST snapshot records them (a struck row keeps its cells), then the last
-  snapshot that carried the id, then ``UNTAGGED`` -- never a guess. The
-  record ref is written at handoff, so tags landed since the last snapshot
-  are invisible here: the header names the snapshot the tags come from.
+  snapshot that carried the id, then ``UNTAGGED`` -- never a guess. Tags
+  landed since the last snapshot on the ref read (a merge on the base branch,
+  a handoff on ``record``) are invisible here: the header names the snapshot
+  the tags come from.
 
 The per-step ``struck`` column never sees a row filed and struck inside one
 step (it was never live in a snapshot), so its sum is not the window's
@@ -55,7 +64,7 @@ Usage::
 
     python3 scripts/ledger_trend.py                  # every snapshot, oldest first, then the window
     python3 scripts/ledger_trend.py --since 2026-09-02    # by date
-    python3 scripts/ledger_trend.py --from faf9121         # from one snapshot: after a sweep day
+    python3 scripts/ledger_trend.py --ref record --from faf9121   # from one snapshot: after a sweep day
     python3 scripts/ledger_trend.py --json
     python3 scripts/ledger_trend.py --ref record --path task-packs/FORWARD_LEDGER.md
 
@@ -78,6 +87,35 @@ _HERE = Path(__file__).resolve()
 _ROOT = _HERE.parents[1]
 _DEFAULT_REF = "record"
 _DEFAULT_PATH = "task-packs/FORWARD_LEDGER.md"
+
+
+def _merge_rules():
+    """``tools/cc/_merge_rules.py`` by path: ``base_branch`` is the one read of
+    the remote's default branch (the board and ``ship.py`` read it too)."""
+    spec = importlib.util.spec_from_file_location("_lt_merge_rules", _ROOT / "tools" / "cc" / "_merge_rules.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def default_ref(repo: Path, path: str) -> str:
+    """The ref the snapshots are read from when ``--ref`` is not given: the
+    base branch's remote-tracking ref (``origin/<base>``, the base read from
+    the local ``origin/HEAD``) when the ledger is tracked there, else the
+    ``record`` ref -- an adopter's, or a tree whose ledger is gitignored and
+    snapshotted at handoff. Measured 2026-10-14 on the dispatcher's clone: the
+    old default (``record``) printed its last step for 2026-09-21 while main
+    carried the ledger to the day; probable, not measured, cause: ``record``
+    stopped carrying the ledger once main tracked it. Read with
+    ``--ref origin/main`` on 2026-10-15, the same script printed steps
+    through that day, strikes 8 / 3 / 6 on 10-12 to 10-14."""
+    base = f"origin/{_merge_rules().base_branch(repo)}"
+    # the ledger as one file, or as its rows under the row-file directory: a
+    # base that keeps only the rows still carries the ledger
+    for where in (path, _row_dir(path)):
+        if _git(repo, "cat-file", "-e", f"{base}:{where}").returncode == 0:
+            return base
+    return _DEFAULT_REF
 UNTAGGED = "UNTAGGED"
 
 
@@ -449,7 +487,9 @@ def render(report: dict[str, object], today: date | None = None) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--repo", default=str(_ROOT), help="the git checkout to read (default: this one)")
-    ap.add_argument("--ref", default=_DEFAULT_REF, help="the ref carrying the snapshots (default: record)")
+    ap.add_argument("--ref", default=None,
+                    help="the ref carrying the snapshots (default: origin/<the base branch> when the ledger "
+                         "is tracked there, else record)")
     ap.add_argument("--path", default=_DEFAULT_PATH, help="the ledger's path inside the ref")
     ap.add_argument("--since", help="first snapshot date to include, YYYY-MM-DD")
     ap.add_argument("--from", dest="start", metavar="COMMIT",
@@ -457,6 +497,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
     repo = Path(args.repo).resolve()
+    if args.ref is None:
+        args.ref = default_ref(repo, args.path)
+        if args.ref == _DEFAULT_REF:
+            base = f"origin/{_merge_rules().base_branch(repo)}"
+            if _git(repo, "rev-parse", "--verify", "--quiet", base).returncode == 0:
+                print(f"ledger_trend: {base} carries no ledger at {args.path}; reading {_DEFAULT_REF!r}",
+                      file=sys.stderr)
     if args.since and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", args.since):
         print(f"ledger_trend: --since takes YYYY-MM-DD, not {args.since!r}", file=sys.stderr)
         return 2

@@ -199,6 +199,9 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     # 2026-10-09: what two lanes merged in turn cost (catch-ups, CI runs, the
     # conflicts behind them, replayed as GitHub merges); TP-478's Task 0 oracle.
     "merge_cost_census.py",
+    # 2026-10-15 (TP-701 Wave C): the request-to-ack latency of a worker's ask, the
+    # dispatcher split's metric, read off every mail ref; until then a hand count.
+    "mail_latency_census.py",
     "proof_tier.py",
     "handoff_mechanics.py",
     "ledger_trend.py",
