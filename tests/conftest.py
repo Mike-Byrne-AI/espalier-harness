@@ -264,9 +264,17 @@ def _isolate_audit_dir(monkeypatch, tmp_path):
 #     (temp file + rename), which moves the directory mtime while leaving the
 #     content byte-identical. Measured: `run_self_host_check` rewrites
 #     `reports/cc_surface_gate.json` on every call with identical bytes. An
-#     mtime guard flagged 22 tests for a rewrite that changes nothing a
-#     scanner can observe — a false positive, and the reason this watches
-#     ADD/REMOVE instead.
+#     mtime guard flagged 22 tests for that rewrite — a false positive, and the
+#     reason this watches ADD/REMOVE instead. The rewrite is still not invisible
+#     here: its temp file (`reports/.cc_surface_gate.json.<hex>.tmp`) is an entry
+#     while the write lasts, so under the parallel tier a test on another worker
+#     that straddled it erred at teardown (DEF-973; the races line in
+#     tests/README.md logged it from 2026-09-06). No test runs the gate on the
+#     live checkout since 2026-10-14 — `tests/test_live_root_gate_writers.py`
+#     reds a new one — so the suite no longer causes it: a `reports/` teardown
+#     error now is a new writer in the suite, or a gate run on this checkout from
+#     outside it while the tier runs (`/smoke`'s `espalier audit .`, a doctor or
+#     self-host run); the entry the failure names says which.
 #
 # Entry count is what changes what a live-tree scanner SEES. It is one listdir
 # per watched dir per test (~microseconds), and it cannot be fooled by a
@@ -358,9 +366,14 @@ def _no_live_tree_writes(request):
     xdist_note = (
         "\nTHIS RUN IS UNDER xdist (PYTEST_XDIST_WORKER is set): a sibling worker "
         "can move these entries while this test runs, so this test may be "
-        "innocent. Rerun the failing file serially before acting on this "
-        "message, record the date and test on the races line in tests/README.md, "
-        "and never add to _LIVE_TREE_ALLOWED from a parallel run."
+        "innocent; the entry name says which writer moved. No test runs the "
+        "surface gate on the live checkout since 2026-10-14 (DEF-973), so a "
+        "reports/.cc_surface_gate.json.<hex>.tmp entry is a new writer in the "
+        "suite (tests/test_live_root_gate_writers.py names most) or a gate run on "
+        "this checkout from outside it while the tier ran (/smoke, /preflight, "
+        "doctor). Rerun the failing file serially before acting on this "
+        "message, record the date, test and entry on the races line in "
+        "tests/README.md, and never add to _LIVE_TREE_ALLOWED from a parallel run."
         if os.environ.get("PYTEST_XDIST_WORKER") else ""
     )
     assert not moved, (
@@ -751,6 +764,12 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_agent_contracts",
             "test_handoff_truth",
             "test_test_suite_contract",
+            # Two censuses over tests/ (DEF-973 and the stub warm-up class): a
+            # tests-only diff is the one that adds a writer and it earns this
+            # slice alone, so they live here. No test runs the surface gate on
+            # the live checkout; every executable stand-in is warmed.
+            "test_live_root_gate_writers",
+            "test_stub_warmup",
             "test_test_quality",
             "test_count_claims",
             "test_corpus_count_parity",
@@ -1148,6 +1167,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # the base since a CI run, and which file imports which, is git's
             # answer (fast; slow-exempt).
             "test_stale_base",
+            # Drives tools/cc/board.py's ledger line through real git in a
+            # scratch repo whose checkout sits behind origin/main, and the base
+            # tree's own generator as a child interpreter: what a ref holds is
+            # git's answer, so no mock stands in for it.
+            "test_board_ledger_base",
             "test_symbol_census",
             # Seven cases in TestTheContaminationPopulationIsActuallyDerived
             # build throwaway `git init` repos and plant duplicate files in
@@ -1309,6 +1333,9 @@ _SLOW_FILES: set[str] = {
     # A launcher whose child holds the pipe and sleeps, and real git against an
     # origin whose upload-pack sleeps: each case waits out a 3 s cap.
     "test_bounded_spawn",
+    # Builds a scratch repo per case (this checkout's tools/cc committed twice)
+    # and runs the board's base read: git archive plus a child interpreter.
+    "test_board_ledger_base",
     # The drift matrix drives real `git init` / `commit` in throwaway trees so
     # the commit-subject and ratio census is the detector's own reading, not a
     # string fixture. It lives in its own file so the pure normalizer rows in

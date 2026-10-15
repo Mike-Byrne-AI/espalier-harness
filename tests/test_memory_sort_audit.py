@@ -513,9 +513,8 @@ class TestRepoRootWhenGitPrintsAPathTheDecoderRefuses:
         spec.loader.exec_module(mod)
         bindir = tmp_path / "bin"
         bindir.mkdir()
-        shim = bindir / "git"
-        shim.write_text("#!/bin/sh\nprintf '/tmp/caf\\351repo\\n'\n", encoding="utf-8")
-        shim.chmod(0o755)
+        from tests._stubs import write_stub
+        write_stub(bindir / "git", "#!/bin/sh\nprintf '/tmp/caf\\351repo\\n'\n")
         monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
         monkeypatch.chdir(tmp_path)
         assert mod._repo_root(None) == Path.cwd().resolve()

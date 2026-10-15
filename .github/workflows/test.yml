@@ -123,8 +123,9 @@ jobs:
           # rather than skip: tests/test_verify_pins.py drives its controls
           # against commits on main, and the CHANGELOG tag-parity test reads the
           # release tags. The calibration class in
-          # tests/test_sister_site_probe_regression.py reads a tag this
-          # repository does not carry, so it skips here as in every public clone.
+          # tests/test_sister_site_probe_regression.py needs no history: it reads
+          # its corpus from tests/fixtures/pre_pack_tp104/, so it runs here and in
+          # every public clone.
           fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}

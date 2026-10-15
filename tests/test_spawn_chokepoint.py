@@ -305,10 +305,10 @@ class TestSpawnChecked:
 
     def test_a_path_token_resolves_against_root_never_the_cwd(self, tmp_path, monkeypatch):
         hu = _load_hook_utils()
+        from tests._stubs import write_stub
         script = tmp_path / "scripts" / "t.sh"
         script.parent.mkdir()
-        script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        script.chmod(0o755)
+        write_stub(script, "#!/bin/sh\nexit 0\n")
         monkeypatch.chdir(tmp_path.parent)
         assert hu.resolve_program("scripts/t.sh", root=tmp_path) == str(script)
         assert hu.resolve_program("scripts/t.sh", root=tmp_path / "elsewhere") is None

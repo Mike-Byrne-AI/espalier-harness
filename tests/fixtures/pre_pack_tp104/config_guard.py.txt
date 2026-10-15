@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""ConfigChange hook — blocks unsafe project/local/user settings changes.
+
+Per Claude Code hook protocol (see docs/external/cc-hook-protocol.md):
+- ConfigChange can block project, local, and user settings changes.
+- ConfigChange CANNOT block managed `policy_settings`. For policy_settings
+  this hook only audits.
+- SessionStart cannot block anything.
+
+Channel: exit 0 + JSON decision (project standard since TP-9). On a deny we
+emit `{"decision": "block", "reason": "..."}` matching the Stop-style schema
+expected by ConfigChange.
+
+Stdlib-only. Zero espalier imports. Co-located helper imports go through
+sys.path injection.
+
+If Claude Code disables all hooks before invoking this process, no local
+hook can run. This check only blocks while the ConfigChange hook remains
+active. CI (ci_guard.py) is the merge-time guarantee.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import _integrity  # noqa: E402
+from _hook_utils import warn_exc  # noqa: E402
+
+
+# Sources Claude Code may pass on the ConfigChange event. We block changes
+# in the first three; the fourth is audit-only because policy_settings are
+# explicitly non-blockable per the hook protocol.
+BLOCKING_SOURCES = frozenset({"project", "local", "user"})
+AUDIT_ONLY_SOURCES = frozenset({"policy_settings"})
+
+
+def _project_root() -> Path:
+    return Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+
+
+def block(reason: str) -> int:
+    """Print ConfigChange block JSON and return exit 0.
+
+    Schema mirrors the Stop event: top-level `decision` and `reason`.
+    """
+    output = {"decision": "block", "reason": reason}
+    print(json.dumps(output))
+    return 0
+
+
+def _scan_payload(file_path: str | None, root: Path) -> list[str]:
+    """Scan the candidate settings file for kill-switch findings.
+
+    Falls back to scanning the active settings inventory if the payload's
+    `file_path` is missing, unreadable, or points outside the repo root.
+    We never crash — best-effort scan, silent on failure.
+
+    Path-traversal guard: stdin-supplied ``file_path`` is bounded to
+    ``root`` via ``relative_to``. A traversal payload (``../../etc/passwd``)
+    is dropped here so the scanner never opens files outside the repo.
+    """
+    candidate: Path | None = None
+    if file_path:
+        try:
+            resolved = (root / file_path).resolve()
+            resolved.relative_to(root)  # raises ValueError if outside root
+            candidate = resolved
+        except (OSError, ValueError):
+            candidate = None
+
+    findings: list[str] = []
+    if candidate is not None and candidate.exists():
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            data = None
+        if isinstance(data, dict):
+            # candidate is bounded above; relative_to() is now guaranteed
+            # to succeed without the ValueError fallback that previously
+            # leaked absolute paths into the audit log.
+            rel = str(candidate.relative_to(root))
+            findings.extend(_integrity._find_kill_switches(rel, data))
+
+    # Fall back to scanning the standard settings inventory so we still catch
+    # findings even if the payload doesn't name a path or names a file we
+    # can't reach.
+    if not findings:
+        try:
+            findings = _integrity.scan_for_kill_switches(root)
+        except Exception as e:  # noqa: BLE001 — bounded warn
+            warn_exc("config_guard: scan failed", e)
+            findings = []
+    return findings
+
+
+def main() -> int:
+    from _hook_utils import read_stdin_safely  # noqa: E402
+
+    data = read_stdin_safely()
+
+    source = data.get("source") or data.get("settings_source") or ""
+    file_path = data.get("file_path")
+    root = _project_root()
+
+    findings = _scan_payload(file_path, root)
+
+    if not findings:
+        return 0
+
+    audit_event = (
+        "configchange_blocked_kill_switch"
+        if source in BLOCKING_SOURCES or source not in AUDIT_ONLY_SOURCES
+        else "configchange_policy_settings_kill_switch_detected"
+    )
+    try:
+        _integrity.append_audit(
+            root,
+            {"event_type": audit_event,
+             "details": {
+                 "source": source,
+                 "file_path": file_path,
+                 "findings": findings,
+             }},
+        )
+    except Exception:  # noqa: BLE001 — audit best-effort
+        pass
+
+    if source in AUDIT_ONLY_SOURCES:
+        # ConfigChange cannot block managed policy_settings. Surface a stderr
+        # warning for visibility; exit 0 with no JSON so Claude Code does not
+        # interpret this as a structured block.
+        print(
+            "[WARN] Espalier-Harness kill-switch finding(s) in policy_settings: "
+            f"{findings}. ConfigChange cannot block managed policy settings; "
+            "this is audit-only. Reconcile via your policy authority.",
+            file=sys.stderr,
+        )
+        return 0
+
+    return block(
+        "Espalier-Harness kill-switch setting detected in "
+        f"{source or 'settings'} change: {findings}. Remove the setting "
+        "and run `espalier integrity verify .` before continuing."
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

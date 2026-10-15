@@ -10,11 +10,13 @@ red one, the pull request that turned it red and the revert), every open pull
 request with its seat and what GitHub says holds it -- and, for one whose armed
 auto-merge would land it on its own green CI, whether the base has moved near
 its files since that CI ran -- the dispatcher's live
-assignments, the live claims, and the ledger's live row count.
+assignments, the live claims, and the ledger's live row count at the base
+branch's tip (a checkout that stops moving would otherwise report its own).
 
-Read-only: it writes nothing, sends nothing, and moves no ref beyond the
-mail fetch and, when a pull request is armed, the base branch's
-remote-tracking ref (both skipped with ``--no-fetch``). Each section is read on its own, and
+Read-only: it writes nothing into the tree, sends nothing, and moves no ref
+beyond the mail fetch and the base branch's remote-tracking ref (both skipped
+with ``--no-fetch``); the ledger count reads the base's files from a temporary
+directory outside the tree. Each section is read on its own, and
 one that cannot be read says so on its own line instead of hiding the rest.
 
     python tools/cc/board.py [--no-fetch] [--json] [--root PATH]
@@ -30,6 +32,8 @@ import importlib.util
 import json
 import re
 import sys
+import tarfile
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -40,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _merge_rules  # noqa: E402  the merge-rules read, shared with the SessionStart banner
 import mail  # noqa: E402  the claims and assignments folds
 from _json_safe import os_error_text  # noqa: E402  an OSError rendered as its path and reason
+from _record_fragments import LEDGER_DIR, LEDGER_FILE  # noqa: E402  the ledger and its rows, named once by the loader
 from record_merge import Unresolvable, run  # noqa: E402  the one spawn and the named stop
 
 Runner = Callable[..., tuple[int, str, str]]
@@ -61,7 +66,46 @@ RUN_WINDOW = 20
 _PR_MERGE_RE = re.compile(r"^Merge pull request #(\d+)\b|\(#(\d+)\)\s*$")
 GH_TIMEOUT = 15.0
 OPEN_PR_LIMIT = 30
-LEDGER = "task-packs/FORWARD_LEDGER.md"
+LEDGER = LEDGER_FILE
+#: What the ledger count reads from the base tree: ``tools/cc`` (the generator
+#: and every sibling it loads by path, the fragment loader among them), the
+#: ledger, and its row files where the base keeps them.
+BASE_COUNT_PATHS = ("tools/cc", LEDGER, LEDGER_DIR)
+LEDGER_ROWS = LEDGER_DIR + "/"
+CC = "tools/cc/"
+#: The child that counts the base's ledger: a cold interpreter loading two
+#: modules over a few hundred row texts.
+BASE_COUNT_TIMEOUT = 60.0
+#: Run (``-I``: no user site, no ``PYTHONPATH``, nothing from the working
+#: directory) against the base's own top-level ``tools/cc`` modules, written to
+#: a temporary directory, with the ledger and its row texts on stdin as ASCII
+#: JSON (the child reads stdin in the locale's encoding on Windows): the base's
+#: generator and fragment loader count them, so a checkout on older code reads
+#: a newer base the way the base reads itself, and a base from before row files
+#: (no ``record_fragments``) is its file alone. It also prints where the base's
+#: loader keeps the ledger and its rows: the archive was cut by this checkout's
+#: names, so a base that moved them is refused by name, never counted as the
+#: file alone. A child, not an in-process load: the base's modules would
+#: otherwise share ``sys.modules`` names with this checkout's. The names it
+#: calls are pinned by tests/test_board_ledger_base.py and change by expand,
+#: then contract (root CLAUDE.md Core Rule 15).
+_BASE_COUNT = (
+    "import importlib.util, json, sys\n"
+    "from pathlib import Path\n"
+    "spec = importlib.util.spec_from_file_location(\n"
+    "    '_board_base_ledger_regions', Path(sys.argv[1]) / 'generate_ledger_regions.py')\n"
+    "gen = importlib.util.module_from_spec(spec)\n"
+    "sys.modules[spec.name] = gen\n"
+    "spec.loader.exec_module(gen)\n"
+    "data = json.loads(sys.stdin.read())\n"
+    "text, where = data['ledger'], {}\n"
+    "if hasattr(gen, 'record_fragments'):\n"
+    "    rf = gen.record_fragments()\n"
+    "    where = {'ledger_file': getattr(rf, 'LEDGER_FILE', None), 'ledger_dir': getattr(rf, 'LEDGER_DIR', None)}\n"
+    "    if data['rows'] is not None:\n"
+    "        text = rf.ledger_view_from_texts(text, [tuple(r) for r in data['rows']]).text\n"
+    "print(json.dumps({'live': len(gen.live_member_ids(text)), **where}))\n"
+)
 #: What GitHub's ``mergeStateStatus`` means for the seat reading it.
 MERGE_STATES: dict[str, str] = {
     "CLEAN": "ready",
@@ -191,6 +235,119 @@ def read_ledger_live(root: Path) -> int | None:
     return len(gen.live_member_ids(gen.record_fragments().ledger_view_at(ledger, ledger_text=text).text))
 
 
+def _git_env() -> dict[str, str]:
+    """The environment of the board's git calls: no repository-selecting
+    override and no terminal prompt (``mail.git_env``, as the mail fetch runs),
+    and no Git Credential Manager sign-in window, which on Windows would hold a
+    read-only board read for the whole timeout (as ``checkout_sync`` fetches)."""
+    return mail.git_env({"GCM_INTERACTIVE": "never"})
+
+
+def _is_row(name: str) -> bool:
+    return name.startswith(LEDGER_ROWS) and "/" not in name[len(LEDGER_ROWS):]
+
+
+def _read_base_archive(archive: Path, modules: Path) -> tuple[str, list[tuple[str, str | None]] | None, set[str]]:
+    """From the base's archive: the ledger's text (CRLF to LF, as the loader
+    reads it); ``(name, text)`` for each file directly under its row directory
+    (None where the archive holds none), decoded as the fragment loader reads a
+    row file (strict UTF-8, None when it is not; CRLF to LF); and every regular
+    file name the archive holds, which the caller checks against the tree.
+    Only the base's top-level ``tools/cc`` modules are written, under
+    ``modules``: on Windows a file's first read after it is written is the cost
+    (570 extracted files read in 2.1 s, then in 0.14 s), so the row texts
+    travel in memory, and no member is read before its name says it is wanted.
+    Regular files only, a name that climbs out skipped: the archive is this
+    repository's own."""
+    ledger_text, rows, names = "", None, set()
+    with tarfile.open(archive) as tar:
+        for member in tar.getmembers():
+            name = member.name.replace("\\", "/")
+            if not member.isfile() or name.startswith("/") or ".." in name.split("/"):
+                continue
+            names.add(name)
+            module = name.startswith(CC) and name.endswith(".py") and "/" not in name[len(CC):]
+            if not (name == LEDGER or _is_row(name) or module):
+                continue
+            source = tar.extractfile(member)
+            data = source.read() if source is not None else b""
+            if name == LEDGER:
+                ledger_text = data.decode("utf-8", errors="replace").replace("\r\n", "\n")
+            elif _is_row(name):
+                try:
+                    text: str | None = data.decode("utf-8").replace("\r\n", "\n")
+                except UnicodeDecodeError:
+                    text = None
+                rows = [*(rows or []), (name[len(LEDGER_ROWS):], text)]
+            else:
+                modules.mkdir(parents=True, exist_ok=True)
+                (modules / name[len(CC):]).write_bytes(data)
+    return ledger_text, rows, names
+
+
+def read_ledger_at_base(root: Path, base: str, *, run_: Runner = run) -> dict | None:
+    """The ledger's live member rows at ``origin/<base>``, as
+    ``{"ref", "sha", "live"}`` (``live`` None where the base keeps no ledger),
+    or None when this clone has no ``origin/<base>``; a ``why_not`` reason
+    instead of ``live`` where the base's archive leaves out a file the count
+    reads (an ``export-ignore`` attribute). On None or ``why_not`` the caller
+    counts the working tree and says why. One ``git archive`` of the base's
+    ``tools/cc`` and ledger lands in a temporary directory outside the tree,
+    and a child interpreter counts the base's ledger with the base's own
+    generator and fragment loader."""
+    ref, env = f"origin/{base}", _git_env()
+    rc, out, _err = run_(["git", "rev-parse", "--verify", "--quiet", f"refs/remotes/{ref}^{{commit}}"],
+                         cwd=str(root), timeout=GH_TIMEOUT, env=env)
+    sha = out.strip() if rc == 0 else ""
+    if not sha:
+        return None
+    rc, out, err = run_(["git", "ls-tree", "-r", "-z", "--name-only", sha, "--", *BASE_COUNT_PATHS],
+                        cwd=str(root), timeout=GH_TIMEOUT, env=env)
+    if rc != 0:
+        raise Unresolvable(f"git ls-tree on {ref} failed: {err.strip()[:200]}")
+    listed = {name for name in out.split("\0") if name}
+    at: dict = {"ref": ref, "sha": sha, "live": None}
+    if LEDGER not in listed:
+        return at
+    generator = CC + "generate_ledger_regions.py"
+    if generator not in listed:
+        raise Unresolvable(f"{ref} keeps a ledger but no {generator} to count it with")
+    present = [p for p in BASE_COUNT_PATHS if p in listed or any(n.startswith(p + "/") for n in listed)]
+    try:
+        # ignore_cleanup_errors: a Windows rmtree stops on a file it cannot
+        # remove, and a leftover temporary directory must not cost the line.
+        with tempfile.TemporaryDirectory(prefix="board-base-", ignore_cleanup_errors=True) as scratch:
+            archive = Path(scratch) / "base.tar"
+            rc, _out, err = run_(["git", "archive", "--format=tar", "-o", str(archive), sha, "--", *present],
+                                 cwd=str(root), timeout=GH_TIMEOUT, env=env)
+            if rc != 0:
+                raise Unresolvable(f"git archive of {ref} failed: {err.strip()[:200]}")
+            modules = Path(scratch) / "cc"
+            ledger_text, rows, archived = _read_base_archive(archive, modules)
+            left_out = sorted(n for n in listed - archived if n in (LEDGER, generator) or _is_row(n))
+            if left_out:
+                at["why_not"] = (f"git archive of {ref} leaves out {len(left_out)} file(s) the count reads, "
+                                 f"{left_out[0]} first: an export-ignore attribute at the base")
+                return at
+            rc, out, err = run_([sys.executable, "-I", "-c", _BASE_COUNT, str(modules)], cwd=scratch,
+                                input=json.dumps({"ledger": ledger_text, "rows": rows}), timeout=BASE_COUNT_TIMEOUT)
+    except (tarfile.TarError, EOFError, ValueError, TypeError) as exc:
+        raise Unresolvable(f"the archive of {ref} could not be read: {type(exc).__name__}: {exc}") from exc
+    try:
+        answer = json.loads(out) if rc == 0 else None
+    except ValueError:
+        answer = None
+    if not isinstance(answer, dict) or not isinstance(answer.get("live"), int):
+        raise Unresolvable(f"the base's generator did not count its ledger: {(err or out).strip()[-200:]}")
+    for key, mine in (("ledger_file", LEDGER), ("ledger_dir", LEDGER_DIR)):
+        theirs = answer.get(key)
+        if theirs is not None and theirs != mine:
+            raise Unresolvable(f"{ref}'s ledger tools read {theirs} where this checkout reads {mine}: "
+                               "catch this checkout up to count it")
+    at["live"] = answer["live"]
+    return at
+
+
 def read_stale(root: Path, base: str, pr: dict, *, run_: Runner = run) -> str:
     """The stale-base advisory for one armed pull request, or "": GitHub's
     files list is its paths, and its imports are read at its head when that
@@ -210,22 +367,36 @@ def read_stale_section(root: Path, base: str, prs: list[dict], strict: bool | No
                        run_: Runner = run) -> None:
     """``pr["stale"]`` on each pull request whose armed auto-merge would land
     it on its own green CI: under the up-to-date rule GitHub holds a stale one
-    itself, and one not armed lands only when a seat merges it. The base is
-    fetched first (``--no-fetch`` skips it), so "now" is GitHub's base and not
-    this clone's last fetch. One read that fails costs only its own line."""
+    itself, and one not armed lands only when a seat merges it. With ``fetch``
+    the base is fetched first, so "now" is GitHub's base and not this clone's
+    last fetch; ``collect`` fetches it once per read for every section and
+    passes False. One read that fails costs only its own line."""
     armed = [pr for pr in prs if pr.get("autoMergeRequest") and not pr.get("isDraft")]
     if strict or not armed:
         return
     if fetch:
-        try:
-            run_(["git", "fetch", "origin", base, "--quiet"], cwd=str(root), timeout=GH_TIMEOUT)
-        except Unresolvable:
-            pass   # a failed fetch reads the base as last fetched; the stale read says what it could not read
+        fetch_base(root, base, run_=run_)   # a failed fetch reads the base as last fetched
     for pr in armed:
         try:
             pr["stale"] = read_stale(root, base, pr, run_=run_)
         except Unresolvable as exc:
             pr["stale"] = f"stale-base check not read for #{pr.get('number')}: {exc}"
+
+
+def fetch_base(root: Path, base: str, *, run_: Runner = run) -> tuple[bool, str]:
+    """``origin/<base>`` brought up to GitHub's, once per read, for the stale
+    check and the ledger count alike (with no pull request armed nothing else
+    would refresh it): ``(True, "")``, or ``(False, why)`` when the fetch
+    failed and the base stays as last fetched, which the ledger line says."""
+    try:
+        rc, out, err = run_(["git", "fetch", "origin", base, "--quiet"], cwd=str(root), timeout=GH_TIMEOUT,
+                            env=_git_env())
+    except Unresolvable as exc:
+        return False, str(exc)
+    if rc != 0:
+        lines = (err.strip() or out.strip()).splitlines()
+        return False, (lines[-1] if lines else f"git fetch exited {rc}")[:160]
+    return True, ""
 
 
 def collect(root: Path, *, fetch: bool = True, run_: Runner = run) -> dict:
@@ -256,12 +427,16 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run) -> dict:
     board["claims"] = claims
     board["assignments"] = mail.live_assignments(by_machine, dispatcher)
     seat_of_lane = mail.lane_seats(by_machine)
+    board["base_fetch"] = {"state": "skipped", "problem": ""}
+    if fetch:
+        ok, problem = fetch_base(root, base, run_=run_)
+        board["base_fetch"] = {"state": "ok" if ok else "failed", "problem": problem}
     try:
         prs = read_open_prs(root, run_=run_)
         for pr in prs:
             pr["seat"] = (seat_of_lane.get(str(pr.get("headRefName") or ""), "")
                           if not board.get("mail_unread") else None)
-        read_stale_section(root, base, prs, _merge_rules.strict(rules[1], rules[2]), fetch=fetch, run_=run_)
+        read_stale_section(root, base, prs, _merge_rules.strict(rules[1], rules[2]), fetch=False, run_=run_)
         for pr in prs:
             pr.pop("files", None)   # read for the stale check; the board's JSON carries the verdict, not the list
         board["open_prs"] = prs
@@ -272,7 +447,13 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run) -> dict:
     except Unresolvable as exc:
         board["post_merge"] = {"unread": str(exc)}
     try:
-        board["ledger_live"] = read_ledger_live(root)
+        at = read_ledger_at_base(root, base, run_=run_)
+        if at is None or at.get("why_not"):
+            board["ledger_live"] = read_ledger_live(root)
+            board["ledger_at"] = {"working_tree": at["why_not"] if at else f"origin/{base} is not in this clone"}
+        else:
+            board["ledger_live"] = at["live"]
+            board["ledger_at"] = {"ref": at["ref"], "sha": at["sha"]}
     except OSError as exc:
         board["ledger_live"] = {"unread": os_error_text(exc)}
     except (Unresolvable, AttributeError) as exc:
@@ -396,8 +577,19 @@ def render(board: dict) -> str:
                          + f"{c.get('from')}: {re_.get('lane') or '(no lane)'} ({n} path{'s' if n != 1 else ''}"
                          + (f", ids {', '.join(re_.get('ids'))}" if re_.get("ids") else "") + f") since {c.get('at')}")
     live = board.get("ledger_live")
-    if isinstance(live, int):
-        lines.append(f"ledger:   {live} live rows")
+    at = board.get("ledger_at") or {}
+    if at.get("ref") and (live is None or isinstance(live, int)):
+        count = "no ledger" if live is None else f"{live} live rows"
+        line = f"ledger:   {count} at {at['ref']} ({str(at.get('sha') or '')[:7]})"
+        fetched = board.get("base_fetch") or {}
+        if fetched.get("state") == "skipped":
+            line += ", as last fetched (--no-fetch)"
+        elif fetched.get("state") == "failed":
+            line += f", as last fetched (the fetch failed: {fetched.get('problem')})"
+        lines.append(line)
+    elif isinstance(live, int):
+        where = f" in this working tree ({at['working_tree']})" if at.get("working_tree") else ""
+        lines.append(f"ledger:   {live} live rows{where}")
     elif isinstance(live, dict):
         lines.append(f"ledger:   unread ({live.get('unread')})")
     return "\n".join(_ascii(line) for line in lines)
@@ -406,7 +598,8 @@ def render(board: dict) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="board.py", description=__doc__.split("\n\n", 1)[0])
     parser.add_argument("--root", default=None, help="the checkout (default: the one around the cwd)")
-    parser.add_argument("--no-fetch", action="store_true", help="read the local mail refs only")
+    parser.add_argument("--no-fetch", action="store_true",
+                        help="read the local mail refs and the base branch as last fetched")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     try:

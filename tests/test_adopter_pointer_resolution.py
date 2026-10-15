@@ -852,6 +852,19 @@ def _self_host_only_spans(module: ast.Module) -> list[tuple[int, int]]:
         if isinstance(render, ast.Name):
             gated_names.add(render.id)
 
+    # The mirror-sync rules are derived from a table of ``_SyncRow`` calls into
+    # PostToolUse rules of the default scope, so their renders are named there
+    # (the second positional, or ``render=``, and ``generated_render=``);
+    # `test_every_sync_table_render_is_a_gated_span` pins both halves of that.
+    for node in ast.walk(module):
+        if not isinstance(node, ast.Call) or _call_name(node) != "_SyncRow":
+            continue
+        named = node.args[1:2] + [
+            kw.value for kw in node.keywords
+            if kw.arg in ("render", "generated_render")
+        ]
+        gated_names.update(n.id for n in named if isinstance(n, ast.Name))
+
     gated_names |= _self_host_only_functions(module)
 
     for node in ast.walk(module):
@@ -1925,6 +1938,44 @@ class TestCodeCarrierPointers:
             f"PostToolUse call site is wrapped in is_self_host_repo, so these "
             f"fire on adopter repos -- and this arm would wrongly excuse "
             f"their pointers as self-host-only."
+        )
+
+    def test_every_sync_table_render_is_a_gated_span(self, adopter_tree, monkeypatch):
+        """The mirror-sync advisories are derived from ``_reinject._SYNC_ROWS``
+        (DEF-4015), so no ``ReinjectRule(render=<name>)`` names their renders and
+        ``_self_host_only_spans`` reads the table's ``_SyncRow`` calls instead.
+        This pins that read against the module itself: every rule the table
+        yields is one the PostToolUse gate covers (that event, the self-host
+        scope), and every render the table names sits in a reported span. The
+        table's first shape blinded the classifier to all eight renders, which
+        surfaced only as one unrelated dead pointer."""
+        monkeypatch.syspath_prepend(
+            str(Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks")
+        )
+        import _reinject  # noqa: PLC0415 -- the hooks dir is on sys.path only here
+
+        reinject = next(
+            p for p in deployed_python(adopter_tree) if p.name == "_reinject.py"
+        )
+        module = ast.parse(reinject.read_text(encoding="utf-8"))
+        spans = set(_self_host_only_spans(module))
+        gated = {
+            node.name for node in ast.walk(module)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and (node.lineno, node.end_lineno or node.lineno) in spans
+        }
+        ungated_rules = [
+            r.id for pair in _reinject.SYNC_RULE_PAIRS for r in pair
+            if r.event != "PostToolUse" or r.scope != "self_host"
+        ]
+        renders = {
+            f.__name__ for row in _reinject._SYNC_ROWS
+            for f in (row.render, row.generated_render) if f is not None
+        }
+        assert renders and not ungated_rules, ungated_rules
+        assert renders <= gated, (
+            f"sync-table render(s) the classifier does not gate: "
+            f"{sorted(renders - gated)}"
         )
 
 

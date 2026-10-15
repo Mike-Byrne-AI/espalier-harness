@@ -155,9 +155,8 @@ def _run_with_fake_claude(
 
     fakebin = tmp_path / "bin"
     fakebin.mkdir()
-    fake = fakebin / "claude"
-    fake.write_text("#!/bin/bash\n" + claude_body, encoding="utf-8")
-    fake.chmod(0o755)
+    from tests._stubs import write_stub
+    write_stub(fakebin / "claude", "#!/bin/bash\n" + claude_body)
 
     env = dict(os.environ)
     env["PATH"] = f"{fakebin}:{env['PATH']}"
@@ -345,8 +344,9 @@ def _regate_two_run_fixture(tmp_path):
 
     fakebin = tmp_path / "bin"
     fakebin.mkdir()
-    fake = fakebin / "claude"
-    fake.write_text(
+    from tests._stubs import write_stub
+    write_stub(
+        fakebin / "claude",
         "#!/bin/bash\n"
         "mkdir -p cc\n"
         "cat > cc/_pack_receipt.json <<'JSON'\n" + _CLEAN_RECEIPT + "\nJSON\n"
@@ -355,9 +355,7 @@ def _regate_two_run_fixture(tmp_path):
         '  git commit --allow-empty -qm "test: a change with no pack id"\n'
         "fi\n"
         "exit 0\n",
-        encoding="utf-8",
     )
-    fake.chmod(0o755)
 
     ledger = tmp_path / "ledger.txt"
     marker = tmp_path / "committed.txt"

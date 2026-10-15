@@ -1,0 +1,312 @@
+#!/usr/bin/env python3
+"""PostToolUse hook — triggers reflect_protocol.py after source-file write milestones.
+
+Advisory only (always exits 0). Tracks writes to project source files and
+triggers reflect every 10th write, or immediately on config file changes.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
+import _hook_utils  # noqa: E402
+from _hook_utils import warn_exc  # noqa: E402
+
+# Config files that trigger reflect immediately when written
+CONFIG_FILES = {
+    "pyproject.toml",
+    "package.json",
+    "Cargo.toml",
+    "go.mod",
+    "settings.json",
+}
+
+# Source file extensions to track
+SOURCE_EXTENSIONS = {
+    ".py", ".js", ".ts", ".jsx", ".tsx",
+    ".go", ".rs", ".java", ".rb", ".php",
+    ".cpp", ".c", ".h", ".cs", ".swift",
+    ".kt", ".scala",
+}
+
+# Universal excluded prefixes — paths under these are not tracked for
+# auto-reflect regardless of repo context. On the self-host repo, espalier/
+# and tools/cc/ ARE source and should be tracked, so the runtime call uses
+# _hook_utils.harness_excluded_prefixes() to drop them. See TP-13 Task 13-A.
+EXCLUDED_PREFIXES = [
+    "tests/",
+    "tools/cc/",
+    ".claude/",
+    "espalier/",
+    "cc/",
+    "reports/",
+]
+
+STATE_DIR = ".espalier-state"
+COUNTER_FILE = "write_count"
+
+
+def _project_root() -> Path:
+    return Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+
+
+def _normalize_rel(file_path: str, root: Path) -> str:
+    """Get path relative to project root, resolving `..` traversals.
+
+    TP-39 (R12 W4/W5 sister-site fix): expand ``~`` and strip
+    ``$CLAUDE_PROJECT_DIR/`` prefix so Write tool_input paths in either
+    form match the prefix check. The same helper in write_guard.py,
+    plan_guard.py, and post_write_check.py got this fix in R12; this
+    site was missed by R13's sister-site sweep.
+    """
+    cleaned = os.path.expanduser(file_path) if file_path else file_path
+    if cleaned.startswith("$CLAUDE_PROJECT_DIR/"):
+        cleaned = cleaned[len("$CLAUDE_PROJECT_DIR/"):]
+    elif cleaned.startswith("${CLAUDE_PROJECT_DIR}/"):
+        cleaned = cleaned[len("${CLAUDE_PROJECT_DIR}/"):]
+    p = Path(cleaned)
+    try:
+        if p.is_absolute():
+            return str(p.resolve().relative_to(root)).replace("\\", "/")
+        return str((root / p).resolve().relative_to(root)).replace("\\", "/")
+    except (ValueError, OSError):
+        return cleaned.replace("\\", "/")
+
+
+def _is_source_file(rel_path: str, root: Path) -> bool:
+    """Return True if path is a project source file (not harness, not tests).
+
+    Resolves the prefix list per-call via _hook_utils.harness_excluded_prefixes
+    so the dogfood-reflect story works on the self-host repo (espalier/ and
+    tools/cc/ ARE source there) without leaking into user repos. See TP-13
+    Task 13-A.
+    """
+    for prefix in _hook_utils.harness_excluded_prefixes(root):
+        if rel_path.startswith(prefix):
+            return False
+    ext = Path(rel_path).suffix.lower()
+    return ext in SOURCE_EXTENSIONS
+
+
+def _is_config_file(rel_path: str) -> bool:
+    """Return True if this is a root-level config file that warrants immediate reflect."""
+    filename = Path(rel_path).name
+    if filename in CONFIG_FILES:
+        return True
+    # Root-level .yaml/.yml
+    if Path(rel_path).parent == Path(".") and Path(rel_path).suffix in (".yaml", ".yml"):
+        return True
+    return False
+
+
+def _read_counter(state_dir: Path) -> int:
+    """Read current write counter."""
+    counter_path = state_dir / COUNTER_FILE
+    if not counter_path.exists():
+        return 0
+    try:
+        return int(counter_path.read_text().strip())
+    except (ValueError, OSError):
+        return 0
+
+
+def _write_counter(state_dir: Path, count: int) -> None:
+    """Write updated counter."""
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / COUNTER_FILE).write_text(str(count))
+
+
+def _locked_increment(state_dir: Path) -> int:
+    """Atomically read-modify-write the counter (R9 B1).
+
+    Pre-fix, ``count = _read_counter() + 1; _write_counter(count)`` was
+    a classic TOCTOU: two parallel CC sessions both read N, both wrote
+    N+1, the counter drifted by half. The reflect-every-10th-write
+    cadence depends on the counter being monotonic across sessions,
+    so the drift broke the trigger semantics for users running CC in
+    a parent repo + worktree simultaneously.
+
+    Mechanism: ``fcntl.flock`` on POSIX gives advisory exclusion across
+    processes. The lock is taken on the counter file's own file
+    descriptor — opening the file in r+/append mode and locking the
+    fd is safe under concurrent openers. On Windows ``fcntl`` is
+    absent; we fall through and accept the (smaller) Windows race —
+    Windows operators rarely run two CC sessions in one repo, and
+    adding a Win32 lock would require importing ``msvcrt`` with
+    different ergonomics. Audit + docs note this as a known limit.
+
+    Returns the new count after increment.
+    """
+    state_dir.mkdir(parents=True, exist_ok=True)
+    counter_path = state_dir / COUNTER_FILE
+    # Ensure the file exists so r+ open works (lock is on the fd).
+    if not counter_path.exists():
+        counter_path.write_text("0")
+    try:
+        import fcntl  # POSIX only
+    except ImportError:
+        # Windows fallback — non-atomic, documented limit.
+        current = _read_counter(state_dir)
+        new = current + 1
+        _write_counter(state_dir, new)
+        return new
+    # POSIX: lock on the counter file's own fd. Reads the locked
+    # content, increments, writes back, releases on close.
+    with open(counter_path, "r+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            raw = fh.read().strip()
+            try:
+                current = int(raw) if raw else 0
+            except ValueError:
+                current = 0
+            new = current + 1
+            fh.seek(0)
+            fh.truncate()
+            fh.write(str(new))
+            fh.flush()
+            os.fsync(fh.fileno())
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    return new
+
+
+def _run_reflect(root: Path) -> None:
+    """Run reflect_protocol.py, print results to stderr, and record to blueprint."""
+    reflect_script = root / "tools" / "cc" / "reflect_protocol.py"
+    blueprint_script = root / "tools" / "cc" / "cognitive_blueprint.py"
+    if not reflect_script.exists():
+        return
+
+    # env= pins CLAUDE_PROJECT_DIR to root for both the reflect_protocol
+    # invocation and the subsequent record-reflect blueprint write below.
+    # cognitive_blueprint._repo_root() prefers the env var over cwd; the
+    # symmetry on reflect_protocol future-proofs against added coupling.
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
+    try:
+        result = subprocess.run(
+            [sys.executable, str(reflect_script), "--pass", "1", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=25,
+            cwd=str(root),
+            env=env,
+        )
+        if not result.stdout.strip():
+            return
+
+        # Parse JSON report
+        try:
+            report = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            # Fallback: print raw output if JSON parse fails
+            print("=== REFLECT TRIGGER (auto) ===", file=sys.stderr)
+            for line in result.stdout.strip().splitlines():
+                print(f"  {line}", file=sys.stderr)
+            print("=" * 30, file=sys.stderr)
+            return
+
+        # Print human-readable summary to stderr.
+        # R12 W7: on a clean reflect (no findings, no gaps, no orphans),
+        # emit a single line instead of a 7-line block. Heavy sessions
+        # trigger reflect every 10 writes \u2014 pre-fix that produced 7
+        # lines of noise per fire even when the surface was coherent.
+        findings = report.get("findings", [])
+        gap_count = report.get("gap_count", 0)
+        orphan_count = report.get("orphan_count", 0)
+        files_analyzed = report.get("files_analyzed", 0)
+        if not findings and gap_count == 0 and orphan_count == 0:
+            print(
+                f"[reflect] clean -- {files_analyzed} files, surface coherent",
+                file=sys.stderr,
+            )
+        else:
+            # Use ASCII separator (R12 N5) so log sinks that strip
+            # non-ASCII don't render the divider as garbage.
+            print("=== REFLECT TRIGGER (auto) ===", file=sys.stderr)
+            print(f"  Files analyzed:    {files_analyzed}", file=sys.stderr)
+            print(f"  Cross-ref density: {report.get('cross_ref_density', 0)} refs/file", file=sys.stderr)
+            print(f"  Gaps:              {gap_count}", file=sys.stderr)
+            print(f"  Orphans:           {orphan_count}", file=sys.stderr)
+            for f in findings:
+                sev = f"[{f['severity']}] " if f.get("severity") != "low" else ""
+                print(f"  [{f['kind'].upper()}] {sev}{f['description']}", file=sys.stderr)
+            print("=" * 30, file=sys.stderr)
+
+        # Record reflect pass into the active blueprint
+        if blueprint_script.exists():
+            try:
+                subprocess.run(
+                    [sys.executable, str(blueprint_script), "record-reflect",
+                     "--data", result.stdout.strip()],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    cwd=str(root),
+                    env=env,
+                )
+            except (subprocess.TimeoutExpired, OSError) as e:
+                warn_exc("reflect: blueprint record failed", e)
+
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print(f"[WARN] reflect_trigger: {type(e).__name__}: {e}", file=sys.stderr)
+
+
+def main() -> int:
+    data = _hook_utils.read_stdin_safely()
+    if not data:
+        return 0
+
+    tool_name = data.get("tool_name", "")
+    tool_input = data.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+
+    # R11 W: include MCP write tools so the reflect cadence still fires
+    # under MCP-heavy workflows (e.g., agent using `mcp__filesystem__write_file`
+    # rather than the built-in Write tool). Pre-fix, the early-return
+    # silently dropped MCP writes from the counter and the every-10th-write
+    # trigger never fired.
+    is_native_write = tool_name in ("Write", "Edit", "NotebookEdit")
+    is_mcp_write = (
+        tool_name.startswith("mcp__")
+        and any(
+            verb in tool_name.lower()
+            for verb in ("write", "edit", "create", "patch", "append", "save")
+        )
+    )
+    if not (is_native_write or is_mcp_write):
+        return 0
+
+    # MCP tool_input uses `path` more often than `file_path`. Sweep both.
+    file_path = tool_input.get("file_path", "") or tool_input.get("path", "")
+    root = _project_root()
+    rel_path = _normalize_rel(file_path, root)
+
+    # Trigger immediately on config file changes
+    if _is_config_file(rel_path):
+        _run_reflect(root)
+        return 0
+
+    # Only count source file writes
+    if not _is_source_file(rel_path, root):
+        return 0
+
+    state_dir = root / STATE_DIR
+    # Atomic increment under flock (POSIX) — no concurrent-session
+    # drift. Windows fall-through is documented in _locked_increment.
+    count = _locked_increment(state_dir)
+
+    # Trigger every 10th source file write
+    if count % 10 == 0:
+        _run_reflect(root)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

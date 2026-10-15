@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""SubagentStop hook — finalize subagent reasoning into the parent
+session's blueprint chain.
+
+Agents (architecture-analyst, code-reviewer, etc.) run in isolated
+contexts and bypass ``stop_gate.py`` entirely. Their reasoning lands in
+the parent session's tool-result stream, but no gate finalizes it into
+the blueprint. This hook closes that gap: on every SubagentStop, append
+a reasoning entry to the active blueprint with ``source=subagent``.
+
+Gates: Gate 4 only (auto-finalize blueprint append). Pytest, docs
+refresh, code review do NOT fire — subagent results don't carry the
+same blast radius as a parent Stop.
+
+Matcher: "*" (all subagent types). Filter happens internally; payload
+``stop_hook_active`` is honored to prevent recursive subagent loops.
+
+Protocol contract (cc-hook-protocol.md):
+- Exit 0 with no JSON → allow subagent stop (default path).
+- Exit 0 + ``{"decision": "block", "reason": "..."}`` → block stop;
+  stderr goes to the parent session. SubagentStop uses the same JSON
+  shape as Stop (top-level, not nested in hookSpecificOutput).
+- Exit 1 = script bug. NEVER use for governance decisions.
+
+This hook only emits exit 0 (with or without JSON). It never blocks
+the subagent — blocking would deadlock the parent session waiting for
+agent completion.
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import _hook_utils  # noqa: E402
+import _maintenance_mode  # noqa: E402
+
+
+def _project_root() -> Path:
+    return Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+
+
+def _append_subagent_reasoning(root: Path, agent_type: str, summary: str) -> None:
+    """Append a ``pattern_discovered`` reasoning entry tagged with the
+    agent type to the active blueprint.
+
+    Uses the standalone ``tools/cc/cognitive_blueprint.py record`` CLI
+    (same one the other hooks use) — keeps the zero-espalier-import
+    constraint. The blueprint's ``kind`` enum doesn't include a
+    dedicated ``subagent`` value (would require schema bump); we encode
+    the subagent identity in the description prefix so the entry is
+    grep-able by ``[subagent:<type>]``.
+
+    Failure is non-fatal — subagent stop must not block on logging.
+    """
+    script = root / "tools" / "cc" / "cognitive_blueprint.py"
+    if not script.is_file():
+        return
+    description = f"[subagent:{agent_type}] {summary[:400]}" if summary else (
+        f"[subagent:{agent_type}] completed"
+    )
+    # env= pins CLAUDE_PROJECT_DIR to root: cognitive_blueprint._repo_root()
+    # prefers the env var over cwd, so an inherited value would silently
+    # record subagent reasoning into the wrong repo's blueprint chain.
+    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(root)}
+    try:
+        result = subprocess.run(
+            [
+                sys.executable, str(script),
+                "record",
+                "--kind", "pattern_discovered",
+                "--description", description,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(root),
+            env=env,
+        )
+        if result.returncode == 2:
+            # No active session — that's fine, this hook is opportunistic.
+            # The agent's reasoning is still visible in the parent's
+            # tool-result stream regardless of blueprint state.
+            return
+        if result.returncode != 0:
+            # M6 (TP-48): a non-zero non-2 exit means the standalone
+            # record CLI crashed (file lock failure, OOM, bad JSON
+            # parse mid-modify). Previously swallowed silently —
+            # subagent reasoning lost without any operator signal.
+            print(
+                f"[WARN] subagent_stop: cognitive_blueprint record "
+                f"exited {result.returncode}: {(result.stderr or '').strip()}",
+                file=sys.stderr,
+            )
+    except (subprocess.TimeoutExpired, OSError) as e:
+        # Per channel-XOR: stderr advisory, no JSON, exit 0.
+        print(
+            f"[WARN] subagent_stop: blueprint record failed: "
+            f"{type(e).__name__}: {e}",
+            file=sys.stderr,
+        )
+
+
+STATE_DIR = ".espalier-state"
+
+# Agents whose successful completion satisfies a stop_gate gate. Map
+# from agent_type -> flag-file name in STATE_DIR. When a SubagentStop
+# event fires with one of these agent_types, the corresponding flag is
+# written so the next stop_gate evaluation passes that gate.
+#
+# Why here, not in stop_gate.py: stop_gate fires on the parent Stop
+# event AFTER the agent has finished and the operator has typed nothing.
+# It cannot observe in-session agent runs. SubagentStop fires
+# immediately when the agent finishes; this is the only hook that sees
+# the agent_type and can persist a session-scoped sentinel.
+#
+# DO NOT add `{"code-reviewer": "review_requested"}` (or any mapping to
+# `review_requested`). stop_gate's Gate 3 self-writes that flag at first
+# fire as a "next stop passes, current stop blocks" signal — adding a
+# subagent_stop writer would silently bypass Gate 3 because the flag
+# would land BEFORE Gate 3 ever evaluates, and the user is never
+# prompted to invoke /review. Only gates whose flag is purely a
+# "block-relief" signal (Gate 2 / docs_refreshed) belong in this map.
+_AGENT_RELIEF_FLAGS: dict[str, str] = {
+    "docs-maintainer": "docs_refreshed",
+}
+# Belt-and-suspenders: refuse to load the module if a future edit
+# violates the discipline above. Catches the comment being ignored.
+assert "review_requested" not in _AGENT_RELIEF_FLAGS.values(), (
+    "review_requested must not be in _AGENT_RELIEF_FLAGS — see comment "
+    "above; mapping it here would silently bypass stop_gate Gate 3."
+)
+
+
+def _set_relief_flag(root: Path, agent_type: str) -> None:
+    """Persist the stop_gate relief flag for this agent type, if any."""
+    flag_name = _AGENT_RELIEF_FLAGS.get(agent_type)
+    if not flag_name:
+        return
+    try:
+        state_dir = root / STATE_DIR
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / flag_name).write_text("")
+    except OSError as e:
+        # Channel-XOR: stderr advisory, no JSON, exit 0. Same shape as
+        # the existing OSError handler in _append_subagent_reasoning.
+        print(
+            f"[WARN] subagent_stop: could not set {flag_name!r} relief "
+            f"flag for agent {agent_type!r}: {type(e).__name__}: {e}",
+            file=sys.stderr,
+        )
+
+
+def main() -> int:
+    if _maintenance_mode.is_active(
+        "subagent_stop",
+        action="blueprint-append skipped",
+    ):
+        return 0
+
+    data = _hook_utils.read_stdin_safely()
+    if not data:
+        return 0
+
+    # Recursive-loop guard: if a subagent is being asked to stop by another
+    # subagent stop hook, do not re-enter. Honored by CC per protocol.
+    if data.get("stop_hook_active"):
+        return 0
+
+    agent_type = str(data.get("agent_type", "")) or "unknown"
+    # CC may include a transcript path; we don't parse it here — the
+    # parent session's tool-result stream already contains the agent's
+    # output. A single anchor entry per stop is enough signal.
+    summary = (
+        f"Subagent {agent_type!r} completed; "
+        f"output captured in parent tool-result stream."
+    )
+
+    root = _project_root()
+    # Relief-flag side-effect FIRST: set before the (potentially-failing)
+    # blueprint record so a stop_gate gate is unblocked even if the
+    # blueprint append fails. Empty agent_type / unmapped agent_type is
+    # a no-op.
+    _set_relief_flag(root, agent_type)
+
+    _append_subagent_reasoning(root, agent_type, summary)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

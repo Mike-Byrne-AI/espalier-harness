@@ -954,9 +954,8 @@ class TestPythonResolverCheck:
         # already carries a PATHEXT extension -- so a file literally named
         # `python` is never found, the predicate saw an unresolvable name
         # rather than a venv-only one, and the test asserted the wrong branch.
-        shim = bindir / (name + ".exe" if os.name == "nt" else name)
-        shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        shim.chmod(0o755)
+        from tests._stubs import write_stub
+        write_stub(bindir / (name + ".exe" if os.name == "nt" else name), "#!/bin/sh\nexit 0\n")
         return venv, bindir
 
     def test_warns_when_wired_name_resolves_only_inside_a_venv(
@@ -3109,13 +3108,16 @@ class TestUnstampedSeedIsNamed:
         report = run_doctor_check(adopter_copy)
         assert not [s for s in report["info"] if "espalier:seed-version" in s], report["info"]
 
-    def test_the_self_host_tree_gets_no_info_line(self):
+    def test_the_self_host_tree_gets_no_info_line(self, initialized_repo_root):
         """The docs HERE are the seed sources and carry no stamp; the first cut
         fired on 20 of 20 with a remedy that had no referent. The gate must have
-        something to suppress, or this test proves nothing."""
+        something to suppress, or this test proves nothing. On the init'd copy
+        (its seed docs stay unstamped), never the live root: doctor runs the
+        surface gate, which rewrites the live reports/ under a sibling worker's
+        live-tree guard (DEF-973)."""
         from espalier.doctor import run_doctor_check
         from espalier.managed_inventory import count_unstamped_seed_docs
-        repo_root = Path(__file__).resolve().parents[1]
+        repo_root = initialized_repo_root
         assert count_unstamped_seed_docs(repo_root), "gate has nothing to suppress"
         report = run_doctor_check(repo_root)
         assert not [s for s in report["info"] if "espalier:seed-version" in s], report["info"]
