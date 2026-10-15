@@ -99,7 +99,7 @@ subagent model) still reaches the child. The runner also pins
 `--permission-mode default` (2.1.299 accepts it, though `--help` lists `manual`,
 and the run's `init` event reports `default`): without it a `-p` run's starting
 mode depends on whether the CLI fetched its feature flags (the Claude Code
-reference, as the dispatcher read it on 2026-10-15). In that mode, with no one
+reference, as the dispatcher read it on 2026-10-14). In that mode, with no one
 to answer a prompt, the CLI refuses any write the hooks let through
 (`source: config` in its records), so a write never lands in a live run; the
 retry check reads those refusals (`SCHEMA.md`). The template's

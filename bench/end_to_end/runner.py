@@ -161,7 +161,7 @@ def _target_state(work_dir: Path, target: str, before: str | None) -> dict[str, 
     path = work_dir / target
     mtime, ctime = _change_times(work_dir, path)
     return {"path": target, "before": before, "after": _digest(path), "mtime": mtime, "ctime": ctime,
-            "plans": _plans(work_dir)}
+            "plans": _plans(work_dir), "work_dir": str(work_dir.resolve())}
 
 
 def load_scenario(path: Path) -> dict[str, Any]:
