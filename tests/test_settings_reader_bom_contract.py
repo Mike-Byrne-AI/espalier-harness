@@ -89,6 +89,8 @@ import ast
 import re
 from pathlib import Path
 
+from tests._source_segment import segment, source_lines
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 #: Helpers that make a read BOM-tolerant. A read is guarded when the bytes it
@@ -674,9 +676,12 @@ class TestSettingsReadersDecodeBOM:
                     tree = ast.parse(src)
                 except SyntaxError:  # pragma: no cover - another test's job
                     continue
+                lines: tuple[str, ...] | None = None  # split only where the helper is defined
                 for node in ast.walk(tree):
                     if isinstance(node, ast.FunctionDef) and node.name == helper:
-                        bodies.append((str(path), ast.get_source_segment(src, node) or ""))
+                        if lines is None:
+                            lines = source_lines(src)
+                        bodies.append((str(path), segment(lines, node) or ""))
             assert bodies, f"{helper} is on the roster but defined nowhere under the scanned roots"
             others = [h for h in _BOM_HELPERS if h != helper]
             for where, body in bodies:

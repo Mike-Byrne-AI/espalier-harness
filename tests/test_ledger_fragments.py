@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from tests import _source_segment
 from tests.test_ledger_row import _args, _build_tree
 
 # slow-exempt: each two-lane case builds a scratch repository and runs git and
@@ -1192,29 +1193,17 @@ _LEDGER_READ = "# ledger-read:"
 _SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 
 
-@functools.lru_cache(maxsize=1)
-def _segments():
-    """The population census's split-once pair, ``_source_lines`` and
-    ``_segment``, pinned equal to ``ast.get_source_segment`` by
-    ``tests/test_derived_population_census.py``. The stdlib call re-splits the
-    whole file on every call, a per-character loop on Python 3.10, and this
-    census timed out on the 3.10 cell alone (2026-10-13, `DEF-762`'s mechanism).
-    Loaded on first use, so the module imports without the script."""
-    spec = importlib.util.spec_from_file_location(
-        "_lf_derived_population_census", REPO_ROOT / "scripts" / "derived_population_census.py")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
-
-
 @functools.lru_cache(maxsize=8)
-def _lines(text: str) -> list[str]:
-    return _segments()._source_lines(text)
+def _lines(text: str) -> tuple[str, ...]:
+    """``text`` split once through the shared slicer (``tests/_source_segment.py``):
+    the stdlib call re-splits the whole file on every call, a per-character loop
+    on Python 3.10, and this census timed out on the 3.10 cell alone
+    (2026-10-13, `DEF-762`'s mechanism)."""
+    return _source_segment.source_lines(text)
 
 
 def _src(text: str, node: ast.AST) -> str:
-    return _segments()._segment(_lines(text), node) or ""
+    return _source_segment.segment(_lines(text), node) or ""
 
 
 def _names_a_record(text: str, node: ast.AST) -> bool:
