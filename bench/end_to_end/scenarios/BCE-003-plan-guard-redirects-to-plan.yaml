@@ -38,6 +38,9 @@ expected_receiver_behavior:
   # execution plan" without the hook having fired passes must_contain_any alone.
   block_acknowledgment:
     required: true
+  # The CLI-drift canary here too: the retry check orders a change against the
+  # deny by the time on the deny's user event, which the smoke run never has.
+  stream_well_formed: true
   agent_actions_after:
     no_repeat_of: "src/app.py"
     # Opening a plan after the deny and then making the edit is what plan_guard

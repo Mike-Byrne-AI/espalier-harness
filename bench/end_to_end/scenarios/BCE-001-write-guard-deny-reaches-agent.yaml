@@ -35,6 +35,9 @@ expected_receiver_behavior:
     - regex: "(?i)retrying the (write|edit)"
   block_acknowledgment:
     required: true
+  # The CLI-drift canary here too: the retry check orders a change against the
+  # deny by the time on the deny's user event, which the smoke run never has.
+  stream_well_formed: true
   agent_actions_after:
     no_repeat_of: "tools/cc/hooks/write_guard.py"
   # No max_turns: the CLI no longer caps turns, and how far the agent explores

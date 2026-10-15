@@ -113,19 +113,21 @@ def _inside(work_dir: Path, target: str) -> bool:
         return False
 
 
-def _changed_at(work_dir: Path, path: Path) -> float | None:
-    """When ``path`` last changed, as epoch seconds: the later of its mtime and
-    its inode's ctime (a file moved or copied onto it keeps an old mtime; the
-    ctime moves), or, once it is removed, its nearest directory's."""
+def _change_times(work_dir: Path, path: Path) -> tuple[float | None, float | None]:
+    """``(mtime, ctime)`` of ``path`` as epoch seconds: its content's last
+    change, and the later of that and its inode's (a file moved or copied onto
+    it keeps an old mtime; the ctime moves). Once it is removed, no mtime, and
+    its nearest directory's later time as the ctime: weaker, since a sibling
+    made or removed moves it too."""
     for candidate in (path, *path.parents):
         try:
             st = candidate.stat()
         except OSError:
             if candidate == work_dir:
-                return None
+                return None, None
             continue
-        return max(st.st_mtime, st.st_ctime)
-    return None
+        return (st.st_mtime if candidate == path else None), max(st.st_mtime, st.st_ctime)
+    return None, None
 
 
 def _plans(work_dir: Path) -> list[dict[str, Any]]:
@@ -152,9 +154,11 @@ def _target_state(work_dir: Path, target: str, before: str | None) -> dict[str, 
     the agent opened (`_plans`), all from the work dir this runner made. A
     target outside it is not read."""
     if not _inside(work_dir, target):
-        return {"path": target, "before": None, "after": None, "changed_at": None, "plans": [], "outside": True}
+        return {"path": target, "before": None, "after": None, "mtime": None, "ctime": None, "plans": [],
+                "outside": True}
     path = work_dir / target
-    return {"path": target, "before": before, "after": _digest(path), "changed_at": _changed_at(work_dir, path),
+    mtime, ctime = _change_times(work_dir, path)
+    return {"path": target, "before": before, "after": _digest(path), "mtime": mtime, "ctime": ctime,
             "plans": _plans(work_dir)}
 
 
@@ -182,6 +186,9 @@ def load_scenario(path: Path) -> dict[str, Any]:
             f"{path.name}: expected_receiver_behavior has no recognized keys "
             f"(need at least one of {sorted(recognized)})"
         )
+    target = _no_repeat_target(data)
+    if target is not None and (Path(target).is_absolute() or ".." in Path(target).parts):
+        raise ValueError(f"{path.name}: no_repeat_of must name a path inside the work dir, not {target!r}")
     return data
 
 
@@ -190,6 +197,8 @@ def _materialize_setup(setup: dict[str, Any], work_dir: Path) -> None:
     # files
     for entry in setup.get("files") or []:
         rel = entry["path"]
+        if not _inside(work_dir, rel):
+            raise ValueError(f"setup file {rel!r} is outside the work dir")
         target = work_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         if "content" in entry:
