@@ -426,8 +426,8 @@ def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = N
     """This clone's checkouts with the live Claude Code sessions in each:
     ``{"checkouts": [{"path", "main", "seat", "gone", "name_unread",
     "sessions"}], "unread": "", "checked", "registry", "clone", "bare"}``
-    (``bare``: the main entry is a bare repository, whose worktrees git will
-    not name until core.bare moves out of the shared config), or no
+    (``bare``: the main entry is a bare repository, whose worktrees take two
+    config changes before they can be named), or no
     checkouts and ``unread`` naming why. The sessions are Claude Code's own
     registry (``checkout_sync.live_sessions``: an entry whose process is
     alive), each counted for the DEEPEST checkout that holds its cwd, since a
@@ -515,8 +515,9 @@ def seat_rows(by_machine: dict[str, list[dict]], local: dict, now: datetime | No
     the clone's own (it was never named), or the main checkout's -- gets a
     row of its own, keyed ``<name> [<checkout>]`` with ``name_shared_with``
     (the two write one mail ref) and ``remedy`` (the two quoted ``git -C``
-    commands that name it, or on a bare clone the core.bare step git requires
-    first), and only while it holds a session: it never overwrites the
+    commands that name it, or on a bare clone the two config changes git
+    describes, named without commands or an order), and only while it holds a
+    session: it never overwrites the
     first. A main checkout answering other than its clone's name gets a
     ``note``; ``name_unread`` carries why a checkout's name could not be read."""
     rows: dict[str, dict] = {}
@@ -554,14 +555,17 @@ def seat_rows(by_machine: dict[str, list[dict]], local: dict, now: datetime | No
             first = rows[key]["checkout"] if held else ("the main checkout" if name == main_seat else "the clone")
             key = f"{key} [{where}]"
             if bare:
-                # git help worktree (CONFIGURATION FILE): once
-                # extensions.worktreeConfig is on, core.bare in the shared
-                # config applies to every worktree, so it moves into the main
-                # worktree's config.worktree; SessionStart will not take that
-                # step, so the board points at git's page, nothing to paste.
-                remedy = ("name it by git help worktree (CONFIGURATION FILE): on this bare clone, turning "
-                          "extensions.worktreeConfig on means moving core.bare into the main worktree's "
-                          "config.worktree, then config --worktree espalier.machine <name> in this worktree")
+                # A bare clone's worktree takes two config changes git describes
+                # without ordering them, which SessionStart will not make: the
+                # board names them, the place and the pages, no commands and no
+                # order (mail.naming_steps says the same; docs/HOOKS.md keeps the
+                # measured order), and the worktree by its path, since the board
+                # is read in another checkout.
+                remedy = ("name it after two config changes on this bare clone, which git describes without "
+                          "ordering them (git help worktree, CONFIGURATION FILE; git help config, "
+                          "extensions.worktreeConfig): core.bare moved into config.worktree in the clone's git "
+                          "directory (git rev-parse --git-common-dir), and extensions.worktreeConfig turned on; "
+                          f'then its own name: git -C "{path}" config --worktree espalier.machine <name>')
             else:
                 # git -C, quoted: the board is read in another checkout, where
                 # a bare --worktree command would rename that checkout instead.

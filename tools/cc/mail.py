@@ -747,8 +747,9 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
 
     The name is ``<clone>-<worktree directory>``. Refused, with the command, when
     another worktree of this clone already answers it, or when the clone's
-    shared config sets ``core.worktree`` or ``core.bare``, which git says must
-    move before ``extensions.worktreeConfig`` is turned on. The name is set with
+    shared config sets ``core.worktree`` or ``core.bare``, which per-worktree
+    config needs moved into ``config.worktree`` in the clone's git directory, a
+    change this does not make (:func:`naming_steps` says what). The name is set with
     ``--worktree`` scope and read back: set without it, the clone itself would be
     renamed."""
     if not (root / ".git").is_file():
@@ -773,9 +774,9 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
             rc, value, _ = run(["git", "config", "--get", key], cwd=str(root), env=git_env(), timeout=timeout)
             if rc == 0 and value.strip() and value.strip() != "false":
                 return None, (f"this worktree answers the clone's name {clone!r}, and the clone's shared config sets "
-                              f"{key}, which must move into the main worktree's config.worktree once per-worktree "
-                              f"config is on (git help worktree, CONFIGURATION FILE), a step SessionStart will not "
-                              f"take; {by_hand()}")
+                              f"{key}, which per-worktree config needs moved into config.worktree in the clone's "
+                              "git directory (git rev-parse --git-common-dir; git help worktree, CONFIGURATION FILE), "
+                              f"a change SessionStart will not make; {by_hand()}")
         rc, listing, _ = run(["git", "worktree", "list", "--porcelain"], cwd=str(root), env=git_env(), timeout=timeout)
         here = Path(top.strip()).resolve()
         for line in listing.splitlines() if rc == 0 else []:
@@ -814,13 +815,18 @@ def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0) -> str
     """The by-hand steps that give the linked worktree at ``root`` a name of
     its own, run in it: ``git config extensions.worktreeConfig true``, then
     ``git config --worktree espalier.machine <name>``. Where the clone's shared
-    config sets ``core.bare`` (or ``core.worktree``), git's order sits between
-    them: with the extension on, that key no longer applies to the main
-    worktree alone, so it moves into the main worktree's ``config.worktree``
-    (``git help worktree``, CONFIGURATION FILE). That step is pointed at, not
-    spelled as commands to paste, and SessionStart will not take it. The one
-    owner of these steps for every refusal that prints them
-    (``name_this_worktree``, ``assign_refusal``, the ledger's mint refusal)."""
+    config sets ``core.bare`` (or ``core.worktree``), naming a worktree takes
+    two config changes git describes without ordering them (``git help
+    worktree``, CONFIGURATION FILE; ``git help config``,
+    extensions.worktreeConfig): the key moved into ``config.worktree`` in the
+    clone's git directory, and the extension turned on. The text names both,
+    the place and the pages, and no commands and no order: round 7 measured
+    that the extension turned on first makes every worktree read as bare until
+    the move lands, and that a move run in the linked worktree lands in that
+    worktree's own file (``docs/HOOKS.md`` keeps the order measured to leave
+    no such window). SessionStart will not make them. The one owner of these
+    steps for every refusal that prints them (``name_this_worktree``,
+    ``assign_refusal``, the ledger's mint refusal)."""
     steps = f"git config extensions.worktreeConfig true, then git config --worktree {MACHINE_KEY} <name>"
     for key in ("core.bare", "core.worktree"):
         try:
@@ -828,9 +834,12 @@ def naming_steps(root: Path, *, run: Runner = run, timeout: float = 10.0) -> str
         except Unresolvable:
             continue
         if rc == 0 and value.strip() and value.strip() != "false":
-            return (f"turn the extension on (git config extensions.worktreeConfig true), then move {key} out of "
-                    "the clone's shared config into the main worktree's config.worktree as git help worktree "
-                    f"describes (CONFIGURATION FILE), then git config --worktree {MACHINE_KEY} <name>")
+            return (f"on this clone, whose shared config sets {key}, naming a worktree takes two config changes "
+                    "git describes without ordering them (git help worktree, CONFIGURATION FILE; git help config, "
+                    f"extensions.worktreeConfig): {key} moved out of the shared config into config.worktree in "
+                    "the clone's git directory (git rev-parse --git-common-dir), and the extensions.worktreeConfig "
+                    "setting turned on, which SessionStart will not do; after both, the worktree's own name: "
+                    f"git config --worktree {MACHINE_KEY} <name>")
     return steps
 
 

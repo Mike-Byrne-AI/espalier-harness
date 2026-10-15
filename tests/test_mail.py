@@ -354,11 +354,12 @@ class TestMachineSettingReads:
 
 class TestNamingSteps:
     """The by-hand steps that name a linked worktree, one owner for every
-    refusal that prints them: git says core.bare (and core.worktree) must move
-    out of the shared config before extensions.worktreeConfig is turned on,
-    and SessionStart refuses to name a bare clone's worktrees for that reason
-    (both reviewers, TP-701 r5: the board withheld the step, its siblings
-    still printed it)."""
+    refusal that prints them. On a clone whose shared config sets core.bare
+    (or core.worktree), naming a worktree takes two config changes git
+    describes without ordering them; the printed text names both, where the
+    key goes and git's two pages, and no commands (dispatcher, c160d6 (i):
+    round 7 measured that the extension turned on first makes every worktree
+    read as bare, and that a move run in the linked worktree lands there)."""
 
     @staticmethod
     def _git(values: dict):
@@ -371,15 +372,18 @@ class TestNamingSteps:
         steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "false"}))
         assert steps == "git config extensions.worktreeConfig true, then git config --worktree espalier.machine <name>"
 
-    def test_a_bare_clone_gets_gits_order_and_a_pointer_not_a_paste(self, mail, tmp_path):
-        """git help worktree (CONFIGURATION FILE): turn the extension on, THEN
-        move core.bare (or core.worktree) into the main worktree's
-        config.worktree; git refuses `config --worktree` before the extension
-        is on (failure-mode review, r6; read on git 2.39.5). Dies to: the move
-        ordered first, or the pointer to git's own page dropped."""
+    def test_a_bare_clone_gets_the_two_changes_the_place_and_the_pages_no_order(self, mail, tmp_path):
+        """Dies to: an order stated between the two changes, a command to
+        paste, the place (the clone's git directory) or a page dropped, or
+        the worktree's own name placed before the two changes."""
         steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "true"}))
-        assert steps.index("extensions.worktreeConfig") < steps.index("move core.bare"), steps
-        assert "git help worktree" in steps and "main worktree's config.worktree" in steps, steps
+        for part in ("core.bare", "extensions.worktreeConfig", "config.worktree", "git rev-parse --git-common-dir",
+                     "git help worktree", "git help config"):
+            assert part in steps, (part, steps)
+        assert not any(word in steps for word in (" first", "before", "once ", "then move")), steps
+        assert "git config extensions.worktreeConfig true" not in steps, "no command to paste on a bare clone"
+        name_at = steps.index("--worktree espalier.machine")
+        assert name_at > steps.index("core.bare") and name_at > steps.index("extensions.worktreeConfig"), steps
         assert "core.worktree" in mail.naming_steps(tmp_path, run=self._git({"core.worktree": "/x"}))
 
     def test_the_assign_refusal_carries_the_steps(self, mail, tmp_path, monkeypatch):
@@ -420,12 +424,13 @@ class TestNamingSteps:
         assert name is None and mail.naming_steps(tmp_path, run=run) in said, said
         assert "core.bare" in said
 
-    def test_name_this_worktrees_core_bare_refusal_states_gits_order(self, mail, tmp_path):
-        """Dies to: the refusal saying git wants the move before the extension."""
+    def test_name_this_worktrees_core_bare_refusal_states_no_order(self, mail, tmp_path):
+        """Dies to: the refusal ordering the two changes either way."""
         (tmp_path / ".git").write_text("gitdir: x\n", encoding="utf-8")
         name, said = mail.name_this_worktree(tmp_path, run=self._worktree_git(tmp_path, tmp_path / "wt", bare=True))
-        assert name is None and "git help worktree" in said, said
+        assert name is None and "git help worktree" in said and "git rev-parse --git-common-dir" in said, said
         assert "move before per-worktree config is turned on" not in said, said
+        assert "once per-worktree config is on" not in said, said
 
 
 class TestLiveRequests:

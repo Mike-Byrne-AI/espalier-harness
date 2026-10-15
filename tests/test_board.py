@@ -523,10 +523,12 @@ class TestSeats:
                 f'true && git -C "{work}" config --worktree espalier.machine <name>') in text, text
 
     def test_a_bare_clones_worktree_gets_the_core_bare_step_not_the_commands(self, board, tmp_path):
-        """git says core.bare must move before extensions.worktreeConfig is
-        turned on, and SessionStart refuses to name a bare clone's worktrees
-        for that reason; the board must not hand out the step it refuses (code
-        review, r4). Dies to: the paste-ready commands on a bare clone."""
+        """Naming a bare clone's worktree takes two config changes, which
+        SessionStart will not make; the board names them, where the key goes
+        and git's pages, never commands or an order (code review r4;
+        dispatcher, c160d6 (i)), and names the worktree by its path, since the
+        board is read in another checkout (code review r7). Dies to: the
+        paste-ready commands, an order, or "this worktree" for a path."""
         main, work = self._clone(tmp_path)
 
         def run(argv, **kw):
@@ -539,8 +541,10 @@ class TestSeats:
         local = board.read_sessions(main, run_=run, config_dir=_registry(tmp_path, work), inside_session=False)
         text = self._text(board, board.seat_rows({}, local, _NOW))
         assert "air [" in text and "core.bare" in text and "git help worktree" in text, text
-        assert "extensions.worktreeConfig true &&" not in text, text
-        assert "before per-worktree names" not in text, "git turns the extension on first, then the move (r6)"
+        assert "git rev-parse --git-common-dir" in text and str(work) in text, text
+        assert "extensions.worktreeConfig true &&" not in text and "this worktree" not in text, text
+        assert not any(word in text for word in ("before per-worktree", "turning extensions.worktreeConfig on means",
+                                                 " first,")), text
 
     def test_the_flag_reads_the_clones_name_not_the_main_checkouts(self, board, tmp_path):
         """The board runs in the main checkout, and a naming command pasted

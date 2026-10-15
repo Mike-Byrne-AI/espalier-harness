@@ -346,8 +346,16 @@ class MintRefused(Exception):
 
 
 class SeatUnreadable(MintRefused):
-    """The seat's name could not be read at all (a copied subset without
-    ``mail.py``): a failed read, where an inherited name is evidence."""
+    """The seat's name could not be read at all: a copied subset without
+    ``mail.py`` (here), or git not answering (:class:`SeatNameUnread`). A
+    failed read, where an inherited name is evidence."""
+
+
+class SeatNameUnread(SeatUnreadable):
+    """``mail.py`` is here, and git could not answer for the seat's name (a
+    timeout, a config git cannot parse). A mint and an explicit id are both
+    refused by name: an id checked against no block is the collision the
+    channel exists to refuse (dispatcher, TP-701 c160d6 (A))."""
 
 
 def read_id_blocks(root: Path) -> dict[str, dict[str, tuple[int, int]]] | None:
@@ -439,7 +447,7 @@ def minting_seat(root: Path) -> tuple[str, str | None]:
         # A read that failed (a timeout, a config git cannot parse) is not
         # "no name": that answer would offer `git config espalier.machine`,
         # which in a worktree renames the clone, or mint from the shared range.
-        raise SeatUnreadable(str(how))
+        raise SeatNameUnread(f"this seat's machine name could not be read ({how}); retry once git answers")
     if machine is None:
         # The shared range is safe for one clone (its worktrees share the
         # record) and unsafe across machines, which each keep their own.
@@ -654,9 +662,11 @@ def explicit_id_refusal(root: Path, rid: str) -> tuple[str | None, str | None]:
     id in another seat's block is that seat's next mint, and one outside every
     block is a hand-picked number two seats can both pick. A worktree still
     answering its clone's name is refused here as it is for a mint -- that is
-    evidence, not a failed read. A table that cannot be read, or a seat that
-    cannot be named at all, is a note and no refusal: the explicit path worked
-    before the blocks."""
+    evidence, not a failed read. A seat name git could not answer is refused
+    by name too, ``--override`` the way past: an id checked against no block
+    is the collision the channel refuses. A table that cannot be read, or a
+    copied subset without ``mail.py``, is a note and no refusal: the explicit
+    path worked before the blocks."""
     m = _ROW_ID_RE.fullmatch(rid)
     if not m:
         return None, None
@@ -665,6 +675,9 @@ def explicit_id_refusal(root: Path, rid: str) -> tuple[str | None, str | None]:
         if blocks is None:
             return None, None
         seat, _note = minting_seat(root)
+    except SeatNameUnread as exc:
+        return (f"{exc}; {rid}'s block cannot be checked until then, so it is refused (--override files it "
+                "anyway)"), None
     except SeatUnreadable as exc:
         print(f"ledger_row: note -- the id blocks were not checked ({exc})", file=sys.stderr)
         return None, None

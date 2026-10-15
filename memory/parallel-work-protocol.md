@@ -106,9 +106,10 @@ remembered. A red `main` is reverted before anything lands on it.
        worktrees. Name one by hand with
        `git config extensions.worktreeConfig true`, then
        `git config --worktree espalier.machine <name>`, run in it; on a bare
-       clone, `core.bare` moves into the main worktree's `config.worktree`
-       between the two (`git help worktree`, CONFIGURATION FILE). The refusals
-       print `mail.naming_steps`, the one owner of these steps.
+       clone it also takes moving `core.bare` into `config.worktree` in the
+       clone's git directory, which git describes without an order and
+       `docs/HOOKS.md` records the measured order for. The refusals print
+       `mail.naming_steps`, the one owner of these steps.
      - An explicit new id outside the block you mint from is refused, and
        `--override` files it anyway. That covers an id in another seat's
        block, and a hand-picked "safe" number outside every block.

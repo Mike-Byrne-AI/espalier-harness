@@ -1591,6 +1591,10 @@ def _seat_channel(mail, machine, *claims, inherited=False, clone=None, others=()
     refs this clone holds, and the live claims (the fold is the real one)."""
     import types
     return types.SimpleNamespace(
+        # The real phrase: an unset name ("unnamed") must not read as a failed
+        # read, which the mint refuses (code review, TP-701 r7: without it the
+        # unread check could be dropped and every unnamed clone refused).
+        MACHINE_UNREAD=mail.MACHINE_UNREAD,
         machine_setting=lambda root, **kw: (machine, "named" if machine else "unnamed"),
         worktree_name_inherited=lambda root, **kw: inherited,
         clone_machine=lambda root, **kw: clone if clone is not None else machine,
@@ -1740,11 +1744,28 @@ class TestIdsAreMintedFromTheSeatsBlock:
         err = capsys.readouterr().err
         assert "could not be read" in err and "names no machine" not in err, err
         assert "git config espalier.machine <name>" not in err
+        assert "retry once git answers" in err, "the refusal names the next step (failure-mode review, r7)"
+        assert t["ledger"].read_text(encoding="utf-8") == before
+
+    def test_an_explicit_id_is_refused_while_the_seat_name_is_unread(self, lr, tmp_path, monkeypatch, capsys):
+        """A cross-block id under an unreadable name is the collision the
+        channel exists to refuse; the note the copied-subset case prints let it
+        through (failure-mode review, TP-701 r7; dispatcher, c160d6 (A)). Dies
+        to: the unread name caught as the copied-subset note."""
+        t = _seat_tree(tmp_path)
+        channel = _seat_channel(_mail_module(), "win")
+        channel.machine_setting = lambda root, **kw: (
+            None, "git config could not be read (git config took longer than 10s), so no machine is named")
+        monkeypatch.setattr(lr, "_MAIL", channel)
+        before = t["ledger"].read_text(encoding="utf-8")
+        assert _file_minted(lr, t, rid=("DEF-3001",)) == 2
+        err = capsys.readouterr().err
+        assert "could not be read" in err and "cannot be checked" in err and "--override" in err, err
         assert t["ledger"].read_text(encoding="utf-8") == before
 
     def test_the_refusal_names_the_steps_the_channel_gives(self, lr, tmp_path, monkeypatch, capsys):
         """The mint refusal prints mail.naming_steps, the one owner of the
-        by-hand steps (core.bare first on a bare clone; TP-701 r5). Dies to:
+        by-hand steps (git's two config changes on a bare clone; TP-701 r5). Dies to:
         the refusal spelling its own copy of the commands."""
         t = _seat_tree(tmp_path)
         channel = _seat_channel(_mail_module(), "win", inherited=True)
