@@ -1,0 +1,353 @@
+{"shape": "sed -i '' 's/a/b/; s/c/d/' @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "sed -i 's/^def deny(/&  # debug/' @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "perl -pi -e 's/a/b/; s/c/d/' @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "perl -i -pe 's/^(def deny.*)$/$1\\n    import sys; print(1)/' @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "sed -i '' '/def deny/a\\\n    print(1)' @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "sed -i '' -e 's/a/b/' \\\n  @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "sed -i '' '1i\\\nimport logging\n' @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "sed -i 's/x/y/' @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "perl -0pi -e 's/a/b/' @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "sed --in-place 's/a/b/' @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "ls @T | xargs -I {} rm {}", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "ls @T | xargs -n 1 rm", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "ls @T | xargs -P 4 rm", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "ls @T | xargs -0 rm", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "ls @T | xargs rm -f", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "printf '%s\\n' @T | xargs rm", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "find . -path ./@T \\\n  -delete", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "find . -path ./@T -delete", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "echo @T |& xargs rm", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "rm \\\n  @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "rm -f -- @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "if true; then rm @T; fi", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "echo start\nrm -f @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "cat >> @T <<'EOF'\n\ndef goodbye():\n    return 'bye'\nEOF", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "printf '\\ndef goodbye():\\n    return 1\\n' >> @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "echo x | tee -a @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "cp /tmp/new_app.py @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "mv @T.new @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "cat @T.new > @T", "want": true, "from": "round-5 failure-mode review"}
+{"shape": "cat > /tmp/wd/PLAN.md <<'EOF'\n1. rm @T\nEOF", "want": false, "from": "round-5 failure-mode review"}
+{"shape": "cat > /tmp/wd/NOTES.md <<'EOF'\nunlink @T later\nEOF", "want": false, "from": "round-5 failure-mode review"}
+{"shape": "git commit -m 'first line\nrm @T is next'", "want": false, "from": "round-5 failure-mode review"}
+{"shape": "cat > /tmp/wd/steps.md <<'EOF'\nsed -i 's/a/b/' @T\nEOF", "want": false, "from": "round-5 failure-mode review"}
+{"shape": "echo \"rm @T\"", "want": false, "from": "round-5 failure-mode review"}
+{"shape": "cat @T | xargs echo rm", "want": false, "from": "round-5 failure-mode review"}
+{"shape": "rm /tmp/scratch\ncat @T", "want": false, "from": "round-5 failure-mode review"}
+{"shape": "sed -n '1,20p' @T", "want": false, "from": "round-5 failure-mode review"}
+{"shape": "grep -n deny @T; sed -i '' 's/a/b/' /tmp/other", "want": false, "from": "round-5 failure-mode review"}
+{"shape": "sed -i '' 's/a/b/' /tmp/other && cat @T", "want": false, "from": "round-5 failure-mode review"}
+{"shape": "echo ok\nrm @T", "want": true, "from": "round-5 code review"}
+{"shape": "echo ok\n\nrm -f @T", "want": true, "from": "round-5 code review"}
+{"shape": "ls\n  rm @T", "want": true, "from": "round-5 code review"}
+{"shape": "sed -i 's/a/b/g;s/c/d/g' @T", "want": true, "from": "round-5 code review"}
+{"shape": "sed -i -e 's/a/b/' -e 's/c/d/' @T", "want": true, "from": "round-5 code review"}
+{"shape": "sed -i 's/x/&&/' @T", "want": true, "from": "round-5 code review"}
+{"shape": "ls @T | xargs -I{} rm {}", "want": true, "from": "round-5 code review"}
+{"shape": "echo @T | xargs -0 -r rm", "want": true, "from": "round-5 code review"}
+{"shape": "echo @T | xargs rm -f", "want": true, "from": "round-5 code review"}
+{"shape": "find . -name @T -delete", "want": true, "from": "round-5 code review"}
+{"shape": "rm -f \\\n @T", "want": true, "from": "round-5 code review"}
+{"shape": " rm @T", "want": true, "from": "round-5 code review"}
+{"shape": "rm a\nrm @T", "want": true, "from": "round-5 code review"}
+{"shape": "cd x && rm @T", "want": true, "from": "round-5 code review"}
+{"shape": "echo a &&\nrm @T", "want": true, "from": "round-5 code review"}
+{"shape": "perl -pi -e 's/a/b/;' @T", "want": true, "from": "round-5 code review"}
+{"shape": "sed -i '' '1d' @T", "want": true, "from": "round-5 code review"}
+{"shape": "true || rm @T", "want": true, "from": "round-5 code review"}
+{"shape": "echo @T | xargs -n1 rm", "want": true, "from": "round-5 code review"}
+{"shape": "echo @T | xargs -P 4 rm", "want": true, "from": "round-5 code review"}
+{"shape": "echo @T |\n xargs rm", "want": true, "from": "round-5 code review"}
+{"shape": "echo @T | xargs --no-run-if-empty rm", "want": true, "from": "round-5 code review"}
+{"shape": "echo @T | xargs -d '\\n' rm", "want": true, "from": "round-5 code review"}
+{"shape": "echo @T | xargs -t rm", "want": true, "from": "round-5 code review"}
+{"shape": "cat @T", "want": false, "from": "round-5 code review"}
+{"shape": "rm /tmp/x\ncat @T", "want": false, "from": "round-5 code review"}
+{"shape": "ls /tmp | xargs rm; cat @T", "want": false, "from": "round-5 code review"}
+{"shape": "cat @T | xargs grep rm", "want": false, "from": "round-5 code review"}
+{"shape": "sed -i '' s/a/b/ /tmp/o; cat @T", "want": false, "from": "round-5 code review"}
+{"shape": "echo rm @T", "want": false, "from": "round-5 code review"}
+{"shape": "grep -rn unlink @T", "want": false, "from": "round-5 code review"}
+{"shape": "sed -n 1p @T", "want": false, "from": "round-5 code review"}
+{"shape": "cat @T\nrm /tmp/x", "want": false, "from": "round-5 code review"}
+{"shape": "cat @T | sed s/a/b/", "want": false, "from": "round-5 code review"}
+{"shape": "cat > plan.md <<EOF\nrm @T\nEOF", "want": false, "from": "round-5 code review"}
+{"shape": "grep -i foo @T", "want": false, "from": "round-5 code review"}
+{"shape": "cat @T && rm /tmp/x", "want": false, "from": "round-5 code review"}
+{"shape": "ls\nfind . -name x -delete\ncat @T", "want": false, "from": "round-5 code review"}
+{"shape": "echo @T > /dev/null", "want": false, "from": "round-5 code review"}
+{"shape": "ls 2>&1 @T", "want": false, "from": "round-5 code review"}
+{"shape": "echo x >| @T", "want": true, "from": "tests"}
+{"shape": "echo x > /dev/nullx@T", "want": true, "from": "tests"}
+{"shape": "ls; rm @T", "want": true, "from": "tests"}
+{"shape": "sudo rm -f @T", "want": true, "from": "tests"}
+{"shape": "if x; then rm @T; fi", "want": true, "from": "tests"}
+{"shape": "{ rm @T; }", "want": true, "from": "tests"}
+{"shape": "`rm @T`", "want": true, "from": "tests"}
+{"shape": "/bin/rm @T", "want": true, "from": "tests"}
+{"shape": "\\rm @T", "want": true, "from": "tests"}
+{"shape": "command rm @T", "want": true, "from": "tests"}
+{"shape": "env FOO=1 rm @T", "want": true, "from": "tests"}
+{"shape": "time rm @T", "want": true, "from": "tests"}
+{"shape": "ls @T | xargs rm", "want": true, "from": "tests"}
+{"shape": "find . -path @T -delete", "want": true, "from": "tests"}
+{"shape": "echo '# debug' >> @T", "want": true, "from": "tests"}
+{"shape": "sed -i '' 's/a/b/' @T", "want": true, "from": "tests"}
+{"shape": "cp /tmp/copy.py @T", "want": true, "from": "tests"}
+{"shape": "grep rm @T", "want": false, "from": "tests"}
+{"shape": "sed -i '' s/a/b/ /tmp/other; cat @T", "want": false, "from": "tests"}
+{"shape": "grep x @T 2>&1", "want": false, "from": "tests"}
+{"shape": "grep -q x @T > /dev/null", "want": false, "from": "tests"}
+{"shape": "awk \"$1>=2\" @T", "want": false, "from": "tests"}
+{"shape": "cp @T /tmp/copy.py", "want": false, "from": "tests"}
+{"shape": "grep -n deny @T", "want": false, "from": "tests"}
+{"shape": "find . -path ./@T -exec rm {} \\;", "want": true, "from": "round-5 batch"}
+{"shape": "find . -name app.py -path '*@T' -exec rm -f {} +", "want": true, "from": "round-5 batch"}
+{"shape": "echo \"$(rm @T)\"", "want": true, "from": "round-5 batch"}
+{"shape": "echo `rm @T`", "want": true, "from": "round-5 batch"}
+{"shape": "ls @T | xargs sudo rm", "want": true, "from": "round-5 batch"}
+{"shape": "ls @T | xargs --max-args 1 rm", "want": true, "from": "round-5 batch"}
+{"shape": "ls @T | xargs --delimiter=, rm", "want": true, "from": "round-5 batch"}
+{"shape": "perl -i.bak -pe 's/a/b/' @T", "want": true, "from": "round-5 batch"}
+{"shape": "sed --in-place=.bak 's/a/b/' @T", "want": true, "from": "round-5 batch"}
+{"shape": "sed -E -i 's/a|b/c/' @T", "want": true, "from": "round-5 batch"}
+{"shape": "rm '@T'", "want": true, "from": "round-5 batch"}
+{"shape": "rm \"@T\"", "want": true, "from": "round-5 batch"}
+{"shape": "cp /tmp/x '@T'", "want": true, "from": "round-5 batch"}
+{"shape": "cat <<EOF > @T\nx\nEOF", "want": true, "from": "round-5 batch"}
+{"shape": "cat > /tmp/x <<EOF\nhi\nEOF\nrm @T", "want": true, "from": "round-5 batch"}
+{"shape": "echo x |& tee @T", "want": true, "from": "round-5 batch"}
+{"shape": "echo x &> @T", "want": true, "from": "round-5 batch"}
+{"shape": "cp a b\ncat @T", "want": false, "from": "round-5 batch"}
+{"shape": "git commit -m \"first\nrm @T next\"", "want": false, "from": "round-5 batch"}
+{"shape": "cat > /tmp/p.md <<-EOF\n\trm @T\n\tEOF", "want": false, "from": "round-5 batch"}
+{"shape": "cat > /tmp/p.md << 'END'\nsed -i 's/a/b/' @T\nEND", "want": false, "from": "round-5 batch"}
+{"shape": "echo 'rm @T; done'", "want": false, "from": "round-5 batch"}
+{"shape": "grep -n '; rm ' @T", "want": false, "from": "round-5 batch"}
+{"shape": "sed -n 's/-i/x/p' @T", "want": false, "from": "round-5 batch"}
+{"shape": "cat @T | xargs -I {} echo rm {}", "want": false, "from": "round-5 batch"}
+{"shape": "find . -path ./@T -print", "want": false, "from": "round-5 batch"}
+{"shape": "find . -name '*.tmp' -delete; cat @T", "want": false, "from": "round-5 batch"}
+{"shape": "echo \"a;b\" > /tmp/o; cat @T", "want": false, "from": "round-5 batch"}
+{"shape": "mv /tmp/a /tmp/b && cat @T", "want": false, "from": "round-5 batch"}
+{"shape": "echo hi # it's fine\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "cat <<< x\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "cat <<< \"x\"\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "cat <<< 'x'\nsed -i 's/a/b/' @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo $'a\\'b'; rm @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo \"`rm @T`\"", "want": true, "from": "round-6 code review"}
+{"shape": "echo \"$(echo \"x\"; rm @T)\"", "want": true, "from": "round-6 code review"}
+{"shape": "cat <<EOF\n$(rm @T)\nEOF", "want": true, "from": "round-6 code review"}
+{"shape": "for f in @T; do rm \"$f\"; done", "want": true, "from": "round-6 code review", "unseen": "a removal through a loop variable"}
+{"shape": "mv @T /tmp/x", "want": true, "from": "round-6 code review"}
+{"shape": "git rm @T", "want": true, "from": "round-6 code review", "unseen": "a version-control command"}
+{"shape": "echo x | tee -- @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo x | tee --append @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo x | tee -i @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo x | tee -a -i @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo \"x\" > @T", "want": true, "from": "round-6 code review"}
+{"shape": "\"rm\" @T", "want": true, "from": "round-6 code review", "unseen": "a quoted command word"}
+{"shape": "'rm' @T", "want": true, "from": "round-6 code review", "unseen": "a quoted command word"}
+{"shape": "echo a;rm @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo a&&\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "rm @T&", "want": true, "from": "round-6 code review"}
+{"shape": "perl -e 'unlink @T'", "want": true, "from": "round-6 code review", "unseen": "an interpreter's write"}
+{"shape": "ls @T | xargs -J % rm %", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -J{} rm {}", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -r -t -I{} rm {}", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs --replace rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -o rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -- rm", "want": true, "from": "round-6 code review"}
+{"shape": "gsed -i s/a/b/ @T", "want": true, "from": "round-6 code review"}
+{"shape": "sed -i.bak s/a/b/ @T", "want": true, "from": "round-6 code review"}
+{"shape": "sed -ni 'p' @T", "want": true, "from": "round-6 code review"}
+{"shape": "perl -pi.bak -e 's/a/b/' @T", "want": true, "from": "round-6 code review"}
+{"shape": "perl -i -ne 'print' @T", "want": true, "from": "round-6 code review"}
+{"shape": "sed -s -i 's/a/b/' @T", "want": true, "from": "round-6 code review"}
+{"shape": "sed -i -- 's/a/b/' @T", "want": true, "from": "round-6 code review"}
+{"shape": "sed -n '1p' @T -i", "want": true, "from": "round-6 code review"}
+{"shape": "sed -E -i '' 's/a|b/c/' @T", "want": true, "from": "round-6 code review"}
+{"shape": "perl -MPOSIX -pi -e 's/a/b/' @T", "want": true, "from": "round-6 code review"}
+{"shape": "perl -Mstrict -i -pe 's/a/b/' @T", "want": true, "from": "round-6 code review"}
+{"shape": "perl -pie 's/a/b/' @T", "want": true, "from": "round-6 code review"}
+{"shape": "cp /tmp/x @T", "want": true, "from": "round-6 code review"}
+{"shape": "cp -f /tmp/x @T;echo done", "want": true, "from": "round-6 code review"}
+{"shape": "cp /tmp/x \"@T\"", "want": true, "from": "round-6 code review"}
+{"shape": "install -m 644 /tmp/x @T", "want": true, "from": "round-6 code review"}
+{"shape": "printf x > @T", "want": true, "from": "round-6 code review"}
+{"shape": "printf x | tee @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo x >> @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo x >\"@T\"", "want": true, "from": "round-6 code review"}
+{"shape": "echo x>@T", "want": true, "from": "round-6 code review"}
+{"shape": "echo x 1> @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo x 2> @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo x >& @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo x >&@T", "want": true, "from": "round-6 code review"}
+{"shape": "echo x | tee /dev/null @T", "want": true, "from": "round-6 code review"}
+{"shape": "dd if=/dev/zero of=@T", "want": true, "from": "round-6 code review"}
+{"shape": "dd if=/dev/zero of=\"@T\"", "want": true, "from": "round-6 code review"}
+{"shape": "git commit -m \"$(cat <<'EOF'\nfix: rm @T is gone\nEOF\n)\"", "want": false, "from": "round-6 code review"}
+{"shape": "git commit -m \"$(cat <<'EOF'\nfix it (and)\nrm @T\nEOF\n)\"", "want": false, "from": "round-6 code review"}
+{"shape": "git commit -m \"$(cat <<'EOF'\nUse sed -i on @T for it\nEOF\n)\"", "want": false, "from": "round-6 code review"}
+{"shape": "git commit -m \"$(cat <<'EOF'\nwhy :) rm @T\nEOF\n)\"", "want": false, "from": "round-6 code review"}
+{"shape": "git commit -m \"$(cat <<'EOF'\ndont\nrm @T\nEOF\n)\" && git status", "want": false, "from": "round-6 code review"}
+{"shape": "echo done # rm @T", "want": false, "from": "round-6 code review"}
+{"shape": "echo done # ok; rm @T", "want": false, "from": "round-6 code review"}
+{"shape": "echo \"x\" > /tmp/o # @T", "want": false, "from": "round-6 code review"}
+{"shape": "grep -c \"rm\" @T", "want": false, "from": "round-6 code review"}
+{"shape": "perl -ne 'print' @T", "want": false, "from": "round-6 code review"}
+{"shape": "perl -wlne 'print' @T", "want": false, "from": "round-6 code review"}
+{"shape": "sed -n -e '/x/p' @T", "want": false, "from": "round-6 code review"}
+{"shape": "sed -n '1p' @T | grep -i foo", "want": false, "from": "round-6 code review"}
+{"shape": "cat @T | sed -i 's/a/b/' /tmp/other", "want": false, "from": "round-6 code review"}
+{"shape": "sed -i 's/a/b/' /tmp/other; cat @T", "want": false, "from": "round-6 code review"}
+{"shape": "sed -i 's/a/b/' /tmp/o\ncat @T", "want": false, "from": "round-6 code review"}
+{"shape": "sed --silent '1p' @T", "want": false, "from": "round-6 code review"}
+{"shape": "perl -MList::Util=first -e 'print' @T", "want": false, "from": "round-6 code review"}
+{"shape": "perl -Ilib -e 'print' @T", "want": false, "from": "round-6 code review"}
+{"shape": "perl -E 'say' @T", "want": false, "from": "round-6 code review"}
+{"shape": "ls @T | xargs git log", "want": false, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -n 1 echo rm", "want": false, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -I {} cp {} /tmp/", "want": false, "from": "round-6 code review"}
+{"shape": "find . -name @T -exec grep -l x {} +", "want": false, "from": "round-6 code review"}
+{"shape": "cat <<< 'rm @T'", "want": false, "from": "round-6 code review"}
+{"shape": "cat <<< \"rm @T\"", "want": false, "from": "round-6 code review"}
+{"shape": "cat @T | xargs -d '\\n' echo", "want": false, "from": "round-6 code review"}
+{"shape": "cp @T /tmp/y", "want": false, "from": "round-6 code review"}
+{"shape": "echo x > /tmp/o 2>&1 @T", "want": false, "from": "round-6 code review"}
+{"shape": "ls @T >&2", "want": false, "from": "round-6 code review"}
+{"shape": "ls @T &", "want": false, "from": "round-6 code review"}
+{"shape": "ls @T &> /dev/null", "want": false, "from": "round-6 code review"}
+{"shape": "ls @T |& grep x", "want": false, "from": "round-6 code review"}
+{"shape": "echo \"$((1<<2))\"\ncat @T", "want": false, "from": "round-6 code review"}
+{"shape": "echo $((1<<2))\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "x=$((a<<b))\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "cat <<A <<B\nbodyA\nA\nbodyB\nB\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "cat <<A <<B\nrm @T\nA\nrm @T\nB\ncat x", "want": false, "from": "round-6 code review"}
+{"shape": "cat <<\"EOF\"\nrm /tmp/x\nEOF\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "cat <<EOF; rm @T\nbody\nEOF", "want": true, "from": "round-6 code review"}
+{"shape": "cat <<EOF\nrm @T", "want": false, "from": "round-6 code review"}
+{"shape": "echo @T |&\nxargs rm", "want": true, "from": "round-6 code review"}
+{"shape": "echo @T | # note\nxargs rm", "want": true, "from": "round-6 code review"}
+{"shape": "x=$(cat <<EOF\nhi\nEOF\n)\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "x=$(cat <<EOF\nrm @T\nEOF\n)", "want": false, "from": "round-6 code review"}
+{"shape": "cat <<EOF\n  rm @T\nEOF", "want": false, "from": "round-6 code review"}
+{"shape": "cat <<EOF\nhi\n  EOF\nrm @T", "want": false, "from": "round-6 code review"}
+{"shape": "echo \"a\" \"b\"\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo 'a\"b'\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo \"a\\\"b\"\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo a\\'b\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo \"$'\"\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo \"$(echo ')')\"\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "git commit -m \"msg\"\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "git commit -m \"$(cat <<'EOF'\nbody (unbalanced\nEOF\n)\"\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "git commit -m \"$(cat <<'EOF'\nbody\nEOF\n)\" && rm @T", "want": true, "from": "round-6 code review"}
+{"shape": "git commit -m \"$(cat <<'EOF'\nbody\nEOF\n)\" && cat @T", "want": false, "from": "round-6 code review"}
+{"shape": "echo \"x\" &\nrm @T", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -I '{}' rm '{}'", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -n 1 -P 2 rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -L 1 rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -s 100 rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -E x rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs --max-args=1 rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs --max-procs 4 rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -0 -r unlink", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs /bin/rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs \\rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -t sudo rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs time rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs nohup rm", "want": true, "from": "round-6 code review"}
+{"shape": "ls @T | xargs grep -n rm", "want": false, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -I {} echo rm {}", "want": false, "from": "round-6 code review"}
+{"shape": "ls @T | xargs -n 1 cat", "want": false, "from": "round-6 code review"}
+{"shape": "xargs -a /tmp/f rm", "want": false, "from": "round-6 code review"}
+{"shape": "find . -path ./@T -exec rm {} +", "want": true, "from": "round-6 code review"}
+{"shape": "find . -path ./@T -execdir rm {} \\;", "want": true, "from": "round-6 code review"}
+{"shape": "find . -path ./@T -exec rm {} ';'", "want": true, "from": "round-6 code review"}
+{"shape": "find . -path ./@T -exec cat {} \\;", "want": false, "from": "round-6 code review"}
+{"shape": "find . -name 'rm' -path ./@T", "want": false, "from": "round-6 code review"}
+{"shape": "sed -i '1i\\\nline' @T", "want": true, "from": "round-6 code review"}
+{"shape": "sed -i 'a\\\nx' @T", "want": true, "from": "round-6 code review"}
+{"shape": "sed -i '/a/{\np\n}' @T", "want": true, "from": "round-6 code review"}
+{"shape": "sed -n 'p' @T > /tmp/o", "want": false, "from": "round-6 code review"}
+{"shape": "sed -n '/a/; p' @T", "want": false, "from": "round-6 code review"}
+{"shape": "perl -ne 'print if /x/;' @T", "want": false, "from": "round-6 code review"}
+{"shape": "perl -pi -e \"s/a/b/; s/c/d/\" @T", "want": true, "from": "round-6 code review"}
+{"shape": "perl -0777 -pi -e 's/a/b/g' @T", "want": true, "from": "round-6 code review"}
+{"shape": "perl -i -pe 's/a/b/'\\\n @T", "want": true, "from": "round-6 code review"}
+{"shape": "echo \"rm @T\" && cat @T", "want": false, "from": "round-6 code review"}
+{"shape": "echo 'a\nrm @T\nb'", "want": false, "from": "round-6 code review"}
+{"shape": "echo \"a\nrm @T\nb\"", "want": false, "from": "round-6 code review"}
+{"shape": "echo @T\\;rm x", "want": false, "from": "round-6 code review"}
+{"shape": "echo a\\; rm @T", "want": false, "from": "round-6 code review"}
+{"shape": "# The Edit was denied; let's append instead\necho x >> @T", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "# can't use Edit here\nsed -i '' 's/a/b/' @T", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "# don't need a plan\nrm -f @T", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "# it's protected, so copy over it\ncat /tmp/new.py > @T", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "echo start  # that's the setup\nrm @T", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "# Don't use Edit\necho x >> @T\n# That's the retry", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "# the \"Edit tool was denied\necho x >> @T", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "ls\n# next; rm @T", "want": false, "from": "round-6 failure-mode review"}
+{"shape": "cat @T  # then; rm it", "want": false, "from": "round-6 failure-mode review"}
+{"shape": "printf $'it\\'s\\n' >> @T", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "echo a \\\\\nrm @T", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "echo a#b; rm @T", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "echo ${#x}; rm @T", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "bash <<EOF\nrm @T\nEOF", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "cat <<< x; rm @T", "want": true, "from": "round-6 failure-mode review"}
+{"shape": "git commit -m \"$(cat <<'EOF'\nTidy the guard\nrm @T is not part of this\nEOF\n)\"", "want": false, "from": "round-6 failure-mode review"}
+{"shape": "git commit -m \"$(cat <<'EOF'\nTidy the guard\nnext; rm @T later\nEOF\n)\"", "want": false, "from": "round-6 failure-mode review"}
+{"shape": "cat <<-EOF\n\tbody\n\tEOF\nrm @T", "want": true, "from": "round-6 batch"}
+{"shape": "cat <<-EOF\n\trm @T\n\tEOF", "want": false, "from": "round-6 batch"}
+{"shape": "cat <<EOF | bash\nrm @T\nEOF", "want": true, "from": "round-6 batch"}
+{"shape": "cat <<'EOF' | grep x\nrm @T\nEOF", "want": false, "from": "round-6 batch"}
+{"shape": "mv @T.bak /tmp/x", "want": false, "from": "round-6 batch"}
+{"shape": "echo x | tee -a /tmp/log @T", "want": true, "from": "round-6 batch"}
+{"shape": "cat @T | tee /tmp/copy", "want": false, "from": "round-6 batch"}
+{"shape": "echo $'a\\'b' 'c; rm @T'", "want": false, "from": "round-6 batch"}
+{"shape": "((n = a<<b))\nrm @T", "want": true, "from": "round-6 batch"}
+{"shape": "echo \"$(echo \"$(echo \"$(echo \"$(echo 'a; rm @T')\")\")\")\"", "want": false, "from": "round-6 batch"}
+{"shape": "echo \"it is; rm @T", "want": true, "from": "round-6 batch", "note": "an unclosed quote is left as it is: the costlier mistake is a missed write"}
+{"shape": "echo 'it is; rm @T", "want": true, "from": "round-6 batch", "note": "an unclosed quote is left as it is: the costlier mistake is a missed write"}
+{"shape": "sed -i 's/a/b/' $(git ls-files | grep -x @T)", "want": true, "from": "round-7 regressions"}
+{"shape": "echo @T | parallel sed -i s/a/b/ {}", "want": true, "from": "round-7 regressions"}
+{"shape": "ls @T | parallel perl -pi -e s/a/b/", "want": true, "from": "round-7 regressions"}
+{"shape": "sed -i s/a/b/ $(find . -name \"*.py\" | grep @T)", "want": true, "from": "round-7 regressions"}
+{"shape": "perl -pi -e s/a/b/ `git ls-files | grep @T`", "want": true, "from": "round-7 regressions"}
+{"shape": "find $(ls -d . | head -1) -path ./@T -delete", "want": true, "from": "round-7 regressions"}
+{"shape": "echo go && bash <<EOF\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "set -e; bash <<'EOF'\nrm -f @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "{ bash <<EOF\nrm @T\nEOF\n}", "want": true, "from": "round-7 regressions"}
+{"shape": "if true; then bash <<EOF\nrm @T\nEOF\nfi", "want": true, "from": "round-7 regressions"}
+{"shape": "( sh <<EOF\nrm @T\nEOF\n)", "want": true, "from": "round-7 regressions"}
+{"shape": "env -i bash <<EOF\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "bash <<'EOF'\necho it's\nEOF\nrm @T\necho 'done'", "want": true, "from": "round-7 regressions"}
+{"shape": "bash ./setup.sh <<EOF\nrm @T\nEOF", "want": false, "from": "round-7 regressions"}
+{"shape": "sudo bash <<EOF\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "cat <<EOF | sh -s\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "cat <<EOF | ssh host bash\nrm @T\nEOF", "want": false, "from": "round-7 regressions"}
+{"shape": "cd /tmp && bash <<'EOF'\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "echo go; sh <<EOF\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "sudo -u nobody bash <<EOF\nrm @T\nEOF", "want": true, "from": "round-7 regressions"}
+{"shape": "(bash <<EOF\nrm @T\nEOF\n)", "want": true, "from": "round-7 regressions"}
+{"shape": "bash a.sh; cat <<'EOF'\nrm @T\nEOF", "want": false, "from": "round-7 regressions"}
+{"shape": "bash a.sh && cat <<'EOF'\nrm @T\nEOF", "want": false, "from": "round-7 regressions"}
+{"shape": "cat <<'EOF' > /tmp/x; bash a.sh\nrm @T\nEOF", "want": false, "from": "round-7 regressions"}
+{"shape": "echo $(ls @T | xargs rm)", "want": true, "from": "round-7 regressions"}
+{"shape": "(cd d && ls @T | xargs rm)", "want": true, "from": "round-7 regressions"}
+{"shape": "echo $((1 + \\\n2 <<x))\nrm @T", "want": true, "from": "round-7 regressions"}
+{"shape": "echo $(pwd)#x; rm @T", "want": true, "from": "round-7 regressions"}
+{"shape": "v=$(date)#tag; rm @T", "want": true, "from": "round-7 regressions"}
+{"shape": "(cd /tmp)#c\nrm @T", "want": true, "from": "round-7 regressions"}
+{"shape": "echo x | tee 2>/tmp/err @T", "want": true, "from": "round-7 regressions"}
+{"shape": "sed -i 's/a/b/' $(cd . && ls @T)", "want": true, "from": "round-7 regressions"}
+{"shape": "bash -c 'echo hi' <<EOF\nrm @T\nEOF", "want": false, "from": "round-7 regressions"}
+{"shape": "cat > /tmp/fix.sh <<'EOF'\nrm @T\nEOF\nbash /tmp/fix.sh", "want": true, "from": "round-7 regressions", "unseen": "a script a heredoc writes and a later command runs"}
+{"shape": "{ bash; } <<EOF\nrm @T\nEOF", "want": true, "from": "round-7 regressions", "unseen": "a heredoc on a group or a subshell"}
+{"shape": "bash -c 'rm @T'", "want": true, "from": "round-6 batch", "unseen": "a nested shell string"}
+{"shape": "python3 -c \"import os; os.remove('@T')\"", "want": true, "from": "round-6 batch", "unseen": "an interpreter's write"}
+{"shape": "FOO=1 rm @T", "want": true, "from": "round-6 batch", "unseen": "a removal behind another wrapper"}
+{"shape": "timeout 5 rm @T", "want": true, "from": "round-6 batch", "unseen": "a removal behind another wrapper"}
+{"shape": "sudo -u nobody rm @T", "want": true, "from": "round-6 batch", "unseen": "a removal behind another wrapper"}
+{"shape": "git restore @T", "want": true, "from": "round-6 batch", "unseen": "a version-control command"}
+{"shape": "patch @T < /tmp/fix.diff", "want": true, "from": "round-6 batch", "unseen": "a patch tool"}

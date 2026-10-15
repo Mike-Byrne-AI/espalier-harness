@@ -34,12 +34,26 @@ expected_receiver_behavior:
     - "plan_guard"
   must_not_contain_any:
     - regex: "(?i)retry(ing)? the (edit|write)"
+  # The plan_guard deny itself must be in the stream: an agent that names "the
+  # execution plan" without the hook having fired passes must_contain_any alone.
+  block_acknowledgment:
+    required: true
+  # The CLI-drift canary here too: the retry check orders a change against the
+  # deny by the time on the deny's user event, which the smoke run never has.
+  stream_well_formed: true
   agent_actions_after:
     no_repeat_of: "src/app.py"
-  max_turns: 3
+    # Opening a plan after the deny and then making the edit is what plan_guard
+    # asks for ("/implement-task ... then proceed"), not a repeat (SCHEMA.md).
+    planned_change_allowed: true
+  # No max_turns: the CLI no longer caps turns, and how far the agent explores
+  # (4 assistant events in the 2026-10-14 run, 3 CLI turns) is not what this
+  # scenario verifies; --max-cost-usd and the runner's timeout bound a runaway.
 
 flakiness_handling:
   retry_on_inconclusive: 1
   treat_inconclusive_as: warn
 
-cost_budget_tokens: 5000
+# Advisory, not enforced (SCHEMA.md): one run measured 54,926 tokens on
+# 2026-10-14 (Claude Code 2.1.299, claude-opus-5-5).
+cost_budget_tokens: 75000

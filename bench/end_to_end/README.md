@@ -35,25 +35,38 @@ the hook *emitted*.
 
 ## Cost
 
-Per-scenario rough estimate (Sonnet-tier, 3-turn cap):
+Measured 2026-10-14, one run each, on a maintainer's Mac with Claude Code
+2.1.299 and its default model (`claude-opus-5-5`), with the run's cost read
+from the CLI's own `result` event (`total_cost_usd`; tokens include the cache
+tokens, which are most of them). Runs vary with the model's path, and a CI key
+whose default model is cheaper will cost less, so treat these as one sample:
 
-| Scenario | Avg tokens | Avg cost |
+| Scenario | Tokens | Cost |
 |---|---|---|
-| BCE-000 (smoke) | ~500 | ~$0.01 |
-| BCE-001 | ~3,000 | ~$0.04 |
-| BCE-002 | ~3,500 | ~$0.05 |
-| BCE-003 | ~3,000 | ~$0.04 |
+| BCE-000 (smoke) | 16,373 | $0.05 |
+| BCE-001 | 263,375 | $0.42 |
+| BCE-002 | 78,866 | $0.11 |
+| BCE-003 | 54,926 | $0.09 |
 
-Weekly CI cost: ~$0.15/run × 52 = **~$8/year**. The hard cap is
-`--max-cost-usd 5.00` per workflow invocation.
+One pass of all four is about **$0.67** at these figures, so a weekly run is
+about $35 a year. The workflow passes `--max-cost-usd 5.00`, which the
+orchestrator checks after each run: past it, no further scenario starts, so the
+run in flight can go over it. A run the timeout cuts off sends no `result` event, so the cap prices
+its messages' usage instead, each token class at the rates the CLI's own prices
+of these runs solve to (4, 20, 8 and 0.20 USD a million input, output,
+cache-write and cache-read tokens); that reads 80 to 89 percent of the billed
+price on the captured runs, since the stream's per-message output count is the
+one each message opened with. (The table this replaced, about 3,000 tokens a scenario under a
+3-turn cap, came from a runner whose own estimate left the cache tokens out and
+that never reached the CLI: it lacked `--verbose`.)
 
 > **Schedule is manual pre-launch.** The weekly `schedule:` trigger is
 > currently commented out in `end-to-end-bench.yml` pending the
 > `ANTHROPIC_API_KEY_E2E_BENCH` repo secret; only `workflow_dispatch` is
 > active today. Re-enable the cron block once the secret is set.
 
-> **Stay scheduled or per-PR. Never per-commit.** Three scenarios at
-> $0.05 each per commit on a busy repo runs into hundreds of dollars
+> **Stay scheduled or per-PR. Never per-commit.** Four scenarios at about
+> $0.67 a pass per commit on a busy repo runs into thousands of dollars
 > per year and produces signal that the weekly run already gives you.
 
 ## When to run locally
@@ -73,6 +86,34 @@ python3 -m bench.end_to_end.run --scenario BCE-001-write-guard-deny-reaches-agen
 Run it with `python3 -m bench.end_to_end.run` from the repo root — the `-m`
 module form is required (the package resolves `bench.end_to_end` relative to the
 repo root, not the script's directory).
+
+A run measures its scenario, not your machine: the runner passes
+`--setting-sources project` and `--strict-mcp-config`, so your user-scope hooks,
+permission mode and MCP connectors stay out (a user-scope SessionStart hook once
+told the nested agent to make no edits), and it drops every `ESPALIER_*` variable
+and the three that make the child a nested session (`CLAUDECODE`,
+`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_PROJECT_DIR`) from the child's environment, so
+a run from inside a session or a maintenance-mode shell still exercises the
+scenario's hooks. Any other setting a parent session exports (an effort level, a
+subagent model) still reaches the child. The runner also pins
+`--permission-mode default` (2.1.299 accepts it, though `--help` lists `manual`,
+and the run's `init` event reports `default`): without it a `-p` run's starting
+mode depends on whether the CLI fetched its feature flags (the Claude Code
+reference, as the dispatcher read it on 2026-10-14). In that mode, with no one
+to answer a prompt, the CLI refuses any write the hooks let through
+(`source: config` in its records), so a write never lands in a live run; the
+retry check reads those refusals (`SCHEMA.md`). The template's
+`permissions.allow` cannot change that: the same reference says a project's
+allow list is ignored in `-p` on an untrusted folder, so letting writes land
+would take an argv mode such as `acceptEdits`, an operator's call. The CLI authenticates however it finds
+(an API key, or your local login), and the model is your CLI's default; the
+report names the CLI version and model of each run. A run that itself failed
+before any model turn (the CLI refused the argv, or found no login or a bad key,
+when it sends only its own error message and an error result) fails with its
+exit code and error printed beside the verdict and no assertion under it, which
+is how it reads apart from a hook verdict; a run that exited 0 with no events is
+inconclusive, which a wiring scenario reports as a warn; a run the timeout ended
+fails.
 
 ## When to ignore failures
 

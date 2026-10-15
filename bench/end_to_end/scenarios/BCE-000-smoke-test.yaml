@@ -24,9 +24,14 @@ expected_receiver_behavior:
   must_contain_any:
     - "4"
   max_turns: 2
+  # The CLI-drift canary: the stream still carries the init event and the
+  # priced result event the bench reads, so a renamed field reds here first.
+  stream_well_formed: true
 
 flakiness_handling:
   retry_on_inconclusive: 0
   treat_inconclusive_as: fail
 
-cost_budget_tokens: 1000
+# Advisory, not enforced (SCHEMA.md): one run measured 16,373 tokens, most of
+# them cache reads, on 2026-10-14 (Claude Code 2.1.299, claude-opus-5-5).
+cost_budget_tokens: 20000
