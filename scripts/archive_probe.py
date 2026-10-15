@@ -203,24 +203,38 @@ def _leaves_the_tree(arg: str) -> bool:
     only at the front (DEF-3007). The host's ``Path`` alone lets a Git Bash
     ``/c/Users/...`` through on Windows and ``C:\\x`` through on POSIX;
     ``PureWindowsPath`` reads both separators and every root, drive and share
-    a POSIX reading has, so it is the one judge. Sister site:
-    ``bench/end_to_end/runner.py::_leaves_the_tree``."""
+    a POSIX reading has, so it is the one judge. Sister site, held equal by
+    ``tests/test_archive_probe.py``: ``bench/end_to_end/runner.py::_leaves_the_tree``.
+    Two more judges read both families and differ on ``~``:
+    ``tools/cc/mail.py::_repo_relative`` and the probe ``inputs`` check in
+    ``tools/cc/check_ledger_probes.py``."""
     path = PureWindowsPath(arg)
     return bool(path.anchor) or ".." in path.parts
 
 
 def refuse_unless_relative(pytest_args: Sequence[str]) -> None:
-    """A bare pytest argument that is anchored, or climbs out with ``..``,
-    names a file OUTSIDE the extracted tree: pytest would run the dev tree's
-    module and conftest inside the export's venv, and under ``--audit`` every
-    registration would read as stale. Options are left alone."""
+    """A bare pytest argument whose path is anchored, or climbs out with
+    ``..``, names a file OUTSIDE the extracted tree: pytest would run the dev
+    tree's module and conftest inside the export's venv, and under ``--audit``
+    every registration would read as stale. A node id is judged by its path,
+    the part before ``::`` (its parametrize id may hold any text); an
+    ``@file`` argument is refused, since pytest reads more arguments from it
+    that this check cannot see. Options are left alone; an option's value
+    given as its own argument is judged like any other, so ``--opt=value`` is
+    the form for one that looks like a path."""
     for arg in pytest_args:
         if arg.startswith("-"):
             continue
-        if _leaves_the_tree(arg):
+        if arg.startswith("@"):
+            raise ProbeRefusal(
+                f"pytest argument {arg!r} reads more arguments from a file, which pytest expands and this "
+                "check cannot see: name the tests on the command line instead"
+            )
+        if _leaves_the_tree(arg.split("::", 1)[0]):
             raise ProbeRefusal(
                 f"pytest argument {arg!r} reaches outside the extracted tree; name tests "
-                "relative to the archive root (tests/test_x.py), never by an absolute path or a .. climb"
+                "relative to the archive root (tests/test_x.py), never by an absolute path or a .. climb "
+                "(an option's value is judged too: pass it as --opt=value)"
             )
 
 

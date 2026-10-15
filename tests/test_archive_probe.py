@@ -166,19 +166,53 @@ class TestRelativeArguments:
         with pytest.raises(probe.ProbeRefusal, match="outside the extracted tree"):
             probe.refuse_unless_relative(["../tests/test_recall.py"])
 
-    def test_a_path_either_host_family_reads_as_leaving_the_tree_is_refused(self, probe):
-        """DEF-3007. Dies to: `Path(arg).is_absolute()` alone, which lets a Git
-        Bash path (`/c/Users/...`) through on Windows and a drive or share path
-        through on POSIX, and a climb in the middle through everywhere."""
-        for arg in ("/c/Users/me/repo/tests/test_recall.py", "C:\\repo\\tests\\test_recall.py",
-                    "\\\\server\\share\\tests\\test_x.py", "tests/../../outside/test_x.py",
-                    "tests\\..\\..\\outside\\test_x.py"):
-            with pytest.raises(probe.ProbeRefusal, match="outside the extracted tree"):
-                probe.refuse_unless_relative([arg, "-q"])
+    @pytest.mark.parametrize("arg", [
+        "\\Users\\me\\repo\\tests\\test_recall.py", "/home/me/repo/tests/test_recall.py",
+        "C:\\repo\\tests\\test_recall.py", "\\\\server\\share\\tests\\test_x.py",
+        "tests/../../outside/test_x.py", "tests\\..\\..\\outside\\test_x.py",
+        "/home/me/repo/tests/test_x.py::TestA::test_b[x]",
+    ])
+    def test_a_path_either_host_family_reads_as_leaving_the_tree_is_refused(self, probe, arg):
+        """DEF-3007. Dies to: `Path(arg).is_absolute()` alone, which lets a
+        rooted path with no drive through on Windows and a drive or share path
+        through on POSIX, and a climb in the middle through everywhere; and to
+        skipping a node id outright, which lets an anchored one back in."""
+        with pytest.raises(probe.ProbeRefusal, match="outside the extracted tree"):
+            probe.refuse_unless_relative([arg, "-q"])
+
+    def test_an_argument_file_is_refused_since_its_contents_go_unjudged(self, probe):
+        """pytest expands `@file` (fromfile_prefix_chars), and the repo teaches
+        the idiom (portability.yml). Dies to: judging only the file's own name."""
+        with pytest.raises(probe.ProbeRefusal, match="reads more arguments from a file"):
+            probe.refuse_unless_relative(["@.github/windows-reds.txt"])
 
     def test_relative_paths_and_options_pass(self, probe):
-        probe.refuse_unless_relative(["tests/test_recall.py", "-q", "-p", "no:cacheprovider",
-                                     "-m", "not full_tree", "--rootdir=/anything"])
+        """Dies to: judging a node id's parametrize id, or the second half of
+        a warnings action, as a path (both reviewers found the shapes)."""
+        probe.refuse_unless_relative([
+            "tests/test_recall.py", "-q", "-p", "no:cacheprovider", "-m", "not full_tree", "--rootdir=/anything",
+            "tests/test_write_guard.py::TestPathTraversalBlocked::test_x[safe_dir/../tools/cc/hooks/write_guard.py]",
+            "tests/test_reachability_differential.py::test_y[../../etc]", "-W", "e::DeprecationWarning",
+            "tests/a:b.py::t[C:/x]", "..foo/test_x.py",
+        ])
+
+
+class TestTheSisterJudgesAgree:
+    """The bench loader's and this probe's `_leaves_the_tree` live in trees
+    that do not import each other, so each is a copy (DEF-3007). Dies to: an
+    edit to one copy and not the other."""
+
+    LEAVING = ("/etc/hosts", "\\etc\\hosts", "C:\\Windows\\x", "C:x", "C:/x", "\\\\server\\share\\x", "a/../../x",
+               "a\\..\\..\\x", "/c/Users/me/x.py", "..", "src/../x.py")
+    STAYING = ("src/app.py", "tests/test_recall.py", "a/b.c", "..foo", "a..b/c", "no:cacheprovider", "tests/a:b.py")
+
+    def test_both_copies_give_one_verdict_on_one_table(self, probe):
+        from bench.end_to_end.runner import _leaves_the_tree as bench_judge
+
+        for rel in self.LEAVING:
+            assert bench_judge(rel) and probe._leaves_the_tree(rel), rel
+        for rel in self.STAYING:
+            assert not bench_judge(rel) and not probe._leaves_the_tree(rel), rel
 
 
 class _FakeProc:
