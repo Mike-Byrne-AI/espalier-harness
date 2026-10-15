@@ -31,7 +31,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
-from tests._live_tree import checkout_glob, checkout_rglob
+from tests._live_tree import checkout_glob, plant_self_host_packs
 
 _ROOT = Path(__file__).resolve().parent.parent
 _PACKS = _ROOT / "task-packs"
@@ -246,6 +246,7 @@ def _pack_is_landed(done: Path, tok: str) -> bool:
     ``LANDED`` counts, never ``SCRAPPED``: a follow-up owned by a *scrapped* pack is
     unfinished work whose ledger row should stay, not be struck.
     """
+    # live-tree: ok -- task-packs/Done/ is gitignored by design on the self-host tree, so the filesystem is its one view
     for pack in sorted(done.glob(f"{tok}-*.md")):
         if _landed_state(pack.read_text(encoding="utf-8")) == "LANDED":
             return True
@@ -1264,7 +1265,8 @@ def _deferral_kind(packs_root: Path, tok: str) -> str:
     is a deferral into a pack nobody wrote yet -- the pack is authored. Message
     text only: the verdict above never depends on a folder the seed tree lacks."""
     if packs_root.is_dir():
-        for hit in checkout_rglob(packs_root, f"{tok}-*.md"):
+        # live-tree: ok -- message text only: the landed folders are gitignored by design, so the filesystem is their one view
+        for hit in sorted(packs_root.rglob(f"{tok}-*.md")):
             parts = hit.relative_to(packs_root).parts
             if any(part.startswith(".") for part in parts) or len(parts) < 2:
                 continue
@@ -1314,6 +1316,14 @@ class TestScopeOutDeferralsResolve:
             "TP-999": ["TP-1-a.md"]}
         assert _deferral_kind(packs, "TP-999").startswith("landed in Done/")
         assert _deferral_kind(packs, "TP-998").startswith("no pack file on this tree")
+
+    def test_a_landed_pack_is_named_as_landed_where_git_ignores_done(self, tmp_path):
+        # The self-host shape: a repository whose Done/ is gitignored, so git's view
+        # of task-packs/ holds nothing under it; the fixture above has no git at all.
+        packs = plant_self_host_packs(tmp_path / "repo")
+        assert _deferral_kind(packs, "TP-1").startswith("landed in Done/")
+        assert _deferral_kind(packs, "TP-4").startswith("landed in Deferred/")
+        assert _deferral_kind(packs, "TP-2").startswith("no pack file on this tree")
 
     def test_a_live_ledger_row_resolves_it(self, tmp_path):
         packs, ledger = self._tree(tmp_path, "TP-1-a.md", "- the rest goes to TP-999\n",

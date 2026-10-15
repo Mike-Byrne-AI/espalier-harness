@@ -103,7 +103,21 @@ from check_ledger_probes import (  # noqa: E402
     UNRESOLVED,
     run_probe,
 )
-from tests._live_tree import checkout_iterdir
+from tests._live_tree import checkout_iterdir, ignored_by_git, plant_self_host_packs
+
+
+def _input_dangles(root: Path, rel: str) -> bool:
+    """A declared input that names nothing on ``root``'s tree, or an empty folder there.
+    A folder git ignores by design (``task-packs/Done/``) holds what is on disk, as
+    the gate reads it; any other folder holds what git's view does."""
+    path = root / rel
+    if not path.exists():
+        return True
+    if not path.is_dir():
+        return False
+    # live-tree: ok -- a folder git ignores by design (task-packs/Done/) has no view but the filesystem
+    members = path.iterdir() if ignored_by_git(path) else checkout_iterdir(path)
+    return not any(members)
 
 # A subject that certainly exists in any source checkout, so the subject gate is
 # never the thing under test except where it IS the thing under test.
@@ -741,10 +755,7 @@ class TestTheLiveProbeFile:
         )
         dangling = [
             (p["id"], x) for p in probes for x in (p.get("inputs") or [])
-            if isinstance(x, str) and norm(x) not in withheld and (
-                not (REPO_ROOT / norm(x)).exists()
-                or ((REPO_ROOT / norm(x)).is_dir() and not any(checkout_iterdir(REPO_ROOT / norm(x))))
-            )
+            if isinstance(x, str) and norm(x) not in withheld and _input_dangles(REPO_ROOT, norm(x))
         ]
         assert not dangling, (
             f"declared input(s) that do not resolve on this tree: {dangling} "
@@ -787,6 +798,25 @@ class TestTheLiveProbeFile:
             "probe(s) pin what looks like a line number as their open_value; any "
             f"insert above the citation false-STRIKES the row: {offenders}"
         )
+
+
+class TestADeclaredInputGitIgnores:
+    """``task-packs/Done/`` is gitignored by design on the self-host tree, and the
+    gate reads a probe's inputs off the disk: git's view holds nothing there."""
+
+    def test_a_folder_git_ignores_resolves_by_what_it_holds_on_disk(self, tmp_path):
+        packs = plant_self_host_packs(tmp_path / "repo")
+        assert ignored_by_git(packs / "Done") and not ignored_by_git(packs / "Deferred")
+        assert not _input_dangles(packs.parent, "task-packs/Done")
+        (packs / "Done" / "TP-1-landed.md").unlink()
+        assert _input_dangles(packs.parent, "task-packs/Done")
+
+    def test_a_tracked_folder_still_reads_gits_view(self, tmp_path):
+        packs = plant_self_host_packs(tmp_path / "repo")
+        (packs / "Deferred" / "TP-4-parked.md").unlink()
+        (packs / "Deferred" / "notes.txt").write_bytes(b"an ignored scratch file\n")
+        assert _input_dangles(packs.parent, "task-packs/Deferred")
+        assert not _input_dangles(packs.parent, "task-packs")
 
 
 class TestATreeWalkingProbeRefusesAContaminatedTree:

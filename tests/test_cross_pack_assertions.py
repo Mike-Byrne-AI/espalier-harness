@@ -55,7 +55,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from tests._live_tree import checkout_iterdir
+from tests._live_tree import checkout_iterdir, ignored_by_git, plant_self_host_packs
 
 _ROOT = Path(__file__).resolve().parent.parent
 _PACKS = _ROOT / "task-packs"
@@ -191,7 +191,10 @@ def _pack_index(packs_root: Path) -> dict[str, list[tuple[str, Path]]]:
         directory = packs_root.joinpath(*parts)
         if not directory.is_dir():
             continue
-        for path in checkout_iterdir(directory):
+        # live-tree: ok -- a status folder git ignores by design (Done/, Merged/ and Scrapped/ on the
+        # self-host tree) has no view but the filesystem; every other location reads git's view
+        members = sorted(directory.iterdir()) if ignored_by_git(directory) else checkout_iterdir(directory)
+        for path in members:
             if not path.is_file() or path.suffix.lower() not in _MARKDOWN_SUFFIXES:
                 continue
             match = _PACK_FILE_RE.match(path.name)
@@ -358,6 +361,56 @@ def test_guard_population_is_non_vacuous():
     assert not failures, "The reciprocity guard is running vacuously:\n  " + "\n  ".join(failures)
 
 
+def _pack_subfolders(packs_root: Path) -> set[str]:
+    """Every folder under ``packs_root``, tracked or not."""
+    # live-tree: ok -- the status folders are gitignored by design, and a new one must red, tracked or not
+    return {p.name for p in packs_root.iterdir() if p.is_dir() and not p.name.startswith(".")}
+
+
+class TestTheFoldersGitIgnores:
+    """The self-host status folders are gitignored by design, so git's view holds
+    none of them; each reader here sees them on disk, and reads every other
+    location through git's view."""
+
+    def test_the_pack_index_reads_a_landed_pack_and_not_an_untracked_draft(self, tmp_path):
+        packs = plant_self_host_packs(tmp_path / "repo")
+        index = _pack_index(packs)
+        assert {k: [loc for loc, _ in v] for k, v in index.items()} == {
+            "TP-1": ["Done"], "TP-2": ["in-flight"], "TP-3": ["in-flight"], "TP-4": ["Deferred"]}
+        (packs / "Deferred" / "TP-5-scratch.markdown").write_bytes(b"# ignored by the allow-list\n")
+        assert "TP-5" not in _pack_index(packs)
+
+    def test_an_ignored_status_folder_is_still_a_folder_to_classify(self, tmp_path):
+        packs = plant_self_host_packs(tmp_path / "repo")
+        (packs / "Archive").mkdir()
+        (packs / "Archive" / "TP-6-old.md").write_bytes(b"# an unclassified sibling\n")
+        assert _pack_subfolders(packs) == {"Done", "Deferred", "Archive"}
+
+    def test_the_gate_reds_on_a_new_folder_git_ignores(self, tmp_path, monkeypatch):
+        # The mutation this names: the gate reading git's view of task-packs/ again
+        # (checkout_iterdir(_PACKS)) hides every folder git ignores, so a new status
+        # folder would drain the population with no red anywhere. The gate is skipped
+        # without a Done/; called directly, it judges the plant on every box.
+        packs = plant_self_host_packs(tmp_path / "repo")
+        (packs / "Archive").mkdir()
+        (packs / "Archive" / "TP-6-old.md").write_bytes(b"# an unclassified sibling\n")
+        monkeypatch.setitem(globals(), "_PACKS", packs)
+        with pytest.raises(AssertionError, match="Archive"):
+            test_every_pack_subfolder_is_classified()
+
+    def test_the_plant_refuses_a_checkout_that_tracks_done(self, tmp_path, monkeypatch):
+        # The plant copies this checkout's .gitignore; were Done/ ever tracked, every
+        # planted test here would pass on a shape the repository no longer has.
+        from tests import _live_tree
+
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        (checkout / ".gitignore").write_bytes(b"")
+        monkeypatch.setattr(_live_tree, "REPO_ROOT", checkout)
+        with pytest.raises(RuntimeError, match="no longer ignores task-packs/Done/"):
+            plant_self_host_packs(tmp_path / "repo")
+
+
 @_requires_packs
 def test_every_pack_subfolder_is_classified():
     """A new sibling folder must RED loudly, not drain the population quietly.
@@ -369,7 +422,7 @@ def test_every_pack_subfolder_is_classified():
     the drain is silent for exactly as long as it takes to matter.
     """
     classified = {name for name in _LOCATION_DIRS if name != "in-flight"}
-    actual = {p.name for p in checkout_iterdir(_PACKS) if p.is_dir() and not p.name.startswith(".")}
+    actual = _pack_subfolders(_PACKS)
     unclassified = actual - classified
     assert not unclassified, (
         f"Pack subfolder(s) not named in _LOCATION_DIRS: {sorted(unclassified)}. "
