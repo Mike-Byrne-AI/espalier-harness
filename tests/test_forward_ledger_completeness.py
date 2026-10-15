@@ -31,6 +31,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob, checkout_rglob
 
 _ROOT = Path(__file__).resolve().parent.parent
 _PACKS = _ROOT / "task-packs"
@@ -331,7 +332,7 @@ def _pack_id_exists(packs: Path, tok: str) -> bool:
     for folder in (packs, packs / "Deferred"):
         if not folder.is_dir():
             continue
-        for hit in folder.glob(f"{tok}-*.md"):
+        for hit in checkout_glob(folder, f"{tok}-*.md"):
             if hit.is_file() and not hit.name.startswith("."):
                 return True
     return False
@@ -1263,7 +1264,7 @@ def _deferral_kind(packs_root: Path, tok: str) -> str:
     is a deferral into a pack nobody wrote yet -- the pack is authored. Message
     text only: the verdict above never depends on a folder the seed tree lacks."""
     if packs_root.is_dir():
-        for hit in sorted(packs_root.rglob(f"{tok}-*.md")):
+        for hit in checkout_rglob(packs_root, f"{tok}-*.md"):
             parts = hit.relative_to(packs_root).parts
             if any(part.startswith(".") for part in parts) or len(parts) < 2:
                 continue

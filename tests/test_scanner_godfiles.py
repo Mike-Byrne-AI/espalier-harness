@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from espalier.scanners import godfiles as scn
+from tests._live_tree import keep_in_checkout
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -52,7 +53,7 @@ def test_does_not_trip_on_negatives() -> None:
 def test_fixture_skipped_by_live_scan() -> None:
     """EXEMPT_PREFIXES added in TP-143 must keep the fixture out of
     both `files` and `outlines` in scan_repo's output."""
-    report = scn.scan_repo(str(REPO_ROOT))
+    report = keep_in_checkout(scn.scan_repo(str(REPO_ROOT)))
     fixture_rel = "tests/fixtures/test_godfiles_positives.py"
     fixture_rows = [
         r for r in report["files"]

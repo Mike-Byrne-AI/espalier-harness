@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 #: Every deployed root and the floor of text files each must hold (a missing
@@ -85,7 +86,7 @@ def _source_of(rel: str) -> str:
 
 def _deployed_text_files():
     for root in DEPLOYED_ROOTS:
-        for path in sorted((REPO_ROOT / root).rglob("*")):
+        for path in checkout_rglob(REPO_ROOT / root, "*"):
             if path.is_file() and path.suffix in TEXT_SUFFIXES and "__pycache__" not in path.parts:
                 yield path
 
@@ -157,7 +158,7 @@ class TestDeployedAssetsCarryNoHomePathShape:
         for root, floor in DEPLOYED_ROOTS.items():
             directory = REPO_ROOT / root
             assert directory.is_dir(), root
-            count = sum(1 for p in directory.rglob("*") if p.is_file() and p.suffix in TEXT_SUFFIXES and "__pycache__" not in p.parts)
+            count = sum(1 for p in checkout_rglob(directory, "*") if p.is_file() and p.suffix in TEXT_SUFFIXES and "__pycache__" not in p.parts)
             assert count > floor, (root, count, floor)
 
     def test_the_red_names_the_source_and_its_sync(self):

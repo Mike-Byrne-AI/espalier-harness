@@ -45,6 +45,7 @@ from sister_site_probe import (  # noqa: E402
     _self_host_scan_targets,
     probe_mode,
 )
+from tests._live_tree import checkout_rglob
 
 
 def _fn(src: str) -> ast.FunctionDef:
@@ -662,7 +663,7 @@ class TestFusedOverlay:
                 ):
                     uncovered.append(entry)
                 continue
-            if not entry.endswith("/") or not any((REPO_ROOT / entry).rglob("*.py")):
+            if not entry.endswith("/") or not any(checkout_rglob(REPO_ROOT / entry, "*.py")):
                 continue
             if entry in pruned_dirs or entry in pruned_paths:
                 continue

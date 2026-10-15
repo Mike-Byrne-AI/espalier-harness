@@ -90,6 +90,7 @@ import re
 from pathlib import Path
 
 from tests._source_segment import segment, source_lines
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -139,7 +140,7 @@ def _iter_python_files():
         base = REPO_ROOT / root
         if not base.is_dir():
             continue
-        for path in sorted(base.rglob("*.py")):
+        for path in checkout_rglob(base, "*.py"):
             if _SKIP_PARTS & set(path.parts):
                 continue
             yield path

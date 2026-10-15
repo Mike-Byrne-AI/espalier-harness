@@ -38,6 +38,7 @@ from pathlib import Path
 import pytest
 
 from tests._symlink_support import requires_symlink
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -960,7 +961,7 @@ def replace_writers(root: Path) -> set[tuple[str, str]]:
     ``_vendor/`` mirror) and ``tools/cc/`` that calls ``os.replace``."""
     found: set[tuple[str, str]] = set()
     for sub in ("espalier", "tools/cc"):
-        for py in sorted((root / sub).rglob("*.py")):
+        for py in checkout_rglob(root / sub, "*.py"):
             rel = py.relative_to(root).as_posix()
             if rel.startswith("espalier/_vendor/"):
                 continue

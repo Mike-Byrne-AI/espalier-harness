@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_iterdir
 
 
 MEMORY_PATH = Path(__file__).resolve().parent.parent / "ESPALIER_MEMORY.md"
@@ -191,7 +192,7 @@ def _fragment_problems(root: Path, rf) -> list[str]:
     counts: a misnamed file is named as such, never folded into a count whose
     prune remedy cannot clear it."""
     base = root / rf.SESSION_LOG_DIR
-    files = sorted(p for p in base.iterdir() if p.is_file()) if base.is_dir() else []
+    files = sorted(p for p in checkout_iterdir(base) if p.is_file()) if base.is_dir() else []
     problems = []
     named_files = 0
     for p in files:

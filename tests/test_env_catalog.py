@@ -19,6 +19,7 @@ import re
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_rglob
 
 _REPO = Path(__file__).parents[1]
 _CATALOG = _REPO / "docs" / "ENV_CATALOG.md"
@@ -144,7 +145,7 @@ def _live_readers() -> dict[str, list[str]]:
     """Walk source via AST; return {var_name: [reader_path, ...]}."""
     readers: dict[str, list[str]] = {}
     for scope in _SCOPE_DIRS:
-        for path in (_REPO / scope).rglob("*.py"):
+        for path in checkout_rglob(_REPO / scope, "*.py"):
             try:
                 text = path.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from tests._live_tree import checkout_rglob
 
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -39,7 +40,7 @@ def _is_historical(line: str, prior_line: str) -> bool:
 def test_no_stale_gate_five_references() -> None:
     failures: list[str] = []
     for root in SCAN_ROOTS:
-        for py_file in root.rglob("*.py"):
+        for py_file in checkout_rglob(root, "*.py"):
             if py_file.resolve() == _SELF_PATH:
                 continue
             try:

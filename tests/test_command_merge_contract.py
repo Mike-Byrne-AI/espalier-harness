@@ -13,6 +13,7 @@ from pathlib import Path
 from espalier.surface_contract import CLAUDE_KIND_GLOBS
 from tests._surface_expected import EXPECTED_COMMAND_COUNT
 from tests.test_doc_source_citations import _RECORD_SURFACE_DOCS
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -86,7 +87,7 @@ class TestAccomplishIsRetired:
         globs.extend(cls._FIXED_GLOBS)
         return {
             g: [
-                p for p in sorted(REPO_ROOT.glob(g))
+                p for p in sorted(checkout_glob(REPO_ROOT, g))
                 if p.is_file() and p.relative_to(REPO_ROOT).as_posix() not in _RECORD_SURFACE_DOCS
             ]
             for g in globs

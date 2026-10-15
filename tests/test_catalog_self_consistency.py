@@ -36,6 +36,7 @@ from tests._export_guard import pruned_from_this_tree
 from espalier.canon_vocab import failure_mode_coinages
 from espalier.claim_extractor import OUT_OF_DOMAIN
 from espalier.surface_contract import is_shipped_pack
+from tests._live_tree import checkout_rglob
 
 # slow-exempt: the one subprocess call is a single fast `git ls-files` enumeration
 # (`_tracked_anchor_docs`, TP-373 3-A tree-wide anchor scan); the whole module runs in
@@ -282,7 +283,7 @@ def _resolve_source(file_ref: str, symbol: str | None = None) -> tuple[str | Non
     for d in _SOURCE_DIRS:
         root = REPO_ROOT / d
         if root.is_dir():
-            for m in root.rglob(base):
+            for m in checkout_rglob(root, base):
                 rel = m.relative_to(REPO_ROOT).as_posix()
                 # TP-178: espalier/_vendor/cc/ is a byte-identical copy of
                 # tools/cc/; anchors resolve to the canonical tools/ source,

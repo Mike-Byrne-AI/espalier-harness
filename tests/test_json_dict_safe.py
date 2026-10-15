@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from _site_path import site_path
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
@@ -556,7 +557,7 @@ class TestLoadJsonDictSafe:
 
 def _iter_guarded_py():
     for root in _GATE_ROOTS:
-        for path in sorted(root.rglob("*.py")):
+        for path in checkout_rglob(root, "*.py"):
             if "test" in path.name or path.name in EXEMPT_FILES:
                 continue
             yield path

@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from espalier.scanners import retired_vocab as rv
+from tests._live_tree import keep_in_checkout
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -331,7 +332,7 @@ def test_scanner_returns_clean_against_live_repo() -> None:
     Post-sweep gate (140-H). Expected to fail until residue cleanup
     completes; afterwards stays green and catches future residue.
     """
-    findings = rv.scan_repo(REPO_ROOT)
+    findings = keep_in_checkout(rv.scan_repo(REPO_ROOT))
     if findings:
         msg = "\n".join(
             f"  {f.path}:{f.lineno} — {f.term} — "

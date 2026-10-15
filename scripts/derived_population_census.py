@@ -222,8 +222,12 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 8 row(s), shapes: comprehension, for-assert
     "tests/test_asset_shipping.py": (
-        4, "452c0a4e7307c53f4bd0d0dc9378c37f621dbc939c4b98d0a16565e1d6c08325",
+        4, "245413b5ab48882a8590af896c0d2a8d8cbb6669706fc13c438f0b57fa28cb0a",
         "CORRECT_BY_PROPERTY",
+        "RE-PINNED 2026-10-15 (DEF-2013): the packaged-side comprehension now reads "
+        "git's view of the checkout through tests/_live_tree.py::checkout_glob, same "
+        "four rows, same property; a gitignored file under espalier/assets/claude/ is "
+        "no longer judged as shipped. "
         "RE-PINNED 2026-10-06 (§C28, DEF-479): the packaged-side comprehension now "
         "routes through espalier._safe_walk.visible, same four rows, same property. "
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
@@ -2081,6 +2085,13 @@ def _is_loop_bound(node: ast.expr) -> bool:
     )
 
 
+#: The git-view twins of ``base.glob(pattern)`` / ``base.rglob(pattern)``
+#: (``tests/_live_tree.py``): the pattern is their SECOND argument, so the walk
+#: below follows it where it follows a method call's first, and a routed walk
+#: keeps the row it had.
+_GLOB_HELPERS = frozenset({"checkout_glob", "checkout_rglob"})
+
+
 def _root_name(node: ast.expr) -> str | None:
     """Root identifier of an iterated expression: sorted(m.FOO)[1:] -> m."""
     cur: ast.expr = node
@@ -2089,6 +2100,9 @@ def _root_name(node: ast.expr) -> str | None:
             return cur.id
         if isinstance(cur, ast.Attribute):
             cur = cur.value
+        elif isinstance(cur, ast.Call) and isinstance(cur.func, ast.Name) \
+                and cur.func.id in _GLOB_HELPERS and len(cur.args) >= 2:
+            cur = cur.args[1]
         elif isinstance(cur, ast.Call):
             cur = cur.args[0] if cur.args else cur.func
         elif isinstance(cur, ast.Subscript):

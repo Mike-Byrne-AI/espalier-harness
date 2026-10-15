@@ -25,6 +25,7 @@ if str(HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(HOOKS_DIR))
 
 import _reinject  # noqa: E402
+from tests._live_tree import checkout_rglob
 
 
 def _fire(tool, tool_input, tmp_path):
@@ -445,13 +446,13 @@ class TestMirrorCensusCoverage:
             base_rel, suffixes = glob
             base = REPO / base_rel
             hits = sorted(
-                p for p in base.rglob("*")
+                p for p in checkout_rglob(base, "*")
                 if p.is_file() and p.suffix in suffixes and "__pycache__" not in p.parts
             )
         elif r.sot.endswith("/"):
             base = REPO / r.sot
             hits = sorted(
-                p for p in base.rglob("*")
+                p for p in checkout_rglob(base, "*")
                 if p.is_file()
                 and "__pycache__" not in p.parts
                 and mirror_registry.covers(

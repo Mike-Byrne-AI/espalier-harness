@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from espalier.scanners import prints as scn
+from tests._live_tree import keep_in_checkout
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +48,7 @@ def test_does_not_trip_on_negatives() -> None:
 def test_fixture_skipped_by_live_scan() -> None:
     """EXEMPT_PREFIXES added in TP-143 must keep the fixture out of
     live scans."""
-    report = scn.scan_repo(str(REPO_ROOT))
+    report = keep_in_checkout(scn.scan_repo(str(REPO_ROOT)))
     fixture_rel = "tests/fixtures/test_prints_positives.py"
     fixture_findings = [
         f for f in report["findings"]

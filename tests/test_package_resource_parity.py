@@ -41,6 +41,7 @@ from tests._surface_expected import (
     EXPECTED_SKILL_COUNT,
     EXPECTED_WORKFLOW_COUNT,
 )
+from tests._live_tree import checkout_rglob
 
 # The parametrize lists below read the one owner of the kinds; a kind added there is
 # a kind these parity tests cover with no edit here. The SUBDIRS pin further down is
@@ -176,11 +177,11 @@ class TestRootMirrorParity:
             pytest.skip(f"examples/dogfooding/.claude/{subdir}/ absent")
         assert root_dir.is_dir(), f"root .claude/{subdir}/ missing"
 
-        df_files = [p for p in visible(dogfooding_dir.rglob("*"), dogfooding_dir) if p.is_file()]
+        df_files = [p for p in visible(checkout_rglob(dogfooding_dir, "*"), dogfooding_dir) if p.is_file()]
         df_rels = {p.relative_to(dogfooding_dir) for p in df_files}
         assert df_rels, f"examples/dogfooding/.claude/{subdir}/ enumerated as empty: a wrong `visible` base drops everything quietly"
 
-        root_files = [p for p in visible(root_dir.rglob("*"), root_dir) if p.is_file()]
+        root_files = [p for p in visible(checkout_rglob(root_dir, "*"), root_dir) if p.is_file()]
         root_rels = {p.relative_to(root_dir) for p in root_files}
 
         missing = df_rels - root_rels
@@ -238,10 +239,10 @@ class TestAssetClaudeMirrorParity:
             pytest.skip(f"examples/dogfooding/.claude/{subdir}/ absent")
         assert asset_dir.is_dir(), f"espalier/assets/claude/{subdir}/ missing"
 
-        df_files = [p for p in visible(dogfooding_dir.rglob("*"), dogfooding_dir) if p.is_file()]
+        df_files = [p for p in visible(checkout_rglob(dogfooding_dir, "*"), dogfooding_dir) if p.is_file()]
         df_rels = {p.relative_to(dogfooding_dir) for p in df_files}
         assert df_rels, f"examples/dogfooding/.claude/{subdir}/ enumerated as empty: a wrong `visible` base drops everything quietly"
-        asset_files = [p for p in visible(asset_dir.rglob("*"), asset_dir) if p.is_file()]
+        asset_files = [p for p in visible(checkout_rglob(asset_dir, "*"), asset_dir) if p.is_file()]
         asset_rels = {p.relative_to(asset_dir) for p in asset_files}
 
         missing = df_rels - asset_rels
@@ -502,7 +503,7 @@ def _claude_kind_listing_sites() -> tuple[list[tuple[str, int]], list[tuple[str,
     routed: list[tuple[str, int]] = []
     unrouted: list[tuple[str, int]] = []
     for root in _KIND_ENUMERATION_ROOTS:
-        for path in sorted((REPO_ROOT / root).rglob("*.py")):
+        for path in checkout_rglob(REPO_ROOT / root, "*.py"):
             rel = path.relative_to(REPO_ROOT).as_posix()
             if rel.startswith(_KIND_ENUMERATION_SKIP):
                 continue

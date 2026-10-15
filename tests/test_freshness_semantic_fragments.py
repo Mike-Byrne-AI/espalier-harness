@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from tests._live_tree import keep_in_checkout
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,7 +39,7 @@ def _verify_on_touch_fragments() -> tuple[tuple[str, tuple[str, ...]], ...]:
     from espalier.scanners.freshness import discover_fragments
     return tuple(
         (f.id, tuple(f.bound))
-        for f in discover_fragments(REPO_ROOT)
+        for f in keep_in_checkout(discover_fragments(REPO_ROOT))
         if f.policy == "verify-on-touch"
     )
 
@@ -119,7 +120,7 @@ class TestSemanticFragmentBounds:
     def test_all_seeded_fragments_discoverable(self) -> None:
         from espalier.scanners.freshness import discover_fragments
         seeded = {fid for fid, _ in SEMANTIC_FRAGMENTS}
-        discovered = {f.id for f in discover_fragments(REPO_ROOT)}
+        discovered = {f.id for f in keep_in_checkout(discover_fragments(REPO_ROOT))}
         missing = seeded - discovered
         assert not missing, (
             f"semantic fragments not discovered (marker missing or "
@@ -152,7 +153,7 @@ class TestMarkerContractClosure:
 
     def test_marker_contract_has_bound_closure_true(self) -> None:
         from espalier.scanners.freshness import discover_fragments
-        for f in discover_fragments(REPO_ROOT):
+        for f in keep_in_checkout(discover_fragments(REPO_ROOT)):
             if f.id == "marker-contract":
                 assert f.bound_closure is True
                 return

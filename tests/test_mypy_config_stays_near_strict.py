@@ -22,6 +22,7 @@ import ast
 import re
 import sys
 from pathlib import Path
+from tests._live_tree import checkout_rglob
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -156,7 +157,7 @@ def test_every_windows_only_arm_in_the_gate_scope_holds_nothing_to_type():
     assert cfg.get("platform") == "linux", "this pin exists because of the platform pin"
     offenders, arms = [], 0
     for scope in cfg.get("files", []):
-        for path in sorted((REPO_ROOT / scope).rglob("*.py")):
+        for path in checkout_rglob(REPO_ROOT / scope, "*.py"):
             source = path.read_text(encoding="utf-8")
             arms += sum(_windows_only_arm(n) is not None for n in ast.walk(ast.parse(source)))
             offenders += [f"{path.relative_to(REPO_ROOT).as_posix()}:{line}"

@@ -6214,6 +6214,7 @@ from pathlib import Path as _Path
 _HOOKS_DIR = _Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 _sys.path.insert(0, str(_HOOKS_DIR))
 from _integrity import is_kill_switch_set  # noqa: E402
+from tests._live_tree import checkout_glob
 
 
 class TestTP117KillSwitchHelper:
@@ -9679,7 +9680,7 @@ def _row_oracles() -> list[str]:
     import ast
 
     names = []
-    for path in sorted(_BENCH_DIR.glob("*.py")):
+    for path in checkout_glob(_BENCH_DIR, "*.py"):
         for node in ast.parse(path.read_text(encoding="utf-8")).body:
             targets = (node.targets if isinstance(node, ast.Assign)
                        else [node.target] if isinstance(node, ast.AnnAssign) else [])
@@ -9690,7 +9691,7 @@ def _row_oracles() -> list[str]:
 
 
 _ROW_ORACLES = _row_oracles()
-_BENCH_SCRIPTS = [p.stem for p in sorted(_BENCH_DIR.glob("*.py"))]
+_BENCH_SCRIPTS = [p.stem for p in checkout_glob(_BENCH_DIR, "*.py")]
 _ROOT_SHAPES = list(_load_bench("powershell_guard_rehearsal").ROOT_SHAPES)
 _COUNT_SENTENCE = re.compile(  # whitespace-tolerant: the sentence wraps in a docstring
     r"(\d+)\s+rows\s+x\s+(\d+)\s+root\s+shapes,\s+(\d+)\s+of\s+(\d+)\s+verdicts\s+as\s+"

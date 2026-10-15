@@ -24,6 +24,7 @@ import os
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 # Bare-except: pass — trips the exceptions scanner (swallowed_silent).
 _VIOLATION = "def f():\n    try:\n        risky()\n    except:\n        pass\n"
@@ -135,7 +136,7 @@ class TestNestedRepoSkip:
         scanners_dir = Path(_pkg.__file__).parent
         covered = {m for m, _ in _WALKERS} | set(_SAFE_RGLOB_SCANNERS)
         discovered: set[str] = set()
-        for py in sorted(scanners_dir.glob("*.py")):
+        for py in checkout_glob(scanners_dir, "*.py"):
             tree = ast.parse(py.read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if isinstance(node, ast.ImportFrom) and node.module == "os":

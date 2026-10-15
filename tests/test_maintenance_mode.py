@@ -513,6 +513,7 @@ class TestBypassRosterCarriers:
 # ---------------------------------------------------------------------------
 
 import ast  # noqa: E402
+from tests._live_tree import checkout_rglob
 
 _PADDED = ("1 ", " 1", "1\t")
 _STATUSLINE = _REPO_ROOT / "tools" / "cc" / "statusline.py"
@@ -661,7 +662,7 @@ def _maintenance_reader_sources() -> list[Path]:
     roots = (_REPO_ROOT / "tools" / "cc", _REPO_ROOT / "espalier")
     skip = ("espalier/_vendor/", "espalier/assets/")
     out = [
-        p for root in roots for p in sorted(root.rglob("*.py"))
+        p for root in roots for p in checkout_rglob(root, "*.py")
         if not p.relative_to(_REPO_ROOT).as_posix().startswith(skip)
     ]
     assert len(out) > 50, f"the reader walk found only {len(out)} files"

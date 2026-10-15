@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -78,7 +79,7 @@ def _unguarded_tomllib_imports() -> list[str]:
     scanned roots."""
     offenders: list[str] = []
     for root in _SCANNED_ROOTS:
-        for path in sorted((REPO_ROOT / root).rglob("*.py")):
+        for path in checkout_rglob(REPO_ROOT / root, "*.py"):
             try:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
             except (OSError, SyntaxError):  # pragma: no cover -- unreadable/partial file

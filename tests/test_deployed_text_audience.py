@@ -56,6 +56,7 @@ from espalier.cli import (
 from espalier.managed_inventory import get_managed_public_prefixes
 from espalier.mirror_registry import MIRROR_ROWS, glob_row_parts
 from espalier.render_surface import render_live_surface, render_pack_manifest
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VENDOR_CC = "espalier/_vendor/cc"
@@ -188,7 +189,7 @@ def _emitted_strings(source: str) -> list[tuple[int, str]]:
 
 def _vendored_python() -> list[Path]:
     return sorted(
-        p for p in (REPO_ROOT / VENDOR_CC).rglob("*.py") if "__pycache__" not in p.parts
+        p for p in checkout_rglob(REPO_ROOT / VENDOR_CC, "*.py") if "__pycache__" not in p.parts
     )
 
 
@@ -204,7 +205,7 @@ def _python_hits() -> dict[str, list[str]]:
 
 def _text_files(root: str) -> list[Path]:
     return sorted(
-        p for p in (REPO_ROOT / root).rglob("*")
+        p for p in checkout_rglob(REPO_ROOT / root, "*")
         if p.is_file() and p.suffix in TEXT_SUFFIXES and "__pycache__" not in p.parts
     )
 
@@ -505,7 +506,7 @@ class TestThePopulation:
         for root, floor in FLOORS.items():
             directory = REPO_ROOT / root
             assert directory.is_dir(), root
-            files = list(directory.rglob("*.py")) if root == VENDOR_CC else _text_files(root)
+            files = list(checkout_rglob(directory, "*.py")) if root == VENDOR_CC else _text_files(root)
             assert len(files) > floor, (root, len(files), floor)
 
     def test_the_claude_population_is_the_deploy_set(self):

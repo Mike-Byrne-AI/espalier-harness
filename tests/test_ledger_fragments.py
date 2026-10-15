@@ -28,6 +28,7 @@ import pytest
 
 from tests import _source_segment
 from tests.test_ledger_row import _args, _build_tree
+from tests._live_tree import checkout_rglob
 
 # slow-exempt: each two-lane case builds a scratch repository and runs git and
 # the real verbs on two branches (measured 0.2 to 0.3 s a case); what conflicts
@@ -1403,7 +1404,7 @@ def _unexplained_reads(root: Path) -> list[str]:
     reason). The loader is the one module that reads the files themselves."""
     found = []
     for base in _CENSUS_ROOTS:
-        for p in sorted((root / base).rglob("*.py")):
+        for p in checkout_rglob(root / base, "*.py"):
             rel = p.relative_to(root).as_posix()
             if "/_vendor/" in rel or "/assets/" in rel or rel == "tools/cc/_record_fragments.py":
                 continue
@@ -1453,7 +1454,7 @@ class TestTheReaderCensus:
     def test_every_reason_says_something(self):
         bare = []
         for base in _CENSUS_ROOTS:
-            for p in sorted((REPO_ROOT / base).rglob("*.py")):
+            for p in checkout_rglob(REPO_ROOT / base, "*.py"):
                 rel = p.relative_to(REPO_ROOT).as_posix()
                 if "/_vendor/" in rel or rel == "tests/test_ledger_fragments.py":
                     continue

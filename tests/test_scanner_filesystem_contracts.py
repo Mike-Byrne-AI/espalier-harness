@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from espalier.scanners import filesystem_contracts as fc
+from tests._live_tree import keep_in_checkout
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -86,7 +87,7 @@ def test_no_unpinned_filesystem_contracts() -> None:
     """Live-repo zero-UNPINNED: every cross-module structured-file
     write under espalier/ or tools/ must be PINNED, UNSTRUCTURED, or
     routed through a known-output path."""
-    findings = fc.scan_repo(REPO_ROOT)
+    findings = keep_in_checkout(fc.scan_repo(REPO_ROOT))
     unpinned = [f for f in findings if f.severity == "UNPINNED"]
     if unpinned:
         msg = "\n".join(
@@ -120,7 +121,7 @@ def test_cc_surface_gate_write_is_pinned_contract() -> None:
     invisible (unresolvable variable path) or output-exempt. Pre-fix the write
     used a bare ``out`` variable the resolver could not trace, so the
     coordination file was a stealth contract."""
-    findings = fc.scan_repo(REPO_ROOT)
+    findings = keep_in_checkout(fc.scan_repo(REPO_ROOT))
     gate_findings = [
         f for f in findings
         if str(f.writer_path).replace("\\", "/") == "espalier/proofs.py"
@@ -137,7 +138,7 @@ def test_cc_surface_gate_write_is_pinned_contract() -> None:
 
 
 def test_build_report_shape() -> None:
-    report = fc.build_report(REPO_ROOT)
+    report = keep_in_checkout(fc.build_report(REPO_ROOT))
     assert isinstance(report, dict)
     assert "count" in report
     assert "findings" in report
@@ -273,7 +274,7 @@ def test_live_repo_has_no_unannotated_recursive_walks() -> None:
     under espalier/ + tools/ must be CONVERTED to safe_rglob/_safe_rglob or
     carry a ``# espalier:safe-walk-ok <reason>`` pragma. A new unannotated bare
     recursive walk earns the red here (the recurrence guard's whole purpose)."""
-    walks = fc.scan_recursive_walks(REPO_ROOT)
+    walks = keep_in_checkout(fc.scan_recursive_walks(REPO_ROOT))
     if walks:
         msg = "\n".join(f"  {w.path}:{w.lineno} [{w.call}]" for w in walks)
         pytest.fail(
