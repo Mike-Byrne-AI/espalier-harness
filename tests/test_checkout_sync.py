@@ -895,8 +895,9 @@ class TestPieces:
         monkeypatch.setenv("USERPROFILE", str(home))
         monkeypatch.setenv("HOME", str(home))
         assert cs.claude_config_dir() == cfg
-        assert cs.live_sessions() == [{"pid": os.getpid(), "session_id": "s1", "cwd": str(tmp_path)},
-                                      {"pid": os.getpid(), "session_id": "s2", "cwd": str(home)}]
+        bare = {"kind": "", "entrypoint": "", "started_at": None}
+        assert cs.live_sessions() == [{"pid": os.getpid(), "session_id": "s1", "cwd": str(tmp_path), **bare},
+                                      {"pid": os.getpid(), "session_id": "s2", "cwd": str(home), **bare}]
 
     def test_only_the_nearest_ancestor_in_the_registry_is_the_caller(self, cs, tmp_path):
         """A session launched from another session (a nested `claude -p`) has
@@ -976,6 +977,116 @@ class TestPieces:
         payload = json.loads(r.stdout)
         assert payload["checkout"]["state"] == "would_catch_up"
         assert _out(work, "rev-parse", "HEAD") == before
+
+
+# -- the one liveness oracle (TP-701 B-1) ----------------------------------------------
+
+def _row(cwd: object, *, pid: int | None = None, sid: str = "s") -> dict:
+    return {"pid": pid or os.getpid(), "session_id": sid, "cwd": str(cwd), "kind": "", "entrypoint": "",
+            "started_at": None}
+
+
+def _ids(rows) -> list[str]:
+    return [r["session_id"] for r in rows]
+
+
+class TestTheOneLivenessOracle:
+    """``sessions_in`` and ``occupancy``: the one answer the seat driver, the
+    ship driver and (later) the banner ask "is a session live in this
+    checkout" of. A session belongs to the DEEPEST registered checkout that
+    holds its cwd; the registry answers, the markers only ever add, and an
+    answer nobody can give is "cannot tell", never "empty"."""
+
+    def test_a_registry_row_carries_its_kind_entrypoint_and_start(self, cs, tmp_path):
+        """The measured headless shape (2026-10-15, 2.1.300): a `claude -p` run
+        registers as kind interactive, entrypoint sdk-cli. Dies to: dropping
+        the fields, which leaves a headless run indistinguishable from a window."""
+        cfg = _registry(tmp_path, [
+            {"pid": os.getpid(), "sessionId": "h1", "cwd": str(tmp_path), "kind": "interactive",
+             "entrypoint": "sdk-cli", "startedAt": 1792045849132},
+            {"pid": os.getppid(), "sessionId": "odd", "cwd": str(tmp_path / "x"), "kind": 7,
+             "entrypoint": None, "startedAt": True},
+        ])
+        rows = sorted(cs.live_sessions(cfg), key=lambda r: r["session_id"] != "h1")
+        assert rows[0] == {"pid": os.getpid(), "session_id": "h1", "cwd": str(tmp_path), "kind": "interactive",
+                           "entrypoint": "sdk-cli", "started_at": 1792045849.132}
+        assert (rows[1]["kind"], rows[1]["entrypoint"], rows[1]["started_at"]) == ("", "", None)
+        assert cs.describe_session(rows[0]) == f"pid {os.getpid()} (sdk-cli, started 2026-10-15 06:30Z)"
+        assert cs.describe_session(_row(tmp_path, pid=42)) == "pid 42"
+
+    def test_a_session_belongs_to_the_deepest_checkout_that_holds_it(self, cs, repos):
+        """Dies to: dropping the cwd comparison or the depth (a worktree's
+        session then counts for the clone that holds its folder), and to the
+        reaper's prefix rule (a worktree outside .claude/worktrees counted for
+        the clone: the disagreement the Wave A review found)."""
+        work = repos["work"]
+        inside = _worktree(repos, "seat-a")
+        side = work / "side"
+        _git(work, "worktree", "add", "--quiet", "--detach", str(side), "origin/main")
+        rows = [_row(work, sid="root"), _row(work / "src", sid="root-sub"), _row(inside, sid="a"),
+                _row(inside / "deep", sid="a-sub"), _row(side, sid="side"),
+                _row(work.parent / "elsewhere", sid="out")]
+        assert _ids(cs.sessions_in(work, sessions=rows)) == ["root", "root-sub"]
+        assert _ids(cs.sessions_in(inside, sessions=rows)) == ["a", "a-sub"]
+        assert _ids(cs.sessions_in(side, sessions=rows)) == ["side"]
+        listed = cs.registered_checkouts(work)
+        assert [p.name for p in listed][1:] == ["seat-a", "side"]
+        # Depth decides, not git's listing order (the main checkout first).
+        backwards = list(reversed(listed))
+        assert _ids(cs.sessions_in(work, sessions=rows, checkouts=backwards)) == ["root", "root-sub"]
+        assert _ids(cs.sessions_in(inside, sessions=rows, checkouts=backwards)) == ["a", "a-sub"]
+
+    @pytest.mark.skipif(os.name != "nt", reason="the registry spells the drive letter both ways on Windows")
+    def test_the_drive_letter_case_names_one_checkout(self, cs, repos):
+        work = repos["work"]
+        text = str(work)
+        flipped = text[0].swapcase() + text[1:]
+        assert _ids(cs.sessions_in(work, sessions=[_row(flipped, sid="lower")])) == ["lower"]
+
+    def test_without_git_a_worktree_under_claude_worktrees_still_counts_as_its_own(self, cs, tmp_path):
+        root = tmp_path / "repo"
+        rows = [_row(root, sid="root"), _row(root / ".claude" / "worktrees" / "a", sid="a")]
+        assert _ids(cs.sessions_in(root, sessions=rows, runner=lambda *a, **k: None)) == ["root"]
+
+    def test_an_unreadable_registry_is_cannot_tell_and_the_markers_only_ever_add(self, cs, tmp_path,
+                                                                                  monkeypatch):
+        """An idle session touches no marker, so "no marker" is never "nobody".
+        Dies to: reading an empty marker list as an empty checkout."""
+        monkeypatch.setattr(cs, "live_sessions", lambda *a, **k: None)
+        monkeypatch.delenv("CLAUDECODE", raising=False)
+        assert cs.sessions_in(tmp_path) is None
+        blind = cs.occupancy(tmp_path, markers=lambda tree: [])
+        assert (blind.sessions, blind.oracle) == (None, "")
+        assert blind.note == ("Claude Code's session registry could not be read in full; no session marker "
+                              "answers either, so who is in it cannot be told")
+        seen = cs.occupancy(tmp_path, markers=lambda tree: [{"session_id": "m1", "pid": 77, "cwd": str(tmp_path)}])
+        assert seen.oracle == "markers" and _ids(seen.sessions) == ["m1"]
+        broken = cs.occupancy(tmp_path, markers=lambda tree: 1 / 0)
+        assert broken.sessions is None and broken.oracle == ""
+
+    def test_a_registry_that_does_not_list_the_session_asking_is_not_trusted(self, cs, tmp_path, monkeypatch):
+        rows = [_row(tmp_path, sid="someone")]
+        monkeypatch.setenv("CLAUDECODE", "1")
+        monkeypatch.setattr(cs, "ancestor_pids", lambda depth=8: [999999])
+        stranger = cs.occupancy(tmp_path, sessions=rows, checkouts=[tmp_path], markers=lambda tree: [])
+        assert stranger.sessions is None
+        assert stranger.note.startswith("this session is not in Claude Code's session registry")
+        monkeypatch.setattr(cs, "ancestor_pids", lambda depth=8: [os.getpid()])
+        listed = cs.occupancy(tmp_path, sessions=rows, checkouts=[tmp_path], markers=lambda tree: [])
+        assert listed.oracle == "registry" and listed.sessions == rows
+
+    def test_reaping_one_named_worktree_leaves_the_rest_and_says_what_it_unlocked(self, cs, repos):
+        """``seat.py retire``'s removal: the reaper's rules for one worktree. A
+        lock whose holder exited (a `claude --worktree -p` run leaves one, read
+        2026-10-15: "claude session <name> (pid N)") is released and said."""
+        work = repos["work"]
+        a = _worktree(repos, "a", "lane/a")
+        b = _worktree(repos, "b", "lane/b")
+        gone = _dead_pid()
+        _git(work, "worktree", "lock", "--reason", f"claude session a (pid {gone})", str(a))
+        report = cs.reap_worktrees(work, sessions=[], only=a)
+        assert report.removed == ["a"] and report.unlocked == [f"a (pid {gone})"]
+        assert not a.exists() and b.is_dir() and _registered(work, b)
 
 
 def test_every_worktree_include_entry_is_safe_for_the_reap(cs):

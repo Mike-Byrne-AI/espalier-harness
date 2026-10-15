@@ -160,8 +160,9 @@ class Reap:
     """What :func:`reap_worktrees` did: ``removed`` names, ``kept`` as
     (name, reason) with ``kept_paths`` beside them, ``deferred`` (not reached
     this session, out of time), ``saved`` (paths written into the root),
-    ``would_remove`` (dry run) and a ``note`` for a reason that kept every
-    worktree."""
+    ``would_remove`` (dry run), ``unlocked`` (a dead holder's lock released
+    before its removal, as ``name (pid N)``; not on the banner line) and a
+    ``note`` for a reason that kept every worktree."""
     removed: list[str] = field(default_factory=list)
     kept: list[tuple[str, str]] = field(default_factory=list)
     kept_paths: list[str] = field(default_factory=list)
@@ -169,6 +170,7 @@ class Reap:
     saved: list[str] = field(default_factory=list)
     would_remove: list[str] = field(default_factory=list)
     note: str = ""
+    unlocked: list[str] = field(default_factory=list)
 
     def keep(self, path: Path, reason: str) -> None:
         self.kept.append((path.name, reason))
@@ -483,10 +485,24 @@ def claude_config_dir() -> Path:
     return claude_config_dirs()[0]
 
 
+def _started_at(value: object) -> float | None:
+    """The registry's ``startedAt`` (epoch milliseconds) in epoch seconds, or
+    None for any other shape: a courtesy for the words, never a liveness fact."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return float(value) / 1000.0
+
+
 def live_sessions(config_dir: Path | None = None) -> list[dict[str, object]] | None:
     """The running Claude Code sessions, from Claude Code's own registry: one
-    ``{"pid", "session_id", "cwd"}`` per entry whose process is alive (or whose
-    liveness this host cannot tell). None when the registry cannot be read in
+    ``{"pid", "session_id", "cwd", "kind", "entrypoint", "started_at"}`` per
+    entry whose process is alive (or whose liveness this host cannot tell).
+    ``kind`` and ``entrypoint`` are the registry's words ('' when absent): a
+    headless ``claude -p`` run registers as kind ``interactive`` with
+    entrypoint ``sdk-cli`` (measured 2026-10-15 on 2.1.300, Windows), so the
+    entrypoint, not the kind, tells a headless run from a window (``cli``) or
+    an editor's (``claude-vscode``). ``started_at`` is epoch seconds or None.
+    None when the registry cannot be read in
     full -- the primary directory missing, an entry that does not parse (unless
     its file name is a pid that has exited: a crash's half-written leftover),
     an entry with no ``cwd``, or one whose ``pid`` is not a positive integer --
@@ -522,8 +538,11 @@ def live_sessions(config_dir: Path | None = None) -> list[dict[str, object]] | N
                 return None  # a shape we do not know is "cannot tell", never "gone"
             if pid_alive(pid) is False:
                 continue  # a crashed session's leftover entry
-            sid = record.get("sessionId")
-            row = {"pid": pid, "session_id": sid if isinstance(sid, str) else "", "cwd": cwd}
+            sid, kind, entry = record.get("sessionId"), record.get("kind"), record.get("entrypoint")
+            row = {"pid": pid, "session_id": sid if isinstance(sid, str) else "", "cwd": cwd,
+                   "kind": kind if isinstance(kind, str) else "",
+                   "entrypoint": entry if isinstance(entry, str) else "",
+                   "started_at": _started_at(record.get("startedAt"))}
             if row not in rows:
                 rows.append(row)
     return rows
@@ -605,6 +624,127 @@ def other_sessions_in_checkout(sessions: list[dict[str, object]], root: Path,
     (:func:`own_entry`) and nothing else."""
     mine = own_entry(sessions, own_session_id)
     return [s for s in sessions_in_checkout(sessions, root) if s is not mine]
+
+
+def registered_checkouts(root: Path, *, deadline: float | None = None,
+                         runner: Runner = run) -> list[Path] | None:
+    """Every checkout git registers for the repository at ``root`` -- the main
+    one and each linked worktree, wherever it sits -- or None when git cannot
+    list them. A registration whose folder is gone is left out: no session
+    can stand in it."""
+    listing = _Git(root, deadline, runner).out("worktree", "list", "--porcelain")
+    if listing is None:
+        return None
+    return [Path(b["worktree"]) for b in parse_worktrees(listing)
+            if b.get("worktree") and "prunable" not in b]
+
+
+def checkout_of(cwd: str, checkouts: list[Path]) -> Path | None:
+    """The DEEPEST of ``checkouts`` that holds ``cwd`` (a worktree inside the
+    main checkout's folder is its own checkout, wherever it sits), or None
+    when none does. Paths compare by :func:`within`: normalised and case
+    folded, so ``c:\\`` and ``C:\\`` (both spellings are in the registry on
+    Windows, read 2026-10-15) name one folder."""
+    best: Path | None = None
+    depth = -1
+    for checkout in checkouts:
+        if within(cwd, checkout) and len(_norm(checkout)) > depth:
+            best, depth = checkout, len(_norm(checkout))
+    return best
+
+
+def sessions_in(path: Path, *, sessions: list[dict[str, object]] | None = None,
+                checkouts: list[Path] | None = None, deadline: float | None = None,
+                runner: Runner = run) -> list[dict[str, object]] | None:
+    """The live sessions working in the checkout at ``path``: each registry
+    entry whose ``cwd`` lies in ``path`` and in no deeper registered checkout.
+    ``sessions`` defaults to :func:`live_sessions`, ``checkouts`` to
+    :func:`registered_checkouts`; where git cannot list them, a worktree under
+    ``.claude/worktrees/`` still counts as its own (the reaper's rule). None
+    when the registry cannot be read in full: the caller cannot tell."""
+    if sessions is None:
+        sessions = live_sessions()
+        if sessions is None:
+            return None
+    if checkouts is None:
+        checkouts = registered_checkouts(path, deadline=deadline, runner=runner)
+    if checkouts is None:
+        return sessions_in_checkout(sessions, path)
+    target = _norm(path)
+    places = list(checkouts) if any(_norm(c) == target for c in checkouts) else [*checkouts, path]
+    found = []
+    for row in sessions:
+        home = checkout_of(str(row.get("cwd", "")), places)
+        if home is not None and _norm(home) == target:
+            found.append(row)
+    return found
+
+
+@dataclass
+class Occupancy:
+    """Who is working in one checkout, and which oracle said so.
+    ``sessions`` is None when no oracle could tell (then a caller that would
+    delete or launch must refuse); ``oracle`` is ``registry`` (Claude Code's
+    own, the one that places an idle session), ``markers`` (this harness's
+    per-tree session markers, read only when the registry cannot be: they can
+    say a session is there, never that none is), or ''; ``note`` says why the
+    registry was not used."""
+    sessions: list[dict[str, object]] | None
+    oracle: str
+    note: str = ""
+
+
+def occupancy(path: Path, *, sessions: list[dict[str, object]] | None = None,
+              own_session_id: str = "", checkouts: list[Path] | None = None,
+              markers: Callable[[Path], list[dict[str, object]]] | None = None,
+              deadline: float | None = None, runner: Runner = run) -> Occupancy:
+    """The one answer to "is a session live in this checkout" (TP-701 B-1):
+    every session :func:`sessions_in` places at ``path``, the caller's own
+    included. The registry is trusted only when it is read in full and, run
+    from inside a session (``CLAUDECODE`` set), lists that session. Otherwise
+    the per-tree markers answer when one is live (``markers`` reads them;
+    default: the deployed hooks' ``other_live_sessions``), and when none is,
+    the answer is "cannot tell", never "empty": an idle session touches no
+    marker."""
+    note = ""
+    if sessions is None:
+        sessions = live_sessions()
+        if sessions is None:
+            note = "Claude Code's session registry could not be read in full"
+    if sessions is not None and os.environ.get("CLAUDECODE") and own_entry(sessions, own_session_id) is None:
+        note, sessions = "this session is not in Claude Code's session registry", None
+    if sessions is not None:
+        placed = sessions_in(path, sessions=sessions, checkouts=checkouts, deadline=deadline, runner=runner)
+        if placed is not None:
+            return Occupancy(placed, "registry")
+    if markers is None:
+        hook_utils = _hook_utils_by_path()
+        reader = getattr(hook_utils, "other_live_sessions", None) if hook_utils is not None else None
+        markers = (lambda tree: reader(tree, "")) if callable(reader) else None
+    rows: list[dict[str, object]] = []
+    if markers is not None:
+        try:
+            rows = list(markers(path))
+        except Exception:  # noqa: BLE001 -- fail-open: ok deliberate -- a marker read that breaks is "cannot tell", below
+            rows = []
+    if rows:
+        return Occupancy([{"pid": r.get("pid"), "session_id": r.get("session_id", ""), "cwd": r.get("cwd", ""),
+                           "kind": "", "entrypoint": "", "started_at": None} for r in rows], "markers", note)
+    tail = "no session marker answers either, so who is in it cannot be told"
+    return Occupancy(None, "", f"{note}; {tail}" if note else tail)
+
+
+def describe_session(row: dict[str, object]) -> str:
+    """One session in words, 7-bit ASCII: ``pid 4242 (cli, started 2026-10-15
+    06:01Z)``, as much of it as the oracle knew."""
+    pid = row.get("pid")
+    head = f"pid {pid}" if pid else f"session {str(row.get('session_id') or '?')[:8]}"
+    bits = [str(row.get("entrypoint") or row.get("kind") or "")]
+    started = row.get("started_at")
+    if isinstance(started, (int, float)) and not isinstance(started, bool):
+        bits.append("started " + time.strftime("%Y-%m-%d %H:%MZ", time.gmtime(started)))
+    bits = [b for b in bits if b]
+    return _ascii(head + (f" ({', '.join(bits)})" if bits else ""))
 
 
 def lock_holder_dead(reason: str) -> bool:
@@ -952,10 +1092,11 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
                    own_cwd: Path | None = None,
                    marker_live: Callable[[Path], bool] | None = None,
                    held_by_other: str = "", unreadable_note: str = "",
-                   dry_run: bool = False, remote: str = REMOTE,
+                   dry_run: bool = False, remote: str = REMOTE, only: Path | None = None,
                    runner: Runner = run, spawner: Callable[..., Spawned | None] = spawn) -> Reap:
     """Remove the leftover worktrees under ``<root>/.claude/worktrees/`` that
-    hold nothing (the module docstring has the rules). ``sessions`` comes from
+    hold nothing (the module docstring has the rules); with ``only``, that one
+    worktree alone, under the same rules (``seat.py retire``). ``sessions`` comes from
     :func:`live_sessions` (None: the registry could not be trusted, and then
     nothing is removed; ``unreadable_note`` says why); ``held_by_other`` names
     a live session in the root checkout, which also removes nothing, since
@@ -970,6 +1111,8 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
     home = root.joinpath(*WORKTREES_REL)
     blocks = [b for b in parse_worktrees(listing)[1:] if b.get("worktree")]
     ours = [b for b in blocks if within(b["worktree"], home)]
+    if only is not None:
+        ours = [b for b in ours if _norm(b["worktree"]) == _norm(only)]
     if not ours:
         return report
     blocked = ""
@@ -1027,6 +1170,8 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
             continue
         if "locked" in block:
             git.ask("worktree", "unlock", str(path))
+            held = _LOCK_PID_RE.search(block.get("locked", ""))
+            report.unlocked.append(f"{path.name} (pid {held.group(1)})" if held else path.name)
         removal = git.change("worktree", "remove", str(path), wait=REMOVE_WAIT_S)
         if removal is not None and not removal.done:
             report.keep(path, f"its removal is still running (git pid {removal.pid}); it finishes on its own")
