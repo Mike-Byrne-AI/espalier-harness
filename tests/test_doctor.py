@@ -1920,6 +1920,9 @@ class TestEveryWarningCarriesANextStep:
         mp.setattr(d, "_check_external_tool", lambda tool, hint: [])
         mp.setattr(d, "_check_reporter_hook_wiring", lambda root: [])
         mp.setattr(d, "_check_config_unknown_keys", lambda root, cfg=None: [])
+        # The sandbox posture (TP-476 B-1) warns only when the sandbox is on
+        # with entries missing; silenced so its fixture alone arms it.
+        mp.setattr(d, "_check_sandbox_posture", lambda root: ([], []))
         mp.setattr(d, "_check_package_manager", lambda root: [])
         mp.setattr(d, "_check_wired_hooks_start", lambda root: [])
 
@@ -2146,10 +2149,25 @@ class TestEveryWarningCarriesANextStep:
             lambda root: ("npm", "ambiguous: package-lock.json, pnpm-lock.yaml"),
         )
 
+    @staticmethod
+    def _sandbox_posture_missing(mp):
+        """The sandbox is on and the harness zones are not behind it (TP-476
+        B-1): the warning names the missing entries and the flag; the next
+        step names the upgrade that appends them."""
+        from espalier import doctor as d
+        mp.setattr(
+            d, "_check_sandbox_posture",
+            lambda root: ([], ["sandbox: on (sandbox.enabled true in .claude/settings.json); "
+                               "2 posture entries missing of 3 (denyWrite ./tools/cc, denyWrite "
+                               "./.github/workflows); `--sandbox-posture` on `init` or "
+                               "`upgrade --execute` writes them"]),
+        )
+
     WARN_STATES = [
         "_ambiguous_package_manager",
         "_worktree_include_missing",
         "_stop_gate_posture",
+        "_sandbox_posture_missing",
         "_unknown_config_key",
         "_retired_deny_rule",
         "_superseded_allow_rule",

@@ -1006,6 +1006,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_utf8_text_io",
             "test_managed_cleanup_parity",
             "test_doctor",
+            # TP-476 Wave B-1: drives init, upgrade and doctor on a scratch repo
+            # for the sandbox posture (the deny lists derived from the rosters).
+            "test_sandbox_posture",
             "test_recovery",
             "test_scanners",
             "test_session_resume",
