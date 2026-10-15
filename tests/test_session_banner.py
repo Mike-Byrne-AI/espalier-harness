@@ -2848,7 +2848,7 @@ class TestOrdersLine:
         res = subprocess.run(
             [HOOK_PYTHON, str(HOOKS_DIR / "session_start.py")],
             input=json.dumps({"source": "startup", "session_id": "o-1"}), capture_output=True, text=True,
-            timeout=90, cwd=str(clones["w"]), check=False, encoding="utf-8",
+            timeout=45, cwd=str(clones["w"]), check=False, encoding="utf-8",   # the hook's own ceiling is 15 s
             env={**os.environ, "CLAUDE_PROJECT_DIR": str(clones["w"])},
         )
         assert res.returncode == 0, res.stderr
@@ -3873,7 +3873,7 @@ class TestSessionsLine:
             (config / "sessions" / f"{os.getpid()}.json").write_text(json.dumps(entry), encoding="utf-8")
         res = subprocess.run(
             [HOOK_PYTHON, str(HOOKS_DIR / script)], input=json.dumps(payload), capture_output=True, text=True,
-            timeout=60, cwd=str(root), check=False, encoding="utf-8",
+            timeout=45, cwd=str(root), check=False, encoding="utf-8",   # the hook's own ceiling is 15 s
             env={**os.environ, "CLAUDE_PROJECT_DIR": str(root), "CLAUDE_CONFIG_DIR": str(config)},
         )
         assert res.returncode == 0, res.stderr

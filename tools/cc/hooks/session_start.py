@@ -544,7 +544,8 @@ def _sessions_line(
     marked "pid gone". ``rows`` is for tests; production reads the markers
     under ``root``."""
     rows = _hook_utils.other_live_sessions(root, sid, now) if rows is None else rows
-    debug = os.environ.get(_SESSIONS_DEBUG_ENV) == "1"
+    # Stripped: cmd.exe's `set VAR=1 ` hands the value over with its trailing space.
+    debug = (os.environ.get(_SESSIONS_DEBUG_ENV) or "").strip() == "1"
     if not debug:
         rows = [row for row in rows if row.get("alive") is not False]
     if not rows:
