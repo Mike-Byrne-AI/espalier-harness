@@ -527,14 +527,18 @@ class TestBrief:
         assert capsys.readouterr().out == seat.compose_brief(clone, "box-feat", feat).text + "\n"
 
     def test_the_banner_line_is_the_short_form_of_the_same_brief(self, seat, clone):
+        """Its interval is read from the loop each form ends with, so the two
+        cannot drift. Dies to: an interval spelled apart from the template."""
         _dispatcher(clone, '"box"')
         worker = seat.compose_brief(clone, "box-feat", None)
         dispatcher = seat.compose_brief(clone, "box", None)
-        assert seat.brief_line(worker, "box-feat", "py -3") == (
-            "worker seat box-feat: /inbox, then /inbox board, then the worker tick every 10m; "
+        assert seat.brief_line(worker.role, "box-feat", "py -3") == (
+            "run /inbox, then /inbox board, then start the worker loop (/loop 10m); "
             "py -3 tools/cc/seat.py brief box-feat prints the first message")
-        assert seat.brief_line(dispatcher, "box") == (
-            "dispatcher seat box: /inbox, then /inbox board, then the board read every 15m")
+        assert worker.loop.startswith("/loop 10m ")
+        assert seat.brief_line(dispatcher.role, "box") == (
+            "run /inbox, then /inbox board, then start the board loop (/loop 15m)")
+        assert dispatcher.loop.startswith("/loop 15m ")
 
 
 # -- retire --------------------------------------------------------------------------

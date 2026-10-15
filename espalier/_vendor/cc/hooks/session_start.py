@@ -826,6 +826,29 @@ def _load_mail() -> Any:
     return mod
 
 
+def _load_seat() -> Any:
+    """``tools/cc/seat.py`` by path under a private alias, as ``_load_mail``:
+    the seat driver owns a seat's first message, and the `Orders:` line prints
+    its short form. None where it is not deployed beside the hooks."""
+    path = Path(__file__).resolve().parent.parent / "seat.py"
+    if not path.is_file():
+        return None
+    alias = "_session_start_seat"
+    mod = sys.modules.get(alias)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(alias, path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except BaseException:
+            sys.modules.pop(alias, None)   # a half-run module would answer the next caller wrong
+            raise
+    return mod
+
+
 def _seat_line(root: Path, mail: Any = None, *, source: str = "startup", deadline: float | None = None) -> str:
     """The banner's `Seat:` value: a linked worktree of a named clone that
     still answers the clone's name is given its own (``mail.name_this_worktree``:
@@ -949,7 +972,7 @@ def _engine_line(root: Path, deadline: float | None = None, *,
     )
 
 
-def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> str:
+def _mail_line(root: Path, deadline: float | None = None, mail: Any = None, read: dict | None = None) -> str:
     """The banner's `Mail:` value: the unread messages the other machines
     left, newest first, one headline per row (three, then "and N more"), with
     the tail that says whose text it is, and on the dispatcher seat the count
@@ -962,7 +985,9 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> s
     no name means no line and no spawn past the config read. ``deadline`` is
     the pull-request block's: every read here takes what is left of it, and
     a budget already spent costs the line. ``mail`` is the channel module,
-    injectable for tests."""
+    injectable for tests. ``read``, when given, is filled with what was read
+    (``machine``, ``by_machine``, ``unread``) for the `Orders:` line, which
+    reads no ref of its own."""
     mail = mail if mail is not None else _load_mail()
     if mail is None:
         return ""
@@ -996,6 +1021,8 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> s
         return "(no time left to read the mail refs; /inbox reads them)"
     by_machine, _skipped = mail.read_mail(root, timeout=left)
     pending = mail.unread(by_machine, mail.read_cursor(root), exclude_machine=machine)
+    if read is not None:
+        read.update(machine=machine, by_machine=by_machine, unread=len(pending))
     rows = [_ascii(mail.headline(m)) for m in reversed(pending)]
     try:
         asks = _asks_count(root, mail, machine, by_machine)
@@ -1028,6 +1055,54 @@ def _asks_count(root: Path, mail: Any, machine: str, by_machine: dict) -> str:
     n = len(asks)
     return (f"{n} unanswered ask{'s' if n != 1 else ''} (requests no ack names), "
             f"oldest {_age_text(asks[0].get('age_s'))}: /inbox board lists them")
+
+
+def _job_label(assign: dict) -> str:
+    """One job as the `Orders:` line names it: its lane, else its ids, else
+    its classes (an assign names at least one)."""
+    held = assign.get("re")
+    re_: dict = held if isinstance(held, dict) else {}
+    lane = str(re_.get("lane") or "")
+    if lane:
+        return lane
+    named = [str(x) for x in (re_.get("ids") or []) + (re_.get("classes") or [])]
+    return ", ".join(named) or "a job with no lane"
+
+
+def _orders_line(root: Path, read: dict, mail: Any = None, seat: Any = None, python: str | None = None) -> str:
+    """The banner's `Orders:` value, on a worker seat: where espalier.toml
+    names a dispatcher that is not this seat and the mail refs ``_mail_line``
+    read (``read``) hold live assigns for this seat, its name, how many jobs
+    with the first, its unread count, then the seat driver's short form of its
+    first message (``seat.brief_line``: the reads to start with and the worker
+    loop, and the command that prints the whole message). '' anywhere else: on
+    the dispatcher seat, with no job, where nothing was read, or where the
+    dispatcher setting is unusable. Reporter only, and no read or spawn of its
+    own: the refs are the mail line's, the setting is one file. ``mail``,
+    ``seat`` and ``python`` are injectable for tests."""
+    machine, by_machine = read.get("machine"), read.get("by_machine")
+    if not machine or not isinstance(by_machine, dict):
+        return ""
+    mail = mail if mail is not None else _load_mail()
+    setting = getattr(mail, "dispatcher_setting", None)
+    jobs_of = getattr(mail, "live_assignments", None)
+    if setting is None or jobs_of is None:
+        return ""
+    dispatcher = setting(root)[0]
+    if not dispatcher or dispatcher in (getattr(mail, "DISPATCHER_UNUSABLE", None), machine):
+        return ""
+    jobs = [a for a in jobs_of(by_machine, dispatcher)
+            if isinstance(a.get("re"), dict) and a["re"].get("seat") == machine]
+    if not jobs:
+        return ""
+    n, unread = len(jobs), int(read.get("unread") or 0)
+    head = (f"{_ascii(machine)}: {n} job{'s' if n != 1 else ''} from {_ascii(dispatcher)}, first "
+            f"{_ascii(_job_label(jobs[0]))[:80]}; {unread} unread")
+    seat = seat if seat is not None else _load_seat()
+    line = getattr(seat, "brief_line", None)
+    spelled = _hook_utils.python_command_hint() if python is None else python
+    hint = line("worker", machine, spelled) if callable(line) else "run /inbox, then /inbox board"
+    return f"{head}; {_ascii(hint)}"
 
 
 def _latest_run_per_check(rows: list) -> list:
@@ -3380,7 +3455,7 @@ def _permissions_line(root: Path) -> str:
 def _build_compact_context(
     root: Path, self_host: bool, integrity: str = "", loose: str = "",
     open_prs: str = "", merged_prs: str = "", mail: str = "", sessions: str = "",
-    permissions: str = "", merging: str = "", seat: str = "", engine: str = "",
+    permissions: str = "", merging: str = "", seat: str = "", engine: str = "", orders: str = "",
 ) -> str:
     """The mid-session COMPACT-orientation banner. Reshapes the normal banner:
     OMITS the MEMORY digest + the prior-session blueprint note (the compaction
@@ -3424,6 +3499,7 @@ def _build_compact_context(
         *([f"Seat:      {seat}\n"] if seat else []),
         *([f"Engine:    {engine}\n"] if engine else []),
         *([f"Mail:      {mail}\n"] if mail else []),
+        *([f"Orders:    {orders}\n"] if orders else []),
         f"Surface:   {surface_line}\n",
         # Tamper state, in the channel the session actually reads. Omitted when the
         # caller supplies nothing so the existing shorter-arity callers (tests, and
@@ -3511,6 +3587,7 @@ def _build_context(
     merging: str = "",
     seat: str = "",
     engine: str = "",
+    orders: str = "",
 ) -> str:
     """Assemble the SessionStart additionalContext banner. ``self_host`` is the
     once-computed value from main so is_self_host_repo is not re-probed here.
@@ -3523,7 +3600,7 @@ def _build_context(
     normal banner byte-identical."""
     if source == "compact":
         return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs, mail, sessions,
-                                      permissions, merging, seat=seat, engine=engine)
+                                      permissions, merging, seat=seat, engine=engine, orders=orders)
     name = repo_name(root, warn_label="session_start")
     branch = check_branch(root)
     status = _check_dirty(root)
@@ -3595,6 +3672,9 @@ def _build_context(
         # is named: headlines newest first, then the tail that says whose
         # text it is. Same omit-when-empty contract; read once in main.
         *([f"Mail:      {mail}\n"] if mail else []),
+        # A worker seat's jobs and the short form of its first message
+        # (_orders_line), from the refs the mail line read. Same contract.
+        *([f"Orders:    {orders}\n"] if orders else []),
         f"Memory:    {memory}\n",
         f"Blueprint: {blueprint}\n",
         f"Surface:   {surface_line}\n",
@@ -3894,11 +3974,19 @@ def _run_main() -> int:
     # reason: one bounded fetch, then local reads, each taking what the
     # pull-request block left; a box that names no machine gets at most the
     # opt-in line.
+    mail_read: dict = {}
     try:
-        mail_line = _mail_line(root, pr_deadline)
+        mail_line = _mail_line(root, pr_deadline, read=mail_read)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
         _hook_utils.advise_exc("session_start: mail scan failed", e)
         mail_line = ""
+    # A worker seat's orders, from the refs the mail line just read: its jobs,
+    # and the seat driver's short form of its first message. No read of its own.
+    try:
+        orders_line = _orders_line(root, mail_read)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _hook_utils.advise_exc("session_start: orders read failed", e)
+        orders_line = ""
 
     # The base branch's merge rules, one more bounded read under the same
     # deadline, AFTER the mail: the mail is the line other seats depend on, so
@@ -3927,7 +4015,7 @@ def _run_main() -> int:
         permissions=permissions_line,
         open_prs=open_prs_line, merged_prs=merged_prs_line, mail=mail_line,
         checkout=checkout_line, worktrees=worktrees_line, merging=merge_rules_line, seat=seat_line,
-        engine=engine_line,
+        engine=engine_line, orders=orders_line,
     )
 
     # Enforce size budget — truncate rather than flood context window.

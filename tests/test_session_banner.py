@@ -2749,6 +2749,114 @@ def _mail_message(i: int, text: str = "hello") -> dict:
     return {"id": f"id-{i}", "type": "note", "from": "win", "at": f"2026-10-0{i}T00:00:00Z", "re": {}, "text": text}
 
 
+def _real_mail():
+    spec = importlib.util.spec_from_file_location("_mail_for_orders", HOOKS_DIR.parent / "mail.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_mail_for_orders"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class TestOrdersLine:
+    """TP-701 B-5: a worker seat's banner names its jobs from the refs the
+    mail line read, then the seat driver's short form of its first message,
+    so the operator's first paste is not needed. Read on the real mail.py
+    fold and a real espalier.toml, never a stub of either."""
+
+    @staticmethod
+    def _assign(mail, seat: str, *, frm: str = "hub", **job) -> dict:
+        return mail.new_message(frm, "assign", f"to {seat}", seat=seat, **job)
+
+    def test_a_worker_with_live_jobs_is_given_its_orders(self, tmp_path):
+        """Dies to: counting another seat's jobs (3), or a worker's own
+        assign counting where a dispatcher is named."""
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+        by = {"hub": [self._assign(mail, "w", lane="lane/a"), self._assign(mail, "w", ids=["DEF-1"]),
+                      self._assign(mail, "other", lane="lane/z")],
+              "w": [self._assign(mail, "w", frm="w", lane="lane/self")]}
+        line = mod._orders_line(tmp_path, {"machine": "w", "by_machine": by, "unread": 2}, mail=mail, python="py -3")
+        assert line == ("w: 2 jobs from hub, first lane/a; 2 unread; run /inbox, then /inbox board, then start the "
+                        "worker loop (/loop 10m); py -3 tools/cc/seat.py brief w prints the first message")
+        assert line.isascii()
+
+    def test_no_line_on_the_dispatcher_seat_without_a_job_or_a_read_or_a_named_dispatcher(self, tmp_path):
+        """Dies to: the dispatcher check dropped (the dispatcher's own clone
+        would be ordered about), or a line from an unusable setting."""
+        mod, mail = _load(), _real_mail()
+        toml = tmp_path / "espalier.toml"
+        by = {"hub": [self._assign(mail, "w", lane="lane/a"), self._assign(mail, "hub", lane="lane/h")]}
+        read = {"machine": "w", "by_machine": by, "unread": 0}
+        assert mod._orders_line(tmp_path, read, mail=mail, python="") == ""          # no dispatcher named
+        toml.write_text('dispatcher = "hub"\n', encoding="utf-8")
+        assert mod._orders_line(tmp_path, {**read, "machine": "hub"}, mail=mail, python="") == ""
+        assert mod._orders_line(tmp_path, {**read, "machine": "x"}, mail=mail, python="") == ""   # no job
+        assert mod._orders_line(tmp_path, {}, mail=mail, python="") == ""                      # nothing read
+        toml.write_text('dispatcher = "Not A Name"\n', encoding="utf-8")
+        assert mod._orders_line(tmp_path, read, mail=mail, python="") == ""
+        toml.write_text('dispatcher = "hub"\n', encoding="utf-8")
+        release = mail.new_message("hub", "release", "", lane="lane/a")
+        assert mod._orders_line(tmp_path, {**read, "by_machine": {"hub": [*by["hub"], release]}}, mail=mail,
+                                python="") == ""                                                # released
+
+    def test_without_the_seat_driver_the_line_still_names_the_two_reads(self, tmp_path):
+        import types
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+        read = {"machine": "w", "by_machine": {"hub": [self._assign(mail, "w", classes=["C9"])]}, "unread": 1}
+        line = mod._orders_line(tmp_path, read, mail=mail, seat=types.SimpleNamespace(), python="py -3")
+        assert line == "w: 1 job from hub, first C9; 1 unread; run /inbox, then /inbox board"
+
+    def test_the_mail_line_hands_over_what_it_read(self, tmp_path):
+        mod = _load()
+        stub = _mail_stub(read_mail=lambda root, timeout=None: ({"win": [_mail_message(1)]}, {}))
+        read: dict = {}
+        mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub, read=read)
+        assert read["machine"] == "mac" and read["by_machine"] == {"win": [_mail_message(1)]} and read["unread"] == 1
+
+    def test_both_banners_carry_the_line_after_the_mail_only_when_given(self, tmp_path):
+        mod = _load()
+        assert "Orders:" not in mod._build_context(tmp_path, False, False, mail="m")
+        for source in ("startup", "compact"):
+            text = mod._build_context(tmp_path, False, False, source, mail="m", orders="w: 1 job")
+            assert "Orders:    w: 1 job\n" in text and text.index("Mail:") < text.index("Orders:"), source
+
+    def test_a_worker_clone_opens_on_its_orders_end_to_end(self, tmp_path):
+        """The wiring in main: the dispatcher clone sends an assign through a
+        scratch origin, and the worker clone's real SessionStart prints the
+        line. Dies to: main not passing the line to the builder, or the mail
+        line not handing over its read."""
+        from tests._git_oracle import _git_env
+        from tests._interpreter_hosts import HOOK_PYTHON
+
+        def git(cwd: Path, *args: str) -> None:
+            subprocess.run(["git", *args], cwd=cwd, env=_git_env(), check=True, capture_output=True, timeout=45)
+
+        origin = tmp_path / "origin.git"
+        git(tmp_path, "init", "--bare", "--quiet", "-b", "main", str(origin))
+        clones = {}
+        for name in ("hub", "w"):
+            path = tmp_path / name
+            git(tmp_path, "clone", "--quiet", str(origin), str(path))
+            for key, value in (("user.name", "t"), ("user.email", "t@example.invalid"),
+                               ("commit.gpgsign", "false"), ("espalier.machine", name)):
+                git(path, "config", key, value)
+            (path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+            clones[name] = path
+        mail = _real_mail()
+        mail.send(clones["hub"], self._assign(mail, "w", lane="lane/a"), say=lambda _s: None)
+        res = subprocess.run(
+            [HOOK_PYTHON, str(HOOKS_DIR / "session_start.py")],
+            input=json.dumps({"source": "startup", "session_id": "o-1"}), capture_output=True, text=True,
+            timeout=90, cwd=str(clones["w"]), check=False, encoding="utf-8",
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(clones["w"])},
+        )
+        assert res.returncode == 0, res.stderr
+        banner = json.loads(res.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert ("Orders:    w: 1 job from hub, first lane/a; 1 unread; run /inbox, then /inbox board, then start "
+                "the worker loop (/loop 10m)") in banner, banner
+
+
 class TestEngineLine:
     """The banner's `Engine:` line: in a linked worktree seat whose root holds
     the engine source, `python3` (the interpreter a tier runs) resolving

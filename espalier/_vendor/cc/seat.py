@@ -643,16 +643,17 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
                  loop)
 
 
-def brief_line(brief: Brief, seat: str, python: str = "") -> str:
-    """The short form the SessionStart banner's ``Orders:`` line prints: the
-    role, the two reads to start with, the loop's interval and what it reads,
-    and the command that prints the whole message (``python`` is the
-    interpreter spelling the caller resolved; '' leaves the command out)."""
-    loop = brief.loop.split(" ", 2)
-    every = loop[1] if len(loop) > 1 else ""
-    what = "the board read" if brief.role == "dispatcher" else "the worker tick"
+def brief_line(role: str, seat: str, python: str = "") -> str:
+    """The short form of the same brief, for the SessionStart banner's
+    ``Orders:`` line: the two reads to start with, the loop it ends with and
+    its interval, and the command that prints the whole message (``python``
+    is the interpreter spelling the caller resolved; '' leaves the command
+    out). Read from the templates alone, with no git, so a hook can afford it."""
+    loop = DISPATCHER_TICK if role == "dispatcher" else WORKER_TICK
+    every = loop.split(" ", 2)[1]
+    what = "the board loop" if role == "dispatcher" else "the worker loop"
     tail = f"; {python} tools/cc/seat.py brief {seat} prints the first message" if python else ""
-    return f"{brief.role} seat {seat}: /inbox, then /inbox board, then {what} every {every}{tail}"
+    return f"run /inbox, then /inbox board, then start {what} (/loop {every}){tail}"
 
 
 def cmd_brief(root: Path, seat: str) -> int:

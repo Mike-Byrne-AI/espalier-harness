@@ -120,10 +120,17 @@ an earlier build's heartbeat wrote -- is repaired the next time its session
 prompts, so a predecessor from before the pid landed is retired too once it
 has prompted again; one already closed is never repaired and ages out of the
 four-hour window instead. Both writers read the `cwd` they record through one
-resolver, so the same-tree comparison meets one spelling. Reporter only,
-omitted when nothing qualifies, and a window closed without `/handoff` keeps
-its marker until it ages out, which the line says (a `SessionEnd` hook,
-planned, is the full answer). And a fresh session (source
+resolver, so the same-tree comparison meets one spelling. Each marker also
+records whether Claude Code's session registry named that pid when it was
+written (`window`): only such a pid tells by its exit that the session ended,
+since on Windows the fallback (the hook's own parent) is an interpreter
+launcher that exits with the hook while the session runs on. The line leaves
+out a sibling whose registry-named pid is no longer running on this host, and
+names every sibling whose liveness cannot be told; `ESPALIER_SESSIONS_DEBUG=1`
+names the left-out ones too, each marked `pid gone`. Reporter only, omitted
+when nothing qualifies, and a window closed without `/handoff` whose pid the
+registry did not name keeps its marker until it ages out, which the line says
+(a `SessionEnd` hook, planned, is the full answer). And a fresh session (source
 `startup` or `clear`) that finds `cc/execution_plan.json` still `in_progress`
 opens the body with an `OPEN PLAN` section -- the task, the current step by
 its index (as `mark <index>` takes it), how long since the file changed, and
@@ -202,6 +209,19 @@ lists them`), counted from the refs already read with no spawn; a reader that
 fails costs that count and never the headlines. Reporter only, like the two
 lines above it. The compaction re-orient carries an unread count from the
 local refs with no fetch.
+
+On a worker seat -- `espalier.toml` names a dispatcher, and it is another
+machine -- whose local mail refs hold live assigns for this seat, an `Orders:`
+line follows `Mail:`: the seat's name, how many jobs and the first one's lane
+(or its ids), its unread count, then the short form of the seat's first
+message from the seat driver (`tools/cc/seat.py`): run `/inbox`, then `/inbox
+board`, then start the worker loop, and the command that prints the whole
+message (`<python> tools/cc/seat.py brief <seat>`, spelled with the host's
+interpreter). It reads the refs the mail line already read and spawns nothing
+of its own; on the dispatcher seat, a seat with no job, or a clone whose
+dispatcher setting is unusable there is no line. `seat.py launch <seat>` passes
+that first message as the session's prompt, so a seat launched through it needs
+no paste; the line is for one started by hand.
 
 And in a linked worktree of a clone that names a machine, before the mail is
 read, it gives the worktree a name of its own when it still answers the
