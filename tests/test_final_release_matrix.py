@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._source_segment import segment, source_lines
+
 # slow-exempt: the only direct child spawns are the DEF-670 seed pins' three
 # local git calls (init, add, commit) on a three-file scratch tree -- 0.55 s
 # for the three tests, measured 2026-09-13. The one genuinely slow test here,
@@ -541,7 +543,8 @@ def test_stage_two_seeds_git_after_asserting_the_archive_ships_none():
         n for n in _ast.walk(_ast.parse(src))
         if isinstance(n, _ast.FunctionDef) and n.name == "stage_source_archive"
     )
-    body = _ast.get_source_segment(src, fn) or ""
+    lines = source_lines(src)
+    body = segment(lines, fn) or ""
     assertion = body.find("extracted archive contains .git/")
     seed = body.find("_seed_git(")
     pytest_run = body.find('"pytest"')

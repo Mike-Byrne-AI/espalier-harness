@@ -125,6 +125,7 @@ import importlib.util as _ilu
 import re
 
 from _denied_form import every_form_is_denied
+from tests._source_segment import segment, source_lines
 
 _HOOKS = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 
@@ -216,7 +217,7 @@ class TestRelaunchHint:
         'BODY = "the denied form (`ESPALIER_MAINTENANCE_MODE=1 claude -p ...`) misleads; just run ESPALIER_MAINTENANCE_MODE=1 claude -p directly"',
         # a form feed on an EARLIER line: `str.splitlines()` breaks on it and
         # shifts every later line, so a slicer built on it reads the wrong
-        # line for this literal and misses the offender; `_lines_no_ff` does
+        # line for this literal and misses the offender; `source_lines` does
         # not break there (the `ast` rule), so the offender is read
         'X = 1\f\nBODY = "relaunch with ESPALIER_MAINTENANCE_MODE=1 claude now"',
     ])
@@ -240,16 +241,17 @@ class TestRelaunchHint:
         'X = 1\nY = 2\n',
     ])
     def test_the_slicer_reads_exactly_what_ast_get_source_segment_reads(self, src):
-        """The one-split slicer is a faithful copy of `get_source_segment`
-        (byte offsets, `_splitlines_no_ff` line ends): every string node's
-        segment is identical, including the shapes a char-offset or a
-        `str.splitlines()` draft mis-slices (red-team lane A, driven)."""
+        """The shared one-split slicer the scan uses (``tests/_source_segment.py``)
+        reads what `get_source_segment` reads (byte offsets, `_splitlines_no_ff`
+        line ends): every string node's segment is identical, including the
+        shapes a char-offset or a `str.splitlines()` draft mis-slices (red-team
+        lane A, driven)."""
         import ast
-        lines = _lines_no_ff(src)
+        lines = source_lines(src)
         nodes = [n for n in ast.walk(ast.parse(src))
                  if isinstance(n, ast.JoinedStr) or (isinstance(n, ast.Constant) and isinstance(n.value, str))]
         for node in nodes:
-            assert _segment(lines, node) == ast.get_source_segment(src, node), ast.dump(node)[:80]
+            assert segment(lines, node) == ast.get_source_segment(src, node), ast.dump(node)[:80]
 
     def test_the_scan_ignores_the_denied_form_and_the_helper_form(self):
         assert not _bare_relaunch_offenders('X = "do not launch (`ESPALIER_MAINTENANCE_MODE=1 claude -p ...`)"')
@@ -285,40 +287,11 @@ _CONCAT_SEAM_RE = re.compile(
 )
 
 
-# `ast.get_source_segment` re-splits the WHOLE module on every call (3.10's
-# `_splitlines_no_ff` is pure Python and unbounded; 3.13+ stops at the node's
-# line), so a scan that calls it once per string node is quadratic in the
-# module: 179.7 s on 3.10 and 18.7 s on 3.14 for the 12,397-line
-# `_bash_patterns.py`, a per-test timeout on the floor interpreter and an
-# xdist worker death (measured 2026-09-22 in a fresh clone). Split each module
-# ONCE and slice by the node's positions -- the rule `get_source_segment`
-# applies after its split. The line ends are `\r\n`, `\n` and `\r` and
-# nothing else, exactly `_splitlines_no_ff`'s: `str.splitlines()` also breaks
-# on `\f`, `\v`, `\x1c`-`\x1e`, `\x85`, `\u2028` and `\u2029` and would
-# shift every line after a form feed (the shapes row carries one).
-_LINE_NO_FF_RE = re.compile(r"(.*?(?:\r\n|\n|\r|$))")
-
-
-def _lines_no_ff(source: str) -> list[str]:
-    lines = _LINE_NO_FF_RE.findall(source)
-    if lines and lines[-1] == "":
-        lines.pop()
-    return lines
-
-
-def _segment(lines: list[str], node) -> str | None:
-    """The source text of ``node`` from a module split once by
-    :func:`_lines_no_ff` -- byte offsets, as the AST's columns are."""
-    try:
-        lineno, end_lineno = node.lineno - 1, node.end_lineno - 1
-        col, end_col = node.col_offset, node.end_col_offset
-    except (AttributeError, TypeError):
-        return None
-    if end_lineno == lineno:
-        return lines[lineno].encode("utf-8")[col:end_col].decode("utf-8")
-    first = lines[lineno].encode("utf-8")[col:].decode("utf-8")
-    last = lines[end_lineno].encode("utf-8")[:end_col].decode("utf-8")
-    return "".join([first, *lines[lineno + 1:end_lineno], last])
+# The scan below splits each module ONCE through the shared slicer
+# (``tests/_source_segment.py``): calling `ast.get_source_segment` once per
+# string node re-split the whole module every time, 179.7 s on 3.10 for the
+# 12,397-line `_bash_patterns.py`, a per-test timeout on the floor interpreter
+# and an xdist worker death (measured 2026-09-22 in a fresh clone).
 
 
 def _bare_relaunch_offenders(src: str) -> list[tuple[int, str]]:
@@ -327,23 +300,23 @@ def _bare_relaunch_offenders(src: str) -> list[tuple[int, str]]:
     evaluated value: an f-string's pieces arrive as separate ast.Constant
     nodes with the `{...}` gone, and a value-based scan passed against the
     exact pre-fix _speedbump line. Comments are not string nodes and are
-    never read. The module is split once (see `_lines_no_ff`)."""
+    never read. The module is split once (``tests/_source_segment.py``)."""
     import ast
 
     tree = ast.parse(src)
-    lines = _lines_no_ff(src)
+    lines = source_lines(src)
     out: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.JoinedStr) or (
             isinstance(node, ast.Constant) and isinstance(node.value, str)
         ):
-            segment = _segment(lines, node) or ""
-            joined = _CONCAT_SEAM_RE.sub("", segment)
+            seg = segment(lines, node) or ""
+            joined = _CONCAT_SEAM_RE.sub("", seg)
             if not _BARE_RELAUNCH_RE.search(joined):
                 continue
             if every_form_is_denied(joined, _P_FORM_RE):
                 continue  # every form the segment holds is the denied quote
-            out.append((node.lineno, segment))
+            out.append((node.lineno, seg))
     return out
 
 
