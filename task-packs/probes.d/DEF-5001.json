@@ -12,7 +12,7 @@
   "bench/end_to_end/scenarios/BCE-003-plan-guard-redirects-to-plan.yaml",
   "tests/fixtures/e2e_bench/bce002_stop_feedback.jsonl"
  ],
- "row_sha": "c0914cd68c7b",
- "text_sha": "46e817fddda6",
- "verified_2026_10_14": "STILL_OPEN (re-pinned value unchanged on 2026-10-14: review round 7 (both reviewers): fixing one member alone printed readings without the old signature and read STRIKE_CANDIDATE, so open now means any reading with fewer than two runs (member 2) or an exit 0 (member 1); the fourth reading confirms the stub's evidence. Driven: as written open; member 1 alone open; member 2 alone open; both members print the readings; four broken readings exit 3 with nothing on stdout)"
+ "row_sha": "9cdb8dffebdb",
+ "text_sha": "a10f419eeba0",
+ "verified_2026_10_14": "STILL_OPEN (re-pinned value unchanged on 2026-10-14: review round 9 (failure-mode, round-8 N7): the row's text names the retry check's new inconclusive routes, which the exit 0 now covers too; the probe and its value are unchanged)"
 }
