@@ -548,6 +548,7 @@ class TestBrief:
         _holds(clone, "memory/parallel-work-protocol.md")
         assert "revert first on a red main" in seat.compose_brief(clone, "box", clone).text
 
+    @pytest.mark.contract   # it reads a shipped command body (tests/test_marker_taxonomy.py)
     def test_the_adopter_phrases_name_steps_the_shipped_command_body_holds(self, seat):
         """The adopter tick points at /implement-task's steps by number: a
         step inserted into the shipped body would re-point every adopter
