@@ -171,16 +171,20 @@ that is away: a seat with a queue does not need it in real time.
 
 **The dispatcher's first read is the board's `seats:` and `asks:` lines**
 (`python3 tools/cc/board.py`, `TP-701` Wave A). `asks:` is every request no
-`ack` names, oldest first with its age: the answers owed, and on the
-dispatcher's clone the banner's `Mail:` line carries the count and the oldest
-age. A request that went moot is closed with an ack saying so, or it stays on
-the line. `seats:` is each machine's last mail and, for this clone's
-checkouts, the live sessions Claude Code's registry lists: two in one checkout
-are flagged (the state the `win-2` relaunch reached at 2026-10-15 02:00Z,
-caught then only by a seat reading its banner). Another machine's row is its
-last mail only; whether its session runs is not something the channel can
-say, so a quiet seat is asked, not presumed dead. Both were read by hand before
-(an ad-hoc census over every mail ref; the pids checked one by one).
+`ack` names, from every seat (the dispatcher's own outgoing ones included: a
+request names no addressee), oldest first with its full id and age; on the
+dispatcher seat the banner's `Mail:` line carries the count and the oldest
+age. A request that went moot is closed with an ack naming its full id and
+saying so, or it stays on the line. `seats:` is each seat name's last mail
+and, for this clone's checkouts, the live sessions Claude Code's registry
+lists under the name each checkout answers: two in one checkout are flagged
+and named by pid (the state the `win-2` relaunch reached at 2026-10-15 02:00Z,
+caught then only by a seat reading its banner). A row with no checkout here
+is its last mail only, and may be another machine, another clone or a
+worktree since removed; so a quiet seat is asked, or, where its worktree is
+gone, its claims and jobs are released, never presumed dead or alive. Both
+were read by hand before (an ad-hoc census over every mail ref; the pids
+checked one by one).
 
 **Compare a job's functions, not only its files, before assigning it.** Grep
 the pack task for the functions it edits and set them against what each seat's

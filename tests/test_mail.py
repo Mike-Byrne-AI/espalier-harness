@@ -95,6 +95,18 @@ class TestMessageShape:
         assert _msg(mail, "mac", "ack", "", ack="some-id")["ack"] == "some-id"
         assert _msg(mail, "mac", "release", "", lane="lane/x")["ack"] == ""
 
+    def test_an_ack_names_the_message_it_answers_never_a_lane(self, mail):
+        """A lane closes claims and jobs through a release; nothing reads a
+        lane-only ack, so one was accepted and answered nothing, and the
+        refusal text pointed at it (failure-mode review, TP-701 r1; 0 of 123
+        acks on the live refs were lane-only, 2026-10-15). Dies to: a lane
+        accepted in place of the id."""
+        with pytest.raises(mail.Unresolvable, match=r"an ack names the message it answers \(--ack <id>\)"):
+            _msg(mail, "mac", "ack", "done", lane="lane/x")
+        with pytest.raises(mail.Unresolvable) as refused:
+            _msg(mail, "mac", "ack", "done")
+        assert "--lane" not in str(refused.value)
+
     def test_a_note_or_request_needs_text_and_the_text_is_capped(self, mail):
         with pytest.raises(mail.Unresolvable, match="needs text"):
             _msg(mail, "mac", "request", "   ")
@@ -400,6 +412,16 @@ class TestTextFile:
         assert "latin.txt" in capsys.readouterr().err
         assert self._send(mail, monkeypatch, tmp_path, "--text-file", str(tmp_path / "gone.txt"), "--dry-run") == 1
         assert "gone.txt" in capsys.readouterr().err
+
+    def test_a_windows_saved_body_reads_with_lf_line_ends(self, mail, monkeypatch, tmp_path, capsys):
+        """Two seats are Windows boxes: a CRLF file carried every CR into the
+        body and paid one character per line against the cap (code review,
+        r1). Dies to: the line ends kept."""
+        body = tmp_path / "crlf.txt"
+        body.write_bytes(b"one\r\ntwo\r\n")
+        assert self._send(mail, monkeypatch, tmp_path, "--text-file", str(body), "--dry-run") == 0
+        out, err = capsys.readouterr()
+        assert json.loads(out)["text"] == "one\ntwo" and "body: 7 of" in err
 
     def test_the_cap_is_unchanged(self, mail, monkeypatch, tmp_path, capsys):
         long = tmp_path / "long.txt"

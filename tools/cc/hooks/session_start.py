@@ -939,8 +939,10 @@ def _engine_line(root: Path, deadline: float | None = None, *,
 def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> str:
     """The banner's `Mail:` value: the unread messages the other machines
     left, newest first, one headline per row (three, then "and N more"), with
-    the tail that says whose text it is -- or '' where nothing is unread after
-    a fetch that went through. A fetch that could not be made is said in the
+    the tail that says whose text it is, and on the dispatcher seat the count
+    of requests no ack names (``_asks_count``) -- or '' where nothing is
+    unread and no ask is counted after a fetch that went through. A fetch
+    that could not be made is said in the
     line, beside what was fetched before. Where this clone names no machine
     but already holds another machine's mail ref (a plain ``git fetch
     origin`` brings them in), the line says how to opt in; with no ref either,
@@ -976,7 +978,11 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> s
     by_machine, _skipped = mail.read_mail(root, timeout=left)
     pending = mail.unread(by_machine, mail.read_cursor(root), exclude_machine=machine)
     rows = [_ascii(mail.headline(m)) for m in reversed(pending)]
-    asks = _asks_count(root, mail, machine, by_machine)
+    try:
+        asks = _asks_count(root, mail, machine, by_machine)
+    except Exception as e:  # noqa: BLE001 — the count costs itself, never the headlines read above
+        _hook_utils.advise_exc("session_start: unanswered-asks count failed", e)
+        asks = ""
     if not rows:
         return " ".join(part for part in (asks, note) if part)
     line = _render_rows(rows) + "\n" + _PR_INDENT + _MAIL_TAIL + (f" {note}" if note else "")
@@ -984,12 +990,15 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None) -> s
 
 
 def _asks_count(root: Path, mail: Any, machine: str, by_machine: dict) -> str:
-    """On the dispatcher's clone (``dispatcher`` in espalier.toml names this
-    machine), how many requests no ack names and how old the oldest is: the
-    asks it owes an answer (TP-701 Wave A-1); '' on any other seat, with none
-    open, or where the deployed mail.py predates the reader. Every machine's
-    ref is counted, this one's own included, since the dispatcher's acks live
-    there. No spawn: the refs were read above, the setting is one file."""
+    """On the dispatcher seat (``dispatcher`` in espalier.toml names the
+    machine this checkout answers; the dispatcher clone's other worktree seats
+    get nothing), how many requests no ack names, from any seat, its own
+    outgoing ones included, and how old the oldest is (TP-701 Wave A-1); ''
+    on any other seat, with none open, or where the deployed mail.py predates
+    the reader. Every machine's ref is counted, this one's own included,
+    since the dispatcher's acks live there. No spawn: the refs were read
+    above, the setting is one file. The caller guards it, so a reader that
+    raises costs the count only."""
     setting = getattr(mail, "dispatcher_setting", None)
     reader = getattr(mail, "live_requests", None)
     if setting is None or reader is None or setting(root)[0] != machine:

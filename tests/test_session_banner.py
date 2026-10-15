@@ -3024,10 +3024,12 @@ class TestMailLine:
 
     def _asks_stub(self, machine: str, **over):
         seen: list = []
-        return _mail_stub(
+        fields = dict(
             machine_setting=lambda root, timeout=None: (machine, f"git config espalier.machine = {machine}"),
             dispatcher_setting=lambda root: ("mac", "espalier.toml sets dispatcher = mac"),
-            live_requests=lambda by: seen.append(by) or self._ASKS, **over), seen
+            live_requests=lambda by: seen.append(by) or self._ASKS)
+        fields.update(over)
+        return _mail_stub(**fields), seen
 
     def test_the_dispatchers_clone_counts_the_unanswered_asks(self, tmp_path):
         """TP-701 Wave A-1: the dispatcher's clone opens on how many requests no
@@ -3048,15 +3050,65 @@ class TestMailLine:
         assert rows[0] == 'win: note -- "hello"' and rows[1] == mod._PR_INDENT + mod._MAIL_TAIL
         assert rows[2] == mod._PR_INDENT + "2 unanswered asks (requests no ack names), oldest 2 d ago: /inbox board lists them"
 
+    def test_a_count_that_raises_costs_the_count_and_never_the_headlines(self, tmp_path):
+        """A present reader that raises (a skewed deploy, a signature drift)
+        lost the unread headlines with it (code review, r1). Dies to: the
+        count read unguarded inside the line."""
+        mod = _load()
+
+        def broken(by):
+            raise TypeError("live_requests() missing 1 required positional argument: 'now'")
+
+        stub, _ = self._asks_stub("mac", live_requests=broken,
+                                  read_mail=lambda root, timeout=None: ({"win": [_mail_message(1)]}, {}))
+        mod._hook_utils.take_advisories()
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        assert line == 'win: note -- "hello"\n' + mod._PR_INDENT + mod._MAIL_TAIL
+        said = mod._hook_utils.take_advisories()
+        assert any("unanswered-asks count failed: TypeError" in s for s in said), said
+
+    def test_the_count_reads_the_real_modules_ages(self, tmp_path):
+        """The stubbed tests pin the rendering; this one feeds the real
+        mail.py's fold, so a rename of the age key cannot leave the banner
+        printing "oldest unknown" under green stubs (failure-mode review, r1)."""
+        import importlib.util
+        import re
+        import types
+
+        spec = importlib.util.spec_from_file_location("mail_for_banner_test", HOOKS_DIR.parent / "mail.py")
+        real = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = real
+        spec.loader.exec_module(real)
+        from datetime import datetime, timezone
+        t = datetime(2026, 10, 1, 12, 0, 0, tzinfo=timezone.utc)
+        asked = real.new_message("win", "request", "please look", now=t)
+        answered = real.new_message("win", "request", "done one", now=t)
+        ack = real.new_message("mac", "ack", "done", ack=answered["id"], now=t)
+        by_machine = {"win": [asked, answered], "mac": [ack]}
+        stub = types.SimpleNamespace(
+            machine_setting=lambda root, timeout=None: ("mac", "named"),
+            dispatcher_setting=lambda root: ("mac", "named"),
+            fetch_mail=lambda root, timeout: (True, ""),
+            read_mail=lambda root, timeout=None: (by_machine, {}),
+            read_cursor=lambda root: {}, unread=lambda by, cursor, exclude_machine: [],
+            headline=real.headline, live_requests=real.live_requests)
+        line = _load()._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
+        assert re.fullmatch(r"1 unanswered ask \(requests no ack names\), oldest \d+ d ago: /inbox board lists them",
+                            line), line
+
     def test_an_older_mail_module_costs_the_count_and_nothing_else(self, tmp_path):
         """A deployed mail.py from before live_requests: the line renders as
-        it did. Dies to: the new reader called unguarded."""
+        it did, and quietly (an expected older module is no fault to warn
+        about every session). Dies to: the new reader reached unguarded by
+        getattr, which the count's own guard would then report each session."""
         mod = _load()
         stub = _mail_stub(machine_setting=lambda root, timeout=None: ("mac", "named"),
                           dispatcher_setting=lambda root: ("mac", "named"),
                           read_mail=lambda root, timeout=None: ({"win": [_mail_message(1)]}, {}))
+        mod._hook_utils.take_advisories()
         line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=stub)
         assert line == 'win: note -- "hello"\n' + mod._PR_INDENT + mod._MAIL_TAIL
+        assert mod._hook_utils.take_advisories() == []
 
     def test_the_banner_carries_the_line_after_merged_only_when_given(self, tmp_path):
         mod = _load()

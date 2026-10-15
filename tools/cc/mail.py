@@ -51,7 +51,7 @@ re-open it):
 Verbs::
 
     python tools/cc/mail.py send --type claim --lane lane/x --path tools/cc/x.py --text "..."
-    python tools/cc/mail.py send --type request --lane lane/x --text-file body.txt [--dry-run]
+    python tools/cc/mail.py send --type request --lane lane/x --text-file /tmp/body.txt [--dry-run]
     python tools/cc/mail.py inbox [--all] [--mark-read] [--no-fetch] [--json]
     python tools/cc/mail.py claims [--no-fetch] [--json]
     python tools/cc/mail.py send --type assign --seat win --lane "the pack's wave B" --class C13
@@ -213,8 +213,13 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     ack = (ack or "").strip()
     if type_ == "claim" and not (lane or norm_paths or norm_classes or norm_ids):
         raise Unresolvable("a claim names a lane, a class, a path or a row id (--lane, --class, --path, --id)")
-    if type_ in ("release", "ack") and not (ack or lane):
-        raise Unresolvable(f"a {type_} names the message it answers (--ack <id>) or the lane it closes (--lane)")
+    if type_ == "release" and not (ack or lane):
+        raise Unresolvable("a release names the message it answers (--ack <id>) or the lane it closes (--lane)")
+    if type_ == "ack" and not ack:
+        # Only an id closes anything an ack answers (live_requests pairs on it);
+        # a lane closes claims and jobs through a release. A lane-only ack was
+        # accepted and answered nothing (failure-mode review, TP-701 r1).
+        raise Unresolvable("an ack names the message it answers (--ack <id>); a lane is closed by a release")
     seat = (seat or "").strip()
     if seat and type_ != "assign":
         raise Unresolvable(f"a seat belongs to an assign, not a {type_}")
@@ -465,14 +470,15 @@ def age_seconds(message: dict, now: datetime | None = None) -> int | None:
 
 def live_requests(by_machine: dict[str, list[dict]], *, now: datetime | None = None) -> list[dict]:
     """The requests no ``ack`` message answers, oldest first, each a copy of
-    the request with ``age_s`` (:func:`age_seconds`): the unanswered asks. An
-    ack answers the request whose id its ``ack`` field names; a note or a
-    release carrying the id does not, and an ack naming anything else is no
-    one's answer here (on the live record 37 of 92 acks answered a note, an
-    ack or a claim, read 2026-10-15). Every machine's ref is read, the
-    asker's own included: an asker may close its own request, and the
-    dispatcher's acks live on its own ref. Ordered as the claims fold is: the
-    stamp, the machine, the position in its file."""
+    the request with ``age_s`` (:func:`age_seconds`): the unanswered asks,
+    from every seat, the dispatcher's own outgoing ones included (a request
+    names no addressee). An ack answers the request whose FULL id its ``ack``
+    field names; a note, a release or an assign carrying the id does not, and
+    an ack naming anything else is no one's answer here (on the live record
+    37 of 92 acks answered a note, an ack or a claim, read 2026-10-15). Every
+    machine's ref is read, the asker's own included: an asker may close its
+    own request, and the dispatcher's acks live on its own ref. Ordered as
+    the claims fold is: the stamp, the machine, the position in its file."""
     answered = {str(m.get("ack") or "") for messages in by_machine.values() for m in messages
                 if m.get("type") == "ack"}
     asks: list[tuple[str, str, int, dict]] = []
@@ -1061,7 +1067,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _read_text_file(path: str) -> str:
     """``send --text-file``: the whole file as UTF-8 text (a byte-order mark is
-    read); a file that cannot be read, or is not UTF-8, refuses by its name."""
+    read), CRLF read as LF so a body saved on Windows carries no CR and pays
+    no extra character per line against the cap; a file that cannot be read,
+    or is not UTF-8, refuses by its name."""
     try:
         raw = Path(path).read_bytes()
     except OSError as exc:
@@ -1069,7 +1077,7 @@ def _read_text_file(path: str) -> str:
     text, problem = decode_text_or_problem(raw)
     if problem:
         raise Unresolvable(f"--text-file {path}: {problem}")
-    return text
+    return text.replace("\r\n", "\n")
 
 
 def _print_message(m: dict) -> None:
