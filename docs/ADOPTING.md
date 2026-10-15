@@ -34,6 +34,17 @@ examples, distill *your* footguns, or calibrate FACT/INFERENCE/SPECULATION
 — those are reading-and-judgment tasks. That is exactly why grounding is
 agent-driven (`/analyze`), not a script.
 
+## The sandbox posture (macOS, Linux, WSL2)
+
+Where Claude Code's Bash sandbox is on, `init` and `upgrade` can put the
+harness zones and the secret paths behind it: `python -m espalier init .`
+prints the posture, `--sandbox-posture` writes it, and `espalier doctor .`
+reports the state. It is a shell layer beside `write_guard`, never a
+replacement for its path check on the file tools, and it refuses some of
+the harness's own commands from inside a session. The deployed
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md) ("The sandbox refused a command")
+has what it writes, what it refuses and how to read it.
+
 ## See also
 
 - [QUICKSTART.md](QUICKSTART.md) — install + verify walkthrough

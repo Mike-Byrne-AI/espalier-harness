@@ -556,6 +556,27 @@ Pack budgets on this repository have run about 2.7 times over on one measured pa
 - Earn-the-red: per wave, against the mutation its Implementation names
 - Red-team: per wave; authoring review not yet run
 - Reach: see Reach; no row closed at authoring
+- Wave A: LANDED 2026-10-15 (#231, b57f859, seat air-work). A-0: item 2 confirmed the pack's
+  refuting result (acks also answer notes and claims, so the asks line pairs on the request's full
+  id); item 3 measured on #211 (a pending optional check reads UNSTABLE for about 25 s, BLOCKED for
+  the first ten). Nine review rounds, both reviewers on snapshot clones with edits frozen, no
+  blocker after round 1, SHOULD yields 8, 3, 1, 2, 1, 3/1, 4/2, 4/3, then the convergence exit;
+  the bare-clone text re-specified by measurement to one change and no printed order. The full
+  tier with `--base` on the tree merged with 97d8d4d (parallel leg 21,932 tests, then the serial
+  leg); archive probe 274 passed on the three lane test files. Also landed: `mail send
+  --text-file`, an ack needs `--ack`, a checkout's seat is the name it answers, and `DEF-5002`
+  filed (five `machine_setting` callers read an unread name as none; fix routed after this wave).
+- Wave B part 1: LANDED 2026-10-15 (#230, 97d8d4d, seat win-2). B-1 `checkout_sync.sessions_in`
+  and occupancy (the deepest registered checkout, normcased paths, a reused pid checked by its
+  start time); B-2 `tools/cc/seat.py` `list`, `launch`, `retire` (retire releases from inside the
+  worktree, option (a); refuses a seat holding jobs unless `--return-jobs`); B-3 `open`, `handoff`,
+  `lane` and `catch-up` refuse two live sessions in their checkout, `ESPALIER_SHARED_CHECKOUT_OK`
+  the recorded override. B-0's four oracles driven on Windows (CLI 2.1.300): `--worktree` re-enters
+  by name but leaves the worktree locked after `-p`; drive-letter case differs across registry
+  entries. Both reviewers REQUEST CHANGES on 8e9d746, one fix batch 2e8e597; the full tier local in
+  24 file groups (21,500 passed, 1,088 serial, one box-local red), archive probe 336. `DEF-1175`
+  repinned (the plan guard's site joined). B-4 to B-6 are a second lane now that Wave A has merged;
+  `mail.py send --as` for a release is a row from win-2's block.
 - Wave D: DONE 2026-10-15 (01:50 EDT), read-only, by the dispatcher seat with eight Opus agents (one
   finder per seat on the pull request bodies, one refuter per seat on the mail refs). Report
   `reports/completion-audit-2026-10.md` on the dispatcher's box (`reports/` is gitignored on this

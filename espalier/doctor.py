@@ -1347,6 +1347,33 @@ def _check_stop_gate_posture(repo_root: Path) -> tuple[list[str], list[str]]:
     return [f"stop_gate: Gate 1 is off (ESPALIER_STOP_GATE=light, the default); under full it {what}{tail}"], []
 
 
+def _check_sandbox_posture(repo_root: Path) -> tuple[list[str], list[str], list[str]]:
+    """Claude Code's Bash sandbox and the harness's posture in it, as
+    ``(info, warnings, next steps)``: one info line on native Windows (there
+    is no sandbox; the location layer is the after-check and write_guard's
+    path check), else the state (off, the default, or on and from which
+    file), the derived deny entries present or missing, the user scope's
+    ``allowUnsandboxedCommands`` (read through ``CLAUDE_CONFIG_DIR`` or the
+    home, never written), and the one line on what the posture is not. A
+    warning, each with its own step, only when the sandbox is on and entries
+    are missing or a key is not the shape the sandbox reads, or when the
+    derivation cannot read the deployed guard's roster (named, never a silent
+    empty list: that guard's own secret-read deny is then in doubt too).
+    ``_host_is_windows`` is the seam tests patch."""
+    from espalier import sandbox_posture as _sandbox_posture
+
+    py = _remedy_py()
+    if _host_is_windows():
+        # No sandbox to posture for: the one line, without reading a roster.
+        return _sandbox_posture.doctor_lines(_sandbox_posture.SandboxState(supported=False), remedy_py=py)
+    lists, why_not = _sandbox_posture.posture_or_refusal(repo_root)
+    if lists is None:
+        warning, step = _sandbox_posture.derivation_warning(why_not or "", remedy_py=py)
+        return [], [warning], [step]
+    state = _sandbox_posture.read_state(repo_root, posture=lists, host_is_windows=False)
+    return _sandbox_posture.doctor_lines(state, remedy_py=py)
+
+
 def _check_package_manager(repo_root: Path) -> list[str]:
     """A warning when the root holds lockfiles of two or more different Node
     package managers: the commands the harness infers then fall back to npm
@@ -3001,6 +3028,13 @@ def run_doctor_check(
     gate_info, gate_warnings = _check_stop_gate_posture(repo_root)
     info.extend(gate_info)
     warnings.extend(gate_warnings)
+    # The sandbox posture: none on native Windows, off (the default) or on,
+    # with the derived deny entries present or missing and the user scope's
+    # unsandboxed retry; a warning, each with its own step, when the sandbox is
+    # on and entries are missing or malformed, or the guard's roster is gone.
+    posture_info, posture_warnings, posture_steps = _check_sandbox_posture(repo_root)
+    info.extend(posture_info)
+    warnings.extend(posture_warnings)
     # What /recall reaches here, from the deployed hook (DEF-1087): an info row.
     info.extend(_check_recall_corpus(repo_root))
     # Every wired hook starts: one FAIL per hook that
@@ -3022,6 +3056,8 @@ def run_doctor_check(
             "ESPALIER_STOP_GATE_TEST_CMD=<your test command> in the shell that launches "
             "Claude Code, so Gate 1 runs your suite",
         )
+    for step in posture_steps:
+        _append_step(next_steps, step)
     warnings.extend(config_warnings)
     if config_warnings:
         _append_step(

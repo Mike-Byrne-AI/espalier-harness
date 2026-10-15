@@ -1006,6 +1006,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_utf8_text_io",
             "test_managed_cleanup_parity",
             "test_doctor",
+            # TP-476 Wave B-1: drives init, upgrade and doctor on a scratch repo
+            # for the sandbox posture (the deny lists derived from the rosters).
+            "test_sandbox_posture",
             "test_recovery",
             "test_scanners",
             "test_session_resume",
@@ -2242,8 +2245,13 @@ def harness_repo(python_repo):
         # oracle keys on "file on disk but event unwired".
         "plan_guard.py", "config_guard.py",
     ]:
+        # The guard stub carries a one-entry secret roster: the sandbox
+        # posture's denyRead derivation reads it by AST, and a guard with no
+        # roster is a doctor warning on every POSIX run of this fixture.
+        roster = ('_SECRET_PATH_LABEL = {"env": ".env / .env.*"}\n'
+                  if hook == "write_guard.py" else "")
         (hooks_dir / hook).write_text(
-            "#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n", encoding="utf-8"
+            "#!/usr/bin/env python3\nimport sys\n" + roster + "sys.exit(0)\n", encoding="utf-8"
         )
 
     # ── Fingerprint AFTER all surface files are present ───────────────
