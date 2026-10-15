@@ -58,8 +58,8 @@ def _roster_source(tmp_path: Path, labels: dict[str, str], name: str = "write_gu
     return path
 
 
-def _lists(deny_write: list[str], deny_read: list[str]) -> dict[str, list[str]]:
-    return {"denyWrite": deny_write, "denyRead": deny_read}
+def _lists(deny_write: list[str], deny_read: list[str], allow_read: list[str] | None = None) -> dict[str, list[str]]:
+    return {"denyWrite": deny_write, "denyRead": deny_read, "allowRead": allow_read or []}
 
 
 class TestTheDenyReadDerivation:
@@ -113,6 +113,41 @@ class TestTheDenyReadDerivation:
         assert sp.deny_read_entries(root=tmp_path) == ["./only.txt", "./**/only.txt"]
         vendored = sp.write_guard_source(tmp_path / "elsewhere")
         assert vendored.is_file() and "_vendor" in vendored.parts
+
+
+class TestTheAllowReadDerivation:
+    """The guard allows a read of the dotenv template files (its
+    ``_DOTENV_TEMPLATE_SUFFIXES``, DEF-816), which the ``denyRead`` glob
+    would refuse at the OS; the dispatcher settled (air c3a5c0) that they
+    become ``allowRead`` entries derived from that tuple, under the sandbox's
+    documented narrower-allow rule for reads, flagged not driven."""
+
+    def test_the_live_guards_four_suffixes_yield_eight_entries(self):
+        assert sp.allow_read_entries(LIVE_GUARD) == [
+            "./.env.example", "./**/.env.example", "./.env.sample", "./**/.env.sample",
+            "./.env.template", "./**/.env.template", "./.env.dist", "./**/.env.dist",
+        ]
+
+    def test_the_entries_follow_the_guards_tuple(self, tmp_path):
+        source = _roster_source(tmp_path, {"env": ".env"})
+        source.write_bytes(source.read_bytes() + b'_DOTENV_TEMPLATE_SUFFIXES = (".example", ".local")\n')
+        assert sp.allow_read_entries(source) == ["./.env.example", "./**/.env.example",
+                                                 "./.env.local", "./**/.env.local"]
+
+    def test_a_guard_without_the_tuple_allows_none(self, tmp_path):
+        assert sp.allow_read_entries(_roster_source(tmp_path, {"env": ".env"})) == []
+
+    def test_a_tuple_that_is_not_suffix_strings_is_refused_by_name(self, tmp_path):
+        source = _roster_source(tmp_path, {"env": ".env"})
+        source.write_bytes(source.read_bytes() + b'_DOTENV_TEMPLATE_SUFFIXES = ("the example file",)\n')
+        with pytest.raises(ValueError, match="_DOTENV_TEMPLATE_SUFFIXES"):
+            sp.allow_read_entries(source)
+
+    def test_the_posture_carries_the_list_and_describe_says_it_is_not_driven(self, tmp_path):
+        found = sp.posture(tmp_path)
+        assert found.lists["allowRead"] == sp.allow_read_entries(root=tmp_path)
+        text = "\n".join(sp.describe(found, written=False, prefix="[init]", remedy_py=PY))
+        assert "allowRead re-opens the dotenv template files" in text and "not yet driven" in text
 
 
 def _hook_utils(monkeypatch, self_host: bool):
@@ -206,7 +241,7 @@ class TestThePosture:
                                                                                "WSL2 skip a denyWrite entry "
                                                                                "that holds one"]
         assert found.lists["denyRead"][0] == "./.env" and "_vendor" in found.source
-        assert found.total == len(found.lists["denyWrite"]) + len(found.lists["denyRead"])
+        assert found.total == sum(len(found.lists[name]) for name in ("denyWrite", "denyRead", "allowRead"))
 
     def test_a_roster_less_guard_is_a_refusal_with_its_reason_never_a_raise(self, tmp_path):
         hooks = tmp_path / "tools" / "cc" / "hooks"
@@ -271,7 +306,7 @@ class TestTheMergeKeepsTheOperatorsKeys:
         settings = claude / "settings.json"
         settings.write_text(json.dumps({"permissions": {"allow": ["Read"]}, "sandbox": {"enabled": False}}),
                             encoding="utf-8")
-        posture = _lists(["./tools/cc"], ["./.env"])
+        posture = {"denyWrite": ["./tools/cc"], "denyRead": ["./.env"]}  # an empty list is never created
         result = merge_hooks_into_settings(settings, repo_root=tmp_path, sandbox_posture=posture)
         assert result.status == MERGE_WIRED and result.event_count > 0
         assert result.posture_added == ("denyWrite ./tools/cc", "denyRead ./.env")
@@ -290,7 +325,7 @@ class TestTheMergeKeepsTheOperatorsKeys:
         settings = claude / "settings.json"
         settings.write_text(json.dumps(fresh_settings(tmp_path, "workflow")), encoding="utf-8")
         assert merge_hooks_into_settings(settings, repo_root=tmp_path).status == MERGE_ALREADY
-        posture = _lists(["./tools/cc"], ["./.env"])
+        posture = {"denyWrite": ["./tools/cc"], "denyRead": ["./.env"]}
         first = merge_hooks_into_settings(settings, repo_root=tmp_path, sandbox_posture=posture)
         assert first.status == MERGE_WIRED and first.posture_added == ("denyWrite ./tools/cc", "denyRead ./.env")
         assert first.event_count == 0
@@ -357,6 +392,7 @@ class TestInitWritesThePostureOnlyOnTheFlag:
         fs = body["sandbox"]["filesystem"]
         assert fs["denyWrite"] == sp.deny_write_entries(repo)
         assert fs["denyRead"] == sp.deny_read_entries(root=repo)
+        assert fs["allowRead"] == sp.allow_read_entries(root=repo) and fs["allowRead"]
         assert "enabled" not in body["sandbox"]
         assert "written to .claude/settings.json" in capsys.readouterr().out
 

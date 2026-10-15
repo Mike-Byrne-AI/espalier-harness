@@ -483,8 +483,12 @@ or `checkout` that touches `tools/cc/` (it stops with `unable to unlink old`,
 measured on macOS), `espalier upgrade --execute` over the hook files or
 `.claude/settings.json`, and on the source tree the two `sync_*` scripts.
 Any read of a secret path, by any process: your own test suite's dotenv
-loader included, and the dotenv template files (`.env.example` and its
-siblings), which `write_guard` allows and the sandbox's glob does not.
+loader included. The dotenv template files (`.env.example` and the other
+suffixes the guard allows) are re-opened by `allowRead` entries derived from
+the guard's own suffix tuple, under the sandbox's narrower-allow rule for
+reads; that pairing is not yet driven on a live sandbox, and if an exact
+allow turns out not to narrow a glob deny, the glob stays and this page says
+so instead.
 Outside the project tree the posture reaches nothing (`~/.aws/credentials`
 is Claude Code's own `sandbox.credentials` setting). Run the refused
 command from a terminal outside the session, or let the unsandboxed retry

@@ -24,10 +24,13 @@ are derived here and never copied:
   has none yet), parsed from the source by AST so the engine imports no hook;
   ``' / '`` splits a label that names two spellings, and each spelling is
   written at the project root and anywhere below it, since the guard matches
-  by name wherever the file sits. The guard's exemption of the dotenv
-  template suffixes is not expressed here yet (an open question for the
-  dispatcher), so a sandboxed read of a template file is refused where the
-  guard would allow it; the docs say so.
+  by name wherever the file sits.
+* ``allowRead``: the dotenv template files the guard exempts (its own
+  ``_DOTENV_TEMPLATE_SUFFIXES``, parsed the same way), re-opened under the
+  glob deny by the documented narrower-allow rule for read rules. Not yet
+  driven on a live sandbox: if the Mac drive shows an exact ``allowRead``
+  does not narrow a glob ``denyRead``, the glob stays and the divergence is
+  documented instead.
 
 Every entry is ``./``-relative, which Claude Code resolves against the
 project root for a project settings file (and against ``~/.claude`` for a
@@ -61,9 +64,13 @@ SANDBOX_KEY = "sandbox"
 FILESYSTEM_KEY = "filesystem"
 DENY_WRITE = "denyWrite"
 DENY_READ = "denyRead"
-LISTS: tuple[str, ...] = (DENY_WRITE, DENY_READ)
-#: The roster the ``denyRead`` derivation parses out of the guard's source.
+ALLOW_READ = "allowRead"
+LISTS: tuple[str, ...] = (DENY_WRITE, DENY_READ, ALLOW_READ)
+#: The roster the ``denyRead`` derivation parses out of the guard's source,
+#: and the suffix tuple the ``allowRead`` derivation parses beside it.
 ROSTER_NAME = "_SECRET_PATH_LABEL"
+TEMPLATE_SUFFIXES_NAME = "_DOTENV_TEMPLATE_SUFFIXES"
+DOTENV_NAME = ".env"
 GUARD_REL = "tools/cc/hooks/write_guard.py"
 #: What the hook keeps for itself: the harness's own shell commands write
 #: these (the plan and blueprints under cc/, the two manifests), and the
@@ -135,6 +142,31 @@ def secret_roster(source: Path) -> dict[str, str]:
     )
 
 
+def template_suffixes(source: Path) -> tuple[str, ...]:
+    """``_DOTENV_TEMPLATE_SUFFIXES`` as the guard's source declares it, by AST:
+    the dotenv names the guard allows a read of. ``()`` when the guard has no
+    such tuple (one from before the exemption, which then allows none);
+    refused by name when it is there and not a literal sequence of strings."""
+    source = Path(source)
+    text = source.read_text(encoding="utf-8", errors="replace")
+    tree = ast.parse(text, filename=str(source))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(t, ast.Name) and t.id == TEMPLATE_SUFFIXES_NAME for t in node.targets):
+            continue
+        try:
+            value = ast.literal_eval(node.value)
+        except ValueError as exc:
+            raise ValueError(f"{source}: {TEMPLATE_SUFFIXES_NAME} is not a literal ({exc})") from exc
+        if not isinstance(value, (tuple, list)) or not all(
+            isinstance(s, str) and _SPELLING_RE.match(s) for s in value
+        ):
+            raise ValueError(f"{source}: {TEMPLATE_SUFFIXES_NAME} is not a sequence of suffix strings")
+        return tuple(value)
+    return ()
+
+
 def _relative(raw: str) -> str | None:
     """``./``-relative spelling of a roster entry; ``None`` for an empty one."""
     entry = raw.strip().replace("\\", "/")
@@ -164,6 +196,25 @@ def deny_read_entries(source: Path | None = None, *, root: Path | None = None) -
                 rel = _relative(form)
                 if rel is not None and rel not in out:
                     out.append(rel)
+    return out
+
+
+def allow_read_entries(source: Path | None = None, *, root: Path | None = None) -> list[str]:
+    """Two ``./``-relative paths per template suffix the guard exempts, the
+    dotenv name plus the suffix at the project root and anywhere below it:
+    the files the glob ``denyRead`` would otherwise refuse and the guard
+    allows. Empty on a guard with no suffix tuple."""
+    if source is None:
+        if root is None:
+            raise TypeError("allow_read_entries needs the guard's source or the tree's root")
+        source = write_guard_source(root)
+    out: list[str] = []
+    for suffix in template_suffixes(source):
+        name = f"{DOTENV_NAME}{suffix}"
+        for form in (name, f"**/{name}"):
+            rel = _relative(form)
+            if rel is not None and rel not in out:
+                out.append(rel)
     return out
 
 
@@ -261,6 +312,7 @@ def posture(root: Path) -> Posture:
     lists = {
         DENY_WRITE: deny_write_entries(root, dropped=dropped),
         DENY_READ: deny_read_entries(source),
+        ALLOW_READ: allow_read_entries(source),
     }
     return Posture(lists=lists, dropped=dropped, source=str(source))
 
@@ -354,6 +406,9 @@ def describe(posture: Posture, *, written: bool, prefix: str, remedy_py: str) ->
         lines.append(f"{prefix}   {name}: " + (", ".join(posture.lists.get(name, [])) or "(none)"))
     for item in posture.dropped:
         lines.append(f"{prefix}   left out of denyWrite, from protected_paths: {item}")
+    if posture.lists.get(ALLOW_READ):
+        lines.append(f"{prefix}   allowRead re-opens the dotenv template files under the denyRead glob by the "
+                     "sandbox's narrower-allow rule for reads (not yet driven on a live sandbox)")
     lines.append(f"{prefix}   a shell layer beside write_guard where the sandbox is on (macOS, Linux, WSL2; "
                  "none on native Windows), for every process a sandboxed command starts; the Write, Edit "
                  f"and NotebookEdit tools run outside it; see {DOC}")

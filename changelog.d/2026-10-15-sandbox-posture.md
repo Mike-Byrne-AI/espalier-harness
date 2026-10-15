@@ -25,9 +25,11 @@
   macOS: `denyWrite` holds for shell writes and `git checkout` and not for
   the `Write` tool, so the posture is a shell layer beside `write_guard`,
   never a replacement for its path check on `Write`, `Edit` and
-  `NotebookEdit`; `denyRead` itself is not yet driven, and the dotenv
-  template files the guard allows are refused by its glob. The deployed
-  `docs/TROUBLESHOOTING.md` has what it refuses.
+  `NotebookEdit`. The dotenv template files the guard allows are re-opened by
+  `allowRead` entries derived from the guard's own suffix tuple under the
+  sandbox's narrower-allow rule for reads; `denyRead` and that pairing are
+  not yet driven on a live sandbox. The deployed `docs/TROUBLESHOOTING.md`
+  has what it refuses.
 - **`doctor` reports the sandbox in three states.** On native Windows, that
   there is no sandbox and the location layer is the after-check and the
   guard's path check; otherwise whether the sandbox is off (the default) or
