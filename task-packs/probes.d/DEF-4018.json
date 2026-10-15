@@ -1,10 +1,11 @@
 {
  "id": "DEF-4018",
- "subject": "tests/test_ledger_fragments.py",
- "cmd": "python3 -c \"import subprocess,pathlib,re;fs=subprocess.run(['git','ls-files','.claude','memory','docs','README.md','CONTRIBUTING.md','CLAUDE.md','task-packs/CLAUDE.md'],capture_output=True,text=True).stdout.split();print(sum(1 for f in fs if f.endswith(('.md','.js')) and '/session-log.d/' not in f and re.search(r'FORWARD_LEDGER[.]md|LEDGER_PROBES[.]json',t:=pathlib.Path(f).read_text(encoding='utf-8',errors='replace')) and not re.search(r'ledger[.]d|probes[.]d|_record_fragments[.]py',t)))\"",
- "open_value": "12",
+ "subject": "tests/test_documented_claims.py",
+ "cmd": "python3 -c \"import subprocess,pathlib,re;B=chr(96)*3;fs=subprocess.run(['git','ls-files','.claude','memory','docs','README.md','CONTRIBUTING.md','CLAUDE.md','task-packs/CLAUDE.md'],capture_output=True,text=True).stdout.split();fe=re.compile('(?m)^[ ]*'+B+'(?s:.*?)^[ ]*'+B+'.*$');us=lambda t:fe.findall(t)+re.split('(?m)^[ ]*$|^(?=[ ]*(?:[|#]|[-*+] |[0-9]+[.)] ))',fe.sub('',t));old=lambda u:re.search('FORWARD_LEDGER[.]md|LEDGER_PROBES[.]json|[.](?:LEDGER|PROBES)(?![A-Za-z_])',u) or (re.search('ESPALIER_MEMORY[.]md',u) and re.search('(?i)session[ -]log',u));hit=lambda u:old(re.sub('(?:FORWARD_LEDGER[.]md|LEDGER_PROBES[.]json|ESPALIER_MEMORY[.]md):[0-9]','',u)) and not re.search('ledger[.]d|probes[.]d|session-log[.]d|_record_fragments|folded-record: ok',u) and not re.match('[*][*](?:Status|Linked from):',u.lstrip());print(sum(1 for f in fs if f.endswith(('.md','.js')) and '/session-log.d/' not in f and f!='memory/CONVERGENCE_LEDGER.md' for u in us(pathlib.Path(f).read_text(encoding='utf-8',errors='replace')) if hit(u)))\"",
+ "open_value": "40",
  "why_not": null,
- "row_sha": "c9d8dca16d91",
- "text_sha": "6f5b4dbe57bb",
- "verified_2026_10_13": "OPEN (filed 2026-10-13; probe driven at filing)"
+ "row_sha": "407f0c967536",
+ "text_sha": "0fcf72cab705",
+ "verified_2026_10_13": "OPEN (filed 2026-10-13; probe driven at filing)",
+ "verified_2026_10_14": "STILL_OPEN (re-pinned '12' -> '40'; subject 'tests/test_ledger_fragments.py' -> 'tests/test_documented_claims.py' on 2026-10-14: re-pinned before the first fix edit (lane/prose-readers-of-folded-records, assign 197cca): the file-granular count let one folder mention anywhere in a file hide every other mention, which is how ship.md's record-finish line and memory/task-packs.md's filing rule slipped; the probe now counts units (a fence whole, else a paragraph split before each list item, table row and heading) and adds the Session Log arm, and its subject is the contract class that will hold it)"
 }
