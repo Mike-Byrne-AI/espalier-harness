@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -656,6 +657,95 @@ def _release_claims(root: Path, lane: str, text: str) -> None:
               f"`python tools/cc/mail.py send --type release --lane {lane}` closes them")
 
 
+#: The liveness oracle (``tools/cc/checkout_sync.py``), loaded by path on first
+#: use and never at import, as the mail channel is: a tree without it ships as
+#: it did before. Tests stand an oracle in here.
+_SYNC = None
+
+
+def _sync_module():
+    global _SYNC
+    if _SYNC is None:
+        path = Path(__file__).resolve().parent / "checkout_sync.py"
+        if not path.is_file():
+            return None
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_ship_checkout_sync", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["_ship_checkout_sync"] = module  # registered before exec (3.14)
+        spec.loader.exec_module(module)
+        _SYNC = module
+    return _SYNC
+
+
+#: Set to a reason, it lets a push past a shared checkout and says so: the
+#: way through a refusal the registry got wrong (an entry no process of its
+#: own still holds), never a default.
+SHARED_CHECKOUT_OK = "ESPALIER_SHARED_CHECKOUT_OK"
+#: Asked once per run: open, handoff, lane and catch-up each ask, and handoff
+#: calls lane and open.
+_SHARED = {"asked": False}
+
+
+def shared_checkout(root: Path) -> tuple[list[str] | None, str]:
+    """``(the live sessions working in this checkout in words, or None; the
+    reason it is None, else the hints for the words)``: those Claude Code's
+    registry places here, plus the session running this when it acts here
+    from a checkout of its own. None when the registry cannot place them:
+    the session markers alone outlive a closed window by hours, so they never
+    stop a push. Never raises."""
+    try:
+        sync = _sync_module()
+        if sync is None:
+            return [], ""
+        occ = sync.occupancy(root)
+        if occ.sessions is None or occ.oracle != "registry":
+            return None, occ.note or "only the session markers answered"
+        rows = occ.from_registry()
+        caller = occ.caller
+        if caller is not None and not any(r.get("pid") == caller.get("pid") for r in rows):
+            rows = rows + [caller]
+        hints = []
+        if any(row.get("kind") == "background" for row in rows):
+            hints.append("a background session is one Claude Code's daemon resumed: `claude daemon stop --any` ends it")
+        if rows:
+            hints.append(f"the entries are under {sync.claude_config_dir() / 'sessions'}")
+        return [sync.describe_session(row) for row in rows], "; ".join(hints)
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the reason is said by the caller
+        return None, f"the session registry was not read ({os_error_text(exc)})"
+
+
+def _shared_checkout_words(who: list[str], hints: str) -> str:
+    return (f"{len(who)} live sessions work in this checkout ({'; '.join(who)}"
+            + (f"; {hints}" if hints else "") + "): they share its branch and index, so a push from here ships "
+            "the other's commits too. Close one (a window or an editor tab), or give it a checkout of its own (a "
+            f"worktree), then push; {SHARED_CHECKOUT_OK}=<reason> lets this push through when an entry names a "
+            "session that is not really there")
+
+
+def _refuse_a_shared_checkout(root: Path) -> None:
+    """Stop a push from a checkout two or more live sessions share, before
+    anything here moves. A registry that cannot place them is a
+    note, never a refusal: a push is reversible, and a false refusal under an
+    unreadable registry would stop every seat at once. Asked once a run."""
+    if _SHARED["asked"]:
+        return
+    _SHARED["asked"] = True
+    who, why = shared_checkout(root)
+    if who is None:
+        _note(f"who else works in this checkout cannot be told ({why}); the push goes ahead -- two sessions "
+              "in one checkout share its branch, and only you can see whether that is so here")
+        return
+    if len(who) >= 2:
+        reason = os.environ.get(SHARED_CHECKOUT_OK, "").strip()
+        if reason:
+            _note(f"pushing beside {len(who)} live sessions in this checkout ({SHARED_CHECKOUT_OK}: {reason})")
+            return
+        raise Refused(_shared_checkout_words(who, why))
+
+
 def _refuse_a_marked_record(root: Path) -> None:
     """Stop a push the gate would red in every required cell: a record file
     that carries a merge-conflict marker. Named by file and line, with the
@@ -737,6 +827,11 @@ def preflight() -> int:
     if marked:
         _note(f"`open` will refuse this lane: a record file carries a merge-conflict marker "
               f"({'; '.join(marked)}); resolve the hunk and commit the file whole")
+    who, why = shared_checkout(root)
+    if who is None:
+        _note(f"who else works in this checkout cannot be told ({why}); `open` will push anyway")
+    elif len(who) >= 2:
+        _note(f"`open` will refuse this lane: {_shared_checkout_words(who, why)}")
     rc, untracked, _ = _git("status", "--porcelain", "--untracked-files=all", cwd=str(root))
     scratch = [ln[3:] for ln in untracked.splitlines() if ln.startswith("?? ")]
     if scratch:
@@ -804,6 +899,7 @@ def lane() -> int:
     if branch != base:
         _say(f"HEAD is {branch}, not {base}: nothing to move (a lane already) -- next: open")
         return 0
+    _refuse_a_shared_checkout(root)   # the switch below moves every session in this checkout onto the lane
     rc, subject, _ = _git("log", "-1", "--format=%s", cwd=str(root))
     slug = re.sub(r"[^A-Za-z0-9]+", "-", subject.strip()).strip("-").lower()[:48].rstrip("-")
     if not slug:
@@ -852,6 +948,7 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         raise Refused(f"origin/{branch} has {behind} commit(s) this HEAD does not reach: merge them in "
                       f"(git merge origin/{branch}); never rebase or force-push a pushed lane")
     _refuse_a_marked_record(root)
+    _refuse_a_shared_checkout(root)
     prs = _open_prs(str(root))
     refusal = red_base_refusal(base, branch, prs, str(root))
     if refusal:
@@ -1107,6 +1204,9 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     _say(f"handoff push is on: {how}.")
     _refuse_a_dirty_tree(root)
     _refuse_a_marked_record(root)
+    # Before `lane` below, which switches this checkout's branch: a second
+    # session here would keep committing onto the lane it was moved to.
+    _refuse_a_shared_checkout(root)
     base = default_branch()
     if current_branch() == base:
         if dry_run:
@@ -1151,6 +1251,7 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
 
 def catch_up() -> int:
     root = repo_root()
+    _refuse_a_shared_checkout(root)   # both paths below change this checkout's lane and push or pull it
     _wiring_note(root)
     branch = current_branch()
     pr = _require_open_pr(branch)

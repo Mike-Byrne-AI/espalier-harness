@@ -257,6 +257,7 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
             "tools/cc/_merge_rules.py",
             "tools/cc/_record_fragments.py",
             "tools/cc/checkout_sync.py",
+            "tools/cc/seat.py",
             "tools/cc/_blueprint_limits.py",
             "tools/cc/_stack_table.py",
             "tools/cc/_freshness_cache.py",

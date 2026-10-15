@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -160,8 +161,9 @@ class Reap:
     """What :func:`reap_worktrees` did: ``removed`` names, ``kept`` as
     (name, reason) with ``kept_paths`` beside them, ``deferred`` (not reached
     this session, out of time), ``saved`` (paths written into the root),
-    ``would_remove`` (dry run) and a ``note`` for a reason that kept every
-    worktree."""
+    ``would_remove`` (dry run), ``unlocked`` (a dead holder's lock released
+    before its removal, as ``name (pid N)``; not on the banner line) and a
+    ``note`` for a reason that kept every worktree."""
     removed: list[str] = field(default_factory=list)
     kept: list[tuple[str, str]] = field(default_factory=list)
     kept_paths: list[str] = field(default_factory=list)
@@ -169,6 +171,7 @@ class Reap:
     saved: list[str] = field(default_factory=list)
     would_remove: list[str] = field(default_factory=list)
     note: str = ""
+    unlocked: list[str] = field(default_factory=list)
 
     def keep(self, path: Path, reason: str) -> None:
         self.kept.append((path.name, reason))
@@ -483,10 +486,68 @@ def claude_config_dir() -> Path:
     return claude_config_dirs()[0]
 
 
+def _started_at(value: object) -> float | None:
+    """The registry's ``startedAt`` (epoch milliseconds) in epoch seconds, or
+    None for any other shape (a non-finite or far-future number included, which
+    ``time.gmtime`` would raise on): a courtesy for the words, never a
+    liveness fact."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not math.isfinite(value) or not 0 < value < 4e12:
+        return None
+    return float(value) / 1000.0
+
+
+def _proc_start_windows(pid: int) -> str | None:
+    """The process's creation time as the decimal FILETIME Claude Code's
+    registry records in ``procStart`` (equal for every live entry read
+    2026-10-15 on 2.1.300), or None when it cannot be read."""
+    import ctypes
+    from ctypes import wintypes
+
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.GetProcessTimes.argtypes = (wintypes.HANDLE,) + (ctypes.POINTER(wintypes.FILETIME),) * 4
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return None
+        try:
+            times = [wintypes.FILETIME() for _ in range(4)]
+            if not kernel32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+                return None
+            return str((times[0].dwHighDateTime << 32) | times[0].dwLowDateTime)
+        finally:
+            kernel32.CloseHandle(handle)
+    except (OSError, AttributeError, ValueError):  # fail-open: ok deliberate -- an unreadable creation time keeps the entry (read as alive)
+        return None
+
+
+def _pid_reused(pid: int, record: dict) -> bool:
+    """True when the registry entry's ``procStart`` names a process other than
+    the one now holding ``pid``: a crashed session's entry whose pid Windows
+    handed to an unrelated process, which ``pid_alive`` alone reads as live
+    for good. Windows only (the field is measured there); False wherever it
+    cannot be compared."""
+    recorded = record.get("procStart")
+    if os.name != "nt" or not isinstance(recorded, str) or not recorded.isdigit():
+        return False
+    now = _proc_start_windows(pid)
+    return now is not None and now != recorded
+
+
 def live_sessions(config_dir: Path | None = None) -> list[dict[str, object]] | None:
     """The running Claude Code sessions, from Claude Code's own registry: one
-    ``{"pid", "session_id", "cwd"}`` per entry whose process is alive (or whose
-    liveness this host cannot tell). None when the registry cannot be read in
+    ``{"pid", "session_id", "cwd", "kind", "entrypoint", "started_at"}`` per
+    entry whose process is alive (or whose liveness this host cannot tell).
+    ``kind`` and ``entrypoint`` are the registry's words ('' when absent): a
+    headless ``claude -p`` run registers as kind ``interactive`` with
+    entrypoint ``sdk-cli`` (measured 2026-10-15 on 2.1.300, Windows), so the
+    entrypoint, not the kind, tells a headless run from a window (``cli``) or
+    an editor's (``claude-vscode``). ``started_at`` is epoch seconds or None.
+    None when the registry cannot be read in
     full -- the primary directory missing, an entry that does not parse (unless
     its file name is a pid that has exited: a crash's half-written leftover),
     an entry with no ``cwd``, or one whose ``pid`` is not a positive integer --
@@ -520,10 +581,13 @@ def live_sessions(config_dir: Path | None = None) -> list[dict[str, object]] | N
                 return None
             if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
                 return None  # a shape we do not know is "cannot tell", never "gone"
-            if pid_alive(pid) is False:
+            if pid_alive(pid) is False or _pid_reused(pid, record):
                 continue  # a crashed session's leftover entry
-            sid = record.get("sessionId")
-            row = {"pid": pid, "session_id": sid if isinstance(sid, str) else "", "cwd": cwd}
+            sid, kind, entry = record.get("sessionId"), record.get("kind"), record.get("entrypoint")
+            row = {"pid": pid, "session_id": sid if isinstance(sid, str) else "", "cwd": cwd,
+                   "kind": kind if isinstance(kind, str) else "",
+                   "entrypoint": entry if isinstance(entry, str) else "",
+                   "started_at": _started_at(record.get("startedAt"))}
             if row not in rows:
                 rows.append(row)
     return rows
@@ -605,6 +669,197 @@ def other_sessions_in_checkout(sessions: list[dict[str, object]], root: Path,
     (:func:`own_entry`) and nothing else."""
     mine = own_entry(sessions, own_session_id)
     return [s for s in sessions_in_checkout(sessions, root) if s is not mine]
+
+
+def registered_checkouts(root: Path, *, deadline: float | None = None,
+                         runner: Runner = run) -> list[Path] | None:
+    """Every checkout git registers for the repository at ``root`` -- the main
+    one and each linked worktree, wherever it sits -- or None when git cannot
+    list them. A registration whose folder is gone is left out: no session
+    can stand in it."""
+    listing = _Git(root, deadline, runner).out("worktree", "list", "--porcelain")
+    if listing is None:
+        return None
+    return [Path(b["worktree"]) for b in parse_worktrees(listing)
+            if b.get("worktree") and "prunable" not in b]
+
+
+def checkout_of(cwd: str, checkouts: list[Path]) -> Path | None:
+    """The DEEPEST of ``checkouts`` that holds ``cwd`` (a worktree inside the
+    main checkout's folder is its own checkout, wherever it sits), or None
+    when none does. Paths compare by :func:`within`: normalised and case
+    folded, so ``c:\\`` and ``C:\\`` (both spellings are in the registry on
+    Windows, read 2026-10-15) name one folder."""
+    best: Path | None = None
+    depth = -1
+    for checkout in checkouts:
+        size = len(_norm(checkout))
+        if size > depth and within(cwd, checkout):
+            best, depth = checkout, size
+    return best
+
+
+def sessions_in(path: Path, *, sessions: list[dict[str, object]] | None = None,
+                checkouts: list[Path] | None = None, deadline: float | None = None,
+                runner: Runner = run) -> list[dict[str, object]] | None:
+    """The live sessions working in the checkout at ``path``: each registry
+    entry whose ``cwd`` lies in ``path`` and in no deeper registered checkout.
+    ``sessions`` defaults to :func:`live_sessions`, ``checkouts`` to
+    :func:`registered_checkouts`; where git cannot list them, a worktree under
+    ``.claude/worktrees/`` still counts as its own (the reaper's rule). None
+    when the registry cannot be read in full: the caller cannot tell."""
+    if sessions is None:
+        sessions = live_sessions()
+        if sessions is None:
+            return None
+    if checkouts is None:
+        checkouts = registered_checkouts(path, deadline=deadline, runner=runner)
+    if checkouts is None:
+        return sessions_in_checkout(sessions, path)
+    target = _norm(path)
+    places = list(checkouts) if any(_norm(c) == target for c in checkouts) else [*checkouts, path]
+    found = []
+    for row in sessions:
+        home = checkout_of(str(row.get("cwd", "")), places)
+        if home is not None and _norm(home) == target:
+            found.append(row)
+    return found
+
+
+MarkerReader = Callable[[Path], list[dict[str, object]]]
+
+
+def _default_marker_reader() -> MarkerReader | None:
+    hook_utils = _hook_utils_by_path()
+    reader = getattr(hook_utils, "other_live_sessions", None) if hook_utils is not None else None
+    return (lambda tree: reader(tree, "")) if callable(reader) else None
+
+
+def marker_sessions(tree: Path, reader: MarkerReader | None = None) -> list[dict[str, object]]:
+    """The session markers under ``tree``'s own state directory that may still
+    be live: touched within the hooks' window AND recording a window pid that
+    has not exited (an unknown pid counts: it cannot be ruled out). Rows in
+    the registry's shape with ``source`` ``marker``; a marker that records no
+    cwd stands for ``tree`` itself. [] when no reader is deployed or it
+    breaks."""
+    reader = reader if reader is not None else _default_marker_reader()
+    if reader is None:
+        return []
+    try:
+        found = list(reader(tree))
+    except Exception:  # noqa: BLE001 -- fail-open: ok deliberate -- a marker read that breaks adds nobody; the registry still answers
+        return []
+    rows: list[dict[str, object]] = []
+    for r in found:
+        pid = r.get("pid")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid_alive(pid) is False:
+            continue
+        rows.append({"pid": pid if isinstance(pid, int) else None, "session_id": str(r.get("session_id") or ""),
+                     "cwd": str(r.get("cwd") or "") or str(tree), "kind": "", "entrypoint": "",
+                     "started_at": None, "source": "marker"})
+    return rows
+
+
+@dataclass
+class Occupancy:
+    """Who is working in one checkout, and which oracle said so.
+    ``sessions`` is None when no oracle could tell (then a caller that would
+    delete or launch must refuse); each row's ``source`` is ``registry``
+    (Claude Code's own, the one that places an idle session) or ``marker``
+    (this harness's per-tree markers, which can only add a session, never
+    rule one out). ``oracle`` is ``registry`` when the registry answered,
+    ``markers`` when only the markers could, or ''; ``note`` says why the
+    registry was not used; ``caller`` is the asking session's own registry
+    entry, wherever it is placed (None outside a session or when unknown)."""
+    sessions: list[dict[str, object]] | None
+    oracle: str
+    note: str = ""
+    caller: dict[str, object] | None = None
+
+    def from_registry(self) -> list[dict[str, object]]:
+        return [r for r in self.sessions or [] if r.get("source") == "registry"]
+
+
+def caller_entry(sessions: list[dict[str, object]], own_session_id: str = "") -> dict[str, object] | None:
+    """The asking session's own registry entry: by the id and window pid a
+    session exports to its children (``CLAUDE_CODE_SESSION_ID``,
+    ``CLAUDE_PID``; both equal the registry's, read 2026-10-15), then by the
+    nearest registered ancestor (:func:`own_entry`)."""
+    sid = own_session_id or os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    pid_text = os.environ.get("CLAUDE_PID", "")
+    ancestors = ([int(pid_text)] if pid_text.isdigit() else []) + ancestor_pids()
+    return own_entry(sessions, sid, ancestors)
+
+
+def occupancy(path: Path, *, sessions: list[dict[str, object]] | None = None,
+              own_session_id: str = "", checkouts: list[Path] | None = None,
+              markers: MarkerReader | None = None,
+              deadline: float | None = None, runner: Runner = run) -> Occupancy:
+    """The one answer to "is a session live in this checkout":
+    every session :func:`sessions_in` places at ``path``, the caller's own
+    included, plus every live marker (:func:`marker_sessions`) -- in ``path``
+    or in the clone's main checkout -- whose cwd is placed there: a session
+    that moved into a worktree mid-session keeps its registry cwd and records
+    the new one in its marker (SessionStart's reaper reads it the same way).
+    The registry is trusted only when it is read in full and, run from inside
+    a session (``CLAUDECODE`` set), lists that session. Otherwise the markers
+    answer when one is live, and when none is, the answer is "cannot tell",
+    never "empty": an idle session touches no marker."""
+    note = ""
+    if sessions is None:
+        sessions = live_sessions()
+        if sessions is None:
+            note = "Claude Code's session registry could not be read in full"
+    caller = caller_entry(sessions, own_session_id) if sessions is not None else None
+    if sessions is not None and os.environ.get("CLAUDECODE") and caller is None:
+        note, sessions = "this session is not in Claude Code's session registry", None
+    if checkouts is None:
+        checkouts = registered_checkouts(path, deadline=deadline, runner=runner)
+    target = _norm(path)
+    places = list(checkouts or [])
+    if not any(_norm(c) == target for c in places):
+        places.append(path)
+    trees = [path] + [c for c in (checkouts or [])[:1] if _norm(c) != target]
+    marked: list[dict[str, object]] = []
+    for tree in trees:
+        for row in marker_sessions(tree, markers):
+            home = checkout_of(str(row["cwd"]), places) if checkouts is not None else (
+                path if within(str(row["cwd"]), path) else None)
+            if home is not None and _norm(home) == target:
+                marked.append(row)
+    if sessions is not None:
+        placed = sessions_in(path, sessions=sessions, checkouts=checkouts, deadline=deadline, runner=runner) or []
+        rows = [{**r, "source": "registry"} for r in placed]
+        ids = {r["session_id"] for r in rows if r["session_id"]}
+        pids = {r["pid"] for r in rows}
+        rows += [m for m in marked if m["session_id"] not in ids and m["pid"] not in pids]
+        return Occupancy(rows, "registry", note, caller)
+    if marked:
+        return Occupancy(marked, "markers", note)
+    tail = "no session marker answers either, so who is in it cannot be told"
+    return Occupancy(None, "", f"{note}; {tail}" if note else tail)
+
+
+def describe_session(row: dict[str, object]) -> str:
+    """One session in words, 7-bit ASCII: ``pid 4242 (cli, started 2026-10-15
+    06:01Z)``, as much of it as the oracle knew; a kind other than a window's
+    is said (``background`` is a session Claude Code's daemon resumed), and a
+    marker's row says it is one."""
+    pid = row.get("pid")
+    head = f"pid {pid}" if pid else f"session {str(row.get('session_id') or '?')[:8]}"
+    kind = str(row.get("kind") or "")
+    bits = [str(row.get("entrypoint") or kind)]
+    if kind and kind != "interactive" and row.get("entrypoint"):
+        bits.append(kind)
+    if row.get("source") == "marker":
+        bits.append("a session marker")
+    raw = row.get("started_at")
+    started = (_started_at(raw * 1000)
+               if isinstance(raw, (int, float)) and not isinstance(raw, bool) and math.isfinite(raw) else None)
+    if started is not None:
+        bits.append("started " + time.strftime("%Y-%m-%d %H:%MZ", time.gmtime(started)))
+    bits = [b for b in bits if b]
+    return _ascii(head + (f" ({', '.join(bits)})" if bits else ""))
 
 
 def lock_holder_dead(reason: str) -> bool:
@@ -952,10 +1207,11 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
                    own_cwd: Path | None = None,
                    marker_live: Callable[[Path], bool] | None = None,
                    held_by_other: str = "", unreadable_note: str = "",
-                   dry_run: bool = False, remote: str = REMOTE,
+                   dry_run: bool = False, remote: str = REMOTE, only: Path | None = None,
                    runner: Runner = run, spawner: Callable[..., Spawned | None] = spawn) -> Reap:
     """Remove the leftover worktrees under ``<root>/.claude/worktrees/`` that
-    hold nothing (the module docstring has the rules). ``sessions`` comes from
+    hold nothing (the module docstring has the rules); with ``only``, that one
+    worktree alone, under the same rules (``seat.py retire``). ``sessions`` comes from
     :func:`live_sessions` (None: the registry could not be trusted, and then
     nothing is removed; ``unreadable_note`` says why); ``held_by_other`` names
     a live session in the root checkout, which also removes nothing, since
@@ -970,6 +1226,8 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
     home = root.joinpath(*WORKTREES_REL)
     blocks = [b for b in parse_worktrees(listing)[1:] if b.get("worktree")]
     ours = [b for b in blocks if within(b["worktree"], home)]
+    if only is not None:
+        ours = [b for b in ours if _norm(b["worktree"]) == _norm(only)]
     if not ours:
         return report
     blocked = ""
@@ -1027,6 +1285,8 @@ def reap_worktrees(root: Path, *, deadline: float | None = None,
             continue
         if "locked" in block:
             git.ask("worktree", "unlock", str(path))
+            held = _LOCK_PID_RE.search(block.get("locked", ""))
+            report.unlocked.append(f"{path.name} (pid {held.group(1)})" if held else path.name)
         removal = git.change("worktree", "remove", str(path), wait=REMOVE_WAIT_S)
         if removal is not None and not removal.done:
             report.keep(path, f"its removal is still running (git pid {removal.pid}); it finishes on its own")
@@ -1142,7 +1402,8 @@ def _seat_claims_kept(here: _Git, root: Path) -> str:
         return ""
     lanes = sorted({str((c.get("re") or {}).get("lane") or "no lane") for c in claims})
     return (f"its seat {seat} holds {_plural(len(claims), 'live claim')} ({_names(lanes)}) that only it can "
-            "release: in it, `python tools/cc/mail.py send --type release --lane <lane>`, then it can go")
+            f"release: `python tools/cc/seat.py retire {seat}` releases them from inside it and removes it, "
+            "or in it, `python tools/cc/mail.py send --type release --lane <lane>`, then it can go")
 
 
 # -- the banner's words ------------------------------------------------------------

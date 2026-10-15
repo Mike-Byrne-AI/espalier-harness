@@ -20,6 +20,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -53,10 +54,32 @@ def _load():
     return mod
 
 
+def _oracle(rows: list[dict] | None, *, oracle: str = "registry", note: str = "", caller: dict | None = None):
+    """A stand-in for checkout_sync's occupancy oracle: ``rows`` are the
+    sessions it places in the checkout (None: it cannot tell), each from the
+    registry unless ``oracle`` says markers; ``caller`` is the asking
+    session's own entry, wherever it is."""
+    def occupancy(root):
+        placed = None if rows is None else [{"source": "registry" if oracle == "registry" else "marker", **r}
+                                            for r in rows]
+        return types.SimpleNamespace(
+            sessions=placed, oracle=oracle, note=note, caller=caller,
+            from_registry=lambda: [r for r in placed or [] if r["source"] == "registry"])
+    return types.SimpleNamespace(
+        occupancy=occupancy,
+        describe_session=lambda row: f"pid {row['pid']} ({row['entrypoint']})",
+        claude_config_dir=lambda: Path("cfg"),
+    )
+
+
 @pytest.fixture
 def ship():
-    """A fresh copy of the script per row: each row replaces its runner."""
-    return _load()
+    """A fresh copy of the script per row: each row replaces its runner, and
+    the liveness oracle reads nobody else in the checkout unless a row says so
+    (the real one reads the box's own session registry)."""
+    mod = _load()
+    mod._SYNC = _oracle([])
+    return mod
 
 
 @pytest.fixture
@@ -2327,6 +2350,141 @@ class TestAShippedLaneReleasesItsClaims:
         with pytest.raises(ship.Refused, match="gh pr create failed"):
             ship.open_pr()
         assert calls == [(tmp_path, "lane/x", "Lane pushed; claims closed.")]
+
+
+# ── TP-701 B-3: a push from a checkout two live sessions share is refused ────
+
+def _two_sessions() -> list[dict]:
+    return [{"pid": 4242, "entrypoint": "cli"}, {"pid": 4343, "entrypoint": "claude-vscode"}]
+
+
+class TestASharedCheckoutStopsThePush:
+    """Two live sessions in one checkout share its branch and index, so a push
+    from either ships the other's commits too. ``open``, ``handoff`` (before
+    ``lane`` can switch the branch), ``lane`` and ``catch-up`` refuse that
+    state before anything moves; ``preflight`` says it. Only Claude Code's own
+    registry can refuse: an unreadable one, or the session markers alone, is a
+    note and the push goes ahead; ``ESPALIER_SHARED_CHECKOUT_OK=<reason>`` lets
+    a push past an entry the registry got wrong, and says so."""
+
+    def test_two_sessions_refuse_open_before_anything_moves(self, ship, tmp_path, forget_guard):
+        _write_guard(tmp_path)
+        ship._SYNC = _oracle(_two_sessions())
+        spawns = _arm(ship, _open_answers(tmp_path))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        said = str(stop.value)
+        assert said.startswith("2 live sessions work in this checkout (pid 4242 (cli); pid 4343 (claude-vscode); "
+                               f"the entries are under {Path('cfg') / 'sessions'})")
+        assert "Close one (a window or an editor tab)" in said and "ESPALIER_SHARED_CHECKOUT_OK=<reason>" in said
+        assert "Core Rule" not in said
+        assert spawns.mutations == []
+
+    def test_the_caller_alone_ships(self, ship, tmp_path, forget_guard, capsys):
+        _write_guard(tmp_path)
+        ship._SYNC = _oracle(_two_sessions()[:1], caller={"pid": 4242, "entrypoint": "cli"})
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert spawns.count(("git", "push")) == 1
+        assert "cannot be told" not in capsys.readouterr().out
+
+    def test_a_caller_acting_here_from_its_own_checkout_counts(self, ship, tmp_path, forget_guard):
+        """A clone session pushing from inside a worktree a seat's session is
+        live in: one session placed here, the caller from elsewhere. Dies to:
+        counting only the sessions placed here."""
+        _write_guard(tmp_path)
+        ship._SYNC = _oracle(_two_sessions()[:1], caller={"pid": 9999, "entrypoint": "cli"})
+        spawns = _arm(ship, _open_answers(tmp_path))
+        with pytest.raises(ship.Refused, match=r"2 live sessions work in this checkout \(pid 4242 \(cli\); pid 9999"):
+            ship.open_pr()
+        assert spawns.mutations == []
+
+    @pytest.mark.parametrize("oracle", [
+        _oracle(None, oracle="", note="Claude Code's session registry could not be read in full"),
+        _oracle(_two_sessions(), oracle="markers", note="Claude Code's session registry could not be read in full"),
+    ], ids=["nobody-can-tell", "markers-alone"])
+    def test_an_answer_the_registry_cannot_give_is_a_note_and_the_push_goes_ahead(
+            self, ship, tmp_path, forget_guard, capsys, oracle):
+        """Dies to: refusing on the markers, which outlive a closed window by
+        hours and would stop every seat at once."""
+        _write_guard(tmp_path)
+        ship._SYNC = oracle
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert spawns.count(("git", "push")) == 1
+        out = capsys.readouterr().out
+        assert "note: who else works in this checkout cannot be told (Claude Code's session registry" in out
+
+    def test_the_override_lets_the_push_through_and_says_why(self, ship, tmp_path, forget_guard, monkeypatch,
+                                                            capsys):
+        _write_guard(tmp_path)
+        ship._SYNC = _oracle(_two_sessions())
+        monkeypatch.setenv("ESPALIER_SHARED_CHECKOUT_OK", "pid 4343 is a reused pid, checked by hand")
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0 and spawns.count(("git", "push")) == 1
+        assert ("note: pushing beside 2 live sessions in this checkout (ESPALIER_SHARED_CHECKOUT_OK: pid 4343 is a "
+                "reused pid, checked by hand)") in capsys.readouterr().out
+
+    def test_handoff_onto_an_open_pull_request_refuses_before_its_push(self, ship, tmp_path):
+        _toml(tmp_path, "handoff_push = true\n")
+        ship._SYNC = _oracle(_two_sessions())
+        spawns = _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
+        with pytest.raises(ship.Refused, match="2 live sessions work in this checkout"):
+            ship.handoff()
+        assert spawns.mutations == []
+
+    def test_handoff_on_the_default_branch_refuses_before_lane_switches_it(self, ship, tmp_path):
+        """`lane` switches this checkout's branch: a second session here would
+        keep committing onto the lane it was moved to. Dies to: asking only in
+        `open`, after `lane` has run (the failure-mode review's M4)."""
+        _toml(tmp_path, "handoff_push = true\n")
+        ship._SYNC = _oracle(_two_sessions())
+        answers = _lane_answers(tmp_path)
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused, match="2 live sessions work in this checkout"):
+            ship.handoff()
+        assert spawns.mutations == []
+
+    def test_the_lane_verb_refuses_before_it_moves_anything(self, ship, tmp_path):
+        ship._SYNC = _oracle(_two_sessions())
+        spawns = _arm(ship, _lane_answers(tmp_path))
+        with pytest.raises(ship.Refused, match="2 live sessions work in this checkout"):
+            ship.lane()
+        assert spawns.mutations == []
+
+    def test_catch_up_refuses_before_it_moves_the_lane(self, ship, tmp_path):
+        ship._SYNC = _oracle(_two_sessions())
+        spawns = _arm(ship, _catch_up_answers(tmp_path))
+        with pytest.raises(ship.Refused, match="2 live sessions work in this checkout"):
+            ship.catch_up()
+        assert spawns.mutations == []
+
+    def test_preflight_says_open_will_refuse(self, ship, tmp_path, capsys):
+        ship._SYNC = _oracle(_two_sessions())
+        _arm(ship, _preflight_answers(tmp_path))
+        assert ship.preflight() == 0
+        assert "note: `open` will refuse this lane: 2 live sessions work in this checkout" in capsys.readouterr().out
+
+    def test_the_real_oracle_is_loaded_by_path_and_reads_the_registry(self, ship, tmp_path, monkeypatch):
+        """No stand-in: the deployed checkout_sync.py beside the script, a
+        registry of two live entries in this checkout. Dies to: an oracle
+        import that fails on a fresh deploy, or a reader of another shape."""
+        ship._SYNC = None
+        for name in ("CLAUDECODE", "CLAUDE_PID", "CLAUDE_CODE_SESSION_ID"):
+            monkeypatch.delenv(name, raising=False)
+        sync = ship._sync_module()
+        assert sync is not None and sync.__file__ == str(SHIP.parent / "checkout_sync.py")
+        monkeypatch.setattr(sync, "ancestor_pids", lambda depth=8: [])
+        cfg = tmp_path / "cfg"
+        (cfg / "sessions").mkdir(parents=True)
+        for pid, entry in ((os.getpid(), "cli"), (os.getppid(), "sdk-cli")):
+            (cfg / "sessions" / f"{pid}.json").write_text(json.dumps(
+                {"pid": pid, "sessionId": f"s{pid}", "cwd": str(tmp_path), "entrypoint": entry}), encoding="utf-8")
+        monkeypatch.setattr(sync, "claude_config_dirs", lambda: [cfg])
+        who, hints = ship.shared_checkout(tmp_path)
+        assert sorted(who) == sorted([f"pid {os.getpid()} (cli)", f"pid {os.getppid()} (sdk-cli)"])
+        assert hints == f"the entries are under {cfg / 'sessions'}"
 
 
 # ── TP-479 B-3: a red base, one open pull request per seat, a stale base ──────
