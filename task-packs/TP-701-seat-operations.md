@@ -556,4 +556,14 @@ Pack budgets on this repository have run about 2.7 times over on one measured pa
 - Earn-the-red: per wave, against the mutation its Implementation names
 - Red-team: per wave; authoring review not yet run
 - Reach: see Reach; no row closed at authoring
+- Wave D: DONE 2026-10-15 (01:50 EDT), read-only, by the dispatcher seat with eight Opus agents (one
+  finder per seat on the pull request bodies, one refuter per seat on the mail refs). Report
+  `reports/completion-audit-2026-10.md` on the dispatcher's box (`reports/` is gitignored on this
+  tree) with the deriving commands at its head. Population: 46 code pull requests of the 56 merged
+  since 2026-10-10. Figure, the five terms in rubric order: the cohort merged from 2026-10-14 (the
+  step-template bodies) 12/13, 13/13, 5/13, 11/13, 13/13; the cohort before it 4/31, 5/28, 2/33,
+  0/33, 32/33; the mail refuted 1 of 127 "not met". Rows filed for the gaps no seat is assigned to:
+  `DEF-4021` (the ship driver's default body is the commit subjects), `DEF-4022` (implement-task step
+  7 shows no `--base` and no earned red), `DEF-4023` (no contract on a `tests/` import from the
+  shipped roots). The figure goes to the operator's `TP-700` W1 decision.
 - Date:
