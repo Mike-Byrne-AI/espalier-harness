@@ -28,6 +28,7 @@ import pytest
 
 from espalier.config import load_config
 from espalier.models import HarnessConfig
+from tests._source_segment import segment, source_lines
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -108,16 +109,17 @@ def _symbol_source(rel_path: str, symbol: str) -> str | None:
         return None
     src = path.read_text(encoding="utf-8")
     tree = ast.parse(src)
+    lines = source_lines(src)
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == symbol:
             body = list(node.body)
             if body and isinstance(body[0], ast.Expr) and isinstance(getattr(body[0], "value", None), ast.Constant) and isinstance(body[0].value.value, str):
                 body = body[1:]
-            return "\n".join(ast.get_source_segment(src, stmt) or "" for stmt in body)
+            return "\n".join(segment(lines, stmt) or "" for stmt in body)
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if any(isinstance(t, ast.Name) and t.id == symbol for t in targets):
-                return ast.get_source_segment(src, node) or ""
+                return segment(lines, node) or ""
     return None
 
 

@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._source_segment import segment, source_lines
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_PATH = REPO_ROOT / "espalier" / "cli.py"
 
@@ -300,12 +302,12 @@ class TestDeployIterationInvariant:
         ``PACK_MANIFEST.txt`` as a read source. The manifest is written
         by ``write_required_surface`` post-deploy as a *report*.
         """
-        tree = ast.parse(CLI_PATH.read_text(encoding="utf-8"))
+        text = CLI_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(text)
+        lines = source_lines(text)
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name == "deploy_harness":
-                source_segment = ast.get_source_segment(
-                    CLI_PATH.read_text(encoding="utf-8"), node,
-                ) or ""
+                source_segment = segment(lines, node) or ""
                 offenders = [
                     line for line in source_segment.splitlines()
                     if "PACK_MANIFEST" in line

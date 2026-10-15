@@ -11735,7 +11735,10 @@ class TestEverySpanReadDecidesTheQuotedOperandCut:
 
     def test_a_class_scoped_hook_spawning_fixture_isolates_maintenance_mode(self):
         import ast
+
+        from tests._source_segment import segment, source_lines
         src = (HOOKS_DIR.parent.parent.parent / "tests" / "test_write_guard.py").read_text(encoding="utf-8")
+        lines = source_lines(src)
         spawners = {"run_bash_guard", "_run_ps_guard", "run_guard_from", "_run_ps_guard_with_temp", "subprocess"}
         offenders = []
         for fn in [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.FunctionDef)]:
@@ -11748,7 +11751,7 @@ class TestEverySpanReadDecidesTheQuotedOperandCut:
                 continue
             names = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)} | {
                 n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)}
-            if names & spawners and "ESPALIER_MAINTENANCE_MODE" not in ast.get_source_segment(src, fn):
+            if names & spawners and "ESPALIER_MAINTENANCE_MODE" not in segment(lines, fn):
                 offenders.append((fn.name, fn.lineno))
         assert not offenders, (
             "a class/module/session-scoped fixture spawns the hook without dropping "
