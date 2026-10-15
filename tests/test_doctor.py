@@ -1921,8 +1921,9 @@ class TestEveryWarningCarriesANextStep:
         mp.setattr(d, "_check_reporter_hook_wiring", lambda root: [])
         mp.setattr(d, "_check_config_unknown_keys", lambda root, cfg=None: [])
         # The sandbox posture (TP-476 B-1) warns only when the sandbox is on
-        # with entries missing; silenced so its fixture alone arms it.
-        mp.setattr(d, "_check_sandbox_posture", lambda root: ([], []))
+        # with entries missing, or the guard's roster is gone; silenced so its
+        # fixture alone arms it.
+        mp.setattr(d, "_check_sandbox_posture", lambda root: ([], [], []))
         mp.setattr(d, "_check_package_manager", lambda root: [])
         mp.setattr(d, "_check_wired_hooks_start", lambda root: [])
 
@@ -2159,8 +2160,11 @@ class TestEveryWarningCarriesANextStep:
             d, "_check_sandbox_posture",
             lambda root: ([], ["sandbox: on (sandbox.enabled true in .claude/settings.json); "
                                "2 posture entries missing of 3 (denyWrite ./tools/cc, denyWrite "
-                               "./.github/workflows); `--sandbox-posture` on `init` or "
-                               "`upgrade --execute` writes them"]),
+                               "./.claude/settings.json); `python -m espalier upgrade . --execute "
+                               "--sandbox-posture` appends them under your keys"],
+                          ["run `python -m espalier upgrade . --execute --sandbox-posture` to append "
+                           "the missing sandbox deny entries under your keys: the sandbox is on and "
+                           "the harness zones or the secret paths are not behind it"]),
         )
 
     WARN_STATES = [

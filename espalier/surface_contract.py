@@ -398,6 +398,22 @@ def get_protected_mutation_prefixes() -> tuple[str, ...]:
     ))
 
 
+def get_runtime_protected_prefixes(self_host: bool) -> tuple[str, ...]:
+    """The prefixes the deployed write_guard denies mutation on AT RUNTIME for
+    one kind of tree, as ``tools/cc/hooks/_hook_utils.py::harness_protected_prefixes``
+    applies them: ``tools/cc/`` and ``cc/`` on every tree; ``.github/workflows/``
+    and ``espalier/`` on the self-host tree alone (an adopter edits its own CI
+    files, and ``harness-guard.yml`` stays an exact-match protected file). The
+    declaration roster above is wider on purpose (it feeds the docs and the
+    CI-merge gate); a consumer that writes the posture an adopter LIVES under
+    reads this one. ``tests/test_sandbox_posture.py`` pins the two equal.
+    """
+    universal = ("tools/cc/", "cc/")
+    if self_host:
+        return universal + (".github/workflows/", "espalier/")
+    return universal
+
+
 def get_protected_integrity_paths() -> tuple[str, ...]:
     """Files covered by the committed integrity manifest."""
     return _sorted_tuple(

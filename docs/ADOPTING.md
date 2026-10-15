@@ -36,44 +36,14 @@ agent-driven (`/analyze`), not a script.
 
 ## The sandbox posture (macOS, Linux, WSL2)
 
-Claude Code's Bash sandbox is a boundary the operating system enforces around
-the shell commands Claude runs and the processes they start. It is off by
-default, it covers shell commands only (the `Write`, `Edit` and
-`NotebookEdit` tools, MCP servers and hooks run outside it), and there is
-none on native Windows. Where it is on, the harness can stand behind it:
-
-- `python -m espalier init .` and `python -m espalier upgrade .` print the
-  posture they would write; `--sandbox-posture` writes it (`init
-  --wire-hooks --sandbox-posture` on a settings file you already had, or
-  `upgrade --execute --sandbox-posture`), appended under your keys in
-  `.claude/settings.json` through the same merge that wires the hooks, a
-  backup kept first.
-- `sandbox.filesystem.denyWrite` names the harness zones (`tools/cc/`,
-  `.github/workflows/`, the integrity and freshness manifests, the two
-  settings files) and your `protected_paths` from `espalier.toml`;
-  `denyRead` names the secret paths `write_guard` refuses to read (`.env`
-  and `.env.*`, `secrets/`, `.aws/credentials`, `credentials.json`), each at
-  the project root and anywhere below it, as the guard matches them. Both
-  lists are derived from the guard's own rosters at the time of the write,
-  never copied by hand. `cc/` is left to
-  `write_guard`: the harness's own shell commands write its carve-outs (the
-  plan, the blueprints, the working summary), and the sandbox has no
-  narrower allow for writes.
-- `sandbox.enabled` is never written. Turning the sandbox on changes how your
-  network and command approvals behave, so it stays yours: `/sandbox` in a
-  session. Set `allowUnsandboxedCommands` to `false` in your user settings
-  (`~/.claude/settings.json`) to stop a refused command being retried outside
-  the sandbox; a user-scope `false` holds against a project's `true`.
-- `python -m espalier doctor .` reports the state: no sandbox on native
-  Windows (the after-check and the guard's path check are the location layer
-  there), off, or on and from which file, with the derived entries present
-  and missing and whether your user settings disable the retry.
-
-What this is not: a replacement for `write_guard`. Measured on macOS, a
-`denyWrite` path refuses shell writes and `git checkout` and not the `Write`
-tool, so the guard's path check on the file tools stays the layer there. An
-`espalier upgrade` run from inside the sandbox over a denied path is refused
-by the sandbox too; run it outside, or let the unsandboxed retry take it.
+Where Claude Code's Bash sandbox is on, `init` and `upgrade` can put the
+harness zones and the secret paths behind it: `python -m espalier init .`
+prints the posture, `--sandbox-posture` writes it, and `espalier doctor .`
+reports the state. It is a shell layer beside `write_guard`, never a
+replacement for its path check on the file tools, and it refuses some of
+the harness's own commands from inside a session. The deployed
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md) ("The sandbox refused a command")
+has what it writes, what it refuses and how to read it.
 
 ## See also
 

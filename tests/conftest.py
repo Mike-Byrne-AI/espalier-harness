@@ -2236,8 +2236,13 @@ def harness_repo(python_repo):
         # oracle keys on "file on disk but event unwired".
         "plan_guard.py", "config_guard.py",
     ]:
+        # The guard stub carries a one-entry secret roster: the sandbox
+        # posture's denyRead derivation reads it by AST, and a guard with no
+        # roster is a doctor warning on every POSIX run of this fixture.
+        roster = ('_SECRET_PATH_LABEL = {"env": ".env / .env.*"}\n'
+                  if hook == "write_guard.py" else "")
         (hooks_dir / hook).write_text(
-            "#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n", encoding="utf-8"
+            "#!/usr/bin/env python3\nimport sys\n" + roster + "sys.exit(0)\n", encoding="utf-8"
         )
 
     # ── Fingerprint AFTER all surface files are present ───────────────

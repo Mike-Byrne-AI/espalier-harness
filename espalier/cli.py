@@ -3082,10 +3082,12 @@ class SettingsOutcome:
     settings_hooks_wired: bool
     skipped_reason: str | None
     deployed: list[str]
-    #: The sandbox posture's fate on the shared arming path (TP-476 B-1):
-    #: written | already | refused, or "not requested" when the flag was off or
-    #: the file never reached the merge.
+    #: The sandbox posture's fate on the shared arming path: written | skipped
+    #: | already | refused, or "not requested" when the flag was off or the
+    #: file never reached the merge; ``posture_detail`` carries the named key
+    #: or the refusal.
     posture_state: str = "not requested"
+    posture_detail: str = ""
 
 
 def _reconcile_existing_settings(
@@ -3368,18 +3370,18 @@ def _wire_hooks_into_existing(
     # upgrade (older engine missing a newer canonical event) and returns
     # MERGE_ALREADY only when EVERY event is wired.
     posture_lists = None
+    derived = False
     if sandbox_posture:
         from espalier import sandbox_posture as _sandbox_posture
-        posture_lists = _sandbox_posture.posture(repo_root)
+        found, _why = _sandbox_posture.posture_or_refusal(repo_root)
+        if found is not None:
+            posture_lists, derived = found.lists, True
     merge_result = merge_hooks_into_settings(
         settings_path, profile=profile_name or "workflow",
         repo_root=repo_root, sandbox_posture=posture_lists,
     )
-    posture_state = (
-        "written" if merge_result.posture_added
-        else "already" if sandbox_posture and merge_result.status in (MERGE_WIRED, MERGE_ALREADY)
-        else "refused" if sandbox_posture
-        else "not requested"
+    posture_state, posture_detail = _posture_state_after_merge(
+        merge_result, flag=sandbox_posture, derived=derived,
     )
     # The profile's allow rules the file lacks are the operator's to accept;
     # --wire-hooks appends hook events (and espalier's statusLine when that key
@@ -3426,7 +3428,7 @@ def _wire_hooks_into_existing(
         return SettingsOutcome(
             settings_hooks_wired=(blockers == []),
             skipped_reason=None, deployed=deployed,
-            posture_state=posture_state,
+            posture_state=posture_state, posture_detail=posture_detail,
         )
     if merge_result.status == MERGE_ALREADY:
         # Already FULLY wired — a clean no-op (no .bak churn, no re-merge), and
@@ -3463,7 +3465,7 @@ def _wire_hooks_into_existing(
         settings_hooks_wired=settings_hooks_wired,
         skipped_reason=skipped_reason,
         deployed=deployed,
-        posture_state=posture_state,
+        posture_state=posture_state, posture_detail=posture_detail,
     )
 
 
@@ -3782,9 +3784,11 @@ def deploy_harness(
     # when they don't). Fresh write -> True; existing file -> only if it
     # already wires the hooks (a genuine upgrade).
     settings_hooks_wired = False
-    # The sandbox posture (TP-476 B-1): written | preserved | already | refused,
-    # or "not requested" without the flag; cmd_init prints the lists either way.
+    # The sandbox posture: written | preserved | skipped | already | refused |
+    # gained content, or "not requested" without the flag; cmd_init prints the
+    # lists either way, with the detail when there is one.
     posture_state = "not requested"
+    posture_detail = ""
     # An EMPTY file is absent for this decision: there is no content to
     # preserve, and preserving it sent the adopter through a move-aside round
     # trip (DEF-700). Any non-empty bytes, parseable or not, keep the
@@ -3808,6 +3812,7 @@ def deploy_harness(
         )
         settings_hooks_wired = outcome.settings_hooks_wired
         posture_state = outcome.posture_state
+        posture_detail = outcome.posture_detail
         if sandbox_posture and posture_state == "not requested":
             # The file was preserved (no --wire-hooks), so nothing reached the
             # merge that writes the lists; cmd_init names the two commands.
@@ -3826,11 +3831,18 @@ def deploy_harness(
                 file=sys.stderr,
             )
         settings = fresh_settings(repo_root, profile_name)
+        posture_in_render = False
         if sandbox_posture:
-            # The two deny lists under sandbox.filesystem, never sandbox.enabled
-            # (TP-476 B-1): the fresh render carries them when the flag asks.
+            # The two deny lists under sandbox.filesystem, never sandbox.enabled:
+            # the fresh render carries them when the flag asks. A roster the
+            # derivation cannot read leaves them out; cmd_init says why.
             from espalier import sandbox_posture as _sandbox_posture
-            _sandbox_posture.merge_posture(settings, _sandbox_posture.posture(repo_root))
+            found, why_not = _sandbox_posture.posture_or_refusal(repo_root)
+            if found is None:
+                posture_state, posture_detail = "refused", why_not or ""
+            else:
+                _sandbox_posture.merge_posture(settings, found.lists)
+                posture_in_render = True
         # Atomic write: a crash mid-write would leave config_guard reading a
         # truncated JSON every session, which raises JSONDecodeError and exits
         # 1 -- hook bug surfaces on every tool call. atomic_write_text closes
@@ -3852,13 +3864,15 @@ def deploy_harness(
                 ".claude/settings.json (gained content during init -- "
                 "preserved unchanged; re-run init)"
             )
+            if sandbox_posture:
+                posture_state = "gained content"
         else:
             atomic_write_text(
                 settings_path,
                 json.dumps(settings, indent=2, sort_keys=True) + "\n",
             )
             deployed.append(".claude/settings.json")
-            if sandbox_posture:
+            if posture_in_render:
                 posture_state = "written"
             # A fresh write lands the full hooks block -- but only the SETTINGS
             # half. If the deploy above skipped a hook source (a package-data
@@ -3989,8 +4003,9 @@ def deploy_harness(
         # Did the live settings.json end up with Espalier hooks wired?
         # cmd_init reads this to keep the "Hooks now intercept ..." banner honest.
         "settings_hooks_wired": settings_hooks_wired,
-        # The sandbox posture's fate (TP-476 B-1); cmd_init prints the lists.
+        # The sandbox posture's fate and its detail; cmd_init prints the lists.
         "sandbox_posture": posture_state,
+        "sandbox_posture_detail": posture_detail,
         # What `_seed_goal_snapshot` did; cmd_init names the file when created.
         "goal_snapshot": goal_state,
     }
@@ -6933,35 +6948,88 @@ def _refuse_unreadable_harness_root(repo_root: Path, command: str) -> int | None
     return 1
 
 
-#: Why the flag did not write the posture, by the state the deploy reports.
-_POSTURE_NOT_WRITTEN = {
-    "preserved": ("your settings.json was preserved (no --wire-hooks), so nothing reached the merge "
-                  "that writes the lists; `init --wire-hooks --sandbox-posture` or "
-                  "`upgrade --execute --sandbox-posture` appends them under your keys"),
-    "already": "every entry was already there",
-    "refused": "the settings merge refused the file (the message above says why)",
-    "not requested": "a dry run; --execute writes them",
-}
+def _posture_not_written(state: str, py: str) -> str:
+    """Why the flag did not write the posture, by the state the deploy or the
+    merge reports."""
+    return {
+        "preserved": ("your settings.json was preserved (no --wire-hooks), so nothing reached the "
+                      f"merge that writes the lists; `{py} -m espalier init . --wire-hooks "
+                      f"--sandbox-posture` or `{py} -m espalier upgrade . --execute --sandbox-posture` "
+                      "appends them under your keys"),
+        "already": "every entry was already there",
+        "refused": "the settings merge refused the file",
+        "skipped": "a key in your settings.json is not the shape the sandbox reads and was left untouched",
+        "gained content": "your settings.json gained content while init ran and was left untouched; re-run init",
+        "not requested": "a dry run; --execute writes them",
+    }.get(state, state)
 
 
-def _print_sandbox_posture(repo_root: Path, state: str, *, flag: bool, prefix: str) -> None:
+def _print_sandbox_posture(repo_root: Path, state: str, *, flag: bool, prefix: str,
+                           detail: str = "") -> None:
     """Print the sandbox posture ``init`` and ``upgrade`` would write, or
-    wrote (TP-476 B-1): the two deny lists, derived at print time from the
-    tree's rosters, and when the flag asked and the state says it did not
-    land, why. A roster the derivation cannot read is said, never a silent
-    empty list."""
+    wrote: the two deny lists, derived at print time from the tree's rosters,
+    and when the flag asked and the state says it did not land, why. A roster
+    the derivation cannot read is said, never a silent empty list."""
     from espalier import sandbox_posture as _sandbox_posture
 
-    try:
-        lists = _sandbox_posture.posture(repo_root)
-    except (OSError, ValueError, SyntaxError) as exc:
-        print(f"{prefix} sandbox posture: not derived ({exc})", file=sys.stderr)
+    py = _remedy_py()
+    lists, why_not = _sandbox_posture.posture_or_refusal(repo_root)
+    if lists is None:
+        print(f"{prefix} sandbox posture: not derived ({why_not}); the deployed "
+              f"{_sandbox_posture.GUARD_REL} has no readable secret roster, so nothing was written; "
+              f"`{py} -m espalier doctor .` names the repair", file=sys.stderr)
         return
-    for line in _sandbox_posture.describe(lists, written=(state == "written"), prefix=prefix):
+    for line in _sandbox_posture.describe(lists, written=(state == "written"), prefix=prefix,
+                                          remedy_py=py):
         print(line)
     if flag and state != "written":
-        why = _POSTURE_NOT_WRITTEN.get(state, state)
+        why = _posture_not_written(state, py) + (f": {detail}" if detail else "")
         print(f"{prefix}   {_sandbox_posture.FLAG} did not write it: {why}")
+
+
+def _posture_state_after_merge(merge_result: "MergeResult", *, flag: bool,
+                               derived: bool) -> tuple[str, str]:
+    """``(state, detail)`` for the print after a merge that was handed the
+    posture: written, skipped (a malformed key, named), already, or refused
+    (the merge's refusal, or a roster the derivation could not read)."""
+    if not flag:
+        return "not requested", ""
+    if not derived:
+        return "refused", "the posture could not be derived"
+    if merge_result.posture_added:
+        return "written", ""
+    if merge_result.posture_skipped:
+        return "skipped", "; ".join(merge_result.posture_skipped)
+    if merge_result.status in (MERGE_WIRED, MERGE_ALREADY):
+        return "already", ""
+    return "refused", f"{merge_result.status}: {merge_result.detail}"
+
+
+def _sandbox_posture_on_current_tree(repo_root: Path, *, execute: bool) -> None:
+    """``upgrade --sandbox-posture`` on a tree whose harness is current: the
+    version-current branch returns before the settings stage, so the flag is
+    answered here. The dry run prints the lists; ``--execute`` appends them
+    through the one merge, hooks already current."""
+    from espalier import sandbox_posture as _sandbox_posture
+
+    settings_path = repo_root / ".claude" / "settings.json"
+    if not os.path.isfile(settings_path):
+        print(f"[upgrade] sandbox posture: no .claude/settings.json to write into; "
+              f"`{_remedy_py()} -m espalier init .` writes one", file=sys.stderr)
+        return
+    if not execute:
+        _print_sandbox_posture(repo_root, "not requested", flag=True, prefix="[upgrade]")
+        return
+    lists, _why = _sandbox_posture.posture_or_refusal(repo_root)
+    merge_result = merge_hooks_into_settings(
+        settings_path, profile=installed_settings_profile(repo_root), repo_root=repo_root,
+        sandbox_posture=lists.lists if lists is not None else None,
+    )
+    if merge_result.status == MERGE_WIRED:
+        print(f"[upgrade] {_merge_did_phrase(merge_result, noun='hook event')} into settings.json "
+              f"(backup {merge_result.detail}).")
+    state, detail = _posture_state_after_merge(merge_result, flag=True, derived=lists is not None)
+    _print_sandbox_posture(repo_root, state, flag=True, prefix="[upgrade]", detail=detail)
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -7203,9 +7271,10 @@ def cmd_init(args: argparse.Namespace) -> int:
     result["deployed"].extend(seed_outcome["created"] + seed_outcome["refreshed"])
     result["refreshed_seed_docs"] = list(seed_outcome["refreshed"])
 
-    # The sandbox posture (TP-476 B-1): printed on every run, written on the flag.
+    # The sandbox posture: printed on every run, written on the flag.
     _print_sandbox_posture(repo_root, result.get("sandbox_posture", "not requested"),
-                           flag=getattr(args, "sandbox_posture", False), prefix="[init]")
+                           flag=getattr(args, "sandbox_posture", False), prefix="[init]",
+                           detail=result.get("sandbox_posture_detail", ""))
 
     # Step 4a: File the onboarding rows into the forward ledger the seed just
     # created -- after the deploy (the verb, GOAL and the fingerprint must be on
@@ -7304,9 +7373,12 @@ class MergeResult(NamedTuple):
     stale_denies: tuple[tuple[str, str], ...] = ()
     scoped_allows: tuple[tuple[str, int], ...] = ()
     #: The sandbox posture entries this call appended under
-    #: ``sandbox.filesystem`` (``"<list> <entry>"``; TP-476 B-1), only when the
-    #: caller passed the posture; ``()`` otherwise.
+    #: ``sandbox.filesystem`` (``"<list> <entry>"``), only when the caller
+    #: passed the posture; ``()`` otherwise. ``posture_skipped`` names the keys
+    #: it could not write into because the operator's value there is not the
+    #: shape the sandbox reads (left untouched).
     posture_added: tuple[str, ...] = ()
+    posture_skipped: tuple[str, ...] = ()
 
     @property
     def allow_count(self) -> int:
@@ -7330,7 +7402,7 @@ def _merge_did_phrase(
     if result.statusline_added:
         did.append("added espalier's statusLine")
     if result.posture_added:
-        did.append(f"added {plural(len(result.posture_added), 'sandbox posture entry')}")
+        did.append(f"added {plural(len(result.posture_added), 'sandbox posture entry', 'sandbox posture entries')}")
     if not did:
         return "rewrote nothing"
     if len(did) == 1:
@@ -7554,19 +7626,24 @@ def merge_hooks_into_settings(
         _event_groups_have_espalier_hook(_existing_hooks_dict.get(event))
         for event in managed_hooks
     )
-    # The sandbox posture (TP-476 B-1): the two deny lists appended under
-    # sandbox.filesystem, tried on a copy first so a fully wired file that only
-    # lacks an entry is still written, and a file that has them all is not.
+    # The sandbox posture: the two deny lists appended under sandbox.filesystem,
+    # tried on a copy first so a fully wired file that only lacks an entry is
+    # still written, and a file that has them all is not; a key that is not
+    # the shape the sandbox reads is left alone and named.
     posture_probe: dict = {}
     posture_added: list[str] = []
+    posture_skipped: list[str] = []
     if sandbox_posture:
         from espalier import sandbox_posture as _sandbox_posture
         posture_probe = copy.deepcopy(existing)
-        posture_added = _sandbox_posture.merge_posture(posture_probe, sandbox_posture)
+        posture_merge = _sandbox_posture.merge_posture(posture_probe, sandbox_posture)
+        posture_added = posture_merge.added
+        posture_skipped = posture_merge.skipped
     if hooks_current and not append_allows and not add_statusline and not posture_added:
         return MergeResult(
             MERGE_ALREADY, missing_allows=tuple(missing_allows), allow_note=allow_note,
             stale_denies=stale_denies, scoped_allows=scoped_allows,
+            posture_skipped=tuple(posture_skipped),
         )
     merged = dict(existing)
     topped_up_events = 0
@@ -7648,6 +7725,7 @@ def merge_hooks_into_settings(
         added_allows=tuple(added), allow_note=allow_note,
         statusline_added=add_statusline, stale_denies=stale_denies,
         scoped_allows=scoped_allows, posture_added=tuple(posture_added),
+        posture_skipped=tuple(posture_skipped),
     )
 
 
@@ -10273,6 +10351,11 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                       "compared surface; " + "; ".join(qualifiers) + ".")
             else:
                 print(f"[upgrade] harness is current ({__version__}); nothing to do.")
+            if getattr(args, "sandbox_posture", False):
+                # The settings stage below is never reached on a current tree,
+                # so the flag is answered here: printed on a dry run, written
+                # on --execute, through the one merge.
+                _sandbox_posture_on_current_tree(repo_root, execute=execute)
             return 0
     else:
         print(
@@ -10561,7 +10644,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         # never received it, and nothing said so).
         profile = installed_settings_profile(repo_root)
         if not execute:
-            # The sandbox posture (TP-476 B-1): the lists the flag would write.
+            # The sandbox posture: the lists the flag would write.
             _print_sandbox_posture(repo_root, "not requested",
                                    flag=getattr(args, "sandbox_posture", False), prefix="[upgrade]")
             if preview_stages:
@@ -10591,21 +10674,21 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         else:
             want_posture = getattr(args, "sandbox_posture", False)
             posture_lists = None
+            posture_derived = False
             if want_posture:
                 from espalier import sandbox_posture as _sandbox_posture
-                posture_lists = _sandbox_posture.posture(repo_root)
+                found, _why = _sandbox_posture.posture_or_refusal(repo_root)
+                if found is not None:
+                    posture_lists, posture_derived = found.lists, True
             merge_result = merge_hooks_into_settings(
                 settings_path, profile=profile, repo_root=repo_root,
                 sandbox_posture=posture_lists,
             )
-            _print_sandbox_posture(
-                repo_root,
-                "written" if merge_result.posture_added
-                else "already" if want_posture and merge_result.status in (MERGE_WIRED, MERGE_ALREADY)
-                else "refused" if want_posture
-                else "not requested",
-                flag=want_posture, prefix="[upgrade]",
+            posture_state, posture_detail = _posture_state_after_merge(
+                merge_result, flag=want_posture, derived=posture_derived,
             )
+            _print_sandbox_posture(repo_root, posture_state, flag=want_posture, prefix="[upgrade]",
+                                   detail=posture_detail)
             # One armament read, shared with the retired-rule gate below.
             exec_blockers: object = _ARMAMENT_UNREAD
             if merge_result.status == MERGE_WIRED:
@@ -10651,6 +10734,10 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 scoped=merge_result.scoped_allows,
                 hint_command=lambda: _merge_settings_hint(profile),
             )
+    elif getattr(args, "sandbox_posture", False):
+        # The flag with no settings file to write into is answered, not dropped.
+        print(f"[upgrade] sandbox posture: no .claude/settings.json to write into; "
+              f"`{_remedy_py()} -m espalier init .` writes one", file=sys.stderr)
 
     # Surface retired managed files (report-only; never deletes -- Scope (out)).
     orphans = _scan_managed_orphans(repo_root)

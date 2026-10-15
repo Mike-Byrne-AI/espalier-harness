@@ -443,6 +443,74 @@ file makes `espalier audit .` report it as divergent, so prefer
 
 ---
 
+## "The sandbox refused a command" (the sandbox posture)
+
+Claude Code's Bash sandbox is a boundary the operating system enforces around
+the shell commands Claude runs and every process they start. It is off by
+default, it covers shell commands only (the `Write`, `Edit` and
+`NotebookEdit` tools, MCP servers and hooks run outside it), it runs on
+macOS, Linux and WSL2, and there is none on native Windows. Where it is on,
+the harness can stand behind it, and this is what that posture refuses.
+
+**Writing it.** `python -m espalier init .` and `python -m espalier upgrade .`
+print the posture they would write on every run; the flag writes it:
+`python -m espalier init . --sandbox-posture` on a fresh tree,
+`python -m espalier init . --wire-hooks --sandbox-posture` over a settings
+file you already had, `python -m espalier upgrade . --execute
+--sandbox-posture` on an installed one. The entries are appended under your
+keys in `.claude/settings.json` through the same merge that wires the hooks,
+a backup kept first. `sandbox.enabled` is never written: turning the sandbox
+on is yours (`/sandbox` in a session). Nothing is ever removed either; an
+entry a later engine stops deriving is named by `doctor` for you to delete.
+
+**What it writes.** `sandbox.filesystem.denyWrite`: the zones `write_guard`
+denies on your tree (`tools/cc/`, the two settings files,
+`.github/workflows/harness-guard.yml`; on the Espalier source tree also
+`.github/workflows/` and `espalier/`) and your `protected_paths` from
+`espalier.toml` (an entry that is absolute, a home path, a wildcard or a
+climb is left out and the print says why). `denyRead`: the secret paths the
+guard refuses to read (the dotenv file and its variants, a `secrets/`
+directory, `.aws/credentials`, `credentials.json`), each at the project root
+and anywhere below it. Both lists are derived from the guard's own rosters at
+the time of the write, never copied by hand. `cc/`, `.espalier/integrity.json`
+and `.espalier/freshness.json` stay with `write_guard`: the harness's own
+shell commands write them (the plan, the blueprints, `integrity refresh`, the
+freshness scanner), and the sandbox has no narrower allow for writes.
+
+**What it refuses, inside the sandbox.** Any shell write under a denied
+path, by any process: a `sed -i` on a hook, a `git pull`, `merge`, `rebase`
+or `checkout` that touches `tools/cc/` (it stops with `unable to unlink old`,
+measured on macOS), `espalier upgrade --execute` over the hook files or
+`.claude/settings.json`, and on the source tree the two `sync_*` scripts.
+Any read of a secret path, by any process: your own test suite's dotenv
+loader included, and the dotenv template files (`.env.example` and its
+siblings), which `write_guard` allows and the sandbox's glob does not.
+Outside the project tree the posture reaches nothing (`~/.aws/credentials`
+is Claude Code's own `sandbox.credentials` setting). Run the refused
+command from a terminal outside the session, or let the unsandboxed retry
+take it: with the default `allowUnsandboxedCommands`, Claude re-runs a
+refused command outside the sandbox without a prompt under
+`bypassPermissions`, which makes the posture a one-retry speed bump; set it
+to `false` in your user settings (`~/.claude/settings.json`) to make the
+refusal hold, and then run those commands outside the session. A user-scope
+`false` holds against a project's `true`.
+
+**Reading it.** `python -m espalier doctor .` says which state the tree is
+in: no sandbox on native Windows (the after-check and the guard's path check
+are the location layer there), off, or on and from which file, with the
+derived entries present and missing (a warning when the sandbox is on and
+some are missing, or a key is not the shape the sandbox reads), whether your
+user settings disable the retry, and a guard whose roster cannot be read.
+Doctor reads the project, local and user files; a managed settings file or
+`--settings` is not read.
+
+**What it is not.** A replacement for `write_guard`. Measured on macOS, a
+`denyWrite` path refuses shell writes and `git checkout` and not the `Write`
+tool, so the guard's path check on the file tools stays the layer there.
+`denyRead` itself has not been driven yet.
+
+---
+
 ## Still stuck?
 
 - For a known-footgun lookup matching your symptom, search the source
