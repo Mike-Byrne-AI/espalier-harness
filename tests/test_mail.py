@@ -355,16 +355,22 @@ class TestMachineSettingReads:
 class TestNamingSteps:
     """The by-hand steps that name a linked worktree, one owner for every
     refusal that prints them. On a clone whose shared config sets core.bare
-    (or core.worktree), naming a worktree takes two config changes git
-    describes without ordering them; the printed text names both, where the
-    key goes and git's two pages, and no commands (dispatcher, c160d6 (i):
-    round 7 measured that the extension turned on first makes every worktree
-    read as bare, and that a move run in the linked worktree lands there)."""
+    (or core.worktree), naming a worktree takes ONE change, the key moved out
+    of the shared config into the main worktree's config.worktree at the path
+    the refusal computes, after which a fresh session turns per-worktree config
+    on and names the worktree itself (dispatcher, f43314 (i'): rounds 6-8 each
+    failed a two-change wording a different way; round 8 measured on git
+    2.39.5 that the move alone, then SessionStart, names every worktree with
+    each one healthy)."""
 
     @staticmethod
     def _git(values: dict):
         def run(argv, **kw):
             value = values.get(argv[-1])
+            if isinstance(value, Exception):
+                raise value
+            if isinstance(value, tuple):
+                return value
             return (0, value + "\n", "") if value is not None else (1, "", "")
         return run
 
@@ -372,19 +378,25 @@ class TestNamingSteps:
         steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "false"}))
         assert steps == "git config extensions.worktreeConfig true, then git config --worktree espalier.machine <name>"
 
-    def test_a_bare_clone_gets_the_two_changes_the_place_and_the_pages_no_order(self, mail, tmp_path):
-        """Dies to: an order stated between the two changes, a command to
-        paste, the place (the clone's git directory) or a page dropped, or
-        the worktree's own name placed before the two changes."""
-        steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "true"}))
-        for part in ("core.bare", "extensions.worktreeConfig", "config.worktree", "git rev-parse --git-common-dir",
-                     "git help worktree", "git help config"):
-            assert part in steps, (part, steps)
-        assert not any(word in steps for word in (" first", "before", "once ", "then move")), steps
-        assert "git config extensions.worktreeConfig true" not in steps, "no command to paste on a bare clone"
-        name_at = steps.index("--worktree espalier.machine")
-        assert name_at > steps.index("core.bare") and name_at > steps.index("extensions.worktreeConfig"), steps
+    def test_a_bare_clone_gets_one_change_at_its_path_then_a_fresh_session(self, mail, tmp_path):
+        """Dies to: a second change, a command, the path not computed (the
+        clone-git-directory phrase was met by the wrong file, round 8), or the
+        fresh session dropped."""
+        common = tmp_path / "repo.git"
+        steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": "true", "--git-common-dir": str(common)}))
+        assert f"main worktree's config.worktree ({common.resolve() / 'config.worktree'})" in steps, steps
+        assert "fresh session" in steps, steps
+        assert "extensions.worktreeConfig" not in steps and "git config" not in steps, steps
         assert "core.worktree" in mail.naming_steps(tmp_path, run=self._git({"core.worktree": "/x"}))
+
+    def test_a_core_bare_read_that_fails_prints_no_steps(self, mail, tmp_path):
+        """A failed read fell through to the paste-ready pair, whose first
+        command breaks every worktree of a bare clone (failure-mode review,
+        r8, measured). Dies to: the failed read taken for "not bare"."""
+        for answer in (mail.Unresolvable("git config took longer than 10s"), (128, "", "fatal: bad config line 3")):
+            steps = mail.naming_steps(tmp_path, run=self._git({"core.bare": answer}))
+            assert "no steps are printed" in steps, steps
+            assert "extensions.worktreeConfig true" not in steps and "--worktree" not in steps, steps
 
     def test_the_assign_refusal_carries_the_steps(self, mail, tmp_path, monkeypatch):
         (tmp_path / "espalier.toml").write_text('dispatcher = "win"\n', encoding="utf-8")
@@ -424,13 +436,63 @@ class TestNamingSteps:
         assert name is None and mail.naming_steps(tmp_path, run=run) in said, said
         assert "core.bare" in said
 
-    def test_name_this_worktrees_core_bare_refusal_states_no_order(self, mail, tmp_path):
-        """Dies to: the refusal ordering the two changes either way."""
+    def test_name_this_worktrees_core_bare_refusal_gives_the_one_change(self, mail, tmp_path):
+        """Dies to: a second change or a command in the refusal, or ", in
+        <worktree>" covering the move (round 7: a move run in the linked
+        worktree lands in that worktree's own file)."""
         (tmp_path / ".git").write_text("gitdir: x\n", encoding="utf-8")
         name, said = mail.name_this_worktree(tmp_path, run=self._worktree_git(tmp_path, tmp_path / "wt", bare=True))
-        assert name is None and "git help worktree" in said and "git rev-parse --git-common-dir" in said, said
-        assert "move before per-worktree config is turned on" not in said, said
-        assert "once per-worktree config is on" not in said, said
+        assert name is None and str((tmp_path / "common").resolve() / "config.worktree") in said, said
+        assert "fresh session" in said and "extensions.worktreeConfig" not in said, said
+        assert not said.endswith(f", in {tmp_path}"), said
+
+    def test_name_this_worktree_hands_the_steps_the_value_it_read(self, mail, tmp_path):
+        """A second read of core.bare that failed printed "sets core.bare" and
+        then the plain pair (failure-mode review, r8). Dies to: naming_steps
+        reading the key again."""
+        (tmp_path / ".git").write_text("gitdir: x\n", encoding="utf-8")
+        base = self._worktree_git(tmp_path, tmp_path / "wt", bare=True)
+        reads = []
+
+        def run(argv, **kw):
+            if argv[1:] == ["config", "--get", "core.bare"]:
+                reads.append(1)
+                if len(reads) > 1:
+                    raise mail.Unresolvable("git config took longer than 2s")
+            return base(argv, **kw)
+
+        name, said = mail.name_this_worktree(tmp_path, run=run)
+        assert name is None and "fresh session" in said and "no steps are printed" not in said, said
+        assert len(reads) == 1, reads
+
+
+class TestNamingProse:
+    """Every tracked doc that gives the command turning per-worktree config on
+    names a bare clone shortly before it, so a reader on one does not run it
+    first (both reviewers, TP-701 r8: four prose readers led with it). The
+    population is derived from the tree, never listed by hand."""
+
+    COMMAND = "extensions.worktreeConfig true"
+    WINDOW = 700
+
+    def test_the_command_is_preceded_by_its_bare_clone_condition(self):
+        import re
+
+        from espalier._safe_walk import visible
+        roots = [REPO_ROOT / d for d in ("docs", ".claude", "memory")]
+        seen, bad = 0, []
+        for root in roots:
+            for path in visible(root.rglob("*.md"), root):
+                rel = path.relative_to(REPO_ROOT).as_posix()
+                if rel.startswith("memory/session-log.d/"):
+                    continue   # a record: an old row is not rewritten
+                text = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
+                for m in re.finditer(re.escape(self.COMMAND), text):
+                    seen += 1
+                    if "bare clone" not in text[max(0, m.start() - self.WINDOW):m.start()]:
+                        bad.append(f"{rel}: ...{text[max(0, m.start() - 120):m.end()]}")
+        assert seen >= 4, f"only {seen} occurrences found: the walk lost its population"
+        assert not bad, "the command with no bare-clone condition before it:\n" + "\n".join(bad)
 
 
 class TestLiveRequests:

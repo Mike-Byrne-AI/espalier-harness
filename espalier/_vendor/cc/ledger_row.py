@@ -447,7 +447,8 @@ def minting_seat(root: Path) -> tuple[str, str | None]:
         # A read that failed (a timeout, a config git cannot parse) is not
         # "no name": that answer would offer `git config espalier.machine`,
         # which in a worktree renames the clone, or mint from the shared range.
-        raise SeatNameUnread(f"this seat's machine name could not be read ({how}); retry once git answers")
+        raise SeatNameUnread(f"this seat's machine name could not be read ({how}); retry once git answers (a "
+                             "config git cannot parse never will: fix it first)")
     if machine is None:
         # The shared range is safe for one clone (its worktrees share the
         # record) and unsafe across machines, which each keep their own.
@@ -1740,7 +1741,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--override", action="store_true",
                     help="write a row another machine's live claim names (the mail channel), naming the "
                          "holder; the claim stays theirs -- a release from them, or a request to them, is "
-                         "the ordinary way past")
+                         "the ordinary way past. Also files an explicit id outside this seat's block, and "
+                         "one whose block cannot be checked because the seat's name could not be read")
     ap.add_argument("--reconcile-count", action="store_true",
                     help="does nothing: the probe roster stores no total since 2026-10-12, so there "
                          "is no mismatch to accept; still accepted so an old command line runs")

@@ -103,13 +103,14 @@ remembered. A red `main` is reverted before anything lands on it.
    - **Refusals:**
      - A linked worktree still answering its clone's name is refused, for a
        mint and for an explicit id. SessionStart names Claude Code's
-       worktrees. Name one by hand with
-       `git config extensions.worktreeConfig true`, then
-       `git config --worktree espalier.machine <name>`, run in it; on a bare
-       clone it also takes moving `core.bare` into `config.worktree` in the
-       clone's git directory, which git describes without an order and
-       `docs/HOOKS.md` records the measured order for. The refusals print
-       `mail.naming_steps`, the one owner of these steps.
+       worktrees. On a bare clone, the one change is `core.bare` moved into
+       the main worktree's `config.worktree` (the refusal prints its path),
+       after which a fresh session names the worktree. Elsewhere, name one by
+       hand with `git config extensions.worktreeConfig true`, then
+       `git config --worktree espalier.machine <name>`, run in it. The
+       refusals print `mail.naming_steps`, the one owner of these steps.
+     - A seat whose machine name git could not read is refused a mint and an
+       explicit id alike; `--override` files the explicit id anyway.
      - An explicit new id outside the block you mint from is refused, and
        `--override` files it anyway. That covers an id in another seat's
        block, and a hand-picked "safe" number outside every block.

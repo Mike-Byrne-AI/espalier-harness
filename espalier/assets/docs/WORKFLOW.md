@@ -469,14 +469,12 @@ When several Claude Code sessions work one repository at once, each runs as a
 once with `git config espalier.machine <name>`, run in its main checkout (in a
 bare clone, in the repository). A linked worktree of a named clone is given a
 name of its own at SessionStart (`<clone>-<directory>`; the banner's `Seat:`
-line says so); to set one by hand, run `git config extensions.worktreeConfig
-true` once, then `git -C <worktree> config --worktree espalier.machine
-<name>`. On a bare clone, naming a worktree also takes moving `core.bare` out of
-the shared config into `config.worktree` in the clone's git directory (`git
-rev-parse --git-common-dir`); git describes both changes (`git help
-worktree`, CONFIGURATION FILE; `git help config`, `extensions.worktreeConfig`),
-and the worktree's own name comes after both. SessionStart will not name a
-bare clone's worktrees for that reason. A plain `git config espalier.machine` run inside a
+line says so). To name one by hand on a bare clone, move `core.bare` out of
+the shared config into the main worktree's `config.worktree` (the refusal
+prints its path); a fresh session then names the worktree, turning
+per-worktree config on itself. On any other clone, run `git config
+extensions.worktreeConfig true` once, then `git -C <worktree> config
+--worktree espalier.machine <name>`. A plain `git config espalier.machine` run inside a
 worktree renames the clone and its main checkout instead. Seats coordinate
 through the mail channel (`/inbox`): a seat claims the files it works so
 another does not duplicate them, a dispatcher seat (the `dispatcher` key in

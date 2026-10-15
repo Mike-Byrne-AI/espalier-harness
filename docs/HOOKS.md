@@ -216,25 +216,23 @@ Only a fresh session (`startup` or `clear`) is named. A resumed or compacted
 session keeps the name its claims were made under.
 
 It does not name the worktree when the derived name is another worktree's, or
-when the clone's config sets `core.worktree` or `core.bare`, which per-worktree
-config needs moved into `config.worktree` in the clone's git directory. The
-line then says why, and what naming the worktree by hand takes.
+when the clone's shared config sets `core.worktree` or `core.bare`. The line
+then says why, and what naming the worktree by hand takes.
 
-Naming a worktree of such a clone by hand takes two config changes that git
-describes without ordering them (`git help worktree`, CONFIGURATION FILE;
-`git help config`, `extensions.worktreeConfig`): the key moved out of the
-shared config into `config.worktree` in the clone's git directory (`git
-rev-parse --git-common-dir`), and `extensions.worktreeConfig` turned on; then
-the worktree's own name, with `git config --worktree`. The order matters.
-Measured on git 2.39.5 with a bare clone and two linked worktrees: turning the
-extension on first makes every worktree of the clone read as bare (`git
-status` fails in each) until the move lands, and a move written with `git
-config --worktree` from inside a linked worktree lands in that worktree's own
-file and leaves it bare. Writing the key first with `git config --file
-<git-common-dir>/config.worktree core.bare true`, then `git config --unset
-core.bare`, then `git config extensions.worktreeConfig true`, left every
-worktree working throughout. The tools print none of this as commands; it is
-kept here to be checked against the git in hand.
+On such a clone that is one change: the key moved out of the shared config into
+the main worktree's `config.worktree` (`$GIT_COMMON_DIR/config.worktree`; the
+refusal prints the absolute path). A fresh session then finds the shared key
+gone, turns `extensions.worktreeConfig` on itself and names the worktree. The
+tools print the change and the path, never commands, because the obvious
+commands break a bare clone. Measured on git 2.39.5 with a bare clone and two
+linked worktrees: turning the extension on first makes every worktree of the
+clone read as bare (`git status` fails in each) until the move lands, and a
+move written with `git config --worktree` from inside a linked worktree lands
+in that worktree's own `config.worktree` and leaves it bare. Writing the key
+with `git config --file <git-common-dir>/config.worktree core.bare true`, then
+`git config --unset core.bare`, then starting a fresh session, named both
+worktrees with every worktree working throughout. Kept here to be checked
+against the git in hand.
 
 - **Where it runs no git:** a main checkout (its `.git` is a directory), a
   clone that names no machine, and a worktree that already has a name.

@@ -1745,6 +1745,7 @@ class TestIdsAreMintedFromTheSeatsBlock:
         assert "could not be read" in err and "names no machine" not in err, err
         assert "git config espalier.machine <name>" not in err
         assert "retry once git answers" in err, "the refusal names the next step (failure-mode review, r7)"
+        assert "cannot parse" in err, "a config git cannot parse never answers by waiting (code review, r8)"
         assert t["ledger"].read_text(encoding="utf-8") == before
 
     def test_an_explicit_id_is_refused_while_the_seat_name_is_unread(self, lr, tmp_path, monkeypatch, capsys):
@@ -1762,6 +1763,10 @@ class TestIdsAreMintedFromTheSeatsBlock:
         err = capsys.readouterr().err
         assert "could not be read" in err and "cannot be checked" in err and "--override" in err, err
         assert t["ledger"].read_text(encoding="utf-8") == before
+        # The way past it names is real (both reviewers, r8: untested).
+        assert _file_minted(lr, t, "--override", rid=("DEF-3001",)) == 0
+        assert "DEF-3001" in t["ledger"].read_text(encoding="utf-8") or any(
+            p.name == "DEF-3001.md" for p in t["ledger"].parent.rglob("DEF-3001.md"))
 
     def test_the_refusal_names_the_steps_the_channel_gives(self, lr, tmp_path, monkeypatch, capsys):
         """The mint refusal prints mail.naming_steps, the one owner of the
