@@ -1,8 +1,9 @@
-"""Contract tests for the board's ledger line (``tools/cc/board.py``): it counts
-the live rows at the base branch's tip, through the base tree's own generator
-and fragment loader, so a checkout that stops moving reads what the base holds
-while every other board line reads GitHub or the base live (DEF-3006). Seen
-2026-10-14: a checkout on a merged branch read 274 all day while main held 279.
+"""Contract tests that pin the board's ledger line (``tools/cc/board.py``) to the
+base branch's tip: it counts the live rows there, through the base tree's own
+generator and fragment loader, so a checkout that stops moving reads what the
+base holds while every other board line reads GitHub or the base live
+(DEF-3006). Without this the line drifts silently: seen 2026-10-14, a checkout
+on a merged branch read 274 all day while main held 279.
 
 Real git is the oracle for what a ref holds, so each case builds a scratch
 repository whose checkout sits behind ``origin/main``; GitHub and the mail
