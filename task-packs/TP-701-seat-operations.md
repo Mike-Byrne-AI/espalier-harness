@@ -577,6 +577,20 @@ Pack budgets on this repository have run about 2.7 times over on one measured pa
   24 file groups (21,500 passed, 1,088 serial, one box-local red), archive probe 336. `DEF-1175`
   repinned (the plan guard's site joined). B-4 to B-6 are a second lane now that Wave A has merged;
   `mail.py send --as` for a release is a row from win-2's block.
+- Wave C: LANDED 2026-10-15 (#235, a905624, seat win). C-0: the trend script's stale default was
+  its ref, not the fold (with `--ref origin/main` the unmodified script printed steps through
+  2026-10-15; per-day strikes 8, 3, 6 for 10-12 to 10-14 against the pack's 7, 3, 6); the latency
+  census reproduces the dispatcher's hand count read the way it ran (02:10:45Z, a floor-rank p75,
+  one ask still open) and pins its own nearest-rank reading at the 02:20Z freeze: before the split
+  n=21, median 268, p75 726, max 8264 minutes; since it n=19, 6, 10, 16; 19 of 19 answered within
+  the hour since the split against 4 of 21 before. C-1 `scripts/mail_latency_census.py` with the
+  frozen fixture `tests/fixtures/mail_latency/refs-2026-10-15T0220Z.json`; C-2
+  `scripts/ledger_trend.py` defaults `--ref` to the base branch's remote-tracking ref where the
+  ledger is tracked there, the record ref otherwise. 16 named mutants killed; both reviewers
+  REQUEST CHANGES on a snapshot clone of 48fe7e8 (one blocker, re-raised to the dispatcher and
+  settled), one fold; the full tier (suite config earns it) with the lane's three reds fixed and
+  their groups re-run; the contract slice on the 4af7d4a merge clean. C-3 (the `TP-479a` window's
+  date) stays open until the window closes.
 - Wave D: DONE 2026-10-15 (01:50 EDT), read-only, by the dispatcher seat with eight Opus agents (one
   finder per seat on the pull request bodies, one refuter per seat on the mail refs). Report
   `reports/completion-audit-2026-10.md` on the dispatcher's box (`reports/` is gitignored on this
