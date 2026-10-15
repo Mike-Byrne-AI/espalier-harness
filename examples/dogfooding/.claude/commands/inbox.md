@@ -140,11 +140,10 @@ python tools/cc/board.py
 Read live state in the same turn before you state it: the SessionStart
 banner, a handoff note, the mail and a session's own context are snapshots,
 and with several seats (sessions, each in its own named worktree) pushing,
-they go stale within the hour. The board writes nothing; what it moves is the
-mail fetch and, when a pull request's auto-merge is armed, the base branch's
-remote-tracking ref, both skipped with `--no-fetch` (`--json` gives the same
-as data). Each section is read on its own, and one that cannot be read says so on
-its own line:
+they go stale within the hour. The board writes nothing into the tree; what it
+moves is the mail fetch and the base branch's remote-tracking ref, both skipped
+with `--no-fetch` (`--json` gives the same as data). Each section is read on its
+own, and one that cannot be read says so on its own line:
 
 - **merging:** whether a pull request must be caught up with the base before
   it merges (the up-to-date rule) and how many checks are required, read from
@@ -165,7 +164,13 @@ its own line:
   near its files since its CI ran -- a path both changed, or a Python module
   one import away -- gets a `stale:` line under it: its seat runs `catch-up`,
   so CI tests the combination before it merges. A move elsewhere says nothing.
-- **jobs**, **claims** and the ledger's live row count.
+- **jobs**, **claims** and the ledger's live row count, counted at the base
+  branch's remote-tracking ref with the base's own ledger tools and naming the
+  commit it read, so a checkout that stops moving still reads what the base
+  holds. The line says `as last fetched` when the fetch failed or `--no-fetch`
+  skipped it. It counts the working tree, and says why, on a clone without that
+  ref or a base whose archive leaves the ledger out (an `export-ignore`), and
+  reads unread when the base keeps its ledger where this checkout does not look.
 
 If the board and your own account disagree, the board is the one that read
 GitHub just now.
