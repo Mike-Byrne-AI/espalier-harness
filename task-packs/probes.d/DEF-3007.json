@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3007",
+ "subject": "bench/end_to_end/runner.py",
+ "cmd": "python -c \"import re; print(sum(len(re.findall(r'Path\\((?:target|arg)\\)\\.is_absolute\\(\\)', open(f, encoding='utf-8').read())) for f in ('bench/end_to_end/runner.py', 'scripts/archive_probe.py')))\"",
+ "open_value": "3",
+ "why_not": null,
+ "inputs": [
+  "scripts/archive_probe.py"
+ ],
+ "row_sha": "d3a233934144",
+ "text_sha": "d13918d9ed5d",
+ "verified_2026_10_15": "OPEN (filed 2026-10-15; probe driven at filing)"
+}

@@ -166,6 +166,16 @@ class TestRelativeArguments:
         with pytest.raises(probe.ProbeRefusal, match="outside the extracted tree"):
             probe.refuse_unless_relative(["../tests/test_recall.py"])
 
+    def test_a_path_either_host_family_reads_as_leaving_the_tree_is_refused(self, probe):
+        """DEF-3007. Dies to: `Path(arg).is_absolute()` alone, which lets a Git
+        Bash path (`/c/Users/...`) through on Windows and a drive or share path
+        through on POSIX, and a climb in the middle through everywhere."""
+        for arg in ("/c/Users/me/repo/tests/test_recall.py", "C:\\repo\\tests\\test_recall.py",
+                    "\\\\server\\share\\tests\\test_x.py", "tests/../../outside/test_x.py",
+                    "tests\\..\\..\\outside\\test_x.py"):
+            with pytest.raises(probe.ProbeRefusal, match="outside the extracted tree"):
+                probe.refuse_unless_relative([arg, "-q"])
+
     def test_relative_paths_and_options_pass(self, probe):
         probe.refuse_unless_relative(["tests/test_recall.py", "-q", "-p", "no:cacheprovider",
                                      "-m", "not full_tree", "--rootdir=/anything"])

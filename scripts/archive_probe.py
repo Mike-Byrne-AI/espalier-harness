@@ -81,7 +81,7 @@ import tempfile
 import threading
 import zipfile
 from collections.abc import Mapping, Sequence
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -197,18 +197,30 @@ def build_pytest_command(venv_python: Path, pytest_args: Sequence[str]) -> list[
     return [str(venv_python), "-m", "pytest"] + list(pytest_args)
 
 
+def _leaves_the_tree(arg: str) -> bool:
+    """True when ``arg`` is not a plain relative path on EITHER host family:
+    anchored (a root, a drive, a share) or climbing with ``..`` anywhere, not
+    only at the front (DEF-3007). The host's ``Path`` alone lets a Git Bash
+    ``/c/Users/...`` through on Windows and ``C:\\x`` through on POSIX;
+    ``PureWindowsPath`` reads both separators and every root, drive and share
+    a POSIX reading has, so it is the one judge. Sister site:
+    ``bench/end_to_end/runner.py::_leaves_the_tree``."""
+    path = PureWindowsPath(arg)
+    return bool(path.anchor) or ".." in path.parts
+
+
 def refuse_unless_relative(pytest_args: Sequence[str]) -> None:
-    """A bare pytest argument that is an absolute path, or climbs out with
-    ``..``, names a file OUTSIDE the extracted tree: pytest would run the dev
-    tree's module and conftest inside the export's venv, and under ``--audit``
-    every registration would read as stale. Options are left alone."""
+    """A bare pytest argument that is anchored, or climbs out with ``..``,
+    names a file OUTSIDE the extracted tree: pytest would run the dev tree's
+    module and conftest inside the export's venv, and under ``--audit`` every
+    registration would read as stale. Options are left alone."""
     for arg in pytest_args:
         if arg.startswith("-"):
             continue
-        if Path(arg).is_absolute() or arg.startswith(".."):
+        if _leaves_the_tree(arg):
             raise ProbeRefusal(
                 f"pytest argument {arg!r} reaches outside the extracted tree; name tests "
-                "relative to the archive root (tests/test_x.py), never by an absolute path"
+                "relative to the archive root (tests/test_x.py), never by an absolute path or a .. climb"
             )
 
 
