@@ -650,7 +650,8 @@ def cmd_retire(root: Path, seat: str, *, dry_run: bool, fetch: bool, return_jobs
         target = resolve(root, seat)
     except Refused:
         if mine:
-            raise Refused(f"seat {seat} holds {len(mine)} live claim(s) and {by_hand_release(root, clone, seat, lanes)}")
+            raise Refused(f"seat {seat} holds {len(mine)} live claim(s) and "
+                          f"{by_hand_release(root, clone, seat, lanes)}") from None
         raise
     if not target.exists:
         if mine:
