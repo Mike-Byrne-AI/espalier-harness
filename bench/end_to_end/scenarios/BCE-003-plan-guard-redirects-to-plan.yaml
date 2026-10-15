@@ -40,6 +40,9 @@ expected_receiver_behavior:
     required: true
   agent_actions_after:
     no_repeat_of: "src/app.py"
+    # Opening a plan after the deny and then making the edit is what plan_guard
+    # asks for ("/implement-task ... then proceed"), not a repeat (SCHEMA.md).
+    planned_change_allowed: true
   # No max_turns: the CLI no longer caps turns, and how far the agent explores
   # (4 assistant events in the 2026-10-14 run, 3 CLI turns) is not what this
   # scenario verifies; --max-cost-usd and the runner's timeout bound a runaway.

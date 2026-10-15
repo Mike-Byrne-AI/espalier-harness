@@ -323,18 +323,27 @@ class Transcript:
         text = result.get("result")
         return text if isinstance(text, str) and text else str(result.get("terminal_reason") or "is_error")
 
-    def deny_events(self) -> list[tuple[int, str | None]]:
-        """``(event index, tool_use_id)`` for every deny the harness delivered,
-        in stream order: a hook's refusal of a tool call (its tool_use_id
-        names the call it answers), or a hook or system message carrying a
-        deny marker (no id). Never the agent's own words."""
-        out: list[tuple[int, str | None]] = []
+    def deny_records(self) -> list[tuple[int, str | None, str, str | None]]:
+        """``(event index, tool_use_id, text, timestamp)`` for every deny the
+        harness delivered, in stream order: a hook's refusal of a tool call (its
+        tool_use_id names the call it answers), or a hook or system message
+        carrying a deny marker (no id); with the deny's text (write_guard's and
+        plan_guard's name the path) and the time the CLI stamped on its event
+        (every user and assistant event carries one, 2.1.299). Never the
+        agent's own words."""
+        out: list[tuple[int, str | None, str, str | None]] = []
         for i, e in enumerate(self._events):
+            stamp = e.metadata.get("timestamp")
+            stamp = stamp if isinstance(stamp, str) else None
             if e.role == "tool_result":
-                out += [(i, tid) for tid, _text in _hook_denials(e)]
+                out += [(i, tid, text, stamp) for tid, text in _hook_denials(e)]
             elif e.role in {"system", "hook"} and _marker_in(e.content):
-                out.append((i, None))
+                out.append((i, None, e.content, stamp))
         return out
+
+    def deny_events(self) -> list[tuple[int, str | None]]:
+        """``(event index, tool_use_id)`` for every deny (`deny_records`)."""
+        return [(i, tid) for i, tid, _text, _stamp in self.deny_records()]
 
     def deny_event_index(self) -> int | None:
         """The index of the first deny the harness delivered, else None."""

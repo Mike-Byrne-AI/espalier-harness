@@ -15,6 +15,7 @@ The runner does not embed or read keys from disk.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -69,6 +70,8 @@ class ScenarioRun:
     #: CLI and model a verdict holds for (CI installs an unpinned CLI).
     cli_version: str | None = None
     model: str | None = None
+    #: The no_repeat_of target's ground truth, from the work dir (`_target_state`).
+    target_state: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -82,7 +85,42 @@ class ScenarioRun:
             "n_events": len(self.transcript.events),
             "cli_version": self.cli_version,
             "model": self.model,
+            "target_state": self.target_state,
         }
+
+
+def _digest(path: Path) -> str | None:
+    """The file's sha256, or None when it cannot be read (absent, removed)."""
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _no_repeat_target(scenario: dict[str, Any]) -> str | None:
+    actions = (scenario.get("expected_receiver_behavior") or {}).get("agent_actions_after") or {}
+    target = actions.get("no_repeat_of") if isinstance(actions, dict) else None
+    return str(target) if target else None
+
+
+def _target_state(work_dir: Path, target: str, before: str | None) -> dict[str, Any]:
+    """The target's ground truth after the run: its bytes before the trigger
+    (``before``) and now, its last change (mtime, epoch seconds) and the
+    execution plan the agent opened, if any (`cc/execution_plan.json`'s
+    `created` and `status`), all from the work dir this runner made."""
+    path = work_dir / target
+    try:
+        mtime: float | None = path.stat().st_mtime
+    except OSError:
+        mtime = None
+    try:
+        plan = json.loads((work_dir / "cc" / "execution_plan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        plan = {}
+    plan = plan if isinstance(plan, dict) else {}
+    return {"path": target, "before": before, "after": _digest(path), "mtime": mtime,
+            "plan_created": plan.get("created") if isinstance(plan.get("created"), str) else None,
+            "plan_status": plan.get("status") if isinstance(plan.get("status"), str) else None}
 
 
 def load_scenario(path: Path) -> dict[str, Any]:
@@ -260,6 +298,9 @@ def run_scenario(
             work_dir.mkdir(parents=True, exist_ok=True)
 
         _materialize_setup(scenario.get("setup") or {}, work_dir)
+        # The retry check's ground truth: the target's bytes before the trigger.
+        target = _no_repeat_target(scenario)
+        before = _digest(work_dir / target) if target else None
 
         trigger = scenario.get("trigger") or {}
         trigger_type = trigger.get("type", "prompt")
@@ -365,6 +406,7 @@ def run_scenario(
             error=error,
             cli_version=init.get("claude_code_version"),
             model=init.get("model"),
+            target_state=_target_state(work_dir, target, before) if target else None,
         )
     finally:
         if cleanup_dir is not None and not keep_work_dir:

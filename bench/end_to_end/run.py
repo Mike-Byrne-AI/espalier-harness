@@ -80,7 +80,7 @@ def _run_with_retry(
 
     def _do_run() -> tuple[ScenarioRun, ScenarioVerdict]:
         run = run_scenario(scenario_path, keep_work_dir=keep_work_dir)
-        verdict = evaluate(scenario, run.transcript, cost_tokens=run.cost_tokens)
+        verdict = evaluate(scenario, run.transcript, cost_tokens=run.cost_tokens, target_state=run.target_state)
         verdict.run_exit_code, verdict.run_error = run.exit_code, run.error
         verdict.cli_version, verdict.model = run.cli_version, run.model
         if run.exit_code == TIMEOUT_EXIT_CODE:
