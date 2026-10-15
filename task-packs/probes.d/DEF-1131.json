@@ -4,8 +4,8 @@
  "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda t,c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":t,\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));q=chr(34);print(\"bash_eval=\"+r(\"Bash\",\"eval \"+q+\"cat .env\"+q)+\" ps_iex=\"+r(\"PowerShell\",\"iex \"+q+\"Get-Content .env\"+q)+\" ps_pwsh=\"+r(\"PowerShell\",\"pwsh -Command \"+q+\"Get-Content .env\"+q))'",
  "open_value": "bash_eval=allow ps_iex=allow ps_pwsh=allow",
  "why_not": null,
- "row_sha": "dde2a7facc8a",
- "text_sha": "bcfb08cbc201",
+ "row_sha": "811c5921e124",
+ "text_sha": "fc35f8ed5151",
  "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)",
- "verified_2026_10_15": "STILL_OPEN (re-pinned value unchanged on 2026-10-15: both reviews of lane/sandbox-posture found the first re-pin overclaiming: it said the sandbox refuses the read where only denyWrite was measured, and named no condition; the sentence now names the retry setting, the project-tree limit, the template-suffix divergence and that denyRead is not yet driven, so a reader sees the surface still live on macOS and Linux under default settings; the probe and its value unchanged)"
+ "verified_2026_10_15": "STILL_OPEN (re-pinned value unchanged on 2026-10-15: the dispatcher settled the template question (air c3a5c0): the dotenv template files the guard exempts become allowRead entries derived from its suffix tuple under the narrower-allow rule, not yet driven; the sentence names that, the refutation (the glob stays and the divergence is documented), and the Mac drive that decides it; the probe and its value unchanged)"
 }

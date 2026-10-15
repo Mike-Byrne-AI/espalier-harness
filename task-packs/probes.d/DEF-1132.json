@@ -4,8 +4,8 @@
  "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":\"Bash\",\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));print(\"redirect=\"+r(\"cat < .env\")+\" glued=\"+r(\"cat <.env\")+\" head=\"+r(\"head -3 < config/.env.local\"))'",
  "open_value": "redirect=allow glued=allow head=allow",
  "why_not": null,
- "row_sha": "f9c1f4e55cfb",
- "text_sha": "870009afcd4d",
+ "row_sha": "6a79d5b194b5",
+ "text_sha": "00f1ca87e760",
  "verified_2026_10_05": "OPEN (filed 2026-10-05; probe driven at filing)",
- "verified_2026_10_15": "STILL_OPEN (re-pinned value unchanged on 2026-10-15: both reviews of lane/sandbox-posture found the first re-pin overclaiming: it said the sandbox refuses the read where only denyWrite was measured, and named no condition; the sentence now names the retry setting, the project-tree limit, the template-suffix divergence and that denyRead is not yet driven, so a reader sees the surface still live on macOS and Linux under default settings; the probe and its value unchanged)"
+ "verified_2026_10_15": "STILL_OPEN (re-pinned value unchanged on 2026-10-15: the dispatcher settled the template question (air c3a5c0): the dotenv template files the guard exempts become allowRead entries derived from its suffix tuple under the narrower-allow rule, not yet driven; the sentence names that, the refutation (the glob stays and the divergence is documented), and the Mac drive that decides it; the probe and its value unchanged)"
 }
