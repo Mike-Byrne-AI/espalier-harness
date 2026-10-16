@@ -34,6 +34,15 @@ from pathlib import Path
 
 import pytest
 
+# The module's shared fixtures are paid by whichever test asks first, under that
+# test's ceiling: `report` 13.5 s inside a 60 s consumer and `fresh_alpha_rows`
+# 57.8 s inside a 300 s one, measured serially on 3.10 (DEF-5010). Under -n auto
+# on a loaded cell the first crossed 60 s and every test sharing it errored at
+# setup (#258's test (3.10) cell, 17 errors). Every consumer carries the
+# ceiling the fixtures need; the tests themselves are fast, so none is `slow`.
+# timeout-exempt: the raised bound is for the shared fixtures' setup, which the first consumer pays; the tests stay in the not-slow slices
+pytestmark = pytest.mark.timeout(300)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "recall_eval.py"
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
