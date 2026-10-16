@@ -200,18 +200,22 @@ the engine's own surface contract module is present) it is `tools/cc/`, `.claude
 `.github/actions/`, `bench/`, `scripts/`, or `espalier/` engine code (`bench/` gates releases; `scripts/` holds
 the mirror-sync + release tooling — both governance-load-bearing). On any other tree it is
 the adopter's own source: the `code-reviewer` agent's `primary_paths` in `reports/harness_config.json` when that file is present and the list is non-empty (`init` and `upgrade` write it; `reports/` is gitignored, so a teammate's clone lacks it until they run one), else every path the diff touches that is not harness-managed (`tools/cc/`, `cc/`, `reports/`, `.espalier/`, `.espalier-state/`, `.claude/`, the seeded `docs/`, `memory/`, `task-packs/`, `ESPALIER_MEMORY.md`).
-Routine diffs (docs, tests) skip it — keep the gate fast. But a `.claude/` change is NOT
+Routine diffs (docs, tests) skip it — keep the gate fast — unless a workflow runs one of their
+files: that file is a gate. And a `.claude/` change is NOT
 routine on either branch: it is a governance change, so it is reviewed, not skipped.
+<!-- espalier:self-host-only -->
 On the Espalier-Harness tree `python scripts/proof_tier.py` computes the two bullets below
 from the diff (`--base origin/<base>` for a committed lane) and prints them on its `review:`
 line -- `none`, `code-reviewer` or `both`, with the path that earned each; a gate there is
-the CI definition, `bench/` and every file a workflow calls. Dispatch the reviewers the line
+the CI definition, `bench/` and every file a workflow calls, a hook is also every module a hook
+loads, and `espalier.toml` and `pyproject.toml` earn both. Dispatch the reviewers the line
 names: one it does not name was not earned, which is not a skipped review.
+<!-- /espalier:self-host-only -->
 
 - **Correctness first.** If the diff touches any trigger surface, dispatch the
   `code-reviewer` subagent (`subagent_type='code-reviewer'`) on the diff.
 - **Adversarial second — read AFTER code-reviewer, dispatched WITH it.** If the diff also
-  ships or modifies a hook, a gate, or a command / agent / skill body, ALSO dispatch
+  ships or modifies a hook, a gate, or a command / agent / skill / workflow body, ALSO dispatch
   `failure-mode-reviewer` (the `/adversarial` lens). Its own spec says it "fires AFTER
   code-reviewer agrees the change is correct" — that is a reading order, not a wall-clock
   one: dispatch both in one message, read the failure-mode report second, and never run it

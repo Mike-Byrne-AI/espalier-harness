@@ -410,7 +410,8 @@ W1's gate.
 
 *Rubric note (2026-10-16, `lane/review-tier-by-surface`).* An audit of pull requests opened
 after that lane counts term (1) against the reviewers the diff's surface earns: the
-`review:` line `scripts/proof_tier.py --base` prints for it. A lane that earned `none` reads
+`review:` line `scripts/proof_tier.py --base` prints for it at the pull request's head (the gate set
+is read from the workflows there). A lane that earned `none` reads
 not applicable, one that earned `code-reviewer` meets the term with that one verdict, and
 one that earned `both` needs both; a reviewer run beyond the earned set is not a gap.
 

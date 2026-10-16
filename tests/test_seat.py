@@ -674,7 +674,10 @@ class TestBrief:
         feat = _worktree(clone, "feat", name="box-feat")
         _holds(feat, "docs/WORKFLOW.md")
         assert "the reviewers the diff earns" in seat.compose_brief(clone, "box-feat", feat).loop
-        _holds(feat, "memory/parallel-work-protocol.md", "scripts/proof_tier.py")
+        _holds(feat, "memory/parallel-work-protocol.md")
+        # the protocol alone: no script to print the line, so step 6's rule
+        assert "the reviewers the diff earns" in seat.compose_brief(clone, "box-feat", feat).loop
+        _holds(feat, "scripts/proof_tier.py")
         loop = seat.compose_brief(clone, "box-feat", feat).loop
         assert "red-team the reviewers scripts/proof_tier.py --base origin/main names" in loop
         assert "both reviewers" not in loop

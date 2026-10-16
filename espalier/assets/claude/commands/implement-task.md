@@ -100,7 +100,7 @@ For one bounded change, one main proof path, or a small localized edit.
    `ESPALIER_MEMORY.md`); a `.claude/` change is a governance change on both
    branches. If the diff touches the surface, dispatch `code-reviewer` on it
    now; if it also
-   ships or modifies a hook, a gate, or a command / agent / skill body,
+   ships or modifies a hook, a gate, or a command / agent / skill / workflow body,
    dispatch `failure-mode-reviewer` in the same message (the trigger surface,
    the two-tier rule and the stop vocabulary are `/preflight` step 6's — keep
    them in step). **Dispatch both at once and freeze your edits until both
@@ -109,13 +109,18 @@ For one bounded change, one main proof path, or a small localized edit.
    batch and re-run the targeted proof. An edit applied while a reviewer is
    still reading makes it re-derive against a tree that moved under it
    (measured twice). A doc-only or test-only diff skips the
-   dispatch and goes straight to step 7.
+   dispatch and goes straight to step 7, unless a workflow runs one of its
+   files: that file is a gate.
+   <!-- espalier:self-host-only -->
    On the Espalier-Harness tree `python scripts/proof_tier.py` computes this
    rule from the diff (`--base origin/<base>` for a committed lane) and prints
    it on its `review:` line -- `none`, `code-reviewer` or `both`, with the
    path that earned each; a gate there is the CI definition, `bench/` and
-   every file a workflow calls. Dispatch the reviewers the line names: one it
+   every file a workflow calls, a hook is also every module a hook loads, and
+   `espalier.toml` and `pyproject.toml` (configuration a hook or a gate reads)
+   earn both. Dispatch the reviewers the line names: one it
    does not name was not earned, which is not a skipped step.
+   <!-- /espalier:self-host-only -->
    **Before dispatching, run this
    repo's enumerator pins** — the tests that count or classify files (on the
    Espalier-Harness tree `test_test_suite_contract`, `test_marker_taxonomy`

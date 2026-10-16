@@ -1449,10 +1449,11 @@ runs:
       shell: bash
 """
 _JOINS = ("scripts/new_gate.py", "scripts/yaml_quoted.py", "scripts/dotted.py", "scripts/chained.py",
+          "scripts/prefixed.py",
           ".github/actions/local/action.yml", "tools/from_action.py")
 _NOT_CALLS = ("scripts/commented.py", "scripts/double_quoted.py", "scripts/single_quoted.py",
               "scripts/assigned.py", "scripts/env_value.py", "scripts/other_block.py",
-              "scripts/sibling_key.py", "scripts/prefixed.py", "scripts/escaped_quote.py")
+              "scripts/sibling_key.py", "scripts/escaped_quote.py")
 
 
 def _planted(tmp_path, *, workflow=_PLANTED_WORKFLOW):
@@ -1480,10 +1481,12 @@ class TestTheReviewLine:
         ("memory/n.md", "none"),
         ("task-packs/TP-1-x.md", "none"),
         ("tests/test_x.py", "none"),
-        ("tests/conftest.py", "none"),
-        ("tests/_helper.py", "none"),
-        ("pyproject.toml", "none"),
-        ("espalier.toml", "none"),
+        # the suite's shared test code reads the code reviewer, the harness
+        # configuration a hook or a gate reads both (air, 2026-10-16)
+        ("tests/conftest.py", "code-reviewer"),
+        ("tests/_helper.py", "code-reviewer"),
+        ("pyproject.toml", "both"),
+        ("espalier.toml", "both"),
         ("espalier/assets/claude/commands/x.md", "none"),
         ("espalier/_vendor/cc/hooks/h.py", "none"),
         ("examples/dogfooding/.claude/commands/x.md", "none"),
@@ -1601,7 +1604,7 @@ class TestTheReviewLine:
         monkeypatch.setattr(pt, "_head_files", unreadable)
         assert pt.main(["--root", str(r), "--base", "HEAD~1"]) == 0
         captured = capsys.readouterr()
-        assert "review: both -- (the workflows) (unread at the head)\n" in captured.out
+        assert "review: both -- (the head) (unread)\n" in captured.out
         assert "planted; the review reads both" in captured.err
 
     def test_the_merge_gate_is_a_gate_on_this_tree(self, pt):
@@ -1644,6 +1647,184 @@ class TestTheBodiesCiteTheReviewLine:
         assert roots == set(pt._REVIEW_PREFIXES) | set(pt._FULL_PREFIXES) | {pt._ENGINE_PREFIX}
 
     @pytest.mark.parametrize("name", sorted(_BODIES))
+    def test_the_body_kinds_the_prose_names_are_the_scripts(self, pt, name):
+        """The bodies say which bodies earn both reviewers; the script's
+        `_BODY_PREFIXES` decide it. A workflow body once counted in the script
+        and not in the prose (failure-mode review, 2026-10-16)."""
+        step = self._step(name)
+        i = step.index("a command / ")
+        kinds = set(step[i + len("a "):step.index(" body", i)].split(" / "))
+        assert kinds == {prefix.split("/")[1][:-1] for prefix in pt._BODY_PREFIXES}, kinds
+
+    @pytest.mark.parametrize("name", sorted(_BODIES))
     def test_each_body_cites_the_review_line(self, name):
         step = self._step(name)
         assert "scripts/proof_tier.py" in step and "`review:` line" in step, name
+
+
+#: Call shapes a gate is spelled with (both reviews and air, 2026-10-16): a
+#: quoted script after an interpreter, a `$(...)` inside double quotes, a
+#: module run with `-m`, a step's working directory, an Actions expression
+#: before the path, an apostrophe in heredoc prose ahead of a call, and a
+#: JavaScript action's entry point; and the shapes that stay data (printed
+#: text, a test's operand).
+_CALL_SHAPES_WORKFLOW = """name: ci
+on: push
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: python "scripts/quoted_call.py" --x
+      - run: tier="$(python scripts/substituted.py --quiet || echo full)"
+      - run: printf 'scripts/printed.py'; echo scripts/echoed.py
+      - run: if [ -f scripts/tested.py ]; then true; fi
+      - run: python -m tools.module_main
+      - run: python gate.py
+        working-directory: scripts
+      - run: python ${{ github.workspace }}/scripts/expression.py
+      - run: |
+          cat <<EOF
+          Don't stop
+          EOF
+          python scripts/after_apostrophe.py
+      - uses: ./tools/js_action
+"""
+_CALLED = ("scripts/quoted_call.py", "scripts/substituted.py", "tools/module_main.py", "scripts/gate.py",
+           "scripts/expression.py", "scripts/after_apostrophe.py", "tools/js_action/action.yml",
+           "tools/js_action/dist/index.js")
+_DATA = ("scripts/printed.py", "scripts/echoed.py", "scripts/tested.py")
+
+
+def _call_shapes(tmp_path):
+    r = tmp_path / "cs"
+    files = {rel: "x\n" for rel in _CALLED + _DATA}
+    files[".github/workflows/ci.yml"] = _CALL_SHAPES_WORKFLOW
+    files["tools/js_action/action.yml"] = "name: js\nruns:\n  using: node20\n  main: dist/index.js\n"
+    for rel, text in files.items():
+        (r / rel).parent.mkdir(parents=True, exist_ok=True)
+        (r / rel).write_text(text, encoding="utf-8")
+    return r
+
+
+def _hooked(tmp_path):
+    """A scratch tools/cc/ whose one hook loads modules every way a hook does."""
+    r = tmp_path / "hk"
+    files = {
+        "tools/cc/hooks/h.py": (
+            "import _imported\n"
+            "from _from_imported import x\n"
+            "from pathlib import Path\n"
+            "p = Path(__file__).resolve().parent.parent / 'by_path.py'\n"
+            "_load_beside_hooks('beside.py', 'alias')\n"
+        ),
+        "tools/cc/_imported.py": "import _transitive\n",
+        "tools/cc/_from_imported.py": "x = 1\n",
+        "tools/cc/by_path.py": "",
+        "tools/cc/beside.py": "",
+        "tools/cc/_transitive.py": "",
+        "tools/cc/unloaded.py": "",
+    }
+    for rel, text in files.items():
+        (r / rel).parent.mkdir(parents=True, exist_ok=True)
+        (r / rel).write_text(text, encoding="utf-8")
+    return r
+
+
+class TestWhatAHookOrAGateReads:
+    """The fix batch of both reviews (2026-10-16), under air's three answers:
+    a hook is tools/cc/hooks/ and every tools/cc module a hook loads, derived;
+    the configuration a hook or a gate reads earns both; a quoted script after
+    an interpreter and a `$(...)` inside double quotes are calls, printed text
+    and a test's operand are not; a mirror-registry source earns its mirrors'
+    class; what cannot be read reads both."""
+
+    def test_every_module_a_hook_loads_is_derived(self, pt, tmp_path):
+        r = _hooked(tmp_path)
+        assert set(pt.hook_loaded_files(r)) == {
+            "tools/cc/_imported.py", "tools/cc/_from_imported.py", "tools/cc/by_path.py",
+            "tools/cc/beside.py", "tools/cc/_transitive.py"}
+        assert pt.review(["tools/cc/_transitive.py"], r) == (
+            "both", [("tools/cc/_transitive.py", "loaded by a hook: tools/cc/_imported.py loads it")])
+        assert pt.review(["tools/cc/unloaded.py"], r)[0] == "code-reviewer"
+
+    def test_the_live_hooks_load_the_bounded_spawn(self, pt):
+        """`_hook_utils.py` imports `_json_safe`: a break there refused every
+        tool call on 2026-10-16, so the module reads as a hook does."""
+        assert pt.review(["tools/cc/_json_safe.py"], REPO_ROOT)[0] == "both"
+
+    @pytest.mark.parametrize("line,expected", [
+        ("build/", "code-reviewer"),
+        (".claude/settings.json", "both"),
+    ])
+    def test_the_kill_switch_line_of_gitignore_is_a_gates(self, pt, tmp_path, line, expected):
+        r = _repo(tmp_path)
+        _commit(r, ".gitignore", "build/\n.claude/settings.json\n")
+        (r / ".gitignore").write_text(
+            "build/\n.claude/settings.json\n".replace(line + "\n", ""), encoding="utf-8")
+        assert pt.review([".gitignore"], r)[0] == expected
+        subprocess.run(_git(r) + ["commit", "-qam", "drop"], check=True, capture_output=True)
+        assert pt.review([".gitignore"], r, base="HEAD~1")[0] == expected
+
+    def test_the_call_shapes_join_and_the_data_shapes_do_not(self, pt, tmp_path):
+        named = pt.workflow_named_files(_call_shapes(tmp_path))
+        assert set(named) == set(_CALLED)
+        assert named["tools/js_action/dist/index.js"] == "tools/js_action/action.yml"
+
+    def test_the_gates_ci_rests_on_stay_named_on_this_tree(self, pt):
+        """A floor, not the set: the scripts the required cells and the
+        release run, each named by a workflow today."""
+        named = set(pt.workflow_named_files(REPO_ROOT))
+        assert {"scripts/proof_tier.py", "tools/cc/ci_guard.py", "scripts/release_check.py",
+                "bench/run_benchmark.py", "tools/review_agent_audit.py"} <= named, sorted(named)
+
+    def test_every_mirror_source_earns_at_least_its_mirrors_review(self, pt):
+        """`espalier/assets/github/workflows/harness-guard.yml` is the source of
+        the merge gate's workflow (a SOT_IS_PACKAGED row) and read none until
+        the review; every row of the registry is held to the order."""
+        from tests._git_oracle import require_tracked_paths
+        tracked = require_tracked_paths(REPO_ROOT, minimum=1000, what="the tree the mirror rows read")
+        rows = pt._mirror_rows(REPO_ROOT, False)
+        assert any(sot == "espalier/assets/github/workflows/harness-guard.yml" for sot, _ in rows), rows
+        for sot, mirrors in rows:
+            source = sot if not sot.endswith("/") else next(p for p in tracked if p.startswith(sot))
+            for mirror in mirrors:
+                image = mirror + source[len(sot):] if sot.endswith("/") else mirror
+                assert pt.REVIEWS.index(pt.review([source], REPO_ROOT)[0]) >= \
+                    pt.REVIEWS.index(pt.review([image], REPO_ROOT)[0]), (source, image)
+
+    def test_an_unresolved_base_reads_both_never_fewer(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        assert pt.main(["--root", str(r), "--base", "no-such-ref", "--tier", "full", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["review"] == "both"
+        assert data["review_earned_by"][0]["path"] == "(the diff)"
+
+    def test_base_mode_names_the_uncommitted_paths_it_leaves_out(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        _commit(r, "docs/X.md")
+        (r / "tools" / "cc" / "hooks" / "h.py").write_text("uncommitted\n", encoding="utf-8")
+        assert pt.main(["--root", str(r), "--base", "HEAD~1"]) == 0
+        out = capsys.readouterr().out
+        assert "review: none" in out
+        assert "note: 1 uncommitted path(s) are outside the --base diff" in out
+        assert "tools/cc/hooks/h.py" in out
+
+    def test_a_staged_rename_reads_as_its_new_path(self, pt, tmp_path):
+        """Under `-z` a rename's original path is a field of its own after the
+        new one; it is skipped, as the `old -> new` form's left side was."""
+        r = _repo(tmp_path)
+        subprocess.run(_git(r) + ["mv", "tools/cc/hooks/h.py", "tools/cc/hooks/renamed.py"],
+                       check=True, capture_output=True)
+        assert pt.changed_paths(r) == (["tools/cc/hooks/renamed.py"], [])
+
+    @pytest.mark.parametrize("name", ["my hook.py", "né.py"])
+    def test_a_changed_path_is_read_as_written(self, pt, tmp_path, name):
+        """`git status --porcelain` quotes a path with a space or a non-ASCII
+        character unless asked for `-z`."""
+        r = _repo(tmp_path)
+        _commit(r, f"tools/cc/hooks/{name}", "one\n")
+        (r / "tools" / "cc" / "hooks" / name).write_text("two\n", encoding="utf-8")
+        changed, _untracked = pt.changed_paths(r)
+        assert changed == [f"tools/cc/hooks/{name}"]
+        assert pt.tier(changed) == "full"
+        assert pt.review(changed, r)[0] == "both"

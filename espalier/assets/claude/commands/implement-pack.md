@@ -299,15 +299,20 @@ reachability analysis. Both gates run before any sub-task executes.
      so a teammate's clone lacks it until they run one), else every path the diff
      touches that is not harness-managed (`tools/cc/`, `cc/`, `reports/`, `.espalier/`, `.espalier-state/`, `.claude/`, the seeded
      `docs/`, `memory/`, `task-packs/`, `ESPALIER_MEMORY.md`).
-   - If the pack ships or modifies a hook, a gate, or a command / agent / skill body
+   - If the pack ships or modifies a hook, a gate, or a command / agent / skill / workflow body
      → ALSO dispatch `failure-mode-reviewer` (the `/adversarial` lens). Command bodies
      count: they are the instruction layer this workflow runs on.
+   <!-- espalier:self-host-only -->
    - On the Espalier-Harness tree `python scripts/proof_tier.py` computes the two
      bullets above from the pack's diff (`--base <baseline>` once committed) and
      prints them on its `review:` line -- `none`, `code-reviewer` or `both`, with
      the path that earned each; a gate there is the CI definition, `bench/` and
-     every file a workflow calls. Dispatch the reviewers the line names.
-   - Doc-only or test-only packs skip this — the mechanical gates above are sufficient
+     every file a workflow calls, a hook is also every module a hook loads, and
+     `espalier.toml` and `pyproject.toml` earn both. Dispatch the reviewers the
+     line names.
+   <!-- /espalier:self-host-only -->
+   - Doc-only or test-only packs skip this, unless a workflow runs one of their files (a
+     gate) — the mechanical gates above are sufficient
      and an agent pass would only add latency. "Config-only" is NOT a skip: a
      `.claude/` change is a governance change.
 
