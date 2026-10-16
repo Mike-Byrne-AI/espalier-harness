@@ -206,6 +206,12 @@ interactive session as under `-p`; a killed session leaves the lock behind.
    the fix lane would then have had to edit to delete the mark. The bridge
    went; the rows stayed for the fix lane to strike.
 
+9. **Run the reviewers your lane's surface earns**: `python scripts/proof_tier.py
+   --base origin/main` prints them on its `review:` line (`none`, `code-reviewer`
+   or `both`: `/implement-task` step 6's rule computed from the diff, since
+   2026-10-16), each on a snapshot clone with your edits frozen, and a reviewer
+   the line does not name was not earned, so leaving it out is not a skipped step.
+
 ## What the dispatcher does, and does not
 
 | Does | Does not |
