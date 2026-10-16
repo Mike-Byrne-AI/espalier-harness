@@ -274,9 +274,12 @@ class TestTheSeatNamesSayAFailedRead:
         with pytest.raises(seat.Refused):
             seat.resolve(clone, "box-feat")
 
-    def test_launch_refuses_when_the_worktrees_own_name_cannot_be_read(self, seat, clone, monkeypatch):
+    def test_launch_refuses_when_the_worktrees_own_name_cannot_be_read(self, seat, clone, registry, monkeypatch):
         """The launch's own check, after naming: dies to the unread name read
-        as "does not answer the seat", which names the wrong cause."""
+        as "does not answer the seat", which names the wrong cause. The
+        registry is the test's own: on a host with no readable one (every CI
+        runner) the occupancy check refuses first and the name read is never
+        reached."""
         feat = _worktree(clone, "feat", name="box-feat")
         monkeypatch.setattr(seat, "resolve", lambda root, s: seat.Target(s, feat, True, False))
         monkeypatch.setattr(seat.mail, "name_this_worktree", lambda path, **kw: (None, ""))
