@@ -874,10 +874,11 @@ class TestSymbolLevelDrift:
     values, because every lane touched that file somewhere else, and a third,
     bound to a hook-wiring table, read stale on three commits that never
     touched the table. The walk is ``git log -L`` over the symbol's own lines
-    at HEAD (``git show HEAD:path`` parsed by ``ast``, decorators included);
-    anything the span cannot place (a nested or missing symbol, a file that is
-    not Python) and any git error keeps the file count, so the fallback is
-    always the conservative one.
+    at HEAD (``git show HEAD:path`` parsed by ``ast``, decorators included;
+    a nested symbol, ``C.m`` or ``C::m``, one segment per scope);
+    anything the span cannot place (a missing symbol, a file that is not
+    Python) and any git error keeps the file count, so the fallback is always
+    the conservative one, and the message says which symbol it could not place.
     """
 
     @staticmethod
@@ -924,11 +925,126 @@ class TestSymbolLevelDrift:
         self._rewrite_and_commit(repo, body.replace("A = 1", "A = 2"), "touch C")
         assert scan_repo(repo)[0].state == "stale"
 
-    def test_a_nested_symbol_keeps_the_file_count(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("spelling", ["C.m", "C::m"])
+    def test_a_nested_symbol_drifts_with_its_own_lines(self, tmp_path: Path, spelling: str) -> None:
+        """Dies to: a nested symbol unplaced, so the file's every commit counts
+        (memory-line-cap's ``TestMemoryMdLineLimit::test_memory_md_within_cap``
+        re-pinned on 10-13, 10-14 and 10-15 over commits that never touched its
+        lines), in either spelling a bound uses."""
         body = "class C:\n    def m(self):\n        return 1\n\n\nX = 2\n"
-        repo = self._pinned(tmp_path, "a.py::C.m", body)
+        repo = self._pinned(tmp_path, f"a.py::{spelling}", body)
         self._rewrite_and_commit(repo, body.replace("X = 2", "X = 3"), "touch X")
+        state = scan_repo(repo)[0]
+        assert state.state == "fresh", state.message
+        self._rewrite_and_commit(repo, body.replace("X = 2", "X = 3").replace("return 1", "return 2"), "touch m")
+        state = scan_repo(repo)[0]
+        assert state.state == "stale", state.message
+        assert state.commits_since == 1
+
+    def test_a_commit_to_a_sibling_method_leaves_a_nested_bound_fresh(self, tmp_path: Path) -> None:
+        """Dies to: the span widened to the enclosing class, so a sibling
+        method's commit counts against the bound one."""
+        body = "class C:\n    def m(self):\n        return 1\n\n    def n(self):\n        return 1\n"
+        repo = self._pinned(tmp_path, "a.py::C::m", body)
+        self._rewrite_and_commit(repo, body.replace("def n(self):\n        return 1", "def n(self):\n        return 9"),
+                                 "touch n")
+        assert scan_repo(repo)[0].state == "fresh"
+
+    def test_a_function_nested_in_a_function_places(self, tmp_path: Path) -> None:
+        """Dies to: only a class scope walked; ``outer::inner`` is a def in a def."""
+        body = "def outer():\n    pre = 1\n\n    def inner():\n        return 1\n\n    return inner\n"
+        repo = self._pinned(tmp_path, "a.py::outer::inner", body)
+        self._rewrite_and_commit(repo, body.replace("pre = 1", "pre = 2"), "touch outer")
+        assert scan_repo(repo)[0].state == "fresh"
+        self._rewrite_and_commit(repo, body.replace("pre = 1", "pre = 2").replace("return 1", "return 2"),
+                                 "touch inner")
         assert scan_repo(repo)[0].state == "stale"
+
+    def test_a_decorator_change_on_a_nested_method_stales(self, tmp_path: Path) -> None:
+        """Dies to: the innermost node's decorators left out of its span."""
+        body = ("import functools\n\n\nclass C:\n    @functools.lru_cache(maxsize=1)\n"
+                "    def m(self):\n        return 1\n\n\nX = 2\n")
+        repo = self._pinned(tmp_path, "a.py::C.m", body)
+        self._rewrite_and_commit(repo, body.replace("maxsize=1", "maxsize=2"), "touch the decorator")
+        assert scan_repo(repo)[0].state == "stale"
+
+    def test_a_nested_symbol_the_file_no_longer_defines_keeps_the_file_count_and_says_so(
+        self, tmp_path: Path
+    ) -> None:
+        """Dies to: the fallback silent, so an operator reading ``check`` sees a
+        file's drift charged to a symbol and cannot tell the bound is unplaced."""
+        body = "class C:\n    def m(self):\n        return 1\n\n\nX = 2\n"
+        repo = self._pinned(tmp_path, "a.py::C::gone", body)
+        self._rewrite_and_commit(repo, body.replace("X = 2", "X = 3"), "touch X")
+        state = scan_repo(repo)[0]
+        assert state.state == "stale"
+        assert state.commits_since == 1
+        assert "a.py::C::gone" in state.message and "whole file" in state.message, state.message
+        assert "gone" in state.message.split("whole file", 1)[1], state.message
+
+    def test_a_placed_symbol_says_nothing_of_the_file(self, tmp_path: Path) -> None:
+        """Dies to: the unplaced note added to every symbol bound's message."""
+        body = "class C:\n    def m(self):\n        return 1\n\n\nX = 2\n"
+        repo = self._pinned(tmp_path, "a.py::C::m", body)
+        self._rewrite_and_commit(repo, body.replace("return 1", "return 2"), "touch m")
+        state = scan_repo(repo)[0]
+        assert state.state == "stale"
+        assert "whole file" not in state.message, state.message
+
+    def test_a_change_to_a_property_setter_stales_a_bound_property(self, tmp_path: Path) -> None:
+        """Dies to: the first binding taken alone, so a changed setter reads fresh
+        (the under-count a nested walk invites: getter and setter share a name)."""
+        body = ("class C:\n    @property\n    def x(self):\n        return 1\n\n"
+                "    @x.setter\n    def x(self, v):\n        self._v = v\n\n\nY = 2\n")
+        repo = self._pinned(tmp_path, "a.py::C::x", body)
+        self._rewrite_and_commit(repo, body.replace("self._v = v", "self._v = v + 1"), "touch the setter")
+        state = scan_repo(repo)[0]
+        assert state.state == "stale", state.message
+        assert state.commits_since == 1
+
+    def test_an_overloaded_function_spans_its_implementation(self, tmp_path: Path) -> None:
+        """Dies to: the top-level walk stopping at the first ``@overload`` stub."""
+        body = ("from typing import overload\n\n\n@overload\ndef f(x: int) -> int: ...\n\n\n"
+                "@overload\ndef f(x: str) -> str: ...\n\n\ndef f(x):\n    return x\n\n\nY = 2\n")
+        repo = self._pinned(tmp_path, "a.py::f", body)
+        self._rewrite_and_commit(repo, body.replace("Y = 2", "Y = 3"), "touch Y")
+        assert scan_repo(repo)[0].state == "fresh"
+        self._rewrite_and_commit(repo, body.replace("Y = 2", "Y = 3").replace("return x", "return x * 2"),
+                                 "touch the implementation")
+        assert scan_repo(repo)[0].state == "stale"
+
+    def test_a_scope_defined_twice_cannot_be_placed_and_says_so(self, tmp_path: Path) -> None:
+        """Dies to: one of two same-named classes picked, so a change to the
+        other one's method reads fresh."""
+        body = "class C:\n    def m(self):\n        return 1\n\n\nclass C:\n    def m(self):\n        return 2\n\n\nY = 2\n"
+        repo = self._pinned(tmp_path, "a.py::C::m", body)
+        self._rewrite_and_commit(repo, body.replace("return 2", "return 3"), "touch the second C")
+        state = scan_repo(repo)[0]
+        assert state.state == "stale", state.message
+        assert "C is bound more than once" in state.message, state.message
+
+    def test_check_names_every_symbol_it_could_not_place(self, tmp_path: Path) -> None:
+        """Dies to: the walk stopping at the first unplaced symbol of a path, so
+        the message names one of two typos."""
+        body = "class C:\n    def m(self):\n        return 1\n\n\nX = 2\n"
+        repo = self._pinned(tmp_path, "a.py::C::gone,a.py::C::gone2", body)
+        self._rewrite_and_commit(repo, body.replace("X = 2", "X = 3"), "touch X")
+        message = scan_repo(repo)[0].message
+        assert "a.py::C::gone (" in message and "a.py::C::gone2 (" in message, message
+
+    def test_a_source_with_a_coding_line_is_placed(self, tmp_path: Path) -> None:
+        """Dies to: the file decoded as UTF-8 before it is parsed, so a latin-1
+        source with its PEP 263 line reads unplaced, blamed on git."""
+        body = "# -*- coding: latin-1 -*-\nclass C:\n    def m(self):\n        return 'caf\xe9'\n\n\nX = 2\n"
+        repo = _init_repo(tmp_path)
+        _write_doc_with_fragment(repo, "foo", "a.py::C::m")
+        (repo / "a.py").write_bytes(body.encode("latin-1"))
+        sha = _commit_all(repo, "init")
+        _write_manifest(repo, "foo", sha, ["a.py::C::m"])
+        (repo / "a.py").write_bytes(body.replace("X = 2", "X = 3").encode("latin-1"))
+        _commit_all(repo, "touch X")
+        state = scan_repo(repo)[0]
+        assert state.state == "fresh", state.message
 
     def test_a_symbol_missing_at_head_keeps_the_file_count(self, tmp_path: Path) -> None:
         repo = self._pinned(tmp_path, "a.py::GONE", "SYM = 1\n")
@@ -1040,10 +1156,11 @@ class TestSymbolLevelDrift:
             check=True, capture_output=True, text=True, encoding="utf-8",
         ).stdout.strip()
         assert fr_mod._git_log_symbol_commits(repo, sha, "a.py", (9999, 9999)) is None
-        monkeypatch.setattr(fr_mod, "_symbol_span", lambda *a, **k: (9999, 9999))
+        monkeypatch.setattr(fr_mod, "_place_symbol", lambda *a, **k: ((9999, 9999), ""))
         state = scan_repo(repo)[0]
         assert state.state == "stale", "a walk git refuses must keep the file count, never read fresh"
         assert state.commits_since == 1
+        assert "a.py::SYM" in state.message and "whole file" in state.message, state.message
 
     def test_a_bare_hex_line_inside_the_region_is_not_a_commit(self, tmp_path: Path) -> None:
         digest = "0123456789abcdef0123456789abcdef01234567"
@@ -1104,6 +1221,34 @@ class TestUncommittedBoundChanges:
         (repo / "a.py").write_text("def f():\n    y = 0\n    return 1\n\n\nX = 2\n", encoding="utf-8")
         assert scan_repo(repo)[0].state == "stale"
 
+    def test_an_uncommitted_edit_outside_a_nested_bound_stays_fresh(self, tmp_path: Path) -> None:
+        """Dies to: the dirty check left on the file for a nested symbol (a
+        seat with an edit elsewhere in tests/test_contracts.py read stale)."""
+        body = "class C:\n    def m(self):\n        return 1\n\n\nX = 2\n"
+        repo = self._pinned(tmp_path, "a.py::C::m", body)
+        (repo / "a.py").write_text(body.replace("X = 2", "X = 3"), encoding="utf-8")
+        state = scan_repo(repo)[0]
+        assert state.state == "fresh", state.message
+        assert state.dirty_paths == ()
+
+    def test_an_uncommitted_edit_inside_a_nested_bound_reads_stale(self, tmp_path: Path) -> None:
+        body = "class C:\n    def m(self):\n        return 1\n\n\nX = 2\n"
+        repo = self._pinned(tmp_path, "a.py::C.m", body)
+        (repo / "a.py").write_text(body.replace("return 1", "return 2"), encoding="utf-8")
+        state = scan_repo(repo)[0]
+        assert state.state == "stale", state.message
+        assert state.dirty_paths == ("a.py",)
+
+    def test_a_dirty_bound_it_cannot_place_says_so(self, tmp_path: Path) -> None:
+        """Dies to: the dirty fallback silent about the symbol it could not place."""
+        body = "class C:\n    def m(self):\n        return 1\n\n\nX = 2\n"
+        repo = self._pinned(tmp_path, "a.py::C::gone", body)
+        (repo / "a.py").write_text(body.replace("X = 2", "X = 3"), encoding="utf-8")
+        state = scan_repo(repo)[0]
+        assert state.state == "stale", state.message
+        assert state.dirty_paths == ("a.py",)
+        assert "a.py::C::gone" in state.message and "whole file" in state.message, state.message
+
     def test_an_untracked_file_under_a_directory_bound_reads_stale(self, tmp_path: Path) -> None:
         repo = _init_repo(tmp_path)
         _write_doc_with_fragment(repo, "foo", "corpus/")
@@ -1134,6 +1279,19 @@ class TestUncommittedBoundChanges:
         state = scan_repo(repo)[0]
         assert state.state == "stale", state.message
         assert "by hand" in state.message and "1" in state.message, state.message
+
+    def test_the_unplaced_note_stays_off_a_message_about_the_literal(self, tmp_path: Path) -> None:
+        """Dies to: the note appended to every message, here one that names a
+        hand-edited number and counts nothing."""
+        repo = self._pinned(tmp_path, "a.py::GONE", "x = 1\n", policy="numeric-contract", expected_value=1)
+        _commit_all(repo, "pin")
+        manifest = repo / ".espalier" / "freshness.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["fragments"]["foo"]["expected_value"] = 2
+        manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        (repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        state = scan_repo(repo)[0]
+        assert "by hand" in state.message and "could not place" not in state.message, state.message
 
     def test_a_dirty_bound_never_masks_a_critical(self, tmp_path: Path) -> None:
         repo = self._pinned(tmp_path, "a.py", "x = 1\n", last_verified_at=_iso_days_ago(40))

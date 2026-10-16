@@ -1896,13 +1896,17 @@ Doc claims that bind to code paths can declare a fragment marker:
 
 ```
 <!-- espalier:fragment id=<short-id>
-     bound=<path>[::<symbol>][,<path>...]
+     bound=<path>[::<symbol>[::<member>]][,<path>...]
      policy=<verify-on-touch|weekly|numeric-contract> -->
 ```
 
 The manifest at `.espalier/freshness.json` records the SHA at which
 each fragment was last asserted accurate by an operator. State is
-computed from `git log` of bound paths since the pinned SHA.
+computed from `git log` of bound paths since the pinned SHA; a bound
+that names a symbol, nested ones (`Class::method`) included, counts
+only the commits to that symbol's own lines, and one the scanner cannot
+place counts its whole file, says so in `check`, and is refused at `pin`
+without `--force`.
 
 Critical invariants:
 

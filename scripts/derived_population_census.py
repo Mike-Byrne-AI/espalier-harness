@@ -722,10 +722,18 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "CORRECT_BY_SHAPE",
         "derives the EXPECTATION and compares it against an independently obtained actual -- the corre...",
     ),
-    # 3 row(s), shapes: comprehension, for-assert
+    # 4 row(s), shapes: comprehension, for-assert
     "tests/test_freshness_semantic_fragments.py": (
-        3, "a8eb5e3f172ed533513630980b527ab2029a1aa23d950f2435016bef5a52b476",
+        4, "f538ba179cd90a2d1b0c7537fc625744be695ee924f12de4227ecf8784ade6f6",
         "CORRECT_BY_REMEDY",
+        "GROWTH 3->4 adjudicated 2026-10-16 (lane/freshness-nested-symbol-span): _every_symbol_bound "
+        "derives every path::symbol entry of every discovered fragment, any policy, for "
+        "test_every_symbol_bound_the_scanner_counts_is_one_it_can_place (each must place with the "
+        "scanner's own walk, else its drift is the whole file's). Deriving is the point: a hand list "
+        "would miss the next bound written in a spelling the scanner cannot place, which is how "
+        "memory-line-cap's nested bound went unplaced. It asserts the population is non-empty, and the "
+        "six seeded verify-on-touch fragments sit inside it; a lost marker leaves it silently, as for "
+        "the three rows below. "
         "NEW 2026-10-15 (DEF-2013 lane two): visible since the scanner's own FRAGMENT_SURFACE_ALLOWLIST "
         "became the innermost first argument (`_root_name` follows it through every call; it was the "
         "test's REPO_ROOT before). _verify_on_touch_fragments derives the verify-on-touch sweep, floored "
