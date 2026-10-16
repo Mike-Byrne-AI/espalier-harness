@@ -73,7 +73,7 @@ limit would mean the friction layer drifted past its stated scope.
   whether it refuses the reads espalier's posture lists (a headless `claude` per
   case, a paid session each, never run by the suite), with its re-scorer and the
   arm table of what was measured where. It measures Claude Code's OS-level sandbox,
-  not the friction layer (an OS-level sandbox drive: [its README](sandbox_read_drive/README.md)).
+  not the friction layer; its own `README.md` holds the method and the arm table.
 
 This list is pinned to the tracked tree: every top-level `bench/*.py` must
 appear here and in the layout below

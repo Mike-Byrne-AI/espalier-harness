@@ -1,10 +1,10 @@
 """The sandbox read drive's verdicts, on planted streams: no paid run, no claude.
 
 ``bench/sandbox_read_drive/drive.py`` and its ``rescore.py`` score a case from the
-tool results of its saved stream. A run that never executed (logged out,
-rate-limited, the model declining, a late file never planted) must not read as
-the sandbox refusing: a seat closing a ledger arm off the refused lines would
-close it on nothing. Re-scored under this rule, the 2026-10-15 macOS streams keep
+tool results of its saved stream. This file pins the verdict rule both share. A
+run that never executed (logged out, rate-limited, the model declining, a late
+file never planted) must not read as the sandbox refusing, because a seat closing
+a ledger arm off the refused lines would close it on nothing. Re-scored under this rule, the 2026-10-15 macOS streams keep
 every figure, and the Grep-tool and user-scope arms, which never ran, read
 ``not-run`` where the substring-era scorer read them as refused.
 """
