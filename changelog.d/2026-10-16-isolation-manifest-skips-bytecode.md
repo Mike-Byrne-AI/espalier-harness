@@ -8,3 +8,9 @@
   wrote on purpose (twice on 2026-10-16). `__pycache__` directories are now
   skipped at any depth by the one rule every walk and copy of the live
   checkout shares; a source file beside one is still seen.
+- **The recall-eval tests no longer error together on a loaded cell.** Their
+  shared fixtures are paid by whichever test asks first, and on a busy runner
+  that test's 60-second ceiling ran out during setup, so every test sharing
+  the fixture errored at once. The module now gives each of its tests the
+  ceiling the shared setup needs. It keeps them out of the `slow` mark, so
+  they still run in every not-slow slice.
