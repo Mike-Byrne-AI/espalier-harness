@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3008",
+ "subject": "tools/cc/hooks/plan_guard.py",
+ "cmd": "python -c \"import json, os, shutil, subprocess, sys, tempfile, pathlib; t = pathlib.Path(tempfile.mkdtemp()); shutil.copytree('tools/cc', t / 'tools' / 'cc'); p = t / 'tools' / 'cc' / 'hooks' / '_denial_reasons.py'; p.write_bytes(p.read_bytes() + bytes([10]) + b'raise KeyError(1)' + bytes([10])); env = {k: v for k, v in os.environ.items() if not k.startswith('CLAUDE')}; r = subprocess.run([sys.executable, str(t / 'tools' / 'cc' / 'hooks' / 'plan_guard.py')], input=json.dumps({'tool_name': 'Write', 'tool_input': {'file_path': 'src/app.py', 'content': 'x'}}), capture_output=True, text=True, cwd=t, env=env, timeout=60); print(r.returncode == 1)\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_denial_reasons.py"
+ ],
+ "row_sha": "e9f45479e6e2",
+ "text_sha": "cb34f4755f04",
+ "verified_2026_10_16": "OPEN (filed 2026-10-16; probe driven at filing)"
+}
