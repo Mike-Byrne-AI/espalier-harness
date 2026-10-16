@@ -108,6 +108,101 @@ def interpreter_token(command: str) -> str:
     return cmd.split(None, 1)[0]
 
 
+def entry_argv(command: object, args: object = None) -> tuple[str, list]:
+    """``(argv[0], the words after it)`` of a settings.json hook entry.
+
+    The FORM decides before the word (DEF-968). An entry carrying an ``args``
+    list is exec form: Claude Code spawns ``command`` itself, with no shell and
+    no tokenization on any platform (the upstream hooks page, section "Exec
+    form and shell form"), so argv[0] is all of ``command`` -- a space in an
+    interpreter path is part of the path, and a quote is part of the file
+    name, which is why a quoted exec-form ``command`` cannot start -- and the
+    words after it are ``args``. Without ``args`` the entry is shell form, and
+    argv[0] is :func:`interpreter_token`'s first word, which agrees with
+    ``sh -c`` and Git Bash -- with a leading ``~`` expanded, as the shell
+    expands an unquoted one. A first-word reading of exec form named
+    ``C:\\Program`` for an interpreter under ``C:\\Program Files``.
+
+    Twin of ``tools/cc/hooks/session_start.py::_entry_argv`` (``espalier/``
+    never imports ``tools/cc/``), pinned equal over one table of entry shapes
+    by ``tests/test_hook_entry_argv.py``.
+    """
+    if isinstance(args, list):
+        return (command if isinstance(command, str) else ""), list(args)
+    cmd = command.strip() if isinstance(command, str) else ""
+    head = interpreter_token(cmd)
+    if not head:
+        return "", []
+    if cmd[:1] in ("'", '"'):
+        end = cmd.find(cmd[0], 1)
+        return head, (cmd[end + 1:].split() if end > 0 else [])
+    return (os.path.expanduser(head) if head.startswith("~") else head), cmd.split()[1:]
+
+
+def names_a_python(token: str) -> bool:
+    """Does argv[0] ``token`` name a Python interpreter at all?
+
+    Read on the file name -- either slash a separator, quotes off, lowercased,
+    ``.exe`` dropped, and its first word only (an exec-form ``command`` of
+    ``py -3`` or ``python -u`` names a Python it cannot start) -- so an
+    absolute path to a below-floor interpreter is still asked (``DEF-636``).
+    Not asked, on purpose: a ``$``-led head (``$HOME/.venv/bin/python``, which
+    no reader here expands), ``pypy``, and a wrapper head (``uv run``,
+    ``env``, ``poetry run``), whose interpreter is not argv[0]. Twin of
+    ``tools/cc/hooks/session_start.py::_names_a_python`` (DEF-1024), pinned
+    equal by ``tests/test_hook_entry_argv.py``.
+    """
+    if not token or token.startswith("$") or "${" in token:
+        return False
+    name = token.replace("\\", "/").rsplit("/", 1)[-1].strip("\"'").lower().split()
+    base = name[0] if name else ""
+    if base.endswith(".exe"):
+        base = base[: -len(".exe")]
+    return base == "py" or base.startswith("python")
+
+
+def exec_name_has_space(command: str) -> bool:
+    """Does an exec-form ``command``'s FILE NAME hold whitespace?
+
+    Exec form spawns ``command`` as one file name, so a space in its
+    directory is a real path's (``C:\\Program Files\\...``) while a space in
+    the name (``py -3``, ``python -X utf8``) is a file no host has: the entry
+    cannot start, and the launcher split of :func:`interpreter_argv` must not
+    read it as ``py`` plus a flag (DEF-968). Twin of
+    ``tools/cc/hooks/session_start.py::_exec_name_has_space``.
+    """
+    name = command.replace("\\", "/").rsplit("/", 1)[-1]
+    return any(ch.isspace() for ch in name)
+
+
+def shell_cut_path(command: str) -> str | None:
+    """The Python path a shell-form ``command`` names unquoted across a space,
+    which the shell cuts at that space; None when it does not.
+
+    ``C:\\Program Files\\Python312\\python.exe x.py`` runs ``C:\\Program``
+    under ``sh -c`` and Git Bash (exit 127, every guard fails open), and the
+    cut word names no Python, so a reader that asks only argv[0] whether it
+    is one skips the entry. This finds the longer word-prefix that does name
+    a Python (not a ``.py``/``.sh`` script), where argv[0] is a path that is
+    not a file. The rewire must DECLINE such an entry: swapping the cut word
+    wrote ``python Envs/py312/bin/python3 ...``, which exits 2 -- a block on
+    every tool call (failure-mode review, driven). Twin of
+    ``tools/cc/hooks/session_start.py::_shell_cut_path``.
+    """
+    cmd = command.strip() if isinstance(command, str) else ""
+    if not cmd or cmd[:1] in ("'", '"'):
+        return None
+    words = cmd.split()
+    head = os.path.expanduser(words[0]) if words[0].startswith("~") else words[0]
+    if not any(sep in head for sep in ("/", "\\")) or os.path.isfile(head):
+        return None
+    for end in range(2, len(words) + 1):
+        prefix = " ".join(words[:end])
+        if not prefix.endswith((".py", ".sh")) and names_a_python(prefix):
+            return prefix
+    return None
+
+
 def is_statusline_shim_head(token: str) -> bool:
     """Is ``token`` (an unquoted argv[0]) the Windows statusline shim?
 

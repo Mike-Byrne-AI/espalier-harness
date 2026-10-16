@@ -1303,13 +1303,24 @@ _MUTATION_MATCHER_TOOLS = ("Write", "Edit", "NotebookEdit")
 
 def _is_python_interpreter(token: str) -> bool:
     """True if ``token`` is a BARE python interpreter command word — ``python`` /
-    ``python3`` / ``python3.12`` / ``py``, optionally a full path. A token with
-    whitespace (a shell-form command string like ``python3 -c pass x.py``) is
-    NOT a bare interpreter and returns False — so only the canonical exec form
-    (``command`` == a single interpreter binary) is recognized."""
-    if not token or any(c.isspace() for c in token):
+    ``python3`` / ``python3.12`` / ``py``, optionally a full path. A FILE NAME
+    with whitespace (a shell-form command string like ``python3 -c pass x.py``,
+    or an exec ``command`` of ``py -3``) is NOT a bare interpreter and returns
+    False — so only the canonical exec form (``command`` == a single
+    interpreter binary) is recognized. A space in the DIRECTORY is a real
+    path's (``C:\\Program Files\\Python312\\python.exe``), which exec form
+    spawns whole; refusing it called every gate on such a host unwired
+    (DEF-968). The file name is read lowercased, ``.exe`` dropped. One rule in
+    the three copies (``tools/cc/ci_guard.py``, ``tools/cc/hooks/_integrity.py``),
+    pinned over one table by ``tests/test_hook_entry_argv.py``."""
+    if not token:
         return False
     base = token.replace("\\", "/").rsplit("/", 1)[-1]
+    if any(c.isspace() for c in base):
+        return False
+    base = base.lower()
+    if base.endswith(".exe"):
+        base = base[: -len(".exe")]
     return base == "py" or base.startswith("python") or is_python_launcher(token)
 
 

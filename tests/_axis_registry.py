@@ -131,8 +131,10 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     AxisCell("root", "spaced_interpreter", "",
              "no CI interpreter path holds a space. On the Windows host, whose venv "
              "does, the stop-gate override pair reds because its fixture spells "
-             "sys.executable unquoted (measured 2026-10-06); DEF-968 is the product "
-             "half of the shape"),
+             "sys.executable unquoted (measured 2026-10-06). DEF-968 closed the "
+             "product half (struck 2026-10-16: tests/test_hook_entry_argv.py spawns "
+             "a real interpreter under a spaced directory on every host), but no "
+             "test is parametrised over this axis"),
     # -- tree ----------------------------------------------------------------
     AxisCell("tree", "clean", "",
              "every test runs here, and none is parametrised against a dirty machine"),

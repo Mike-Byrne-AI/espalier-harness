@@ -159,27 +159,30 @@ def _sh_stub(bin_dir: Path, name: str, *, working: bool) -> Path:
     return _write(bin_dir / name, body, crlf=False)
 
 
-_PY_OLD_DEFAULT_FORWARDER = (
-    "import re, subprocess, sys\n"
-    "args = sys.argv[1:]\n"
-    f"if args and re.fullmatch(r'{LAUNCHER_FLAG_RE}', args[0]):\n"
-    "    sys.exit(subprocess.call([sys.executable, *args[1:]]))\n"
-    "if args == ['--version']:\n"
-    "    print('Python 3.9.6')\n"
-    "    sys.exit(0)\n"
-    "sys.exit(subprocess.call([sys.executable, *args]))\n"
-)
+def _old_default_forwarder(banner: str) -> str:
+    return (
+        "import re, subprocess, sys\n"
+        "args = sys.argv[1:]\n"
+        f"if args and re.fullmatch(r'{LAUNCHER_FLAG_RE}', args[0]):\n"
+        "    sys.exit(subprocess.call([sys.executable, *args[1:]]))\n"
+        "if args == ['--version']:\n"
+        f"    print({banner!r})\n"
+        "    sys.exit(0)\n"
+        "sys.exit(subprocess.call([sys.executable, *args]))\n"
+    )
 
 
-def build_old_default_launcher(root: Path) -> Path:
+def build_old_default_launcher(root: Path, default_banner: str = "Python 3.9.6") -> Path:
     """A launcher-only host whose ``py`` DEFAULT is a 3.9 (a ``PY_PYTHON=3.9``
     setting, or a py.ini default) while ``py -3`` runs this interpreter: the
     one host where a bare ``py`` probe and a ``py -3`` probe disagree, so two
     readers of one settings site that spell it differently disagree too.
-    Native flavour only."""
+    ``default_banner`` is what the bare launcher answers ``--version`` with:
+    ``"Python 2.7.18"`` makes the default fail an identity probe as well as
+    the floor (DEF-1146). Native flavour only."""
     bin_dir = root / "old-default-launcher"
     bin_dir.mkdir(parents=True)
-    forwarder = _write(bin_dir / "_py_old_default.py", _PY_OLD_DEFAULT_FORWARDER, crlf=False)
+    forwarder = _write(bin_dir / "_py_old_default.py", _old_default_forwarder(default_banner), crlf=False)
     if os.name == "nt":
         _write(bin_dir / "py.cmd", f'@"{sys.executable}" "{forwarder}" %*', crlf=True)
         for name in ("python", "python3"):
