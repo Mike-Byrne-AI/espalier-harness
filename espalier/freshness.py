@@ -73,9 +73,11 @@ from espalier._spawn import run_bounded
 __all__ = [
     "Fragment",
     "FragmentState",
+    "DirtyBoundRefusedError",
     "FreshnessError",
     "RebindingRefusedError",
     "StaleLiteralRefusedError",
+    "UnplacedBoundRefusedError",
     "carried_literal",
     "STALE_THRESHOLD_COMMITS",
     "CRITICAL_THRESHOLD_DAYS",

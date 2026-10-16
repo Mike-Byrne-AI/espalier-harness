@@ -662,18 +662,27 @@ def _defined_names(node: ast.AST) -> list[str]:
     return []
 
 
-def _span_in_source(source: str, symbol: str) -> tuple[tuple[int, int] | None, str]:
+def _first_line(node: ast.stmt) -> int:
+    """A statement's first line, its decorators included."""
+    decorators = getattr(node, "decorator_list", [])
+    return min([node.lineno, *(d.lineno for d in decorators)])
+
+
+def _span_in_source(source: str | bytes, symbol: str) -> tuple[tuple[int, int] | None, str]:
     """The 1-based line span of ``symbol`` in Python ``source`` and ``""``, or
     ``None`` and why it cannot be placed.
 
     A nested symbol (``Class::method``, ``Class.method``, ``outer::inner``) is
-    resolved one segment per scope: each part is the first ``def``, ``async
-    def``, ``class`` or assignment that binds it in the body of the one before.
-    The span is the innermost node's own lines, decorators included, so a
-    method's span is its own body and never its class's -- a commit to a
-    sibling method does not count against it. ``tests/test_freshness_semantic_fragments.py``
-    validates every live bound with this same walk, so the suite calls a bound
-    valid exactly when its drift can be counted on its lines.
+    resolved one segment per scope: each part is a ``def``, ``async def``,
+    ``class`` or assignment that binds it in the body of the one before. The
+    span is the innermost node's own lines, decorators included, so a method's
+    span is its own body and never its class's -- a commit to a sibling method
+    does not count against it. Every binding of the last segment in its scope is
+    the symbol (a property's getter and setter, ``@overload`` stubs and their
+    implementation), so the span runs from the first binding's first line to the
+    last one's end; an enclosing segment bound more than once cannot be told
+    apart and is not placed. ``tests/test_freshness_semantic_fragments.py``
+    validates every live bound with this same walk.
     """
     parts = symbol.replace(".", "::").split("::")
     if not symbol or not all(parts):
@@ -683,24 +692,23 @@ def _span_in_source(source: str, symbol: str) -> tuple[tuple[int, int] | None, s
     except (SyntaxError, ValueError):
         return None, "the file does not parse"
     scope: ast.AST = tree
-    node: ast.stmt | None = None
     for depth, part in enumerate(parts):
-        found = next(
-            (child for child in ast.iter_child_nodes(scope)
-             if isinstance(child, ast.stmt) and part in _defined_names(child)),
-            None,
-        )
-        if found is None:
-            where = "the module" if depth == 0 else "::".join(parts[:depth])
+        where = "the module" if depth == 0 else "::".join(parts[:depth])
+        binders = [
+            child for child in ast.iter_child_nodes(scope)
+            if isinstance(child, ast.stmt) and part in _defined_names(child)
+        ]
+        if not binders:
             return None, f"{part} is not defined in {where}"
-        scope = node = found
-    if node is None:  # unreachable: parts is non-empty, so the loop bound one
-        return None, "a segment of the name is empty"
-    start = node.lineno
-    decorators = getattr(node, "decorator_list", [])
-    if decorators:
-        start = min(start, min(d.lineno for d in decorators))
-    return (start, node.end_lineno or node.lineno), ""
+        if depth < len(parts) - 1:
+            if len(binders) > 1:
+                return None, f"{part} is bound more than once in {where}"
+            scope = binders[0]
+            continue
+        start = min(_first_line(b) for b in binders)
+        end = max(b.end_lineno or b.lineno for b in binders)
+        return (start, end), ""
+    return None, "a segment of the name is empty"
 
 
 def _place_symbol(repo_root: Path, path: str, symbol: str) -> tuple[tuple[int, int] | None, str]:
@@ -720,9 +728,12 @@ def _place_symbol(repo_root: Path, path: str, symbol: str) -> tuple[tuple[int, i
     if not path.endswith(".py"):
         return None, "not a Python file"
     try:
+        # Bytes, parsed as bytes: ``ast.parse`` honours a PEP 263 coding line
+        # and the line numbers are the same, where a UTF-8 decode here would
+        # fail a latin-1 source before it was read.
         shown = run_bounded(
             ["git", "-C", str(repo_root), "show", f"HEAD:{path}"],
-            capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
+            capture_output=True, check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
         return None, "git did not answer"
@@ -822,7 +833,8 @@ def _bound_drift(
     read stale on three commits that never touched the table. Measured
     2026-10-16: memory-line-cap, bound to a test method
     (``Class::method``), was re-pinned three days running because a nested
-    symbol was not placed at all, and none of its six drift commits touched the
+    symbol was not placed at all, and none of its drift commits (four on main,
+    six on the head of the pull request that last re-pinned it) touched the
     method's lines. The symbol walk runs only for a path whose file-level count
     is non-zero, so a scan of a quiet tree stays at one subprocess per pin, and
     any entry the walk cannot place keeps the whole path's file-level count and
@@ -849,16 +861,18 @@ def _bound_drift(
         placed = True
         for symbol in symbols:
             span, why = _place_symbol(repo_root, path, symbol)
-            found = (
-                _git_log_symbol_commits(repo_root, since_sha, path, span)
-                if span else None
-            )
-            if found is None:
-                placed = False
-                if notes is not None:
-                    notes.append(f"{path}::{symbol} ({why or 'git log -L could not answer'})")
+            if span is not None and placed:
+                found = _git_log_symbol_commits(repo_root, since_sha, path, span)
+                if found is not None:
+                    touched |= found
+                    continue
+                why = "git log -L could not answer"
+            elif span is not None:
+                continue  # the file count already stands; only the unplaced are named
+            placed = False
+            if notes is None:
                 break
-            touched |= found
+            notes.append(f"{path}::{symbol} ({why})")
         total += len(touched) if placed else file_count
     return total
 
@@ -985,17 +999,22 @@ def _dirty_bound(
         if ranges is None:
             dirty.append(path)
             continue
+        is_dirty = False
         for symbol in symbols:
             span, why = _place_symbol(repo_root, norm, symbol)
             if span is None:
-                dirty.append(path)
-                if notes is not None:
-                    notes.append(f"{norm}::{symbol} ({why})")
-                break
+                is_dirty = True
+                if notes is None:
+                    break
+                notes.append(f"{norm}::{symbol} ({why})")
+                continue
             start, end = span
             if any(max(start, a) <= min(end, b) for a, b in ranges):
-                dirty.append(path)
-                break
+                is_dirty = True
+                if notes is None:
+                    break
+        if is_dirty:
+            dirty.append(path)
     return dirty
 
 
@@ -1302,6 +1321,9 @@ def scan_repo(repo_root: Path) -> list[FragmentState]:
         )
 
         message = ""
+        # Set by the three branches whose message is about the bound's drift,
+        # the only ones the unplaced note below belongs to.
+        drift_message = False
         if not policy_known:
             message = f"unknown policy: {frag.policy!r}"
         elif entry is not None and not manifest_match:
@@ -1319,6 +1341,7 @@ def scan_repo(repo_root: Path) -> list[FragmentState]:
                 f"drift exceeds threshold "
                 f"({commits} commits, {days} days)"
             )
+            drift_message = True
         elif hand_edited:
             message = (
                 f"expected_value edited by hand: HEAD carries {head_value!r}, the "
@@ -1334,11 +1357,13 @@ def scan_repo(repo_root: Path) -> list[FragmentState]:
             )
             if commits:
                 message += f"; drift detected ({commits} commits, {days} days)"
+            drift_message = True
         elif state == "stale":
             message = f"drift detected ({commits} commits, {days} days)"
-        if unplaced and message and manifest_match and policy_known:
+            drift_message = True
+        if unplaced and drift_message:
             message += (
-                "; counted the whole file, since the scan could not place "
+                "; read the whole file for each symbol the scan could not place: "
                 + "; ".join(dict.fromkeys(unplaced))
             )
 

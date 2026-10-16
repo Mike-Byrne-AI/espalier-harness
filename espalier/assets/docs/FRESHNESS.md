@@ -114,14 +114,19 @@ rest of the file is not; the repo's diff driver plays no part. A nested
 symbol (`path.py::Class::method`, or `path.py::Class.method`, the form
 the template above uses) is placed one segment per scope, and its span
 is the innermost node's own lines, so a commit to a sibling method does
-not count against it. A bound that names a file counts every commit to
-it. A symbol the scanner cannot place (renamed away, defined somewhere
-other than the scope the bound names, or in a file that is not Python)
-and any git error fall back to the file count, the conservative side,
-and `check`'s message names the entry and why it could not be placed;
+not count against it. A name bound more than once in its scope (a
+property's getter and setter, `@overload` stubs and their
+implementation) spans all of its bindings, from the first one's first
+line to the last one's end. A bound that names a file counts every
+commit to it. A symbol the scanner cannot place (renamed away, defined
+somewhere other than the scope the bound names, inside a class or
+function the file defines twice, or in a file that is not Python) and
+any git error fall back to the file count, the conservative side, and
+`check`'s message names each such entry and why it could not be placed;
 the walk runs only when the file has drifted at all. `pin` refuses a
-bound it cannot place, naming the entry (`--force` records it anyway),
-and `pin --all` refuses before pinning anything, so the fallback is
+bound it cannot place, naming the entry (`--force` records it anyway,
+and says so, since one `--force` also consents to a rebind or a dirty
+bound), and `pin --all` refuses before pinning anything, so the fallback is
 caught where the bound is written rather than on every later commit to
 its file. Until 2026-10-16 a nested symbol was never placed, and the
 fallback was silent: a test-method bound in a 2,700-line test file was

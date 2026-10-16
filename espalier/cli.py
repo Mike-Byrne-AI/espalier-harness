@@ -13515,6 +13515,20 @@ def cmd_freshness_pin(args: argparse.Namespace) -> int:
         return 1
 
     _note_missing_literal(args.fragment_id, entry)
+    if force:
+        # One --force consents to every refusal at once: a rebind forced through
+        # must not record an unplaced symbol without a word (a typo in the new
+        # bound would surface only once its file drifted).
+        from espalier.scanners.freshness import unplaced_bound_entries
+        unplaced = unplaced_bound_entries(repo_root, tuple(entry.get("bound", [])))
+        if unplaced:
+            print(
+                f"note: {args.fragment_id!r} was pinned with --force over a bound the "
+                f"scan cannot place ({'; '.join(f'{e} ({w})' for e, w in unplaced)}): "
+                f"its drift is the whole file's until the bound names a symbol the "
+                f"file defines",
+                file=sys.stderr,
+            )
     print(json.dumps({
         "pinned": args.fragment_id,
         "entry": entry,

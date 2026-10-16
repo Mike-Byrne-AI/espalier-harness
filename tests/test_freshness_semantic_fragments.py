@@ -50,15 +50,16 @@ SEMANTIC_FRAGMENTS: tuple[tuple[str, tuple[str, ...]], ...] = _verify_on_touch_f
 
 
 def _symbol_exists(path: str, symbol: str) -> bool:
-    """Placed by the scanner's own walk, on the file as it is on disk: the suite
-    calls a bound valid exactly when drift can be counted on its lines. Until
+    """Placed by the scanner's own walk and its Python-only gate, on the file
+    as it is on disk (the scanner reads HEAD): the suite calls a bound valid
+    when its drift can be counted on its lines. Until
     2026-10-16 this was a second walk that took ``Class::method`` while the
     scanner placed top-level names only, so memory-line-cap's bound read valid
     here and drifted on every commit to its file there."""
     from espalier.scanners.freshness import _span_in_source
     full = REPO_ROOT / path
-    if not full.is_file():
-        return False
+    if not path.endswith(".py") or not full.is_file():
+        return False  # the scanner's own gate: a symbol outside Python is never placed
     try:
         source = full.read_text(encoding="utf-8")
     except OSError:

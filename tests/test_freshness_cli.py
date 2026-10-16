@@ -670,6 +670,9 @@ class TestPinRefusesABoundItCannotPlace:
         rc, out, err = _run_cli("freshness", "pin", "foo", str(repo), "--force")
         assert rc == 0, err
         assert json.loads(out)["entry"]["bound"] == ["a.py::C::gone"]
+        # Dies to: a forced pin (one --force also consents to a rebind or a
+        # dirty bound) recording an unplaced symbol without a word.
+        assert "a.py::C::gone" in err and "whole file" in err, err
 
     def test_a_nested_symbol_it_can_place_pins_without_force(self, tmp_path: Path) -> None:
         """Dies to: the refusal firing on every nested bound, placed or not."""
@@ -709,6 +712,15 @@ class TestPinRefusesABoundItCannotPlace:
         from espalier.scanners import freshness as scan_mod
         repo = _init_with_fragment(tmp_path)
         self._bound(repo, "a.py::C::gone")
+        doc = repo / "docs" / "x.md"
+        doc.write_text(
+            "<!-- espalier:fragment id=bar bound=b.py policy=verify-on-touch -->\nclaim zero\n\n"
+            + doc.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (repo / "b.py").write_text("y = 1\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+        _git(repo, "commit", "-q", "-m", "a fragment before the unplaced one")
         monkeypatch.setattr(scan_mod, "unplaced_bound_entries", lambda *a, **k: [])
         original = fresh_mod.pin_fragment
 
@@ -721,6 +733,7 @@ class TestPinRefusesABoundItCannotPlace:
         rc, out, err = _run_cli("freshness", "pin", "--all", str(repo))
         assert rc == 1, err
         payload = json.loads(out)
+        assert payload["pinned_all"] == ["bar"], payload
         assert [s["id"] for s in payload["skipped"]] == ["foo"], payload
         assert "a.py::C::gone" in payload["skipped"][0]["reason"]
 

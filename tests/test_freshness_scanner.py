@@ -991,6 +991,61 @@ class TestSymbolLevelDrift:
         assert state.state == "stale"
         assert "whole file" not in state.message, state.message
 
+    def test_a_change_to_a_property_setter_stales_a_bound_property(self, tmp_path: Path) -> None:
+        """Dies to: the first binding taken alone, so a changed setter reads fresh
+        (the under-count a nested walk invites: getter and setter share a name)."""
+        body = ("class C:\n    @property\n    def x(self):\n        return 1\n\n"
+                "    @x.setter\n    def x(self, v):\n        self._v = v\n\n\nY = 2\n")
+        repo = self._pinned(tmp_path, "a.py::C::x", body)
+        self._rewrite_and_commit(repo, body.replace("self._v = v", "self._v = v + 1"), "touch the setter")
+        state = scan_repo(repo)[0]
+        assert state.state == "stale", state.message
+        assert state.commits_since == 1
+
+    def test_an_overloaded_function_spans_its_implementation(self, tmp_path: Path) -> None:
+        """Dies to: the top-level walk stopping at the first ``@overload`` stub."""
+        body = ("from typing import overload\n\n\n@overload\ndef f(x: int) -> int: ...\n\n\n"
+                "@overload\ndef f(x: str) -> str: ...\n\n\ndef f(x):\n    return x\n\n\nY = 2\n")
+        repo = self._pinned(tmp_path, "a.py::f", body)
+        self._rewrite_and_commit(repo, body.replace("Y = 2", "Y = 3"), "touch Y")
+        assert scan_repo(repo)[0].state == "fresh"
+        self._rewrite_and_commit(repo, body.replace("Y = 2", "Y = 3").replace("return x", "return x * 2"),
+                                 "touch the implementation")
+        assert scan_repo(repo)[0].state == "stale"
+
+    def test_a_scope_defined_twice_cannot_be_placed_and_says_so(self, tmp_path: Path) -> None:
+        """Dies to: one of two same-named classes picked, so a change to the
+        other one's method reads fresh."""
+        body = "class C:\n    def m(self):\n        return 1\n\n\nclass C:\n    def m(self):\n        return 2\n\n\nY = 2\n"
+        repo = self._pinned(tmp_path, "a.py::C::m", body)
+        self._rewrite_and_commit(repo, body.replace("return 2", "return 3"), "touch the second C")
+        state = scan_repo(repo)[0]
+        assert state.state == "stale", state.message
+        assert "C is bound more than once" in state.message, state.message
+
+    def test_check_names_every_symbol_it_could_not_place(self, tmp_path: Path) -> None:
+        """Dies to: the walk stopping at the first unplaced symbol of a path, so
+        the message names one of two typos."""
+        body = "class C:\n    def m(self):\n        return 1\n\n\nX = 2\n"
+        repo = self._pinned(tmp_path, "a.py::C::gone,a.py::C::gone2", body)
+        self._rewrite_and_commit(repo, body.replace("X = 2", "X = 3"), "touch X")
+        message = scan_repo(repo)[0].message
+        assert "a.py::C::gone (" in message and "a.py::C::gone2 (" in message, message
+
+    def test_a_source_with_a_coding_line_is_placed(self, tmp_path: Path) -> None:
+        """Dies to: the file decoded as UTF-8 before it is parsed, so a latin-1
+        source with its PEP 263 line reads unplaced, blamed on git."""
+        body = "# -*- coding: latin-1 -*-\nclass C:\n    def m(self):\n        return 'caf\xe9'\n\n\nX = 2\n"
+        repo = _init_repo(tmp_path)
+        _write_doc_with_fragment(repo, "foo", "a.py::C::m")
+        (repo / "a.py").write_bytes(body.encode("latin-1"))
+        sha = _commit_all(repo, "init")
+        _write_manifest(repo, "foo", sha, ["a.py::C::m"])
+        (repo / "a.py").write_bytes(body.replace("X = 2", "X = 3").encode("latin-1"))
+        _commit_all(repo, "touch X")
+        state = scan_repo(repo)[0]
+        assert state.state == "fresh", state.message
+
     def test_a_symbol_missing_at_head_keeps_the_file_count(self, tmp_path: Path) -> None:
         repo = self._pinned(tmp_path, "a.py::GONE", "SYM = 1\n")
         self._rewrite_and_commit(repo, "SYM = 2\n", "touch SYM")
@@ -1224,6 +1279,19 @@ class TestUncommittedBoundChanges:
         state = scan_repo(repo)[0]
         assert state.state == "stale", state.message
         assert "by hand" in state.message and "1" in state.message, state.message
+
+    def test_the_unplaced_note_stays_off_a_message_about_the_literal(self, tmp_path: Path) -> None:
+        """Dies to: the note appended to every message, here one that names a
+        hand-edited number and counts nothing."""
+        repo = self._pinned(tmp_path, "a.py::GONE", "x = 1\n", policy="numeric-contract", expected_value=1)
+        _commit_all(repo, "pin")
+        manifest = repo / ".espalier" / "freshness.json"
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data["fragments"]["foo"]["expected_value"] = 2
+        manifest.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        (repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+        state = scan_repo(repo)[0]
+        assert "by hand" in state.message and "could not place" not in state.message, state.message
 
     def test_a_dirty_bound_never_masks_a_critical(self, tmp_path: Path) -> None:
         repo = self._pinned(tmp_path, "a.py", "x = 1\n", last_verified_at=_iso_days_ago(40))
