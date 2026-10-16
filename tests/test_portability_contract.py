@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import ast
 import builtins
+import functools
 import inspect
 import json
 import re
@@ -1436,9 +1437,28 @@ def _ast_scope_nodes(scope: ast.AST):
             stack.extend(ast.iter_child_nodes(node))
 
 
+def _stamp(path: Path) -> tuple[int, int]:
+    st = path.stat()
+    return st.st_mtime_ns, st.st_size
+
+
+@functools.lru_cache(maxsize=None)
+def _parsed(path: Path, stamp: tuple[int, int]) -> ast.Module:
+    return ast.parse(path.read_text(encoding="utf-8"))
+
+
+def _ast_tree(path: Path) -> ast.Module:
+    """``path`` parsed once per content (DEF-4024: the remedy-slot walk re-read
+    and re-parsed three modules, ``espalier/cli.py`` among them, for every slot
+    and level it followed, 13 s a run and 60 s on the floor cell). Keyed on the
+    file's stamp, so a file a test rewrites is read fresh; the trees are shared
+    and read only, never edited."""
+    return _parsed(path, _stamp(path))
+
+
 def _ast_scopes(path: Path):
     """``(name, node)`` for the module and every function in ``path``."""
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = _ast_tree(path)
     yield "<module>", tree
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -1448,6 +1468,18 @@ def _ast_scopes(path: Path):
 def _ast_callee(node: ast.Call) -> str | None:
     f = node.func
     return f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+
+
+@functools.lru_cache(maxsize=None)
+def _calls_index(path: Path, stamp: tuple[int, int]) -> dict[str, tuple[tuple[ast.AST, ast.Call], ...]]:
+    """Every call in ``path`` by callee name: ``(caller scope, call)`` in the
+    order a walk of its scopes meets them, built once per content."""
+    index: dict[str, list[tuple[ast.AST, ast.Call]]] = {}
+    for _owner, scope in _ast_scopes(path):
+        for node in _ast_scope_nodes(scope):
+            if isinstance(node, ast.Call):
+                index.setdefault(_ast_callee(node) or "", []).append((scope, node))
+    return {name: tuple(calls) for name, calls in index.items()}
 
 
 #: Every shipped Python module the two DEF-799 pins walk: the engine (minus
@@ -1699,12 +1731,13 @@ class TestRemediesSpellTheRemedyInterpreter:
 
     @staticmethod
     def _calls_of(name: str, paths):
-        """``(path, caller scope, call)`` per call of ``name`` in ``paths``."""
+        """``(path, caller scope, call)`` per call of ``name`` in ``paths``, in
+        the order a walk of each module's scopes meets them: read from one index
+        per module, built once, rather than walking every scope again for each
+        slot and level the verdict follows (DEF-4024)."""
         for path in paths:
-            for _owner, scope in _ast_scopes(path):
-                for node in _ast_scope_nodes(scope):
-                    if isinstance(node, ast.Call) and _ast_callee(node) == name:
-                        yield path, scope, node
+            for scope, node in _calls_index(path, _stamp(path)).get(name, ()):
+                yield path, scope, node
 
     @staticmethod
     def _argument_for(call: ast.Call, fn: ast.FunctionDef, param: str):
@@ -1802,6 +1835,28 @@ class TestRemediesSpellTheRemedyInterpreter:
             "through the parameter at every call site:\n  " + "\n  ".join(stray)
         )
 
+    def test_the_call_index_holds_what_a_walk_meets_in_its_order(self):
+        """DEF-4024's hoist reads calls from one index per module; it must hold
+        exactly the calls a walk of the module's scopes meets, per callee and in
+        that order, so the verdicts and their messages are the walk's."""
+        for path in self._MODULE_PATHS:
+            walked: dict[str, list[tuple[ast.AST, ast.Call]]] = {}
+            for _owner, scope in _ast_scopes(path):
+                for node in _ast_scope_nodes(scope):
+                    if isinstance(node, ast.Call):
+                        walked.setdefault(_ast_callee(node) or "", []).append((scope, node))
+            index = _calls_index(path, _stamp(path))
+            assert {name: list(calls) for name, calls in index.items()} == walked, path.name
+
+    def test_a_rewritten_file_is_parsed_again(self, tmp_path):
+        """The parse is shared per content, keyed on the file's stamp: a file
+        rewritten between two reads is read fresh, never served stale."""
+        module = tmp_path / "m.py"
+        module.write_text("def a():\n    pass\n", encoding="utf-8")
+        first = _ast_tree(module)
+        module.write_text("def a():\n    pass\n\n\ndef b():\n    pass\n", encoding="utf-8")
+        assert [node.name for node in _ast_tree(module).body] == ["a", "b"] and _ast_tree(module) is not first
+
     def test_every_traced_function_name_is_unique(self):
         """The call-site match is by bare name (see ``_slot_verdict``), which is
         sound only while no two shipped functions with a parameter-borne
@@ -1817,7 +1872,7 @@ class TestRemediesSpellTheRemedyInterpreter:
             defs = [
                 p.relative_to(REPO_ROOT).as_posix()
                 for p in self._MODULE_PATHS
-                for node in ast.walk(ast.parse(p.read_text(encoding="utf-8")))
+                for node in ast.walk(_ast_tree(p))
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name
             ]
             assert len(defs) == 1, f"{name}() is defined in {defs}; the name-keyed call-site match is ambiguous"
