@@ -49,6 +49,28 @@ MALFORMED_MCP_PAYLOAD = (
     "str, got {type_name}"
 )
 
+# The one remedy for a harness-path collision (DEF-910): an adopter's own
+# source that merely shares a harness path's name (a top-level `cc/`) is
+# relocated from their own terminal; maintenance mode is for editing the
+# HARNESS and is not the remedy for that. Composed into every harness-zone
+# template -- the Write / Edit and PowerShell pair, the Bash and MCP one-liners,
+# the symlink and hardlink ones -- and kept off the adopter's own templates
+# below. Until 2026-10-16 only the full pair carried it, each its own copy.
+_NAME_COLLISION_WRITE: str = (
+    "\n  Your own source colliding with a harness path (e.g. a top-level "
+    "`cc/`)? Relocate it from your own terminal, outside a Claude Code "
+    "session (the guard reads tool calls, not your shell) -- maintenance "
+    "mode is not the remedy for that."
+)
+# The delete / move twin: a move of the colliding directory is itself refused.
+_NAME_COLLISION_MUTATION: str = (
+    "\n  Your own source colliding with a harness path (e.g. a top-level "
+    "`cc/`)? Relocate it from your own terminal, outside a Claude Code "
+    "session (the guard reads tool calls, not your shell -- and a move of "
+    "that directory is itself a refused row) -- maintenance mode is not the "
+    "remedy for that."
+)
+
 # The relaunch inside is _maintenance_mode.relaunch_hint(), evaluated ONCE at
 # import (host-keyed); a platform-sensitive test reloads via importlib.
 PROTECTED_ZONE_WRITE = (
@@ -61,14 +83,7 @@ PROTECTED_ZONE_WRITE = (
     "hooks; --continue keeps the session you are in), then resume the change "
     "through your normal workflow (/implement-task) -- the harness self-edit "
     "is the exception, not your task."
-    # Maintenance mode is for editing the HARNESS. If this is your OWN source
-    # that merely collides with a harness path (e.g. a top-level `cc/`),
-    # relocate your directory instead -- don't run in maintenance mode.
-    "\n  Your own source colliding with a harness path (e.g. a top-level "
-    "`cc/`)? Relocate it from your own terminal, outside a Claude Code "
-    "session (the guard reads tool calls, not your shell) -- maintenance "
-    "mode is not the remedy for that."
-)
+) + _NAME_COLLISION_WRITE
 
 # The adopter's OWN zones -- a path their espalier.toml names under
 # ``protected_paths`` ("never touch") or ``generated_paths`` ("regenerate; do not
@@ -106,7 +121,7 @@ ADOPTER_ZONE_MUTATION = (
 
 PROTECTED_ZONE_WRITE_BASH = (
     "Bash write to protected harness zone blocked: {path}.{hint}"
-)
+) + _NAME_COLLISION_WRITE
 
 # The remove/relocate twins of the write templates (§C52): ``{effect}`` is
 # ``delete`` or ``move`` -- the operand a verb removes or relocates, or a
@@ -123,21 +138,16 @@ PROTECTED_ZONE_MUTATION = (
     "hooks; --continue keeps the session you are in), then resume the change "
     "through your normal workflow (/implement-task) -- the harness self-edit "
     "is the exception, not your task."
-    "\n  Your own source colliding with a harness path (e.g. a top-level "
-    "`cc/`)? Relocate it from your own terminal, outside a Claude Code "
-    "session (the guard reads tool calls, not your shell -- and a move of "
-    "that directory is itself a refused row) -- maintenance mode is not the "
-    "remedy for that."
-)
+) + _NAME_COLLISION_MUTATION
 
 PROTECTED_ZONE_MUTATION_BASH = (
     "Bash {effect} of protected harness zone blocked: {path}.{hint}"
-)
+) + _NAME_COLLISION_MUTATION
 
 PROTECTED_ZONE_WRITE_MCP = (
     "Write to protected harness zone blocked: {path} (via mcp tool "
     "{tool_name}, field {field_name}).{hint}"
-)
+) + _NAME_COLLISION_WRITE
 
 # The way-forward clause a zone deny carries when the zone is the ADOPTER'S
 # OWN -- a path their espalier.toml names under ``protected_paths`` ("never
@@ -167,7 +177,7 @@ MCP_PAYLOAD_UNVERIFIABLE = (
 PROTECTED_ZONE_SYMLINK_BASH = (
     "Bash symlink creation into protected harness zone blocked: {path} "
     "(symlinks bypass the file-path allowlist by design)"
-)
+) + _NAME_COLLISION_WRITE
 
 # MCP / PowerShell symlink-creation twins of the Bash check. A symlink may
 # NEVER land in a governed zone (protected OR allowlisted-in-protected)
@@ -178,11 +188,11 @@ PROTECTED_ZONE_SYMLINK_BASH = (
 PROTECTED_ZONE_SYMLINK_MCP = (
     "MCP symlink creation into protected harness zone blocked: {path} "
     "(via mcp tool {tool_name}; symlinks bypass the file-path allowlist by design)"
-)
+) + _NAME_COLLISION_WRITE
 PROTECTED_ZONE_SYMLINK_PS = (
     "PowerShell symlink creation into protected harness zone blocked: {path} "
     "(symlinks bypass the file-path allowlist by design)"
-)
+) + _NAME_COLLISION_WRITE
 
 # A HARDLINK aliases an inode under a second name, so
 # `ln <protected> alias; echo evil > alias` rewrites the protected file's bytes
@@ -195,11 +205,11 @@ PROTECTED_ZONE_HARDLINK_BASH = (
     "Bash hardlink of a protected harness file blocked: {path} "
     "(a hardlink aliases the file's bytes under a second name; writing through "
     "the alias would rewrite the protected file)"
-)
+) + _NAME_COLLISION_WRITE
 PROTECTED_ZONE_HARDLINK_INODE = (
     "Write to a hardlink alias of a protected harness file blocked: {path} "
     "(its inode matches a protected file; the write would rewrite protected bytes)"
-)
+) + _NAME_COLLISION_WRITE
 
 # pid -> plain-English "what matched", so the operator sees the intent, not a
 # raw regex. Keyed by BashPatternRecord.pid (write_guard.DANGEROUS_BASH_PATTERNS).

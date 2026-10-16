@@ -119,8 +119,12 @@ def _collect_denial_reason_constants() -> set[str]:
     false-firing on the ``format_dangerous_bash`` / ``format_dangerous_ps``
     helpers, which are ``def`` nodes, not str assignments): walk
     module-level ``ast.Assign`` nodes only; keep the LHS Name iff the
-    RHS is ``ast.Constant`` AND ``isinstance(value, str)``.
-    FunctionDef / AsyncFunctionDef / ClassDef nodes are excluded by
+    RHS is a string expression -- a ``str`` ``ast.Constant``, an f-string,
+    or a ``+`` of those and names with at least one string piece in it.
+    The last two count since 2026-10-16: the zone templates compose a shared
+    clause (``(...) + _NAME_COLLISION_WRITE``), and a Constant-only walk lost
+    eight of them from this census silently (failure-mode review, driven 49
+    -> 41). FunctionDef / AsyncFunctionDef / ClassDef nodes are excluded by
     AST type, not by name filter.
     """
     tree = _parse(DENIAL_REASONS_PATH)
@@ -129,13 +133,24 @@ def _collect_denial_reason_constants() -> set[str]:
     # the walk to module scope (excludes nested defs).
     if not isinstance(tree, ast.Module):
         return names
+
+    def _is_text(node: ast.AST) -> bool:
+        return isinstance(node, ast.JoinedStr) or (isinstance(node, ast.Constant) and isinstance(node.value, str))
+
+    def _operands(node: ast.AST) -> list[ast.AST]:
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            return _operands(node.left) + _operands(node.right)
+        return [node]
+
+    def _is_str_expr(node: ast.AST) -> bool:
+        operands = _operands(node)
+        return (all(_is_text(o) or isinstance(o, ast.Name) for o in operands)
+                and any(_is_text(o) for o in operands))
+
     for node in tree.body:
         if not isinstance(node, ast.Assign):
             continue
-        value = node.value
-        if not isinstance(value, ast.Constant):
-            continue
-        if not isinstance(value.value, str):
+        if not _is_str_expr(node.value):
             continue
         for target in node.targets:
             if isinstance(target, ast.Name):
@@ -585,6 +600,11 @@ class TestDenialReasons:
         Catches orphaned templates that drift out of sync.
         """
         defined = _collect_denial_reason_constants()
+        # A floor, so a collector that stops seeing a template's shape reds here
+        # instead of shrinking the census silently: 60 on 2026-10-16, when the
+        # string-expression read joined (49 under the Constant-only walk before
+        # the zone templates composed their shared clause, 41 after).
+        assert len(defined) >= 60, f"the census read {len(defined)} templates: did the collector narrow?"
         hook_paths = [HOOKS_DIR / name for name in DENYING_HOOKS]
         referenced = _collect_references(hook_paths, defined)
         unused = sorted(defined - referenced)
@@ -1152,7 +1172,8 @@ class TestRelaunchSitesTellTheAgentToVerify:
     The roster is DERIVED, never listed: every module-level string in
     ``_denial_reasons`` that carries the relaunch hint or the ``{hint}`` slot,
     the shared ``write_guard._PROTECTED_ZONE_HINT`` that fills the slot (and
-    reaches every Bash, MCP and link deny directly), and every speed-bump body
+    reaches the full pair and the Bash and MCP one-liners through that slot;
+    the symlink and hardlink one-liners name no remedy), and every speed-bump body
     that carries the hint. A ``{hint}`` template is covered by the shared hint;
     everything else must carry the sentence itself. The banner token is read
     from the helper that prints it, so a rename reds both sides at once."""
