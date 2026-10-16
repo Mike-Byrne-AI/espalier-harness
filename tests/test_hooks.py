@@ -3984,6 +3984,9 @@ class TestHookUtils:
                 _hook_utils, "interpreter_is_python3",
                 lambda name: {"python3": py3, "python": py, "py -3": launcher}.get(name, False),
             )
+            # A `yes` also needs a start (DEF-1145); every name here starts, so
+            # this test reads the identity states alone.
+            monkeypatch.setattr(_hook_utils, "interpreter_start_failure", lambda name: None)
 
         # py3-only host (stock macOS, the majority platform) — the original contradiction.
         _state(py3=True, py=False)

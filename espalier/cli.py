@@ -39,10 +39,14 @@ from espalier._spawn import run_bounded
 from espalier._text import os_error_text, pin_utf8_streams, plural, quoted_if_spaced
 from espalier._venv import (
     after_head_index,
+    entry_argv,
+    exec_name_has_space,
     interpreter_site_token,
     interpreter_token,
     is_statusline_shim_head,
+    names_a_python,
     path_without,
+    shell_cut_path,
 )
 from espalier.analyze import HARNESS_OUTPUT_PREFIXES, fingerprint_repo
 from espalier.assets import (
@@ -8274,14 +8278,19 @@ def _is_python_interpreter_site(token: str) -> bool:
     Python", used to tell a site we DECLINED from a site that was never ours.
     Reporting "every wired interpreter already meets the floor" while silently
     skipping python sites we could not parse is the DEF-620 shape one level in.
+
+    The rule is ``_venv.names_a_python``'s (the file name, either slash,
+    quotes off, lowercased, ``.exe`` dropped, its first word), so
+    ``C:\\Program Files\\Python312\\Python.exe`` is a Python site on any host;
+    twin of ``tools/cc/hooks/session_start.py::_names_a_python`` (DEF-1024),
+    pinned equal by ``tests/test_hook_entry_argv.py``.
     """
-    if not token or "${" in token:
-        return False
-    base = _interpreter_base_name(token)
-    return base == "py" or base.startswith("python")
+    return names_a_python(token)
 
 
-def _is_rewirable_interpreter(token: str) -> bool:
+def _is_rewirable_interpreter(
+    token: str, *, exec_form: bool = False, cut: bool = False,
+) -> bool:
     """Is ``token`` a python-like name this may SAFELY replace?
 
     Deliberately narrow, because a wrong rewrite here bricks every hook. An
@@ -8306,11 +8315,27 @@ def _is_rewirable_interpreter(token: str) -> bool:
       argument (``"python3 -u -m x hook`` -> ``"python3``) while the report
       said "your args were preserved". An unclosed quote around a Windows path
       with spaces is the likeliest hand-edit typo on this exact surface.
+
+    In exec form argv[0] is all of ``command`` (``_venv.entry_argv``), so a
+    space in its DIRECTORY is a real path's (``C:\\Program Files\\...``) and
+    the exec rewire replaces ``command`` whole, keeping every argument
+    (:func:`_rewire_exec_entry`). A space in its FILE NAME (``py -3``,
+    ``python -X utf8``) is refused: replacing that ``command`` whole would
+    drop the words the operator meant as flags (DEF-968, both reviews).
+
+    * **A shell head the shell cuts is refused** (``cut``): an unquoted
+      spaced path (``/Users/me/Python Envs/py312/bin/python3 x.py``) runs its
+      first word, and swapping that word wrote ``python Envs/py312/...``,
+      which exits 2 from PreToolUse -- a block on every tool call where the
+      cut path had only failed open (``_venv.shell_cut_path``, driven by the
+      failure-mode review). The operator quotes the path by hand.
     """
-    if not _is_python_interpreter_site(token):
+    if cut or not _is_python_interpreter_site(token):
         return False
     if token.endswith((".py", ".sh")):
         return False
+    if exec_form:
+        return not exec_name_has_space(token)
     return not any(ch.isspace() for ch in token)
 
 
@@ -8407,19 +8432,29 @@ def rewire_interpreter_in_settings(
 
     stale, declined = [], []
     for container, key, where in sites:
-        # argv[0], or argv[1] behind the Windows statusline shim (DEF-729);
-        # doctor's resolver check reads the same helper.
-        token = interpreter_site_token(container[key])
-        if not _is_python_interpreter_site(token):
+        # A hook entry's argv[0] as it runs (`_venv.entry_argv`: all of
+        # `command` in exec form, DEF-968); the statusLine's argv[0], or argv[1]
+        # behind the Windows statusline shim (DEF-729). doctor's resolver check
+        # reads the same helpers.
+        exec_form = where != "statusLine" and isinstance(container.get("args"), list)
+        if where == "statusLine":
+            token = interpreter_site_token(container[key])
+        else:
+            token = entry_argv(container[key], container.get("args"))[0]
+        # A shell head cut from an unquoted spaced Python path is a Python
+        # site this must never rewrite (`_venv.shell_cut_path`).
+        cut = not exec_form and where != "statusLine" and shell_cut_path(container[key]) is not None
+        if not (_is_python_interpreter_site(token) or cut):
             continue  # not a Python site at all -- never ours to touch
-        if not _is_rewirable_interpreter(token):
-            # A Python site we recognise but must not rewrite (the `py`
-            # launcher, an unterminated quote, a shebang script). Counted, so
-            # the all-clear below cannot claim a site it never examined.
+        if not _is_rewirable_interpreter(token, exec_form=exec_form, cut=cut):
+            # A Python site we recognise but must not rewrite (an unterminated
+            # quote, a shebang script, an exec name with a space in it, a cut
+            # shell path). Counted, so the all-clear below cannot claim a site
+            # it never examined.
             declined.append((where, container[key]))
             continue
         if not interpreter_meets_floor(_launcher_spelling_of(container, key, token)):
-            stale.append((container, key, where))
+            stale.append((container, key, where, exec_form))
     if not stale:
         return RewireResult(REWIRE_NOTHING, declined=declined)
 
@@ -8451,12 +8486,12 @@ def rewire_interpreter_in_settings(
                 target = resolved
 
     changes = []
-    for container, key, where in stale:
+    for container, key, where, exec_form in stale:
         old_command = container[key]
-        if (where != "statusLine" and isinstance(container.get("args"), list)
-                and old_command.strip() == interpreter_site_token(old_command)):
+        if exec_form:
             # Exec form: the interpreter is all of `command`, its arguments
-            # (the launcher's flag among them) are `args`.
+            # (the launcher's flag among them) are `args`. A spaced or quoted
+            # `command` is one word here, never split (DEF-968).
             swapped = _rewire_exec_entry(container, target)
             if swapped is not None:
                 changes.append((where, *swapped))
@@ -8496,12 +8531,63 @@ def _espalier_deployed_scripts() -> frozenset[str]:
     return frozenset(INIT_HOOK_SCRIPTS) | frozenset(INIT_TOOL_SCRIPTS)
 
 
+class _WiredEntry(NamedTuple):
+    """One wired Espalier hook entry, as :func:`_wired_espalier_entries` reads it.
+
+    ``spelling`` is the interpreter the entry RUNS, as the readers probe it:
+    argv[0] by the entry's form (``_venv.entry_argv``: all of ``command`` in
+    exec form, DEF-968) and, for the launcher, its version flag (``py -3``,
+    DEF-1146: a bare ``py`` probe asks the launcher's default, which a
+    ``PY_PYTHON`` setting or a ``py.ini`` can make another interpreter).
+    ``None`` when ``command`` is not a string. ``argv`` is what a probe runs:
+    the spelling split for the launcher, or the whole exec ``command`` unsplit
+    when its file name holds a space (``py -3`` there is one file name, which
+    cannot start). ``exec_form`` and ``cut`` (an unquoted spaced Python path
+    the shell cuts, ``_venv.shell_cut_path``) decide what
+    ``--rewire-interpreter`` may touch.
+    """
+
+    spelling: str | None
+    rels: list[str]
+    exec_form: bool
+    argv: tuple = ()
+    cut: bool = False
+
+
+class _NotPython3(NamedTuple):
+    """One spelling the identity arm found not answering as a Python 3: what
+    its head resolves to (or None), the deployed scripts wired through it, and
+    the shape that decides its remedy (form, cut path, the argv probed)."""
+
+    resolved: str | None
+    rels: list[str]
+    exec_form: bool
+    cut: bool
+    argv: tuple
+
+
+def _wired_entry(hook: dict, rels: list[str]) -> _WiredEntry:
+    """A hook entry as the readers probe it: argv[0] by its form, the
+    launcher's version flag after it when the launcher heads it."""
+    command, args = hook.get("command"), hook.get("args")
+    exec_form = isinstance(args, list)
+    if not isinstance(command, str):
+        return _WiredEntry(None, rels, exec_form)
+    token, _rest = entry_argv(command, args)
+    if exec_form and exec_name_has_space(token):
+        return _WiredEntry(token, rels, True, (token,))  # one file name: never split
+    spelling = _launcher_spelling_of(hook, "command", token) if token else ""
+    cut = not exec_form and shell_cut_path(command) is not None
+    return _WiredEntry(spelling, rels, exec_form, tuple(interpreter_argv(spelling)) if spelling else (), cut)
+
+
 def _wired_espalier_entries(
     settings_path: Path,
-) -> list[tuple[str | None, list[str]]] | None:
+) -> list[_WiredEntry] | None:
     """Every hook entry in ``settings_path`` that names an Espalier-deployed
-    script, as ``(command, [repo-relative paths it names])``; ``None`` when the
-    file cannot be read or parsed.
+    script, as a :class:`_WiredEntry` (the interpreter spelling it runs, the
+    repo-relative paths it names, its form); ``None`` when the file cannot be
+    read or parsed.
 
     ONE walker for the enforcement claim's per-entry arms -- the existence arm
     (:func:`_missing_from_entries`) and the identity arm
@@ -8568,7 +8654,7 @@ def _wired_espalier_entries(
         # AttributeErrors on .values(). Driven -- {"hooks": 42} crashed init
         # rc=1 on an adopter tree whose file we had already refused to touch.
         return None
-    entries: list[tuple[str | None, list[str]]] = []
+    entries: list[_WiredEntry] = []
     for groups in hooks_cfg.values():
         if not isinstance(groups, list):
             continue
@@ -8595,19 +8681,19 @@ def _wired_espalier_entries(
                     if rel and rel not in rels:
                         rels.append(rel)
                 if rels:
-                    entries.append((command if isinstance(command, str) else None, rels))
+                    entries.append(_wired_entry(hook, rels))
     return entries
 
 
 def _missing_from_entries(
-    repo_root: Path, entries: list[tuple[str | None, list[str]]],
+    repo_root: Path, entries: list[_WiredEntry],
 ) -> list[str]:
     """The existence arm over walked entries: the deployed scripts they name
     that are NOT on disk, sorted."""
     return sorted({
         rel
-        for _command, rels in entries
-        for rel in rels
+        for entry in entries
+        for rel in entry.rels
         if not (repo_root / rel).is_file()
     })
 
@@ -8628,7 +8714,7 @@ def _missing_wired_hook_scripts(
 
 def _wired_interpreters_not_python3(
     settings_path: Path,
-) -> dict[str, tuple[str | None, list[str]]] | None:
+) -> dict[str, _NotPython3] | None:
     """The identity arm of the enforcement claim, reading the file itself:
     :func:`_not_python3_from_entries` over :func:`_wired_espalier_entries`, or
     ``None`` when the settings cannot be read."""
@@ -8639,11 +8725,20 @@ def _wired_interpreters_not_python3(
 
 
 def _not_python3_from_entries(
-    entries: list[tuple[str | None, list[str]]],
-) -> dict[str, tuple[str | None, list[str]]]:
-    """The identity arm of the enforcement claim: each interpreter word a wired
-    Espalier entry runs under that does NOT answer as a Python 3, mapped to
-    ``(what it resolves to or None, [the deployed scripts wired through it])``.
+    entries: list[_WiredEntry],
+) -> dict[str, _NotPython3]:
+    """The identity arm of the enforcement claim: each interpreter spelling a
+    wired Espalier entry runs under that does NOT answer as a Python 3, mapped
+    to a :class:`_NotPython3` (what its head resolves to or None, the deployed
+    scripts wired through it, the shape that decides the remedy).
+
+    The spelling is the argv the entry runs (:class:`_WiredEntry`), so the
+    launcher is asked as ``py -3`` -- the head resolved, its flag passed to
+    both probes -- never as the bare ``py``, whose default a ``PY_PYTHON``
+    setting or a ``py.ini`` can point at a Python 2 while every hook runs
+    under ``-3`` (DEF-1146). An exec ``command`` whose file name holds a space
+    is probed whole, and does not resolve; a cut shell path is asked by its
+    cut head, which is what the shell runs (DEF-968).
 
     The other two arms ask whether the wired PATHS resolve and whether each
     entry is EXECUTABLE in shape; neither runs the interpreter. On the Windows
@@ -8680,31 +8775,41 @@ def _not_python3_from_entries(
     """
     verdicts: dict[str, tuple[str | None, bool]] = {}
     failing: dict[str, list[str]] = {}
-    for command, rels in entries:
-        token = interpreter_token(command or "")
-        if not _is_python_interpreter_site(token):
+    shapes: dict[str, _WiredEntry] = {}
+    for entry in entries:
+        token = entry.spelling or ""
+        head, *flags = entry.argv or (token,)
+        # A cut shell path names a Python its cut head is not (`_venv.shell_cut_path`).
+        if not (_is_python_interpreter_site(head) or entry.cut):
             continue
         if token not in verdicts:
-            resolved = shutil.which(token) or (
-                token if Path(token).is_file() else None
+            resolved = shutil.which(head) or (
+                head if Path(head).is_file() else None
             )
-            answered = _doctor._interpreter_is_python3(resolved)
+            answered = _doctor._interpreter_is_python3(resolved, *flags)
             if resolved and not answered:
                 # A genuine Python 2 answers fast, so the retry costs it little;
                 # a slow shim gets the second chance the docstring describes.
-                answered = _doctor._interpreter_is_python3(resolved)
+                answered = _doctor._interpreter_is_python3(resolved, *flags)
             # The start-up probe gives a timeout its own second chance.
             if answered and resolved and (
-                _doctor._interpreter_start_failure([resolved]) is not None
+                _doctor._interpreter_start_failure([resolved, *flags]) is not None
             ):
                 answered = False
             verdicts[token] = (resolved, answered)
         if verdicts[token][1]:
             continue
         bucket = failing.setdefault(token, [])
-        bucket.extend(rel for rel in rels if rel not in bucket)
+        bucket.extend(rel for rel in entry.rels if rel not in bucket)
+        # The narrowest shape per spelling decides the remedy: exec form only
+        # while every entry is, a cut path once any is.
+        seen = shapes.get(token)
+        shapes[token] = entry if seen is None else seen._replace(
+            exec_form=seen.exec_form and entry.exec_form, cut=seen.cut or entry.cut)
     return {
-        token: (verdicts[token][0], sorted(rels)) for token, rels in failing.items()
+        token: _NotPython3(verdicts[token][0], sorted(rels), shapes[token].exec_form,
+                           shapes[token].cut, shapes[token].argv or (token,))
+        for token, rels in failing.items()
     }
 
 
@@ -8763,8 +8868,8 @@ def _enforcement_claim_blockers(
         for script in unwired_governance_gates(repo_root)
         if not _gate_wiring_is_unreadable_legacy_form(repo_root, script)
     )
-    for _resolved, rels in _not_python3_from_entries(entries).values():
-        blockers.update(rels)
+    for found in _not_python3_from_entries(entries).values():
+        blockers.update(found.rels)
     return sorted(blockers)
 
 
@@ -9355,22 +9460,26 @@ def _disarmed_diagnosis_shape(repo_root: Path) -> tuple[str, list[str], bool]:
         # through it at once, whatever shape the entries have, so it is named
         # before the per-gate shapes. Sorted for a stable sentence: the first
         # word carries the prose, the rest are counted.
-        token, (resolved, _rels) = sorted(not_python3.items())[0]
+        token, first = sorted(not_python3.items())[0]
+        resolved = first.resolved
+        # The head and the launcher's flag, probed as the hooks run them
+        # (DEF-1146): a bare `py` would ask the launcher's default.
+        head, *flags = first.argv
         extra = (f" (and {plural(len(not_python3) - 1, 'other interpreter word')})"
                  if len(not_python3) > 1 else "")
         found = (
             f"resolves to {resolved} but does not answer as Python 3"
             if resolved else "does not resolve on this host"
         )
-        if resolved and _doctor._interpreter_is_python3(resolved):
+        if resolved and _doctor._interpreter_is_python3(resolved, *flags):
             # The banner answered and the start-up probe did not: say that,
             # not "does not answer as Python 3" about an interpreter that
             # printed a Python 3 banner (two more spawns, failure path only;
             # a flake that now starts keeps the sentence above).
-            cannot_start = _doctor._interpreter_start_failure([resolved])
+            cannot_start = _doctor._interpreter_start_failure([resolved, *flags])
             if cannot_start is not None:
                 found = f"resolves to {resolved} and answers as Python 3 but {cannot_start}"
-        if not _is_rewirable_interpreter(token):
+        if not _is_rewirable_interpreter(head, exec_form=first.exec_form, cut=first.cut):
             # DEF-620's rule at this prescriber too: `--rewire-interpreter`
             # DECLINES the `py` launcher, a shebang script and an unterminated
             # quote, and then reports "nothing to rewire" -- a success-shaped
@@ -9378,8 +9487,9 @@ def _disarmed_diagnosis_shape(repo_root: Path) -> tuple[str, list[str], bool]:
             # DEF-727 failure-mode review). Ask the one predicate that decides,
             # as `doctor._check_python_resolver` does.
             remedy = (
-                f"`--rewire-interpreter` declines this command shape (the `py` "
-                f"launcher, a shebang script, an unterminated quote), so edit the "
+                f"`--rewire-interpreter` declines this command shape (an unquoted "
+                f"path with a space, an exec-form command with words after its "
+                f"name, a shebang script, an unterminated quote), so edit the "
                 f"hook commands in .claude/settings.json by hand to an interpreter "
                 f"that answers as Python {floor_text()}+."
             )

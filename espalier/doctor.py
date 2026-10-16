@@ -458,8 +458,14 @@ def _remedy_py() -> str:
     return _remedy_hint()[0]
 
 
-def _interpreter_is_python3(path: "str | None") -> bool:
+def _interpreter_is_python3(path: "str | None", *flags: str) -> bool:
     """Does ``path`` actually ANSWER as a Python 3 interpreter?
+
+    ``flags`` are the launcher's version flag (``py -3`` resolved to the
+    launcher's path, ``-3`` here): the probe asks what the hooks run, not the
+    launcher's default (DEF-1146). A caller passes them only for the launcher,
+    so the one-argument seam patches in the tests keep serving every other
+    caller.
 
     ``shutil.which(name) is not None`` answers "does something answer to this
     name", which is a different question. A Microsoft Store App Execution
@@ -488,13 +494,13 @@ def _interpreter_is_python3(path: "str | None") -> bool:
     # False, and reports a healthy host as failing open. Closing a fail-open
     # must not open a fail-closed on the same message.
     try:
-        if os.path.samefile(path, sys.executable):
+        if not flags and os.path.samefile(path, sys.executable):
             return True
     except OSError:
         pass
     try:
         result = run_bounded(
-            [path, "--version"], capture_output=True, text=True,
+            [path, *flags, "--version"], capture_output=True, text=True,
             encoding="utf-8", timeout=2,
         )
     except (subprocess.SubprocessError, OSError, ValueError):  # strict decode: a structured answer (DEF-821)
@@ -698,8 +704,27 @@ def _check_python_resolver(
     # it: a bare `py` probe asks the launcher's DEFAULT interpreter, which a
     # PY_PYTHON setting or a py.ini can make a different one from the one `-3`
     # runs, and the two readers would disagree about one site (DEF-620's loop).
-    from espalier.cli import _launcher_spelling_of  # lazy: cli imports doctor at top level
-    seen_commands: set[str] = set()
+    from espalier.cli import (  # lazy: cli imports doctor at top level
+        _WiredEntry,
+        _is_python_interpreter_site,
+        _is_rewirable_interpreter,
+        _launcher_spelling_of,
+        _wired_entry,
+    )
+    # Per spelling, the shape the readers share (`cli._wired_entry`): the argv
+    # a probe runs, and the form and cut that decide what the rewire may
+    # touch -- exec form only while every entry spelling it is, a cut path
+    # once any is.
+    shapes: dict[str, Any] = {}
+
+    def _note(entry: Any) -> None:
+        token = entry.argv[0] if entry.argv else ""
+        if not token or "${" in token or token.endswith((".py", ".sh")):
+            return
+        seen = shapes.get(entry.spelling)
+        shapes[entry.spelling] = entry if seen is None else seen._replace(
+            exec_form=seen.exec_form and entry.exec_form, cut=seen.cut or entry.cut)
+
     for event_hooks in hooks.values():
         if not isinstance(event_hooks, list):
             continue
@@ -720,10 +745,10 @@ def _check_python_resolver(
                     # kept warning about the whole string, so the operator loop
                     # was: doctor complains -> rewire -> doctor complains
                     # identically -> rewire says "nothing to do" -> forever.
-                    # Two readers of one file must agree on argv[0].
-                    token = interpreter_token(cmd)
-                    if token and "${" not in token and not token.endswith((".py", ".sh")):
-                        seen_commands.add(_launcher_spelling_of(inner, "command", token))
+                    # Two readers of one file must agree on argv[0] -- and on
+                    # the FORM, which decides it: in exec form argv[0] is all
+                    # of `command`, a spaced path included (DEF-968).
+                    _note(_wired_entry(inner, []))
     # statusLine is the 13th interpreter site and lives outside ``hooks``.
     # It is a shell string, so take argv[0] -- or argv[1] behind the Windows
     # statusline shim (DEF-729), through the helper the rewire reads too; a
@@ -737,20 +762,32 @@ def _check_python_resolver(
             # is run via its shebang, not looked up on PATH -- `which` always
             # answers None for it, so checking it would warn every run on a
             # config that is fine.
-            if token and "${" not in token and not token.endswith((".py", ".sh")):
-                seen_commands.add(_launcher_spelling_of(status_line, "command", token))
+            if token:
+                spelling = _launcher_spelling_of(status_line, "command", token)
+                _note(_WiredEntry(spelling, [], False, tuple(interpreter_argv(spelling))))
 
+    # The file name decides, as the rewire and SessionStart read it: a whole-
+    # word test dropped every absolute path, a spaced exec-form one included,
+    # so doctor examined none of them (DEF-968). A cut shell path is asked by
+    # the cut word the shell runs.
     python_like = {
-        c for c in seen_commands
-        if (head := interpreter_argv(c)[0]) == "python" or head == "py"
-        or head.startswith("python")
+        spelling: entry for spelling, entry in shapes.items()
+        if _is_python_interpreter_site(entry.argv[0]) or entry.cut
     }
+    # The remedy interpreter, asked once per call on the first failure path
+    # that spells it: the answer cannot change during the call, and each ask
+    # is two child processes, so asking per broken entry multiplied them and
+    # asking before the loop would tax a healthy host (DEF-383b).
+    py = ""
     # Identity, not presence. Under a stub this used to be True, so doctor
     # emitted "`python3` IS on PATH -- re-run init" -- actively WRONG advice
     # on the exact host this check exists for.
     py3_present = _interpreter_is_python3(shutil.which("python3"))
+    remedy_answer: tuple = ()  # `_remedy_hint()`, asked once per call too
     for cmd in sorted(python_like):
-        head = interpreter_argv(cmd)[0]  # the executable; `cmd` may be `py -3`
+        # The executable and the launcher's flag; an exec `command` with a
+        # space in its name is one word (`cli._wired_entry`).
+        head, *flags = python_like[cmd].argv
         # Per site: the cannot-start branch below carries its own remedy.
         start_hint: str | None = None
         if resolves_only_inside(head):
@@ -763,12 +800,13 @@ def _check_python_resolver(
             root = venv_root_of(shutil.which(cmd) or "") or Path(
                 os.environ.get("VIRTUAL_ENV", "")
             )
+            py = py or _remedy_py()
             issues.append(
                 f"hook interpreter `{cmd}` resolves only inside the virtualenv "
                 f"at `{root}`. Hooks spawn under the PATH Claude Code is "
                 f"launched with, which will not have this virtualenv activated "
                 f"-- they will fail to start and every blocking guard fails "
-                f"open. Re-run `{_remedy_py()} -m espalier init . --rewire-interpreter` "
+                f"open. Re-run `{py} -m espalier init . --rewire-interpreter` "
                 f"from a shell with the virtualenv deactivated so a host-wide "
                 f"interpreter name is wired."
             )
@@ -782,7 +820,7 @@ def _check_python_resolver(
                 problem = (
                     f"hook interpreter `{cmd}` does not resolve on current host. "
                 )
-            elif not _interpreter_is_python3(resolved):
+            elif not _interpreter_is_python3(resolved, *flags):
                 problem = (
                     f"hook interpreter `{cmd}` resolves to `{resolved}` but does "
                     f"not answer as Python 3, so every hook spawned with it exits "
@@ -796,9 +834,7 @@ def _check_python_resolver(
                 # extra spawn on a healthy host). A banner is answered before the
                 # interpreter initialises (DEF-915): one that cannot start
                 # runs NO guard, while a below-floor 3.9 runs them all.
-                cannot_start = _interpreter_start_failure(
-                    [resolved, *interpreter_argv(cmd)[1:]]
-                )
+                cannot_start = _interpreter_start_failure([resolved, *flags])
                 if cannot_start is not None:
                     problem = (
                         f"hook interpreter `{cmd}` resolves to `{resolved}` and "
@@ -814,7 +850,7 @@ def _check_python_resolver(
                     # `python` is as good a target. The resolver now refuses
                     # an interpreter that cannot start, so `clears` is True
                     # exactly when the rewire has a target that starts.
-                    remedy, clears, probed = _remedy_hint()
+                    remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
                     if clears:
                         start_hint = (
                             f"`{remedy}` starts and clears the floor -- run "
@@ -848,23 +884,25 @@ def _check_python_resolver(
                     )
             else:
                 continue  # resolves, is Python 3, clears the floor.
+            py = py or _remedy_py()
             # DEF-620, one more time: do not prescribe `--rewire-interpreter`
             # for a site that verb will DECLINE. An unterminated quote and a
             # shebang script are refused there by design, so pointing at
             # the flag would send the operator round the same loop the flag was
             # added to end. Ask the one predicate that decides, so the two
             # cannot drift.
-            from espalier.cli import (  # lazy: cli imports doctor at top level
-                _is_rewirable_interpreter,
-            )
-            if not _is_rewirable_interpreter(head):
+            if not _is_rewirable_interpreter(
+                    head, exec_form=python_like[cmd].exec_form, cut=python_like[cmd].cut):
                 issues.append(
                     problem
-                    + f"`{_remedy_py()} -m espalier init . "
+                    + f"`{py} -m espalier init . "
                     "--rewire-interpreter` will NOT fix this one -- it declines "
                     "command shapes that are not a bare interpreter (an "
-                    "unterminated quote, a shebang script). Edit "
-                    "this command in .claude/settings.json by hand."
+                    "unquoted path with a space, which a shell cuts; an "
+                    "exec-form command with words after its name, which "
+                    "belong in `args`; an unterminated quote; a shebang "
+                    "script). Edit this command in .claude/settings.json by "
+                    "hand."
                 )
                 continue
             if start_hint is not None:
@@ -882,7 +920,7 @@ def _check_python_resolver(
                 # Re-init/symlink is the real fix, not installing python.
                 hint = (
                     f"a WORKING `python3` IS on PATH -- re-run "
-                    f"`{_remedy_py()} -m espalier init . --rewire-interpreter` "
+                    f"`{py} -m espalier init . --rewire-interpreter` "
                     f"to rewire the wired interpreter, or symlink `{cmd}` -> "
                     f"python3."
                 )

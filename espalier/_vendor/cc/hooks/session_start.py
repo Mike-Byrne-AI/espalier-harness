@@ -2465,6 +2465,94 @@ def _warn_if_load_bearing_tool_missing(self_host: bool) -> None:
             )
 
 
+def _entry_argv(command: object, args: object = None) -> tuple:
+    """``(argv[0], the words after it)`` of a settings.json hook entry.
+
+    The FORM decides before the word (DEF-968). An entry carrying an ``args``
+    list is exec form: Claude Code spawns ``command`` itself, with no shell and
+    no tokenization on any platform, so argv[0] is all of ``command`` -- a
+    space in an interpreter path is part of the path, and a quote is part of
+    the file name, so a quoted exec-form ``command`` cannot start -- and the
+    words after it are ``args``. Without ``args`` it is shell form: the first
+    word, a quoted path taken whole without shlex (which mangles backslashes
+    in posix mode), as ``sh -c`` and Git Bash read it -- with a leading ``~``
+    expanded, as the shell expands an unquoted one.
+
+    Twin of ``espalier._venv.entry_argv``; pinned equal over one table of
+    entry shapes by ``tests/test_hook_entry_argv.py``.
+    """
+    if isinstance(args, list):
+        return (command if isinstance(command, str) else ""), list(args)
+    cmd = command.strip() if isinstance(command, str) else ""
+    if not cmd:
+        return "", []
+    if cmd[:1] in ("'", '"'):
+        end = cmd.find(cmd[0], 1)
+        if end > 0:
+            return cmd[1:end], cmd[end + 1:].split()
+        return cmd[1:], []
+    head = cmd.split(None, 1)[0]
+    return (os.path.expanduser(head) if head.startswith("~") else head), cmd.split()[1:]
+
+
+def _names_a_python(token: str) -> bool:
+    """Does argv[0] ``token`` name a Python interpreter at all (DEF-1024)?
+
+    Asked on the file name -- either slash, quotes off, lowercased, ``.exe``
+    dropped, its first word only (an exec ``command`` of ``py -3`` names a
+    Python it cannot start) -- so an absolute path to a below-floor
+    interpreter is still asked (a whole-token test dropped one, ``DEF-636``),
+    while ``npx``, ``node``, ``bash``, ``powershell.exe`` and a path-wired
+    script are not spawned with ``--version`` at all: each one drew the
+    fail-open warning every session, and a script ran twice. Not asked, on
+    purpose: a ``$``-led head (``$HOME/.venv/bin/python``, never expanded
+    here), ``pypy``, and a wrapper head (``uv run``, ``env``), whose
+    interpreter is not argv[0]. Twin of ``espalier._venv.names_a_python``;
+    pinned equal by ``tests/test_hook_entry_argv.py``.
+    """
+    if not token or token.startswith("$") or "${" in token:
+        return False
+    name = token.replace("\\", "/").rsplit("/", 1)[-1].strip("\"'").lower().split()
+    base = name[0] if name else ""
+    if base.endswith(".exe"):
+        base = base[: -len(".exe")]
+    return base == "py" or base.startswith("python")
+
+
+def _exec_name_has_space(command: str) -> bool:
+    """Does an exec-form ``command``'s FILE NAME hold whitespace? Exec form
+    spawns ``command`` as one file name, so ``py -3`` or ``python -u`` there
+    is a file no host has: the entry cannot start (DEF-968). A space in the
+    directory is a real path's. Twin of ``espalier._venv.exec_name_has_space``."""
+    name = command.replace("\\", "/").rsplit("/", 1)[-1]
+    return any(ch.isspace() for ch in name)
+
+
+def _shell_cut_path(command: str) -> "str | None":
+    """The Python path a shell-form ``command`` names unquoted across a space,
+    which the shell cuts at that space; None when it does not.
+
+    ``C:\\Program Files\\Python312\\python.exe x.py`` runs ``C:\\Program``
+    under ``sh -c`` and Git Bash (exit 127, every guard fails open), and the
+    cut word names no Python, so asking argv[0] alone skipped the entry. A
+    longer word-prefix that names a Python (not a ``.py``/``.sh`` script),
+    where argv[0] is a path that is not a file, is the cut path. Twin of
+    ``espalier._venv.shell_cut_path``.
+    """
+    cmd = command.strip() if isinstance(command, str) else ""
+    if not cmd or cmd[:1] in ("'", '"'):
+        return None
+    words = cmd.split()
+    head = os.path.expanduser(words[0]) if words[0].startswith("~") else words[0]
+    if not any(sep in head for sep in ("/", "\\")) or os.path.isfile(head):
+        return None
+    for end in range(2, len(words) + 1):
+        prefix = " ".join(words[:end])
+        if not prefix.endswith((".py", ".sh")) and _names_a_python(prefix):
+            return prefix
+    return None
+
+
 def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
     """Surface a broken settings.json hook interpreter at boot.
 
@@ -2512,6 +2600,7 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
     if not isinstance(hooks, dict):
         return
     unresolved: set[str] = set()
+    unstartable: set[str] = set()
     for groups in hooks.values():
         if not isinstance(groups, list):
             continue
@@ -2524,19 +2613,9 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
                 command = entry.get("command")
                 if not isinstance(command, str) or not command.strip():
                     continue
-                cmd = command.strip()
-                # First token = interpreter. Handle a quoted path with spaces
-                # (Windows ``"C:\\Program Files\\...\\python.exe"``) without
-                # shlex, which mangles backslashes in posix mode.
-                if cmd[:1] in ("'", '"'):
-                    end = cmd.find(cmd[0], 1)
-                    interp = cmd[1:end] if end > 0 else cmd[1:]
-                    rest = cmd[end + 1:].split() if end > 0 else []
-                else:
-                    interp = cmd.split(None, 1)[0]
-                    rest = cmd.split()[1:]
-                if not rest and isinstance(entry.get("args"), list):
-                    rest = entry["args"]  # exec form: the arguments live in args
+                # argv[0] as the entry runs it: all of `command` in exec form,
+                # the first word in shell form (DEF-968).
+                interp, rest = _entry_argv(command, entry.get("args"))
                 # A bare-PATH command (e.g.
                 # `${CLAUDE_PROJECT_DIR}/tools/cc/hooks/x.py`, a canonical CC
                 # idiom) is a SCRIPT the OS runs via its shebang, not an
@@ -2548,6 +2627,20 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
                 # carrying an unexpanded ${...} variable or ending in a script
                 # suffix.
                 if "${" in interp or interp.endswith((".py", ".sh")):
+                    continue
+                exec_form = isinstance(entry.get("args"), list)
+                # Only a Python is asked whether it is one (DEF-1024): any other
+                # head failed the probe by construction and drew the warning. A
+                # shell head cut from an unquoted spaced Python path is one: the
+                # shell runs the cut word, which no probe needs to start.
+                if not _names_a_python(interp) and (
+                        exec_form or _shell_cut_path(command) is None):
+                    continue
+                # An exec name with a space in it (`py -3`, `python -u`) is one
+                # file name no host has: named as is, never split into a
+                # launcher and its flag (DEF-968).
+                if exec_form and _exec_name_has_space(interp):
+                    unstartable.add(interp)
                     continue
                 # IDENTITY, not presence. `which(interp) is None` is False for a
                 # stub that resolves, so this check used to pass silently on the
@@ -2562,6 +2655,14 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
                 interp = launcher_spelling(interp, rest)
                 if interp and not interpreter_meets_floor(interp):
                     unresolved.add(interp)
+    for interp in sorted(unstartable):
+        _hook_utils.advise(
+            f"[WARN] wired hook interpreter `{interp}` cannot start: the entry "
+            "is exec form (it has `args`), so Claude Code runs `command` as one "
+            "file name, and no file is named that -- every blocking guard fails "
+            "OPEN. Put the interpreter alone in `command` and the words after "
+            "it at the front of `args`. Run `espalier doctor .` for details.",
+        )
     for interp in sorted(unresolved):
         # TWO failures share this warning and they need different words.
         # "Not a Python 3 at all" and "a Python 3 below the

@@ -658,6 +658,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_session_start_maintenance_warn",
             # TP-177 W6-3 — SessionStart WARN on an unresolved hook interpreter
             "test_session_start_interpreter_warn",
+            # DEF-968 class — every reader of a wired hook's interpreter reads
+            # the argv the hook runs (the warning, doctor, the rewire, the
+            # enforcement claim, the gate-wiring check); spawns real launcher
+            # and cannot-start stubs and a real spaced-path interpreter.
+            "test_hook_entry_argv",
             # TP-345 — SessionStart ruff-banner self-host gate (adopter-friction parity)
             "test_session_start_ruff_gate",
             # TP-147 147-B — external-tool availability triple

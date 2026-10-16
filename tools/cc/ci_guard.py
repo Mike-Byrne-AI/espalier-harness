@@ -919,9 +919,17 @@ _CI_MUTATION_MATCHER_TOOLS = ("Write", "Edit", "NotebookEdit")
 
 
 def _ci_is_python_interpreter(token: str) -> bool:
-    if not token or any(c.isspace() for c in token):
+    # A space in the directory is a real path's, one in the file name is no
+    # interpreter (`py -3`); the name lowercased, `.exe` dropped (DEF-968). One
+    # rule with espalier/surface_contract.py and tools/cc/hooks/_integrity.py.
+    if not token:
         return False
     base = token.replace("\\", "/").rsplit("/", 1)[-1]
+    if any(c.isspace() for c in base):
+        return False
+    base = base.lower()
+    if base.endswith(".exe"):
+        base = base[: -len(".exe")]
     return base == "py" or base.startswith("python") or _ci_is_python_launcher(token)
 
 
