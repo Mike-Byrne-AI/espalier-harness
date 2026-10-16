@@ -601,7 +601,10 @@ directory passed the delete nudge, and a write into a checkout kept there passed
 readers are `_hook_utils.git_bash_tmp_tail` and `git_bash_tmp_mount`, asked only of a Bash
 spelling (`join_directory`'s required `bash` keyword: PowerShell reads `/tmp` as the current
 drive's), and a site that builds a list of places keeps both readings (`joined_directories`),
-because the directory chain folds a backslash into a slash before it spells a directory. The
+because the directory chain folds a backslash into a slash before it spells a directory. Whether
+a `cd` got there is the other question, and it has one answer: asked at both readings, a `cd`
+Git Bash fails read as entered, and what followed it was judged outside the checkout it ran in
+(`directory_exists` asks the one reading the shell uses; the failure-mode review drove it). The
 mount is read from the hook's own `TEMP`, a proxy for the session's mount table: a child shell
 handed another `TEMP` still mounted the session's temp directory. The judge of "rooted" is the
 `PureWindowsPath` anchor (`_hook_utils.rooted`), never the host's `Path.is_absolute()`, which on
