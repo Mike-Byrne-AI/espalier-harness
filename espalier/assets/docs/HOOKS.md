@@ -549,10 +549,9 @@ Requires an active execution plan before Claude can write to project
 source files. If Claude tries to write `src/app.py` without first
 creating a plan via `/implement-task`, the write is denied.
 
-Like `write_guard`, it starts or refuses: a sibling import that fails on a
-kept, older `_hook_utils.py` is a structured deny naming the repair, never an
-exit 1 the protocol reads as non-blocking (`write_guard`, "It starts or
-refuses").
+Like `write_guard`, it starts or refuses: a sibling import that fails is a
+structured deny naming the file that raised and the repair, never an exit 1 the
+protocol reads as non-blocking (`write_guard`, "It starts or refuses").
 
 **What you see when blocked:**
 
@@ -706,19 +705,43 @@ module top with exit 1, which Claude Code reads as a non-blocking error: every
 tool call proceeded with no guard at all (`DEF-1176`, measured on a Node adopter
 tree). Now the sibling imports and every helper name the hook's import graph
 takes are read under one module-top guard, and a failure there is a structured
-deny naming the kept helper and the repair -- restore its `# espalier:managed`
-marker line, then `espalier upgrade --execute .` -- with a
-`pretooluse_blocked_internal_error` record; every call is refused until the
-helper is repaired. The two budget names (`spawn_timeout`, `STATE_WRITE_LOCK`)
-degrade instead, because no verdict depends on them, so a helper missing only
-those judges on. `plan_guard.py`, `config_guard.py` and `stop_gate.py` carry
-the same guard (the Stop gate's refusal is the Stop-style block, which the
-protocol's loop signal lets through on the next Stop), `upgrade` names the
-missing names when it keeps the helper, and `espalier doctor` names a wired hook
-that cannot start. Maintenance mode (the friction bypass below) does not lift
-this refusal -- the guard runs before that gate is read, and the PreToolUse
-guard matches every tool -- so the repair is made from a terminal, never from
-inside the session. Pinned by `tests/test_hooks_start_on_a_kept_helper.py`.
+deny with a `pretooluse_blocked_internal_error` record; every call is refused
+until the cause is repaired. The deny names the file under `tools/cc/` that
+raised, its line and the exception. When a name a sibling takes is missing from
+`_hook_utils.py` -- the kept-helper case -- it also names the upgrade repair
+(restore the helper's `# espalier:managed` marker line, then `espalier upgrade
+--execute .`). Any other raise names no upgrade, which would regenerate the
+file under edit (`DEF-2010`: a sibling raising at import was blamed on the
+helper twice, 2026-10-14 and 10-16). The two budget names (`spawn_timeout`,
+`STATE_WRITE_LOCK`) degrade instead, because no verdict depends on them, so a
+helper missing only those judges on. `plan_guard.py`, `config_guard.py` and
+`stop_gate.py` carry the same guard (the Stop gate's refusal is the Stop-style
+block, which the protocol's loop signal lets through on the next Stop),
+`upgrade` names the missing names when it keeps the helper, and `espalier
+doctor` names a wired hook that cannot start. Maintenance mode (the friction
+bypass below) does not lift this refusal -- the guard runs before that gate is
+read, and the PreToolUse guard matches every tool.
+
+**One call gets through a wedged guard.** A wedged guard used to refuse the
+call that would repair it, so the operator restored the file from a terminal
+(six lock-outs from 2026-09-08 to 10-16, `DEF-4025`). Now the PreToolUse
+refusal reads the payload first, and lets through exactly one shape: a Bash call
+that is one command, `git restore [--source=HEAD] [--] <file>`, `git checkout
+-- <file>` or `git checkout HEAD -- <file>`, of a file the refusal names (in the
+kept-helper case, `_hook_utils.py` or the file that takes the name). Forward and
+back slashes both read, and a relative path resolves against the Bash tool's
+directory. Before letting the call through, it copies the file's bytes to
+`.espalier-state/wedge-restore/<stem>-<UTC>.py.txt`: while the guard is wedged
+the discard speed bump's snapshot cannot run, and the restore discards the
+file's uncommitted edit. A failed copy never blocks the restore. The call
+carries no permission decision, so your permission mode decides it as it
+would any other. Its context tells Claude why it passed, and it writes a
+`pretooluse_failed_open_wedge_restore` record. Anything else stays refused: a
+second command, a shell operator, another ref, the index (`--staged`), another
+file, two files, the PowerShell tool, an Edit or a Write. `write_guard`'s crash
+guard, which catches a fault after the imports, does the same. Its refusal
+names the innermost `tools/cc/` frame by exception class and line, never the
+message. Pinned by `tests/test_hooks_start_on_a_kept_helper.py`.
 
 It blocks three categories of tool calls (kill-switch and protected-zone
 first; the dangerous-command catch is a secondary slip-catcher):
@@ -1475,9 +1498,9 @@ dangerous-command denials use their own reason channels.
 
 **Event:** ConfigChange · **Can block:** Yes (project/local/user settings)
 
-Like `write_guard`, it starts or refuses: a sibling import that fails on a
-kept, older `_hook_utils.py` is the Stop-style block naming the repair, never an
-exit 1 (`write_guard`, "It starts or refuses").
+Like `write_guard`, it starts or refuses: a sibling import that fails is the
+Stop-style block naming the file that raised and the repair, never an exit 1
+(`write_guard`, "It starts or refuses").
 
 Fires when Claude Code modifies settings. Scans the incoming settings
 for kill-switch patterns. If found in project, local, or user settings,
