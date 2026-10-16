@@ -28,8 +28,8 @@ from espalier._venv import (
 from espalier._integrity_bridge import load_integrity_module
 from espalier._text import plural
 from espalier._python_floor import (
-    floor_text, interpreter_argv, interpreter_meets_floor, interpreter_start_failure,
-    is_python3_banner,
+    START_UNANSWERED, floor_text, interpreter_argv, interpreter_meets_floor,
+    interpreter_start_failure, is_python3_banner, start_refuted,
 )
 from espalier._report_io import load_harness_plan, report_is_json_object
 from espalier._spawn import run_bounded
@@ -835,7 +835,10 @@ def _check_python_resolver(
                 # interpreter initialises (DEF-915): one that cannot start
                 # runs NO guard, while a below-floor 3.9 runs them all.
                 cannot_start = _interpreter_start_failure([resolved, *flags])
-                if cannot_start is not None:
+                # A start-up probe that never answered kept the banner's
+                # verdict in the floor check, so a False here with no refuted
+                # start is a banner below the floor (DEF-5014).
+                if start_refuted(cannot_start):
                     problem = (
                         f"hook interpreter `{cmd}` resolves to `{resolved}` and "
                         f"answers `--version` as Python 3, but {cannot_start} -- "
@@ -883,7 +886,23 @@ def _check_python_resolver(
                         f"{floor_text()} or newer and re-wire the hooks to it. "
                     )
             else:
-                continue  # resolves, is Python 3, clears the floor.
+                # The floor check kept the banner's verdict on a start-up probe
+                # that never answered (DEF-5014), so this claim says the start
+                # was not confirmed rather than call the interpreter healthy,
+                # and steps to doctor again, not to a rewire whose target is
+                # this same interpreter. The verdict is the one the process
+                # kept for this file, so the probe is not run twice.
+                unconfirmed = _interpreter_start_failure([resolved, *flags])
+                if unconfirmed is None or not unconfirmed.startswith(START_UNANSWERED):
+                    continue  # resolves, is Python 3, clears the floor, starts.
+                py = py or _remedy_py()
+                issues.append(
+                    f"hook interpreter `{cmd}` resolves to `{resolved}` and "
+                    f"answers `--version` as Python {floor_text()}+, but "
+                    f"{unconfirmed}. Run `{py} -m espalier doctor .` again on a "
+                    f"less loaded machine to confirm it starts."
+                )
+                continue
             py = py or _remedy_py()
             # DEF-620, one more time: do not prescribe `--rewire-interpreter`
             # for a site that verb will DECLINE. An unterminated quote and a
@@ -905,21 +924,28 @@ def _check_python_resolver(
                     "hand."
                 )
                 continue
+            py3_start = (
+                _interpreter_start_failure([shutil.which("python3") or "python3"])
+                if start_hint is None and py3_present else None
+            )
             if start_hint is not None:
                 hint = start_hint
-            elif py3_present and _interpreter_start_failure(
-                [shutil.which("python3") or "python3"]
-            ) is None:
+            elif py3_present and not start_refuted(py3_start):
                 # "WORKING" is said only of a `python3` that starts: its banner
                 # alone is what `py3_present` read (DEF-915), and on a host
                 # whose `python3` is a copied venv that cannot start this
                 # sentence sent the operator to a rewire that then found no
-                # target. Asked here, on the failure path only.
+                # target. Asked here, on the failure path only. A probe that
+                # never answered (DEF-5014) is no verdict: the rewire takes
+                # that `python3` on its banner, so it is still the remedy,
+                # and the sentence says only what was seen.
                 # The common case -- `python3` IS on PATH but settings
                 # wired a different name (e.g. `python`) or a stale path.
                 # Re-init/symlink is the real fix, not installing python.
+                seen = ("a WORKING `python3`" if py3_start is None else
+                        f"a `python3` that answers as Python 3 ({py3_start})")
                 hint = (
-                    f"a WORKING `python3` IS on PATH -- re-run "
+                    f"{seen} IS on PATH -- re-run "
                     f"`{py} -m espalier init . --rewire-interpreter` "
                     f"to rewire the wired interpreter, or symlink `{cmd}` -> "
                     f"python3."
@@ -2880,7 +2906,17 @@ def run_doctor_check(
 
     python_resolver_issues = _check_python_resolver(repo_root)
     warnings.extend(python_resolver_issues)
-    if python_resolver_issues:
+    # A hook interpreter whose start went unconfirmed (DEF-5014) steps to
+    # doctor again: the rewire's target would be that same interpreter.
+    unconfirmed_starts = [i for i in python_resolver_issues if START_UNANSWERED in i]
+    if unconfirmed_starts:
+        _append_step(
+            next_steps,
+            f"run `{_remedy_py()} -m espalier doctor .` again on a less loaded "
+            f"machine: the hook interpreter's start-up probe did not answer, "
+            f"which a slow host does to a working interpreter, so it is asked again",
+        )
+    if len(unconfirmed_starts) < len(python_resolver_issues):
         # DEF-620: this used to say plain `init .`, which does NOT overwrite an
         # existing settings.json (user sovereignty) -- measured before and
         # after, `group_unwired_gates_by_shape` returned the identical

@@ -26,6 +26,7 @@ from espalier._atomic_io import atomic_write_bytes, atomic_write_text
 from espalier._integrity_bridge import load_integrity_module
 from espalier._python_floor import (
     LAUNCHER_VERSION_FLAG,
+    START_UNANSWERED,
     floor_text,
     interpreter_argv,
     interpreter_meets_floor,
@@ -33,6 +34,7 @@ from espalier._python_floor import (
     is_below_floor_python3,
     is_python_launcher,
     meets_python_floor,
+    start_refuted,
 )
 from espalier._safe_walk import safe_rglob, visible, is_own_git_repo as _is_own_git_repo
 from espalier._spawn import run_bounded
@@ -967,7 +969,10 @@ def _detect_python_command() -> str:
         # for a probe that said nothing.
         if meets_python_floor(version_str) or is_below_floor_python3(version_str):
             cannot_start = interpreter_start_failure([path])
-            if cannot_start is not None:
+            # A probe that never answered keeps the banner's verdict (DEF-5014):
+            # passing a working name over on a slow host ended at the literal
+            # `python`, which a python3-only host does not have.
+            if start_refuted(cannot_start):
                 if first_probe is None:
                     first_probe = (candidate, path, f"{version_str} to --version, and {cannot_start}")
                 continue
@@ -8556,14 +8561,17 @@ class _WiredEntry(NamedTuple):
 
 class _NotPython3(NamedTuple):
     """One spelling the identity arm found not answering as a Python 3: what
-    its head resolves to (or None), the deployed scripts wired through it, and
-    the shape that decides its remedy (form, cut path, the argv probed)."""
+    its head resolves to (or None), the deployed scripts wired through it, the
+    shape that decides its remedy (form, cut path, the argv probed), and
+    whether it answered as one and only its start went unconfirmed, on a probe
+    that never answered (``DEF-5014``)."""
 
     resolved: str | None
     rels: list[str]
     exec_form: bool
     cut: bool
     argv: tuple
+    unconfirmed: bool = False
 
 
 def _wired_entry(hook: dict, rels: list[str]) -> _WiredEntry:
@@ -8773,7 +8781,7 @@ def _not_python3_from_entries(
     is a false alarm the operator can re-run, never a false all-clear, so the
     arm asserts rather than abstains; the retry keeps the alarm rare.
     """
-    verdicts: dict[str, tuple[str | None, bool]] = {}
+    verdicts: dict[str, tuple[str | None, bool, bool]] = {}
     failing: dict[str, list[str]] = {}
     shapes: dict[str, _WiredEntry] = {}
     for entry in entries:
@@ -8791,12 +8799,16 @@ def _not_python3_from_entries(
                 # A genuine Python 2 answers fast, so the retry costs it little;
                 # a slow shim gets the second chance the docstring describes.
                 answered = _doctor._interpreter_is_python3(resolved, *flags)
-            # The start-up probe gives a timeout its own second chance.
-            if answered and resolved and (
-                _doctor._interpreter_start_failure([resolved, *flags]) is not None
-            ):
+            # The start-up probe gives a timeout its own second chance. A start
+            # it never saw withholds the claim too, since the claim must never
+            # be a false all-clear; the narration says it was not confirmed
+            # rather than that it cannot start (DEF-5014).
+            start = (_doctor._interpreter_start_failure([resolved, *flags])
+                     if answered and resolved else None)
+            unconfirmed = start is not None and start.startswith(START_UNANSWERED)
+            if start is not None:
                 answered = False
-            verdicts[token] = (resolved, answered)
+            verdicts[token] = (resolved, answered, unconfirmed)
         if verdicts[token][1]:
             continue
         bucket = failing.setdefault(token, [])
@@ -8808,7 +8820,8 @@ def _not_python3_from_entries(
             exec_form=seen.exec_form and entry.exec_form, cut=seen.cut or entry.cut)
     return {
         token: _NotPython3(verdicts[token][0], sorted(rels), shapes[token].exec_form,
-                           shapes[token].cut, shapes[token].argv or (token,))
+                           shapes[token].cut, shapes[token].argv or (token,),
+                           verdicts[token][2])
         for token, rels in failing.items()
     }
 
@@ -9460,7 +9473,9 @@ def _disarmed_diagnosis_shape(repo_root: Path) -> tuple[str, list[str], bool]:
         # through it at once, whatever shape the entries have, so it is named
         # before the per-gate shapes. Sorted for a stable sentence: the first
         # word carries the prose, the rest are counted.
-        token, first = sorted(not_python3.items())[0]
+        # A word whose start only went unconfirmed is narrated last: one that
+        # fails outright is the headline whenever there is one (DEF-5014).
+        token, first = sorted(not_python3.items(), key=lambda kv: (kv[1].unconfirmed, kv[0]))[0]
         resolved = first.resolved
         # The head and the launcher's flag, probed as the hooks run them
         # (DEF-1146): a bare `py` would ask the launcher's default.
@@ -9477,6 +9492,19 @@ def _disarmed_diagnosis_shape(repo_root: Path) -> tuple[str, list[str], bool]:
             # printed a Python 3 banner (two more spawns, failure path only;
             # a flake that now starts keeps the sentence above).
             cannot_start = _doctor._interpreter_start_failure([resolved, *flags])
+            if cannot_start is not None and cannot_start.startswith(START_UNANSWERED):
+                # No verdict on the interpreter (DEF-5014): the claim is
+                # withheld, never asserted, and neither "fails OPEN" nor a
+                # rewire whose target is this same interpreter is said.
+                return (
+                    f"Hooks are not confirmed active: settings.json runs its hooks "
+                    f"with {token!r}{extra}, which resolves to {resolved} and "
+                    f"answers as Python 3, but {cannot_start}.",
+                    [f"Run `{py} -m espalier doctor .` again on a less loaded "
+                     f"machine: it asks the interpreter to start again, and names "
+                     f"it if it cannot."],
+                    False,
+                )
             if cannot_start is not None:
                 found = f"resolves to {resolved} and answers as Python 3 but {cannot_start}"
         if not _is_rewirable_interpreter(head, exec_form=first.exec_form, cut=first.cut):

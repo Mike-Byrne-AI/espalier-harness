@@ -856,7 +856,8 @@ class TestAnInterpreterThatAnswersItsBannerAndCannotStart:
         calls.clear()
         outcomes[:] = [subprocess.TimeoutExpired(probe, 2), subprocess.TimeoutExpired(probe, 2)]
         failure = _python_floor.interpreter_start_failure(probe)
-        assert failure is not None and "timed out twice" in failure, failure
+        # Two timeouts are no verdict on the interpreter (DEF-5014).
+        assert failure is not None and failure.startswith("start not confirmed"), failure
         assert len(calls) == 2, calls
 
         calls.clear()
@@ -1106,6 +1107,239 @@ class TestAnInterpreterThatAnswersItsBannerAndCannotStart:
         result = cli.rewire_interpreter_in_settings(path, new_interpreter="python3")
         assert result.status == cli.REWIRE_NO_TARGET, result
         assert path.read_bytes() == before, "the file was modified on a refusal"
+
+
+class TestAStartProbeThatNeverAnswers:
+    """DEF-5014: on a slow host the start-up probe times out on both tries, and
+    that says nothing about the interpreter (DEF-1130 measured 31 to 73 s per
+    concurrent interpreter start on windows-latest). It is its own verdict,
+    never "cannot start:": a decision (the resolver, the floor check, a remedy
+    target) keeps the banner's verdict on it, as the hook-side twin does, and a
+    claim (init's enforcement claim, doctor's floor check) says the start was
+    not confirmed, with a next step. The verdict is kept per interpreter for
+    the process, so the probe's spawns are one bounded total.
+
+    Only the ``-I -c 'import sys'`` spawn is stubbed to time out; every other
+    spawn (each ``--version``, git, doctor's own probes) runs for real against
+    stubs forwarding to this interpreter, so the banner is a real answer. RED
+    on main e388ec8: the verdict read "cannot start: ... timed out twice"; a
+    ``python3``-only host had the literal ``python`` wired, which does not
+    resolve there, and init said every guard fails OPEN; init asked the one
+    interpreter 26 times and doctor 10.
+    """
+
+    START_PROBE = ["-I", "-c", "import sys"]
+
+    @pytest.fixture
+    def slow(self, monkeypatch):
+        """Time out every start-up probe, and record what each one asked."""
+        from espalier import _spawn
+
+        real = _spawn.run_bounded
+        asked: list[tuple[str, ...]] = []
+
+        def run_bounded(argv, *args, **kwargs):
+            argv = list(argv)
+            if argv[-3:] == self.START_PROBE:
+                asked.append(tuple(argv[:-3]))
+                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+            return real(argv, *args, **kwargs)
+
+        monkeypatch.setattr(_spawn, "run_bounded", run_bounded)
+        monkeypatch.setattr(_python_floor, "_START_VERDICTS", {}, raising=False)
+        monkeypatch.delenv("PYTHONHOME", raising=False)
+        monkeypatch.delenv("PYTHONPATH", raising=False)
+        return asked
+
+    @staticmethod
+    def _host(tmp_path, monkeypatch, *, working, stubbed=()):
+        """Working stubs for ``working``, Store stubs for ``stubbed``, and git;
+        nothing else on PATH. Returns the bin dir."""
+        import shutil
+
+        from tests import _interpreter_hosts as hosts
+
+        git = shutil.which("git")
+        assert git, "git is needed to drive init"
+        bin_dir = hosts.build_cannot_start(tmp_path / "host", (), working=working, stubbed=stubbed)
+        monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), str(Path(git).parent)]))
+        return bin_dir
+
+    def test_two_timeouts_are_their_own_verdict_and_an_exit_status_still_refutes(
+        self, tmp_path, monkeypatch, slow
+    ):
+        import shutil
+
+        self._host(tmp_path, monkeypatch, working=("python3",))
+        python3 = shutil.which("python3")
+        verdict = _python_floor.interpreter_start_failure([python3])
+        assert verdict is not None and not verdict.startswith("cannot start"), (
+            f"a probe that never answered was read as an interpreter that cannot start: {verdict}"
+        )
+        assert verdict.startswith("start not confirmed") and "slow host" in verdict, verdict
+        assert len(slow) == 2, f"one timeout and its retry, no more: {slow}"
+        refuted = getattr(_python_floor, "start_refuted", None)
+        assert refuted is not None and refuted(verdict) is False and refuted(None) is False
+        assert refuted("cannot start: `-I -c 'import sys'` exits 1 (boom)") is True
+
+    def test_each_interpreter_is_asked_once_for_the_process(self, tmp_path, monkeypatch, slow):
+        """Init asked one interpreter 26 times on a slow host, 2 s a try, so
+        every remembered answer is up to 4 s not spent. A file rewritten in
+        place is asked again: the verdict is keyed on the file as well."""
+        import shutil
+
+        self._host(tmp_path, monkeypatch, working=("python3",))
+        python3 = shutil.which("python3")
+        for _ in range(3):
+            _python_floor.interpreter_start_failure([python3])
+        assert len(slow) == 2, f"the same interpreter was asked again: {slow}"
+        stub = Path(python3)
+        stub.write_bytes(stub.read_bytes() + b"\n")
+        os.utime(stub, ns=(stub.stat().st_atime_ns, stub.stat().st_mtime_ns + 10**9))
+        _python_floor.interpreter_start_failure([python3])
+        assert len(slow) == 4, f"a rewritten file was answered from memory: {slow}"
+
+    def test_the_floor_check_keeps_the_banners_verdict(self, tmp_path, monkeypatch, slow):
+        self._host(tmp_path, monkeypatch, working=("python3",))
+        assert _python_floor.interpreter_meets_floor("python3") is True, (
+            "a working interpreter whose start-up probe never answered was read as "
+            "below the floor"
+        )
+
+    def test_the_resolver_wires_the_working_name_not_the_literal(
+        self, tmp_path, monkeypatch, capsys, slow
+    ):
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, working=("python3",), stubbed=("python",))
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False, raising=False)
+        assert cli._detect_python_command() == "python3", (
+            "the resolver passed over the one working name on a probe that never "
+            "answered, and fell back to a name that does not run here"
+        )
+        assert "could be validated" not in capsys.readouterr().err
+
+    def test_init_and_doctor_say_not_confirmed_with_a_next_step(
+        self, tmp_path, monkeypatch, capsys, slow
+    ):
+        """End to end on a ``python3``-only slow host: init wires ``python3``
+        and withholds the enforcement claim (never a false all-clear) with the
+        slow host named and a next step; doctor warns the same and steps to
+        itself, not to a rewire whose target is the wired interpreter. Each
+        asks each interpreter once: one timeout and its retry."""
+        import argparse
+        from collections import Counter
+
+        from espalier import cli, doctor
+
+        self._host(tmp_path, monkeypatch, working=("python3",), stubbed=("python",))
+        for var in ("HOME", "USERPROFILE"):
+            monkeypatch.setenv(var, str(tmp_path / "home"))
+        monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+        (tmp_path / "home").mkdir()
+        target = tmp_path / "adopter"
+        target.mkdir()
+        (target / "README.md").write_text("# adopter\n", encoding="utf-8")
+        (target / "pyproject.toml").write_text('[project]\nname = "adopter"\n', encoding="utf-8")
+        subprocess.check_call(["git", "init", "--quiet"], cwd=str(target))
+        monkeypatch.chdir(target)
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False, raising=False)
+
+        assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
+        captured = capsys.readouterr()
+        said = captured.out + captured.err
+        settings = json.loads((target / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        wired = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        assert wired == "python3", f"init wired {wired!r}:\n{said[-3000:]}"
+        assert "cannot start:" not in said and "fails OPEN" not in said, said[-3000:]
+        assert "Hooks now intercept" not in said, (
+            f"init claimed enforcement on a start it never saw:\n{said[-3000:]}"
+        )
+        claim = [line for line in said.splitlines() if "not confirmed" in line]
+        assert claim and "slow host" in claim[0], said[-3000:]
+        assert any("-m espalier doctor ." in line and "less loaded" in line
+                   for line in said.splitlines()), said[-3000:]
+        assert set(Counter(slow).values()) == {2}, f"init asked again: {Counter(slow)}"
+
+        slow.clear()
+        _python_floor._START_VERDICTS.clear()  # doctor runs in a process of its own
+        result = doctor.run_doctor_check(target)
+        warned = [w for w in result["warnings"] if "python3" in w]
+        assert warned and "start not confirmed" in warned[0], result["warnings"]
+        assert not any("cannot start:" in w or "fails OPEN" in w for w in result["warnings"])
+        assert any("-m espalier doctor ." in s and "less loaded" in s
+                   for s in result["next_steps"]), result["next_steps"]
+        assert not any("--rewire-interpreter" in s for s in result["next_steps"]), (
+            f"a rewire whose target is the wired interpreter was prescribed: {result['next_steps']}"
+        )
+        assert set(Counter(slow).values()) == {2}, f"doctor asked again: {Counter(slow)}"
+
+    #: The calls of the start-up probe in the engine on main e388ec8; a sweep
+    #: that finds fewer is reading less than it says.
+    CALL_FLOOR = 6
+
+    def test_every_engine_caller_reads_an_unanswered_verdict(self):
+        """A caller that tests ``is not None`` reads a slow host as an
+        interpreter that cannot start, which is the defect. Each call's
+        verdict reaches ``start_refuted(...)`` or a ``startswith`` on
+        ``START_UNANSWERED``, directly or through the name it is bound to, or
+        the call carries ``# start-unanswered: ok <why>`` on its line or the
+        line above, where any verdict is meant to count."""
+        probes = {"interpreter_start_failure", "_interpreter_start_failure"}
+        mark = re.compile(r"#\s*start-unanswered: ok \w{3}")
+
+        def name(node):
+            return getattr(node, "attr", getattr(node, "id", None))
+
+        def reads(node, bound):
+            for n in ast.walk(node):
+                if not isinstance(n, ast.Call):
+                    continue
+                if name(n.func) == "start_refuted" and any(
+                        a is bound or (isinstance(a, ast.Name) and a.id == bound) for a in n.args):
+                    return True
+                if (name(n.func) == "startswith" and n.args
+                        and name(n.args[0]) == "START_UNANSWERED"
+                        and isinstance(n.func, ast.Attribute)
+                        and (n.func.value is bound
+                             or (isinstance(n.func.value, ast.Name) and n.func.value.id == bound))):
+                    return True
+            return False
+
+        sites, silent = [], []
+        for path in sorted((REPO_ROOT / "espalier").rglob("*.py")):
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            if "/_vendor/" in rel or "/assets/" in rel:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if not any(p in text for p in probes):
+                continue
+            lines = text.splitlines()
+            tree = ast.parse(text)
+            funcs = [f for f in ast.walk(tree) if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))]
+            for call in ast.walk(tree):
+                if not (isinstance(call, ast.Call) and name(call.func) in probes):
+                    continue
+                site = f"{rel}:{call.lineno}"
+                sites.append(site)
+                if any(mark.search(lines[i]) for i in (call.lineno - 1, call.lineno - 2) if i >= 0):
+                    continue
+                scope = min((f for f in funcs if f.lineno <= call.lineno <= f.end_lineno),
+                            key=lambda f: f.end_lineno - f.lineno, default=tree)
+                if reads(scope, call):
+                    continue
+                bound = next((t.id for a in ast.walk(scope)
+                              if isinstance(a, ast.Assign) and (
+                                  a.value is call or (isinstance(a.value, ast.IfExp)
+                                                      and call in (a.value.body, a.value.orelse)))
+                              for t in a.targets if isinstance(t, ast.Name)), None)
+                if bound is None or not reads(scope, bound):
+                    silent.append(site)
+        assert len(sites) >= self.CALL_FLOOR, f"the sweep found {len(sites)} calls: {sites}"
+        assert not silent, (
+            f"these calls read the start-up verdict without telling a probe that "
+            f"never answered from an interpreter that cannot start: {silent}"
+        )
 
 
 def test_cognitive_blueprint_really_does_need_310():
