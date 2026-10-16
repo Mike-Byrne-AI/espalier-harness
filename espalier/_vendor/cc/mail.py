@@ -429,8 +429,9 @@ def git_env(extra: dict[str, str] | None = None) -> dict[str, str]:
 
 
 def _git(root: Path, *args: str, run: Runner = run, timeout: float = DEFAULT_TIMEOUT,
-         env: dict[str, str] | None = None, input: str | None = None) -> str:
-    rc, out, err = run(["git", *args], cwd=str(root), timeout=timeout, env=env or git_env(), input=input)
+         env: dict[str, str] | None = None) -> str:
+    # No stdin: text fed to git here is re-lined on Windows (2026-10-16).
+    rc, out, err = run(["git", *args], cwd=str(root), timeout=timeout, env=env or git_env())
     if rc != 0:
         raise Unresolvable(f"git {' '.join(args[:2])} failed: {(err.strip() or out.strip())[:200]}")
     return out.strip()
@@ -512,9 +513,10 @@ def pending(root: Path, directory: str, against: list[str], *, run: Runner = run
     seen = ever_added(root, against, directory, run=run, timeout=timeout)
     rows: list[tuple[str, str, str]] = []
     for ref in refs:
-        listed = _git(root, "ls-tree", "-r", "--name-only", ref, "--", directory, run=run, timeout=timeout)
+        prefix = directory.rstrip("/") + "/"
         rows += [(ref[len(REMOTE_RECORDS_PREFIX):], path, ref)
-                 for path in (ln.strip() for ln in listed.splitlines()) if path and path not in seen]
+                 for path in _tree_records(root, ref, run=run, timeout=timeout)
+                 if path.startswith(prefix) and path not in seen]
     return sorted(rows, key=lambda row: row[1])
 
 
@@ -1157,19 +1159,57 @@ def _hash_blob(root: Path, data: bytes, *, run: Runner) -> str:
             pass
 
 
+#: What a refused commit tells the seat: retrying cannot help, and the
+#: dispatcher needs the git and the host to find the builder at fault (a seat
+#: told to send again re-ran the same refusal).
+_NOT_TRANSIENT = (" -- a git or builder defect, not a transient failure: do not retry; send `git --version` "
+                  "and the platform to the dispatcher")
+
+
+def _names(paths: list[str]) -> str:
+    """Repo paths for a refusal, 7-bit and on one line: a control character or
+    a non-ASCII letter is escaped, never echoed raw."""
+    return ", ".join("`" + path.encode("unicode_escape").decode("ascii") + "`" for path in paths) or "none"
+
+
+def _tree_records(root: Path, rev: str, *, run: Runner, timeout: float = DEFAULT_TIMEOUT) -> dict[str, str]:
+    """``{path: blob id}`` of every file in ``rev``'s tree, read NUL-separated
+    and unstripped: without ``-z`` git quotes an unusual name, which then goes
+    back to git as a literal (code review, driven 2026-10-16), and a stripped
+    read cuts a name that opens with a blank."""
+    rc, out, err = run(["git", "ls-tree", "-r", "-z", rev], cwd=str(root), timeout=timeout, env=git_env())
+    if rc != 0:
+        raise Unresolvable(f"git ls-tree failed: {(err.strip() or out.strip())[:200]}")
+    records: dict[str, str] = {}
+    for record in out.split("\0"):
+        meta, _tab, name = record.partition("\t")
+        if name:
+            records[name] = meta.split()[-1]
+    return records
+
+
 def _commit_entries(root: Path, entries: dict[str, str], parent: str | None, subject: str, *,
                     run: Runner) -> str:
     """A commit whose tree holds exactly ``entries`` (path -> blob id), built
     under a scratch index: the worktree, HEAD and the live index are never read
-    or written."""
+    or written. Each entry goes to git as an argument, never on stdin: a spawn
+    on Windows writes its input in text mode, which re-lines every ``\\n`` as
+    ``\\r\\n``, and ``--index-info`` then indexed ``mail.jsonl\\r``, or Windows git
+    took nothing and an empty tree was pushed, every message the seat had sent
+    gone from origin's tip (win, 2026-10-16). The tree is read back before the
+    commit: one that does not hold exactly ``entries`` refuses here, ahead of
+    any ref move or push, whatever the builder above it did wrong."""
+    if not entries:
+        raise Unresolvable("a commit with no files was asked for; nothing was moved or pushed" + _NOT_TRANSIENT)
     fd, index_path = tempfile.mkstemp(prefix="mail-index-", suffix=".idx")
     os.close(fd)
     os.unlink(index_path)  # git wants to create it itself
     env = git_env({"GIT_INDEX_FILE": index_path})
     try:
         _git(root, "read-tree", "--empty", run=run, env=env)
-        _git(root, "update-index", "--add", "--index-info", run=run, env=env,
-             input="".join(f"100644 {blob}\t{path}\n" for path, blob in sorted(entries.items())))
+        cacheinfo = [arg for path, blob in sorted(entries.items())
+                     for arg in ("--cacheinfo", f"100644,{blob},{path}")]
+        _git(root, "update-index", "--add", *cacheinfo, run=run, env=env)
         tree = _git(root, "write-tree", run=run, env=env)
     finally:
         for leftover in (index_path, index_path + ".lock"):
@@ -1177,6 +1217,15 @@ def _commit_entries(root: Path, entries: dict[str, str], parent: str | None, sub
                 os.unlink(leftover)
             except OSError:
                 pass
+    held = _tree_records(root, tree, run=run)
+    if held != entries:
+        missing = sorted(set(entries) - set(held))
+        extra = sorted(set(held) - set(entries))
+        changed = sorted(path for path in set(entries) & set(held) if held[path] != entries[path])
+        raise Unresolvable(
+            "the tree git wrote is not the one it was given (missing: " + _names(missing)
+            + "; not given: " + _names(extra) + "; other content: " + _names(changed)
+            + "); nothing was moved or pushed" + _NOT_TRANSIENT)
     args = ["commit-tree", tree]
     if parent:
         args += ["-p", parent]
@@ -1216,6 +1265,12 @@ def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callab
     else:
         parent = local_tip
     commit = build(parent)
+    # The net at the push, whatever builder made the commit: one whose tree
+    # holds nothing never moves the ref or leaves this box (a Windows send
+    # pushed exactly that, 2026-10-16).
+    if not _tree_records(root, commit, run=run, timeout=timeout):
+        raise Unresolvable(f"the {noun} built a commit whose tree is empty; nothing was moved or {past}"
+                           + _NOT_TRANSIENT)
     _git(root, "update-ref", ref, commit, local_tip or _ZERO, run=run)
     rc, _out, err = run(["git", "push", "--quiet", REMOTE, f"{ref}:{ref}"], cwd=str(root), timeout=timeout,
                         env=git_env())
@@ -1300,11 +1355,7 @@ def park(root: Path, path: str, data: bytes | None, base_ref: str, *, from_rev: 
     def build(parent: str | None) -> str:
         entries: dict[str, str] = {}
         if parent:
-            listed = _git(root, "ls-tree", "-r", parent, run=run, timeout=timeout)
-            for line in listed.splitlines():
-                meta, _tab, name = line.partition("\t")
-                if name:
-                    entries[name] = meta.split()[-1]
+            entries = _tree_records(root, parent, run=run, timeout=timeout)
             try:
                 folded = ever_added(root, [base_ref], directory, run=run, timeout=timeout)
             except Unresolvable:
