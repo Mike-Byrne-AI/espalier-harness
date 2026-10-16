@@ -1391,3 +1391,266 @@ class TestReleaseLane:
         assert "send --type release --lane lane/x" in said[0] and said[0].isascii()
         assert "turns it on" not in said[0]
         assert not fake.has("git", "push") and not fake.has("git", "for-each-ref")
+
+
+# ── the records refs: a parked Session Log row, and the fold that brings it in ──
+# A handoff whose pull request already merged parks its row on the seat's own
+# records ref (one writer per ref, the mail channel's compare-and-swap commit),
+# and the next lane's push folds every pending row in and prunes to the cap, the
+# one writer of the count. Before this, every lane enforced the cap in its own
+# tree and a merged lane's handoff opened a pull request for its row alone
+# (seven in two days, #212 to #240).
+
+_ROW_DIR = "memory/session-log.d"
+
+
+def _row(name: str) -> bytes:
+    return f"| {name[:10]} | {name[18:-3]} | the row of {name} |\n".encode("ascii")
+
+
+def _main_rows(machines, tmp_path, *add: str, prune: tuple[str, ...] = ()) -> None:
+    """Land rows on main, and prune some, the way a merged lane does."""
+    keeper = tmp_path / "keeper"
+    if not keeper.exists():
+        _git(tmp_path, "clone", "--quiet", str(machines["origin"]), str(keeper))
+        _identity(keeper, "keeper")
+    _git(keeper, "pull", "--quiet", "--ff-only", "origin", "main")
+    for name in add:
+        path = keeper / _ROW_DIR / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(_row(name))
+    for name in prune:
+        (keeper / _ROW_DIR / name).unlink()
+    _git(keeper, "add", "-A", "--", _ROW_DIR)
+    _git(keeper, "commit", "--quiet", "-m", "rows")
+    _git(keeper, "push", "--quiet", "origin", "main")
+
+
+def _park(mail, root: Path, name: str) -> str:
+    return mail.park(root, f"{_ROW_DIR}/{name}", _row(name), "origin/main", run=_real_run(mail),
+                     say=lambda _s: None)
+
+
+def _ref_rows(origin: Path, machine: str) -> list[str]:
+    return _git(origin, "ls-tree", "-r", "--name-only", f"refs/heads/records/{machine}").stdout.split()
+
+
+@pytest.fixture(scope="module")
+def ship_driver():
+    return _load(REPO_ROOT / "tools" / "cc" / "ship.py", "ship_for_the_records_ref")
+
+
+@pytest.fixture(scope="module")
+def fragments():
+    """The record loader: the fold's trailer has its one home there."""
+    return _load(REPO_ROOT / "tools" / "cc" / "_record_fragments.py", "fragments_for_the_records_ref")
+
+
+class TestTheRecordsRef:
+    def test_a_park_writes_the_row_on_the_seats_records_ref_and_touches_nothing_here(self, mail, machines):
+        """Dies to: a park through the working tree or the index, or a ref other
+        than the seat's own records ref."""
+        mac, origin = machines["mac"], machines["origin"]
+        head = _git(mac, "rev-parse", "HEAD").stdout
+        name = "2026-10-16-010101-mac.md"
+        commit = _park(mail, mac, name)
+        assert _git(origin, "rev-parse", "refs/heads/records/mac").stdout.strip() == commit
+        assert _ref_rows(origin, "mac") == [f"{_ROW_DIR}/{name}"]
+        raw = subprocess.run(["git", "cat-file", "-p", f"refs/heads/records/mac:{_ROW_DIR}/{name}"], cwd=origin,
+                             capture_output=True, env=_git_env(), check=True, timeout=45).stdout
+        assert raw == _row(name)
+        assert _git(mac, "rev-parse", "HEAD").stdout == head
+        assert _git(mac, "status", "--porcelain").stdout == ""
+        assert _git(mac, "diff", "--cached", "--name-only").stdout == ""
+
+    def test_a_park_keeps_what_is_pending_and_drops_what_main_holds(self, mail, machines, tmp_path):
+        """Dies to: a records ref that grows forever, or one that drops a row no
+        lane has folded yet."""
+        mac, origin = machines["mac"], machines["origin"]
+        first, second, third = (f"2026-10-16-0{h}0101-mac.md" for h in (1, 2, 3))
+        _park(mail, mac, first)
+        _park(mail, mac, second)
+        _main_rows(machines, tmp_path, first)
+        _git(mac, "fetch", "--quiet", "origin")
+        _park(mail, mac, third)
+        assert _ref_rows(origin, "mac") == [f"{_ROW_DIR}/{second}", f"{_ROW_DIR}/{third}"]
+
+    def test_pending_is_what_no_branch_has_ever_added(self, mail, machines, tmp_path):
+        """Dies to: pending read as on a ref but not in the tree, which brings a
+        row the prune archived back on every fold."""
+        mac, win = machines["mac"], machines["win"]
+        folded, waiting = "2026-10-16-010101-mac.md", "2026-10-16-020101-mac.md"
+        _park(mail, mac, folded)
+        _park(mail, mac, waiting)
+        _main_rows(machines, tmp_path, folded)
+        _main_rows(machines, tmp_path, prune=(folded,))
+        ok, problem = mail.fetch_records(win, run=_real_run(mail))
+        assert ok, problem
+        _git(win, "fetch", "--quiet", "origin")
+        got = mail.pending(win, _ROW_DIR, ["origin/main", "HEAD"], run=_real_run(mail))
+        assert [(m, p) for m, p, _ref in got] == [("mac", f"{_ROW_DIR}/{waiting}")]
+
+    def test_an_unnamed_clone_parks_nothing(self, mail, machines, tmp_path):
+        nameless = tmp_path / "nameless"
+        _git(tmp_path, "clone", "--quiet", str(machines["origin"]), str(nameless))
+        _identity(nameless, "nameless")
+        with pytest.raises(mail.Unresolvable):
+            _park(mail, nameless, "2026-10-16-010101-x.md")
+        assert _git(machines["origin"], "for-each-ref", "refs/heads/records/").stdout == ""
+
+    @staticmethod
+    def _lane(win: Path) -> None:
+        _git(win, "pull", "--quiet", "--ff-only", "origin", "main")
+        _git(win, "switch", "--quiet", "-c", "lane/win-work")
+        (win / "work.txt").write_text("work\n", encoding="utf-8")
+        _git(win, "add", "work.txt")
+        _git(win, "commit", "--quiet", "-m", "feat: work")
+
+    def test_a_lane_push_folds_the_pending_rows_in_then_prunes_to_the_cap(
+        self, mail, ship_driver, fragments, machines, tmp_path
+    ):
+        """The assign's red: two seats, a pending ref. Dies to: no fold (the row
+        waits for a pull request of its own), one commit that adds and prunes (a
+        row older than the window then never enters history and re-folds on
+        every push), a fold without its trailer (the lane's own-row checks read
+        another seat's row as this lane's), or a second fold of the same row."""
+        mac, win = machines["mac"], machines["win"]
+        older = [f"2026-10-1{d}-120000-air.md" for d in (1, 2, 3)]
+        _main_rows(machines, tmp_path, *older)
+        parked = "2026-10-16-010101-mac.md"
+        _park(mail, mac, parked)
+        self._lane(win)
+        assert ship_driver._fold_session_log(win, "main", keep=3, slack=0) == (1, 1)
+        subjects = _git(win, "log", "--reverse", "--format=%s", "origin/main..HEAD").stdout.split("\n")
+        assert len([s for s in subjects if s]) == 3, subjects
+        fold_sha, prune_sha = _git(win, "log", "--format=%H", "-2", "HEAD").stdout.split()[::-1]
+        for sha in (fold_sha, prune_sha):
+            assert fragments.FOLD_TRAILER in _git(win, "log", "-1", "--format=%B", sha).stdout
+        assert _git(win, "diff-tree", "--no-commit-id", "--name-status", "-r", fold_sha).stdout.split() == [
+            "A", f"{_ROW_DIR}/{parked}"]
+        assert _git(win, "diff-tree", "--no-commit-id", "--name-status", "-r", prune_sha).stdout.split() == [
+            "D", f"{_ROW_DIR}/{older[0]}"]
+        assert sorted(p.name for p in (win / _ROW_DIR).iterdir()) == sorted([*older[1:], parked])
+        assert (win / _ROW_DIR / parked).read_bytes() == _row(parked)
+        assert ship_driver._fold_session_log(win, "main", keep=3, slack=0) == (0, 0)
+        # Air 847e2b: the fold's row is no row of this lane, and the lane's own still is.
+        assert ship_driver.lane_carries_memory_row("main", win) is False
+        own = win / _ROW_DIR / "2026-10-16-030101-win.md"
+        own.write_bytes(_row(own.name))
+        _git(win, "add", "--", str(own.relative_to(win)))
+        _git(win, "commit", "--quiet", "-m", "docs: handoff row")
+        assert ship_driver.lane_carries_memory_row("main", win) is True
+
+    def test_a_row_older_than_the_window_is_folded_once_and_never_again(
+        self, mail, ship_driver, machines, tmp_path
+    ):
+        """Dies to: pending read against main alone, so a row the lane added and
+        pruned in one push comes back on the next push of the same lane; and,
+        after the lane lands as GitHub lands it (a --no-ff merge, the directory
+        net unchanged), history simplification dropping that side of the merge,
+        so the row read pending again at every later fold and its parker's ref
+        kept it forever (both reviews of DEF-5007, driven)."""
+        mac, win, origin = machines["mac"], machines["win"], machines["origin"]
+        _main_rows(machines, tmp_path, *[f"2026-10-1{d}-120000-air.md" for d in (1, 2, 3)])
+        old = "2026-01-02-120000-mac.md"
+        _park(mail, mac, old)
+        self._lane(win)
+        assert ship_driver._fold_session_log(win, "main", keep=3, slack=0) == (1, 1)
+        assert not (win / _ROW_DIR / old).exists()
+        assert ship_driver._fold_session_log(win, "main", keep=3, slack=0) == (0, 0)
+        _git(win, "push", "--quiet", "origin", "lane/win-work")
+        keeper = tmp_path / "keeper"
+        _git(keeper, "fetch", "--quiet", "origin")
+        _git(keeper, "merge", "--quiet", "--no-ff", "-m", "Merge pull request #1", "origin/lane/win-work")
+        _git(keeper, "push", "--quiet", "origin", "main")
+        _git(win, "fetch", "--quiet", "origin")
+        _git(win, "switch", "--quiet", "-c", "lane/win-next", "origin/main")
+        assert ship_driver._fold_session_log(win, "main", keep=3, slack=0) == (0, 0)
+        _git(mac, "fetch", "--quiet", "origin")
+        _park(mail, mac, "2026-10-16-020101-mac.md")
+        assert f"{_ROW_DIR}/{old}" not in _ref_rows(origin, "mac")
+
+    def test_the_fold_prunes_only_past_the_slack_and_then_back_to_the_cap(
+        self, mail, ship_driver, machines, tmp_path
+    ):
+        """Air fc87ad: dies to an exact cap, a prune commit on every lane that
+        brings a row to a full main (eight such commits on main in three days)."""
+        mac, win = machines["mac"], machines["win"]
+        _main_rows(machines, tmp_path, *[f"2026-10-1{d}-120000-air.md" for d in (1, 2, 3, 4)])
+        _park(mail, mac, "2026-10-16-010101-mac.md")
+        self._lane(win)
+        assert ship_driver._fold_session_log(win, "main", keep=3, slack=2) == (1, 0)   # 5: inside the slack
+        _park(mail, mac, "2026-10-16-020101-mac.md")
+        assert ship_driver._fold_session_log(win, "main", keep=3, slack=2) == (1, 3)   # 6: back to the cap
+        assert len(list((win / _ROW_DIR).iterdir())) == 3
+
+    def test_two_lanes_off_one_base_stay_inside_the_slack_with_no_prune_commit(
+        self, ship_driver, machines, tmp_path
+    ):
+        """The failure-mode review's two-lane overshoot (DEF-5007 did not end it
+        at an exact cap): each lane adds its own row off one base, each folds,
+        both land; main holds the two rows inside the slack and no lane paid a
+        prune commit."""
+        _main_rows(machines, tmp_path, *[f"2026-10-1{d}-120000-air.md" for d in (1, 2, 3)])
+        keeper = tmp_path / "keeper"
+        for seat in ("mac", "win"):
+            clone = machines[seat]
+            _git(clone, "pull", "--quiet", "--ff-only", "origin", "main")
+            _git(clone, "switch", "--quiet", "-c", f"lane/{seat}")
+            row = clone / _ROW_DIR / f"2026-10-16-0{1 if seat == 'mac' else 2}0101-{seat}.md"
+            row.write_bytes(_row(row.name))
+            _git(clone, "add", "--", str(row.relative_to(clone)))
+            _git(clone, "commit", "--quiet", "-m", f"docs: {seat}'s row")
+            assert ship_driver._fold_session_log(clone, "main", keep=3, slack=2) == (0, 0)
+            _git(clone, "push", "--quiet", "origin", f"lane/{seat}")
+        _git(keeper, "fetch", "--quiet", "origin")
+        for seat in ("mac", "win"):
+            _git(keeper, "merge", "--quiet", "--no-ff", "-m", f"Merge {seat}", f"origin/lane/{seat}")
+        assert len(list((keeper / _ROW_DIR).iterdir())) == 5
+        assert "prune" not in _git(keeper, "log", "--format=%s", "-8").stdout
+
+    def test_a_park_moves_the_branch_back_so_the_checkout_catches_up(self, mail, ship_driver, machines):
+        """Both reviews' BLOCKER: the row's commit left ahead held SessionStart's
+        catch-up on the parked lane (ahead 1) and passed the --early question as
+        a row of the next lane's. Dies to: the branch left where the park found
+        it, or a park of the working tree's bytes rather than the committed blob."""
+        mac, origin = machines["mac"], machines["origin"]
+        _git(mac, "fetch", "--quiet", "origin")
+        before = _git(mac, "rev-parse", "origin/main").stdout.strip()
+        row = mac / _ROW_DIR / "2026-10-16-010101-mac.md"
+        row.parent.mkdir(parents=True, exist_ok=True)
+        row.write_bytes(_row(row.name))
+        _git(mac, "add", "--", str(row.relative_to(mac)))
+        _git(mac, "commit", "--quiet", "-m", "docs: the handoff's row")
+        assert ship_driver._park_the_row(mac, "main") is True
+        assert _git(mac, "rev-parse", "HEAD").stdout.strip() == before
+        assert _git(mac, "rev-list", "--count", "origin/main..HEAD").stdout.strip() == "0"
+        raw = subprocess.run(["git", "cat-file", "-p", f"refs/heads/records/mac:{_ROW_DIR}/{row.name}"], cwd=origin,
+                             capture_output=True, env=_git_env(), check=True, timeout=45).stdout
+        assert raw == _row(row.name)
+
+    def test_a_lane_whose_own_commit_quotes_the_trailer_still_carries_its_row(self, ship_driver, machines):
+        """Dies to: the fold trailer matched anywhere in a body, so a commit that
+        explains the fold in prose hid the lane's own row and asked for --early."""
+        win = machines["win"]
+        self._lane(win)
+        row = win / _ROW_DIR / "2026-10-16-030101-win.md"
+        row.parent.mkdir(parents=True, exist_ok=True)
+        row.write_bytes(_row(row.name))
+        _git(win, "add", "--", str(row.relative_to(win)))
+        _git(win, "commit", "--quiet", "-m", "docs: the row",
+             "-m", "The fold marks its commits with\nEspalier-Fold: session-log\nand this one is no fold.",
+             "-m", "Co-Authored-By: Someone <someone@example.invalid>")
+        assert ship_driver.lane_carries_memory_row("main", win) is True
+
+    def test_a_fold_whose_commit_fails_leaves_the_tree_as_it_was(self, mail, ship_driver, machines, tmp_path):
+        """Dies to: another seat's rows left staged after a failed commit, which a
+        later hand commit would carry without the trailer as this lane's own."""
+        mac, win = machines["mac"], machines["win"]
+        _park(mail, mac, "2026-10-16-010101-mac.md")
+        self._lane(win)
+        from tests._stubs import write_stub
+        write_stub(win / ".git" / "hooks" / "commit-msg", "#!/bin/sh\nexit 1\n")
+        assert ship_driver._fold_session_log(win, "main", keep=3, slack=0) == (0, 0)
+        assert _git(win, "status", "--porcelain").stdout == ""
+        assert not (win / _ROW_DIR / "2026-10-16-010101-mac.md").exists()

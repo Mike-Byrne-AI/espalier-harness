@@ -345,15 +345,11 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
                   f"{cap}-line cap; the prune moves only Session Log table rows, so trim the section "
                   f"that grew (largest: {_largest_sections(lines)}), then re-run", file=sys.stderr)
             return 2
-    # 1b. the fragments' own cap (the legacy table is frozen, so the line cap
-    #     above never reaches a fragment): the oldest beyond it are archived and
-    #     deleted, and the deletions ride this commit with the new row
-    if fragments is not None:
-        left = fragments.prune_session_log(root, dry_run=dry_run)
-        if left:
-            print(("would prune " if dry_run else "pruned ")
-                  + f"{len(left)} Session Log fragment row(s) beyond {fragments.SESSION_LOG_CAP} "
-                  f"(dated {', '.join(row.date for row in left)})")
+    # 1b. The fragments' cap is not held here. Until 2026-10-16 this step pruned
+    #     the oldest fragments into this commit, so each lane kept the count in
+    #     its own tree and two lanes each at 30 merged to 31 on main; the cap's
+    #     one writer is now the fold a lane's push runs (tools/cc/ship.py,
+    #     DEF-5007), which also brings in the rows other seats parked.
     # 2. finalize the blueprint
     argv = [sys.executable, "tools/cc/cognitive_blueprint.py", "finalize"]
     if _announce(argv, dry_run):
@@ -362,9 +358,9 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
     #    path's byte-mirror twin when the registry has one (committing one side
     #    alone reds the parity contract)
     # The fragment directory as a pathspec: `git add` and a path-limited commit
-    # on a directory take its new files and its deletions (the prune's) alike.
-    # It takes any other file there too; the only writers of that directory are
-    # this row and the prune, and the new rows were checked above.
+    # on a directory take its new files and any deletion alike. It takes any
+    # other file there too; this row is the directory's only writer here (the
+    # fold commits its own at the push), and the new rows were checked above.
     paths = ([_MEMORY_REL] if memory_changed or n else []) \
         + ([f"{log_dir}/"] if log_dir and (root / log_dir).is_dir() else []) + list(also)
     twins: list[str] = []

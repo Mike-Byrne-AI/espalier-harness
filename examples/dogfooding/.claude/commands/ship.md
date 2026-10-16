@@ -37,7 +37,10 @@ print a Python 3 version, try the other interpreter name, then the launcher's
   `memory/session-log.d/` and no change to `ESPALIER_MEMORY.md` -- unless given
   `--early "<reason>"`, because the
   handoff's row then becomes a second push on the lane (a check cycle restarted
-  and a marker re-bound).
+  and a marker re-bound), or, where the lane merges before the session ends,
+  a row the handoff parks on the seat's records ref for the next lane's push
+  to fold in (no pull request for the row alone). A row a fold brought in is
+  another session's and does not count as this lane's.
 - **Off:** `/handoff` commits its row and pushes nothing, and `/ship` is how a
   lane leaves the machine, whenever you choose.
 
@@ -144,6 +147,28 @@ conflict the resolver cannot take -- prose edited on both sides, a row changed
 on both sides, one id filed on two machines, one row file written by both, a
 path outside those record files -- is a note, not a stop: the lane ships and
 reads DIRTY as it would have, and the note names the files and the way back.
+
+Then the fold, the one place the Session Log is pruned: the rows every seat
+parked on its records ref (`refs/heads/records/<seat>`, fetched now) that no
+history of the base or this lane has added (read with `--full-history`, so a
+lane merged by GitHub's merge commit counts) come into the lane in one commit,
+and, once the fragments run past 35, they are pruned back to their cap (30) in
+a second, both carrying the trailer `Espalier-Fold: session-log` (read by key,
+so a commit that quotes it in prose is untouched). Two commits, so a parked row
+older than the kept window enters history once and never comes back; the
+slack spares most lanes a prune commit, and two lanes off one base that land a
+row past it are pruned at the next fold. A fragment directory with uncommitted
+changes, records git cannot read, or a step that fails skips the fold with a
+note and leaves the tree as it was. The `fold` verb runs the same fold on its
+own, for a push this verb does not make (a direct push to the default branch);
+`--dry-run` says how many parked rows it would bring in, and commits nothing:
+
+```bash
+python tools/cc/ship.py fold
+```
+
+Until 2026-10-16 every lane pruned to the exact cap in its own tree, a prune
+commit per lane carrying a row, and two lanes merged to 31.
 
 Then, in order: the diff against the base asked of the harness guard
 (`tools/cc/ci_guard.py`, loaded from the tree when it is there -- a tree
