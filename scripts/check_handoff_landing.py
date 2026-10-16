@@ -838,6 +838,42 @@ def _record_fragments():
     return mod
 
 
+def _mail():
+    """``tools/cc/mail.py`` by path, from this script's own tree as
+    ``_record_fragments`` is (the records refs' pending rows), or None."""
+    path = Path(__file__).resolve().parent.parent / "tools" / "cc" / "mail.py"
+    if not path.is_file():
+        return None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_chl_mail", path)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # registered before exec, the 3.14 rule for a path-loaded module
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _fold_added_rows(fragments, rel_dir: str) -> set[str]:
+    """The Session Log files the fold's commits in this lane added (their body
+    carries ``FOLD_TRAILER``): rows other sessions parked, brought in at a push,
+    never this lane's own (DEF-5007)."""
+    trailer = getattr(fragments, "FOLD_TRAILER", None)
+    if not trailer:
+        return set()
+    out = subprocess.run(["git", "log", "--format=%x1e%B%x1f", "--name-only", "--no-renames", "--diff-filter=A",
+                          "origin/main..HEAD", "--", rel_dir], cwd=REPO_ROOT, capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
+    if out.returncode != 0:
+        return set()
+    rows: set[str] = set()
+    for record in out.stdout.split("\x1e")[1:]:
+        body, _sep, names = record.partition("\x1f")
+        if trailer in body:
+            rows |= {ln.strip() for ln in names.splitlines() if ln.strip()}
+    return rows
+
+
 def _newest_row_in_tree() -> str | None:
     """The newest Session Log row in the working tree: the fragments' and the
     legacy table's, through the one loader. None when neither holds a dated row."""
@@ -904,6 +940,10 @@ def _lane_fragment_row() -> str | None:
         # _row_inherited_from_base already follows (review of #179).
         since = [set(git("diff", "--name-only", "--diff-filter=A", base, "--", rel_dir)) for base in bases]
         added |= set.intersection(*since)
+    # Rows the push's fold brought in are other sessions' rows, parked on the
+    # records refs; this lane's own row, committed beside them, stays (air
+    # 847e2b on DEF-5007).
+    added -= _fold_added_rows(fragments, rel_dir)
     # A folded row (``-legacy``, the table's rows moved into files on
     # 2026-10-10) is added by the lane that moves it, but it is no session's
     # row of this lane: on the fold lane it stood in for the handoff's own
@@ -1394,27 +1434,40 @@ RECORD_REF = "record"
 
 
 def check_session_log_cap(notes: "list[str] | None" = None) -> list[str]:
-    """This lane's tree keeps the Session Log fragments to their cap. The
-    lane controls its own count (the handoff prunes before its commit; a
-    catch-up merge can carry it over), while the merged tree GitHub builds
-    does not answer to any one lane: two lanes that each add a row from one
-    base land one over, and the next row written prunes back. So the cap is
-    held here, before the push, and the tree-wide test bounds only the
-    runaway case (review of the Wave C batch: a merged-tree bound tied to the
-    one-pull-request-per-seat rule, which nothing enforces, red main on
-    nobody's diff). Only fragment names count, the population the prune
-    counts. Nothing to check where the loader is not beside this script."""
+    """What the Session Log's cap will be after this lane's push: the fragments
+    in the tree, the rows pending on the records refs (``mail.pending``, as last
+    fetched), and what the push's fold will leave. Never a refusal: the cap's
+    one writer is the fold a lane's push runs (``tools/cc/ship.py``, DEF-5007),
+    which brings the pending rows in and prunes there. Until 2026-10-16 this arm
+    refused a tree over the cap, so each lane held the count in its own tree, a
+    count two lanes recompute, and main reached 31; the tree-wide test still
+    bounds the runaway case. Only fragment names count, the population the
+    prune counts. Nothing to say where the loader is not beside this script."""
     fragments = _record_fragments()
     if fragments is None:
         return []
     named, _skipped = fragments.session_log_fragments(REPO_ROOT)
-    if len(named) <= fragments.SESSION_LOG_CAP:
-        if notes is not None:
-            notes.append(f"session log cap: {len(named)} of {fragments.SESSION_LOG_CAP} fragments")
-        return []
-    return [f"{fragments.SESSION_LOG_DIR}/ holds {len(named)} Session Log fragments, over the cap of "
-            f"{fragments.SESSION_LOG_CAP}: run `python3 tools/cc/_record_fragments.py prune` and "
-            "commit the deletions (a catch-up merge carries main's rows in; the lane's own tree keeps the cap)"]
+    cap = fragments.SESSION_LOG_CAP
+    if len(named) <= cap:
+        note = f"session log cap: {len(named)} of {cap} fragments"
+    else:
+        note = (f"session log cap: {len(named)} fragments in the tree, over the cap of {cap}: "
+                "the push's fold prunes to it")
+    mail = _mail()
+    pending: "int | None" = None
+    if mail is None:
+        note += "; the records refs were not read (tools/cc/mail.py is not beside this script)"
+    else:
+        try:
+            pending = len(mail.pending(REPO_ROOT, fragments.SESSION_LOG_DIR, ["origin/main", "HEAD"]))
+        except mail.Unresolvable as exc:
+            note += f"; the records refs could not be read ({exc})"
+    if pending:
+        note += (f"; {pending} pending on the records refs, which the push's fold brings in "
+                 f"(the fold leaves {min(cap, len(named) + pending)})")
+    if notes is not None:
+        notes.append(note)
+    return []
 
 
 def check_changelog_records_on_record_branch(

@@ -72,6 +72,12 @@ ARCHIVE = "docs/session-archive.md"
 #: not count toward this until the fold.
 SESSION_LOG_CAP = 30
 
+#: The trailer on the commits a lane's push makes to fold the parked rows in and
+#: prune to the cap (``tools/cc/ship.py``, the one writer of the count): the
+#: lane's own-row readers skip the rows those commits add, which are other
+#: sessions' rows, never this lane's.
+FOLD_TRAILER = "Espalier-Fold: session-log"
+
 #: A Session Log row: ``| YYYY-MM-DD ...``. The same pattern as the other
 #: consumers (tests/test_forced_copy_parity.py::TestMemoryDateRegexParity).
 _MEMORY_DATE_RE = re.compile(r"^\|\s*(\d{4}-\d{2}-\d{2})")

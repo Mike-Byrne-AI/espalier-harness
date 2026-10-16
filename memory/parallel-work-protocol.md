@@ -160,6 +160,21 @@ interactive session as under `-p`; a killed session leaves the lock behind.
    forms (a census test holds each reader to the view), and only then did the
    writers switch, on a repository that sets `ledger_fragments = true`; the
    legacy rows stay in the file until the fold.
+   - **The Session Log's transport (2026-10-16, `DEF-5007`).** A count is a
+     record too: every lane held the Session Log's cap in its own tree, so two
+     lanes each at 30 merged to 31 on `main`, and a handoff whose lane had
+     already merged opened a pull request for its row alone (seven in two
+     days). The cap now has one writer: the fold a lane's push runs
+     (`tools/cc/ship.py`) brings in every row the seats parked on their
+     records refs (`refs/heads/records/<seat>`, each written by its seat
+     alone) and prunes there, in commits carrying `Espalier-Fold:
+     session-log`. A handoff with no open pull request and nothing but its
+     row parks the row instead of opening one. Readers learned the pending
+     rows (the landing check) before the writers moved, and the hook and the
+     handoff stopped pruning in the same lane. **Another seat sees a parked
+     row only after the next fold:** the banner's recent rows read the tree,
+     so until some lane's push lands the row reaches no banner, the parking
+     seat's next session included.
 7. **A red `main` is reverted first and diagnosed second.** The post-merge
    proof (`.github/workflows/post-merge.yml`) runs after merges, and the ship
    preflight and the board name a red one. A newer push cancels an older run,

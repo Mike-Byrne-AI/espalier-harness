@@ -477,10 +477,12 @@ class TestMemoryAutoprunReadsTheOperatorsFile:
 
 
 class TestSessionLogFragmentCap:
-    """TP-479 Wave C: a write of a Session Log fragment (``memory/session-log.d/``)
-    archives and deletes the oldest fragments beyond the loader's cap, in
-    process, and says which left; the legacy table is never touched from here.
-    Mutation seen red: the hook not calling the fragment prune."""
+    """A write of a Session Log fragment (``memory/session-log.d/``) is read back
+    and never prunes. Until 2026-10-16 the hook archived and deleted the oldest
+    fragments past the cap at every write (TP-479 Wave C), so every lane kept the
+    count in its own tree and two lanes each at 30 merged to 31 on main; the cap
+    is now the fold's, the one writer, at a lane's push (``tools/cc/ship.py``,
+    ``DEF-5007``)."""
 
     def _fragments(self, repo: Path, n: int) -> list[Path]:
         base = repo / "memory" / "session-log.d"
@@ -493,18 +495,17 @@ class TestSessionLogFragmentCap:
             out.append(path)
         return out
 
-    def test_a_fragment_write_over_the_cap_prunes_the_oldest(self, fresh_repo):
+    def test_a_fragment_write_over_the_cap_prunes_nothing(self, fresh_repo):
+        """Dies to: the hook still pruning, a second writer of the cap beside the
+        fold (the count two lanes both recompute)."""
         paths = self._fragments(fresh_repo, 32)
         memory = _make_over_cap_memory(fresh_repo, target_lines=40)
         before = memory.read_text(encoding="utf-8")
         result = _run_hook(fresh_repo, paths[-1].relative_to(fresh_repo).as_posix())
         assert result.returncode == 0, result.stderr
-        left = sorted(p.name for p in (fresh_repo / "memory" / "session-log.d").iterdir())
-        assert len(left) == 30
-        assert paths[0].name not in left and paths[1].name not in left and paths[-1].name in left
-        assert "Session Log fragments over the cap" in result.stdout
-        archive = (fresh_repo / "docs" / "session-archive.md").read_text(encoding="utf-8")
-        assert "| 2026-01-01 | row 0 | n |" in archive and "| 2026-01-02 | row 1 | n |" in archive
+        assert len(list((fresh_repo / "memory" / "session-log.d").iterdir())) == 32
+        assert "over the cap" not in result.stdout, result.stdout
+        assert not (fresh_repo / "docs" / "session-archive.md").exists()
         assert memory.read_text(encoding="utf-8") == before
 
     @pytest.mark.parametrize("name, body, said", [
@@ -530,13 +531,13 @@ class TestSessionLogFragmentCap:
 
 
 class TestTheFragmentPruneOnAKeptOlderLoader:
-    """Review of #179: the fragment prune runs in process through whatever
-    loader sits beside the hooks, and an upgrade can keep an older one. A
-    loader missing one name costs the prune and says so; it never takes the
-    rest of the post-write check down, and a missing loader is said, as the
-    SessionStart digest says it. Mutations seen red: the except catching only
-    (OSError, ValueError); the cap read after the try; the None loader
-    returning in silence."""
+    """Review of #179: the written fragment is read back in process through
+    whatever loader sits beside the hooks, and an upgrade can keep an older one.
+    A loader missing one name costs the read-back and says so; it never takes
+    the rest of the post-write check down, and a missing loader is said, as the
+    SessionStart digest says it. The prune that once ran here is the fold's now
+    (``DEF-5007``). Mutations seen red: the except catching only (OSError,
+    ValueError); the None loader returning in silence."""
 
     REL = "memory/session-log.d/2026-10-10-120000-win.md"
 
@@ -569,37 +570,35 @@ class TestTheFragmentPruneOnAKeptOlderLoader:
             (base / f"{day}-120000-win.md").write_bytes(f"| {day} | row {i} | n |\n".encode())
         (repo / self.REL).write_bytes(b"| 2026-10-10 | newest | n |\n")
 
-    def test_a_loader_missing_the_prune_degrades_and_says_so(self, fresh_repo, monkeypatch):
+    def test_a_loader_missing_a_read_name_degrades_and_says_so(self, fresh_repo, monkeypatch):
         mod = self._hook(monkeypatch)
         self._write_fragments(fresh_repo, 2)
         monkeypatch.setattr(mod._hook_utils, "load_record_fragments",
-                            lambda: self._older_loader("prune_session_log"))
-        mod._maybe_prune_session_log_fragments(fresh_repo, self.REL)
+                            lambda: self._older_loader("rows_from_texts"))
+        mod._check_session_log_fragment(fresh_repo, self.REL)
         said = " ".join(mod._hook_utils._ADVISORIES)
         # The removed name itself, so a stub that lost more names than it was
         # told to cannot pass on some other AttributeError.
-        assert "Session Log fragment read or prune failed: AttributeError" in said, said
-        assert "prune_session_log" in said, said
+        assert "Session Log fragment read failed: AttributeError" in said, said
+        assert "rows_from_texts" in said, said
 
-    def test_a_loader_missing_the_cap_still_prunes_and_says_to_commit(self, fresh_repo, monkeypatch):
-        """Review of the batch: the cap was read after the prune, so a loader
-        lacking it archived and deleted the files and then the advisory called
-        the finished prune a failure. Mutation seen red: the read after."""
+    def test_a_loader_without_the_prune_checks_the_write_and_prunes_nothing(self, fresh_repo, monkeypatch):
+        """Dies to: the hook still reaching for the prune, which a kept older
+        loader or a future one without it would turn into a failure advisory."""
         mod = self._hook(monkeypatch)
         self._write_fragments(fresh_repo, 32)
         monkeypatch.setattr(mod._hook_utils, "load_record_fragments",
-                            lambda: self._older_loader("SESSION_LOG_CAP"))
-        mod._maybe_prune_session_log_fragments(fresh_repo, self.REL)
+                            lambda: self._older_loader("prune_session_log"))
+        mod._check_session_log_fragment(fresh_repo, self.REL)
         said = " ".join(mod._hook_utils._ADVISORIES)
-        assert "failed" not in said, said
-        assert "Session Log fragments over the cap: archived 2 rows" in said and "commit the deletions" in said, said
-        assert len(list((fresh_repo / "memory" / "session-log.d").iterdir())) == 30
+        assert "failed" not in said and "over the cap" not in said, said
+        assert len(list((fresh_repo / "memory" / "session-log.d").iterdir())) == 32
 
     def test_no_loader_beside_a_written_fragment_is_said(self, fresh_repo, monkeypatch):
         mod = self._hook(monkeypatch)
         self._write_fragments(fresh_repo, 1)
         monkeypatch.setattr(mod._hook_utils, "load_record_fragments", lambda: None)
         monkeypatch.setattr(mod._hook_utils, "RECORD_FRAGMENTS_LOAD_ERROR", "SyntaxError: x")
-        mod._maybe_prune_session_log_fragments(fresh_repo, self.REL)
+        mod._check_session_log_fragment(fresh_repo, self.REL)
         said = " ".join(mod._hook_utils._ADVISORIES)
-        assert self.REL in said and "no Session Log fragment was checked or pruned: SyntaxError: x" in said, said
+        assert self.REL in said and "no Session Log fragment was checked: SyntaxError: x" in said, said

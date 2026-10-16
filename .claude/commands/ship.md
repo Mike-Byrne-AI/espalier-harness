@@ -37,7 +37,10 @@ print a Python 3 version, try the other interpreter name, then the launcher's
   `memory/session-log.d/` and no change to `ESPALIER_MEMORY.md` -- unless given
   `--early "<reason>"`, because the
   handoff's row then becomes a second push on the lane (a check cycle restarted
-  and a marker re-bound).
+  and a marker re-bound), or, where the lane merges before the session ends,
+  a row the handoff parks on the seat's records ref for the next lane's push
+  to fold in (no pull request for the row alone). A row a fold brought in is
+  another session's and does not count as this lane's.
 - **Off:** `/handoff` commits its row and pushes nothing, and `/ship` is how a
   lane leaves the machine, whenever you choose.
 
@@ -144,6 +147,16 @@ conflict the resolver cannot take -- prose edited on both sides, a row changed
 on both sides, one id filed on two machines, one row file written by both, a
 path outside those record files -- is a note, not a stop: the lane ships and
 reads DIRTY as it would have, and the note names the files and the way back.
+
+Then the fold, the Session Log cap's one writer: the rows every seat parked on
+its records ref (`refs/heads/records/<seat>`, fetched now) that no history of
+the base or this lane has added come into the lane in one commit, and the
+fragments are pruned to their cap (30) in a second, both carrying the trailer
+`Espalier-Fold: session-log`. Two commits, so a parked row older than the kept
+window enters history once and never comes back. A fragment directory with
+uncommitted changes, or records git cannot read, skips the fold with a note;
+the next push's fold heals the count. Until 2026-10-16 every lane pruned in its
+own tree and two lanes each at 30 merged to 31 on the base.
 
 Then, in order: the diff against the base asked of the harness guard
 (`tools/cc/ci_guard.py`, loaded from the tree when it is there -- a tree

@@ -90,6 +90,12 @@ REMOTE = "origin"
 REF_PREFIX = "refs/heads/mail/"
 REMOTE_REF_PREFIX = "refs/remotes/origin/mail/"
 MAIL_FILE = "mail.jsonl"
+#: Each machine's parked records: a handoff with no open pull request leaves its
+#: Session Log row here, under the path it has in the tree, and the next lane's
+#: push folds it in (``tools/cc/ship.py``). Written by that machine alone, by the
+#: same compare-and-swap commit as its mail.
+RECORDS_PREFIX = "refs/heads/records/"
+REMOTE_RECORDS_PREFIX = "refs/remotes/origin/records/"
 #: Where this box remembers the last message it read from each other box
 #: (gitignored session state; ``tests/test_state_file_flag_parity.py`` lists it).
 CURSOR = ".espalier-state/mail_seen.json"
@@ -438,6 +444,14 @@ def remote_ref_for(machine: str) -> str:
     return REMOTE_REF_PREFIX + machine
 
 
+def records_ref_for(machine: str) -> str:
+    return RECORDS_PREFIX + machine
+
+
+def remote_records_ref_for(machine: str) -> str:
+    return REMOTE_RECORDS_PREFIX + machine
+
+
 def fetch_mail(root: Path, *, run: Runner = run, timeout: float = DEFAULT_TIMEOUT) -> tuple[bool, str]:
     """Every machine's ref into ``refs/remotes/origin/mail/*``, bounded by
     ``timeout``. ``(ok, problem)``; never raises, so a banner that cannot
@@ -450,6 +464,54 @@ def fetch_mail(root: Path, *, run: Runner = run, timeout: float = DEFAULT_TIMEOU
     if rc != 0:
         return False, (err.strip().splitlines() or [f"rc={rc}"])[-1][:200]
     return True, ""
+
+
+def fetch_records(root: Path, *, run: Runner = run, timeout: float = DEFAULT_TIMEOUT) -> tuple[bool, str]:
+    """Every machine's records ref into ``refs/remotes/origin/records/*``, as
+    ``fetch_mail`` does for the mail: ``(ok, problem)``, never raises."""
+    try:
+        rc, _out, err = run(["git", "fetch", "--quiet", REMOTE, f"+{RECORDS_PREFIX}*:{REMOTE_RECORDS_PREFIX}*"],
+                            cwd=str(root), timeout=timeout, env=git_env())
+    except Unresolvable as exc:
+        return False, str(exc)
+    if rc != 0:
+        return False, (err.strip().splitlines() or [f"rc={rc}"])[-1][:200]
+    return True, ""
+
+
+def ever_added(root: Path, revs: list[str], directory: str, *, run: Runner = run,
+               timeout: float = DEFAULT_TIMEOUT) -> set[str]:
+    """Every path under ``directory`` that some commit in the history of any of
+    ``revs`` added: a parked row folded once is in history whether or not a
+    prune has since deleted it, so it is never pending again (read as "on a ref
+    but not in the tree", a pruned row came back at every fold). Raises
+    ``Unresolvable`` where git cannot answer: an unread history must never read
+    as one that added nothing."""
+    added: set[str] = set()
+    for rev in revs:
+        out = _git(root, "log", "--format=", "--name-only", "--no-renames", "--diff-filter=A", rev, "--",
+                   directory, run=run, timeout=timeout)
+        added.update(ln.strip() for ln in out.splitlines() if ln.strip())
+    return added
+
+
+def pending(root: Path, directory: str, against: list[str], *, run: Runner = run,
+            timeout: float = DEFAULT_TIMEOUT) -> list[tuple[str, str, str]]:
+    """The rows parked on the LOCAL remote-tracking records refs (no network)
+    under ``directory`` that no history in ``against`` ever added:
+    ``(machine, path, remote ref)``, by path. Raises ``Unresolvable`` where git
+    cannot answer."""
+    out = _git(root, "for-each-ref", "--format=%(refname)", REMOTE_RECORDS_PREFIX, run=run, timeout=timeout)
+    refs = sorted(ref for ref in out.split() if ref.startswith(REMOTE_RECORDS_PREFIX))
+    if not refs:
+        return []
+    seen = ever_added(root, against, directory, run=run, timeout=timeout)
+    rows: list[tuple[str, str, str]] = []
+    for ref in refs:
+        listed = _git(root, "ls-tree", "-r", "--name-only", ref, "--", directory, run=run, timeout=timeout)
+        rows += [(ref[len(REMOTE_RECORDS_PREFIX):], path, ref)
+                 for path in (ln.strip() for ln in listed.splitlines()) if path and path not in seen]
+    return sorted(rows, key=lambda row: row[1])
 
 
 def local_mail_machines(root: Path, *, run: Runner = run, timeout: float = DEFAULT_TIMEOUT) -> list[str]:
@@ -1074,30 +1136,36 @@ def _tip(root: Path, ref: str, *, run: Runner) -> str | None:
     return out.strip() if rc == 0 and out.strip() else None
 
 
-def _commit_blob(root: Path, content: str, parent: str | None, subject: str, *, run: Runner) -> str:
-    """A commit whose tree holds ``mail.jsonl`` = ``content`` and nothing else,
-    built under a scratch index from the blob alone: the worktree, HEAD and
-    the live index are never read or written."""
-    # The blob from a file written in BINARY with LF, hashed with no filters:
-    # a text-mode pipe re-lines the content CRLF on Windows before git sees
-    # it, and a path-derived filter would do the same (review, 2026-10-05).
+def _hash_blob(root: Path, data: bytes, *, run: Runner) -> str:
+    """``data`` as a blob in the object store, its id returned."""
+    # From a file written in BINARY, hashed with no filters: a text-mode pipe
+    # re-lines the content CRLF on Windows before git sees it, and a
+    # path-derived filter would do the same (review, 2026-10-05).
     fd, blob_path = tempfile.mkstemp(prefix="mail-blob-", suffix=".jsonl")
     try:
         with os.fdopen(fd, "wb") as fh:
-            fh.write(content.encode("utf-8"))
-        blob = _git(root, "hash-object", "-w", "--no-filters", "--", blob_path, run=run)
+            fh.write(data)
+        return _git(root, "hash-object", "-w", "--no-filters", "--", blob_path, run=run)
     finally:
         try:
             os.unlink(blob_path)
         except OSError:
             pass
+
+
+def _commit_entries(root: Path, entries: dict[str, str], parent: str | None, subject: str, *,
+                    run: Runner) -> str:
+    """A commit whose tree holds exactly ``entries`` (path -> blob id), built
+    under a scratch index: the worktree, HEAD and the live index are never read
+    or written."""
     fd, index_path = tempfile.mkstemp(prefix="mail-index-", suffix=".idx")
     os.close(fd)
     os.unlink(index_path)  # git wants to create it itself
     env = git_env({"GIT_INDEX_FILE": index_path})
     try:
         _git(root, "read-tree", "--empty", run=run, env=env)
-        _git(root, "update-index", "--add", "--cacheinfo", f"100644,{blob},{MAIL_FILE}", run=run, env=env)
+        _git(root, "update-index", "--add", "--index-info", run=run, env=env,
+             input="".join(f"100644 {blob}\t{path}\n" for path, blob in sorted(entries.items())))
         tree = _git(root, "write-tree", run=run, env=env)
     finally:
         for leftover in (index_path, index_path + ".lock"):
@@ -1110,6 +1178,55 @@ def _commit_blob(root: Path, content: str, parent: str | None, subject: str, *, 
         args += ["-p", parent]
     args += ["-m", subject]
     return _git(root, *args, run=run)
+
+
+def _commit_blob(root: Path, content: str, parent: str | None, subject: str, *, run: Runner) -> str:
+    """A commit whose tree holds ``mail.jsonl`` = ``content`` and nothing else."""
+    blob = _hash_blob(root, content.encode("utf-8"), run=run)
+    return _commit_entries(root, {MAIL_FILE: blob}, parent, subject, run=run)
+
+
+def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callable[[str | None], str], *,
+              run: Runner, timeout: float, verb: tuple[str, str]) -> str:
+    """Move this machine's ``ref`` to the commit ``build(parent)`` makes and push
+    it: origin's tip is read fresh and must be what this checkout last saw (a
+    local ref behind it is adopted, one ahead of or diverged from it refuses:
+    one writer per machine); the ref moves by compare-and-swap, the push carries
+    no force, and a push origin refuses is rolled back so the next write starts
+    clean. ``verb`` names the write in a refusal (``("send", "sent")``)."""
+    noun, past = verb
+    out = _git(root, "ls-remote", "--heads", REMOTE, ref, run=run, timeout=timeout)
+    remote_tip = out.split()[0] if out else None
+    local_tip = _tip(root, ref, run=run)
+    if remote_tip:
+        _git(root, "fetch", "--quiet", REMOTE, f"+{ref}:{remote_ref}", run=run, timeout=timeout)
+        if local_tip and local_tip != remote_tip:
+            rc, _o, _e = run(["git", "merge-base", "--is-ancestor", local_tip, remote_tip], cwd=str(root), env=git_env())
+            if rc != 0:
+                raise Unresolvable(
+                    f"{ref} here is not behind {REMOTE}'s: a {noun} from this checkout was never pushed, or "
+                    f"another checkout writes under the name {machine!r} (one writer per machine). Read "
+                    f"both (`git log {ref}` and `git log {remote_ref}`), then "
+                    f"`git update-ref -d {ref}` here to adopt {REMOTE}'s")
+        parent = remote_tip
+    else:
+        parent = local_tip
+    commit = build(parent)
+    _git(root, "update-ref", ref, commit, local_tip or _ZERO, run=run)
+    rc, _out, err = run(["git", "push", "--quiet", REMOTE, f"{ref}:{ref}"], cwd=str(root), timeout=timeout,
+                        env=git_env())
+    if rc != 0:
+        # Back to where this checkout was, so the next write reads origin fresh
+        # instead of refusing forever on a ref only this box has.
+        if local_tip:
+            _git(root, "update-ref", ref, local_tip, commit, run=run)
+        else:
+            _git(root, "update-ref", "-d", ref, commit, run=run)
+        lines = err.strip().splitlines()
+        detail = next((ln for ln in lines if ln.startswith("remote:")), lines[-1] if lines else "no detail")
+        raise Unresolvable(f"{REMOTE} refused the push ({detail.strip()[:160]}); nothing was {past} -- fetch, "
+                           f"read, and {noun} again")
+    return commit
 
 
 def send(root: Path, message: dict, *, run: Runner = run, say: Callable[[str], None] = print,
@@ -1133,49 +1250,66 @@ def send(root: Path, message: dict, *, run: Runner = run, say: Callable[[str], N
         raise Unresolvable("not sent, the channel lives on a public origin and the guard reads a secret path "
                            "in it: " + "; ".join(hits[:5]))
     ref = ref_for(machine)
-    out = _git(root, "ls-remote", "--heads", REMOTE, ref, run=run, timeout=timeout)
-    remote_tip = out.split()[0] if out else None
-    local_tip = _tip(root, ref, run=run)
-    if remote_tip:
-        _git(root, "fetch", "--quiet", REMOTE, f"+{ref}:{remote_ref_for(machine)}", run=run, timeout=timeout)
-        if local_tip and local_tip != remote_tip:
-            rc, _o, _e = run(["git", "merge-base", "--is-ancestor", local_tip, remote_tip], cwd=str(root), env=git_env())
-            if rc != 0:
-                raise Unresolvable(
-                    f"{ref} here is not behind {REMOTE}'s: a send from this checkout was never pushed, or "
-                    f"another checkout writes under the name {machine!r} (one writer per machine). Read "
-                    f"both (`git log {ref}` and `git log {remote_ref_for(machine)}`), then "
-                    f"`git update-ref -d {ref}` here to adopt {REMOTE}'s")
-        parent = remote_tip
-    else:
-        parent = local_tip
-    existing = ""
-    if parent:
-        # Read through the raising runner: a parent whose file cannot be read
-        # (a partial fetch, a ref a hand rebuilt without the file) must refuse,
-        # never read as "no prior mail" and drop every earlier message (code
-        # review, driven 2026-10-05). The file is append-only, so the strip of
-        # the final newline is put back below.
-        text = _git(root, "show", f"{parent}:{MAIL_FILE}", run=run, timeout=timeout)
-        existing = text + "\n" if text else ""
-    content = existing + encode(message)
-    subject = f"mail({machine}): {message['type']} {message['id']}"
-    commit = _commit_blob(root, content, parent, subject, run=run)
-    _git(root, "update-ref", ref, commit, local_tip or _ZERO, run=run)
-    rc, _out, err = run(["git", "push", "--quiet", REMOTE, f"{ref}:{ref}"], cwd=str(root), timeout=timeout,
-                        env=git_env())
-    if rc != 0:
-        # Back to where this checkout was, so the next send reads origin fresh
-        # instead of refusing forever on a ref only this box has.
-        if local_tip:
-            _git(root, "update-ref", ref, local_tip, commit, run=run)
-        else:
-            _git(root, "update-ref", "-d", ref, commit, run=run)
-        lines = err.strip().splitlines()
-        detail = next((ln for ln in lines if ln.startswith("remote:")), lines[-1] if lines else "no detail")
-        raise Unresolvable(f"{REMOTE} refused the push ({detail.strip()[:160]}); nothing was sent -- fetch, "
-                           "read, and send again")
+
+    def build(parent: str | None) -> str:
+        existing = ""
+        if parent:
+            # Read through the raising runner: a parent whose file cannot be read
+            # (a partial fetch, a ref a hand rebuilt without the file) must refuse,
+            # never read as "no prior mail" and drop every earlier message (code
+            # review, driven 2026-10-05). The file is append-only, so the strip of
+            # the final newline is put back below.
+            text = _git(root, "show", f"{parent}:{MAIL_FILE}", run=run, timeout=timeout)
+            existing = text + "\n" if text else ""
+        content = existing + encode(message)
+        subject = f"mail({machine}): {message['type']} {message['id']}"
+        return _commit_blob(root, content, parent, subject, run=run)
+
+    commit = _push_ref(root, machine, ref, remote_ref_for(machine), build, run=run, timeout=timeout,
+                       verb=("send", "sent"))
     say(f"sent {message['type']} {message['id']} as {commit[:7]} on {ref}")
+    return commit
+
+
+def park(root: Path, path: str, data: bytes, base_ref: str, *, run: Runner = run,
+         say: Callable[[str], None] = print, timeout: float = DEFAULT_TIMEOUT) -> str:
+    """Leave ``data`` at ``path`` on this machine's records ref and push it: a
+    handoff with no open pull request parks its Session Log row here instead of
+    opening a pull request for the row alone (``tools/cc/ship.py``), and the
+    next lane's push folds it in. The ref keeps what is still pending: each park
+    drops the rows ``base_ref``'s history has added (a failed read of that
+    history drops nothing). Refused where this clone names no machine, as a
+    send is; the same compare-and-swap push. Returns the commit id."""
+    root = Path(root)
+    machine, how = machine_setting(root, run=run)
+    if machine is None:
+        raise Unresolvable(_off_reason(how))
+    parts = path.replace("\\", "/").split("/")
+    if path.startswith("/") or not all(parts) or ".." in parts:
+        raise Unresolvable(f"`{path}` is not a repo-relative path")
+    path = "/".join(parts)
+    directory = "/".join(parts[:-1])
+    ref = records_ref_for(machine)
+
+    def build(parent: str | None) -> str:
+        entries: dict[str, str] = {}
+        if parent:
+            listed = _git(root, "ls-tree", "-r", parent, run=run, timeout=timeout)
+            for line in listed.splitlines():
+                meta, _tab, name = line.partition("\t")
+                if name:
+                    entries[name] = meta.split()[-1]
+            try:
+                folded = ever_added(root, [base_ref], directory, run=run, timeout=timeout)
+            except Unresolvable:
+                folded = set()   # keep every row: a pending one dropped is a row lost
+            entries = {name: blob for name, blob in entries.items() if name not in folded}
+        entries[path] = _hash_blob(root, data, run=run)
+        return _commit_entries(root, entries, parent, f"records({machine}): {parts[-1]}", run=run)
+
+    commit = _push_ref(root, machine, ref, remote_records_ref_for(machine), build, run=run, timeout=timeout,
+                       verb=("park", "parked"))
+    say(f"parked {path} as {commit[:7]} on {ref}")
     return commit
 
 

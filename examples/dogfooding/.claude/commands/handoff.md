@@ -116,10 +116,13 @@ Do not add a row to a `## Session Log` table in ESPALIER_MEMORY.md: where the
 loader (`tools/cc/_record_fragments.py`) is deployed the table is frozen (in this
 repository it was folded into the files under `memory/session-log.d/` on
 2026-10-10), and every reader (the SessionStart digest, the
-landing check, the cap) takes both forms. When the write leaves more than 30
-fragments, the `post_write_check` hook archives the oldest to
-`docs/session-archive.md` (generated on your tree; not deployed) and deletes
-their files; commit those deletions with the row.
+landing check, the cap) takes both forms. The fragments' cap (30) is not held
+here or by the `post_write_check` hook: a write over it prunes nothing. The
+lane's push holds it: the ship driver's fold brings in the rows other seats
+parked on their records refs and archives the oldest to
+`docs/session-archive.md` (generated on your tree; not deployed), in commits of
+its own. One writer of the count; a lane that held it in its own tree merged
+with another to 31.
 
 **Without that file** (`tools/cc/_record_fragments.py`; a deploy from before it): **prepend** the new Session
 Log row to ESPALIER_MEMORY.md — newest-first, directly under the table header.
@@ -140,8 +143,9 @@ Update only durable repo operating knowledge:
 - next session entry point (name the lane, not a pull request number: where
   `handoff_push` is on, the pull request is opened after this row is written,
   by step 8's push, and the next SessionStart banner's `Open PRs:` line names
-  it; where it is off, nothing is pushed and no pull request will appear, so
-  say the lane is committed locally)
+  it, unless the lane already merged and carries only this row, which step 8
+  parks instead; where it is off, nothing is pushed and no pull request will
+  appear, so say the lane is committed locally)
 
 Keep the row compact: it is one line, and the digest shows its bold headline.
 
@@ -156,10 +160,10 @@ python scripts/handoff_mechanics.py after-memory-row \
     --message "docs(memory): <what this session established>" \
     [--also memory/<new-note>.md] [--trailer "Claude-Session: <url>"]
 ```
-It checks a new fragment's name and row (one row, dated as named), prunes the
-fragments and ESPALIER_MEMORY.md to their caps (a row a script wrote lands
-without the hook's autoprune), finalizes the blueprint, stages the row (the
-fragment directory with the prune's deletions, or the memory file) and each
+It checks a new fragment's name and row (one row, dated as named), prunes
+ESPALIER_MEMORY.md to its cap (a row a script wrote lands without the hook's
+autoprune; the fragments' cap is the push's fold's), finalizes the blueprint,
+stages the row (the fragment directory, or the memory file) and each
 `--also` path with its byte-mirror twin, commits with the canonical
 trailer and those paths on the commit line (step 5's rule), prints the
 ahead-of-origin count for step 7, and drives the owed-list probes so step 7
@@ -208,7 +212,7 @@ and stage only what *this command* wrote:
 
 | Path | Written by | When |
 |---|---|---|
-| `memory/session-log.d/` (the new row and the prune's deletions), or `ESPALIER_MEMORY.md` on a deploy without the loader | step 2 | every handoff |
+| `memory/session-log.d/` (the new row), or `ESPALIER_MEMORY.md` on a deploy without the loader | step 2 | every handoff |
 | every file step 1b wrote: the printed `proposed:` target on a promote, the nearest note on an update | step 1b | on a disposition that writes |
 
 <!-- espalier:self-host-only -->
@@ -629,7 +633,19 @@ python tools/cc/ship.py handoff
   leaves the pull request mergeable and the merge commit rides it. Once the
   push lands, the verb releases this machine's live claims on the lane on the
   mail channel (`/inbox` step 5): the claim's lifetime is the lane's time on
-  this machine, so no claim is left warning the other box forever.
+  this machine, so no claim is left warning the other box forever. Before
+  either push, the verb folds: the rows other seats parked come into the lane
+  and the fragments are pruned to their cap, in commits of their own, so the
+  marker binds the head that is pushed.
+  **A lane that already merged** (no open pull request, and nothing in its diff
+  with the base but this Session Log row) opens no pull request for the row
+  alone: the verb parks the row on this seat's records ref
+  (`refs/heads/records/<seat>`, the mail channel's compare-and-swap commit),
+  and the next lane's push, any seat's, folds it into the base. Until that
+  fold, the banner's recent rows, which read the tree, show it to no seat, this
+  one's next session included; say so in the `Next:` line. A seat with no name,
+  or a park origin refuses, opens the pull request as before, and the verb says
+  why.
 - **Off (the default):** nothing is pushed. The commit stays on this branch in
   this checkout, and the verb prints how to push it (`/ship`) and how to opt in.
   Say so in the summary: the next session here reads the row while it stays on
