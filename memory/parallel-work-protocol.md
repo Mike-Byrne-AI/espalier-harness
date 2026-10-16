@@ -182,10 +182,11 @@ interactive session as under `-p`; a killed session leaves the lock behind.
      row reaches no banner, the parking seat's next session included.
 7. **A red `main` is reverted first and diagnosed second.** The post-merge
    proof (`.github/workflows/post-merge.yml`) runs after merges, and the ship
-   preflight and the board name a red one. A newer push cancels an older run,
-   so one red run can carry every merge since the last green one: the board
-   prints the revert only when exactly one pull request merged in between, and
-   otherwise names the suspects to read. The seat whose merge turned it red
+   preflight and the board name a red one. Each push's run goes to the end,
+   beside the next one, so a red run's suspects are the merges since the last
+   green run before it, more than one when a run between them is red or still
+   going: the board prints the revert only when exactly one pull request merged
+   in between, and otherwise names the suspects to read. The seat whose merge turned it red
    opens the revert pull request. If that seat is not running, whoever sees the
    red first claims a `revert/<sha>` lane and does it. The dispatcher is the
    backstop. Nothing lands on a red `main`: disarm the auto-merge the board

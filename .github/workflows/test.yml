@@ -100,6 +100,10 @@ jobs:
     # PR (see the matrix comment below). The env default covers an empty output.
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    # A hang the per-test ceiling cannot reach ends here, not at GitHub's
+    # 360-minute default (DEF-1178): above the measured worst case, 46.6 min
+    # (the last 16 runs to 2026-10-16).
+    timeout-minutes: 75
     strategy:
       # A LITERAL five-cell list, never a `${{ }}` expression: branch protection
       # matches check-run names, the release checklist requires `test (3.10)`
@@ -178,6 +182,11 @@ jobs:
     needs: tier
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    # DEF-1178: above the measured worst case, 7.0 min (18 runs to 2026-10-16),
+    # and ten minutes above the largest per-test timeout in the serial files
+    # (900 s), so a slow test is failed by its own mark, by name, before the job
+    # is killed with none named (tests/test_ci_job_bounds.py derives the floor).
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -240,6 +249,8 @@ jobs:
   # selects, and the full tier's cells have no ripgrep to find.
   ripgrep-parity:
     runs-on: ubuntu-latest
+    # DEF-1178: above the measured worst case, 0.8 min (18 runs to 2026-10-16).
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -336,6 +347,8 @@ jobs:
 
   artifact-parity:
     runs-on: ubuntu-latest
+    # DEF-1178: above the measured worst case, 0.8 min (18 runs to 2026-10-16).
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 

@@ -10,6 +10,7 @@ See `tests/README.md` for operator-facing guidance.
 from __future__ import annotations
 
 import ast
+import functools
 import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -1675,7 +1676,12 @@ def _budget_sites(modules: list[tuple[str, str]], ini_ceiling: float,
     ``timeout``, or the positional bound of a standard-library wait
     (``_POSITIONAL_WAITS``).
     Code at module or class-body level runs at collection, under no ceiling,
-    and is not read. A ``timeout=`` value that is neither a number, a module
+    and is not read; nor is a module-level pytest hook that runs outside any
+    item (:func:`_hooks_outside_any_item`), in ``conftest.py``, where pytest
+    registers it, and called by nothing else in that module, for the same
+    reason; the same name in a test module, or one a conftest fixture or helper
+    calls, runs under a test's ceiling and stays charged. A ``timeout=``
+    value that is neither a number, a module
     constant nor a ``timeout`` parameter passed through is appended to
     ``unread`` as ``module::unit`` -- the contract pins which ones there are.
     """
@@ -1727,6 +1733,12 @@ def _budget_sites(modules: list[tuple[str, str]], ini_ceiling: float,
         edges = {u.qual: _unit_refs(u, by_qual, class_bases, module_marks) for u in units}
         timeout_pos = {u.qual: pos for u in units if (pos := _timeout_position(u)) is not None}
         tests = [u for u in units if u.is_test]
+        # A conftest hook pytest calls outside every item, which nothing else in
+        # its module runs: a fixture or helper that called it would run it under a
+        # test's ceiling, and then it is charged like any helper.
+        called_here = {q for caller, refs in edges.items() for q in refs if q != caller}
+        uncharged = ({u.qual for u in units if not u.classes and u.qual in _hooks_outside_any_item()
+                      and u.qual not in called_here} if stem == "conftest" else set())
         for u in units:
             if not (u.autouse and u.fixture):
                 continue
@@ -1765,6 +1777,8 @@ def _budget_sites(modules: list[tuple[str, str]], ini_ceiling: float,
                 u, consts, lambda e, u=u: _callee(e, u, by_qual, class_bases), timeout_pos)
             if not budgets:
                 continue
+            if u.qual in uncharged:
+                continue   # pytest calls it outside every item: no per-test ceiling governs it
             if u.is_test:
                 governors = [(_ceiling_of(u, ini_ceiling), f"test {u.qual}")]
             else:
@@ -1782,6 +1796,31 @@ def _budget_sites(modules: list[tuple[str, str]], ini_ceiling: float,
             sites.extend(_BudgetSite(stem, line, seconds, u.qual, ceiling, governed_by)
                          for line, seconds in budgets)
     return sites
+
+
+@functools.lru_cache(maxsize=None)
+def _hooks_outside_any_item() -> frozenset[str]:
+    """pytest's own hooks that run outside any test item, derived from its hook
+    specifications, never listed: those whose spec takes the session or the
+    terminal reporter, outside the run-test protocol -- collection, the session's
+    start and end, the test loop, the terminal summary. pytest-timeout arms a
+    test's ceiling inside that item's protocol, so a wait budget in a conftest
+    implementation of one of these is governed by no ceiling, the reading the
+    walker already gives module-level code (DEF-1177: the initialized tree is
+    built in ``pytest_collection_finish``, four xdist workers at once, and on
+    windows-latest each worker's ``git add -A`` took the whole of a 50 s bound,
+    run 38890464527). A hook whose spec takes only the config stays charged:
+    ``pytest_configure`` does, and so does ``pytest_markeval_namespace``, which
+    pytest calls inside an item's setup."""
+    import inspect
+
+    from _pytest import hookspec
+
+    return frozenset(
+        name for name, spec in vars(hookspec).items()
+        if name.startswith("pytest_") and not name.startswith("pytest_runtest_") and inspect.isfunction(spec)
+        and {"session", "terminalreporter"} & set(inspect.signature(spec).parameters)
+    )
 
 
 def _unread_budgets(unit: _Unit, consts: dict[str, float]) -> list[int]:
@@ -2193,6 +2232,47 @@ class TestTheCeilingWalkerReportsBothVerdicts:
 
     def test_module_level_code_runs_at_collection_and_is_not_read(self):
         assert _synth_offenders("PROBE = subprocess.run(['x'], timeout=120)\n") == []
+
+    def test_a_hook_pytest_calls_outside_any_item_is_governed_by_no_ceiling(self):
+        """``pytest_collection_finish`` runs at collection, as module-level code
+        does (DEF-1177's tree build). Its neighbours that run inside an item stay
+        charged: a fixture, a run-test hook, a hook taking only the config (as
+        ``pytest_markeval_namespace``, called in an item's setup, does), and a
+        hook-named method of a class."""
+        wait = "    subprocess.run(['x'], timeout=180)\n"
+
+        def in_conftest(src: str) -> list[str]:
+            return _ceiling_offenders(_budget_sites([("conftest", _SYNTH_RUN + src)], 60))
+
+        assert in_conftest("def pytest_collection_finish(session):\n" + wait) == []
+        assert in_conftest("def pytest_terminal_summary(terminalreporter, exitstatus, config):\n" + wait) == []
+        for charged in ("@pytest.fixture\ndef tree():\n", "def pytest_runtest_setup(item):\n",
+                        "def pytest_markeval_namespace(config):\n", "def pytest_configure(config):\n",
+                        "class Plugin:\n    def pytest_collection_finish(self, session):\n    "):
+            out = in_conftest(charged + wait)
+            assert len(out) == 1 and "timeout=180" in out[0], (charged, out)
+        # In a test module the name registers nothing: it is a function a test calls.
+        out = _synth_offenders("def pytest_collection_finish(session):\n" + wait)
+        assert len(out) == 1 and "timeout=180" in out[0], out
+        # A conftest fixture that calls the hook runs it inside the requesting test.
+        out = in_conftest("def pytest_sessionfinish(session, exitstatus):\n" + wait
+                          + "\n@pytest.fixture\ndef finish(request):\n    pytest_sessionfinish(None, 0)\n")
+        assert len(out) == 1 and "timeout=180" in out[0], out
+
+    def test_the_uncharged_hooks_are_derived_from_pytest_not_listed(self):
+        import inspect
+
+        from _pytest import hookspec
+
+        hooks = _hooks_outside_any_item()
+        assert {"pytest_collection_finish", "pytest_sessionstart", "pytest_terminal_summary"} <= hooks, hooks
+        assert not [h for h in hooks if h.startswith("pytest_runtest_")], hooks
+        assert not {"pytest_markeval_namespace", "pytest_fixture_setup", "pytest_configure"} & hooks, hooks
+        # A spec pytest later widens to take the running item would no longer be
+        # outside it: the derivation must then drop it, so this reds first.
+        per_item = {"item", "nextitem", "pyfuncitem", "request", "fixturedef", "node"}
+        assert {h: sorted(per_item & set(inspect.signature(getattr(hookspec, h)).parameters))
+                for h in hooks if per_item & set(inspect.signature(getattr(hookspec, h)).parameters)} == {}
 
     def test_a_number_passed_positionally_into_a_helpers_timeout_is_a_budget(self):
         src = ("def _run(cmd, timeout=45):\n    subprocess.run(cmd, timeout=timeout)\n\n"
