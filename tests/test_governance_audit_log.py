@@ -1359,13 +1359,35 @@ class TestProtectedZoneDenialsAreAudited:
             encoding="utf-8"
         )
         tree = ast.parse(src)
+        # A reason bound from `_zone_reason` is a protected-zone reason too: the
+        # adopter arms (DEF-995) and the full-template channels deny with one, and
+        # a bare deny(reason) of it would leave the log as surely as a template's.
+        # Bound per function: `reason` is a common name, and only the function
+        # that bound it from `_zone_reason` denies a zone with it.
+        zone_reason_at: dict[int, str] = {}
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            bound = {
+                target.id
+                for node in ast.walk(fn)
+                if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call)
+                and getattr(node.value.func, "id", None) == "_zone_reason"
+                for target in node.targets if isinstance(target, ast.Name)
+            }
+            for call in ast.walk(fn):
+                if isinstance(call, ast.Call):
+                    for arg in ast.walk(call):
+                        if isinstance(arg, ast.Name) and arg.id in bound:
+                            zone_reason_at[id(call)] = arg.id
 
         def _mentions_protected_zone(node: ast.AST) -> bool:
-            return any(
+            return id(node) in zone_reason_at or any(
                 isinstance(a, ast.Attribute) and a.attr.startswith("PROTECTED_ZONE")
                 for a in ast.walk(node)
             )
 
+        assert zone_reason_at, "no call denies with a `_zone_reason` result: did the zone deny's shape change?"
         offenders: list[int] = []
         audited = 0
         for call in ast.walk(tree):
