@@ -27,10 +27,10 @@ are derived here and never copied:
   by name wherever the file sits.
 * ``allowRead``: the dotenv template files the guard exempts (its own
   ``_DOTENV_TEMPLATE_SUFFIXES``, parsed the same way), re-opened under the
-  glob deny by the documented narrower-allow rule for read rules. Not yet
-  driven on a live sandbox: if the Mac drive shows an exact ``allowRead``
-  does not narrow a glob ``denyRead``, the glob stays and the divergence is
-  documented instead.
+  glob deny by the documented narrower-allow rule for read rules. Driven
+  2026-10-15 on macOS (Claude Code 2.1.299): the five template files read
+  with these entries beside the glob deny and none read without them.
+  Linux and WSL2 are not driven.
 
 Every entry is ``./``-relative, which Claude Code resolves against the
 project root for a project settings file (and against ``~/.claude`` for a
@@ -41,7 +41,15 @@ scope (``allowUnsandboxedCommands``) is read for ``doctor`` and never
 written. Measured 2026-10-09 on macOS: ``denyWrite`` holds for shell writes
 and ``git checkout`` and NOT for the ``Write`` tool, so this is a shell layer
 beside ``write_guard``, never a replacement for its path check on ``Write``,
-``Edit`` and ``NotebookEdit``. ``denyRead`` itself has not been driven yet.
+``Edit`` and ``NotebookEdit``. Measured 2026-10-15 on macOS with ``head``
+and ``cat``: ``denyRead`` refuses shell reads of every roster path at the
+root and one directory down (the dotenv three down as well), a dotenv
+created after the session starts included, and does NOT stop the ``Read``
+tool, so ``write_guard``'s read deny stays the layer for the file tools. Not
+driven: Linux and WSL2 (the settings reference says a read entry is expanded
+there to the concrete paths it matches, so a file created later may escape),
+other read commands, the PowerShell tool, and a rename or link of a denied
+file before the read.
 """
 from __future__ import annotations
 
@@ -408,10 +416,11 @@ def describe(posture: Posture, *, written: bool, prefix: str, remedy_py: str) ->
         lines.append(f"{prefix}   left out of denyWrite, from protected_paths: {item}")
     if posture.lists.get(ALLOW_READ):
         lines.append(f"{prefix}   allowRead re-opens the dotenv template files under the denyRead glob by the "
-                     "sandbox's narrower-allow rule for reads (not yet driven on a live sandbox)")
-    lines.append(f"{prefix}   a shell layer beside write_guard where the sandbox is on (macOS, Linux, WSL2; "
-                 "none on native Windows), for every process a sandboxed command starts; the Write, Edit "
-                 f"and NotebookEdit tools run outside it; see {DOC}")
+                     "sandbox's narrower-allow rule for reads (driven on macOS; Linux and WSL2 not yet)")
+    lines.append(f"{prefix}   a shell layer beside write_guard where the sandbox is on (driven on macOS; "
+                 "Linux and WSL2 not yet, where a secret file created after the session starts may stay "
+                 "readable; none on native Windows), for every process a sandboxed command starts; the Read, Write, "
+                 f"Edit and NotebookEdit tools run outside it, where the guard's checks stay the layer; see {DOC}")
     return lines
 
 
@@ -628,7 +637,9 @@ def doctor_lines(state: SandboxState, *, remedy_py: str) -> tuple[list[str], lis
             info.append(f"sandbox: {note}")
     info.append(
         "sandbox: the posture is a shell layer beside write_guard, never a replacement for its path "
-        "check on Write, Edit and NotebookEdit (the sandbox covers shell commands and the processes "
-        f"they start; the file tools run outside it); {DOC} has what it refuses"
+        "check on Write, Edit and NotebookEdit or its read deny on Read (the sandbox covers shell "
+        "commands and the processes they start; the file tools run outside it); driven on macOS, and "
+        "on Linux and WSL2 not yet, where a secret file created after the session starts may stay "
+        f"readable; {DOC} has what it refuses"
     )
     return info, warnings_out, steps

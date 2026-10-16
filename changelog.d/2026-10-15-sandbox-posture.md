@@ -27,9 +27,15 @@
   never a replacement for its path check on `Write`, `Edit` and
   `NotebookEdit`. The dotenv template files the guard allows are re-opened by
   `allowRead` entries derived from the guard's own suffix tuple under the
-  sandbox's narrower-allow rule for reads; `denyRead` and that pairing are
-  not yet driven on a live sandbox. The deployed `docs/TROUBLESHOOTING.md`
-  has what it refuses.
+  sandbox's narrower-allow rule for reads. Measured on macOS (Claude Code
+  2.1.299, reading with `head` and `cat`): `denyRead` refuses shell reads of
+  every path on the guard's secret list at the root and one directory down
+  (the dotenv three down as well), including a dotenv created after the
+  session started, and the `allowRead` entries re-open the template files,
+  which are refused without them. It does not stop the `Read` tool, where the
+  guard's read deny stays the layer. Linux and WSL2, and a rename or link of
+  a secret file before the read, are not yet measured. The deployed
+  `docs/TROUBLESHOOTING.md` has what it refuses.
 - **`doctor` reports the sandbox in three states.** On native Windows, that
   there is no sandbox and the location layer is the after-check and the
   guard's path check; otherwise whether the sandbox is off (the default) or
