@@ -352,6 +352,11 @@ class TestMachineSettingReads:
         assert "turns it on" in capsys.readouterr().err
 
 
+#: The one argv the readers use for the per-worktree config switch: the
+#: repository's own config, read as a boolean (git's own reading of it).
+_EXT_READ = ("config", "--local", "--type=bool", "--get", "extensions.worktreeConfig")
+
+
 class TestTheNameReadersSayAFailedRead:
     """Every read of the machine name tells a read that failed (git timing
     out, a config git cannot parse) from a name that is not set: the clone's
@@ -400,7 +405,7 @@ class TestTheNameReadersSayAFailedRead:
         having a name of its own, not a failed read. Dies to the worktree
         scope reading every 128 as unread, which kept every worktree of a clone
         without the extension from SessionStart's clean-up."""
-        ext = ("config", "--get", "extensions.worktreeConfig")
+        ext = _EXT_READ
         own = ("config", "--worktree", "--get", "espalier.machine")
         refused = (128, "", "fatal: --worktree cannot be used with multiple working trees")
         name, how = mail.machine_setting(tmp_path, run=self._git_at({}, {ext: (1, "", ""), own: refused}),
@@ -414,18 +419,35 @@ class TestTheNameReadersSayAFailedRead:
                                    scope="worktree")
         assert got[0] == "air-2", got
 
-    def test_a_failed_key_read_is_no_evidence_of_an_inherited_name(self, mail, tmp_path):
-        """worktree_name_inherited refuses on evidence only (its docstring):
-        it answered True, refusing a mint or an assign, where its key read
-        exited 128. Dies to every nonzero exit read as "no name of its own"."""
+    def test_a_failed_key_read_is_neither_answer(self, mail, tmp_path):
+        """A read that failed is no evidence either way: it answered True,
+        refusing a mint or an assign that had nothing wrong, where its key
+        read exited 128, and False, letting an inherited name through, where
+        git raised. Dies to either answer for a failed read (None now, and each
+        caller says so), and to a refused hand-set value read as no name."""
         answers = {("rev-parse", "--git-dir"): (0, f"{tmp_path / 'gitdir'}\n", ""),
                    ("rev-parse", "--git-common-dir"): (0, f"{tmp_path / 'common'}\n", ""),
-                   ("config", "--get", "extensions.worktreeConfig"): (0, "true\n", "")}
+                   _EXT_READ: (0, "true\n", "")}
+        own = ("config", "--worktree", "--get", "espalier.machine")
         for failed in self._failures(mail):
-            run = self._git_at({}, {**answers, ("config", "--worktree", "--get", "espalier.machine"): failed})
-            assert mail.worktree_name_inherited(tmp_path, run=run) is False, failed
-        run = self._git_at({}, {**answers, ("config", "--worktree", "--get", "espalier.machine"): (1, "", "")})
-        assert mail.worktree_name_inherited(tmp_path, run=run) is True
+            for broken in ({**answers, own: failed}, {**answers, _EXT_READ: failed},
+                           {**answers, ("rev-parse", "--git-dir"): failed}):
+                assert mail.worktree_name_inherited(tmp_path, run=self._git_at({}, broken)) is None, (failed, broken)
+        assert mail.worktree_name_inherited(tmp_path, run=self._git_at({}, {**answers, own: (1, "", "")})) is True
+        assert mail.worktree_name_inherited(tmp_path, run=self._git_at({}, {**answers, own: (0, "Air-2\n", "")})) is False
+        off = {**answers, _EXT_READ: (1, "", "")}
+        assert mail.worktree_name_inherited(tmp_path, run=self._git_at({}, off)) is True
+
+    def test_an_unread_inherited_check_is_said_and_refuses_an_assign(self, mail, tmp_path, monkeypatch):
+        """Dies to the unread answer taken for "has a name of its own":
+        SessionStart's naming then said nothing, and an assign went through."""
+        (tmp_path / ".git").write_text("gitdir: x\n", encoding="utf-8")
+        monkeypatch.setattr(mail, "worktree_name_inherited", lambda root, **kw: None)
+        name, said = mail.name_this_worktree(tmp_path, run=self._git_at({}, {}))
+        assert name is None and "could not be read" in said and "fix it first" in said, said
+        (tmp_path / "espalier.toml").write_text('dispatcher = "air"\n', encoding="utf-8")
+        refusal = mail.assign_refusal(tmp_path, "air", run=self._git_at({}, {})) or ""
+        assert "could not be read" in refusal and "fix it first" in refusal, refusal
 
     def _naming(self, tmp_path, *, clone, sibling=(1, "", ""), back=(0, "air-wt\n", "")):
         """The git name_this_worktree meets in .claude-style worktree `wt` of a
@@ -438,7 +460,7 @@ class TestTheNameReadersSayAFailedRead:
         default = {
             ("rev-parse", "--git-dir"): (0, f"{tmp_path / 'gitdir'}\n", ""),
             ("rev-parse", "--git-common-dir"): (0, f"{tmp_path / 'common'}\n", ""),
-            ("config", "--get", "extensions.worktreeConfig"): (0, "true\n", ""),
+            _EXT_READ: (0, "true\n", ""),
             ("config", "--get", "espalier.machine"): clone,
             ("rev-parse", "--show-toplevel"): (0, f"{wt}\n", ""),
             ("config", "--get", "core.worktree"): (1, "", ""),
@@ -458,7 +480,8 @@ class TestTheNameReadersSayAFailedRead:
             sub.mkdir()
             wt, run = self._naming(sub, clone=failed)
             name, said = mail.name_this_worktree(wt, run=run)
-            assert name is None and mail.MACHINE_UNREAD in said and "not named until git answers" in said, said
+            assert name is None and mail.MACHINE_UNREAD in said and "is not named" in said, said
+            assert "fix it first" in said, said   # a config git cannot parse is not healed by a retry
 
     def test_name_this_worktree_refuses_when_a_siblings_name_cannot_be_read(self, mail, tmp_path):
         """Dies to an unreadable sibling read as 'not taken': two worktrees
@@ -542,7 +565,7 @@ class TestNamingSteps:
         answers = {
             ("rev-parse", "--git-dir"): (0, f"{root / 'gitdir'}\n", ""),
             ("rev-parse", "--git-common-dir"): (0, f"{root / 'common'}\n", ""),
-            ("config", "--get", "extensions.worktreeConfig"): (1, "", ""),
+            _EXT_READ: (1, "", ""),
             ("config", "--get", "espalier.machine"): (0, "air\n", ""),
             ("rev-parse", "--show-toplevel"): (0, f"{toplevel}\n", ""),
             ("config", "--get", "core.bare"): (0, "true\n" if bare else "false\n", ""),
@@ -812,6 +835,32 @@ class TestInheritedWorktreeName:
         self._git("config", "extensions.worktreeConfig", "true", cwd=repo)
         assert mail.worktree_name_inherited(tmp_path / "wt") is True       # the switch alone names nothing
         self._git("config", "--worktree", "espalier.machine", "air-2", cwd=tmp_path / "wt")
+        assert mail.worktree_name_inherited(tmp_path / "wt") is False
+
+    def test_the_switch_is_read_where_git_reads_it(self, mail, tmp_path, monkeypatch):
+        """git honours extensions.worktreeConfig in the repository's own
+        config only, and reads it as a boolean. Dies to the switch read with
+        a plain --get: a global `true` made --worktree exit 128 on a clone of
+        several worktrees, read as a failed read, so a worktree that shares its
+        clone's name minted and assigned as the clone; and to `yes` read as off."""
+        glob = tmp_path / "global.gitconfig"
+        glob.write_text("[extensions]\n\tworktreeConfig = true\n", encoding="utf-8")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(glob))
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._git("init", "-q", cwd=repo)
+        self._git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base", cwd=repo)
+        self._git("config", "espalier.machine", "air", cwd=repo)
+        self._git("worktree", "add", "-q", str(tmp_path / "wt"), cwd=repo)
+        self._git("worktree", "add", "-q", str(tmp_path / "wt2"), cwd=repo)
+        name, how = mail.machine_setting(tmp_path / "wt", scope="worktree")
+        assert name is None and not how.startswith(mail.MACHINE_UNREAD), how
+        assert mail.worktree_name_inherited(tmp_path / "wt") is True
+        refusal = mail.assign_refusal(tmp_path / "wt", "air") or ""
+        assert "answers the clone's shared name 'air'" in refusal, refusal
+        self._git("config", "extensions.worktreeConfig", "yes", cwd=repo)
+        self._git("config", "--worktree", "espalier.machine", "air-wt", cwd=tmp_path / "wt")
+        assert mail.machine_setting(tmp_path / "wt", scope="worktree")[0] == "air-wt"
         assert mail.worktree_name_inherited(tmp_path / "wt") is False
 
 

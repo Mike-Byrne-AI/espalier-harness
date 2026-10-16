@@ -407,13 +407,20 @@ class TestEveryNameReaderSaysWhichItIs:
 
     def test_no_raw_read_of_the_name_goes_unsaid(self):
         """Dies to: a new ``git config --get`` of the machine key outside the
-        two readers, with no line saying what its exit codes mean (DEF-5004's
-        seven, at filing). Read it through ``mail.machine_setting`` (its
-        ``scope`` reads the clone's or a worktree's own config), or tell exit 1
-        from every other exit and mark the read with the reason."""
+        two readers (DEF-5004's seven, at filing), marked or not. A marker is a
+        comment, so the two raw reads left are named here and their exit-code
+        handling is held by their module tests:
+        ``tests/test_record_fragments.py::TestTheSeatNameSaysAFailedRead`` and
+        ``tests/test_checkout_sync.py::TestReapWorktrees::test_a_seat_name_that_cannot_be_read_keeps_the_worktree``.
+        Read a new one through ``mail.machine_setting`` (its ``scope`` reads the
+        clone's or a worktree's own config)."""
         from tests._name_readers import raw_reads, tools_cc_files
-        _found, silent = raw_reads(tools_cc_files(REPO_ROOT), REPO_ROOT)
+        found, silent = raw_reads(tools_cc_files(REPO_ROOT), REPO_ROOT)
         assert silent == [], f"raw reads of the machine name that do not say a failed read: {silent}"
+        sites = {site.rsplit(":", 1)[0] for site in found}
+        assert sites == {"tools/cc/_record_fragments.py::_seat", "tools/cc/checkout_sync.py::_seat_claims_kept"}, (
+            "a raw read of the machine name outside the two this pin names: route it through "
+            f"mail.machine_setting, or name it here beside the module test that holds its exit codes: {found}")
 
     def test_a_reader_handing_the_reason_on_is_not_a_caller(self, tmp_path):
         """A reader that returns another reader's answer whole is a reader,
@@ -431,8 +438,13 @@ class TestEveryNameReaderSaysWhichItIs:
             "def caller(root):\n"
             "    return machine_setting(root, scope='worktree')[0]\n",
             encoding="utf-8")
-        found, silent, _aliases = calls([planted / "mail.py"], tmp_path)
-        assert found == ["tools/cc/mail.py::caller"] and silent == ["tools/cc/mail.py::caller"], (found, silent)
+        (planted / "seat.py").write_text(
+            "def clone_machine(root):\n"
+            "    return machine_setting(root, scope='local')\n",
+            encoding="utf-8")
+        found, silent, _aliases = calls([planted / "mail.py", planted / "seat.py"], tmp_path)
+        assert found == ["tools/cc/mail.py::caller", "tools/cc/seat.py::clone_machine"], found
+        assert silent == found, ("a same-named shim outside mail.py is a caller like any other", silent)
 
     def test_the_predicate_tells_each_shape_apart(self, tmp_path):
         """The pin's own red, on a planted tree (subfolder included). Dies to: a
@@ -510,10 +522,11 @@ class TestEveryNameReaderSaysWhichItIs:
         assert aliases == [f"tools/cc/deep/readers.py::{n}" for n in (1, 2, 3)], aliases
 
     def test_raw_reads_count_each_read_and_take_only_a_line_marker(self, tmp_path):
-        """DEF-5004's probe predicate, on a planted tree. Dies to: judging per
+        """The raw-read predicate, on a planted tree. Dies to: judging per
         function (one marked read closing its unmarked neighbour), counting a
-        write or another key, missing the ``MACHINE_KEY`` spelling, or taking a
-        mention of the phrase for a fix."""
+        write or another key, missing the ``MACHINE_KEY`` spelling, taking a
+        mention of the phrase for a fix, or skipping a function named like a
+        reader outside ``tools/cc/mail.py``."""
         from tests._name_readers import raw_reads
         planted = tmp_path / "tools" / "cc"
         planted.mkdir(parents=True)
@@ -535,11 +548,16 @@ class TestEveryNameReaderSaysWhichItIs:
             "def machine_setting(root):\n"
             "    return run(['git', 'config', '--get', MACHINE_KEY])\n",
             encoding="utf-8")
-        found, silent = raw_reads([planted / "raw.py"], tmp_path)
+        (planted / "mail.py").write_text(
+            "def machine_setting(root):\n"
+            "    return run(['git', 'config', '--get', MACHINE_KEY])\n",
+            encoding="utf-8")
+        found, silent = raw_reads([planted / "raw.py", planted / "mail.py"], tmp_path)
         assert found == ["tools/cc/raw.py::by_key:8", "tools/cc/raw.py::by_list:10",
+                         "tools/cc/raw.py::machine_setting:16",
                          "tools/cc/raw.py::two_reads:3", "tools/cc/raw.py::two_reads:4"], found
         assert silent == ["tools/cc/raw.py::by_key:8", "tools/cc/raw.py::by_list:10",
-                          "tools/cc/raw.py::two_reads:4"], silent
+                          "tools/cc/raw.py::machine_setting:16", "tools/cc/raw.py::two_reads:4"], silent
 
 
 class TestPathNormalization:

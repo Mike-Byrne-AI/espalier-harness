@@ -10,7 +10,8 @@ child touches is inside its scratch repository. The arm table, the prompts' purp
 what was measured and what was not are in this folder's README.
 
     python3 bench/sandbox_read_drive/drive.py --list
-    python3 bench/sandbox_read_drive/drive.py --tree . --model claude-haiku-5-5 [--only a,b] [--runs DIR]
+    python3 bench/sandbox_read_drive/drive.py --tree . --model claude-haiku-5-5 --only a,b [--runs DIR]
+    python3 bench/sandbox_read_drive/drive.py --tree . --all
 
 It spends a paid headless session per case and needs a logged-in Claude Code; it is
 never run by the suite.
@@ -24,6 +25,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -105,6 +107,25 @@ SAME_CMD = (f"mkdir -p same && printf 'DRIVE_MARKER=%s\\n' {slug(SAME)} > {SAME}
 
 MARK_RE = re.compile(r"DRIVE_MARKER=(MK_\w+)")
 STRICT = json.dumps({"sandbox": {"allowUnsandboxedCommands": False}})
+
+
+def verdict_of(path: str, seen: set[str], text: str, *, unplanted: bool = False) -> str:
+    """``read`` where the path's marker came back; ``refused`` only where a tool
+    result names the path itself in a refusal (``head: .env: Operation not
+    permitted``: the path standing alone, so ``sub/.env``'s line is not
+    ``.env``'s); ``not-run`` otherwise -- a run that never executed (logged out,
+    rate-limited, the model declining) or a late file never planted is not
+    evidence of a refusal."""
+    if slug(path) in seen:
+        return "read"
+    if unplanted:
+        return "not-run"
+    named = re.compile(rf"(?:^|[\s:'\"`]){re.escape(path)}(?=[:\s'\"`]|$)")
+    for line in text.splitlines():
+        low = line.lower()
+        if ("not permitted" in low or "denied" in low) and named.search(line):
+            return "refused"
+    return "not-run"
 
 
 def settings(enabled: bool, deny=None, allow=None, witness=False) -> dict:
@@ -199,9 +220,15 @@ def run_case(runs: Path, model: str, name: str, sett: dict, kind: str, extra: li
     t0 = time.time()
     events = []
     planted_at = None
-    with open(runs / f"{name}.jsonl", "w", encoding="utf-8") as out:
+    # stderr to a file, so a large one cannot fill a pipe nobody reads; the
+    # watchdog kills a child that goes silent, which a check per stdout line
+    # never would.
+    with open(runs / f"{name}.jsonl", "w", encoding="utf-8") as out, \
+            open(runs / f"{name}.stderr", "w", encoding="utf-8") as errf:
         proc = subprocess.Popen(cmd, cwd=repo, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+                                stderr=errf, text=True, encoding="utf-8", errors="replace")
+        watchdog = threading.Timer(240, proc.kill)
+        watchdog.start()
         assert proc.stdout is not None
         for line in proc.stdout:
             out.write(line)
@@ -217,11 +244,9 @@ def run_case(runs: Path, model: str, name: str, sett: dict, kind: str, extra: li
                         for p in LATE_FILES:
                             plant(repo, p)
                         planted_at = ev["_t"]
-            if time.time() - t0 > 240:
-                proc.kill()
-                break
         proc.wait(timeout=30)
-        err = proc.stderr.read() if proc.stderr else ""
+        watchdog.cancel()
+    err = (runs / f"{name}.stderr").read_text(encoding="utf-8", errors="replace")
     calls, results = [], {}
     for ev in events:
         msg = ev.get("message", {})
@@ -235,11 +260,12 @@ def run_case(runs: Path, model: str, name: str, sett: dict, kind: str, extra: li
     init = next((e for e in events if e.get("type") == "system" and e.get("subtype") == "init"), {})
     alltext = "\n".join(r["text"] for r in results.values())
     seen = set(MARK_RE.findall(alltext))  # whole tokens: MK__env never matches inside MK__env_local
-    verdict = {p: ("read" if slug(p) in seen else "refused") for p in targets}
+    verdict = {p: verdict_of(p, seen, alltext, unplanted=(kind == "late" and planted_at is None and p in LATE_FILES))
+               for p in targets}
     errlines = sorted({ln.strip() for ln in alltext.splitlines()
                        if "not permitted" in ln.lower() or "denied" in ln.lower()})
     summary = {
-        "case": name, "repo": str(repo), "rc": proc.returncode, "secs": round(time.time() - t0, 1),
+        "case": name, "kind": kind, "repo": str(repo), "rc": proc.returncode, "secs": round(time.time() - t0, 1),
         "cc_version": init.get("claude_code_version"), "model": init.get("model"),
         "permission_mode": init.get("permissionMode"),
         "planted_at": planted_at,
@@ -268,9 +294,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tree", default=".", help="the espalier checkout whose guard the lists are derived from")
     ap.add_argument("--model", default="claude-haiku-5-5")
     ap.add_argument("--only", default="", help="comma-separated case names")
+    ap.add_argument("--all", action="store_true", help="every case (40 paid sessions)")
     ap.add_argument("--runs", default="", help="where the scratch repos and streams go (default: a new temp dir)")
     ap.add_argument("--list", action="store_true", help="print the case names and exit; runs nothing")
     args = ap.parse_args(argv)
+    if not (args.list or args.only or args.all):
+        ap.error("name the cases with --only, or --all for every one: each case is a paid session")
     if args.list:
         for name, _sett, kind, extra in cases(["<denyRead>"], ["<allowRead>"], Path(args.runs or "<runs>")):
             print(f"{name:<20} {kind:<9} {' '.join(x for x in extra if not x.startswith('{'))}".rstrip())

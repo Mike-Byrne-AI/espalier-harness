@@ -203,7 +203,7 @@ class TestTheSeatNameSaysAFailedRead:
                 got = rf._seat(tmp_path)
             except Exception as exc:  # noqa: BLE001 -- the refusal is the expected answer
                 got = exc
-            assert isinstance(got, Exception) and "could not be read" in str(got), got
+            assert isinstance(got, getattr(rf, "SeatNameUnread", ())) and "could not be read" in str(got), got
             assert rf.main(["--root", str(tmp_path), "new", "session-log"]) == 2
             assert "no Session Log row is named" in capsys.readouterr().err
         monkeypatch.setattr(rf, "run_bounded", lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", ""))

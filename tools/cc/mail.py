@@ -161,8 +161,35 @@ def _off_reason(how: str) -> str:
 
 #: The scopes :func:`machine_setting` reads: the effective setting (``None``),
 #: the clone's shared config (``local``), and a linked worktree's own
-#: (``worktree``, which git reads as ``local`` where the extension is off).
+#: (``worktree``, which is "not set" wherever per-worktree config is off).
 NAME_SCOPES = (None, "local", "worktree")
+
+#: The words :func:`machine_setting` gives a value the channel refuses: a name
+#: is set there, just not one this channel takes, which is not "not set".
+NAME_REFUSED = "is not a name this channel takes"
+
+#: The way out every refusal on a failed name read names: a timeout heals, a
+#: config git cannot parse does not.
+RETRY_HINT = "retry once git answers (a config git cannot parse never will: fix it first)"
+
+
+def _worktree_config(root: Path, *, run: Runner = run, timeout: float = 10.0) -> tuple[bool | None, str]:
+    """``(whether per-worktree config is on, why it could not be read)``, read
+    as git reads it: from the repository's own config (``--local``: git honours
+    ``extensions.worktreeConfig`` nowhere else, so a global value is no answer)
+    and as a boolean (``--type=bool``: ``yes``, ``on`` and ``1`` are on). None
+    where git could not answer."""
+    try:
+        rc, out, err = run(["git", "config", "--local", "--type=bool", "--get", "extensions.worktreeConfig"],
+                           cwd=str(root), env=git_env(), timeout=timeout)
+    except Unresolvable as exc:
+        return None, str(exc)
+    if rc == 1:
+        return False, ""
+    if rc == 0:
+        return out.strip() == "true", ""
+    lines = err.strip().splitlines()
+    return None, f"git exited {rc}" + (f": {lines[-1][:160]}" if lines else "")
 
 
 def machine_setting(root: Path, *, run: Runner = run, timeout: float = 10.0,
@@ -179,21 +206,20 @@ def machine_setting(root: Path, *, run: Runner = run, timeout: float = 10.0,
     flag = [f"--{scope}"] if scope else []
     key = f"{flag[0]} {MACHINE_KEY}" if flag else MACHINE_KEY
     off = ", so the channel is off" if scope is None else ""
+    if scope == "worktree":
+        # Without the extension git keeps no per-worktree config, so no
+        # worktree has a name of its own, and git refuses --worktree (exit 128)
+        # wherever a clone has several: that is "not set", not a read that
+        # failed. Only a failed read of the extension itself is.
+        on, why = _worktree_config(root, run=run, timeout=timeout)
+        if on is None:
+            return None, f"{MACHINE_UNREAD} (extensions.worktreeConfig: {why}), so no machine is named"
+        if not on:
+            return None, (f"git config {key} is not set (extensions.worktreeConfig is off, so no worktree "
+                          "has a name of its own)")
     try:
-        rc, out, err = 0, "true", ""
-        if scope == "worktree":
-            # Without the extension git keeps no per-worktree config, so no
-            # worktree has a name of its own, and git refuses --worktree (exit
-            # 128) wherever a clone has several: that is "not set", not a read
-            # that failed. Only a failed read of the extension itself is.
-            rc, out, err = run(["git", "config", "--get", "extensions.worktreeConfig"], cwd=str(root),
-                               env=git_env(), timeout=timeout)
-            if rc == 1 or (rc == 0 and out.strip().lower() != "true"):
-                return None, (f"git config {key} is not set (extensions.worktreeConfig is off, so no worktree "
-                              "has a name of its own)")
-        if rc == 0:
-            rc, out, err = run(["git", "config", *flag, "--get", MACHINE_KEY], cwd=str(root), env=git_env(),
-                               timeout=timeout)
+        rc, out, err = run(["git", "config", *flag, "--get", MACHINE_KEY], cwd=str(root), env=git_env(),
+                           timeout=timeout)
     except Unresolvable as exc:
         return None, f"{MACHINE_UNREAD} ({exc}), so no machine is named{' and the channel is off' if off else ''}"
     if rc not in (0, 1):
@@ -209,7 +235,7 @@ def machine_setting(root: Path, *, run: Runner = run, timeout: float = 10.0,
         return None, f"git config {key} is not set{off}{' (the default)' if off else ''}"
     if _MACHINE_RE.match(value):
         return value, f"git config {key} = {value}"
-    return None, (f"git config {key} = {value!r} is not a name this channel takes (lowercase "
+    return None, (f"git config {key} = {value!r} {NAME_REFUSED} (lowercase "
                   f"letters, digits and hyphens, 32 at most){off}")
 
 
@@ -708,30 +734,28 @@ def dispatcher_setting(root: Path) -> tuple[str | None, str]:
     return None, f"espalier.toml does not set {DISPATCHER_KEY}, so every machine's assigns count"
 
 
-def worktree_name_inherited(root: Path, *, run: Runner = run, timeout: float = 10.0) -> bool:
+def worktree_name_inherited(root: Path, *, run: Runner = run, timeout: float = 10.0) -> bool | None:
     """True when ``root`` is a LINKED worktree whose machine name is the clone's
     shared one rather than its own ``--worktree`` setting: two seats then answer
     one name, share its mail ref and its id block, and the second can assign as
     the dispatcher (``docs/SHARP_EDGES.md``, "The worktrees of one clone share
-    its machine name"). False for the main worktree, and wherever git cannot
-    answer (the check refuses on evidence, never on a failed read)."""
+    its machine name"). False for the main worktree, and for a worktree with a
+    name of its own (one the channel refuses included: it answers that, not its
+    clone's). None where git could not answer, so each caller says so rather
+    than read the failure as either answer."""
     try:
         rc1, gitdir, _ = run(["git", "rev-parse", "--git-dir"], cwd=str(root), env=git_env(), timeout=timeout)
         rc2, common, _ = run(["git", "rev-parse", "--git-common-dir"], cwd=str(root), env=git_env(), timeout=timeout)
-        if rc1 or rc2 or (root / gitdir.strip()).resolve() == (root / common.strip()).resolve():
-            return False
-        rc, flag, _ = run(["git", "config", "--get", "extensions.worktreeConfig"], cwd=str(root),
-                          env=git_env(), timeout=timeout)
-        if rc != 0 or flag.strip().lower() != "true":
-            return True   # without per-worktree config a linked worktree cannot hold a name of its own
-        # unread-name: ok exit 1 alone is "not set"; git raising or any other exit answers False below
-        rc, own, _ = run(["git", "config", "--worktree", "--get", MACHINE_KEY], cwd=str(root),
-                         env=git_env(), timeout=timeout)
     except Unresolvable:
+        return None
+    if rc1 or rc2:
+        return None
+    if (root / gitdir.strip()).resolve() == (root / common.strip()).resolve():
         return False
-    if rc not in (0, 1):
-        return False      # a read that failed (128: a config git cannot parse) is no evidence of sharing
-    return rc != 0 or not own.strip()
+    own, how = machine_setting(root, run=run, timeout=timeout, scope="worktree")
+    if own is None and how.startswith(MACHINE_UNREAD):
+        return None
+    return own is None and NAME_REFUSED not in how
 
 
 def clone_machine(root: Path, *, run: Runner = run, timeout: float = 10.0) -> tuple[str | None, str]:
@@ -782,11 +806,15 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
     if not (root / ".git").is_file():
         return None, ""          # a main checkout keeps .git as a directory; only a linked worktree has the file
     try:
-        if not worktree_name_inherited(root, run=run, timeout=timeout):
+        inherited = worktree_name_inherited(root, run=run, timeout=timeout)
+        if inherited is None:
+            return None, (f"whether this worktree has a machine name of its own could not be read (`git config "
+                          f"--worktree --get {MACHINE_KEY}` run in it says why), so it is not named; {RETRY_HINT}")
+        if not inherited:
             return None, ""
         clone, how = machine_setting(root, run=run, timeout=timeout)
         if how.startswith(MACHINE_UNREAD):
-            return None, f"{how}; this worktree is not named until git answers"
+            return None, f"{how}; this worktree is not named: {RETRY_HINT}"
         if clone is None:
             return None, ""
         rc, top, _ = run(["git", "rev-parse", "--show-toplevel"], cwd=str(root), env=git_env(), timeout=timeout)
@@ -804,9 +832,15 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
             if rc == 0 and value.strip() and value.strip() != "false":
                 return None, (f"this worktree answers the clone's name {clone!r}, and "
                               f"{by_hand(known=(key, value.strip()))}")
+        ext_on, ext_why = _worktree_config(root, run=run, timeout=timeout)
+        if ext_on is None:
+            return None, (f"this worktree answers the clone's name {clone!r}, and whether per-worktree config is "
+                          f"on could not be read ({ext_why}); {by_hand()}")
+        # With the extension off no worktree holds a name of its own, so none
+        # can already answer the derived one: the siblings are read only when on.
         rc, listing, _ = run(["git", "worktree", "list", "--porcelain"], cwd=str(root), env=git_env(), timeout=timeout)
         here = Path(top.strip()).resolve()
-        for line in listing.splitlines() if rc == 0 else []:
+        for line in listing.splitlines() if rc == 0 and ext_on else []:
             if not line.startswith("worktree "):
                 continue
             other = Path(line[len("worktree "):].strip())
@@ -819,12 +853,10 @@ def name_this_worktree(root: Path, *, run: Runner = run, timeout: float = 10.0) 
             if theirs == name:
                 return None, (f"this worktree answers the clone's name {clone!r}, and the name it derives, `{name}`, "
                               f"is taken by {other}; {by_hand()}")
-        rc, flag, _ = run(["git", "config", "--get", "extensions.worktreeConfig"], cwd=str(root), env=git_env(),
-                          timeout=timeout)
         # The extension lives in the clone's shared config: written only when
         # it is off, so a second worktree starting at once does not contend
         # for git's config lock with the first.
-        writes = [] if rc == 0 and flag.strip().lower() == "true" else [["git", "config", "extensions.worktreeConfig", "true"]]
+        writes = [] if ext_on else [["git", "config", "extensions.worktreeConfig", "true"]]
         for argv in (*writes, ["git", "config", "--worktree", MACHINE_KEY, name]):
             rc, _, err = run(argv, cwd=str(root), env=git_env(), timeout=timeout)
             if rc != 0:
@@ -916,7 +948,11 @@ def assign_refusal(root: Path, machine: str, *, run: Runner = run) -> str | None
     if dispatcher and dispatcher != machine:
         return (f"only the dispatcher ({dispatcher}) assigns jobs; send {dispatcher} a request "
                 f"(--type request) naming the job instead")
-    if worktree_name_inherited(root, run=run):
+    inherited = worktree_name_inherited(root, run=run)
+    if inherited is None:
+        return (f"whether this checkout answers its own name or its clone's {machine!r} could not be read, so an "
+                f"assign from it could read as another seat's; {RETRY_HINT}")
+    if inherited:
         return (f"this linked worktree answers the clone's shared name {machine!r}, so an assign from it would "
                 f"read as {machine}'s; name it first: {naming_steps(root, run=run)}")
     return None

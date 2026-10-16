@@ -466,7 +466,13 @@ def minting_seat(root: Path) -> tuple[str, str | None]:
                               "ask the dispatcher for a block")
         return UNNAMED_SEAT, ("this clone sets no git config espalier.machine, so it mints from the shared "
                               f"range ({UNNAMED_SEAT}); name the box to mint from its own block")
-    if mail.worktree_name_inherited(root):
+    inherited = mail.worktree_name_inherited(root)
+    if inherited is None:
+        # A read that failed is no evidence either way: minting here could
+        # take the clone's next id, so it is refused by name, as an unread name is.
+        raise SeatNameUnread(f"whether this checkout answers its own name or its clone's {machine!r} could not be "
+                             "read; retry once git answers (a config git cannot parse never will: fix it first)")
+    if inherited:
         # mail.naming_steps is the one owner of the by-hand steps (git's
         # core.bare step on a bare clone); an older mail.py without it keeps
         # the two commands.
@@ -623,13 +629,15 @@ def block_key(root: Path, seat: str, blocks: dict[str, dict[str, tuple[int, int]
     if seat in blocks:
         return seat, None
     mail = _mail_module()
-    if mail is None or not hasattr(mail, "clone_machine"):
+    # NAME_SCOPES marks the mail.py whose clone_machine returns its reason; an
+    # older one returns a bare name, which this does not unpack.
+    if mail is None or not hasattr(mail, "NAME_SCOPES"):
         return None, None
     clone, how = mail.clone_machine(root)
     if clone is None and how.startswith(mail.MACHINE_UNREAD):
         raise SeatNameUnread(f"{seat} has no line of its own in [{BLOCKS_TABLE}], and its clone's machine name "
                              f"could not be read ({how}), so the block it mints from is not known; retry once "
-                             "git answers")
+                             "git answers (a config git cannot parse never will: fix it first)")
     if clone and clone in blocks and seat.startswith(clone + "-"):
         return clone, (f"{seat} has no line of its own in [{BLOCKS_TABLE}], so it mints from its clone's "
                        f"block ({clone}), shared with every worktree of this clone")

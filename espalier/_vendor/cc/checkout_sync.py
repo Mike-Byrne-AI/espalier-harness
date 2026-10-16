@@ -1411,8 +1411,10 @@ def _seat_claims_kept(here: _Git, root: Path) -> str:
     its claims cannot be read, as every other check here keeps what it cannot
     read. Without per-worktree config no worktree has a name of its own (git
     then refuses ``--worktree`` outright where a clone has several)."""
-    ext = here.ask("config", "--get", "extensions.worktreeConfig")
-    if ext is not None and (ext.returncode == 1 or (ext.returncode == 0 and ext.stdout.strip().lower() != "true")):
+    # Read as git reads it: the repository's own config (git honours the
+    # extension nowhere else) and as a boolean (yes, on and 1 are on).
+    ext = here.ask("config", "--local", "--type=bool", "--get", "extensions.worktreeConfig")
+    if ext is not None and (ext.returncode == 1 or (ext.returncode == 0 and ext.stdout.strip() != "true")):
         return ""
     asked = None
     if ext is not None and ext.returncode == 0:

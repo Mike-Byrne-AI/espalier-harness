@@ -468,6 +468,42 @@ class TestReapWorktrees:
             assert reason.startswith("its seat name could not be read ("), reason
             assert ("bad config line 3" if failed else "did not answer in time") in reason, reason
 
+    def test_a_switch_read_that_fails_keeps_the_worktree(self, cs, repos, monkeypatch):
+        """The per-worktree config switch read itself failing (a value git
+        cannot read as a boolean, then no answer in time). Dies to a failed
+        switch read taken for "off", which reads as no seat of its own and
+        lets the worktree go with its seat's claims."""
+        work = repos["work"]
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        real_ask = cs._Git.ask
+        switch = ("config", "--local", "--type=bool", "--get", "extensions.worktreeConfig")
+        for i, failed in enumerate((subprocess.CompletedProcess([], 128, "", "fatal: bad boolean config value"),
+                                    None)):
+            wt = _worktree(repos, f"sw{i}", f"lane/sw{i}")
+            _git(wt, "config", "--worktree", "espalier.machine", f"work-sw{i}")
+
+            def ask(self, *args, _failed=failed, **kw):
+                return _failed if args == switch else real_ask(self, *args, **kw)
+            monkeypatch.setattr(cs._Git, "ask", ask)
+            monkeypatch.setattr(cs, "seat_live_claims", lambda root, seat, timeout: [])
+            report = cs.reap_worktrees(work, sessions=[])
+            assert wt.is_dir(), report
+            reason = dict(report.kept)[f"sw{i}"]
+            assert reason.startswith("its seat name could not be read ("), reason
+            assert ("bad boolean config value" if failed else "did not answer in time") in reason, reason
+
+    def test_a_yes_switch_reads_as_on(self, cs, repos, monkeypatch):
+        """git reads the switch as a boolean. Dies to `yes` read as off, which
+        took a worktree whose own seat holds claims for one with no seat."""
+        work = repos["work"]
+        wt = _worktree(repos, "yes", "lane/yes")
+        _git(work, "config", "extensions.worktreeConfig", "yes")
+        _git(wt, "config", "--worktree", "espalier.machine", "work-yes")
+        monkeypatch.setattr(cs, "seat_live_claims",
+                            lambda root, seat, timeout: [{"from": seat, "re": {"lane": "lane/yes"}}])
+        report = cs.reap_worktrees(work, sessions=[])
+        assert wt.is_dir() and dict(report.kept)["yes"].startswith("its seat work-yes holds 1 live claim"), report
+
     def test_todays_case_an_idle_session_in_a_clean_merged_worktree_keeps_it(self, cs, repos, tmp_path):
         """Clean, merged, unlocked, no file written for hours -- and a live
         Claude session sits in it. The registry names it; the reaper keeps it."""

@@ -1617,6 +1617,7 @@ def _seat_channel(mail, machine, *claims, inherited=False, clone=None, others=()
         # read, which the mint refuses (code review, TP-701 r7: without it the
         # unread check could be dropped and every unnamed clone refused).
         MACHINE_UNREAD=mail.MACHINE_UNREAD,
+        NAME_SCOPES=mail.NAME_SCOPES,   # the mail.py whose clone_machine returns its reason
         machine_setting=lambda root, **kw: (machine, "named" if machine else "unnamed"),
         worktree_name_inherited=lambda root, **kw: inherited,
         clone_machine=clone_reader or (lambda root, **kw: (own_clone, "named" if own_clone else "unnamed")),
@@ -1735,6 +1736,16 @@ class TestIdsAreMintedFromTheSeatsBlock:
             assert _file_minted(lr, t, rid=("DEF-2005",)) != 0
             err = capsys.readouterr().err
             assert "clone's machine name could not be read" in err and "--override" in err, err
+
+    def test_an_unread_inherited_check_refuses_the_mint_by_name(self, lr, tmp_path, monkeypatch, capsys):
+        """mail.worktree_name_inherited answers None where git could not
+        answer. Dies to that taken for "has a name of its own": the mint then
+        took the clone's next id from a worktree that may share its name."""
+        t = _seat_tree(tmp_path)
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win", inherited=None))
+        assert _mint(lr, t, "DEF") != 0
+        err = capsys.readouterr().err
+        assert "could not be read" in err and "fix it first" in err, err
 
     def test_a_refused_filing_gives_its_minted_number_back(self, lr, tmp_path, monkeypatch, capsys):
         t = _seat_tree(tmp_path)

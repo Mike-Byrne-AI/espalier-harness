@@ -260,6 +260,33 @@ class TestTheSeatNamesSayAFailedRead:
             said = str(caught.value)
             assert "cannot be told from the clone itself" in said and seat.mail.MACHINE_UNREAD in said, said
 
+    def test_a_hand_set_name_the_channel_refuses_is_not_replaced_by_a_derived_one(self, seat, clone, registry):
+        """A worktree whose own config holds a value the channel does not take.
+        SessionStart never names it (it has a name of its own), so a derived
+        name would stand for a seat nothing answers. Dies to the refused value
+        read as "not set" (the derived name offered, and resolve handing the
+        worktree over under it), the board having said the opposite."""
+        feat = _worktree(clone, "feat")
+        _git(feat, "config", "--worktree", "espalier.machine", "Air-2")
+        found, _note = seat.seats(clone, fetch=False)
+        row = next(s for s in found if s.path == str(feat))
+        assert row.naming == "unnamed" and row.name == "" and seat.mail.NAME_REFUSED in row.naming_note, row
+        with pytest.raises(seat.Refused):
+            seat.resolve(clone, "box-feat")
+
+    def test_launch_refuses_when_the_worktrees_own_name_cannot_be_read(self, seat, clone, monkeypatch):
+        """The launch's own check, after naming: dies to the unread name read
+        as "does not answer the seat", which names the wrong cause."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        monkeypatch.setattr(seat, "resolve", lambda root, s: seat.Target(s, feat, True, False))
+        monkeypatch.setattr(seat.mail, "name_this_worktree", lambda path, **kw: (None, ""))
+        monkeypatch.setattr(seat, "_own_name",
+                            lambda path: ("", "unread", "git config could not be read (git exited 128)"))
+        with pytest.raises(seat.Refused) as caught:
+            seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=True)
+        said = str(caught.value)
+        assert "own seat name could not be read" in said and "fix it first" in said, said
+
     def test_a_worktree_whose_own_name_is_unread_is_not_given_a_derived_one(self, seat, clone, registry):
         """A config git cannot parse in the worktree's own config. Dies to the
         failed read taken for "no name of its own": the derived name then

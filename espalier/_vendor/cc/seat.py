@@ -171,14 +171,18 @@ def _home(root: Path) -> Path:
     return root.joinpath(*WORKTREES_REL)
 
 
-def _own_name(path: Path) -> tuple[str, str]:
-    """``(the worktree's own name or '', why it could not be read or '')``:
-    git's per-worktree setting, read as :func:`mail.machine_setting` reads it,
-    so a read that failed is said, never taken for "no name of its own"."""
+def _own_name(path: Path) -> tuple[str, str, str]:
+    """``(the worktree's own name or '', state, why)``: git's per-worktree
+    setting, read as :func:`mail.machine_setting` reads it. ``state`` is
+    ``own``, ``unset``, ``refused`` (a value is set there that the channel
+    does not take, which is no reason to derive one) or ``unread`` (the read
+    failed, said, never taken for "no name of its own")."""
     own, how = mail.machine_setting(path, scope="worktree")
-    if own is None and how.startswith(mail.MACHINE_UNREAD):
-        return "", how
-    return own or "", ""
+    if own:
+        return own, "own", ""
+    if how.startswith(mail.MACHINE_UNREAD):
+        return "", "unread", how
+    return "", ("refused" if mail.NAME_REFUSED in how else "unset"), how
 
 
 def _seat_name(clone: str | None, path: Path, clone_unread: str = "") -> tuple[str, str, str]:
@@ -186,10 +190,14 @@ def _seat_name(clone: str | None, path: Path, clone_unread: str = "") -> tuple[s
     one SessionStart derives from its folder, else ''. ``how`` is ``unread``,
     with ``why``, where its own name, or the clone's it would derive from
     (``clone_unread``), could not be read: then no name is given, since a
-    derived one could stand for another seat."""
-    own, unread = _own_name(path)
-    if unread:
-        return "", "unread", unread
+    derived one could stand for another seat. A value of its own that the
+    channel refuses is ``unnamed`` with ``why``: SessionStart will not name a
+    worktree that holds one, so no derived name is offered for it either."""
+    own, state, why = _own_name(path)
+    if state == "unread":
+        return "", "unread", why
+    if state == "refused":
+        return "", "unnamed", why
     if own:
         return own, "own", ""
     if clone_unread:
@@ -343,7 +351,7 @@ def resolve(root: Path, seat: str) -> Target:
     clone, clone_how = mail.clone_machine(root)
     if not clone:
         if clone_how.startswith(mail.MACHINE_UNREAD):
-            raise Refused(f"{clone_how}, so no seat of this clone can be resolved until git answers")
+            raise Refused(f"{clone_how}, so no seat of this clone can be resolved; {mail.RETRY_HINT}")
         raise Refused(f"this clone names no machine, so it has no seats: `git config {mail.MACHINE_KEY} <name>` "
                       "names it (lowercase letters, digits and hyphens)")
     if seat == clone:
@@ -362,7 +370,7 @@ def resolve(root: Path, seat: str) -> Target:
         registered[sync._norm(path)] = (path, name)
     if unread:
         raise Refused(f"the seat name of {'; '.join(unread)} could not be read, so whether it is {seat!r} cannot be "
-                      "told: nothing is resolved until git answers")
+                      f"told: nothing is resolved; {mail.RETRY_HINT}")
     prefix = f"{clone}-"
     folder = seat[len(prefix):] if seat.startswith(prefix) else ""
     if not folder or mail.worktree_seat_name(clone, folder) != seat:
@@ -776,10 +784,10 @@ def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unc
         if said:
             say(said)
         if name is None:
-            own, unread = _own_name(target.path)
-            if unread:
-                raise Refused(f"{target.path}'s own seat name could not be read ({unread}), so whether it answers "
-                              f"{seat!r} cannot be told: nothing is launched until git answers")
+            own, state, why = _own_name(target.path)
+            if state == "unread":
+                raise Refused(f"{target.path}'s own seat name could not be read ({why}), so whether it answers "
+                              f"{seat!r} cannot be told: nothing is launched; {mail.RETRY_HINT}")
             if own != seat:
                 raise Refused(f"{target.path} does not answer {seat!r} and could not be named: "
                               f"{said or 'no reason given'}")
@@ -855,7 +863,7 @@ def cmd_retire(root: Path, seat: str, *, dry_run: bool, fetch: bool, return_jobs
     named_clone, clone_how = mail.clone_machine(root)
     if named_clone is None and clone_how.startswith(mail.MACHINE_UNREAD):
         raise Refused(f"{clone_how}, so {seat!r} cannot be told from the clone itself: nothing is released or "
-                      "removed until git answers")
+                      f"removed; {mail.RETRY_HINT}")
     clone = named_clone or ""
     if seat == clone:
         raise Refused(f"{seat} is the clone itself: its checkout is the repository, never retired")

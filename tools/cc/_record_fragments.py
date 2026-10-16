@@ -950,8 +950,8 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 seat = args.seat or _seat(root)
             except SeatNameUnread as exc:
-                print(f"{exc}, so no Session Log row is named: run it again once git answers, or name the "
-                      "seat with --seat", file=sys.stderr)
+                print(f"{exc}, so no Session Log row is named: run it again once git answers (a config git "
+                      "cannot parse never will: fix it first), or name the seat with --seat", file=sys.stderr)
                 return 2
             path = this_sessions_row(root, seat)
             if path is not None:
