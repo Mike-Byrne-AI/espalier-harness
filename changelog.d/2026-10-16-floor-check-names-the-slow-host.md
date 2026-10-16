@@ -21,10 +21,11 @@
   - `init` does not claim the hooks are active on a start it never saw: it
     says the start was not confirmed and tells you to run `doctor`.
   - `doctor` gives such an interpreter the 5 seconds a blocking hook gets.
-    If it starts, nothing is reported. If it does not, `doctor` says every
-    blocking guard runs out of time before it decides, which is true
-    whether the machine is that loaded or the interpreter hangs at
-    start-up, and says what to do.
+    If it starts, `doctor` still warns that it was slow to start, since a
+    hook runs for several times as long as a bare start. If it does not,
+    `doctor` says every blocking guard runs out of time before it decides,
+    which is true whether the machine is that loaded or the interpreter
+    hangs at start-up. Either way it says what to do.
   - Each interpreter is asked once per run. Measured with every start
     check forced to run out of time, on a machine with both `python` and
     `python3`, `init` spawned 80 start checks of 2 seconds each; it now

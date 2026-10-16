@@ -217,10 +217,17 @@ def interpreter_start_failure(argv: "list[str] | tuple[str, ...]") -> str | None
     about: ``init`` asked one interpreter 26 times on a host where every ask
     timed out twice.
     """
-    verdict = _start_verdict(argv, 2, 2)
+    verdict = _start_verdict(argv, START_PROBE_SECONDS, START_PROBE_TRIES)
     if verdict is not None and verdict.startswith(START_UNANSWERED):
         return None
     return verdict
+
+
+#: The start-up probe's time per try, and its tries: the banner probe's two
+#: seconds, and one retry for a shim that is slow once. Read by every sentence
+#: that quotes them, so a sentence cannot drift from the probe.
+START_PROBE_SECONDS = 2
+START_PROBE_TRIES = 2
 
 
 def interpreter_start_unconfirmed(argv: "list[str] | tuple[str, ...]") -> str | None:
@@ -229,7 +236,7 @@ def interpreter_start_unconfirmed(argv: "list[str] | tuple[str, ...]") -> str | 
     answered either way. The same kept verdict, so asking both costs one
     probe. For a caller that claims a start (``DEF-5014``): a decision keeps
     the banner's verdict, a claim says the start was not confirmed."""
-    verdict = _start_verdict(argv, 2, 2)
+    verdict = _start_verdict(argv, START_PROBE_SECONDS, START_PROBE_TRIES)
     if verdict is not None and verdict.startswith(START_UNANSWERED):
         return verdict
     return None
@@ -340,7 +347,8 @@ def _ask_start(argv: "list[str] | tuple[str, ...]", seconds: int, tries: int) ->
         times = ", twice" if tries == 2 else ""
         return (
             f"{START_UNANSWERED}: its start-up probe did not answer within "
-            f"{seconds} s{times}, which a loaded host does to a working interpreter"
+            f"{seconds} s{times}, which a loaded host does to a working "
+            f"interpreter, and an interpreter that hangs at start-up does too"
         )
     if result.returncode == 0:
         return None

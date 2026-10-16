@@ -26,6 +26,8 @@ from espalier._atomic_io import atomic_write_bytes, atomic_write_text
 from espalier._integrity_bridge import load_integrity_module
 from espalier._python_floor import (
     LAUNCHER_VERSION_FLAG,
+    START_PROBE_SECONDS,
+    START_PROBE_TRIES,
     floor_text,
     interpreter_argv,
     interpreter_meets_floor,
@@ -8128,24 +8130,30 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
         for where, old_command, new_command in result.changes:
             print(f"    {where}: `{old_command}` -> `{new_command}`", file=sys.stderr)
     elif result.status == REWIRE_NOTHING and result.unconfirmed:
-        # Not "already starts": the start of these was never seen, and nothing
-        # on PATH whose start was seen is there to take them (DEF-5014).
-        print(
-            f"--rewire-interpreter: nothing to rewire to -- "
-            f"{plural(len(result.unconfirmed), 'interpreter command')} this command "
-            f"can read {'answers' if len(result.unconfirmed) == 1 else 'answer'} as "
-            f"Python {floor_text()}+, but the start-up probe did not answer within "
-            f"2 s, twice, and no interpreter on PATH whose start was seen is there "
-            f"to rewire to. No file was written. Run "
-            f"`{_remedy_py()} -m espalier doctor .`: it gives "
-            f"each the {_doctor._blocking_hook_seconds()} s a blocking hook gets.",
-            file=sys.stderr,
-        )
+        # Not "already starts": the WARN below says what was left (DEF-5014).
+        print("--rewire-interpreter: nothing to rewire to. No file was written.",
+              file=sys.stderr)
     elif result.status == REWIRE_NOTHING:
         print(
             f"--rewire-interpreter: nothing to rewire -- every interpreter this "
             f"command can read already starts and meets Python {floor_text()}+. "
             f"No file was written.",
+            file=sys.stderr,
+        )
+    if result.unconfirmed:
+        # Sites whose start was never seen, left because no target whose start
+        # was seen is on PATH (DEF-5014): said on a rewire that moved other
+        # sites too, and never folded into "already starts".
+        count = len(result.unconfirmed)
+        print(
+            f"WARN: --rewire-interpreter left "
+            f"{plural(count, 'interpreter command')} alone that "
+            f"{'answers' if count == 1 else 'answer'} as Python {floor_text()}+ "
+            f"but whose start the start-up probe never saw (no answer within "
+            f"{START_PROBE_SECONDS} s, in {START_PROBE_TRIES} tries), and no "
+            f"interpreter on PATH whose start was seen is there to rewire to. "
+            f"Run `{_remedy_py()} -m espalier doctor .`: it gives each the "
+            f"{_doctor._blocking_hook_seconds()} s a blocking hook gets.",
             file=sys.stderr,
         )
     if result.declined:
@@ -8553,10 +8561,9 @@ def rewire_interpreter_in_settings(
         if interpreter_meets_floor(target) and start_unconfirmed_of(target) is None:
             stale.extend(unseen)
             unseen = []
+    left = [(where, container[key]) for container, key, where, _ in unseen]
     if not stale:
-        return RewireResult(
-            REWIRE_NOTHING, declined=declined,
-            unconfirmed=[(where, container[key]) for container, key, where, _ in unseen])
+        return RewireResult(REWIRE_NOTHING, declined=declined, unconfirmed=left)
 
     target = target or new_interpreter or _detect_python_command()
     # Refuse rather than wire a name that fails the same floor. Rewiring 3.9 to
@@ -8608,7 +8615,7 @@ def rewire_interpreter_in_settings(
         container[key] = new_command
         changes.append((where, old_command, new_command))
     if not changes:
-        return RewireResult(REWIRE_NOTHING, declined=declined)
+        return RewireResult(REWIRE_NOTHING, declined=declined, unconfirmed=left)
 
     backup_path = _back_up_settings(settings_path)
     # ensure_ascii=False: escaping the operator's own non-ASCII paths back to
@@ -8619,7 +8626,7 @@ def rewire_interpreter_in_settings(
         follow_symlinks=True,
     )
     return RewireResult(REWIRE_DONE, detail=_backup_detail(backup_path),
-                        changes=changes, declined=declined)
+                        changes=changes, declined=declined, unconfirmed=left)
 
 
 #: Paths Espalier itself deploys under ``tools/cc/``. Derived from the deploy

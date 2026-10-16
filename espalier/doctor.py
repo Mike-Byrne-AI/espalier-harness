@@ -28,7 +28,8 @@ from espalier._venv import (
 from espalier._integrity_bridge import load_integrity_module
 from espalier._text import plural
 from espalier._python_floor import (
-    START_TOO_SLOW, floor_text, interpreter_argv, interpreter_meets_floor,
+    START_PROBE_SECONDS, START_PROBE_TRIES, START_TOO_SLOW, floor_text,
+    interpreter_argv, interpreter_meets_floor,
     interpreter_start_failure, interpreter_start_failure_within,
     interpreter_start_unconfirmed, is_python3_banner, start_unconfirmed_of,
 )
@@ -925,7 +926,24 @@ def _check_python_resolver(
                 seconds = _blocking_hook_seconds()
                 late = _interpreter_start_failure_within([resolved, *flags], seconds)
                 if late is None:
-                    continue  # it starts, given a blocking hook's time
+                    # It starts, but not within the start-up probe's time: a
+                    # hook runs for several times a bare start (9.4 times on
+                    # the Air, measured by the failure-mode review), so while
+                    # the host is this loaded a blocking guard may still run
+                    # out of its time. Said, never passed over as healthy.
+                    if out_of_time is not None:
+                        out_of_time.append(cmd)
+                    issues.append(
+                        f"hook interpreter `{cmd}` resolves to `{resolved}` and "
+                        f"answers `--version` as Python {floor_text()}+, and starts, "
+                        f"but not within {START_PROBE_SECONDS} s in "
+                        f"{START_PROBE_TRIES} tries: a blocking hook gets {seconds} s "
+                        f"per tool call for its whole run, which takes several times "
+                        f"a bare start, so while this host is this loaded a blocking "
+                        f"guard wired with it may run out of time before it decides "
+                        f"and fail OPEN."
+                    )
+                    continue
                 if not late.startswith(START_TOO_SLOW):
                     problem = (
                         f"hook interpreter `{cmd}` resolves to `{resolved}` and "
@@ -3064,10 +3082,10 @@ def run_doctor_check(
             next_steps,
             f"run `{hint} -m espalier doctor .` again when "
             f"the host is less loaded: the hook interpreter "
-            f"{', '.join(f'`{c}`' for c in late_starts)} did not start within the "
-            f"{_blocking_hook_seconds()} s a blocking hook gets; if it still does "
-            f"not, put a Python {floor_text()}+ that starts on PATH and rewire the "
-            f"hooks to it",
+            f"{', '.join(f'`{c}`' for c in late_starts)} was slow to start here, "
+            f"against the {_blocking_hook_seconds()} s a blocking hook gets for its "
+            f"whole run; if it still is, put a Python {floor_text()}+ that starts "
+            f"quickly on PATH and rewire the hooks to it",
         )
     if python_resolver_issues and (target_seen or len(late_starts) < len(python_resolver_issues)):
         # DEF-620: this used to say plain `init .`, which does NOT overwrite an
