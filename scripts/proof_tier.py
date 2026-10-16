@@ -3,7 +3,7 @@
 
 The proof-order bodies (`/implement-task` step 7, `/preflight` Step 2,
 `/implement-pack` step 6) state one rule: a change that touched no engine code
-and no hook runs the tree-wide contracts (`pytest -m contract -q`); a change
+and no hook runs the tree-wide contracts (`pytest -n auto -m contract -q`); a change
 that touched a file the pull-recall corpus reads (``memory/``, the two
 catalogs, ``docs/sharp-edges/``, the principles) runs those contracts and then
 the recall engine's own tests, because a corpus edit moves the calibration
@@ -27,15 +27,22 @@ leaves it out since 2026-10-01, which is how it stopped crashing them);
 
 The full tier's command lines are the hook type gate, the lint line, then the
 parallel recipe: ``pytest -n auto`` with the five serial files left out, then
-those five serially. The pytest pair is
+those five at one xdist worker (``-n 1`` since DEF-2017: on a thread-method
+host a ceiling crossing then names its test). The pytest pair is
 the local default since 2026-09-06, after the two clean full runs
 ``tests/README.md`` pre-registered as the count the flip needed (6:31 and 6:12
 on the 8 GB self-host box, against 18:41-19:52 serial -- the 2026-09-06 figures;
 by 2026-09-23 the tier's floor was the stage-one smoke's nested serial not-slow
 child, about twelve minutes on its own, so a full tier reads longer than either:
 DEF-919). The contract slice's
-own parallel form raced on the live tree the same day, so the slice stays
-serial. A parallel full run that errors on a live-tree race is a loud error,
+own parallel form raced on the live tree the same day, and the slice stayed
+serial until 2026-10-16 (DEF-2017). Its races were the
+``reports/.cc_surface_gate.json`` temp file a suite gate run wrote into the live
+checkout, closed at its writer on 2026-10-14 (DEF-973), and the staged release
+tree, closed on 2026-10-06 (DEF-1138); its tests had run under ``-n auto``
+inside the full tier's parallel leg in every cell since the CI flip; so the
+contract and recall lines run at ``-n auto`` too, and a recurrence goes to the
+races line in ``tests/README.md``. A parallel full run that errors on a live-tree race is a loud error,
 never a false green: rerun the failing file serially and add the date and the
 test to the races line in ``tests/README.md`` (the flip rests on two clean
 runs; the counter-evidence needs a home or it is rerun and forgotten).
@@ -229,7 +236,19 @@ _RECALL_CORPUS_FILES: tuple[str, ...] = (
 #: tokens, so the receipt and the execution cannot drift apart. A dict, so a
 #: tier nobody wired raises instead of falling through to the cheaper one.
 _PYTEST: tuple[str, ...] = ("pytest", "-q")
-_CONTRACT_ARGV: tuple[str, ...] = ("pytest", "-m", "contract", "-q")
+#: Every pytest line a tier runs is under xdist (DEF-2017, after DEF-979's
+#: portability cell): where pytest-timeout uses its thread method (Windows, a
+#: seat's own box) a test that crosses the per-test ceiling then fails by name
+#: and its worker is replaced, where one session would end with no summary and
+#: no test named. That holds up to xdist's restart cap, four per worker by
+#: default: past it the run stops scheduling, and ``-q`` hides xdist's line
+#: saying so (failure-mode review, 2026-10-16; the summary line that would
+#: count the tests that never ran is DEF-2020). The serial files keep one worker (their placement was
+#: measured: wall-clock budgets and timeout-near gates, kept off parallel
+#: load); every other line runs at ``-n auto``.
+_PARALLEL: tuple[str, ...] = ("-n", "auto")
+_ONE_WORKER: tuple[str, ...] = ("-n", "1")
+_CONTRACT_ARGV: tuple[str, ...] = ("pytest", "-n", "auto", "-m", "contract", "-q")
 #: The heavy end-to-end stages (tests/conftest.py::_HEAVY_E2E_TESTS) leave the
 #: per-pull-request tier: the stage-one smoke alone ran 848 s on one xdist
 #: worker of a 992 s parallel leg (a CI cell, 2026-09-30), and one member lives
@@ -250,10 +269,10 @@ _TIER_ARGVS: dict[str, tuple[tuple[str, ...], ...]] = {
     "full": (
         ("mypy", "tools/cc/hooks/"),
         _RUFF_ARGV,
-        _PYTEST + ("-n", "auto") + _NOT_HEAVY + tuple(f"--ignore={rel}" for rel in SERIAL_FILES),
-        _PYTEST + _NOT_HEAVY + SERIAL_FILES,
+        _PYTEST + _PARALLEL + _NOT_HEAVY + tuple(f"--ignore={rel}" for rel in SERIAL_FILES),
+        _PYTEST + _ONE_WORKER + _NOT_HEAVY + SERIAL_FILES,
     ),
-    "recall": (_RUFF_ARGV, _CONTRACT_ARGV, _PYTEST + RECALL_SLICE_FILES),
+    "recall": (_RUFF_ARGV, _CONTRACT_ARGV, _PYTEST + _PARALLEL + RECALL_SLICE_FILES),
     "contract": (_RUFF_ARGV, _CONTRACT_ARGV),
 }
 TIERS: tuple[str, ...] = tuple(_TIER_ARGVS)
@@ -261,6 +280,11 @@ FULL_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS[
 RECALL_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["recall"])
 CONTRACT_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["contract"])
 INSTALL_HINT = "needs pytest-xdist, mypy and ruff (the `dev` extra: pip install -e '.[dev]')"
+#: Why a leg can be empty: only the full tier has a serial leg (``LEGS``); a
+#: cheaper tier runs a changed serial file on its own-tests line at one
+#: worker, inside its parallel leg (``tier_argvs``).
+_EMPTY_LEG_WHY = ("only the full tier has a serial leg; a cheaper tier runs a changed serial "
+                  "file in its parallel leg, at one worker")
 #: The legs ``--leg`` can run. ``serial`` is the ``SERIAL_FILES`` line where a
 #: tier has one (only the full tier does); ``parallel`` is every other line, by
 #: complement, so a cheaper tier's required cells run their whole tier under
@@ -326,7 +350,11 @@ def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = Fals
     ``FULL_COMMANDS`` stays the four lines the receipts count."""
     argvs = _TIER_ARGVS[which]
     own = () if which == "full" else own_tests(changed, root)
-    lines = argvs + ((_PYTEST + _NOT_HEAVY + own,) if own else ())
+    own_parallel = tuple(rel for rel in own if rel not in SERIAL_FILES)
+    own_serial = tuple(rel for rel in own if rel in SERIAL_FILES)
+    lines = (argvs
+             + ((_PYTEST + _PARALLEL + _NOT_HEAVY + own_parallel,) if own_parallel else ())
+             + ((_PYTEST + _ONE_WORKER + _NOT_HEAVY + own_serial,) if own_serial else ()))
     if heavy:
         lines = tuple(_without_heavy_filter(argv) for argv in lines)
     if leg == "serial":
@@ -448,6 +476,11 @@ def run_commands(argvs, root: Path) -> int:
         except FileNotFoundError:
             rc = 127
             print(f"{head}: not installed -- {INSTALL_HINT}", flush=True)
+        if head == "pytest" and rc == 4 and "-n" in rest:
+            # pytest's usage error: without pytest-xdist, `-n` is an argument
+            # it does not know, and every tier's pytest lines carry it.
+            print(f"pytest: exit 4 is a usage error; an unrecognized `-n` means pytest-xdist "
+                  f"is missing -- {INSTALL_HINT}", flush=True)
         print(f"exit {rc}: {shlex.join(argv)}", flush=True)
         worst = max(worst, rc)
     verdict = "PASS" if worst == 0 else f"FAIL (worst exit {worst})"
@@ -1261,14 +1294,15 @@ def main(argv: list[str] | None = None) -> int:
             if args.leg == "both":
                 what = "the tier"
             elif args.leg == "parallel" and which != "full":
-                what = "the whole tier (its parallel leg; this tier has no serial line)"
+                what = ("the whole tier (its parallel leg: only the full tier has a serial leg, "
+                        "and a changed serial file runs here at one worker)")
             else:
                 what = f"the {args.leg} leg of the tier"
             print(f"all {len(result['commands'])} lines are {what} -- `--run` executes them under one receipt")
         if not result["commands"]:
             print(f"nothing to run: the {args.leg} leg of the {which} tier has no commands "
-                  "(the serial files belong to the full tier)")
-        if which == "full":
+                  f"({_EMPTY_LEG_WHY})")
+        if result["commands"]:
             print(INSTALL_HINT)
         if untracked:
             print("untracked -- invisible to the git ls-files gates until staged:")
@@ -1287,7 +1321,7 @@ def main(argv: list[str] | None = None) -> int:
             # which leg of which tier has nothing to run, then let the receipt
             # count zero of zero rather than exit silently.
             print(f"nothing to run: the {args.leg} leg of the {which} tier has no commands "
-                  "(the serial files belong to the full tier)", flush=True)
+                  f"({_EMPTY_LEG_WHY})", flush=True)
         rc = run_commands(argvs, root)
         if which != earned:
             # The forced-tier note printed at the top is four lines above the

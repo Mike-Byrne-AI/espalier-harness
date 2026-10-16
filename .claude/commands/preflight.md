@@ -68,8 +68,8 @@ untracked one. On the Espalier-Harness tree the suite has three tiers, and
 its `proof_tier.py` computes which one a diff earns (the same
 boundary `/implement-task` step 7 and `/implement-pack` step 6 cite): a diff
 that touched no file under `tools/cc/` and no `.py` under `espalier/` outside
-its byte-mirrors runs `pytest -m contract -q` here (the tree-wide truth
-tests; 164 s serial when measured, and the five contracts that
+its byte-mirrors runs `pytest -n auto -m contract -q` here (the tree-wide truth
+tests; 164 s serially when last measured, and the five contracts that
 caught that day's batch are all in it), then the recall engine's own test
 files as well when it touched a file the pull-recall corpus reads (`memory/`,
 the two catalogs, `docs/sharp-edges/`, the principles -- the `recall` tier,
@@ -79,7 +79,7 @@ on the shipped runtime, and every handoff, runs the full suite: on the
 Espalier-Harness tree, one command,
 its `proof_tier.py --run --tier full`, which runs the four lines
 (the hook type gate, the lint line, xdist across the cores with the five
-serial files left out, then those five serially: 6:31 and 6:12 for the two
+serial files left out, then those five at one xdist worker: 6:31 and 6:12 for the two
 pytest lines on the two clean runs that form was gated on, against about
 nineteen minutes serial) and prints a receipt naming each;
 a live-tree race, if one ever shows, is a loud error -- rerun the failing file
