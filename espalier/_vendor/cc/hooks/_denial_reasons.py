@@ -964,24 +964,329 @@ _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
 #: the shipped tree on purpose: widening it means editing a protected hook
 #: file, in view of the reviewer and the gate-weakening speed bump, not a
 #: test file.
-# ── a deny hook that cannot start (DEF-1176) ─────────────────────────
-#: The structured refusal a deny hook emits when a sibling import fails at its
-#: module top. The tree's ``tools/cc/hooks/_hook_utils.py`` predates its
-#: siblings: an upgrade kept it as the adopter's (no managed marker) and
-#: regenerated the rest, which may import names the kept copy lacks. Under the
-#: hook protocol an uncaught exit 1 is a NON-BLOCKING error, so a guard that
-#: dies at import judges nothing (measured 2026-10-07 and 2026-10-10: every
-#: call proceeded unguarded); this is the fail-closed shape instead. Composed
-#: by :func:`refuse_on_helper_skew` from this module and the standard library
-#: alone, since any other sibling may be the one that failed. ``{hook}`` is the
-#: hook's stem, ``{error}`` the exception's class and text.
+# ── a deny hook that cannot start (DEF-1176, DEF-2010, DEF-4025) ─────
+#: The structured refusals a deny hook emits when a sibling import fails at its
+#: module top. Under the hook protocol an uncaught exit 1 is a NON-BLOCKING
+#: error, so a guard that dies at import judges nothing (measured 2026-10-07
+#: and 2026-10-10: every call proceeded unguarded); these are the fail-closed
+#: shape instead. Two causes read differently (DEF-2010). A KEPT OLD HELPER: an
+#: upgrade kept the tree's ``tools/cc/hooks/_hook_utils.py`` as the adopter's
+#: (no managed marker) and regenerated the rest, which import a name the kept
+#: copy lacks -- or, on a tree being edited, an edit removed the name or added
+#: its import first. ANY OTHER RAISE: the file that raised is named, with its
+#: line, and the upgrade is not offered, since it would regenerate the file
+#: under edit (the 2026-10-14 and 10-16 lock-outs, each a sibling that raised
+#: at import and a refusal that blamed the helper). Composed by
+#: :func:`refuse_on_helper_skew` from this module and the standard library
+#: alone, since any other sibling may be the one that failed. ``{hook}`` is
+#: the hook's stem, ``{error}`` the exception's class and text, ``{restore}``
+#: the repair (:func:`_restore_clause`).
 HELPER_SKEW = (
-    "{hook} cannot start: a sibling helper import failed ({error}). The tree's"
-    " tools/cc/hooks/_hook_utils.py predates its siblings -- an upgrade kept it as"
-    " yours (no managed marker) and regenerated the rest. From a terminal, restore"
-    " its `# espalier:managed` marker line and run `espalier upgrade --execute .`;"
-    " every call this hook judges is refused until then."
+    "{hook} cannot start: {taker} takes `{name}` from tools/cc/hooks/_hook_utils.py,"
+    " which lacks it ({error}). If an upgrade kept _hook_utils.py as yours (no managed"
+    " marker) and regenerated the rest: from a terminal, restore its `# espalier:managed`"
+    " marker line and run `espalier upgrade --execute .`. If an edit in progress removed"
+    " the name or added its import, restore the edited file to HEAD: {restore}. Every"
+    " call this hook judges is refused until then."
 )
+SIBLING_RAISED = (
+    "{hook} cannot start: {file} raised {error} at line {line} while the hook imported"
+    " its siblings. No name is missing from tools/cc/hooks/_hook_utils.py, so this is"
+    " not a kept old helper and `espalier upgrade` would not repair it. Restore the file"
+    " to HEAD: {restore}. Every call this hook judges is refused until then."
+)
+#: The import failed in a file outside ``tools/cc/`` (never seen: the hook's
+#: own frame is under it), so nothing is named to restore.
+SIBLING_RAISED_UNPLACED = (
+    "{hook} cannot start: a sibling import failed ({error}) and no file under"
+    " tools/cc/ is on its traceback. Read the error from a terminal and repair the"
+    " file it names. Every call this hook judges is refused until then."
+)
+#: The crash guard's text for a fault after the imports (DEF-4025's twin):
+#: the class and the place, never the message (a message can quote a path or a
+#: file's contents), as the record never carries it either.
+WRITE_GUARD_CRASHED_AT = (
+    "write_guard internal error ({error} at {file}:{line}); failing closed. Re-issue"
+    " once. If every call is denied the guard is wedged, and if {file} is being"
+    " edited, restore it to HEAD: {restore}. Otherwise `/status --log` counts it and"
+    " the repair is made from a terminal outside this session."
+)
+#: The context of the one call a wedged PreToolUse hook lets through (DEF-4025):
+#: a Bash call that is one command, a restore to HEAD of a file the refusal
+#: names. No ``permissionDecision`` goes with it, so the operator's permission
+#: mode decides the call as it would any other; the text reaches Claude.
+WEDGE_RESTORE_CONTEXT = (
+    "{hook} is wedged ({cause}), so it refuses every call but one: a restore to"
+    " HEAD of a file its refusal names. This call restores {file}, so it was let"
+    " through. {copy} The next call is judged by the restored hook; if it still"
+    " cannot start, its refusal names what raised next."
+)
+
+#: The Bash command words a restore may not contain: a separator, a pipe, a
+#: redirect, an expansion, a substitution, a glob, a group or a comment (a
+#: second command, or an operand the shell would rewrite). Quotes and the
+#: backslash are read as the shell reads them (``shlex``).
+_RESTORE_SHELL_CHARS = frozenset(";&|<>$`(){}*?[]~!#\n\r")
+#: The longest restore command read; past it the call is refused unread.
+_RESTORE_COMMAND_CAP = 4096
+
+
+class _SkewReading:
+    """What a failed start can say about itself: the file that raised (an
+    absolute path under ``tools/cc/``) and its line, the helper name a sibling
+    takes and ``_hook_utils`` lacks (the kept-old-helper test), and the files
+    whose restore to HEAD the refusal names and lets through."""
+
+    def __init__(self, file: Path | None, line: int | None, missing: str | None,
+                 restorable: list[Path], cc_dir: Path) -> None:
+        self.file = file
+        self.line = line
+        self.missing = missing
+        self.restorable = restorable
+        self.cc_dir = cc_dir
+
+    def rel(self, path: Path) -> str:
+        """``path`` as the repository spells it, ``tools/cc/...``."""
+        return "tools/cc/" + path.relative_to(self.cc_dir).as_posix()
+
+
+def _under(path: Path, cc_dir: Path) -> bool:
+    try:
+        path.relative_to(cc_dir)
+    # fail-open: ok deliberate a path outside tools/cc is an answer, not a fault
+    except ValueError:
+        return False
+    return True
+
+
+def _missing_helper_name(exc: BaseException) -> str | None:
+    """The kept-old-helper test: the name a sibling takes from ``_hook_utils``
+    that the loaded ``_hook_utils`` lacks, or None. Read from the exception's
+    own fields (an ``ImportError`` from ``from _hook_utils import <name>``, an
+    ``AttributeError`` on the ``_hook_utils`` module object), then checked
+    against the module, so an error raised for any other reason never reads as
+    a kept helper."""
+    helper = sys.modules.get("_hook_utils")
+    if helper is None:
+        return None
+    name: object = None
+    if isinstance(exc, ImportError) and exc.name == "_hook_utils":
+        name = getattr(exc, "name_from", None)
+        if not isinstance(name, str):
+            text = str(exc)
+            if text.startswith("cannot import name '"):
+                name = text[len("cannot import name '"):].split("'", 1)[0]
+    elif isinstance(exc, AttributeError) and getattr(exc, "obj", None) is helper:
+        name = exc.name
+    if isinstance(name, str) and name and not hasattr(helper, name):
+        return name
+    return None
+
+
+def wedge_reading(exc: BaseException) -> _SkewReading | None:
+    """Read a failed start (or, for the crash guard, a fault after it): the
+    innermost traceback frame in a file under ``tools/cc/`` -- or, for a
+    ``SyntaxError``, which has no frame in the file it names, that file -- and
+    the kept-old-helper test. The files a restore may name are that file, and
+    ``_hook_utils.py`` too when the test holds (either edit wedges the hook,
+    and a restore to HEAD of either re-enables the committed guard). It reads
+    the exception's class, traceback, ``filename`` and the name a sibling
+    takes, never renders its text, so the crash guard may hand it a caught
+    OSError (the portability roster's argued entry). Never raises: None when
+    nothing can be read."""
+    try:
+        cc_dir = Path(__file__).resolve().parent.parent
+        file: Path | None = None
+        line: int | None = None
+        if isinstance(exc, SyntaxError) and exc.filename:
+            named = Path(exc.filename).resolve()
+            if _under(named, cc_dir):
+                file, line = named, exc.lineno
+        if file is None:
+            tb = exc.__traceback__
+            while tb is not None:
+                frame_file = Path(tb.tb_frame.f_code.co_filename)
+                if frame_file.is_absolute() or frame_file.exists():
+                    resolved = frame_file.resolve()
+                    if _under(resolved, cc_dir):
+                        file, line = resolved, tb.tb_lineno
+                tb = tb.tb_next
+        missing = _missing_helper_name(exc)
+        restorable = [file] if file is not None else []
+        if missing is not None:
+            helper = cc_dir / "hooks" / "_hook_utils.py"
+            if helper not in restorable:
+                restorable.insert(0, helper)
+        return _SkewReading(file, line, missing, restorable, cc_dir)
+    # fail-open: ok text-fallback the refusal goes out unplaced
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _restore_clause(reading: _SkewReading, event: str) -> str:
+    """The repair a refusal names: each restorable file's `git restore`, and on
+    PreToolUse that one such Bash command is the call the hook lets through."""
+    commands = " or ".join(f"`git restore {reading.rel(p)}`" for p in reading.restorable)
+    if event == "PreToolUse":
+        return (f"{commands}, as one Bash command, is the one call this hook lets through"
+                " while it is wedged, and it saves the file's bytes under"
+                " .espalier-state/wedge-restore/ first; or restore it from a terminal")
+    return f"from a terminal, or as one Bash command, {commands}"
+
+
+def _restore_operand(words: list[str]) -> str | None:
+    """The one path a restore to HEAD names, or None for any other command:
+    ``git restore [--source=HEAD | -s HEAD | --worktree | -W] [--] <path>``,
+    ``git checkout -- <path>`` or ``git checkout HEAD -- <path>``. Any other
+    option (``--staged`` restores the index, not the file), ref or operand
+    count is refused."""
+    if len(words) < 3 or words[0] != "git":
+        return None
+    verb, rest = words[1], words[2:]
+    operands: list[str] = []
+    if verb == "restore":
+        ended = False
+        i = 0
+        while i < len(rest):
+            word = rest[i]
+            if ended or not word.startswith("-"):
+                operands.append(word)
+            elif word == "--":
+                ended = True
+            elif word in ("--source=HEAD", "--worktree", "-W"):
+                pass
+            elif word in ("--source", "-s") and rest[i + 1:i + 2] == ["HEAD"]:
+                i += 1
+            else:
+                return None
+            i += 1
+    elif verb == "checkout":
+        if rest[:1] == ["--"]:
+            operands = rest[1:]
+        elif rest[:2] == ["HEAD", "--"]:
+            operands = rest[2:]
+        else:
+            return None
+    else:
+        return None
+    return operands[0] if len(operands) == 1 else None
+
+
+def _restore_target(payload: object, reading: _SkewReading) -> Path | None:
+    """The restorable file this call restores to HEAD, or None (DEF-4025):
+    a Bash call whose command is one ``git restore`` or ``git checkout --`` of
+    exactly one file the refusal names. A relative operand resolves against the
+    payload's ``cwd``; forward and back slashes both read. Standard library
+    only: ``_bash_patterns`` may be the module that raised."""
+    import os
+    import shlex
+
+    if not isinstance(payload, dict) or payload.get("tool_name") != "Bash":
+        return None
+    tool_input = payload.get("tool_input")
+    command = tool_input.get("command") if isinstance(tool_input, dict) else None
+    if not isinstance(command, str) or len(command) > _RESTORE_COMMAND_CAP:
+        return None
+    if _RESTORE_SHELL_CHARS & set(command):
+        return None
+    try:
+        words = shlex.split(command, posix=True)
+    # fail-open: ok deliberate an unbalanced quote is no restore, and is refused
+    except ValueError:
+        return None
+    operand = _restore_operand(words)
+    if not operand:
+        return None
+    cwd = payload.get("cwd")
+    base = Path(cwd) if isinstance(cwd, str) and cwd else Path(os.getcwd())
+    target = Path(operand.replace("\\", "/"))
+    if not target.is_absolute():
+        target = base / target
+    wanted = os.path.normcase(str(target.resolve()))
+    for path in reading.restorable:
+        if os.path.normcase(str(path.resolve())) == wanted:
+            return path
+    return None
+
+
+def _read_payload() -> object:
+    """The hook's stdin as JSON, or None. The floor helper's reader is not
+    used: the kept helper may lack it."""
+    import json
+
+    try:
+        return json.loads(sys.stdin.buffer.read().decode("utf-8", errors="replace"))
+    # fail-open: ok deliberate an unread payload lets nothing through
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def wedge_restore(hook: str, reading: _SkewReading | None, error: str,
+                  payload: object) -> tuple[str, dict] | None:
+    """The one call a wedged PreToolUse hook lets through (DEF-4025): when
+    ``payload`` restores to HEAD a file ``reading`` (:func:`wedge_reading`)
+    names, save the file's bytes under ``.espalier-state/wedge-restore/`` and
+    return the context to send and the record's details; else None. ``error``
+    is the exception's class name. A failed copy never blocks the restore, and
+    the context says so. Never raises."""
+    try:
+        if reading is None or not reading.restorable:
+            return None
+        target = _restore_target(payload, reading)
+        if target is None:
+            return None
+        rel = reading.rel(target)
+        raiser = reading.rel(reading.file) if reading.file is not None else "a sibling"
+        if reading.missing is not None:
+            cause = f"{raiser} takes `{reading.missing}`, which tools/cc/hooks/_hook_utils.py lacks"
+        else:
+            cause = f"{raiser} raised {error}"
+        copy = _save_before_restore(target, reading.cc_dir)
+        context = WEDGE_RESTORE_CONTEXT.format(hook=hook, cause=cause, file=rel, copy=copy)
+        return context, {"hook": hook, "file": rel, "error": error}
+    # fail-open: ok deliberate a reading that faults lets nothing through
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _save_before_restore(target: Path, cc_dir: Path) -> str:
+    """Copy ``target``'s bytes to ``<root>/<state dir>/wedge-restore/`` and say
+    where; the discard speed bump's snapshot cannot run while the hook is
+    wedged, and the restore discards the file's uncommitted edit."""
+    import datetime
+
+    try:
+        state = getattr(sys.modules.get("_hook_utils"), "STATE_DIR", ".espalier-state")
+        if not isinstance(state, str) or not state:
+            state = ".espalier-state"
+        if not target.is_file():
+            return "There was no file to copy first."
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        dest_dir = cc_dir.parent.parent / state / "wedge-restore"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / f"{target.stem}-{stamp}.py.txt"
+        dest.write_bytes(target.read_bytes())
+        return f"Its bytes as they were are saved at {dest.relative_to(cc_dir.parent.parent).as_posix()}."
+    except Exception as err:  # noqa: BLE001 -- fail-open: ok copy-failed the restore still goes through, and says so
+        return f"No copy was saved first ({type(err).__name__})."
+
+
+def crash_refusal(reading: _SkewReading | None, error: str) -> tuple[str, dict] | None:
+    """The crash guard's named refusal (DEF-4025's twin): the text naming the
+    innermost ``tools/cc/`` frame of ``reading`` (:func:`wedge_reading`) by
+    ``error``, the exception's class name, and its line, with the record's
+    details; None when no frame is placed. Never raises."""
+    try:
+        if reading is None or reading.file is None:
+            return None
+        rel = reading.rel(reading.file)
+        reason = WRITE_GUARD_CRASHED_AT.format(
+            error=error, file=rel, line=reading.line,
+            restore=_restore_clause(reading, "PreToolUse"))
+        return reason, {"file": rel, "line": reading.line}
+    # fail-open: ok text-fallback today's unplaced text goes out
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn:
@@ -989,17 +1294,34 @@ def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn
     at module top, then exit 0: the structured channel, where an exit 1 would be
     read as non-blocking. ``event`` picks the decision shape -- ``PreToolUse``
     emits ``hookSpecificOutput.permissionDecision: deny``, ``ConfigChange`` and
-    ``Stop`` the Stop-style ``{"decision": "block"}``. Standard library and this module only:
-    ``_hook_utils`` is the floor the caller already imported, ``_integrity`` may
-    be the module that failed, so the audit record is best-effort, and the
-    exception's text routes through ``_json_safe``'s ``os_error_text`` (never the
-    helper's, which may be the name missing), with ``str`` as the floor. The record type is the crash guard's, ``<event>_blocked_internal_error``
-    with ``details.skew`` naming the cause, so no roster or documented table
-    grows; the type is composed, never a literal, so the crash-guard census does
-    not read this module as a fifth blocking hook. One channel per deny: nothing
-    on stderr. Pinned by ``tests/test_hooks_start_on_a_kept_helper.py``."""
+    ``Stop`` the Stop-style ``{"decision": "block"}``. The text names the file
+    that raised and its line, and offers the upgrade only on the kept-old-helper
+    test (DEF-2010). On ``PreToolUse`` the payload is read first, and a Bash
+    restore to HEAD of a file the refusal names is let through instead, with
+    context and no decision (DEF-4025, :func:`wedge_restore`). Standard library
+    and this module only: ``_hook_utils`` is the floor the caller already
+    imported, ``_integrity`` may be the module that failed, so the audit record
+    is best-effort, and the exception's text routes through ``_json_safe``'s
+    ``os_error_text`` (never the helper's, which may be the name missing), with
+    ``str`` as the floor. The record types are composed, never literals, so the
+    crash-guard census does not read this module as a fifth blocking hook: the
+    refusal's is the crash guard's, ``<event>_blocked_internal_error`` with
+    ``details.skew`` naming the cause, and the let-through's is a fail-open
+    record, ``<event>_failed_open_wedge_restore``, so no roster or documented
+    table grows. One channel per decision: nothing on stderr. Pinned by
+    ``tests/test_hooks_start_on_a_kept_helper.py``."""
     import json
 
+    reading = wedge_reading(exc)
+    if event == "PreToolUse":
+        passed = wedge_restore(hook, reading, type(exc).__name__, _read_payload())
+        if passed is not None:
+            context, passed_details = passed
+            _record(f"{event.lower()}_failed_open_wedge_restore", passed_details)
+            sys.stdout.write(json.dumps({"hookSpecificOutput": {
+                "hookEventName": event, "additionalContext": context}}) + "\n")
+            sys.stdout.flush()
+            raise SystemExit(0)
     # The seam renders an OSError's path as a path (a Windows path through
     # str() is its repr, backslashes doubled); it lives one directory up in
     # tools/cc, beside the hooks and regenerated with them, never in the kept
@@ -1011,18 +1333,21 @@ def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn
         from _json_safe import os_error_text  # type: ignore[import-not-found]
     except Exception:  # noqa: BLE001 -- fail-open: ok text-fallback the refusal still goes out, with the plain text
         os_error_text = str  # type: ignore[assignment]
-    reason = HELPER_SKEW.format(hook=hook, error=f"{type(exc).__name__}: {os_error_text(exc)}")
-    try:
-        import _hook_utils  # type: ignore[import-not-found]
-        import _integrity  # type: ignore[import-not-found]
-        _integrity.append_audit(
-            _hook_utils.resolve_project_root(),
-            {"event_type": f"{event.lower()}_blocked_internal_error",
-             "details": {"hook": hook, "error": type(exc).__name__, "skew": "sibling import"}},
-            quiet=True,
-        )
-    except Exception:  # noqa: BLE001, S110 -- a best-effort record; the refusal is the point
-        pass
+    error = f"{type(exc).__name__}: {os_error_text(exc)}"
+    details: dict = {"hook": hook, "error": type(exc).__name__, "skew": "sibling import"}
+    if reading is not None and reading.file is not None:
+        details.update(file=reading.rel(reading.file), line=reading.line)
+    if reading is not None and reading.missing is not None and reading.file is not None:
+        reason = HELPER_SKEW.format(hook=hook, taker=reading.rel(reading.file), name=reading.missing,
+                                    error=error, restore=_restore_clause(reading, event))
+        details["cause"] = "kept helper"
+    elif reading is not None and reading.file is not None:
+        details["cause"] = "raised"
+        reason = SIBLING_RAISED.format(hook=hook, file=reading.rel(reading.file), error=error,
+                                       line=reading.line, restore=_restore_clause(reading, event))
+    else:
+        reason = SIBLING_RAISED_UNPLACED.format(hook=hook, error=error)
+    _record(f"{event.lower()}_blocked_internal_error", details)
     output: dict
     if event in ("ConfigChange", "Stop"):
         output = {"decision": "block", "reason": reason}
@@ -1032,6 +1357,18 @@ def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn
     sys.stdout.write(json.dumps(output) + "\n")
     sys.stdout.flush()
     raise SystemExit(0)
+
+
+def _record(event_type: str, details: dict) -> None:
+    """A best-effort audit record for a hook that cannot start: ``_integrity``
+    may be the module that failed."""
+    try:
+        import _hook_utils  # type: ignore[import-not-found]
+        import _integrity  # type: ignore[import-not-found]
+        _integrity.append_audit(
+            _hook_utils.resolve_project_root(), {"event_type": event_type, "details": details}, quiet=True)
+    except Exception:  # noqa: BLE001, S110 -- a best-effort record; the decision is the point
+        pass
 
 
 FAIL_CLOSED_REASONS: frozenset[str] = frozenset({

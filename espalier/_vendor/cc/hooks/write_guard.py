@@ -2669,6 +2669,7 @@ def _judge(seen: list[dict] | None = None) -> int:
     treats exit 1 as a non-blocking script error, so we MUST fail-closed
     inside the hook process itself. ``seen`` receives the payload once read.
     """
+    data: dict | None = None
     try:
         data = _hook_utils.read_stdin_safely()
         if seen is not None:
@@ -2707,6 +2708,31 @@ def _judge(seen: list[dict] | None = None) -> int:
             root = _resolve_project_root()
         except BaseException:  # noqa: BLE001 -- best-effort; never mask the deny
             root = Path(".")
+        # A fault in a file being edited wedges the guard the way a failed
+        # import does (DEF-4025): the refusal names the innermost tools/cc
+        # frame by class and line, and the one call it lets through is a Bash
+        # restore to HEAD of that file, with context and no decision. All of it
+        # runs under a catch-all, so whatever it raises (a kept older
+        # _denial_reasons has none of the three names) leaves today's deny.
+        passed: tuple[str, dict] | None = None
+        named: tuple[str, dict] | None = None
+        try:
+            reading = _denial_reasons.wedge_reading(exc)
+            passed = _denial_reasons.wedge_restore("write_guard", reading, error_type, data)
+            if passed is None:
+                named = _denial_reasons.crash_refusal(reading, error_type)
+        except BaseException:  # noqa: BLE001 -- best-effort; never mask the deny
+            passed = named = None
+        if passed is not None:
+            _audit(root, "pretooluse_failed_open_wedge_restore", **passed[1])
+            print(json.dumps({"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "additionalContext": passed[0]}}))
+            return 0
+        if named is not None:
+            return _audit_deny(
+                root, "pretooluse_blocked_internal_error", named[0],
+                hook="write_guard", error=error_type, **named[1],
+            )
         return _audit_deny(
             root, "pretooluse_blocked_internal_error",
             _denial_reasons.WRITE_GUARD_INTERNAL_ERROR,

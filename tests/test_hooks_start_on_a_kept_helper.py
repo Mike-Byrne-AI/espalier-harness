@@ -300,6 +300,10 @@ def _cell(base: Path, job: tuple[str, str, str | None, str]) -> Cell:
     if kind == "planted":
         (root / "tools" / "cc" / "hooks" / f"{name}.py").write_text(
             'raise ImportError("planted: this sibling cannot import")\n', encoding="utf-8")
+    elif kind in ("raised", "syntax"):
+        sibling = root / "tools" / "cc" / "hooks" / f"{name}.py"
+        tail = "\nraise KeyError(1)\n" if kind == "raised" else "\ndef (:\n"
+        sibling.write_bytes(sibling.read_bytes() + tail.encode("utf-8"))
     elif name is not None:
         _skew(root, name)
     run = _run_hook(root, hook, event)
@@ -319,6 +323,8 @@ def cells(tmp_path_factory) -> list[Cell]:
             jobs.append((hook, event, name, "degraded"))
         jobs.append((hook, event, None, "intact"))
         jobs.append((hook, event, "_integrity", "planted"))
+        jobs.append((hook, event, "_integrity", "raised"))
+        jobs.append((hook, event, "_integrity", "syntax"))
     for hook, event in reporter_hooks().items():
         for name in sorted(BUDGET_NAMES):
             jobs.append((hook, event, name, "reporter"))
@@ -448,7 +454,8 @@ class TestADenyHookOnAKeptHelper:
             reason = _reason(c)
             assert c.hook[:-3] in reason, (c.hook, reason)
             assert "tools/cc/hooks/_hook_utils.py" in reason and "espalier upgrade --execute" in reason, reason
-            assert "cannot start: a sibling helper import failed" in reason, reason
+            assert f"takes `{c.name}` from tools/cc/hooks/_hook_utils.py, which lacks it" in reason, reason
+            assert "git restore tools/cc/hooks/_hook_utils.py" in reason, reason
             assert "Error" in reason, reason          # the exception's class, never through os_error_text
 
     def test_a_missing_degraded_name_is_judged_not_refused(self, cells):
@@ -471,6 +478,10 @@ class TestADenyHookOnAKeptHelper:
         assert {c.hook for c in planted} == set(deny_hooks())
         bad = [_summary(c) for c in planted if not (c.rc == 0 and _is_refusal(c) and "planted" in _reason(c))]
         assert not bad, bad
+        # Named, and not blamed on the helper (DEF-2010): no name is missing.
+        for c in planted:
+            assert "tools/cc/hooks/_integrity.py raised ImportError" in _reason(c), _reason(c)
+            assert "upgrade --execute" not in _reason(c), _reason(c)
 
 
 class TestAReporterOnTheBudgetSkew:
@@ -481,6 +492,270 @@ class TestAReporterOnTheBudgetSkew:
         assert {c.hook for c in reporters} == set(reporter_hooks()), sorted({c.hook for c in reporters})
         bad = [_summary(c) for c in reporters if c.rc != 0]
         assert not bad, bad
+
+
+# ── a wedged guard names what raised, and lets one restore through ───────────
+#
+# DEF-2010: the refusal names the file that raised, its line and the exception,
+# and offers the upgrade only on the kept-old-helper test. DEF-4025: on
+# PreToolUse it reads the payload first and lets through exactly one shape, a
+# Bash call that is one ``git restore`` or ``git checkout --`` to HEAD of a file
+# it names, with context, no decision and a copy of the file saved first; the
+# crash guard after the imports does the same. Each plant is one copy of
+# ``tools/cc``; every payload in its table runs against it (the hook judges a
+# restore, it never runs one, so the copy stays as planted).
+
+_RAISE = "\nraise KeyError(1)\n"
+#: The plants: (name, file under tools/cc/hooks, appended text). The crash
+#: plant rebinds a helper write_guard aliases at import and calls on every
+#: call, so the fault lands after the imports, inside the crash guard.
+_WEDGE_PLANTS = {
+    "raised": ("_reinject.py", _RAISE),
+    "kept": (f"{HELPER}.py", "\ndel say_once\n"),
+    "crash": (f"{HELPER}.py", "\ndef payload_cwd(*args, **kwargs):\n    raise KeyError(2)\n"),
+}
+_REINJECT = "tools/cc/hooks/_reinject.py"
+
+
+def _bash(command: str) -> dict:
+    return {"tool_name": "Bash", "tool_input": {"command": command}}
+
+
+#: (plant, payload, passes). Every refused row is one way past the shape the
+#: rows name: a second command, an operator, an expansion, another ref, the
+#: index, another file, two files, a glob, another tool, an unquoted backslash
+#: path (the shell eats the backslashes, so git would read another path).
+_RESTORE_TABLE: list[tuple[str, dict, bool]] = [
+    ("raised", _bash(f"git restore {_REINJECT}"), True),
+    ("raised", _bash(f"git restore -- {_REINJECT}"), True),
+    ("raised", _bash(f"git restore --source=HEAD -- {_REINJECT}"), True),
+    ("raised", _bash(f"git restore -s HEAD {_REINJECT}"), True),
+    ("raised", _bash(f"git restore --worktree {_REINJECT}"), True),
+    ("raised", _bash(f"git checkout -- {_REINJECT}"), True),
+    ("raised", _bash(f"git checkout HEAD -- {_REINJECT}"), True),
+    ("raised", _bash(f"git restore ./{_REINJECT}"), True),
+    ("raised", _bash("git restore 'tools\\cc\\hooks\\_reinject.py'"), True),
+    ("raised", _bash(f'git restore "{_REINJECT}"'), True),
+    ("raised", _bash(f"git restore {_REINJECT}; ls"), False),
+    ("raised", _bash(f"git restore {_REINJECT} && echo done"), False),
+    ("raised", _bash(f"git restore {_REINJECT} | cat"), False),
+    ("raised", _bash(f"git restore {_REINJECT} > out.txt"), False),
+    ("raised", _bash(f"git restore {_REINJECT}\nls"), False),
+    ("raised", _bash("git restore $(echo tools/cc/hooks/_reinject.py)"), False),
+    ("raised", _bash("git restore `echo tools/cc/hooks/_reinject.py`"), False),
+    ("raised", _bash(f"git checkout main -- {_REINJECT}"), False),
+    ("raised", _bash(f"git restore --source=main -- {_REINJECT}"), False),
+    ("raised", _bash(f"git restore --source HEAD~1 {_REINJECT}"), False),
+    ("raised", _bash(f"git restore --source main {_REINJECT}"), False),
+    ("raised", _bash(f"git restore -s origin/main -- {_REINJECT}"), False),
+    ("raised", _bash(f"git restore --staged {_REINJECT}"), False),
+    ("raised", _bash(f"git checkout {_REINJECT}"), False),
+    ("raised", _bash(f"git -C . restore {_REINJECT}"), False),
+    ("raised", _bash("git restore tools/cc/hooks/_speedbump.py"), False),
+    ("raised", _bash("git restore tools/_reinject.py"), False),
+    # A relative operand resolves against the payload's cwd (the Bash tool's
+    # directory), not the hook's: the same words pass from one and not the other.
+    ("raised", {**_bash("git restore cc/hooks/_reinject.py"), "cwd": "tools"}, True),
+    ("raised", {**_bash(f"git restore {_REINJECT}"), "cwd": "tools"}, False),
+    ("raised", _bash(f"git restore {_REINJECT} tools/cc/hooks/_speedbump.py"), False),
+    ("raised", _bash("git restore tools/cc/hooks/_rein*.py"), False),
+    ("raised", _bash("git restore tools\\cc\\hooks\\_reinject.py"), False),
+    ("raised", {"tool_name": "PowerShell", "tool_input": {"command": f"git restore {_REINJECT}"}}, False),
+    ("raised", {"tool_name": "Edit", "tool_input": {"file_path": _REINJECT, "old_string": "a", "new_string": "b"}}, False),
+    ("raised", {"tool_name": "Write", "tool_input": {"file_path": _REINJECT, "content": ""}}, False),
+    ("kept", _bash(f"git restore tools/cc/hooks/{HELPER}.py"), True),
+    ("kept", _bash("git restore tools/cc/hooks/_speedbump.py"), True),
+    ("kept", _bash(f"git restore {_REINJECT}"), False),
+    ("crash", _bash(f"git restore tools/cc/hooks/{HELPER}.py"), True),
+    ("crash", _bash(f"git restore {_REINJECT}"), False),
+]
+
+
+@dataclass
+class Restore:
+    plant: str
+    payload: dict
+    passes: bool
+    rc: int
+    stdout: str
+    stderr: str
+    copies: list[str]
+    audit: str
+
+
+def _plant(root: Path, plant: str) -> None:
+    _copy_cc(root)
+    name, text = _WEDGE_PLANTS[plant]
+    target = root / "tools" / "cc" / "hooks" / name
+    target.write_bytes(target.read_bytes() + text.encode("utf-8"))
+
+
+def _run_payload(root: Path, hook: str, payload: dict, audit: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, str(root / "tools" / "cc" / "hooks" / hook)],
+        input=json.dumps({"hook_event_name": "PreToolUse", "session_id": "wedged", "cwd": str(root), **payload}),
+        cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
+        env={**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(audit)},
+    )
+
+
+def _wedge_copies(root: Path) -> list[str]:
+    saved = root / ".espalier-state" / "wedge-restore"
+    return sorted(p.name for p in saved.iterdir()) if saved.is_dir() else []
+
+
+def _audit_text(audit: Path) -> str:
+    return "".join(p.read_text(encoding="utf-8", errors="replace") for p in audit.rglob("*") if p.is_file()) \
+        if audit.is_dir() else ""
+
+
+@pytest.fixture(scope="module")
+def restores(tmp_path_factory) -> list[Restore]:
+    base = tmp_path_factory.mktemp("wedged")
+
+    def one(job: tuple[int, tuple[str, dict, bool]]) -> Restore:
+        i, (plant, payload, passes) = job
+        root = base / f"{i:02d}-{plant}"
+        _plant(root, plant)
+        audit = root / "audit"
+        if "cwd" in payload:  # a row's cwd is relative to its own copy
+            payload = {**payload, "cwd": str(root / payload["cwd"])}
+        run = _run_payload(root, "write_guard.py", payload, audit)
+        result = Restore(plant, payload, passes, run.returncode, run.stdout, run.stderr,
+                         _wedge_copies(root), _audit_text(audit))
+        shutil.rmtree(root, ignore_errors=True)
+        return result
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        return list(pool.map(one, enumerate(_RESTORE_TABLE)))
+
+
+def _output(run: Restore) -> dict:
+    text = run.stdout.strip()
+    assert text.startswith("{") and len(text.splitlines()) == 1, (run.payload, run.stdout, run.stderr)
+    return json.loads(text)["hookSpecificOutput"]
+
+
+class TestAWedgedGuardNamesWhatRaised:
+    def test_a_sibling_that_raises_at_import_is_named_and_the_upgrade_is_not(self, cells):
+        # The row's probe shape, on every deny hook: a sibling's module body
+        # raises. The refusal names the file, its line and the exception, and
+        # never sends the reader to the upgrade, which would regenerate the
+        # file under edit (DEF-2010).
+        raised = [c for c in cells if c.kind == "raised"]
+        assert {c.hook for c in raised} == set(deny_hooks())
+        for c in raised:
+            reason = _reason(c)
+            assert c.rc == 0 and _is_refusal(c), _summary(c)
+            assert "tools/cc/hooks/_integrity.py raised KeyError: 1 at line " in reason, reason
+            assert "upgrade --execute" not in reason and "managed" not in reason, reason
+            assert "git restore tools/cc/hooks/_integrity.py" in reason, reason
+
+    def test_a_sibling_that_does_not_parse_is_named_by_its_own_line(self, cells):
+        # A SyntaxError has no frame in the file it names, so the file is read
+        # from the error itself.
+        broken = [c for c in cells if c.kind == "syntax"]
+        assert {c.hook for c in broken} == set(deny_hooks())
+        for c in broken:
+            reason = _reason(c)
+            assert c.rc == 0 and _is_refusal(c), _summary(c)
+            assert "tools/cc/hooks/_integrity.py raised SyntaxError" in reason, reason
+            assert "upgrade --execute" not in reason, reason
+
+    def test_only_the_pretooluse_refusal_offers_a_call_it_lets_through(self, cells):
+        # The ConfigChange and Stop guards judge no tool call, so their text
+        # sends the restore to a terminal or a Bash call, and claims no pass.
+        for c in (c for c in cells if c.kind == "raised"):
+            lets = "is the one call this hook lets through" in _reason(c)
+            assert lets == (c.event == "PreToolUse"), (c.hook, _reason(c))
+
+
+class TestTheOneRestoreAWedgedGuardLetsThrough:
+    def test_the_table_is_both_polarities_on_each_plant(self):
+        for plant in _WEDGE_PLANTS:
+            seen = {passes for p, _payload, passes in _RESTORE_TABLE if p == plant}
+            assert seen == {True, False}, plant
+
+    def test_each_row_passes_or_is_refused_as_written(self, restores):
+        wrong = [(r.plant, r.payload, r.passes, r.stdout[-200:], r.stderr[-200:]) for r in restores
+                 if r.rc != 0 or ("permissionDecision" in _output(r)) == r.passes]
+        assert not wrong, wrong
+
+    def test_a_restore_that_passes_carries_context_and_no_decision(self, restores):
+        # No permissionDecision: the operator's permission mode decides the
+        # call as it would any other; the context says why it passed.
+        for r in (r for r in restores if r.passes):
+            out = _output(r)
+            assert set(out) == {"hookEventName", "additionalContext"}, out
+            assert "is wedged" in out["additionalContext"] and "was let through" in out["additionalContext"], out
+
+    def test_a_restore_that_passes_saves_the_file_first_and_records_it(self, restores):
+        for r in (r for r in restores if r.passes):
+            assert len(r.copies) == 1 and r.copies[0].endswith(".py.txt"), (r.payload, r.copies)
+            assert r.copies[0] in _output(r)["additionalContext"], _output(r)
+            assert "pretooluse_failed_open_wedge_restore" in r.audit, r.audit[-400:]
+        assert not [r.copies for r in restores if not r.passes and r.copies]
+
+    def test_the_copy_holds_the_bytes_the_restore_discards(self, tmp_path):
+        root = tmp_path / "copy"
+        _plant(root, "raised")
+        run = _run_payload(root, "write_guard.py", _bash(f"git restore {_REINJECT}"), root / "audit")
+        assert "additionalContext" in run.stdout, run.stdout
+        (copy,) = (root / ".espalier-state" / "wedge-restore").iterdir()
+        assert copy.read_bytes() == (root / _REINJECT).read_bytes()
+        assert copy.read_bytes().endswith(_RAISE.encode("utf-8"))
+
+    def test_a_copy_that_cannot_be_written_never_blocks_the_restore(self, tmp_path):
+        root = tmp_path / "nocopy"
+        _plant(root, "raised")
+        (root / ".espalier-state").write_text("a file where the directory goes\n", encoding="utf-8")
+        run = _run_payload(root, "write_guard.py", _bash(f"git restore {_REINJECT}"), root / "audit")
+        out = json.loads(run.stdout)["hookSpecificOutput"]
+        assert "permissionDecision" not in out and "No copy was saved first" in out["additionalContext"], out
+
+    def test_the_kept_helper_refusal_names_both_files_and_the_upgrade(self, restores):
+        refused = next(r for r in restores if r.plant == "kept" and not r.passes)
+        reason = _output(refused)["permissionDecisionReason"]
+        assert "takes `say_once` from tools/cc/hooks/_hook_utils.py" in reason, reason
+        assert "espalier upgrade --execute" in reason, reason
+        assert "`git restore tools/cc/hooks/_hook_utils.py` or `git restore tools/cc/hooks/" in reason, reason
+
+    def test_a_quoted_shell_operator_refuses_even_where_the_path_would_match(self, tmp_path):
+        # The operator check is its own refusal, not the operand count's: a
+        # restorable file whose name holds `;` is refused when quoted. Driven
+        # in a child, the hook modules' loader contract (never in-suite).
+        script = (
+            "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import _denial_reasons as d\n"
+            "cc = Path(sys.argv[1]).resolve().parent\n"
+            "r = d._SkewReading(cc / 'hooks' / 'a;b.py', 1, None, [cc / 'hooks' / 'a;b.py'], cc)\n"
+            "pay = lambda c: {'tool_name': 'Bash', 'tool_input': {'command': c}, 'cwd': str(cc.parent.parent)}\n"
+            "print(d._restore_target(pay(\"git restore 'tools/cc/hooks/a;b.py'\"), r))\n"
+            "r2 = d._SkewReading(cc / 'hooks' / 'ab.py', 1, None, [cc / 'hooks' / 'ab.py'], cc)\n"
+            "print(d._restore_target(pay(\"git restore 'tools/cc/hooks/ab.py'\"), r2) is not None)\n"
+        )
+        out = subprocess.run([sys.executable, "-c", script, str(HOOKS_DIR)], capture_output=True, text=True,
+                             encoding="utf-8", env=_ENV, cwd=str(REPO_ROOT), timeout=45)
+        assert out.stdout.split() == ["None", "True"], (out.stdout, out.stderr)
+
+    def test_an_error_naming_a_helper_name_that_exists_is_no_kept_helper(self):
+        # The kept-old-helper test checks the module, not only the error's
+        # fields: an AttributeError that names a name the helper has (raised by
+        # hand, or by any code path but a missing name) is a plain raise.
+        script = (
+            "import sys; sys.path.insert(0, sys.argv[1]); import _hook_utils as h, _denial_reasons as d\n"
+            "print(d._missing_helper_name(AttributeError('x', name='STATE_DIR', obj=h)))\n"
+            "print(d._missing_helper_name(AttributeError('x', name='no_such_helper_name', obj=h)))\n"
+        )
+        out = subprocess.run([sys.executable, "-c", script, str(HOOKS_DIR)], capture_output=True, text=True,
+                             encoding="utf-8", env=_ENV, cwd=str(REPO_ROOT), timeout=45)
+        assert out.stdout.split() == ["None", "no_such_helper_name"], (out.stdout, out.stderr)
+
+    def test_the_crash_guard_names_the_frame_and_never_the_message(self, restores):
+        refused = next(r for r in restores if r.plant == "crash" and not r.passes)
+        reason = _output(refused)["permissionDecisionReason"]
+        assert "write_guard internal error (KeyError at tools/cc/hooks/_hook_utils.py:" in reason, reason
+        assert "KeyError: 2" not in reason, reason
+        assert "git restore tools/cc/hooks/_hook_utils.py" in reason, reason
 
 
 # ── the guard is reachable, and earns its red ────────────────────────────────

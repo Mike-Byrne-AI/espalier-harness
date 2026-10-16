@@ -1910,7 +1910,7 @@ class TestOsErrorsRenderAsPaths:
     #: kind: ``seam`` (the renderer itself), ``routes`` (a helper whose body
     #: is PROVEN below to call the seam -- the roster is not the place a red
     #: is silenced by adding a line), ``errno-only`` (never renders the text;
-    #: the one argued exemption). Liveness-pinned both ways.
+    #: each such entry argued). Liveness-pinned both ways.
     _RENDERERS = {
         "os_error_text": ("seam", "espalier/_text.py and tools/cc/_json_safe.py"),
         "warn_exc": ("routes", "the hooks' one exception reporter (tools/cc/hooks/_hook_utils.py)"),
@@ -1918,6 +1918,7 @@ class TestOsErrorsRenderAsPaths:
         "say_crash": ("routes", "a reporter crash guard's once-a-session record and its stderr copy (tools/cc/hooks/_hook_utils.py)"),
         "refuse_on_helper_skew": ("routes", "a blocking hook's start refusal: the failed import's text through _json_safe's os_error_text, str as the floor (tools/cc/hooks/_denial_reasons.py)"),
         "_is_permission_refusal": ("errno-only", "reads exc.errno and never the text (espalier/_rmtree.py)"),
+        "wedge_reading": ("errno-only", "a wedged guard's reading: the exception's class, traceback, filename and the helper name a sibling takes, never its text (tools/cc/hooks/_denial_reasons.py)"),
     }
     _CLEAN_CALLEES = frozenset({"isinstance", "issubclass", "type", "getattr", "hasattr"})
 
