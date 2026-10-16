@@ -256,6 +256,15 @@ _CMD_SET_REACH = [
     ("ps", f'cmd /c"set {ENV_VAR}=1&&claude -p x"'),
     ("bash", f"cd /tmp && cmd //c 'set {ENV_VAR}=1 && claude -p x'"),
     ("ps", f"Set-Location C:\\x; cmd /c 'set {ENV_VAR}=1 && claude -p x'"),
+    # DEF-1071 (e): behind the stop-parsing token, and as a Start-Process
+    # argument list (one string, and the array cmd's command line joins)
+    ("ps", f"cmd --% /c set {ENV_VAR}=1 && claude -p x"),
+    ("ps", f"Start-Process cmd -ArgumentList '/c set {ENV_VAR}=1 && claude -p x'"),
+    ("ps", f"Start-Process -FilePath cmd.exe -Wait -ArgumentList '/c','set {ENV_VAR}=1 && claude -p x'"),
+    # a common parameter's value and a colon-bound list (PowerShell binds both)
+    ("ps", f"Start-Process cmd -ErrorAction Stop -ArgumentList:'/c set {ENV_VAR}=1 && claude -p x'"),
+    # the elevation idiom: `-Verb` is Verb's, not a prefix of `-Verbose`
+    ("ps", f"Start-Process cmd -Verb RunAs -ArgumentList '/c','set {ENV_VAR}=1','&&','claude'"),
 ]
 
 
@@ -283,6 +292,14 @@ def test_cmd_exe_set_then_claude_denies(shell, command):
     ("bash", f'git commit -m "docs: cmd /c set {ENV_VAR}=1 && claude is refused"'),
     # a `set` outside cmd (Bash's builtin sets positional parameters)
     ("bash", f"true && set {ENV_VAR}=1 && pytest -q"),
+    # DEF-1071 (e)'s twins: the two new shapes before a real invocation, and
+    # the cmdlet mentioned in a double-quoted string, which the masker keeps
+    ("ps", f"cmd --% /c set {ENV_VAR}=1 && pytest -q"),
+    ("ps", f"Start-Process cmd -ArgumentList '/c set {ENV_VAR}=1 && pytest -q'"),
+    ("ps", f"Start-Process cmd -ErrorAction Stop -ArgumentList:'/c set {ENV_VAR}=1 && pytest -q'"),
+    ("ps", f"Start-Process cmd -Verb RunAs -ArgumentList '/c','set {ENV_VAR}=1','&&','pytest'"),
+    ("ps", 'Write-Output "Start-Process cmd -ArgumentList '
+           + f"'/c set {ENV_VAR}=1 && claude -p x'" + '"'),
 ])
 def test_cmd_exe_set_before_a_real_invocation_is_allowed(shell, command):
     assert not _denies(_dispatch(shell), command)

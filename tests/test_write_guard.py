@@ -445,6 +445,142 @@ class TestQuotedVerbTailIsUniform:
         assert_hook_allowed(run_bash_guard(cmd, tmp_path))
 
 
+class TestBinaryVerbSpellingIsUniform:
+    """DEF-1161, its class widened (air ff9ddb): a native binary's verb as a
+    case-insensitive host spells it.
+
+    Git for Windows' bash runs ``rm.exe``, ``RM`` and ``Rm.EXE`` as GNU ``rm``
+    (each printed its coreutils version, driven 2026-10-16), as macOS's
+    default file system runs ``RM``; the verb arms read only the lowercase
+    bare word, so the zone reader missed every suffixed or uppercase spelling
+    (20 of 20 suffixed delete and move heads drew no zone deny where each
+    plain spelling denied), and the rm segment's tokenizer read ``rm.exe``
+    itself as a delete operand. Every binary arm now spells its verb
+    ``(?i:<verb>)`` + ``_bash_patterns._EXE_SUFFIX``: case-blind, with an
+    optional ``.exe``.
+
+    The roster is the quoted-verb walk's (`TestQuotedVerbTailIsUniform`),
+    itself held equal to the module's ``_CMD_POS``-anchored arms, so a new
+    arm is walked here too. Arms whose verb is a shell builtin or keyword stay
+    case-sensitive by design: bash runs no ``CD``, so reading it as a move
+    would judge a later delete in the wrong directory (a fail-open).
+    """
+
+    #: Builtins and keywords bash matches case-sensitively; never spelled
+    #: case-blind (each pinned below, with the must-deny twin).
+    _CASE_SENSITIVE_BY_DESIGN = frozenset({
+        "_DIR_VERB_RE", "_MKDIR_RE",
+        "_FOR_SUBST_REMOVE_RE", "_TAIL_LOOP_REMOVE_RE", "_FOR_WORDS_REMOVE_RE",
+    })
+    #: The arms with no zone-deny fixture in the quoted-verb roster: proven at
+    #: the pattern (the secret leg's reads), or through the hook below (the
+    #: rm segment). Each sample begins with its verb.
+    _PATTERN_SAMPLES = {
+        "_TAR_CREATE_RE": ("tar", "tar -cf out.tar notes"),
+        "_ZIP_RE": ("zip", "zip out.zip notes"),
+        "_DD_IF_RE": ("dd", "dd if=notes of=out"),
+        "_RM_SEGMENT_RE": ("rm", "rm -rf notes"),
+    }
+
+    @staticmethod
+    def _spellings(verb: str) -> list[str]:
+        return [verb + ".exe", verb.upper(), verb[:1].upper() + verb[1:] + ".EXE"]
+
+    def test_every_anchored_arm_is_walked_or_case_sensitive_by_design(self):
+        fixtures = TestQuotedVerbTailIsUniform._FIXTURES
+        walked = {k for k, v in fixtures.items()
+                  if v and k not in self._CASE_SENSITIVE_BY_DESIGN} | set(self._PATTERN_SAMPLES)
+        assert set(fixtures) == walked | self._CASE_SENSITIVE_BY_DESIGN, sorted(
+            set(fixtures) ^ (walked | self._CASE_SENSITIVE_BY_DESIGN))
+        assert not walked & self._CASE_SENSITIVE_BY_DESIGN
+
+    @pytest.mark.parametrize("spelling", [0, 1, 2], ids=["suffix", "upper", "mixed-suffix"])
+    @pytest.mark.parametrize("arm", sorted(
+        k for k, v in TestQuotedVerbTailIsUniform._FIXTURES.items()
+        if v and k not in {"_DIR_VERB_RE", "_MKDIR_RE"}))
+    def test_a_binary_verb_denies_like_the_bare_verb(self, tmp_path, arm, spelling):
+        verb, bare = TestQuotedVerbTailIsUniform._FIXTURES[arm]
+        assert bare.startswith(verb)
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        assert_hook_denied(run_bash_guard(bare, tmp_path))   # the bare control
+        spelled = self._spellings(verb)[spelling] + bare[len(verb):]
+        assert_hook_denied(run_bash_guard(spelled, tmp_path))
+
+    @pytest.mark.parametrize("arm", sorted(_PATTERN_SAMPLES))
+    def test_a_read_arm_takes_every_spelling_at_the_pattern(self, arm):
+        bp = _bash_patterns_module()
+        verb, bare = self._PATTERN_SAMPLES[arm]
+        pattern = getattr(bp, arm)
+        assert pattern.search(bare), (arm, bare)
+        for spelled in self._spellings(verb):
+            text = spelled + bare[len(verb):]
+            assert pattern.search(text), (arm, text)
+
+    @pytest.mark.parametrize("arm", sorted(_CASE_SENSITIVE_BY_DESIGN - {"_MKDIR_RE"}))
+    def test_a_builtin_or_keyword_arm_stays_case_sensitive(self, arm):
+        bp = _bash_patterns_module()
+        upper = {"_DIR_VERB_RE": "CD /tmp", "_FOR_SUBST_REMOVE_RE": "FOR f in $(ls); do rm $f; done",
+                 "_TAIL_LOOP_REMOVE_RE": "WHILE read f; do rm $f; done",
+                 "_FOR_WORDS_REMOVE_RE": "FOR f in a b; do rm $f; done"}[arm]
+        assert getattr(bp, arm).search(upper) is None, (arm, upper)
+
+    def test_mkdir_stays_case_sensitive(self):
+        bp = _bash_patterns_module()
+        assert bp._MKDIR_RE.search("mkdir -p notes")
+        assert bp._MKDIR_RE.search("MKDIR -p notes") is None
+
+    def test_a_delete_after_a_cd_bash_does_not_run_is_judged_where_the_command_runs(self, tmp_path):
+        # the must-deny twin: `CD` fails, so the delete runs in the checkout
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        assert_hook_denied(run_bash_guard("CD /tmp; rm -rf tools/cc/hooks", tmp_path))
+        assert_hook_denied(run_bash_guard("cd /tmp; rm -rf " + str(tmp_path / "tools" / "cc" / "hooks"), tmp_path))
+
+    @pytest.mark.parametrize("head", ["rm.exe", "RM.EXE", "/usr/bin/rm.exe", "Rm",
+                                      '"rm.exe"', "'/usr/bin/rm.exe'"])
+    def test_the_rm_segment_reads_the_suffixed_verb_on_every_tier(self, tmp_path, head):
+        # the zone deny, and the suffix is never read as a delete operand: a
+        # roster build directory draws no nudge, as the bare verb's does not
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        (tmp_path / "build").mkdir()
+        assert_hook_denied(run_bash_guard(f"{head} -r tools/cc/hooks", tmp_path))
+        assert_hook_allowed(run_bash_guard(f"{head} -r build", tmp_path))
+
+    @pytest.mark.parametrize("cmd", [
+        "echo rm.exe -rf notes",                 # the verb as data
+        "rm.exe=1; echo $rm",                    # not a verb
+        "cat notes/rm.exe",                      # a path named for it
+    ])
+    def test_a_mention_of_a_binary_verb_stays_allowed(self, tmp_path, cmd):
+        assert_hook_allowed(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd", ["SETFACL -b tools/cc/hooks/x.py", "Setfacl.exe -b tools/cc/hooks/x.py"])
+    def test_a_verb_a_reader_dispatches_on_is_read_by_every_spelling(self, tmp_path, cmd):
+        """The readers that dispatch on the verb an arm captured ask one key
+        for it (`_bash_patterns._verb_key`): the arm read `SETFACL`, the ACL
+        table's lookup missed it, and the change to a hook passed (the code
+        review)."""
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True, exist_ok=True)
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))
+
+    @pytest.mark.parametrize("cmd", ["ln.exe tools/cc/hooks/x.py /tmp/alias",
+                                     "LN tools/cc/hooks/x.py /tmp/alias",
+                                     "CP.EXE -l tools/cc/hooks/x.py /tmp/alias"])
+    def test_a_hardlink_out_of_the_zone_is_read_by_every_spelling(self, tmp_path, cmd):
+        """The hardlink reader dispatches on its verb (`ln`, or `cp` with a
+        link flag) through the verb key too: a protected file aliased OUT of
+        the zone is the hardlink check's alone, since no write lands in the
+        zone (the lane's third mutant round found no row held it)."""
+        hooks = tmp_path / "tools" / "cc" / "hooks"
+        hooks.mkdir(parents=True, exist_ok=True)
+        (hooks / "x.py").write_text("x", encoding="utf-8")
+        assert_hook_denied(run_bash_guard(cmd, tmp_path))
+
+    def test_the_verb_key_folds_every_spelling(self):
+        bp = _bash_patterns_module()
+        assert [bp._verb_key(v) for v in ("SETFACL", "Mv.EXE", "'/usr/bin/ln.exe'", "C:/Git/usr/bin/SED.exe")]             == ["setfacl", "mv", "ln", "sed"]
+        assert bp._remove_effect("MV.EXE") == "move" and bp._remove_effect("rm.exe") == "delete"
+
+
 class TestPowerShellQuotedVerbBehindTheCallOperator:
     """DEF-791 (§C49): the PowerShell twin of the class above.
 
@@ -7940,8 +8076,13 @@ _ASSIGN_GUARD = "(?!=)"
 # The floor caught that as "carries the guard but no verb was derivable", which is
 # the floor working exactly as its own message instructs: fix the SCRAPE, never
 # lower the floor. The class is bounded ({0,8}) so this stays a shape-scrape.
+# ⚠ AND -- since the binary-verb spelling (DEF-1161's class, 2026-10-16) -- a
+# verb group may open `(?i:` and be followed by `(?i:\.exe)?`, before or after
+# its own close, and the rm segment's verb sits in a second named group: the
+# scrape returned 5 verbs of the floor's 10 until it read all three.
 _VERBS_AT_GUARD_RE = re.compile(
-    r"(?:\\b|\(\?P<\w+>)\(?(?:\?:)?([a-z][a-z|]*)\)?(?:\[[^\]]{0,8}\]\?)?\\b\(\?!=\)"
+    r"(?:\\b|\(\?P<\w+>)(?:\(\?P<\w+>)?\(?\(?(?:\?i?:)?([a-z][a-z|]*)"
+    r"(?:\(\?i:\\\.exe\)\?)?\)?\)?(?:\(\?i:\\\.exe\)\?)?(?:\[[^\]]{0,8}\]\?)?\\b\(\?!=\)"
 )
 
 
@@ -8110,8 +8251,12 @@ class TestPowerShellEphemeralCarveOut:
         # allow. Added after a syntax-preserving mutation showed that check
         # SURVIVING -- the original table pinned it nowhere.
         (r"Remove-Item -Recurse -Force dist/$env:SystemRoot", False),
-        (r"Remove-Item -Recurse -Force build\*", False),
-        (r"Remove-Item -Recurse -Force dist/*", False),
+        # A wildcard AFTER the roster directory names only entries below it,
+        # so it reads as that directory (DEF-1174, 2026-10-16): these two
+        # pass as `build` does; the glob check still walls a wildcard in the
+        # first component (`build*` above, `bu*ld/x` in the rungs test).
+        (r"Remove-Item -Recurse -Force build\*", True),
+        (r"Remove-Item -Recurse -Force dist/*", True),
         (r"Remove-Item -Recurse -Force build/C:foo", False),
     )
 
@@ -8428,6 +8573,11 @@ def _recursive_delete_launch_forms() -> list[tuple[str, str, str]]:
     for verb in sorted(bp._CMD_DELETE_VERBS):
         forms.append((f"bash-cmd-{verb}", "Bash", "cmd //c " + verb + " /s /q {t}"))
         forms.append((f"ps-cmd-{verb}", "PowerShell", "cmd /c " + verb + " /s /q {t}"))
+        # DEF-1071 (e): behind the stop-parsing token, and started by the
+        # process-start cmdlet with its program as an argument list
+        forms.append((f"ps-cmd-stopparse-{verb}", "PowerShell", "cmd --% /c " + verb + " /s /q {t}"))
+        forms.append((f"ps-cmd-saps-{verb}", "PowerShell",
+                      "Start-Process cmd -ArgumentList '/c " + verb + " /s /q {t}'"))
     for word in re.findall(r"[\w-]+", bp._PS_REMOVE_VERB_WORDS):
         forms.append((f"ps-word-{word.lower()}", "PowerShell", word + " -Recurse {t}"))
     words = {w.lower() for w in re.findall(r"[\w-]+", bp._PS_REMOVE_VERB_WORDS)}
@@ -8440,6 +8590,16 @@ def _recursive_delete_launch_forms() -> list[tuple[str, str, str]]:
                  for name in _roster_words(bp._PS_NATIVE_REMOVE_NAMES))
     for k, head in enumerate(heads):
         forms.append((f"ps-native-{k}", "PowerShell", head + " -r {t}"))
+    # DEF-1161: the native binary by its suffix and case on the Bash tool
+    # (Git for Windows' bash runs each as GNU rm; a path is an example)
+    for k, head in enumerate(("rm.exe", "RM.EXE", "Rm", "/usr/bin/rm.exe", '"/usr/bin/rm.exe"')):
+        forms.append((f"bash-native-{k}", "Bash", head + " -r {t}"))
+    # DEF-1162: every wrapper word before the native remove on the PowerShell
+    # tool, where pwsh on a POSIX host runs it as the Bash tool's shell does,
+    # but `xargs`, this tool's pipe carrier (DEF-826: its own class pins it)
+    for word in _roster_words(bp._CMD_POS_WRAPPER):
+        if word != "xargs":
+            forms.append((f"ps-wrap-{word}", "PowerShell", word + " rm -r {t}"))
     return forms
 
 
@@ -8486,7 +8646,48 @@ class TestEveryLaunchFormMeetsTheRecursiveDeleteWall:
             ".venv", "venv", ".tox", ".nox", "htmlcov", ".eggs",
             ".next", ".nuxt", ".turbo", ".gradle")
         assert re.findall(r"[\w-]+", bp._PS_NATIVE_REMOVE_NAMES) == ["rmdir", "rm"]
-        assert len(_LAUNCH_FORMS) == 39, len(_LAUNCH_FORMS)
+        assert _roster_words(bp._CMD_POS_WRAPPER) == [
+            "env", "sudo", "doas", "command", "time", "nohup", "timeout", "xargs", "exec",
+            "nice", "ionice", "stdbuf", "setsid", "strace", "ltrace", "watch", "script",
+            "chrt", "taskset", "unbuffer", "torify", "proxychains"]
+        assert len(_LAUNCH_FORMS) == 73, len(_LAUNCH_FORMS)
+
+    def test_xargs_is_the_pipe_carrier_and_no_wrapper_on_the_powershell_tool(self):
+        """`xargs` hands the remove verb its operands from the pipe on this
+        tool, which the enumerator reader judges (DEF-826), so the wrapper run
+        leaves it out: read as a wrapper, it handed the records a remove with
+        no operand of its own, which walled a narrowed pipeline the carrier
+        passes and took the sweep's reason from an unnarrowed one (the
+        carrier rows went red, 2026-10-16). So a bare `xargs rm` with no pipe
+        in front is not read here, nor xargs's own operands behind a head
+        that is no enumerator, nor a wrapper spelled by its path -- the
+        false-allow direction, declared -- while every other roster word,
+        spelled bare, is."""
+        bp = _bash_patterns_module()
+        assert bp._PS_REMOVE_ITEM_RE.search(bp.powershell_scan_text("xargs rm -rf .")) is None
+        assert bp._PS_REMOVE_ITEM_RE.search(bp.powershell_scan_text("sudo rm -rf .")) is not None
+        assert bp._PS_REMOVE_ITEM_RE.search(bp.powershell_scan_text("sudo xargs rm -rf .")) is None
+        # declared limits, pinned (the failure-mode review): the carrier reads
+        # xargs's own operands only behind an enumerator head, and this tool
+        # steps over a wrapper spelled bare, never by a path
+        assert bp._PS_REMOVE_ITEM_RE.search(
+            bp.powershell_scan_text("Write-Output x | xargs rm -rf .")) is None
+        assert bp._PS_REMOVE_ITEM_RE.search(bp.powershell_scan_text("/usr/bin/sudo rm -rf .")) is None
+
+    @pytest.mark.parametrize("command", [
+        "echo a | xargs shred -u tools/cc/hooks/write_guard.py",
+        "echo a | xargs unlink tools/cc/hooks/write_guard.py",
+        "echo a | xargs truncate -s 0 tools/cc/hooks/write_guard.py",
+        "echo a | xargs find tools/cc -delete",
+    ])
+    def test_the_other_native_readers_still_step_over_xargs(self, command, tmp_path):
+        """Only the remove head leaves `xargs` out: the find, destroy and
+        truncate readers read a native verb behind it as they did before the
+        lane (a first draft narrowed their shared run and each of these
+        passed, the code review)."""
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)
+        (tmp_path / "tools" / "cc" / "hooks" / "write_guard.py").write_text("x", encoding="utf-8")
+        assert_hook_denied(_run_ps_guard(command, tmp_path))
 
     def test_the_native_path_cap_is_a_declared_limit(self):
         """The bare path before the native binary's name is bounded (a speed
@@ -8635,6 +8836,52 @@ class TestTheCmdDeleteReaderReadsEachBranch:
         ("quoted-program", 'cmd /c "rd /s /q build"', [["build"]]),
         ("by-file-name", "cmd.exe /c rd /s /q build", [["build"]]),
         ("mention", "Write-Output 'cmd /c rd /s /q build'", []),
+        # DEF-1071 (e): behind the stop-parsing token, and as the process-start
+        # cmdlet's argument list by name, positionally and as an array; the
+        # cmdlet in a double-quoted string is a mention (the masker keeps it)
+        ("stop-parsing", "cmd --% /c rd /s /q build", [["build"]]),
+        ("start-process", "Start-Process cmd -ArgumentList '/c rd /s /q build'", [["build"]]),
+        ("start-process-positional", "saps cmd '/c rd /s /q build'", [["build"]]),
+        ("start-process-array", "Start-Process cmd.exe -Args '/c','rd /s /q build'", [["build"]]),
+        ("start-process-valued-switch",
+         "Start-Process cmd -WindowStyle Hidden -ArgumentList '/c rd /s /q build'", [["build"]]),
+        # a value bound by a colon, and a common parameter's value, are never
+        # the argument list: every named parameter but the cmdlet's switches
+        # takes one, an exact alias first (PowerShell 5.1 bound each so)
+        ("start-process-bound", "Start-Process cmd -ArgumentList:'/c rd /s /q build'", [["build"]]),
+        ("start-process-bound-blank", "Start-Process cmd -ArgumentList: '/c rd /s /q build'",
+         [["build"]]),
+        ("start-process-bound-alias", "Start-Process cmd -Args:'/c','rd /s /q build'", [["build"]]),
+        ("start-process-bound-value", "Start-Process cmd -WindowStyle:Hidden '/c rd /s /q build'",
+         [["build"]]),
+        ("start-process-bound-switch", "Start-Process cmd -Wait: $true '/c rd /s /q build'",
+         [["build"]]),
+        ("start-process-common", "Start-Process cmd -ErrorAction Stop '/c rd /s /q build'",
+         [["build"]]),
+        ("start-process-common-alias", "Start-Process cmd -wa Stop -ArgumentList '/c rd /s /q build'",
+         [["build"]]),
+        ("start-process-switches", "Start-Process cmd -PassThru -nnw '/c rd /s /q build'", [["build"]]),
+        # an exact name before a prefix: `-Verb` is Verb's, not `-Verbose`'s
+        # (the code review: the elevation idiom read `RunAs` as the list)
+        ("start-process-verb", "Start-Process cmd -Verb RunAs -ArgumentList '/c rd /s /q build'",
+         [["build"]]),
+        ("start-process-verb-positional", "Start-Process cmd -Wait -Verb RunAs '/c rd /s /q build'",
+         [["build"]]),
+        # an array in an array subexpression or a group
+        ("start-process-subexpression", "Start-Process cmd -ArgumentList @('/c','rd /s /q build')",
+         [["build"]]),
+        ("start-process-group", "Start-Process cmd ('/c', 'rd /s /q build')", [["build"]]),
+        ("start-process-group-bare", "Start-Process cmd @('/c', 'rd /s /q', build)", [["build"]]),
+        # behind a module qualifier, and inside a program a reparsing shell
+        # runs (the failure-mode review); a double-quoted mention stays one
+        ("start-process-module-qualified",
+         "Microsoft.PowerShell.Management\\Start-Process cmd -ArgumentList '/c rd /s /q build'",
+         [["build"]]),
+        ("start-process-reparsed",
+         'powershell -Command "Start-Process cmd -ArgumentList ' + "'/c rd /s /q build'" + '"',
+         [["build"]]),
+        ("start-process-mention",
+         'Write-Output "Start-Process cmd -ArgumentList ' + "'/c rd /s /q build'" + '"', []),
     ]
 
     @pytest.mark.parametrize("row", _PS, ids=[r[0] for r in _PS])
@@ -8644,6 +8891,50 @@ class TestTheCmdDeleteReaderReadsEachBranch:
         got = [t for _at, t, another in bp._ps_unforced_recursive_removes(
             bp.powershell_scan_text(command)) if another]
         assert got == want
+
+    def test_the_process_start_parameter_sets_are_the_cmdlets_own(self):
+        """The argument-list reader steps over a value after every named
+        parameter but the cmdlet's switches, so a switch missing from its set
+        would eat the argument list as its value, and a valued name read as
+        a switch would hand its value over as the list: the reader's own
+        question (`_ps_start_process_takes_value`) is asked of every name,
+        alias and unambiguous prefix a live PowerShell's metadata lists, so a
+        version that adds one is read as it binds or reds here. An earlier form compared the sets
+        and passed while `-Verb` read as a prefix of `-Verbose` (the code
+        review)."""
+        import shutil
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        if shell is None:
+            pytest.skip("no PowerShell on this host")
+        script = ("$p = (Get-Command Start-Process).Parameters.Values; "
+                  "foreach ($v in $p) { '{0} {1} {2}' -f $v.SwitchParameter, $v.Name, "
+                  "($v.Aliases -join ',') }")
+        out = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", script],
+                             capture_output=True, text=True, timeout=50).stdout
+        names: dict[str, bool] = {}         # each name -> is a switch
+        spelled: dict[str, bool] = {}       # every name and alias -> is a switch
+        for line in out.splitlines():
+            if not line.startswith(("True ", "False ")):
+                continue
+            kind, name, *aliases = line.split(" ")
+            names[name.lower()] = kind == "True"
+            for word in [name, *",".join(aliases).split(",")]:
+                if word:
+                    spelled[word.lower()] = kind == "True"
+        assert any(names.values()) and not all(names.values()), out
+        # every unambiguous prefix of a name binds as the name does
+        for name, is_switch in names.items():
+            for cut in range(1, len(name)):
+                p = name[:cut]
+                if p not in spelled and [m for m in names if m.startswith(p)] == [name]:
+                    spelled[p] = is_switch
+        bp = _bash_patterns_module()
+        # the reader's own question, asked of every live spelling: the list
+        # (`argumentlist`, `args` and their prefixes) is read before it is asked
+        wrong = sorted(w for w, is_switch in spelled.items()
+                       if not ("argumentlist".startswith(w) or w == "args")
+                       and bp._ps_start_process_takes_value(w) == is_switch)
+        assert not wrong, wrong
 
     @pytest.mark.parametrize("command, want", [
         ("cmd //c del x.py", ("delete", "x.py")),              # one file, no recurse switch
@@ -8669,7 +8960,9 @@ class TestPowerShellRecursiveRemoveTiersAgree:
     pinned; this is the property over a generated population.
 
     The population is every PowerShell launch form (`_LAUNCH_FORMS`: the
-    cmdlet's words, the native binary by name and path, cmd's deletes)
+    cmdlet's words, the native binary by name and path and behind a wrapper
+    word, cmd's deletes, behind the stop-parsing token and in a
+    `Start-Process` argument list too)
     crossed with each family's switch spellings, forced and not, and with a
     target roster (on and off the ephemeral roster, relative and not, an
     array); quote style and statement shape (plain, a trailing statement,
@@ -8688,6 +8981,7 @@ class TestPowerShellRecursiveRemoveTiersAgree:
     _SWITCHES = {
         "ps-word-": [r + f for r in ("-Recurse", "-r", "-rec") for f in ("", " -Force", " -fo")],
         "ps-native-": ["-r", "-R", "-rf", "-r -f", "--recursive"],
+        "ps-wrap-": ["-r", "-R", "-rf", "-r -f", "--recursive"],
         "ps-cmd-": ["/s /q", "/s", "/q /s", "/s/q"],
     }
     _TARGETS = (
@@ -8696,6 +8990,8 @@ class TestPowerShellRecursiveRemoveTiersAgree:
         "build, src", "~/proj/thing", "$VAR", "{repo}/sub", ".", "~",
         "{scratch}/x", "{scratch}/x/y", "{scratch}", "{scratch}/clone",
         "build, {scratch}/x", "src, {scratch}/x",
+        # DEF-1174: a wildcard after a relative directory, read as it
+        "build/*", "src/*", "out/x/**",
     )
     _QUOTES = ("{}", "'{}'", '"{}"')
     _SHAPES = ("{v}", "{v}; Write-Output done", "if (Test-Path {t}) {{ {v} }}")
@@ -8731,7 +9027,11 @@ class TestPowerShellRecursiveRemoveTiersAgree:
         import _speedbump
         form_id, _tool, template = form
         family = next(k for k in self._SWITCHES if form_id.startswith(k))
-        head = template[:template.index(" -" if family != "ps-cmd-" else " /s")]
+        # the text after the target stays (the argument list's closing quote),
+        # and a target inside that list is quoted as cmd reads quotes
+        head, tail = template.split("{t}")
+        head = head[:head.index(" -" if family != "ps-cmd-" else " /s")]
+        quotes = self._QUOTES if not tail else ("{}", '"{}"', "{}")
         repo, scratch = tmp_path / "repo", tmp_path / "scratch"
         (repo / "build").mkdir(parents=True)
         (scratch / "clone" / ".git").mkdir(parents=True)
@@ -8742,8 +9042,8 @@ class TestPowerShellRecursiveRemoveTiersAgree:
         for i, switches in enumerate(self._SWITCHES[family]):
             for j, spelled in enumerate(self._TARGETS):
                 target = spelled.format(repo=repo.as_posix(), scratch=scratch.as_posix())
-                quoted = self._QUOTES[(i + j) % 3].format(target)
-                verb = f"{head} {switches} {quoted}"
+                quoted = quotes[(i + j) % 3].format(target)
+                verb = f"{head} {switches} {quoted}{tail}"
                 command = self._SHAPES[(i + 2 * j) % 3].format(v=verb, t=quoted)
                 asked += 1
                 if wg._ps_dangerous_reason(command, repo, cwd=repo) is not None:
@@ -8776,6 +9076,130 @@ class TestPowerShellRecursiveRemoveTiersAgree:
         rather than the wall an empty element drew."""
         command = "Remove-Item -Recurse -Force " + sep.join(pair)
         assert _delete_verdict(run_guard_from("PowerShell", command, tmp_path, None)) == verdict
+
+    @staticmethod
+    def _tier(command: str, tmp_path: Path, monkeypatch, *, inside: bool = False) -> str:
+        """The forced remove's tier in-process, a repo with a roster build
+        directory and a scratch root beside it holding a checkout -- or, with
+        ``inside``, the repo itself below the scratch root, as a clone in the
+        temp directory is: the wall's reason first, then the nudge, as the
+        hook asks them."""
+        scratch = tmp_path / "scratch"
+        repo = scratch / "a" / "repo" if inside else tmp_path / "repo"
+        (repo / "build").mkdir(parents=True, exist_ok=True)
+        (scratch / "clone" / ".git").mkdir(parents=True, exist_ok=True)
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, str(scratch))
+        wg = _load_write_guard()
+        import _speedbump
+        command = command.format(scratch=scratch.as_posix(), repo=repo.as_posix())
+        if wg._ps_dangerous_reason(command, repo, cwd=repo) is not None:
+            return "wall"
+        return "bump" if _speedbump._pred_rmrf("PowerShell", {"command": command}, repo, repo) else "allow"
+
+    @pytest.mark.parametrize("spelled, verdict", [
+        # DEF-1174: each element by the rung it meets (a roster directory and
+        # its own scratch below the temp directory), the worst one's tier, and
+        # a wildcard after a fixed relative prefix read as that prefix, as
+        # the unforced remove reads it
+        ("build, {scratch}/x", "allow"), ("'build', '{scratch}/x'", "allow"),
+        ("build/*", "allow"), ("build\\*", "allow"), ("'build/*'", "allow"),
+        ("build/*.o", "allow"), ("dist/x/**", "allow"), ("out/x/**", "wall"),
+        ("src, {scratch}/x", "bump"),
+        ("build, {scratch}/clone", "bump"),      # a checkout below scratch keeps it
+        ("build/*, {scratch}/x", "allow"),       # the prefix read on the element rung too
+        # the must-deny twins: a wildcard or an element the wall owns keeps it
+        ("C:/*", "wall"), ("../*", "wall"), ("$HOME/*", "wall"), ("~/*", "wall"),
+        ("build, C:/", "wall"), ("build, ..", "wall"), ("build, $HOME", "wall"),
+        ("src/../*", "wall"), ("build, {scratch}", "wall"), ("bu*ld/x", "wall"),
+        ("build, C:/Windows", "wall"), ("build, `$x", "wall"),
+        # one double-quoted string is ONE path, its comma no array separator
+        ('"src, {scratch}/x"', "wall"),
+        # what follows the wildcard is read: `..` after it climbs out (the
+        # code review: these passed, the checkout's parent among them)
+        ("build/*/../..", "wall"), ("build/*/..", "wall"), ("'build/*/../..'", "wall"),
+        ("build\\*\\..\\..", "wall"), ("build/?/../..", "wall"), ("build/**/../..", "wall"),
+        ("build/*/C:/x", "wall"), ("build/*/$x", "wall"),
+        # and only below a roster directory: the zone reader reads no
+        # wildcard (the failure-mode review: `tools/*` fell to one nudge)
+        ("src/*", "wall"), ("tools/*", "wall"), (".claude/*", "wall"), ("tools/cc/build/*", "wall"),
+    ])
+    def test_a_forced_remove_is_judged_element_by_element_across_the_rungs(
+            self, spelled, verdict, tmp_path, monkeypatch):
+        """The three rungs each asked their question of every target, so an
+        array of a roster directory and a scratch path passed by neither and
+        met the wall though each part passes alone, and `build/*` met it
+        though `build` and the unforced remove pass (DEF-1174). The wall and
+        the nudge read one helper (`_bash_patterns.powershell_removal_element_tier`),
+        so a step aside off the roster is never silent."""
+        command = "Remove-Item -Recurse -Force " + spelled
+        assert self._tier(command, tmp_path, monkeypatch) == verdict, command
+
+    @pytest.mark.parametrize("prefix", ["build", "dist"])
+    @pytest.mark.parametrize("context", [
+        "Remove-Item -Recurse -Force {t}",
+        "Remove-Item -Recurse -Force {t} -ErrorAction SilentlyContinue",
+        "Remove-Item -Recurse -Force {t}, {scratch}/x",
+        "Remove-Item -Recurse -Force {scratch}/x, {t}",
+        "Remove-Item -Recurse -Force -Path {t}",
+        "Remove-Item -Recurse {t}",
+        "Get-ChildItem {t} | Remove-Item -Recurse -Force",
+        "Remove-Item -Recurse -Force {t}/..",
+        "Remove-Item -Recurse -Force {t}/../..",
+    ])
+    def test_a_wildcard_after_a_relative_directory_reads_as_that_directory(
+            self, context, prefix, tmp_path, monkeypatch):
+        """DEF-1174's prefix reading, metamorphically: in every context
+        `<dir>/*` meets the tier `<dir>` meets, for a roster directory, on
+        the wall's rungs and the nudge's alike (below any other directory a
+        wildcard keeps the wall: the element test's twins). The lane's mutants found each of its two sites held by
+        no row: the relative rungs' (beside a switch value, whose value those
+        rungs read as a target) and the element rung's (beside a scratch
+        path)."""
+        tiers = [self._tier(context.replace("{t}", t), tmp_path, monkeypatch)
+                 for t in (prefix, prefix + "/*")]
+        assert tiers[0] == tiers[1], (context, prefix, tiers)
+
+    #: One target each, in the plain forced form, every one read whole by
+    #: the three rungs (no blank inside a quote).
+    _ONE_TARGET = [
+        "build", "build/*", "src", "src/*", "{scratch}/x", "{scratch}/clone", "{scratch}",
+        "'{scratch}/a,b'", '"{scratch}/x,C:/Windows"', "{scratch}/a`b", "{scratch}/.`./x",
+        "C:/", "~", "$HOME", "../x", "{scratch}/a", "{repo}", "{repo}/build",
+    ]
+
+    @pytest.mark.parametrize("inside", [False, True], ids=["repo-beside-scratch", "repo-below-scratch"])
+    @pytest.mark.parametrize("target", _ONE_TARGET)
+    def test_one_target_meets_the_tier_the_three_rungs_give_it(
+            self, target, inside, tmp_path, monkeypatch):
+        """The element rung is for an ARRAY (DEF-1174): for one target read
+        whole it relaxes nothing the three rungs it composes give, on either
+        tier. The lane's mutants found two of its checks no row held: without
+        its catastrophic check, a scratch path holding the checkout (a clone
+        in the temp directory) fell from the wall to a nudge, and without its
+        quoted-comma check a one-path string did. Asked twice, the second
+        time with the element rung answering None."""
+        command = "Remove-Item -Recurse -Force " + target
+        with_rung = self._tier(command, tmp_path, monkeypatch, inside=inside)
+        wg = _load_write_guard()
+        import _speedbump
+        assert _speedbump._bash_patterns is wg._bash_patterns
+        monkeypatch.setattr(wg._bash_patterns, "powershell_removal_element_tier",
+                            lambda *_a, **_k: None)
+        assert self._tier(command, tmp_path, monkeypatch, inside=inside) == with_rung, command
+
+    @pytest.mark.parametrize("target, verdict", [
+        ("{scratch}/x", "allow"), ("{scratch}/clone", "bump"), ("build", "allow"),
+        ("C:/", "wall"), ("~", "wall"),
+    ])
+    def test_the_guarded_cleanup_idiom_draws_the_plain_forms_tier(
+            self, target, verdict, tmp_path, monkeypatch):
+        """Inside the guarded cleanup idiom the block's closing brace beside
+        the target is no target (`_ps_strip_statement_brace`): the forced
+        remove of scratch walled there until 2026-10-16, where the plain
+        form passed, and a checkout below scratch keeps its nudge."""
+        command = f"if (Test-Path {target}) {{{{ Remove-Item -Recurse -Force {target} }}}}"
+        assert self._tier(command, tmp_path, monkeypatch) == verdict, command
 
     @pytest.mark.parametrize("force", ["", " -Force"], ids=["unforced", "forced"])
     @pytest.mark.parametrize("target, verdict", [
