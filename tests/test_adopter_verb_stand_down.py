@@ -40,6 +40,7 @@ from espalier._safe_walk import visible
 from tests._source_segment import segment, source_lines
 
 from _adopter_tree import assert_is_adopter_tree
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -383,7 +384,7 @@ class TestHarmfulVerbsAreDeclaredAgainstTheHiddenCanon:
         silently.
         """
         consumers = set()
-        for path in sorted((REPO_ROOT / "espalier").rglob("*.py")):
+        for path in sorted(checkout_rglob(REPO_ROOT / "espalier", "*.py")):
             rel = str(path.relative_to(REPO_ROOT)).replace("\\", "/")
             if rel.startswith("espalier/_vendor/"):
                 continue  # verbatim mirror, governed by its source tree
@@ -772,7 +773,7 @@ class TestCommitStagesOnlyWhatWasReviewed:
         in every shipped body commits only what it names, and every body
         carrying one is in `_COMMITTING_BODIES`."""
         found: dict[str, list[str]] = {}
-        for path in visible(_SHIPPED_BODIES.rglob("*.md"), _SHIPPED_BODIES):
+        for path in visible(checkout_rglob(_SHIPPED_BODIES, "*.md"), _SHIPPED_BODIES):
             rel = path.relative_to(_SHIPPED_BODIES).as_posix()
             commits = [ln for ln in _staging_lines(path.read_text(encoding="utf-8"))
                        if ln.startswith("git commit ")]
@@ -795,7 +796,7 @@ class TestCommitStagesOnlyWhatWasReviewed:
         span_re = re.compile(
             r"`((?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*git(?:\s+-[Cc]\s+\S+)*\s+commit\b[^`]*)`")
         seen, wide = 0, []
-        for path in visible(_SHIPPED_BODIES.rglob("*.md"), _SHIPPED_BODIES):
+        for path in visible(checkout_rglob(_SHIPPED_BODIES, "*.md"), _SHIPPED_BODIES):
             rel = path.relative_to(_SHIPPED_BODIES).as_posix()
             text = path.read_text(encoding="utf-8")
             prose = re.sub(r"^([ \t]*)```.*?^\1```", "", text, flags=re.M | re.S)
@@ -820,7 +821,7 @@ class TestCommitStagesOnlyWhatWasReviewed:
         lands the fix, a message-only one leaves it staged, and `-F` carries
         the new message."""
         spans = []
-        for path in visible(_SHIPPED_BODIES.rglob("*.md"), _SHIPPED_BODIES):
+        for path in visible(checkout_rglob(_SHIPPED_BODIES, "*.md"), _SHIPPED_BODIES):
             rel = path.relative_to(_SHIPPED_BODIES).as_posix()
             spans += [(rel, s) for s in re.findall(r"`(git commit --amend[^`]*)`",
                                                    path.read_text(encoding="utf-8"))]

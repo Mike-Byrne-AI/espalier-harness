@@ -21,7 +21,7 @@ import pathlib
 import re
 
 import pytest
-from tests._live_tree import checkout_rglob
+from tests._live_tree import LISTING_HELPERS, checkout_glob, checkout_rglob
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -46,7 +46,10 @@ class TestDoctorReleaseCheckCorpusCountParity:
     #: ``d.glob(...)``, ``(ROOT / "bench" / "corpus").glob(...)`` -- so the
     #: site list is derived from the tree, never retyped (a third and fourth
     #: caller had appeared with spellings the two-file regex above cannot see).
-    _IN_SCOPE_GLOB_RE = re.compile(r'\.glob\(\s*"(BC-\[0-9\][^"]*)"\s*\)')
+    #: ``checkout_glob(CORPUS_DIR, ...)`` -- the routed spelling every tests/
+    #: walk takes (DEF-2013), the folder first -- is one more.
+    _IN_SCOPE_GLOB_RE = re.compile(
+        r'(?:\.glob\(|\b(?:' + "|".join(LISTING_HELPERS) + r')\([^,\n]+,)\s*"(BC-\[0-9\][^"]*)"\s*\)')
     _SITE_ROOTS = ("espalier", "scripts", "tests")
     _CANONICAL = "BC-[0-9]*.json"
 
@@ -66,11 +69,26 @@ class TestDoctorReleaseCheckCorpusCountParity:
         assert {"espalier/doctor.py", "scripts/release_check.py"} <= set(sites), (
             f"the two pinned tools no longer glob the in-scope corpus: {sorted(sites)}"
         )
+        # Five files on 2026-10-15; the routed spelling took two of them out of
+        # the regex for a day without a red (DEF-2013 lane two).
+        assert len(sites) >= 5, f"the site census narrowed: {sorted(sites)}"
         off = {f: g for f, g in sites.items() if any(x != self._CANONICAL for x in g)}
         assert not off, (
             f"in-scope corpus-count sites that do not use {self._CANONICAL!r}: {off}. "
             "Every site that counts in-scope bypass classes must spell the same glob."
         )
+
+    @pytest.mark.parametrize("call", [
+        'corpus_dir.glob("{drift}")',
+        'checkout_glob(CORPUS_DIR, "{drift}")',
+        'checkout_glob(REPO_ROOT / "bench" / "corpus", "{drift}")',
+    ], ids=["method", "routed-name", "routed-path"])
+    def test_the_site_regex_reads_every_spelling(self, call: str) -> None:
+        """A drifted glob is found in each spelling a count site takes; the
+        routed one (DEF-2013) passes the corpus folder first. The pattern is
+        built here so this file's own text is not a drifted site."""
+        drift = "BC-[0-9]" + "[0-9]*.json"
+        assert self._IN_SCOPE_GLOB_RE.findall(call.format(drift=drift)) == [drift], call
 
     def _extract_glob(self, file_rel: str) -> str:
         path = REPO_ROOT / file_rel
@@ -132,7 +150,7 @@ class TestCorpusIdsAreUnique:
         import re
 
         rows: dict[str, list[tuple[str, str]]] = {}
-        for path in sorted((REPO_ROOT / "bench" / "corpus").glob("BC-[0-9]*.json")):
+        for path in sorted(checkout_glob(REPO_ROOT / "bench" / "corpus", "BC-[0-9]*.json")):
             m = re.match(r"BC-(\d+)([a-z]?)-", path.name)
             assert m, path.name
             data = json.loads(path.read_text(encoding="utf-8"))

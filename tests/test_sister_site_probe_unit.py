@@ -565,7 +565,7 @@ def _live_tools_py() -> set[str]:
     deploy zone ``tools/cc/`` (pruned on every adopter tree already)."""
     return {
         p.relative_to(REPO_ROOT).as_posix()
-        for p in (REPO_ROOT / "tools").rglob("*.py")
+        for p in checkout_rglob(REPO_ROOT / "tools", "*.py")
         if not p.relative_to(REPO_ROOT).as_posix().startswith("tools/cc/")
         and "__pycache__" not in p.parts
     }

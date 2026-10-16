@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from espalier import zone_writes as ze
+from tests._live_tree import checkout_glob
 
 ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = ROOT / "tools" / "cc" / "hooks"
@@ -192,7 +193,7 @@ class TestTheTwinsAgree:
         """Both ways: every script that brackets itself is a writer the hook
         reads, and every script writer the hook reads brackets itself."""
         recording = set()
-        for script in sorted((ROOT / "scripts").glob("*.py")):
+        for script in sorted(checkout_glob(ROOT / "scripts", "*.py")):
             source = script.read_text(encoding="utf-8")
             if "zone_writes import recorded" in source:
                 rel = script.relative_to(ROOT).as_posix()

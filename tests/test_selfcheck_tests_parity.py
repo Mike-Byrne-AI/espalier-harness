@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC = REPO_ROOT / "tests"
@@ -42,7 +43,7 @@ def _mirror_files() -> set[str]:
         return set()
     return {
         p.relative_to(MIRROR).as_posix()
-        for p in MIRROR.rglob("*")
+        for p in checkout_rglob(MIRROR, "*")
         if p.is_file() and "__pycache__" not in p.parts
     }
 
@@ -120,6 +121,24 @@ class TestSelfcheckTestsParity:
             assert f"def {fixture}(" in text, f"mirror conftest missing {fixture!r}"
         for self_host in ("harness_repo", "initialized_repo_root", "REPO_ROOT"):
             assert self_host not in text, f"mirror conftest leaked {self_host!r}"
+
+    def test_no_mirrored_module_imports_the_source_tests_package(self):
+        """The mirror runs inside an installed engine, where no ``tests``
+        package exists. ``tests/test_scanners.py`` imports ``tests._live_tree``
+        inside the methods of the two classes the transform drops (DEF-2013);
+        hoisting that import would ship a mirror that fails to import on every
+        adopter's ``espalier selfcheck``, and no workflow runs one."""
+        import ast
+
+        leaks = []
+        for rel in sorted(_mirror_files()):
+            if not rel.endswith(".py"):
+                continue
+            for node in ast.walk(ast.parse((MIRROR / rel).read_text(encoding="utf-8"))):
+                names = ([node.module or ""] if isinstance(node, ast.ImportFrom)
+                         else [a.name for a in node.names] if isinstance(node, ast.Import) else [])
+                leaks += [f"{rel}:{node.lineno} {n}" for n in names if n == "tests" or n.startswith("tests.")]
+        assert not leaks, f"mirrored modules import the source tests package: {leaks}"
 
     def test_pytest_ini_silences_marker_warning_and_cache(self):
         text = (MIRROR / "pytest.ini").read_text(encoding="utf-8")

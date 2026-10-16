@@ -25,7 +25,7 @@ import pytest
 
 
 from espalier._safe_walk import visible
-from tests._live_tree import checkout_rglob
+from tests._live_tree import checkout_glob, checkout_rglob
 from espalier.cli import _build_settings_json
 from espalier.managed_inventory import _SEED_DOC_REL_PATHS
 from espalier.self_hosting import SELF_HOST_EXAMPLE_LABEL
@@ -69,8 +69,8 @@ class TestOperatorDocsPortability:
             REPO_ROOT / "README.md",
             REPO_ROOT / "docs" / "CHEAT-SHEET.md",
             REPO_ROOT / "docs" / "SHARP_EDGES.md",
-            *visible((REPO_ROOT / ".claude" / "agents").glob("*.md"), REPO_ROOT / ".claude" / "agents"),
-            *visible((REPO_ROOT / ".claude" / "commands").glob("*.md"), REPO_ROOT / ".claude" / "commands"),
+            *visible(checkout_glob(REPO_ROOT / ".claude" / "agents", "*.md"), REPO_ROOT / ".claude" / "agents"),
+            *visible(checkout_glob(REPO_ROOT / ".claude" / "commands", "*.md"), REPO_ROOT / ".claude" / "commands"),
         ]
 
         forbidden_tokens = ["python3 ", "/tmp/"]
@@ -101,7 +101,7 @@ class TestManagedHooksMatchDisk:
         from espalier import surface_contract
         hooks_dir = REPO_ROOT / "tools" / "cc" / "hooks"
         disk_hooks = sorted(
-            p.name for p in hooks_dir.glob("*.py") if not p.name.startswith("_")
+            p.name for p in checkout_glob(hooks_dir, "*.py") if not p.name.startswith("_")
         )
         canonical = sorted(surface_contract.get_canonical_hook_scripts())
         assert canonical == disk_hooks, (
@@ -1020,7 +1020,7 @@ class TestOperatorStringsArePortable:
         # silently unreached. A hardcoded path pinned exactly one module and
         # would have let the next one in unmeasured.
         declaring = sorted(
-            p for p in (REPO_ROOT / "tools" / "cc" / "hooks").glob("*.py")
+            p for p in checkout_glob(REPO_ROOT / "tools" / "cc" / "hooks", "*.py")
             if "_OPERATOR_FACING_TEMPLATES" in p.read_text(encoding="utf-8")
         )
         assert declaring, (
@@ -1458,8 +1458,8 @@ def _ast_callee(node: ast.Call) -> str | None:
 #: from them into a shipped module and these pins catch it there.
 _SHIPPED_PY_MODULES = tuple(sorted(
     p for p in (
-        [q for q in (REPO_ROOT / "espalier").rglob("*.py") if "_vendor" not in q.parts]
-        + list((REPO_ROOT / "tools" / "cc").rglob("*.py"))
+        [q for q in checkout_rglob(REPO_ROOT / "espalier", "*.py") if "_vendor" not in q.parts]
+        + list(checkout_rglob(REPO_ROOT / "tools" / "cc", "*.py"))
     )
 ))
 
@@ -1495,7 +1495,7 @@ class TestRemediesSpellTheRemedyInterpreter:
     #: resolver is walked the day it appears, not the day someone lists it.
     _MODULES = tuple(sorted(
         p.relative_to(REPO_ROOT).as_posix()
-        for p in (REPO_ROOT / "espalier").rglob("*.py")
+        for p in checkout_rglob(REPO_ROOT / "espalier", "*.py")
         if "_vendor" not in p.parts
     ))
     #: (module, innermost function, callee) -> the argument for the write answer.

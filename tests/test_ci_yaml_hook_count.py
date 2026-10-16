@@ -22,6 +22,7 @@ from pathlib import Path
 
 from tests._contracts import count_opt_outs_for_rule
 from tests._surface_expected import CONTRACT_CEILINGS
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
@@ -39,7 +40,7 @@ def _line_carries_historical_marker(line: str) -> bool:
 
 
 def _yaml_files() -> list[Path]:
-    return sorted(WORKFLOWS_DIR.glob("*.yml"))
+    return sorted(checkout_glob(WORKFLOWS_DIR, "*.yml"))
 
 
 class TestCiYamlHookCount:

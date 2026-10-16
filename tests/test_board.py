@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from tests._live_tree import copy_checkout
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TOOLS_CC = REPO_ROOT / "tools" / "cc"
@@ -907,7 +908,7 @@ class TestDerivedNotRestated:
         packs.mkdir(parents=True)
         shutil.copy(REPO_ROOT / "task-packs" / "FORWARD_LEDGER.md", packs / "FORWARD_LEDGER.md")
         if (REPO_ROOT / "task-packs" / "ledger.d").is_dir():
-            shutil.copytree(REPO_ROOT / "task-packs" / "ledger.d", packs / "ledger.d")
+            copy_checkout(REPO_ROOT / "task-packs" / "ledger.d", packs / "ledger.d")
         gen = _load("generate_ledger_regions", "gen_for_board_test")
         expected = len(gen.live_member_ids(gen.record_fragments().ledger_text(tmp_path)))
         assert expected >= 100, f"the scratch ledger reads {expected} live rows: the copy or the view broke"

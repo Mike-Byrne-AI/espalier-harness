@@ -657,7 +657,10 @@ class TestFloorAtTheThreeDecisionSites:
         assert warning.count("WARNING:") == 1, f"the warning must print once:\n{warning}"
         remedy = [line for line in warning.splitlines() if "--rewire-interpreter" in line]
         assert len(remedy) == 1, warning
-        assert "python3 -m espalier" not in remedy[0], (
+        # The failed candidate is the bare word `python3`. The interpreter running
+        # the test can end in `bin/python3` (`python3 -m pytest`), and the right
+        # remedy then contains the substring, so the check anchors on the word.
+        assert not re.search(r"(?<![\w./\\-])python3 -m espalier", remedy[0]), (
             f"the remedy is spelled with the interpreter that just failed the floor:\n{remedy[0]}"
         )
         assert f"{cli.quoted_if_spaced(sys.executable)} -m espalier init . --rewire-interpreter" in remedy[0], (

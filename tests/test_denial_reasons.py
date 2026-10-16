@@ -45,6 +45,7 @@ from espalier import cli, managed_inventory
 
 # tests/ sibling helper -- the shared cross-document pointer matchers.
 from _doc_pointers import section_citations
+from tests._live_tree import checkout_glob, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -258,7 +259,7 @@ def _adopter_visible_doc_sources() -> list[tuple[str, Path]]:
     # from .claude/, so either side would do; this is the one init copies.
     sources += [
         (str(p.relative_to(REPO_ROOT)), p)
-        for p in visible((assets / "claude").rglob("*.md"), assets / "claude")
+        for p in visible(checkout_rglob(assets / "claude", "*.md"), assets / "claude")
     ]
     return sources
 
@@ -299,7 +300,7 @@ def _cited_claude_md_sections() -> dict[str, set[str]]:
     is fully resolvable, so a doc carrier that goes dark fails loudly there.
     """
     cited: dict[str, set[str]] = {}
-    for path in sorted(HOOKS_DIR.glob("*.py")):
+    for path in sorted(checkout_glob(HOOKS_DIR, "*.py")):
         for node in ast.walk(_parse(path)):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 for name in _citations_in(node.value):
@@ -320,7 +321,7 @@ def _cited_sections_all_files() -> dict[tuple[str, str], set[str]]:
     carriers that cite it. Same ``ast.Constant`` walk over the hook tree, same
     text scan over the seeded docs and ``.claude/`` assets, same matcher."""
     cited: dict[tuple[str, str], set[str]] = {}
-    for path in sorted(HOOKS_DIR.glob("*.py")):
+    for path in sorted(checkout_glob(HOOKS_DIR, "*.py")):
         for node in ast.walk(_parse(path)):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 for pair in section_citations(node.value):

@@ -475,6 +475,7 @@ class TestBlueprintSummaryParsesLoadJsonOutput:
         # If no blueprint exists yet, the bug under test isn't reachable —
         # _blueprint_summary returns "missing", not "invalid".
         blueprints_dir = REPO_ROOT / "cc" / "blueprints"
+        # live-tree: ok -- the blueprints are session state in the gitignored cc/blueprints/, the subject of this test
         if not blueprints_dir.exists() or not any(blueprints_dir.glob("*.json")):
             pytest.skip("live repo has no blueprint; bug not reachable")
 

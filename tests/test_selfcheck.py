@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from espalier import selfcheck
+from tests._live_tree import copy_checkout
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -404,10 +405,9 @@ def test_run_contracts_returns_1_when_a_contract_fails(tmp_path, capsys):
     aggregate (C-3 fails) → run_contracts returns 1 and prints a fail report."""
     # Deploy the real hook into tmp_path so C-1/C-2 can run, then plant a
     # kill-switch in the live settings so C-3 reds.
-    import shutil
     deployed = tmp_path / "tools" / "cc" / "hooks"
     deployed.mkdir(parents=True)
-    shutil.copytree(HOOKS_DIR, deployed, dirs_exist_ok=True)
+    copy_checkout(HOOKS_DIR, deployed)
     claude = tmp_path / ".claude"
     claude.mkdir()
     (claude / "settings.json").write_text(

@@ -27,6 +27,7 @@ from _denied_form import every_form_is_denied
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -449,9 +450,9 @@ def _deployed_bodies() -> list[tuple[str, str]]:
     """The onboarding docs plus every deployed command / skill / agent body."""
     out = list(_existing_docs())
     roots = (
-        visible((REPO_ROOT / ".claude" / "commands").glob("*.md"), REPO_ROOT / ".claude" / "commands"),
-        visible((REPO_ROOT / ".claude" / "skills").glob("*/SKILL.md"), REPO_ROOT / ".claude" / "skills"),
-        visible((REPO_ROOT / ".claude" / "agents").glob("*.md"), REPO_ROOT / ".claude" / "agents"),
+        visible(checkout_glob(REPO_ROOT / ".claude" / "commands", "*.md"), REPO_ROOT / ".claude" / "commands"),
+        visible(checkout_glob(REPO_ROOT / ".claude" / "skills", "*/SKILL.md"), REPO_ROOT / ".claude" / "skills"),
+        visible(checkout_glob(REPO_ROOT / ".claude" / "agents", "*.md"), REPO_ROOT / ".claude" / "agents"),
     )
     for group in roots:
         for path in group:

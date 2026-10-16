@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "tools" / "cc"))
@@ -73,7 +74,7 @@ def _line_has_opt_out(source_lines: list[str], lineno: int) -> bool:
 
 def _iter_tools_cc_files() -> list[Path]:
     return sorted(
-        p for p in TOOLS_CC_ROOT.rglob("*.py")
+        p for p in checkout_rglob(TOOLS_CC_ROOT, "*.py")
         if p != SELF_EXCLUDE and "__pycache__" not in p.parts
     )
 

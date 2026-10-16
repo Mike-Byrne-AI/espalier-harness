@@ -21,6 +21,7 @@ import re
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -310,8 +311,8 @@ def test_every_engine_hook_twin_is_named_in_the_conventions_registry():
     """
     conventions = (REPO_ROOT / "docs" / "CONVENTIONS.md").read_text(encoding="utf-8")
     section = _parity_registry_section(conventions)
-    esp = {p.name for p in (REPO_ROOT / "espalier").rglob("*.py") if "_vendor" not in str(p)}
-    cc = {p.name for p in (REPO_ROOT / "tools" / "cc").rglob("*.py")}
+    esp = {p.name for p in checkout_rglob(REPO_ROOT / "espalier", "*.py") if "_vendor" not in str(p)}
+    cc = {p.name for p in checkout_rglob(REPO_ROOT / "tools" / "cc", "*.py")}
     twins = sorted((esp & cc) - _TWIN_REGISTRY_EXEMPT)
     assert twins, "no engine<->hook twins discovered -- the walk broke"
     unregistered = [t for t in twins if t.removesuffix(".py") not in section]
