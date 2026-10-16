@@ -157,8 +157,9 @@ def plan_steps(facts: dict, skip: set[str] | None = None) -> list[dict]:
         # Windows pytest-timeout's thread method ends a plain session at the first
         # test past the ceiling with no test named; under xdist that test fails by
         # name, its worker is replaced and the run goes on, up to xdist's restart
-        # cap (four at one worker: past it the run stops scheduling, and -q hides
-        # xdist's line saying so, DEF-2020). One worker keeps the serial files off
+        # cap (four at one worker: past it the run stops scheduling, -q hides
+        # xdist's line saying so, and the suite's summary counts the tests that
+        # never ran, DEF-2020). One worker keeps the serial files off
         # parallel load, as the run always did.
         {"name": "pytest",
          "argv": [py, "-m", "pytest", "-q", "-n", "1", "-m", "not heavy_e2e", "-p", "no:cacheprovider"],

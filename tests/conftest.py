@@ -16,10 +16,13 @@ import pytest
 # session INTERNALERROR on the 3.10/3.11 floor (the module says why).
 from tests._report_os_name_guard import pytest_runtest_makereport  # noqa: F401
 
-# Registers the timeout backstop beside pytest-timeout: where the per-test
-# ceiling is a signal alarm, a pass past it is a failure and a test that blocks
-# again after it still ends (the module says why).
-from tests._timeout_backstop import pytest_configure  # noqa: F401
+# Registered by pytest_configure below: the timeout backstop beside
+# pytest-timeout (where the per-test ceiling is a signal alarm, a pass past it
+# is a failure and a test that blocks again after it still ends), and the count
+# of the selected tests that never ran, in a line -q keeps (past xdist's
+# restart cap the run stops scheduling without a word under -q). Each module
+# says why.
+from tests import _never_ran, _timeout_backstop
 # Stops a session whose interpreter imports another tree's engine before any
 # test runs: every CLI-spawning test would otherwise pass about the wrong code.
 from tests._engine_check import pytest_sessionstart  # noqa: F401
@@ -29,6 +32,13 @@ from tests._engine_check import pytest_sessionstart  # noqa: F401
 from _stack_trees import write_stack
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def pytest_configure(config):
+    """Register the timeout backstop and the never-ran count (the imports above
+    say what each is for)."""
+    _timeout_backstop.pytest_configure(config)
+    _never_ran.pytest_configure(config)
 
 
 @pytest.fixture(autouse=True)
@@ -372,6 +382,39 @@ def _live_tree_moves(before, after):
     return sorted(moved)
 
 
+def _live_tree_xdist_note() -> str:
+    """The live-tree failure's note under xdist: another writer may have moved
+    the entries. A sibling worker is named only where one runs: at one xdist
+    worker (the full tier's serial leg, the host check's suite step, DEF-2017)
+    there is none to blame, but a gate run from outside the checkout still
+    can be (DEF-2020's failure-mode review). A count xdist did not set is read
+    as siblings that may exist."""
+    if not os.environ.get("PYTEST_XDIST_WORKER"):
+        return ""
+    try:
+        workers = int(os.environ.get("PYTEST_XDIST_WORKER_COUNT") or 0)
+    except ValueError:
+        workers = 0
+    head = (
+        "\nTHIS RUN IS UNDER xdist AT ONE WORKER: no sibling worker ran beside "
+        "this test, but another writer still can have. "
+        if workers == 1 else
+        f"\nTHIS RUN IS UNDER xdist ({workers or 'an unread number of'} workers): "
+        "a sibling worker can move these entries while this test runs, so this "
+        "test may be innocent; the entry name says which writer moved. "
+    )
+    return head + (
+        "No test runs the "
+        "surface gate on the live checkout since 2026-10-14 (DEF-973), so a "
+        "reports/.cc_surface_gate.json.<hex>.tmp entry is a new writer in the "
+        "suite (tests/test_live_root_gate_writers.py names most) or a gate run on "
+        "this checkout from outside it while the tier ran (/smoke, /preflight, "
+        "doctor). Rerun the failing file on its own before acting on this "
+        "message, record the date, test and entry on the races line in "
+        "tests/README.md, and never add to _LIVE_TREE_ALLOWED from a run under xdist."
+    )
+
+
 @pytest.fixture(autouse=True)
 def _no_live_tree_writes(request):
     """Fail a test that adds or removes entries in a watched live-tree dir.
@@ -387,19 +430,6 @@ def _no_live_tree_writes(request):
     yield
     after = _live_tree_fingerprint()
     moved = _live_tree_moves(before, after)
-    xdist_note = (
-        "\nTHIS RUN IS UNDER xdist (PYTEST_XDIST_WORKER is set): a sibling worker "
-        "can move these entries while this test runs, so this test may be "
-        "innocent; the entry name says which writer moved. No test runs the "
-        "surface gate on the live checkout since 2026-10-14 (DEF-973), so a "
-        "reports/.cc_surface_gate.json.<hex>.tmp entry is a new writer in the "
-        "suite (tests/test_live_root_gate_writers.py names most) or a gate run on "
-        "this checkout from outside it while the tier ran (/smoke, /preflight, "
-        "doctor). Rerun the failing file serially before acting on this "
-        "message, record the date, test and entry on the races line in "
-        "tests/README.md, and never add to _LIVE_TREE_ALLOWED from a parallel run."
-        if os.environ.get("PYTEST_XDIST_WORKER") else ""
-    )
     assert not moved, (
         "test added or removed entries in the LIVE repo tree: "
         + ", ".join(moved)
@@ -408,7 +438,7 @@ def _no_live_tree_writes(request):
         "first. Redirect the writer to tmp_path (monkeypatch the module-level "
         "output constant), or add this file to _LIVE_TREE_ALLOWED with the "
         "reason it genuinely cannot be isolated."
-        + xdist_note
+        + _live_tree_xdist_note()
     )
 
 
@@ -1286,6 +1316,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # every process that collects the file: not the `unit` slice's
             # no-subprocess quick pass (DEF-1177's failure-mode review).
             "test_session_tree_build",
+            # Whether xdist stops replacing crashed workers, and what a quiet
+            # run then prints, is a fact about a real xdist child whose workers
+            # the thread-method ceiling ends (DEF-2020).
+            "test_xdist_never_ran",
         ),
         "integration",
     ),
@@ -1620,6 +1654,10 @@ _SLOW_FILES: set[str] = {
     # working branch, a plain clone carrying an orphan ref) are git's own
     # behaviour, observable no other way.
     "test_record_snapshot",
+    # One pytest child at one xdist worker whose thread-method ceiling ends
+    # five workers in a row, each replaced (about seven seconds on the Windows
+    # box, DEF-2020).
+    "test_xdist_never_ran",
 }
 # NOTE: test_archive_transcripts is deliberately NOT here. It spawns subprocesses
 # and so needs the subprocess contract satisfied, but it does that with the
@@ -2539,8 +2577,9 @@ _INITIALIZED_REPO_FIXTURE = "initialized_repo_root"
 _BUILD_NEAR_BOUND = 0.5
 #: Options that collect without running a test, so nothing needs the tree
 #: (``config.option`` attribute names; tests/test_session_tree_build.py pins each
-#: as one pytest still defines).
-_NO_TEST_RUNS = ("collectonly", "showfixtures", "show_fixtures_per_test", "setupplan")
+#: as one pytest still defines). One tuple with the never-ran count, which owes
+#: no line under them either.
+_NO_TEST_RUNS = _never_ran.NO_TEST_RUNS
 #: The key a worker's build report rides under in xdist's ``workeroutput``.
 _BUILD_REPORT_KEY = "initialized_repo_build"
 
