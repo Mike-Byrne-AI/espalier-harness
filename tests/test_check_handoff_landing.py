@@ -1642,9 +1642,14 @@ class TestTheLanesOwnTreeKeepsTheSessionLogCap:
         self._rows(tmp_path, cap)
 
         def git(*argv: str, input: str | None = None) -> str:
+            # Bytes in and out: a text-mode stdin is re-lined CR LF on Windows,
+            # and mktree then names each entry with a trailing carriage return
+            # (`memory\r`), so the planted row sat under no session-log
+            # directory and the count read 0 (DEF-5013, win's host).
             return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.com", *argv], cwd=tmp_path,
-                                  check=True, capture_output=True, text=True, encoding="utf-8",
-                                  input=input).stdout.strip()
+                                  check=True, capture_output=True,
+                                  input=input.encode("utf-8") if input is not None else None,
+                                  ).stdout.decode("utf-8").strip()
 
         git("init", "-q", "-b", "main")
         git("add", "-A")
