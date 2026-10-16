@@ -190,13 +190,31 @@ interactive session as under `-p`; a killed session leaves the lock behind.
 
 | Does | Does not |
 |---|---|
-| Turns the operator's priorities into assignments (`mail.py send --type assign --seat <seat> ...`): which seat works which job | Set the priorities: the operator does |
+| Turns the operator's priorities into assignments (`mail.py send --type assign --seat <seat> ...`): which seat works which job, and since 2026-10-15 sends them without a per-assign yes when the job is inside an approved pack or a live ledger row (the paragraph below) | Set the priorities: the operator does, by approving packs and naming the classes to drain; a new pack, a scope change, a release, or a call `cc/GOAL.md` lists as the operator's still goes to the operator |
 | Sequences jobs that would collide: two jobs on one hot file, a record-format change while lanes are open | Gate changes: seats ship their own lanes |
 | Keeps at least one job with clear gates on every seat's queue, and re-reads the gates when a lane merges; a gate names another seat's open lane and the file both touch | Gate a seat on its own open pull request (item 4: the cap is on pull requests, not work) |
 | Answers worker requests at its next prompt (the operator prompts "dispatch", or a `/loop` does) | Review all code, or act as the merge queue |
 | Backs up a red `main` that nobody else has reverted | Hold knowledge only in its own context: what it decides is written where every seat can read it |
 | Carries a lighter lane of its own | Run the heaviest lanes, which compete with dispatching |
 | Files the rows nobody is assigned to fix, and the ones its own measurements find | File rows for a job it has assigned: the finding, its probe and its fix are the assignee's one job (rule 8) |
+
+**Assign authority (decided by the operator 2026-10-15, after two days'
+measurement).** The dispatcher assigns, re-sequences and releases jobs on its
+own when the job is a wave of a pack the operator has approved (its `Status`
+not waiting on an operator decision) or a live ledger row or class; it does not
+wait for a yes per assign. Outside that set the operator decides: a new pack,
+a change to an approved pack's scope, a release or tag, a revert that is not
+the Core Rule 15 red-`main` revert, and every item `cc/GOAL.md` lists under the
+operator's open calls. Each assign is reported at the dispatcher's next tick
+with the job and the reason, so the operator can veto it, and the day's
+assigns go in the Session Log row. Why: the per-assign yes was the queue's
+single point of failure. Measured on 2026-10-14 and 10-15, assign-to-first-claim
+ran 0.4 to 1.6 hours with the operator present and 7.2 to 10.9 hours overnight
+(three lanes assigned 02:00 to 04:11Z, claimed 12:00 to 15:00Z), while every
+worker ask was answered within ten minutes; the dispatcher's recommendations
+had been taken 13 of 13 times since 2026-10-14. The data point that falsifies
+this: an assign the operator vetoes after the fact; two in a week re-opens the
+rule.
 
 A Claude session acts only when prompted. The design tolerates a dispatcher
 that is away: a seat with a queue does not need it in real time.
