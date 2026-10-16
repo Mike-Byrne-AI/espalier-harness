@@ -80,6 +80,17 @@ def ship():
     (the real one reads the box's own session registry)."""
     mod = _load()
     mod._SYNC = _oracle([])
+    # The Session Log fold runs real git against the records refs; its own
+    # rows are tests/test_mail.py::TestTheRecordsRef. Here it is a recorder,
+    # noting where in the spawn order each fold ran.
+    mod.FOLDS = []
+
+    def _no_fold(root, base, *, keep=None, dry_run=False):
+        calls = getattr(mod.RUN, "calls", None)
+        mod.FOLDS.append({"base": base, "dry_run": dry_run, "at": len(calls) if calls is not None else -1})
+        return 0, 0
+
+    mod._fold_session_log = _no_fold
     return mod
 
 
@@ -360,6 +371,7 @@ def _preflight_answers(root, *, dirty="", untracked="", commits="abc1234 feat: a
         ("git", "diff", "--name-only"): (0, "", ""),   # the attribute walk: nothing changed on both sides
         ("gh", "pr", "list", "--author"): (0, merged, ""),
         ("gh", "run", "list", "--workflow", "post-merge.yml"): (0, base_runs, ""),
+        _ROW_FILES: _row_log(),   # no row added by the lane's own commits
     })
     return answers
 
@@ -372,9 +384,19 @@ def _memory(root: Path, *dates: str) -> None:
 
 #: The read that asks whether this lane's own commits touch the memory file.
 _MEMORY_LOG = ("git", "log", "--format=%h")
-#: The read that asks whether this lane added a Session Log file (the row's
-#: home since 2026-10-10).
-_ROW_FILES = ("git", "diff", "--name-only", "--diff-filter=A")
+#: The read that asks whether this lane's own commits added a Session Log file
+#: (the row's home since 2026-10-10), each commit's fold trailer (read by key)
+#: beside its names so a fold commit's rows are told apart.
+_ROW_FILES = ("git", "log", "--format=%x1e%(trailers:key=Espalier-Fold,valueonly)%x1f")
+#: The handoff's question: does this lane carry anything but Session Log rows?
+_LANE_DIFF = ("git", "diff", "--name-status")
+#: A fold commit's trailer value, as the row read prints it.
+_FOLD = "session-log"
+
+
+def _row_log(*commits: tuple[str, list[str]]) -> tuple[int, str, str]:
+    """The row read's answer: ``(fold trailer value or "", added paths)`` per commit."""
+    return 0, "".join(f"\x1e{value}\x1f\n" + "".join(f"{p}\n" for p in paths) for value, paths in commits), ""
 
 
 def _toml(root: Path, text: str) -> None:
@@ -620,6 +642,8 @@ def _open_answers(root, *, branch="lane/x", base="main", existing="[]",
         ("git", "log", "--format=- %s"): (0, "- feat: a thing\n", ""),
         ("git", "push"): push,
         ("git", "diff", "--name-only"): (0, diff, ""),
+        _LANE_DIFF: (0, "".join(f"M\t{p}\n" for p in diff.split()), ""),   # a lane with code: no park
+        _ROW_FILES: _row_log(),   # no row added by the lane's own commits
         ("gh", "pr", "create"): create,
         ("gh", "pr", "merge"): merge,
         ("gh", "pr", "view"): (0, armed, ""),
@@ -851,6 +875,8 @@ class TestHandoffVerb:
         _toml(tmp_path, "handoff_push = true\n")
         answers = _reads(tmp_path, branch="main")
         answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[("git", "fetch")] = (0, "", "")
+        answers[_LANE_DIFF] = (0, "M\ttools/cc/ship.py\n", "")   # code: not a handoff-only lane
         spawns = _arm(ship, answers)
         assert ship.handoff(dry_run=True) == 0
         assert spawns.mutations == []
@@ -862,6 +888,8 @@ class TestHandoffVerb:
         answers[("git", "branch", "--show-current")] = [(0, "main\n", ""), (0, "lane/x\n", "")]
         answers[_list_key()] = (0, "[]", "")
         answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[("git", "fetch")] = (0, "", "")
+        answers[_LANE_DIFF] = (0, "M\ttools/cc/ship.py\n", "")   # code: not a handoff-only lane
         _arm(ship, answers)
         order: list[str] = []
         monkeypatch.setattr(ship, "lane", lambda: order.append("lane") or 0)
@@ -911,7 +939,7 @@ class TestTheLaneCarriesItsMemoryRowWhenHandoffPushes:
         self._on(tmp_path)
         answers = _open_answers(tmp_path)
         answers[_MEMORY_LOG] = (0, "", "")
-        answers[_ROW_FILES] = (0, "memory/session-log.d/2026-10-11-120000-win.md\n", "")
+        answers[_ROW_FILES] = _row_log(("", ["memory/session-log.d/2026-10-11-120000-win.md"]))
         spawns = _arm(ship, answers)
         assert ship.open_pr() == 0
         assert spawns.count(("git", "push")) == 1
@@ -920,7 +948,7 @@ class TestTheLaneCarriesItsMemoryRowWhenHandoffPushes:
         self._on(tmp_path)
         answers = _open_answers(tmp_path)
         answers[_MEMORY_LOG] = (0, "", "")
-        answers[_ROW_FILES] = (0, "", "")
+        answers[_ROW_FILES] = _row_log()
         _arm(ship, answers)
         with pytest.raises(ship.Refused) as stop:
             ship.open_pr()
@@ -949,6 +977,159 @@ class TestTheLaneCarriesItsMemoryRowWhenHandoffPushes:
         assert ship.preflight() == 0
         out = capsys.readouterr().out
         assert "ESPALIER_MEMORY.md" in out and "--early" in out
+
+
+class _FakeMail:
+    """The channel's park, recorded; ``refuse`` makes it refuse as an unnamed seat does."""
+
+    class Unresolvable(Exception):
+        pass
+
+    def __init__(self, refuse: str | None = None):
+        self.parked: list[tuple[str, object, str, object]] = []
+        self.refuse = refuse
+
+    def park(self, root, path, data, base_ref, *, from_rev=None, say=print, **_kw):
+        if self.refuse:
+            raise self.Unresolvable(self.refuse)
+        self.parked.append((path, data, base_ref, from_rev))
+        say(f"parked {path}")
+        return "c0ffee"
+
+
+_PARKED_ROW = "memory/session-log.d/2026-10-16-010101-win.md"
+
+
+class TestTheSessionLogFoldAndPark:
+    """DEF-5007. A lane's push folds the parked rows in and prunes to the cap,
+    before the marker's sha (the fold's commits are the head the marker binds);
+    a handoff whose lane carries only its row parks it instead of opening a pull
+    request for one row; the rows a fold adds are no row of this lane."""
+
+    def test_open_folds_before_the_marker_is_bound_and_the_push(self, ship, tmp_path, forget_guard):
+        """Dies to: no fold (the cap's one writer gone), or a fold after the
+        sha the marker binds, which binds the marker to a head the push moves."""
+        _write_guard(tmp_path)
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        [fold] = ship.FOLDS
+        assert fold["base"] == "main" and fold["dry_run"] is False
+        assert fold["at"] < spawns.index(("git", "push"))
+        heads = [i for i, c in enumerate(spawns.calls) if c[:3] == ["git", "rev-parse", "HEAD"]]
+        assert any(i >= fold["at"] for i in heads), (fold, heads)
+
+    def test_the_handoffs_push_onto_an_open_pull_request_folds_first(self, ship, tmp_path, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = TestHandoffVerb._existing_pr_answers(tmp_path)
+        spawns = _arm(ship, answers)
+        monkeypatch.setattr(ship, "rebind", lambda **_kw: 0)
+        assert ship.handoff() == 0
+        [fold] = ship.FOLDS
+        assert fold["at"] < spawns.index(("git", "push"))
+
+    def _handoff_only(self, ship, tmp_path, diff: str, mail: _FakeMail):
+        _toml(tmp_path, "handoff_push = true\n")
+        (tmp_path / _PARKED_ROW).parent.mkdir(parents=True)
+        (tmp_path / _PARKED_ROW).write_bytes(b"| 2026-10-16 | the row | -- |\n")
+        answers = _reads(tmp_path)
+        answers[_list_key()] = (0, "[]", "")
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[("git", "fetch")] = (0, "", "")
+        answers[_LANE_DIFF] = (0, diff, "")
+        answers[("git", "rev-parse", "HEAD")] = (0, f"{HEAD}\n", "")
+        answers[("git", "merge-base")] = (0, f"{OLD_HEAD}\n", "")
+        answers[("git", "reset", "--keep")] = (0, "", "")
+        ship._MAIL = mail
+        return _arm(ship, answers)
+
+    def test_a_lane_carrying_only_its_row_parks_it_and_opens_nothing(self, ship, tmp_path, monkeypatch, capsys):
+        """The assign's red: dies to a pull request opened for one row (seven
+        in two days, #212 to #240)."""
+        mail = _FakeMail()
+        spawns = self._handoff_only(ship, tmp_path, f"A\t{_PARKED_ROW}\n", mail)
+        monkeypatch.setattr(ship, "open_pr", lambda **_kw: pytest.fail("a pull request opened for the row alone"))
+        assert ship.handoff() == 0
+        assert mail.parked == [(_PARKED_ROW, None, "origin/main", "HEAD")]   # the committed blob, not the file
+        assert spawns.count(("git", "push")) == 0 and spawns.count(("gh", "pr", "create")) == 0
+        # Both reviews' BLOCKER: the row's commit is dropped from the branch once parked.
+        [reset] = spawns.matching(("git", "reset", "--keep"))
+        assert reset[-1] == OLD_HEAD, reset
+        out = capsys.readouterr().out
+        assert "No pull request opened" in out and "next lane's push" in out and out.isascii()
+        assert f"moved back to {OLD_HEAD[:7]}" in out and HEAD[:7] in out
+
+    def test_a_lane_that_edits_a_row_opens_as_before(self, ship, tmp_path, monkeypatch):
+        """Dies to: an edited row passing the rows-only test and parking the new
+        row alone, so the edit never reached a pull request (code review,
+        driven)."""
+        mail = _FakeMail()
+        self._handoff_only(ship, tmp_path, f"M\tmemory/session-log.d/2026-10-13-120000-win.md\nA\t{_PARKED_ROW}\n",
+                           mail)
+        opened: list[str] = []
+        monkeypatch.setattr(ship, "open_pr", lambda **_kw: opened.append("open") or 0)
+        assert ship.handoff() == 0
+        assert opened == ["open"] and mail.parked == []
+
+    def test_the_fold_verb_folds_against_the_default_branch(self, ship, tmp_path):
+        """A direct-push tree's /handoff step: the same writer, at its own push."""
+        answers = _reads(tmp_path, branch="main")
+        answers[("git", "fetch")] = (0, "", "")
+        _arm(ship, answers)
+        assert ship.main(["fold"]) == 0
+        assert [f["base"] for f in ship.FOLDS] == ["main"]
+
+    def test_a_seat_the_channel_refuses_opens_a_pull_request_as_before(self, ship, tmp_path, monkeypatch, capsys):
+        """Dies to: the row stranded on a branch where the seat has no name."""
+        mail = _FakeMail(refuse="this clone names no machine")
+        self._handoff_only(ship, tmp_path, f"A\t{_PARKED_ROW}\n", mail)
+        opened: list[str] = []
+        monkeypatch.setattr(ship, "open_pr", lambda **_kw: opened.append("open") or 0)
+        assert ship.handoff() == 0
+        assert opened == ["open"] and mail.parked == []
+        assert "names no machine" in capsys.readouterr().out
+
+    def test_a_lane_with_code_beside_its_row_opens_as_before(self, ship, tmp_path, monkeypatch):
+        """Dies to: a lane's code parked away with its row, never reaching a pull request."""
+        mail = _FakeMail()
+        self._handoff_only(ship, tmp_path, f"A\t{_PARKED_ROW}\nM\ttools/cc/ship.py\n", mail)
+        opened: list[str] = []
+        monkeypatch.setattr(ship, "open_pr", lambda **_kw: opened.append("open") or 0)
+        assert ship.handoff() == 0
+        assert opened == ["open"] and mail.parked == []
+
+    def test_a_dry_run_says_it_would_park_and_parks_nothing(self, ship, tmp_path, capsys):
+        mail = _FakeMail()
+        spawns = self._handoff_only(ship, tmp_path, f"A\t{_PARKED_ROW}\n", mail)
+        assert ship.handoff(dry_run=True) == 0
+        assert mail.parked == [] and spawns.mutations == []
+        assert f"dry-run: park {_PARKED_ROW}" in capsys.readouterr().out
+
+    def test_rows_a_fold_added_are_no_row_of_this_lane(self, ship, tmp_path, forget_guard):
+        """Dies to: another seat's parked row, folded in, read as this lane's
+        row, so a lane shipped before its handoff is not asked for --early."""
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        assert ship._fragments_module().FOLD_TRAILER == f"Espalier-Fold: {_FOLD}"
+        answers = _open_answers(tmp_path)
+        answers[_MEMORY_LOG] = (0, "", "")
+        answers[_ROW_FILES] = _row_log((_FOLD, ["memory/session-log.d/2026-10-16-090000-mac.md"]))
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert "--early" in str(stop.value)
+
+    def test_the_lanes_own_row_beside_a_fold_still_counts(self, ship, tmp_path, forget_guard):
+        """Air 847e2b: only the fold's rows are skipped."""
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[_MEMORY_LOG] = (0, "", "")
+        answers[_ROW_FILES] = _row_log(
+            (_FOLD, ["memory/session-log.d/2026-10-16-090000-mac.md"]),
+            ("", ["memory/session-log.d/2026-10-16-080000-win.md"]))
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert spawns.count(("git", "push")) == 1
 
 
 class TestPushClaimsInShippedBodiesNameTheSetting:

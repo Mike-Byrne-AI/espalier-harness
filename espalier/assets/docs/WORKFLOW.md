@@ -173,9 +173,10 @@ of describing the change in chat:
 The per-pack lifecycle, end to end: **pre-flight gates** (0-A pack
 review → 0-B scope-check → 0-C compression probe → 0-D surface-impact) →
 **draft the execution plan** → **execute phase-by-phase** with targeted
-proof at each phase → **orthogonal review** (both reviewers together, one
-fix batch) → **integration check** (the one full-suite run + release gate +
-audit) → **changelog + any generated mirrors your repo keeps** →
+proof at each phase → **orthogonal review** (the reviewers the diff's
+surface earns, dispatched together, one fix batch) →
+**integration check** (the one full-suite run + release gate + audit) →
+**changelog + any generated mirrors your repo keeps** →
 **one atomic commit** → **stamp Landing + move to `Done/`**. In folder
 mode this repeats for each pack without asking permission between them.
 
@@ -293,9 +294,10 @@ recorded hashes. If you've made legitimate changes to harness files
 
 Runs everything, cheapest first: lint (if configured), the surface audit
 and integrity check, the release gate and reflection pass (their failures
-are edits), the diff review (both reviewers dispatched together, their
-findings landed as one fix batch), and only then the full test suite and
-pin check, once. Reports a GO/NO-GO verdict. Run this before pushing a PR
+are edits), the diff review (the reviewers the diff's surface earns,
+dispatched together, their findings landed as one fix batch), and only
+then the full test suite and pin check, once. Reports a GO/NO-GO verdict.
+Run this before pushing a PR
 — it catches the things individual checks miss by running them together,
 and it pays for the expensive tier only after every edit it will ask for
 is in.

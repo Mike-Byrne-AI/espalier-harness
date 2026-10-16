@@ -1136,6 +1136,38 @@ class TestIsolation:
         )
 
 
+class TestTheManifestSkipsBytecode:
+    """A bytecode cache another worker compiled is not the tool's mutation
+    (DEF-5009). A worker's first import of a module lands its ``.pyc`` inside
+    the isolation test's window, and the manifest read it as one: #255's 3.14
+    cell (run 38874646235) on four ``tests/__pycache__/test_*.cpython-314.pyc``,
+    its 3.13 cell (run 38878802493) on two
+    ``bench/sandbox_read_drive/__pycache__/*.cpython-313.pyc``, 2026-10-16. The
+    content-hash manifest (DEF-2008) is intact; this is its sibling symptom.
+    ``__pycache__`` is skipped at any depth by ``tests/_live_tree.py``'s
+    ``live_tree_skip_names``, the rule every walk and copy of the live checkout
+    shares, and a source file beside it is still seen."""
+
+    def test_bytecode_appearing_anywhere_reads_unchanged_and_a_source_beside_it_does_not(self, tmp_path):
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "m.py").write_text("x = 1\n", encoding="utf-8")
+        before = _fs_manifest(tmp_path)
+        for cache in ("pkg/__pycache__/m.cpython-314.pyc", "__pycache__/top.cpython-313.pyc",
+                      "a/b/c/__pycache__/deep.cpython-310.pyc"):
+            (tmp_path / cache).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / cache).write_bytes(b"\x00compiled")
+        assert _fs_manifest(tmp_path) == before
+        (tmp_path / "pkg" / "n.py").write_text("y = 2\n", encoding="utf-8")
+        (tmp_path / "a" / "b" / "c" / "deep.py").write_text("z = 3\n", encoding="utf-8")
+        assert sorted(set(_fs_manifest(tmp_path)) - set(before)) == ["a/b/c/deep.py", "pkg/n.py"]
+
+    def test_the_tool_never_names_a_bytecode_cache(self):
+        """The skip is safe only while verify_pins cannot write there, as the
+        churn roster's exclusions are (TestIsolation's guard on them)."""
+        src = (REPO_ROOT / "scripts" / "verify_pins.py").read_text(encoding="utf-8")
+        assert "__pycache__" not in src, "verify_pins.py names __pycache__, which the manifest no longer sees"
+
+
 @_no_recursion
 class TestExitCodes:
     @_needs_history

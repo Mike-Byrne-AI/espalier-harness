@@ -408,6 +408,13 @@ share met per criterion over the population, by seat, with the pull requests mis
 listed by number. No threshold is set here: the operator reads the figure and decides `TP-700`
 W1's gate.
 
+*Rubric note (2026-10-16, `lane/review-tier-by-surface`).* An audit of pull requests opened
+after that lane counts term (1) against the reviewers the diff's surface earns: the
+`review:` line `scripts/proof_tier.py --base` prints for it at the pull request's head (the gate set
+is read from the workflows there). A lane that earned `none` reads
+not applicable, one that earned `code-reviewer` meets the term with that one verdict, and
+one that earned `both` needs both; a reviewer run beyond the earned set is not a gap.
+
 **D-3 the method.** Agent fan-out by the dispatcher (read-only; the memory on fan-out mechanics
 applies: a snapshot, no git writes), one agent per seat's pull requests, a refute pass on every
 "not met" by reading the mail refs for the same lane (the evidence may live in a note). The

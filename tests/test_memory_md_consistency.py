@@ -180,12 +180,11 @@ def _load_tools_cc(filename: str):
 def _fragment_problems(root: Path, rf) -> list[str]:
     """What the readers would mishandle under ``root``'s Session Log fragment
     directory. The count is the MERGED tree's, which answers to no one lane:
-    each lane prunes its own checkout to the cap, GitHub's merge runs no
-    resolver, so lanes that each add a row from one base land over it, and
-    the next row written prunes back (review of #179). The cap itself is held
-    per lane, before the push, by the landing check
-    (``check_handoff_landing.check_session_log_cap``). Here the bound is
-    twice the cap: loud only when the prune has stopped running. A bound of
+    the fold a lane's push runs (``tools/cc/ship.py``, DEF-5007) prunes back
+    to the cap only past its slack, GitHub's merge runs no resolver, so lanes
+    that each add a row from one base can land past the slack, and the next
+    push's fold prunes back. Here the bound is twice the cap: loud only when
+    no fold has run. A bound of
     the cap plus the seats less one leaned on one open pull request per seat,
     which nothing enforces, and would have red main on nobody's diff (review
     of the Wave C batch). Only fragment names count, the population the prune
@@ -209,9 +208,9 @@ def _fragment_problems(root: Path, rf) -> list[str]:
     bound = 2 * rf.SESSION_LOG_CAP
     if named_files > bound:
         problems.append(
-            f"{named_files} fragments, over twice the cap of {rf.SESSION_LOG_CAP}: the prune has "
-            "stopped running (every row written prunes the oldest beyond the cap): "
-            "`python tools/cc/_record_fragments.py prune`, then find the writer that skips it")
+            f"{named_files} fragments, over twice the cap of {rf.SESSION_LOG_CAP}: no fold has run "
+            "(a lane's push folds and prunes them; where no lane pushes, `python tools/cc/ship.py fold`), "
+            "then find the push that skips it")
     return problems
 
 
@@ -244,7 +243,7 @@ class TestTheFragmentBoundIsTheMergedTrees:
         rf = _load_tools_cc("_record_fragments.py")
         assert _fragment_problems(self._tree(tmp_path / "at", rf, 2 * rf.SESSION_LOG_CAP), rf) == []
         [problem] = _fragment_problems(self._tree(tmp_path / "past", rf, 2 * rf.SESSION_LOG_CAP + 1), rf)
-        assert f"over twice the cap of {rf.SESSION_LOG_CAP}: the prune has stopped running" in problem
+        assert f"over twice the cap of {rf.SESSION_LOG_CAP}: no fold has run" in problem
 
     def test_a_misnamed_file_is_named_and_not_counted(self, tmp_path):
         rf = _load_tools_cc("_record_fragments.py")

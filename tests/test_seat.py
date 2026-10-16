@@ -510,12 +510,15 @@ class TestLaunch:
 # -- brief ---------------------------------------------------------------------------
 
 #: The worker tick as the operator pasted it on 2026-10-15 18:56Z (mail note
-#: 215fbb, verbatim): the self-host render must reproduce it byte for byte.
+#: 215fbb, verbatim), with its review step read from the diff since 2026-10-16
+#: (air's assign 0b750e, on the operator's yes): the self-host render must
+#: reproduce it byte for byte.
 _OPERATOR_TICK = (
     "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
     "yours, in this order: your own open PR red, in conflict or stale (fix it, or ship.py catch-up); a new "
-    "assign or note from air; continue your current lane through its full procedure (plan, red-team both "
-    "reviewers on a snapshot clone, one fix batch, the tier the diff earns with --base origin/main, one open PR "
+    "assign or note from air; continue your current lane through its full procedure (plan, red-team the "
+    "reviewers scripts/proof_tier.py --base origin/main names, on a snapshot clone, one fix batch, the tier the "
+    "diff earns with --base origin/main, one open PR "
     "per seat, every step listed with its evidence in the PR body; a skipped step is a stop); then your next "
     "assigned job. STOP and send air one request, then only re-read mail until it is answered, on anything not "
     "green: a red you cannot fix in two attempts, a choice the assign does not settle, a refusal you cannot "
@@ -562,7 +565,8 @@ class TestBrief:
         seeded = seat.compose_brief(clone, "box-feat", feat)
         assert "a worker under the dispatcher hub (docs/WORKFLOW.md, Parallel seats)." in seeded.text
         assert "the proof the change earns per /implement-task step 7" in seeded.loop and "--base" not in seeded.text
-        assert "both reviewers at once with your edits frozen per /implement-task step 6" in seeded.loop
+        assert ("the reviewers the diff earns, dispatched at once with your edits frozen, per "
+                "/implement-task step 6") in seeded.loop
         assert "snapshot clone" not in seeded.text   # defined on this repository only
         assert "note from hub;" in seeded.loop and "send hub one request" in seeded.loop
         assert "memory/" not in seeded.text and "Core Rule" not in seeded.text
@@ -645,6 +649,38 @@ class TestBrief:
         assert "propose the revert to the operator on a red main" in adopter and "revert first" not in adopter
         _holds(clone, "memory/parallel-work-protocol.md")
         assert "revert first on a red main" in seat.compose_brief(clone, "box", clone).text
+
+    def test_this_repositorys_dispatcher_assigns_and_an_adopters_proposes(self, seat, clone):
+        """The operator's assign-authority decision (2026-10-15) is this
+        repository's; an adopter's dispatcher proposes every assign, as before.
+        Dies to: the self-host authority rendered for every tree, or the
+        self-host brief still asking for a yes per assign."""
+        _dispatcher(clone, '"box"')
+        _holds(clone, "docs/WORKFLOW.md")
+        adopter = seat.compose_brief(clone, "box", clone).text
+        assert "propose assigns and releases to the operator and send them on a yes" in adopter
+        assert "on your own" not in adopter
+        _holds(clone, "memory/parallel-work-protocol.md")
+        own = seat.compose_brief(clone, "box", clone).text
+        assert "within approved packs and live ledger rows on your own" in own
+        assert "Assign authority paragraph" in own and "send them on a yes" not in own
+
+    def test_this_repositorys_worker_runs_the_reviewers_its_diff_earns(self, seat, clone):
+        """The self-host tick names the review line the tier script prints, at
+        the base the tier uses; the adopter's points at step 6's rule. Dies to:
+        either tick saying both reviewers for every lane (the 1.8 then 2.6
+        review rounds per reviewed pull request the assign measured)."""
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "docs/WORKFLOW.md")
+        assert "the reviewers the diff earns" in seat.compose_brief(clone, "box-feat", feat).loop
+        _holds(feat, "memory/parallel-work-protocol.md")
+        # the protocol alone: no script to print the line, so step 6's rule
+        assert "the reviewers the diff earns" in seat.compose_brief(clone, "box-feat", feat).loop
+        _holds(feat, "scripts/proof_tier.py")
+        loop = seat.compose_brief(clone, "box-feat", feat).loop
+        assert "red-team the reviewers scripts/proof_tier.py --base origin/main names" in loop
+        assert "both reviewers" not in loop
 
     @pytest.mark.contract   # it reads a shipped command body (tests/test_marker_taxonomy.py)
     def test_the_adopter_phrases_name_steps_the_shipped_command_body_holds(self, seat):

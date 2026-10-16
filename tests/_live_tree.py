@@ -86,6 +86,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 #: filesystem walk does not consult).
 EXCLUDED_DIR_PARTS: tuple[tuple[str, ...], ...] = ((".claude", "worktrees"),)
 
+#: Directory names skipped at any depth by every walk and copy of the live
+#: checkout: bytecode caches. No tool under test writes one on purpose, and a
+#: test worker's first import of a module compiles one inside another test's
+#: window -- the live-tree isolation manifest read that as the tool's mutation
+#: and reddened required cells twice on 2026-10-16 (DEF-5009: run 38874646235,
+#: four `tests/__pycache__/test_*.cpython-314.pyc`; run 38878802493, two
+#: `bench/sandbox_read_drive/__pycache__/*.cpython-313.pyc`). Bytecode is never
+#: a copy's to carry either: the copy compiles its own.
+SKIPPED_DIR_NAMES: frozenset[str] = frozenset({"__pycache__"})
+
 
 def is_under_excluded_dir(path: Path, repo_root: Path) -> bool:
     """True when ``path`` lies below one of :data:`EXCLUDED_DIR_PARTS`, the pair
@@ -124,8 +134,9 @@ def live_tree_skip_names(directory: str, names: list[str]) -> set[str]:
     """What a copy of the live checkout leaves out of ``directory``, in
     ``shutil.copytree``'s ``ignore`` signature, for a callback with rules of its
     own to compose with: every nested repository (:func:`nested_repo_names`),
-    and the last member of an :data:`EXCLUDED_DIR_PARTS` run whose leading
-    members end ``directory`` -- ``worktrees`` under a ``.claude``. The name
+    the last member of an :data:`EXCLUDED_DIR_PARTS` run whose leading
+    members end ``directory`` -- ``worktrees`` under a ``.claude`` -- and a
+    :data:`SKIPPED_DIR_NAMES` member at any depth. The name
     rule is the walkers' and covers a worktree folder whose ``.git`` link is
     gone (an interrupted removal on Windows stops at the first locked file;
     ``tools/cc/checkout_sync.py`` reports that state), so a walk and a copy
@@ -136,7 +147,7 @@ def live_tree_skip_names(directory: str, names: list[str]) -> set[str]:
         if excluded[-1] in names and len(tail) >= len(excluded) - 1
         and tuple(tail[len(tail) - len(excluded) + 1:]) == excluded[:-1]
     }
-    return nested_repo_names(directory, names) | by_name
+    return nested_repo_names(directory, names) | by_name | (SKIPPED_DIR_NAMES & set(names))
 
 
 def live_tree_copy_ignore(*patterns: str) -> Callable[[str, list[str]], set[str]]:

@@ -110,12 +110,13 @@ echo "=== tools/cc/ isolation check (documented sharp edge) ==="
 ```bash
 echo "=== Session log length ==="
 # Where tools/cc/_record_fragments.py is deployed each row is a file of its own
-# under memory/session-log.d/, and its prune keeps the newest 30; elsewhere the
-# rows are the dated lines of the Session Log table in ESPALIER_MEMORY.md.
+# under memory/session-log.d/, kept at 30 to 35 by the fold a lane's push runs
+# (tools/cc/ship.py), never pruned in a lane; elsewhere the rows are the dated
+# lines of the Session Log table in ESPALIER_MEMORY.md.
 if [ -f tools/cc/_record_fragments.py ]; then
   frag_count=$(git ls-files --cached --others --exclude-standard memory/session-log.d 2>/dev/null | grep -c '/20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]-[^/]*\.md$')
-  echo "  $frag_count session log fragment files (target: at most 30)"
-  [ "$frag_count" -gt 30 ] && echo "  ⚠ NEEDS PRUNING: more than 30 fragment files (python tools/cc/_record_fragments.py prune)"
+  echo "  $frag_count session log fragment files (the next push's fold prunes back to 30 past 35)"
+  [ "$frag_count" -gt 60 ] && echo "  ⚠ NO FOLD HAS RUN: more than 60 fragment files (a lane's push folds them; where no lane pushes: python tools/cc/ship.py fold)"
 else
   # Table rows only — exclude header row and separator row
   row_count=$(grep "^| 20" ESPALIER_MEMORY.md 2>/dev/null | wc -l || echo "0")
@@ -133,7 +134,7 @@ echo "  (target: at most 120 lines)"
 ### ESPALIER_MEMORY.md — update after every session
 
 1. Add the session's row: where `tools/cc/_record_fragments.py` is deployed, as a file of its own under `memory/session-log.d/` (`python tools/cc/_record_fragments.py new session-log` names it; one row, `| {YYYY-MM-DD} | {branch} | {what changed} |`), never in the `## Session Log` table, which is frozen; elsewhere, prepended to that table
-2. The `post_write_check` hook prunes on a write: a Session Log file beyond the fragments' own cap on a write under `memory/session-log.d/` (by hand: `python tools/cc/_record_fragments.py prune`), and a Session Log table still in ESPALIER_MEMORY.md when a write pushes the file over its 120-line cap (by hand: `espalier memory prune --rows N`; a folded section holds no table, and the verb says so).
+2. The `post_write_check` hook prunes a Session Log table still in ESPALIER_MEMORY.md when a write pushes the file over its 120-line cap (by hand: `espalier memory prune --rows N`; a folded section holds no table, and the verb says so). The files under `memory/session-log.d/` are never pruned on a write or in a lane: the fold a lane's push runs prunes them back to their cap past its slack, and where no lane pushes, `python tools/cc/ship.py fold` before the push.
 3. Update stack-specific lessons if new patterns discovered this session
 4. Never remove architectural decisions or hardware constraints — those are permanent
 

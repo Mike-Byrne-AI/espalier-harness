@@ -141,12 +141,16 @@ class TestPowerShellToolDiscards:
 
     def test_the_other_checkpoints_stay_tool_keyed(self, repo: Path):
         """The carve-out the module docstring records: only CP-DISCARD and its
-        snapshot read the PowerShell tool; a force-push or a clean spelled
-        there, bare or behind `bash -c`, is still not bumped."""
-        for cmd in ("git push --force", "bash -c 'git push --force'"):
-            assert not _speedbump._pred_forcepush("PowerShell", {"command": cmd}, repo)
-        for cmd in ("git clean -fdx", "bash -c 'git clean -fdx'"):
-            assert not _speedbump._pred_gitclean("PowerShell", {"command": cmd}, repo)
+        snapshot read a program the PowerShell tool hands to `bash -c`. Since
+        DEF-1038 a force-push or a clean typed on that tool bumps, read by the
+        PowerShell twins; behind `bash -c` it is still not bumped (air,
+        2026-10-16)."""
+        assert _speedbump._pred_forcepush("PowerShell", {"command": "git push --force"}, repo)
+        assert _speedbump._pred_gitclean("PowerShell", {"command": "git clean -fdx"}, repo)
+        assert not _speedbump._pred_forcepush(
+            "PowerShell", {"command": "bash -c 'git push --force'"}, repo)
+        assert not _speedbump._pred_gitclean(
+            "PowerShell", {"command": "bash -c 'git clean -fdx'"}, repo)
 
     @pytest.mark.parametrize("cmd", [
         "bash -c 'git checkout file.py'",

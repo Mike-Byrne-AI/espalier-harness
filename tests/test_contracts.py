@@ -560,6 +560,48 @@ class TestEveryNameReaderSaysWhichItIs:
                           "tools/cc/raw.py::machine_setting:16", "tools/cc/raw.py::two_reads:4"], silent
 
 
+class TestOnlyTheFoldPrunesTheSessionLog:
+    """The Session Log's cap has one writer: the fold a lane's push runs
+    (``tools/cc/ship.py::_fold_session_log``), beside the prune verb's own command
+    line. Until 2026-10-16 the hook and the handoff each pruned in the lane's own
+    tree, a count two lanes both recompute, and main reached 31 (DEF-5007). The
+    predicate is the ledger probe's own (``tests/_session_log_prunes.py``)."""
+
+    def test_no_prune_call_outside_the_fold(self):
+        from tests._session_log_prunes import outside_the_fold, prune_calls
+        calls = prune_calls()
+        assert {(f, w) for f, w, _line in calls} >= {("tools/cc/ship.py", "_fold_session_log")}, (
+            f"the fold no longer prunes, so nothing holds the cap: {calls}")
+        assert outside_the_fold() == [], (
+            "a second writer of the Session Log's cap: prune only in the fold, at a lane's push "
+            f"(tools/cc/ship.py::_fold_session_log): {outside_the_fold()}")
+
+    def test_the_predicate_names_a_planted_call_and_spares_the_fold(self, tmp_path):
+        """Dies to: a predicate that misses an attribute call or a bare one, or
+        reads the fold itself as a second writer."""
+        from tests._session_log_prunes import outside_the_fold
+        (tmp_path / "tools" / "cc").mkdir(parents=True)
+        (tmp_path / "tools" / "cc" / "ship.py").write_text(
+            "def _fold_session_log(root):\n    fragments.prune_session_log(root)\n", encoding="utf-8")
+        (tmp_path / "tools" / "cc" / "other.py").write_text(
+            "def at_write(root):\n    fragments.prune_session_log(root)\n\n"
+            "def at_handoff(root):\n    prune_session_log(root)\n", encoding="utf-8")
+        got = outside_the_fold(tmp_path, ["tools/cc/ship.py", "tools/cc/other.py"])
+        assert got == [("tools/cc/other.py", "at_handoff", 5), ("tools/cc/other.py", "at_write", 2)], got
+        (tmp_path / "tools" / "cc" / "aliased.py").write_text(
+            "from _record_fragments import prune_session_log as trim\n", encoding="utf-8")
+        assert outside_the_fold(tmp_path, ["tools/cc/aliased.py"]) == [("tools/cc/aliased.py", "<module>", 1)]
+
+    def test_no_body_under_dot_claude_tells_a_session_to_prune(self):
+        """The failure-mode review of DEF-5007: the docs-maintainer agent told a
+        session to run the prune verb past 30, which brings the second writer
+        back through prose; the call walk cannot see a body."""
+        from tests._session_log_prunes import prose_prunes
+        assert prose_prunes() == [], (
+            "a .claude/ body names the Session Log prune verb: the fold a lane's push runs prunes, "
+            f"never a session in its lane: {prose_prunes()}")
+
+
 class TestPathNormalization:
     def test_managed_paths_use_forward_slashes(self):
         """Path comparisons in espalier/ must use .replace('\\\\', '/') for Windows compat."""
