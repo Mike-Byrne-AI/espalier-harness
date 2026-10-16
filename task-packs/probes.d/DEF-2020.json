@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2020",
+ "subject": "tests/conftest.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the defect is a line a pytest session prints only once xdist's restart cap is crossed, in a controller hook of tests/conftest.py: a probe reading conftest's text closes on the fix's own paperwork (FAILURE_MODES 5.23), and a session crossing the cap under the repo's conftest rebuilds the suite's trees on every worker restart (minutes) from a test file inside the live tests/ tree, so the fix lands with its pytester pin (six tests crossing a one-second thread-method ceiling at -n 1 -q), which is the oracle",
+ "row_sha": "a18faec272b1",
+ "text_sha": "d7af87a30fe3",
+ "verified_2026_10_16": "OPEN (filed 2026-10-16; probe driven at filing)"
+}

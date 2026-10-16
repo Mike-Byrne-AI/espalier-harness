@@ -231,7 +231,9 @@ against a mis-substituted template, not against hostile input.
 
 ## Running the suite and the benches on another host
 
-`scripts/host_check.py` runs the portability cell's suite (`-m "not heavy_e2e"`),
+`scripts/host_check.py` runs the portability cell's suite (`-m "not heavy_e2e"`,
+at one xdist worker, so a test that crosses the per-test ceiling is named, up
+to xdist's restart cap of four; `DEF-2020` is the count of what a fifth leaves unrun),
 the PowerShell rehearsal, the guard row probe and the PowerShell differential
 (under `pwsh` and, on Windows, under Windows PowerShell 5.1 as well) on the
 host it is started on,

@@ -84,9 +84,12 @@ python -m pytest -m "not slow"
 
 # per-batch truth tier (self-host): the tree-wide contracts -- enumerations,
 # mirrors, citations, doc claims, census, scanners. Measured 2026-09-06:
-# 2,834 tests, 164 s serial. Run it serially; its `-n auto` form (62 s)
-# raced on the live tree three times in one run.
-python -m pytest -m contract
+# 2,834 tests, 164 s serial; its `-n auto` form (62 s) raced on the live tree
+# three times in one run that day, from writers since closed (DEF-1138 on
+# 2026-10-06, DEF-973 on 2026-10-14), so the slice runs at `-n auto` since
+# 2026-10-16 (DEF-2017): 5,113 passed in 5:47 on four workers on the Windows
+# host, and two more halves at `-n 3` green in a review's clone.
+python -m pytest -n auto -m contract
 
 # release confidence:
 python -m pytest -m "contract or release or security"
