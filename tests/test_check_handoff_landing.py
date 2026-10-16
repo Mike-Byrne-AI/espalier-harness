@@ -835,6 +835,35 @@ class TestCitedCandidateKeysResolveToTheLog:
             "| 2026-10-10 | **Folded.** key ce8174fe9fd9 held. | -- |\n", encoding="utf-8")
         assert _load(root=tmp_path)._lane_fragment_row() is None
 
+    def test_a_row_the_records_fold_added_is_not_the_lanes_and_its_own_still_is(self, tmp_path):
+        """DEF-5007: a lane's push folds other seats' parked rows in, in commits
+        carrying the fold trailer. The newest of those must not stand in for
+        this lane's row, and this lane's own row, committed beside them, is
+        still found (air 847e2b). Dies to: every added fragment read as the
+        lane's, or the fold's commits skipped together with the lane's own."""
+        self._lane_repo(tmp_path, ["| 2026-10-06 | **Older.** nothing cited. | -- |"])
+        mod = _load(root=tmp_path)
+        trailer = mod._record_fragments().FOLD_TRAILER
+        frag_dir = tmp_path / "memory" / "session-log.d"
+        frag_dir.mkdir(parents=True)
+
+        def commit(name: str, row: str, message: str) -> None:
+            (frag_dir / name).write_text(row, encoding="utf-8")
+            for argv in (["add", "-A"], ["commit", "-q", "-m", message]):
+                subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.com", *argv], cwd=tmp_path,
+                               check=True, capture_output=True)
+
+        commit("2026-10-16-090000-mac.md", "| 2026-10-16 | **Parked.** key ce8174fe9fd9 held. | -- |\n",
+               f"chore(records): fold 1 Session Log row\n\n{trailer}")
+        assert mod._lane_fragment_row() is None
+        # The lane's own commit quotes the trailer in prose (its last paragraph is
+        # its own trailers): read by key, it is still the lane's row.
+        commit("2026-10-16-080000-win.md", "| 2026-10-16 | **This lane.** nothing cited. | -- |\n",
+               f"docs: the handoff's row\n\nThe fold marks its commits with\n{trailer}\nand this is no fold.\n\n"
+               "Co-Authored-By: t <t@t.com>")
+        row = mod._lane_fragment_row()
+        assert row is not None and "This lane." in row, row
+
     def test_a_cited_key_with_no_log_row_is_flagged(self, tmp_path):
         self._write(tmp_path, ["| 2026-09-04 | **X.** Five reflect keys logged as proposals: ce8174fe9fd9. | -- |"],
                     log_rows=[])
@@ -1554,10 +1583,13 @@ class TestTheHookWiringArm:
 
 
 class TestTheLanesOwnTreeKeepsTheSessionLogCap:
-    """Review of the Wave C batch: the merged tree's count answers to no one
-    lane, so the cap is held per lane, before the push, and the tree-wide test
-    bounds only the runaway case. Mutation seen red: no arm, so a lane that
-    carried main's rows in over the cap pushed in silence."""
+    """The cap is the fold's since 2026-10-16 (DEF-5007): a lane's push brings
+    the parked rows in and prunes there, the one writer, so the landing check
+    reads the tree's count, the rows pending on the records refs and what the
+    fold will leave, and names a tree over the cap instead of refusing it (until
+    then each lane held the cap in its own tree, a count two lanes recompute,
+    and main reached 31). The tree-wide test still bounds the runaway case.
+    Mutation seen red: no arm, so a lane's count went unsaid."""
 
     @staticmethod
     def _rows(root: Path, n: int, extra: tuple[str, ...] = ()) -> None:
@@ -1575,15 +1607,58 @@ class TestTheLanesOwnTreeKeepsTheSessionLogCap:
         self._rows(tmp_path, cap, extra=("README.md",))
         notes: list[str] = []
         assert mod.check_session_log_cap(notes) == []
-        assert notes == [f"session log cap: {cap} of {cap} fragments"]
+        [note] = notes
+        # Not a git repository here, so the records refs are said to be unread,
+        # never read as holding nothing.
+        assert note.startswith(f"session log cap: {cap} of {cap} fragments"), note
+        assert "the records refs could not be read" in note, note
 
-    def test_a_lane_over_the_cap_is_told_to_prune(self, tmp_path):
+    def test_a_lane_over_the_cap_is_named_and_left_to_the_fold(self, tmp_path):
+        """Dies to: the refusal kept, which sends every lane cut from a main at
+        31 to commit a prune of its own (the second writer of the count)."""
         mod = _load(root=tmp_path)
         cap = mod._record_fragments().SESSION_LOG_CAP
         self._rows(tmp_path, cap + 1)
-        [problem] = mod.check_session_log_cap()
-        assert f"holds {cap + 1} Session Log fragments, over the cap of {cap}" in problem
-        assert "_record_fragments.py prune" in problem
+        notes: list[str] = []
+        assert mod.check_session_log_cap(notes) == []
+        [note] = notes
+        assert f"{cap + 1} fragments in the tree, over the cap of {cap}" in note, note
+        assert f"prunes back to {cap}" in note, note
+        slack = mod._record_fragments().SESSION_LOG_SLACK
+        (tmp_path / "memory" / "session-log.d").joinpath("2026-12-31-120000-win.md").write_bytes(
+            b"| 2026-12-31 | one more | n |\n")
+        for i in range(slack):
+            (tmp_path / "memory" / "session-log.d" / f"2026-12-{10 + i}-120000-win.md").write_bytes(
+                f"| 2026-12-{10 + i} | past | n |\n".encode())
+        notes = []
+        assert mod.check_session_log_cap(notes) == []
+        assert f"past {cap + slack}: the push's fold prunes back to {cap}" in notes[0], notes
+
+    def test_the_rows_pending_on_the_records_refs_are_counted(self, tmp_path):
+        """Dies to: the tree read alone, so a row parked by another seat is
+        nowhere in what the landing check says the fold will leave."""
+        mod = _load(root=tmp_path)
+        cap = mod._record_fragments().SESSION_LOG_CAP
+        self._rows(tmp_path, cap)
+
+        def git(*argv: str, input: str | None = None) -> str:
+            return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.com", *argv], cwd=tmp_path,
+                                  check=True, capture_output=True, text=True, encoding="utf-8",
+                                  input=input).stdout.strip()
+
+        git("init", "-q", "-b", "main")
+        git("add", "-A")
+        git("commit", "-q", "-m", "base")
+        git("update-ref", "refs/remotes/origin/main", "HEAD")
+        blob = git("hash-object", "-w", "--stdin", input="| 2026-10-16 | parked | -- |\n")
+        tree = git("mktree", input=f"100644 blob {blob}\tparked.md\n")
+        tree = git("mktree", input=f"040000 tree {tree}\tsession-log.d\n")
+        tree = git("mktree", input=f"040000 tree {tree}\tmemory\n")
+        commit = git("commit-tree", tree, "-m", "park")
+        git("update-ref", "refs/remotes/origin/records/mac", commit)
+        notes: list[str] = []
+        assert mod.check_session_log_cap(notes) == []
+        assert "1 pending on the records refs" in notes[0], notes
 
     def test_main_runs_the_arm(self, tmp_path, monkeypatch, capsys):
         mod = _load(root=tmp_path)

@@ -175,6 +175,13 @@ def run(argv: list[str], *, timeout: float = DEFAULT_TIMEOUT, cwd: str | None = 
     prog = shutil.which(argv[0])
     if prog is None:
         raise Unresolvable(f"{argv[0]} is not on PATH")
+    if input is not None and "\n" in input:
+        # Text on stdin is re-lined on Windows (the pipe is text mode, so every
+        # line ends CR LF), and a line-reading verb then reads a carriage return
+        # into each name: a mail send pushed an empty tree that way (2026-10-16).
+        # Lines go as arguments, or as NUL-separated records with `-z`.
+        raise Unresolvable(f"{' '.join(argv[:2])} was handed lines of text on stdin, which Windows re-lines; "
+                           "pass them as arguments or NUL-separated records")
     stdin_kw: dict = {"input": input} if input is not None else {"stdin": subprocess.DEVNULL}
     try:
         # subprocess-contract: ok the argv is the caller's by design (one runner for every step); each step's argv is pinned by tests/test_record_merge.py through the injectable runner and the real-git cases

@@ -402,19 +402,50 @@ def lane_carries_memory_row(base: str, root: Path) -> bool | None:
     ESPALIER_MEMORY.md (the table, on a tree before the fragments), or a file
     added under ``memory/session-log.d/`` (a handoff's row since 2026-10-10)?
     Reading the memory file alone refused every lane whose handoff wrote its
-    row as a file (review of the Wave C batch). None when git cannot answer:
-    no verdict is ever a refusal on a guess."""
+    row as a file (review of the Wave C batch). A row a fold commit added
+    (``_record_fragments.FOLD_TRAILER``) is another session's, parked and
+    brought in at a push, and does not count. None when git cannot answer: no
+    verdict is ever a refusal on a guess."""
     rc, out, _ = _git("log", "--format=%h", f"origin/{base}..HEAD", "--", "ESPALIER_MEMORY.md",
                       cwd=str(root))
     if rc != 0:
         return None
     if out.strip():
         return True
-    rc, out, _ = _git("diff", "--name-only", "--diff-filter=A", f"origin/{base}...HEAD", "--",
-                      SESSION_LOG_DIR, cwd=str(root))
+    added = _lane_added_rows(root, base)
+    if added is None:
+        return None
+    return bool(added)
+
+
+def _fold_trailer() -> tuple[str, str]:
+    """The fold trailer's key and value (``_record_fragments.FOLD_TRAILER``), or
+    two empty strings where the loader is not beside this script."""
+    fragments = _fragments_module()
+    trailer = getattr(fragments, "FOLD_TRAILER", "") if fragments is not None else ""
+    key, _sep, value = trailer.partition(": ")
+    return key, value
+
+
+def _lane_added_rows(root: Path, base: str) -> list[str] | None:
+    """The Session Log files this lane's own commits added (``origin/<base>..HEAD``),
+    less those a fold commit added: the commit's trailer is read by key, so a
+    body that quotes the trailer's text in prose is still the lane's own (both
+    reviews of DEF-5007). None when git cannot answer."""
+    key, value = _fold_trailer()
+    shown = f"%(trailers:key={key},valueonly)" if key else ""
+    rc, out, _ = _git("log", f"--format=%x1e{shown}%x1f", "--name-only", "--no-renames", "--full-history",
+                      "--diff-filter=A", f"origin/{base}..HEAD", "--", SESSION_LOG_DIR, cwd=str(root))
     if rc != 0:
         return None
-    return any(ln.strip().replace("\\", "/").startswith(SESSION_LOG_DIR) for ln in out.splitlines())
+    rows: list[str] = []
+    for record in out.split("\x1e")[1:]:
+        trailers, _sep, names = record.partition("\x1f")
+        if value and value in (ln.strip() for ln in trailers.splitlines()):
+            continue
+        rows += [ln.strip().replace("\\", "/") for ln in names.splitlines()
+                 if ln.strip().replace("\\", "/").startswith(SESSION_LOG_DIR)]
+    return rows
 
 
 def _second_push_message(how: str) -> str:
@@ -641,6 +672,201 @@ def _mail_module():
         spec.loader.exec_module(module)
         _MAIL = module
     return _MAIL
+
+
+#: The record loader (``tools/cc/_record_fragments.py``), loaded by path on first
+#: use: the Session Log's directory, cap, prune and fold trailer.
+_FRAGMENTS = None
+
+
+def _fragments_module():
+    global _FRAGMENTS
+    if _FRAGMENTS is None:
+        path = Path(__file__).resolve().parent / "_record_fragments.py"
+        if not path.is_file():
+            return None
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_ship_record_fragments", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["_ship_record_fragments"] = module  # registered before exec (3.14)
+        spec.loader.exec_module(module)
+        _FRAGMENTS = module
+    return _FRAGMENTS
+
+
+def _fold_session_log(root: Path, base: str, *, keep: int | None = None, slack: int | None = None,
+                      dry_run: bool = False) -> tuple[int, int]:
+    """The only place the Session Log is pruned, run before a lane's push (and
+    by the ``fold`` verb, for a push ``open`` does not make): bring every row
+    parked on the records refs that no history has added (``mail.pending``
+    against ``origin/<base>`` and HEAD) into the lane, then, only when the
+    fragments run past the cap plus ``SESSION_LOG_SLACK``, prune back to the
+    cap, as two commits carrying ``FOLD_TRAILER``. Two commits, so a parked row
+    older than the kept window enters history once and is never pending again.
+    Until 2026-10-16 each lane held the cap in its own tree, at the write and at
+    the handoff, and paid a prune commit for it (DEF-5007); two lanes off one
+    base can still land a row or two past the slack's edge, and the next fold
+    prunes. ``(folded, pruned)``. Never a refusal, and never a half-done tree: a
+    missing channel or loader, uncommitted changes under the directory, records
+    git cannot read, or a step that fails is said, the tree is put back as it
+    was, and the lane's push goes ahead; the next push's fold heals the count."""
+    mail, fragments = _mail_module(), _fragments_module()
+    if mail is None or fragments is None:
+        _note("the Session Log fold is skipped: tools/cc/mail.py or tools/cc/_record_fragments.py is not "
+              "beside this script")
+        return 0, 0
+    directory = fragments.SESSION_LOG_DIR
+    cap = fragments.SESSION_LOG_CAP if keep is None else keep
+    over = getattr(fragments, "SESSION_LOG_SLACK", 0) if slack is None else slack
+    rc, dirty, _ = _git("status", "--porcelain", "--untracked-files=all", "--", directory, cwd=str(root))
+    if rc != 0 or dirty.strip():
+        listed = ", ".join(ln[3:].strip() for ln in dirty.splitlines() if ln.strip())[:300]
+        _note(f"the Session Log fold is skipped: {directory}/ has uncommitted changes ({listed or 'unread'}). "
+              "Commit this session's own row; a row an earlier fold checked out and could not commit is "
+              "another seat's: `git restore --staged -- <path>`, then delete the file. The next push folds")
+        return 0, 0
+    ok, problem = mail.fetch_records(root)
+    if not ok:
+        _note(f"the records refs were not fetched ({problem}): folding what this clone last fetched")
+    try:
+        rows = mail.pending(root, directory, [f"origin/{base}", "HEAD"])
+    except mail.Unresolvable as exc:
+        _note(f"the Session Log fold is skipped: {exc}")
+        return 0, 0
+    trailer = fragments.FOLD_TRAILER
+    if dry_run:
+        if rows:
+            _say(f"dry-run: fold {len(rows)} parked Session Log row(s) into the lane, then prune to {cap} "
+                 f"once past {cap + over}")
+        return 0, 0
+    if rows:
+        paths = [path for _machine, path, _ref in rows]
+        failed = ""
+        for _machine, path, ref in rows:
+            rc, _out, err = _git("checkout", ref, "--", path, cwd=str(root))
+            if rc != 0:
+                failed = f"could not take {path} from {ref}: {err.strip()[:200]}"
+                break
+        if not failed:
+            subject = f"chore(records): fold {len(rows)} parked Session Log row{'s' if len(rows) != 1 else ''}"
+            message = subject + "\n\n" + "\n".join(f"- {path} ({machine})" for machine, path, _ref in rows) \
+                + f"\n\n{trailer}\n"
+            rc, _out, err = _git("commit", "--quiet", "-m", message, "--", *paths, cwd=str(root))
+            if rc != 0:
+                failed = f"its commit failed: {err.strip()[:200]}"
+        if failed:
+            # Another seat's rows never stay staged here: committed by hand
+            # without the trailer, they would read as this lane's own.
+            _git("reset", "-q", "--", *paths, cwd=str(root))
+            for path in paths:
+                try:
+                    (root / path).unlink()
+                except OSError:
+                    pass
+            _note(f"the Session Log fold did not run ({failed}); the tree is as it was, and the next push folds")
+            return 0, 0
+        _say(f"folded {len(rows)} parked Session Log row(s) into the lane: {', '.join(paths)}")
+    named, _skipped = fragments.session_log_fragments(root)
+    pruned = 0
+    if len(named) > cap + over:
+        try:
+            left = fragments.prune_session_log(root, keep=cap)
+        except OSError as exc:
+            left, failed = [], f"the prune failed: {os_error_text(exc)}"
+        else:
+            failed = ""
+        pruned = len(left)
+        if pruned and not failed:
+            for argv in (("add", "-A", "--", directory),
+                         ("commit", "--quiet", "-m",
+                          f"chore(records): prune the Session Log to its cap of {cap}\n\n{trailer}\n",
+                          "--", directory)):
+                rc, _out, err = _git(*argv, cwd=str(root))
+                if rc != 0:
+                    failed = f"the prune's commit failed: {err.strip()[:200]}"
+                    break
+        if failed:
+            _git("reset", "-q", "--", directory, cwd=str(root))
+            _git("checkout", "-q", "HEAD", "--", directory, cwd=str(root))
+            _note(f"the Session Log prune did not run ({failed}); the fragments are as they were (the local "
+                  f"archive, {fragments.ARCHIVE}, may hold their rows twice), and the next push prunes")
+            return len(rows), 0
+        if pruned:
+            _say(f"pruned {pruned} Session Log row(s) back to the cap of {cap}, past {cap + over} "
+                 f"(archived to {fragments.ARCHIVE})")
+    return len(rows), pruned
+
+
+def fold(dry_run: bool = False) -> int:
+    """The fold on its own, for a push ``open`` and the handoff do not make: a
+    repository whose default branch takes direct pushes runs it before its
+    ``git push`` (/handoff's direct-push step), so its Session Log is kept by
+    the same writer, at the same moment, as a pull-request tree's."""
+    root = repo_root()
+    base = default_branch()
+    _git("fetch", "origin", base, "--quiet", cwd=str(root))
+    folded, pruned = _fold_session_log(root, base, dry_run=dry_run)
+    if not dry_run and not (folded or pruned):
+        _say("nothing to fold: no parked row is pending and the Session Log is within its slack")
+    return 0
+
+
+def _park_the_row(root: Path, base: str, *, dry_run: bool = False) -> bool:
+    """A handoff-only lane -- no open pull request, and nothing in its diff with
+    ``origin/<base>`` but Session Log rows -- parks the rows it added on this
+    seat's records ref (``mail.park``) instead of opening a pull request for
+    them alone: seven such pull requests in two days before this (DEF-5007).
+    Only rows added: a lane that edits or renames a row keeps today's path, so
+    the change reaches a pull request (a park carries additions alone). The
+    blob parked is the committed one (``HEAD:<path>``). Once every row is parked
+    the branch moves back to its merge base with the base (``reset --keep``):
+    the commits held nothing but those rows, now on origin's records ref, and a
+    commit left ahead held the next SessionStart's catch-up on this lane and
+    passed the --early question as a row of this lane's (both reviews). The
+    dropped head is printed. True when parked. Any other lane, a seat with no
+    name or one git could not read, or a park origin refused, keeps today's path
+    and says why."""
+    _git("fetch", "origin", base, "--quiet", cwd=str(root))
+    rc, out, _ = _git("diff", "--name-status", "--no-renames", f"origin/{base}...HEAD", cwd=str(root))
+    if rc != 0 or not out.strip():
+        return False
+    entries = [ln.split("\t", 1) for ln in out.splitlines() if ln.strip()]
+    if any(len(e) != 2 or e[0].strip() != "A" or not e[1].replace("\\", "/").startswith(SESSION_LOG_DIR)
+           for e in entries):
+        return False
+    added = [e[1].replace("\\", "/") for e in entries]
+    mail = _mail_module()
+    if mail is None:
+        _note("tools/cc/mail.py is not beside this script, so the row is not parked: opening a pull request "
+              "for it, as before")
+        return False
+    if dry_run:
+        _say(f"dry-run: park {', '.join(added)} on this seat's records ref and move this branch back to its "
+             f"merge base with origin/{base}; no pull request")
+        return True
+    try:
+        for rel in added:
+            mail.park(root, rel, None, f"origin/{base}", from_rev="HEAD", say=_say)
+    except (mail.Unresolvable, OSError) as exc:
+        _note(f"the row was not parked ({os_error_text(exc)}): opening a pull request for it, as before")
+        return False
+    head = _git("rev-parse", "HEAD", cwd=str(root))[1].strip()
+    rc, merge_base, _ = _git("merge-base", f"origin/{base}", "HEAD", cwd=str(root))
+    moved = rc == 0 and bool(merge_base.strip()) and \
+        _git("reset", "--keep", "--quiet", merge_base.strip(), cwd=str(root))[0] == 0
+    _say(f"No pull request opened: this lane carries only its Session Log row, now parked on this seat's "
+         f"records ref. The next lane's push, any seat's, folds it into {base}; until then the banner's recent "
+         f"rows, which read the tree, show it to no seat, this one's next session included.")
+    if moved:
+        _say(f"This branch moved back to {merge_base.strip()[:7]}, where {base} holds it; the row's commit, "
+             f"{head[:7]}, is on the records ref (and in this checkout's reflog).")
+    else:
+        _note(f"this branch could not be moved back to its merge base with origin/{base}: the row's commit "
+              f"{head[:7]} stays ahead, so SessionStart will not catch this checkout up until you move it "
+              f"(`git reset --keep $(git merge-base origin/{base} HEAD)`)")
+    return True
 
 
 def _release_claims(root: Path, lane: str, text: str) -> None:
@@ -1004,9 +1230,11 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         # On the record, not only on a terminal: an --early that became a reflex
         # is visible in every pull request it shipped.
         body = body.rstrip("\n") + f"\n\nShipped before the handoff: {early_reason}\n"
-    # The merge-first step, then the marker's sha: a merge commit moves HEAD,
-    # and a marker bound to the old head is the stall rebind exists to clear.
+    # The merge-first step, then the fold, then the marker's sha: a merge or a
+    # fold commit moves HEAD, and a marker bound to the old head is the stall
+    # rebind exists to clear. The fold is the Session Log cap's one writer.
     _merge_base_first(root, base, dry_run=dry_run)
+    _fold_session_log(root, base, dry_run=dry_run)
     sha = head_sha()
     # The guard question is asked BEFORE the push: the diff against the fetched
     # base needs nothing on the remote, so a diff that fails or lists nothing
@@ -1213,14 +1441,20 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     # session here would keep committing onto the lane it was moved to.
     _refuse_a_shared_checkout(root)
     base = default_branch()
-    if current_branch() == base:
+    on_base = current_branch() == base
+    pr = None if on_base else pr_for_branch(current_branch(), "open")
+    # A handoff whose lane already merged carries its row alone: park it on the
+    # records ref instead of opening a pull request for one row (DEF-5007).
+    if pr is None and _park_the_row(root, base, dry_run=dry_run):
+        return 0
+    if on_base:
         if dry_run:
             _say("dry-run: `lane` would move the unmerged commits to a lane branch, then `open` "
                  "would push it as a pull request with auto-merge armed")
             return 0
         lane()
+        pr = pr_for_branch(current_branch(), "open")
     branch = current_branch()
-    pr = pr_for_branch(branch, "open")
     if pr is None:
         return open_pr(title=title, body_file=body_file, dry_run=dry_run)
     behind = _remote_has_commits_we_lack(branch, str(root))
@@ -1235,6 +1469,7 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     base = str(pr.get("baseRefName") or base)
     _git("fetch", "origin", base, "--quiet", cwd=str(root))
     _merge_base_first(root, base, dry_run=dry_run)
+    _fold_session_log(root, base, dry_run=dry_run)
     base_red = base_red_after_merge(base, cwd=str(root))
     if base_red and pr.get("autoMergeRequest") and not branch.startswith("revert/"):
         # Not a refusal: the handoff's row must reach the pull request. Its
@@ -1673,6 +1908,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_rel = sub.add_parser("release", help="after the merge: tag the merge commit, push it, create the release")
     p_rel.add_argument("tag")
     p_rel.add_argument("--dry-run", action="store_true")
+    p_fold = sub.add_parser("fold", help="bring the parked Session Log rows in and prune past the slack: "
+                                         "the step before a push `open` does not make")
+    p_fold.add_argument("--dry-run", action="store_true")
     p_hand = sub.add_parser("handoff", help="/handoff's push: only when espalier.toml sets handoff_push = true")
     p_hand.add_argument("--title", help="the pull request title (default: the head commit's subject)")
     p_hand.add_argument("--body-file", help="the pull request body (default: the commit subjects)")
@@ -1700,6 +1938,8 @@ def main(argv: list[str] | None = None) -> int:
             return rerun(dry_run=args.dry_run)
         if args.verb == "release":
             return release(args.tag, dry_run=args.dry_run)
+        if args.verb == "fold":
+            return fold(dry_run=args.dry_run)
         if args.verb == "handoff":
             return handoff(title=args.title, body_file=args.body_file, dry_run=args.dry_run)
     except Refused as stop:

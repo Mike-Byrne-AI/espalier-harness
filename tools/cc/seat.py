@@ -610,9 +610,12 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
 #: loop with no second message, and the loop survives ``/clear``. No double
 #: quote (Windows PowerShell 5.1 splits a native argument there), no ``%``
 #: (cmd.exe expands it) and 7-bit ASCII; ``tests/test_seat.py`` pins all three.
-#: On this repository the worker loop renders to the tick the operator ran by
-#: hand, byte for byte (``tests/test_seat.py::_OPERATOR_TICK``): a change to it
-#: changes what every worker seat does, which is the operator's decision.
+#: On this repository the worker loop renders to the operator's tick byte for
+#: byte (``tests/test_seat.py::_OPERATOR_TICK``): the tick the operator ran by
+#: hand on 2026-10-15, its review step read from the diff since 2026-10-16 on
+#: the operator's yes. A change to it changes what every worker seat does,
+#: which is the operator's decision; a seat already looping keeps its old tick
+#: until its loop is started again from the brief.
 WORKER_BRIEF = (
     "You are seat {seat}, a worker under {dispatcher_phrase} ({protocol}). Orient from the banner, then run "
     "/inbox (mark read) and /inbox board, and read live state before you state it. Your jobs are the live "
@@ -633,10 +636,9 @@ WORKER_TICK = (
 DISPATCHER_BRIEF = (
     "You are the dispatcher seat {seat} ({protocol}). Orient from the banner{goal}, then run /inbox (mark "
     "read) and /inbox board. Your duties: read the board every 15 minutes (the loop on the next line), answer "
-    "every worker request within the hour with facts, propose assigns and releases to the operator and send "
-    "them on a yes, {red}, write the Landing lines of the packs in flight from the "
-    "seats' merged PR bodies. Decisions stay the operator's. Start the loop on the next line with no further "
-    "message from the operator."
+    "every worker request within the hour with facts, {assign}, {red}, write the Landing lines of the packs "
+    "in flight from the seats' merged PR bodies. Decisions stay the operator's. Start the loop on the next "
+    "line with no further message from the operator."
 )
 DISPATCHER_TICK = "/loop 15m /inbox board"
 #: Where the seat procedure lives, the first a checkout holds: this
@@ -654,10 +656,25 @@ GOAL_NOTES = "cc/GOAL.md"
 #: protocol (its first home above) from an adopter's: the review procedure
 #: (a snapshot clone is defined here only) and a red base (reverting first is
 #: this repository's rule; an adopter's dispatcher proposes it).
-SELF_HOST_REVIEW = "red-team both reviewers on a snapshot clone"
-ADOPTER_REVIEW = "both reviewers at once with your edits frozen per /implement-task step 6"
+#: The review a lane runs is the one its diff earns (air, 2026-10-16, the
+#: operator's yes): on this repository the tier script prints it on its
+#: `review:` line (none, code-reviewer or both, /implement-task step 6's rule
+#: computed); elsewhere step 6's rule, read from the body. A reviewer the diff
+#: does not earn is not a skipped step.
+SELF_HOST_REVIEW = "red-team the reviewers scripts/proof_tier.py --base origin/{base} names, on a snapshot clone"
+ADOPTER_REVIEW = "the reviewers the diff earns, dispatched at once with your edits frozen, per /implement-task step 6"
 SELF_HOST_RED = "revert first on a red {base}"
 ADOPTER_RED = "propose the revert to the operator on a red {base}"
+#: The dispatcher's assign authority: this repository's operator decided it
+#: on 2026-10-15 (the protocol's Assign authority paragraph is its home); an
+#: adopter's dispatcher proposes every assign, as before.
+SELF_HOST_ASSIGN = (
+    "assign, re-sequence and release jobs within approved packs and live ledger rows on your own and "
+    "report each at your next tick, propose the rest to the operator (a new pack, a scope change, a "
+    "release or tag, a revert that is not the red-main revert, the open calls in cc/GOAL.md; the "
+    "protocol's Assign authority paragraph)"
+)
+ADOPTER_ASSIGN = "propose assigns and releases to the operator and send them on a yes"
 #: Flags after which claude is not starting a fresh session from a first
 #: message (a one-shot, a resumed or a continued conversation, a session
 #: brought over): the brief is refused beside them, never passed.
@@ -691,13 +708,16 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
     if dispatcher is not None and dispatcher == seat:
         goal = f" and {GOAL_NOTES}'s notes" if (where / GOAL_NOTES).is_file() else ""
         red = (SELF_HOST_RED if self_host else ADOPTER_RED).format(base=base)
-        text = DISPATCHER_BRIEF.format(seat=seat, protocol=protocol, goal=goal, red=red)
+        assign = SELF_HOST_ASSIGN if self_host else ADOPTER_ASSIGN
+        text = DISPATCHER_BRIEF.format(seat=seat, protocol=protocol, goal=goal, assign=assign, red=red)
         return Brief("dispatcher", text + "\n" + DISPATCHER_TICK, DISPATCHER_TICK)
-    tier = (f"the tier the diff earns with --base origin/{base}" if (where / TIER_SCRIPT).is_file()
+    has_tier_script = (where / TIER_SCRIPT).is_file()
+    tier = (f"the tier the diff earns with --base origin/{base}" if has_tier_script
             else "the proof the change earns per /implement-task step 7")
     phrase = f"the dispatcher {dispatcher}" if dispatcher else "the operator (espalier.toml names no dispatcher)"
     loop = WORKER_TICK.format(dispatcher=dispatcher or "the operator", tier=tier,
-                              review=SELF_HOST_REVIEW if self_host else ADOPTER_REVIEW)
+                              review=(SELF_HOST_REVIEW.format(base=base) if self_host and has_tier_script
+                                      else ADOPTER_REVIEW))
     return Brief("worker", WORKER_BRIEF.format(seat=seat, dispatcher_phrase=phrase, protocol=protocol) + "\n" + loop,
                  loop)
 
