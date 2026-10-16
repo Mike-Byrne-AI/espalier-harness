@@ -1808,7 +1808,12 @@ class TestTp168Redos:
             # 2026-09-13): the same verb tails behind the PowerShell command
             # position, for CP-DISCARD and its snapshot alone. Budgeted here
             # like every other git regex.
-            "_PS_DISCARD_RE", "_PS_SNAPSHOTABLE_RE",
+            "_PS_DISCARD_RE",
+            # The PowerShell tool's twins of the force-push, clean and tag-push
+            # arms (DEF-1038, 2026-10-16): one verdict for one intent on either
+            # tool. Budgeted here like every other git regex.
+            "_PS_FORCE_PUSH_RE", "_PS_GITCLEAN_RE", "_PS_RELEASE_TAGPUSH_RE",
+            "_PS_SNAPSHOTABLE_RE",
             "_RELEASE_TAGPUSH_RE",
             # The pre-discard snapshot trigger. Deliberately WIDER than
             # _DISCARD_RE (it fires on any discard-capable verb, including forms
@@ -2418,6 +2423,10 @@ class TestCommandPositionClassClose:
         assert set(git_res) == {
             "_speedbump._FORCE_PUSH_RE",
             "_speedbump._RELEASE_TAGPUSH_RE",
+            # the PowerShell tool's twins (DEF-1038), behind `_PS_GIT_CMD`
+            "_speedbump._PS_FORCE_PUSH_RE",
+            "_speedbump._PS_RELEASE_TAGPUSH_RE",
+            "_speedbump._PS_GITCLEAN_RE",
             "_speedbump._DISCARD_RE",
             "_speedbump._GITCLEAN_RE",
             "_speedbump._SNAPSHOTABLE_RE",
@@ -2757,8 +2766,17 @@ class TestCommandPositionClassClose:
             "directory destination's landed file can be computed (DEF-638).",
         "_speedbump._GITCLEAN_FORCE_RE":
             "FLAG -- reads `m.group(1)` of the anchored `_GITCLEAN_RE`.",
-        "_speedbump._GITCLEAN_DRYRUN_RE":
-            "FLAG -- same, the dry-run half.",
+        "_speedbump._GIT_DRYRUN_RE":
+            "FLAG -- the rehearsal token the three git checkpoints share "
+            "(DEF-898): read from the arguments an anchored push or clean "
+            "match selected, never from a whole command.",
+        "_speedbump._QUOTED_SPAN_RE":
+            "SYNTAX -- blanks the quoted spans of those arguments before the "
+            "rehearsal token is read, so a quoted operand spelling `-n` is "
+            "not a dry run; it names no verb.",
+        "_speedbump._STATEMENT_END_RE":
+            "SYNTAX -- finds where an anchored push match's statement ends, so "
+            "the rehearsal token is read from that push alone; it names no verb.",
         "_speedbump._PIPE_CONTINUATION_RE":
             "SYNTAX -- joins a pipe-then-newline continuation (one pipeline in "
             "both shells' grammar) into `| ` before the fetch-and-execute arms "
@@ -3841,3 +3859,133 @@ class TestCommandPositionClassClose:
     ])
     def test_true_positives_are_unchanged_by_the_anchor(self, tmp_path, cmd, pred_name):
         assert _fires(getattr(_speedbump, pred_name), cmd, tmp_path)
+
+
+# ── The three git checkpoints on both tools (DEF-1038, DEF-898) ───────────────
+
+_CHECKPOINT_PREDICATES = {
+    "release": _speedbump._pred_release,
+    "forcepush": _speedbump._pred_forcepush,
+    "gitclean": _speedbump._pred_gitclean,
+}
+
+#: One predicate table for the release, force-push and clean checkpoints:
+#: ``(label, checkpoint, command, bumps)``, each row driven on BOTH tools.
+#: One intent gets one verdict whichever tool runs it and however the driver
+#: path is spelled, and a rehearsal (`--dry-run`, or an `-n` cluster) never
+#: bumps, since it publishes or deletes nothing (driven against a scratch
+#: remote, 2026-10-16). Before the lane the PowerShell tool read the ship
+#: driver's release verb alone, a quoted driver path was silent on both tools,
+#: and only the clean checkpoint knew a rehearsal.
+_GIT_CHECKPOINT_TABLE = [
+    ("gh-release", "release", "gh release create v1.2.3 --notes x", True),
+    ("gh-release-repo-flag", "release", "gh -R owner/repo release create v1.2.3", True),
+    ("gh-release-draft", "release", "gh release create v1.2.3 --draft", False),
+    ("tag-push", "release", "git push origin v1.2.3", True),
+    ("tag-push-global-option", "release", "git -C repo push origin v1.2.3", True),
+    ("push-tags", "release", "git push --tags", True),
+    ("follow-tags", "release", "git push --follow-tags origin main", True),
+    ("branch-push", "release", "git push origin main", False),
+    ("ship-release", "release", "python tools/cc/ship.py release v1.2.3", True),
+    ("ship-release-double-quoted", "release", 'python "tools/cc/ship.py" release v1.2.3', True),
+    ("ship-release-single-quoted", "release", "python 'tools/cc/ship.py' release v1.2.3", True),
+    ("ship-release-quoted-bare-name", "release", 'python "ship.py" release v1.2.3', True),
+    ("ship-release-rehearsal", "release", "python tools/cc/ship.py release --dry-run v1.2.3", False),
+    ("ship-status-quoted", "release", 'python "tools/cc/ship.py" status', False),
+    ("tag-push-rehearsal", "release", "git push --dry-run origin v1.2.3", False),
+    ("push-tags-rehearsal", "release", "git push -n --tags", False),
+    ("follow-tags-rehearsal", "release", "git push --dry-run --follow-tags origin main", False),
+    ("rehearsal-then-tag-push", "release",
+     "git push --dry-run origin v1.2.3; git push origin v1.2.3", True),
+    ("tag-push-then-rehearsal", "release",
+     "git push origin v1.2.3; git push --dry-run origin v2.0.0", True),
+    ("quoted-n-is-no-rehearsal", "release", 'git push -o "note -n" origin v1.2.3', True),
+    ("force-push", "forcepush", "git push --force origin main", True),
+    ("force-push-short", "forcepush", "git push -f origin main", True),
+    ("force-push-global-option", "forcepush", "git -C repo push -f origin main", True),
+    ("force-with-lease", "forcepush", "git push --force-with-lease origin main", False),
+    ("force-push-rehearsal", "forcepush", "git push --dry-run --force origin main", False),
+    ("force-push-rehearsal-cluster", "forcepush", "git push -nf origin main", False),
+    ("rehearsal-then-force-push", "forcepush",
+     "git push -n -f origin main; git push -f origin main", True),
+    ("clean", "gitclean", "git clean -fd", True),
+    ("clean-global-option", "gitclean", "git -C repo clean -fdx", True),
+    ("clean-unforced", "gitclean", "git clean -d", False),
+    ("clean-rehearsal", "gitclean", "git clean -n -fd", False),
+    ("clean-rehearsal-long", "gitclean", "git clean --dry-run -f", False),
+    ("clean-quoted-n-operand", "gitclean", 'git clean -f "old -n notes"', True),
+]
+
+
+class TestGitCheckpointsAgreeAcrossTools:
+    """DEF-1038 and DEF-898 as one class: the release, force-push and clean
+    checkpoints give one verdict for one intent across tool, spelling and
+    rehearsal. Who it served: the operator releasing from PowerShell by the
+    release checklist, whose `gh release create` and tag push drew no nudge
+    while the checklist's own rehearsal push drew one."""
+
+    @pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+    @pytest.mark.parametrize(
+        "checkpoint,command,bumps",
+        [row[1:] for row in _GIT_CHECKPOINT_TABLE],
+        ids=[row[0] for row in _GIT_CHECKPOINT_TABLE],
+    )
+    def test_one_intent_one_verdict_on_either_tool(self, tmp_path, tool, checkpoint, command, bumps):
+        assert _CHECKPOINT_PREDICATES[checkpoint](tool, {"command": command}, tmp_path) == bumps
+
+    @pytest.mark.parametrize("tool,command", [
+        ("Bash", 'python "/c/Program Files/repo/tools/cc/ship.py" release v1.2.3'),
+        ("PowerShell", r'python "C:\Program Files\repo\tools\cc\ship.py" release v1.2.3'),
+        ("PowerShell", r'& "C:\Program Files\repo\tools\cc\ship.py" release v1.2.3'),
+        ("PowerShell", r'py -3 ".\tools\cc\ship.py" release v1.2.3'),
+    ], ids=["bash-quoted-absolute", "ps-quoted-absolute", "ps-call-operator", "ps-launcher-quoted"])
+    def test_a_quoted_driver_path_with_a_space_bumps(self, tmp_path, tool, command):
+        assert _speedbump._pred_release(tool, {"command": command}, tmp_path)
+
+    @pytest.mark.parametrize("checkpoint,command", [
+        ("forcepush", 'bash -c "git push --force origin main"'),
+        ("release", "bash -c 'git push origin v1.2.3'"),
+        ("gitclean", 'bash -c "git clean -fd"'),
+    ], ids=["force-push", "tag-push", "clean"])
+    def test_a_program_the_powershell_tool_hands_to_bash_bumps(self, tmp_path, checkpoint, command):
+        """The PowerShell tool's readings are CP-DISCARD's there: a program it
+        hands to `bash -c` is read by the Bash arms, as bash receives it."""
+        assert _CHECKPOINT_PREDICATES[checkpoint]("PowerShell", {"command": command}, tmp_path)
+
+    @pytest.mark.parametrize("checkpoint,command", [
+        ("forcepush", "Write-Output 'git push --force origin main'"),
+        ("release", "Write-Output 'git push origin v1.2.3'"),
+        ("release", "Write-Output 'gh release create v1.2.3'"),
+        ("gitclean", "Write-Output 'git clean -fd'"),
+        # A Bash-anchored arm would open a command position at the exec quote
+        # inside this PowerShell literal; the PowerShell twins read it as data.
+        ("forcepush", """Write-Output 'bash -c "git push --force origin main"'"""),
+        ("release", """Write-Output 'bash -c "git push origin v1.2.3"'"""),
+        ("gitclean", """Write-Output 'bash -c "git clean -fd"'"""),
+    ], ids=["force-push", "tag-push", "gh-release", "clean",
+            "force-push-exec-quote", "tag-push-exec-quote", "clean-exec-quote"])
+    def test_a_powershell_literal_that_mentions_one_stays_silent(self, tmp_path, checkpoint, command):
+        assert not _CHECKPOINT_PREDICATES[checkpoint]("PowerShell", {"command": command}, tmp_path)
+
+    @pytest.mark.parametrize("checkpoint,command", [
+        ("gitclean", r"git clean C:\scratch\build -fdx"),
+        # the backtick escapes the separator: `x;y` is one operand there, and
+        # the force cluster after it applies
+        ("gitclean", "git clean x`;y -fd"),
+        ("forcepush", "Git push --force origin main"),
+        ("release", "GIT push origin v1.2.3"),
+    ], ids=["clean-backslash-operand", "clean-backtick-escaped-separator",
+            "force-push-capitalised", "tag-push-capitalised"])
+    def test_the_powershell_grammar_of_one(self, tmp_path, checkpoint, command):
+        """In PowerShell a backslash is a path character (the backtick is the
+        escape) and a command name is case-blind, so these run as written."""
+        assert _CHECKPOINT_PREDICATES[checkpoint]("PowerShell", {"command": command}, tmp_path)
+
+    def test_a_wrappers_own_n_is_no_rehearsal(self, tmp_path):
+        """The rehearsal token is read from the push's own arguments: `sudo
+        -n` (non-interactive) before a real force push is not a dry run."""
+        assert _speedbump._pred_forcepush("Bash", {"command": "sudo -n git push -f origin main"}, tmp_path)
+
+    def test_a_tool_neither_reads_stays_silent(self, tmp_path):
+        for predicate in _CHECKPOINT_PREDICATES.values():
+            assert not predicate("Write", {"command": "git push --force origin v1.2.3"}, tmp_path)
