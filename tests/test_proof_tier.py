@@ -1404,3 +1404,211 @@ class TestTheLegsAndTheHeavyLane:
 class _Rc:
     def __init__(self, returncode: int) -> None:
         self.returncode = returncode
+
+
+
+#: A scratch workflow for the gate derivation (air's red, 2026-10-16): one
+#: planted call per shape that joins (a YAML-quoted value is the shell's text,
+#: so it joins), and one per shape that must not -- a
+#: comment, a quoted string either way, an assignment value, an ``env:`` value,
+#: a line inside another key's block, a sibling key after a ``run:`` block, and
+#: a path no file at the head answers.
+_PLANTED_WORKFLOW = """name: ci
+on: push
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    env:
+      GATE_ENV: scripts/env_value.py
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/new_gate.py --check
+      - run: "python scripts/yaml_quoted.py"
+      - name: block
+        run: |
+          # python scripts/commented.py
+          echo "python scripts/double_quoted.py"
+          echo 'scripts/single_quoted.py'
+          GATE=scripts/assigned.py true
+          python scripts/absent.py
+          python ./scripts/dotted.py && python scripts/chained.py
+          python "$PREFIX"scripts/prefixed.py
+          echo "say \\" python scripts/escaped_quote.py now"
+        working-directory: scripts/sibling_key.py
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            run: python scripts/other_block.py
+      - uses: ./.github/actions/local  # the local action
+"""
+_PLANTED_ACTION = """name: local
+runs:
+  using: composite
+  steps:
+    - run: python tools/from_action.py
+      shell: bash
+"""
+_JOINS = ("scripts/new_gate.py", "scripts/yaml_quoted.py", "scripts/dotted.py", "scripts/chained.py",
+          ".github/actions/local/action.yml", "tools/from_action.py")
+_NOT_CALLS = ("scripts/commented.py", "scripts/double_quoted.py", "scripts/single_quoted.py",
+              "scripts/assigned.py", "scripts/env_value.py", "scripts/other_block.py",
+              "scripts/sibling_key.py", "scripts/prefixed.py", "scripts/escaped_quote.py")
+
+
+def _planted(tmp_path, *, workflow=_PLANTED_WORKFLOW):
+    r = tmp_path / "rv"
+    files = {rel: "x\n" for rel in _JOINS + _NOT_CALLS}
+    files[".github/actions/local/action.yml"] = _PLANTED_ACTION
+    if workflow is not None:
+        files[".github/workflows/ci.yml"] = workflow
+    for rel, text in files.items():
+        (r / rel).parent.mkdir(parents=True, exist_ok=True)
+        (r / rel).write_text(text, encoding="utf-8")
+    return r
+
+
+class TestTheReviewLine:
+    """``review`` is ``/implement-task`` and ``/preflight`` step 6's rule made
+    mechanical, over the tier's own changed paths: a path on the review surface
+    earns ``code-reviewer``; a hook, a command / agent / skill / workflow body,
+    or a gate earns ``both``; anything else ``none``. A gate is the CI
+    definition, ``bench/``, and every file a workflow at the diff's head calls,
+    derived and never kept by hand (air, 2026-10-16)."""
+
+    @pytest.mark.parametrize("rel,expected", [
+        ("docs/X.md", "none"),
+        ("memory/n.md", "none"),
+        ("task-packs/TP-1-x.md", "none"),
+        ("tests/test_x.py", "none"),
+        ("tests/conftest.py", "none"),
+        ("tests/_helper.py", "none"),
+        ("pyproject.toml", "none"),
+        ("espalier.toml", "none"),
+        ("espalier/assets/claude/commands/x.md", "none"),
+        ("espalier/_vendor/cc/hooks/h.py", "none"),
+        ("examples/dogfooding/.claude/commands/x.md", "none"),
+        ("scripts/s.py", "code-reviewer"),
+        ("espalier/cli.py", "code-reviewer"),
+        ("tools/cc/seat.py", "code-reviewer"),
+        (".claude/CLAUDE.md", "code-reviewer"),
+        ("tools/cc/hooks/h.py", "both"),
+        (".claude/commands/x.md", "both"),
+        (".claude/agents/a.md", "both"),
+        (".claude/skills/s/SKILL.md", "both"),
+        (".claude/workflows/w.js", "both"),
+        (".github/workflows/ci.yml", "both"),
+        (".github/actions/a/action.yml", "both"),
+        ("bench/x.py", "both"),
+    ])
+    def test_each_surface_earns_its_reviewers(self, pt, tmp_path, rel, expected):
+        verdict, earned_by = pt.review([rel], tmp_path)
+        assert verdict == expected, (rel, earned_by)
+        assert [p for p, _ in earned_by] == ([] if expected == "none" else [rel])
+
+    @pytest.mark.parametrize("rel,why", [
+        ("tools/cc/hooks/h.py", "a hook"),
+        (".claude/skills/s/SKILL.md", "a command, agent, skill or workflow body"),
+        (".github/workflows/ci.yml", "the CI definition"),
+        (".github/actions/a/action.yml", "the CI definition"),
+        ("bench/x.py", "the release bench"),
+        ("scripts/s.py", "on the review surface"),
+    ])
+    def test_the_line_says_why_each_path_earned_it(self, pt, tmp_path, rel, why):
+        assert pt.review([rel], tmp_path)[1] == [(rel, why)]
+
+    def test_the_heaviest_path_decides_and_is_the_one_named(self, pt, tmp_path):
+        verdict, earned_by = pt.review(
+            ["docs/X.md", "scripts/s.py", "tools/cc/hooks/h.py"], tmp_path)
+        assert (verdict, earned_by) == ("both", [("tools/cc/hooks/h.py", "a hook")])
+
+    def test_a_script_a_workflow_runs_reads_both(self, pt, tmp_path):
+        r = _planted(tmp_path)
+        assert pt.review(["scripts/new_gate.py"], r) == (
+            "both", [("scripts/new_gate.py", "a gate: .github/workflows/ci.yml runs it")])
+
+    def test_the_same_script_with_no_workflow_reads_code_reviewer(self, pt, tmp_path):
+        r = _planted(tmp_path, workflow=None)
+        assert pt.review(["scripts/new_gate.py"], r)[0] == "code-reviewer"
+
+    def test_the_derivation_is_exactly_the_calls(self, pt, tmp_path):
+        named = pt.workflow_named_files(_planted(tmp_path))
+        assert set(named) == set(_JOINS)
+        assert named["tools/from_action.py"] == ".github/actions/local/action.yml"
+
+    def test_a_path_a_workflow_names_that_is_absent_does_not_join(self, pt, tmp_path):
+        r = _planted(tmp_path)
+        assert "python scripts/absent.py" in _PLANTED_WORKFLOW
+        assert "scripts/absent.py" not in pt.workflow_named_files(r)
+        assert pt.review(["scripts/absent.py"], r)[0] == "code-reviewer"
+
+    @pytest.mark.parametrize("rel", _NOT_CALLS)
+    def test_a_word_that_is_not_a_call_does_not_join(self, pt, tmp_path, rel):
+        r = _planted(tmp_path)
+        assert rel in _PLANTED_WORKFLOW
+        assert pt.review([rel], r)[0] == "code-reviewer"
+
+    def test_base_mode_reads_the_head_not_the_working_tree(self, pt, tmp_path):
+        r = _planted(tmp_path)
+        subprocess.run(_git(r) + ["init", "-q"], check=True)
+        subprocess.run(_git(r) + ["add", "-A"], check=True, capture_output=True)
+        subprocess.run(_git(r) + ["commit", "-qm", "i"], check=True, capture_output=True)
+        wf = r / ".github" / "workflows" / "ci.yml"
+        wf.write_text(_PLANTED_WORKFLOW.replace("scripts/new_gate.py", "scripts/commented.py"),
+                      encoding="utf-8")
+        assert "scripts/new_gate.py" in pt.workflow_named_files(r, at_head=True)
+        assert "scripts/new_gate.py" not in pt.workflow_named_files(r)
+        assert "scripts/commented.py" in pt.workflow_named_files(r)
+        assert "scripts/commented.py" not in pt.workflow_named_files(r, at_head=True)
+        (r / "scripts" / "late.py").write_text("x\n", encoding="utf-8")
+        wf.write_text(_PLANTED_WORKFLOW + "      - run: python scripts/late.py\n", encoding="utf-8")
+        assert "scripts/late.py" in pt.workflow_named_files(r)
+        assert "scripts/late.py" not in pt.workflow_named_files(r, at_head=True)
+
+    def test_the_cli_prints_the_line_beside_the_tier(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        (r / "tools" / "cc" / "hooks" / "h.py").write_text("changed\n", encoding="utf-8")
+        assert pt.main(["--root", str(r)]) == 0
+        assert "review: both -- tools/cc/hooks/h.py (a hook)\n" in capsys.readouterr().out
+        assert pt.main(["--root", str(r), "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["review"] == "both"
+        assert data["review_earned_by"] == [{"path": "tools/cc/hooks/h.py", "why": "a hook"}]
+
+    def test_a_docs_diff_says_none_and_why(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        _commit(r, "docs/X.md")
+        assert pt.main(["--root", str(r), "--base", "HEAD~1"]) == 0
+        assert "review: none -- no changed path is on the review surface\n" in capsys.readouterr().out
+
+    def test_quiet_never_reads_the_workflows(self, pt, tmp_path, capsys, monkeypatch):
+        """The CI tier job captures ``--quiet``'s one word; a workflow read it
+        never needed must not be able to fail it."""
+        r = _repo(tmp_path)
+        _commit(r, "docs/X.md")
+
+        def boom(*a, **k):
+            raise AssertionError("--quiet read the workflows")
+        monkeypatch.setattr(pt, "workflow_named_files", boom)
+        assert pt.main(["--root", str(r), "--base", "HEAD~1", "--quiet"]) == 0
+        assert capsys.readouterr().out == "contract\n"
+
+    def test_unreadable_workflows_read_both_never_fewer(self, pt, tmp_path, capsys, monkeypatch):
+        r = _repo(tmp_path)
+        _commit(r, "docs/X.md")
+
+        def unreadable(*a, **k):
+            raise pt.BaseUnresolvable("cannot list HEAD's files: planted")
+        monkeypatch.setattr(pt, "_head_files", unreadable)
+        assert pt.main(["--root", str(r), "--base", "HEAD~1"]) == 0
+        captured = capsys.readouterr()
+        assert "review: both -- (the workflows) (unread at the head)\n" in captured.out
+        assert "planted; the review reads both" in captured.err
+
+    def test_the_merge_gate_is_a_gate_on_this_tree(self, pt):
+        """The live derivation: ``ci_guard.py`` alone reads both because
+        harness-guard runs it (air: the merge gate's force-add backstop), and
+        every path the derivation names is a file here."""
+        named = pt.workflow_named_files(REPO_ROOT)
+        assert named.get("tools/cc/ci_guard.py") == ".github/workflows/harness-guard.yml"
+        assert all((REPO_ROOT / rel).is_file() for rel in named), named
+        assert pt.review(["tools/cc/ci_guard.py"], REPO_ROOT)[0] == "both"
