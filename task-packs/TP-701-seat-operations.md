@@ -607,4 +607,29 @@ Pack budgets on this repository have run about 2.7 times over on one measured pa
   `DEF-4021` (the ship driver's default body is the commit subjects), `DEF-4022` (implement-task step
   7 shows no `--base` and no earned red), `DEF-4023` (no contract on a `tests/` import from the
   shipped roots). The figure goes to the operator's `TP-700` W1 decision.
+- Wave B part 2: LANDED 2026-10-15 (#243, df355d6, seat win-2). B-4 the `Sessions:` line reads life:
+  a marker records `window: true` only where `checkout_sync.window_pid` found its pid in Claude
+  Code's registry, `alive` is judged for such a pid alone (None otherwise), a dead one leaves the
+  line (`ESPALIER_SESSIONS_DEBUG=1` names it `pid gone`), `checkout_sync.marker_sessions` reads the
+  same field; `DEF-4020` repinned on the unfixed source, then struck on the driven proof. B-5 the
+  `Orders:` line on a worker seat holding live assigns (seat, jobs, first lane, unread count, the
+  brief's short form and command), no `machine_setting` call of its own. B-6 the records (the
+  protocol, `HOOK_ASSUMPTIONS` Assumption 6, `HOOKS`, the root `CLAUDE.md` row, `ENV_CATALOG`,
+  `TP-700` W1 item 2, `managed_paths`, a fragment). B-7, added by the dispatcher 10-15: `seat.py
+  brief <seat>` composes the first message from one tracked template, a worker form and a dispatcher
+  form picked by `espalier.toml`'s `dispatcher` line read from the seat's own checkout; on this
+  repository the worker loop renders the operator's tick byte for byte; `launch` passes it as
+  claude's prompt after `--` unless `--no-brief`, refusing it beside `-p`, `-c`, `-r`, `--from-pr`,
+  `--teleport`, a bare first argument, a `.cmd` claude or an unusable dispatcher setting. B-0 item 3
+  measured on Windows (CLI 2.1.301): the positional prompt arrives after SessionStart's context and
+  the loop is created with no second message; a cron `/loop` survives `/clear` (fired 18 s into the
+  new transcript); `--worktree` locks the worktree in interactive mode too; `claude -p --add-dir <d>
+  <prompt>` reads the prompt as a directory, hence the `--`. 28 named mutants killed in a scratch
+  clone; both reviewers on a snapshot clone, 0 BLOCKER (2 and 4 SHOULD), one fix batch; the full
+  tier with `--base` on the tree merged with 2196060 (parallel 21,791 passed, serial 1,088; one host
+  baseline red, one lane red fixed and re-proved on the slice); archive probe 449 on the four lane
+  test files. It shared `seat.py` with #242 (`DEF-5002`, 5ce6233): the dispatcher merged the two
+  heads in a scratch worktree (no conflict, twins identical, the name-reader pin and 535
+  shared-module tests green) and the second landed on its own CI with no catch-up. Offered: a row
+  that a session marker carries no host identity (air's block).
 - Date:

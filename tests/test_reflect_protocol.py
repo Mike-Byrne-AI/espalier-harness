@@ -1000,11 +1000,17 @@ class TestReflectTwinParity:
         from espalier.surface_contract import classify_release_path
         from tests._git_oracle import GitAnswerUnavailable, require_tracked_paths
 
+        from tests._live_tree import keep_in_checkout
+
         root = Path(__file__).resolve().parent.parent
         hook = _hook_side()
-        engine = {p.resolve().relative_to(root).as_posix() for p in _iter_surface_files(root)}
+        # Both walks are the adopter's reflect and read what git ignores; this
+        # contract is over this tree, so each reads through git's view and a
+        # maintainer's ignored notes never decide it (DEF-2013).
+        engine = {p.resolve().relative_to(root).as_posix()
+                  for p in keep_in_checkout(list(_iter_surface_files(root)), root=root)}
         tools = {hook._rel(p.resolve(), root)
-                 for p in hook.iter_surface(root) if p.suffix == ".md"}
+                 for p in keep_in_checkout(list(hook.iter_surface(root)), root=root) if p.suffix == ".md"}
         assert engine == tools, sorted(engine ^ tools)
         try:
             tracked = require_tracked_paths(root, "*CLAUDE.md", "memory/*.md", minimum=10,

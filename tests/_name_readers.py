@@ -3,12 +3,13 @@
 ``git config espalier.machine`` is read three ways under ``tools/cc``: through
 ``mail.machine_setting``, whose reason opens with ``MACHINE_UNREAD`` when the read
 itself failed (a timeout, a config git cannot parse); through ``mail.clone_machine``,
-which cannot tell the two apart yet (DEF-5003); and by raw ``git config --get``
-calls (DEF-5004). One predicate serves the contract pin
-(``tests/test_contracts.py::TestEveryNameReaderSaysWhichItIs``) and those rows'
-ledger probes, so a pin and a probe cannot disagree about a call. Standard library
-only; the files come from git's view of the checkout (``git ls-files``), never a
-filesystem walk.
+its ``--local`` read, which returns the same reason; and by a few raw
+``git config --get`` calls, each telling exit 1 ("not set") from every other exit
+and marked. One predicate serves the contract pin
+(``tests/test_contracts.py::TestEveryNameReaderSaysWhichItIs``) and any ledger probe
+over these readers, so a pin and a probe cannot disagree about a call. Standard
+library only; the files come from git's view of the checkout (``git ls-files``),
+never a filesystem walk.
 
 A call says which when its result is unpacked into a pair (a plain or a conditional
 assignment) and that binding of the reason reaches a ``startswith`` on
@@ -19,8 +20,8 @@ through that comment: once it is fixed it reads through a reader that returns th
 reason, and leaves this population.
 
     python3 tests/_name_readers.py machine_setting   # open=False while every call says which
-    python3 tests/_name_readers.py clone_machine     # DEF-5003's probe
-    python3 tests/_name_readers.py --raw             # DEF-5004's probe
+    python3 tests/_name_readers.py clone_machine     # the same, for the clone's own read
+    python3 tests/_name_readers.py --raw             # open=False while every raw read is marked
     (add --list for the sites)
 """
 from __future__ import annotations
@@ -35,9 +36,11 @@ if __package__ in (None, ""):   # run as the ledger probe: the root, not tests/,
     sys.path.insert(0, str(REPO))
 from tests._git_oracle import require_tracked_paths  # noqa: E402
 MARK = re.compile(r"#\s*unread-name: ok \w{3}")
-#: The readers that answer with the reason (or will): a raw read inside them is the
-#: reader itself, not a caller.
+#: The readers that answer with the reason, and the one file that holds them: a raw
+#: read inside them is the reader itself, and a reader returning another's answer
+#: whole hands the reason on. The same names in any other file are callers like any.
 READERS = ("machine_setting", "clone_machine")
+READERS_HOME = "tools/cc/mail.py"
 _KEY_LITERAL = "espalier.machine"
 
 
@@ -141,8 +144,9 @@ def calls(files: list[Path], root: Path, reader: str = "machine_setting") -> tup
             if not (isinstance(call, ast.Call) and _name(call.func) == reader):
                 continue
             inner = _innermost(funcs, call.lineno)
-            if inner is not None and inner.name == reader:
-                continue
+            if inner is not None and inner.name in READERS and rel == READERS_HOME:
+                continue   # a reader returning another's answer whole hands the reason on, as one
+                           # that runs git itself does (clone_machine is machine_setting's --local read)
             scope, where = (tree, "<module>") if inner is None else (inner, inner.name)
             found.append(f"{rel}::{where}")
             if not _says_which(call, scope, lines):
@@ -174,7 +178,7 @@ def raw_reads(files: list[Path], root: Path) -> tuple[list[str], list[str]]:
             if not _raw_key_read(call):
                 continue
             inner = _innermost(funcs, call.lineno)
-            if inner is not None and inner.name in READERS:
+            if inner is not None and inner.name in READERS and rel == READERS_HOME:
                 continue
             site = f"{rel}::{inner.name if inner else '<module>'}:{call.lineno}"
             found.append(site)

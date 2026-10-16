@@ -1407,9 +1407,29 @@ def _seat_claims_kept(here: _Git, root: Path) -> str:
     claims. Only that name can release them: removed with its worktree, they
     stay live and warn every other seat's plan, and no seat is left to close
     them. A worktree that answers its clone's name is the clone's own seat,
-    which can still release, so it is not asked. Kept when the claims cannot
-    be read, as every other check here keeps what it cannot read."""
-    seat = here.out("config", "--worktree", "--get", "espalier.machine")
+    which can still release, so it is not asked. Kept when the seat's name or
+    its claims cannot be read, as every other check here keeps what it cannot
+    read. Without per-worktree config no worktree has a name of its own (git
+    then refuses ``--worktree`` outright where a clone has several)."""
+    # Read as git reads it: the repository's own config (git honours the
+    # extension nowhere else) and as a boolean (yes, on and 1 are on).
+    ext = here.ask("config", "--local", "--type=bool", "--get", "extensions.worktreeConfig")
+    if ext is not None and (ext.returncode == 1 or (ext.returncode == 0 and ext.stdout.strip() != "true")):
+        return ""
+    asked = None
+    if ext is not None and ext.returncode == 0:
+        # unread-name: ok exit 1 alone is "not set"; no answer, or any other exit, keeps the worktree below
+        asked = here.ask("config", "--worktree", "--get", "espalier.machine")
+    if asked is None or asked.returncode not in (0, 1):
+        # The read that failed: the name's, else the extension's own (asked
+        # never ran), else neither answered in time.
+        failed = asked if asked is not None else ext if ext is not None and ext.returncode != 0 else None
+        lines = (failed.stderr or "").strip().splitlines() if failed is not None else []
+        detail = ("git did not answer in time" if failed is None else
+                  f"git exited {failed.returncode}" + (f": {_ascii(lines[-1])[:120]}" if lines else ""))
+        return (f"its seat name could not be read ({detail}), so whether it holds claims only it can release "
+                "is not known")
+    seat = asked.stdout.strip() if asked.returncode == 0 else ""
     if not seat:
         return ""
     timeout = _left(here.deadline, GIT_CAP_S)

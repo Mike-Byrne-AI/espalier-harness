@@ -684,7 +684,8 @@ def _bash_derived_payloads(tool_input: dict, root: Path, *, already: int,
         # reads it: the payload cwd, moved by the command's own cd chain; a
         # .NET-API path on PowerShell keeps the process directory.
         start = cwd or root
-        _exists = _hook_utils.directory_exists(start)
+        bash = tool_name != "PowerShell"
+        _exists = _hook_utils.directory_exists(start, bash=bash)
         if tool_name == "PowerShell":
             paths = _bash_patterns._candidate_paths_from_powershell(command)
             text, statements = _bash_patterns.powershell_directory_chain(command, _exists)
@@ -713,10 +714,12 @@ def _bash_derived_payloads(tool_input: dict, root: Path, *, already: int,
             landed = None
             for spelled in (["."] if rel in fixed
                             else _bash_patterns.statement_directories(text, statements, rel)):
-                base, norm = _hook_utils.resolve_in_checkout(
-                    rel, root, base=_hook_utils.join_directory(start, spelled))
-                if (base / norm).is_file():
-                    landed = (base, norm)
+                for at in _hook_utils.joined_directories(start, spelled, bash=bash):
+                    base, norm = _hook_utils.resolve_in_checkout(rel, root, base=at)
+                    if (base / norm).is_file():
+                        landed = (base, norm)
+                        break
+                if landed is not None:
                     break
             if landed is None:
                 continue          # mentioned, not written

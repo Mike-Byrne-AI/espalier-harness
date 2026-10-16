@@ -67,8 +67,8 @@
       "bound": [
         "tests/test_contracts.py::TestMemoryMdLineLimit::test_memory_md_within_cap"
       ],
-      "last_verified_at": "2026-10-15T05:26:38Z",
-      "last_verified_sha": "c62e5c160d456ca40ecc9d878d2a807507260727",
+      "last_verified_at": "2026-10-16T03:30:44Z",
+      "last_verified_sha": "a8be9ed326dde9cb6b0a4aa1f62cff1dadcbfceb",
       "marker_path": "docs/SHARP_EDGES.md",
       "policy": "verify-on-touch"
     },

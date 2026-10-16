@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Any
 
 try:  # the bounded spawn beside this file; it is also loaded where that sibling is not importable
-    from _json_safe import run_bounded
+    from _json_safe import os_error_text, run_bounded
 except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (copied alone, or loaded by path): subprocess.run, a bound everywhere but Windows
     def run_bounded(
         args: Any, *, timeout: float | None = None, input: Any = None,
@@ -45,6 +45,10 @@ except ImportError:  # fail-open: ok deliberate -- tools/cc is not on sys.path (
         """``subprocess.run``, read when called, so a replaced one is honoured as ``run_bounded`` honours it."""
         return subprocess.run(  # spawn: ok the bounded spawn's fallback where _json_safe.py is not importable
             args, timeout=timeout, input=input, capture_output=capture_output, check=check, **kwargs)
+
+    def os_error_text(exc: BaseException) -> str:
+        """``str(exc)``, where the sibling that spells an error's path as a path is not importable."""
+        return str(exc)
 
 #: The fragment directories, repo-relative with forward slashes, no trailing
 #: slash. ``FRAGMENT_DIRS`` spells them with one, the form the record-file
@@ -211,19 +215,32 @@ def rows_from_texts(fragments: list[tuple[str, str]], memory_text: str) -> list[
     return sorted(rows, key=lambda row: row.date, reverse=True)
 
 
+class SeatNameUnread(Exception):
+    """This seat's machine name could not be read (git timing out, a config
+    git cannot parse): naming the fragment ``local`` would be a guess."""
+
+
 def _seat(root: Path) -> str:
     """This seat's name for a fragment: ``git config espalier.machine`` (a
     linked worktree's own name where it has one), lower-cased to the name
-    pattern, else ``local``."""
+    pattern, else ``local`` where no name is set. A read that failed raises
+    :class:`SeatNameUnread`: the name also decides which of today's started
+    rows is this seat's, so ``local`` there would take another seat's row or
+    start a second one the handoff refuses."""
     try:
-        result = run_bounded(  # spawn: ok a name lookup: a git that cannot answer names the fragment local
+        # unread-name: ok exit 1 alone is "not set" (named local); no answer, or any other exit, raises below
+        result = run_bounded(  # spawn: ok a name lookup, bounded; a read that fails refuses the fragment
             ["git", "config", "--get", "espalier.machine"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=5, cwd=str(root),
         )
-        name = result.stdout.strip() if result.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError):  # fail-open: ok text-fallback -- no git answer names the fragment local
-        name = ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise SeatNameUnread(f"this seat's machine name could not be read ({os_error_text(exc)})") from None
+    if result.returncode not in (0, 1):
+        lines = (result.stderr or "").strip().splitlines()
+        raise SeatNameUnread(f"this seat's machine name could not be read (git exited {result.returncode}"
+                             + (f": {lines[-1][:160]}" if lines else "") + ")")
+    name = result.stdout.strip() if result.returncode == 0 else ""
     name = re.sub(r"[^a-z0-9-]+", "-", name.lower()).strip("-")
     return name or "local"
 
@@ -930,7 +947,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.verb == "new":
         if args.record == "session-log":
-            seat = args.seat or _seat(root)
+            try:
+                seat = args.seat or _seat(root)
+            except SeatNameUnread as exc:
+                print(f"{exc}, so no Session Log row is named: run it again once git answers (a config git "
+                      "cannot parse never will: fix it first), or name the seat with --seat", file=sys.stderr)
+                return 2
             path = this_sessions_row(root, seat)
             if path is not None:
                 print("(this seat's row from today is already here, not yet committed: edit it, "

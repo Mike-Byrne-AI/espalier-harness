@@ -61,7 +61,7 @@ try:
         "STACK_ROOT_FILES", "STATE_DIR", "atomic_write_text", "harness_exempt_prefixes", "has_active_plan",
         "iter_mcp_path_leaves", "lock_file", "normalize_path", "normalize_path_str", "os_error_text",
         "read_stdin_safely", "read_text_nofollow", "read_toml_string_list", "read_toml_table",
-        "resolve_project_root", "say_bad_stdin", "say_once", "say_stack_table_fault", "source_extensions",
+        "resolve_project_root", "rooted", "say_bad_stdin", "say_once", "say_stack_table_fault", "source_extensions",
         "unlock_file", "warn", "warn_exc",
     )
     for _name in _PLAN_GUARD_HELPER_NAMES:
@@ -674,8 +674,17 @@ def _is_exempt(rel_path: str, root: Path) -> bool:
     write_guard handles symlink-into-protected-zone bypasses via its
     own _normalize_path that resolves symlinks before the protected
     check, so this exemption does not enable redirect attacks.
+
+    "Raw absolute" is `_hook_utils.rooted`, the one judge on every host: the
+    host's ``Path(x).is_absolute()`` read a rooted path with no drive
+    (``/tmp/scratch.py``, ``/etc/x.py``) as relative on Windows, so a scratch
+    file outside the checkout was refused for want of a plan there while its
+    drive and Git Bash drive spellings passed (DEF-1175). It is asked AFTER
+    `_normalize_path`, which anchors a rooted drive-less path inside the
+    checkout onto its drive and relativises it, so such a path stays judged
+    by the prefixes below.
     """
-    if Path(rel_path).is_absolute():
+    if _hook_utils.rooted(rel_path):
         return True
     # NFKC + casefold parity with write_guard._is_protected. See write_guard
     # docstring for the bypass class this closes.
@@ -726,7 +735,7 @@ def _is_root_source_file(rel_path: str, root: Path | None = None) -> bool:
     the prefix list. With ``root``, the adopter's declared source extensions
     count too."""
     p = Path(rel_path)
-    if p.is_absolute() or p.parent != Path("."):
+    if _hook_utils.rooted(rel_path) or p.parent != Path("."):
         return False
     if p.name in PLAN_REQUIRED_ROOT_FILES:
         return False

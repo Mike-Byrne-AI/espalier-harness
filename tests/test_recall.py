@@ -1962,6 +1962,9 @@ _TASK_ARM = (
      "launches the base interpreter as its own child), and the sibling-cwd banner test builds "
      "a root longer than the cwd cap instead of a POSIX split",
      "docs/sharp-edges/protected-zone-path-equivalence.md"),  # 2026-10-06 sessions-tests lane (hazard query: Windows path comparison backslash separator case-insensitive; applied: paths built with pathlib and compared through the hook's own normalization, never a literal slash split)
+    ("DEF-1175: one rooted-path judge shared by join_directory, the two temp-root carve-out "
+     "sites and plan_guard's exemption: a Git Bash /tmp base read where Git for Windows mounts it",
+     "docs/SHARP_EDGES.md :: Catastrophic `rm` hard-deny parses flags + target, it does not regex a fixed order"),  # 2026-10-16 lane/rooted-path-judge (hazard query: temp root carve-out checkout clone scratch nudge; applied: the hard tier's rules unchanged, the carve-out only adds places to look for work, a typed /tmp delete of a checkout at the mount walls)
 )
 
 #: The ratchet: every (query, source) pair filed on 2026-09-11, and every row a
@@ -2194,6 +2197,9 @@ _TASK_ARM_FILED = frozenset({
         "docs/SHARP_EDGES.md :: An earn-the-red snapshot-restore is masked by stale bytecode for an imported module",
         "docs/sharp-edges/protected-zone-path-equivalence.md",
     )],
+    ("DEF-1175: one rooted-path judge shared by join_directory, the two temp-root carve-out "
+     "sites and plan_guard's exemption: a Git Bash /tmp base read where Git for Windows mounts it",
+     "docs/SHARP_EDGES.md :: Catastrophic `rm` hard-deny parses flags + target, it does not regex a fixed order"),
 })
 
 #: Characterisation counts, all pinned with `==`. Re-measured 2026-08-19 at a budget

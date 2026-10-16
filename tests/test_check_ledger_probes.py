@@ -1235,7 +1235,7 @@ class TestProbeShapesAreRatcheted:
         "DEF-383b", "DEF-392c", "DEF-392d",
         "DEF-393a", "DEF-400b", "DEF-413a", "DEF-415b",
         "DEF-415f", "DEF-415h", "DEF-416b",
-        "DEF-417h", "DEF-418b", "DEF-419b", "DEF-419c",
+        "DEF-417h", "DEF-418b", "DEF-419c",
         "DEF-419e", "DEF-424b", "DEF-424g", "DEF-437",
         "DEF-438", "DEF-439", "DEF-449",
         "DEF-450", "DEF-476", "DEF-477", "DEF-483", "DEF-485", "DEF-486", "DEF-488",

@@ -1400,7 +1400,12 @@ live layer. Three jobs cannot move to the after-check at all, because after the
 fact is too late or there is nothing on disk to compare: a catastrophic delete
 (the checkout, your home directory, a system path), the speed bumps (an
 irreversible local or remote action, confirmed by re-issue rather than detected
-after), and a secret read on a host with no sandbox to refuse it. For those the
+after), and a secret read wherever no sandbox refuses it: native Windows, a
+host with the sandbox off or the sandbox posture unwritten, any host where the
+unsandboxed escape is left on (the default, which ran unprompted on a first call
+as well as on a retry), and on every host the file tools (`Read` among them)
+and MCP servers, which no sandbox covers (the sandbox's read lists were measured
+on macOS only). For those the
 readers above stay, and this contract, decided on 2026-10-08, says which
 spellings of them are work:
 
