@@ -1214,6 +1214,32 @@ class TestGitBashTmpMount:
             code = write_guard.check_bash_for_protected_mutations(cd + "echo x > tools/cc/probe.py", held, elsewhere)
         assert code or "deny" in out.getvalue()
 
+    def test_a_checkout_at_the_drive_roots_tmp_keeps_its_walls_after_a_backslash_cd(self, places, tmp_path):
+        """Git Bash reads `\\tmp` as the drive root's, and the chain folds the
+        backslash into a slash before it spells the directory, so the walls
+        read a `/tmp` directory at both places (`_hook_utils.
+        joined_directories`): placed at the mount alone, this `cd` read as a
+        failed one and the delete of the repo as a delete where it started."""
+        _repo, _mount, drive_tmp, tag = places
+        held = drive_tmp / f"espalier-checkout-{tag}"
+        (held / ".git").mkdir(parents=True)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        command = f"cd '\\tmp\\{held.name}' && rm -rf ."
+        assert _bash_patterns.has_catastrophic_recursive_rm(command, str(held), cwd=elsewhere)
+
+    def test_a_target_led_by_a_backslash_is_read_at_the_drive_root(self, places):
+        """Git Bash reads `\\tmp\\x` as the drive root's `C:\\tmp\\x`, never
+        as a name below the directory a `cd` reached, so a clone there keeps
+        the nudge after a `cd` into scratch."""
+        repo, mount, drive_tmp, tag = places
+        (mount / f"espalier-sub-{tag}").mkdir()
+        (drive_tmp / f"espalier-sub-{tag}").mkdir()
+        held = drive_tmp / f"espalier-clone-{tag}"
+        (held / ".git").mkdir(parents=True)
+        command = f"cd /tmp/espalier-sub-{tag} && rm -rf '\\tmp\\{held.name}'"
+        assert _fires(_speedbump._pred_rmrf, command, repo), command
+
 
 # ── CP-FETCHEXEC ──────────────────────────────────────────────────────────────
 
