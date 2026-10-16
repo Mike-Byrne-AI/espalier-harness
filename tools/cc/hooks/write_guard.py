@@ -2715,28 +2715,28 @@ def _judge(seen: list[dict] | None = None) -> int:
         # runs under a catch-all, so whatever it raises (a kept older
         # _denial_reasons has none of the three names) leaves today's deny.
         passed: tuple[str, dict] | None = None
-        named: tuple[str, dict] | None = None
+        crash_reason: str = _denial_reasons.WRITE_GUARD_INTERNAL_ERROR
+        crash_details: dict = {}
         try:
             reading = _denial_reasons.wedge_reading(exc)
             passed = _denial_reasons.wedge_restore("write_guard", reading, error_type, data)
             if passed is None:
                 named = _denial_reasons.crash_refusal(reading, error_type, data is not None)
+                if named is not None:
+                    crash_reason = _denial_reasons.WRITE_GUARD_CRASHED_AT.format(**named[0])
+                    crash_details = named[1]
         except BaseException:  # noqa: BLE001 -- best-effort; never mask the deny
-            passed = named = None
+            passed = None
+            crash_reason = _denial_reasons.WRITE_GUARD_INTERNAL_ERROR
+            crash_details = {}
         if passed is not None:
             _audit(root, "pretooluse_failed_open_wedge_restore", **passed[1])
             print(json.dumps({"hookSpecificOutput": {
                 "hookEventName": "PreToolUse", "additionalContext": passed[0]}}))
             return 0
-        if named is not None:
-            return _audit_deny(
-                root, "pretooluse_blocked_internal_error", named[0],
-                hook="write_guard", error=error_type, **named[1],
-            )
         return _audit_deny(
-            root, "pretooluse_blocked_internal_error",
-            _denial_reasons.WRITE_GUARD_INTERNAL_ERROR,
-            hook="write_guard", error=error_type,
+            root, "pretooluse_blocked_internal_error", crash_reason,
+            hook="write_guard", error=error_type, **crash_details,
         )
 
 

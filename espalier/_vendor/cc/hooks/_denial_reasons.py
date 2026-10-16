@@ -1297,21 +1297,22 @@ def _save_before_restore(target: Path, cc_dir: Path) -> str:
 
 
 def crash_refusal(reading: _SkewReading | None, error: str,
-                  read_payload: bool) -> tuple[str, dict] | None:
-    """The crash guard's named refusal (DEF-4025's twin): the text naming the
-    innermost ``tools/cc/`` frame of ``reading`` (:func:`wedge_reading`) by
-    ``error``, the exception's class name, and its line, with the record's
-    details; None when no frame is placed. ``read_payload`` is whether the
-    guard read the call before it crashed: a crash in the read lets nothing
-    through, so its text offers the terminal alone. Never raises."""
+                  read_payload: bool) -> tuple[dict, dict] | None:
+    """The crash guard's named refusal (DEF-4025's twin): the fields of
+    :data:`WRITE_GUARD_CRASHED_AT` naming the innermost ``tools/cc/`` frame of
+    ``reading`` (:func:`wedge_reading`) by ``error``, the exception's class
+    name, and its line, with the record's details; None when no frame is
+    placed. The guard formats the template at its deny site, so the
+    deny-marker contract reads the reason there. ``read_payload`` is whether
+    the guard read the call before it crashed: a crash in the read lets
+    nothing through, so its text offers the terminal alone. Never raises."""
     try:
         if reading is None or reading.file is None:
             return None
         rel = reading.rel(reading.file)
-        reason = WRITE_GUARD_CRASHED_AT.format(
-            error=error, file=rel, line=reading.line,
-            restore=_restore_clause(reading, read_payload))
-        return reason, {"file": rel, "line": reading.line}
+        fields = {"error": error, "file": rel, "line": reading.line,
+                  "restore": _restore_clause(reading, read_payload)}
+        return fields, {"file": rel, "line": reading.line}
     # fail-open: ok text-fallback today's unplaced text goes out
     except Exception:  # noqa: BLE001
         return None
