@@ -47,8 +47,10 @@ telling those apart is this tool's entire job.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 from collections.abc import Callable
@@ -885,8 +887,37 @@ def _is_session_churn(rel: str) -> bool:
     return rel.replace("\\", "/").startswith(_SESSION_CHURN_PREFIXES)
 
 
-def _fs_manifest(root: Path) -> dict[str, tuple[int, int]]:
-    """Every file under `root`, by (size, mtime_ns). NOT git's view.
+def _content_key(path: Path, st: os.stat_result) -> tuple[int, str]:
+    """A file's size and a digest of its bytes; a symlink by its target, any
+    other non-regular entry (a socket, a FIFO: opening one would fail or block)
+    by its type alone."""
+    if stat.S_ISLNK(st.st_mode):
+        return st.st_size, "link:" + os.readlink(path)
+    if not stat.S_ISREG(st.st_mode):
+        return st.st_size, f"type:{stat.S_IFMT(st.st_mode):o}"
+    digest = hashlib.blake2b(digest_size=16)
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(chunk)
+    except OSError as exc:
+        return st.st_size, f"unreadable:{exc.errno}"
+    return st.st_size, digest.hexdigest()
+
+
+def _fs_manifest(root: Path) -> dict[str, tuple[int, str]]:
+    """Every file under `root`, by (size, a digest of its bytes). NOT git's view.
+
+    Content, not ``(size, mtime_ns)``, which it was until 2026-10-16 (DEF-2008):
+    two seven-byte writes inside one timestamp tick left that key unchanged, so
+    the non-vacuity control below failed one run in three on the Windows box and
+    a same-size rewrite by the tool could pass unseen; and an mtime-only touch
+    read as a mutation: a git command that finds an object already packed
+    freshens the pack with ``utime()`` and writes no byte, which
+    ``tests/test_record_merge.py``'s ``--shared`` clone of this checkout does,
+    and which redded one CI cell of five on PR #248. Hashing the tree, its
+    ``.git`` packs included (132 MB on a full clone), costs well under a second
+    a snapshot on the self-host box.
 
     `git status --porcelain -uall` -- what this control used to compare -- is
     blind by construction to anything under a gitignored path and to everything
@@ -908,7 +939,7 @@ def _fs_manifest(root: Path) -> dict[str, tuple[int, int]]:
     tool's mutation (observed once in a full tier, 2026-10-15). The tool clones
     and carries from THIS checkout's root and never names that directory.
     """
-    out: dict[str, tuple[int, int]] = {}
+    out: dict[str, tuple[int, str]] = {}
     # live-tree: ok -- a mutation guard sees what git ignores on purpose (the 2026-08-21 measurement above)
     for dirpath, dirnames, filenames in os.walk(root):
         skip = live_tree_skip_names(dirpath, dirnames)
@@ -919,8 +950,7 @@ def _fs_manifest(root: Path) -> dict[str, tuple[int, int]]:
             rel = str(path.relative_to(root)).replace("\\", "/")
             if _is_session_churn(rel):
                 continue
-            st = path.lstat()
-            out[rel] = (st.st_size, st.st_mtime_ns)
+            out[rel] = _content_key(path, path.lstat())
     return out
 
 
@@ -1035,6 +1065,38 @@ class TestIsolation:
         assert _fs_manifest(tmp_path) != before, (
             "the control went blind to a region --carry actually writes"
         )
+
+    def test_a_same_size_rewrite_inside_one_mtime_tick_moves_the_manifest(self, tmp_path):
+        """Dies to: a manifest keyed by (size, mtime_ns). Two seven-byte writes
+        inside one timestamp tick left it unchanged, so the control above failed
+        one run in three on the Windows box (DEF-2008), and a same-size rewrite
+        by the tool under test would pass the live-tree check unseen. The mtime
+        is pinned here, so this reds every run, never one in three."""
+        watched = tmp_path / "reports" / "precious.md"
+        watched.parent.mkdir(parents=True)
+        watched.write_text("keep me", encoding="utf-8")
+        stamp = watched.stat()
+        before = _fs_manifest(tmp_path)
+        watched.write_text("mutated", encoding="utf-8")
+        os.utime(watched, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        assert watched.stat().st_size == stamp.st_size
+        assert watched.stat().st_mtime_ns == stamp.st_mtime_ns
+        assert _fs_manifest(tmp_path) != before, "a same-size rewrite inside one tick went unseen"
+
+    def test_an_mtime_only_touch_leaves_the_manifest_unchanged(self, tmp_path):
+        """Dies to: a manifest keyed by mtime. A git command that finds an object
+        already packed freshens the pack's mtime with utime() and writes no byte;
+        test_record_merge.py's --shared clone of the live tree does exactly that,
+        and test_a_run_does_not_touch_the_live_tree redded on PR #248's 3.12 cell
+        when the touch landed between its two snapshots (air ce8fb5, measured)."""
+        pack = tmp_path / ".git" / "objects" / "pack" / "pack-0.pack"
+        pack.parent.mkdir(parents=True)
+        pack.write_bytes(b"PACK" + bytes(64))
+        stamp = pack.stat()
+        before = _fs_manifest(tmp_path)
+        os.utime(pack, ns=(stamp.st_atime_ns, stamp.st_mtime_ns + 5_000_000_000))
+        assert pack.stat().st_mtime_ns != stamp.st_mtime_ns
+        assert _fs_manifest(tmp_path) == before, "an mtime-only touch read as a mutation"
 
     @_needs_history
     def test_a_run_does_not_touch_the_live_tree(self):

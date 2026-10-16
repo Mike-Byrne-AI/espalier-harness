@@ -27,10 +27,12 @@ Critical correctness invariants:
 - One ``git log --name-only`` subprocess per distinct pin SHA walks the
   union of that pin's bound paths since it; per-fragment drift is computed
   in-memory by path-set intersection. A bound that names a symbol
-  (``path::symbol``) then narrows its path's count to the commits that
-  changed the symbol's own lines -- ``git show HEAD:path`` for the span, one
-  ``git log -L`` per such entry -- and only when the path's file-level count
-  is non-zero (``_bound_drift``).
+  (``path::symbol``, or a nested ``path::Class::method``) then narrows its
+  path's count to the commits that changed the symbol's own lines -- ``git
+  show HEAD:path`` for the span, one ``git log -L`` per such entry -- and only
+  when the path's file-level count is non-zero (``_bound_drift``). An entry
+  the walk cannot place keeps the file's count and the message names it; the
+  pin refuses one (``unplaced_bound_entries``).
 """
 from __future__ import annotations
 
@@ -649,53 +651,125 @@ def _git_log_name_only(
     return per_path
 
 
-def _symbol_span(repo_root: Path, path: str, symbol: str) -> tuple[int, int] | None:
-    """The 1-based line span of a top-level symbol in ``path`` at HEAD, or
-    ``None`` when the symbol cannot be placed.
+def _defined_names(node: ast.AST) -> list[str]:
+    """The names a ``def``, ``async def``, ``class`` or assignment statement binds."""
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [node.name]
+    if isinstance(node, ast.Assign):
+        return [t.id for t in node.targets if isinstance(t, ast.Name)]
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return [node.target.id]
+    return []
+
+
+def _first_line(node: ast.stmt) -> int:
+    """A statement's first line, its decorators included."""
+    decorators = getattr(node, "decorator_list", [])
+    return min([node.lineno, *(d.lineno for d in decorators)])
+
+
+def _span_in_source(source: str | bytes, symbol: str) -> tuple[tuple[int, int] | None, str]:
+    """The 1-based line span of ``symbol`` in Python ``source`` and ``""``, or
+    ``None`` and why it cannot be placed.
+
+    A nested symbol (``Class::method``, ``Class.method``, ``outer::inner``) is
+    resolved one segment per scope: each part is a ``def``, ``async def``,
+    ``class`` or assignment that binds it in the body of the one before. The
+    span is the innermost node's own lines, decorators included, so a method's
+    span is its own body and never its class's -- a commit to a sibling method
+    does not count against it. Every binding of the last segment in its scope is
+    the symbol (a property's getter and setter, ``@overload`` stubs and their
+    implementation), so the span runs from the first binding's first line to the
+    last one's end; an enclosing segment bound more than once cannot be told
+    apart and is not placed. ``tests/test_freshness_semantic_fragments.py``
+    validates every live bound with this same walk.
+    """
+    parts = symbol.replace(".", "::").split("::")
+    if not symbol or not all(parts):
+        return None, "a segment of the name is empty"
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return None, "the file does not parse"
+    scope: ast.AST = tree
+    for depth, part in enumerate(parts):
+        where = "the module" if depth == 0 else "::".join(parts[:depth])
+        binders = [
+            child for child in ast.iter_child_nodes(scope)
+            if isinstance(child, ast.stmt) and part in _defined_names(child)
+        ]
+        if not binders:
+            return None, f"{part} is not defined in {where}"
+        if depth < len(parts) - 1:
+            if len(binders) > 1:
+                return None, f"{part} is bound more than once in {where}"
+            scope = binders[0]
+            continue
+        start = min(_first_line(b) for b in binders)
+        end = max(b.end_lineno or b.lineno for b in binders)
+        return (start, end), ""
+    return None, "a segment of the name is empty"
+
+
+def _place_symbol(repo_root: Path, path: str, symbol: str) -> tuple[tuple[int, int] | None, str]:
+    """``_span_in_source`` over ``path`` as committed at HEAD: the span and
+    ``""``, or ``None`` and why it cannot be placed, said in the scan's
+    message and the pin's refusal.
 
     Read from ``git show HEAD:<path>`` rather than the working tree: ``git log
     -L`` applies a line range to the newest revision it walks, and a dirty
-    tree would hand it lines that no longer line up. Only a top-level ``def``,
-    ``async def``, ``class`` or assignment is placed, decorators included, so
-    the span is the symbol's own lines -- a function's whole body, a tuple's
-    every row -- and nothing before or after it; a column-zero mention of the
-    name in a docstring above cannot capture the region, and the repo's diff
-    driver plays no part. A dotted or ``::``-nested symbol, a symbol the file
-    no longer defines, a path absent at HEAD, a file that does not parse or is
-    not Python returns ``None`` and the caller keeps the file-level count,
-    the conservative side.
+    tree would hand it lines that no longer line up. The span is the symbol's
+    own lines -- a function's whole body, a tuple's every row -- and nothing
+    before or after it; a column-zero mention of the name in a docstring above
+    cannot capture the region, and the repo's diff driver plays no part.
     """
-    if not symbol or "." in symbol or "::" in symbol or not path.endswith(".py"):
-        return None
+    if not symbol:
+        return None, "no symbol"
+    if not path.endswith(".py"):
+        return None, "not a Python file"
     try:
+        # Bytes, parsed as bytes: ``ast.parse`` honours a PEP 263 coding line
+        # and the line numbers are the same, where a UTF-8 decode here would
+        # fail a latin-1 source before it was read.
         shown = run_bounded(
             ["git", "-C", str(repo_root), "show", f"HEAD:{path}"],
-            capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
+            capture_output=True, check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
-        return None
+        return None, "git did not answer"
     if shown.returncode != 0:
-        return None
-    try:
-        tree = ast.parse(shown.stdout)
-    except (SyntaxError, ValueError):
-        return None
-    for node in tree.body:
-        names: list[str] = []
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names = [node.name]
-        elif isinstance(node, ast.Assign):
-            names = [t.id for t in node.targets if isinstance(t, ast.Name)]
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            names = [node.target.id]
-        if symbol not in names:
+        return None, f"not at HEAD (git show exited {shown.returncode})"
+    return _span_in_source(shown.stdout, symbol)
+
+
+def _symbol_span(repo_root: Path, path: str, symbol: str) -> tuple[int, int] | None:
+    """The 1-based line span of ``symbol`` in ``path`` at HEAD, or ``None``
+    when it cannot be placed (``_place_symbol`` says why).
+
+    Top-level and nested symbols are placed, ``Class::method`` and
+    ``Class.method`` alike. A symbol the file no longer defines, a path absent
+    at HEAD, a file that does not parse or is not Python returns ``None`` and
+    the caller keeps the file-level count, the conservative side, and says so.
+    Until 2026-10-16 a nested symbol returned ``None`` here at the first guard,
+    silently, while ``docs/FRESHNESS.md``'s template prescribes one.
+    """
+    return _place_symbol(repo_root, path, symbol)[0]
+
+
+def unplaced_bound_entries(repo_root: Path, bound: tuple[str, ...]) -> list[tuple[str, str]]:
+    """Every ``path::symbol`` entry of ``bound`` the scan cannot place at HEAD,
+    with why -- the pin's refusal (``pin_fragment``) and ``pin --all``'s
+    pre-flight. Such an entry's drift is its whole file's, so a pin would
+    vouch for a claim that every commit to that file then reads as moved."""
+    out: list[tuple[str, str]] = []
+    for entry in bound:
+        path, sep, symbol = entry.partition("::")
+        if not sep or not symbol or not path or path.startswith("-"):
             continue
-        start = node.lineno
-        decorators = getattr(node, "decorator_list", [])
-        if decorators:
-            start = min(start, min(d.lineno for d in decorators))
-        return start, node.end_lineno or node.lineno
-    return None
+        span, why = _place_symbol(repo_root, path, symbol)
+        if span is None:
+            out.append((entry, why))
+    return out
 
 
 #: Leads every commit line ``_git_log_symbol_commits`` asks git for, so a
@@ -743,21 +817,28 @@ def _bound_drift(
     bound: tuple[str, ...],
     bound_paths: list[str],
     path_commits: dict[str, int],
+    *,
+    notes: list[str] | None = None,
 ) -> int:
     """Commits since the pin that touched the fragment's bound, summed per path.
 
     A path bound whole counts every commit to it. A path bound only through
     ``::symbol`` entries counts the union of the commits that changed those
-    symbols' own lines at HEAD (``_symbol_span``), so a commit that touched two
+    symbols' own lines at HEAD (``_place_symbol``), so a commit that touched two
     bound symbols at once counts once and a commit to the rest of the file
     counts not at all.
     Measured 2026-09-09: two fragments bound to constants in one test file had
     been re-pinned twice in eight days at unchanged values because every lane
     touched that file elsewhere, and a third, bound to a hook-wiring table,
-    read stale on three commits that never touched the table. The symbol walk
-    runs only for a path whose file-level count is non-zero, so a scan of a
-    quiet tree stays at one subprocess per pin, and any entry the walk cannot
-    place keeps the whole path's file-level count.
+    read stale on three commits that never touched the table. Measured
+    2026-10-16: memory-line-cap, bound to a test method
+    (``Class::method``), was re-pinned three days running because a nested
+    symbol was not placed at all, and none of its drift commits (four on main,
+    six on the head of the pull request that last re-pinned it) touched the
+    method's lines. The symbol walk runs only for a path whose file-level count
+    is non-zero, so a scan of a quiet tree stays at one subprocess per pin, and
+    any entry the walk cannot place keeps the whole path's file-level count and
+    is appended to ``notes`` (``path::symbol (why)``) for the scan's message.
     """
     symbols_by_path: dict[str, list[str]] = {}
     whole_paths: set[str] = set()
@@ -779,15 +860,19 @@ def _bound_drift(
         touched: set[str] = set()
         placed = True
         for symbol in symbols:
-            span = _symbol_span(repo_root, path, symbol)
-            found = (
-                _git_log_symbol_commits(repo_root, since_sha, path, span)
-                if span else None
-            )
-            if found is None:
-                placed = False
+            span, why = _place_symbol(repo_root, path, symbol)
+            if span is not None and placed:
+                found = _git_log_symbol_commits(repo_root, since_sha, path, span)
+                if found is not None:
+                    touched |= found
+                    continue
+                why = "git log -L could not answer"
+            elif span is not None:
+                continue  # the file count already stands; only the unplaced are named
+            placed = False
+            if notes is None:
                 break
-            touched |= found
+            notes.append(f"{path}::{symbol} ({why})")
         total += len(touched) if placed else file_count
     return total
 
@@ -866,6 +951,8 @@ def _dirty_bound(
     bound: tuple[str, ...],
     bound_paths: list[str],
     status: dict[str, str],
+    *,
+    notes: list[str] | None = None,
 ) -> list[str]:
     """The paths of ``bound`` carrying uncommitted changes, in bound order.
 
@@ -878,9 +965,10 @@ def _dirty_bound(
     directory bound included). A path bound only through ``::symbol`` entries
     is narrowed the way the commit walk is: a tracked modification is dirty
     only when a changed HEAD-side range meets a bound symbol's span at HEAD
-    (``_symbol_span``); an untracked, added, deleted or renamed entry, a
-    range git cannot report, or a span that cannot be placed keeps the whole
-    path, the conservative side.
+    (``_place_symbol``, nested symbols included); an untracked, added, deleted
+    or renamed entry, a range git cannot report, or a span that cannot be
+    placed keeps the whole path, the conservative side, and an entry it could
+    not place is appended to ``notes`` (``path::symbol (why)``).
     """
     symbols_by_path: dict[str, list[str]] = {}
     whole_paths: set[str] = set()
@@ -911,15 +999,22 @@ def _dirty_bound(
         if ranges is None:
             dirty.append(path)
             continue
+        is_dirty = False
         for symbol in symbols:
-            span = _symbol_span(repo_root, norm, symbol)
+            span, why = _place_symbol(repo_root, norm, symbol)
             if span is None:
-                dirty.append(path)
-                break
+                is_dirty = True
+                if notes is None:
+                    break
+                notes.append(f"{norm}::{symbol} ({why})")
+                continue
             start, end = span
             if any(max(start, a) <= min(end, b) for a, b in ranges):
-                dirty.append(path)
-                break
+                is_dirty = True
+                if notes is None:
+                    break
+        if is_dirty:
+            dirty.append(path)
     return dirty
 
 
@@ -1198,13 +1293,17 @@ def scan_repo(repo_root: Path) -> list[FragmentState]:
         # shared global window (see scan_repo's per-distinct-pin block above),
         # and a symbol-bound path narrows to its symbols' own commits.
         sha_commits = per_sha_path_commits.get(last_sha, {})
+        # A symbol entry the walk could not place counts its whole file; each
+        # one is named in the message, so the file's drift is never read as
+        # the symbol's.
+        unplaced: list[str] = []
         commits = (
-            _bound_drift(repo_root, last_sha, frag.bound, bound_paths, sha_commits)
+            _bound_drift(repo_root, last_sha, frag.bound, bound_paths, sha_commits, notes=unplaced)
             if has_pin else 0
         )
         days = _days_since(last_at) if has_pin else 0
         dirty_here = (
-            _dirty_bound(repo_root, frag.bound, bound_paths, dirty_status)
+            _dirty_bound(repo_root, frag.bound, bound_paths, dirty_status, notes=unplaced)
             if has_pin and manifest_match else []
         )
         hand_edited, head_value = (
@@ -1222,6 +1321,9 @@ def scan_repo(repo_root: Path) -> list[FragmentState]:
         )
 
         message = ""
+        # Set by the three branches whose message is about the bound's drift,
+        # the only ones the unplaced note below belongs to.
+        drift_message = False
         if not policy_known:
             message = f"unknown policy: {frag.policy!r}"
         elif entry is not None and not manifest_match:
@@ -1239,6 +1341,7 @@ def scan_repo(repo_root: Path) -> list[FragmentState]:
                 f"drift exceeds threshold "
                 f"({commits} commits, {days} days)"
             )
+            drift_message = True
         elif hand_edited:
             message = (
                 f"expected_value edited by hand: HEAD carries {head_value!r}, the "
@@ -1254,8 +1357,15 @@ def scan_repo(repo_root: Path) -> list[FragmentState]:
             )
             if commits:
                 message += f"; drift detected ({commits} commits, {days} days)"
+            drift_message = True
         elif state == "stale":
             message = f"drift detected ({commits} commits, {days} days)"
+            drift_message = True
+        if unplaced and drift_message:
+            message += (
+                "; read the whole file for each symbol the scan could not place: "
+                + "; ".join(dict.fromkeys(unplaced))
+            )
 
         states.append(FragmentState(
             fragment=frag,
