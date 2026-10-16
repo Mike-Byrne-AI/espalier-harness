@@ -677,7 +677,9 @@ class TestEveryWiredHookStarts:
         assert r.stderr.strip() == "", r.stderr           # one channel per deny
         assert _is_deny(r), r.stdout
         reason = json.loads(r.stdout.strip().splitlines()[-1])["hookSpecificOutput"]["permissionDecisionReason"]
-        assert "cannot start: a sibling helper import failed" in reason, reason
+        # The kept-helper text (DEF-2010): the taking file, the name the helper
+        # lacks, then the upgrade the kept-old-helper test earns.
+        assert "cannot start:" in reason and "from tools/cc/hooks/_hook_utils.py, which lacks it" in reason, reason
         assert "tools/cc/hooks/_hook_utils.py" in reason and "upgrade --execute" in reason, reason
         assert "payload_cwd" in reason, reason          # the exception names the missing name
 

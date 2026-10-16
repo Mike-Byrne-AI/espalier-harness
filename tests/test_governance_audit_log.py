@@ -1896,7 +1896,10 @@ class TestCrashGuardsReachTheLog:
         assert details.get("hook", hook_name) == hook_name, details
         if event_type.startswith("pretooluse_"):
             assert "hook" in details, details
-        assert set(details) <= {"hook", "rule", "error"}, details
+        # write_guard's record also places the fault (DEF-4025): the innermost
+        # tools/cc file and its line, a harness path and a number, never the
+        # message.
+        assert set(details) <= {"hook", "rule", "error", "file", "line"}, details
         assert records[0]["repo_path"] == str(tmp_path.resolve())
         assert "secret" not in json.dumps(records[0])
 

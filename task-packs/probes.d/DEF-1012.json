@@ -7,7 +7,8 @@
  "inputs": [
   "tools/cc/hooks/_hook_utils.py"
  ],
- "row_sha": "7f88f68aa8af",
- "text_sha": "fddf9c63d015",
- "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)"
+ "row_sha": "04cfa4bd416f",
+ "text_sha": "aebef1dc2fed",
+ "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
+ "verified_2026_10_16": "STILL_OPEN (re-pinned value unchanged on 2026-10-16: amended with a second trigger and consumer of the same slice (air 836703); the probe and its value stand)"
 }
