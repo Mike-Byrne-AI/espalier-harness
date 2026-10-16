@@ -21,8 +21,8 @@ redirect_note: |
   origin; the docs.claude.com URL is retained below only as the redirect entry.
 mirrors:
   - https://docs.claude.com/en/docs/claude-code/hooks
-fetched: 2026-10-12
-section: "Hook input and output — Exit code output (Exit code 0, Exit code 2, Other exit codes, Timeouts, Block the action when a hook fails), JSON output, Decision control; the WorktreeCreate and WorktreeRemove events"
+fetched: 2026-10-16
+section: "Hook input and output — Exit code output (Exit code 0, Exit code 2, Other exit codes, Timeouts, Block the action when a hook fails), JSON output, Decision control; Command hook fields — Exec form and shell form; the WorktreeCreate and WorktreeRemove events"
 section_anchor: "hook-input-and-output"
 content_hash: ""
 refresh_policy: weekly
@@ -35,8 +35,8 @@ purpose: |
 # Claude Code Hook Protocol — Pinned Excerpt
 
 **Source:** https://code.claude.com/docs/en/hooks.md (formerly docs.claude.com/en/docs/claude-code/hooks, now a 301)
-**Fetched:** 2026-10-10
-**Section:** "Hook input and output" — "Exit code output", "JSON output", "Decision control", plus the per-event rows espalier wires and the two worktree events
+**Fetched:** 2026-10-16
+**Section:** "Hook input and output" — "Exit code output", "JSON output", "Decision control", plus the per-event rows espalier wires, "Exec form and shell form" and the two worktree events
 **Purpose:** Verification target for Espalier-Harness's hook implementations and any espalier doc claim that mentions hook exit codes, stdout, stderr, or the structured JSON schema.
 
 ⚠ **The 2026-09-28 refresh was a contract change, not a re-word, and the
@@ -64,7 +64,8 @@ Upstream, verbatim (the opening of "Exit code output"):
 >
 > * **Success**: your hook exits 0. Claude Code applies any JSON output fields
 >   your hook printed, and the action goes ahead unless those fields block or
->   deny it.
+>   deny it. [Hooks that start a background process](https://code.claude.com/docs/en/hooks#hooks-that-start-a-background-process)
+>   covers the exception.
 > * **Blocking error**: your hook exits 2. On events that can block, Claude
 >   Code stops the action.
 > * **Non-blocking error**: your hook exits with any other code, or fails in
@@ -623,6 +624,60 @@ Also new, and relevant to `post_write_check.py`'s `Bash` matcher:
 > matching `Edit|Write` when a `Bash` command or a process outside Claude Code
 > rewrites the same file.
 
+## Exec form and shell form
+
+<!-- excerpt 2026-10-16, off the page fetched that day through the refresher's
+     own fetch of `source_url` (espalier.refresh_externals.refresh_pin). -->
+
+How Claude Code spawns a command hook, and so what argv[0] of a wired entry is:
+every espalier reader of a wired hook's interpreter rests on this rule (see
+"What espalier asserts against this excerpt"). The fields' rows (verbatim,
+"Command hook fields"):
+
+> | Field | Required | Description |
+> | :- | :- | :- |
+> | `command` | yes | Shell command to execute. With `args`, the executable to spawn directly. See [Exec form and shell form](https://code.claude.com/docs/en/hooks#exec-form-and-shell-form) |
+> | `args` | no | Argument list. When present, `command` is resolved as an executable and spawned directly with `args` as the argument vector, with no shell involved. See [Exec form and shell form](https://code.claude.com/docs/en/hooks#exec-form-and-shell-form) |
+
+The section (verbatim):
+
+> A command hook runs as exec form when `args` is set, and shell form when
+> `args` is omitted. Set `args` whenever the hook references a
+> [path placeholder](https://code.claude.com/docs/en/hooks#reference-scripts-by-path), since each element is passed as one
+> argument with no quoting. Omit `args` when you need shell features like pipes
+> or `&&`, or when neither concern applies.
+>
+> **Exec form** runs when `args` is present. Claude Code resolves `command` as
+> an executable on `PATH` and spawns it directly with `args` as the argument
+> vector. There is no shell, so each `args` element is one argument exactly as
+> written, and path placeholders like `${CLAUDE_PLUGIN_ROOT}` are substituted
+> into `command` and into each `args` element as plain strings. Special
+> characters such as apostrophes, `$`, and backticks pass through verbatim
+> because there is no shell to interpret them. No shell tokenization happens on
+> any platform.
+>
+> **Shell form** runs when `args` is absent. The `command` string is passed to
+> a shell: `sh -c` on macOS and Linux, Git Bash on Windows, or PowerShell when
+> Git Bash isn't installed. Set the `shell` field to choose explicitly. The
+> shell tokenizes the string, expands variables, and interprets pipes, `&&`,
+> redirects, and globs.
+
+And the section's closing `<Note>` (verbatim), the one about `command`'s own
+words:
+
+> In exec form, `command` is the executable name or path only. If `command` is
+> a bare name with no path separator and contains whitespace alongside `args`,
+> Claude Code logs a warning because the spawn will fail: there is no
+> executable named `node script.js`. Move the extra tokens into `args`.
+> Absolute paths with spaces, such as `C:\Program Files\nodejs\node.exe`, are a
+> single valid executable and don't trigger the warning.
+
+What espalier reads from it: the form is decided by whether the entry carries
+an `args` list, never by the text of `command`. With `args`, argv[0] is all of
+`command`, a space in an interpreter path included (and a quote in it is part
+of the file name, so a quoted exec-form `command` cannot start); without, it is
+the shell's first word.
+
 ## Worktree events: `WorktreeCreate` and `WorktreeRemove`
 
 <!-- re-excerpt 2026-10-10, read by hand off the page fetched that day: first
@@ -797,6 +852,13 @@ of this excerpt; this section is orientation only.
 - `stop_gate.py` block JSON uses the top-level Stop schema, not the nested
   PreToolUse schema. Verified by
   `tests/test_hook_protocol.py::TestStopGateBlockSchema` (Espalier source repo).
+- A wired hook entry's interpreter is read by "Exec form and shell form": with
+  an `args` list, argv[0] is all of `command`; without, the shell's first word.
+  The rule's engine home is `espalier._venv.entry_argv`, and its standalone
+  twin is `tools/cc/hooks/session_start.py::_entry_argv` (`espalier/` never
+  imports `tools/cc/`). One table of entry shapes reads both,
+  in `tests/test_hook_entry_argv.py::TestTheArgvRuleIsWrittenTwiceAlike`, and
+  holds each reader that acts on argv[0] to it (Espalier source repo).
 
 <!-- re-excerpt 2026-10-01: upstream's rewrite of this page inverted the
 exit-code contract (stdout JSON is read on every exit code; exit 2's block is
@@ -807,7 +869,7 @@ corrected in the change that landed this excerpt. The refresher's bound tests
 read this pin, never a candidate; the forward ledger carries that row. -->
 
 <!-- re-excerpt 2026-10-10, the whole pin, against the page fetched that day.
-     The refresh now reads drift off the quoted passages (DEF-744), and on that
+     The refresh now reads drift off the quoted passages, and on that
      page 14 of this pin's quotes no longer stood: upstream rewrote "Exit code
      output" around three outcomes and a stdout-by-exit-code table (a reword of
      the 2026-09-28 contract, not a reversal), added `onFailure: "block"`, made
@@ -817,3 +879,15 @@ read this pin, never a candidate; the forward ledger carries that row. -->
      stdout-must-be-JSON sentence. Each was re-excerpted; every quoted passage
      now stands on that page. The pin's own warning at the top is prose, not a
      blockquote, since a `>` line in a pin is an upstream quote. -->
+
+<!-- re-excerpt 2026-10-16, against the page fetched that day: "Exec form and
+     shell form" joined the pin (the premise of every reader of a wired hook's
+     interpreter, which no quote here covered), and one quote had moved: the
+     Success outcome now points to a new "Hooks that start a background
+     process" subsection, where a PreToolUse hook that prints an allow and then
+     starts a background process without redirecting its output gets the call
+     blocked. That subsection is not excerpted: no PreToolUse hook here starts
+     a background process, and the one process any hook can leave running,
+     SessionStart's tree change that is never killed at its wait
+     (`tools/cc/checkout_sync.py::spawn`), writes to temporary files, not to
+     the hook's output. -->

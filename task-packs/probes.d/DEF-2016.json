@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2016",
+ "subject": "docs/external/cc-hook-protocol.md",
+ "cmd": "python -c 'import sys;sys.path.insert(0,\".\");from pathlib import Path;from espalier.external_pins import list_pins;from espalier.external_diff import quoted_passages;(p,)=[x for x in list_pins(Path(\".\")) if x.name==\"cc-hook-protocol\"];print(any(\"No shell tokenization happens on any platform\" in q.text for q in quoted_passages(p)))'",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "8863136f6cf3",
+ "text_sha": "f2a6326749fb",
+ "verified_2026_10_16": "STILL_OPEN (re-pinned value unchanged on 2026-10-16: the probe read a heading in its own subject, which the fix's paperwork could flip; it now asks the refresher's quote reader for the quoted sentence)"
+}
