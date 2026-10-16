@@ -177,6 +177,7 @@ class TestThePluginObject:
             raise RuntimeError("boom")
 
         monkeypatch.setattr(_never_ran, "count_line", broken)
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)   # the CI cells set it: no annotation here
         plugin = _never_ran.NeverRan()
         plugin.selected = 6
         assert _summarise(plugin, {}) == ["the never-ran count failed (RuntimeError: boom; tests/_never_ran.py)"]
