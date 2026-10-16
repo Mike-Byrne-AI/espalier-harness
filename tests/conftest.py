@@ -2578,13 +2578,16 @@ def pytest_runtest_logreport(report):
 
 def _ceilings(config) -> tuple[float, float]:
     """``(the run's per-test ceiling, the suite's own)``, as pytest-timeout ranks
-    them: ``--timeout``, then ``PYTEST_TIMEOUT``, then the ini."""
-    suite = float(config.getini("timeout") or 0)
-    given = config.getoption("timeout", default=None) or os.environ.get("PYTEST_TIMEOUT")
+    them: ``--timeout``, then ``PYTEST_TIMEOUT``, then the ini. ``(0, 0)`` where
+    pytest-timeout is not installed: pytest then knows no ``timeout`` ini key and
+    raises on the read (the artifact-parity job installs pytest alone), and a
+    run with no ceiling has none raised."""
     try:
+        suite = float(config.getini("timeout") or 0)
+        given = config.getoption("timeout", default=None) or os.environ.get("PYTEST_TIMEOUT")
         return (float(given) if given else suite), suite
     except ValueError:
-        return suite, suite
+        return 0.0, 0.0
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config):

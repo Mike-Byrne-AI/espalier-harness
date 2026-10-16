@@ -248,6 +248,19 @@ class TestARaisedCeilingHidesNoSlowdown:
         assert lines[1:3] == ["  120.0s t::slower", "  75.5s t::slow"], lines
         assert lines[3].startswith("::warning::2 unmarked test(s)") and "t::slower 120s" in lines[3], lines
 
+    def test_a_run_without_pytest_timeout_reads_no_ceiling_and_never_raises(self, conftest, monkeypatch):
+        """pytest alone (the artifact-parity job) knows no ``timeout`` ini key and
+        raises on the read; the summary hook would then end that run red after
+        every test passed (run 38908556689)."""
+        def unknown(name):
+            raise ValueError(f"unknown configuration value: {name!r}")
+        monkeypatch.setenv("PYTEST_TIMEOUT", "180")
+        monkeypatch.setattr(conftest, "_PHASE_SECONDS", {"t::slow": 75.5})
+        config = SimpleNamespace(getini=unknown, getoption=lambda name, default=None: default)
+        lines: list[str] = []
+        conftest.pytest_terminal_summary(SimpleNamespace(write_line=lines.append), 0, config)
+        assert lines == [] and conftest._ceilings(config) == (0.0, 0.0)
+
     def test_at_the_suites_own_ceiling_nothing_is_listed(self, conftest, monkeypatch):
         monkeypatch.setattr(conftest, "_PHASE_SECONDS", {"t::slow": 75.5})
         lines: list[str] = []
