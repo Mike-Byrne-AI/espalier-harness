@@ -10760,7 +10760,13 @@ _PS_STOP_PARSING = "--%"
 #: 2026-10-16, with pwsh 7.4's common parameter ProgressAction (`proga`)
 #: from its documentation, not driven; the reading is held to a live
 #: PowerShell's for every name, alias and unambiguous prefix where one is
-#: installed, which CI's pwsh 7 runs.
+#: installed, which CI's pwsh 7 runs. pwsh 7 binds two switches 5.1 does
+#: not, `-WhatIf` (`wi`) and `-Confirm` (`cf`), held apart
+#: (`_PS_START_PROCESS_SWITCHES_7`, found by CI's pwsh 7 on 2026-10-16): a
+#: prefix a name of both versions also begins reads as that name, since in
+#: 7 it is ambiguous and starts nothing (`-c` is 5.1's Credential), and
+#: `-wi`, in 7 WhatIf's alias, under which nothing starts, reads as 5.1's
+#: WindowStyle prefix.
 _PS_START_PROCESS_RE = re.compile(r"(?i)\b(?:Start-Process|saps)\b")
 _PS_START_PROCESS_SWITCHES = ("loaduserprofile", "nonewwindow", "passthru", "wait",
                               "usenewenvironment", "verbose", "debug")
@@ -10770,7 +10776,8 @@ _PS_START_PROCESS_VALUED = (
     "environment", "erroraction", "warningaction", "informationaction", "errorvariable",
     "warningvariable", "informationvariable", "outvariable", "outbuffer",
     "pipelinevariable", "progressaction")
-_PS_START_PROCESS_SWITCH_ALIASES = frozenset({"lup", "nnw", "vb", "db"})
+_PS_START_PROCESS_SWITCHES_7 = ("whatif", "confirm")
+_PS_START_PROCESS_SWITCH_ALIASES = frozenset({"lup", "nnw", "vb", "db", "cf"})
 _PS_START_PROCESS_VALUED_ALIASES = frozenset({
     "pspath", "runas", "rse", "rsi", "rso", "ea", "wa", "infa", "ev", "wv", "iv",
     "ov", "ob", "pv", "proga"})
@@ -10807,14 +10814,21 @@ def _ps_word_at(text: str, i: int) -> tuple[str, int]:
 def _ps_start_process_takes_value(low: str) -> bool:
     """Whether the ``Start-Process`` parameter spelled ``low`` (no dash, in
     lower case) takes a value, as PowerShell binds it: an exact name or alias
-    first, then a prefix of a switch's name; anything else takes one. An
-    ambiguous prefix (``-w``) is a binding error PowerShell runs nothing on,
-    so either reading of it is moot."""
+    first, then a prefix of a switch both versions bind, of a valued name,
+    and of a switch pwsh 7 alone binds, in that order; anything else takes
+    one. An ambiguous prefix (``-w``) is a binding error PowerShell runs
+    nothing on, so either reading of it is moot, and a prefix that is
+    ambiguous in one version only reads as the other binds it."""
     if low in _PS_START_PROCESS_VALUED or low in _PS_START_PROCESS_VALUED_ALIASES:
         return True
-    if low in _PS_START_PROCESS_SWITCHES or low in _PS_START_PROCESS_SWITCH_ALIASES:
+    if (low in _PS_START_PROCESS_SWITCHES or low in _PS_START_PROCESS_SWITCHES_7
+            or low in _PS_START_PROCESS_SWITCH_ALIASES):
         return False
-    return not any(s.startswith(low) for s in _PS_START_PROCESS_SWITCHES)
+    if any(s.startswith(low) for s in _PS_START_PROCESS_SWITCHES):
+        return False
+    if any(v.startswith(low) for v in _PS_START_PROCESS_VALUED):
+        return True
+    return not any(s.startswith(low) for s in _PS_START_PROCESS_SWITCHES_7)
 
 
 def ps_start_process_arguments(text: str, at: int) -> tuple[int, str] | None:
@@ -10827,7 +10841,8 @@ def ps_start_process_arguments(text: str, at: int) -> tuple[int, str] | None:
     before it is stepped over with its value -- after a colon
     (``-WindowStyle:Hidden``, ``-Wait: $true``) or as the next word -- unless
     it is one of the cmdlet's switches, as PowerShell 5.1 bound each of
-    them (driven 2026-10-16). Linear: one pass."""
+    them (driven 2026-10-16), or one of the two pwsh 7 adds. Linear: one
+    pass."""
     i, n = at, len(text)
     while i < n:
         while i < n and text[i] in " \t":

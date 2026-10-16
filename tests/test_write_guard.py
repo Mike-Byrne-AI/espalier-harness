@@ -8861,6 +8861,12 @@ class TestTheCmdDeleteReaderReadsEachBranch:
         ("start-process-common-alias", "Start-Process cmd -wa Stop -ArgumentList '/c rd /s /q build'",
          [["build"]]),
         ("start-process-switches", "Start-Process cmd -PassThru -nnw '/c rd /s /q build'", [["build"]]),
+        # the two switches pwsh 7 adds (CI's pwsh 7), by name and alias, and
+        # a prefix they share with a name 5.1 binds, which stays that name's
+        ("start-process-confirm", "Start-Process cmd -Confirm '/c rd /s /q build'", [["build"]]),
+        ("start-process-whatif", "Start-Process cmd -cf -WhatIf '/c rd /s /q build'", [["build"]]),
+        ("start-process-credential-prefix", "Start-Process cmd -c $cred '/c rd /s /q build'",
+         [["build"]]),
         # an exact name before a prefix: `-Verb` is Verb's, not `-Verbose`'s
         # (the code review: the elevation idiom read `RunAs` as the list)
         ("start-process-verb", "Start-Process cmd -Verb RunAs -ArgumentList '/c rd /s /q build'",
@@ -8932,10 +8938,25 @@ class TestTheCmdDeleteReaderReadsEachBranch:
         bp = _bash_patterns_module()
         # the reader's own question, asked of every live spelling: the list
         # (`argumentlist`, `args` and their prefixes) is read before it is asked
+        # and `-wi`, the one spelling the versions bind apart, is held to 5.1's
+        # reading by the rows below: in pwsh 7 it is WhatIf's, and starts nothing
         wrong = sorted(w for w, is_switch in spelled.items()
-                       if not ("argumentlist".startswith(w) or w == "args")
+                       if not ("argumentlist".startswith(w) or w == "args" or w == "wi")
                        and bp._ps_start_process_takes_value(w) == is_switch)
         assert not wrong, wrong
+
+    @pytest.mark.parametrize("spelled, takes", [
+        ("whatif", False), ("wh", False), ("confirm", False), ("co", False), ("cf", False),
+        ("c", True), ("cr", True), ("wi", True), ("windowstyle", True), ("wait", False),
+    ])
+    def test_a_spelling_pwsh_7_adds_reads_as_the_version_that_starts_a_process(self, spelled, takes):
+        """pwsh 7 binds `-WhatIf` (`wi`) and `-Confirm` (`cf`), which 5.1 does
+        not (the metadata pin above, on CI's pwsh 7): each is a switch, and a
+        spelling the versions bind apart reads as the version in which a
+        process starts binds it -- `-c` is 5.1's Credential (ambiguous in 7),
+        `-wi` 5.1's WindowStyle (WhatIf in 7, which starts nothing). Held here
+        on every host, whichever PowerShell it has."""
+        assert _bash_patterns_module()._ps_start_process_takes_value(spelled) is takes
 
     @pytest.mark.parametrize("command, want", [
         ("cmd //c del x.py", ("delete", "x.py")),              # one file, no recurse switch
@@ -9112,7 +9133,7 @@ class TestPowerShellRecursiveRemoveTiersAgree:
         # the must-deny twins: a wildcard or an element the wall owns keeps it
         ("C:/*", "wall"), ("../*", "wall"), ("$HOME/*", "wall"), ("~/*", "wall"),
         ("build, C:/", "wall"), ("build, ..", "wall"), ("build, $HOME", "wall"),
-        ("src/../*", "wall"), ("build, {scratch}", "wall"), ("bu*ld/x", "wall"),
+        ("src/../*", "wall"), ("bu*ld/x", "wall"),
         ("build, C:/Windows", "wall"), ("build, `$x", "wall"),
         # one double-quoted string is ONE path, its comma no array separator
         ('"src, {scratch}/x"', "wall"),
@@ -9135,6 +9156,16 @@ class TestPowerShellRecursiveRemoveTiersAgree:
         so a step aside off the roster is never silent."""
         command = "Remove-Item -Recurse -Force " + spelled
         assert self._tier(command, tmp_path, monkeypatch) == verdict, command
+
+    def test_the_scratch_root_itself_keeps_the_tier_it_meets_alone(self, tmp_path, monkeypatch):
+        """The scratch root is never below itself, so beside a roster directory
+        it keeps the tier a remove of it alone meets: the wall where it is the
+        top of its scratch, a nudge where a fixed POSIX temp root holds it, as
+        `/tmp` holds pytest's on Linux (CI, 2026-10-16: a table row held the
+        Windows reading alone)."""
+        alone = self._tier("Remove-Item -Recurse -Force {scratch}", tmp_path, monkeypatch)
+        assert alone != "allow"
+        assert self._tier("Remove-Item -Recurse -Force build, {scratch}", tmp_path, monkeypatch) == alone
 
     @pytest.mark.parametrize("prefix", ["build", "dist"])
     @pytest.mark.parametrize("context", [
