@@ -395,12 +395,13 @@ class TestRequireIsGitignored:
 
 
 def test_the_repo_redirecting_env_list_has_one_shape_everywhere() -> None:
-    """Four owners of the same six keys: this module, the engine's hermetic
-    gitignore oracle (DEF-635), the handoff snapshot script, and the release
+    """Five owners of the same six keys: this module, the engine's hermetic
+    gitignore oracle (DEF-635), the handoff snapshot script, the release
     matrix's git seed (DEF-670, the first WRITING git site -- inherited, the
-    channel would re-initialise the operator's repo from inside the extract).
-    A key added to one and not the others re-opens the channel there; parity
-    is pinned rather than claimed in a docstring."""
+    channel would re-initialise the operator's repo from inside the extract),
+    and the pack-fence checker's view of the checkout (DEF-2013, a stdlib-only
+    script). A key added to one and not the others re-opens the channel there;
+    parity is pinned rather than claimed in a docstring."""
     import importlib.util
     import sys as _sys
 
@@ -421,12 +422,14 @@ def test_the_repo_redirecting_env_list_has_one_shape_everywhere() -> None:
 
     snapshot = _load("record_snapshot.py", "_record_snapshot_env")
     matrix = _load("final_release_matrix.py", "_final_release_matrix_env")
+    fences = _load("check_pack_fences.py", "_check_pack_fences_env")
 
     assert (
         tuple(_GIT_REDIRECT_ENV)
         == tuple(_GIT_ENV_OVERRIDES)
         == tuple(snapshot._GIT_ENV_OVERRIDES)
         == tuple(matrix._GIT_REDIRECT_ENV)
+        == tuple(fences._GIT_REDIRECT_ENV)
     )
 
 

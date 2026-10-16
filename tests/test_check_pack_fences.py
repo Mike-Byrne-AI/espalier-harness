@@ -1,11 +1,13 @@
-# pytest-marker: default-unit
 """Contract for ``scripts/check_pack_fences.py``.
 
 The checker resolves a pack's PRESCRIBED python fences against the module they
 land in. Every assertion here was written against a behaviour the checker got
 wrong first -- the dedent, the nesting, and the do-not-blame-the-pack rule each
 have a measured failure behind them, recorded in the test that pins it.
+
+Marker: ``integration`` (registered in ``tests/conftest.py::_MARKER_RULES``).
 """
+# slow-exempt: one `git init` scratch tree for the git-view lookup (about 0.1 s); the module runs in 2.4 s, measured 2026-10-16
 from __future__ import annotations
 
 import importlib.util
@@ -244,6 +246,7 @@ class TestResolveLeavesSecondCopiesOut:
             (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
             (tmp_path / rel).write_text("x = 1\n", encoding="utf-8")
         monkeypatch.setattr(C, "_ROOT", tmp_path)
+        C._VIEWS.clear()  # git's view is read once per root; this tree is new
         return tmp_path
 
     def test_a_linked_worktree_is_not_a_second_copy(self, tmp_path, monkeypatch):
@@ -269,6 +272,17 @@ class TestResolveLeavesSecondCopiesOut:
                           "espalier/assets/claude/x.md", "docs/x.md")
         assert C.resolve_target("write_guard.py") == (root / "tools/cc/hooks/write_guard.py", "ok")
         assert C.resolve_target("x.md") == (root / "docs" / "x.md", "ok")
+
+    def test_a_copy_git_ignores_is_not_a_second_copy(self, tmp_path, monkeypatch):
+        """A file git ignores is a maintainer's scratch, not this tree's target
+        (DEF-2013's read audit): its basename made the declared file read
+        `ambiguous`. Where git answers, the candidates are git's view."""
+        import subprocess
+
+        root = self._root(tmp_path, monkeypatch, "src/probe_target.py", "scratch/probe_target.py")
+        (root / ".gitignore").write_text("scratch/\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+        assert C.resolve_target("probe_target.py") == (root / "src" / "probe_target.py", "ok")
 
     def test_a_two_segment_entry_is_anchored_at_the_root(self, tmp_path, monkeypatch):
         """The control: `espalier/_vendor` deeper in the tree is not the mirror,

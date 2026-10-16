@@ -1247,6 +1247,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # session registry in a temp config dir. Real git and a real
             # channel are the oracle for what a seat holds; claude never runs.
             "test_seat",
+            # Drives the fence checker's lookup against `git init`ed scratch
+            # trees: which copy of a name the checkout holds is git's answer
+            # (DEF-2013), so no mock stands in for it.
+            "test_check_pack_fences",
         ),
         "integration",
     ),

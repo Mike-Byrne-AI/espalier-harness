@@ -41,8 +41,10 @@ from __future__ import annotations
 import argparse
 import ast
 import builtins
+import fnmatch
 import os
 import re
+import subprocess
 import sys
 import textwrap
 from pathlib import Path
@@ -120,13 +122,76 @@ def resolve_target(rel: str) -> tuple[Path | None, str]:
             for e in entries
         )
 
+    view = _checkout_view()
+    candidates = (
+        [_ROOT / r for r in view if fnmatch.fnmatch(r.rsplit("/", 1)[-1], rel)]
+        if view is not None else list(_ROOT.rglob(rel))
+    )
     hits = [
-        p for p in _ROOT.rglob(rel)
-        if not _skipped(p.relative_to(_ROOT).parts) and not _in_nested_repo(p)
+        p for p in candidates
+        if p.is_file() and not _skipped(p.relative_to(_ROOT).parts) and not _in_nested_repo(p)
     ]
     if len(hits) == 1:
         return hits[0], "ok"
     return None, "ambiguous" if hits else "missing"
+
+
+#: Ambient git env that re-points a git command at a DIFFERENT repository (a
+#: hook, ``git rebase --exec``): stripped so the view is ``_ROOT``'s own. The
+#: same six keys as tests/_git_oracle.py, whose parity test pins this copy.
+_GIT_REDIRECT_ENV = (
+    "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES",
+)
+_VIEWS: dict[str, "list[str] | None"] = {}
+
+
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path (a standard-library module, so this script stays stdlib-only):
+    ``subprocess.run`` whose timeout holds on Windows, where Git for Windows's
+    ``git.exe`` is a launcher whose child holds the pipe past the cap
+    (DEF-3004). Read beside this script, never under ``_ROOT``, which a test
+    points at a scratch tree that has no ``tools/``."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_check_pack_fences",
+        Path(__file__).resolve().parents[1] / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
+
+
+def _checkout_view() -> "list[str] | None":
+    """Git's view of ``_ROOT`` (tracked plus untracked, not ignored), as
+    repo-relative paths, or None where git does not answer for it: no ``.git``
+    of its own (an extracted archive under another checkout), no git, an error.
+    A file git ignores is a maintainer's scratch, never a pack's target, and a
+    copy of its basename made the declared file read ``ambiguous`` (DEF-2013).
+    Read once per root and kept for the process: a test that plants a file
+    after its first call clears ``_VIEWS``."""
+    key = str(_ROOT)
+    if key not in _VIEWS:
+        _VIEWS[key] = None
+        if os.path.lexists(_ROOT / ".git"):
+            env = {k: v for k, v in os.environ.items() if k not in _GIT_REDIRECT_ENV}
+            try:
+                proc = run_bounded(
+                    ["git", "-c", "core.quotePath=false", "ls-files", "-z", "--cached", "--others",
+                     "--exclude-standard"],
+                    cwd=_ROOT, env=env, capture_output=True, timeout=60,
+                )
+            except (OSError, subprocess.SubprocessError):
+                proc = None
+            if proc is not None and proc.returncode == 0:
+                # surrogateescape: a name that is not UTF-8 comes back as itself on
+                # POSIX, where "replace" made it a path no file has.
+                _VIEWS[key] = [p for p in proc.stdout.decode("utf-8", "surrogateescape").split("\0") if p]
+    return _VIEWS[key]
 
 
 def _in_nested_repo(path: Path) -> bool:
