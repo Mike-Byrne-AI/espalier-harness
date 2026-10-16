@@ -3706,16 +3706,17 @@ def interpreter_start_failure(name_or_path: str) -> "str | None":
     orientation line of a name about to be spelled or reported, after its
     banner passed. The engine's twin,
     ``espalier._python_floor.interpreter_start_failure``, decides WIRING and
-    differs on purpose in two places, each pinned by
-    ``tests/test_hook_entry_argv.py``:
+    differs on purpose in one place, pinned by
+    ``tests/test_hook_entry_argv.py``: no ``-I`` and no
+    ``PYTHONHOME``/``PYTHONPATH`` rule, since a hook spawned in this session
+    inherits this session's environment, so the question is whether the name
+    starts here, not in a shell that settings.json outlives.
 
-    * no ``-I`` and no ``PYTHONHOME``/``PYTHONPATH`` rule: a hook spawned in
-      this session inherits this session's environment, so the question is
-      whether the name starts here, not in a shell that settings.json
-      outlives;
-    * a probe that times out twice keeps the banner's verdict (None): a slow
-      shim on a loaded box is not a broken interpreter, and a false ``no`` in
-      every orientation line would cost more than a missed hang.
+    A probe that times out twice keeps the banner's verdict (None) in both
+    copies (the engine's since ``DEF-5014``, pinned by
+    ``tests/test_python_floor.py``): a slow shim on a loaded box is not a
+    broken interpreter, and a false ``no`` in every orientation line would
+    cost more than a missed hang.
 
     As the engine does, the running interpreter, as it was invoked, is
     answered without a spawn -- its path, not its file (``samefile`` would

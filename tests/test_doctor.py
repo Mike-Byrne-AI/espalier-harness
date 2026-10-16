@@ -1916,7 +1916,7 @@ class TestEveryWarningCarriesANextStep:
         })
         mp.setattr(d, "_surface_presence", _clean_presence)
         mp.setattr(d, "_check_doc_drift", lambda root: [])
-        mp.setattr(d, "_check_python_resolver", lambda root: [])
+        mp.setattr(d, "_check_python_resolver", lambda root, out_of_time=None: [])
         mp.setattr(d, "_check_external_tool", lambda tool, hint: [])
         mp.setattr(d, "_check_reporter_hook_wiring", lambda root: [])
         mp.setattr(d, "_check_config_unknown_keys", lambda root, cfg=None: [])
@@ -1999,7 +1999,7 @@ class TestEveryWarningCarriesANextStep:
         from espalier import doctor as d
         mp.setattr(
             d, "_check_python_resolver",
-            lambda root: ["hook interpreter 'python' does not resolve on this host"],
+            lambda root, out_of_time=None: ["hook interpreter 'python' does not resolve on this host"],
         )
 
     @staticmethod
@@ -4044,7 +4044,7 @@ class TestReporterHookWiring:
 
         monkeypatch.setattr(
             doctor_module, "_check_python_resolver",
-            lambda root: ["hook interpreter 'python' does not resolve on this host"],
+            lambda root, out_of_time=None: ["hook interpreter 'python' does not resolve on this host"],
         )
         data = _load_settings(harness_repo)
         data["hooks"].pop("PostCompact")

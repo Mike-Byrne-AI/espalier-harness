@@ -856,7 +856,8 @@ class TestAnInterpreterThatAnswersItsBannerAndCannotStart:
         calls.clear()
         outcomes[:] = [subprocess.TimeoutExpired(probe, 2), subprocess.TimeoutExpired(probe, 2)]
         failure = _python_floor.interpreter_start_failure(probe)
-        assert failure is not None and "timed out twice" in failure, failure
+        # Two timeouts keep the banner's verdict (DEF-5014).
+        assert failure is None, failure
         assert len(calls) == 2, calls
 
         calls.clear()
@@ -1106,6 +1107,445 @@ class TestAnInterpreterThatAnswersItsBannerAndCannotStart:
         result = cli.rewire_interpreter_in_settings(path, new_interpreter="python3")
         assert result.status == cli.REWIRE_NO_TARGET, result
         assert path.read_bytes() == before, "the file was modified on a refusal"
+
+
+class TestAStartProbeThatNeverAnswers:
+    """DEF-5014: on a loaded host the start-up probe times out on both tries,
+    and that says nothing about the interpreter (DEF-1130 measured 31 to 73 s
+    per concurrent interpreter start on windows-latest). So the verdict keeps
+    the banner's, as the hook-side twin's does: no decision passes a working
+    interpreter over on it. A claim asks ``interpreter_start_unconfirmed`` as
+    well: init withholds the enforcement claim, and doctor gives the
+    interpreter the time a blocking hook gets, once, and names it if it does
+    not start in that time. Each verdict is kept for the process, so the
+    probe's spawns are one bounded total.
+
+    Only the ``-I -c 'import sys'`` spawn is stubbed; every other spawn (each
+    ``--version``, git, doctor's own probes) runs for real against stubs
+    forwarding to this interpreter, so the banner is a real answer. RED on
+    main e388ec8: the verdict read "cannot start: ... timed out twice"; a
+    ``python3``-only host had the literal ``python`` wired, which does not
+    resolve there, and init said every guard fails OPEN; init asked the one
+    interpreter 26 times and doctor 10. The tests marked "reviewed" were red
+    on the lane's first commit d5e5f666, as both reviews drove them.
+    """
+
+    START_PROBE = ["-I", "-c", "import sys"]
+
+    @pytest.fixture
+    def slow(self, monkeypatch):
+        """Time out the start-up probe, and record what each one asked.
+
+        ``spare`` holds the file names whose probe runs for real; with
+        ``patient`` set, a probe given more than 2 s runs for real too (a
+        host that is loaded, not an interpreter that hangs)."""
+        import types
+
+        from espalier import _spawn
+
+        real = _spawn.run_bounded
+        state = types.SimpleNamespace(asked=[], spare=set(), patient=False)
+
+        def run_bounded(argv, *args, **kwargs):
+            argv = list(argv)
+            if argv[-3:] == self.START_PROBE:
+                timeout = kwargs.get("timeout") or 0
+                state.asked.append((tuple(argv[:-3]), timeout))
+                name = Path(argv[0]).stem
+                if name not in state.spare and not (state.patient and timeout > 2):
+                    raise subprocess.TimeoutExpired(argv, timeout)
+            return real(argv, *args, **kwargs)
+
+        monkeypatch.setattr(_spawn, "run_bounded", run_bounded)
+        monkeypatch.delenv("PYTHONHOME", raising=False)
+        monkeypatch.delenv("PYTHONPATH", raising=False)
+        return state
+
+    @staticmethod
+    def _host(tmp_path, monkeypatch, *, working, stubbed=()):
+        """Working stubs for ``working``, Store stubs for ``stubbed``, and git;
+        nothing else on PATH. Returns the bin dir."""
+        import shutil
+
+        from tests import _interpreter_hosts as hosts
+
+        git = shutil.which("git")
+        assert git, "git is needed to drive init"
+        bin_dir = hosts.build_cannot_start(tmp_path / "host", (), working=working, stubbed=stubbed)
+        monkeypatch.setenv("PATH", os.pathsep.join([str(bin_dir), str(Path(git).parent)]))
+        return bin_dir
+
+    @staticmethod
+    def _adopter(tmp_path, monkeypatch):
+        """An empty git tree to init, HOME kept in the test's own directory."""
+        from espalier import cli
+
+        for var in ("HOME", "USERPROFILE"):
+            monkeypatch.setenv(var, str(tmp_path / "home"))
+        monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+        (tmp_path / "home").mkdir()
+        target = tmp_path / "adopter"
+        target.mkdir()
+        (target / "README.md").write_text("# adopter\n", encoding="utf-8")
+        (target / "pyproject.toml").write_text('[project]\nname = "adopter"\n', encoding="utf-8")
+        subprocess.check_call(["git", "init", "--quiet"], cwd=str(target))
+        monkeypatch.chdir(target)
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False, raising=False)
+        return target
+
+    @staticmethod
+    def _wire(target: Path, interpreter: str) -> None:
+        """Rewrite every hook command in the tree's settings.json to ``interpreter``."""
+        path = target / ".claude" / "settings.json"
+        settings = json.loads(path.read_text(encoding="utf-8"))
+        for groups in settings["hooks"].values():
+            for group in groups:
+                for hook in group["hooks"]:
+                    hook["command"] = interpreter
+        path.write_text(json.dumps(settings), encoding="utf-8")
+
+    def test_two_timeouts_keep_the_banners_verdict_and_a_claim_hears_it(
+        self, tmp_path, monkeypatch, slow
+    ):
+        import shutil
+
+        self._host(tmp_path, monkeypatch, working=("python3",))
+        python3 = shutil.which("python3")
+        verdict = _python_floor.interpreter_start_failure([python3])
+        assert verdict is None, (
+            f"a probe that never answered was read as an interpreter that cannot start: {verdict}"
+        )
+        assert len(slow.asked) == 2, f"one timeout and its retry, no more: {slow.asked}"
+        unconfirmed = getattr(_python_floor, "interpreter_start_unconfirmed")([python3])
+        assert unconfirmed and unconfirmed.startswith("start not confirmed"), unconfirmed
+        assert "loaded host" in unconfirmed, unconfirmed
+        assert len(slow.asked) == 2, f"the claim's ask spawned again: {slow.asked}"
+
+    def test_each_interpreter_is_asked_once_for_the_process(self, tmp_path, monkeypatch, slow):
+        """Init asked one interpreter 26 times on a slow host, 2 s a try, so
+        every remembered answer is up to 4 s not spent. A file rewritten in
+        place is asked again: the verdict is keyed on the file as well."""
+        import shutil
+
+        self._host(tmp_path, monkeypatch, working=("python3",))
+        python3 = shutil.which("python3")
+        for _ in range(3):
+            _python_floor.interpreter_start_failure([python3])
+        assert len(slow.asked) == 2, f"the same interpreter was asked again: {slow.asked}"
+        stub = Path(python3)
+        stub.write_bytes(stub.read_bytes() + b"\n")
+        os.utime(stub, ns=(stub.stat().st_atime_ns, stub.stat().st_mtime_ns + 10**9))
+        _python_floor.interpreter_start_failure([python3])
+        assert len(slow.asked) == 4, f"a rewritten file was answered from memory: {slow.asked}"
+
+    def test_the_floor_check_keeps_the_banners_verdict(self, tmp_path, monkeypatch, slow):
+        self._host(tmp_path, monkeypatch, working=("python3",))
+        assert _python_floor.interpreter_meets_floor("python3") is True, (
+            "a working interpreter whose start-up probe never answered was read as "
+            "below the floor"
+        )
+
+    def test_the_resolver_wires_the_working_name_not_the_literal(
+        self, tmp_path, monkeypatch, capsys, slow
+    ):
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, working=("python3",), stubbed=("python",))
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False, raising=False)
+        assert cli._detect_python_command() == "python3", (
+            "the resolver passed over the one working name on a probe that never "
+            "answered, and fell back to a name that does not run here"
+        )
+        assert "could be validated" not in capsys.readouterr().err
+
+    def test_the_resolver_prefers_a_name_whose_start_was_seen(self, tmp_path, monkeypatch, slow):
+        """Reviewed: ``python`` answers its banner and hangs at start-up (a
+        blocking sitecustomize), ``python3`` works. A start nobody saw is no
+        verdict, so the later candidate that started outranks it; d5e5f666
+        wired the hanging one, where main wired ``python3``."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, working=("python", "python3"))
+        slow.spare.add("python3")
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        assert cli._detect_python_command() == "python3"
+
+    def test_the_rewire_repairs_a_wired_name_whose_start_nobody_saw(
+        self, tmp_path, monkeypatch, slow
+    ):
+        """Reviewed: the floor check keeps the banner's verdict, so without
+        its own test the rewire read the hanging ``python`` as already fine and
+        said "nothing to rewire" over a working ``python3``."""
+        import shutil
+
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, working=("python", "python3"))
+        slow.spare.add("python3")
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        path = TestAnInterpreterThatAnswersItsBannerAndCannotStart._settings(tmp_path, "python")
+        result = cli.rewire_interpreter_in_settings(path)
+        assert result.status == cli.REWIRE_DONE, result
+        entry = json.loads(path.read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]["hooks"][0]
+        # The bare name, or its absolute path where the launchd PATH's python3
+        # is older (the rewire's own DEF-636 rule).
+        assert entry["command"] in ("python3", shutil.which("python3")), entry
+
+    def test_init_withholds_the_claim_and_doctor_says_the_start_was_slow(
+        self, tmp_path, monkeypatch, capsys, slow
+    ):
+        """End to end on a ``python3``-only host that is loaded, not broken:
+        init wires ``python3`` and withholds the enforcement claim (never a
+        false all-clear), naming the unconfirmed start and a step to doctor;
+        doctor gives the interpreter a blocking hook's time, it starts, and
+        doctor says it starts but slowly, never "cannot start" and never
+        healthy: a hook runs for several times a bare start (the failure-mode
+        re-check measured 9.4 times on the Air). Each asks each interpreter
+        once."""
+        import argparse
+        from collections import Counter
+
+        from espalier import cli, doctor
+
+        self._host(tmp_path, monkeypatch, working=("python3",), stubbed=("python",))
+        target = self._adopter(tmp_path, monkeypatch)
+        slow.patient = True
+
+        assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
+        captured = capsys.readouterr()
+        said = captured.out + captured.err
+        settings = json.loads((target / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        wired = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        assert wired == "python3", f"init wired {wired!r}:\n{said[-3000:]}"
+        assert "cannot start:" not in said and "fails OPEN" not in said, said[-3000:]
+        assert "Hooks now intercept" not in said, (
+            f"init claimed enforcement on a start it never saw:\n{said[-3000:]}"
+        )
+        claim = [line for line in said.splitlines() if "not confirmed" in line]
+        assert claim and "loaded host" in claim[0], said[-3000:]
+        assert any("-m espalier doctor ." in line and "blocking hook" in line
+                   for line in said.splitlines()), said[-3000:]
+        assert set(Counter(slow.asked).values()) == {2}, f"init asked again: {Counter(slow.asked)}"
+
+        slow.asked.clear()
+        getattr(_python_floor, "_START_VERDICTS", {}).clear()  # doctor runs in a process of its own
+        result = doctor.run_doctor_check(target)
+        warned = [w for w in result["warnings"] if "python3" in w]
+        assert warned and "and starts, but not within" in warned[0], result["warnings"]
+        assert "cannot start" not in warned[0] and "did not start within" not in warned[0], warned
+        assert any("less loaded" in s for s in result["next_steps"]), result["next_steps"]
+        asked = Counter(slow.asked)
+        assert sorted(asked.values()) == [1, 2], (
+            f"doctor asks twice in 2 s and once in a blocking hook's time: {asked}"
+        )
+
+    def test_doctor_names_an_interpreter_that_does_not_start_in_a_blocking_hooks_time(
+        self, tmp_path, monkeypatch, capsys, slow
+    ):
+        """Reviewed: doctor stepped to itself forever on an interpreter that
+        hangs, and spelled that step with the hanging interpreter. Given the
+        time a blocking hook gets, one that does not start in it fails every
+        blocking guard open, whatever the cause, and with nothing on PATH
+        whose start was seen the step is doctor again on a less loaded host,
+        spelled with the interpreter running doctor."""
+        import argparse
+
+        from espalier import cli, doctor
+
+        self._host(tmp_path, monkeypatch, working=("python3",), stubbed=("python",))
+        target = self._adopter(tmp_path, monkeypatch)
+        assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
+        capsys.readouterr()
+        getattr(_python_floor, "_START_VERDICTS", {}).clear()  # doctor runs in a process of its own
+        result = doctor.run_doctor_check(target)
+        seconds = doctor._blocking_hook_seconds()
+        late = [w for w in result["warnings"] if f"did not start within {seconds} s" in w]
+        assert late and "fails OPEN" in late[0], result["warnings"]
+        assert any(timeout > 2 for _, timeout in slow.asked), slow.asked
+        again = [s for s in result["next_steps"]
+                 if "-m espalier doctor ." in s and "less loaded" in s]
+        assert again, result["next_steps"]
+        assert "python3 -m espalier" not in again[0], (
+            f"the step was spelled with the interpreter that does not start: {again[0]}"
+        )
+
+    def test_doctor_keeps_the_rewire_step_for_a_wired_name_that_is_not_python(
+        self, tmp_path, monkeypatch, slow
+    ):
+        """Reviewed (the BLOCKER): the tree main's init left on a python3-only
+        loaded host -- ``python`` wired, a Store stub -- on the same host. The
+        python3 hint names an unconfirmed start, and d5e5f666 matched that
+        text and dropped the rewire step for a false "run doctor again"."""
+        import argparse
+
+        from espalier import cli, doctor
+
+        self._host(tmp_path, monkeypatch, working=("python3",), stubbed=("python",))
+        target = self._adopter(tmp_path, monkeypatch)
+        assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
+        self._wire(target, "python")
+        getattr(_python_floor, "_START_VERDICTS", {}).clear()
+        result = doctor.run_doctor_check(target)
+        assert any("does not answer as Python 3" in w or "does not resolve" in w
+                   for w in result["warnings"]), result["warnings"]
+        assert any("--rewire-interpreter" in s for s in result["next_steps"]), result["next_steps"]
+        assert not any("start-up probe did not answer" in s for s in result["next_steps"]), (
+            result["next_steps"])
+        assert not any("WORKING" in w for w in result["warnings"]), (
+            f"a python3 whose start nobody saw was called WORKING: {result['warnings']}")
+
+    def test_the_claim_reads_its_own_verdict_not_a_second_banner_ask(
+        self, tmp_path, monkeypatch, capsys, slow
+    ):
+        """Reviewed: the narration asked the banner again, with no retry, and
+        a miss there turned "not confirmed" back into DEF-5014's sentence. The
+        fold saw the banner and not the start; the narration's own banner ask
+        misses."""
+        import argparse
+        import shutil
+
+        from espalier import cli, doctor
+
+        self._host(tmp_path, monkeypatch, working=("python3",), stubbed=("python",))
+        target = self._adopter(tmp_path, monkeypatch)
+        assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
+        capsys.readouterr()
+        python3 = shutil.which("python3")
+        found = {"python3": cli._NotPython3(
+            python3, ["tools/cc/hooks/write_guard.py"], False, False, (python3,), True)}
+        monkeypatch.setattr(cli, "_not_python3_from_entries", lambda entries: found)
+        monkeypatch.setattr(doctor, "_interpreter_is_python3", lambda resolved, *flags: False)
+        reason, remedies = cli._disarmed_diagnosis(target)
+        assert "not confirmed" in reason and "does not answer as Python 3" not in reason, reason
+        assert any("-m espalier doctor ." in r for r in remedies), remedies
+
+    def test_the_rewire_says_what_it_left_and_never_already_starts(
+        self, tmp_path, monkeypatch, capsys, slow
+    ):
+        """Reviewed: on a host where no start is seen, the rewire has no
+        target to move a site to, and its report said "every interpreter ...
+        already starts" of interpreters whose start nobody saw."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, working=("python3",), stubbed=("python",))
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        path = TestAnInterpreterThatAnswersItsBannerAndCannotStart._settings(tmp_path, "python3")
+        before = path.read_bytes()
+        assert cli._report_interpreter_rewire(path) == cli.REWIRE_NOTHING
+        said = capsys.readouterr().err
+        assert "already starts" not in said and "never saw" in said, said
+        assert path.read_bytes() == before, "the file was written on a rewire with no target"
+
+    def test_doctors_cannot_start_hint_says_starts_only_of_a_start_it_saw(
+        self, tmp_path, monkeypatch, slow
+    ):
+        """Reviewed: the wired ``python`` cannot start (an exit status) and the
+        rewire's target, ``python3``, answers its banner while its start-up
+        probe never answers: the hint said "`python3` starts and clears the
+        floor". The rewire still takes it, so the remedy stands."""
+        from espalier import doctor
+        from tests import _interpreter_hosts as hosts
+
+        bin_dir = hosts.build_cannot_start(tmp_path / "host", ("python",), working=("python3",))
+        monkeypatch.setenv("PATH", str(bin_dir))
+        slow.spare.add("python")  # its probe runs for real, and exits
+        monkeypatch.setattr(doctor, "resolves_only_inside", lambda cmd: False)
+        joined = " ".join(doctor._check_python_resolver(
+            tmp_path, TestAnInterpreterThatAnswersItsBannerAndCannotStart._settings(tmp_path, "python")))
+        assert "cannot start" in joined, f"precondition: the wired python cannot start: {joined}"
+        assert "starts and clears the floor" not in joined, joined
+        assert "`python3` answers as Python" in joined and "--rewire-interpreter" in joined, joined
+
+    def test_doctor_steps_to_the_rewire_when_a_started_target_is_there(
+        self, tmp_path, monkeypatch, capsys, slow
+    ):
+        """Reviewed: the wired ``python`` hangs at start-up, ``python3``
+        starts. Doctor names the hang and steps to the rewire, whose target
+        started; "doctor again" is the step only when nothing on PATH did."""
+        import argparse
+
+        from espalier import cli, doctor
+
+        self._host(tmp_path, monkeypatch, working=("python", "python3"))
+        slow.spare.add("python3")
+        target = self._adopter(tmp_path, monkeypatch)
+        assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
+        capsys.readouterr()
+        self._wire(target, "python")
+        getattr(_python_floor, "_START_VERDICTS", {}).clear()
+        result = doctor.run_doctor_check(target)
+        seconds = doctor._blocking_hook_seconds()
+        assert any(f"did not start within {seconds} s" in w for w in result["warnings"]), (
+            result["warnings"])
+        assert any("--rewire-interpreter" in s for s in result["next_steps"]), result["next_steps"]
+        assert not any("less loaded" in s for s in result["next_steps"]), result["next_steps"]
+
+    def test_a_bare_name_is_asked_each_time(self, tmp_path, monkeypatch, slow):
+        """Reviewed: a bare name resolves through PATH at the spawn, which a
+        file of that name in the working directory does not key, so its
+        verdict is never kept."""
+        self._host(tmp_path, monkeypatch, working=("python3",))
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "python3").write_text("not an interpreter\n", encoding="utf-8")
+        _python_floor.interpreter_start_failure(["python3"])
+        _python_floor.interpreter_start_failure(["python3"])
+        assert len(slow.asked) == 4, slow.asked
+
+    def test_the_venv_only_probe_is_asked_once_per_candidate(self, tmp_path, monkeypatch):
+        """Reviewed: unconfirmed candidates now reach the venv-only probe, a
+        5 s spawn the resolver repeated for every remedy a run spells (13 in
+        one init on a host where every spawn timed out)."""
+        import shutil
+
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, working=("python3",))
+        python3 = shutil.which("python3")
+        real = cli.run_bounded
+        asked: list[list[str]] = []
+
+        def run_bounded(argv, *args, **kwargs):
+            if any("ESPALIER_PROBE" in str(a) for a in argv):
+                asked.append(list(argv))
+            return real(argv, *args, **kwargs)
+
+        monkeypatch.setattr(cli, "run_bounded", run_bounded)
+        for _ in range(3):
+            assert cli._resolves_only_inside_a_virtualenv("python3", python3) is False
+        assert len(asked) == 1, asked
+
+    def test_the_engine_and_hook_probes_agree_on_two_timeouts(self, tmp_path, monkeypatch, slow):
+        """The two copies keep the banner's verdict on a probe that never
+        answered: the hook-side twin by design (DEF-1145), the engine since
+        DEF-5014. A change to either reds here and must re-argue it."""
+        import shutil
+
+        hu = _hook_utils()
+        self._host(tmp_path, monkeypatch, working=("python3",))
+        monkeypatch.setattr(hu, "_INTERPRETER_IDENTITY_MEMO", {})
+
+        def timed_out(argv, *args, **kwargs):
+            raise subprocess.TimeoutExpired(argv, kwargs.get("timeout"))
+
+        monkeypatch.setattr(hu, "run_bounded", timed_out)
+        assert hu.interpreter_start_failure("python3") is None
+        assert _python_floor.interpreter_start_failure([shutil.which("python3")]) is None
+
+    def test_the_kept_verdicts_are_cleared_around_every_test(self, tmp_path, monkeypatch, slow):
+        """Reviewed: a verdict one test drove answered the next test's ask
+        (both reviews drove a test that passed or failed by order). The
+        conftest fixture clears both engine memos; this pins the clearer."""
+        import shutil
+
+        from espalier import cli
+        from tests import conftest
+
+        self._host(tmp_path, monkeypatch, working=("python3",))
+        _python_floor.interpreter_start_failure([shutil.which("python3")])
+        cli._VENV_ONLY_VERDICTS[("x",)] = True
+        assert _python_floor._START_VERDICTS
+        conftest._clear_engine_interpreter_memos()
+        assert _python_floor._START_VERDICTS == {} and cli._VENV_ONLY_VERDICTS == {}
 
 
 def test_cognitive_blueprint_really_does_need_310():

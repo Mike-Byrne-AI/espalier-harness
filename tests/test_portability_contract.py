@@ -1546,6 +1546,11 @@ class TestRemediesSpellTheRemedyInterpreter:
             "three hand-edit sentences name the value to write (the `written` local)",
         ("espalier/doctor.py", "run_doctor_check", "_resolver_hint"):
             "three hand-edit sentences name the value to write (the `written` local)",
+        ("espalier/doctor.py", "_check_python_resolver", "_resolver_hint"):
+            "two remedy sentences name the rewire target, which settings.json will "
+            "carry, in strings of their own (the `written` local); their commands "
+            "spell `_remedy_hint()`, a started interpreter where the target's start "
+            "was never seen (DEF-5014)",
     }
 
     @staticmethod

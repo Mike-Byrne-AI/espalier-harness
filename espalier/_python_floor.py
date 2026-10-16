@@ -202,28 +202,141 @@ def interpreter_start_failure(argv: "list[str] | tuple[str, ...]") -> str | None
     slow once (pyenv or asdf on a loaded box, a first-run scan) would
     otherwise turn a working interpreter into a refused one, which is the
     flake the enforcement claim's identity arm already retries. An exit
-    status is not retried; it does not flake.
+    status is not retried; it does not flake. A probe that times out on both
+    tries says nothing either way, so this returns None for it and the
+    banner's verdict stands, as it does in the hook-side twin (``DEF-5014``).
+    A loaded host does exactly that to a working interpreter, and reading it
+    as "cannot start" made ``init`` pass over a working ``python3`` for a name
+    that was not there. A caller that CLAIMS a start also asks
+    :func:`interpreter_start_unconfirmed` (``init``'s enforcement claim
+    withholds itself), and ``doctor`` gives such an interpreter a blocking
+    hook's whole time with :func:`interpreter_start_failure_within`.
+
+    Each verdict is kept for the process (:data:`_START_VERDICTS`), so a
+    process spends at most two spawns, 4 s, on each interpreter it asks
+    about: ``init`` asked one interpreter 26 times on a host where every ask
+    timed out twice.
     """
+    verdict = _start_verdict(argv, START_PROBE_SECONDS, START_PROBE_TRIES)
+    if verdict is not None and verdict.startswith(START_UNANSWERED):
+        return None
+    return verdict
+
+
+#: The start-up probe's time per try, and its tries: the banner probe's two
+#: seconds, and one retry for a shim that is slow once. Read by every sentence
+#: that quotes them, so a sentence cannot drift from the probe.
+START_PROBE_SECONDS = 2
+START_PROBE_TRIES = 2
+
+
+def interpreter_start_unconfirmed(argv: "list[str] | tuple[str, ...]") -> str | None:
+    """A clause saying the start-up probe never answered for ``argv`` (both of
+    :func:`interpreter_start_failure`'s tries timed out), or None when it
+    answered either way. The same kept verdict, so asking both costs one
+    probe. For a caller that claims a start (``DEF-5014``): a decision keeps
+    the banner's verdict, a claim says the start was not confirmed."""
+    verdict = _start_verdict(argv, START_PROBE_SECONDS, START_PROBE_TRIES)
+    if verdict is not None and verdict.startswith(START_UNANSWERED):
+        return verdict
+    return None
+
+
+def interpreter_start_failure_within(
+    argv: "list[str] | tuple[str, ...]", seconds: int,
+) -> str | None:
+    """Why the interpreter at ``argv`` does not start within ``seconds``, on
+    one try, or None when it does. No answer in that time is a failure here,
+    not a non-answer: ``doctor`` passes the time a blocking hook gets per tool
+    call, and an interpreter that cannot start in it leaves every blocking
+    guard wired with it to time out before it decides, whatever the cause (a
+    hang at start-up, or a host this loaded)."""
+    verdict = _start_verdict(argv, seconds, 1)
+    if verdict is not None and verdict.startswith(START_UNANSWERED):
+        return f"{START_TOO_SLOW}: it did not start within {seconds} s"
+    return verdict
+
+
+#: How :func:`interpreter_start_failure_within` opens when the interpreter did
+#: not start in the time it was given, as against an exit status.
+START_TOO_SLOW = "cannot start in time"
+
+
+def start_unconfirmed_of(name_or_path: str | None) -> str | None:
+    """:func:`interpreter_start_unconfirmed` for an interpreter SPELLING
+    (``python3``, a path, ``py -3``), resolved as :func:`interpreter_meets_floor`
+    resolves it, so the two read one kept verdict. None when it does not
+    resolve."""
+    if not name_or_path:
+        return None
+    import shutil
+    from pathlib import Path as _Path
+
+    head, *flags = interpreter_argv(name_or_path)
+    resolved = shutil.which(head) or (head if _Path(head).is_file() else None)
+    return interpreter_start_unconfirmed([resolved, *flags]) if resolved else None
+
+
+#: Each start-up verdict this process has asked for, keyed on the argv, the
+#: time and tries it was given, and the file its head names (device, inode,
+#: size, modification time, so a file rewritten in place is asked again). A
+#: head that is not a path is never kept: a bare name resolves through PATH at
+#: the spawn, which a file of that name in the working directory does not key.
+_START_VERDICTS: dict[tuple[object, ...], "str | None"] = {}
+
+#: How a start-up verdict opens when the probe never answered in its time
+#: (``DEF-5014``). Internal to this module: :func:`interpreter_start_failure`
+#: turns it into None (the banner's verdict stands),
+#: :func:`interpreter_start_unconfirmed` hands it to a claim, and
+#: :func:`interpreter_start_failure_within` turns it into a failure.
+START_UNANSWERED = "start not confirmed"
+
+
+def _start_verdict(
+    argv: "list[str] | tuple[str, ...]", seconds: int, tries: int,
+) -> str | None:
+    """The kept start-up verdict for ``argv``: None (started), "cannot
+    start: ..." (an exit status, or a probe that could not run), or a
+    :data:`START_UNANSWERED` clause (every try timed out)."""
     import os
-    import subprocess
     import sys
 
-    from espalier._spawn import run_bounded
     rescued = os.environ.get("PYTHONHOME") or os.environ.get("PYTHONPATH")
     if len(argv) == 1 and sys.executable and not rescued:
         def _as_invoked(path: str) -> str:
             return os.path.normcase(os.path.abspath(path))
         if _as_invoked(argv[0]) == _as_invoked(sys.executable):
             return None
+    head = argv[0] if argv else ""
+    key: tuple[object, ...] | None = None
+    if "/" in head.replace("\\", "/"):
+        try:
+            st = os.stat(head)
+            key = (tuple(argv), seconds, tries, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+        except (OSError, ValueError):
+            key = None
+    if key is not None and key in _START_VERDICTS:
+        return _START_VERDICTS[key]
+    verdict = _ask_start(argv, seconds, tries)
+    if key is not None:
+        _START_VERDICTS[key] = verdict
+    return verdict
+
+
+def _ask_start(argv: "list[str] | tuple[str, ...]", seconds: int, tries: int) -> str | None:
+    """The spawn half of :func:`_start_verdict`, unkept."""
+    import subprocess
+
+    from espalier._spawn import run_bounded
     result = None
-    for _attempt in (1, 2):
+    for _attempt in range(tries):
         try:
             # The tail is a literal, the one spelling of the probe, so the
             # subprocess-contract scanner resolves this argv as it does the
             # banner probe's below, rather than reading it as all-dynamic.
             result = run_bounded(
                 [*argv, "-I", "-c", "import sys"], capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=2,
+                encoding="utf-8", errors="replace", timeout=seconds,
             )
         except subprocess.TimeoutExpired:
             continue
@@ -231,7 +344,12 @@ def interpreter_start_failure(argv: "list[str] | tuple[str, ...]") -> str | None
             return f"cannot start: the start-up probe raised {type(exc).__name__}"
         break
     if result is None:
-        return "cannot start: the start-up probe timed out twice (2 s each)"
+        times = ", twice" if tries == 2 else ""
+        return (
+            f"{START_UNANSWERED}: its start-up probe did not answer within "
+            f"{seconds} s{times}, which a loaded host does to a working "
+            f"interpreter, and an interpreter that hangs at start-up does too"
+        )
     if result.returncode == 0:
         return None
     said = [
@@ -274,7 +392,10 @@ def interpreter_meets_floor(name_or_path: str | None) -> bool:
 
     False for an unresolvable name, a non-interpreter, a probe that cannot
     run, or an interpreter that cannot start: an unreadable answer is not a
-    passing one. A launcher spelling (``py -3``) is probed as the launcher
+    passing one. A start-up probe that never answered is no answer about the
+    start, so the banner's verdict stands (``DEF-5014``,
+    :func:`interpreter_start_failure`).
+    A launcher spelling (``py -3``) is probed as the launcher
     with its flag: resolved whole, the two words named nothing and a working
     launcher read as absent.
     """
@@ -300,6 +421,8 @@ def interpreter_meets_floor(name_or_path: str | None) -> bool:
         return False
     if not meets_python_floor((result.stdout or result.stderr).strip()):
         return False
+    # A start-up probe that never answered keeps the banner's verdict here
+    # (DEF-5014): every caller of this decides with it.
     return interpreter_start_failure([resolved, *flags]) is None
 
 

@@ -26,13 +26,17 @@ from espalier._atomic_io import atomic_write_bytes, atomic_write_text
 from espalier._integrity_bridge import load_integrity_module
 from espalier._python_floor import (
     LAUNCHER_VERSION_FLAG,
+    START_PROBE_SECONDS,
+    START_PROBE_TRIES,
     floor_text,
     interpreter_argv,
     interpreter_meets_floor,
     interpreter_start_failure,
+    interpreter_start_unconfirmed,
     is_below_floor_python3,
     is_python_launcher,
     meets_python_floor,
+    start_unconfirmed_of,
 )
 from espalier._safe_walk import safe_rglob, visible, is_own_git_repo as _is_own_git_repo
 from espalier._spawn import run_bounded
@@ -675,7 +679,35 @@ def _resolves_only_inside_a_virtualenv(name: str, resolved: str) -> bool:
     payload is a tagged JSON line rather than a line count so that a
     sitecustomize banner, a corporate ``.pth`` or a deprecation notice printed
     before it cannot silently disable the guard.
+
+    Each answer is kept for the process (:data:`_VENV_ONLY_VERDICTS`): the
+    resolver runs again for every remedy a run spells, and on a loaded host
+    each ask is a spawn of up to 5 s (``DEF-5014``'s failure-mode review drove
+    13 of them in one ``init``).
     """
+    try:
+        st = os.stat(resolved)
+        key: tuple[object, ...] | None = (
+            name, resolved, os.environ.get("PATH", ""),
+            st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+    except (OSError, ValueError):
+        key = None
+    if key is not None and key in _VENV_ONLY_VERDICTS:
+        return _VENV_ONLY_VERDICTS[key]
+    verdict = _ask_resolves_only_inside_a_virtualenv(name, resolved)
+    if key is not None:
+        _VENV_ONLY_VERDICTS[key] = verdict
+    return verdict
+
+
+#: Each :func:`_resolves_only_inside_a_virtualenv` answer this process has
+#: asked for, keyed on the name, its path, PATH and the file (device, inode,
+#: size, modification time).
+_VENV_ONLY_VERDICTS: dict[tuple[object, ...], bool] = {}
+
+
+def _ask_resolves_only_inside_a_virtualenv(name: str, resolved: str) -> bool:
+    """The spawn half of :func:`_resolves_only_inside_a_virtualenv`, unkept."""
     import subprocess
     try:
         probe = run_bounded(
@@ -914,9 +946,19 @@ def _detect_python_command() -> str:
     passes it. One that cannot start falls through, and its evidence is what
     the warning quotes when nothing else validates. The launcher is held to
     the same test through :func:`interpreter_meets_floor`.
+
+    A candidate whose start-up probe never answered (``DEF-5014``) is no
+    verdict either way: a loaded host does that to a working interpreter, and
+    so does one that hangs at start-up. So a later candidate whose start was
+    seen outranks it, the launcher included, and it is wired only when none
+    did: ahead of the venv-only, below-floor and literal fallbacks, which are
+    known to be worse. Two timeouts once sent a ``python3``-only host to the
+    literal ``python``, which was not there.
     """
     import subprocess
     last_resort = None
+    # The first floor-clearing candidate whose start the probe never saw.
+    unconfirmed: str | None = None
     # What the FIRST candidate that resolved-but-failed-identity actually said.
     # The loop's `path` / `result` are per-iteration locals, so without this the
     # warning below could name only the candidate, not the evidence. FIRST,
@@ -992,6 +1034,12 @@ def _detect_python_command() -> str:
                 if last_resort is None:
                     last_resort = candidate
                 continue
+            # A start the probe never saw (DEF-5014): kept, while a later
+            # candidate whose start was seen outranks it (see the docstring).
+            if interpreter_start_unconfirmed([path]) is not None:
+                if unconfirmed is None:
+                    unconfirmed = candidate
+                continue
             return candidate
         # A WORKING Python 3 that is merely too OLD is a third state, and
         # collapsing it into "nothing validated" made things WORSE than before
@@ -1024,8 +1072,15 @@ def _detect_python_command() -> str:
     # shell that settings.json outlives, and the below-floor and literal
     # fallbacks, which are worse answers than a working interpreter. The
     # floor check runs the start-up probe too, so a launcher whose `-3`
-    # answers a banner and cannot start is not wired here either.
-    if interpreter_meets_floor(LAUNCHER_CANDIDATE):
+    # answers a banner and cannot start is not wired here either. A start
+    # nobody saw ranks below one that was seen, the launcher's as a bare
+    # name's (DEF-5014).
+    launcher = interpreter_meets_floor(LAUNCHER_CANDIDATE)
+    if launcher and start_unconfirmed_of(LAUNCHER_CANDIDATE) is None:
+        return LAUNCHER_CANDIDATE
+    if unconfirmed is not None:
+        return unconfirmed
+    if launcher:
         return LAUNCHER_CANDIDATE
     if last_resort is not None:
         return last_resort
@@ -1052,9 +1107,18 @@ def _remedy_interpreter() -> tuple[str, bool]:
     exactly when ``--rewire-interpreter`` itself would find no target on this
     PATH (``REWIRE_NO_TARGET``), so a caller can say "install first" instead of
     prescribing a repair that reports nothing to do.
+
+    A resolver answer whose start-up probe never answered (``DEF-5014``) is
+    still the rewire's target, which takes it on its banner, so the second
+    value stays True; but the command is spelled with the interpreter running
+    this, which started, since a name that hangs at start-up would hang the
+    operator's next command too. A caller that names the TARGET reads
+    :func:`_detect_python_command`, never this.
     """
     py = _detect_python_command()
     if interpreter_meets_floor(py):
+        if sys.executable and start_unconfirmed_of(py) is not None:
+            return quoted_if_spaced(sys.executable), True
         return py, True
     if sys.executable and interpreter_meets_floor(sys.executable):
         # An absolute path the operator will paste, so quoted when it carries
@@ -8065,11 +8129,31 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
         )
         for where, old_command, new_command in result.changes:
             print(f"    {where}: `{old_command}` -> `{new_command}`", file=sys.stderr)
+    elif result.status == REWIRE_NOTHING and result.unconfirmed:
+        # Not "already starts": the WARN below says what was left (DEF-5014).
+        print("--rewire-interpreter: nothing to rewire to. No file was written.",
+              file=sys.stderr)
     elif result.status == REWIRE_NOTHING:
         print(
             f"--rewire-interpreter: nothing to rewire -- every interpreter this "
             f"command can read already starts and meets Python {floor_text()}+. "
             f"No file was written.",
+            file=sys.stderr,
+        )
+    if result.unconfirmed:
+        # Sites whose start was never seen, left because no target whose start
+        # was seen is on PATH (DEF-5014): said on a rewire that moved other
+        # sites too, and never folded into "already starts".
+        count = len(result.unconfirmed)
+        print(
+            f"WARN: --rewire-interpreter left "
+            f"{plural(count, 'interpreter command')} alone that "
+            f"{'answers' if count == 1 else 'answer'} as Python {floor_text()}+ "
+            f"but whose start the start-up probe never saw (no answer within "
+            f"{START_PROBE_SECONDS} s, in {START_PROBE_TRIES} tries), and no "
+            f"interpreter on PATH whose start was seen is there to rewire to. "
+            f"Run `{_remedy_py()} -m espalier doctor .`: it gives each the "
+            f"{_doctor._blocking_hook_seconds()} s a blocking hook gets.",
             file=sys.stderr,
         )
     if result.declined:
@@ -8157,6 +8241,11 @@ class RewireResult:
     #: Reported, never silent: an all-clear that covers sites the walk never
     #: examined is the DEF-620 shape the whole verb exists to close.
     declined: list = field(default_factory=list)
+    #: ``(json_path, command)`` per Python site that clears the floor on its
+    #: banner but whose start the probe never saw, left alone because no target
+    #: whose start was seen is on PATH (DEF-5014). Reported, never folded into
+    #: an all-clear that says it starts.
+    unconfirmed: list = field(default_factory=list)
 
 
 def _swap_interpreter_token(command: str, new_name: str) -> str:
@@ -8362,7 +8451,10 @@ def rewire_interpreter_in_settings(
       test (:func:`interpreter_meets_floor`) includes the start-up probe, so
       an interpreter that prints a banner and cannot start counts as failing
       it -- the wiring an older ``init`` wrote on the banner alone is what
-      this repairs -- and is never accepted as the target either.
+      this repairs -- and is never accepted as the target either. One whose
+      start-up probe never answered keeps its banner's verdict there, so it
+      is rewired only to a target whose start was seen, and reported
+      otherwise (``DEF-5014``).
     * **A ``.bak`` of the pre-write bytes is kept first**, via the same helper
       the merge path uses (written, or the rung that already holds them).
     * **A malformed file is refused, never clobbered** -- the operator's
@@ -8430,7 +8522,7 @@ def rewire_interpreter_in_settings(
     if isinstance(status_line, dict) and isinstance(status_line.get("command"), str):
         sites.append((status_line, "command", "statusLine"))
 
-    stale, declined = [], []
+    stale, declined, unseen = [], [], []
     for container, key, where in sites:
         # A hook entry's argv[0] as it runs (`_venv.entry_argv`: all of
         # `command` in exec form, DEF-968); the statusLine's argv[0], or argv[1]
@@ -8453,12 +8545,27 @@ def rewire_interpreter_in_settings(
             # it never examined.
             declined.append((where, container[key]))
             continue
-        if not interpreter_meets_floor(_launcher_spelling_of(container, key, token)):
+        spelling = _launcher_spelling_of(container, key, token)
+        if not interpreter_meets_floor(spelling):
             stale.append((container, key, where, exec_form))
+        elif start_unconfirmed_of(spelling) is not None:
+            unseen.append((container, key, where, exec_form))
+    target = ""
+    if unseen:
+        # A site whose start the probe never saw (DEF-5014) is rewired when the
+        # target's start was seen: an interpreter that hangs at start-up
+        # answers its banner, and the floor check keeps the banner's verdict,
+        # so without this the repair said "nothing to rewire" over a working
+        # one (failure-mode review). Otherwise it is left and reported.
+        target = new_interpreter or _detect_python_command()
+        if interpreter_meets_floor(target) and start_unconfirmed_of(target) is None:
+            stale.extend(unseen)
+            unseen = []
+    left = [(where, container[key]) for container, key, where, _ in unseen]
     if not stale:
-        return RewireResult(REWIRE_NOTHING, declined=declined)
+        return RewireResult(REWIRE_NOTHING, declined=declined, unconfirmed=left)
 
-    target = new_interpreter or _detect_python_command()
+    target = target or new_interpreter or _detect_python_command()
     # Refuse rather than wire a name that fails the same floor. Rewiring 3.9 to
     # 3.9 would report success and change nothing -- the exact shape of the
     # defect this function exists to close.
@@ -8508,7 +8615,7 @@ def rewire_interpreter_in_settings(
         container[key] = new_command
         changes.append((where, old_command, new_command))
     if not changes:
-        return RewireResult(REWIRE_NOTHING, declined=declined)
+        return RewireResult(REWIRE_NOTHING, declined=declined, unconfirmed=left)
 
     backup_path = _back_up_settings(settings_path)
     # ensure_ascii=False: escaping the operator's own non-ASCII paths back to
@@ -8519,7 +8626,7 @@ def rewire_interpreter_in_settings(
         follow_symlinks=True,
     )
     return RewireResult(REWIRE_DONE, detail=_backup_detail(backup_path),
-                        changes=changes, declined=declined)
+                        changes=changes, declined=declined, unconfirmed=left)
 
 
 #: Paths Espalier itself deploys under ``tools/cc/``. Derived from the deploy
@@ -8556,14 +8663,17 @@ class _WiredEntry(NamedTuple):
 
 class _NotPython3(NamedTuple):
     """One spelling the identity arm found not answering as a Python 3: what
-    its head resolves to (or None), the deployed scripts wired through it, and
-    the shape that decides its remedy (form, cut path, the argv probed)."""
+    its head resolves to (or None), the deployed scripts wired through it, the
+    shape that decides its remedy (form, cut path, the argv probed), and
+    whether it answered as one and only its start went unconfirmed, on a probe
+    that never answered (``DEF-5014``)."""
 
     resolved: str | None
     rels: list[str]
     exec_form: bool
     cut: bool
     argv: tuple
+    unconfirmed: bool = False
 
 
 def _wired_entry(hook: dict, rels: list[str]) -> _WiredEntry:
@@ -8773,7 +8883,7 @@ def _not_python3_from_entries(
     is a false alarm the operator can re-run, never a false all-clear, so the
     arm asserts rather than abstains; the retry keeps the alarm rare.
     """
-    verdicts: dict[str, tuple[str | None, bool]] = {}
+    verdicts: dict[str, tuple[str | None, bool, bool]] = {}
     failing: dict[str, list[str]] = {}
     shapes: dict[str, _WiredEntry] = {}
     for entry in entries:
@@ -8791,12 +8901,18 @@ def _not_python3_from_entries(
                 # A genuine Python 2 answers fast, so the retry costs it little;
                 # a slow shim gets the second chance the docstring describes.
                 answered = _doctor._interpreter_is_python3(resolved, *flags)
-            # The start-up probe gives a timeout its own second chance.
-            if answered and resolved and (
-                _doctor._interpreter_start_failure([resolved, *flags]) is not None
-            ):
+            # The start-up probe gives a timeout its own second chance. A start
+            # it never saw withholds the claim too, since the claim must never
+            # be a false all-clear; the narration says it was not confirmed
+            # rather than that it cannot start (DEF-5014). One kept verdict
+            # answers both questions.
+            cannot_start = unconfirmed = None
+            if answered and resolved:
+                cannot_start = _doctor._interpreter_start_failure([resolved, *flags])
+                unconfirmed = _doctor._interpreter_start_unconfirmed([resolved, *flags])
+            if cannot_start is not None or unconfirmed is not None:
                 answered = False
-            verdicts[token] = (resolved, answered)
+            verdicts[token] = (resolved, answered, unconfirmed is not None)
         if verdicts[token][1]:
             continue
         bucket = failing.setdefault(token, [])
@@ -8808,7 +8924,8 @@ def _not_python3_from_entries(
             exec_form=seen.exec_form and entry.exec_form, cut=seen.cut or entry.cut)
     return {
         token: _NotPython3(verdicts[token][0], sorted(rels), shapes[token].exec_form,
-                           shapes[token].cut, shapes[token].argv or (token,))
+                           shapes[token].cut, shapes[token].argv or (token,),
+                           verdicts[token][2])
         for token, rels in failing.items()
     }
 
@@ -9460,7 +9577,9 @@ def _disarmed_diagnosis_shape(repo_root: Path) -> tuple[str, list[str], bool]:
         # through it at once, whatever shape the entries have, so it is named
         # before the per-gate shapes. Sorted for a stable sentence: the first
         # word carries the prose, the rest are counted.
-        token, first = sorted(not_python3.items())[0]
+        # A word whose start only went unconfirmed is narrated last: one that
+        # fails outright is the headline whenever there is one (DEF-5014).
+        token, first = sorted(not_python3.items(), key=lambda kv: (kv[1].unconfirmed, kv[0]))[0]
         resolved = first.resolved
         # The head and the launcher's flag, probed as the hooks run them
         # (DEF-1146): a bare `py` would ask the launcher's default.
@@ -9471,6 +9590,24 @@ def _disarmed_diagnosis_shape(repo_root: Path) -> tuple[str, list[str], bool]:
             f"resolves to {resolved} but does not answer as Python 3"
             if resolved else "does not resolve on this host"
         )
+        if first.unconfirmed and resolved:
+            # No verdict on the interpreter (DEF-5014): the claim is withheld,
+            # never asserted, and neither "fails OPEN" nor a rewire whose
+            # target is this same interpreter is said. Read from the fold's
+            # own verdict: a second banner ask has no retry, and a miss there
+            # turned this back into DEF-5014's sentence (code review).
+            unseen = (_doctor._interpreter_start_unconfirmed([resolved, *flags])
+                      or "its start was not confirmed")
+            return (
+                f"Hooks are not confirmed active: settings.json runs its hooks "
+                f"with {token!r}{extra}, which resolves to {resolved} and answers "
+                f"as Python 3, but {unseen}.",
+                [f"Run `{py} -m espalier doctor .`: "
+                 f"it gives the interpreter the {_doctor._blocking_hook_seconds()} s "
+                 f"a blocking hook gets, and names it if it does not start in that "
+                 f"time."],
+                False,
+            )
         if resolved and _doctor._interpreter_is_python3(resolved, *flags):
             # The banner answered and the start-up probe did not: say that,
             # not "does not answer as Python 3" about an interpreter that
