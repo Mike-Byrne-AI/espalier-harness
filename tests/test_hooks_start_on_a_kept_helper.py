@@ -818,7 +818,7 @@ class TestTheOneRestoreAWedgedGuardLetsThrough:
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-c", "core.autocrlf=false", "-c", "user.name=wedge", "-c", "user.email=wedge@example.invalid",
-         *args], cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+         *args], cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45)
 
 
 def _committed_copy(root: Path) -> None:
