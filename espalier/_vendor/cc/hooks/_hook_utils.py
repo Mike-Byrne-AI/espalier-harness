@@ -2740,7 +2740,9 @@ def rooted(spelled: str) -> bool:
     below the start (DEF-1175). A drive-relative ``C:x`` counts as anchored.
     The ``..`` half stays with each caller, which handles it its own way: the
     plan gate reads a path `normalize_path` already resolved, the carve-out
-    refuses a ``..`` step, and `join_directory` joins one."""
+    refuses a ``..`` step, and `join_directory` joins one. One parse on every
+    host, by design: the same answer everywhere is the point, and it is asked
+    per plan check and per carve-out target, never per directory join."""
     return bool(PureWindowsPath(spelled).anchor)
 
 
@@ -2766,16 +2768,19 @@ def git_bash_tmp_tail(spelled: str) -> str | None:
     return "".join("/" + part for part in parts[1:])
 
 
-#: A value of ``TEMP``, ``TMP`` or ``TMPDIR`` that can be where Git for
-#: Windows mounts ``/tmp``: drive-qualified, with at least one component.
+#: A value of ``TMP`` or ``TEMP`` that can be where Git for Windows mounts
+#: ``/tmp``: drive-qualified, with at least one component.
 _GIT_BASH_TMP_VALUE_RE = re.compile(r"^[A-Za-z]:/[^/]")
 
 
 def git_bash_tmp_mount(spelled: str) -> str | None:
     """Where Git for Windows puts a `git_bash_tmp_tail` spelling: the first
-    drive-qualified value of ``TEMP``, ``TMP`` or ``TMPDIR``, with the tail,
-    in forward slashes; ``None`` for any other spelling, off Windows, and
-    when no value qualifies (the caller keeps its own reading).
+    drive-qualified value of ``TMP`` then ``TEMP`` -- the order
+    ``GetTempPathW`` reads them in, which the ``usertemp`` mount is built
+    from (probable: the runtime DLL imports it; verified that with ``TEMP``
+    and ``TMP`` set apart, ``GetTempPathW`` answers ``TMP``) -- with the
+    tail, in forward slashes; ``None`` for any other spelling, off Windows,
+    and when neither qualifies (the caller keeps its own reading).
 
     A PROXY, declared. The mount is the session's mount table, which the
     first Git Bash process of the user's session builds; the hook sees only
@@ -2789,7 +2794,7 @@ def git_bash_tmp_mount(spelled: str) -> str | None:
     tail = git_bash_tmp_tail(spelled)
     if tail is None:
         return None
-    for var in ("TEMP", "TMP", "TMPDIR"):
+    for var in ("TMP", "TEMP"):
         value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
         if _GIT_BASH_TMP_VALUE_RE.match(value):
             return value + tail
@@ -3213,6 +3218,16 @@ def normalize_path_str(value: object, root: Path) -> str:
         # out-of-prefix as a bare ``../<repo>/...`` string.
         collapsed = posixpath.normpath(posixpath.join(root_posix, cleaned))
     hit = containing_checkout(collapsed, root)
+    if hit is None and os.name == "nt" and collapsed[:1] == "/" and collapsed[1:2] != "/":
+        # A rooted leaf with no drive is on the current drive to Windows, and
+        # Layer 1's resolve() anchors it there (`normalize_path`); read as
+        # typed it matched no checkout, so the plan gate's one judge
+        # (`rooted`) read a drive-less spelling of a path inside the checkout
+        # as outside it (DEF-1175's review, driven through an MCP write). The
+        # root's drive stands in for the current one: the hook runs there.
+        drive = PureWindowsPath(root_posix).drive
+        if drive:
+            hit = containing_checkout(drive + collapsed, root)
     # Under a checkout (root or a sibling worktree) -> the remainder relative to
     # it; otherwise the collapsed absolute (out-of-repo, correctly will NOT match
     # a repo-relative protected prefix). The checkout list is memoised per
@@ -3309,6 +3324,16 @@ def resolve_bash_in_checkout(
     try:
         resolved = ((base or root) / cleaned).resolve()
         hit = containing_checkout(str(resolved).replace("\\", "/"), root)
+        mount = git_bash_tmp_mount(cleaned) if hit is None else None
+        if mount is not None:
+            # A typed Git Bash /tmp path is where Git for Windows mounts it
+            # (`git_bash_tmp_mount`): a checkout kept there was read at the
+            # drive root's tmp alone, so a write below its tools/cc passed the
+            # zone typed while `cd` to it and the same write walled (DEF-1175).
+            # The drive root's reading is asked first, as before, so no zone
+            # it found is lost; the separator fold above makes a backslash-led
+            # spelling, which Git Bash reads at the drive root, read both ways.
+            hit = containing_checkout(str(Path(mount).resolve()).replace("\\", "/"), root)
         if hit is not None:
             return _base_path(hit[0], root), hit[1] or "."
     except (ValueError, OSError):
@@ -3369,11 +3394,17 @@ def directory_exists(start: Path, *, bash: bool) -> "Callable[[str], bool]":
     post_write_check, so a rule about what counts as "there" (a directory the
     same command makes is credited by the walk itself) reaches both.
     ``bash`` is `join_directory`'s: REQUIRED, so a chain cannot be asked in
-    the other shell's reading by default. There at any place
-    `joined_directories` names is there."""
+    the other shell's reading by default. Asked at the ONE place the shell
+    reads the spelling, never at every place `joined_directories` names: a
+    `cd` Git Bash fails leaves the shell where it was, and what follows runs
+    there. Asked at both, ``cd '\\tmp\\<m>'; echo x > tools/cc/x`` with
+    ``<m>`` only in the temp directory read as entered, and a write into the
+    checkout passed (the failure-mode review, driven against Git Bash). The
+    chain hands a backslash-led target here as typed for that reason
+    (`_bash_patterns._step_one`)."""
     def exists(spelled: str) -> bool:
         try:
-            return any(p.is_dir() for p in joined_directories(start, spelled, bash=bash))
+            return join_directory(start, spelled, bash=bash).is_dir()
         except (OSError, ValueError):  # fail-open: ok deliberate -- a directory the cd-walk cannot read is not entered; the command is judged where it stands
             return False
     return exists
@@ -3387,7 +3418,8 @@ def joined_directories(start: Path, spelled: str | None, *, bash: bool) -> list[
     rooted backslash spelling (``\\tmp``) as the drive root's, so both
     readings stand: a site that judges every place keeps each wall and nudge
     the drive-root reading had before 2026-10-15 and adds the mount's. The
-    form every site that builds a list of bases asks."""
+    form every site that builds a list of bases asks; whether a `cd` got
+    there is `directory_exists`'s, at one place."""
     here = join_directory(start, spelled, bash=bash)
     if bash and spelled is not None and git_bash_tmp_tail(spelled) is not None:
         there = join_directory(start, spelled, bash=False)

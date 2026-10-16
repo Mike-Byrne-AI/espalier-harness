@@ -1255,16 +1255,45 @@ class TestRootedPathJudge:
         want = {s: (tails.get(s) if _ON_WINDOWS else None) for s in got}
         assert got == want
 
-    def test_the_mount_is_the_first_drive_qualified_temp_value(self, monkeypatch):
+    @staticmethod
+    def _mounts(hu, monkeypatch) -> list:
+        """The mount's readings, in GetTempPathW's order (TMP, then TEMP)."""
+        got = []
+        for tmp, temp in (("C:\\Users\\u\\AppData\\Local\\Temp", "D:/other"),   # both qualify: TMP
+                          ("relative/tmp", "D:/other"),                         # TMP does not: TEMP
+                          ("C:/", "C:/")):                                       # a bare drive root: none
+            monkeypatch.setenv("TMP", tmp)
+            monkeypatch.setenv("TEMP", temp)
+            got.append(hu.git_bash_tmp_mount("/tmp/x"))
+        got.append(hu.git_bash_tmp_mount("/var/tmp/x"))
+        return got
+
+    def test_the_mount_is_the_first_drive_qualified_value_in_get_temp_path_order(self, monkeypatch):
         import _hook_utils as hu
-        monkeypatch.setenv("TEMP", "relative/temp")
-        monkeypatch.setenv("TMP", "C:\\Users\\u\\AppData\\Local\\Temp")
-        monkeypatch.setenv("TMPDIR", "D:/other")
-        assert hu.git_bash_tmp_mount("/tmp/x") == ("C:/Users/u/AppData/Local/Temp/x" if _ON_WINDOWS else None)
-        assert hu.git_bash_tmp_mount("/var/tmp/x") is None
-        for var in ("TEMP", "TMP", "TMPDIR"):
-            monkeypatch.setenv(var, "C:/")
-        assert hu.git_bash_tmp_mount("/tmp/x") is None, "a drive root with no component is no mount"
+        monkeypatch.setenv("TMPDIR", "E:/never")
+        want = ["C:/Users/u/AppData/Local/Temp/x", "D:/other/x", None, None] if _ON_WINDOWS else [None] * 4
+        assert self._mounts(hu, monkeypatch) == want
+
+    def test_the_tmp_readers_answer_as_on_windows_on_every_host(self, monkeypatch):
+        """The two readers ask only the string and the environment, so a
+        POSIX cell pins the Windows answer under ``os.name == "nt"``: the
+        required cells run on Linux, and the Windows-only rows would let a
+        refactor from another host pass every gate."""
+        import _hook_utils as hu
+        monkeypatch.setattr(hu.os, "name", "nt")
+        tails = [hu.git_bash_tmp_tail(s) for s in ("/tmp", "/TMP/x", "/tmp\\x", "\\tmp\\x", "//tmp/x", "/var/tmp")]
+        mounts = self._mounts(hu, monkeypatch)
+        monkeypatch.undo()
+        assert tails == ["", "/x", "/x", None, None, None]
+        assert mounts == ["C:/Users/u/AppData/Local/Temp/x", "D:/other/x", None, None]
+
+    def test_an_mcp_leaf_spelled_without_its_drive_is_read_inside_the_checkout(self, tmp_path):
+        """Layer 2 (`normalize_path_str`) anchors a rooted leaf with no drive
+        on the root's drive, as Layer 1's resolve() does, so the plan gate's
+        judge (`rooted`) never reads an in-checkout path as outside it."""
+        import _hook_utils as hu
+        inside = (tmp_path / "src" / "a.py").as_posix()
+        assert hu.normalize_path_str(inside[2:] if inside[1:2] == ":" else inside, tmp_path) == "src/a.py"
 
     def test_each_shell_joins_tmp_where_it_lands(self, monkeypatch, tmp_path):
         import _hook_utils as hu

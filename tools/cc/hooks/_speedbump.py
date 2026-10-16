@@ -884,7 +884,9 @@ def _placed_rm_readings(
     (`_bash_patterns._scratch_holds_no_work`), so the two spellings are one
     judge. Joined, it was read at the drive root's ``tmp`` alone, and a clone
     kept where Git for Windows mounts ``/tmp`` passed with no nudge
-    (DEF-1175)."""
+    (DEF-1175). The drive root's reading joined on the start's drive rides
+    beside it, since the spelled one is resolved on the hook process's
+    drive: a base only adds places, so it only adds friction."""
     expanded = _bash_patterns._expand_simple_var_assignments(
         _bash_patterns.bind_mktemp_scratch(_bash_patterns._cap_for_scan(text)))
     if at is None:
@@ -897,12 +899,14 @@ def _placed_rm_readings(
     out: list[tuple[bool, list[str], list[str | None]]] = []
     # a quoted operand the chain's boundary cut is read whole (the reader's view)
     for s, e, dirs in _bash_patterns.chain_statement_slices(chained, statements):
-        bases: list[str | None] = [
-            None if d is None
-            else d if _hook_utils.git_bash_tmp_tail(d) is not None
-            else str(join_directory(at, d, bash=True))
-            for d in dirs
-        ]
+        bases: list[str | None] = []
+        for d in dirs:
+            if d is None:
+                bases.append(None)
+            elif _hook_utils.git_bash_tmp_tail(d) is not None:
+                bases.extend((d, str(join_directory(at, d, bash=False))))
+            else:
+                bases.append(str(join_directory(at, d, bash=True)))
         for rec, _f, ops in _bash_patterns.iter_rm_invocations(chained[s:e]):
             out.append((rec, ops, bases))
     return out

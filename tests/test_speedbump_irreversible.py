@@ -1137,9 +1137,11 @@ class TestGitBashTmpMount:
         import uuid
         mount, repo = tmp_path / "mount", tmp_path / "repo"
         mount.mkdir()
-        repo.mkdir()
+        (repo / "tools" / "cc").mkdir(parents=True)
         for var in ("TEMP", "TMP", "TMPDIR"):
             monkeypatch.setenv(var, str(mount))
+        # the drive root's tmp on the start's drive, where the hooks join it
+        monkeypatch.chdir(repo)
         drive_tmp = Path(os.path.realpath("/tmp"))
         made = not drive_tmp.exists()
         drive_tmp.mkdir(exist_ok=True)
@@ -1154,6 +1156,20 @@ class TestGitBashTmpMount:
                     drive_tmp.rmdir()
                 except OSError:
                     pass
+
+    @staticmethod
+    def _zone_denies(command: str, root: Path, cwd: Path) -> bool:
+        """write_guard's Bash zone check denies: its one output shape, the
+        structured deny on stdout."""
+        import contextlib
+        import io
+        import json
+        import write_guard
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            write_guard.check_bash_for_protected_mutations(command, root, cwd)
+        text = out.getvalue().strip()
+        return bool(text) and json.loads(text)["hookSpecificOutput"]["permissionDecision"] == "deny"
 
     @staticmethod
     def _spellings(name: str) -> list[str]:
@@ -1198,9 +1214,6 @@ class TestGitBashTmpMount:
         `tools/cc` is the zone's. Read at the drive root, the `cd` failed and
         both were judged where the command started: the delete drew the
         clearable nudge and the write passed."""
-        import contextlib
-        import io
-        import write_guard
         _repo, mount, _drive_tmp, tag = places
         held = mount / f"espalier-checkout-{tag}"
         (held / ".git").mkdir(parents=True)
@@ -1209,10 +1222,44 @@ class TestGitBashTmpMount:
         elsewhere.mkdir()
         cd = f"cd /tmp/{held.name} && "
         assert _bash_patterns.has_catastrophic_recursive_rm(cd + "rm -rf .", str(held), cwd=elsewhere)
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            code = write_guard.check_bash_for_protected_mutations(cd + "echo x > tools/cc/probe.py", held, elsewhere)
-        assert code or "deny" in out.getvalue()
+        assert self._zone_denies(cd + "echo x > tools/cc/probe.py", held, elsewhere)
+
+    def test_a_typed_tmp_path_into_a_checkout_kept_there_meets_its_walls(self, places, tmp_path):
+        """The typed spelling of the row above: `/tmp/<checkout>` is where
+        Git for Windows mounts `/tmp` too (`_hook_utils.
+        resolve_bash_in_checkout`, the rm walk's typed reading). Read at the
+        drive root alone, the write below `tools/cc` and its delete passed
+        the zone and a delete of the checkout drew only the nudge, while the
+        `cd` spelling walled all three."""
+        _repo, mount, _drive_tmp, tag = places
+        held = mount / f"espalier-checkout-{tag}"
+        (held / ".git").mkdir(parents=True)
+        (held / "tools" / "cc").mkdir(parents=True)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        typed = f"/tmp/{held.name}"
+        assert self._zone_denies(f"echo x > {typed}/tools/cc/probe.py", held, elsewhere)
+        assert self._zone_denies(f"rm -rf {typed}/tools/cc", held, elsewhere)
+        assert _bash_patterns.has_catastrophic_recursive_rm(f"rm -rf {typed}", str(held), cwd=elsewhere)
+
+    def test_a_cd_git_bash_fails_leaves_what_follows_where_the_shell_stands(self, places):
+        """Git Bash fails `cd '\\tmp\\<m>'` when `<m>` is only in the temp
+        directory (a backslash-led path is the drive root's), and `cd
+        /tmp/<d>` when `<d>` is only at the drive root's `tmp` (driven, rc=1
+        each), so the statements after either run in the checkout. Whether a
+        `cd` got there is asked at the one place the shell reads
+        (`_hook_utils.directory_exists`); asked at both, the first read as
+        entered and a write into `tools/cc` passed (the failure-mode review),
+        and the second passed on the base as well."""
+        repo, mount, drive_tmp, tag = places
+        only_mount, only_drive = mount / f"espalier-m-{tag}", drive_tmp / f"espalier-d-{tag}"
+        only_mount.mkdir()
+        only_drive.mkdir()
+        for cd in (f"cd '\\tmp\\{only_mount.name}'", f"cd /tmp/{only_drive.name}"):
+            assert self._zone_denies(cd + "; echo x > tools/cc/probe.py", repo, repo), cd
+            assert self._zone_denies(cd + "\nrm -rf tools", repo, repo), cd
+            assert _fires(_speedbump._pred_rmrf, cd + "; rm -rf src", repo), cd
+            assert _bash_patterns.has_catastrophic_recursive_rm(cd + "; rm -rf *", str(repo), cwd=repo), cd
 
     def test_a_checkout_at_the_drive_roots_tmp_keeps_its_walls_after_a_backslash_cd(self, places, tmp_path):
         """Git Bash reads `\\tmp` as the drive root's, and the chain folds the
@@ -1228,17 +1275,21 @@ class TestGitBashTmpMount:
         command = f"cd '\\tmp\\{held.name}' && rm -rf ."
         assert _bash_patterns.has_catastrophic_recursive_rm(command, str(held), cwd=elsewhere)
 
-    def test_a_target_led_by_a_backslash_is_read_at_the_drive_root(self, places):
+    def test_a_target_led_by_a_backslash_keeps_the_nudge(self, places):
         """Git Bash reads `\\tmp\\x` as the drive root's `C:\\tmp\\x`, never
-        as a name below the directory a `cd` reached, so a clone there keeps
-        the nudge after a `cd` into scratch."""
+        as a name below the directory a `cd` reached. The carve-out reads it
+        as rooted (`_hook_utils.rooted`) and no backslash-led spelling is a
+        scratch literal, so it keeps the nudge whether a clone is there or
+        nothing is: it is never scratch, and a later carve-out for it would
+        have to read it at the drive root."""
         repo, mount, drive_tmp, tag = places
         (mount / f"espalier-sub-{tag}").mkdir()
         (drive_tmp / f"espalier-sub-{tag}").mkdir()
         held = drive_tmp / f"espalier-clone-{tag}"
         (held / ".git").mkdir(parents=True)
-        command = f"cd /tmp/espalier-sub-{tag} && rm -rf '\\tmp\\{held.name}'"
-        assert _fires(_speedbump._pred_rmrf, command, repo), command
+        for name in (held.name, f"espalier-none-{tag}"):
+            command = f"cd /tmp/espalier-sub-{tag} && rm -rf '\\tmp\\{name}'"
+            assert _fires(_speedbump._pred_rmrf, command, repo), command
 
 
 # ── CP-FETCHEXEC ──────────────────────────────────────────────────────────────

@@ -6727,20 +6727,29 @@ def _step_one(
     the ``exists`` oracle refuses leaves the directory where it was, as a
     failed `cd` does (driven: `cd /nonexistent; echo x > <hook>` writes in
     the old directory); without an oracle every readable target is assumed
-    to succeed."""
+    to succeed. A target led by ONE backslash is asked of the oracle as
+    typed, and recorded folded: Git Bash reads ``\\tmp\\x`` as the drive
+    root's and ``/tmp/x`` as where Git for Windows mounts ``/tmp``
+    (`_hook_utils.git_bash_tmp_tail`), so the folded spelling asked the
+    other place, and a `cd` the shell fails read as entered (DEF-1175's
+    review). A relative `cd` after it is built on the folded spelling, a
+    declared limit."""
+    probe: str | None = None
     if not target:
         new: str | None = "~"                   # `cd` alone goes home
     elif target == "-" or "$" in target or "`" in target:
         return None                             # the indirection class
     else:
-        target = target.replace("\\", "/")
+        raw, target = target, target.replace("\\", "/")
         if target.startswith(("~", "/")) or _DRIVE_OR_UNC_ABSOLUTE_RE.match(target):
             new = target
+            if raw[:1] == "\\" and raw[1:2] != "\\":
+                probe = raw
         elif cwd is None:
             return None
         else:
             new = posixpath.normpath(posixpath.join(cwd, target))
-    if new is not None and exists is not None and not exists(new):
+    if new is not None and exists is not None and not exists(probe or new):
         return cwd                              # the shell stays put
     return new
 
@@ -12389,6 +12398,16 @@ def _rm_lands_catastrophic(
         # unknown directory (a superset; the net keeps its own reading)
         here = candidates + [None] if in_string and not net and None not in candidates else candidates
         for op in operands:
+            # A typed Git Bash /tmp target is where Git for Windows mounts it
+            # as well (`_hook_utils.git_bash_tmp_mount`): a checkout kept there
+            # drew only the nudge typed as `/tmp/<root>` while `cd /tmp` and
+            # `rm -rf <root>` walled (DEF-1175). A literal spelling only; the
+            # brace and glob analysis below keeps the typed reading.
+            spelled = _shell_unquote(op)
+            mount = (None if any(ch in spelled for ch in "$`*?[{") else
+                     _hook_utils.git_bash_tmp_mount(spelled))
+            if mount is not None and _target_is_catastrophic(mount, root, None, net=net):
+                return True
             for base in here:
                 if _operand_can_be_catastrophic(op, None, root, base, net=net):
                     return True

@@ -701,6 +701,20 @@ class TestPlanGuardOutOfRepoExemption:
         spelled = inside[2:] if inside[1:2] == ":" else inside
         assert_hook_denied(run_hook_edit(spelled, tmp_path))
 
+    def test_a_rooted_spelling_inside_the_checkout_through_an_mcp_write_still_requires_a_plan(self, tmp_path):
+        """The MCP leaf walk normalises by Layer 2 (`normalize_path_str`),
+        which until the review left a drive-less leaf as typed, so the judge
+        read it as outside the checkout and the write went exempt."""
+        inside = (tmp_path / "src" / "module.py").as_posix()
+        payload = {"tool_name": "mcp__filesystem__write_file",
+                   "tool_input": {"path": inside[2:] if inside[1:2] == ":" else inside, "content": "x"}}
+        result = subprocess.run(
+            [sys.executable, str(HOOKS_DIR / "plan_guard.py")], input=json.dumps(payload),
+            capture_output=True, text=True, timeout=10, encoding="utf-8",
+            env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
+        )
+        assert_hook_denied(result)
+
 
 # ── TP-142 (FM-2 §10.4): fail-closed umbrella ──────────────────────────
 
