@@ -479,9 +479,10 @@ class TestTheHookSideNamesOnlyAnInterpreterThatStarts:
 
 class TestTheHookStartProbesOwnRule:
     """The reporter's start probe and where it differs from the engine's on
-    purpose (its docstring names both): no ``-I`` and no environment rescue,
-    since a hook inherits this session's environment, and two timeouts keep
-    the banner's verdict. The shortcut for the running interpreter keys on
+    purpose (its docstring names it): no ``-I`` and no environment rescue,
+    since a hook inherits this session's environment. Two timeouts keep the
+    banner's verdict, as the engine's do since DEF-5014 (the agreement is
+    pinned in ``tests/test_python_floor.py``). The shortcut for the running interpreter keys on
     its invoked path, as the engine's does. Each pinned here, since four
     mutants of the first draft survived every test (failure-mode review)."""
 

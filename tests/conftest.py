@@ -165,8 +165,26 @@ def _isolate_interpreter_identity_memo():
         _clear_hook_utils_memos(_sys.modules.get("_hook_utils"))
     except Exception:  # noqa: BLE001, S110 - a missing hook module must not break collection
         pass
+    _clear_engine_interpreter_memos()
     yield
     _clear_hook_utils_memos(__import__("sys").modules.get("_hook_utils"))
+    _clear_engine_interpreter_memos()
+
+
+def _clear_engine_interpreter_memos() -> None:
+    """Clear the engine's per-process interpreter verdicts (DEF-5014): the
+    start-up probe's (`espalier._python_floor._START_VERDICTS`) and the
+    venv-only probe's (`espalier.cli._VENV_ONLY_VERDICTS`). Production keeps
+    them for one CLI run; one pytest process spans the suite, so a verdict one
+    test drove would answer the next test's ask (both reviews of DEF-5014
+    drove a test that passed or failed by order). A module not yet imported
+    has nothing kept."""
+    import sys as _sys
+    for module, name in (("espalier._python_floor", "_START_VERDICTS"),
+                         ("espalier.cli", "_VENV_ONLY_VERDICTS")):
+        memo = getattr(_sys.modules.get(module), name, None)
+        if memo is not None:
+            memo.clear()
 
 
 def _clear_hook_utils_memos(live) -> None:

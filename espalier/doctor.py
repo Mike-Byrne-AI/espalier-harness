@@ -28,8 +28,9 @@ from espalier._venv import (
 from espalier._integrity_bridge import load_integrity_module
 from espalier._text import plural
 from espalier._python_floor import (
-    START_UNANSWERED, floor_text, interpreter_argv, interpreter_meets_floor,
-    interpreter_start_failure, is_python3_banner, start_refuted,
+    START_TOO_SLOW, floor_text, interpreter_argv, interpreter_meets_floor,
+    interpreter_start_failure, interpreter_start_failure_within,
+    interpreter_start_unconfirmed, is_python3_banner, start_unconfirmed_of,
 )
 from espalier._report_io import load_harness_plan, report_is_json_object
 from espalier._spawn import run_bounded
@@ -532,12 +533,26 @@ _interpreter_meets_floor = interpreter_meets_floor
 
 # ``_interpreter_start_failure(argv)`` -- why the interpreter at ``argv``
 # cannot start, or None (DEF-915). An alias seam like the one above, read by
-# the two callers that need its EVIDENCE (this module's resolver check and
-# ``cli``'s enforcement-claim identity arm), so a test can patch both here.
-# The floor probe calls ``_python_floor.interpreter_start_failure`` itself, so
-# a patch on this name does NOT reach it: patch ``_interpreter_meets_floor``
-# for that.
+# the callers that need its EVIDENCE (this module's resolver check, at three
+# sites, and ``cli``'s enforcement-claim identity arm and its narration), so a
+# test can patch them all here. The floor probe calls
+# ``_python_floor.interpreter_start_failure`` itself, so a patch on this name
+# does NOT reach it: patch ``_interpreter_meets_floor`` for that.
 _interpreter_start_failure = interpreter_start_failure
+
+# ``_interpreter_start_unconfirmed(argv)`` -- the clause when the start-up
+# probe never answered, or None -- and ``_interpreter_start_failure_within(argv,
+# seconds)`` -- why it does not start in that time (DEF-5014). Alias seams like
+# the one above, for the same readers.
+_interpreter_start_unconfirmed = interpreter_start_unconfirmed
+_interpreter_start_failure_within = interpreter_start_failure_within
+
+
+def _blocking_hook_seconds() -> int:
+    """The time a blocking hook gets per tool call: ``write_guard``'s timeout,
+    read from the wiring every hook command is built from."""
+    from espalier.harness_config import CANONICAL_HOOK_WIRING
+    return int(CANONICAL_HOOK_WIRING["write_guard.py"]["timeout"])
 
 
 def _host_is_windows() -> bool:
@@ -669,10 +684,15 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
 
 
 def _check_python_resolver(
-    repo_root: Path, settings_path: Path | None = None
+    repo_root: Path, settings_path: Path | None = None,
+    out_of_time: list[str] | None = None,
 ) -> list[str]:
     """Verify the python interpreter named in ``.claude/settings.json`` resolves
     on the current host. Returns a list of warning strings (empty if no issue).
+
+    ``out_of_time`` collects each wired command whose interpreter did not start
+    within the time a blocking hook gets (``DEF-5014``), so the caller can give
+    those their own next step, read from this list and never from the text.
 
     Reads ``hooks[*].hooks[*].command`` from settings.json; for python-like
     names (``python``, ``python3``, ``python3.12``, ``py``), runs
@@ -836,9 +856,10 @@ def _check_python_resolver(
                 # runs NO guard, while a below-floor 3.9 runs them all.
                 cannot_start = _interpreter_start_failure([resolved, *flags])
                 # A start-up probe that never answered kept the banner's
-                # verdict in the floor check, so a False here with no refuted
-                # start is a banner below the floor (DEF-5014).
-                if start_refuted(cannot_start):
+                # verdict in the floor check (DEF-5014), so a False here with
+                # no failure to start is a banner below the floor, or a banner
+                # probe that did not answer in its time (DEF-5015).
+                if cannot_start is not None:
                     problem = (
                         f"hook interpreter `{cmd}` resolves to `{resolved}` and "
                         f"answers `--version` as Python 3, but {cannot_start} -- "
@@ -855,10 +876,19 @@ def _check_python_resolver(
                     # exactly when the rewire has a target that starts.
                     remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
                     if clears:
-                        start_hint = (
-                            f"`{remedy}` starts and clears the floor -- run "
-                            f"`{remedy} -m espalier init . --rewire-interpreter` "
-                            f"to rewire the hooks to it."
+                        # "starts" only of a start that was seen (DEF-5014):
+                        # the rewire takes its target on the banner when the
+                        # probe never answered, so the remedy stands, and the
+                        # sentence names the target (what the rewire WRITES,
+                        # in a string of its own) and says only what was seen.
+                        written = _resolver_hint()
+                        unseen = start_unconfirmed_of(written)
+                        target_said = (
+                            f"`{written}` starts and clears the floor" if unseen is None
+                            else f"`{written}` answers as Python {floor_text()}+ ({unseen})")
+                        start_hint = target_said + (
+                            f" -- run `{remedy} -m espalier init . "
+                            f"--rewire-interpreter` to rewire the hooks to it."
                         )
                     else:
                         start_hint = (
@@ -885,24 +915,53 @@ def _check_python_resolver(
                         f"raises SyntaxError every session. Install Python "
                         f"{floor_text()} or newer and re-wire the hooks to it. "
                     )
+            elif _interpreter_start_unconfirmed([resolved, *flags]) is None:
+                continue  # resolves, is Python 3, clears the floor, starts.
             else:
                 # The floor check kept the banner's verdict on a start-up probe
-                # that never answered (DEF-5014), so this claim says the start
-                # was not confirmed rather than call the interpreter healthy,
-                # and steps to doctor again, not to a rewire whose target is
-                # this same interpreter. The verdict is the one the process
-                # kept for this file, so the probe is not run twice.
-                unconfirmed = _interpreter_start_failure([resolved, *flags])
-                if unconfirmed is None or not unconfirmed.startswith(START_UNANSWERED):
-                    continue  # resolves, is Python 3, clears the floor, starts.
-                py = py or _remedy_py()
-                issues.append(
-                    f"hook interpreter `{cmd}` resolves to `{resolved}` and "
-                    f"answers `--version` as Python {floor_text()}+, but "
-                    f"{unconfirmed}. Run `{py} -m espalier doctor .` again on a "
-                    f"less loaded machine to confirm it starts."
-                )
-                continue
+                # that never answered (DEF-5014). Health is not claimed on a
+                # start nobody saw, nor is "cannot start": the interpreter gets
+                # one try with the time a blocking hook gets per tool call.
+                seconds = _blocking_hook_seconds()
+                late = _interpreter_start_failure_within([resolved, *flags], seconds)
+                if late is None:
+                    continue  # it starts, given a blocking hook's time
+                if not late.startswith(START_TOO_SLOW):
+                    problem = (
+                        f"hook interpreter `{cmd}` resolves to `{resolved}` and "
+                        f"answers `--version` as Python 3, but {late} -- so every "
+                        f"hook spawned with it exits outside the blocking range "
+                        f"and each guard fails OPEN while init reports success. "
+                    )
+                else:
+                    if out_of_time is not None:
+                        out_of_time.append(cmd)
+                    problem = (
+                        f"hook interpreter `{cmd}` resolves to `{resolved}` and "
+                        f"answers `--version` as Python {floor_text()}+, but did "
+                        f"not start within {seconds} s, the time a blocking hook "
+                        f"gets per tool call, so every blocking guard wired with "
+                        f"it runs out of time before it decides and fails OPEN: "
+                        f"this host is that loaded now, or the interpreter hangs "
+                        f"at start-up. "
+                    )
+                # The rewire takes only a target whose start it saw for a site
+                # like this one, so the remedy is keyed on that.
+                remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
+                written = _resolver_hint()
+                if clears and start_unconfirmed_of(written) is None:
+                    start_hint = f"`{written}` starts and clears the floor" + (
+                        f" -- run `{remedy} -m espalier init . --rewire-interpreter` "
+                        f"to rewire the hooks to it."
+                    )
+                else:
+                    start_hint = (
+                        f"Run `{remedy} -m espalier doctor .` again when the "
+                        f"host is less loaded; if `{cmd}` still does not start "
+                        f"in time, put a Python {floor_text()}+ that starts on "
+                        f"PATH and run `{remedy} -m espalier init . "
+                        f"--rewire-interpreter`."
+                    )
             py = py or _remedy_py()
             # DEF-620, one more time: do not prescribe `--rewire-interpreter`
             # for a site that verb will DECLINE. An unterminated quote and a
@@ -924,28 +983,28 @@ def _check_python_resolver(
                     "hand."
                 )
                 continue
-            py3_start = (
-                _interpreter_start_failure([shutil.which("python3") or "python3"])
-                if start_hint is None and py3_present else None
-            )
             if start_hint is not None:
                 hint = start_hint
-            elif py3_present and not start_refuted(py3_start):
+            elif py3_present and _interpreter_start_failure(
+                [shutil.which("python3") or "python3"]
+            ) is None:
                 # "WORKING" is said only of a `python3` that starts: its banner
                 # alone is what `py3_present` read (DEF-915), and on a host
                 # whose `python3` is a copied venv that cannot start this
                 # sentence sent the operator to a rewire that then found no
                 # target. Asked here, on the failure path only. A probe that
-                # never answered (DEF-5014) is no verdict: the rewire takes
-                # that `python3` on its banner, so it is still the remedy,
-                # and the sentence says only what was seen.
+                # never answered (DEF-5014) keeps the banner's verdict: the
+                # rewire takes that `python3` on it, so it is still the
+                # remedy, and the sentence says only what was seen.
                 # The common case -- `python3` IS on PATH but settings
                 # wired a different name (e.g. `python`) or a stale path.
                 # Re-init/symlink is the real fix, not installing python.
-                seen = ("a WORKING `python3`" if py3_start is None else
-                        f"a `python3` that answers as Python 3 ({py3_start})")
+                python3_unseen = _interpreter_start_unconfirmed(
+                    [shutil.which("python3") or "python3"])
+                python3_said = ("a WORKING `python3`" if python3_unseen is None else
+                                f"a `python3` that answers as Python 3 ({python3_unseen})")
                 hint = (
-                    f"{seen} IS on PATH -- re-run "
+                    f"{python3_said} IS on PATH -- re-run "
                     f"`{py} -m espalier init . --rewire-interpreter` "
                     f"to rewire the wired interpreter, or symlink `{cmd}` -> "
                     f"python3."
@@ -2989,19 +3048,28 @@ def run_doctor_check(
             "(`*.py[cod]` for `*.pyc`) is reported missing under that check"
         )
 
-    python_resolver_issues = _check_python_resolver(repo_root)
+    late_starts: list[str] = []
+    python_resolver_issues = _check_python_resolver(repo_root, out_of_time=late_starts)
     warnings.extend(python_resolver_issues)
-    # A hook interpreter whose start went unconfirmed (DEF-5014) steps to
-    # doctor again: the rewire's target would be that same interpreter.
-    unconfirmed_starts = [i for i in python_resolver_issues if START_UNANSWERED in i]
-    if unconfirmed_starts:
+    hint, resolver_clears_floor, probed = (
+        _remedy_hint() if python_resolver_issues else ("", False, ""))
+    # A wired interpreter that did not start in a blocking hook's time
+    # (DEF-5014), on a PATH with no target whose start was seen: the rewire
+    # would reach no interpreter that starts, so the step is doctor again on a
+    # less loaded host. Decided from the list `_check_python_resolver` fills,
+    # never from the warning text.
+    target_seen = resolver_clears_floor and start_unconfirmed_of(_resolver_hint()) is None
+    if late_starts and not target_seen:
         _append_step(
             next_steps,
-            f"run `{_remedy_py()} -m espalier doctor .` again on a less loaded "
-            f"machine: the hook interpreter's start-up probe did not answer, "
-            f"which a slow host does to a working interpreter, so it is asked again",
+            f"run `{hint} -m espalier doctor .` again when "
+            f"the host is less loaded: the hook interpreter "
+            f"{', '.join(f'`{c}`' for c in late_starts)} did not start within the "
+            f"{_blocking_hook_seconds()} s a blocking hook gets; if it still does "
+            f"not, put a Python {floor_text()}+ that starts on PATH and rewire the "
+            f"hooks to it",
         )
-    if len(unconfirmed_starts) < len(python_resolver_issues):
+    if python_resolver_issues and (target_seen or len(late_starts) < len(python_resolver_issues)):
         # DEF-620: this used to say plain `init .`, which does NOT overwrite an
         # existing settings.json (user sovereignty) -- measured before and
         # after, `group_unwired_gates_by_shape` returned the identical
@@ -3016,8 +3084,8 @@ def run_doctor_check(
         # rewire would even find a target. When it would not, the blocker is
         # PATH, not a missing install: this command is running under a Python
         # that clears the floor, so "install Python" prescribed an install the
-        # operator had already done (driven by the code review).
-        hint, resolver_clears_floor, probed = _remedy_hint()
+        # operator had already done (driven by the code review). Spelled with
+        # an interpreter whose start was seen (DEF-5014): the command is typed.
         step = (
             f"run `{hint} -m espalier init . "
             "--rewire-interpreter` to rewire the hook commands to an "

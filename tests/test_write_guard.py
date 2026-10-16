@@ -14276,12 +14276,20 @@ class TestAdopterZonesOnTheOneLineChannels:
         assert "`out/keep/` under `protected_paths`" in reason, reason
         assert "generated_paths" not in reason, reason
 
-    @pytest.mark.parametrize("command", ["echo hi > data./y.txt", 'echo hi > "data /y.txt"'])
+    @pytest.mark.parametrize("command", [
+        "echo hi > data./y.txt",
+        pytest.param('echo hi > "data /y.txt"', marks=pytest.mark.skipif(
+            sys.platform == "win32",
+            reason="on Windows an intermediate trailing blank is not a spelling of data/: Python "
+                   "open, Git Bash and PowerShell Out-File each refused it with no such directory "
+                   "and nothing landed (win's drive, 2026-10-16), so the guard has no deny to word")),
+    ])
     def test_a_folded_spelling_of_an_adopter_zone_is_still_the_adopters(self, adopter, command):
         """The verdict folds a trailing dot or blank off a component (the
         Windows spellings of one directory), so the zone's name must fold the
         same way: unfolded, these read as harness ground and told the adopter
-        to relaunch (both reviews, driven 2026-10-16)."""
+        to relaunch (both reviews, driven 2026-10-16). On Windows only the dot
+        folds an intermediate component; the blank case has no deny there."""
         _bash_patterns_module()
         import write_guard as wg
 
