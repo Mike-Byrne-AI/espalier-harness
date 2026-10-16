@@ -12,7 +12,6 @@ real drift.
 """
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 # The freshness scanner raises on a duplicate fragment id before any filter can
 # run (a second seat's worktree or a copy-duplicate doc holds one), so it reads a
@@ -51,31 +50,33 @@ SEMANTIC_FRAGMENTS: tuple[tuple[str, tuple[str, ...]], ...] = _verify_on_touch_f
 
 
 def _symbol_exists(path: str, symbol: str) -> bool:
+    """Placed by the scanner's own walk and its Python-only gate, on the file
+    as it is on disk (the scanner reads HEAD): the suite calls a bound valid
+    when its drift can be counted on its lines. Until
+    2026-10-16 this was a second walk that took ``Class::method`` while the
+    scanner placed top-level names only, so memory-line-cap's bound read valid
+    here and drifted on every commit to its file there."""
+    from espalier.scanners.freshness import _span_in_source
     full = REPO_ROOT / path
-    if not full.is_file():
-        return False
+    if not path.endswith(".py") or not full.is_file():
+        return False  # the scanner's own gate: a symbol outside Python is never placed
     try:
-        tree = ast.parse(full.read_text(encoding="utf-8"))
-    except (SyntaxError, OSError):
+        source = full.read_text(encoding="utf-8")
+    except OSError:
         return False
-    # A nested symbol (``Class::method`` or ``Class.method``) resolves one
-    # segment per scope: each part must be defined in the body of the last.
-    scope: ast.AST = tree
-    for part in symbol.replace(".", "::").split("::"):
-        names: dict[str, ast.AST] = {}
-        for node in ast.iter_child_nodes(scope):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                names[node.name] = node
-            elif isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        names[target.id] = node
-            elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-                names[node.target.id] = node
-        if part not in names:
-            return False
-        scope = names[part]
-    return True
+    return _span_in_source(source, symbol)[0] is not None
+
+
+def _every_symbol_bound() -> tuple[tuple[str, str], ...]:
+    """Every ``path::symbol`` entry of every discovered fragment, whatever its
+    policy: each one's drift is counted on the symbol's lines or the file's."""
+    from espalier.scanners.freshness import FRAGMENT_SURFACE_ALLOWLIST, discover_fragments
+    return tuple(
+        (f.id, entry)
+        for f in discover_fragments(checkout_copy(FRAGMENT_SURFACE_ALLOWLIST))
+        for entry in f.bound
+        if "::" in entry
+    )
 
 
 class TestSemanticFragmentBounds:
@@ -85,8 +86,8 @@ class TestSemanticFragmentBounds:
     fragment), floored by the six seeded ids so it cannot go vacuous.
 
     The check is mechanical: split each entry on ``::``, verify the
-    file exists, and (when a ``::symbol`` suffix is present) verify
-    the symbol is defined at module scope via AST inspection.
+    file exists, and (when a ``::symbol`` suffix is present) verify the
+    scanner's own walk places the symbol, nested ones one segment per scope.
     """
 
     def test_the_derived_set_holds_every_seeded_fragment(self) -> None:
@@ -116,9 +117,18 @@ class TestSemanticFragmentBounds:
                 if not _symbol_exists(path, symbol):
                     missing.append(f"{fragment_id}: {entry}")
         assert not missing, (
-            f"semantic fragment bound symbols not found at module scope: "
+            f"semantic fragment bound symbols the scanner cannot place: "
             f"{missing}"
         )
+
+    def test_every_symbol_bound_the_scanner_counts_is_one_it_can_place(self) -> None:
+        """Dies to: a bound the scanner cannot place, which counts every commit
+        to its file (memory-line-cap re-pinned three days running over commits
+        that never touched its method), on any policy, not only the six seeded."""
+        entries = _every_symbol_bound()
+        assert entries, "no symbol bound discovered: the derivation went vacuous"
+        unplaced = [f"{fid}: {entry}" for fid, entry in entries if not _symbol_exists(*entry.split("::", 1))]
+        assert not unplaced, f"symbol bounds the scanner cannot place (it counts the whole file): {unplaced}"
 
     def test_all_seeded_fragments_discoverable(self) -> None:
         from espalier.scanners.freshness import FRAGMENT_SURFACE_ALLOWLIST, discover_fragments

@@ -12,6 +12,8 @@ import subprocess
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
+import pytest
+
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
@@ -633,6 +635,107 @@ class TestPinRefusesABoundWithUncommittedChanges:
         (repo / "a.py").write_text("x = 1\ny = 3\n", encoding="utf-8")
         rc, _out, err = _run_cli("freshness", "pin", "foo", str(repo), "--expected-value", "1")
         assert rc == 0, err
+
+
+class TestPinRefusesABoundItCannotPlace:
+    """A symbol bound the scanner cannot place counts its whole file, so the
+    fragment drifts on every commit to that file and the pin buys nothing: the
+    catch moves to the pin, which refuses and names the entry (``--force``
+    records it anyway), and ``--all`` refuses before pinning anything, the
+    rule a dirty bound already sets."""
+
+    @staticmethod
+    def _bound(repo: Path, bound: str, fid: str = "foo") -> None:
+        doc = repo / "docs" / "x.md"
+        doc.write_text(
+            doc.read_text(encoding="utf-8").replace(
+                "id=foo bound=a.py policy=numeric-contract", f"id={fid} bound={bound} policy=verify-on-touch"),
+            encoding="utf-8",
+        )
+        (repo / "a.py").write_text("class C:\n    def m(self):\n        return 1\n", encoding="utf-8")
+        _git(repo, "commit", "-q", "-am", f"bound {bound}")
+
+    def test_a_pin_over_a_symbol_it_cannot_place_is_refused_and_names_it(self, tmp_path: Path) -> None:
+        """Dies to: the pin recording a bound whose drift is the whole file's."""
+        repo = _init_with_fragment(tmp_path)
+        self._bound(repo, "a.py::C::gone")
+        rc, _out, err = _run_cli("freshness", "pin", "foo", str(repo))
+        assert rc == 1, err
+        assert "a.py::C::gone" in err and "--force" in err and "place" in err, err
+        assert not (repo / ".espalier" / "freshness.json").exists()
+
+    def test_force_records_a_symbol_it_cannot_place(self, tmp_path: Path) -> None:
+        repo = _init_with_fragment(tmp_path)
+        self._bound(repo, "a.py::C::gone")
+        rc, out, err = _run_cli("freshness", "pin", "foo", str(repo), "--force")
+        assert rc == 0, err
+        assert json.loads(out)["entry"]["bound"] == ["a.py::C::gone"]
+        # Dies to: a forced pin (one --force also consents to a rebind or a
+        # dirty bound) recording an unplaced symbol without a word.
+        assert "a.py::C::gone" in err and "whole file" in err, err
+
+    def test_a_nested_symbol_it_can_place_pins_without_force(self, tmp_path: Path) -> None:
+        """Dies to: the refusal firing on every nested bound, placed or not."""
+        repo = _init_with_fragment(tmp_path)
+        self._bound(repo, "a.py::C::m")
+        rc, _out, err = _run_cli("freshness", "pin", "foo", str(repo))
+        assert rc == 0, err
+
+    def test_pin_all_refuses_a_bound_it_cannot_place_before_pinning_anything(self, tmp_path: Path) -> None:
+        """Dies to: --all pinning the placeable fragments and stopping at the
+        unplaced one, which splits a cohort's clock."""
+        repo = _init_with_fragment(tmp_path)
+        self._bound(repo, "a.py::C::gone")
+        doc = repo / "docs" / "x.md"
+        doc.write_text(
+            doc.read_text(encoding="utf-8")
+            + "\n<!-- espalier:fragment id=bar bound=b.py policy=verify-on-touch -->\nclaim two\n",
+            encoding="utf-8",
+        )
+        (repo / "b.py").write_text("y = 1\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+        _git(repo, "commit", "-q", "-m", "two fragments")
+        rc, out, _err = _run_cli("freshness", "pin", "--all", str(repo))
+        assert rc == 1, out
+        payload = json.loads(out)
+        assert payload["pinned_all"] == []
+        assert [s["id"] for s in payload["skipped"]] == ["foo"]
+        assert "a.py::C::gone" in payload["skipped"][0]["reason"]
+        assert not (repo / ".espalier" / "freshness.json").exists()
+
+    def test_pin_all_skips_an_unplaced_refusal_the_pre_flight_missed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Dies to: the refusal reaching --all's generic arm, which stops the
+        pass with exit 1 after the earlier fragments were pinned."""
+        from espalier import freshness as fresh_mod
+        from espalier.scanners import freshness as scan_mod
+        repo = _init_with_fragment(tmp_path)
+        self._bound(repo, "a.py::C::gone")
+        doc = repo / "docs" / "x.md"
+        doc.write_text(
+            "<!-- espalier:fragment id=bar bound=b.py policy=verify-on-touch -->\nclaim zero\n\n"
+            + doc.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        (repo / "b.py").write_text("y = 1\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True, capture_output=True)
+        _git(repo, "commit", "-q", "-m", "a fragment before the unplaced one")
+        monkeypatch.setattr(scan_mod, "unplaced_bound_entries", lambda *a, **k: [])
+        original = fresh_mod.pin_fragment
+
+        def pin(fid, root, *a, **k):  # type: ignore[no-untyped-def]
+            if fid == "foo":
+                raise fresh_mod.UnplacedBoundRefusedError("refusing: a.py::C::gone", entries=["a.py::C::gone"])
+            return original(fid, root, *a, **k)
+
+        monkeypatch.setattr(fresh_mod, "pin_fragment", pin)
+        rc, out, err = _run_cli("freshness", "pin", "--all", str(repo))
+        assert rc == 1, err
+        payload = json.loads(out)
+        assert payload["pinned_all"] == ["bar"], payload
+        assert [s["id"] for s in payload["skipped"]] == ["foo"], payload
+        assert "a.py::C::gone" in payload["skipped"][0]["reason"]
 
 
 class TestASingleRePinCarriesTheLiteral:
