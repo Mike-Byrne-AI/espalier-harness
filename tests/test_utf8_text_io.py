@@ -884,7 +884,8 @@ class TestLiveTreeWalkRatchet:
     over a scanner's result; ``checkout_glob`` / ``checkout_rglob`` /
     ``checkout_iterdir`` / ``copy_checkout`` leave no site at all), marked with
     its reason, or a baseline site still waiting for its lane. The census is
-    ``tests/_live_tree_census.py``, the same walker the ledger probe runs."""
+    ``tests/_live_tree_census.py``, the same walker a ledger probe over the
+    class runs (DEF-2013's, until the row was struck)."""
 
     @staticmethod
     def _pending() -> Counter:
@@ -966,39 +967,76 @@ class TestLiveTreeWalkRatchet:
                 f"{s.rel}:{s.line}: a `# live-tree: ok` marker without its `-- <reason>`"
             )
 
-    def test_the_ledger_probe_reports_the_row_open_until_both_halves_close(self):
-        """The probe is ``python3 tests/_live_tree_census.py`` from the root: it
-        prints ``True`` while any enumeration in tests/ is pending or any engine
-        site is listed -- a verdict, not a count, so two lanes that each route
-        a site never both rewrite one stored number -- and the row's probe pins
-        that line."""
-        from tests.test_check_ledger_probes import _live_roster_probes
-
+    @pytest.mark.slow
+    @pytest.mark.timeout(240)
+    def test_the_census_prints_its_verdict_from_the_root(self):
+        """``python3 tests/_live_tree_census.py`` from the root prints ``True``
+        while any enumeration in tests/ is pending or any engine site is listed,
+        and ``False`` once both close -- a verdict, not a count, so two lanes
+        that each route a site never both rewrite one stored number. It was
+        DEF-2013's probe until lane three closed the engine half and struck the
+        row; a later row over a new walk takes the same line."""
+        # The census reads every tests/ module from cold: 43.85 s on a Windows box
+        # on 2026-10-15, against the 45 s bound it had; a hang still ends. A
+        # bound past the suite's 60 s ceiling needs the test's own timeout above
+        # it, and a test that long is slow (tests/test_test_suite_contract.py).
         out = subprocess.run(
             [sys.executable, str(REPO_ROOT / "tests" / "_live_tree_census.py")],
-            cwd=REPO_ROOT, capture_output=True, encoding="utf-8", timeout=45, check=True,
+            cwd=REPO_ROOT, capture_output=True, encoding="utf-8", timeout=180, check=True,
         ).stdout.strip().splitlines()[-1]
         assert out == live_tree_census.probe_line() == str(bool(_PENDING_SITES) or bool(live_tree_census.ENGINE_SITES))
-        probe = next(p for p in _live_roster_probes() if p["id"] == "DEF-2013")
-        assert "tests/_live_tree_census.py" in probe["cmd"] and probe["open_value"] == "True"
 
     def test_the_probe_stays_open_while_an_engine_site_is_listed(self, monkeypatch):
         """Both halves close the row: the census at zero with an engine site
         still listed is open, and only both empty is closed."""
         monkeypatch.setattr(live_tree_census, "unrouted_count", lambda: 0)
-        assert live_tree_census.ENGINE_SITES and live_tree_census.probe_open() is True
+        monkeypatch.setattr(live_tree_census, "ENGINE_SITES", {"scripts/x.py::walk": "a declared walk"})
+        assert live_tree_census.probe_open() is True
         monkeypatch.setattr(live_tree_census, "ENGINE_SITES", {})
         assert live_tree_census.probe_open() is False
+        monkeypatch.setattr(live_tree_census, "unrouted_count", lambda: 1)
+        assert live_tree_census.probe_open() is True
+
+    @staticmethod
+    def _unnamed(sites) -> list[str]:
+        """The declared sites whose function does not exist in their file."""
+        missing = []
+        for where in sites:
+            rel, _, name = where.partition("::")
+            path = REPO_ROOT / rel
+            tree = ast.parse(path.read_text(encoding="utf-8")) if path.is_file() else ast.Module(body=[])
+            if not any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name
+                       for n in ast.walk(tree)):
+                missing.append(where)
+        return missing
 
     def test_every_engine_site_names_a_function_that_exists(self):
         """The engine and script walks the census cannot read are declared;
-        each names a real function, so the second lane's list cannot drift
-        from the code it points at."""
-        for where in live_tree_census.ENGINE_SITES:
-            rel, _, name = where.partition("::")
-            tree = ast.parse((REPO_ROOT / rel).read_text(encoding="utf-8"))
-            assert any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name == name
-                       for n in ast.walk(tree)), where
+        each names a real function, so the list cannot drift from the code it
+        points at. Empty since lane three, so the live half checks nothing: the
+        planted half shows the check still bites."""
+        assert self._unnamed(live_tree_census.ENGINE_SITES) == []
+        assert self._unnamed({"scripts/release_check.py::_public_doc_paths": "",
+                              "scripts/release_check.py::no_such_walk": ""}) == ["scripts/release_check.py::no_such_walk"]
+
+    def test_a_declared_engine_site_has_a_live_probe_reading_it(self):
+        """Declaring an engine site reopens the class, so an open ledger row's
+        probe must run the census and expect ``True``; with none, the census
+        prints ``True`` to nobody (lane three's failure-mode review). Passes on
+        nothing while ``ENGINE_SITES`` is empty; the planted half shows it reds."""
+        from tests.test_check_ledger_probes import _live_roster_probes
+
+        def unread(sites, probes) -> list[str]:
+            readers = [p for p in probes
+                       if "tests/_live_tree_census.py" in (p.get("cmd") or "") and p.get("open_value") == "True"]
+            return sorted(sites) if sites and not readers else []
+
+        assert unread(live_tree_census.ENGINE_SITES, _live_roster_probes()) == [], (
+            "an engine site is declared and no open ledger row's probe runs tests/_live_tree_census.py: "
+            "file the row (tools/cc/ledger_row.py file, that probe, open value True) or route the walk")
+        planted = {"scripts/x.py::walk": "a declared walk"}
+        assert unread(planted, []) == ["scripts/x.py::walk"]
+        assert unread(planted, [{"cmd": "python3 tests/_live_tree_census.py", "open_value": "True"}]) == []
 
     def test_an_open_lane_owner_is_allowed_only_while_its_lane_is_open(self):
         """``OPEN_LANE_OWNERS`` names another seat's unmerged walk so the ratchet

@@ -456,6 +456,28 @@ class TestBuildsStageACopyAndNeverWriteTheRoot:
         assert not cwd.exists(), "the staged copy outlived the build"
         assert "--wheel" in seen["cmd"] and wheel.name.endswith(".whl")
 
+    def test_a_nested_checkout_stays_out_of_the_copy(self, tmp_path):
+        """A linked worktree under `.claude/worktrees/` (a gitlink `.git` file)
+        or an embedded clone is another checkout. The copy took it whole, its
+        `cc/blueprints/` included, because ``BUILD_TREE_SKIP_PATHS`` matches at
+        the root only (DEF-2013's read audit). It is left out by its own `.git`,
+        the engine's nested-repo rule (``espalier._safe_walk.has_git_entry``)."""
+        from espalier.artifact_parity import stage_build_tree
+
+        root = tmp_path / "root"
+        (root / "pkg").mkdir(parents=True)
+        (root / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+        wt = root / ".claude" / "worktrees" / "wt"
+        (wt / "cc" / "blueprints").mkdir(parents=True)
+        (wt / "cc" / "blueprints" / "node.json").write_text("{}\n", encoding="utf-8")
+        (wt / ".git").write_text("gitdir: /elsewhere/.git/worktrees/wt\n", encoding="utf-8")
+        (root / "vendor" / "clone" / ".git").mkdir(parents=True)
+        (root / "vendor" / "clone" / "x.py").write_text("x = 1\n", encoding="utf-8")
+        staged = stage_build_tree(root, tmp_path / "stage")
+        assert (staged / "pkg" / "__init__.py").is_file()
+        assert not (staged / ".claude" / "worktrees" / "wt").exists()
+        assert not (staged / "vendor" / "clone").exists()
+
     def test_build_sdist_asks_for_an_sdist_and_finds_the_tarball(self, tmp_path, monkeypatch):
         from espalier import artifact_parity
         from espalier.artifact_parity import build_sdist

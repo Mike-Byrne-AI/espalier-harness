@@ -38,6 +38,18 @@ def _load_checker():
     return mod
 
 
+def _live_findings(checker) -> set[str]:
+    """The checker's ``rel:lineno`` findings over this checkout, kept to the
+    files git's view holds. The walk is the script's own and lists every
+    ``.py`` under its roots on disk; a file only this box ignores (a scratch
+    script in ``.git/info/exclude``) must not decide a contract over the
+    tree (DEF-2013, found by lane three's failure-mode review)."""
+    from tests._live_tree import in_checkout
+
+    return {f for f in checker.find_unannotated_broad_excepts(REPO_ROOT)
+            if in_checkout(f.rsplit(":", 1)[0], root=REPO_ROOT)}
+
+
 pytestmark = [pytest.mark.contract]
 
 
@@ -60,7 +72,7 @@ class TestExceptionPolicyGate:
         pre-convention sites and shrinks over time.
         """
         checker = _load_checker()
-        findings = set(checker.find_unannotated_broad_excepts(REPO_ROOT))
+        findings = _live_findings(checker)
         allowlist = checker._load_allowlist()
         new_violations = sorted(findings - allowlist)
         assert not new_violations, (
@@ -78,7 +90,7 @@ class TestExceptionPolicyGate:
         someone fixed the site without bumping the allowlist down.
         """
         checker = _load_checker()
-        findings = set(checker.find_unannotated_broad_excepts(REPO_ROOT))
+        findings = _live_findings(checker)
         allowlist = checker._load_allowlist()
         stale = sorted(allowlist - findings)
         assert not stale, (
