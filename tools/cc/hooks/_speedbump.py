@@ -22,7 +22,11 @@ the PowerShell command position, each program masked as the Bash side masks
 a nested program, so a `git reset --hard` typed on that tool or
 spelled behind `bash -c` is snapshotted and bumped as the Bash tool would.
 Until then both discarded without the stash. Every other checkpoint stays
-tool-keyed.
+tool-keyed. Keyed on the tool is not Bash-only: since DEF-1038 the release,
+force-push and clean checkpoints read the PowerShell tool's own scan text
+with PowerShell twins of their arms (`_git_checkpoint_readings`), so a tag
+push or a `git clean -f` typed on that tool bumps as it does on Bash, while a
+program it hands to `bash -c` is still not read by them (air, 2026-10-16).
 
 On the Bash tool the carve-out was narrowed by the operator on 2026-09-11 (the
 Bash trio's third step, §C5): a program a READER head hands to a shell --
@@ -44,6 +48,7 @@ no hook-count delta.
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import re
 import subprocess
@@ -153,7 +158,8 @@ _GIT_CMD = (
     _bash_patterns._CMD_POS + _bash_patterns._GIT_VERB + r"\b" + _bash_patterns._QUOTED_VERB_TAIL
 )
 #: The PowerShell tool's twin of the head (DEF-747): the same verb tails behind
-#: the PowerShell command position, for CP-DISCARD and its snapshot alone. A
+#: the PowerShell command position, for CP-DISCARD and its snapshot and, since
+#: DEF-1038, the push and clean arms of the three other git checkpoints. A
 #: Bash-anchored regex over PowerShell text would open a command position at
 #: the Bash exec-quote arm (`bash -c "`) inside a PowerShell LITERAL, so
 #: `Write-Output 'bash -c "git reset --hard"'` bumped as a discard; behind the
@@ -165,15 +171,188 @@ _PS_GIT_CMD = (
     _bash_patterns._PS_CMD_POS + _bash_patterns._GIT_VERB + r"\b" + _bash_patterns._QUOTED_VERB_TAIL
 )
 
-_GIT_PUSH = _GIT_CMD + r"[ \t]+(?:" + _GIT_PREOPT + r")*push\b[^\n;|&]*?"
+#: The push head, at a command position. What follows it is the push's own
+#: statement, read by `_statement`, which ends it where its shell does -- at a
+#: separator, a block, a substitution or a comment, never inside a quote -- so
+#: the force and tag tails below are searched in that span alone. Until the
+#: review of 2026-10-16 a lazy run read on to the next separator: across a
+#: PowerShell block into the next command (`try { git push origin main } catch
+#: { Write-Host -f Red }` read `-f` as a force flag) and, on a flood of blocks,
+#: from every head to the end of the text (quadratic, on both tools).
+_GIT_PUSH_HEAD = r"[ \t]+(?:" + _GIT_PREOPT + r")*push\b"
+_PUSH_HEAD_RE = re.compile(_GIT_CMD + _GIT_PUSH_HEAD)
+#: The PowerShell tool's push head (DEF-1038): before it the release and
+#: force-push arms ran for Bash alone, so `git push origin v1.2.3` from the
+#: PowerShell tool -- the release checklist's own tag push, on the Windows
+#: box's main shell -- drew no nudge. IGNORECASE for the opener words, as the
+#: module's other PowerShell twins.
+_PS_PUSH_HEAD_RE = re.compile(_PS_GIT_CMD + _GIT_PUSH_HEAD, re.IGNORECASE)
 
 # CP-FORCEPUSH -- `git push --force` / glued `-f` cluster destroys remote commits;
 # silent on `--force-with-lease` (the safe form). The `-[a-eg-z]*f[a-z]*` arm fires
 # `-f`/`-fv`/`-vf` (glued short flags) but NOT `-v` (the `f` class excludes `f`
-# from the prefix run, forcing a literal `f`).
-_FORCE_PUSH_RE = re.compile(
-    _GIT_PUSH + r"(?:--force(?!-with-lease)|(?<![\w-])-[a-eg-z]*f[a-z]*\b)"
-)
+# from the prefix run, forcing a literal `f`). A `+` on a refspec forces that
+# ref as `--force` does: `git push origin +HEAD:main` rewrote a scratch
+# remote's branch with no nudge (driven by the failure-mode review, 2026-10-16).
+_FORCE_TAIL = r"(?:--force(?!-with-lease)|(?<![\w-])-[a-eg-z]*f[a-z]*\b|[ \t]\+[^\s;|&])"
+_FORCE_TAIL_RE = re.compile(_FORCE_TAIL)
+
+#: A rehearsal (DEF-898): `--dry-run`, or the short `-n`, publishes or deletes
+#: nothing for `git push` and `git clean` alike (driven 2026-10-16: a dry-run
+#: tag push, `-n --tags`, a dry-run follow-tags push and `-nf` left a scratch
+#: remote without the tag and its branch unmoved). One reading for the three
+#: git checkpoints -- until DEF-898 only CP-GITCLEAN carried one, so the release
+#: checklist's own rehearsal push drew the release nudge: the subcommand's own
+#: options (`_given_flags`) in the words its shell splits (`_statement`).
+#: The burn and the delete are the strictly worse errors, so an abstention
+#: needs the real flag: a comment, a substitution, a redirect target, the value
+#: of an option that takes one, a PowerShell block or operator after the
+#: command, and a quoted word that only holds the token are never one.
+#: Each table: the subcommand's boolean short flags, its short flags that take
+#: a value, and its long options whose value is the next word.
+_PUSH_OPTIONS = ("46dfnquv", "o", frozenset({"--push-option", "--repo", "--receive-pack", "--exec"}))
+_CLEAN_OPTIONS = ("dfinqxX", "e", frozenset({"--exclude"}))
+#: `gh release create`'s: `-d` is `--draft`; notes, notes file, title and the
+#: repository take a value.
+_GH_RELEASE_OPTIONS = ("dp", "nFtR", frozenset({
+    "--notes", "--notes-file", "--title", "--target", "--repo",
+    "--discussion-category", "--notes-start-tag",
+}))
+#: What ends a statement's words outside quotes: the separators, and the
+#: grouping and substitution characters, so a block, a subexpression or a
+#: substitution after the subcommand is never read as its options (on Bash a
+#: backtick too). Cutting the reading short can only add bumps.
+_WORDS_END = "\n;|&(){}"
+
+
+def _statement(text: str, start: int, *, bash: bool) -> tuple[list[str | None], int]:
+    """``(words, end)``: the words of the statement that runs on from
+    ``start`` (just after a subcommand), as its shell splits them, and the
+    index where it ends (the end character's, or the text's length).
+    Whitespace splits; a quoted span joins its word unquoted, so
+    ``"--dry-run"`` reaches git as the flag, in the tool's grammar (Bash: a
+    backslash escapes, single quotes are literal; PowerShell: a backtick
+    escapes, a doubled quote is one quote); a word holding an expansion (a
+    ``$``, or a Bash backtick inside double quotes) is unknown and reads as
+    None; a redirect operator is a word of its own, ``>``, so `_given_flags`
+    skips its target; the words end at an unquoted `_WORDS_END` character, a
+    Bash backtick, or a comment (``#`` at a word's start, and PowerShell's
+    ``<#``). One pass over the text, no backtracking."""
+    escape = "\\" if bash else "`"
+    ends = _WORDS_END + ("`" if bash else "")
+    words: list[str | None] = []
+    cur: list[str] = []
+    open_word = unknown = False
+    i, n = start, len(text)
+
+    def flush() -> None:
+        nonlocal open_word, unknown
+        if open_word:
+            words.append(None if unknown else "".join(cur))
+        cur.clear()
+        open_word = unknown = False
+
+    while i < n:
+        c = text[i]
+        if c == escape:
+            if i + 1 < n and text[i + 1] != "\n":
+                cur.append(text[i + 1])
+                open_word = True
+            i += 2
+            continue
+        if c in "'\"":
+            open_word = True
+            i += 1
+            while i < n:
+                d = text[i]
+                if c == '"' and d == escape and i + 1 < n:
+                    cur.append(text[i + 1])
+                    i += 2
+                    continue
+                if d == c:
+                    if not bash and text[i + 1:i + 2] == c:
+                        cur.append(c)
+                        i += 2
+                        continue
+                    i += 1
+                    break
+                if c == '"' and (d == "$" or (bash and d == "`")):
+                    unknown = True
+                cur.append(d)
+                i += 1
+            continue
+        if c in ends or (c == "#" and not open_word) or (c == "<" and not bash and text[i + 1:i + 2] == "#"):
+            break
+        if c.isspace():
+            flush()
+        elif c in "<>":
+            flush()
+            words.append(">")
+        else:
+            if c == "$":
+                unknown = True
+            cur.append(c)
+            open_word = True
+        i += 1
+    flush()
+    return words, min(i, n)
+
+
+def _given_flags(words: list[str | None], options: tuple[str, str, frozenset[str]]) -> set[str]:
+    """The options a subcommand reads from its ``words`` (`_statement`):
+    each short flag of a cluster as ``-x``, each long option as written, an
+    ``=value`` kept. A cluster holding a letter the subcommand does not take
+    is not its options (`-ForegroundColor`, `-join`); the value an option
+    takes, a redirect's target and everything after ``--`` are never read."""
+    bools, valued, valued_long = options
+    flags: set[str] = set()
+    skip = False
+    for word in words:
+        if skip:
+            skip = False
+            continue
+        if word == ">":
+            skip = True
+            continue
+        if word is None or len(word) < 2 or word[0] != "-":
+            continue
+        if word == "--":
+            break
+        if word.startswith("--"):
+            flags.add(word)
+            skip = word in valued_long
+            continue
+        found: list[str] = []
+        for j, letter in enumerate(word[1:], 1):
+            if letter in bools:
+                found.append("-" + letter)
+            elif letter in valued:
+                found.append("-" + letter)
+                skip = j == len(word) - 1
+                break
+            else:
+                found = []
+                break
+        flags.update(found)
+    return flags
+
+
+def _rehearsal(words: list[str | None], options: tuple[str, str, frozenset[str]]) -> bool:
+    """The subcommand's own options carry its dry run."""
+    flags = _given_flags(words, options)
+    return "-n" in flags or "--dry-run" in flags
+
+
+def _pushes_for_real(head: re.Pattern[str], tail: re.Pattern[str], text: str, *, bash: bool) -> bool:
+    """Some push ``head`` finds in ``text`` carries ``tail`` in its own
+    statement and is not a rehearsal. Every push is read, each from its own
+    subcommand on, so a wrapper's `-n` (`sudo -n`) is not its dry run and a
+    rehearsal beside a real push in one command still bumps."""
+    for m in head.finditer(text):
+        words, end = _statement(text, m.end(), bash=bash)
+        if tail.search(text, m.end(), end) and not _rehearsal(words, _PUSH_OPTIONS):
+            return True
+    return False
 
 
 def _masked_command(tool_input: dict) -> str:
@@ -225,6 +404,15 @@ def _bash_reading(text: str) -> tuple[str, str]:
     return _bash_patterns.mask_inert_syntax(raw), raw
 
 
+@functools.lru_cache(maxsize=8)
+def _ps_scan_text(command: str) -> str:
+    """`_bash_patterns.powershell_scan_text`, remembered across the call: the
+    discard, release, force-push and clean checkpoints all scan the same
+    PowerShell command, which cost four scans a call before (review,
+    2026-10-16)."""
+    return _bash_patterns.powershell_scan_text(command)
+
+
 def _ps_discard_readings(tool_input: dict) -> list[tuple[str, str | None, bool]]:
     """What the discard arms read on the PowerShell tool (DEF-747), each
     paired with the grammar that reads it: the command's own scan text
@@ -235,7 +423,7 @@ def _ps_discard_readings(tool_input: dict) -> list[tuple[str, str | None, bool]]
     it). The recovery half of the tool-keyed carve-out (see the module
     docstring); the other checkpoints do not read this."""
     raw = tool_input.get("command", "")
-    scan = _bash_patterns.powershell_scan_text(raw)
+    scan = _ps_scan_text(str(raw))
     readings: list[tuple[str, str | None, bool]] = [(scan, None, False)]
     for body in _bash_patterns._ps_shell_program_bodies(raw, scan):
         readings.append((*_bash_reading(body), True))
@@ -261,10 +449,28 @@ def _discard_readings(tool_name: str, tool_input: dict) -> list[tuple[str, str |
     return []
 
 
+def _git_checkpoint_readings(tool_name: str, tool_input: dict) -> list[tuple[str, bool]]:
+    """``(text, is_bash_text)`` for the release, force-push and clean
+    checkpoints, by tool (DEF-1038): on the Bash tool the masked command and
+    every program it hands to a shell (`_scan_texts`), read by the Bash arms;
+    on the PowerShell tool its own scan text, read by the PowerShell twins so a
+    literal stays data. A program the PowerShell tool hands to `bash -c` is
+    not read here: the tool-keyed carve-out in the module docstring, kept for
+    these three (air, 2026-10-16), whose one exception is CP-DISCARD. Empty for
+    any other tool."""
+    if tool_name == "Bash":
+        return [(text, True) for text in _scan_texts(tool_input)]
+    if tool_name == "PowerShell":
+        return [(_ps_scan_text(str(tool_input.get("command", ""))), False)]
+    return []
+
+
 def _pred_forcepush(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:
-    if tool_name != "Bash":
-        return False
-    return any(_FORCE_PUSH_RE.search(cmd) for cmd in _scan_texts(tool_input))
+    return any(
+        _pushes_for_real(_PUSH_HEAD_RE if is_bash else _PS_PUSH_HEAD_RE, _FORCE_TAIL_RE, text,
+                         bash=is_bash)
+        for text, is_bash in _git_checkpoint_readings(tool_name, tool_input)
+    )
 
 
 # CP-RELEASE -- a v<digit> tag reaching the remote burns a PyPI version
@@ -273,9 +479,10 @@ def _pred_forcepush(tool_name: str, tool_input: dict, root: Path, cwd: Path | No
 # FAIL TOWARD FRICTION: a branch named `v2-foo` over-fires (one retry) but a real
 # tag push is never missed (an unrecoverable burn is the strictly worse error) --
 # true through git global options too (`git -C <d> push origin v1.2.3`).
-_RELEASE_TAGPUSH_RE = re.compile(
-    _GIT_PUSH + r"(?:--tags\b|--follow-tags\b|\bv\d[\w.\-]*)"
-)
+#: `\bv\$` reads the release checklist's own spelling, `git push origin
+#: "v$VER"`, which was silent on both tools (a review finding, 2026-10-16).
+_TAGPUSH_TAIL = r"(?:--tags\b|--follow-tags\b|\bv\d[\w.\-]*|\bv\$)"
+_TAGPUSH_TAIL_RE = re.compile(_TAGPUSH_TAIL)
 
 # The ship driver's `release` verb is a third path to the same burn: it tags the
 # merge commit, pushes that one tag and creates the release inside one process,
@@ -287,20 +494,31 @@ _RELEASE_TAGPUSH_RE = re.compile(
 # launcher), an optional path prefix ending in either separator, the script,
 # the verb, a `v` and a digit. The driver runs the same from the PowerShell
 # tool on the Windows box, so the tail is read there too, at that tool's
-# command position -- the one path to the burn that tool has.
-# The path prefix, when present, opens with a name, dot, tilde or separator
-# character and never carries a paren, a dollar, a redirect or a quote: at a
-# flood of separators, parens or subexpressions (each a fresh command
-# position) the class matches nothing and the literal fails at once, so the
-# scan is linear in the text (tests/test_speedbump_irreversible.py budgets it).
+# command position, beside that tool's tag-push and `gh release create` twins
+# (DEF-1038: until then this tail was the only release arm the PowerShell
+# tool read).
+# The bare path prefix, when present, opens with a name, dot, tilde or
+# separator character and never carries a paren, a dollar, a redirect or a
+# quote: at a flood of separators, parens or subexpressions (each a fresh
+# command position) the class matches nothing and the literal fails at once,
+# so the scan is linear in the text (tests/test_speedbump_irreversible.py
+# budgets it). A quoted script path (`python "tools/cc/ship.py" release
+# v1.2.3`, a quoted absolute path with a space in it) is its own arm, opened
+# by the quote and bounded by the closing one or 512 characters, so neither
+# arm can run past the other's text (DEF-1038: the quoted spelling was silent
+# on both tools).
 _SHIP_RELEASE_TAIL = (
     # The lookbehind holds the tail to a token START: `re.search` tries every
     # offset, and without it each offset inside a long slash-separated token
     # would open a path-prefix scan to the end (quadratic: 4.5 s on the slash
     # flood at the command cap, measured 2026-09-30; linear with it).
     r"(?<![\w./\\~-])"
-    r"(?:(?:python[\w.]*|py)[ \t]+(?:-[^\s;|&]+[ \t]+)*)?"
-    r"(?:[\w.~/\\-][^\s;|&()$<>'\"`]*[/\\])?ship\.py[ \t]+release[ \t]+v\d"
+    # the interpreter may carry its own path (`.venv\Scripts\python.exe`, a
+    # review finding, 2026-10-16), read from the same token start
+    r"(?:(?:[\w.~:/\\-]*[/\\])?(?:python[\w.]*|py)[ \t]+(?:-[^\s;|&]+[ \t]+)*)?"
+    r"(?:\"(?:[^\"\n]{0,512}[/\\])?ship\.py\"|'(?:[^'\n]{0,512}[/\\])?ship\.py'"
+    # the tag may be quoted, or the checklist's own variable spelling (`"v$VER"`)
+    r"|(?:[\w.~/\\-][^\s;|&()$<>'\"`]*[/\\])?ship\.py)[ \t]+release[ \t]+[\"']?v(?:\d|\$)"
 )
 _SHIP_RELEASE_RE = re.compile(_bash_patterns._CMD_POS + _SHIP_RELEASE_TAIL)
 _PS_SHIP_RELEASE_RE = re.compile(_bash_patterns._PS_CMD_POS + _SHIP_RELEASE_TAIL)
@@ -322,24 +540,47 @@ _PS_SHIP_RELEASE_RE = re.compile(_bash_patterns._PS_CMD_POS + _SHIP_RELEASE_TAIL
 # actually gets driven with from a non-default checkout. Every iteration begins
 # with `-` and the optional argument begins with a NON-`-` class, so the run
 # stays prefix-disjoint and linear (no nested ambiguous quantifier).
-_GH_RELEASE_CREATE_RE = re.compile(
-    _bash_patterns._CMD_POS
-    + r"gh[ \t]+(?:-[^\s;|&]+[ \t]+(?:[^-\s;|&][^\s;|&]*[ \t]+)?)*release[ \t]+create\b"
+#
+# The verb admits `gh.exe` and a quoted verb (`& 'gh' release create`), as
+# `_GIT_VERB` and `_QUOTED_VERB_TAIL` do for git (a review finding, 2026-10-16).
+_GH_RELEASE_TAIL = (
+    r"gh(?:\.exe)?\b" + _bash_patterns._QUOTED_VERB_TAIL
+    + r"[ \t]+(?:-[^\s;|&]+[ \t]+(?:[^-\s;|&][^\s;|&]*[ \t]+)?)*release[ \t]+create\b"
 )
+_GH_RELEASE_CREATE_RE = re.compile(_bash_patterns._CMD_POS + _GH_RELEASE_TAIL)
+#: The PowerShell tool's twin (DEF-1038): the same tail at that tool's command
+#: position, so the release checklist's `gh release create` bumps from the
+#: Windows box's main shell as it does from Bash.
+_PS_GH_RELEASE_CREATE_RE = re.compile(
+    _bash_patterns._PS_CMD_POS + _GH_RELEASE_TAIL, re.IGNORECASE
+)
+#: The `--draft=` values gh reads as false (Go's `strconv.ParseBool`): such a
+#: release publishes (`--draft=false`, gh 2.96, driven by the review).
+_GH_FALSE = frozenset({"false", "0", "f"})
+
+
+def _drafts(words: list[str | None]) -> bool:
+    """`gh release create`'s own options make a draft, which publishes nothing:
+    `-d`, `--draft`, or `--draft=` a value gh reads as true. Read from that
+    command's words, so a `--draft` in a quoted note or in a later command
+    never stands the release down."""
+    for flag in _given_flags(words, _GH_RELEASE_OPTIONS):
+        if flag in ("-d", "--draft"):
+            return True
+        if flag.startswith("--draft=") and flag[len("--draft="):].lower() not in _GH_FALSE:
+            return True
+    return False
 
 
 def _pred_release(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:
-    if tool_name == "PowerShell":
-        scan = _bash_patterns.powershell_scan_text(str(tool_input.get("command", "")))
-        return bool(_PS_SHIP_RELEASE_RE.search(scan))
-    if tool_name != "Bash":
-        return False
-    for cmd in _scan_texts(tool_input):
-        if _GH_RELEASE_CREATE_RE.search(cmd) and "--draft" not in cmd:
+    for text, is_bash in _git_checkpoint_readings(tool_name, tool_input):
+        gh = _GH_RELEASE_CREATE_RE if is_bash else _PS_GH_RELEASE_CREATE_RE
+        if any(not _drafts(_statement(text, m.end(), bash=is_bash)[0]) for m in gh.finditer(text)):
             return True
-        if _RELEASE_TAGPUSH_RE.search(cmd):
+        if _pushes_for_real(_PUSH_HEAD_RE if is_bash else _PS_PUSH_HEAD_RE, _TAGPUSH_TAIL_RE, text,
+                            bash=is_bash):
             return True
-        if _SHIP_RELEASE_RE.search(cmd):
+        if (_SHIP_RELEASE_RE if is_bash else _PS_SHIP_RELEASE_RE).search(text):
             return True
     return False
 
@@ -569,35 +810,34 @@ _GITCLEAN_RE = re.compile(
     _GIT_CMD + r"[ \t]+(?:" + _GIT_PREOPT + r")*clean\b((?:[^\n;|&\\\"']|"
     + _bash_patterns._SPAN_QUOTED_ARMS_WIDE + r"){0,2048})"
 )
-# Token tests over the captured arg span. Short clusters use the CP-FORCEPUSH glued
-# idiom -- `(?<![\w-])-[a-zA-Z]*<flag>[a-zA-Z]*` fires on <flag> anywhere in a boolean
-# short cluster (`-fd`, `-xdf`) but never across a `--long` option or inside a
-# non-flag operand. The char-class MUST include uppercase: `git clean -X` (remove
-# ignored files) rides in a real force cluster (`-fdX`), and an `[a-z]`-only run
-# could neither span nor terminate across the `X`, silently missing the delete
-# (deliberately WIDER than the CP-FORCEPUSH sibling, which has no uppercase short
-# flag to glue). Linear, prefix-anchored -> ReDoS-safe.
-_GITCLEAN_FORCE_RE = re.compile(r"--force\b|(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*\b")
-_GITCLEAN_DRYRUN_RE = re.compile(r"--dry-run\b|(?<![\w-])-[a-zA-Z]*n[a-zA-Z]*\b")
-
-
+#: The PowerShell tool's twin (DEF-1038): the same verb behind `_PS_GIT_CMD`,
+#: its argument span in that shell's grammar -- a backslash is a path
+#: character there and the backtick the escape, as the fetch hop's PowerShell
+#: span reads it -- so `git clean -fd` from the PowerShell tool draws the
+#: nudge it draws from Bash.
+_PS_GITCLEAN_RE = re.compile(
+    _PS_GIT_CMD + r"[ \t]+(?:" + _GIT_PREOPT + r")*clean\b((?:[^\n;|&`\"']|"
+    + _bash_patterns._PS_SPAN_QUOTED_ARMS_WIDE + r"){0,2048})",
+    re.IGNORECASE,
+)
 def _pred_gitclean(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = None) -> bool:
-    if tool_name != "Bash":
-        return False
-    for cmd in _scan_texts(tool_input):
-        m = _GITCLEAN_RE.search(cmd)
-        if m is None:
-            continue
-        args = m.group(1)
-        # A dry run only LISTS -- never fire (`-n` wins even if `-f` is also present).
-        if _GITCLEAN_DRYRUN_RE.search(args):
-            continue
-        # Fire only when it will actually delete (force present). A bare `git clean`
-        # errors out under default clean.requireForce, so nudging it is pure friction;
-        # a `clean.requireForce=false` host is an accepted under-fire (fail toward less
-        # friction on the safe-by-default form).
-        if _GITCLEAN_FORCE_RE.search(args):
-            return True
+    for cmd, is_bash in _git_checkpoint_readings(tool_name, tool_input):
+        # Every clean is read, so a preview before a real clean in one command
+        # still bumps; each from its own subcommand on, by the option reader the
+        # push checkpoints share (`_CLEAN_OPTIONS`: `-X`, remove ignored files,
+        # rides in a real force cluster such as `-fdX`; `-e` takes a pattern, so
+        # `-e -n` excludes a file named `-n` and is no preview).
+        for m in (_GITCLEAN_RE if is_bash else _PS_GITCLEAN_RE).finditer(cmd):
+            flags = _given_flags(_statement(cmd, m.start(1), bash=is_bash)[0], _CLEAN_OPTIONS)
+            # A dry run only LISTS -- never fire (`-n` wins even if `-f` is also present).
+            if "-n" in flags or "--dry-run" in flags:
+                continue
+            # Fire only when it will actually delete (force present). A bare `git clean`
+            # errors out under default clean.requireForce, so nudging it is pure friction;
+            # a `clean.requireForce=false` host is an accepted under-fire (fail toward less
+            # friction on the safe-by-default form).
+            if "-f" in flags or "--force" in flags:
+                return True
     return False
 
 
