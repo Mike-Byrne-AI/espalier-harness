@@ -1,13 +1,14 @@
 {
  "id": "DEF-5015",
- "subject": "espalier/_python_floor.py",
- "cmd": "python3 -c \"import subprocess as s,sys;sys.dont_write_bytecode=True;sys.path.insert(0,'.');import espalier._spawn as p;from espalier import _python_floor as f;p.run_bounded=lambda a,**k:(_ for _ in ()).throw(s.TimeoutExpired(a,2));print('banner_timeout_reads_below_floor='+str(f.interpreter_meets_floor(sys.executable) is False))\"",
- "open_value": "banner_timeout_reads_below_floor=True",
+ "subject": "espalier/cli.py",
+ "cmd": "python3 -c \"import os,sys,tempfile,subprocess as s;sys.dont_write_bytecode=True;sys.path.insert(0,'.');import espalier._spawn as p;from espalier import cli;p.run_bounded=cli.run_bounded=lambda a,**k:(_ for _ in ()).throw(s.TimeoutExpired(a,2));d=tempfile.mkdtemp();n=os.path.join(d,'python3'+('.exe' if os.name=='nt' else ''));open(n,'w').close();os.chmod(n,0o755);os.environ['PATH']=d;cli._INTERPRETER_WARNING_EMITTED=True;print('wires_literal_name='+str(cli._detect_python_command()=='python'))\"",
+ "open_value": "wires_literal_name=True",
  "why_not": null,
  "inputs": [
-  "espalier/_spawn.py"
+  "espalier/_spawn.py",
+  "espalier/_python_floor.py"
  ],
  "row_sha": "997a42eaf651",
  "text_sha": "10a6119b4361",
- "verified_2026_10_16": "OPEN (filed 2026-10-16; probe driven at filing)"
+ "verified_2026_10_16": "STILL_OPEN (re-pinned 'banner_timeout_reads_below_floor=True' -> 'wires_literal_name=True'; subject 'espalier/_python_floor.py' -> 'espalier/cli.py'; inputs ['espalier/_spawn.py'] -> ['espalier/_spawn.py', 'espalier/_python_floor.py'] on 2026-10-16: re-pinned to the harm before the fix (assign 79e19c): the old probe read interpreter_meets_floor's bool, which stays False on a banner that never answered by design (not accepted); the new one stubs every spawn to time out on a python3-only PATH and reads whether the resolver wires the literal python)"
 }

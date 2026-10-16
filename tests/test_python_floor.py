@@ -1411,8 +1411,10 @@ class TestAStartProbeThatNeverAnswers:
         assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
         capsys.readouterr()
         python3 = shutil.which("python3")
+        clause = ("and answers as Python 3, but "
+                  + _python_floor.interpreter_start_unconfirmed([python3]))
         found = {"python3": cli._NotPython3(
-            python3, ["tools/cc/hooks/write_guard.py"], False, False, (python3,), True)}
+            python3, ["tools/cc/hooks/write_guard.py"], False, False, (python3,), clause)}
         monkeypatch.setattr(cli, "_not_python3_from_entries", lambda entries: found)
         monkeypatch.setattr(doctor, "_interpreter_is_python3", lambda resolved, *flags: False)
         reason, remedies = cli._disarmed_diagnosis(target)
@@ -1433,7 +1435,7 @@ class TestAStartProbeThatNeverAnswers:
         before = path.read_bytes()
         assert cli._report_interpreter_rewire(path) == cli.REWIRE_NOTHING
         said = capsys.readouterr().err
-        assert "already starts" not in said and "never saw" in said, said
+        assert "already starts" not in said and "never answered" in said, said
         assert path.read_bytes() == before, "the file was written on a rewire with no target"
 
     def test_doctors_cannot_start_hint_says_starts_only_of_a_start_it_saw(
@@ -1543,9 +1545,208 @@ class TestAStartProbeThatNeverAnswers:
         self._host(tmp_path, monkeypatch, working=("python3",))
         _python_floor.interpreter_start_failure([shutil.which("python3")])
         cli._VENV_ONLY_VERDICTS[("x",)] = True
+        getattr(_python_floor, "_BANNER_VERDICTS", {})[("x",)] = None
         assert _python_floor._START_VERDICTS
         conftest._clear_engine_interpreter_memos()
         assert _python_floor._START_VERDICTS == {} and cli._VENV_ONLY_VERDICTS == {}
+        assert getattr(_python_floor, "_BANNER_VERDICTS", {}) == {}
+
+
+class TestABannerThatNeverAnswers:
+    """DEF-5015: on a loaded host an interpreter's ``--version`` can miss its
+    2 s too, and the engine read that as an answer: not a Python 3, below the
+    floor. A ``python3``-only host had the literal ``python`` wired, which does
+    not resolve there, while init said every guard fails OPEN and doctor told
+    the operator to install a Python. The banner is now asked twice and kept
+    for the process, shared by the resolver, the floor check and doctor's
+    identity check. A candidate whose banner never answered is neither
+    refused nor accepted on it: the resolver keeps it as the last choice ahead
+    of the literal name, init withholds its claim ("not confirmed"), doctor
+    gives the banner the time a blocking hook gets, and the rewire moves such
+    a site only to a target that was seen. RED on the branch it is built on
+    (lane/floor-check-names-the-slow-host, 0d8ad2f3).
+
+    Only the stub interpreters' ``--version`` spawns are stubbed, each name to
+    one of four answers: time out every try, time out the first try only, time
+    out the 2 s tries and answer a longer one, or answer as a Python 2. Every
+    other spawn runs for real.
+    """
+
+    @pytest.fixture
+    def mute(self, monkeypatch, tmp_path):
+        """Stub the banner probe of the host's stub interpreters, per name.
+
+        ``modes`` maps a file name to "timeout" (every try), "retry" (the
+        first try of each argv only), "patient" (every try of 2 s or less) or
+        "py2" (answers ``Python 2.7.18``); a name not listed answers for real.
+        """
+        import types
+
+        from espalier import _spawn, cli, doctor
+
+        real = _spawn.run_bounded
+        state = types.SimpleNamespace(asked=[], modes={}, bin_dir=None, seen=set())
+
+        def run_bounded(argv, *args, **kwargs):
+            argv = list(argv)
+            head = str(argv[0])
+            if argv[-1:] == ["--version"] and state.bin_dir and head.startswith(str(state.bin_dir)):
+                timeout = kwargs.get("timeout") or 0
+                state.asked.append((tuple(argv[:-1]), timeout))
+                mode = state.modes.get(Path(head).stem)
+                first = tuple(argv) not in state.seen
+                state.seen.add(tuple(argv))
+                if mode == "timeout" or (mode == "retry" and first) or (
+                        mode == "patient" and timeout <= 2):
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                if mode == "py2":
+                    return subprocess.CompletedProcess(argv, 0, stdout="Python 2.7.18\n", stderr="")
+            return real(argv, *args, **kwargs)
+
+        for module in (_spawn, cli, doctor):
+            monkeypatch.setattr(module, "run_bounded", run_bounded)
+        monkeypatch.delenv("PYTHONHOME", raising=False)
+        monkeypatch.delenv("PYTHONPATH", raising=False)
+        return state
+
+    @staticmethod
+    def _host(tmp_path, monkeypatch, mute, *, working, stubbed=(), modes=None):
+        bin_dir = TestAStartProbeThatNeverAnswers._host(
+            tmp_path, monkeypatch, working=working, stubbed=stubbed)
+        mute.bin_dir = bin_dir
+        mute.modes.update(modes or {})
+        return bin_dir
+
+    def test_the_banner_is_asked_twice_and_kept_for_the_process(self, tmp_path, monkeypatch, mute):
+        self._host(tmp_path, monkeypatch, mute, working=("python3",), modes={"python3": "timeout"})
+        for _ in range(3):
+            assert _python_floor.interpreter_meets_floor("python3") is False
+        assert len(mute.asked) == 2, f"two tries, then the kept answer: {mute.asked}"
+
+    def test_a_banner_answering_on_its_retry_is_a_banner(self, tmp_path, monkeypatch, capsys, mute):
+        """Polarity: a banner slow once is asked again and read as answered."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, mute, working=("python3",), stubbed=("python",),
+                   modes={"python3": "retry"})
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False, raising=False)
+        assert cli._detect_python_command() == "python3"
+        assert "WARNING" not in capsys.readouterr().err
+
+    def test_a_banner_that_answers_wrong_is_still_refused(self, tmp_path, monkeypatch, capsys, mute):
+        """Polarity: a Python 2 answer is an answer, never a mute banner, so
+        the literal fallback and its warning quoting the banner stand."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, mute, working=("python",), stubbed=("python3",),
+                   modes={"python": "py2"})
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False, raising=False)
+        assert cli._detect_python_command() == "python"
+        warning = capsys.readouterr().err
+        assert "2.7.18" in warning and "could be validated" in warning, warning
+
+    def test_the_resolver_keeps_a_mute_banner_ahead_of_the_literal_name(
+        self, tmp_path, monkeypatch, capsys, mute
+    ):
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, mute, working=("python3",), stubbed=("python",),
+                   modes={"python3": "timeout"})
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False, raising=False)
+        assert cli._detect_python_command() == "python3", (
+            "a working python3 whose banner never answered was passed over for the "
+            "literal name, which does not run here"
+        )
+        warning = capsys.readouterr().err
+        assert "Falling back to the literal name" not in warning, warning
+        assert "python3" in warning and "--version" in warning, warning
+
+    def test_a_banner_that_answered_outranks_a_mute_one(self, tmp_path, monkeypatch, mute):
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, mute, working=("python", "python3"),
+                   modes={"python": "timeout"})
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        assert cli._detect_python_command() == "python3"
+
+    def test_init_withholds_the_claim_and_doctor_names_a_mute_banner(
+        self, tmp_path, monkeypatch, capsys, mute
+    ):
+        """End to end on a ``python3``-only host whose banner never answers:
+        init wires ``python3`` and withholds the claim, and doctor gives the
+        banner a blocking hook's time, says every blocking guard runs out of
+        it, and steps to doctor again (nothing on PATH was seen)."""
+        import argparse
+
+        from espalier import cli, doctor
+
+        self._host(tmp_path, monkeypatch, mute, working=("python3",), stubbed=("python",),
+                   modes={"python3": "timeout"})
+        target = TestAStartProbeThatNeverAnswers._adopter(tmp_path, monkeypatch)
+        assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
+        captured = capsys.readouterr()
+        said = captured.out + captured.err
+        settings = json.loads((target / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        wired = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        assert wired == "python3", f"init wired {wired!r}:\n{said[-3000:]}"
+        assert "fails OPEN" not in said and "does not answer as Python 3" not in said, said[-3000:]
+        assert "Hooks now intercept" not in said, said[-3000:]
+        claim = [line for line in said.splitlines() if "not confirmed" in line]
+        assert claim and "--version" in claim[0], said[-3000:]
+
+        mute.asked.clear()
+        mute.seen.clear()
+        getattr(_python_floor, "_BANNER_VERDICTS", {}).clear()
+        getattr(_python_floor, "_START_VERDICTS", {}).clear()
+        result = doctor.run_doctor_check(target)
+        seconds = doctor._blocking_hook_seconds()
+        late = [w for w in result["warnings"] if f"`--version` within {seconds} s" in w]
+        assert late and "fails OPEN" in late[0], result["warnings"]
+        assert not any("brew install" in w for w in result["warnings"]), result["warnings"]
+        assert any("less loaded" in s for s in result["next_steps"]), result["next_steps"]
+
+    def test_doctor_says_a_banner_that_answers_late_is_slow(self, tmp_path, monkeypatch, capsys, mute):
+        """A banner that answers only in the time a blocking hook gets: doctor
+        warns that it is slow, never that it is not a Python 3."""
+        import argparse
+
+        from espalier import cli, doctor
+
+        self._host(tmp_path, monkeypatch, mute, working=("python3",), stubbed=("python",),
+                   modes={"python3": "patient"})
+        target = TestAStartProbeThatNeverAnswers._adopter(tmp_path, monkeypatch)
+        assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
+        capsys.readouterr()
+        getattr(_python_floor, "_BANNER_VERDICTS", {}).clear()
+        result = doctor.run_doctor_check(target)
+        warned = [w for w in result["warnings"] if "python3" in w]
+        assert warned and "not within" in warned[0], result["warnings"]
+        assert "does not answer as Python 3" not in warned[0], warned
+
+    def test_the_rewire_moves_a_mute_site_only_to_a_seen_target(
+        self, tmp_path, monkeypatch, capsys, mute
+    ):
+        import shutil
+
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, mute, working=("python", "python3"),
+                   modes={"python3": "timeout"})
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        path = TestAnInterpreterThatAnswersItsBannerAndCannotStart._settings(tmp_path, "python3")
+        result = cli.rewire_interpreter_in_settings(path)
+        assert result.status == cli.REWIRE_DONE, result
+        entry = json.loads(path.read_text(encoding="utf-8"))["hooks"]["PreToolUse"][0]["hooks"][0]
+        assert entry["command"] in ("python", shutil.which("python")), entry
+
+        mute.modes["python"] = "timeout"
+        getattr(_python_floor, "_BANNER_VERDICTS", {}).clear()
+        path = TestAnInterpreterThatAnswersItsBannerAndCannotStart._settings(tmp_path / "two", "python3")
+        before = path.read_bytes()
+        assert cli._report_interpreter_rewire(path) == cli.REWIRE_NOTHING
+        said = capsys.readouterr().err
+        assert "never answered" in said and "already starts" not in said, said
+        assert path.read_bytes() == before, "a mute site was rewired to a mute target"
 
 
 def test_cognitive_blueprint_really_does_need_310():

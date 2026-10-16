@@ -307,20 +307,131 @@ def _start_verdict(
             return os.path.normcase(os.path.abspath(path))
         if _as_invoked(argv[0]) == _as_invoked(sys.executable):
             return None
-    head = argv[0] if argv else ""
-    key: tuple[object, ...] | None = None
-    if "/" in head.replace("\\", "/"):
-        try:
-            st = os.stat(head)
-            key = (tuple(argv), seconds, tries, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
-        except (OSError, ValueError):
-            key = None
+    key = _probe_key(argv, seconds, tries)
     if key is not None and key in _START_VERDICTS:
         return _START_VERDICTS[key]
     verdict = _ask_start(argv, seconds, tries)
     if key is not None:
         _START_VERDICTS[key] = verdict
     return verdict
+
+
+def _probe_key(
+    argv: "list[str] | tuple[str, ...]", seconds: int, tries: int,
+) -> tuple[object, ...] | None:
+    """The key a kept probe answer is filed under: the argv, the time and
+    tries it was given, and the file its head names (device, inode, size,
+    modification time). None for a head that is not a path, or is gone: a bare
+    name resolves through PATH at the spawn, which no file here keys."""
+    import os
+
+    head = argv[0] if argv else ""
+    if "/" not in head.replace("\\", "/"):
+        return None
+    try:
+        st = os.stat(head)
+    except (OSError, ValueError):
+        return None
+    return (tuple(argv), seconds, tries, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+#: The ``--version`` probe's time per try and its tries (``DEF-5015``): the
+#: start-up probe's two seconds, and one retry for an interpreter slow once.
+BANNER_PROBE_SECONDS = 2
+BANNER_PROBE_TRIES = 2
+
+#: How a banner opens when the ``--version`` probe could not run at all (an
+#: unspawnable path, an answer that does not decode): an answer against the
+#: interpreter, unlike a probe that never answered in its time, which is None.
+BANNER_PROBE_FAILED = "probe failed"
+
+#: Each ``--version`` answer this process has asked for, keyed as
+#: :func:`_probe_key` says.
+_BANNER_VERDICTS: dict[tuple[object, ...], "str | None"] = {}
+
+
+def interpreter_banner(argv: "list[str] | tuple[str, ...]") -> str | None:
+    """What the interpreter at ``argv`` answers to ``--version`` -- its
+    stdout, else its stderr, stripped -- or None when the probe never answered
+    in :data:`BANNER_PROBE_TRIES` tries of :data:`BANNER_PROBE_SECONDS` s
+    (``DEF-5015``). A loaded host does that to a working interpreter, so None
+    is no answer either way: the resolver keeps such a candidate as its last
+    choice ahead of the literal name, a claim says it was not confirmed, and
+    the floor check, a decision, does not accept it. A probe that could not
+    run opens with :data:`BANNER_PROBE_FAILED`, an answer against it; the
+    decode is strict, a structured answer (``DEF-821``).
+
+    Kept for the process like the start-up verdict, so the resolver, the floor
+    check and doctor's identity check read one answer: asked apart, one
+    interpreter could answer the first and miss the second, and doctor called
+    a 3.10 "older than 3.10" that way.
+    """
+    return _banner_verdict(argv, BANNER_PROBE_SECONDS, BANNER_PROBE_TRIES)
+
+
+def interpreter_banner_within(argv: "list[str] | tuple[str, ...]", seconds: int) -> str | None:
+    """:func:`interpreter_banner` on one try of ``seconds`` (``doctor`` passes
+    the time a blocking hook gets): None when it did not answer in it."""
+    return _banner_verdict(argv, seconds, 1)
+
+
+def interpreter_banner_unanswered(argv: "list[str] | tuple[str, ...]") -> str | None:
+    """A clause saying the ``--version`` probe never answered for ``argv``, or
+    None when it answered either way: the same kept answer, so no spawn beyond
+    :func:`interpreter_banner`'s."""
+    if interpreter_banner(argv) is not None:
+        return None
+    return (
+        f"its `--version` probe did not answer within {BANNER_PROBE_SECONDS} s, "
+        f"twice, which a loaded host does to a working interpreter, and an "
+        f"interpreter that hangs at start-up does too"
+    )
+
+
+def banner_unanswered_of(name_or_path: str | None) -> str | None:
+    """:func:`interpreter_banner_unanswered` for an interpreter SPELLING,
+    resolved as :func:`interpreter_meets_floor` resolves it, so the two read
+    one kept answer. None when it does not resolve."""
+    if not name_or_path:
+        return None
+    import shutil
+    from pathlib import Path as _Path
+
+    head, *flags = interpreter_argv(name_or_path)
+    resolved = shutil.which(head) or (head if _Path(head).is_file() else None)
+    return interpreter_banner_unanswered([resolved, *flags]) if resolved else None
+
+
+def _banner_verdict(
+    argv: "list[str] | tuple[str, ...]", seconds: int, tries: int,
+) -> str | None:
+    """The kept ``--version`` answer for ``argv`` (:func:`interpreter_banner`)."""
+    key = _probe_key(argv, seconds, tries)
+    if key is not None and key in _BANNER_VERDICTS:
+        return _BANNER_VERDICTS[key]
+    banner = _ask_banner(argv, seconds, tries)
+    if key is not None:
+        _BANNER_VERDICTS[key] = banner
+    return banner
+
+
+def _ask_banner(argv: "list[str] | tuple[str, ...]", seconds: int, tries: int) -> str | None:
+    """The spawn half of :func:`_banner_verdict`, unkept."""
+    import subprocess
+
+    from espalier._spawn import run_bounded
+    for _attempt in range(tries):
+        try:
+            result = run_bounded(
+                [*argv, "--version"], capture_output=True, text=True,
+                encoding="utf-8", timeout=seconds,
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        except (subprocess.SubprocessError, OSError, ValueError) as exc:  # strict decode: a structured answer (DEF-821)
+            return f"{BANNER_PROBE_FAILED}: {type(exc).__name__}"
+        return (result.stdout or result.stderr).strip()
+    return None
 
 
 def _ask_start(argv: "list[str] | tuple[str, ...]", seconds: int, tries: int) -> str | None:
@@ -402,24 +513,18 @@ def interpreter_meets_floor(name_or_path: str | None) -> bool:
     if not name_or_path:
         return False
     import shutil
-    import subprocess
     from pathlib import Path as _Path
 
-    from espalier._spawn import run_bounded
     head, *flags = interpreter_argv(name_or_path)
     resolved = shutil.which(head) or (
         head if _Path(head).is_file() else None
     )
     if not resolved:
         return False
-    try:
-        result = run_bounded(
-            [resolved, *flags, "--version"], capture_output=True, text=True,
-            encoding="utf-8", timeout=2,
-        )
-    except (subprocess.SubprocessError, OSError, ValueError):  # strict decode: a structured answer (DEF-821)
-        return False
-    if not meets_python_floor((result.stdout or result.stderr).strip()):
+    # The kept banner (DEF-5015). One that never answered is not accepted by
+    # this decision; the resolver and the claims ask the banner themselves.
+    banner = interpreter_banner([resolved, *flags])
+    if banner is None or not meets_python_floor(banner):
         return False
     # A start-up probe that never answered keeps the banner's verdict here
     # (DEF-5014): every caller of this decides with it.
