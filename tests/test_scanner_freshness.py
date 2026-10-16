@@ -18,7 +18,7 @@ import ast
 from pathlib import Path
 
 from espalier.scanners import freshness as scn
-from tests._live_tree import keep_in_checkout
+from tests._live_tree import checkout_copy
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -63,13 +63,16 @@ def test_does_not_trip_on_negatives() -> None:
 
 def test_fixture_not_in_live_scan() -> None:
     """FRAGMENT_SURFACE_ALLOWLIST excludes tests/fixtures/ implicitly
-    (no glob covers it). Confirm scan_repo does not surface any
-    FragmentState for the fixture path."""
-    states = keep_in_checkout(scn.scan_repo(REPO_ROOT))
+    (no glob covers it). Confirm the scan's surface, ``discover_fragments``,
+    reaches no fragment in the fixture path. It reads a copy of the files git
+    sees under the allowlist: the scanner raises on a duplicate fragment id
+    before any filter can run, and the copy follows the allowlist, so a
+    pattern that grows to cover tests/fixtures/ copies the fixture too."""
+    fragments = scn.discover_fragments(checkout_copy(scn.FRAGMENT_SURFACE_ALLOWLIST))
     fixture_rel = "tests/fixtures/test_freshness_positives.md"
     fixture_states = [
-        s for s in states
-        if fixture_rel in s.fragment.source_path.replace("\\", "/")
+        f for f in fragments
+        if fixture_rel in f.source_path.replace("\\", "/")
     ]
     assert fixture_states == [], (
         f"discover_fragments unexpectedly walked the fixture; found "

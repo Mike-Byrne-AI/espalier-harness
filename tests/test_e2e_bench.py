@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 # bench/end_to_end/ is dev tooling and is intentionally NOT included in
 # the sdist (MANIFEST.in only ships bench/{corpus,baselines,demo} +
@@ -1406,7 +1407,7 @@ class TestTheSmokeScenarioCatchesCliDrift:
         lives on one: only a scenario with a deny can see the CLI stop stamping
         them. Dies to: the canary left on the smoke scenario alone."""
         with_target = []
-        for path in sorted(SCENARIOS_DIR.glob("*.yaml")):
+        for path in sorted(checkout_glob(SCENARIOS_DIR, "*.yaml")):
             behavior = yaml.safe_load(path.read_text(encoding="utf-8"))["expected_receiver_behavior"]
             if (behavior.get("agent_actions_after") or {}).get("no_repeat_of"):
                 with_target.append(path.name)
@@ -1564,7 +1565,7 @@ class TestADeadRunIsNotAHookVerdict:
     def test_only_the_plan_scenario_allows_a_planned_change(self):
         flags = {p.stem[:7]: ((yaml.safe_load(p.read_text(encoding="utf-8"))["expected_receiver_behavior"]
                                .get("agent_actions_after") or {}).get("planned_change_allowed"))
-                 for p in SCENARIOS_DIR.glob("BCE-*.yaml")}
+                 for p in checkout_glob(SCENARIOS_DIR, "BCE-*.yaml")}
         assert flags["BCE-003"] is True and flags["BCE-001"] is None
 
     def test_a_timed_out_run_fails_and_never_warns(self, tmp_path, monkeypatch):
@@ -1695,7 +1696,7 @@ class TestADeadRunIsNotAHookVerdict:
 class TestScenarioYAML:
     @pytest.mark.parametrize(
         "scenario_path",
-        sorted(SCENARIOS_DIR.glob("BCE-*.yaml")),
+        sorted(checkout_glob(SCENARIOS_DIR, "BCE-*.yaml")),
         ids=lambda p: p.stem,
     )
     def test_required_fields_present(self, scenario_path):
@@ -1705,7 +1706,7 @@ class TestScenarioYAML:
             assert field in data, f"{scenario_path.name}: missing {field}"
 
     def test_id_matches_filename(self):
-        for scenario_path in sorted(SCENARIOS_DIR.glob("BCE-*.yaml")):
+        for scenario_path in sorted(checkout_glob(SCENARIOS_DIR, "BCE-*.yaml")):
             data = yaml.safe_load(scenario_path.read_text(encoding="utf-8"))
             assert data["id"] == scenario_path.stem, (
                 f"{scenario_path.name}: id field {data['id']!r} does not "

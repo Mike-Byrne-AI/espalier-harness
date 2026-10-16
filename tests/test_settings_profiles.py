@@ -28,6 +28,7 @@ from espalier.settings_profiles import (
     get_profile,
     powershell_twins,
 )
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -673,7 +674,7 @@ def test_one_function_renders_the_allow_list_and_one_the_fresh_settings():
     owners: dict[str, set[str]] = {
         "fingerprint_allows": set(), "python_only": set(), "JSON_SENTINEL_KEY=True": set(),
     }
-    for path in sorted((REPO_ROOT / "espalier").glob("*.py")):
+    for path in sorted(checkout_glob(REPO_ROOT / "espalier", "*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for fn in (n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))):
             for node in ast.walk(fn):

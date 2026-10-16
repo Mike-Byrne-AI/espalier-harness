@@ -33,6 +33,7 @@ import pytest
 
 from espalier.harness_config import HOOK_EVENTS
 from tests._contracts import StringContract, extract_matches
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROTOCOL_DOC = REPO_ROOT / "docs/external/cc-hook-protocol.md"
@@ -214,7 +215,7 @@ def test_every_hookEventName_emitter_in_contracts():
     (the registry is the iteration domain; an unlisted emitter is invisible).
     Sister to the TP-150 'registration-set as iteration domain' mode."""
     hooks_dir = REPO_ROOT / "tools" / "cc" / "hooks"
-    texts = {f"tools/cc/hooks/{p.name}": p.read_text(encoding="utf-8") for p in hooks_dir.glob("*.py")}
+    texts = {f"tools/cc/hooks/{p.name}": p.read_text(encoding="utf-8") for p in checkout_glob(hooks_dir, "*.py")}
     emitters = {
         rel for rel, text in texts.items()
         if re.search(_HOOK_EVENT_NAME_RE, text) or re.search(_EMIT_ADVISORIES_RE, text)

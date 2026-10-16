@@ -22,6 +22,7 @@ from espalier import pre_release, surface_contract
 from espalier.pre_release import run_cleanliness_gate
 
 import pytest
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -1764,7 +1765,7 @@ class TestNoticeNamesEveryExternalPin:
 
         pins_dir = REPO_ROOT / "docs" / "external"
         names = sorted(
-            p.name for p in pins_dir.glob("*.md")
+            p.name for p in checkout_glob(pins_dir, "*.md")
             if p.name != "README.md" and not p.stem.startswith(("_", "."))
         )
         # The same rule list_pins applies; pinning the count to the canon

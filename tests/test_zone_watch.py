@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 import pytest
+from tests._live_tree import copy_checkout
 
 ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = ROOT / "tools" / "cc" / "hooks"
@@ -767,7 +768,7 @@ def test_a_deploy_without_the_helper_says_so_once_and_keeps_the_hook(tmp_path: P
     """A post_write_check beside a tree that predates _zone_watch.py keeps
     its other checks and says the zone check is off once, never every call."""
     cc = tmp_path / "deployed" / "tools" / "cc"
-    shutil.copytree(ROOT / "tools" / "cc", cc, ignore=shutil.ignore_patterns("__pycache__"))
+    copy_checkout(ROOT / "tools" / "cc", cc, ignore=shutil.ignore_patterns("__pycache__"))
     (cc / "hooks" / "_zone_watch.py").unlink()
     tree = tmp_path / "work"
     (tree / "tools" / "cc" / "hooks").mkdir(parents=True)

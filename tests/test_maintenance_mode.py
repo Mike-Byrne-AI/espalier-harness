@@ -184,7 +184,7 @@ class TestRelaunchHint:
         literals, by SOURCE segment, for a spelled-out relaunch; only
         relaunch_hint() may."""
         offenders = []
-        for path in sorted(_HOOKS.glob("*.py")):
+        for path in sorted(checkout_glob(_HOOKS, "*.py")):
             if path.name == "_maintenance_mode.py":
                 continue
             offenders.extend(
@@ -339,7 +339,7 @@ def _maintenance_bypass_callers() -> set[str]:
     import ast
 
     callers: set[str] = set()
-    for path in sorted(_HOOKS_DIR.glob("*.py")):
+    for path in sorted(checkout_glob(_HOOKS_DIR, "*.py")):
         if path.name == "_maintenance_mode.py":
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -513,7 +513,7 @@ class TestBypassRosterCarriers:
 # ---------------------------------------------------------------------------
 
 import ast  # noqa: E402
-from tests._live_tree import checkout_rglob
+from tests._live_tree import checkout_glob, checkout_rglob
 
 _PADDED = ("1 ", " 1", "1\t")
 _STATUSLINE = _REPO_ROOT / "tools" / "cc" / "statusline.py"

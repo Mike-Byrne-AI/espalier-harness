@@ -11,13 +11,14 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from tests._live_tree import checkout_glob
 
 GOLDEN = Path(__file__).resolve().parent.parent / "examples" / "golden"
 # Files are named test_g*.py (not G*.py): pytest's default python_files pattern
 # is test_*.py, so `pytest <dir>` only collects test_-prefixed files. A G*.py
 # name collects only when passed as an explicit file arg — the same footgun an
 # adopter would hit copying the example. The naming is part of the lesson.
-GN_FILES = sorted(GOLDEN.glob("test_g*.py"))
+GN_FILES = sorted(checkout_glob(GOLDEN, "test_g*.py"))
 
 
 def test_golden_dir_has_the_expected_examples():

@@ -1141,7 +1141,7 @@ class TestWitnessSetParity:
         if not asset_docs.is_dir():
             return  # nothing deployed (stripped tree); the rule is legitimately inert
         deployed = {f"docs/{p.relative_to(asset_docs).as_posix()}"
-                    for p in asset_docs.rglob("*.md")}
+                    for p in checkout_rglob(asset_docs, "*.md")}
         assert deployed == set(_reinject._DOCS_ASSET_TAILS), (
             "_DOCS_ASSET_TAILS drifted from espalier/assets/docs/ -- "
             f"deployed={deployed}, rule={set(_reinject._DOCS_ASSET_TAILS)}"

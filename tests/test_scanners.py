@@ -136,9 +136,12 @@ class TestScannerSelfContainment:
     Any import from `espalier` would silently break the generated file."""
 
     def test_no_scanner_imports_from_espalier(self):
+        # imported here: the selfcheck mirror drops this class, and an installed mirror has no tests package
+        from tests._live_tree import checkout_glob
+
         scanners_dir = Path(__file__).parent.parent / "espalier" / "scanners"
         violations = []
-        for py_file in scanners_dir.glob("*.py"):
+        for py_file in checkout_glob(scanners_dir, "*.py"):
             if py_file.name == "__init__.py":
                 continue
             source = py_file.read_text(encoding="utf-8")
@@ -172,9 +175,11 @@ class TestScannerExemptPrefixesParity:
     """
 
     def test_test_walking_scanners_exempt_fixtures(self):
+        from tests._live_tree import checkout_glob
+
         scanners_dir = Path(__file__).parent.parent / "espalier" / "scanners"
         offenders = []
-        for path in scanners_dir.glob("*.py"):
+        for path in checkout_glob(scanners_dir, "*.py"):
             if path.name == "__init__.py":
                 continue
             source = path.read_text(encoding="utf-8")
@@ -200,9 +205,11 @@ class TestScannerExemptPrefixesParity:
         deliberate decision (raise the cap) not silent exemption debt."""
         import importlib
 
+        from tests._live_tree import checkout_glob
+
         scanners_dir = Path(__file__).parent.parent / "espalier" / "scanners"
         checked: list[str] = []
-        for path in sorted(scanners_dir.glob("*.py")):
+        for path in sorted(checkout_glob(scanners_dir, "*.py")):
             if path.name == "__init__.py":
                 continue
             mod = importlib.import_module(f"espalier.scanners.{path.stem}")

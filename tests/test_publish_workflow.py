@@ -37,6 +37,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 yaml = pytest.importorskip("yaml")
 
@@ -110,7 +111,7 @@ class TestUsesAreSHAPinned:
 
     def test_every_narrative_pin_mention_matches_its_uses_tag_comment(self) -> None:
         checked = 0
-        for wf in sorted(PUBLISH_YML.parent.glob("*.yml")):
+        for wf in sorted(checkout_glob(PUBLISH_YML.parent, "*.yml")):
             text = wf.read_text(encoding="utf-8")
             for m in self._NARRATIVE_PIN_RE.finditer(text):
                 uses = re.search(

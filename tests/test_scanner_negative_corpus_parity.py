@@ -45,6 +45,7 @@ import re
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCANNER_DIR = REPO_ROOT / "espalier" / "scanners"
@@ -115,7 +116,7 @@ def _non_exempt_scanner_names() -> list[str]:
     the negative-axis exemptions."""
     return sorted(
         p.stem
-        for p in SCANNER_DIR.glob("*.py")
+        for p in checkout_glob(SCANNER_DIR, "*.py")
         if p.name != "__init__.py" and p.stem not in NEGATIVE_CORPUS_EXEMPT
     )
 

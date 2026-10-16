@@ -19,6 +19,7 @@ import json
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CORPUS_DIR = REPO_ROOT / "bench" / "corpus"
@@ -28,7 +29,7 @@ _REQUIRED_TOP_KEYS = frozenset({
     "canonical_attempts",
 })
 _OUTCOMES = frozenset({"blocked", "allowed", "not_blocked_documented_oos"})
-_CORPUS_FILES = sorted(CORPUS_DIR.glob("BC-*.json"))
+_CORPUS_FILES = sorted(checkout_glob(CORPUS_DIR, "BC-*.json"))
 
 
 def _validate(obj: dict, stem: str) -> None:

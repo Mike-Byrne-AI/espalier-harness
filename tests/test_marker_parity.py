@@ -63,6 +63,7 @@ import pytest
 from espalier._compat import tomllib
 from tests._contracts import StringListContract
 from tests._surface_expected import PLUGIN_OWNED_MARKERS
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -316,7 +317,7 @@ def _full_tree_marks_outside_the_registry(tests_dir: Path = REPO_ROOT / "tests")
     """Every `pytest.mark.full_tree` spelled in a test module -- a decorator or a
     `pytestmark` -- as `file.py:line`. AST, so prose and strings do not count."""
     hits: list[str] = []
-    for path in sorted(tests_dir.glob("test_*.py")):
+    for path in sorted(checkout_glob(tests_dir, "test_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if (

@@ -62,6 +62,7 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -584,7 +585,7 @@ class TestNoPackIdsInHookRuntimeStrings:
 
     def test_no_pack_ids_in_injected_runtime_strings(self):
         offenders: list[tuple[str, int, str, str]] = []
-        for py in sorted(self.HOOK_DIR.glob("*.py")):
+        for py in sorted(checkout_glob(self.HOOK_DIR, "*.py")):
             tree = ast.parse(py.read_text(encoding="utf-8"))
             for lineno, text in _hook_injected_strings(tree):
                 for match in _TP_ID_RE.finditer(text):

@@ -34,6 +34,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -68,7 +69,7 @@ def _live_zone_tokens() -> set[str]:
 def _demo_files() -> list[Path]:
     # docs/DEMO.md is the same kind of transcript (the README's demo beat) and
     # drifted half-updated once; it rides the same gate.
-    return sorted(DEMO_DIR.glob("*.md")) + [REPO_ROOT / "docs" / "DEMO.md"]
+    return sorted(checkout_glob(DEMO_DIR, "*.md")) + [REPO_ROOT / "docs" / "DEMO.md"]
 
 
 class TestDemoQuotesMatchLiveDenyTemplates:

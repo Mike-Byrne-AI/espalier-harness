@@ -33,6 +33,7 @@ from espalier.render_surface import (
     render_live_surface,
     render_pack_manifest,
 )
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -71,7 +72,7 @@ class TestManifestIncludesManagedSurface:
     def test_all_hook_files_in_manifest(self):
         entries = _manifest_lines(REPO_ROOT)
         hooks_dir = REPO_ROOT / "tools" / "cc" / "hooks"
-        for hook in hooks_dir.glob("*.py"):
+        for hook in checkout_glob(hooks_dir, "*.py"):
             if hook.name == "__init__.py":
                 continue
             rel = f"tools/cc/hooks/{hook.name}"

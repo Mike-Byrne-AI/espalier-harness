@@ -54,6 +54,7 @@ from pathlib import Path
 import pytest
 
 from tests._git_oracle import require_tracked_paths
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 _WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -84,7 +85,7 @@ def _scheduled_workflows() -> dict[str, bool]:
     """``{filename: has_a_real_schedule_key}``."""
     return {
         p.name: bool(_SCHEDULE_KEY.search(p.read_text(encoding="utf-8")))
-        for p in sorted(_WORKFLOWS.glob("*.yml"))
+        for p in sorted(checkout_glob(_WORKFLOWS, "*.yml"))
     }
 
 

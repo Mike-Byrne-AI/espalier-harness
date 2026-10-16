@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -27,7 +28,7 @@ SOT_MODULE = "_hook_utils.py"
 def _hook_modules() -> list[Path]:
     """All hook scripts except the SoT module itself (``_vendor`` lives
     under ``espalier/`` so it is already outside ``HOOKS_DIR``)."""
-    return sorted(p for p in HOOKS_DIR.glob("*.py") if p.name != SOT_MODULE)
+    return sorted(p for p in checkout_glob(HOOKS_DIR, "*.py") if p.name != SOT_MODULE)
 
 
 class TestStateDirSingleSource:

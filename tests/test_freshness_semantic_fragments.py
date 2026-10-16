@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from tests._live_tree import keep_in_checkout
+# The freshness scanner raises on a duplicate fragment id before any filter can
+# run (a second seat's worktree or a copy-duplicate doc holds one), so it reads a
+# copy of the surface git sees, cut by its own allowlist.
+from tests._live_tree import checkout_copy
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,10 +39,10 @@ def _verify_on_touch_fragments() -> tuple[tuple[str, tuple[str, ...]], ...]:
     bounds -- derived, never retyped, so a fragment flipped to the policy (the
     seven the pin-tax lane moved off numeric-contract on 2026-09-10) joins the
     sweep without an edit here."""
-    from espalier.scanners.freshness import discover_fragments
+    from espalier.scanners.freshness import FRAGMENT_SURFACE_ALLOWLIST, discover_fragments
     return tuple(
         (f.id, tuple(f.bound))
-        for f in keep_in_checkout(discover_fragments(REPO_ROOT))
+        for f in discover_fragments(checkout_copy(FRAGMENT_SURFACE_ALLOWLIST))
         if f.policy == "verify-on-touch"
     )
 
@@ -118,9 +121,9 @@ class TestSemanticFragmentBounds:
         )
 
     def test_all_seeded_fragments_discoverable(self) -> None:
-        from espalier.scanners.freshness import discover_fragments
+        from espalier.scanners.freshness import FRAGMENT_SURFACE_ALLOWLIST, discover_fragments
         seeded = {fid for fid, _ in SEMANTIC_FRAGMENTS}
-        discovered = {f.id for f in keep_in_checkout(discover_fragments(REPO_ROOT))}
+        discovered = {f.id for f in discover_fragments(checkout_copy(FRAGMENT_SURFACE_ALLOWLIST))}
         missing = seeded - discovered
         assert not missing, (
             f"semantic fragments not discovered (marker missing or "
@@ -152,8 +155,8 @@ class TestMarkerContractClosure:
     opts into ``bound_closure=true``. Verify the parser recognizes it."""
 
     def test_marker_contract_has_bound_closure_true(self) -> None:
-        from espalier.scanners.freshness import discover_fragments
-        for f in keep_in_checkout(discover_fragments(REPO_ROOT)):
+        from espalier.scanners.freshness import FRAGMENT_SURFACE_ALLOWLIST, discover_fragments
+        for f in discover_fragments(checkout_copy(FRAGMENT_SURFACE_ALLOWLIST)):
             if f.id == "marker-contract":
                 assert f.bound_closure is True
                 return

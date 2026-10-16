@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from tests._surface_expected import CONTRACT_CEILINGS, PLUGIN_OWNED_MARKERS
-from tests._live_tree import checkout_rglob
+from tests._live_tree import checkout_glob, checkout_rglob
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -109,7 +109,7 @@ def test_suite_size_lower_bound():
     consolidations (5-10 files merging) without false alarms but catches
     actual mass deletion.
     """
-    test_files = list(TESTS_DIR.glob("test_*.py"))
+    test_files = list(checkout_glob(TESTS_DIR, "test_*.py"))
     assert len(test_files) >= 80, (
         f"Only {len(test_files)} test files. The suite had 92+ files "
         f"in 0.5.0. If you intentionally consolidated below 80, update "
@@ -232,7 +232,7 @@ def test_scripts_dir_matches_pinned_inventory():
     from _surface_expected import EXPECTED_SCRIPT_NAMES
     scripts_dir = REPO_ROOT / "scripts"
     live_names = frozenset(
-        p.name for p in scripts_dir.glob("*.py")
+        p.name for p in checkout_glob(scripts_dir, "*.py")
         if not p.name.startswith("__")
     )
     assert live_names == EXPECTED_SCRIPT_NAMES, (
@@ -265,7 +265,7 @@ def test_every_test_file_matches_a_marker_rule_or_defaults_to_unit():
     pattern_strs = {p for patterns, _marker in _MARKER_RULES for p in patterns}
     assert pattern_strs, "no patterns extracted from _MARKER_RULES"
 
-    test_files = sorted(TESTS_DIR.glob("test_*.py"))
+    test_files = sorted(checkout_glob(TESTS_DIR, "test_*.py"))
     unmatched: list[str] = []
     for path in test_files:
         stem = path.stem
@@ -496,7 +496,7 @@ def test_no_test_module_imports_a_dev_extra_at_module_level():
     assert {"yaml", "packaging", "build"} <= names, names
     offenders = [
         f"{path.relative_to(REPO_ROOT)}:{lineno}: {name}"
-        for path in sorted(TESTS_DIR.glob("*.py"))
+        for path in sorted(checkout_glob(TESTS_DIR, "*.py"))
         for lineno, name in _module_level_dev_extra_imports(
             path.read_text(encoding="utf-8"), names
         )
@@ -652,7 +652,7 @@ def test_every_subprocess_test_is_slow_or_exempt():
     from tests.conftest import _SLOW_FILES
 
     offenders: list[str] = []
-    for path in sorted(TESTS_DIR.glob("test_*.py")):
+    for path in sorted(checkout_glob(TESTS_DIR, "test_*.py")):
         text = path.read_text(encoding="utf-8")
         if not _module_spawns_child(text):
             continue
@@ -840,7 +840,7 @@ def _declared_timeout_sites(text: str, consts: dict[str, float] | None = None
 def _live_test_modules() -> list[tuple[str, str]]:
     """(stem, source) for every collected test module, read once."""
     return [(p.stem, p.read_text(encoding="utf-8"))
-            for p in sorted(TESTS_DIR.glob("test_*.py"))]
+            for p in sorted(checkout_glob(TESTS_DIR, "test_*.py"))]
 
 
 def _timeout_offenders(
@@ -1034,7 +1034,7 @@ def test_every_spawned_step_lives_in_the_spawn_helper():
     so a renamed driver cannot empty the population into a green."""
     offenders: list[str] = []
     calls = 0
-    for path in sorted(TESTS_DIR.glob("test_*.py")):
+    for path in sorted(checkout_glob(TESTS_DIR, "test_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         helper_names = {
             alias.asname or alias.name
@@ -1933,7 +1933,7 @@ def _all_test_dir_modules() -> list[tuple[str, str]]:
     """(stem, source) for every ``tests/*.py`` -- test modules, ``conftest.py``
     and the private helpers alike. ``tests/fixtures/`` holds scanner inputs
     (sample sources, no tests in them), so it is not read."""
-    return [(p.stem, p.read_text(encoding="utf-8")) for p in sorted(TESTS_DIR.glob("*.py"))]
+    return [(p.stem, p.read_text(encoding="utf-8")) for p in sorted(checkout_glob(TESTS_DIR, "*.py"))]
 
 
 def test_pyproject_leaves_the_timeout_method_to_the_platform():
@@ -2408,7 +2408,7 @@ def _raw_git_population_census() -> dict[str, int]:
     rather than papered over.
     """
     census: dict[str, int] = {}
-    for path in sorted(TESTS_DIR.glob("*.py")):
+    for path in sorted(checkout_glob(TESTS_DIR, "*.py")):
         if path.name in ("_git_oracle.py", "test_git_oracle.py"):
             continue
         try:
@@ -2608,7 +2608,7 @@ def _eacces_unsafe_probes_in_denial_blocks() -> dict[str, list[str]]:
     (or the line above) is the declared way to say so.
     """
     found: dict[str, list[str]] = {}
-    for path in sorted(TESTS_DIR.glob("*.py")):
+    for path in sorted(checkout_glob(TESTS_DIR, "*.py")):
         text = path.read_text(encoding="utf-8")
         try:
             tree = ast.parse(text)
@@ -2766,7 +2766,7 @@ def test_the_denial_block_detector_still_engages_the_live_corpus():
     pass the contract above having checked nothing -- the born-weak shape
     (docs/FAILURE_MODES.md, `/scan test_loosening`)."""
     blocks = 0
-    for path in sorted(TESTS_DIR.glob("*.py")):
+    for path in sorted(checkout_glob(TESTS_DIR, "*.py")):
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
         except SyntaxError:  # pragma: no cover
@@ -2972,7 +2972,7 @@ def test_every_dev_tree_test_is_full_tree_or_exempt():
     marked_files = {frag.split("::", 1)[0] for frag in _FULL_TREE_NODEIDS}
 
     offenders: list = []
-    for path in sorted(TESTS_DIR.glob("test_*.py")):
+    for path in sorted(checkout_glob(TESTS_DIR, "test_*.py")):
         text = path.read_text(encoding="utf-8")
         if not _module_reads_dev_only_path(text, is_dev_only):
             continue
@@ -3023,7 +3023,7 @@ def test_every_exempt_module_carries_exactly_its_measured_dev_only_chains():
     is_dev_only = _export_ignore_predicate()
     measured = {
         path.name: _dev_only_chains(path.read_text(encoding="utf-8"), is_dev_only)
-        for path in sorted(TESTS_DIR.glob("test_*.py"))
+        for path in sorted(checkout_glob(TESTS_DIR, "test_*.py"))
         if _FULL_TREE_EXEMPT_MARKER in path.read_text(encoding="utf-8")
     }
     assert measured, "no module carries the opt-out marker -- the census read nothing"
@@ -3224,7 +3224,7 @@ def test_no_non_test_function_carries_a_skip_or_xfail_mark():
     import re
     offenders = []
     mark_re = re.compile(r"pytest\.mark\.(skip|skipif|xfail)\b")
-    for path in sorted((REPO_ROOT / "tests").glob("*.py")):
+    for path in sorted(checkout_glob(REPO_ROOT / "tests", "*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and not node.name.startswith("test_"):
@@ -3271,7 +3271,7 @@ def _script_spawns_past_hook_python(text: str) -> list[tuple[int, str]]:
 def test_a_module_that_asserts_on_a_spawned_hooks_parent_spawns_through_hook_python():
     offenders = [
         f"{path.name}:{n}: {line}"
-        for path in sorted(TESTS_DIR.glob("*.py"))
+        for path in sorted(checkout_glob(TESTS_DIR, "*.py"))
         if path.name != Path(__file__).name  # this file names the form in its own text
         for n, line in _script_spawns_past_hook_python(path.read_text(encoding="utf-8"))
     ]
@@ -3437,7 +3437,7 @@ def test_no_test_command_string_opens_with_an_unquoted_interpreter():
     strings live when they are shared."""
     offenders = [
         f"{path.relative_to(REPO_ROOT)}:{lineno}"
-        for path in sorted(TESTS_DIR.glob("*.py"))
+        for path in sorted(checkout_glob(TESTS_DIR, "*.py"))
         for lineno in _unquoted_interpreter_heads(path.read_text(encoding="utf-8"))
     ]
     assert not offenders, (

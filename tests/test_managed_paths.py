@@ -26,6 +26,7 @@ from espalier.managed_paths import (
     ownership_summary,
     self_host_managed_paths,
 )
+from tests._live_tree import checkout_glob, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -56,7 +57,7 @@ class TestHarnessOwnedRootsSingleOwner:
         # double-count) and __pycache__; tests/ is out of scope (this pins
         # production sites, and the pin's own fixtures use the literal).
         for root in (REPO_ROOT / "espalier", REPO_ROOT / "tools" / "cc"):
-            for path in sorted(root.rglob("*.py")):
+            for path in sorted(checkout_rglob(root, "*.py")):
                 if "_vendor" in path.parts or "__pycache__" in path.parts:
                     continue
                 yield path
@@ -356,7 +357,7 @@ class TestCanonicalHookCountFromContract:
     def test_canonical_hooks_match_disk(self):
         hooks_dir = REPO_ROOT / "tools" / "cc" / "hooks"
         disk_hooks = sorted(
-            p.name for p in hooks_dir.glob("*.py") if not p.name.startswith("_")
+            p.name for p in checkout_glob(hooks_dir, "*.py") if not p.name.startswith("_")
         )
         assert sorted(surface_contract.get_canonical_hook_scripts()) == disk_hooks
 

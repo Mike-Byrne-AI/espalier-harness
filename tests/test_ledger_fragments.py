@@ -28,7 +28,7 @@ import pytest
 
 from tests import _source_segment
 from tests.test_ledger_row import _args, _build_tree
-from tests._live_tree import checkout_rglob
+from tests._live_tree import LISTING_HELPERS, checkout_rglob
 
 # slow-exempt: each two-lane case builds a scratch repository and runs git and
 # the real verbs on two branches (measured 0.2 to 0.3 s a case); what conflicts
@@ -1258,17 +1258,25 @@ def _read_target(text: str, node: ast.Call) -> "ast.AST | None":
 def _globs_a_record(text: str, node: ast.Call, bound: "dict[str, ast.AST]") -> bool:
     """A ``glob``/``rglob`` over the task-pack folder whose pattern takes in
     the ledger or its roster: every file it yields is read as one of many,
-    the record among them, with no name saying so."""
+    the record among them, with no name saying so. The folder is the method's
+    receiver, or the first argument of one of ``tests/_live_tree.py``'s
+    ``LISTING_HELPERS``, the form DEF-2013 routes every tests/ walk to (the
+    two that take no pattern fall out at the pattern check)."""
     import fnmatch
 
     f = node.func
-    if not (isinstance(f, ast.Attribute) and f.attr in ("glob", "rglob") and node.args
-            and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)):
+    if isinstance(f, ast.Attribute) and f.attr in ("glob", "rglob"):
+        folder, args = f.value, node.args
+    elif isinstance(f, ast.Name) and f.id in LISTING_HELPERS and node.args:
+        folder, args = node.args[0], node.args[1:]
+    else:
         return False
-    pattern = node.args[0].value
+    if not (args and isinstance(args[0], ast.Constant) and isinstance(args[0].value, str)):
+        return False
+    pattern = args[0].value
     if not any(fnmatch.fnmatch(name, pattern) for name in ("FORWARD_LEDGER.md", "LEDGER_PROBES.json")):
         return False
-    receiver = [f.value] + ([bound[f.value.id]] if isinstance(f.value, ast.Name) and f.value.id in bound else [])
+    receiver = [folder] + ([bound[folder.id]] if isinstance(folder, ast.Name) and folder.id in bound else [])
     # The folder itself, never a folder under it (task-packs/Done holds packs).
     return any(re.search(r"""["']task-packs/?["']\)?\s*$""", _src(text, e)) for e in receiver)
 
@@ -1549,7 +1557,11 @@ class TestTheReaderCensus:
             "def via_glob():\n"
             "    return [p.read_text() for p in Path('task-packs').glob('*.md')]\n"
             "def under_it():\n"
-            "    return [p.read_text() for p in Path('task-packs/Done').glob('*.md')]\n", encoding="utf-8")
+            "    return [p.read_text() for p in Path('task-packs/Done').glob('*.md')]\n"
+            "def via_checkout():\n"
+            "    return [p.read_text() for p in checkout_glob(Path('task-packs'), '*.md')]\n"
+            "def under_it_routed():\n"
+            "    return [p.read_text() for p in checkout_rglob(Path('task-packs/Done'), '*.md')]\n", encoding="utf-8")
         scripts = tmp_path / "scripts"
         scripts.mkdir()
         (scripts / "imports.py").write_text(
@@ -1558,7 +1570,7 @@ class TestTheReaderCensus:
             "    return (root / LEDGER).read_text()\n", encoding="utf-8")
         found = _unexplained_reads(tmp_path)
         assert sorted(f.split(" ", 1)[1].split(":")[0] for f in found) == [
-            "via_constant", "via_glob", "via_helper", "via_search"], found
+            "via_checkout", "via_constant", "via_glob", "via_helper", "via_search"], found
 
 
 class TestTheRecordPredicates:

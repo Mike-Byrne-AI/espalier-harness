@@ -41,6 +41,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 HOOKS_DIR = Path(__file__).resolve().parents[1] / "tools" / "cc" / "hooks"
 TOOLS_CC = HOOKS_DIR.parent
@@ -103,7 +104,7 @@ def spawn_sites(root: Path = HOOKS_DIR, pattern: str = "*.py") -> list[dict]:
     """Every raw ``subprocess.*`` call (and a timed ``.communicate``), and
     every ``spawn_checked(`` and ``run_bounded(`` call, under ``root``."""
     out: list[dict] = []
-    for f in sorted(root.glob(pattern)):
+    for f in sorted(checkout_glob(root, pattern)):
         src = f.read_text(encoding="utf-8")
         lines = src.splitlines()
         tree = ast.parse(src)

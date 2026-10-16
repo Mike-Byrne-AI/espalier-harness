@@ -26,6 +26,7 @@ import pytest
 
 from espalier._safe_walk import is_own_git_repo
 from espalier.release_pack import create_release_zip
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -99,12 +100,13 @@ def test_create_release_zip_excludes_nested_repo_members(tmp_path):
 
 # --- 3-A: tests/conftest.py::initialized_repo_root copy mechanism ----------
 #
-# The fixture copytree's the source tree then runs `git add -A` in the copy.
+# The fixture copies the source tree then runs `git add -A` in the copy.
 # An EMPTY nested repo (its own `.git`, no commit) breaks `git add -A` with
 # exit 128 ("does not have a commit checked out"), erroring every test that
-# uses the fixture. The `_ignore` skip below is the exact mechanism the fixture
-# now uses; we drive the copy+init+add path on a tmp tree (never the real repo
-# root, per the pack) and prove the skip is what averts the crash.
+# uses the fixture. The red below drives the pre-fix copytree; the survivors
+# drive the fixture's own copy (`tests.conftest._copy_isolated_tree`, git's
+# view since DEF-2013 lane two) on a tmp tree (never the real repo root, per
+# the pack): its `_ignore` skip where no git answers, git's view where one does.
 
 def _ignore_factory(*, skip_nested: bool):
     def _ignore(path: str, names: list[str]) -> set[str]:
@@ -118,8 +120,19 @@ def _ignore_factory(*, skip_nested: bool):
 
 
 def _drive_copy_and_add(src: Path, dst: Path, *, skip_nested: bool) -> None:
-    """Replicate the fixture's copytree -> git init -> git add -A path."""
+    """The pre-fix fixture's copytree -> git init -> git add -A path."""
     shutil.copytree(src, dst, ignore=_ignore_factory(skip_nested=skip_nested))
+    subprocess.run(["git", "init", "-q"], cwd=str(dst), check=True)
+    subprocess.run(
+        ["git", "add", "-A"], cwd=str(dst), check=True, capture_output=True
+    )
+
+
+def _drive_fixture_copy_and_add(src: Path, dst: Path) -> None:
+    """The fixture's own copy, then its git init and git add -A."""
+    from tests.conftest import _copy_isolated_tree
+
+    _copy_isolated_tree(src, dst)
     subprocess.run(["git", "init", "-q"], cwd=str(dst), check=True)
     subprocess.run(
         ["git", "add", "-A"], cwd=str(dst), check=True, capture_output=True
@@ -147,12 +160,16 @@ def test_fixture_copy_without_skip_chokes_on_empty_nested_repo(tmp_path):
     assert exc.value.returncode == 128
 
 
-def test_fixture_copy_with_skip_survives_empty_nested_repo(tmp_path):
-    """Post-fix: the nested-repo skip omits the embedded repo, so the copy is
-    clean and `git add -A` succeeds; the nested repo is absent from the copy."""
+@pytest.mark.parametrize("src_is_a_checkout", [False, True], ids=["walked", "git-view"])
+def test_fixture_copy_with_skip_survives_empty_nested_repo(tmp_path, src_is_a_checkout):
+    """Post-fix, through the fixture's own copy: the embedded repo is left
+    out, so the copy is clean and `git add -A` succeeds -- by the `_ignore`
+    skip on a tree no git answers for, by git's view on a checkout."""
     src = _src_tree_with_empty_nested_repo(tmp_path)
+    if src_is_a_checkout:
+        subprocess.run(["git", "init", "-q"], cwd=str(src), check=True)
     dst = tmp_path / "dst_ok"
-    _drive_copy_and_add(src, dst, skip_nested=True)  # must not raise
+    _drive_fixture_copy_and_add(src, dst)  # must not raise
     assert (dst / "pkg" / "mod.py").exists()
     assert not (dst / "empty_repo").exists()
 
@@ -280,7 +297,7 @@ def test_bare_os_walk_walkers_prune_nested_repos():
     discovered: list[str] = []
     scanner_discovered: list[str] = []
     unguarded: list[str] = []
-    for py in sorted(espalier_dir.rglob("*.py")):
+    for py in sorted(checkout_rglob(espalier_dir, "*.py")):
         rel = py.relative_to(REPO_ROOT).as_posix()
         if "espalier/_vendor/" in rel:
             continue

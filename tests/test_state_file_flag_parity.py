@@ -319,6 +319,7 @@ def test_no_unexpected_flag_files() -> None:
     """Anything in .espalier-state/ must be in the documented set."""
     if not _FLAGS.exists():
         pytest.skip(".espalier-state/ not present")
+    # live-tree: ok -- the gitignored .espalier-state/ is the subject: every flag file a writer drops there
     unexpected = [p.name for p in _FLAGS.iterdir() if not _is_documented_flag(p.name)]
     assert not unexpected, (
         f".espalier-state/ contains undocumented files: {unexpected}. "

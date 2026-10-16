@@ -38,6 +38,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 if str(HOOKS_DIR) not in sys.path:
@@ -1211,12 +1212,12 @@ def test_every_corpus_tier_still_loads():
     docs = _recall._load_corpus(REPO_ROOT)
     loaded_sharp_edges = sum(1 for d in docs if d.source.startswith("docs/sharp-edges/"))
     loaded_memory = sum(1 for d in docs if d.source.startswith("memory/"))
-    fs_sharp_edges = len([p for p in (REPO_ROOT / "docs" / "sharp-edges").glob("*.md")
+    fs_sharp_edges = len([p for p in checkout_glob(REPO_ROOT / "docs" / "sharp-edges", "*.md")
                           if p.name != "README.md"])
     # The loader skips README.md and the notes PULL_EXCLUDED_MEMORY_NOTES names
     # (a record and an aggregate, 2026-09-12); the on-disk side applies the same
     # two rules so a tier that stopped loading still reds and a skip does not.
-    fs_memory = len([p for p in (REPO_ROOT / "memory").glob("*.md")
+    fs_memory = len([p for p in checkout_glob(REPO_ROOT / "memory", "*.md")
                      if p.name != "README.md"
                      and f"memory/{p.name}" not in _recall.PULL_EXCLUDED_MEMORY_NOTES])
     assert loaded_sharp_edges == fs_sharp_edges, (
@@ -3552,7 +3553,7 @@ def test_pull_excluded_memory_notes_exist_and_are_not_indexed():
     # The exact on-disk spelling, not `is_file()`: on a case-insensitive
     # filesystem `is_file()` answers yes for any casing, and a differently-cased
     # file would be indexed under a name this loop never checks.
-    on_disk = {f"memory/{p.name}" for p in (REPO_ROOT / "memory").glob("*.md")}
+    on_disk = {f"memory/{p.name}" for p in checkout_glob(REPO_ROOT / "memory", "*.md")}
     for src in _recall.PULL_EXCLUDED_MEMORY_NOTES:
         assert src in on_disk, f"{src} is excluded but no file of exactly that name exists"
         assert src not in sources, f"{src} is indexed despite the exclusion"
@@ -3656,7 +3657,7 @@ def test_indexed_sources_follows_the_corpus_gates(tmp_path, monkeypatch):
     assert _recall.indexed_sources(tmp_path) == ["memory/", "docs/STANDING_PRINCIPLES.md"]
 
     # The seeded SHARP_EDGES scaffold yields no doc, so its family is not named.
-    seed = next((REPO_ROOT / "espalier" / "assets" / "seed").glob("SHARP_EDGES*.md"))
+    seed = next(checkout_glob(REPO_ROOT / "espalier" / "assets" / "seed", "SHARP_EDGES*.md"))
     (docs / "SHARP_EDGES.md").write_text(seed.read_text(encoding="utf-8"), encoding="utf-8")
     assert "SHARP_EDGES" not in " ".join(_recall.indexed_sources(tmp_path))
 
@@ -3715,7 +3716,7 @@ def test_every_corpus_doc_closes_its_fences():
     sources, and the failure names the file and the fence left open."""
     roots = [REPO_ROOT / "docs" / "SHARP_EDGES.md", REPO_ROOT / "docs" / "STANDING_PRINCIPLES.md",
              REPO_ROOT / "docs" / "STANDING_PRINCIPLES.aliases.md", REPO_ROOT / "docs" / "FAILURE_MODES.md"]
-    roots += sorted((REPO_ROOT / "memory").glob("*.md")) + sorted((REPO_ROOT / "docs" / "sharp-edges").glob("*.md"))
+    roots += sorted(checkout_glob(REPO_ROOT / "memory", "*.md")) + sorted(checkout_glob(REPO_ROOT / "docs" / "sharp-edges", "*.md"))
     # The default roster's files are corpus files on this tree too (the root
     # CLAUDE.md since 2026-10-08): an unclosed fence there hides its sections alike.
     roots += [path for path, _family in _recall._default_roster(REPO_ROOT)]

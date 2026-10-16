@@ -12,6 +12,7 @@ import ast
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_rglob
 
 _REPO = Path(__file__).parents[1]
 _TARGET = _REPO / "tests" / "_surface_expected.py"
@@ -67,7 +68,7 @@ def test_derived_constants_not_used_as_witnesses() -> None:
         pytest.skip("no derived constants yet")
 
     offenders: list[str] = []
-    for test_file in (_REPO / "tests").rglob("test_*.py"):
+    for test_file in checkout_rglob(_REPO / "tests", "test_*.py"):
         if test_file.name == "test_surface_expected_witness_contract.py":
             continue
         try:

@@ -58,6 +58,7 @@ from _stack_census import (
     unmarked_count,
     vocabulary,
 )
+from tests._live_tree import copy_checkout
 
 REPO = Path(__file__).resolve().parent.parent
 SOURCE = REPO / "tools" / "cc" / "_stack_table.py"
@@ -979,7 +980,7 @@ _TABLE_FAULTS: dict[str, str | None] = {
 def _deployed_copy(tmp_path: Path) -> Path:
     """tools/cc as init deploys it, under a scratch project root."""
     root = tmp_path / "project"
-    shutil.copytree(
+    copy_checkout(
         REPO / "tools" / "cc", root / "tools" / "cc",
         ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
     )

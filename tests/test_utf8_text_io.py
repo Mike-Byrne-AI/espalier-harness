@@ -32,6 +32,7 @@ from espalier._safe_walk import visible
 from tests import _live_tree_census as live_tree_census
 from tests._live_tree import (
     EXCLUDED_DIR_PARTS,
+    checkout_copy,
     checkout_files,
     checkout_glob,
     checkout_iterdir,
@@ -310,8 +311,8 @@ def _entry_point_files() -> list[Path]:
     """Top-level ``tools/cc/*.py``, the non-event CLIs in ``tools/cc/hooks/``
     (``_recall.py`` is ``/recall``'s; event hooks print ASCII JSON and are out of
     scope), and every ``espalier/`` module outside the ``_vendor`` byte-mirror."""
-    return (sorted(TOOLS_CC.glob("*.py")) + sorted((TOOLS_CC / "hooks").glob("_*.py"))
-            + sorted(p for p in (REPO_ROOT / "espalier").rglob("*.py")
+    return (sorted(checkout_glob(TOOLS_CC, "*.py")) + sorted(checkout_glob(TOOLS_CC / "hooks", "_*.py"))
+            + sorted(p for p in checkout_rglob(REPO_ROOT / "espalier", "*.py")
                      if "_vendor" not in p.parts))
 
 
@@ -414,7 +415,7 @@ class TestDeadConfigPassOnACodePagePipe:
 
     def test_pass_reports_a_dead_hook(self, tmp_path):
         body = _heredoc_after(ADVISOR_BODY.read_text(encoding="utf-8"), "### Dead-Config Pass")
-        shutil.copytree(PACKAGED_CLAUDE, tmp_path / ".claude")
+        copy_checkout(PACKAGED_CLAUDE, tmp_path / ".claude")
         settings = {"hooks": {"Stop": [{"hooks": [{"command": f'python "{self.DEAD}"'}]}]}}
         (tmp_path / ".claude" / "settings.json").write_text(
             json.dumps(settings, ensure_ascii=False), encoding="utf-8")
@@ -795,259 +796,17 @@ class TestLiveTreeExclusion:
 
 
 #: Enumerations of this checkout in tests/ that still list its files from the
-#: filesystem, by (owner, what it calls, what it walks), waiting for the second
-#: lane of DEF-2013 (air bcc9eb: every enumeration rooted in the checkout reads
-#: git's view; this lane routed the ones rooted at the checkout root, at a
-#: directory holding a path-bearing .gitignore rule, or at a computed root).
-#: Dated 2026-10-15: 235 sites. A lane that routes or marks a site deletes its
-#: entry; an entry whose site is gone reds until it is deleted; and an entry the
-#: merge base's baseline does not hold reds (the baseline only shrinks). A walk
-#: of gitignored state is never routed -- git's view holds nothing there, and
-#: tests/_live_tree.py refuses such a base -- it is marked: the entries noted
-#: "mark, never route" below.
-_PENDING_SITES: dict[str, int] = {
-    # mark, never route: it reads gitignored state on purpose (win-2's claims 4b5b25, #230)
-    "tests/conftest.py::_live_session_markers::os.scandir::.espalier-state/sessions": 1,
-    # mark, never route: it reads gitignored state on purpose (win-2's claims 4b5b25, #230)
-    "tests/conftest.py::_live_tree_fingerprint::os.listdir::<computed>": 1,
-    # mark, never route: it reads gitignored state on purpose (win-2's claims 4b5b25, #230)
-    "tests/conftest.py::_no_live_once_flags._flags::glob::.espalier-state": 1,
-    # route once win-2's claims (4b5b25, #230) merge
-    "tests/conftest.py::initialized_repo_root::copytree::<root>": 1,
-    "tests/test_adopter_message_hints.py::test_runtime_strings_do_not_deny_the_pypi_channel::rglob::espalier": 1,
-    "tests/test_adopter_verb_stand_down.py::TestCommitStagesOnlyWhatWasReviewed.test_every_amend_a_body_teaches_leaves_a_staged_change_staged::rglob::espalier/assets/claude": 1,
-    "tests/test_adopter_verb_stand_down.py::TestCommitStagesOnlyWhatWasReviewed.test_every_shipped_body_that_commits_is_driven::rglob::espalier/assets/claude": 1,
-    "tests/test_adopter_verb_stand_down.py::TestCommitStagesOnlyWhatWasReviewed.test_no_shipped_body_teaches_a_wide_commit_in_prose::rglob::espalier/assets/claude": 1,
-    "tests/test_adopter_verb_stand_down.py::TestHarmfulVerbsAreDeclaredAgainstTheHiddenCanon.test_hidden_ness_is_not_the_canon_for_this_class::rglob::espalier": 1,
-    "tests/test_agent_contracts.py::TestCommandTableMatchesFiles.test_claude_md_skills_table_matches_skill_dirs::iterdir::.claude/skills": 1,
-    "tests/test_agent_contracts.py::TestHookCountConsistentAcrossDocs.test_hook_count_claims_match_reality::glob::tools/cc/hooks": 1,
-    "tests/test_agent_contracts.py::_agent_files::glob::.claude/agents": 1,
-    "tests/test_agent_contracts.py::_all_doc_files::glob::.claude/skills": 1,
-    "tests/test_agent_contracts.py::_command_files::glob::.claude/commands": 1,
-    "tests/test_agent_frontmatter_contract.py::test_every_agent_on_disk_has_tier::glob::.claude/agents": 1,
-    "tests/test_atomic_io.py::_engine_raw_writes::rglob::espalier": 1,
-    "tests/test_atomic_io.py::_raw_writes_under::rglob::espalier": 1,
-    "tests/test_bench_corpus_schema.py::<module>::glob::bench/corpus": 1,
-    "tests/test_bench_corpus_wiring_parity.py::_all_corpus_verifiers::glob::bench/corpus": 1,
-    "tests/test_bench_corpus_wiring_parity.py::_in_scope_blocked_verifiers::glob::bench/corpus": 1,
-    "tests/test_bench_demo_script_quotes.py::_demo_files::glob::bench/demo": 1,
-    "tests/test_bench_results_parity.py::corpus_files::glob::bench/corpus": 1,
-    "tests/test_bench_surface_hygiene.py::agent_names::glob::.claude/agents": 1,
-    "tests/test_board.py::TestDerivedNotRestated.test_the_ledger_count_is_the_generators::copytree::task-packs/ledger.d": 1,
-    "tests/test_board_ledger_base.py::_behind_its_base::copytree::tools/cc": 1,
-    "tests/test_ci_yaml_hook_count.py::_yaml_files::glob::.github/workflows": 1,
-    "tests/test_cli_deploy.py::<module>::glob::espalier": 1,
-    "tests/test_cli_deploy.py::TestEveryRetiredRuleReportGoesThroughTheGate._engine_modules::rglob::espalier": 1,
-    "tests/test_common_tier_agent_adopter_handoff.py::_enumerate_common_tier_agents::glob::espalier/assets/claude/agents": 1,
-    "tests/test_contracts.py::TestHookExitCodesNoStrayOne.test_no_stray_sys_exit_one::glob::tools/cc/hooks": 1,
-    "tests/test_contracts.py::TestHookWiring.test_every_hook_file_wired_in_settings::glob::tools/cc/hooks": 1,
-    "tests/test_contracts.py::TestReadmeHookCount.test_readme_hook_count_matches_reality::glob::tools/cc/hooks": 1,
-    "tests/test_contracts.py::TestScannersStdlibOnly.test_scanners_stdlib_only::glob::espalier/scanners": 1,
-    "tests/test_contracts.py::TestToolsCcAndHooksShareNoModuleName.test_no_basename_is_in_both_tools_cc_and_its_hooks_dir::glob::tools/cc": 1,
-    "tests/test_contracts.py::TestToolsCcAndHooksShareNoModuleName.test_no_basename_is_in_both_tools_cc_and_its_hooks_dir::glob::tools/cc/hooks": 1,
-    "tests/test_contracts.py::TestToolsCcNoEspalierImports.test_espalier_does_not_import_tools_cc_except_sanctioned::rglob::espalier": 1,
-    "tests/test_contracts.py::_engine_modules::rglob::espalier": 1,
-    "tests/test_contracts.py::_scan_for_espalier_imports::rglob::tools/cc": 1,
-    "tests/test_convergence_workflow_stages.py::TestConvergenceWorkflowStages._scope_breaker_scaffolds::glob::.claude/workflows": 1,
-    "tests/test_convergence_workflow_stages.py::TestWorkflowBodiesResolveTheInterpreterOnTheHost.test_every_persist_command_opens_with_the_resolver_idiom::glob::.claude/workflows": 1,
-    "tests/test_convergence_workflow_stages.py::TestWorkflowBodiesResolveTheInterpreterOnTheHost.test_no_workflow_body_hands_an_agent_a_bare_versioned_invocation::glob::.claude/workflows": 1,
-    "tests/test_corpus_count_parity.py::TestCorpusIdsAreUnique.test_numeric_prefixes_are_unique_except_the_b_variant::glob::bench/corpus": 1,
-    "tests/test_corpus_documented_in_resolves.py::TestCorpusDocumentedIn.test_documented_in_resolves::glob::bench/corpus": 1,
-    "tests/test_count_claims.py::_live_agent_count::glob::.claude/agents": 1,
-    "tests/test_count_claims.py::_live_command_count::glob::.claude/commands": 1,
-    "tests/test_count_claims.py::_live_helper_count::glob::tools/cc/hooks": 1,
-    "tests/test_demo_end_to_end.py::_hook_sources::glob::tools/cc/hooks": 1,
-    "tests/test_denial_reason_actionability.py::_roster::glob::.claude/agents": 1,
-    "tests/test_denial_reason_actionability.py::_slash_commands::glob::.claude/commands": 1,
-    "tests/test_denial_reason_actionability.py::_slash_commands::glob::.claude/skills": 1,
-    "tests/test_denial_reasons.py::_adopter_visible_doc_sources::rglob::espalier/assets/claude": 1,
-    "tests/test_denial_reasons.py::_cited_claude_md_sections::glob::tools/cc/hooks": 1,
-    "tests/test_denial_reasons.py::_cited_sections_all_files::glob::tools/cc/hooks": 1,
-    "tests/test_deny_markers.py::_collect_deny_sites::glob::tools/cc/hooks": 1,
-    "tests/test_deny_markers.py::test_composed_fragments_are_still_composed::glob::tools/cc/hooks": 1,
-    "tests/test_deploy_doc_parity.py::TestSourceAssetDocByteParity.test_mirrored_covers_every_asset_doc::rglob::espalier/assets/docs": 1,
-    "tests/test_deploy_doc_parity.py::TestSourceAssetDocByteParity.test_source_asset_docs_are_byte_equal::rglob::espalier/assets/docs": 1,
-    "tests/test_deploy_doc_parity.py::_hook_string_literal_refs::glob::tools/cc/hooks": 1,
-    "tests/test_deploy_set_import_closure.py::<module>::glob::espalier/_vendor/cc": 1,
-    "tests/test_deploy_set_import_closure.py::<module>::glob::espalier/_vendor/cc/hooks": 1,
-    "tests/test_deploy_set_import_closure.py::test_closure_guard_analyzes_vendored_ship_surface_not_dev_tree::glob::espalier/_vendor/cc": 1,
-    "tests/test_deploy_set_import_closure.py::test_closure_guard_analyzes_vendored_ship_surface_not_dev_tree::glob::espalier/_vendor/cc/hooks": 1,
-    "tests/test_documented_claims.py::<module>::glob::bench/corpus": 1,
-    "tests/test_documented_claims.py::TestAgentDefinitionsMatchProtocol._agent_files::glob::.claude/agents": 1,
-    "tests/test_documented_claims.py::TestAgentDocsMatchProtocol.test_agents_dir_clean::glob::.claude/agents": 1,
-    "tests/test_documented_claims.py::TestClaudeMdHookCounts._actual_hook_file_count::glob::tools/cc/hooks": 1,
-    "tests/test_documented_claims.py::TestDogfoodingRosterCount.test_dogfooding_readme_roster_matches_actual::glob::examples/dogfooding/.claude/agents": 1,
-    "tests/test_documented_claims.py::TestDogfoodingRosterCount.test_dogfooding_readme_roster_matches_actual::glob::examples/dogfooding/.claude/commands": 1,
-    "tests/test_documented_claims.py::TestDogfoodingRosterCount.test_dogfooding_readme_roster_matches_actual::iterdir::examples/dogfooding/.claude/skills": 1,
-    "tests/test_documented_claims.py::TestSecurityMarkerCoverage._security_relevant_test_stems::glob::tests": 1,
-    "tests/test_e2e_bench.py::TestADeadRunIsNotAHookVerdict.test_only_the_plan_scenario_allows_a_planned_change::glob::bench/end_to_end/scenarios": 1,
-    "tests/test_e2e_bench.py::TestScenarioYAML.test_id_matches_filename::glob::bench/end_to_end/scenarios": 1,
-    "tests/test_e2e_bench.py::TestScenarioYAML.test_required_fields_present::glob::bench/end_to_end/scenarios": 1,
-    "tests/test_e2e_bench.py::TestTheSmokeScenarioCatchesCliDrift.test_the_retry_scenarios_set_the_canary_too::glob::bench/end_to_end/scenarios": 1,
-    "tests/test_failopen_voice.py::TestCollectedAdvisoriesAreRendered.test_a_hook_that_emits_prints_nothing_else_to_stdout::glob::tools/cc/hooks": 1,
-    "tests/test_failopen_voice.py::TestCollectedAdvisoriesAreRendered.test_every_hook_that_collects_renders::glob::tools/cc/hooks": 1,
-    "tests/test_failopen_voice.py::TestCollectedAdvisoriesAreRendered.test_no_deciding_hook_collects_or_emits::glob::tools/cc/hooks": 1,
-    "tests/test_failopen_voice.py::TestCollectedAdvisoriesAreRendered.test_no_shared_helper_collects::glob::tools/cc/hooks": 1,
-    "tests/test_failopen_voice.py::TestFailOpenVoice.test_the_file_level_declaration_is_the_parsers_alone::glob::tools/cc/hooks": 1,
-    "tests/test_failopen_voice.py::_population::glob::tools/cc/hooks": 1,
-    "tests/test_failopen_voice.py::_stderr_population::glob::tools/cc/hooks": 1,
-    "tests/test_finding_ledger.py::TestStandingCallerLedgerWiring._corpus_persisting_workflows::glob::.claude/workflows": 1,
-    "tests/test_finding_ledger.py::TestStandingCallerLedgerWiring.test_every_workflow_body_is_a_valid_function_body::glob::.claude/workflows": 1,
-    "tests/test_finding_ledger.py::TestStandingCallerLedgerWiring.test_no_scaffold_description_is_a_run_record::glob::.claude/workflows": 1,
-    "tests/test_finding_ledger.py::TestStandingCallerLedgerWiring.test_no_workflow_references_the_retired_shared_corpus::glob::.claude/workflows": 1,
-    "tests/test_finding_ledger.py::TestStandingCallerLedgerWiring.test_runnable_persisters_strip_every_private_lane_key::glob::.claude/workflows": 1,
-    # the freshness scanner raises before keep_in_checkout filters: scan a copy_checkout copy
-    "tests/test_freshness_semantic_fragments.py::TestMarkerContractClosure.test_marker_contract_has_bound_closure_true::scanner:discover_fragments::<root>": 1,
-    # the freshness scanner raises before keep_in_checkout filters: scan a copy_checkout copy
-    "tests/test_freshness_semantic_fragments.py::TestSemanticFragmentBounds.test_all_seeded_fragments_discoverable::scanner:discover_fragments::<root>": 1,
-    # the freshness scanner raises before keep_in_checkout filters: scan a copy_checkout copy
-    "tests/test_freshness_semantic_fragments.py::_verify_on_touch_fragments::scanner:discover_fragments::<root>": 1,
-    "tests/test_golden_examples.py::<module>::glob::examples/golden": 1,
-    "tests/test_governance_audit_log.py::TestFailOpenRecordsReachTheStatusLog.test_the_family_is_a_predicate_not_a_roster::glob::tools/cc/hooks": 1,
-    "tests/test_governance_audit_log.py::TestMaintenanceBypassIsRecorded.test_the_written_set_equals_the_readers_set_and_sits_in_neither_tier::glob::tools/cc/hooks": 1,
-    "tests/test_governance_audit_log.py::TestNoHookCallsTheReasonOnlySpeedBumpView.test_no_hook_calls_check_and_write_guard_calls_check_fired::glob::tools/cc/hooks": 1,
-    "tests/test_governance_audit_log.py::_crash_guard_writers::glob::tools/cc/hooks": 1,
-    "tests/test_governance_audit_log.py::_emitted_bypass_event_types::glob::tools/cc/hooks": 1,
-    "tests/test_governance_audit_log.py::_emitted_denial_event_types::glob::tools/cc/hooks": 1,
-    "tests/test_governance_audit_log.py::_hook_trees::glob::tools/cc/hooks": 1,
-    "tests/test_governance_audit_log.py::_hooks_defining_an_emitter::glob::tools/cc/hooks": 1,
-    "tests/test_hook_event_contracts.py::test_every_hookEventName_emitter_in_contracts::glob::tools/cc/hooks": 1,
-    "tests/test_hook_helper_consolidation.py::TestHelperShadow.test_no_shadow_def::glob::tools/cc/hooks": 1,
-    "tests/test_hook_helper_consolidation.py::TestHookHelperConsolidation.test_no_inline_project_root_def::glob::tools/cc/hooks": 1,
-    "tests/test_hook_protocol.py::test_every_deny_hook_in_fixtures_or_exempt::glob::tools/cc/hooks": 1,
-    "tests/test_hook_voice_reaches_claude.py::test_the_reporter_crash_guards_are_the_eight_the_census_named::glob::tools/cc/hooks": 1,
-    "tests/test_hooks.py::TestKillSwitchTextsNameOnlyTheCIGateThisTreeHas.test_a_kept_older_denial_reasons_costs_the_clause_not_the_deny_or_the_warning::copytree::tools/cc": 1,
-    "tests/test_hooks_start_on_a_kept_helper.py::TestTheDerivation.test_the_blocking_hooks_are_the_four_and_each_defines_an_emitter::glob::tools/cc/hooks": 1,
-    "tests/test_hooks_start_on_a_kept_helper.py::TestTheDerivation.test_the_whole_module_census_is_at_least_the_authored_figure::glob::tools/cc/hooks": 1,
-    "tests/test_hooks_start_on_a_kept_helper.py::_copy_cc::copytree::tools/cc": 1,
-    "tests/test_library_hook_parity.py::test_every_engine_hook_twin_is_named_in_the_conventions_registry::rglob::espalier": 1,
-    "tests/test_library_hook_parity.py::test_every_engine_hook_twin_is_named_in_the_conventions_registry::rglob::tools/cc": 1,
-    "tests/test_live_root_gate_writers.py::_test_sources::glob::tests": 1,
-    "tests/test_live_root_gate_writers.py::gate_writers::rglob::espalier": 1,
-    "tests/test_maintenance_mode.py::TestRelaunchHint.test_no_hook_spells_a_bare_relaunch_outside_the_helper::glob::tools/cc/hooks": 1,
-    "tests/test_maintenance_mode.py::_maintenance_bypass_callers::glob::tools/cc/hooks": 1,
-    "tests/test_maintenance_mode_constant_parity.py::test_no_maintenance_mode_literal_in_hook_string_constants::glob::tools/cc/hooks": 1,
-    "tests/test_managed_markers.py::TestConfusableDetection.test_assets_have_no_confusables_at_release::rglob::espalier/assets": 1,
-    "tests/test_managed_markers.py::TestJsonSentinelIsRealSoT.test_literal_appears_in_no_production_code::rglob::espalier": 1,
-    "tests/test_managed_paths.py::TestCanonicalHookCountFromContract.test_canonical_hooks_match_disk::glob::tools/cc/hooks": 1,
-    "tests/test_managed_paths.py::TestHarnessOwnedRootsSingleOwner._iter_production_files::rglob::espalier": 1,
-    "tests/test_manifest_truth.py::TestManifestIncludesManagedSurface.test_all_hook_files_in_manifest::glob::tools/cc/hooks": 1,
-    "tests/test_marker_parity.py::_full_tree_marks_outside_the_registry::glob::tests": 1,
-    "tests/test_marker_taxonomy.py::TestDocReadersRunInTheContractTier.test_every_doc_reading_test_is_in_the_contract_tier::glob::tests": 1,
-    "tests/test_marker_taxonomy.py::TestMarkerTaxonomyMembership.test_every_test_file_is_classified::glob::tests": 1,
-    "tests/test_nested_repo_skip.py::test_bare_os_walk_walkers_prune_nested_repos::rglob::espalier": 1,
-    "tests/test_no_internal_codenames.py::TestNoPackIdsInHookRuntimeStrings.test_no_pack_ids_in_injected_runtime_strings::glob::tools/cc/hooks": 1,
-    "tests/test_onboarding_doc_honesty.py::_deployed_bodies::glob::.claude/agents": 1,
-    "tests/test_onboarding_doc_honesty.py::_deployed_bodies::glob::.claude/commands": 1,
-    "tests/test_onboarding_doc_honesty.py::_deployed_bodies::glob::.claude/skills": 1,
-    "tests/test_operator_docs.py::TestDiskSurfaceCounts.test_agent_count_on_disk::glob::.claude/agents": 1,
-    "tests/test_operator_docs.py::TestDiskSurfaceCounts.test_command_count_on_disk::glob::.claude/commands": 1,
-    "tests/test_operator_docs.py::TestReadmeSurfaceClaims._actual_counts::glob::.claude/agents": 1,
-    "tests/test_operator_docs.py::TestReadmeSurfaceClaims._actual_counts::glob::.claude/commands": 1,
-    "tests/test_paths_consolidation.py::_iter_tools_cc_files::rglob::tools/cc": 1,
-    "tests/test_portability_contract.py::<module>::rglob::espalier": 1,
-    "tests/test_portability_contract.py::<module>::rglob::tools/cc": 1,
-    "tests/test_portability_contract.py::TestManagedHooksMatchDisk.test_canonical_hook_inventory_matches_disk::glob::tools/cc/hooks": 1,
-    "tests/test_portability_contract.py::TestOperatorDocsPortability.test_operator_docs_no_unix_only_default_workflows::glob::.claude/agents": 1,
-    "tests/test_portability_contract.py::TestOperatorDocsPortability.test_operator_docs_no_unix_only_default_workflows::glob::.claude/commands": 1,
-    "tests/test_portability_contract.py::TestOperatorStringsArePortable.test_collector_reaches_the_denial_reason_registry::glob::tools/cc/hooks": 1,
-    "tests/test_portability_contract.py::TestRemediesSpellTheRemedyInterpreter::rglob::espalier": 1,
-    "tests/test_pre_release.py::TestNoticeNamesEveryExternalPin._pin_names::glob::docs/external": 1,
-    "tests/test_proof_tier.py::TestTheContractSliceHoldsTheLiveManifestReaders._readers::glob::tests": 1,
-    "tests/test_proof_tier.py::TestTheLegsAndTheHeavyLane.test_neither_line_collects_a_heavy_stage_without_heavy::glob::tests": 1,
-    "tests/test_proof_tier.py::TestTheRecallSlice.test_no_unlisted_test_file_asserts_a_wall_clock_upper_bound::glob::tests": 1,
-    "tests/test_proof_tier.py::TestTheRecallSlice.test_the_slice_is_every_recall_test_file::glob::tests": 1,
-    "tests/test_publish_workflow.py::TestUsesAreSHAPinned.test_every_narrative_pin_mention_matches_its_uses_tag_comment::glob::.github/workflows": 1,
-    "tests/test_recall.py::test_every_corpus_doc_closes_its_fences::glob::docs/sharp-edges": 1,
-    "tests/test_recall.py::test_every_corpus_doc_closes_its_fences::glob::memory": 1,
-    "tests/test_recall.py::test_every_corpus_tier_still_loads::glob::docs/sharp-edges": 1,
-    "tests/test_recall.py::test_every_corpus_tier_still_loads::glob::memory": 1,
-    "tests/test_recall.py::test_indexed_sources_follows_the_corpus_gates::glob::espalier/assets/seed": 1,
-    "tests/test_recall.py::test_pull_excluded_memory_notes_exist_and_are_not_indexed::glob::memory": 1,
-    "tests/test_recall_pasted_counts.py::test_the_loader_sees_every_file_under_each_file_backed_root::glob::docs/sharp-edges": 1,
-    "tests/test_recall_pasted_counts.py::test_the_loader_sees_every_file_under_each_file_backed_root::glob::memory": 1,
-    "tests/test_record_merge.py::_begin_merge::copytree::tools/cc": 1,
-    "tests/test_redos.py::test_every_dynamic_compile_exemption_is_live::glob::tools/cc/hooks": 1,
-    "tests/test_redos.py::test_no_unreviewed_dotstar_in_hook_regexes::glob::tools/cc/hooks": 1,
-    "tests/test_reinject_sync.py::TestWitnessSetParity.test_docs_asset_tails_match_deployed_set::rglob::espalier/assets/docs": 1,
-    "tests/test_required_status_checks.py::TestEveryMatrixReadsEveryCell._matrices::glob::.github/workflows": 1,
-    "tests/test_required_status_checks.py::TestRequiredStatusCheckNamesResolve.test_every_instructed_check_can_actually_report::glob::.github/workflows": 1,
-    "tests/test_required_status_checks.py::TestTheTierGateCannotParkThePullRequest.test_the_heavy_stages_have_exactly_one_ci_home::glob::.github/workflows": 1,
-    "tests/test_required_status_checks.py::_build_resolver::glob::.github/workflows": 1,
-    "tests/test_safe_walk.py::test_every_safe_rglob_prune_set_under_the_engine_is_the_one_sanctioned_call::glob::espalier": 1,
-    "tests/test_scanner_earn_the_gate_parity.py::TestEveryScannerHasEarnTheGate.test_scanner_has_earn_the_gate::glob::espalier/scanners": 1,
-    # the freshness scanner raises before keep_in_checkout filters: scan a copy_checkout copy
-    "tests/test_scanner_freshness.py::test_fixture_not_in_live_scan::scanner:scan_repo::<root>": 1,
-    "tests/test_scanner_negative_corpus_parity.py::_non_exempt_scanner_names::glob::espalier/scanners": 1,
-    "tests/test_scanners.py::TestScannerExemptPrefixesParity.test_exempt_prefixes_within_declared_cap::glob::espalier/scanners": 1,
-    "tests/test_scanners.py::TestScannerExemptPrefixesParity.test_test_walking_scanners_exempt_fixtures::glob::espalier/scanners": 1,
-    "tests/test_scanners.py::TestScannerSelfContainment.test_no_scanner_imports_from_espalier::glob::espalier/scanners": 1,
-    "tests/test_selfcheck.py::test_run_contracts_returns_1_when_a_contract_fails::copytree::tools/cc/hooks": 1,
-    "tests/test_selfcheck_tests_parity.py::_mirror_files::rglob::espalier/_vendor/selfcheck_tests": 1,
-    "tests/test_session_resume.py::TestBlueprintSummaryParsesLoadJsonOutput.test_blueprint_summary_returns_found_on_real_repo_with_active_blueprint::glob::cc/blueprints": 1,
-    "tests/test_settings_profiles.py::test_one_function_renders_the_allow_list_and_one_the_fresh_settings::glob::espalier": 1,
-    "tests/test_sharp_edges_forward_links.py::_unlinked_sharp_edges::glob::docs/sharp-edges": 1,
-    "tests/test_ship_driver.py::TestPushClaimsInShippedBodiesNameTheSetting.test_every_handoff_push_claim_names_the_setting::glob::espalier/assets/claude/commands": 1,
-    "tests/test_shipped_asset_md_refs.py::_shipped_asset_bodies::rglob::espalier/assets/claude": 1,
-    "tests/test_shipped_commands_ascii_runtime.py::test_command_bash_blocks_are_ascii::glob::espalier/assets/claude/commands": 1,
-    "tests/test_sister_site_probe_unit.py::_live_tools_py::rglob::tools": 1,
-    "tests/test_skill_delegation_parity.py::TestNoBodyNamesTheSubagentTool.test_the_scan_sees_every_body_kind::iterdir::.claude/skills": 1,
-    "tests/test_skill_delegation_parity.py::TestOrphanAgentParity.test_every_agent_invoked_outside_its_own_definition::glob::.claude/commands": 1,
-    "tests/test_skill_delegation_parity.py::TestOrphanAgentParity.test_every_agent_invoked_outside_its_own_definition::glob::tools/cc/hooks": 1,
-    "tests/test_skill_delegation_parity.py::TestOrphanAgentParity.test_every_agent_invoked_outside_its_own_definition::rglob::.claude/skills": 1,
-    "tests/test_skill_delegation_parity.py::_agent_names::glob::.claude/agents": 1,
-    "tests/test_skill_delegation_parity.py::_scan_surfaces::glob::.claude/commands": 1,
-    "tests/test_skill_delegation_parity.py::_scan_surfaces::glob::tools/cc/hooks": 1,
-    "tests/test_skill_delegation_parity.py::_scan_surfaces::rglob::.claude/skills": 1,
-    "tests/test_skill_delegation_parity.py::_wired_bodies::glob::.claude/agents": 1,
-    "tests/test_skill_delegation_parity.py::_wired_bodies::glob::.claude/commands": 1,
-    "tests/test_skill_delegation_parity.py::_wired_bodies::rglob::.claude/skills": 1,
-    "tests/test_skill_tier_contract.py::_all_agent_names::glob::espalier/assets/claude/agents": 1,
-    "tests/test_skill_tier_contract.py::_common_tier_skill_paths::glob::espalier/assets/claude/skills": 1,
-    "tests/test_skill_tier_contract.py::test_runtime_and_asset_skill_dirs_have_parity_for_tier_check::iterdir::.claude/skills": 1,
-    "tests/test_skill_tier_contract.py::test_runtime_and_asset_skill_dirs_have_parity_for_tier_check::iterdir::espalier/assets/claude/skills": 1,
-    "tests/test_spawn_chokepoint.py::spawn_sites::glob::tools/cc/hooks": 1,
-    "tests/test_stack_table.py::_deployed_copy::copytree::tools/cc": 1,
-    "tests/test_state_dir_single_source.py::_hook_modules::glob::tools/cc/hooks": 1,
-    "tests/test_state_file_flag_parity.py::test_no_unexpected_flag_files::iterdir::.espalier-state": 1,
-    "tests/test_stub_warmup.py::_census::glob::tests": 1,
-    "tests/test_subagent_stop.py::TestDocsMaintainerReliefFlag.test_relief_table_keys_are_roster_agents::glob::.claude/agents": 1,
-    "tests/test_subprocess_env_isolation.py::_collect_blueprint_subprocess_calls::glob::tools/cc/hooks": 1,
-    "tests/test_surface_expected_witness_contract.py::test_derived_constants_not_used_as_witnesses::rglob::tests": 1,
-    "tests/test_test_quality.py::TestContractRationale.test_every_file_has_rationale_docstring::glob::tests": 1,
-    "tests/test_test_quality.py::test_no_pass_through_tests::glob::tests": 1,
-    "tests/test_test_suite_contract.py::_all_test_dir_modules::glob::tests": 1,
-    "tests/test_test_suite_contract.py::_eacces_unsafe_probes_in_denial_blocks::glob::tests": 1,
-    "tests/test_test_suite_contract.py::_live_test_modules::glob::tests": 1,
-    "tests/test_test_suite_contract.py::_raw_git_population_census::glob::tests": 1,
-    "tests/test_test_suite_contract.py::test_a_module_that_asserts_on_a_spawned_hooks_parent_spawns_through_hook_python::glob::tests": 1,
-    "tests/test_test_suite_contract.py::test_every_dev_tree_test_is_full_tree_or_exempt::glob::tests": 1,
-    "tests/test_test_suite_contract.py::test_every_exempt_module_carries_exactly_its_measured_dev_only_chains::glob::tests": 1,
-    "tests/test_test_suite_contract.py::test_every_spawned_step_lives_in_the_spawn_helper::glob::tests": 1,
-    "tests/test_test_suite_contract.py::test_every_subprocess_test_is_slow_or_exempt::glob::tests": 1,
-    "tests/test_test_suite_contract.py::test_every_test_file_matches_a_marker_rule_or_defaults_to_unit::glob::tests": 1,
-    "tests/test_test_suite_contract.py::test_no_non_test_function_carries_a_skip_or_xfail_mark::glob::tests": 1,
-    "tests/test_test_suite_contract.py::test_no_test_command_string_opens_with_an_unquoted_interpreter::glob::tests": 1,
-    "tests/test_test_suite_contract.py::test_no_test_module_imports_a_dev_extra_at_module_level::glob::tests": 1,
-    "tests/test_test_suite_contract.py::test_scripts_dir_matches_pinned_inventory::glob::scripts": 1,
-    "tests/test_test_suite_contract.py::test_suite_size_lower_bound::glob::tests": 1,
-    "tests/test_test_suite_contract.py::test_the_denial_block_detector_still_engages_the_live_corpus::glob::tests": 1,
-    "tests/test_utf8_text_io.py::TestDeadConfigPassOnACodePagePipe.test_pass_reports_a_dead_hook::copytree::espalier/assets/claude": 1,
-    "tests/test_utf8_text_io.py::_entry_point_files::glob::tools/cc": 1,
-    "tests/test_utf8_text_io.py::_entry_point_files::glob::tools/cc/hooks": 1,
-    "tests/test_utf8_text_io.py::_entry_point_files::rglob::espalier": 1,
-    "tests/test_vendor_cc_parity.py::_mirrored_files::rglob::tools/cc": 1,
-    "tests/test_wheel_payload.py::TestWheelPayloadExclusion.test_wheel_excludes_top_level_tools_package::rglob::espalier/_vendor/cc": 1,
-    "tests/test_wheel_smoke.py::TestExpectedCountsMatchPackagedAssets.test_expected_agent_count_min_at_most_packaged_rich_agents::glob::espalier/assets/claude/agents": 1,
-    "tests/test_wheel_smoke.py::TestExpectedCountsMatchPackagedAssets.test_expected_hook_entry_count_matches_packaged_hooks::glob::tools/cc/hooks": 1,
-    "tests/test_wheel_smoke.py::TestExpectedCountsMatchPackagedAssets.test_expected_hook_helper_count_matches_packaged_helpers::glob::tools/cc/hooks": 1,
-    "tests/test_wheel_smoke.py::TestPackagedCommandsMatchDeclaredSurface.test_packaged_commands_match_commands_md_table::glob::espalier/assets/claude/commands": 1,
-    "tests/test_workflow_launch_conventions.py::_scaffolds::glob::.claude/workflows": 1,
-    "tests/test_workflow_schedule_claims.py::_scheduled_workflows::glob::.github/workflows": 1,
-    "tests/test_write_guard.py::TestPowerShellEphemeralCarveOut.test_the_roster_is_read_through_one_exemption_helper::glob::tools/cc/hooks": 1,
-    "tests/test_zone_watch.py::test_a_deploy_without_the_helper_says_so_once_and_keeps_the_hook::copytree::tools/cc": 1,
-    "tests/test_zone_writes.py::TestTheTwinsAgree.test_the_script_writers_are_the_scripts_that_record::glob::scripts": 1,
-}
+#: filesystem, by (owner, what it calls, what it walks). Lane one of DEF-2013
+#: (air bcc9eb) routed the walks rooted at the checkout root, at a directory
+#: holding a path-bearing .gitignore rule, or at a computed root, and left 235;
+#: lane two (assign 7850b3, 2026-10-15) routed or marked the rest, the eleven in
+#: files other lanes held folded in at its catch-up once those lanes merged (ack
+#: 95a2c9), so none is left in tests/. The ratchet stays: a new walk of the
+#: checkout from the filesystem is never an entry here; an entry the merge
+#: base's baseline does not hold reds (the baseline only shrinks). A walk of
+#: gitignored state is never routed -- git's view holds nothing there, and
+#: tests/_live_tree.py refuses such a base -- it is marked (`_MARKED_SITES`).
+_PENDING_SITES: dict[str, int] = {}
 
 #: The sites carrying a ``# live-tree: ok -- <reason>`` marker, by (owner, what
 #: it calls, what it walks): a walk that must see past git on purpose, each a
@@ -1074,6 +833,14 @@ _MARKED_SITES: frozenset[str] = frozenset({
     "tests/test_forward_ledger_completeness.py::_deferral_kind::rglob::task-packs",
     "tests/test_check_pack_landing.py::test_live_done_tree_population_is_non_trivial::glob::task-packs/Done",
     "tests/test_forward_ledger_completeness.py::_pack_is_landed::glob::task-packs/Done",
+    # the guards of the live tree's gitignored state (the say-once flags, the
+    # session markers) and of writes into it, which must see what git ignores
+    "tests/conftest.py::_live_session_markers::os.scandir::.espalier-state/sessions",
+    "tests/conftest.py::_live_tree_fingerprint::os.listdir::<computed>",
+    "tests/conftest.py::_no_live_once_flags._flags::glob::.espalier-state",
+    "tests/test_state_file_flag_parity.py::test_no_unexpected_flag_files::iterdir::.espalier-state",
+    # the session's blueprints in the gitignored cc/blueprints/, the test's subject
+    "tests/test_session_resume.py::TestBlueprintSummaryParsesLoadJsonOutput.test_blueprint_summary_returns_found_on_real_repo_with_active_blueprint::glob::cc/blueprints",
 })
 
 
@@ -1512,6 +1279,47 @@ class TestCheckoutView:
         copied = {p.relative_to(dst).as_posix() for p in dst.rglob("*") if p.is_file()}
         assert copied == {".gitignore", "a.py", "docs/guide.md", "src/b.py"}, copied
         assert ".claude" in asked and "." in asked
+
+    def test_checkout_copy_copies_what_git_sees_under_the_patterns(self, tmp_path):
+        """A walker that raises before a filter could run reads this copy: the
+        files git sees under its patterns, and nothing git ignores even where a
+        pattern selects it."""
+        root = _planted_checkout(tmp_path / "src")
+        copy = checkout_copy(("docs/**/*.md", "*.py", "reports/**/*.py"), src=root)
+        copied = {p.relative_to(copy).as_posix() for p in copy.rglob("*") if p.is_file()}
+        assert copied == {"a.py", "docs/guide.md"}, copied
+        assert checkout_copy(("docs/**/*.md", "*.py", "reports/**/*.py"), src=root) == copy
+
+    def test_a_missing_source_raises_as_copytree_does(self, tmp_path):
+        """Ten `shutil.copytree` sites moved to `copy_checkout`; a renamed source
+        directory raised there, and an empty copy would leave each test
+        asserting over nothing."""
+        with pytest.raises(FileNotFoundError):
+            copy_checkout(tmp_path / "renamed-away", tmp_path / "dst")
+
+    def test_the_listing_helpers_constant_names_every_listing(self):
+        """The gates that find a listing call by its name (the `.claude`-kind
+        walk, the ledger record-read census, the doc-sweep and corpus-count
+        regexes) read `LISTING_HELPERS`; a listing helper added here without it
+        is a spelling every one of them is blind to."""
+        import tests._live_tree as live_tree
+
+        listings = {name for name, obj in vars(live_tree).items()
+                    if name.startswith("checkout_") and callable(obj)} - {"checkout_copy"}
+        assert set(live_tree.LISTING_HELPERS) == listings
+
+    def test_the_isolated_repo_copy_takes_git_s_view(self, tmp_path):
+        """`initialized_repo_root` copies the checkout, then runs `git add -A`
+        over the copy. A copy of everything on disk carried what git ignores
+        into it, beyond the fixture's own lists; the hosted Windows leg's
+        session was killed in that setup on #220 and #231. It copies git's
+        view, its own exclusions kept."""
+        from tests.conftest import _copy_isolated_tree
+
+        root = _planted_checkout(tmp_path / "src")
+        dst = _copy_isolated_tree(root, tmp_path / "dst")
+        copied = {p.relative_to(dst).as_posix() for p in dst.rglob("*") if p.is_file()}
+        assert copied == {".gitignore", "a.py", "docs/guide.md", ".claude/skills/s/SKILL.md", "src/b.py"}, copied
 
     def test_the_named_red_is_closed_on_the_test_side(self, tmp_path):
         """The assign's site end to end: an untracked script under a gitignored

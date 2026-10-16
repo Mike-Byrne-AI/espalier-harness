@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCANNER_DIR = REPO_ROOT / "espalier" / "scanners"
@@ -32,7 +33,7 @@ class TestEveryScannerHasEarnTheGate:
     starts with `test_earn_the_gate`."""
 
     @pytest.mark.parametrize("scanner_path", [
-        p for p in sorted(SCANNER_DIR.glob("*.py"))
+        p for p in sorted(checkout_glob(SCANNER_DIR, "*.py"))
         if p.name != "__init__.py" and p.stem not in EARN_THE_GATE_EXEMPT
     ], ids=lambda p: p.stem)
     def test_scanner_has_earn_the_gate(self, scanner_path: Path) -> None:

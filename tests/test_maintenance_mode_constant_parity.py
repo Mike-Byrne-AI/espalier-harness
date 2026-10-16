@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOK_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -61,7 +62,7 @@ def _docstring_nodes(tree: ast.AST) -> set[int]:
 
 def test_no_maintenance_mode_literal_in_hook_string_constants():
     drift: list[tuple[str, int, str]] = []
-    for py in sorted(HOOK_DIR.glob("*.py")):
+    for py in sorted(checkout_glob(HOOK_DIR, "*.py")):
         if py.name in EXEMPT_FILES:
             continue
         text = py.read_text(encoding="utf-8")
