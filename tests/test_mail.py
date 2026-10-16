@@ -1720,4 +1720,61 @@ class TestTheTreeIsReadBackBeforeAnyPush:
         with pytest.raises(mail.Unresolvable):
             mail.park(mac, f"{_ROW_DIR}/{name}", _row(name), "origin/main", run=_dropping_run(mail),
                       say=lambda _s: None)
-        assert _git(origin, "rev-parse", "--verify", "--quiet", "refs/heads/records/mac", check=False).returncode != 0
+        for repo in (origin, mac):
+            assert _git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/records/mac",
+                        check=False).returncode != 0
+
+    @staticmethod
+    def _rewriting_run(mail, rewrite):
+        """The real runner with ``rewrite`` applied to ``update-index``'s
+        arguments: a builder that loses or renames an entry on its way to git."""
+        real = _real_run(mail)
+
+        def run(argv, **kw):
+            if argv[:2] == ["git", "update-index"]:
+                argv = rewrite(list(argv))
+            return real(argv, **kw)
+        return run
+
+    def test_a_tree_short_of_one_entry_refuses_naming_it(self, mail, machines):
+        mac = machines["mac"]
+        blob = mail._hash_blob(mac, b"x\n", run=_real_run(mail))
+        short = self._rewriting_run(mail, lambda argv: argv[:-2])   # the last --cacheinfo pair dropped
+        with pytest.raises(mail.Unresolvable, match="missing: `mail.jsonl`") as refused:
+            mail._commit_entries(mac, {"a.md": blob, "mail.jsonl": blob}, None, "s", run=short)
+        assert "do not retry" in str(refused.value)
+
+    def test_a_renamed_entry_refuses(self, mail, machines):
+        mac = machines["mac"]
+        blob = mail._hash_blob(mac, b"x\n", run=_real_run(mail))
+        # Apple git's shape of the defect: the name gains a carriage return (read
+        # back through the text pipe it is a newline; either way not `mail.jsonl`).
+        renamed = self._rewriting_run(mail, lambda argv: [a + "\r" if a.startswith("100644,") else a for a in argv])
+        with pytest.raises(mail.Unresolvable, match="missing: `mail.jsonl`; not given: `mail.jsonl"):
+            mail._commit_entries(mac, {"mail.jsonl": blob}, None, "s", run=renamed)
+
+    def test_no_entries_refuse(self, mail, machines):
+        with pytest.raises(mail.Unresolvable, match="no files"):
+            mail._commit_entries(machines["mac"], {}, None, "s", run=_real_run(mail))
+
+    def test_the_push_refuses_any_builders_empty_tree(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        empty = _git(mac, "commit-tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "-m", "e").stdout.strip()
+        with pytest.raises(mail.Unresolvable, match="tree is empty"):
+            mail._push_ref(mac, "mac", "refs/heads/mail/mac", "refs/remotes/origin/mail/mac", lambda _parent: empty,
+                           run=_real_run(mail), timeout=30, verb=("send", "sent"))
+        for repo in (origin, mac):
+            assert _git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/mail/mac", check=False).returncode != 0
+
+    def test_a_parked_row_whose_name_git_quotes_is_carried_forward(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        first, second = "2026-10-16-101010-café.md", "2026-10-16-101011-mac.md"
+        for name in (first, second):
+            mail.park(mac, f"{_ROW_DIR}/{name}", f"| {name} |\n".encode("utf-8"), "origin/main",
+                      run=_real_run(mail), say=lambda _s: None)
+        names = _git(origin, "ls-tree", "-r", "-z", "--name-only", "refs/heads/records/mac").stdout.split("\0")
+        assert sorted(n for n in names if n) == [f"{_ROW_DIR}/{first}", f"{_ROW_DIR}/{second}"]
+
+    def test_the_runner_refuses_lines_of_text_on_stdin(self, mail, machines):
+        with pytest.raises(mail.Unresolvable, match="re-lines"):
+            mail.run(["git", "hash-object", "--stdin"], cwd=str(machines["mac"]), input="a\nb\n")
