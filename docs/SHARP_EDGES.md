@@ -590,6 +590,23 @@ general rule: a test that drives a Windows spelling on every runner is asking th
 question the POSIX filesystem cannot answer, so the resolver has to answer it by spelling or
 the row proves a different guard on each host.
 
+**The third spelling: Git Bash's `/tmp` is not the drive root's (DEF-1175, 2026-10-15).** Git
+for Windows mounts `/tmp` on the user's temp directory (`none /tmp usertemp` in its
+`/etc/fstab`) and matches the mount without case, while `Path` and `ntpath` read the rooted,
+drive-less `/tmp` as the current drive's `C:\tmp`. Driven with `cygpath -w`: `/tmp/x`, `/TMP/x`
+and `/tmp\x` are the temp directory, a backslash-led `\tmp\x` is the drive root's (a Win32 path
+to Git Bash), and `//tmp/x` is a share. So after `cd /tmp` a hook that placed the shell at the
+drive root judged the rest of the command where the shell was not: a clone kept in the temp
+directory passed the delete nudge, and a write into a checkout kept there passed the zone. The
+readers are `_hook_utils.git_bash_tmp_tail` and `git_bash_tmp_mount`, asked only of a Bash
+spelling (`join_directory`'s required `bash` keyword: PowerShell reads `/tmp` as the current
+drive's), and a site that builds a list of places keeps both readings (`joined_directories`),
+because the directory chain folds a backslash into a slash before it spells a directory. The
+mount is read from the hook's own `TEMP`, a proxy for the session's mount table: a child shell
+handed another `TEMP` still mounted the session's temp directory. The judge of "rooted" is the
+`PureWindowsPath` anchor (`_hook_utils.rooted`), never the host's `Path.is_absolute()`, which on
+Windows calls `/tmp/x` relative.
+
 ## POSIX-only `os.O_*` flags need `getattr` guards for Windows
 
 **What it is:** `os.O_NOFOLLOW` and `os.O_NONBLOCK` are POSIX-only attributes;
