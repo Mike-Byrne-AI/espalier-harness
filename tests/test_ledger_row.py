@@ -1605,19 +1605,22 @@ _unnamed = { DEF = "1199-1999", INV = "32-99", TP = "479-499" }
 """
 
 
-def _seat_channel(mail, machine, *claims, inherited=False, clone=None, others=()):
+def _seat_channel(mail, machine, *claims, inherited=False, clone=None, others=(), clone_reader=None):
     """The mail module as a seat sees it: its name, whether a linked worktree
-    inherited that name, its clone's own name, the other machines whose mail
-    refs this clone holds, and the live claims (the fold is the real one)."""
+    inherited that name, its clone's own name (``clone_reader`` replaces that
+    read whole), the other machines whose mail refs this clone holds, and the
+    live claims (the fold is the real one)."""
     import types
+    own_clone = clone if clone is not None else machine
     return types.SimpleNamespace(
         # The real phrase: an unset name ("unnamed") must not read as a failed
         # read, which the mint refuses (code review, TP-701 r7: without it the
         # unread check could be dropped and every unnamed clone refused).
         MACHINE_UNREAD=mail.MACHINE_UNREAD,
+        NAME_SCOPES=mail.NAME_SCOPES,   # the mail.py whose clone_machine returns its reason
         machine_setting=lambda root, **kw: (machine, "named" if machine else "unnamed"),
         worktree_name_inherited=lambda root, **kw: inherited,
-        clone_machine=lambda root, **kw: clone if clone is not None else machine,
+        clone_machine=clone_reader or (lambda root, **kw: (own_clone, "named" if own_clone else "unnamed")),
         local_mail_machines=lambda root, **kw: list(others),
         read_mail=lambda root, **kw: ({"other": list(claims)}, {}),
         live_claims=mail.live_claims,
@@ -1707,6 +1710,42 @@ class TestIdsAreMintedFromTheSeatsBlock:
         assert "mints from its clone's block (win)" in captured.err
         assert "| `DEF-2001` |" in b["ledger"].read_text(encoding="utf-8")
         assert json.loads(shared.read_text(encoding="utf-8")) == {"DEF": {"2000": "win", "2001": "win-feat"}}
+
+    def test_a_worktree_seat_whose_clone_name_is_unread_is_refused_by_name(self, lr, tmp_path, monkeypatch,
+                                                                         capsys):
+        """The real clone read, failing. Dies to the failed read taken for a
+        clone that names no machine: the mint was then refused as a seat with
+        no block, sent to the dispatcher for a block it mints from, and an
+        explicit id was judged against no block at all."""
+        mail = _mail_module()
+        failures = (mail.Unresolvable("git config took longer than 10s"),
+                    (128, "", "fatal: bad config line 3 in file .git/config"))
+        for i, failed in enumerate(failures):
+            t = _seat_tree(tmp_path / str(i))
+
+            def run(argv, _failed=failed, **kw):
+                if isinstance(_failed, Exception):
+                    raise _failed
+                return _failed
+            reader = lambda root, _run=run, **kw: mail.clone_machine(root, run=_run)  # noqa: E731
+            monkeypatch.setattr(lr, "_MAIL", _seat_channel(mail, "win-feat", clone_reader=reader))
+            assert _mint(lr, t, "DEF") != 0
+            err = capsys.readouterr().err
+            assert "clone's machine name could not be read" in err and mail.MACHINE_UNREAD in err, err
+            assert "gives a new seat the next free block" not in err, err
+            assert _file_minted(lr, t, rid=("DEF-2005",)) != 0
+            err = capsys.readouterr().err
+            assert "clone's machine name could not be read" in err and "--override" in err, err
+
+    def test_an_unread_inherited_check_refuses_the_mint_by_name(self, lr, tmp_path, monkeypatch, capsys):
+        """mail.worktree_name_inherited answers None where git could not
+        answer. Dies to that taken for "has a name of its own": the mint then
+        took the clone's next id from a worktree that may share its name."""
+        t = _seat_tree(tmp_path)
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win", inherited=None))
+        assert _mint(lr, t, "DEF") != 0
+        err = capsys.readouterr().err
+        assert "could not be read" in err and "fix it first" in err, err
 
     def test_a_refused_filing_gives_its_minted_number_back(self, lr, tmp_path, monkeypatch, capsys):
         t = _seat_tree(tmp_path)
