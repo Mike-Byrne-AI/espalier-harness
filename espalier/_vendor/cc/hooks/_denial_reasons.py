@@ -1279,9 +1279,11 @@ def _save_before_restore(target: Path, cc_dir: Path) -> str:
     import datetime
 
     try:
-        state = getattr(sys.modules.get("_hook_utils"), "STATE_DIR", ".espalier-state")
+        # The state directory's one spelling is the helper's; a kept helper
+        # that names none gets no copy, and the restore still goes through.
+        state = getattr(sys.modules.get("_hook_utils"), "STATE_DIR", None)
         if not isinstance(state, str) or not state:
-            state = ".espalier-state"
+            return "No copy was saved first (the helper names no state directory)."
         if not target.is_file():
             return "There was no file to copy first."
         stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")

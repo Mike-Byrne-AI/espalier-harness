@@ -711,8 +711,8 @@ raised, its line and the exception. When a name a sibling takes is missing from
 `_hook_utils.py` -- the kept-helper case -- it also names the upgrade repair
 (restore the helper's `# espalier:managed` marker line, then `espalier upgrade
 --execute .`). Any other raise names no upgrade, which would regenerate the
-file under edit (`DEF-2010`: a sibling raising at import was blamed on the
-helper twice, 2026-10-14 and 10-16). The two budget names (`spawn_timeout`,
+file under edit (a sibling raising at import was blamed on the helper twice,
+2026-10-14 and 10-16). The two budget names (`spawn_timeout`,
 `STATE_WRITE_LOCK`) degrade instead, because no verdict depends on them, so a
 helper missing only those judges on. `plan_guard.py`, `config_guard.py` and
 `stop_gate.py` carry the same guard (the Stop gate's refusal is the Stop-style
@@ -724,10 +724,10 @@ read, and the PreToolUse guard matches every tool.
 
 **One call gets through a wedged guard.** A wedged guard used to refuse the
 call that would repair it, so the operator restored the file from a terminal
-(six lock-outs from 2026-09-08 to 10-16, `DEF-4025`). Now `write_guard`'s
-refusal reads the payload first, and lets through exactly one shape: a Bash call
-that is one command, `git restore [--source=HEAD] [--] <file>`, `git checkout
--- <file>` or `git checkout HEAD -- <file>`, of a file the refusal names.
+(six lock-outs from 2026-09-08 to 10-16). Now `write_guard`'s refusal reads
+the payload first, and lets through exactly one shape: a Bash call whose whole
+text is `git restore [--source=HEAD] [--] <file>`, `git checkout -- <file>` or
+`git checkout HEAD -- <file>`, for a file the refusal names.
 
 - **Which files.** The refusal names the file that raised and every other
   `tools/cc/` file on the traceback, because the file you edited is often an
