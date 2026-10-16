@@ -1275,6 +1275,15 @@ class TestGitBashTmpMount:
         command = f"cd '\\tmp\\{held.name}' && rm -rf ."
         assert _bash_patterns.has_catastrophic_recursive_rm(command, str(held), cwd=elsewhere)
 
+    def test_a_placed_tmp_base_carries_the_start_drives_tmp_beside_it(self, places):
+        """The spelled base is resolved on the hook process's drive, so the
+        drive root's `tmp` joined on the start's drive rides beside it
+        (`_speedbump._placed_rm_readings`). Pinned by shape: the two drives
+        differ only on a host with more than one."""
+        repo, _mount, _drive_tmp, _tag = places
+        placed = _speedbump._placed_rm_readings("cd /tmp && rm -rf x", repo)
+        assert placed == [(True, ["x"], ["/tmp", str(Path(repo.anchor) / "tmp")])], placed
+
     def test_a_target_led_by_a_backslash_keeps_the_nudge(self, places):
         """Git Bash reads `\\tmp\\x` as the drive root's `C:\\tmp\\x`, never
         as a name below the directory a `cd` reached. The carve-out reads it
