@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2014",
+ "subject": "tests/test_write_guard.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the red is the windows-latest runner's speed, which no local run witnesses (every row passes here and on the Ubuntu and macOS cells); a probe over the code would key on the bound the fix would choose; the row closes when two windows-latest cells run test_write_guard.py with no timeout or budget red",
+ "row_sha": "243d2fd74384",
+ "text_sha": "c9da98b2b7b0",
+ "verified_2026_10_16": "STILL_OPEN (re-pinned value unchanged on 2026-10-16: the pre-registered measure names the three changes its counted cells carry, and reports the two earlier split cells apart (failure-mode review))"
+}

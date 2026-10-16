@@ -93,6 +93,10 @@ jobs:
     # answers differently. Not a required check, so a skip parks nothing.
     if: ${{ !cancelled() && (needs.clean-tier.outputs.tier || 'full') == 'full' }}
     runs-on: ubuntu-latest
+    # A hang the per-test ceiling cannot reach ends here, not at GitHub's
+    # 360-minute default (DEF-1178): above the measured worst case, 69.6 min
+    # (the last 10 runs to 2026-10-16).
+    timeout-minutes: 110
     strategy:
       # One cell, the floor interpreter: the tagless-clone question (does a
       # history- or tag-reading test skip rather than fail on a shallow

@@ -5,6 +5,8 @@ import json
 import os
 import subprocess
 import sys
+import time
+import warnings
 from pathlib import Path
 
 import pytest
@@ -931,6 +933,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # name GitHub can actually report (workflow-name / file-slug / bare
             # matrix-id are the three spellings that park a PR forever).
             "test_required_status_checks",
+            # every CI job that runs the suite declares timeout-minutes, and the
+            # portability cell's serial set is proof_tier.py's (DEF-1178, DEF-979).
+            "test_ci_job_bounds",
             # the record/claim axis agrees with every registry that declares a
             # record, so Core Rule 13's answer does not depend on which module
             # happened to ask it.
@@ -1256,6 +1261,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # trees: which copy of a name the checkout holds is git's answer
             # (DEF-2013), so no mock stands in for it.
             "test_check_pack_fences",
+            # One test asks for the real initialized tree, so the collection
+            # hook builds it (a copy, git and `espalier init`, about 25 s) in
+            # every process that collects the file: not the `unit` slice's
+            # no-subprocess quick pass (DEF-1177's failure-mode review).
+            "test_session_tree_build",
         ),
         "integration",
     ),
@@ -2391,34 +2401,55 @@ def _copy_isolated_tree(src: Path, dst: Path) -> Path:
     return copy_checkout(src, dst, ignore=_ignore)
 
 
-@pytest.fixture(scope="session")
-def initialized_repo_root(tmp_path_factory):
-    """Session-scoped fresh-clone of REPO_ROOT with `espalier init` applied.
+#: Each spawn of the build carries its own bound (DEF-1177): the hook's build
+#: runs before the first test (``pytest_collection_finish``), where no per-test
+#: ceiling reaches it, so a hung command must end itself. That path's bound is
+#: sized from the slow runner, where every worker builds at once: at 50 s, all
+#: four windows-latest workers' ``git add -A`` took the whole bound together
+#: (run 38890464527, the per-worker report below), where 120 s had let every
+#: build finish (run 38874132596). The wait-budget contract leaves a hook pytest
+#: calls outside any item uncharged, as it does module-level code.
+_BUILD_HOOK_STEP_TIMEOUT_S = 180
+#: The lazy path (no hook ran) builds inside a test, so each of its spawns, the
+#: git steps and ``espalier init`` alike, stays below the suite's 60 s ceiling.
+#: Neither bound reaches the copy's own ``git ls-files`` (tests/_live_tree.py
+#: keeps its 30 s; 4.6 to 4.8 s for the whole copy on windows-latest).
+_BUILD_LAZY_STEP_TIMEOUT_S = 50
+#: Each step of this process's last build: ``(step, seconds, bound or None)``.
+#: The build runs before any test, so ``--durations`` never shows it; the hook
+#: reports these and warns on a spawn that used over half its bound.
+_BUILD_STEPS: list[tuple[str, float, float | None]] = []
 
-    The runtime artifacts the live self-host surface depends on
-    (`.claude/settings.json`, `reports/repo_fingerprint.json`,
-    `reports/harness_config.json`, `.espalier/integrity.json`) are
-    gitignored — a fresh clone (and CI) lacks them. This fixture clones
-    REPO_ROOT into a tmp directory and runs `init` against the copy so
-    the artifacts exist.
 
-    Use this fixture, not REPO_ROOT, for tests that exercise the
-    self-host surface (doctor, release_check, surface_contract.discover_*,
-    current_surface_report). Reserve REPO_ROOT for tests
-    whose intent is "this must hold of the source tree as committed"
-    (e.g. version-truth, no-tracked-release-noise).
-    """
+def _build_step(label: str, argv: list[str], *, timeout: float, **kwargs):
+    """One bounded spawn of the build, timed into :data:`_BUILD_STEPS`."""
+    started = time.monotonic()
+    try:
+        return subprocess.run(argv, timeout=timeout, **kwargs)
+    finally:
+        _BUILD_STEPS.append((label, time.monotonic() - started, timeout))
+
+
+def _build_initialized_repo(tmp_path_factory, timeout: float = _BUILD_LAZY_STEP_TIMEOUT_S) -> Path:
+    """The tree behind :func:`initialized_repo_root`: a copy of REPO_ROOT as
+    git sees it, a fresh repository over it, and `espalier init` applied, each
+    spawn bounded by ``timeout`` and timed into :data:`_BUILD_STEPS`: the lazy
+    path's default stays under the per-test ceiling, and the hook passes
+    :data:`_BUILD_HOOK_STEP_TIMEOUT_S`."""
     from espalier._safe_walk import visible
     src = Path(__file__).resolve().parent.parent
     dst = tmp_path_factory.mktemp("initialized_repo") / "tree"
 
+    _BUILD_STEPS.clear()
+    copy_started = time.monotonic()
     _copy_isolated_tree(src, dst)
+    _BUILD_STEPS.append(("copy", time.monotonic() - copy_started, None))
     # TP-88: bootstrap categorized-memory folders so the convention test
     # passes under the isolated-repo fixture even before content migrates.
     (dst / "memory").mkdir(exist_ok=True)
     (dst / "docs" / "sharp-edges").mkdir(parents=True, exist_ok=True)
     # Init a clean git repo so checks like `git ls-files` work.
-    subprocess.run(["git", "init", "-q"], cwd=str(dst), check=True)
+    _build_step("git init", ["git", "init", "-q"], cwd=str(dst), check=True, timeout=timeout)
     # DEF-1168 (§C28, 2026-10-06): a fixture repo never runs a background git.
     # `commit` spawns `maintenance run --auto`, which detaches a repack when
     # it has work; a per-test copy of this tree (`self_host_tree_copy`) listed
@@ -2427,12 +2458,15 @@ def initialized_repo_root(tmp_path_factory):
     # writer per shared state: the only process that writes this `.git` is the
     # fixture's own foreground command. Pinned by a GIT_TRACE of the build.
     for key, value in (("gc.auto", "0"), ("gc.autoDetach", "false"), ("maintenance.auto", "false")):
-        subprocess.run(["git", "config", key, value], cwd=str(dst), check=True, capture_output=True)
-    subprocess.run(["git", "add", "-A"], cwd=str(dst), check=True, capture_output=True)
-    subprocess.run(
+        _build_step(f"git config {key}", ["git", "config", key, value], cwd=str(dst), check=True,
+                    capture_output=True, timeout=timeout)
+    _build_step("git add -A", ["git", "add", "-A"], cwd=str(dst), check=True, capture_output=True,
+                timeout=timeout)
+    _build_step(
+        "git commit",
         ["git", "-c", "user.email=t@t", "-c", "user.name=t",
          "commit", "-q", "-m", "fixture-baseline"],
-        cwd=str(dst), check=True, capture_output=True,
+        cwd=str(dst), check=True, capture_output=True, timeout=timeout,
     )
 
     # Snapshot the agent set before init so we can prune profile-driven
@@ -2446,9 +2480,9 @@ def initialized_repo_root(tmp_path_factory):
     agents_before = {p.name for p in visible(agents_dir.glob("*.md"), agents_dir)} if agents_dir.exists() else set()
 
     # Run init so the gitignored runtime artifacts are produced.
-    result = subprocess.run(
-        [sys.executable, "-m", "espalier.cli", "init", "."],
-        cwd=str(dst), capture_output=True, text=True, timeout=45, encoding="utf-8",
+    result = _build_step(
+        "espalier init", [sys.executable, "-m", "espalier.cli", "init", "."],
+        cwd=str(dst), capture_output=True, text=True, timeout=timeout, encoding="utf-8",
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -2474,6 +2508,228 @@ def initialized_repo_root(tmp_path_factory):
         write_required_surface(dst)
 
     return dst
+
+
+#: The fixture's registered name (``@pytest.fixture(name=...)`` below), the one
+#: string both the fixture and the build hook read, so a rename cannot leave
+#: the hook keyed on a name no test asks for.
+_INITIALIZED_REPO_FIXTURE = "initialized_repo_root"
+#: A build spawn that used more than this share of its bound is warned about,
+#: with the worker, the step, its seconds and the whole build's.
+_BUILD_NEAR_BOUND = 0.5
+#: Options that collect without running a test, so nothing needs the tree
+#: (``config.option`` attribute names; tests/test_session_tree_build.py pins each
+#: as one pytest still defines).
+_NO_TEST_RUNS = ("collectonly", "showfixtures", "show_fixtures_per_test", "setupplan")
+#: The key a worker's build report rides under in xdist's ``workeroutput``.
+_BUILD_REPORT_KEY = "initialized_repo_build"
+
+
+def _build_place(config) -> str:
+    """The process that built: read from xdist's own handshake, never the
+    environment, which a child pytest the suite spawns inherits."""
+    worker = (getattr(config, "workerinput", None) or {}).get("workerid")
+    return f"xdist worker {worker}" if worker else "the pytest process"
+
+
+#: A step under this many seconds is counted, not listed, on the report line.
+_BUILD_REPORT_FLOOR_S = 0.5
+
+
+def _build_report_line(report: dict) -> str:
+    shown = [f"{label} {secs:.1f}s" + (f" of {bound:g}s" if bound else "")
+             for label, secs, bound in report["steps"] if secs >= _BUILD_REPORT_FLOOR_S]
+    quick = sum(1 for _label, secs, _bound in report["steps"] if secs < _BUILD_REPORT_FLOOR_S)
+    if quick:
+        shown.append(f"{quick} more under {_BUILD_REPORT_FLOOR_S:g}s")
+    outcome = f"FAILED: {report['failure']}" if report.get("failure") else f"{report['seconds']:.1f}s"
+    return f"{report['place']} {outcome}" + (f" ({'; '.join(shown)})" if shown else "")
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    """xdist, on the controller: a worker's build report arrives with its output.
+    A worker that went down sends no output, and its line says so rather than
+    vanish: the builds made under the most contention are the ones that die."""
+    report = (getattr(node, "workeroutput", None) or {}).get(_BUILD_REPORT_KEY)
+    if not report and error:
+        worker = getattr(getattr(node, "gateway", None), "id", "?")
+        report = {"place": f"xdist worker {worker}", "seconds": 0.0, "steps": [],
+                  "failure": "went down before it reported its build"}
+    if report:
+        node.config.__dict__.setdefault("_initialized_repo_build_reports", []).append(report)
+
+
+#: Per test, the seconds its setup and call took. Read only under a raised
+#: per-test ceiling (the windows-latest cell's PYTEST_TIMEOUT), where a test
+#: past the suite's own ceiling passes and nothing else would say how slow it was.
+_PHASE_SECONDS: dict[str, float] = {}
+#: How many such tests the summary names, slowest first.
+_SLOW_UNDER_RAISED_SHOWN = 20
+
+
+def pytest_runtest_logreport(report):
+    """Sum each test's setup and call, unless the test carries its own timeout
+    mark (its ceiling is its own, and its time is not news). On the controller
+    under xdist, the workers' reports arrive here too."""
+    if report.when in ("setup", "call") and "timeout" not in report.keywords:
+        _PHASE_SECONDS[report.nodeid] = _PHASE_SECONDS.get(report.nodeid, 0.0) + report.duration
+
+
+def _ceilings(config) -> tuple[float, float]:
+    """``(the run's per-test ceiling, the suite's own)``, as pytest-timeout ranks
+    them: ``--timeout``, then ``PYTEST_TIMEOUT``, then the ini."""
+    suite = float(config.getini("timeout") or 0)
+    given = config.getoption("timeout", default=None) or os.environ.get("PYTEST_TIMEOUT")
+    try:
+        return (float(given) if given else suite), suite
+    except ValueError:
+        return suite, suite
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """One line per process that built the tree, every run that built one: the
+    build runs before the first test, so ``--durations`` cannot show it, and a
+    cell's step times are the reading DEF-1177's bound and DEF-2014's measure
+    are judged by. Under a ceiling raised above the suite's, every unmarked test
+    that took longer than the suite's own is named, and under GitHub Actions as
+    a warning annotation too: the raised ceiling must not hide a slowdown."""
+    reports = list(getattr(config, "_initialized_repo_build_reports", []))
+    own = getattr(config, "_initialized_repo_build_report", None)
+    if own:
+        reports.append(own)
+    if reports:
+        terminalreporter.write_line(f"{_INITIALIZED_REPO_FIXTURE} build, before the first test:")
+        for report in sorted(reports, key=lambda r: r["place"]):
+            terminalreporter.write_line("  " + _build_report_line(report))
+    ceiling, suite = _ceilings(config)
+    if not suite or ceiling <= suite:
+        return
+    slow = sorted(((secs, nodeid) for nodeid, secs in _PHASE_SECONDS.items() if secs > suite), reverse=True)
+    if not slow:
+        return
+    head = (f"{len(slow)} unmarked test(s) took longer than the suite's {suite:g} s ceiling "
+            f"under this run's {ceiling:g} s")
+    terminalreporter.write_line(head + ", slowest first:")
+    for secs, nodeid in slow[:_SLOW_UNDER_RAISED_SHOWN]:
+        terminalreporter.write_line(f"  {secs:.1f}s {nodeid}")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        terminalreporter.write_line(f"::warning::{head}: " + "; ".join(
+            f"{nodeid} {secs:.0f}s" for secs, nodeid in slow[:_SLOW_UNDER_RAISED_SHOWN]))
+
+
+def pytest_collection_finish(session):
+    """Build :func:`initialized_repo_root`'s tree before the first test runs.
+
+    DEF-1177: a session fixture is built inside its first requester's setup,
+    and pytest-timeout counts setup against that test's 60 s ceiling, so on
+    the Windows runner the build alone took over half of it, and a slow run
+    ended the whole session inside the fixture with no test named (run
+    38642037524, 2026-10-14: the thread method's stack dump in this build).
+    Built here, after collection and before any test, no ceiling reaches it;
+    each spawn carries its own bound (:data:`_BUILD_HOOK_STEP_TIMEOUT_S`). Once
+    per process: every xdist worker collects every item and builds its own
+    tree, all at once at the start (before, each built on its first requester,
+    the workers' first requesters spread over the run). Skipped where no test
+    runs (``--collect-only``, ``--fixtures``, ``--setup-plan``) and when no
+    collected item asks for the tree; once past those, the hook marks that it
+    ran, so a request it could not see fails by name instead of building under
+    a ceiling. A failed build is recorded and named, with the worker, in every
+    requester's error rather than raised here, where it would end the session
+    as the timeout did. Each process's step times are reported at the end of
+    the run (:func:`pytest_terminal_summary`), a worker's through xdist.
+    """
+    config = session.config
+    if any(getattr(config.option, name, False) for name in _NO_TEST_RUNS):
+        return
+    factory = getattr(config, "_tmp_path_factory", None)
+    if factory is None:  # the tmp_path plugin is off: the fixture builds lazily
+        return
+    config._initialized_repo_hook_ran = True
+    if not any(_INITIALIZED_REPO_FIXTURE in getattr(item, "fixturenames", ()) for item in session.items):
+        return
+    place = _build_place(config)
+    started = time.monotonic()
+    _BUILD_STEPS.clear()
+    failure = None
+    try:
+        tree = _build_initialized_repo(factory, timeout=_BUILD_HOOK_STEP_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 - recorded and named in each requester's error
+        tree = None
+        failure = f"{type(exc).__name__}: {exc} (on {place}, after {time.monotonic() - started:.1f}s)"
+    elapsed = time.monotonic() - started
+    config._initialized_repo_build = (tree, failure)
+    report = {"place": place, "seconds": round(elapsed, 1), "failure": failure,
+              "steps": [[label, round(secs, 1), bound] for label, secs, bound in _BUILD_STEPS]}
+    config._initialized_repo_build_report = report
+    workeroutput = getattr(config, "workeroutput", None)
+    if workeroutput is not None:   # an xdist worker: the controller prints it
+        workeroutput[_BUILD_REPORT_KEY] = report
+    near = [f"{label} {secs:.1f}s of its {bound:g}s" for label, secs, bound in _BUILD_STEPS
+            if bound and secs > bound * _BUILD_NEAR_BOUND]
+    if near and failure is None:
+        # A report, never a raise: under `-W error` an escaped warning here
+        # would end the session at collection with no test named, DEF-1177's
+        # own symptom, for a build that succeeded. pytest's recorder still
+        # captures it, and xdist forwards it.
+        with warnings.catch_warnings():
+            warnings.simplefilter("always", pytest.PytestWarning)
+            warnings.warn(pytest.PytestWarning(
+                f"{_INITIALIZED_REPO_FIXTURE}: the build on {place} took {elapsed:.1f}s before the first "
+                "test, and a step neared its bound: " + "; ".join(near)))
+
+
+@pytest.fixture(scope="session", name=_INITIALIZED_REPO_FIXTURE)
+def initialized_repo_root(tmp_path_factory, request):
+    """Session-scoped fresh-clone of REPO_ROOT with `espalier init` applied.
+
+    The runtime artifacts the live self-host surface depends on
+    (`.claude/settings.json`, `reports/repo_fingerprint.json`,
+    `reports/harness_config.json`, `.espalier/integrity.json`) are
+    gitignored — a fresh clone (and CI) lacks them. This fixture clones
+    REPO_ROOT into a tmp directory and runs `init` against the copy so
+    the artifacts exist.
+
+    Use this fixture, not REPO_ROOT, for tests that exercise the
+    self-host surface (doctor, release_check, surface_contract.discover_*,
+    current_surface_report). Reserve REPO_ROOT for tests
+    whose intent is "this must hold of the source tree as committed"
+    (e.g. version-truth, no-tracked-release-noise).
+
+    The tree is built by :func:`pytest_collection_finish` before the first
+    test, outside every per-test ceiling (DEF-1177); this hands it on, names
+    that build's failure, fails a request the hook could not see, or builds
+    here when the hook did not run.
+    """
+    return _initialized_repo_for(request.config, tmp_path_factory)
+
+
+def _initialized_repo_for(config, tmp_path_factory) -> Path:
+    """The prebuilt tree, the prebuilt tree's failure named, a request the hook
+    never saw refused by name, or a build now when no hook ran.
+
+    The refusal reads the session, not the request: a ``getfixturevalue``
+    request in a session where another collected test names the fixture as a
+    parameter gets the prebuilt tree, so it shows only in a narrowed run (``-k``,
+    ``--lf``, a dispatched selection). Ask for the fixture as a parameter."""
+    built = getattr(config, "_initialized_repo_build", None)
+    if built is None:
+        if getattr(config, "_initialized_repo_hook_ran", False):
+            pytest.fail(
+                f"{_INITIALIZED_REPO_FIXTURE}: requested where the build hook could not see it "
+                "(request.getfixturevalue, or no collected test names it as a parameter), so it would "
+                "build inside this test's ceiling, where a slow host ends the session with no test "
+                "named (DEF-1177): ask for it as a test or fixture parameter",
+                pytrace=False,
+            )
+        return _build_initialized_repo(tmp_path_factory)
+    tree, failure = built
+    if failure is not None:
+        pytest.fail(
+            f"initialized_repo_root: the tree built before the first test failed: {failure}",
+            pytrace=False,
+        )
+    return tree
 
 
 @pytest.fixture
