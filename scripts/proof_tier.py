@@ -242,10 +242,11 @@ _PYTEST: tuple[str, ...] = ("pytest", "-q")
 #: and its worker is replaced, where one session would end with no summary and
 #: no test named. That holds up to xdist's restart cap, four per worker by
 #: default: past it the run stops scheduling, and ``-q`` hides xdist's line
-#: saying so (failure-mode review, 2026-10-16; the summary line that would
-#: count the tests that never ran is DEF-2020). The serial files keep one worker (their placement was
-#: measured: wall-clock budgets and timeout-near gates, kept off parallel
-#: load); every other line runs at ``-n auto``.
+#: saying so (failure-mode review, 2026-10-16), so the suite's own summary
+#: counts the tests that never ran (``tests/_never_ran.py``, DEF-2020). The
+#: serial files keep one worker (their placement was measured: wall-clock
+#: budgets and timeout-near gates, kept off parallel load); every other line
+#: runs at ``-n auto``.
 _PARALLEL: tuple[str, ...] = ("-n", "auto")
 _ONE_WORKER: tuple[str, ...] = ("-n", "1")
 _CONTRACT_ARGV: tuple[str, ...] = ("pytest", "-n", "auto", "-m", "contract", "-q")

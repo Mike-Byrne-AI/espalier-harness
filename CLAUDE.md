@@ -374,7 +374,7 @@ The non-obvious invariants a `ls` won't reveal:
 pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py tests/test_scanner_magic_depth.py -q
 
 # Full suite -- the local default: xdist with the three wall-clock-budget files and
-# the two timeout-near end-to-end gates left out, then those five at one xdist worker (every pytest line a tier runs is under xdist, so a ceiling crossing names its test, up to xdist's four restarts per worker, DEF-2017). `python3 scripts/proof_tier.py --run --tier full`
+# the two timeout-near end-to-end gates left out, then those five at one xdist worker (every pytest line a tier runs is under xdist, so a ceiling crossing names its test, up to xdist's four restarts per worker, DEF-2017; past them the summary counts the tests that never ran, DEF-2020). `python3 scripts/proof_tier.py --run --tier full`
 # runs all four under one receipt (the hook type gate first, then the lint line); the lines it runs,
 # for pasting by hand. `-n auto` is one worker per logical core (no psutil), which an
 # 8 GB box cannot hold: cap it with PYTEST_XDIST_AUTO_NUM_WORKERS=<n> in the shell
