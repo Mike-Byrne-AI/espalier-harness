@@ -234,7 +234,8 @@ The paths these touch, for the scope walk:
   stay with their owners: `DEF-961` to `DEF-965` (§C57, landed 2026-10-06 by
   `lane/node-adopter-defaults`), `DEF-976` (the stack-registry pack: three lanes, struck 2026-10-07, archived at `23645bec`),
   `DEF-915` (the resolver's start-up probe), `DEF-947` (a container is not a PATH shape, so
-  the runner cannot model a bind mount), and `DEF-968` (the spaced-interpreter extractor). The
+  the runner cannot model a bind mount), and `DEF-968` (the spaced-interpreter extractor; struck
+  2026-10-16 by `lane/wired-interpreter-argv`, every reader routed). The
   cell and the session driver are expected to show some of them red (`DEF-961`'s shape on the
   Node tree is 0-D's pre-registered hypothesis). The pack records each as a declared
   gap in the registry or as a `strict=True` xfail that names the row, never as a silent skip.

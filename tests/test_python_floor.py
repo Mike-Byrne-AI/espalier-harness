@@ -1170,7 +1170,9 @@ class TestSessionStartWarnDistinguishesTheTwoFailures:
 
     @pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
     def test_below_floor_gets_the_below_floor_words(self, tmp_path):
-        warn = self._drive(tmp_path, self._stub(tmp_path, "py39", "Python 3.9.6"))
+        # Python-shaped names: SessionStart asks only a word that names a
+        # Python whether it is one (DEF-1024), so `py39` would go unasked.
+        warn = self._drive(tmp_path, self._stub(tmp_path, "python39", "Python 3.9.6"))
         assert warn, "a wired 3.9 produced no warning at all"
         assert "IS a Python 3" in warn and "3.10" in warn, warn
         assert "does not resolve to a working Python 3" not in warn, (
@@ -1182,7 +1184,7 @@ class TestSessionStartWarnDistinguishesTheTwoFailures:
 
     @pytest.mark.skipif(sys.platform == "win32", reason="sh stub is POSIX")
     def test_non_python_keeps_the_fail_open_words(self, tmp_path):
-        warn = self._drive(tmp_path, self._stub(tmp_path, "notpy", "not a python"))
+        warn = self._drive(tmp_path, self._stub(tmp_path, "python-notpy", "not a python"))
         assert "does not resolve to a working Python 3" in warn, warn
         assert "fails OPEN" in warn or "fail OPEN" in warn, warn
 

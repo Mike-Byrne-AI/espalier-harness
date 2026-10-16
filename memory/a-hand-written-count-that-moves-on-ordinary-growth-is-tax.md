@@ -39,7 +39,12 @@ the tier, and a new script was one more literal to bump. Together they took
   on the symbol's own lines (`git show HEAD:path` for the span, `git log -L`
   back through history). Two fragments re-pinned weekly at unchanged values
   read fresh the day this landed, and the three that read stale on file-level
-  noise read fresh too.
+  noise read fresh too. Key it at every depth the bound can name: the walk
+  placed top-level symbols only, so a test-method bound (`Class::method`) kept
+  its 2,700-line file's count, silently, and was re-pinned on 2026-10-13, -14
+  and -15 over commits that never touched the method; since 2026-10-16 a
+  nested symbol is placed, and one that cannot be is named in `check` and
+  refused at the pin.
 
 ## A literal shape ages like a literal count
 

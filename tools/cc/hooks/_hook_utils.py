@@ -3700,6 +3700,71 @@ def interpreter_meets_floor(name_or_path: str) -> bool:
     return verdict
 
 
+def interpreter_start_failure(name_or_path: str) -> "str | None":
+    """Why the interpreter ``name_or_path`` names cannot start, or None when it
+    can (``DEF-1145``): the REPORTER's start probe, asked by the hint and the
+    orientation line of a name about to be spelled or reported, after its
+    banner passed. The engine's twin,
+    ``espalier._python_floor.interpreter_start_failure``, decides WIRING and
+    differs on purpose in two places, each pinned by
+    ``tests/test_hook_entry_argv.py``:
+
+    * no ``-I`` and no ``PYTHONHOME``/``PYTHONPATH`` rule: a hook spawned in
+      this session inherits this session's environment, so the question is
+      whether the name starts here, not in a shell that settings.json
+      outlives;
+    * a probe that times out twice keeps the banner's verdict (None): a slow
+      shim on a loaded box is not a broken interpreter, and a false ``no`` in
+      every orientation line would cost more than a missed hang.
+
+    As the engine does, the running interpreter, as it was invoked, is
+    answered without a spawn -- its path, not its file (``samefile`` would
+    pass a broken venv whose ``python`` links to the running binary).
+    ``--version`` is answered before an interpreter initialises, so a banner
+    is not a start: a copied virtualenv whose ``home`` names another
+    virtualenv prints ``Python 3.10.x`` and dies importing ``encodings``. Runs
+    ``-c 'import sys'`` with the banner probe's two-second timeout, memoised
+    for the process: a host pays one spawn for each other interpreter it names
+    (38 ms for ``python``, 87 ms for ``py -3`` on a Windows box, measured
+    2026-10-16), and none for a name it lacks.
+    """
+    if not name_or_path:
+        return "cannot start: no interpreter named"
+    key = ("start", name_or_path)
+    if key in _INTERPRETER_IDENTITY_MEMO:
+        return _INTERPRETER_IDENTITY_MEMO[key]
+    import shutil
+    import subprocess
+    head, *flags = interpreter_argv(name_or_path)
+    resolved = shutil.which(head) or (
+        head if Path(head).is_file() else None
+    )
+    verdict: "str | None" = "cannot start: it does not resolve"
+    if resolved and not flags and sys.executable and (
+        os.path.normcase(os.path.abspath(resolved))
+        == os.path.normcase(os.path.abspath(sys.executable))
+    ):
+        verdict = None
+    elif resolved:
+        verdict = None  # two timeouts keep the banner's verdict
+        for _attempt in (1, 2):
+            try:
+                result = run_bounded(  # spawn: ok the start-up probe resolves its own token through shutil.which above; a probe that cannot run is a cannot-start verdict, which the hint and the orientation line read as no
+                    [resolved, *flags, "-c", "import sys"], capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=2,
+                )
+            except subprocess.TimeoutExpired:
+                continue
+            except (subprocess.SubprocessError, OSError, ValueError) as exc:
+                verdict = f"cannot start: the start-up probe raised {type(exc).__name__}"
+                break
+            verdict = None if result.returncode == 0 else (
+                f"cannot start: `-c 'import sys'` exits {result.returncode}")
+            break
+    _INTERPRETER_IDENTITY_MEMO[key] = verdict
+    return verdict
+
+
 def python_command_hint() -> str:
     """The interpreter name to SPELL in a message telling the operator to run
     something -- resolved on this host, never assumed.
@@ -3730,8 +3795,11 @@ def python_command_hint() -> str:
     # install that left PATH alone, the two names Store aliases), it is the
     # spelling the orientation line names, and the absolute path below would
     # be a second, longer answer to the same question.
+    # A name is spelled only if it also STARTS (DEF-1145): a banner is
+    # answered before an interpreter initialises, and a remedy that names one
+    # that cannot start is a command the operator cannot run.
     for candidate in ("python3", "python", LAUNCHER_SPELLING):
-        if interpreter_meets_floor(candidate):
+        if interpreter_meets_floor(candidate) and interpreter_start_failure(candidate) is None:
             return candidate
     if sys.executable and interpreter_meets_floor(sys.executable):
         return sys.executable
@@ -3748,7 +3816,9 @@ def host_orientation_line() -> str:
 
     ``yes`` means IDENTITY, not presence: a name that resolves but does not answer
     as Python 3 reports ``no``. Reporting ``python=yes`` for a Store App Execution
-    Alias put a false host fact into every subagent's orientation line.
+    Alias put a false host fact into every subagent's orientation line. And it
+    means a START (:func:`interpreter_start_failure`, ``DEF-1145``): a copied
+    virtualenv that prints a Python 3 banner and cannot start reports ``no``.
 
     The launcher (``py -3``) is probed only where neither bare name answers:
     there it is the one spelling that runs (the python.org full installer
@@ -3756,10 +3826,16 @@ def host_orientation_line() -> str:
     reporting "no python interpreter detected" sent every session and
     subagent looking for an install the host has. Elsewhere it costs no spawn.
     """
-    has_py3 = interpreter_is_python3("python3")
-    has_py = interpreter_is_python3("python")
+    # `yes` is identity AND start (DEF-1145): a Python 3 banner from an
+    # interpreter that cannot start put a name into every orientation line
+    # that no command could use.
+    def _answers(name: str) -> bool:
+        return interpreter_is_python3(name) and interpreter_start_failure(name) is None
+
+    has_py3 = _answers("python3")
+    has_py = _answers("python")
     probe_launcher = not (has_py3 or has_py)
-    has_launcher = probe_launcher and interpreter_is_python3(LAUNCHER_SPELLING)
+    has_launcher = probe_launcher and _answers(LAUNCHER_SPELLING)
     if has_py3 and has_py:
         hint = "both present => prefer python3"
     elif has_py3:

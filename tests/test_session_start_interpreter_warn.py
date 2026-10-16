@@ -33,13 +33,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SESSION_START = REPO_ROOT / "tools" / "cc" / "hooks" / "session_start.py"
 
 
-def _write_settings(repo: Path, command: str) -> None:
+def _write_settings(repo: Path, command: str, args: list | None = None) -> None:
     claude = repo / ".claude"
     claude.mkdir(parents=True, exist_ok=True)
+    entry = {"type": "command", "command": command}
+    if args is not None:
+        entry["args"] = args
     settings = {
         "hooks": {
             "PreToolUse": [
-                {"matcher": "*", "hooks": [{"type": "command", "command": command}]}
+                {"matcher": "*", "hooks": [entry]}
             ]
         }
     }
@@ -61,7 +64,9 @@ def _run(repo: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_warns_when_hook_interpreter_unresolved(tmp_path):
-    bogus = "definitely-not-a-real-python-xyz"
+    # Python-shaped on purpose: only a word that names a Python is asked
+    # whether it is one (DEF-1024).
+    bogus = "python-definitely-not-real-xyz"
     _write_settings(tmp_path, f"{bogus} /x/hook.py")
     result = _run(tmp_path)
     assert "[WARN]" in result.stderr
@@ -73,11 +78,25 @@ def test_warns_when_hook_interpreter_unresolved(tmp_path):
 
 
 def test_silent_when_hook_interpreter_resolves(tmp_path):
-    # The interpreter running this test resolves by definition.
+    # The interpreter running this test resolves by definition. Shell form, so
+    # the path is quoted as a shell needs it when it holds a space.
     _write_settings(tmp_path, f'"{sys.executable}" /x/hook.py')
     result = _run(tmp_path)
     assert "does not resolve" not in result.stderr, (
         "SessionStart falsely flagged a resolvable interpreter. "
+        "stderr was:\n" + result.stderr
+    )
+
+
+def test_silent_when_the_exec_form_init_renders_resolves(tmp_path):
+    """The entry the way ``init`` renders it: exec form, ``command`` the
+    running interpreter unquoted, ``args`` the script. Read as a shell string
+    it was ``C:\\Program`` on a host whose interpreter sits under a spaced
+    directory, and warned every session (DEF-968)."""
+    _write_settings(tmp_path, sys.executable, args=["/x/hook.py"])
+    result = _run(tmp_path)
+    assert "does not resolve" not in result.stderr, (
+        "SessionStart falsely flagged the exec-form entry init renders. "
         "stderr was:\n" + result.stderr
     )
 

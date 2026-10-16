@@ -1232,7 +1232,10 @@ class TestProbeShapesAreRatcheted:
         # ledger-decisions on the operator's calls: a check that a pack-led row
         # names a pack in flight; the census's declared limit).
         "DEF-346c",
-        "DEF-383b", "DEF-392c", "DEF-392d",
+        # DEF-383b left on 2026-10-16 with its row (struck by lane
+        # wired-interpreter-argv: doctor asks the remedy once per call; its
+        # probe counted the call's spelling in the function's text).
+        "DEF-392c", "DEF-392d",
         "DEF-393a", "DEF-400b", "DEF-413a", "DEF-415b",
         "DEF-415f", "DEF-415h", "DEF-416b",
         "DEF-417h", "DEF-418b", "DEF-419c",
