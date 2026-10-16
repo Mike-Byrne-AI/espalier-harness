@@ -71,6 +71,12 @@ ARCHIVE = "docs/session-archive.md"
 #: rows when fragments began (2026-10-10); the legacy rows are frozen and do
 #: not count toward this until the fold.
 SESSION_LOG_CAP = 30
+#: How far past the cap the fold lets the fragments run before it prunes back to
+#: the cap (``tools/cc/ship.py``). With an exact cap every lane carrying a row
+#: off a full main paid a prune commit of its own (eight on main from 10-13 to
+#: 10-15); with the slack a prune lands about once in six rows, and two lanes off
+#: one base usually stay inside it. Air fc87ad on DEF-5007, 2026-10-16.
+SESSION_LOG_SLACK = 5
 
 #: The trailer on the commits a lane's push makes to fold the parked rows in and
 #: prune to the cap (``tools/cc/ship.py``, the one writer of the count): the

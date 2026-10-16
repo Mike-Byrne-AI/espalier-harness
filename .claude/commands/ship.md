@@ -148,15 +148,21 @@ on both sides, one id filed on two machines, one row file written by both, a
 path outside those record files -- is a note, not a stop: the lane ships and
 reads DIRTY as it would have, and the note names the files and the way back.
 
-Then the fold, the Session Log cap's one writer: the rows every seat parked on
-its records ref (`refs/heads/records/<seat>`, fetched now) that no history of
-the base or this lane has added come into the lane in one commit, and the
-fragments are pruned to their cap (30) in a second, both carrying the trailer
-`Espalier-Fold: session-log`. Two commits, so a parked row older than the kept
-window enters history once and never comes back. A fragment directory with
-uncommitted changes, or records git cannot read, skips the fold with a note;
-the next push's fold heals the count. Until 2026-10-16 every lane pruned in its
-own tree and two lanes each at 30 merged to 31 on the base.
+Then the fold, the one place the Session Log is pruned: the rows every seat
+parked on its records ref (`refs/heads/records/<seat>`, fetched now) that no
+history of the base or this lane has added (read with `--full-history`, so a
+lane merged by GitHub's merge commit counts) come into the lane in one commit,
+and, once the fragments run past 35, they are pruned back to their cap (30) in
+a second, both carrying the trailer `Espalier-Fold: session-log` (read by key,
+so a commit that quotes it in prose is untouched). Two commits, so a parked row
+older than the kept window enters history once and never comes back; the
+slack spares most lanes a prune commit, and two lanes off one base that land a
+row past it are pruned at the next fold. A fragment directory with uncommitted
+changes, records git cannot read, or a step that fails skips the fold with a
+note and leaves the tree as it was. `python tools/cc/ship.py fold` runs the same
+fold on its own, for a push this verb does not make (a direct push to the
+default branch). Until 2026-10-16 every lane pruned to the exact cap in its own
+tree, a prune commit per lane carrying a row, and two lanes merged to 31.
 
 Then, in order: the diff against the base asked of the harness guard
 (`tools/cc/ci_guard.py`, loaded from the tree when it is there -- a tree

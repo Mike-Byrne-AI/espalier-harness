@@ -857,19 +857,20 @@ def _mail():
 def _fold_added_rows(fragments, rel_dir: str) -> set[str]:
     """The Session Log files the fold's commits in this lane added (their body
     carries ``FOLD_TRAILER``): rows other sessions parked, brought in at a push,
-    never this lane's own (DEF-5007)."""
-    trailer = getattr(fragments, "FOLD_TRAILER", None)
-    if not trailer:
+    never this lane's own (DEF-5007). The trailer is read by key, so a lane's
+    own commit that quotes the trailer's text in prose keeps its row."""
+    key, _sep, value = (getattr(fragments, "FOLD_TRAILER", "") or "").partition(": ")
+    if not key or not value:
         return set()
-    out = subprocess.run(["git", "log", "--format=%x1e%B%x1f", "--name-only", "--no-renames", "--diff-filter=A",
-                          "origin/main..HEAD", "--", rel_dir], cwd=REPO_ROOT, capture_output=True, text=True,
-                         encoding="utf-8", errors="replace")
+    out = subprocess.run(["git", "log", f"--format=%x1e%(trailers:key={key},valueonly)%x1f", "--name-only",
+                          "--no-renames", "--full-history", "--diff-filter=A", "origin/main..HEAD", "--", rel_dir],
+                         cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if out.returncode != 0:
         return set()
     rows: set[str] = set()
     for record in out.stdout.split("\x1e")[1:]:
-        body, _sep, names = record.partition("\x1f")
-        if trailer in body:
+        trailers, _sep, names = record.partition("\x1f")
+        if value in (ln.strip() for ln in trailers.splitlines()):
             rows |= {ln.strip() for ln in names.splitlines() if ln.strip()}
     return rows
 
@@ -1448,11 +1449,15 @@ def check_session_log_cap(notes: "list[str] | None" = None) -> list[str]:
         return []
     named, _skipped = fragments.session_log_fragments(REPO_ROOT)
     cap = fragments.SESSION_LOG_CAP
+    limit = cap + getattr(fragments, "SESSION_LOG_SLACK", 0)
     if len(named) <= cap:
         note = f"session log cap: {len(named)} of {cap} fragments"
+    elif len(named) <= limit:
+        note = (f"session log cap: {len(named)} fragments in the tree, over the cap of {cap} and within the "
+                f"fold's slack (it prunes back to {cap} past {limit})")
     else:
-        note = (f"session log cap: {len(named)} fragments in the tree, over the cap of {cap}: "
-                "the push's fold prunes to it")
+        note = (f"session log cap: {len(named)} fragments in the tree, over the cap of {cap} and past "
+                f"{limit}: the push's fold prunes back to {cap}")
     mail = _mail()
     pending: "int | None" = None
     if mail is None:
@@ -1463,8 +1468,9 @@ def check_session_log_cap(notes: "list[str] | None" = None) -> list[str]:
         except mail.Unresolvable as exc:
             note += f"; the records refs could not be read ({exc})"
     if pending:
+        total = len(named) + pending
         note += (f"; {pending} pending on the records refs, which the push's fold brings in "
-                 f"(the fold leaves {min(cap, len(named) + pending)})")
+                 f"(the fold leaves {total if total <= limit else cap})")
     if notes is not None:
         notes.append(note)
     return []

@@ -856,8 +856,11 @@ class TestCitedCandidateKeysResolveToTheLog:
         commit("2026-10-16-090000-mac.md", "| 2026-10-16 | **Parked.** key ce8174fe9fd9 held. | -- |\n",
                f"chore(records): fold 1 Session Log row\n\n{trailer}")
         assert mod._lane_fragment_row() is None
+        # The lane's own commit quotes the trailer in prose (its last paragraph is
+        # its own trailers): read by key, it is still the lane's row.
         commit("2026-10-16-080000-win.md", "| 2026-10-16 | **This lane.** nothing cited. | -- |\n",
-               "docs: the handoff's row")
+               f"docs: the handoff's row\n\nThe fold marks its commits with\n{trailer}\nand this is no fold.\n\n"
+               "Co-Authored-By: t <t@t.com>")
         row = mod._lane_fragment_row()
         assert row is not None and "This lane." in row, row
 
@@ -1620,7 +1623,16 @@ class TestTheLanesOwnTreeKeepsTheSessionLogCap:
         assert mod.check_session_log_cap(notes) == []
         [note] = notes
         assert f"{cap + 1} fragments in the tree, over the cap of {cap}" in note, note
-        assert "the push's fold prunes" in note, note
+        assert f"prunes back to {cap}" in note, note
+        slack = mod._record_fragments().SESSION_LOG_SLACK
+        (tmp_path / "memory" / "session-log.d").joinpath("2026-12-31-120000-win.md").write_bytes(
+            b"| 2026-12-31 | one more | n |\n")
+        for i in range(slack):
+            (tmp_path / "memory" / "session-log.d" / f"2026-12-{10 + i}-120000-win.md").write_bytes(
+                f"| 2026-12-{10 + i} | past | n |\n".encode())
+        notes = []
+        assert mod.check_session_log_cap(notes) == []
+        assert f"past {cap + slack}: the push's fold prunes back to {cap}" in notes[0], notes
 
     def test_the_rows_pending_on_the_records_refs_are_counted(self, tmp_path):
         """Dies to: the tree read alone, so a row parked by another seat is

@@ -333,6 +333,19 @@ def _check_session_log_fragment(repo_root: Path, rel_path: str) -> None:
                         f"{rel_path} holds {_hook_utils.plural(len(held), 'dated row')}; a "
                         f"fragment is one `| YYYY-MM-DD | ... |` row"
                     )
+        # A tree no fold has reached (pushed by hand, or straight to its
+        # default branch without /handoff's fold step) is said once it runs
+        # past twice the cap; it is never pruned from here, so the fold stays
+        # the one writer of the count (air fc87ad on DEF-5007).
+        cap = getattr(fragments, "SESSION_LOG_CAP", None)
+        if cap:
+            named, _skipped = fragments.session_log_fragments(repo_root)
+            if len(named) > 2 * cap:
+                _hook_utils.advise_warn(
+                    f"{len(named)} Session Log fragments, past twice the cap of {cap}: no fold has run "
+                    f"here. A lane's push folds and prunes them (`python tools/cc/ship.py fold` before a "
+                    f"push `open` does not make)"
+                )
     # Exception, not (OSError, ValueError): a kept older loader missing one name
     # raises AttributeError here, which took the whole post-write check down
     # where the SessionStart digest beside it degrades (review of #179).

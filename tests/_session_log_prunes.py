@@ -5,10 +5,11 @@ past ``SESSION_LOG_CAP``. Until 2026-10-16 every lane enforced the cap in its ow
 tree (``post_write_check`` at the write, ``handoff_mechanics`` at the handoff),
 and two trees each kept at 30 merged to 31 on main: a count two lanes both
 recompute (Core Rule 15), which cost a prune commit on the next lane to land. The
-one writer is now the fold in ``tools/cc/ship.py``, which brings every records
-ref's pending rows into the lane at its push and prunes there; the prune verb's
-own command line stays, an operator's tool. Any other call of ``prune_session_log``
-in the shipped code is a second writer of the cap. One predicate serves the
+one place the Session Log is pruned is now the fold in ``tools/cc/ship.py``, which
+brings every records ref's pending rows into the lane at its push and prunes back
+to the cap past its slack; the prune verb's own command line stays, an operator's
+tool. Any other call of ``prune_session_log`` in the shipped code, and any
+``.claude/`` body naming the verb, is a second writer. One predicate serves the
 contract pin (``tests/test_contracts.py::TestOnlyTheFoldPrunesTheSessionLog``) and the
 ledger probe, so the two cannot disagree. Standard library only; the files come
 from git's view of the checkout.
@@ -65,6 +66,10 @@ def prune_calls(root: Path = REPO, files: list[str] | None = None) -> list[tuple
                     name = getattr(child.func, "attr", getattr(child.func, "id", None))
                     if name == PRUNE:
                         found.append((rel, where, child.lineno))
+                elif isinstance(child, ast.ImportFrom) and any(
+                        a.name == PRUNE and a.asname for a in child.names):
+                    # A call through an alias would pass the name test above.
+                    found.append((rel, where, child.lineno))
                 walk(child, inner)
 
         walk(tree, "<module>")
@@ -76,9 +81,34 @@ def outside_the_fold(root: Path = REPO, files: list[str] | None = None) -> list[
     return [c for c in prune_calls(root, files) if (c[0], c[1]) not in ALLOWED]
 
 
+#: The verb's command line, as a body under ``.claude/`` would tell a session to run it.
+PRUNE_VERB = "_record_fragments.py prune"
+
+
+def prose_prunes(root: Path = REPO) -> list[str]:
+    """``path:line`` for every line of a tracked ``.claude/`` body that names the
+    prune verb: an agent, command or skill told to prune in its own lane is a
+    second writer of the cap through prose, which the call walk above cannot
+    see (the failure-mode review of DEF-5007 found the docs-maintainer agent
+    doing it). The operator's own mentions live in ``docs/``, not here."""
+    out: list[str] = []
+    for rel in require_tracked_paths(root, ".claude", minimum=1, what=".claude files"):
+        if not rel.endswith(".md"):
+            continue
+        try:
+            text = (root / rel).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        out += [f"{rel}:{n}" for n, line in enumerate(text.splitlines(), 1) if PRUNE_VERB in line]
+    return out
+
+
 if __name__ == "__main__":
     sites = outside_the_fold(REPO)
+    prose = prose_prunes(REPO)
     if "--list" in sys.argv[1:]:
         for rel, where, line in sites:
             print(f"{rel}:{line} in {where}")
-    print(f"open={bool(sites)}")
+        for site in prose:
+            print(f"{site} (a body naming the prune verb)")
+    print(f"open={bool(sites or prose)}")

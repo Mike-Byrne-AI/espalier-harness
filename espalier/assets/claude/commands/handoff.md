@@ -117,12 +117,15 @@ loader (`tools/cc/_record_fragments.py`) is deployed the table is frozen (in thi
 repository it was folded into the files under `memory/session-log.d/` on
 2026-10-10), and every reader (the SessionStart digest, the
 landing check, the cap) takes both forms. The fragments' cap (30) is not held
-here or by the `post_write_check` hook: a write over it prunes nothing. The
-lane's push holds it: the ship driver's fold brings in the rows other seats
-parked on their records refs and archives the oldest to
+here or by the `post_write_check` hook: a write over it prunes nothing (past
+twice the cap the hook says no fold has run). The lane's push holds it: the
+ship driver's fold brings in the rows other seats parked on their records refs
+and, once the files run past 35, archives the oldest back to 30 in
 `docs/session-archive.md` (generated on your tree; not deployed), in commits of
-its own. One writer of the count; a lane that held it in its own tree merged
-with another to 31.
+its own. The slack spares most lanes a prune commit (when each lane held the
+exact cap in its own tree, every lane carrying a row off a full main paid one,
+and two such lanes merged to 31); two lanes off one base can still land a row
+past it, and the next fold prunes.
 
 **Without that file** (`tools/cc/_record_fragments.py`; a deploy from before it): **prepend** the new Session
 Log row to ESPALIER_MEMORY.md — newest-first, directly under the table header.
@@ -613,7 +616,10 @@ Then the push, which is the repository's own committed choice: `handoff_push`
 in `espalier.toml`, **off unless the file sets it to `true`** (a push is
 outward-facing, so a repository opts in). On a repository whose default branch
 takes direct pushes, the pull-request flow below does not apply: with the
-setting on, `git push`; otherwise leave the commit local. Everywhere else, one
+setting on, `python tools/cc/ship.py fold` (the Session Log's fold, which a
+pull request's push runs for itself: it brings in parked rows and prunes back
+to the cap past its slack), then `git push`; otherwise leave the commit local.
+Everywhere else, one
 verb reads the setting and says which way it went:
 
 ```bash
@@ -638,13 +644,16 @@ python tools/cc/ship.py handoff
   and the fragments are pruned to their cap, in commits of their own, so the
   marker binds the head that is pushed.
   **A lane that already merged** (no open pull request, and nothing in its diff
-  with the base but this Session Log row) opens no pull request for the row
-  alone: the verb parks the row on this seat's records ref
-  (`refs/heads/records/<seat>`, the mail channel's compare-and-swap commit),
-  and the next lane's push, any seat's, folds it into the base. Until that
-  fold, the banner's recent rows, which read the tree, show it to no seat, this
-  one's next session included; say so in the `Next:` line. A seat with no name,
-  or a park origin refuses, opens the pull request as before, and the verb says
+  with the base but Session Log rows it added) opens no pull request for the
+  row alone: the verb parks the committed row on this seat's records ref
+  (`refs/heads/records/<seat>`, the mail channel's compare-and-swap commit) and
+  moves the branch back to its merge base with the base (`reset --keep`; the
+  row's commit, printed, is on the ref and in the reflog), so the next
+  SessionStart catches this checkout up. The next lane's push, any seat's,
+  folds the row into the base. Until that fold, the banner's recent rows, which
+  read the tree, show it to no seat, this one's next session included; say so
+  in the `Next:` line. A lane that edits or renames a row, a seat with no name,
+  or a park origin refuses opens the pull request as before, and the verb says
   why.
 - **Off (the default):** nothing is pushed. The commit stays on this branch in
   this checkout, and the verb prints how to push it (`/ship`) and how to opt in.

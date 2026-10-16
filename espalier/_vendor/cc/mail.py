@@ -486,11 +486,15 @@ def ever_added(root: Path, revs: list[str], directory: str, *, run: Runner = run
     prune has since deleted it, so it is never pending again (read as "on a ref
     but not in the tree", a pruned row came back at every fold). Raises
     ``Unresolvable`` where git cannot answer: an unread history must never read
-    as one that added nothing."""
+    as one that added nothing. ``--full-history``: a lane that folded a row and
+    pruned it in one push leaves the directory as its merge's first parent had
+    it, and the default simplification then drops that side of the merge, so
+    the row read pending again at every later fold (both reviews of DEF-5007,
+    driven with a ``--no-ff`` merge)."""
     added: set[str] = set()
     for rev in revs:
-        out = _git(root, "log", "--format=", "--name-only", "--no-renames", "--diff-filter=A", rev, "--",
-                   directory, run=run, timeout=timeout)
+        out = _git(root, "log", "--format=", "--name-only", "--no-renames", "--full-history", "--diff-filter=A",
+                   rev, "--", directory, run=run, timeout=timeout)
         added.update(ln.strip() for ln in out.splitlines() if ln.strip())
     return added
 
@@ -1271,12 +1275,14 @@ def send(root: Path, message: dict, *, run: Runner = run, say: Callable[[str], N
     return commit
 
 
-def park(root: Path, path: str, data: bytes, base_ref: str, *, run: Runner = run,
-         say: Callable[[str], None] = print, timeout: float = DEFAULT_TIMEOUT) -> str:
+def park(root: Path, path: str, data: bytes | None, base_ref: str, *, from_rev: str | None = None,
+         run: Runner = run, say: Callable[[str], None] = print, timeout: float = DEFAULT_TIMEOUT) -> str:
     """Leave ``data`` at ``path`` on this machine's records ref and push it: a
     handoff with no open pull request parks its Session Log row here instead of
     opening a pull request for the row alone (``tools/cc/ship.py``), and the
-    next lane's push folds it in. The ref keeps what is still pending: each park
+    next lane's push folds it in. ``from_rev`` parks the blob committed at
+    ``<from_rev>:<path>`` instead, byte for byte (a working-tree read would
+    carry a checkout's CRLF). The ref keeps what is still pending: each park
     drops the rows ``base_ref``'s history has added (a failed read of that
     history drops nothing). Refused where this clone names no machine, as a
     send is; the same compare-and-swap push. Returns the commit id."""
@@ -1304,7 +1310,10 @@ def park(root: Path, path: str, data: bytes, base_ref: str, *, run: Runner = run
             except Unresolvable:
                 folded = set()   # keep every row: a pending one dropped is a row lost
             entries = {name: blob for name, blob in entries.items() if name not in folded}
-        entries[path] = _hash_blob(root, data, run=run)
+        if from_rev:
+            entries[path] = _git(root, "rev-parse", f"{from_rev}:{path}", run=run, timeout=timeout)
+        else:
+            entries[path] = _hash_blob(root, data or b"", run=run)
         return _commit_entries(root, entries, parent, f"records({machine}): {parts[-1]}", run=run)
 
     commit = _push_ref(root, machine, ref, remote_records_ref_for(machine), build, run=run, timeout=timeout,

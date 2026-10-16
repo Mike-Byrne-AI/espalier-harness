@@ -1260,7 +1260,7 @@ Three small idioms worth reaching for when code needs the same shape, rather tha
 
 ### Doc-length contracts
 
-`ESPALIER_MEMORY.md` is capped at 120 lines (`tests/test_contracts.py::TestMemoryMdLineLimit`). The Session Log is not what fills it any more: its rows are one file each under `memory/session-log.d/`, kept to their own cap (`tools/cc/_record_fragments.py::SESSION_LOG_CAP`) by the fold a lane's push runs (`tools/cc/ship.py`), which archives the oldest to `docs/session-archive.md`. When the file approaches its cap, trim the section that grew. Discovered patterns and decisions must survive into future sessions even when the immediate "what happened" log is archived.
+`ESPALIER_MEMORY.md` is capped at 120 lines (`tests/test_contracts.py::TestMemoryMdLineLimit`). The Session Log is not what fills it any more: its rows are one file each under `memory/session-log.d/`, kept to their own cap (`tools/cc/_record_fragments.py::SESSION_LOG_CAP`, 30, with a slack of 5) by the fold a lane's push runs (`tools/cc/ship.py`), which archives the oldest to `docs/session-archive.md` once the files run past the slack. When the file approaches its cap, trim the section that grew. Discovered patterns and decisions must survive into future sessions even when the immediate "what happened" log is archived.
 
 ## Library / hook parity
 

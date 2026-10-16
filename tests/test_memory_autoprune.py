@@ -504,9 +504,21 @@ class TestSessionLogFragmentCap:
         result = _run_hook(fresh_repo, paths[-1].relative_to(fresh_repo).as_posix())
         assert result.returncode == 0, result.stderr
         assert len(list((fresh_repo / "memory" / "session-log.d").iterdir())) == 32
-        assert "over the cap" not in result.stdout, result.stdout
+        assert "over the cap" not in result.stdout and "past twice" not in result.stdout, result.stdout
         assert not (fresh_repo / "docs" / "session-archive.md").exists()
         assert memory.read_text(encoding="utf-8") == before
+
+    def test_a_tree_past_twice_the_cap_is_told_of_the_fold_and_pruned_by_nothing(self, fresh_repo):
+        """Both reviews of DEF-5007: a tree no fold reaches (pushed by hand, or
+        straight to its default branch) grew without a word once the hook stopped
+        pruning. Dies to: silence past twice the cap, or a prune here (a second
+        writer of the count)."""
+        paths = self._fragments(fresh_repo, 61)
+        result = _run_hook(fresh_repo, paths[-1].relative_to(fresh_repo).as_posix())
+        assert result.returncode == 0, result.stderr
+        assert "61 Session Log fragments, past twice the cap of 30" in result.stdout, result.stdout
+        assert "ship.py fold" in result.stdout, result.stdout
+        assert len(list((fresh_repo / "memory" / "session-log.d").iterdir())) == 61
 
     @pytest.mark.parametrize("name, body, said", [
         ("notes.md", "| 2026-10-10 | x | n |\n", "is not a Session Log fragment name"),

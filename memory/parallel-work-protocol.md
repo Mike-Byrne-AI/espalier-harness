@@ -164,17 +164,22 @@ interactive session as under `-p`; a killed session leaves the lock behind.
      record too: every lane held the Session Log's cap in its own tree, so two
      lanes each at 30 merged to 31 on `main`, and a handoff whose lane had
      already merged opened a pull request for its row alone (seven in two
-     days). The cap now has one writer: the fold a lane's push runs
-     (`tools/cc/ship.py`) brings in every row the seats parked on their
-     records refs (`refs/heads/records/<seat>`, each written by its seat
-     alone) and prunes there, in commits carrying `Espalier-Fold:
-     session-log`. A handoff with no open pull request and nothing but its
-     row parks the row instead of opening one. Readers learned the pending
-     rows (the landing check) before the writers moved, and the hook and the
-     handoff stopped pruning in the same lane. **Another seat sees a parked
-     row only after the next fold:** the banner's recent rows read the tree,
-     so until some lane's push lands the row reaches no banner, the parking
-     seat's next session included.
+     days). The Session Log is now pruned in one place: the fold a lane's push
+     runs (`tools/cc/ship.py`, and its `fold` verb before a direct push)
+     brings in every row the seats parked on their records refs
+     (`refs/heads/records/<seat>`, each written by its seat alone) and, once
+     the files run past 35, prunes back to 30, in commits carrying
+     `Espalier-Fold: session-log`. The slack is what ends the prune commit
+     per lane; an exact cap kept one on every lane carrying a row, and two
+     lanes off one base can still land a row past the slack, which the next
+     fold prunes (a count two lanes recompute, bounded rather than removed).
+     A handoff with no open pull request and only rows it added parks them
+     and moves its branch back to the base, so its checkout catches up.
+     Readers learned the pending rows (the landing check) before the writers
+     moved, and the hook and the handoff stopped pruning in the same lane.
+     **Another seat sees a parked row only after the next fold:** the
+     banner's recent rows read the tree, so until some lane's push lands the
+     row reaches no banner, the parking seat's next session included.
 7. **A red `main` is reverted first and diagnosed second.** The post-merge
    proof (`.github/workflows/post-merge.yml`) runs after merges, and the ship
    preflight and the board name a red one. A newer push cancels an older run,

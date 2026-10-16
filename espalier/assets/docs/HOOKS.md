@@ -1548,12 +1548,13 @@ validates the result:
 - Root governance docs (`CLAUDE.md`, `ESPALIER_MEMORY.md`, etc.) → placeholder scan
 - A Session Log fragment (`memory/session-log.d/<YYYY-MM-DD>-<HHMMSS>-<seat>.md`)
   → reads the written file back: a name every reader skips, or a file that is
-  not one dated row, is said. It prunes nothing: the fragments' cap has one
-  writer, the fold a lane's push runs (`tools/cc/ship.py`), which brings in the
-  rows other seats parked on their records refs and prunes there. Until
-  2026-10-16 this hook archived the oldest fragments past the cap at every
-  write, so each lane kept the count in its own tree and two lanes each at 30
-  merged to 31.
+  not one dated row, is said. It prunes nothing: the fragments are pruned only
+  by the fold a lane's push runs (`tools/cc/ship.py`, or its `fold` verb before
+  a direct push), which brings in the rows other seats parked on their records
+  refs and prunes back to the cap of 30 once they run past 35. Past twice the
+  cap the hook says no fold has run here and names the verb. Until 2026-10-16
+  this hook archived the oldest fragments past the cap at every write, so each
+  lane kept the count in its own tree and two lanes each at 30 merged to 31.
 - Any non-allowlisted write in a protected zone → integrity drift check
 - The record files (`ESPALIER_MEMORY.md`, `task-packs/FORWARD_LEDGER.md`,
   `task-packs/LEDGER_PROBES.json`, and the record files kept one per change under
