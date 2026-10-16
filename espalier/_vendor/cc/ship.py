@@ -111,6 +111,12 @@ POST_MERGE_RED = frozenset({"FAILURE", "TIMED_OUT", "STARTUP_FAILURE"})
 #: The workflow that proves the merged combination on the base branch after each
 #: push (`.github/workflows/post-merge.yml`); a repository without it reads no runs.
 POST_MERGE_WORKFLOW = "post-merge.yml"
+#: How many of the base's post-merge runs are read back, newest first: the
+#: board's window (`board.py`'s `RUN_WINDOW`; tests/test_ship_driver.py pins the
+#: two equal). Each push's proof runs to the end beside the next (DEF-2015), so
+#: a burst of merges holds several runs still going above the newest verdict,
+#: and the five this read once took could all be such runs, hiding a red.
+POST_MERGE_RUN_WINDOW = 20
 #: The step the live-read workflow carries; its absence means the guard on
 #: this tree judges the event payload's title.
 LIVE_READ_STEP = "Read the pull request title as it is now"
@@ -493,10 +499,13 @@ def base_red_after_merge(base: str, cwd: str | None = None) -> str | None:
     verdict -- the post-merge proof of the merged combination, which no pull
     request's rollup carries. Without the up-to-date rule, two lanes each green
     on its own base can red together, and this run is where that shows. A run
-    still going, cancelled by a newer push, or stale is no verdict: the newer run
-    proves a superset."""
+    still going, cancelled (by hand: no newer push cancels one), stale, skipped
+    or neutral is no verdict, and the read walks back past it through the
+    board's window to the newest run that reached one; a green there proves a
+    superset of any older red."""
     runs = _gh_json("run", "list", "--workflow", POST_MERGE_WORKFLOW, "--branch", base, "--event", "push",
-                    "--limit", "5", "--json", "databaseId,status,conclusion,headSha,url", cwd=cwd)
+                    "--limit", str(POST_MERGE_RUN_WINDOW), "--json", "databaseId,status,conclusion,headSha,url",
+                    cwd=cwd)
     if not isinstance(runs, list):
         return None
     for run_ in runs:
