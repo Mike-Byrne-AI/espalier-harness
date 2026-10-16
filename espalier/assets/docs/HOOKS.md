@@ -941,8 +941,7 @@ first; the dangerous-command catch is a secondary slip-catcher):
    guarded cleanup idiom (`if (Test-Path x) { ... }`) the block's brace is
    no target, so a forced remove of scratch there passes as the plain
    form does, and the nudge reads every element the wall stepped aside
-   for (2026-10-16, pinned by
-   `tests/test_write_guard.py::TestPowerShellRecursiveRemoveTiersAgree::test_a_forced_remove_is_judged_element_by_element_across_the_rungs`).
+   for (2026-10-16).
 
    Scratch below a temp root passes without the nudge on both tools,
    forced or not (2026-10-07; until then every scratch cleanup drew it): a
