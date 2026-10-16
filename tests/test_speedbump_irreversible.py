@@ -123,7 +123,9 @@ class TestCpRelease:
     ], ids=["ps-ship-release", "ps-ship-release-launcher"])
     def test_fires_from_the_powershell_tool(self, tmp_path, cmd):
         """The driver runs the same on the Windows box under the PowerShell
-        tool, and its release verb is the one path to the burn that tool has."""
+        tool. Its release verb is one of that tool's paths to the burn; the tag
+        push and `gh release create` are the others (DEF-1038,
+        `TestGitCheckpointsAgreeAcrossTools`)."""
         assert _fires_ps(_speedbump._pred_release, cmd, tmp_path)
 
     @pytest.mark.parametrize("cmd", [
