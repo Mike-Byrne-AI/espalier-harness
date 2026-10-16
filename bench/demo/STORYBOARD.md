@@ -320,8 +320,9 @@ audit row the bypass writes is the record off screen.
 
 Not in the hero. Kept here because the walkthrough's bench chapter shows shape
 breadth, and because the Bash form is a different template: a one-line
-headline with the relaunch hint and no Don't/Do tail. This is the `tee` row of
-the bypass corpus.
+headline with the relaunch hint and no Don't/Do tail, then the relocate line
+every harness-zone deny carries (since 2026-10-16, for an adopter whose own
+`cc/` collides with the harness's). This is the `tee` row of the bypass corpus.
 
 ```
 ⏺ Bash(echo x | tee --append .claude/settings.json)
@@ -331,6 +332,10 @@ the bypass corpus.
   session). Verify before retrying: the relaunched session's SessionStart banner
   reads MAINTENANCE=on; a second identical deny means the relaunch did not
   happen. Do NOT disable hooks to proceed -- that loosens future safety.
+    Your own source colliding with a harness path (e.g. a top-level `cc/`)?
+    Relocate it from your own terminal, outside a Claude Code session (the
+    guard reads tool calls, not your shell) -- maintenance mode is not the
+    remedy for that.
 ```
 
 Re-drive:

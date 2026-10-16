@@ -114,6 +114,7 @@ try:
     # the AST derivation by tests/test_hooks_start_on_a_kept_helper.py.
     _WRITE_GUARD_HELPER_NAMES = (
         "ADOPTER_ZONE_KEYS", "DENIED", "MCPPayloadUnverifiable", "MCP_CONTENT_KEYS", "MCP_PATH_FIELDS",
+        "adopter_protected_prefixes",
         "MUTATION_TOOLS", "RECALL_LOG_NAME", "STATE_DIR", "_append_jsonl", "_locked_increment",
         "_msys_drive_to_windows", "_read_counter", "_rel_under_root", "_telemetry_enabled",
         "_write_counter", "adopter_zone_for", "atomic_write_text", "directory_exists", "git_bash_tmp_mount",
@@ -1457,8 +1458,9 @@ def _checkout_note(base: Path, root: Path) -> "tuple[str, dict[str, object]]":
 # but a platform-sensitive test must reload this module via importlib, not
 # monkeypatch sys.platform after a normal import.
 # The verify sentence lives HERE, once, because this hint reaches every
-# protected-zone deny (the Edit/Write pair through {hint}; the Bash, MCP and link
-# templates directly): an agent told to relaunch and nothing more asserted
+# protected-harness-zone deny that names a remedy (the full pair and the Bash and
+# MCP one-liners, all through {hint}; the symlink and hardlink one-liners name
+# none): an agent told to relaunch and nothing more asserted
 # "Relaunch confirmed by behavior" and drew a second identical deny on camera
 # (2026-10-03). The banner token it names is printed by _reinject's ORIENT row,
 # which is cap_exempt for that reason; tests/test_denial_reasons.py derives the
@@ -1478,16 +1480,33 @@ _ADOPTER_KEY_OF_KIND = {kind: key for key, kind in _hook_utils.ADOPTER_ZONE_KEYS
 
 
 def _adopter_zone(rel_path: str, root: Path) -> "tuple[str, str] | None":
-    """The adopter zone a deny target sits in, unless a harness zone covers it
-    too (the harness template keeps precedence: it is the one that names the
-    maintenance-mode relaunch, which is right for harness files). Never
+    """The adopter zone a deny target sits in -- or, for a removed or relocated
+    directory, the first ``protected_paths`` zone it encloses (a move of `keep`
+    takes `keep/sub/` with it; DEF-995) -- unless the target is, sits in or
+    encloses a harness zone or file: the harness template keeps precedence (it
+    is the one that names the maintenance-mode relaunch, which is right for
+    harness files). Compared in ``_protected_zones._fs_equiv``'s folded form,
+    the form the deny's own verdict was reached in, so `CC/x` is the harness's
+    as `_is_protected` reads it. The whole tree (`.`) is the harness's. Never
     raises: a zone lookup never decides, and None is the harness text."""
     try:
-        rel = rel_path.replace("\\", "/").strip("/")
-        for prefix in _hook_utils.harness_protected_prefixes(root):
-            if rel == prefix.rstrip("/") or rel.startswith(prefix):
+        fold = _protected_zones._fs_equiv
+        rel = fold(rel_path, all_components=True).strip("/")
+        while rel.startswith("./"):
+            rel = rel[2:]
+        if rel in ("", "."):
+            return None
+        for entry in (*_hook_utils.harness_protected_prefixes(root), *PROTECTED_FILES):
+            ground = fold(entry, all_components=True).rstrip("/")
+            if rel == ground or rel.startswith(ground + "/") or ground.startswith(rel + "/"):
                 return None
-        return _hook_utils.adopter_zone_for(rel_path, root)
+        zone = _hook_utils.adopter_zone_for(rel_path, root)
+        if zone is not None:
+            return zone
+        for prefix, kind in _hook_utils.adopter_protected_prefixes(root):
+            if kind == "protected" and fold(prefix, all_components=True).startswith(rel + "/"):
+                return prefix, kind
+        return None
     # fail-open: ok deliberate -- a lookup never decides; None is the harness text, the safe one
     except Exception:  # noqa: BLE001 -- a lookup never decides; the harness text is the safe one
         return None
@@ -1513,8 +1532,9 @@ def _zone_template(rel_path: str, root: Path, *, mutation: bool = False) -> str:
     """The full deny template for the zone a target sits in: the harness
     templates (whose Don't / Do is the maintenance-mode relaunch) or the
     adopter's own (whose Do names the setting and whose Don't is that
-    relaunch). The one-line Bash / MCP templates carry only ``{hint}`` and
-    are picked at their sites."""
+    relaunch). The harness one-liners (Bash, MCP, the symlink and hardlink
+    checks) are picked at their sites, and each of those sites routes an
+    adopter zone here instead (DEF-995)."""
     zone = _adopter_zone(rel_path, root)
     if zone is None:
         return _denial_reasons.PROTECTED_ZONE_MUTATION if mutation else _denial_reasons.PROTECTED_ZONE_WRITE
@@ -1530,7 +1550,8 @@ def _zone_reason(
     rel_path: str, root: Path, *, where: str, mutation: bool = False, effect: str = "",
 ) -> str:
     """The rendered reason for a zone deny on a full-template channel (Write /
-    Edit / NotebookEdit, PowerShell): the zone's template with the zone's hint.
+    Edit / NotebookEdit, PowerShell) and for an adopter zone on every channel:
+    the zone's template with the zone's hint.
     A named producer, so the deny-marker contract can read the site
     (``x = <call>; deny(x)``); it is registered in
     ``tests/test_deny_markers.py::_RUNTIME_PRODUCERS``."""
@@ -1643,10 +1664,16 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
             base, rel = _resolve_bash_in_checkout(raw, root, base=at)
             where, note = _checkout_note(base, root)
             if _is_protected(rel, root) and not _is_allowed(rel):
+                if _adopter_zone(rel, root) is not None:
+                    reason = _zone_reason(rel, root, where=where)
+                    return _audit_deny(
+                        root, "pretooluse_blocked_protected_zone", reason,
+                        tool="bash", path=rel, rule="protected_write", **note,
+                    )
                 return _audit_deny(
                     root, "pretooluse_blocked_protected_zone",
                     _denial_reasons.PROTECTED_ZONE_WRITE_BASH.format(
-                        path=rel + where, hint=_zone_hint(rel, root),
+                        path=rel + where, hint=_PROTECTED_ZONE_HINT,
                     ),
                     tool="bash", path=rel, rule="protected_write", **note,
                 )
@@ -1675,11 +1702,20 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
             base, rel = _resolve_bash_in_checkout(raw, root, base=at)
             where, note = _checkout_note(base, root)
             if _mutated_zone(effect, rel, root):
+                if _adopter_zone(rel, root) is not None:
+                    reason = _zone_reason(
+                        rel, root, where=where, mutation=True,
+                        effect=_EFFECT_WORD.get(effect, effect).capitalize(),
+                    )
+                    return _audit_deny(
+                        root, "pretooluse_blocked_protected_zone", reason,
+                        tool="bash", path=rel, rule="protected_" + effect, **note,
+                    )
                 return _audit_deny(
                     root, "pretooluse_blocked_protected_zone",
                     _denial_reasons.PROTECTED_ZONE_MUTATION_BASH.format(
                         effect=_EFFECT_WORD.get(effect, effect), path=rel + where,
-                        hint=_zone_hint(rel, root),
+                        hint=_PROTECTED_ZONE_HINT,
                     ),
                     tool="bash", path=rel, rule="protected_" + effect, **note,
                 )
@@ -1688,6 +1724,12 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
 
 #: The operator-facing word for an effect the reader tags more finely.
 _EFFECT_WORD = {"sweep": "delete", "clean": "delete"}
+
+#: What an adopter zone's deny adds after the path on a link channel
+#: (DEF-995): the harness one-liner's reason, kept, so the deny still says why
+#: a link is refused where the adopter's own template speaks of a write.
+_SYMLINK_NOTE = "a symlink: symlinks bypass the file-path allowlist by design"
+_HARDLINK_NOTE = "a hardlink would alias its bytes under a second name"
 
 
 def _mutated_zone(effect: str, rel: str, root: Path) -> bool:
@@ -1726,6 +1768,14 @@ def check_bash_for_protected_hardlinks(command: str, root: Path, cwd: Path | Non
         for at in bases(raw):
             rel = _normalize_bash_path(raw, root, base=at)
             if _is_protected(rel, root) and not _is_allowed(rel):
+                if _adopter_zone(rel, root) is not None:
+                    reason = _zone_reason(
+                        rel, root, where=f" ({_HARDLINK_NOTE})", mutation=True, effect="Hardlink",
+                    )
+                    return _audit_deny(
+                        root, "pretooluse_blocked_protected_zone", reason,
+                        tool="bash", path=rel, rule="hardlink",
+                    )
                 return _audit_deny(
                     root, "pretooluse_blocked_protected_zone",
                     _denial_reasons.PROTECTED_ZONE_HARDLINK_BASH.format(path=rel),
@@ -1782,6 +1832,12 @@ def check_bash_for_protected_symlinks(command: str, root: Path, cwd: Path | None
             for at in bases(linkname):
                 rel = _normalize_bash_path(linkname, root, base=at)
                 if _is_protected(rel, root):
+                    if _adopter_zone(rel, root) is not None:
+                        reason = _zone_reason(rel, root, where=f" ({_SYMLINK_NOTE})")
+                        return _audit_deny(
+                            root, "pretooluse_blocked_protected_zone", reason,
+                            tool="bash", path=rel, rule="symlink",
+                        )
                     return _audit_deny(
                         root, "pretooluse_blocked_protected_zone",
                         _denial_reasons.PROTECTED_ZONE_SYMLINK_BASH.format(
@@ -2203,6 +2259,12 @@ def check_powershell_for_protected_symlinks(
         for at in bases(raw):
             rel = _normalize_bash_path(raw, root, base=at)
             if _is_protected(rel, root):
+                if _adopter_zone(rel, root) is not None:
+                    reason = _zone_reason(rel, root, where=f" ({_SYMLINK_NOTE})")
+                    return _audit_deny(
+                        root, "pretooluse_blocked_protected_zone", reason,
+                        tool="powershell", path=rel, rule="symlink",
+                    )
                 return _audit_deny(
                     root, "pretooluse_blocked_protected_zone",
                     _denial_reasons.PROTECTED_ZONE_SYMLINK_PS.format(path=rel),
@@ -2246,6 +2308,16 @@ def _is_mcp_remove_or_relocate_verb(tool_name: str) -> bool:
     action = (parts[-1] if len(parts) >= 2 else "").lower()
     norm = action.replace("_", "").replace("-", "")
     return any(v in norm for v in ("delete", "remove", "unlink", "move", "rename", "trash"))
+
+
+def _mcp_mutation_effect(tool_name: str) -> str:
+    """The effect an adopter zone's deny names for an MCP tool (DEF-995):
+    ``Move`` for a move or rename, ``Delete`` for the other remove verbs, and
+    "" for a tool that writes."""
+    if not _is_mcp_remove_or_relocate_verb(tool_name):
+        return ""
+    action = tool_name.split("__")[-1].lower().replace("_", "").replace("-", "")
+    return "Move" if any(v in action for v in ("move", "rename")) else "Delete"
 
 
 def _mcp_leaf_denied(
@@ -2360,10 +2432,22 @@ def _deny_mcp(
     rel_path: str, tool_name: str, field_name: str, symlink_verb: bool, root: Path,
     *, base: Path | None = None,
 ) -> int:
-    """Emit the protected-zone MCP deny (symlink vs ordinary write reason).
+    """Emit the protected-zone MCP deny (symlink vs ordinary write reason; an
+    adopter zone's own template on either, DEF-995).
     ``base`` is the checkout a canonical-field path resolved in (Layer 1); the
     FS-free leaf-walk (Layer 2) has none and names the path alone."""
     where, note = _checkout_note(base, root) if base is not None else ("", {})
+    if _adopter_zone(rel_path, root) is not None:
+        effect = "" if symlink_verb else _mcp_mutation_effect(tool_name)
+        detail = f"; {_SYMLINK_NOTE}" if symlink_verb else f", field {field_name}"
+        reason = _zone_reason(
+            rel_path, root, where=f"{where} (via mcp tool {tool_name}{detail})",
+            mutation=bool(effect), effect=effect,
+        )
+        return _audit_deny(
+            root, "pretooluse_blocked_protected_zone", reason,
+            tool=tool_name, path=rel_path, rule="symlink" if symlink_verb else "protected_write", **note,
+        )
     if symlink_verb:
         return _audit_deny(
             root, "pretooluse_blocked_protected_zone",
@@ -2376,7 +2460,7 @@ def _deny_mcp(
         root, "pretooluse_blocked_protected_zone",
         _denial_reasons.PROTECTED_ZONE_WRITE_MCP.format(
             path=rel_path + where, tool_name=tool_name,
-            field_name=field_name, hint=_zone_hint(rel_path, root),
+            field_name=field_name, hint=_PROTECTED_ZONE_HINT,
         ),
         tool=tool_name, path=rel_path, rule="protected_write", **note,
     )

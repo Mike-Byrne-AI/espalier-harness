@@ -14080,6 +14080,172 @@ class TestAdopterZonesFromEspalierToml:
         assert not _protected_zones._is_protected("data/records.csv", root)
 
 
+def _zone_deny_reason(check, *args) -> str:
+    """One zone check, in-process: the deny reason it printed, or "" for an
+    allow. The audit directory is the caller's (``ESPALIER_AUDIT_DIR``)."""
+    import contextlib
+    import io
+
+    _bash_patterns_module()
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        check(*args)
+    text = out.getvalue().strip()
+    return json.loads(text)["hookSpecificOutput"]["permissionDecisionReason"] if text else ""
+
+
+def _zone_tree(tmp_path: Path, monkeypatch, toml: str | None, dirs: tuple[str, ...], files: tuple[str, ...]) -> Path:
+    """A throwaway project, resolved as the hook resolves its root, with its
+    audit records kept out of the live tree."""
+    monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+    root = tmp_path / "tree"
+    root.mkdir()
+    root = root.resolve()
+    if toml is not None:
+        (root / "espalier.toml").write_text(toml, encoding="utf-8")
+    for rel in dirs:
+        (root / rel).mkdir(parents=True, exist_ok=True)
+    for rel in files:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("x\n", encoding="utf-8")
+    return root
+
+
+#: One call per one-line channel, each reaching a zone the way the shells and
+#: the MCP leaf walk read it: (check name, its arguments after the root).
+_ONE_LINE_CHANNELS = {
+    "bash-write": ("check_bash_for_protected_mutations", "echo hi > {z}/y.txt"),
+    "bash-move-out": ("check_bash_for_protected_mutations", "mv {z}/a.csv a.csv"),
+    "mcp-write": ("check_mcp", {"path": "{z}/y.txt", "content": "x"}, "mcp__fs__write_file"),
+    "bash-symlink": ("check_bash_for_protected_symlinks", "ln -s ../x {z}/l"),
+    "ps-symlink": ("check_powershell_for_protected_symlinks",
+                   "New-Item -ItemType SymbolicLink -Path {z}/l -Target ../x"),
+    "mcp-symlink": ("check_mcp", {"path": "{z}/l", "target": "../x"}, "mcp__fs__create_symlink"),
+    "bash-hardlink": ("check_bash_for_protected_hardlinks", "ln {z}/a.csv b.csv"),
+}
+
+
+def _drive_channel(channel: tuple, zone: str, root: Path) -> str:
+    """Drive one ``_ONE_LINE_CHANNELS`` entry against ``zone`` in ``root``."""
+    _bash_patterns_module()
+    import write_guard as wg
+
+    name, *args = channel
+    check = getattr(wg, name)
+    if name == "check_mcp":
+        payload, tool = args
+        return _zone_deny_reason(check, {k: v.format(z=zone) for k, v in payload.items()}, tool, root)
+    return _zone_deny_reason(check, args[0].format(z=zone), root, root)
+
+
+class TestAdopterZonesOnTheOneLineChannels:
+    """DEF-995: an adopter's ``protected_paths`` zone reached through a one-line
+    channel -- a Bash write or move, an MCP write, a symlink on any of the three
+    tools, a hardlink, or a move of a directory that ENCLOSES the zone -- is
+    denied with the adopter's own template: "protected zone", the key their
+    espalier.toml names, and the Don't that refuses a maintenance relaunch (it is
+    for editing the harness, and it switches this check off for the session).
+    Until 2026-10-16 all ten read "protected harness zone" or "harness file",
+    and seven of them carried the relaunch as the remedy. Only the text moves:
+    every case was a deny before and is one after. A harness zone keeps its own
+    text, and its precedence: a target that is, or encloses, a harness zone or
+    file is the harness's, however the adopter's zones overlap it."""
+
+    _TOML = 'protected_paths = ["data/", "keep/sub/"]\n'
+
+    @pytest.fixture
+    def adopter(self, tmp_path, monkeypatch):
+        return _zone_tree(tmp_path, monkeypatch, self._TOML, ("keep/sub", "tools/cc/hooks"), ("data/a.csv",))
+
+    _ENCLOSING = {
+        "bash-move-enclosing": lambda wg, root: _zone_deny_reason(
+            wg.check_bash_for_protected_mutations, "mv keep x", root, root),
+        "ps-move-enclosing": lambda wg, root: _zone_deny_reason(
+            wg.check_powershell_for_protected_mutations, "Move-Item keep x", root, root),
+        "mcp-move-enclosing": lambda wg, root: _zone_deny_reason(
+            wg.check_mcp, {"source": "keep", "destination": "x"}, "mcp__fs__move_file", root),
+    }
+
+    def _reason(self, channel: str, root: Path) -> str:
+        if channel in self._ENCLOSING:
+            _bash_patterns_module()
+            import write_guard as wg
+
+            return self._ENCLOSING[channel](wg, root)
+        return _drive_channel(_ONE_LINE_CHANNELS[channel], "data", root)
+
+    @pytest.mark.parametrize("channel", [*_ONE_LINE_CHANNELS, *_ENCLOSING])
+    def test_the_deny_is_the_adopters_own(self, adopter, channel):
+        reason = self._reason(channel, adopter)
+        assert reason, f"{channel}: allowed -- the verdict must not move"
+        assert "protected zone blocked" in reason, reason
+        assert "under `protected_paths`" in reason, reason
+        assert "relaunch in maintenance mode for this" in reason, reason  # the Don't
+        for harness in ("harness zone", "harness file", "Harness self-edits", "Relocate"):
+            assert harness not in reason, (harness, reason)
+
+    @pytest.mark.parametrize("channel", list(_ENCLOSING))
+    def test_an_enclosing_move_names_the_zone_it_takes(self, adopter, channel):
+        reason = self._reason(channel, adopter)
+        assert reason.startswith("Move of protected zone blocked: keep"), reason
+        assert "`keep/sub/` under `protected_paths`" in reason, reason
+
+    def test_a_harness_zone_in_the_same_tree_keeps_the_harness_text(self, adopter):
+        reason = _drive_channel(_ONE_LINE_CHANNELS["bash-write"], "tools/cc/hooks", adopter)
+        assert "protected harness zone" in reason and "Harness self-edits" in reason, reason
+        assert "This zone is YOURS" not in reason, reason
+
+    @pytest.mark.parametrize(("toml", "command"), [
+        ('protected_paths = [".claude/"]\n', "echo x > .claude/settings.json"),
+        ('protected_paths = ["cc/"]\n', "echo x > CC/notes.md"),
+        ('protected_paths = ["tools/data/"]\n', "mv tools x"),
+        ('protected_paths = ["tools/"]\n', "mv tools x"),
+    ], ids=["harness-file-in-adopter-dir", "case-folded-harness-zone", "encloses-both", "adopter-zone-holds-harness"])
+    def test_a_target_that_is_or_encloses_harness_ground_keeps_the_harness_text(
+        self, tmp_path, monkeypatch, toml, command,
+    ):
+        root = _zone_tree(tmp_path, monkeypatch, toml, ("tools/cc", "tools/data", ".claude", "cc"), ())
+        _bash_patterns_module()
+        import write_guard as wg
+
+        reason = _zone_deny_reason(wg.check_bash_for_protected_mutations, command, root, root)
+        assert "protected harness zone" in reason, reason
+        assert "This zone is YOURS" not in reason, reason
+
+
+class TestEveryHarnessZoneDenyCarriesTheCollisionRemedy:
+    """DEF-910: an adopter whose own top-level ``cc/`` collides with the
+    harness's universal zone is told, on every channel, the one remedy that
+    un-collides it -- relocate the directory from their own terminal, which
+    maintenance mode is not. Until 2026-10-16 only the Write / Edit and
+    PowerShell full templates carried it; the Bash, MCP, symlink and hardlink
+    one-liners gave the relaunch alone, or nothing at all."""
+
+    _CLAUSE = "Relocate it from your own terminal"
+
+    def test_every_harness_zone_template_carries_the_clause(self):
+        import string
+
+        _bash_patterns_module()
+        import _denial_reasons as dr
+
+        templates = {name: getattr(dr, name) for name in vars(dr) if name.startswith("PROTECTED_ZONE_")}
+        assert len(templates) >= 9, sorted(templates)
+        missing = []
+        for name, template in sorted(templates.items()):
+            fields = {f: "x" for _, f, _, _ in string.Formatter().parse(template) if f}
+            if self._CLAUSE not in template.format(**fields):
+                missing.append(name)
+        assert not missing, missing
+
+    @pytest.mark.parametrize("channel", list(_ONE_LINE_CHANNELS))
+    def test_an_adopters_own_cc_is_told_to_relocate_it(self, tmp_path, monkeypatch, channel):
+        root = _zone_tree(tmp_path, monkeypatch, None, (), ("cc/a.csv",))
+        reason = _drive_channel(_ONE_LINE_CHANNELS[channel], "cc", root)
+        assert "protected harness" in reason, reason
+        assert self._CLAUSE in reason, reason
+
+
 class TestWriteGuardFailOpenVoice:
     """The two verified silent sites (a kill-switch scan fault read as "no
     findings"; a speed-bump fault read as "did not fire") still fail OPEN --

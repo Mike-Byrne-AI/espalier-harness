@@ -1570,8 +1570,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        31, "266c49e166d363e66692a91241b88bed854db9e2b9dc5b2a61630c5523058ff2",
+        32, "fba34637f8ee0bb3142fffb1cbca74c91e634ef310a48f04abd417763e6b8051",
         "CORRECT_BY_REMEDY",
+        "GREW 31 -> 32 on 2026-10-16 (the adopter-zone one-liner lane, DEF-910): "
+        "TestEveryHarnessZoneDenyCarriesTheCollisionRemedy reads every `PROTECTED_ZONE_*` "
+        "template out of `vars(dr)` and asserts each carries the relocate clause; a "
+        "template renamed off the prefix would leave the population, so the same test "
+        "holds a floor of nine, and tests/test_write_guard.py::"
+        "TestEveryHarnessZoneDenyCarriesTheCollisionRemedy::"
+        "test_an_adopters_own_cc_is_told_to_relocate_it drives the seven one-line "
+        "channels by name, apart from the population. "
         "GREW 30 -> 31 on 2026-10-07 (the quoted-operand lane, DEF-927): "
         "TestAMetacharacterRootIsReadWhole builds one throwaway project per "
         "`ROOT_SHAPES` entry (`rehearsal.ROOT_SHAPES.items()`), the third loop over "
