@@ -1,7 +1,7 @@
 ### Fixed
 
 - **A freshness bound that names a nested symbol drifts with the symbol's own
-  lines.** A bound such as `tests/test_x.py::TestClass::test_method` (or
+  lines.** A bound such as `<test file>::TestClass::test_method` (or
   `TestClass.test_method`), the form the fragment template in
   `docs/FRESHNESS.md` uses, was never placed: the scanner placed top-level
   names only, so the fragment counted every commit to its file and went stale
