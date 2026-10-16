@@ -114,10 +114,9 @@ try:
     # the AST derivation by tests/test_hooks_start_on_a_kept_helper.py.
     _WRITE_GUARD_HELPER_NAMES = (
         "ADOPTER_ZONE_KEYS", "DENIED", "MCPPayloadUnverifiable", "MCP_CONTENT_KEYS", "MCP_PATH_FIELDS",
-        "adopter_protected_prefixes",
         "MUTATION_TOOLS", "RECALL_LOG_NAME", "STATE_DIR", "_append_jsonl", "_locked_increment",
         "_msys_drive_to_windows", "_read_counter", "_rel_under_root", "_telemetry_enabled",
-        "_write_counter", "adopter_zone_for", "atomic_write_text", "directory_exists", "git_bash_tmp_mount",
+        "_write_counter", "adopter_protected_prefixes", "adopter_zone_for", "atomic_write_text", "directory_exists", "git_bash_tmp_mount",
         "git_bash_tmp_tail", "harness_protected_prefixes", "host_orientation_line", "iter_mcp_path_leaves",
         "join_directory", "joined_directories", "lock_file", "normalize_bash_path",
         "normalize_path", "normalize_path_str", "os_error_text", "payload_cwd", "protected_prefixes",
@@ -1487,8 +1486,13 @@ def _adopter_zone(rel_path: str, root: Path) -> "tuple[str, str] | None":
     is the one that names the maintenance-mode relaunch, which is right for
     harness files). Compared in ``_protected_zones._fs_equiv``'s folded form,
     the form the deny's own verdict was reached in, so `CC/x` is the harness's
-    as `_is_protected` reads it. The whole tree (`.`) is the harness's. Never
-    raises: a zone lookup never decides, and None is the harness text."""
+    as `_is_protected` reads it, and the adopter's zones in the same form, so
+    `data./x` is the adopter's `data/`. A protected zone the target sits in
+    wins, then one it encloses, then a generated one it sits in: a clean of a
+    build directory is refused for the protected zone it holds, never for the
+    generated one around it. The whole tree (`.`) is the harness's. Never
+    raises: a lookup never decides the verdict; a failed one is said once a
+    session and the harness text stands in."""
     try:
         fold = _protected_zones._fs_equiv
         rel = fold(rel_path, all_components=True).strip("/")
@@ -1500,15 +1504,24 @@ def _adopter_zone(rel_path: str, root: Path) -> "tuple[str, str] | None":
             ground = fold(entry, all_components=True).rstrip("/")
             if rel == ground or rel.startswith(ground + "/") or ground.startswith(rel + "/"):
                 return None
-        zone = _hook_utils.adopter_zone_for(rel_path, root)
-        if zone is not None:
-            return zone
-        for prefix, kind in _hook_utils.adopter_protected_prefixes(root):
-            if kind == "protected" and fold(prefix, all_components=True).startswith(rel + "/"):
+        zones = [(prefix, kind, fold(prefix, all_components=True).rstrip("/"))
+                 for prefix, kind in _hook_utils.adopter_protected_prefixes(root)]
+        inside = [(prefix, kind) for prefix, kind, ground in zones
+                  if rel == ground or rel.startswith(ground + "/")]
+        for prefix, kind in inside:
+            if kind == "protected":
                 return prefix, kind
-        return None
-    # fail-open: ok deliberate -- a lookup never decides; None is the harness text, the safe one
-    except Exception:  # noqa: BLE001 -- a lookup never decides; the harness text is the safe one
+        for prefix, kind, ground in zones:
+            if kind == "protected" and ground.startswith(rel + "/"):
+                return prefix, kind
+        return inside[0] if inside else None
+    except Exception as exc:  # noqa: BLE001 -- a lookup never decides; the fallback is said, once a session
+        _hook_utils.say_once(
+            root, "adopter-zone-lookup", "write_guard", "pretooluse_failed_open_zone_text",
+            f"the adopter-zone lookup failed ({type(exc).__name__}); a zone deny names the harness "
+            "remedy this session",
+            fault=type(exc).__name__,
+        )
         return None
 
 
@@ -1726,9 +1739,10 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
 _EFFECT_WORD = {"sweep": "delete", "clean": "delete"}
 
 #: What an adopter zone's deny adds after the path on a link channel
-#: (DEF-995): the harness one-liner's reason, kept, so the deny still says why
-#: a link is refused where the adopter's own template speaks of a write.
-_SYMLINK_NOTE = "a symlink: symlinks bypass the file-path allowlist by design"
+#: (DEF-995), so the deny still says a link was refused where the adopter's
+#: own template speaks of a write or a move. The harness one-liner's reason,
+#: the file-path allowlist, is the harness zones' alone (code review).
+_SYMLINK_NOTE = "a symlink"
 _HARDLINK_NOTE = "a hardlink would alias its bytes under a second name"
 
 
@@ -2317,7 +2331,11 @@ def _mcp_mutation_effect(tool_name: str) -> str:
     if not _is_mcp_remove_or_relocate_verb(tool_name):
         return ""
     action = tool_name.split("__")[-1].lower().replace("_", "").replace("-", "")
-    return "Move" if any(v in action for v in ("move", "rename")) else "Delete"
+    # The delete words first: "remove" spells "move" inside it (code review,
+    # driven 2026-10-16: remove_file read "Move of").
+    if any(v in action for v in ("delete", "remove", "unlink", "trash")):
+        return "Delete"
+    return "Move"
 
 
 def _mcp_leaf_denied(

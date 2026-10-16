@@ -14166,15 +14166,55 @@ class TestAdopterZonesOnTheOneLineChannels:
             wg.check_mcp, {"source": "keep", "destination": "x"}, "mcp__fs__move_file", root),
     }
 
+    # An MCP remove verb deletes; "remove" spells "move" inside it, which once
+    # read as a move (code review, driven 2026-10-16).
+    _MCP_REMOVES = {
+        "mcp-remove": lambda wg, root: _zone_deny_reason(
+            wg.check_mcp, {"path": "data/a.csv"}, "mcp__fs__remove_file", root),
+        "mcp-delete": lambda wg, root: _zone_deny_reason(
+            wg.check_mcp, {"path": "data/a.csv"}, "mcp__fs__delete_file", root),
+        "mcp-remove-enclosing": lambda wg, root: _zone_deny_reason(
+            wg.check_mcp, {"path": "keep"}, "mcp__fs__remove_directory", root),
+    }
+
+    #: What each channel's deny opens with, up to its hint: the template (write,
+    #: move, delete, hardlink), the path, and the channel's own note.
+    _HEADS = {
+        "bash-write": "Write to protected zone blocked: data/y.txt.",
+        "bash-move-out": "Move of protected zone blocked: data/a.csv.",
+        "mcp-write": "Write to protected zone blocked: data/y.txt (via mcp tool mcp__fs__write_file, field path).",
+        "bash-symlink": "Write to protected zone blocked: data/l (a symlink).",
+        "ps-symlink": "Write to protected zone blocked: data/l (a symlink).",
+        "mcp-symlink": "Write to protected zone blocked: data/l (via mcp tool mcp__fs__create_symlink; a symlink).",
+        "bash-hardlink": ("Hardlink of protected zone blocked: data/a.csv (a hardlink would alias its bytes under "
+                          "a second name)."),
+        "bash-move-enclosing": "Move of protected zone blocked: keep.",
+        "ps-move-enclosing": "Move of protected zone blocked: keep.",
+        "mcp-move-enclosing": "Move of protected zone blocked: keep (via mcp tool mcp__fs__move_file, field source).",
+        "mcp-remove": "Delete of protected zone blocked: data/a.csv (via mcp tool mcp__fs__remove_file, field path).",
+        "mcp-delete": "Delete of protected zone blocked: data/a.csv (via mcp tool mcp__fs__delete_file, field path).",
+        "mcp-remove-enclosing": ("Delete of protected zone blocked: keep (via mcp tool mcp__fs__remove_directory, "
+                                 "field path)."),
+    }
+
     def _reason(self, channel: str, root: Path) -> str:
-        if channel in self._ENCLOSING:
+        extra = {**self._ENCLOSING, **self._MCP_REMOVES}
+        if channel in extra:
             _bash_patterns_module()
             import write_guard as wg
 
-            return self._ENCLOSING[channel](wg, root)
+            return extra[channel](wg, root)
         return _drive_channel(_ONE_LINE_CHANNELS[channel], "data", root)
 
-    @pytest.mark.parametrize("channel", [*_ONE_LINE_CHANNELS, *_ENCLOSING])
+    @pytest.mark.parametrize("channel", [*_ONE_LINE_CHANNELS, *_ENCLOSING, *_MCP_REMOVES])
+    def test_each_channel_says_what_it_refused(self, adopter, channel):
+        reason = self._reason(channel, adopter)
+        assert reason.startswith(self._HEADS[channel] + " This zone is YOURS"), reason
+
+    def test_the_heads_cover_every_channel_here(self):
+        assert set(self._HEADS) == {*_ONE_LINE_CHANNELS, *self._ENCLOSING, *self._MCP_REMOVES}
+
+    @pytest.mark.parametrize("channel", [*_ONE_LINE_CHANNELS, *_ENCLOSING, *_MCP_REMOVES])
     def test_the_deny_is_the_adopters_own(self, adopter, channel):
         reason = self._reason(channel, adopter)
         assert reason, f"{channel}: allowed -- the verdict must not move"
@@ -14212,6 +14252,93 @@ class TestAdopterZonesOnTheOneLineChannels:
         assert "protected harness zone" in reason, reason
         assert "This zone is YOURS" not in reason, reason
 
+    _NESTED = {
+        "bash-delete": lambda wg, root: _zone_deny_reason(wg.check_bash_for_protected_mutations, "rm -r out", root, root),
+        "bash-move": lambda wg, root: _zone_deny_reason(wg.check_bash_for_protected_mutations, "mv out x", root, root),
+        "ps-delete": lambda wg, root: _zone_deny_reason(
+            wg.check_powershell_for_protected_mutations, "Remove-Item -Recurse out", root, root),
+        "mcp-move": lambda wg, root: _zone_deny_reason(
+            wg.check_mcp, {"source": "out", "destination": "x"}, "mcp__fs__move_file", root),
+    }
+
+    @pytest.mark.parametrize("channel", list(_NESTED))
+    def test_a_protected_zone_inside_a_generated_one_is_the_zone_named(self, tmp_path, monkeypatch, channel):
+        """A clean of the build directory is refused for the protected zone it
+        holds, so the deny names that zone and its key, never the generated
+        zone around it, whose remedy (regenerate) is the very step refused
+        (both reviews, driven 2026-10-16)."""
+        root = _zone_tree(tmp_path, monkeypatch, 'protected_paths = ["out/keep/"]\ngenerated_paths = ["out/"]\n',
+                          ("out/keep",), ())
+        _bash_patterns_module()
+        import write_guard as wg
+
+        reason = self._NESTED[channel](wg, root)
+        assert "`out/keep/` under `protected_paths`" in reason, reason
+        assert "generated_paths" not in reason, reason
+
+    @pytest.mark.parametrize("command", ["echo hi > data./y.txt", 'echo hi > "data /y.txt"'])
+    def test_a_folded_spelling_of_an_adopter_zone_is_still_the_adopters(self, adopter, command):
+        """The verdict folds a trailing dot or blank off a component (the
+        Windows spellings of one directory), so the zone's name must fold the
+        same way: unfolded, these read as harness ground and told the adopter
+        to relaunch (both reviews, driven 2026-10-16)."""
+        _bash_patterns_module()
+        import write_guard as wg
+
+        reason = _zone_deny_reason(wg.check_bash_for_protected_mutations, command, adopter, adopter)
+        assert "`data/` under `protected_paths`" in reason, reason
+        assert "Harness self-edits" not in reason, reason
+
+
+def _unpaired_zone_denies(source: str) -> list[str]:
+    """Each function whose ``_audit_deny`` names a harness one-line template
+    with no ``_adopter_zone`` arm ahead of it: such a site gives an adopter's
+    zone the harness text. ``PROTECTED_ZONE_HARDLINK_INODE`` is exempt: the
+    inode backstop walks only the harness prefixes, so no adopter zone reaches
+    it."""
+    import ast
+
+    unpaired = []
+    for fn in ast.walk(ast.parse(source)):
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        arms = [c.lineno for c in ast.walk(fn)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == "_adopter_zone"]
+        for call in ast.walk(fn):
+            if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_audit_deny"):
+                continue
+            named = sorted({a.attr for a in ast.walk(call) if isinstance(a, ast.Attribute)
+                            and a.attr.startswith("PROTECTED_ZONE_") and a.attr != "PROTECTED_ZONE_HARDLINK_INODE"})
+            if named and not any(line < call.lineno for line in arms):
+                unpaired.append(f"{fn.name}: {', '.join(named)}")
+    return unpaired
+
+
+class TestEveryOneLineZoneDenyHasAnAdopterArm:
+    """The next harness one-liner is held to the lane's rule by construction:
+    a site that denies with a ``PROTECTED_ZONE_*`` template must first ask
+    ``_adopter_zone`` (DEF-995; failure-mode review, calibrated 2026-10-16:
+    six one-line sites on the lane, every one unpaired on 5fdb457)."""
+
+    def test_every_site_on_the_live_hook_is_paired(self):
+        source = (HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8")
+        assert _unpaired_zone_denies(source) == []
+        # Bash write, Bash move or delete, the hardlink, two symlinks, MCP.
+        assert source.count("if _adopter_zone(") >= 6
+
+    def test_a_planted_site_without_its_arm_is_named(self):
+        planted = (
+            "def check_x(rel, root):\n"
+            "    return _audit_deny(root, 'e', _denial_reasons.PROTECTED_ZONE_SYMLINK_BASH.format(path=rel))\n"
+            "def check_y(rel, root):\n"
+            "    if _adopter_zone(rel, root) is not None:\n"
+            "        return _audit_deny(root, 'e', _zone_reason(rel, root, where=''))\n"
+            "    return _audit_deny(root, 'e', _denial_reasons.PROTECTED_ZONE_WRITE_BASH.format(path=rel))\n"
+            "def check_z(rel, root):\n"
+            "    return _audit_deny(root, 'e', _denial_reasons.PROTECTED_ZONE_HARDLINK_INODE.format(path=rel))\n"
+        )
+        assert _unpaired_zone_denies(planted) == ["check_x: PROTECTED_ZONE_SYMLINK_BASH"]
+
 
 class TestEveryHarnessZoneDenyCarriesTheCollisionRemedy:
     """DEF-910: an adopter whose own top-level ``cc/`` collides with the
@@ -14229,7 +14356,20 @@ class TestEveryHarnessZoneDenyCarriesTheCollisionRemedy:
         _bash_patterns_module()
         import _denial_reasons as dr
 
-        templates = {name: getattr(dr, name) for name in vars(dr) if name.startswith("PROTECTED_ZONE_")}
+        import ast
+
+        # Every PROTECTED_ZONE_* template, and every template a protected-zone
+        # deny in the hook names: one renamed off the prefix stays in.
+        source = (HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8")
+        denied = {
+            a.attr for call in ast.walk(ast.parse(source))
+            if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "_audit_deny"
+            and any(isinstance(c, ast.Constant) and c.value == "pretooluse_blocked_protected_zone" for c in call.args)
+            for a in ast.walk(call)
+            if isinstance(a, ast.Attribute) and isinstance(a.value, ast.Name) and a.value.id == "_denial_reasons"
+        }
+        templates = {name: getattr(dr, name) for name in {n for n in vars(dr) if n.startswith("PROTECTED_ZONE_")}
+                     | denied}
         assert len(templates) >= 9, sorted(templates)
         missing = []
         for name, template in sorted(templates.items()):
