@@ -155,10 +155,12 @@ own, and one that cannot be read says so on its own line:
 - **the base branch:** the newest post-merge proof verdict, where the
   repository runs a workflow named `post-merge.yml` on each push to the base
   (Espalier's own repository does; `init` does not install one, and without it
-  the line says so). A newer push cancels an older run, so a red run can carry
-  every merge since the last green one: the board prints the revert only when
-  exactly one pull request merged in between, names the suspects otherwise, and
-  lists the pull requests whose armed auto-merge would land on the red base.
+  the line says so). Each push's run goes to the end, beside the next one, so a
+  red run's suspects are the merges since the last green run before it -- more
+  than one when a run between them is red or still going: the board prints the
+  revert only when exactly one pull request merged in between, names the
+  suspects otherwise, and lists the pull requests whose armed auto-merge would
+  land on the red base.
   Revert first, diagnose second.
 - **open PRs:** each with the seat whose latest claim or release names its
   branch, and what GitHub's merge state means: ready, blocked by a required

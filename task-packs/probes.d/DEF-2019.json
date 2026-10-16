@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2019",
+ "subject": "espalier/doctor.py",
+ "cmd": "python -c 'import sys;sys.path.insert(0,\".\");from pathlib import Path;import espalier.doctor as d;c=[];d._run_start_probe=lambda r,h,s:c.append(len(s));d.surface_contract.discover_executable_hook_wirings=lambda r:[{\"script\":f\"tools/cc/hooks/h{i}.py\"} for i in range(12)];Path.is_file=lambda self:True;d._probe_wired_hooks_start(Path(\".\"));print(f\"{len(c)} spawns, {len(c)*d._HOOK_START_BUDGET_S} s\")'",
+ "open_value": "13 spawns, 260 s",
+ "why_not": null,
+ "row_sha": "95b3741f3a89",
+ "text_sha": "1d12360ef6d0",
+ "verified_2026_10_16": "STILL_OPEN (re-pinned '260' -> '13 spawns, 260 s' on 2026-10-16: a bare number reads as a line-number pin; the probe names its unit)"
+}

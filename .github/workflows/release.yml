@@ -175,6 +175,8 @@ jobs:
     # summary is "N passed (full ladder)".
     name: release-readiness gate (publish proof tier)
     runs-on: ubuntu-latest
+    # DEF-1178: above the measured worst case, 34.0 min (15 runs to 2026-10-16).
+    timeout-minutes: 60
     env:
       ESPALIER_RELEASE_CHECK_WITH_TESTS: 1
       ESPALIER_RELEASE_CHECK_WITH_WHEEL_SMOKE: 1

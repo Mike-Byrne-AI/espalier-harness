@@ -53,6 +53,7 @@ stripped from the children (a hook reads ``CLAUDE_PROJECT_DIR`` as its root,
 and the suite's own session would otherwise hand it this checkout).
 """
 # slow-exempt: the lifecycle walk, about sixty espalier and hook subprocesses per stack over two stacks plus the api walk, once per module, measured 2026-10-10: 43 s for the whole module on the Air, about 18 s per stack's fixture
+# timeout-exempt: the raised ceiling is the walk fixture's setup on a slow host, not a slow test: 37 s on Ubuntu and 46 s on macOS under -n auto, past 60 s under -n auto on windows-latest (run 38874132596), 123-142 s on a loaded Windows host
 from __future__ import annotations
 
 import json
@@ -72,6 +73,20 @@ from espalier.cli import _ONBOARDING_ROWS, _build_goal_md
 from _adopter_tree import build_adopter_tree
 
 
+#: The module's own per-test ceiling, on every host. Each walk is a module-scoped
+#: fixture set up inside the first test that asks for it, and that setup alone is
+#: most of the suite's 60 s: 37 s on Ubuntu and 46 s on macOS under ``-n auto``,
+#: 38-53 s across 23 serial windows-latest cells and 56-59 s where it passed under
+#: ``-n auto`` there, past 60 s in the 16 worker crashes run 38874132596 named
+#: (2026-10-16, DEF-979's split; each replacement worker rebuilt the walk and
+#: crashed again), and 123-142 s per stack on a loaded Windows host (2026-10-10).
+#: A mark outranks ``--timeout`` and ``PYTEST_TIMEOUT``, so this is the ceiling a
+#: loaded local run gets too, and it stays above the windows-latest cell's own
+#: (tests/test_ci_job_bounds.py pins that no mark sits between the two); the 45 s
+#: subprocess bounds below stay under it.
+pytestmark = pytest.mark.timeout(300)
+
+
 #: The children's environment: every ``ESPALIER_*`` and ``CLAUDE*`` variable
 #: stripped. A hook resolves its root from ``CLAUDE_PROJECT_DIR`` and reads
 #: ``ESPALIER_MAINTENANCE_MODE``; under the suite's own Claude Code session both
@@ -84,9 +99,9 @@ _ENV = {k: v for k, v in os.environ.items() if not k.startswith(("ESPALIER", "CL
 def _espalier(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "espalier.cli", *args],
-        # Under the suite's 60 s per-test ceiling (pyproject `timeout = 60`): a
-        # budget at or above it can never fire first. Pinned by the per-test
-        # ceiling contract in tests/test_test_suite_contract.py.
+        # Under the per-test ceiling (this module's 300 s, `pytestmark` above;
+        # the suite's is 60 s): a budget at or above it can never fire first.
+        # Pinned by the per-test ceiling contract in tests/test_test_suite_contract.py.
         capture_output=True, text=True, encoding="utf-8", timeout=45, env=_ENV,
     )
 
