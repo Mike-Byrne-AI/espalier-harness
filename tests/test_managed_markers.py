@@ -24,6 +24,7 @@ from espalier.managed_markers import (
     apply_marker_to_text,
     has_managed_marker,
 )
+from tests._live_tree import checkout_rglob
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +106,7 @@ class TestJsonSentinelIsRealSoT:
         root = self._repo_root()
         offenders: list[str] = []
         scanned = 0
-        for path in sorted((root / "espalier").rglob("*.py")):
+        for path in sorted(checkout_rglob(root / "espalier", "*.py")):
             rel = path.relative_to(root).as_posix()
             if "/_vendor/" in f"/{rel}":
                 continue  # tools mirror — governed by tools/cc rules
@@ -635,7 +636,7 @@ class TestConfusableDetection:
         from espalier.managed_markers import find_confusable_markers
         assets_dir = Path(__file__).parent.parent / "espalier" / "assets"
         offenders = []
-        for path in assets_dir.rglob("*.md"):
+        for path in checkout_rglob(assets_dir, "*.md"):
             content = path.read_text(encoding="utf-8")
             confusables = find_confusable_markers(content)
             if confusables:

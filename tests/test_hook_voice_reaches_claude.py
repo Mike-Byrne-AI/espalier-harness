@@ -28,6 +28,7 @@ import types
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -248,7 +249,7 @@ def test_the_reporter_crash_guards_are_the_eight_the_census_named():
     """The witness roster above is every non-blocking hook entry point: a
     ninth reporter joins it or this reds."""
     blocking = {"write_guard", "plan_guard", "config_guard", "stop_gate"}
-    entries = {p.stem for p in HOOKS_DIR.glob("*.py") if not p.name.startswith("_")}
+    entries = {p.stem for p in checkout_glob(HOOKS_DIR, "*.py") if not p.name.startswith("_")}
     assert {h for h, _ in REPORTER_CRASH_GUARDS} == entries - blocking
 
 

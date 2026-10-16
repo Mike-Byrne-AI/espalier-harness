@@ -37,6 +37,7 @@ from pathlib import Path
 import pytest
 
 from espalier.managed_inventory import get_managed_public_files, get_seed_docs
+from tests._live_tree import checkout_glob, checkout_rglob
 
 pytestmark = [pytest.mark.contract]
 
@@ -153,7 +154,7 @@ def _extract_doc_refs_from_text(text: str) -> set[str]:
 def _hook_string_literal_refs() -> dict[str, set[str]]:
     """Return ``{filename: {ref, ...}}`` for every ``tools/cc/hooks/*.py``."""
     out: dict[str, set[str]] = {}
-    for hook in sorted(HOOKS_DIR.glob("*.py")):
+    for hook in sorted(checkout_glob(HOOKS_DIR, "*.py")):
         if hook.name.startswith("_"):
             # Helpers like _hook_utils.py / _denial_reasons.py: still
             # in scope -- their string literals reach hook output via
@@ -265,7 +266,7 @@ class TestSourceAssetDocByteParity:
         if not asset_docs_dir.is_dir():
             return  # no asset docs to compare (early-stage repos)
         mismatches: list[str] = []
-        for asset_path in sorted(asset_docs_dir.rglob("*.md")):
+        for asset_path in sorted(checkout_rglob(asset_docs_dir, "*.md")):
             rel = asset_path.relative_to(asset_docs_dir)
             source_path = source_docs_dir / rel
             if not source_path.is_file():
@@ -321,7 +322,7 @@ class TestSourceAssetDocByteParity:
 
         uncovered = [
             f"docs/{p.relative_to(asset_docs_dir).as_posix()}"
-            for p in sorted(asset_docs_dir.rglob("*.md"))
+            for p in sorted(checkout_rglob(asset_docs_dir, "*.md"))
             if f"docs/{p.relative_to(asset_docs_dir).as_posix()}" not in mirrored
         ]
         assert not uncovered, (

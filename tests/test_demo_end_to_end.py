@@ -26,6 +26,7 @@ import pytest
 
 from tests._git_oracle import require_tracked_paths
 from tests.test_doc_source_citations import _RECORD_SURFACE_DOCS
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEMO_DOC = REPO_ROOT / "docs" / "DEMO.md"
@@ -1506,7 +1507,7 @@ def _governed_events() -> set[str]:
 
 def _hook_sources() -> str:
     return "\n".join(
-        p.read_text(encoding="utf-8") for p in sorted(HOOKS_DIR.glob("*.py"))
+        p.read_text(encoding="utf-8") for p in sorted(checkout_glob(HOOKS_DIR, "*.py"))
     )
 
 

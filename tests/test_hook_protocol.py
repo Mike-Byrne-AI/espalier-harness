@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -260,7 +261,7 @@ def test_every_deny_hook_in_fixtures_or_exempt():
     # the PreToolUse-shaped DENY_FIXTURES.
     exempt = {"stop_gate.py"}
     deny_hooks: set[str] = set()
-    for p in sorted(HOOKS_DIR.glob("*.py")):
+    for p in sorted(checkout_glob(HOOKS_DIR, "*.py")):
         if p.name == "__init__.py":
             continue
         tree = ast.parse(p.read_text(encoding="utf-8"))

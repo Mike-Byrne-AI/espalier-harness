@@ -15,6 +15,7 @@ import ast
 import copy
 import re
 from pathlib import Path
+from tests._live_tree import checkout_glob
 
 TESTS_DIR = Path(__file__).resolve().parent
 
@@ -189,7 +190,7 @@ def test_no_pass_through_tests():
             _ = some_symbol  # absence of NameError is the proof
     """
     offenders: list[str] = []
-    for path in sorted(TESTS_DIR.glob("test_*.py")):
+    for path in sorted(checkout_glob(TESTS_DIR, "test_*.py")):
         if path.name == "test_test_quality.py":
             continue
         for fn in _walk_test_functions(path):
@@ -332,7 +333,7 @@ class TestContractRationale:
 
     def test_every_file_has_rationale_docstring(self):
         violations = []
-        for f in sorted(TESTS_DIR.glob("test_*.py")):
+        for f in sorted(checkout_glob(TESTS_DIR, "test_*.py")):
             if f.name in GRANDFATHERED_NO_RATIONALE:
                 continue
             try:

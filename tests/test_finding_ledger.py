@@ -24,6 +24,7 @@ from espalier import finding_ledger as fl
 from espalier import surface_contract as sc
 from tests._interpreter_hosts import shell_resolver_line
 from espalier.fan_out_findings import FINDING_SCHEMA, aggregate_findings
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -332,7 +333,7 @@ class TestStandingCallerLedgerWiring:
         Skipped when node is absent; the first-statement assertion below runs
         everywhere."""
 
-        bodies = sorted(self._WORKFLOWS.glob("*.js"))
+        bodies = sorted(checkout_glob(self._WORKFLOWS, "*.js"))
         assert len(bodies) >= 3, bodies
         for js in bodies:
             first = next(line for line in js.read_text(encoding="utf-8").splitlines() if line.strip())
@@ -354,7 +355,7 @@ class TestStandingCallerLedgerWiring:
     def _corpus_persisting_workflows(self):
         return {
             p.name
-            for p in self._WORKFLOWS.glob("*.js")
+            for p in checkout_glob(self._WORKFLOWS, "*.js")
             if _persists_anything(_code_lines(p.read_text(encoding="utf-8")))
         }
 
@@ -368,7 +369,7 @@ class TestStandingCallerLedgerWiring:
         EVERY scaffold, standing or dated, so a copy of an old round cannot
         reintroduce the hop.
         """
-        paths = sorted(self._WORKFLOWS.glob("*.js"))
+        paths = sorted(checkout_glob(self._WORKFLOWS, "*.js"))
         assert len(paths) >= 3, (
             f"non-vacuity floor: {len(paths)} scaffold(s) under {self._WORKFLOWS} -- the "
             "three standing scaffolds; a moved or renamed directory would leave this "
@@ -623,7 +624,7 @@ class TestStandingCallerLedgerWiring:
         read as a census.
         """
         checked = []
-        for path in sorted(self._WORKFLOWS.glob("*.js")):
+        for path in sorted(checkout_glob(self._WORKFLOWS, "*.js")):
             if path.name in self.DATED_ONEOFFS:
                 continue
             code = _code_lines(path.read_text(encoding="utf-8"))
@@ -782,7 +783,7 @@ class TestStandingCallerLedgerWiring:
         what stops the listing re-accreting with nothing red."""
         bound = 1024
         over = {}
-        for path in sorted(self._WORKFLOWS.glob("*.js")):
+        for path in sorted(checkout_glob(self._WORKFLOWS, "*.js")):
             m = re.search(r"description:\s*(['\"`])(.*?)\1", path.read_text(encoding="utf-8"), re.S)
             size = len(m.group(2).encode("utf-8")) if m else 0
             if size > bound:

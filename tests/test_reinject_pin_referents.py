@@ -36,12 +36,15 @@ class TestOperatorDocPopulation:
             if not segments:
                 continue
             if "glob(" in line:
-                # a globbed directory: every member must be in the rule's population
-                m = re.search(r'glob\("([^"]+)"\)', line)
+                # a globbed directory: every member must be in the rule's population.
+                # Either spelling: `(base).glob("pat")`, or the routed
+                # `checkout_glob(base, "pat")` every tests/ walk takes (DEF-2013).
+                m = (re.search(r'\((?P<base>[^()]*)\)\.glob\("(?P<pat>[^"]+)"\)', line)
+                     or re.search(r'\bcheckout_glob\((?P<base>[^,()]*),\s*"(?P<pat>[^"]+)"\)', line))
                 if m is None:
                     pytest.fail(f"unpinned glob member in the portability population: {line.strip()}")
-                directory = "/".join(seg for seg in segments if seg != m.group(1))
-                paths.append(directory + "/" + m.group(1).replace("*", "probe"))
+                directory = "/".join(re.findall(r'"([^"]+)"', m.group("base")))
+                paths.append(directory + "/" + m.group("pat").replace("*", "probe"))
             else:
                 paths.append("/".join(segments))
         assert paths, "the portability test's population could not be read"

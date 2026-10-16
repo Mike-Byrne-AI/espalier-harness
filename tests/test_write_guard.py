@@ -8190,7 +8190,7 @@ class TestPowerShellEphemeralCarveOut:
                     readers.add((module, where))
                 walk(child, module, where)
 
-        for path in sorted(HOOKS_DIR.glob("*.py")):
+        for path in sorted(checkout_glob(HOOKS_DIR, "*.py")):
             walk(ast.parse(path.read_text(encoding="utf-8")), path.name, "<module>")
         assert readers == {("_bash_patterns.py", "on_the_ephemeral_roster")}, sorted(readers)
 

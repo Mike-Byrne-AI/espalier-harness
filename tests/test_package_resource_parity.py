@@ -41,7 +41,7 @@ from tests._surface_expected import (
     EXPECTED_SKILL_COUNT,
     EXPECTED_WORKFLOW_COUNT,
 )
-from tests._live_tree import checkout_rglob
+from tests._live_tree import LISTING_HELPERS, checkout_rglob
 
 # The parametrize lists below read the one owner of the kinds; a kind added there is
 # a kind these parity tests cover with no edit here. The SUBDIRS pin further down is
@@ -383,8 +383,13 @@ _KIND_ENUMERATION_SKIP = ("espalier/_vendor/", "espalier/assets/")
 #: filesystem-contracts gate pushes a recursive kind walk under `espalier/` or
 #: `tools/` toward `safe_rglob`, so a walk that read only methods went silent on
 #: exactly the site that gate produces (the failure-mode review, 2026-10-06).
+#: `LISTING_HELPERS` are tests/_live_tree.py's listings of what git sees, the
+#: form the live-tree census routes every tests/ walk to (DEF-2013): routing 200
+#: sites through them took 51 of 83 kind listings out of this walk until they
+#: were named here. Git's view still lists a sidecar that is tracked, or that a
+#: tree's .gitignore does not name (this one's ignores `.DS_Store` and `._*`).
 _LISTING_METHODS = frozenset({"glob", "rglob", "iterdir", "listdir", "scandir", "walk"})
-_LISTING_FUNCTIONS = frozenset({"safe_rglob", "_safe_rglob", "safe_glob", "iglob", "glob"})
+_LISTING_FUNCTIONS = frozenset({"safe_rglob", "_safe_rglob", "safe_glob", "iglob", "glob", *LISTING_HELPERS})
 #: Under tests/, a receiver is in the population when it reaches the live tree
 #: or a fixture copied from it; a `tmp_path` tree nothing but the test writes
 #: never meets a sidecar. `__file__` covers every `X = Path(__file__)...` root

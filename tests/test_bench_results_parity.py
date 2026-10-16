@@ -23,6 +23,7 @@ import pytest
 # crash at test-collection time. None when neither parser is available — the
 # version-stamp test below skips in that case.
 from espalier._compat import tomllib
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 RESULTS_PATH = REPO_ROOT / "bench" / "RESULTS.md"
@@ -59,7 +60,7 @@ def corpus_files() -> dict[str, list[Path]]:
     """Split corpus into in-scope (BC-NNN) and out-of-scope (BC-OOS) buckets."""
     in_scope: list[Path] = []
     oos: list[Path] = []
-    for path in sorted(CORPUS_DIR.glob("BC-*.json")):
+    for path in sorted(checkout_glob(CORPUS_DIR, "BC-*.json")):
         if path.name.startswith("BC-OOS-"):
             oos.append(path)
         else:

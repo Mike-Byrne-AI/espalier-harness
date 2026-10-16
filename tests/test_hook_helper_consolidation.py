@@ -23,6 +23,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 HOOKS_DIR = Path(__file__).parent.parent / "tools" / "cc" / "hooks"
 
@@ -31,7 +32,7 @@ class TestHookHelperConsolidation:
     def test_no_inline_project_root_def(self):
         """No hook script defines its own _resolve_project_root (alias is OK)."""
         violations = []
-        for hook_file in HOOKS_DIR.glob("*.py"):
+        for hook_file in checkout_glob(HOOKS_DIR, "*.py"):
             if hook_file.name == "_hook_utils.py":
                 continue
             source = hook_file.read_text(encoding="utf-8")
@@ -121,7 +122,7 @@ class TestHelperShadow:
     def test_no_shadow_def(self, helper_name):
         """No hook script re-defines a name exported by _hook_utils.py."""
         violations = []
-        for hook_file in HOOKS_DIR.glob("*.py"):
+        for hook_file in checkout_glob(HOOKS_DIR, "*.py"):
             if hook_file.name == "_hook_utils.py":
                 continue
             tree = ast.parse(hook_file.read_text(encoding="utf-8"))

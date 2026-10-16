@@ -42,6 +42,7 @@ from tests._recall_pins import (
     rate_drift,
     strip_block,
 )
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GATE = REPO_ROOT / "scripts" / "check_handoff_landing.py"
@@ -144,11 +145,11 @@ def test_the_loader_sees_every_file_under_each_file_backed_root(corpus):
     # too, so a filter that starts dropping anything else still reds here; the
     # excluded names themselves are pinned to exist in tests/test_recall.py.
     on_disk = {
-        "memory/": sum(1 for p in (REPO_ROOT / "memory").glob("*.md")
+        "memory/": sum(1 for p in checkout_glob(REPO_ROOT / "memory", "*.md")
                        if p.name != "README.md"
                        and f"memory/{p.name}" not in _recall.PULL_EXCLUDED_MEMORY_NOTES),
         "docs/sharp-edges/": sum(
-            1 for p in (REPO_ROOT / "docs" / "sharp-edges").glob("*.md") if p.name != "README.md"
+            1 for p in checkout_glob(REPO_ROOT / "docs" / "sharp-edges", "*.md") if p.name != "README.md"
         ),
     }
     # The roster's rules family, derived from the loader's own listing rather

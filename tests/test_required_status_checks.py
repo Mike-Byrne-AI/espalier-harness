@@ -210,7 +210,7 @@ def _build_resolver() -> tuple[dict[str, Job], list[Job]]:
     """Return (reportable-name -> Job) and every PR-triggered job."""
     reportable: dict[str, Job] = {}
     pr_jobs: list[Job] = []
-    for path in sorted(WORKFLOW_DIR.glob("*.yml")):
+    for path in sorted(checkout_glob(WORKFLOW_DIR, "*.yml")):
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         # `on:` parses as the boolean True in YAML 1.1 unless quoted.
         triggers = data.get("on", data.get(True)) or {}
@@ -447,7 +447,7 @@ class TestRequiredStatusCheckNamesResolve:
         by_job_id = {}
         for job in pr_jobs:
             by_job_id.setdefault(job.job_id, job)
-        workflow_names = {p.stem for p in WORKFLOW_DIR.glob("*.yml")}
+        workflow_names = {p.stem for p in checkout_glob(WORKFLOW_DIR, "*.yml")}
 
         problems: list[str] = []
         for label, text in _sources():
@@ -709,7 +709,7 @@ class TestEveryMatrixReadsEveryCell:
     @staticmethod
     def _matrices() -> list[tuple[str, str, dict]]:
         out: list[tuple[str, str, dict]] = []
-        for path in sorted(WORKFLOW_DIR.glob("*.yml")):
+        for path in sorted(checkout_glob(WORKFLOW_DIR, "*.yml")):
             data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             for job_id, spec in (data.get("jobs") or {}).items():
                 strategy = spec.get("strategy") if isinstance(spec, dict) else None
@@ -816,7 +816,7 @@ class TestTheTierGateCannotParkThePullRequest:
         that silently drops the stages everywhere) and two (a copy that runs
         them twice) both red here."""
         homes = []
-        for path in sorted(WORKFLOW_DIR.glob("*.yml")):
+        for path in sorted(checkout_glob(WORKFLOW_DIR, "*.yml")):
             data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             for jid, job in (data.get("jobs") or {}).items():
                 for step in (job.get("steps") or []) if isinstance(job, dict) else []:

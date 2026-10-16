@@ -120,7 +120,9 @@ class TestTheAllowReadDerivation:
     ``_DOTENV_TEMPLATE_SUFFIXES``, DEF-816), which the ``denyRead`` glob
     would refuse at the OS; the dispatcher settled (air c3a5c0) that they
     become ``allowRead`` entries derived from that tuple, under the sandbox's
-    documented narrower-allow rule for reads, flagged not driven."""
+    documented narrower-allow rule for reads, driven on macOS 2026-10-15 (the
+    five templates read with the entries, none without) and not on Linux or
+    WSL2, which the print says."""
 
     def test_the_live_guards_four_suffixes_yield_eight_entries(self):
         assert sp.allow_read_entries(LIVE_GUARD) == [
@@ -143,11 +145,34 @@ class TestTheAllowReadDerivation:
         with pytest.raises(ValueError, match="_DOTENV_TEMPLATE_SUFFIXES"):
             sp.allow_read_entries(source)
 
-    def test_the_posture_carries_the_list_and_describe_says_it_is_not_driven(self, tmp_path):
+    def test_the_posture_carries_the_list_and_describe_says_where_it_was_driven(self, tmp_path):
+        """Dies to the line going back to "not yet driven on a live sandbox", or
+        dropping the hosts the drive did not reach."""
         found = sp.posture(tmp_path)
         assert found.lists["allowRead"] == sp.allow_read_entries(root=tmp_path)
-        text = "\n".join(sp.describe(found, written=False, prefix="[init]", remedy_py=PY))
-        assert "allowRead re-opens the dotenv template files" in text and "not yet driven" in text
+        line = next(x for x in sp.describe(found, written=False, prefix="[init]", remedy_py=PY)
+                    if "allowRead re-opens the dotenv template files" in x)
+        assert "driven on macOS" in line and "Linux and WSL2 not yet" in line, line
+        assert "live sandbox" not in line, line
+
+    def test_describe_names_read_among_the_file_tools(self, tmp_path):
+        """Dies to the Read tool dropping off the line: the macOS drive read a
+        denied dotenv through Read with the sandbox on, so the guard is its layer."""
+        found = sp.posture(tmp_path)
+        line = next(x for x in sp.describe(found, written=False, prefix="[init]", remedy_py=PY)
+                    if "shell layer beside write_guard" in x)
+        tools = line.split("run outside it")[0]
+        assert "run outside it" in line and all(t in tools for t in ("Read", "Write", "Edit", "NotebookEdit")), line
+
+    def test_the_layer_line_says_only_macos_was_driven(self, tmp_path):
+        """Dies to the line claiming Linux and WSL2 as covered (the drive ran on
+        macOS only), or dropping the late-file risk the settings reference names
+        there. Doctor's twin line is pinned in TestDoctorsThreeStates."""
+        found = sp.posture(tmp_path)
+        layer = next(x for x in sp.describe(found, written=False, prefix="[init]", remedy_py=PY)
+                     if "shell layer beside write_guard" in x)
+        assert "driven on macOS" in layer and "Linux and WSL2 not yet" in layer, layer
+        assert "created after the session starts may stay readable" in layer, layer
 
 
 def _hook_utils(monkeypatch, self_host: bool):
@@ -518,7 +543,9 @@ class TestDoctorsThreeStates:
         assert warnings == [] and steps == []
         assert any("sandbox: off" in line and f"{PY} -m espalier upgrade . --execute {sp.FLAG}" in line
                    for line in info), info
-        assert any("shell layer" in line and "Write, Edit and NotebookEdit" in line for line in info), info
+        assert any("shell layer" in line and "Write, Edit and NotebookEdit" in line
+                   and "read deny on Read" in line and "on Linux and WSL2 not yet" in line
+                   and "created after the session starts may stay readable" in line for line in info), info
         assert any("managed settings file or --settings is not read" in line for line in info), info
         # tests/test_doctor.py::TestDoctorFailures guards the report against a
         # spurious bypass-mode info line from the kill-switch check by that

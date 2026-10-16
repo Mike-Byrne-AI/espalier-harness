@@ -98,7 +98,7 @@ class TestHookExitCodesNoStrayOne:
     def test_no_stray_sys_exit_one(self):
         """Hook scripts must not call sys.exit(1)/exit(1) in governance paths."""
         violations = []
-        for hook_file in HOOKS_DIR.glob("*.py"):
+        for hook_file in checkout_glob(HOOKS_DIR, "*.py"):
             if hook_file.name == "__init__.py" or hook_file.name.startswith("_"):
                 continue
             source = hook_file.read_text(encoding="utf-8")
@@ -159,7 +159,7 @@ class TestHookWiring:
                             wired_scripts.add(Path(clean).name)
 
         hook_files = {
-            f.name for f in HOOKS_DIR.glob("*.py")
+            f.name for f in checkout_glob(HOOKS_DIR, "*.py")
             if f.name != "__init__.py" and not f.name.startswith("_")
         }
 
@@ -216,7 +216,7 @@ class TestScannersStdlibOnly:
     def test_scanners_stdlib_only(self):
         """espalier/scanners/*.py must only import stdlib modules."""
         violations = []
-        for scanner_file in SCANNERS_DIR.glob("*.py"):
+        for scanner_file in checkout_glob(SCANNERS_DIR, "*.py"):
             if scanner_file.name == "__init__.py":
                 continue
             source = scanner_file.read_text(encoding="utf-8")
@@ -265,7 +265,7 @@ def _scan_for_espalier_imports(root: Path) -> list[str]:
     now reds both, not just the contract.
     """
     violations: list[str] = []
-    for py_file in root.rglob("*.py"):
+    for py_file in checkout_rglob(root, "*.py"):
         if py_file.name == "__init__.py":
             continue
         source = py_file.read_text(encoding="utf-8")
@@ -317,7 +317,7 @@ class TestToolsCcNoEspalierImports:
         own source (tools/cc), not the espalier runtime package."""
         espalier_dir = REPO_ROOT / "espalier"
         violations = []
-        for py_file in espalier_dir.rglob("*.py"):
+        for py_file in checkout_rglob(espalier_dir, "*.py"):
             rel = py_file.relative_to(REPO_ROOT).as_posix()
             if rel.startswith(("espalier/assets/", "espalier/_vendor/")):
                 continue
@@ -962,7 +962,7 @@ class TestReadmeHookCount:
     def test_readme_hook_count_matches_reality(self):
         """README must not claim a different number of hooks than actually exist."""
         hook_files = [
-            f for f in HOOKS_DIR.glob("*.py")
+            f for f in checkout_glob(HOOKS_DIR, "*.py")
             if f.name != "__init__.py" and not f.name.startswith("_")
         ]
         actual_count = len(hook_files)
@@ -2504,7 +2504,7 @@ def _engine_modules() -> list[Path]:
     (``_vendor/``, the ``tools/cc`` copy; ``assets/``, the deployed bodies)
     are governed by their sources' rules and excluded."""
     return sorted(
-        p for p in (REPO_ROOT / "espalier").rglob("*.py")
+        p for p in checkout_rglob(REPO_ROOT / "espalier", "*.py")
         if "_vendor" not in p.parts and "assets" not in p.parts
     )
 
@@ -2722,8 +2722,8 @@ class TestToolsCcAndHooksShareNoModuleName:
     tool that silently imports the wrong file (failure-mode review, 2026-10-11)."""
 
     def test_no_basename_is_in_both_tools_cc_and_its_hooks_dir(self):
-        tools = {p.name for p in (REPO_ROOT / "tools" / "cc").glob("*.py")}
-        hooks = {p.name for p in HOOKS_DIR.glob("*.py")}
+        tools = {p.name for p in checkout_glob(REPO_ROOT / "tools" / "cc", "*.py")}
+        hooks = {p.name for p in checkout_glob(HOOKS_DIR, "*.py")}
         shared = (tools & hooks) - {"__init__.py"}
         assert not shared, (
             f"{sorted(shared)} exist under both tools/cc/ and tools/cc/hooks/: after a hook "

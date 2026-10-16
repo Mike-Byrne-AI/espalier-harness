@@ -27,6 +27,7 @@ from espalier.surface_contract import (
     make_count_claim_regex,
     parse_count_token,
 )
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -85,11 +86,11 @@ _FALSE_POSITIVE_LINE_MARKERS: tuple[str, ...] = (
 
 
 def _live_agent_count() -> int:
-    return len(visible((REPO_ROOT / ".claude" / "agents").glob("*.md"), REPO_ROOT / ".claude" / "agents"))
+    return len(visible(checkout_glob(REPO_ROOT / ".claude" / "agents", "*.md"), REPO_ROOT / ".claude" / "agents"))
 
 
 def _live_command_count() -> int:
-    return len(visible((REPO_ROOT / ".claude" / "commands").glob("*.md"), REPO_ROOT / ".claude" / "commands"))
+    return len(visible(checkout_glob(REPO_ROOT / ".claude" / "commands", "*.md"), REPO_ROOT / ".claude" / "commands"))
 
 
 def _claims_in(text: str, pattern: re.Pattern[str]) -> list[tuple[int, str]]:
@@ -186,6 +187,6 @@ def _live_helper_count() -> int:
     if not hooks_dir.is_dir():
         return 0
     return len([
-        p for p in hooks_dir.glob("_*.py")
+        p for p in checkout_glob(hooks_dir, "_*.py")
         if p.name != "__init__.py"
     ])

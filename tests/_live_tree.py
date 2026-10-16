@@ -362,7 +362,11 @@ def checkout_glob(base: Path, pattern: str, *, root: Path | None = None) -> Iter
     directories holding one, whose path below ``base`` matches ``pattern``
     (``**`` for any depth), in ``sorted(Path)`` order; an iterator, as
     ``Path.glob`` returns. ``root`` names the checkout when inference would
-    not (see :func:`_root_of`). A ``base`` git ignores raises (:func:`_members`)."""
+    not (see :func:`_root_of`). A ``base`` git ignores raises (:func:`_members`).
+    Where pathlib differs, this does not follow it: a bare trailing ``**``
+    matches files too (pathlib's yields directories only), a trailing ``/`` is
+    dropped (pathlib's keeps directories only), and an empty directory is
+    never a match. No routed site spells either pattern."""
     base = Path(base)
     _root, _prefix, rels = _members(base, root)
     pats = [p for p in pattern.replace("\\", "/").split("/") if p]
@@ -391,6 +395,16 @@ def checkout_files(base: Path = REPO_ROOT, *, root: Path | None = None) -> list[
     in ``sorted(Path)`` order."""
     _root, _prefix, rels = _members(Path(base), root)
     return [Path(base) / rel for rel in sorted(rels, key=_path_order) if (Path(base) / rel).is_file()]
+
+
+#: The listings above by name: the spelling every tests/ walk takes once the
+#: live-tree census routes it. A gate that finds a listing call by its name
+#: reads this (tests/test_package_resource_parity.py's `.claude`-kind walk,
+#: tests/test_ledger_fragments.py's record-read census, the doc-sweep regex in
+#: tests/test_marker_taxonomy.py, the corpus-count regex in
+#: tests/test_corpus_count_parity.py); a listing added here without joining it
+#: reds tests/test_utf8_text_io.py::TestCheckoutView.
+LISTING_HELPERS: tuple[str, ...] = ("checkout_glob", "checkout_rglob", "checkout_iterdir", "checkout_files")
 
 
 #: The fields a scanner's finding names its file by, and the ones it nests the
@@ -505,15 +519,49 @@ def keep_in_checkout(result: Any, *, root: Path | None = None) -> Any:
     raise TypeError(f"keep_in_checkout cannot filter a {type(result).__name__}; route the call that lists files")
 
 
+_COPIES: dict[tuple[str, tuple[str, ...]], Any] = {}
+
+
+def checkout_copy(patterns: Iterable[str], *, src: Path = REPO_ROOT) -> Path:
+    """A copy of the files git's view of ``src`` holds under ``patterns``
+    (``Path.glob`` patterns, ``**`` for any depth), at the same places in a
+    temporary directory: made once per process, removed at a clean exit (a
+    killed run leaves its ``checkout-copy-*`` folder in the system temp
+    directory). For a walker
+    that raises on what it reads before a filter could run (the freshness
+    scanner on a duplicate fragment id), so ``keep_in_checkout`` cannot cut its
+    result; derive ``patterns`` from the walker's own roster, so a pattern it
+    gains is copied too."""
+    import tempfile
+
+    key = (os.path.normcase(str(Path(src).resolve())), tuple(patterns))
+    if key not in _COPIES:
+        holder = tempfile.TemporaryDirectory(prefix="checkout-copy-")
+        dst = Path(holder.name)
+        for pattern in key[1]:
+            for path in checkout_glob(Path(src), pattern):
+                if path.is_file():
+                    target = dst / path.relative_to(src)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(path, target)
+        _COPIES[key] = holder
+    return Path(_COPIES[key].name)
+
+
 def copy_checkout(src: Path, dst: Path, *, ignore: Callable[[str, list[str]], Iterable[str]] | None = None,
                   root: Path | None = None) -> Path:
     """``shutil.copytree(src, dst, ignore=ignore)`` over git's view: copy the
     files of the checkout below ``src`` (``.git`` is never among them) to the
     same places under ``dst``, metadata kept. ``ignore`` is a copytree-style
     callback, asked per directory as copytree would ask it; a name it returns is
-    left out with everything below it. Returns ``dst``."""
+    left out with everything below it. Returns ``dst``. A missing ``src``
+    raises ``FileNotFoundError``, as copytree's does: an empty copy would
+    leave the caller asserting over nothing. Unlike copytree, ``dst`` may
+    already exist, and what it holds stays."""
     src = Path(src)
     dst = Path(dst)
+    if not src.is_dir():
+        raise FileNotFoundError(f"copy_checkout: no directory at {src}")
     _root, _prefix, rels = _members(src, root)
     skipped: dict[str, set[str]] = {}
     dst.mkdir(parents=True, exist_ok=True)

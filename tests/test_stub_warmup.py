@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from tests import _stubs
+from tests._live_tree import checkout_glob
 
 ROOT = Path(__file__).resolve().parent.parent
 TESTS = ROOT / "tests"
@@ -150,7 +151,7 @@ def executable_writers(source: str) -> list[tuple[str, int]]:
 @functools.lru_cache(maxsize=None)
 def _census() -> tuple[tuple[str, str, int], ...]:
     rows: list[tuple[str, str, int]] = []
-    for p in sorted(TESTS.glob("*.py")):
+    for p in sorted(checkout_glob(TESTS, "*.py")):
         if p.name == "_stubs.py":
             continue  # the one writer
         rows += [(p.name, fn, line) for fn, line in executable_writers(p.read_text(encoding="utf-8"))]

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = REPO_ROOT / "scripts" / "proof_tier.py"
@@ -517,19 +518,22 @@ class TestTheContractSliceHoldsTheLiveManifestReaders:
 
     def _readers(self) -> list[str]:
         return sorted(
-            p.stem for p in (REPO_ROOT / "tests").glob("test_*.py")
+            p.stem for p in checkout_glob(REPO_ROOT / "tests", "test_*.py")
             if _reads_live_manifest(p.read_text(encoding="utf-8"))
         )
 
     def test_the_rows_this_was_written_for_are_in_the_population(self):
         # The stressor exists, for both shapes: a green below over a
         # population that lost a known member to a reworded read would be
-        # silent. The first two read the path; the third calls an entry point.
+        # silent. The first two read the path; the third calls an entry point
+        # (test_scanner_freshness was that member until its live-scan test
+        # moved to a copy of the surface git sees, DEF-2013 lane two, and
+        # stopped reading the manifest).
         readers = self._readers()
         for stem in (
             "test_freshness_hook_count_migration",
             "test_freshness_semantic_fragments",
-            "test_scanner_freshness",
+            "test_audit_accuracy",
         ):
             assert stem in readers, (
                 f"tests/{stem}.py no longer reads the live manifest by a shape "
@@ -571,7 +575,7 @@ class TestTheRecallSlice:
             assert (REPO_ROOT / rel).is_file(), rel
 
     def test_the_slice_is_every_recall_test_file(self, pt):
-        on_disk = sorted(f"tests/{p.name}" for p in (REPO_ROOT / "tests").glob("test_recall*.py"))
+        on_disk = sorted(f"tests/{p.name}" for p in checkout_glob(REPO_ROOT / "tests", "test_recall*.py"))
         assert on_disk == sorted(pt.RECALL_SLICE_FILES), (
             "a tests/test_recall*.py file is not in RECALL_SLICE_FILES (or a listed "
             "one is gone) -- a corpus change would land without running it"
@@ -642,7 +646,7 @@ class TestTheRecallSlice:
         quoted in a string -- this file's own must-trip rows -- is not an
         offender, and `test_the_detector_...` below are its twins."""
         offenders = _unlisted_wall_clock_files(
-            sorted((REPO_ROOT / "tests").glob("*.py")), set(pt.WALL_CLOCK_SERIAL_FILES),
+            sorted(checkout_glob(REPO_ROOT / "tests", "*.py")), set(pt.WALL_CLOCK_SERIAL_FILES),
         )
         assert not offenders, f"wall-clock upper bounds outside WALL_CLOCK_SERIAL_FILES: {offenders}"
 
@@ -1383,7 +1387,7 @@ class TestTheLegsAndTheHeavyLane:
         from tests.conftest import _HEAVY_E2E_TESTS
         members = sorted(_HEAVY_E2E_TESTS)
         files = sorted(
-            str(f.relative_to(REPO_ROOT)).replace("\\", "/") for f in (REPO_ROOT / "tests").glob("test_*.py")
+            str(f.relative_to(REPO_ROOT)).replace("\\", "/") for f in checkout_glob(REPO_ROOT / "tests", "test_*.py")
             if any(f"def {name}(" in f.read_text(encoding="utf-8") for name in members)
         )
         assert files, "no module defines a heavy member -- the set and the tree disagree"

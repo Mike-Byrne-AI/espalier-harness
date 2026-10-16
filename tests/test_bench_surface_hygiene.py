@@ -38,7 +38,7 @@ import re
 from pathlib import Path
 
 from espalier._safe_walk import visible
-from tests._live_tree import checkout_rglob
+from tests._live_tree import checkout_glob, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BENCH_DIR = REPO_ROOT / "bench"
@@ -53,7 +53,7 @@ _RAW_SHA_RE = re.compile(r"\b[0-9a-f]{40}\b")
 
 def agent_names() -> frozenset[str]:
     """This repo's agent names, from the files that define them."""
-    names = frozenset(p.stem for p in visible(AGENTS_DIR.glob("*.md"), AGENTS_DIR))
+    names = frozenset(p.stem for p in visible(checkout_glob(AGENTS_DIR, "*.md"), AGENTS_DIR))
     assert names, "no agents under .claude/agents/ -- the roster is derived from it"
     return names
 

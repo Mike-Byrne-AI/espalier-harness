@@ -29,6 +29,7 @@ import pytest
 
 from tests._git_oracle import _git_env
 from tests.test_generate_ledger_regions import STORED_ALL, _ledger
+from tests._live_tree import copy_checkout
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE = REPO_ROOT / "tools" / "cc" / "record_merge.py"
@@ -1143,7 +1144,7 @@ def _begin_merge(win: Path) -> list[str]:
     """``git merge origin/main`` left in progress, this checkout's ``tools/cc``
     beside it (the line's import is relative to the checkout it runs in, and
     the copy is excluded so status stays strict); the paths git left unmerged."""
-    shutil.copytree(REPO_ROOT / "tools" / "cc", win / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
+    copy_checkout(REPO_ROOT / "tools" / "cc", win / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
     with (win / ".git" / "info" / "exclude").open("a", encoding="utf-8") as fh:
         fh.write("tools/\n")
     assert _git(win, "merge", "origin/main", check=False).returncode == 1

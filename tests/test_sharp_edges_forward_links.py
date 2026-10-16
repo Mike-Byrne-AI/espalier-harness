@@ -24,6 +24,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _SHARP_EDGES = REPO_ROOT / "docs" / "SHARP_EDGES.md"
@@ -34,7 +35,7 @@ def _unlinked_sharp_edges() -> list[str]:
     """Names of sharp-edge docs with no forward link in the index monolith."""
     index = _SHARP_EDGES.read_text(encoding="utf-8")
     missing: list[str] = []
-    for p in sorted(_SHARP_EDGES_DIR.glob("*.md")):
+    for p in sorted(checkout_glob(_SHARP_EDGES_DIR, "*.md")):
         if p.name == "README.md":
             continue
         # The `See [sharp-edges/<name>.md](sharp-edges/<name>.md)` stub — any

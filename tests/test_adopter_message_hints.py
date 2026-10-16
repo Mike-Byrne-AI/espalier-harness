@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -61,7 +62,7 @@ def test_runtime_strings_do_not_deny_the_pypi_channel():
     scanned = 0
     offenders: list[tuple[str, list[str]]] = []
     for root in (REPO_ROOT / "espalier", REPO_ROOT / "tools" / "cc"):
-        for path in sorted(root.rglob("*.py")):
+        for path in sorted(checkout_rglob(root, "*.py")):
             rel = path.relative_to(REPO_ROOT).as_posix()
             # _vendor/ is a byte-mirror of tools/cc/ plus the selfcheck test
             # copies; assets/ holds no .py. Scanning the source once is enough.

@@ -28,6 +28,7 @@ from pathlib import Path
 import pytest
 
 from tests._source_segment import segment, source_lines
+from tests._live_tree import checkout_glob, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_PATH = REPO_ROOT / "espalier" / "cli.py"
@@ -1198,7 +1199,7 @@ class TestEveryRetiredRuleReportGoesThroughTheGate:
         import ast
 
         root = Path(__file__).resolve().parents[1] / "espalier"
-        for path in sorted(root.rglob("*.py")):
+        for path in sorted(checkout_rglob(root, "*.py")):
             rel = path.relative_to(root).as_posix()
             if rel.startswith(("_vendor/", "assets/")):
                 continue
@@ -2919,7 +2920,7 @@ _PLAN_WRITERS: dict[str, tuple[str, Callable[[Path], int]]] = {
     "install-ci": ("cli.py::cmd_install_ci", _run_install_ci),
     "upgrade --execute": ("cli.py::cmd_upgrade", _run_upgrade_execute),
 }
-_ENGINE_FILES = sorted((REPO_ROOT / "espalier").glob("*.py"))  # the top-level package only
+_ENGINE_FILES = sorted(checkout_glob(REPO_ROOT / "espalier", "*.py"))  # the top-level package only
 
 
 def _stable_actions(tree: Path) -> dict:

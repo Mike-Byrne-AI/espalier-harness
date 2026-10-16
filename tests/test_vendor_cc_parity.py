@@ -15,6 +15,7 @@ re-sync after editing ``tools/cc``, run ``python scripts/sync_vendor_cc.py``.
 from __future__ import annotations
 
 from pathlib import Path
+from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC = REPO_ROOT / "tools" / "cc"
@@ -31,7 +32,7 @@ def _mirrored_files(root: Path) -> dict[str, bytes]:
     """Map of repo-relative deploy-source path -> bytes, excluding ``__pycache__``."""
     return {
         str(p.relative_to(root)).replace("\\", "/"): p.read_bytes()
-        for p in root.rglob("*")
+        for p in checkout_rglob(root, "*")
         if p.is_file() and p.suffix in MIRRORED_SUFFIXES and "__pycache__" not in p.parts
     }
 
