@@ -1232,16 +1232,18 @@ def _restore_target(payload: object, reading: _SkewReading) -> Path | None:
     return None
 
 
-def _read_payload() -> object:
-    """The hook's stdin as JSON, or None. The floor helper's reader is not
-    used: the kept helper may lack it."""
+def _read_payload() -> dict | None:
+    """The hook's stdin as a JSON object, or None (anything else, unreadable
+    included). The floor helper's reader is not used: the kept helper may
+    lack it."""
     import json
 
     try:
-        return json.loads(sys.stdin.buffer.read().decode("utf-8", errors="replace"))
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8", errors="replace"))
     # fail-open: ok deliberate an unread payload lets nothing through
     except Exception:  # noqa: BLE001
         return None
+    return payload if isinstance(payload, dict) else None
 
 
 def wedge_restore(hook: str, reading: _SkewReading | None, error: str,
