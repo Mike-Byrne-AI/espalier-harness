@@ -1161,15 +1161,22 @@ def _commit_entries(root: Path, entries: dict[str, str], parent: str | None, sub
                     run: Runner) -> str:
     """A commit whose tree holds exactly ``entries`` (path -> blob id), built
     under a scratch index: the worktree, HEAD and the live index are never read
-    or written."""
+    or written. Each entry goes to git as an argument, never on stdin: a spawn
+    on Windows writes its input in text mode, which re-lines every ``\\n`` as
+    ``\\r\\n``, and ``--index-info`` then indexed ``mail.jsonl\\r``, or Windows git
+    took nothing and an empty tree was pushed, every message the seat had sent
+    gone from origin's tip (win, 2026-10-16). The tree is read back before the
+    commit: one that does not hold exactly ``entries`` refuses here, ahead of
+    any ref move or push, whatever the builder above it did wrong."""
     fd, index_path = tempfile.mkstemp(prefix="mail-index-", suffix=".idx")
     os.close(fd)
     os.unlink(index_path)  # git wants to create it itself
     env = git_env({"GIT_INDEX_FILE": index_path})
     try:
         _git(root, "read-tree", "--empty", run=run, env=env)
-        _git(root, "update-index", "--add", "--index-info", run=run, env=env,
-             input="".join(f"100644 {blob}\t{path}\n" for path, blob in sorted(entries.items())))
+        cacheinfo = [arg for path, blob in sorted(entries.items())
+                     for arg in ("--cacheinfo", f"100644,{blob},{path}")]
+        _git(root, "update-index", "--add", *cacheinfo, run=run, env=env)
         tree = _git(root, "write-tree", run=run, env=env)
     finally:
         for leftover in (index_path, index_path + ".lock"):
@@ -1177,6 +1184,13 @@ def _commit_entries(root: Path, entries: dict[str, str], parent: str | None, sub
                 os.unlink(leftover)
             except OSError:
                 pass
+    held = sorted(name for name in _git(root, "ls-tree", "-r", "-z", "--name-only", tree, run=run).split("\0")
+                  if name)
+    if held != sorted(entries):
+        raise Unresolvable(
+            "the tree git wrote holds " + (", ".join(f"`{name}`" for name in held) or "nothing")
+            + " where " + ", ".join(f"`{path}`" for path in sorted(entries)) + " were given; nothing was "
+            "moved or pushed")
     args = ["commit-tree", tree]
     if parent:
         args += ["-p", parent]

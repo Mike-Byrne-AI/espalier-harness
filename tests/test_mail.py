@@ -1654,3 +1654,70 @@ class TestTheRecordsRef:
         assert ship_driver._fold_session_log(win, "main", keep=3, slack=0) == (0, 0)
         assert _git(win, "status", "--porcelain").stdout == ""
         assert not (win / _ROW_DIR / "2026-10-16-010101-mac.md").exists()
+
+
+def _relining_run(mail):
+    """The real runner, with what the Windows pipe does to text input: a spawn
+    there writes ``input=`` in text mode, which re-lines every ``\\n`` as ``\\r\\n``
+    before git reads it (``_json_safe.run_bounded``'s Popen path)."""
+    real = _real_run(mail)
+
+    def run(argv, **kw):
+        if kw.get("input") is not None:
+            kw["input"] = kw["input"].replace("\n", "\r\n")
+        return real(argv, **kw)
+    return run
+
+
+def _dropping_run(mail):
+    """The real runner with every index update a no-op: the empty tree Windows
+    git wrote when it would not take a path ending in a carriage return."""
+    real = _real_run(mail)
+
+    def run(argv, **kw):
+        if argv[:2] == ["git", "update-index"]:
+            return 0, "", ""
+        return real(argv, **kw)
+    return run
+
+
+class TestTheTreeIsReadBackBeforeAnyPush:
+    """A Windows seat's send pushed an empty mail tree (win, 2026-10-16 10:08Z):
+    the builder fed ``update-index --index-info`` its lines on stdin, the Windows
+    text pipe re-lined them, and git indexed ``mail.jsonl\\r`` or nothing. Every
+    message that seat had sent vanished from origin's tip. The builder takes
+    its entries as arguments again, and the tree it wrote is read back before
+    any ref moves: one that does not hold exactly the entries it was given
+    refuses, on a send and on a park alike, so no future builder pushes an empty
+    tree. No POSIX cell sees the pipe; these runners stand in for it."""
+
+    def test_entries_reach_the_tree_through_a_relining_pipe(self, mail, machines):
+        mac = machines["mac"]
+        blob = mail._hash_blob(mac, b'{"x": 1}\n', run=_real_run(mail))
+        commit = mail._commit_entries(mac, {"mail.jsonl": blob, "a/b.md": blob}, None, "s",
+                                      run=_relining_run(mail))
+        names = _git(mac, "ls-tree", "-r", "-z", "--name-only", commit).stdout.split("\0")
+        assert sorted(n for n in names if n) == ["a/b.md", "mail.jsonl"]
+
+    def test_a_tree_without_its_entries_refuses_and_moves_nothing(self, mail, machines):
+        mac = machines["mac"]
+        blob = mail._hash_blob(mac, b"x\n", run=_real_run(mail))
+        with pytest.raises(mail.Unresolvable, match="mail.jsonl"):
+            mail._commit_entries(mac, {"mail.jsonl": blob}, None, "s", run=_dropping_run(mail))
+
+    def test_a_send_that_would_push_an_empty_tree_refuses_and_origin_keeps_its_mail(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        first = mail.send(mac, _msg(mail, "mac", "note", "kept"), run=_real_run(mail), say=lambda _s: None)
+        with pytest.raises(mail.Unresolvable):
+            mail.send(mac, _msg(mail, "mac", "note", "lost"), run=_dropping_run(mail), say=lambda _s: None)
+        assert _git(origin, "rev-parse", "refs/heads/mail/mac").stdout.strip() == first
+        assert _git(mac, "rev-parse", "refs/heads/mail/mac").stdout.strip() == first
+        assert "kept" in _origin_file(origin, "mac")
+
+    def test_a_park_that_would_push_an_empty_tree_refuses(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        name = "2026-10-16-101010-mac.md"
+        with pytest.raises(mail.Unresolvable):
+            mail.park(mac, f"{_ROW_DIR}/{name}", _row(name), "origin/main", run=_dropping_run(mail),
+                      say=lambda _s: None)
+        assert _git(origin, "rev-parse", "--verify", "--quiet", "refs/heads/records/mac", check=False).returncode != 0
