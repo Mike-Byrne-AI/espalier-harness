@@ -121,7 +121,7 @@ class TestTheBoundary:
         """A test-only diff must run the test it changed: the contract slice
         is a hand-keyed marker set and holds almost none of them."""
         r = _repo(tmp_path)
-        ride = shlex.join(("pytest", "-q", *pt._NOT_HEAVY, "tests/test_x.py"))
+        ride = shlex.join(("pytest", "-q", *pt._PARALLEL, *pt._NOT_HEAVY, "tests/test_x.py"))
         assert ride in pt.commands("contract", ["tests/test_x.py"], r)
         assert ride in pt.commands("recall", ["tests/test_x.py"], r)
         assert ride not in pt.commands("full", ["tests/test_x.py"], r)
@@ -271,7 +271,7 @@ class TestTheBaseMode:
         assert pt.main(["--root", str(r), "--base", "HEAD~1"]) == 0
         out = capsys.readouterr().out
         assert out.startswith("contract")
-        assert "run: pytest -q -m 'not heavy_e2e' tests/test_x.py" in out
+        assert "run: pytest -q -n auto -m 'not heavy_e2e' tests/test_x.py" in out
 
     def test_a_hook_moved_out_of_the_runtime_still_earns_full(self, pt, tmp_path, capsys):
         """Renames are read as delete plus add, so the vacated runtime path is
@@ -345,11 +345,32 @@ class TestTheFullRecipe:
 
     def test_the_parallel_line_leaves_out_exactly_the_files_the_serial_line_runs(self, pt):
         parallel, serial = [c for c in pt.FULL_COMMANDS if c.startswith("pytest ")]
-        assert " -n auto " in parallel and " -n " not in serial
+        assert " -n auto " in parallel and " -n 1 " in serial
         ignored = sorted(tok[len("--ignore="):] for tok in parallel.split() if tok.startswith("--ignore="))
         assert ignored == sorted(pt.SERIAL_FILES)
         assert sorted(tok for tok in serial.split() if tok.startswith("tests/")) == sorted(pt.SERIAL_FILES)
         assert set(pt.WALL_CLOCK_SERIAL_FILES).isdisjoint(pt.TIMEOUT_NEAR_SERIAL_FILES)
+
+    def test_every_pytest_line_runs_under_xdist(self, pt):
+        """DEF-2017: where pytest-timeout uses its thread method (Windows, a
+        seat's own box), a plain session that crosses the per-test ceiling ends
+        with no summary and no test named; under xdist the test fails by name and
+        the run reports the rest. Every pytest line of every tier, the own-tests
+        lines included, carries ``-n``: one worker for a line of serial files
+        only, ``-n auto`` for every other."""
+        changed = ["tests/test_final_release_matrix.py", "tests/test_hooks.py"]
+        lines = [argv for which in pt.TIERS for argv in pt.tier_argvs(which, changed, REPO_ROOT)
+                 if argv[0] == "pytest"]
+        assert len(lines) >= 7, lines   # full's two, then contract and recall with two own lines each
+        for argv in lines:
+            assert "-n" in argv, argv
+            workers = argv[argv.index("-n") + 1]
+            files = [tok for tok in argv if tok.startswith("tests/")]
+            if any(rel in pt.SERIAL_FILES for rel in files):
+                # A serial file never rides a parallel line, whatever it shares it with.
+                assert all(rel in pt.SERIAL_FILES for rel in files) and workers == "1", argv
+            else:
+                assert workers == "auto", argv
 
     def test_every_timeout_near_gate_is_in_the_slow_lane(self, pt):
         """The serial-leg pin is for the parallel FULL tier; the `not slow`
@@ -360,13 +381,13 @@ class TestTheFullRecipe:
             assert Path(rel).stem in _SLOW_FILES, rel
 
     def test_the_contract_tier_is_the_lint_then_one_serial_command(self, pt):
-        assert pt.commands("contract") == ("ruff check .", "pytest -m contract -q")
+        assert pt.commands("contract") == ("ruff check .", "pytest -n auto -m contract -q")
 
     def test_the_recall_tier_is_the_contract_slice_then_the_recall_files(self, pt):
         assert pt.commands("recall") == (
             "ruff check .",
-            "pytest -m contract -q",
-            "pytest -q " + " ".join(pt.RECALL_SLICE_FILES),
+            "pytest -n auto -m contract -q",
+            "pytest -q -n auto " + " ".join(pt.RECALL_SLICE_FILES),
         )
         assert not any(c.startswith("mypy") for c in pt.RECALL_COMMANDS)
 
@@ -383,12 +404,13 @@ class TestTheFullRecipe:
                    "scripts/ledger_row.py"]
         assert pt.own_tests(changed, REPO_ROOT) == ("tests/test_ledger_row.py",)
         assert pt.commands("contract", changed, REPO_ROOT) == (
-            "ruff check .", "pytest -m contract -q", "pytest -q -m 'not heavy_e2e' tests/test_ledger_row.py")
+            "ruff check .", "pytest -n auto -m contract -q",
+            "pytest -q -n auto -m 'not heavy_e2e' tests/test_ledger_row.py")
         assert pt.commands("recall", changed, REPO_ROOT) == (
-            *pt.RECALL_COMMANDS, "pytest -q -m 'not heavy_e2e' tests/test_ledger_row.py")
+            *pt.RECALL_COMMANDS, "pytest -q -n auto -m 'not heavy_e2e' tests/test_ledger_row.py")
         assert pt.commands("full", changed, REPO_ROOT) == pt.FULL_COMMANDS
         # the tier-only spelling the bodies cite: the lint line, then the slice
-        assert pt.commands("contract") == ("ruff check .", "pytest -m contract -q")
+        assert pt.commands("contract") == ("ruff check .", "pytest -n auto -m contract -q")
         assert pt.own_tests(["scripts/nested/x.py", "tests/nested/test_y.py"], REPO_ROOT) == ()
         assert pt.own_tests(["tests/test_proof_tier.py"], REPO_ROOT) == ("tests/test_proof_tier.py",)
 
@@ -406,11 +428,11 @@ class TestTheFullRecipe:
         assert pt.main(["--root", str(r)]) == 0
         out = capsys.readouterr().out
         assert out.startswith("contract")
-        assert "run: pytest -q -m 'not heavy_e2e' tests/test_s.py" in out
+        assert "run: pytest -q -n auto -m 'not heavy_e2e' tests/test_s.py" in out
         assert "all 3 lines are the tier" in out
         # and the argv list --run would execute carries the same line
         changed, untracked = pt.changed_paths(r)
-        assert pt.tier_argvs("contract", changed + untracked, r)[-1] == ("pytest", "-q", "-m", "not heavy_e2e", "tests/test_s.py")
+        assert pt.tier_argvs("contract", changed + untracked, r)[-1] == ("pytest", "-q", "-n", "auto", "-m", "not heavy_e2e", "tests/test_s.py")
 
 
 #: Engine entry points that read the freshness manifest of the root they are
@@ -1301,6 +1323,29 @@ class TestRun:
         out = capsys.readouterr().out
         assert calls == [] and "git add -u docs/X.md" in out and "deleted but not staged" in out
 
+    def test_every_tier_prints_the_install_hint(self, pt, tmp_path, capsys):
+        """Every tier's pytest lines carry ``-n`` since DEF-2017, so a venv
+        without pytest-xdist fails the contract tier too: the hint prints for
+        every tier, not only the full one (failure-mode review, 2026-10-16)."""
+        r = _repo(tmp_path)
+        (r / "docs" / "X.md").write_text("y\n", encoding="utf-8")
+        assert pt.main(["--root", str(r)]) == 0
+        out = capsys.readouterr().out
+        assert out.startswith("contract") and pt.INSTALL_HINT in out
+
+    def test_a_usage_error_on_an_xdist_line_names_the_install_hint(self, pt, monkeypatch, capsys):
+        """pytest without pytest-xdist reads ``-n`` as an unknown argument and
+        exits 4, its usage error: the receipt names the extra beside that exit,
+        as it does for a runner that is not installed at all."""
+        def fake(argv, **kw):
+            if list(argv)[1:] == ["--version"]:
+                return types.SimpleNamespace(returncode=0, stdout=f"{argv[0]} 0.0.0\n", stderr="")
+            return types.SimpleNamespace(returncode=4 if argv[0] == "pytest" else 0, stdout="", stderr="")
+        monkeypatch.setattr(pt.subprocess, "run", fake)
+        assert pt.run_commands(pt._TIER_ARGVS["contract"], REPO_ROOT) == 4
+        out = capsys.readouterr().out
+        assert "exit 4: pytest -n auto -m contract -q" in out and pt.INSTALL_HINT in out
+
     def test_a_command_not_led_by_a_known_runner_is_refused(self, pt):
         with pytest.raises(ValueError):
             pt.run_commands((("rm", "-rf", "x"),), REPO_ROOT)
@@ -1339,21 +1384,45 @@ class TestTheLegsAndTheHeavyLane:
         pt.main(["--root", str(r), "--tier", "contract", "--leg", "serial"])
         assert "nothing to run: the serial leg of the contract tier" in capsys.readouterr().out
 
+    def test_a_changed_serial_file_rides_a_cheaper_tiers_parallel_leg_and_the_words_say_so(
+        self, pt, tmp_path, capsys,
+    ):
+        """A test-only diff that changes a serial file earns the contract tier,
+        and that file rides a line of its own at one worker inside the parallel
+        leg (the legs are by complement, so a cheaper tier's required cells run
+        it under ``parallel``): the words may not say the tier has no line for
+        it, or that the serial files belong to the full tier (failure-mode
+        review, 2026-10-16)."""
+        r = _repo(tmp_path)
+        rel = pt.SERIAL_FILES[0]
+        (r / rel).write_text("x\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(r), "add", rel], check=True)
+        pt.main(["--root", str(r), "--leg", "parallel"])
+        out = capsys.readouterr().out
+        assert out.startswith("contract") and f"run: pytest -q -n 1 -m 'not heavy_e2e' {rel}" in out
+        assert "no serial line" not in out and "a changed serial file runs here at one worker" in out
+        pt.main(["--root", str(r), "--leg", "serial"])
+        out = capsys.readouterr().out
+        assert "nothing to run: the serial leg of the contract tier" in out
+        assert "belong to the full tier" not in out and "in its parallel leg, at one worker" in out
+
     def test_the_own_tests_line_carries_the_heavy_filter_on_the_cheaper_tiers(self, pt):
         """Both reviews found the same regression: a changed heavy module rides
         along on the cheaper tiers' own-tests line, and that line carried no
         filter, so a docs-plus-test pull request would have run the 848 s
         smoke in five required cells. Every pytest line filters; ``--heavy``
-        strips every line."""
+        strips every line. A changed serial file rides on its own line at one
+        worker, the rest at ``-n auto`` (DEF-2017)."""
         changed = ["tests/test_final_release_matrix.py", "tests/test_powershell_reachability_differential.py"]
         for which in ("contract", "recall"):
-            own = pt.tier_argvs(which, changed, REPO_ROOT)[-1]
-            assert own[: len(pt._PYTEST) + 2] == pt._PYTEST + pt._NOT_HEAVY, (which, own)
-            assert own[-2:] == tuple(changed)
-            heavy_own = pt.tier_argvs(which, changed, REPO_ROOT, heavy=True)[-1]
-            assert "heavy_e2e" not in " ".join(heavy_own) and heavy_own[-2:] == tuple(changed)
+            own_parallel, own_serial = pt.tier_argvs(which, changed, REPO_ROOT)[-2:]
+            assert own_parallel == pt._PYTEST + pt._PARALLEL + pt._NOT_HEAVY + (changed[0],), (which, own_parallel)
+            assert own_serial == pt._PYTEST + pt._ONE_WORKER + pt._NOT_HEAVY + (changed[1],), (which, own_serial)
+            heavy_own = pt.tier_argvs(which, changed, REPO_ROOT, heavy=True)[-2:]
+            assert "heavy_e2e" not in " ".join(heavy_own[0] + heavy_own[1])
+            assert (heavy_own[0][-1], heavy_own[1][-1]) == tuple(changed)
             assert pt.tier_argvs(which, changed, REPO_ROOT, leg="serial") == ()
-            assert pt.tier_argvs(which, changed, REPO_ROOT, leg="parallel")[-1] == own
+            assert pt.tier_argvs(which, changed, REPO_ROOT, leg="parallel")[-2:] == (own_parallel, own_serial)
 
     def test_leg_parallel_is_the_complement_of_the_serial_line_on_every_tier(self, pt):
         for which in pt.TIERS:

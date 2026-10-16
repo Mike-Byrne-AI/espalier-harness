@@ -60,7 +60,7 @@ Measured on 2026-09-06, two lanes, one operator, an 8 GB machine:
    contract run after it). Then run the tier the surface earns, once --
    `python scripts/proof_tier.py` computes it and names the untracked files:
    no file under `tools/cc/` and no `.py` under `espalier/` outside its
-   byte-mirrors → `pytest -m contract -q` (164 s serial, measured
+   byte-mirrors → `pytest -n auto -m contract -q` (164 s serial, measured
    2026-09-06; every contract that caught that day's batch is in it, and all
    of them are also `slow`, which is why the fast slice never felt safe);
    a file the pull-recall corpus reads (`memory/`, the two catalogs,
@@ -70,13 +70,15 @@ Measured on 2026-09-06, two lanes, one operator, an 8 GB machine:
    nobody saw them until the next lane's full tier, `DEF-775`);
    engine or hook change, or the handoff's preflight → the full suite, as
    `python scripts/proof_tier.py --run` (`--tier full` at the handoff): one
-   command, two halves -- `-n auto` with the three wall-clock-budget files
-   left out, then those three serially -- and one receipt naming both (6:31
+   command, two halves -- `-n auto` with the serial files left out (then
+   three wall-clock-budget files, five since), then those at one xdist worker
+   (serially until DEF-2017, 2026-10-16) -- and one receipt naming both (6:31
    and 6:12 on the two clean runs `tests/README.md` pre-registered as the
    count the flip needed, against about nineteen minutes serial; the default
    since 2026-09-06, a measured bet, not a cleared audit). The contract slice
-   under `-n auto` raced on the live tree between those runs, so the slice
-   stays serial. A parallel full run that errors on a live-tree race is a
+   under `-n auto` raced on the live tree between those runs and stayed
+   serial until its writers closed (DEF-1138, DEF-973); it runs at `-n auto`
+   since DEF-2017. A parallel full run that errors on a live-tree race is a
    loud error, never a false green: rerun the failing file serially and add
    the date and test to the races line in `tests/README.md`.
    If the batch touched a shipped surface after that run, the run is stale

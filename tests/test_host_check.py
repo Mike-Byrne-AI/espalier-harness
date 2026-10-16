@@ -86,6 +86,14 @@ class TestThePlan:
         overridden = dict(both, espalier_pwsh_override="D:/pwsh/pwsh.exe")
         assert "ps51-differential" not in [s["name"] for s in hc.plan_steps(overridden)]
 
+    def test_the_suite_step_runs_at_one_xdist_worker(self, hc):
+        """DEF-2017: this host is often the slow one, and on Windows a plain
+        session ends at the first test past the per-test ceiling with no test
+        named; at one xdist worker the test fails by name and the run reports
+        the rest, the serial files still off parallel load."""
+        argv = {s["name"]: s for s in hc.plan_steps(_facts())}["pytest"]["argv"]
+        assert argv[argv.index("-n") + 1] == "1", argv
+
     def test_a_requested_skip_keeps_the_step_in_the_report(self, hc):
         steps = {s["name"]: s for s in hc.plan_steps(_facts(), {"pytest"})}
         assert steps["pytest"]["skip"] == "skipped on request"
