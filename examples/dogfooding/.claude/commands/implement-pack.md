@@ -290,7 +290,8 @@ reachability analysis. Both gates run before any sub-task executes.
      `git rev-parse HEAD` recorded at step 1). The surface has two branches, by tree:
      on the Espalier-Harness tree (the tell `/preflight` Step 4 uses: the
      engine's own surface contract module is present) it is `tools/cc/`, `.claude/`,
-     `.github/workflows/`, `bench/`, `scripts/`, or `espalier/` engine code (`bench/`
+     `.github/workflows/`, `.github/actions/`, `bench/`, `scripts/`, or `espalier/`
+     engine code (`bench/`
      gates releases; `scripts/` holds the mirror-sync + release tooling — both
      governance-load-bearing, not routine); on any other tree it is the adopter's own
      source: the `code-reviewer` agent's `primary_paths` in `reports/harness_config.json`
@@ -301,6 +302,11 @@ reachability analysis. Both gates run before any sub-task executes.
    - If the pack ships or modifies a hook, a gate, or a command / agent / skill body
      → ALSO dispatch `failure-mode-reviewer` (the `/adversarial` lens). Command bodies
      count: they are the instruction layer this workflow runs on.
+   - On the Espalier-Harness tree `python scripts/proof_tier.py` computes the two
+     bullets above from the pack's diff (`--base <baseline>` once committed) and
+     prints them on its `review:` line -- `none`, `code-reviewer` or `both`, with
+     the path that earned each; a gate there is the CI definition, `bench/` and
+     every file a workflow calls. Dispatch the reviewers the line names.
    - Doc-only or test-only packs skip this — the mechanical gates above are sufficient
      and an agent pass would only add latency. "Config-only" is NOT a skip: a
      `.claude/` change is a governance change.

@@ -63,9 +63,21 @@ gets a green that never ran the rest -- one command with one receipt closes
 that. ``--tier full`` forces the tier (the handoff's preflight runs the full
 suite whatever the diff earned).
 
+Beside the tier it prints the reviewers the diff's surface earns: the
+``review:`` line (``review`` and ``review_earned_by`` in ``--json``), the
+review rule of ``/implement-task`` and ``/preflight`` step 6 computed from the
+same changed paths -- ``none``, ``code-reviewer`` or ``both`` -- with each path
+that earned it. The bodies stated the rule in prose and the worker tick said
+"both reviewers" for every lane, so a records lane ran two reviewers it had not
+earned. A hook, a command / agent / skill / workflow body or a gate earns both;
+a gate is the CI definition, ``bench/`` and every repo file a workflow at the
+diff's head calls (its ``run:`` steps and local ``uses:``), read from the
+workflows at classification time and never kept by hand. ``--quiet`` prints
+the tier word alone and never reads the workflows.
+
 Usage::
 
-    python3 scripts/proof_tier.py                    # prints the tier and its command line(s)
+    python3 scripts/proof_tier.py                    # prints the tier, the review line and the command line(s)
     python3 scripts/proof_tier.py --run              # ...and runs them, one receipt
     python3 scripts/proof_tier.py --run --tier full  # the handoff's preflight form
     python3 scripts/proof_tier.py --json

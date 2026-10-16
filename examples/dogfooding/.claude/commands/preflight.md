@@ -197,11 +197,16 @@ are both meant to fire. But a scripted command executes its listed steps and wil
 auto-fire a skill, so dispatch the agents explicitly, gated on what the diff touched. The
 trigger surface has two branches, by tree. On the Espalier-Harness tree (Step 4's tell:
 the engine's own surface contract module is present) it is `tools/cc/`, `.claude/`, `.github/workflows/`,
-`bench/`, `scripts/`, or `espalier/` engine code (`bench/` gates releases; `scripts/` holds
+`.github/actions/`, `bench/`, `scripts/`, or `espalier/` engine code (`bench/` gates releases; `scripts/` holds
 the mirror-sync + release tooling — both governance-load-bearing). On any other tree it is
 the adopter's own source: the `code-reviewer` agent's `primary_paths` in `reports/harness_config.json` when that file is present and the list is non-empty (`init` and `upgrade` write it; `reports/` is gitignored, so a teammate's clone lacks it until they run one), else every path the diff touches that is not harness-managed (`tools/cc/`, `cc/`, `reports/`, `.espalier/`, `.espalier-state/`, `.claude/`, the seeded `docs/`, `memory/`, `task-packs/`, `ESPALIER_MEMORY.md`).
 Routine diffs (docs, tests) skip it — keep the gate fast. But a `.claude/` change is NOT
 routine on either branch: it is a governance change, so it is reviewed, not skipped.
+On the Espalier-Harness tree `python scripts/proof_tier.py` computes the two bullets below
+from the diff (`--base origin/<base>` for a committed lane) and prints them on its `review:`
+line -- `none`, `code-reviewer` or `both`, with the path that earned each; a gate there is
+the CI definition, `bench/` and every file a workflow calls. Dispatch the reviewers the line
+names: one it does not name was not earned, which is not a skipped review.
 
 - **Correctness first.** If the diff touches any trigger surface, dispatch the
   `code-reviewer` subagent (`subagent_type='code-reviewer'`) on the diff.

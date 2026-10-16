@@ -1612,3 +1612,38 @@ class TestTheReviewLine:
         assert named.get("tools/cc/ci_guard.py") == ".github/workflows/harness-guard.yml"
         assert all((REPO_ROOT / rel).is_file() for rel in named), named
         assert pt.review(["tools/cc/ci_guard.py"], REPO_ROOT)[0] == "both"
+
+
+class TestTheBodiesCiteTheReviewLine:
+    """The step 6 bodies keep the review rule as prose (the adopter branch has
+    no script) and cite the script's line on this tree. The self-host surface
+    they list and the script's surface roots agree both ways: one list kept in
+    two places drifts on the cell nobody enumerated (FAILURE_MODES 1.12), and a
+    presence-only pin is blind to an addition (SHARP_EDGES)."""
+
+    _BODIES = {
+        "implement-task.md": ("6. **Review before the one full run.**", "7. **Run the proof tier once"),
+        "preflight.md": ("## Step 6: Diff review", "## Step 7:"),
+        "implement-pack.md": ("dispatch the orthogonal-context review here",
+                              "Stop conditions, per agent vocabulary"),
+    }
+
+    @classmethod
+    def _step(cls, name: str) -> str:
+        start, end = cls._BODIES[name]
+        text = (REPO_ROOT / ".claude" / "commands" / name).read_text(encoding="utf-8")
+        i = text.index(start)
+        return " ".join(text[i:text.index(end, i)].split())
+
+    @pytest.mark.parametrize("name", sorted(_BODIES))
+    def test_the_self_host_surface_list_is_the_scripts(self, pt, name):
+        step = self._step(name)
+        i = step.index("Espalier-Harness tree")
+        listed = step[i:step.index("engine code", i)].split("`")[1::2]
+        roots = {t for t in listed if t.endswith("/") and " " not in t}
+        assert roots == set(pt._REVIEW_PREFIXES) | set(pt._FULL_PREFIXES) | {pt._ENGINE_PREFIX}
+
+    @pytest.mark.parametrize("name", sorted(_BODIES))
+    def test_each_body_cites_the_review_line(self, name):
+        step = self._step(name)
+        assert "scripts/proof_tier.py" in step and "`review:` line" in step, name
