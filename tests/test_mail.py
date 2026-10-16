@@ -1531,7 +1531,12 @@ class TestTheRecordsRef:
         assert _git(win, "diff-tree", "--no-commit-id", "--name-status", "-r", prune_sha).stdout.split() == [
             "D", f"{_ROW_DIR}/{older[0]}"]
         assert sorted(p.name for p in (win / _ROW_DIR).iterdir()) == sorted([*older[1:], parked])
-        assert (win / _ROW_DIR / parked).read_bytes() == _row(parked)
+        # The committed blob, not the checkout: under core.autocrlf=true (the
+        # Windows default) the working tree reads CRLF and measures the host,
+        # not the fold (win's drive, git 2.52.0.windows.1, DEF-5011).
+        committed = subprocess.run(["git", "show", f"HEAD:{_ROW_DIR}/{parked}"], cwd=win, capture_output=True,
+                                   check=True, timeout=45, env=_git_env()).stdout
+        assert committed == _row(parked)
         assert ship_driver._fold_session_log(win, "main", keep=3, slack=0) == (0, 0)
         # Air 847e2b: the fold's row is no row of this lane, and the lane's own still is.
         assert ship_driver.lane_carries_memory_row("main", win) is False
@@ -1745,13 +1750,16 @@ class TestTheTreeIsReadBackBeforeAnyPush:
         assert "do not retry" in str(refused.value)
 
     def test_a_renamed_entry_refuses(self, mail, machines):
-        mac = machines["mac"]
-        blob = mail._hash_blob(mac, b"x\n", run=_real_run(mail))
-        # Apple git's shape of the defect: the name gains a carriage return (read
-        # back through the text pipe it is a newline; either way not `mail.jsonl`).
+        """The defect's own shape, a name that gains a carriage return. Apple git
+        indexes it and the read-back refuses; Windows git refuses the path
+        itself at update-index (win's drive, git 2.52.0.windows.1, DEF-5011).
+        Either refusal is right: what matters is that nothing is pushed."""
+        mac, origin = machines["mac"], machines["origin"]
         renamed = self._rewriting_run(mail, lambda argv: [a + "\r" if a.startswith("100644,") else a for a in argv])
-        with pytest.raises(mail.Unresolvable, match="missing: `mail.jsonl`; not given: `mail.jsonl"):
-            mail._commit_entries(mac, {"mail.jsonl": blob}, None, "s", run=renamed)
+        with pytest.raises(mail.Unresolvable, match=r"missing: `mail\.jsonl`|Invalid path"):
+            mail.send(mac, _msg(mail, "mac", "note", "x"), run=renamed, say=lambda _s: None)
+        for repo in (origin, mac):
+            assert _git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/mail/mac", check=False).returncode != 0
 
     def test_no_entries_refuse(self, mail, machines):
         with pytest.raises(mail.Unresolvable, match="no files"):

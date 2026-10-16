@@ -14,3 +14,8 @@
   the fixture errored at once. The module now gives each of its tests the
   ceiling the shared setup needs. It keeps them out of the `slow` mark, so
   they still run in every not-slow slice.
+- **Two mail-channel tests pass on a Windows host.** One expected only the
+  read-back's refusal wording, where Windows git refuses the bad file name
+  itself first; it now accepts either refusal and checks that nothing was
+  pushed. The other compared a checked-out file that `core.autocrlf` rewrites
+  with CRLF line endings; it now compares the committed file.
