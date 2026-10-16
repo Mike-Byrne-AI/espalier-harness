@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import itertools
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -399,6 +400,40 @@ def test_docs_no_overclaim_passes_on_calibrated_negation(tmp_path):
     _scaffold_minimal_passing_repo(tmp_path)
     # Already contains "Not a sandbox." — must pass.
     assert release_check.check_docs_no_overclaim(tmp_path).status == "PASS"
+
+
+def test_docs_no_phantom_files_reads_the_docs_git_sees(tmp_path):
+    """docs/session-archive.md is the maintainer's gitignored session history
+    (DEF-2013's read audit found the gate reading it). A phantom pattern there
+    is not a public claim, so it cannot block a release; the same pattern in a
+    doc git sees still does, the archive-excluded RELEASE_CHECKLIST.md among
+    them, since the repository shows it."""
+    (tmp_path / ".gitignore").write_text("docs/session-archive.md\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# X\n", encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "HOOKS.md").write_text("# Hooks\n", encoding="utf-8")
+    (tmp_path / "docs" / "RELEASE_CHECKLIST.md").write_text("# Checklist\n", encoding="utf-8")
+    (tmp_path / "docs" / "session-archive.md").write_text("Total test count: 1607\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
+    assert release_check.check_docs_no_phantom_files(tmp_path).status == "PASS"
+    for shown in ("HOOKS.md", "RELEASE_CHECKLIST.md"):
+        before = (tmp_path / "docs" / shown).read_text(encoding="utf-8")
+        (tmp_path / "docs" / shown).write_text("Total test count: 1607\n", encoding="utf-8")
+        result = release_check.check_docs_no_phantom_files(tmp_path)
+        assert result.status == "FAIL" and shown in result.detail, (shown, result)
+        (tmp_path / "docs" / shown).write_text(before, encoding="utf-8")
+
+
+def test_docs_no_phantom_files_reads_every_doc_where_git_does_not_answer(tmp_path):
+    """No `.git` (or one git refuses): the gate reads every doc on disk, as it
+    always did. The fallback walk drops what the release archive leaves out,
+    and the tracked RELEASE_CHECKLIST.md went with it -- a degraded run that
+    read less, saying nothing (failure-mode review, DEF-2013 lane three)."""
+    (tmp_path / "README.md").write_text("# X\n", encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "RELEASE_CHECKLIST.md").write_text("Total test count: 1607\n", encoding="utf-8")
+    result = release_check.check_docs_no_phantom_files(tmp_path)
+    assert result.status == "FAIL" and "RELEASE_CHECKLIST.md" in result.detail, result
 
 
 def test_version_consistent_fails_on_drift(tmp_path):

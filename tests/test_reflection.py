@@ -22,6 +22,7 @@ from espalier.reflection import (
     reflect_repo,
     render_reflection_report,
 )
+from tests._live_tree import keep_in_checkout
 
 # full-tree-exempt: the one live-tree walk here (reflect_repo on the repo root
 # in TestReflectScanScope) derives its population from the tree it runs on.
@@ -390,7 +391,10 @@ class TestReflectScanScope:
         # Earn-the-red / durable gate: after the scope fix the live repo's
         # navigable docs have ZERO broken links, so `espalier doctor`'s reflect
         # WARN stays clear (this test fails the moment a real broken link lands).
-        links = reflect_repo(_REPO_ROOT)["broken_markdown_links"]
+        # The walk is the adopter's reflect and reads what git ignores; the
+        # contract over this tree reads its result through git's view, so a
+        # maintainer's ignored notes never decide it (DEF-2013).
+        links = keep_in_checkout(reflect_repo(_REPO_ROOT)["broken_markdown_links"], root=_REPO_ROOT)
         assert links == [], (
             "reflect_repo found broken markdown links in tracked docs:\n  "
             + "\n  ".join(f"{l['file']} -> {l['target']}" for l in links)

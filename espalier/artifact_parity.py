@@ -289,7 +289,13 @@ BUILD_TREE_SKIP_PATHS: frozenset[str] = frozenset({
 
 def _build_tree_ignore(repo_root: Path) -> Callable[[str, list[str]], set[str]]:
     """``shutil.copytree``'s ``ignore`` callback for a copy of ``repo_root``:
-    given one directory and its entries, the names to leave out."""
+    given one directory and its entries, the names to leave out. A directory
+    holding a ``.git`` of its own -- a linked worktree, a submodule, an
+    embedded clone -- is another checkout and is left out whole, at any depth:
+    ``BUILD_TREE_SKIP_PATHS`` matches from the root only, so a worktree under
+    ``.claude/worktrees/`` was copied with its ``cc/blueprints/`` (DEF-2013)."""
+    from espalier._safe_walk import has_git_entry
+
     root = repo_root.resolve()
 
     def ignore(directory: str, names: list[str]) -> set[str]:
@@ -298,6 +304,7 @@ def _build_tree_ignore(repo_root: Path) -> Callable[[str, list[str]], set[str]]:
             n for n in names
             if n in BUILD_TREE_SKIP_NAMES or n.endswith(BUILD_TREE_SKIP_SUFFIX)
             or (rel / n).as_posix() in BUILD_TREE_SKIP_PATHS
+            or has_git_entry(Path(directory) / n)
         }
 
     return ignore

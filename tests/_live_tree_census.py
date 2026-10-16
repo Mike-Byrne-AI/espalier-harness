@@ -1,12 +1,13 @@
 """The census of live-tree enumerations in ``tests/``: one walker, two readers.
 
 ``tests/test_utf8_text_io.py::TestLiveTreeWalkRatchet`` holds the ratchet on
-it, and the forward ledger's probe for the live-tree walk row (DEF-2013) runs
-this file: ``python3 tests/_live_tree_census.py`` from the repository root
-prints ``True`` while any site is neither routed nor marked or any engine site
-is still listed (:func:`probe_open`), and ``--list`` prints the second lane's
-work list. One walker for both, so the ratchet and the probe cannot disagree
-about what a site is.
+it. ``python3 tests/_live_tree_census.py`` from the repository root prints
+``True`` while any site is neither routed nor marked or any engine site is
+listed (:func:`probe_open`), and ``--list`` prints the work list. It was the
+probe of the live-tree walk row, DEF-2013, struck 2026-10-15 when both halves
+reached zero; a row that declares a new engine site takes the same line (the
+ratchet reds a declared site no live probe reads). One walker for both, so
+the ratchet and a probe cannot disagree about what a site is.
 
 **What a site is.** A call in a module directly under ``tests/`` (a test file,
 ``conftest.py`` or a ``_*.py`` helper) that lists the files of THIS checkout
@@ -697,24 +698,24 @@ def unrouted_count() -> int:
 #: and listings outside git's view). Each is a member of DEF-2013 for its
 #: second lane, declared rather than derived because the census reads tests/
 #: only: the row stays open while any is listed, and the lane that routes one
-#: deletes its entry with the evidence.
-ENGINE_SITES: dict[str, str] = {
-    "espalier/artifact_parity.py::stage_build_tree":
-        "copies a nested worktree whole, its cc/blueprints/ included: BUILD_TREE_SKIP_PATHS matches at the root only",
-    "scripts/release_check.py::_public_doc_paths":
-        "its docs/*.md glob judges the gitignored docs/session-archive.md",
-    "espalier/reflection.py::_iter_markdown_files":
-        "reflect_repo's walk of the root it is handed (test_reflection's live-repo scan)",
-    "tools/cc/reflect_protocol.py::iter_surface":
-        "the reflect twin's surface walk of the root (test_reflect_protocol's live-tree parity)",
-    "scripts/check_pack_fences.py::resolve_target":
-        "an rglob of the root to resolve a pack's fenced path (test_check_pack_fences' uniqueness cases)",
-}
+#: deletes its entry with the evidence. Lane three (assign 7850b3, 2026-10-15)
+#: closed all five: the build copy leaves out a nested checkout by its own .git
+#: (espalier/artifact_parity.py::_build_tree_ignore); the release gate's docs and
+#: the fence checker's basename candidates are git's view
+#: (scripts/release_check.py::_public_doc_paths,
+#: scripts/check_pack_fences.py::_checkout_view); and the two reflect walks are
+#: the adopter's, so the live-tree tests that run them read their result through
+#: keep_in_checkout (test_reflection's live-repo scan, test_reflect_protocol's
+#: live-tree parity), as do the two that run scripts/check_exception_policy.py's
+#: walk (a sixth, found by that lane's failure-mode review). A walk found later
+#: is declared here again, with an open row whose probe runs this file: the
+#: ratchet reds a declared site no live probe reads.
+ENGINE_SITES: dict[str, str] = {}
 
 
 def probe_open() -> bool:
-    """The ledger probe's verdict: the row is open while any enumeration in
-    tests/ is neither routed nor marked, or any engine site is listed. A
+    """The census's verdict: open while any enumeration in tests/ is neither
+    routed nor marked, or any engine site is listed. A
     boolean, not a count: two lanes that each route a site would both rewrite
     a pinned count to the same lower number, the merge would take both edits
     as one, and the record would be wrong on main (one shared record two
@@ -723,13 +724,13 @@ def probe_open() -> bool:
 
 
 def probe_line() -> str:
-    """What ``python3 tests/_live_tree_census.py`` prints for the probe."""
+    """What ``python3 tests/_live_tree_census.py`` prints on its last line."""
     return str(probe_open())
 
 
 if __name__ == "__main__":
-    # --list: the second lane's work list (every unrouted site, then the engine
-    # sites); bare: the probe's verdict on its last line
+    # --list: the work list (every unrouted site, then the engine sites); bare:
+    # the census's verdict on its last line
     if "--list" in sys.argv[1:]:
         for s in unrouted_sites():
             print(f"{s.rel}:{s.line} {s.owner} {s.kind} {s.root or '<root>'}")

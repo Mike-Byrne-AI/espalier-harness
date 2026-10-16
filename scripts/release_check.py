@@ -630,14 +630,25 @@ def check_release_archive_builds_and_clean(repo_root: Path = REPO_ROOT):
 
 
 def _public_doc_paths(repo_root: Path) -> list[Path]:
-    out = [
-        repo_root / "README.md",
-        repo_root / "CONTRIBUTING.md",
-    ]
-    docs_dir = repo_root / "docs"
-    if docs_dir.is_dir():
-        out.extend(sorted(docs_dir.glob("*.md")))
-    return [p for p in out if p.exists()]
+    """The docs a release publishes: README, CONTRIBUTING and ``docs/*.md``, as
+    git's view of the checkout holds them (tracked plus untracked, not ignored).
+    The gitignored ``docs/session-archive.md`` is the maintainer's history, so
+    its text never decides a release (DEF-2013); a tracked doc the archive
+    leaves out (``docs/RELEASE_CHECKLIST.md``) is still public on the
+    repository, and still read. Where git does not answer (no ``.git``, a
+    gitlink whose target moved, a refusal), every doc on disk is read, as the
+    gate always did: the fallback walk's archive filter would drop the tracked
+    ones the archive leaves out, and a degraded run must read more, not less."""
+    from espalier.repo_mode import list_tracked_or_walked_files
+
+    files, source = list_tracked_or_walked_files(repo_root, include_untracked=True)
+    if source != "git":
+        docs_dir = repo_root / "docs"
+        files = ["README.md", "CONTRIBUTING.md"] + (
+            [p.relative_to(repo_root).as_posix() for p in docs_dir.glob("*.md")] if docs_dir.is_dir() else [])
+    docs = sorted(r for r in files if r.startswith("docs/") and r.count("/") == 1 and r.lower().endswith(".md"))
+    rels = [r for r in ("README.md", "CONTRIBUTING.md") if r in files] + docs
+    return [repo_root / r for r in rels if (repo_root / r).is_file()]
 
 
 _PHANTOM_DOC_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
