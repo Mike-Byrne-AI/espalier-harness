@@ -58,7 +58,7 @@ from typing import Any, Callable, Iterator, NamedTuple
 import _hook_utils
 from _hook_utils import (
     STATE_DIR, _read_counter, _write_counter, directory_exists, join_directory,
-    lock_file, resolve_in_checkout, say_once, unlock_file,
+    joined_directories, lock_file, resolve_in_checkout, say_once, unlock_file,
 )
 # The two budget names (2026-10-07) are read as attributes with a degrade, the
 # way _integrity._STATE_WRITE_LOCK reads the lock: a kept `_hook_utils.py` that
@@ -527,14 +527,14 @@ def _statement_directories(cmd: str, offset: int, root: Path, cwd: Path | None) 
     past the cap (or on a fault) the start is the answer, as it always was."""
     start = cwd or root
     try:
-        text, statements = _bash_patterns.bash_directory_chain(cmd, directory_exists(start))
+        text, statements = _bash_patterns.bash_directory_chain(cmd, directory_exists(start, bash=True))
     except Exception:  # noqa: BLE001 -- the walk is advisory
         return [start]
     if len(text) != len(cmd):
         return [start]
     for s, e, dirs in statements:
         if s <= offset < e:
-            return [join_directory(start, d) for d in dirs]
+            return [p for d in dirs for p in joined_directories(start, d, bash=True)]
     return [start]
 
 
@@ -876,13 +876,21 @@ def _placed_rm_readings(
     (`_cap_for_scan`), as every other binding pass is: the pass costs names
     times length, and on a flood the uncapped text ran the hook past its
     timeout (`tests/test_redos.py::test_var_expansion_prepass_bounded_by_cap`);
-    a capped text that reads fewer invocations withholds the carve-out."""
+    a capped text that reads fewer invocations withholds the carve-out.
+
+    A Git Bash ``/tmp`` directory (`_hook_utils.git_bash_tmp_tail`) is kept
+    as spelled, not joined: the carve-out then reads ``cd /tmp && rm -rf x``
+    as it reads ``rm -rf /tmp/x``, at every place the shell may have meant
+    (`_bash_patterns._scratch_holds_no_work`), so the two spellings are one
+    judge. Joined, it was read at the drive root's ``tmp`` alone, and a clone
+    kept where Git for Windows mounts ``/tmp`` passed with no nudge
+    (DEF-1175)."""
     expanded = _bash_patterns._expand_simple_var_assignments(
         _bash_patterns.bind_mktemp_scratch(_bash_patterns._cap_for_scan(text)))
     if at is None:
         return [(rec, ops, [None]) for rec, _f, ops in _bash_patterns.iter_rm_invocations(expanded)]
     try:
-        chained, statements = _bash_patterns.bash_directory_chain(expanded, directory_exists(at))
+        chained, statements = _bash_patterns.bash_directory_chain(expanded, directory_exists(at, bash=True))
     # fail-open: ok deliberate -- a faulting walk withholds the temp carve-out only, so the nudge still fires
     except Exception:  # noqa: BLE001
         return None
@@ -890,7 +898,10 @@ def _placed_rm_readings(
     # a quoted operand the chain's boundary cut is read whole (the reader's view)
     for s, e, dirs in _bash_patterns.chain_statement_slices(chained, statements):
         bases: list[str | None] = [
-            None if d is None else str(join_directory(at, d)) for d in dirs
+            None if d is None
+            else d if _hook_utils.git_bash_tmp_tail(d) is not None
+            else str(join_directory(at, d, bash=True))
+            for d in dirs
         ]
         for rec, _f, ops in _bash_patterns.iter_rm_invocations(chained[s:e]):
             out.append((rec, ops, bases))
@@ -1729,7 +1740,7 @@ def _placed_rm_operands(text: str, at: Path) -> Iterator[tuple[str, list[Path]]]
     drove it)."""
     text = _bash_patterns._expand_simple_var_assignments(text)
     try:
-        chained, statements = _bash_patterns.bash_directory_chain(text, directory_exists(at))
+        chained, statements = _bash_patterns.bash_directory_chain(text, directory_exists(at, bash=True))
     except Exception:  # noqa: BLE001 -- the walk is advisory; a fault degrades to the start
         chained, statements = text, []
     if not statements:
@@ -1737,7 +1748,7 @@ def _placed_rm_operands(text: str, at: Path) -> Iterator[tuple[str, list[Path]]]
             yield from ((op, [at]) for op in operands)
     else:
         for s, e, dirs in _bash_patterns.chain_statement_slices(chained, statements):
-            bases = [join_directory(at, d) for d in dirs]
+            bases = [p for d in dirs for p in joined_directories(at, d, bash=True)]
             for _rec, _force, operands in _bash_patterns.iter_rm_invocations(chained[s:e]):
                 yield from ((op, bases) for op in operands)
     # The loop carrier (DEF-837's lane): the body's remove takes the loop
@@ -1819,19 +1830,19 @@ def _removal_snapshot_targets(
                 spelled = _bash_patterns._shell_unquote(operand)
                 if not spelled or spelled.startswith("-"):
                     continue
-                candidates.extend(join_directory(base, path)
-                                  for path in _snapshot_spellings(spelled) for base in bases)
+                candidates.extend(p for path in _snapshot_spellings(spelled) for base in bases
+                                  for p in joined_directories(base, path, bash=True))
     else:
         command = _bash_patterns._expand_simple_ps_var_assignments(command)   # DEF-801's twin
         try:
             text, statements = _bash_patterns.powershell_directory_chain(
-                command, directory_exists(at))
+                command, directory_exists(at, bash=False))
         except Exception:  # noqa: BLE001 -- the walk is advisory; a fault degrades to the start
             text, statements = _bash_patterns.powershell_scan_text(command), []
         for m in _bash_patterns._PS_REMOVE_ITEM_RE.finditer(text):
             here = m.start("args")
             dirs = next((ds for s, e, ds in statements if s <= here < e), (".",))
-            bases = [join_directory(at, d) for d in dirs]
+            bases = [join_directory(at, d, bash=False) for d in dirs]
             args = m.group("args")
             # quote-aware, as the wall's reader splits the same span (the
             # lane's review): a quoted target with a space is ONE target
@@ -1856,15 +1867,15 @@ def _removal_snapshot_targets(
                         # absolute spelling as the Bash arm reads one; the
                         # checkout test below keeps only what lies inside.
                         parts = _ps_absolute_parts(element)
-                    candidates.extend(join_directory(base, part) for part in parts for base in bases)
+                    candidates.extend(join_directory(base, part, bash=False) for part in parts for base in bases)
         scan = _bash_patterns.powershell_scan_text(command)
         for body in _bash_patterns._ps_shell_program_bodies(command, scan):
             for operand, bases in _placed_rm_operands(body, at):
                 spelled = _bash_patterns._shell_unquote(operand)
                 if not spelled or spelled.startswith("-"):
                     continue
-                candidates.extend(join_directory(base, path)
-                                  for path in _snapshot_spellings(spelled) for base in bases)
+                candidates.extend(p for path in _snapshot_spellings(spelled) for base in bases
+                                  for p in joined_directories(base, path, bash=True))
     inside: list[str] = []
     for candidate in candidates:
         if len(inside) >= _REMOVAL_CANDIDATE_CAP:

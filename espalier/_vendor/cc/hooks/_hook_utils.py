@@ -19,7 +19,7 @@ import time
 import unicodedata
 from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # the annotation only; subprocess stays a lazy import (see below)
@@ -2728,6 +2728,74 @@ def _msys_drive_to_windows(path: str) -> str:
     return match.group(1).upper() + ":/" + path[match.end():].lstrip("/")
 
 
+def rooted(spelled: str) -> bool:
+    """True when ``spelled`` is anchored on EITHER host family -- a root, a
+    drive or a share -- as ``PureWindowsPath`` reads it. That parser sees both
+    separators and every anchor a POSIX reading has, so one flavor decides on
+    every host: the anchor half of the judge DEF-3007 landed in the bench
+    runner and the archive probe (`bench/end_to_end/runner.py::_leaves_the_tree`).
+    It replaces the host's ``Path(x).is_absolute()``, which on Windows reads a
+    rooted path with no drive (``/tmp/x``, ``\\etc\\x``) as relative, so the
+    plan gate's exemption and the temp-root carve-out read ``/tmp`` as a path
+    below the start (DEF-1175). A drive-relative ``C:x`` counts as anchored.
+    The ``..`` half stays with each caller, which handles it its own way: the
+    plan gate reads a path `normalize_path` already resolved, the carve-out
+    refuses a ``..`` step, and `join_directory` joins one."""
+    return bool(PureWindowsPath(spelled).anchor)
+
+
+def git_bash_tmp_tail(spelled: str) -> str | None:
+    """On Windows, what follows ``/tmp`` in a rooted spelling with no drive,
+    led by a forward slash, whose first component is ``tmp`` in any case:
+    ``""`` for ``/tmp``, ``"/x/y"`` for ``/tmp/x/y`` or ``/TMP/x/y``. ``None``
+    off Windows and for any other spelling. Git for Windows mounts ``/tmp``
+    on the user's temp directory (``none /tmp usertemp`` in its
+    ``/etc/fstab``) and matches the mount without case, so the Bash tool's
+    ``/tmp`` is not the drive root's ``tmp`` that ``Path`` reads it as. Driven
+    with ``cygpath -w`` on the Windows host, 2026-10-15: ``/TMP/x`` and
+    ``/tmp\\x`` answered the temp directory; ``\\tmp\\x``, led by a backslash,
+    answered the drive root's ``C:\\tmp\\x`` (a Win32 path to Git Bash), and
+    ``//tmp/x`` the share ``\\\\tmp\\x`` (it has a drive): neither is this
+    spelling."""
+    if os.name != "nt" or spelled[:1] != "/" or not rooted(spelled):
+        return None
+    path = PureWindowsPath(spelled)
+    parts = path.parts[1:]
+    if path.drive or not parts or parts[0].casefold() != "tmp":
+        return None
+    return "".join("/" + part for part in parts[1:])
+
+
+#: A value of ``TEMP``, ``TMP`` or ``TMPDIR`` that can be where Git for
+#: Windows mounts ``/tmp``: drive-qualified, with at least one component.
+_GIT_BASH_TMP_VALUE_RE = re.compile(r"^[A-Za-z]:/[^/]")
+
+
+def git_bash_tmp_mount(spelled: str) -> str | None:
+    """Where Git for Windows puts a `git_bash_tmp_tail` spelling: the first
+    drive-qualified value of ``TEMP``, ``TMP`` or ``TMPDIR``, with the tail,
+    in forward slashes; ``None`` for any other spelling, off Windows, and
+    when no value qualifies (the caller keeps its own reading).
+
+    A PROXY, declared. The mount is the session's mount table, which the
+    first Git Bash process of the user's session builds; the hook sees only
+    its own environment. A child shell handed another ``TEMP`` and ``TMP``
+    still mounted the session's temp directory (driven 2026-10-15), so a
+    harness that hands the hook a ``TEMP`` other than the session's is read
+    wrong in both directions. Not vetted as a scratch root is
+    (`_bash_patterns._vetted_scratch_values`): this says where the shell
+    stands, not whether a delete there is scratch, so a ``TEMP`` that is the
+    home places a ``cd /tmp`` in the home."""
+    tail = git_bash_tmp_tail(spelled)
+    if tail is None:
+        return None
+    for var in ("TEMP", "TMP", "TMPDIR"):
+        value = os.environ.get(var, "").replace("\\", "/").rstrip("/")
+        if _GIT_BASH_TMP_VALUE_RE.match(value):
+            return value + tail
+    return None
+
+
 def _clean_path_prefixes(cleaned: str) -> str:
     """Shared pre-normalisation cleaning for normalize_path + normalize_path_str.
 
@@ -3294,29 +3362,62 @@ def hook_cwd(payload: object) -> Path | None:
         return None
 
 
-def directory_exists(start: Path) -> "Callable[[str], bool]":
+def directory_exists(start: Path, *, bash: bool) -> "Callable[[str], bool]":
     """The directory chain's oracle (`_bash_patterns.bash_directory_chain`):
     is the directory it spelled there, joined to the start? A `cd` to one
     that is not leaves the shell where it was. ONE home for write_guard and
     post_write_check, so a rule about what counts as "there" (a directory the
-    same command makes is credited by the walk itself) reaches both."""
+    same command makes is credited by the walk itself) reaches both.
+    ``bash`` is `join_directory`'s: REQUIRED, so a chain cannot be asked in
+    the other shell's reading by default. There at any place
+    `joined_directories` names is there."""
     def exists(spelled: str) -> bool:
         try:
-            return join_directory(start, spelled).is_dir()
+            return any(p.is_dir() for p in joined_directories(start, spelled, bash=bash))
         except (OSError, ValueError):  # fail-open: ok deliberate -- a directory the cd-walk cannot read is not entered; the command is judged where it stands
             return False
     return exists
 
 
-def join_directory(start: Path, spelled: str | None) -> Path:
+def joined_directories(start: Path, spelled: str | None, *, bash: bool) -> list[Path]:
+    """Every place a spelled directory may name: `join_directory`'s, and for
+    a Git Bash ``/tmp`` spelling (`git_bash_tmp_tail`) the drive root's
+    ``tmp`` as well. The chain folds a backslash into a slash before it
+    spells a directory (`_bash_patterns._step_one`), and Git Bash reads a
+    rooted backslash spelling (``\\tmp``) as the drive root's, so both
+    readings stand: a site that judges every place keeps each wall and nudge
+    the drive-root reading had before 2026-10-15 and adds the mount's. The
+    form every site that builds a list of bases asks."""
+    here = join_directory(start, spelled, bash=bash)
+    if bash and spelled is not None and git_bash_tmp_tail(spelled) is not None:
+        there = join_directory(start, spelled, bash=False)
+        if there != here:
+            return [here, there]
+    return [here]
+
+
+def join_directory(start: Path, spelled: str | None, *, bash: bool) -> Path:
     """A directory the command's chain spelled (`_bash_patterns.
     bash_directory_chain`), joined to the start it is relative to; an
     unreadable one (``None``) is the start itself -- the indirection class
-    resolves as the root always did."""
+    resolves as the root always did.
+
+    ``bash`` says which shell spelled it, and is REQUIRED: on Windows the
+    Bash tool's ``/tmp`` is where Git for Windows mounts it, the user's temp
+    directory (`git_bash_tmp_mount`), while PowerShell reads the same
+    spelling as the current drive's ``tmp``. Until 2026-10-15 both read the
+    drive root's, so after ``cd /tmp`` the temp-root carve-out looked for a
+    checkout where the shell was not (DEF-1175). A site building a list of
+    bases asks `joined_directories`, which keeps the drive root's reading
+    beside this one."""
     if spelled is None or spelled == ".":
         return start
     if spelled.startswith("~"):
         return Path(spelled).expanduser()
+    if bash:
+        mount = git_bash_tmp_mount(spelled)
+        if mount is not None:
+            return Path(mount)
     # A Git Bash drive spelling (`/c/<home>/x`) is absolute on the host that
     # produces it, and `Path` on Windows anchors it onto the current drive as
     # `C:\\c\\<home>\\x` -- a directory that is not there -- so the walk read

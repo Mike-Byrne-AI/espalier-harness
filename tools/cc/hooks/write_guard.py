@@ -116,11 +116,12 @@ try:
         "ADOPTER_ZONE_KEYS", "DENIED", "MCPPayloadUnverifiable", "MCP_CONTENT_KEYS", "MCP_PATH_FIELDS",
         "MUTATION_TOOLS", "RECALL_LOG_NAME", "STATE_DIR", "_append_jsonl", "_locked_increment",
         "_msys_drive_to_windows", "_read_counter", "_rel_under_root", "_telemetry_enabled",
-        "_write_counter", "adopter_zone_for", "atomic_write_text", "directory_exists", "harness_protected_prefixes",
-        "host_orientation_line", "iter_mcp_path_leaves", "join_directory", "lock_file", "normalize_bash_path",
+        "_write_counter", "adopter_zone_for", "atomic_write_text", "directory_exists", "git_bash_tmp_mount",
+        "git_bash_tmp_tail", "harness_protected_prefixes", "host_orientation_line", "iter_mcp_path_leaves",
+        "join_directory", "joined_directories", "lock_file", "normalize_bash_path",
         "normalize_path", "normalize_path_str", "os_error_text", "payload_cwd", "protected_prefixes",
         "read_stdin_safely", "resolve_bash_in_checkout", "resolve_in_checkout", "resolve_project_root",
-        "say_bad_stdin", "say_once", "stop_gate_mode", "unlock_file", "warn", "warn_exc",
+        "rooted", "say_bad_stdin", "say_once", "stop_gate_mode", "unlock_file", "warn", "warn_exc",
     )
     for _name in _WRITE_GUARD_HELPER_NAMES:
         getattr(_hook_utils, _name)

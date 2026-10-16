@@ -1110,6 +1110,111 @@ class TestCpRmrfTempRoots:
         assert not _bash_patterns.below_a_temp_root("x", r, [p + "/sp", r], bash=True)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Git for Windows mounts /tmp; elsewhere /tmp is itself")
+class TestGitBashTmpMount:
+    """DEF-1175, the Windows host. Git for Windows mounts `/tmp` on the
+    user's temp directory, so the Bash tool's `cd /tmp` lands there, not at
+    the drive root's `tmp` that `Path` reads the spelling as. Until
+    2026-10-15 the chain joined it to the drive root, so a clone kept where
+    `/tmp` is mounted and deleted by name after `cd /tmp` passed with no
+    nudge, while the same delete typed as `/tmp/<name>` drew it.
+
+    One judge now (`_hook_utils.git_bash_tmp_tail`): both spellings are read
+    at every place the shell may mean -- the drive root's `tmp` and the temp
+    directory -- so a clone at either keeps the nudge on both. Two cells are
+    over-fires Git Bash would not need, kept for the one judge: the `cd`
+    spelling with the clone at the drive root alone, and the backslash `cd`
+    with it at the temp directory alone (the chain folds a backslash into a
+    slash before it spells a directory, and Git Bash reads `\\tmp` as the
+    drive root's). The mount is proxied by TEMP, TMP and TMPDIR, pinned to a
+    directory below `tmp_path`; the drive root's `tmp` is the real one, so a
+    clone made there carries a unique name and is removed after."""
+
+    @pytest.fixture
+    def places(self, tmp_path, monkeypatch):
+        import os
+        import shutil
+        import uuid
+        mount, repo = tmp_path / "mount", tmp_path / "repo"
+        mount.mkdir()
+        repo.mkdir()
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, str(mount))
+        drive_tmp = Path(os.path.realpath("/tmp"))
+        made = not drive_tmp.exists()
+        drive_tmp.mkdir(exist_ok=True)
+        tag = uuid.uuid4().hex[:8]
+        try:
+            yield repo, mount, drive_tmp, tag
+        finally:
+            for left in drive_tmp.glob(f"espalier-*-{tag}"):
+                shutil.rmtree(left, ignore_errors=True)
+            if made:
+                try:
+                    drive_tmp.rmdir()
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _spellings(name: str) -> list[str]:
+        return [f"rm -rf /tmp/{name}", f"cd /tmp && rm -rf {name}", f"cd /TMP && rm -rf {name}",
+                f"cd /tmp/ && rm -rf {name}", f"cd '\\tmp' && rm -rf {name}"]
+
+    def test_a_clone_at_either_place_keeps_the_nudge_on_every_spelling(self, places):
+        repo, mount, drive_tmp, tag = places
+        missed = []
+        for place in (mount, drive_tmp):
+            held = place / f"espalier-clone-{tag}"
+            (held / ".git").mkdir(parents=True)
+            missed += [(str(place), c) for c in self._spellings(held.name)
+                       if not _fires(_speedbump._pred_rmrf, c, repo)]
+            (held / ".git").rmdir()
+            held.rmdir()
+        assert not missed, f"{len(missed)} spellings passed a clone with no nudge; first: {missed[0]!r}"
+
+    def test_scratch_where_the_shell_stands_passes_after_a_cd(self, places):
+        """The carve-out still passes scratch after `cd /tmp`, and a
+        directory only the temp directory holds is entered, as Git Bash
+        enters it: read at the drive root alone, the `cd` failed and the
+        delete was judged at the start, where it drew the nudge."""
+        repo, mount, _drive_tmp, tag = places
+        (mount / f"espalier-sub-{tag}" / "x").mkdir(parents=True)
+        for command in (f"cd /tmp && rm -rf espalier-plain-{tag}",
+                        f"cd /tmp/espalier-sub-{tag} && rm -rf x"):
+            assert not _fires(_speedbump._pred_rmrf, command, repo), command
+
+    def test_a_temp_directory_that_names_no_scratch_root_keeps_the_nudge(self, places, monkeypatch):
+        """Where TEMP is the home it vets out as a scratch root
+        (`_vetted_scratch_values`), and the shell still deletes there after
+        `cd /tmp`: the mount is a place the carve-out reads, and a place
+        below no scratch root is no scratch."""
+        repo, mount, _drive_tmp, tag = places
+        monkeypatch.setenv("USERPROFILE", str(mount))
+        assert _fires(_speedbump._pred_rmrf, f"cd /tmp && rm -rf espalier-plain-{tag}", repo)
+
+    def test_a_checkout_kept_where_tmp_is_mounted_keeps_its_walls_after_a_cd(self, places, tmp_path):
+        """From another directory, `cd /tmp/<checkout>` then a delete of
+        `.` is a delete of the repo (the hard tier), and a write below its
+        `tools/cc` is the zone's. Read at the drive root, the `cd` failed and
+        both were judged where the command started: the delete drew the
+        clearable nudge and the write passed."""
+        import contextlib
+        import io
+        import write_guard
+        _repo, mount, _drive_tmp, tag = places
+        held = mount / f"espalier-checkout-{tag}"
+        (held / ".git").mkdir(parents=True)
+        (held / "tools" / "cc").mkdir(parents=True)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        cd = f"cd /tmp/{held.name} && "
+        assert _bash_patterns.has_catastrophic_recursive_rm(cd + "rm -rf .", str(held), cwd=elsewhere)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = write_guard.check_bash_for_protected_mutations(cd + "echo x > tools/cc/probe.py", held, elsewhere)
+        assert code or "deny" in out.getvalue()
+
+
 # ── CP-FETCHEXEC ──────────────────────────────────────────────────────────────
 
 class TestCpFetchexec:

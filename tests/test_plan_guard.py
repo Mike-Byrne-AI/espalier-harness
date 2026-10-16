@@ -655,8 +655,8 @@ class TestPlanGuardOutOfRepoExemption:
     def test_home_plans_path_exempt_without_plan(self, tmp_path):
         """Write to ~/.claude/plans/foo.md passes plan_guard without active plan."""
         # Derive from the real home: an absolute home path is out of the repo
-        # root on any platform. The POSIX literal /Users/... is NOT absolute on
-        # Windows (a drive letter is required), so it would not be exempted.
+        # root on any platform. (A rooted literal with no drive, /Users/...,
+        # is exempt on Windows too since DEF-1175: the rooted-spelling row below.)
         home_plan = Path.home() / ".claude" / "plans" / "foo.md"
         result = run_hook_edit(str(home_plan), tmp_path)
         assert result.returncode == 0
@@ -665,7 +665,7 @@ class TestPlanGuardOutOfRepoExemption:
     def test_tmp_path_exempt_without_plan(self, tmp_path):
         """An absolute path outside the repo root is outside governance scope."""
         # tmp_path.parent is a sibling of the repo root: absolute and out of
-        # repo on any platform (the POSIX literal /tmp is not absolute on Windows).
+        # repo on any platform.
         outside = tmp_path.parent / "scratch.md"
         result = run_hook_edit(str(outside), tmp_path)
         assert result.returncode == 0
@@ -675,6 +675,31 @@ class TestPlanGuardOutOfRepoExemption:
         """Regression: the fix must not weaken in-repo enforcement."""
         result = run_hook_edit("src/module.py", tmp_path)
         assert_hook_denied(result)
+
+    @pytest.mark.parametrize("spelled", [
+        "/tmp/scratch.py", "/etc/x.py", "\\tmp\\scratch.py",
+        "C:\\tmp\\scratch.py", "/c/tmp/scratch.py", "//server/share/x.py",
+    ])
+    def test_a_rooted_spelling_on_either_host_family_is_exempt(self, tmp_path, spelled):
+        """DEF-1175: the exemption asks `_hook_utils.rooted`, one judge on
+        every host, where it asked the host's ``Path.is_absolute()``. On
+        Windows that read a rooted path with no drive as relative, so a
+        scratch file written under `/tmp` from Git Bash was refused for want
+        of a plan while its drive and Git Bash drive spellings passed. On a
+        POSIX host a drive spelling names a directory called ``C:`` below
+        the start; the one judge reads it as rooted, a declared over-yield of
+        the plan friction in a spelling no POSIX tree holds."""
+        result = run_hook_edit(spelled, tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "", f"expected silent allow for {spelled!r}, got: {result.stdout!r}"
+
+    def test_a_rooted_spelling_inside_the_checkout_still_requires_a_plan(self, tmp_path):
+        """The judge is asked AFTER `_normalize_path`, which anchors a rooted
+        drive-less spelling of a path inside the checkout onto its drive and
+        relativises it: asked of the raw spelling, this would go exempt."""
+        inside = (tmp_path / "src" / "module.py").as_posix()
+        spelled = inside[2:] if inside[1:2] == ":" else inside
+        assert_hook_denied(run_hook_edit(spelled, tmp_path))
 
 
 # ── TP-142 (FM-2 §10.4): fail-closed umbrella ──────────────────────────

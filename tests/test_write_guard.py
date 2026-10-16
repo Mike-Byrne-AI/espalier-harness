@@ -4317,7 +4317,7 @@ class TestGitBashDrivePrefix:
         absolute spelling."""
         _emulate_windows_paths(monkeypatch)
         hu = _import_hook_utils()
-        landed = hu.join_directory(Path("C:/Users/x/repo"), "/c/Users/x/repo/tools/cc")
+        landed = hu.join_directory(Path("C:/Users/x/repo"), "/c/Users/x/repo/tools/cc", bash=True)
         assert landed.as_posix() == "C:/Users/x/repo/tools/cc", landed
 
     @pytest.mark.skipif(os.name == "nt", reason="the boundary only exists on a POSIX host")
