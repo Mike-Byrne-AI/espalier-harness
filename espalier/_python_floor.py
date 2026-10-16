@@ -309,7 +309,7 @@ def _start_verdict(
             return None
     head = argv[0] if argv else ""
     key: tuple[object, ...] | None = None
-    if os.sep in head or (os.altsep and os.altsep in head):
+    if "/" in head.replace("\\", "/"):
         try:
             st = os.stat(head)
             key = (tuple(argv), seconds, tries, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
