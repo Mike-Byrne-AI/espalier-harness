@@ -25,7 +25,8 @@ file that pins one specific claim to:
   claim at, stored in `.espalier/freshness.json`.
 
 Drift detection works like this: when any commit since the pin SHA
-touches a bound path, the fragment's state advances from `fresh` to
+touches a bound path (for a bound that names a symbol, the symbol's own
+lines: section 4), the fragment's state advances from `fresh` to
 `stale` (a few commits, advisory) to `critical` (many commits or many
 days, release-blocking).
 
@@ -106,15 +107,26 @@ intended workflow: the act of re-verification IS the pin.
 
 A bound that names a symbol (`path.py::symbol`) counts only the commits
 that changed that symbol's own lines: the scanner reads the file at
-HEAD, takes the span of the top-level `def`, `class` or assignment
+HEAD, takes the span of the `def`, `class` or assignment that binds it
 (decorators included), and follows it back with `git log -L`, so a
 function's whole body and a tuple's every row are in the span and the
-rest of the file is not; the repo's diff driver plays no part. A bound
-that names a file counts every commit to it. A symbol the scanner
-cannot place (nested, renamed away, or in a file that is not Python)
-and any git error fall back to the file count, so the fallback is
-always the conservative one; the walk runs only when the file has
-drifted at all.
+rest of the file is not; the repo's diff driver plays no part. A nested
+symbol (`path.py::Class::method`, or `path.py::Class.method`, the form
+the template above uses) is placed one segment per scope, and its span
+is the innermost node's own lines, so a commit to a sibling method does
+not count against it. A bound that names a file counts every commit to
+it. A symbol the scanner cannot place (renamed away, defined somewhere
+other than the scope the bound names, or in a file that is not Python)
+and any git error fall back to the file count, the conservative side,
+and `check`'s message names the entry and why it could not be placed;
+the walk runs only when the file has drifted at all. `pin` refuses a
+bound it cannot place, naming the entry (`--force` records it anyway),
+and `pin --all` refuses before pinning anything, so the fallback is
+caught where the bound is written rather than on every later commit to
+its file. Until 2026-10-16 a nested symbol was never placed, and the
+fallback was silent: a test-method bound in a 2,700-line test file was
+re-pinned three days running over commits that never touched the
+method.
 
 A symbol bound is narrower than its file. Where a claim spans more than
 one symbol, name each one (`a.py::x,a.py::y`) or bind the file, and
@@ -226,11 +238,12 @@ pinned at 47 against a HEAD where the answer was 46). `pin_fragment`
 refuses with a message naming the paths; commit the bound first,
 then pin, or pass `--force` to record the pin at HEAD anyway. The
 check is narrowed the way the commit walk is: for a bound that names
-a `::symbol`, only a working-tree change to that symbol's own lines
-counts. `pin --all` (which takes no `--force`) refuses before pinning
-anything when any fragment's bound is dirty, so a cohort re-attestation
-resets every clock together or not at all; the `skipped` rows name the
-paths and the remedy is one commit, or a single pin with `--force`.
+a `::symbol`, nested ones included, only a working-tree change to that
+symbol's own lines counts. `pin --all` (which takes no `--force`) refuses before pinning
+anything when any fragment's bound is dirty or names a symbol the scan
+cannot place, so a cohort re-attestation resets every clock together
+or not at all; the `skipped` rows name the paths or entries, and the
+remedy is one commit or a fixed bound, or a single pin with `--force`.
 
 The scan side is the same rule: a pinned fragment whose bound has
 uncommitted changes reads `stale` (never `critical` on that ground

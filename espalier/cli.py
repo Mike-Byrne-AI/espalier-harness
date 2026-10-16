@@ -13313,6 +13313,16 @@ def _note_missing_literal(fragment_id: str, entry: dict[str, Any]) -> None:
         )
 
 
+def _unplaced_reason(fragment_id: str, entries: list[str]) -> str:
+    """``pin --all``'s skip reason for a bound naming a symbol the scan cannot
+    place: the remedy --all can name, since it takes no --force."""
+    return (
+        f"bound names a symbol the scan cannot place ({'; '.join(entries)}), so "
+        f"its drift would be the whole file's: fix the bound, or pin "
+        f"{fragment_id!r} on its own with --force"
+    )
+
+
 def cmd_freshness_pin(args: argparse.Namespace) -> int:
     """Pin a fragment at HEAD.
 
@@ -13323,7 +13333,7 @@ def cmd_freshness_pin(args: argparse.Namespace) -> int:
     """
     from espalier.freshness import (
         pin_fragment, DirtyBoundRefusedError, FreshnessError, RebindingRefusedError,
-        StaleLiteralRefusedError, carried_literal,
+        StaleLiteralRefusedError, UnplacedBoundRefusedError, carried_literal,
     )
     from espalier.scanners.freshness import discover_fragments
 
@@ -13397,8 +13407,10 @@ def cmd_freshness_pin(args: argparse.Namespace) -> int:
         # re-stamp as verified at a new HEAD). The rule is the engine's own
         # (carried_literal), asked here so the refusal lands before the first
         # pin; the remedy is one --all cannot take: a commit, or the one
-        # fragment pinned on its own with --expected-value.
-        from espalier.scanners.freshness import dirty_bound_paths
+        # fragment pinned on its own with --expected-value. A bound naming a
+        # symbol the scan cannot place is refused here too (the engine's
+        # unplaced_bound_entries): its drift would be the whole file's.
+        from espalier.scanners.freshness import dirty_bound_paths, unplaced_bound_entries
         refused: list[dict[str, object]] = []
         for frag in frags:
             dirty = dirty_bound_paths(repo_root, frag.bound)
@@ -13407,6 +13419,11 @@ def cmd_freshness_pin(args: argparse.Namespace) -> int:
                     f"bound has uncommitted changes ({', '.join(dirty)}): commit "
                     f"the bound first, or pin {frag.id!r} on its own with --force"
                 )})
+                continue
+            unplaced = unplaced_bound_entries(repo_root, frag.bound)
+            if unplaced:
+                refused.append({"id": frag.id, "reason": _unplaced_reason(
+                    frag.id, [f"{entry} ({why})" for entry, why in unplaced])})
                 continue
             try:
                 carried_literal(repo_root, frag, on_disk.get(frag.id))
@@ -13417,8 +13434,8 @@ def cmd_freshness_pin(args: argparse.Namespace) -> int:
         if refused:
             print(
                 f"pin --all refused before pinning: {len(refused)} fragment(s) "
-                f"have a bound with uncommitted changes or a literal edited by "
-                f"hand (see skipped); nothing was pinned",
+                f"have a bound with uncommitted changes, a symbol the scan cannot "
+                f"place, or a literal edited by hand (see skipped); nothing was pinned",
                 file=sys.stderr,
             )
             print(json.dumps({
@@ -13443,6 +13460,11 @@ def cmd_freshness_pin(args: argparse.Namespace) -> int:
                 continue
             except RebindingRefusedError as exc:
                 skipped.append({"id": frag.id, "reason": str(exc)})
+                continue
+            except UnplacedBoundRefusedError as exc:
+                # The belt behind the pre-flight: never the generic arm below,
+                # which stops the pass after the earlier fragments were pinned.
+                skipped.append({"id": frag.id, "reason": _unplaced_reason(frag.id, exc.entries)})
                 continue
             except FreshnessError as exc:
                 print(f"pin {frag.id!r} failed: {exc}", file=sys.stderr)

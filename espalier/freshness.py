@@ -65,6 +65,7 @@ from espalier.scanners.freshness import (
     discover_fragments,
     parse_fragment_markers,
     scan_repo,
+    unplaced_bound_entries,
 )
 from espalier._atomic_io import atomic_write_text, lock_file, unlock_file
 from espalier._spawn import run_bounded
@@ -109,6 +110,19 @@ class DirtyBoundRefusedError(FreshnessError):
     def __init__(self, message: str, *, paths: list[str]) -> None:
         super().__init__(message)
         self.paths = list(paths)
+
+
+class UnplacedBoundRefusedError(FreshnessError):
+    """Raised by ``pin_fragment`` when a ``path::symbol`` entry of the bound is
+    one the scan cannot place at HEAD and ``force`` is not set: its drift is
+    then the whole file's, so a pin would vouch for a claim that every commit
+    to the file reads as moved -- the re-pin tax the symbol bound exists to
+    end. ``entries`` names them, so ``pin --all`` (which takes no ``--force``)
+    can word its own remedy."""
+
+    def __init__(self, message: str, *, entries: list[str]) -> None:
+        super().__init__(message)
+        self.entries = list(entries)
 
 
 class StaleLiteralRefusedError(FreshnessError):
@@ -334,6 +348,11 @@ def pin_fragment(
     so a hurried operator cannot silently clear the critical
     finding by re-pinning. CLI exposes this as ``--force``.
 
+    A bound with uncommitted changes (``DirtyBoundRefusedError``) and a
+    ``path::symbol`` entry the scan cannot place at HEAD
+    (``UnplacedBoundRefusedError``) are refused the same way, unless
+    ``force=True``.
+
     Returns the resulting manifest entry (useful for CLI display
     and tests).
     """
@@ -410,6 +429,20 @@ def _pin_fragment_locked(
                 f"Commit the bound first, then pin; or re-run with force=True "
                 f"(CLI: --force) to record the pin at HEAD anyway.",
                 paths=dirty,
+            )
+        # After the dirty check: an unplaced entry is read at HEAD, which a
+        # dirty bound has just been told is not the tree that was verified.
+        unplaced = unplaced_bound_entries(repo_root, frag.bound)
+        if unplaced:
+            named = "; ".join(f"{entry} ({why})" for entry, why in unplaced)
+            raise UnplacedBoundRefusedError(
+                f"refusing to pin fragment {fragment_id!r}: the scan cannot place "
+                f"{named}, so it would count every commit to the whole file "
+                f"against this claim. Name a symbol the file defines at HEAD "
+                f"(a nested one as Class::method), or bind the file whole "
+                f"without '::'; or re-run with force=True (CLI: --force) to "
+                f"record the pin anyway.",
+                entries=[entry for entry, _why in unplaced],
             )
 
     if not explicit:
