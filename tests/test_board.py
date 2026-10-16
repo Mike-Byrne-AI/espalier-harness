@@ -621,6 +621,28 @@ class TestSeats:
         text = self._text(board, rows, names_unread=board.unread_names(local))
         assert f"(seat name unread) {work}: mail unknown; 1 live session in .claude/worktrees/work" in text, text
 
+    def test_a_clone_name_read_that_failed_reads_the_local_sessions_as_unread(self, board, tmp_path):
+        """Without the clone's own name a worktree still answering it cannot be
+        told from one named by hand, and a gone folder's seat cannot be
+        derived. Dies to the failed read taken for a clone that names no
+        machine (clone_machine's None), which folded the local seats on it."""
+        main, work = self._clone(tmp_path)
+        base = _git_for(main, work)
+        failures = (board.Unresolvable("git config took longer than 10s"),
+                    (128, "", "fatal: bad config line 3 in file .git/config"))
+        for i, failed in enumerate(failures):
+            def run(argv, _failed=failed, **kw):
+                if argv[1:3] == ["config", "--local"]:
+                    if isinstance(_failed, Exception):
+                        raise _failed
+                    return _failed
+                return base(argv, **kw)
+            local = board.read_sessions(main, run_=run, config_dir=_registry(tmp_path / str(i), work),
+                                        inside_session=False)
+            assert local["checkouts"] == [], local
+            assert "clone's own machine name could not be read" in local["unread"], local
+            assert board.mail.MACHINE_UNREAD in local["unread"], local
+
     def test_a_checkout_answering_no_usable_name_is_not_given_one(self, board, tmp_path):
         """A hand-set name the channel refuses (`Air-2`) turns the channel off
         there; the derived name is not one that checkout answers (failure-mode

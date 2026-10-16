@@ -444,6 +444,30 @@ class TestReapWorktrees:
         assert report.kept == [("feat", "its seat work-feat's claims could not be read (git show took longer than 2s)")]
         assert wt.is_dir()
 
+    def test_a_seat_name_that_cannot_be_read_keeps_the_worktree(self, cs, repos, monkeypatch):
+        """Only the seat-name read fails (a config git cannot parse, then no
+        answer in time), so every other check passes. Dies to the failed read
+        taken for "no seat of its own": the worktree went, and with it the one
+        checkout that could release its seat's live claims."""
+        work = repos["work"]
+        _git(work, "config", "extensions.worktreeConfig", "true")
+        real_ask = cs._Git.ask
+        for i, failed in enumerate((subprocess.CompletedProcess([], 128, "", "fatal: bad config line 3"), None)):
+            wt = _worktree(repos, f"feat{i}", f"lane/feat{i}")
+            _git(wt, "config", "--worktree", "espalier.machine", f"work-feat{i}")
+
+            def ask(self, *args, _failed=failed, **kw):
+                if args == ("config", "--worktree", "--get", "espalier.machine"):
+                    return _failed
+                return real_ask(self, *args, **kw)
+            monkeypatch.setattr(cs._Git, "ask", ask)
+            monkeypatch.setattr(cs, "seat_live_claims", lambda root, seat, timeout: [])
+            report = cs.reap_worktrees(work, sessions=[])
+            assert report.removed == [] and wt.is_dir(), report
+            reason = dict(report.kept)[f"feat{i}"]
+            assert reason.startswith("its seat name could not be read ("), reason
+            assert ("bad config line 3" if failed else "did not answer in time") in reason, reason
+
     def test_todays_case_an_idle_session_in_a_clean_merged_worktree_keeps_it(self, cs, repos, tmp_path):
         """Clean, merged, unlocked, no file written for hours -- and a live
         Claude session sits in it. The registry names it; the reaper keeps it."""

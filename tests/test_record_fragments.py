@@ -183,6 +183,33 @@ class TestTheWriterNamesTheFile:
         assert path.parent.is_dir() and not path.exists()
 
 
+class TestTheSeatNameSaysAFailedRead:
+    def test_a_failed_name_read_refuses_rather_than_naming_the_fragment_local(self, rf, tmp_path, monkeypatch,
+                                                                            capsys):
+        """A timeout, then a config git cannot parse. Dies to the failed read
+        named ``local``, which also picks today's started row as this seat's:
+        another unnamed seat's row is taken, or a second is started that the
+        handoff refuses."""
+        import subprocess
+
+        for failed in (subprocess.TimeoutExpired(["git"], 5),
+                       subprocess.CompletedProcess([], 128, "", "fatal: bad config line 3 in file .git/config")):
+            def fake(argv, _failed=failed, **kw):
+                if isinstance(_failed, BaseException):
+                    raise _failed
+                return _failed
+            monkeypatch.setattr(rf, "run_bounded", fake)
+            try:
+                got = rf._seat(tmp_path)
+            except Exception as exc:  # noqa: BLE001 -- the refusal is the expected answer
+                got = exc
+            assert isinstance(got, Exception) and "could not be read" in str(got), got
+            assert rf.main(["--root", str(tmp_path), "new", "session-log"]) == 2
+            assert "no Session Log row is named" in capsys.readouterr().err
+        monkeypatch.setattr(rf, "run_bounded", lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", ""))
+        assert rf._seat(tmp_path) == "local"
+
+
 class TestThePruneKeepsTheNewest:
     """Mutations seen red: pruning the newest fragment; counting the legacy
     rows toward the cap."""

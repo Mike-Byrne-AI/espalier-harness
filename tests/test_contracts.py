@@ -376,9 +376,10 @@ class TestEveryNameReaderSaysWhichItIs:
     name, an assignment, a ``getattr`` by name) is refused outright. The
     population is derived, never listed: each fold that closed the readers in
     hand left another, and one more arrived with a later lane after the class
-    was filed (DEF-5002). The same predicate is the ledger probe for the
-    readers that bypass ``machine_setting``: DEF-5003 (``clone_machine``) and
-    DEF-5004 (raw config reads)."""
+    was filed (DEF-5002). The same predicate holds the readers that bypassed
+    ``machine_setting`` once their rows closed: every call of ``clone_machine``
+    (DEF-5003) and every raw ``git config --get`` of the key outside the two
+    readers (DEF-5004)."""
 
     def test_no_reader_takes_an_unread_name_for_none(self):
         """Dies to: a reader whose ``machine is None`` branch goes silent, or
@@ -392,6 +393,46 @@ class TestEveryNameReaderSaysWhichItIs:
         assert silent == [], ("these calls take a name read that failed for 'no machine is named': unpack the "
                               "reason and test it against MACHINE_UNREAD before the name is bound again, or mark "
                               f"the intended silence on the call's line with `# unread-name: ok <why>`: {silent}")
+
+    def test_no_clone_read_takes_an_unread_name_for_none(self):
+        """Dies to: a caller of ``clone_machine`` that takes a failed read for
+        a clone naming no machine (DEF-5003's five, at filing); a renamed
+        ``clone_machine``, which finds no caller (the floor)."""
+        from tests._name_readers import calls, tools_cc_files
+        found, silent, aliases = calls(tools_cc_files(REPO_ROOT), REPO_ROOT, "clone_machine")
+        assert len(found) >= 5, f"only {len(found)} calls of clone_machine: did it move or rename? {found}"
+        assert aliases == [], f"an alias of clone_machine hides its callers from this pin: {aliases}"
+        assert silent == [], ("these calls take the clone's failed name read for 'this clone names no machine': "
+                              f"unpack the reason and test it against MACHINE_UNREAD: {silent}")
+
+    def test_no_raw_read_of_the_name_goes_unsaid(self):
+        """Dies to: a new ``git config --get`` of the machine key outside the
+        two readers, with no line saying what its exit codes mean (DEF-5004's
+        seven, at filing). Read it through ``mail.machine_setting`` (its
+        ``scope`` reads the clone's or a worktree's own config), or tell exit 1
+        from every other exit and mark the read with the reason."""
+        from tests._name_readers import raw_reads, tools_cc_files
+        _found, silent = raw_reads(tools_cc_files(REPO_ROOT), REPO_ROOT)
+        assert silent == [], f"raw reads of the machine name that do not say a failed read: {silent}"
+
+    def test_a_reader_handing_the_reason_on_is_not_a_caller(self, tmp_path):
+        """A reader that returns another reader's answer whole is a reader,
+        not a caller that drops the reason. Dies to: the skip widened to every
+        function (a silent caller then hides), or narrowed back to the reader
+        under count (``clone_machine``'s own delegation then reds the pin)."""
+        from tests._name_readers import calls
+        planted = tmp_path / "tools" / "cc"
+        planted.mkdir(parents=True)
+        (planted / "mail.py").write_text(
+            "def machine_setting(root, *, scope=None):\n"
+            "    return run(['git', 'config', '--get', MACHINE_KEY])\n"
+            "def clone_machine(root):\n"
+            "    return machine_setting(root, scope='local')\n"
+            "def caller(root):\n"
+            "    return machine_setting(root, scope='worktree')[0]\n",
+            encoding="utf-8")
+        found, silent, _aliases = calls([planted / "mail.py"], tmp_path)
+        assert found == ["tools/cc/mail.py::caller"] and silent == ["tools/cc/mail.py::caller"], (found, silent)
 
     def test_the_predicate_tells_each_shape_apart(self, tmp_path):
         """The pin's own red, on a planted tree (subfolder included). Dies to: a

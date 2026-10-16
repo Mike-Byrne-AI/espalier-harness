@@ -616,11 +616,20 @@ def block_key(root: Path, seat: str, blocks: dict[str, dict[str, tuple[int, int]
     has one. Otherwise a worktree seat named ``<clone>-<directory>`` (the name
     SessionStart gives it) mints from its clone's line: the worktrees of one
     clone share the clone's reservation record and its lock, so they cannot
-    collide, and a short-lived worktree needs no line of its own."""
+    collide, and a short-lived worktree needs no line of its own. Where the
+    clone's name could not be read, :class:`SeatNameUnread`: that is not a
+    clone that names no machine, which would send the seat to the dispatcher
+    for a block it may already mint from."""
     if seat in blocks:
         return seat, None
     mail = _mail_module()
-    clone = mail.clone_machine(root) if mail is not None and hasattr(mail, "clone_machine") else None
+    if mail is None or not hasattr(mail, "clone_machine"):
+        return None, None
+    clone, how = mail.clone_machine(root)
+    if clone is None and how.startswith(mail.MACHINE_UNREAD):
+        raise SeatNameUnread(f"{seat} has no line of its own in [{BLOCKS_TABLE}], and its clone's machine name "
+                             f"could not be read ({how}), so the block it mints from is not known; retry once "
+                             "git answers")
     if clone and clone in blocks and seat.startswith(clone + "-"):
         return clone, (f"{seat} has no line of its own in [{BLOCKS_TABLE}], so it mints from its clone's "
                        f"block ({clone}), shared with every worktree of this clone")
@@ -682,6 +691,7 @@ def explicit_id_refusal(root: Path, rid: str) -> tuple[str | None, str | None]:
         if blocks is None:
             return None, None
         seat, _note = minting_seat(root)
+        key, _key_note = block_key(root, seat, blocks)
     except SeatNameUnread as exc:
         return (f"{exc}; {rid}'s block cannot be checked until then, so it is refused (--override files it "
                 "anyway)"), None
@@ -691,7 +701,6 @@ def explicit_id_refusal(root: Path, rid: str) -> tuple[str | None, str | None]:
     except MintRefused as exc:
         return str(exc), None
     kind, number = m.group(1), int(m.group(2))
-    key, _key_note = block_key(root, seat, blocks)
     lo, hi = blocks.get(key, {}).get(kind, (1, 0)) if key else (1, 0)
     if lo <= number <= hi:
         return None, seat

@@ -141,8 +141,9 @@ def calls(files: list[Path], root: Path, reader: str = "machine_setting") -> tup
             if not (isinstance(call, ast.Call) and _name(call.func) == reader):
                 continue
             inner = _innermost(funcs, call.lineno)
-            if inner is not None and inner.name == reader:
-                continue
+            if inner is not None and inner.name in READERS:
+                continue   # a reader returning another's answer whole hands the reason on, as one
+                           # that runs git itself does (clone_machine is machine_setting's --local read)
             scope, where = (tree, "<module>") if inner is None else (inner, inner.name)
             found.append(f"{rel}::{where}")
             if not _says_which(call, scope, lines):

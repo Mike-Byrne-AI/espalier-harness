@@ -207,6 +207,74 @@ class TestList:
 
 # -- launch --------------------------------------------------------------------------
 
+class TestTheSeatNamesSayAFailedRead:
+    """A seat name git could not answer (a timeout, a config git cannot
+    parse) is said, never taken for "no name": the clone's own name, which
+    ``list``, ``launch`` and ``retire`` all read, and a worktree's own."""
+
+    @staticmethod
+    def _failures(seat):
+        return (seat.mail.Unresolvable("git config took longer than 10s"),
+                (128, "", "fatal: bad config line 3 in file .git/config"))
+
+    @staticmethod
+    def _clone_read_fails(seat, monkeypatch, failed):
+        """The real clone read, with a git that fails it."""
+        real = seat.mail.clone_machine
+
+        def run(argv, **kw):
+            if isinstance(failed, Exception):
+                raise failed
+            return failed
+        monkeypatch.setattr(seat.mail, "clone_machine", lambda root, **kw: real(root, run=run))
+
+    def test_an_unread_clone_name_lists_the_seats_and_says_why_nothing_was_read(self, seat, clone, registry,
+                                                                              monkeypatch):
+        """Dies to the failed read taken for a clone that names no machine:
+        the clone listed as unnamed, its worktrees given no seat, and the
+        claims and jobs skipped in silence."""
+        _worktree(clone, "plain")
+        for failed in self._failures(seat):
+            self._clone_read_fails(seat, monkeypatch, failed)
+            found, note = seat.seats(clone, fetch=False)
+            assert found[0].naming == "unread" and seat.mail.MACHINE_UNREAD in found[0].naming_note, found[0]
+            assert found[1].naming == "unread" and found[1].name == "", found[1]
+            assert "clone's machine name could not be read" in note and "claims or jobs" in note, note
+            assert "(seat name unread: git config could not be read" in seat.render(found, note)
+
+    def test_an_unread_clone_name_refuses_resolve_and_retire_without_the_naming_advice(self, seat, clone,
+                                                                                    monkeypatch):
+        """Dies to the refusal that offered `git config espalier.machine
+        <name>`, which in a worktree renames the clone and fails the same way
+        on a config git cannot parse; and to retire taking a seat for one that
+        is not the clone when the clone's name is unknown."""
+        _worktree(clone, "feat", name="box-feat")
+        for failed in self._failures(seat):
+            self._clone_read_fails(seat, monkeypatch, failed)
+            with pytest.raises(seat.Refused) as caught:
+                seat.resolve(clone, "box-feat")
+            said = str(caught.value)
+            assert seat.mail.MACHINE_UNREAD in said and "names it" not in said, said
+            with pytest.raises(seat.Refused) as caught:
+                seat.cmd_retire(clone, "box-feat", dry_run=True, fetch=False)
+            said = str(caught.value)
+            assert "cannot be told from the clone itself" in said and seat.mail.MACHINE_UNREAD in said, said
+
+    def test_a_worktree_whose_own_name_is_unread_is_not_given_a_derived_one(self, seat, clone, registry):
+        """A config git cannot parse in the worktree's own config. Dies to the
+        failed read taken for "no name of its own": the derived name then
+        stood for the seat, and resolve handed that worktree to a launch or a
+        retire of a name it may not answer."""
+        feat = _worktree(clone, "feat", name="box-feat")
+        (clone / ".git" / "worktrees" / "feat" / "config.worktree").write_bytes(b"[espalier\n")
+        found, _note = seat.seats(clone, fetch=False)
+        row = next(s for s in found if s.path == str(feat))
+        assert row.naming == "unread" and row.name == "" and seat.mail.MACHINE_UNREAD in row.naming_note, row
+        with pytest.raises(seat.Refused) as caught:
+            seat.resolve(clone, "box-feat")
+        assert "could not be read" in str(caught.value) and str(feat) in str(caught.value), caught.value
+
+
 class TestLaunch:
     def test_an_occupied_seat_is_refused_and_a_gone_session_is_not_occupancy(self, seat, clone, registry, no_claude,
                                                                              capsys):

@@ -157,6 +157,7 @@ class Seat:
     claims: list[dict] = field(default_factory=list)
     jobs: list[dict] = field(default_factory=list)
     removal: str = ""               # '' for the clone; "removable" or the reason it stays
+    naming_note: str = ""           # why the name could not be read, where naming is "unread"
 
 
 def _blocks(root: Path) -> list[dict[str, str]]:
@@ -170,18 +171,31 @@ def _home(root: Path) -> Path:
     return root.joinpath(*WORKTREES_REL)
 
 
-def _own_name(path: Path) -> str:
-    return _git(path, "config", "--worktree", "--get", mail.MACHINE_KEY) or ""
+def _own_name(path: Path) -> tuple[str, str]:
+    """``(the worktree's own name or '', why it could not be read or '')``:
+    git's per-worktree setting, read as :func:`mail.machine_setting` reads it,
+    so a read that failed is said, never taken for "no name of its own"."""
+    own, how = mail.machine_setting(path, scope="worktree")
+    if own is None and how.startswith(mail.MACHINE_UNREAD):
+        return "", how
+    return own or "", ""
 
 
-def _seat_name(clone: str | None, path: Path) -> tuple[str, str]:
-    """``(name, how)`` for a worktree: its own configured name, else the one
-    SessionStart derives from its folder, else ''."""
-    own = _own_name(path)
+def _seat_name(clone: str | None, path: Path, clone_unread: str = "") -> tuple[str, str, str]:
+    """``(name, how, why)`` for a worktree: its own configured name, else the
+    one SessionStart derives from its folder, else ''. ``how`` is ``unread``,
+    with ``why``, where its own name, or the clone's it would derive from
+    (``clone_unread``), could not be read: then no name is given, since a
+    derived one could stand for another seat."""
+    own, unread = _own_name(path)
+    if unread:
+        return "", "unread", unread
     if own:
-        return own, "own"
+        return own, "own", ""
+    if clone_unread:
+        return "", "unread", clone_unread
     derived = mail.worktree_seat_name(clone, path.name) if clone else None
-    return (derived, "derived") if derived else ("", "unnamed")
+    return (derived, "derived", "") if derived else ("", "unnamed", "")
 
 
 CHANNEL_UNREAD = "the mail channel could not be read"
@@ -225,21 +239,26 @@ _READ = object()
 def seats(root: Path, *, fetch: bool = True, sessions: object = _READ) -> tuple[list[Seat], str]:
     """Every seat of the clone at ``root``, the clone first, and one note on
     the channel read. ``sessions`` defaults to the live registry read."""
-    clone = mail.clone_machine(root)
+    clone, clone_how = mail.clone_machine(root)
+    clone_unread = clone_how if clone is None and clone_how.startswith(mail.MACHINE_UNREAD) else ""
     blocks = _blocks(root)
     live = sync.live_sessions() if sessions is _READ else sessions
     registry = live if isinstance(live, list) else None
     checkouts = [Path(b["worktree"]) for b in blocks if b.get("worktree") and "prunable" not in b]
     claims, jobs, channel_note = _read_channel(root, fetch=fetch) if clone else ([], [], "")
+    if clone_unread:
+        channel_note = (f"the clone's machine name could not be read ({clone_unread}), so no seat's claims or "
+                        "jobs were read")
     rows, marker_live = reap_inputs(root, registry)
     found: list[Seat] = []
     for index, block in enumerate(blocks):
         path = Path(block.get("worktree", ""))
         if index == 0:
-            seat = Seat(clone or "", str(path), "the clone", "clone" if clone else "unnamed")
+            seat = Seat(clone or "", str(path), "the clone",
+                        "clone" if clone else "unread" if clone_unread else "unnamed", naming_note=clone_unread)
         elif sync.within(path, _home(root)):
-            name, how = _seat_name(clone, path)
-            seat = Seat(name, str(path), "/".join(WORKTREES_REL + (path.name,)), how)
+            name, how, why = _seat_name(clone, path, clone_unread)
+            seat = Seat(name, str(path), "/".join(WORKTREES_REL + (path.name,)), how, naming_note=why)
         else:
             continue
         seat.branch = block.get("branch", "").replace("refs/heads/", "") or ("detached" if "detached" in block else "")
@@ -284,7 +303,8 @@ def render(found: list[Seat], channel_note: str) -> str:
     lines: list[str] = []
     for seat in found:
         on = f"on {seat.branch} at {seat.head}" if seat.branch else f"at {seat.head}"
-        named = {"derived": " (name derived; SessionStart sets it)", "unnamed": " (no seat name)"}.get(seat.naming, "")
+        named = {"derived": " (name derived; SessionStart sets it)", "unnamed": " (no seat name)",
+                 "unread": f" (seat name unread: {seat.naming_note})"}.get(seat.naming, "")
         lines.append(f"seat {seat.name or '?'}{named} -- {seat.where} ({seat.path}), {on}")
         lines.append(f"  sessions: {_sessions_words(seat)}")
         lines.append(f"  claims:   {_lanes(seat.claims)}")
@@ -320,21 +340,29 @@ def resolve(root: Path, seat: str) -> Target:
     own name is ``seat``, one whose derived name is (it has none of its own
     yet), or -- for a name of the form ``<clone>-<dir>`` -- a worktree at
     ``.claude/worktrees/<dir>`` that does not exist yet."""
-    clone = mail.clone_machine(root)
+    clone, clone_how = mail.clone_machine(root)
     if not clone:
+        if clone_how.startswith(mail.MACHINE_UNREAD):
+            raise Refused(f"{clone_how}, so no seat of this clone can be resolved until git answers")
         raise Refused(f"this clone names no machine, so it has no seats: `git config {mail.MACHINE_KEY} <name>` "
                       "names it (lowercase letters, digits and hyphens)")
     if seat == clone:
         return Target(seat, root, True, True)
     registered: dict[str, tuple[Path, str]] = {}
+    unread: list[str] = []
     for block in _blocks(root)[1:]:
         path = Path(block.get("worktree", ""))
         if not sync.within(path, _home(root)):
             continue
-        name, _how = _seat_name(clone, path) if path.is_dir() else ("", "gone")
+        name, how, why = _seat_name(clone, path) if path.is_dir() else ("", "gone", "")
         if name == seat:
             return Target(seat, path, True, False)
+        if how == "unread":
+            unread.append(f"{path} ({why})")
         registered[sync._norm(path)] = (path, name)
+    if unread:
+        raise Refused(f"the seat name of {'; '.join(unread)} could not be read, so whether it is {seat!r} cannot be "
+                      "told: nothing is resolved until git answers")
     prefix = f"{clone}-"
     folder = seat[len(prefix):] if seat.startswith(prefix) else ""
     if not folder or mail.worktree_seat_name(clone, folder) != seat:
@@ -747,8 +775,14 @@ def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unc
         name, said = mail.name_this_worktree(target.path)
         if said:
             say(said)
-        if name is None and _own_name(target.path) != seat:
-            raise Refused(f"{target.path} does not answer {seat!r} and could not be named: {said or 'no reason given'}")
+        if name is None:
+            own, unread = _own_name(target.path)
+            if unread:
+                raise Refused(f"{target.path}'s own seat name could not be read ({unread}), so whether it answers "
+                              f"{seat!r} cannot be told: nothing is launched until git answers")
+            if own != seat:
+                raise Refused(f"{target.path} does not answer {seat!r} and could not be named: "
+                              f"{said or 'no reason given'}")
     if venv_bindir(target.path) is None and (target.path / "espalier" / "__init__.py").is_file():
         say(f"note: {target.path} has no .venv, so a test run there imports espalier from wherever `python` "
             "finds it (the banner's Engine: line); a .venv of its own with an editable install fixes it")
@@ -818,7 +852,11 @@ def _send_releases(path: Path, seat: str, ids: list[str], text: str) -> None:
 
 def cmd_retire(root: Path, seat: str, *, dry_run: bool, fetch: bool, return_jobs: bool = False,
                unchecked: bool = False) -> int:
-    clone = mail.clone_machine(root) or ""
+    named_clone, clone_how = mail.clone_machine(root)
+    if named_clone is None and clone_how.startswith(mail.MACHINE_UNREAD):
+        raise Refused(f"{clone_how}, so {seat!r} cannot be told from the clone itself: nothing is released or "
+                      "removed until git answers")
+    clone = named_clone or ""
     if seat == clone:
         raise Refused(f"{seat} is the clone itself: its checkout is the repository, never retired")
     claims, jobs, note = _read_channel(root, fetch=fetch)

@@ -352,6 +352,137 @@ class TestMachineSettingReads:
         assert "turns it on" in capsys.readouterr().err
 
 
+class TestTheNameReadersSayAFailedRead:
+    """Every read of the machine name tells a read that failed (git timing
+    out, a config git cannot parse) from a name that is not set: the clone's
+    own read, a worktree's own, and the reads name_this_worktree makes.
+    Driven with a fake git keyed by directory and argument list, since the
+    failures are the thing under test."""
+
+    @staticmethod
+    def _failures(mail):
+        """The two failures every case is driven with: a timeout, and a config git cannot parse."""
+        return (mail.Unresolvable("git config took longer than 10s"),
+                (128, "", "fatal: bad config line 3 in file .git/config"))
+
+    @staticmethod
+    def _git_at(by_cwd: dict, default: dict):
+        """A fake git: ``by_cwd[str(cwd)][args]`` first, else ``default[args]``;
+        a list answers in call order, an exception is raised."""
+        def run(argv, cwd=None, **kw):
+            key = tuple(argv[1:])
+            table = by_cwd.get(str(cwd), {})
+            answer = table[key] if key in table else default.get(key)
+            if answer is None:
+                raise AssertionError(f"unexpected call {argv} in {cwd}")
+            if isinstance(answer, list):
+                answer = answer.pop(0)
+            if isinstance(answer, BaseException):
+                raise answer
+            return answer
+        return run
+
+    def test_the_clone_read_says_a_failed_read(self, mail, tmp_path):
+        """Dies to clone_machine answering None alike where the clone names no
+        machine and where git could not answer (DEF-5003's reader)."""
+        key = ("config", "--local", "--get", "espalier.machine")
+        for failed in self._failures(mail):
+            name, how = mail.clone_machine(tmp_path, run=self._git_at({}, {key: failed}))
+            assert name is None and how.startswith(mail.MACHINE_UNREAD), how
+        name, how = mail.clone_machine(tmp_path, run=self._git_at({}, {key: (1, "", "")}))
+        assert name is None and not how.startswith(mail.MACHINE_UNREAD), how
+        assert mail.clone_machine(tmp_path, run=self._git_at({}, {key: (0, "win\n", "")}))[0] == "win"
+
+    def test_a_worktree_read_with_the_extension_off_is_not_set(self, mail, tmp_path):
+        """Measured on git 2.39.5: with several worktrees and
+        extensions.worktreeConfig off, `git config --worktree --get` exits 128
+        ("cannot be used with multiple working trees"). That is no worktree
+        having a name of its own, not a failed read. Dies to the worktree
+        scope reading every 128 as unread, which kept every worktree of a clone
+        without the extension from SessionStart's clean-up."""
+        ext = ("config", "--get", "extensions.worktreeConfig")
+        own = ("config", "--worktree", "--get", "espalier.machine")
+        refused = (128, "", "fatal: --worktree cannot be used with multiple working trees")
+        name, how = mail.machine_setting(tmp_path, run=self._git_at({}, {ext: (1, "", ""), own: refused}),
+                                         scope="worktree")
+        assert name is None and not how.startswith(mail.MACHINE_UNREAD), how
+        for failed in self._failures(mail):
+            for answers in ({ext: failed}, {ext: (0, "true\n", ""), own: failed}):
+                name, how = mail.machine_setting(tmp_path, run=self._git_at({}, answers), scope="worktree")
+                assert name is None and how.startswith(mail.MACHINE_UNREAD), (answers, how)
+        got = mail.machine_setting(tmp_path, run=self._git_at({}, {ext: (0, "true\n", ""), own: (0, "air-2\n", "")}),
+                                   scope="worktree")
+        assert got[0] == "air-2", got
+
+    def test_a_failed_key_read_is_no_evidence_of_an_inherited_name(self, mail, tmp_path):
+        """worktree_name_inherited refuses on evidence only (its docstring):
+        it answered True, refusing a mint or an assign, where its key read
+        exited 128. Dies to every nonzero exit read as "no name of its own"."""
+        answers = {("rev-parse", "--git-dir"): (0, f"{tmp_path / 'gitdir'}\n", ""),
+                   ("rev-parse", "--git-common-dir"): (0, f"{tmp_path / 'common'}\n", ""),
+                   ("config", "--get", "extensions.worktreeConfig"): (0, "true\n", "")}
+        for failed in self._failures(mail):
+            run = self._git_at({}, {**answers, ("config", "--worktree", "--get", "espalier.machine"): failed})
+            assert mail.worktree_name_inherited(tmp_path, run=run) is False, failed
+        run = self._git_at({}, {**answers, ("config", "--worktree", "--get", "espalier.machine"): (1, "", "")})
+        assert mail.worktree_name_inherited(tmp_path, run=run) is True
+
+    def _naming(self, tmp_path, *, clone, sibling=(1, "", ""), back=(0, "air-wt\n", "")):
+        """The git name_this_worktree meets in .claude-style worktree `wt` of a
+        clone `air` with one other worktree `other`, extension on."""
+        wt, other = tmp_path / "wt", tmp_path / "other"
+        wt.mkdir()
+        other.mkdir()
+        (wt / ".git").write_text("gitdir: x\n", encoding="utf-8")
+        own = ("config", "--worktree", "--get", "espalier.machine")
+        default = {
+            ("rev-parse", "--git-dir"): (0, f"{tmp_path / 'gitdir'}\n", ""),
+            ("rev-parse", "--git-common-dir"): (0, f"{tmp_path / 'common'}\n", ""),
+            ("config", "--get", "extensions.worktreeConfig"): (0, "true\n", ""),
+            ("config", "--get", "espalier.machine"): clone,
+            ("rev-parse", "--show-toplevel"): (0, f"{wt}\n", ""),
+            ("config", "--get", "core.worktree"): (1, "", ""),
+            ("config", "--get", "core.bare"): (0, "false\n", ""),
+            ("worktree", "list", "--porcelain"): (0, f"worktree {wt}\nworktree {other}\n", ""),
+            ("config", "--worktree", "espalier.machine", "air-wt"): (0, "", ""),
+        }
+        run = self._git_at({str(wt): {own: [(1, "", ""), back]}, str(other): {own: sibling}}, default)
+        return wt, run
+
+    def test_name_this_worktree_says_a_failed_clone_read(self, mail, tmp_path):
+        """Dies to the failed read of the clone's name returning (None, ''),
+        SessionStart's 'nothing to do', so a worktree that should be named
+        stays on its clone's name in silence."""
+        for failed in self._failures(mail):
+            sub = tmp_path / type(failed).__name__
+            sub.mkdir()
+            wt, run = self._naming(sub, clone=failed)
+            name, said = mail.name_this_worktree(wt, run=run)
+            assert name is None and mail.MACHINE_UNREAD in said and "not named until git answers" in said, said
+
+    def test_name_this_worktree_refuses_when_a_siblings_name_cannot_be_read(self, mail, tmp_path):
+        """Dies to an unreadable sibling read as 'not taken': two worktrees
+        would then answer one name and write one mail ref."""
+        for failed in self._failures(mail):
+            sub = tmp_path / type(failed).__name__
+            sub.mkdir()
+            wt, run = self._naming(sub, clone=(0, "air\n", ""), sibling=failed)
+            name, said = mail.name_this_worktree(wt, run=run)
+            assert name is None and "could not be told" in said and mail.MACHINE_UNREAD in said, said
+
+    def test_a_failed_read_back_is_named_as_one(self, mail, tmp_path):
+        """Dies to a read-back that failed reported as a name that did not read
+        back, which sends the operator looking at the wrong thing."""
+        for failed in self._failures(mail):
+            sub = tmp_path / type(failed).__name__
+            sub.mkdir()
+            wt, run = self._naming(sub, clone=(0, "air\n", ""), back=failed)
+            name, said = mail.name_this_worktree(wt, run=run)
+            assert name is None and "read-back failed" in said and mail.MACHINE_UNREAD in said, said
+        wt, run = self._naming(tmp_path, clone=(0, "air\n", ""))
+        assert mail.name_this_worktree(wt, run=run)[0] == "air-wt"
+
+
 class TestNamingSteps:
     """The by-hand steps that name a linked worktree, one owner for every
     refusal that prints them. On a clone whose shared config sets core.bare
@@ -742,7 +873,7 @@ class TestNameThisWorktree:
         repo = self._clone(tmp_path)
         self._git("worktree", "add", "-q", str(tmp_path / "feat"), cwd=repo)
         assert mail.name_this_worktree(tmp_path / "feat")[0] == "win-feat"
-        assert mail.clone_machine(tmp_path / "feat") == "win"
+        assert mail.clone_machine(tmp_path / "feat")[0] == "win"
         assert mail.machine_setting(tmp_path / "feat")[0] == "win-feat"
 
     def test_a_separate_git_dir_clone_is_left_alone(self, mail, tmp_path):
