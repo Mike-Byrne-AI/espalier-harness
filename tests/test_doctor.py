@@ -2061,6 +2061,17 @@ class TestEveryWarningCarriesANextStep:
         ))
 
     @staticmethod
+    def _hook_start_probe_unreached(mp):
+        """DEF-2019: a host too slow for the start probe to reach every hook."""
+        from espalier import doctor as d
+        mp.setattr(
+            d, "_check_wired_hooks_start",
+            lambda root, warnings=None: (warnings.append(
+                "hook start probe: 0 of 12 wired hooks probed; the host did not start the probe's "
+                "interpreter within 20 s (a slow host), which says nothing against config_guard.py"), [])[1],
+        )
+
+    @staticmethod
     def _dead_reporter(mp):
         """DEF-619: a deployed reporter hook with no executable wiring."""
         from espalier import doctor as d
@@ -2176,6 +2187,7 @@ class TestEveryWarningCarriesANextStep:
         "_retired_deny_rule",
         "_superseded_allow_rule",
         "_dead_reporter",
+        "_hook_start_probe_unreached",
         "_gitignore_missing",
         "_gitignore_declined_unknown",
         "_stale_saved_paths",
@@ -4557,7 +4569,8 @@ class TestDoctorNamesAHookThatCannotStart:
 
     @staticmethod
     def _stub_children(doctor_module, monkeypatch, *, hang: str | None = None, slow: bool = False,
-                       mute: bool = False) -> list[tuple[list[str], float]]:
+                       mute: bool = False, as_text: bool = False, alone_slow: bool = False,
+                       ends: str | None = None) -> list[tuple[list[str], float]]:
         """Stand in for every start-probe child at the spawn layer, and return
         each spawn's ``(scripts, budget)`` in order. A child prints a ready line,
         one JSON line per hook it imports, then the whole answer (the reader
@@ -4565,7 +4578,10 @@ class TestDoctorNamesAHookThatCannotStart:
         anything inside its budget (a host too slow to start the interpreter);
         ``mute``: each prints its ready line and then answers for nothing;
         ``hang``: that hook never returns from its import, so the child that
-        reaches it times out with what it printed before."""
+        reaches it times out with what it printed before (as bytes, POSIX's
+        capture, or with ``as_text`` as the text a Windows drain reads);
+        ``alone_slow``: a child given one hook never starts; ``ends``: that
+        hook ends the interpreter at import, so the child exits 1 there."""
         import json
         import subprocess
         spawns: list[tuple[list[str], float]] = []
@@ -4575,30 +4591,32 @@ class TestDoctorNamesAHookThatCannotStart:
                 raise AssertionError(f"an unexpected spawn: {argv[:2]}")
             scripts, budget = list(argv[4:]), kwargs.get("timeout") or 0
             spawns.append((scripts, budget))
-            if slow:
+            if slow or (alone_slow and len(scripts) == 1):
                 raise subprocess.TimeoutExpired(argv, budget)
             lines = [json.dumps({"start_probe_ready": True})]
-            answers = {}
             for script in scripts:
+                if script == ends:
+                    return subprocess.CompletedProcess(argv, 1, "\n".join(lines) + "\n", "")
                 if mute or script == hang:
-                    raise subprocess.TimeoutExpired(argv, budget, output="\n".join(lines).encode("utf-8"))
-                answers[script] = {"ok": True, "error": ""}
+                    printed = "\n".join(lines)
+                    raise subprocess.TimeoutExpired(argv, budget, output=printed if as_text else printed.encode())
                 lines.append(json.dumps({"start_probe": script, "ok": True, "error": ""}))
-            lines.append(json.dumps(answers))
             return subprocess.CompletedProcess(argv, 0, "\n".join(lines) + "\n", "")
 
         monkeypatch.setattr(doctor_module, "run_bounded", child)
         return spawns
 
-    def test_a_hook_that_hangs_is_named_and_its_siblings_are_read_in_one_retry(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("as_text", [False, True], ids=["bytes", "text"])
+    def test_a_hook_that_hangs_is_named_and_its_siblings_are_read_in_one_retry(self, tmp_path, monkeypatch, as_text):
         """DEF-2019: a batch that stops on one hook re-probes that hook alone
         and the hooks after it together -- three spawns, never one per hook --
         and the hook that still does not answer on its own full budget is a
         FAIL by name, never a warning (a hang hides its siblings; the
-        failure-mode review, 2026-10-10)."""
+        failure-mode review, 2026-10-10). What the stopped child printed is
+        read as POSIX captures it and as a Windows drain does."""
         from espalier import doctor as doctor_module
         tree = self._init_tree(tmp_path)
-        spawns = self._stub_children(doctor_module, monkeypatch, hang="post_compact.py")
+        spawns = self._stub_children(doctor_module, monkeypatch, hang="post_compact.py", as_text=as_text)
         answer = doctor_module._probe_wired_hooks_start(tree)
         assert len(spawns) == 3, [s for s, _ in spawns]
         assert spawns[1][0] == ["post_compact.py"] and "post_compact.py" not in spawns[2][0], spawns
@@ -4638,8 +4656,52 @@ class TestDoctorNamesAHookThatCannotStart:
         assert len(failed) == 1 and "did not answer within" in answer[failed[0]]["error"], answer
         assert sum(v["ok"] is None for v in answer.values()) == 11, answer
 
+    def test_a_retry_that_never_starts_judges_no_hook(self, tmp_path, monkeypatch):
+        """The batch stops on a hook, and the child given that hook alone never
+        starts: that is the host, not the hook, so it is no FAIL (code review,
+        driven 2026-10-16: the mutant reading it as a FAIL survived)."""
+        from espalier import doctor as doctor_module
+        tree = self._init_tree(tmp_path)
+        spawns = self._stub_children(doctor_module, monkeypatch, hang="post_compact.py", alone_slow=True)
+        answer = doctor_module._probe_wired_hooks_start(tree)
+        assert len(spawns) == 2, [s for s, _ in spawns]
+        assert not [s for s, v in answer.items() if v["ok"] is False], answer
+        assert answer["post_compact.py"]["ok"] is None and "slow" in answer["post_compact.py"]["error"], answer
+
+    def test_a_hook_that_ends_the_child_is_named_without_a_retry(self, tmp_path, monkeypatch):
+        """A child that exits at a hook's import was ended by that hook: it is a
+        FAIL by name at once, its siblings are read in the next child, and the
+        warning never blames a slow host for it (code review, driven: an
+        `os._exit` hook read as "did not answer within 20 s")."""
+        from espalier import doctor as doctor_module
+        tree = self._init_tree(tmp_path)
+        spawns = self._stub_children(doctor_module, monkeypatch, ends="post_compact.py")
+        answer = doctor_module._probe_wired_hooks_start(tree)
+        assert len(spawns) == 2 and "post_compact.py" not in spawns[1][0], [s for s, _ in spawns]
+        assert [s for s, v in answer.items() if v["ok"] is False] == ["post_compact.py"], answer
+        assert answer["post_compact.py"]["error"] == "ended the probe at import (exit 1)", answer
+        assert all(v["ok"] is True for s, v in answer.items() if s != "post_compact.py"), answer
+
+    def test_the_real_child_says_it_started_and_answers_per_hook(self, tmp_path, monkeypatch):
+        """The child script itself, run for real: it says it started and
+        answers for each hook, which is what lets a stopped child give what it
+        reached (the stubs above print the protocol themselves, so dropping
+        either line from the child survived them; code review). A generous
+        budget: this pins the protocol, not a host's speed."""
+        from espalier import doctor as doctor_module
+        hooks = tmp_path / "hooks"
+        hooks.mkdir()
+        (hooks / "fine.py").write_text("X = 1\n", encoding="utf-8")
+        (hooks / "broken.py").write_text("raise KeyError('floor')\n", encoding="utf-8")
+        monkeypatch.setattr(doctor_module, "_HOOK_START_BUDGET_S", 120)
+        answer, how = doctor_module._run_start_probe(tmp_path, hooks, ["fine.py", "broken.py"])
+        assert how == "exit 0", how
+        assert answer == {"fine.py": {"ok": True, "error": ""},
+                          "broken.py": {"ok": False, "error": "KeyError: 'floor'"}}, answer
+
     def test_the_slow_host_warning_reaches_the_report(self, tmp_path, monkeypatch):
-        """End to end: the report carries the warning and no start FAIL."""
+        """End to end: the report carries the warning, its next step, and no
+        start FAIL."""
         import subprocess
         from espalier import doctor as doctor_module
         tree = self._init_tree(tmp_path)
@@ -4654,6 +4716,7 @@ class TestDoctorNamesAHookThatCannotStart:
         result = run_doctor_check(tree, skip_self_host=True)
         assert self._start_lines(result) == [], result["failures"]
         assert any(w.startswith("hook start probe:") for w in result["warnings"]), result["warnings"]
+        assert any("hook start probe did not reach" in s for s in result["next_steps"]), result["next_steps"]
 
     def test_a_tree_wiring_no_readable_script_adds_nothing(self, tmp_path):
         # Presence and the wiring check own a settings file that wires nothing;
@@ -4662,7 +4725,7 @@ class TestDoctorNamesAHookThatCannotStart:
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".claude" / "settings.json").write_text('{"hooks": {}}', encoding="utf-8")
         assert doctor_module._probe_wired_hooks_start(tmp_path) is None
-        assert doctor_module._check_wired_hooks_start(tmp_path) == []
+        assert doctor_module._check_wired_hooks_start(tmp_path, []) == []
 
 
 class TestDoctorNamesTheStopGatePosture:

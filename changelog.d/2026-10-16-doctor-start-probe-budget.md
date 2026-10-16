@@ -8,13 +8,17 @@
   out too, so every hook was reported as unable to start.
 
   Now:
-  - The check has one time budget of 60 seconds in all.
-  - It re-checks only the hook the first child stopped on, then the hooks
+  - The check runs at most three child processes of 20 seconds each: about a
+    minute at worst, a little more on Windows, where a stopped child can take
+    up to 2 seconds to end.
+  - When a child stops on a hook, it re-checks that hook alone, then the hooks
     after it together.
+  - A child that ends at a hook's import was ended by that hook: that hook is
+    named at once.
   - A child that never starts at all is read as a slow machine, so no hook
     is judged on it.
-  - Hooks it did not reach are a warning that says the machine was slow,
-    not a failure.
+  - Hooks it did not reach are a warning that says why, with a next step, not
+    a failure.
 
   A hook that hangs on its own is still reported by name as unable to start.
   On a healthy tree the check takes the same time as before.

@@ -1171,7 +1171,6 @@ for script in scripts:
         first = (str(exc).splitlines() or [""])[0]
         out[script] = {"ok": False, "error": f"{type(exc).__name__}: {first}"}
     say({"start_probe": script, **out[script]})
-say(out)
 """
 
 #: One start-probe child's budget, in seconds; named in the FAIL.
@@ -1182,14 +1181,16 @@ _HOOK_START_BUDGET_S = 20
 _HOOK_START_TOTAL_S = 60
 
 
-def _run_start_probe(repo_root: Path, hooks_dir: Path, scripts: list[str]) -> dict | None:
+def _run_start_probe(repo_root: Path, hooks_dir: Path, scripts: list[str]) -> tuple[dict | None, str]:
     """One bounded child importing ``scripts`` by name with ``hooks_dir`` first
     on its ``sys.path`` and the tree as cwd. The child says it started, then
-    answers for each hook as it imports it, so a child stopped at its budget
-    still gives what it reached: the dict holds every hook it answered for, and
-    is empty when it started and reached none. ``None`` when the child never
-    said it started (a host too slow to start the interpreter inside the budget)
-    or could not be spawned. A hook's own stdout may sit between the lines."""
+    answers for each hook as it imports it, so a child that stops still gives
+    what it reached. Returns ``(answers, how)``: ``answers`` holds every hook
+    the child answered for (empty when it started and reached none), or is
+    ``None`` when the child never said it started; ``how`` is ``"timeout"``
+    when its budget ran out, ``"exit <code>"`` when it ended on its own (a hook
+    that ends the interpreter at import ends the child with it), and
+    ``"unspawnable"``. A hook's own stdout may sit between the lines."""
     import json as _json
     import subprocess
     import sys as _sys
@@ -1199,14 +1200,15 @@ def _run_start_probe(repo_root: Path, hooks_dir: Path, scripts: list[str]) -> di
             cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=_HOOK_START_BUDGET_S,
         )
-        text = proc.stdout or ""
+        text, how = proc.stdout or "", f"exit {proc.returncode}"
     except subprocess.TimeoutExpired as exc:
-        # What the child printed before its budget ran out: bytes on POSIX,
-        # whatever the platform's capture gives elsewhere.
+        # What the child printed before its budget ran out: bytes on POSIX, the
+        # text a second drain read on Windows (espalier._spawn.run_bounded).
         printed = exc.stdout or b""
         text = printed.decode("utf-8", "replace") if isinstance(printed, bytes) else str(printed)
+        how = "timeout"
     except (OSError, subprocess.SubprocessError, ValueError):
-        return None
+        return None, "unspawnable"
     started = False
     answers: dict = {}
     for line in text.splitlines():
@@ -1223,9 +1225,15 @@ def _run_start_probe(repo_root: Path, hooks_dir: Path, scripts: list[str]) -> di
             started = True
         elif isinstance(obj.get("start_probe"), str):
             answers[obj["start_probe"]] = {"ok": bool(obj.get("ok")), "error": str(obj.get("error") or "")}
-        elif obj and all(isinstance(v, dict) for v in obj.values()):
-            answers.update(obj)  # the whole answer, last
-    return answers if started or answers else None
+    return (answers if started else None), how
+
+
+def _never_started(how: str) -> str:
+    """Why the hooks a probe child never reached went unprobed, from how that
+    child ended: a timeout before it said it started is a slow host."""
+    if how == "timeout":
+        return f"the host did not start the probe's interpreter within {_HOOK_START_BUDGET_S} s (a slow host)"
+    return f"the probe's interpreter could not run ({how})"
 
 
 def _probe_wired_hooks_start(repo_root: Path) -> dict | None:
@@ -1263,33 +1271,46 @@ def _probe_wired_hooks_start(repo_root: Path) -> dict | None:
     out: dict = {}
     pending = list(scripts)
     children = max(1, _HOOK_START_TOTAL_S // _HOOK_START_BUDGET_S)
+    unreached = f"the probe's {children} children of {_HOOK_START_BUDGET_S} s each ran out before them"
     while pending and children:
         children -= 1
-        answer = _run_start_probe(repo_root, hooks_dir, pending)
+        answer, how = _run_start_probe(repo_root, hooks_dir, pending)
         if answer is None:
-            break                                  # never started: the host is slow, no hook judged
+            unreached = _never_started(how)        # no hook is judged on a child that never started
+            break
         for script in pending:
             verdict = answer.get(script)
             if isinstance(verdict, dict):
                 out[script] = verdict
         pending = [script for script in pending if script not in out]
-        if not pending or not children:
+        if not pending:
+            break
+        culprit = pending[0]                       # the hook the child stopped on
+        if how != "timeout":
+            # The child ended at this hook's import: the hook ended it, not the host.
+            out[culprit] = {"ok": False, "error": f"ended the probe at import ({how})"}
+            pending = pending[1:]
+            continue
+        if not children:
             break
         children -= 1
-        suspect = pending[0]                       # the hook the batch stopped on
-        alone = _run_start_probe(repo_root, hooks_dir, [suspect])
+        alone, alone_how = _run_start_probe(repo_root, hooks_dir, [culprit])
         if alone is None:
+            unreached = _never_started(alone_how)
             break
-        verdict = alone.get(suspect)
-        out[suspect] = verdict if isinstance(verdict, dict) else {
-            "ok": False, "error": f"did not answer within {_HOOK_START_BUDGET_S} s"}
+        verdict = alone.get(culprit)
+        out[culprit] = verdict if isinstance(verdict, dict) else {
+            "ok": False,
+            "error": (f"did not answer within {_HOOK_START_BUDGET_S} s" if alone_how == "timeout"
+                      else f"ended the probe at import ({alone_how})"),
+        }
         pending = pending[1:]
     for script in pending:
-        out[script] = {"ok": None, "error": f"not probed within the probe's {_HOOK_START_TOTAL_S} s"}
+        out[script] = {"ok": None, "error": unreached}
     return out
 
 
-def _check_wired_hooks_start(repo_root: Path, warnings: list[str] | None = None) -> list[str]:
+def _check_wired_hooks_start(repo_root: Path, warnings: list[str]) -> list[str]:
     """One FAIL per wired hook that cannot start, naming the hook and the error
     (DEF-1188: ``doctor`` read ``pass`` on a tree where two wired hooks exited 1
     at import, so the diagnostic the README tells an adopter to run after an
@@ -1305,11 +1326,11 @@ def _check_wired_hooks_start(repo_root: Path, warnings: list[str] | None = None)
         return []
     unreached = sorted(script for script, verdict in answer.items()
                        if isinstance(verdict, dict) and verdict.get("ok") is None)
-    if unreached and warnings is not None:
+    if unreached:
+        why = str(answer[unreached[0]].get("error") or "the probe stopped before them")
         warnings.append(
-            f"hook start probe: {len(answer) - len(unreached)} of {len(answer)} wired hooks probed within "
-            f"{_HOOK_START_TOTAL_S} s; the host was slow to start the probe, which says nothing against "
-            f"{', '.join(unreached)}: run doctor again on a quieter machine"
+            f"hook start probe: {len(answer) - len(unreached)} of {len(answer)} wired hooks probed; "
+            f"{why}, which says nothing against {', '.join(unreached)}"
         )
     return [
         f"hook cannot start: tools/cc/hooks/{script} -- {str(verdict.get('error') or 'no error text')}"
@@ -3142,8 +3163,16 @@ def run_doctor_check(
     # Every wired hook starts: one FAIL per hook that
     # cannot, with the repair; a hook that dies at import judges nothing. Hooks
     # a slow host kept the probe from reaching are a warning (DEF-2019).
-    start_failures = _check_wired_hooks_start(repo_root, warnings=warnings)
+    start_warnings: list[str] = []
+    start_failures = _check_wired_hooks_start(repo_root, start_warnings)
     failures.extend(start_failures)
+    warnings.extend(start_warnings)
+    if start_warnings:
+        _append_step(
+            next_steps,
+            f"the hook start probe did not reach every wired hook: run `{_remedy_py()} -m espalier doctor .` "
+            "again on a less loaded machine; a hook it reached and could not start is a FAIL of its own",
+        )
     if start_failures:
         _append_step(
             next_steps,
