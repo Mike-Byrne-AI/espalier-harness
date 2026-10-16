@@ -8910,7 +8910,8 @@ class TestTheCmdDeleteReaderReadsEachBranch:
                   "foreach ($v in $p) { '{0} {1} {2}' -f $v.SwitchParameter, $v.Name, "
                   "($v.Aliases -join ',') }")
         out = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", script],
-                             capture_output=True, text=True, timeout=50).stdout
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=50).stdout
         names: dict[str, bool] = {}         # each name -> is a switch
         spelled: dict[str, bool] = {}       # every name and alias -> is a switch
         for line in out.splitlines():

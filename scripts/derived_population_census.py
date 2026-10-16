@@ -1570,8 +1570,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        32, "fba34637f8ee0bb3142fffb1cbca74c91e634ef310a48f04abd417763e6b8051",
+        33, "a3eb1f923629072e71244f70431245536a9d71be9fa63e6ad0eb03ad8bed558c",
         "CORRECT_BY_REMEDY",
+        "GREW 32 -> 33 on 2026-10-16 (the rm-launch-forms lane, DEF-1162): "
+        "`_recursive_delete_launch_forms` builds one `ps-wrap-<word>` head per word "
+        "of the Bash wrapper roster (`_roster_words(bp._CMD_POS_WRAPPER)`), `xargs` "
+        "left out by name as the PowerShell tool's pipe carrier; a shrink of the "
+        "roster would narrow the launch-form property with it, so "
+        "tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall::"
+        "test_the_rosters_the_forms_derive_from_are_pinned holds the roster equal to a "
+        "hand list of 22 words and the forms at 73: a lost word reds there. "
         "GREW 31 -> 32 on 2026-10-16 (the adopter-zone one-liner lane, DEF-910): "
         "TestEveryHarnessZoneDenyCarriesTheCollisionRemedy reads every `PROTECTED_ZONE_*` "
         "template out of `vars(dr)` and asserts each carries the relocate clause; a "
