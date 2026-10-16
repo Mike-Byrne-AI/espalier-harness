@@ -69,6 +69,11 @@ limit would mean the friction layer drifted past its stated scope.
 - `bench/end_to_end/` — the separate receiver-side end-to-end harness (a real
   `claude` drives each scenario against live hooks); see
   [`bench/end_to_end/README.md`](end_to_end/README.md).
+- `bench/sandbox_read_drive/` — a live drive of Claude Code's OS-level sandbox:
+  whether it refuses the reads espalier's posture lists (a headless `claude` per
+  case, a paid session each, never run by the suite), with its re-scorer and the
+  arm table of what was measured where. It measures Claude Code's OS-level sandbox,
+  not the friction layer; its own `README.md` holds the method and the arm table.
 
 This list is pinned to the tracked tree: every top-level `bench/*.py` must
 appear here and in the layout below
@@ -111,6 +116,9 @@ bench/
 │   ├── run.py, runner.py, assertions.py, transcript.py   the harness
 │   ├── scenarios/                    BCE-*.yaml scenarios
 │   └── templates/                    settings templates for scenario setup
+├── sandbox_read_drive/               the sandbox read lists' live drive (see its README.md)
+│   ├── README.md                     the setup, the arm table, what was and was not measured
+│   └── drive.py, rescore.py          the driver and the whole-token re-scorer
 └── results/                          timestamped artifacts (gitignored)
 ```
 

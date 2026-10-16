@@ -440,7 +440,9 @@ def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = N
     where git could not be asked at all; and ``<clone>-<directory>``
     (SessionStart's naming) only for a listed worktree whose folder is gone,
     which keeps its sessions (``gone``). Unread, never empty, where the
-    registry cannot be read in full, or
+    registry cannot be read in full, where the clone's own name cannot be
+    read (a worktree answering it could not be told from one named by hand),
+    or
     where this runs inside a session the registry does not list (then it is
     not the registry that session writes to: ``checkout_sync.main``'s own
     check). ``checked`` is False outside a session, where that check cannot
@@ -464,7 +466,10 @@ def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = N
                                            "not the registry this session writes to"}
     dirs = [config_dir] if config_dir is not None else checkout_sync.claude_config_dirs()
     registry = ", ".join(str(Path(d) / "sessions") for d in dirs)
-    clone = mail.clone_machine(root, run=run_) or ""
+    named_clone, clone_how = mail.clone_machine(root, run=run_)
+    if clone_how.startswith(mail.MACHINE_UNREAD):
+        return {"checkouts": [], "unread": f"this clone's own machine name could not be read ({clone_how})"}
+    clone = named_clone or ""
     checkouts: list[dict] = []
     for i, block in enumerate(checkout_sync.parse_worktrees(listing)):
         path = block.get("worktree") or ""

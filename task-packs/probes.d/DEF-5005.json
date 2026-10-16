@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5005",
+ "subject": "bench/sandbox_read_drive/README.md",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "no probe here can be the oracle: each arm is a live headless Claude Code drive on its host (bench/sandbox_read_drive/drive.py, re-scored by rescore.py), a paid session per case that needs a login, and no host of ours runs Linux or WSL2; the row closes arm by arm on a recorded drive, re-pinned as each lands",
+ "row_sha": "8467f683a870",
+ "text_sha": "8300d3a91c35",
+ "verified_2026_10_15": "OPEN (filed 2026-10-15; probe driven at filing)"
+}
