@@ -2720,7 +2720,7 @@ def _judge(seen: list[dict] | None = None) -> int:
             reading = _denial_reasons.wedge_reading(exc)
             passed = _denial_reasons.wedge_restore("write_guard", reading, error_type, data)
             if passed is None:
-                named = _denial_reasons.crash_refusal(reading, error_type)
+                named = _denial_reasons.crash_refusal(reading, error_type, data is not None)
         except BaseException:  # noqa: BLE001 -- best-effort; never mask the deny
             passed = named = None
         if passed is not None:

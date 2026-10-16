@@ -724,24 +724,41 @@ read, and the PreToolUse guard matches every tool.
 
 **One call gets through a wedged guard.** A wedged guard used to refuse the
 call that would repair it, so the operator restored the file from a terminal
-(six lock-outs from 2026-09-08 to 10-16, `DEF-4025`). Now the PreToolUse
+(six lock-outs from 2026-09-08 to 10-16, `DEF-4025`). Now `write_guard`'s
 refusal reads the payload first, and lets through exactly one shape: a Bash call
 that is one command, `git restore [--source=HEAD] [--] <file>`, `git checkout
--- <file>` or `git checkout HEAD -- <file>`, of a file the refusal names (in the
-kept-helper case, `_hook_utils.py` or the file that takes the name). Forward and
-back slashes both read, and a relative path resolves against the Bash tool's
-directory. Before letting the call through, it copies the file's bytes to
-`.espalier-state/wedge-restore/<stem>-<UTC>.py.txt`: while the guard is wedged
-the discard speed bump's snapshot cannot run, and the restore discards the
-file's uncommitted edit. A failed copy never blocks the restore. The call
-carries no permission decision, so your permission mode decides it as it
-would any other. Its context tells Claude why it passed, and it writes a
-`pretooluse_failed_open_wedge_restore` record. Anything else stays refused: a
-second command, a shell operator, another ref, the index (`--staged`), another
-file, two files, the PowerShell tool, an Edit or a Write. `write_guard`'s crash
-guard, which catches a fault after the imports, does the same. Its refusal
-names the innermost `tools/cc/` frame by exception class and line, never the
-message. Pinned by `tests/test_hooks_start_on_a_kept_helper.py`.
+-- <file>` or `git checkout HEAD -- <file>`, of a file the refusal names.
+
+- **Which files.** The refusal names the file that raised and every other
+  `tools/cc/` file on the traceback, because the file you edited is often an
+  outer one: a circular import raises in the module it re-enters, a bad
+  argument in the helper it was handed to, a new module's import in the new
+  module. In the kept-helper case it also names `_hook_utils.py`.
+- **Which command.** The command it names is `git restore --source=HEAD --
+  <file>`. A bare `git restore` reads the index, which keeps a staged break and
+  refuses a path a merge left unmerged.
+- **Paths.** Forward and back slashes both read, and a relative path resolves
+  against the Bash tool's directory.
+- **The copy.** Before letting the call through, the guard copies the file's
+  bytes to `.espalier-state/wedge-restore/<stem>-<UTC>.py.txt`. While the guard
+  is wedged the discard speed bump's snapshot cannot run, and the restore
+  discards the file's uncommitted edit. A failed copy never blocks the restore.
+- **The pass.** The call carries no permission decision, so your permission
+  mode decides it as it would any other. Its context tells Claude why it passed,
+  and it writes a `pretooluse_failed_open_wedge_restore` record.
+- **Still refused.** A second command, a shell operator, another ref, the index
+  (`--staged`), another file, two files, the PowerShell tool, an Edit or a
+  Write.
+- **The crash guard.** `write_guard`'s crash guard, which catches a fault after
+  the imports, does the same. Its refusal names the innermost `tools/cc/` frame
+  by exception class and line, never the message. A crash in reading the call
+  itself lets nothing through, and its text names the terminal.
+- **The other three hooks.** `plan_guard`, `config_guard` and `stop_gate` see no
+  Bash call. Their refusals name the same restore, to run from a terminal: a
+  Bash call meets `write_guard`, which judges it as any other.
+
+Pinned by `tests/test_hooks_start_on_a_kept_helper.py`, whose end-to-end class
+runs the named command with real git and starts the guard again.
 
 It blocks three categories of tool calls (kill-switch and protected-zone
 first; the dangerous-command catch is a secondary slip-catcher):

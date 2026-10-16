@@ -1026,16 +1026,23 @@ WEDGE_RESTORE_CONTEXT = (
 #: redirect, an expansion, a substitution, a glob, a group or a comment (a
 #: second command, or an operand the shell would rewrite). Quotes and the
 #: backslash are read as the shell reads them (``shlex``).
-_RESTORE_SHELL_CHARS = frozenset(";&|<>$`(){}*?[]~!#\n\r")
+_RESTORE_SHELL_CHARS = frozenset(";&|<>$`(){}*?[]~!#\n\r\x00")
 #: The longest restore command read; past it the call is refused unread.
 _RESTORE_COMMAND_CAP = 4096
+#: The deny hooks a Bash call reaches: ``write_guard`` is wired for every
+#: tool; ``plan_guard`` matches Write, Edit and NotebookEdit, and the
+#: ConfigChange and Stop hooks judge no tool call. Only these let a restore
+#: through, and only their refusals offer one; the others name the terminal.
+_LETS_A_RESTORE_THROUGH = frozenset({"write_guard"})
 
 
 class _SkewReading:
     """What a failed start can say about itself: the file that raised (an
     absolute path under ``tools/cc/``) and its line, the helper name a sibling
     takes and ``_hook_utils`` lacks (the kept-old-helper test), and the files
-    whose restore to HEAD the refusal names and lets through."""
+    whose restore to HEAD the refusal names and lets through: the raising file
+    first, then (on the kept-helper test) ``_hook_utils.py``, then every other
+    ``tools/cc/`` file on the traceback, inner to outer."""
 
     def __init__(self, file: Path | None, line: int | None, missing: str | None,
                  restorable: list[Path], cc_dir: Path) -> None:
@@ -1087,9 +1094,12 @@ def wedge_reading(exc: BaseException) -> _SkewReading | None:
     """Read a failed start (or, for the crash guard, a fault after it): the
     innermost traceback frame in a file under ``tools/cc/`` -- or, for a
     ``SyntaxError``, which has no frame in the file it names, that file -- and
-    the kept-old-helper test. The files a restore may name are that file, and
-    ``_hook_utils.py`` too when the test holds (either edit wedges the hook,
-    and a restore to HEAD of either re-enables the committed guard). It reads
+    the kept-old-helper test. The file that raised is often not the file that
+    was edited (a circular import raises in the module it re-enters, a bad
+    argument in the helper it was handed to, a new module's import in the new
+    module), so every ``tools/cc/`` file on the traceback may be restored, and
+    ``_hook_utils.py`` too when the test holds; a restore to HEAD of any of
+    them re-enables the committed guard and can disable nothing. It reads
     the exception's class, traceback, ``filename`` and the name a sibling
     takes, never renders its text, so the crash guard may hand it a caught
     OSError (the portability roster's argued entry). Never raises: None when
@@ -1102,36 +1112,47 @@ def wedge_reading(exc: BaseException) -> _SkewReading | None:
             named = Path(exc.filename).resolve()
             if _under(named, cc_dir):
                 file, line = named, exc.lineno
-        if file is None:
-            tb = exc.__traceback__
-            while tb is not None:
-                frame_file = Path(tb.tb_frame.f_code.co_filename)
-                if frame_file.is_absolute() or frame_file.exists():
-                    resolved = frame_file.resolve()
-                    if _under(resolved, cc_dir):
-                        file, line = resolved, tb.tb_lineno
-                tb = tb.tb_next
+        chain: list[tuple[Path, int]] = []
+        tb = exc.__traceback__
+        while tb is not None:
+            frame_file = Path(tb.tb_frame.f_code.co_filename)
+            if frame_file.is_absolute() or frame_file.exists():
+                resolved = frame_file.resolve()
+                if _under(resolved, cc_dir):
+                    chain.append((resolved, tb.tb_lineno))
+            tb = tb.tb_next
+        if file is None and chain:
+            file, line = chain[-1]
         missing = _missing_helper_name(exc)
-        restorable = [file] if file is not None else []
+        restorable: list[Path] = [file] if file is not None else []
         if missing is not None:
-            helper = cc_dir / "hooks" / "_hook_utils.py"
-            if helper not in restorable:
-                restorable.insert(0, helper)
+            restorable.append(cc_dir / "hooks" / "_hook_utils.py")
+        for outer, _line in reversed(chain):
+            if outer not in restorable:
+                restorable.append(outer)
         return _SkewReading(file, line, missing, restorable, cc_dir)
     # fail-open: ok text-fallback the refusal goes out unplaced
     except Exception:  # noqa: BLE001
         return None
 
 
-def _restore_clause(reading: _SkewReading, event: str) -> str:
-    """The repair a refusal names: each restorable file's `git restore`, and on
-    PreToolUse that one such Bash command is the call the hook lets through."""
-    commands = " or ".join(f"`git restore {reading.rel(p)}`" for p in reading.restorable)
-    if event == "PreToolUse":
-        return (f"{commands}, as one Bash command, is the one call this hook lets through"
+def _restore_clause(reading: _SkewReading, lets_through: bool) -> str:
+    """The repair a refusal names: a restore to HEAD of the file that raised
+    (``--source=HEAD``: a bare ``git restore`` reads the index, which keeps a
+    staged break and refuses an unmerged path), and of the file you edited
+    when it is another one on the traceback. ``lets_through`` says the hook
+    passes one such Bash command; otherwise the terminal is the route (a Bash
+    call meets ``write_guard``, which judges it as any other call)."""
+    first, *others = [reading.rel(p) for p in reading.restorable]
+    clause = f"`git restore --source=HEAD -- {first}`"
+    if others:
+        clause += (" (or the same command for the file you edited, if it is "
+                   + " or ".join(others) + ")")
+    if lets_through:
+        return (clause + ", as one Bash command, is the one call this hook lets through"
                 " while it is wedged, and it saves the file's bytes under"
-                " .espalier-state/wedge-restore/ first; or restore it from a terminal")
-    return f"from a terminal, or as one Bash command, {commands}"
+                " .espalier-state/wedge-restore/ first; or run it from a terminal")
+    return clause + ", run from a terminal (a Bash call meets write_guard, which judges it as any other)"
 
 
 def _restore_operand(words: list[str]) -> str | None:
@@ -1195,7 +1216,9 @@ def _restore_target(payload: object, reading: _SkewReading) -> Path | None:
     except ValueError:
         return None
     operand = _restore_operand(words)
-    if not operand:
+    # A trailing space or dot is dropped by the Windows path layer, so the
+    # path would read equal to a named file while git reads another one.
+    if not operand or operand != operand.strip() or operand.endswith("."):
         return None
     cwd = payload.get("cwd")
     base = Path(cwd) if isinstance(cwd, str) and cwd else Path(os.getcwd())
@@ -1271,18 +1294,21 @@ def _save_before_restore(target: Path, cc_dir: Path) -> str:
         return f"No copy was saved first ({type(err).__name__})."
 
 
-def crash_refusal(reading: _SkewReading | None, error: str) -> tuple[str, dict] | None:
+def crash_refusal(reading: _SkewReading | None, error: str,
+                  read_payload: bool) -> tuple[str, dict] | None:
     """The crash guard's named refusal (DEF-4025's twin): the text naming the
     innermost ``tools/cc/`` frame of ``reading`` (:func:`wedge_reading`) by
     ``error``, the exception's class name, and its line, with the record's
-    details; None when no frame is placed. Never raises."""
+    details; None when no frame is placed. ``read_payload`` is whether the
+    guard read the call before it crashed: a crash in the read lets nothing
+    through, so its text offers the terminal alone. Never raises."""
     try:
         if reading is None or reading.file is None:
             return None
         rel = reading.rel(reading.file)
         reason = WRITE_GUARD_CRASHED_AT.format(
             error=error, file=rel, line=reading.line,
-            restore=_restore_clause(reading, "PreToolUse"))
+            restore=_restore_clause(reading, read_payload))
         return reason, {"file": rel, "line": reading.line}
     # fail-open: ok text-fallback today's unplaced text goes out
     except Exception:  # noqa: BLE001
@@ -1313,7 +1339,8 @@ def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn
     import json
 
     reading = wedge_reading(exc)
-    if event == "PreToolUse":
+    lets_through = event == "PreToolUse" and hook in _LETS_A_RESTORE_THROUGH
+    if lets_through:
         passed = wedge_restore(hook, reading, type(exc).__name__, _read_payload())
         if passed is not None:
             context, passed_details = passed
@@ -1333,20 +1360,29 @@ def refuse_on_helper_skew(hook: str, event: str, exc: BaseException) -> NoReturn
         from _json_safe import os_error_text  # type: ignore[import-not-found]
     except Exception:  # noqa: BLE001 -- fail-open: ok text-fallback the refusal still goes out, with the plain text
         os_error_text = str  # type: ignore[assignment]
-    error = f"{type(exc).__name__}: {os_error_text(exc)}"
     details: dict = {"hook": hook, "error": type(exc).__name__, "skew": "sibling import"}
-    if reading is not None and reading.file is not None:
-        details.update(file=reading.rel(reading.file), line=reading.line)
-    if reading is not None and reading.missing is not None and reading.file is not None:
-        reason = HELPER_SKEW.format(hook=hook, taker=reading.rel(reading.file), name=reading.missing,
-                                    error=error, restore=_restore_clause(reading, event))
-        details["cause"] = "kept helper"
-    elif reading is not None and reading.file is not None:
-        details["cause"] = "raised"
-        reason = SIBLING_RAISED.format(hook=hook, file=reading.rel(reading.file), error=error,
-                                       line=reading.line, restore=_restore_clause(reading, event))
-    else:
-        reason = SIBLING_RAISED_UNPLACED.format(hook=hook, error=error)
+    # The text is composed under a catch-all: an escape here would be the
+    # exit 1 this refusal exists to replace (DEF-1176), so a template that
+    # cannot format falls back to plain words that cannot raise.
+    try:
+        error = f"{type(exc).__name__}: {os_error_text(exc)}"
+        if reading is not None and reading.file is not None:
+            details.update(file=reading.rel(reading.file), line=reading.line)
+        if reading is not None and reading.missing is not None and reading.file is not None:
+            reason = HELPER_SKEW.format(hook=hook, taker=reading.rel(reading.file), name=reading.missing,
+                                        error=error, restore=_restore_clause(reading, lets_through))
+            details["cause"] = "kept helper"
+        elif reading is not None and reading.file is not None:
+            details["cause"] = "raised"
+            reason = SIBLING_RAISED.format(hook=hook, file=reading.rel(reading.file), error=error,
+                                           line=reading.line, restore=_restore_clause(reading, lets_through))
+        else:
+            reason = SIBLING_RAISED_UNPLACED.format(hook=hook, error=error)
+    # fail-open: ok text-fallback the refusal still goes out, in plain words
+    except Exception:  # noqa: BLE001
+        reason = (str(hook) + " cannot start: a sibling import failed (" + type(exc).__name__
+                  + "), and its text could not be composed. Read the error from a terminal;"
+                  " every call this hook judges is refused until then.")
     _record(f"{event.lower()}_blocked_internal_error", details)
     output: dict
     if event in ("ConfigChange", "Stop"):

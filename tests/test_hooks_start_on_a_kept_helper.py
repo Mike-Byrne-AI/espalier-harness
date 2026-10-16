@@ -455,7 +455,7 @@ class TestADenyHookOnAKeptHelper:
             assert c.hook[:-3] in reason, (c.hook, reason)
             assert "tools/cc/hooks/_hook_utils.py" in reason and "espalier upgrade --execute" in reason, reason
             assert f"takes `{c.name}` from tools/cc/hooks/_hook_utils.py, which lacks it" in reason, reason
-            assert "git restore tools/cc/hooks/_hook_utils.py" in reason, reason
+            assert "`git restore --source=HEAD -- tools/cc/hooks/" in reason, reason
             assert "Error" in reason, reason          # the exception's class, never through os_error_text
 
     def test_a_missing_degraded_name_is_judged_not_refused(self, cells):
@@ -513,7 +513,13 @@ _WEDGE_PLANTS = {
     "raised": ("_reinject.py", _RAISE),
     "kept": (f"{HELPER}.py", "\ndel say_once\n"),
     "crash": (f"{HELPER}.py", "\ndef payload_cwd(*args, **kwargs):\n    raise KeyError(2)\n"),
+    # A fault in the payload read itself: nothing was read, so nothing passes.
+    "unread": (f"{HELPER}.py", "\ndef read_stdin_safely(*args, **kwargs):\n    raise KeyError(3)\n"),
 }
+#: The plants whose table rows run both ways (``unread`` lets nothing through).
+_BOTH_WAYS = ("raised", "kept", "crash")
+#: A deny hook file no plant puts on write_guard's traceback.
+_UNRELATED = "tools/cc/hooks/session_start.py"
 _REINJECT = "tools/cc/hooks/_reinject.py"
 
 
@@ -551,8 +557,12 @@ _RESTORE_TABLE: list[tuple[str, dict, bool]] = [
     ("raised", _bash(f"git restore --staged {_REINJECT}"), False),
     ("raised", _bash(f"git checkout {_REINJECT}"), False),
     ("raised", _bash(f"git -C . restore {_REINJECT}"), False),
-    ("raised", _bash("git restore tools/cc/hooks/_speedbump.py"), False),
+    ("raised", _bash("git restore --source=HEAD -- tools/cc/hooks/write_guard.py"), True),
+    ("raised", _bash(f"git restore {_UNRELATED}"), False),
     ("raised", _bash("git restore tools/_reinject.py"), False),
+    ("raised", _bash(f'git restore "{_REINJECT} "'), False),
+    ("raised", _bash(f"git restore {_REINJECT}."), False),
+    ("raised", _bash(f"git restore {_REINJECT}\x00"), False),
     # A relative operand resolves against the payload's cwd (the Bash tool's
     # directory), not the hook's: the same words pass from one and not the other.
     ("raised", {**_bash("git restore cc/hooks/_reinject.py"), "cwd": "tools"}, True),
@@ -564,10 +574,14 @@ _RESTORE_TABLE: list[tuple[str, dict, bool]] = [
     ("raised", {"tool_name": "Edit", "tool_input": {"file_path": _REINJECT, "old_string": "a", "new_string": "b"}}, False),
     ("raised", {"tool_name": "Write", "tool_input": {"file_path": _REINJECT, "content": ""}}, False),
     ("kept", _bash(f"git restore tools/cc/hooks/{HELPER}.py"), True),
-    ("kept", _bash("git restore tools/cc/hooks/_speedbump.py"), True),
-    ("kept", _bash(f"git restore {_REINJECT}"), False),
+    # {taker} is read from the plant's own refusal: the module that takes the
+    # missing name first is an import-order fact, not this row's.
+    ("kept", _bash("git restore --source=HEAD -- {taker}"), True),
+    ("kept", _bash(f"git restore {_UNRELATED}"), False),
     ("crash", _bash(f"git restore tools/cc/hooks/{HELPER}.py"), True),
-    ("crash", _bash(f"git restore {_REINJECT}"), False),
+    ("crash", _bash("git restore tools/cc/hooks/write_guard.py"), True),
+    ("crash", _bash(f"git restore {_UNRELATED}"), False),
+    ("unread", _bash(f"git restore --source=HEAD -- tools/cc/hooks/{HELPER}.py"), False),
 ]
 
 
@@ -599,6 +613,14 @@ def _run_payload(root: Path, hook: str, payload: dict, audit: Path) -> subproces
     )
 
 
+def _taker(run: subprocess.CompletedProcess) -> str:
+    """The file a kept-helper refusal says takes the missing name."""
+    reason = json.loads(run.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+    head = reason.split(" takes `", 1)[0]
+    assert head != reason and head.startswith("write_guard cannot start: "), reason
+    return head[len("write_guard cannot start: "):]
+
+
 def _wedge_copies(root: Path) -> list[str]:
     saved = root / ".espalier-state" / "wedge-restore"
     return sorted(p.name for p in saved.iterdir()) if saved.is_dir() else []
@@ -620,6 +642,9 @@ def restores(tmp_path_factory) -> list[Restore]:
         audit = root / "audit"
         if "cwd" in payload:  # a row's cwd is relative to its own copy
             payload = {**payload, "cwd": str(root / payload["cwd"])}
+        if "{taker}" in payload["tool_input"].get("command", ""):
+            taker = _taker(_run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], root / "taker"))
+            payload = _bash(payload["tool_input"]["command"].replace("{taker}", taker))
         run = _run_payload(root, "write_guard.py", payload, audit)
         result = Restore(plant, payload, passes, run.returncode, run.stdout, run.stderr,
                          _wedge_copies(root), _audit_text(audit))
@@ -649,7 +674,7 @@ class TestAWedgedGuardNamesWhatRaised:
             assert c.rc == 0 and _is_refusal(c), _summary(c)
             assert "tools/cc/hooks/_integrity.py raised KeyError: 1 at line " in reason, reason
             assert "upgrade --execute" not in reason and "managed" not in reason, reason
-            assert "git restore tools/cc/hooks/_integrity.py" in reason, reason
+            assert "`git restore --source=HEAD -- tools/cc/hooks/_integrity.py`" in reason, reason
 
     def test_a_sibling_that_does_not_parse_is_named_by_its_own_line(self, cells):
         # A SyntaxError has no frame in the file it names, so the file is read
@@ -662,17 +687,21 @@ class TestAWedgedGuardNamesWhatRaised:
             assert "tools/cc/hooks/_integrity.py raised SyntaxError" in reason, reason
             assert "upgrade --execute" not in reason, reason
 
-    def test_only_the_pretooluse_refusal_offers_a_call_it_lets_through(self, cells):
-        # The ConfigChange and Stop guards judge no tool call, so their text
-        # sends the restore to a terminal or a Bash call, and claims no pass.
+    def test_only_the_hook_a_bash_call_reaches_offers_the_call_it_lets_through(self, cells):
+        # plan_guard matches Write, Edit and NotebookEdit, and the ConfigChange
+        # and Stop guards judge no tool call, so their text sends the restore
+        # to a terminal: a Bash call meets write_guard, which judges it.
         for c in (c for c in cells if c.kind == "raised"):
             lets = "is the one call this hook lets through" in _reason(c)
-            assert lets == (c.event == "PreToolUse"), (c.hook, _reason(c))
+            assert lets == (c.hook == "write_guard.py"), (c.hook, _reason(c))
+            if not lets:
+                assert "run from a terminal" in _reason(c), (c.hook, _reason(c))
 
 
 class TestTheOneRestoreAWedgedGuardLetsThrough:
     def test_the_table_is_both_polarities_on_each_plant(self):
-        for plant in _WEDGE_PLANTS:
+        assert set(_WEDGE_PLANTS) == set(_BOTH_WAYS) | {"unread"}
+        for plant in _BOTH_WAYS:
             seen = {passes for p, _payload, passes in _RESTORE_TABLE if p == plant}
             assert seen == {True, False}, plant
 
@@ -718,7 +747,7 @@ class TestTheOneRestoreAWedgedGuardLetsThrough:
         reason = _output(refused)["permissionDecisionReason"]
         assert "takes `say_once` from tools/cc/hooks/_hook_utils.py" in reason, reason
         assert "espalier upgrade --execute" in reason, reason
-        assert "`git restore tools/cc/hooks/_hook_utils.py` or `git restore tools/cc/hooks/" in reason, reason
+        assert "(or the same command for the file you edited, if it is tools/cc/hooks/_hook_utils.py or " in reason, reason
 
     def test_a_quoted_shell_operator_refuses_even_where_the_path_would_match(self, tmp_path):
         # The operator check is its own refusal, not the operand count's: a
@@ -755,7 +784,124 @@ class TestTheOneRestoreAWedgedGuardLetsThrough:
         reason = _output(refused)["permissionDecisionReason"]
         assert "write_guard internal error (KeyError at tools/cc/hooks/_hook_utils.py:" in reason, reason
         assert "KeyError: 2" not in reason, reason
-        assert "git restore tools/cc/hooks/_hook_utils.py" in reason, reason
+        assert "`git restore --source=HEAD -- tools/cc/hooks/_hook_utils.py`" in reason, reason
+        assert "is the one call this hook lets through" in reason, reason
+
+    def test_a_crash_in_the_payload_read_offers_no_pass(self, restores):
+        # Nothing was read, so nothing can be let through: the text says the
+        # terminal, never the pass the next call would be refused.
+        refused = next(r for r in restores if r.plant == "unread")
+        reason = _output(refused)["permissionDecisionReason"]
+        assert "write_guard internal error (KeyError at tools/cc/hooks/_hook_utils.py:" in reason, reason
+        assert "lets through" not in reason and "run from a terminal" in reason, reason
+
+    def test_an_unplaced_failure_and_an_unformattable_template_still_refuse(self, tmp_path):
+        # The refusal's own text can never be the exit 1 it replaces: a failure
+        # with no traceback reads the unplaced template, and a template that
+        # cannot format falls back to plain words.
+        script = (
+            "import sys, json; sys.path.insert(0, sys.argv[1]); import _hook_utils, _denial_reasons as d\n"
+            "if sys.argv[2] == 'broken': d.SIBLING_RAISED_UNPLACED = '{no_such_key}'\n"
+            "d.refuse_on_helper_skew('plan_guard', 'PreToolUse', KeyError(9))\n"
+        )
+        for mode, words in (("intact", "no file under tools/cc/ is on its traceback"),
+                            ("broken", "its text could not be composed")):
+            out = subprocess.run([sys.executable, "-c", script, str(HOOKS_DIR), mode], capture_output=True,
+                                 text=True, encoding="utf-8", timeout=45, input="", cwd=str(tmp_path),
+                                 env={**_ENV, "CLAUDE_PROJECT_DIR": str(tmp_path),
+                                      "ESPALIER_AUDIT_DIR": str(tmp_path / "audit")})
+            assert out.returncode == 0 and not out.stderr.strip(), (mode, out.returncode, out.stderr)
+            decision = json.loads(out.stdout)["hookSpecificOutput"]
+            assert decision["permissionDecision"] == "deny" and words in decision["permissionDecisionReason"], decision
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-c", "core.autocrlf=false", "-c", "user.name=wedge", "-c", "user.email=wedge@example.invalid",
+         *args], cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+
+
+def _committed_copy(root: Path) -> None:
+    _copy_cc(root)
+    for args in (("init", "-q", "-b", "main"), ("add", "-A"), ("commit", "-q", "-m", "base")):
+        assert _git(root, *args).returncode == 0, args
+
+
+def _append(root: Path, rel: str, text: str) -> None:
+    path = root / rel
+    path.write_bytes(path.read_bytes() + text.encode("utf-8"))
+
+
+def _after_future(root: Path, rel: str, line: str) -> None:
+    """Insert ``line`` after the module's ``from __future__`` import."""
+    path = root / rel
+    head, sep, tail = path.read_bytes().decode("utf-8").partition("from __future__ import annotations\n")
+    assert sep, rel
+    path.write_bytes((head + sep + line + tail).encode("utf-8"))
+
+
+def _staged_name_error(root: Path) -> str:
+    # The 2026-10-16 04:20Z shape: a decorator before its import, staged.
+    _append(root, "tools/cc/hooks/_speedbump.py", "\n@functools_not_yet_imported.lru_cache\ndef _probe():\n    return 0\n")
+    assert _git(root, "add", "tools/cc/hooks/_speedbump.py").returncode == 0
+    return "tools/cc/hooks/_speedbump.py"
+
+
+def _circular(root: Path) -> str:
+    # The edited module re-enters one that imports it; the raise lands there.
+    _after_future(root, "tools/cc/hooks/_bash_patterns.py", "import _speedbump  # noqa: F401\n")
+    return "tools/cc/hooks/_bash_patterns.py"
+
+
+def _new_module(root: Path) -> str:
+    # The edited module imports a new, untracked one that raises.
+    (root / "tools" / "cc" / "hooks" / "_wedge_new.py").write_text("raise KeyError(4)\n", encoding="utf-8")
+    _after_future(root, "tools/cc/hooks/_speedbump.py", "import _wedge_new  # noqa: F401\n")
+    return "tools/cc/hooks/_speedbump.py"
+
+
+def _merge_conflict(root: Path) -> str:
+    # A merge that conflicts in a hook file leaves markers, a SyntaxError.
+    rel = "tools/cc/hooks/_reinject.py"
+    for branch, text in (("side", "\nSIDE = 1\n"), ("main", "\nSIDE = 2\n")):
+        if branch == "side":
+            assert _git(root, "switch", "-q", "-c", "side").returncode == 0
+        else:
+            assert _git(root, "switch", "-q", "main").returncode == 0
+        _append(root, rel, text)
+        assert _git(root, "commit", "-q", "-am", branch).returncode == 0
+    assert _git(root, "merge", "-q", "side").returncode != 0
+    return rel
+
+
+_SCENARIOS = {"staged": _staged_name_error, "circular": _circular, "new-module": _new_module,
+              "merge-conflict": _merge_conflict}
+
+
+class TestTheNamedRestoreRepairsTheGuard:
+    """End to end, with real git: the refusal names a restore of the edited
+    file, the wedged guard lets that command through, git runs it, and the
+    guard starts again. The table above judges the hook's JSON; this is the
+    oracle that the command it names is the repair."""
+
+    @pytest.mark.parametrize("scenario", sorted(_SCENARIOS))
+    def test_the_command_the_refusal_names_repairs_the_wedge(self, tmp_path, scenario):
+        root = tmp_path / scenario
+        _committed_copy(root)
+        edited = _SCENARIOS[scenario](root)
+        audit = root / "audit"
+        refused = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+        reason = json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        assert "cannot start" in reason and edited in reason, reason
+        command = f"git restore --source=HEAD -- {edited}"
+        assert "`git restore --source=HEAD -- " in reason, reason
+        passed = _run_payload(root, "write_guard.py", _bash(command), audit)
+        out = json.loads(passed.stdout)["hookSpecificOutput"]
+        assert "permissionDecision" not in out and "was let through" in out["additionalContext"], out
+        ran = _git(root, *command.split()[1:])
+        assert ran.returncode == 0, ran.stderr
+        judged = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+        assert judged.returncode == 0 and "deny" not in judged.stdout, (judged.stdout, judged.stderr[-300:])
 
 
 # ── the guard is reachable, and earns its red ────────────────────────────────
