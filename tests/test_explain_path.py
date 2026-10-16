@@ -277,6 +277,17 @@ class TestPlanRuleLabels:
         (tmp_path / "espalier.toml").unlink()
         assert ep.explain("lib/x.py", tmp_path).plan_rule == "plan required -- non-exempt path"
 
+    def test_a_rooted_spelling_on_either_host_family_is_labelled_outside_the_repo(self):
+        """DEF-1175: the label asks the exemption's own judge
+        (`_hook_utils.rooted`). On the host's ``Path.is_absolute()`` it read
+        ``/tmp/scratch.py`` as plan-required on Windows, and ``C:/tmp/...``
+        on POSIX, while ``_is_exempt`` exempted both."""
+        ep, _, _ = _load_modules()
+        for path in ("/tmp/scratch.py", "/etc/x.py", "C:/tmp/scratch.py", "//server/share/x.py"):
+            exp = ep.explain(path, REPO_ROOT)
+            assert exp.plan_exempt is True, path
+            assert exp.plan_rule == "exempt -- outside repo (absolute path)", (path, exp.plan_rule)
+
     def test_plan_rule_direction_matches_boolean(self):
         # Whenever the label says "exempt", the boolean is exempt; whenever "plan
         # required", the boolean is required — pins the label's DIRECTION to the

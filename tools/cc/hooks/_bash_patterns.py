@@ -6727,20 +6727,29 @@ def _step_one(
     the ``exists`` oracle refuses leaves the directory where it was, as a
     failed `cd` does (driven: `cd /nonexistent; echo x > <hook>` writes in
     the old directory); without an oracle every readable target is assumed
-    to succeed."""
+    to succeed. A target led by ONE backslash is asked of the oracle as
+    typed, and recorded folded: Git Bash reads ``\\tmp\\x`` as the drive
+    root's and ``/tmp/x`` as where Git for Windows mounts ``/tmp``
+    (`_hook_utils.git_bash_tmp_tail`), so the folded spelling asked the
+    other place, and a `cd` the shell fails read as entered (DEF-1175's
+    review). A relative `cd` after it is built on the folded spelling, a
+    declared limit."""
+    probe: str | None = None
     if not target:
         new: str | None = "~"                   # `cd` alone goes home
     elif target == "-" or "$" in target or "`" in target:
         return None                             # the indirection class
     else:
-        target = target.replace("\\", "/")
+        raw, target = target, target.replace("\\", "/")
         if target.startswith(("~", "/")) or _DRIVE_OR_UNC_ABSOLUTE_RE.match(target):
             new = target
+            if raw[:1] == "\\" and raw[1:2] != "\\":
+                probe = raw
         elif cwd is None:
             return None
         else:
             new = posixpath.normpath(posixpath.join(cwd, target))
-    if new is not None and exists is not None and not exists(new):
+    if new is not None and exists is not None and not exists(probe or new):
         return cwd                              # the shell stays put
     return new
 
@@ -7137,7 +7146,7 @@ Bases = Callable[[str], "list[Path]"]
 
 def command_bases(
     chain: "tuple[str, list[tuple[int, int, tuple[str | None, ...]]]] | None",
-    start: Path, fixed: frozenset = frozenset(),
+    start: Path, fixed: frozenset = frozenset(), *, bash: bool,
 ) -> Bases:
     """``raw -> [Path]``: the directories a captured spelling resolves against
     (DEF-509) -- the start (the payload's ``cwd``, else the root), moved by
@@ -7155,9 +7164,9 @@ def command_bases(
             return [start]
         out: list[Path] = []
         for spelled in statement_directories(text, statements, raw):
-            at = _hook_utils.join_directory(start, spelled)
-            if at not in out:
-                out.append(at)
+            for at in _hook_utils.joined_directories(start, spelled, bash=bash):
+                if at not in out:
+                    out.append(at)
         return out
     return bases
 
@@ -7167,10 +7176,10 @@ def bash_bases(command: str, root: Path, cwd: Path | None) -> Bases:
     the root); a fault in the walk degrades to the start, never to a deny."""
     start = cwd or root
     try:
-        chain = bash_directory_chain(command, _hook_utils.directory_exists(start))
+        chain = bash_directory_chain(command, _hook_utils.directory_exists(start, bash=True))
     except Exception:  # noqa: BLE001 -- the walk is advisory to the resolver
         chain = None
-    return command_bases(chain, start)
+    return command_bases(chain, start, bash=True)
 
 
 def powershell_bases(command: str, root: Path, cwd: Path | None) -> Bases:
@@ -7178,11 +7187,11 @@ def powershell_bases(command: str, root: Path, cwd: Path | None) -> Bases:
     candidates fixed to the start (`powershell_dotnet_paths`)."""
     start = cwd or root
     try:
-        chain = powershell_directory_chain(command, _hook_utils.directory_exists(start))
+        chain = powershell_directory_chain(command, _hook_utils.directory_exists(start, bash=False))
         fixed = frozenset(powershell_dotnet_paths(command))
     except Exception:  # noqa: BLE001 -- as above
         chain, fixed = None, frozenset()
-    return command_bases(chain, start, fixed)
+    return command_bases(chain, start, fixed, bash=False)
 
 
 def _extractor_pair(command: str) -> tuple[str, str]:
@@ -10023,16 +10032,26 @@ def _scratch_holds_no_work(path: str, root: str | None, *, bash: bool) -> bool:
     a sibling of it there, such as macOS's per-user cache directory beside
     `/var/folders/<x>/T`, is scratch to this rule). On the Windows host a Bash ``/tmp/...`` is judged
     where Git for Windows mounts it as well, the user's temp directory, so
-    a checkout there is seen in either spelling."""
+    a checkout there is seen in either spelling: at every drive-qualified
+    temp value that vets (`_vetted_scratch_values`) and at the mount itself
+    (`_hook_utils.git_bash_tmp_mount`), each of which must lie below a
+    scratch root too -- a ``TEMP`` that vets out (the home, a shallow system
+    path) is still where the shell deletes. The speed bump hands a relative
+    target after ``cd /tmp`` here in this same spelling (`_speedbump.
+    _placed_rm_readings`), so the two delete spellings are one judge
+    (DEF-1175)."""
     if not _is_scratch_literal(path) or _target_is_catastrophic(path, root):
         return False
     resolved = _posix(path)
     if not _resolves_below_a_scratch_root(resolved):
         return False
     places = [resolved]
-    if bash and os.name == "nt" and path.startswith("/tmp/"):
-        places.extend(_posix(v + path[len("/tmp"):]) for v in _vetted_scratch_values()
-                      if v[1:2] == ":")
+    tail = _hook_utils.git_bash_tmp_tail(path) if bash else None
+    if tail is not None:
+        places.extend(_posix(v + tail) for v in _vetted_scratch_values() if v[1:2] == ":")
+        mount = _hook_utils.git_bash_tmp_mount(path)
+        if mount is not None:
+            places.append(_posix(mount))
     sites: list[str] = []
     if root:
         sites.append(_fold(_posix(str(root))))
@@ -10051,6 +10070,8 @@ def _scratch_holds_no_work(path: str, root: str | None, *, bash: bool) -> bool:
     if any(typed == r or r.startswith(typed + "/") for r in roots):
         return False
     for place in places:
+        if not _resolves_below_a_scratch_root(place):
+            return False
         key = _fold(place)
         if any(key == s or key.startswith(s + "/") or s.startswith(key + "/") for s in sites):
             return False
@@ -10106,7 +10127,10 @@ def below_a_temp_root(
     drive = bool(_DRIVE_ABSOLUTE_RE.match(spelled))
     if ":" in (spelled[2:] if drive else spelled):
         return False
-    absolute = drive or spelled.startswith("/")
+    # Rooted is the one judge (`_hook_utils.rooted`, DEF-1175): a target led
+    # by a backslash is rooted as well, which Git Bash reads as the drive
+    # root's (driven: `\tmp\x` is `C:\tmp\x`), never a name below a base.
+    absolute = _hook_utils.rooted(spelled)
     for base in ((None,) if absolute else bases):
         if absolute:
             path = spelled
@@ -10418,7 +10442,7 @@ def powershell_removal_lands_catastrophic(
     else:
         try:
             text, statements = powershell_directory_chain(
-                command, _hook_utils.directory_exists(at))
+                command, _hook_utils.directory_exists(at, bash=False))
         except Exception:  # noqa: BLE001 -- the walk is advisory; a fault degrades to the start
             text, statements = powershell_scan_text(command), []
     fed = {m.start("rmargs"): m for m in _PS_PIPED_REMOVE_RE.finditer(text)}
@@ -10429,7 +10453,7 @@ def powershell_removal_lands_catastrophic(
             bases = [None]                # nowhere to stand: a bare wildcard walls
         else:
             dirs = next((ds for s, e, ds in statements if s <= here < e), _UNPLACED_DIRS)
-            bases = _statement_bases(at, dirs, relief=relief)
+            bases = _statement_bases(at, dirs, relief=relief, bash=False)
         # quote-aware, as the unforced twin reads the same span (the lane's
         # review): a quoted relative name with a space is ONE target
         args = m.group("args")
@@ -11096,7 +11120,7 @@ def _placed_ps_unforced_removes(
     if at is not None:
         try:
             text, statements = powershell_directory_chain(
-                command, _hook_utils.directory_exists(at))
+                command, _hook_utils.directory_exists(at, bash=False))
         except Exception:  # noqa: BLE001 -- the walk is advisory; a fault places nothing
             statements = []
     string_at = _ps_quote_cursor(raw if len(raw) == len(text) else "")
@@ -11114,7 +11138,7 @@ def _placed_ps_unforced_removes(
                 dirs = statements[idx][2]
             # in parity with the Bash unforced twin: a bare wildcard after an
             # unknown location walls from nowhere (`_statement_bases`)
-            bases = _statement_bases(at, dirs, relief=_relief_applies(command, bash=False))
+            bases = _statement_bases(at, dirs, relief=_relief_applies(command, bash=False), bash=False)
             # a remove whose arguments sit inside a program handed to another
             # process (pwsh -Command, Start-Process: the masker keeps it live)
             # runs where that process puts it -- its start switch, its own
@@ -12374,6 +12398,16 @@ def _rm_lands_catastrophic(
         # unknown directory (a superset; the net keeps its own reading)
         here = candidates + [None] if in_string and not net and None not in candidates else candidates
         for op in operands:
+            # A typed Git Bash /tmp target is where Git for Windows mounts it
+            # as well (`_hook_utils.git_bash_tmp_mount`): a checkout kept there
+            # drew only the nudge typed as `/tmp/<root>` while `cd /tmp` and
+            # `rm -rf <root>` walled (DEF-1175). A literal spelling only; the
+            # brace and glob analysis below keeps the typed reading.
+            spelled = _shell_unquote(op)
+            mount = (None if any(ch in spelled for ch in "$`*?[{") else
+                     _hook_utils.git_bash_tmp_mount(spelled))
+            if mount is not None and _target_is_catastrophic(mount, root, None, net=net):
+                return True
             for base in here:
                 if _operand_can_be_catastrophic(op, None, root, base, net=net):
                     return True
@@ -12616,7 +12650,7 @@ def _ps_is_plain(command: str) -> bool:
 
 
 def _statement_bases(
-    at: Path, dirs: "tuple[str | None, ...]", *, relief: bool,
+    at: Path, dirs: "tuple[str | None, ...]", *, relief: bool, bash: bool,
 ) -> list[str | None]:
     """The bases one statement's delete operands are judged from: each of its
     candidate directories joined to the start, and ``None`` ADDED when any is
@@ -12638,12 +12672,15 @@ def _statement_bases(
     allowlist, 2026-09-19): ``False`` adds ``None`` whatever the walk
     placed, so outside a plain command a bare leading glob and the location
     variable wall as they did before the relief. REQUIRED, so a new site
-    cannot leave it out and inherit the relief by default."""
+    cannot leave it out and inherit the relief by default. ``bash`` is
+    `_hook_utils.join_directory`'s, REQUIRED for the same reason: the Bash
+    walks and the PowerShell readers both join here."""
     bases: list[str | None] = []
     for d in dirs:
-        joined = str(_hook_utils.join_directory(at, d))
-        if joined not in bases:
-            bases.append(joined)
+        for place in _hook_utils.joined_directories(at, d, bash=bash):
+            joined = str(place)
+            if joined not in bases:
+                bases.append(joined)
     if not relief or any(d is None for d in dirs) or _ANOTHER_SHELLS_PROGRAM.get():
         bases.append(None)
     return bases
@@ -12667,16 +12704,16 @@ def _bash_walk_one(
     at = Path(start)
     relief = _relief_applies(command, bash=True)
     try:
-        text, statements = bash_directory_chain(command, _hook_utils.directory_exists(at))
+        text, statements = bash_directory_chain(command, _hook_utils.directory_exists(at, bash=True))
     except Exception:  # noqa: BLE001 -- the walk is advisory; a fault places nothing
         text, statements = command, []
     if not statements:
-        return lands(command, root, _statement_bases(at, _UNPLACED_DIRS, relief=relief), None, False)
+        return lands(command, root, _statement_bases(at, _UNPLACED_DIRS, relief=relief, bash=True), None, False)
     capped = _capped_whole(command)
     in_heredoc = _heredoc_cursor(text)
     statements = chain_statement_slices(text, statements)   # a quoted operand the chain cut, whole
     for (s, e, dirs), quote in zip(statements, _statement_start_quotes(text, statements)):
-        bases = _statement_bases(at, dirs, relief=relief)
+        bases = _statement_bases(at, dirs, relief=relief, bash=True)
         if (quote is not None or in_heredoc(s)) and None not in bases:
             # another shell's statement (blocker condition 2): inside a string
             # it re-parses, or inside a heredoc body the masker left live
@@ -12869,7 +12906,7 @@ def _placed_sweeps(
     statements: list[tuple[int, int, tuple[str | None, ...]]] = []
     if at is not None:
         try:
-            text, statements = bash_directory_chain(command, _hook_utils.directory_exists(at))
+            text, statements = bash_directory_chain(command, _hook_utils.directory_exists(at, bash=True))
             if text != scan:
                 statements = []           # one scan text by construction; placed nowhere if not
         except Exception:  # noqa: BLE001 -- the walk is advisory; a fault places nothing
@@ -12887,7 +12924,7 @@ def _placed_sweeps(
             dirs: tuple[str | None, ...] = _UNPLACED_DIRS
             if idx < len(statements) and statements[idx][0] <= here < statements[idx][1]:
                 dirs = statements[idx][2]
-            bases = _statement_bases(at, dirs, relief=_relief_applies(command, bash=True))
+            bases = _statement_bases(at, dirs, relief=_relief_applies(command, bash=True), bash=True)
             # a sweep inside a string handed to another program runs where
             # that program puts it (blocker condition 2; `_rm_lands_catastrophic`)
             if quote_at(here) is not None and None not in bases:
@@ -13329,7 +13366,7 @@ def has_catastrophic_ps_sweep(
     if at is not None:
         try:
             text, statements = powershell_directory_chain(
-                command, _hook_utils.directory_exists(at))
+                command, _hook_utils.directory_exists(at, bash=False))
             if text != scan:
                 statements = []           # one scan text by construction; placed nowhere if not
         except Exception:  # noqa: BLE001 -- the walk is advisory; a fault places nothing
@@ -13362,7 +13399,7 @@ def has_catastrophic_ps_sweep(
             # handed to another process runs where that process puts it: the
             # unknown directory as well, as its two siblings add it (the
             # lane's review; `_ps_unforced_lands_catastrophic`, `_placed_sweeps`).
-            bases = _statement_bases(at, dirs, relief=_relief_applies(command, bash=False))
+            bases = _statement_bases(at, dirs, relief=_relief_applies(command, bash=False), bash=False)
             if None not in bases and string_at(here) is not None:
                 bases.append(None)
         for op in roots:

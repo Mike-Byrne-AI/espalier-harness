@@ -1225,3 +1225,100 @@ class TestAdopterZoneReadingEdges:
         hu = self._fresh(monkeypatch)
         (tmp_path / "espalier.toml").write_text('protected_paths = ["data/"]\n', encoding="utf-8")
         assert hu.adopter_zone_for("\uff44ata/x.csv", tmp_path) == ("data/", "protected")  # fullwidth d
+
+
+_ON_WINDOWS = sys.platform == "win32"
+
+
+class TestRootedPathJudge:
+    """DEF-1175: one judge of a rooted spelling (`_hook_utils.rooted`, the
+    ``PureWindowsPath`` anchor, the same reading on every host) and the one
+    reading of where Git for Windows puts ``/tmp`` (`git_bash_tmp_tail`,
+    `git_bash_tmp_mount`), shared by `join_directory`, the temp-root
+    carve-out and the plan gate's exemption. The ``/tmp`` spellings were
+    driven with ``cygpath -w`` on the Windows host, 2026-10-15."""
+
+    _ROOTED = ["/tmp/x", "\\tmp\\x", "/", "C:/x", "C:\\x", "c:/", "//server/share/x",
+               "\\\\server\\share\\x", "C:x"]
+    _RELATIVE = ["x", "x/y", "./x", "../x", "tmp/x", "x\\y", ""]
+
+    def test_rooted_reads_every_anchor_of_both_host_families_on_every_host(self):
+        import _hook_utils as hu
+        wrong = [s for s in self._ROOTED if not hu.rooted(s)] + [s for s in self._RELATIVE if hu.rooted(s)]
+        assert not wrong, wrong
+
+    def test_the_git_bash_tmp_spelling_is_led_by_a_slash_and_read_without_case(self):
+        import _hook_utils as hu
+        tails = {"/tmp": "", "/tmp/": "", "/tmp/x/y": "/x/y", "/TMP/x": "/x", "/Tmp/x": "/x", "/tmp\\x": "/x"}
+        others = ["\\tmp\\x", "//tmp/x", "C:/tmp/x", "/c/tmp/x", "tmp/x", "/tmpx", "/var/tmp", "/x/tmp", ""]
+        got = {s: hu.git_bash_tmp_tail(s) for s in [*tails, *others]}
+        want = {s: (tails.get(s) if _ON_WINDOWS else None) for s in got}
+        assert got == want
+
+    @staticmethod
+    def _mounts(hu, monkeypatch) -> list:
+        """The mount's readings, in GetTempPathW's order (TMP, then TEMP)."""
+        got = []
+        for tmp, temp in (("C:\\Users\\u\\AppData\\Local\\Temp", "D:/other"),   # both qualify: TMP
+                          ("relative/tmp", "D:/other"),                         # TMP does not: TEMP
+                          ("C:/", "C:/")):                                       # a bare drive root: none
+            monkeypatch.setenv("TMP", tmp)
+            monkeypatch.setenv("TEMP", temp)
+            got.append(hu.git_bash_tmp_mount("/tmp/x"))
+        got.append(hu.git_bash_tmp_mount("/var/tmp/x"))
+        return got
+
+    def test_the_mount_is_the_first_drive_qualified_value_in_get_temp_path_order(self, monkeypatch):
+        import _hook_utils as hu
+        monkeypatch.setenv("TMPDIR", "E:/never")
+        want = ["C:/Users/u/AppData/Local/Temp/x", "D:/other/x", None, None] if _ON_WINDOWS else [None] * 4
+        assert self._mounts(hu, monkeypatch) == want
+
+    def test_the_tmp_readers_answer_as_on_windows_on_every_host(self, monkeypatch):
+        """The two readers ask only the string and the environment, so a
+        POSIX cell pins the Windows answer under ``os.name == "nt"``: the
+        required cells run on Linux, and the Windows-only rows would let a
+        refactor from another host pass every gate."""
+        import _hook_utils as hu
+        monkeypatch.setattr(hu.os, "name", "nt")
+        tails = [hu.git_bash_tmp_tail(s) for s in ("/tmp", "/TMP/x", "/tmp\\x", "\\tmp\\x", "//tmp/x", "/var/tmp")]
+        mounts = self._mounts(hu, monkeypatch)
+        monkeypatch.undo()
+        assert tails == ["", "/x", "/x", None, None, None]
+        assert mounts == ["C:/Users/u/AppData/Local/Temp/x", "D:/other/x", None, None]
+
+    def test_an_mcp_leaf_spelled_without_its_drive_is_read_inside_the_checkout(self, tmp_path):
+        """Layer 2 (`normalize_path_str`) anchors a rooted leaf with no drive
+        on the root's drive, as Layer 1's resolve() does, so the plan gate's
+        judge (`rooted`) never reads an in-checkout path as outside it."""
+        import _hook_utils as hu
+        inside = (tmp_path / "src" / "a.py").as_posix()
+        assert hu.normalize_path_str(inside[2:] if inside[1:2] == ":" else inside, tmp_path) == "src/a.py"
+
+    def test_each_shell_joins_tmp_where_it_lands(self, monkeypatch, tmp_path):
+        import _hook_utils as hu
+        mount = tmp_path / "mount"
+        for var in ("TEMP", "TMP", "TMPDIR"):
+            monkeypatch.setenv(var, str(mount))
+        start = tmp_path / "start"
+        bash = hu.join_directory(start, "/tmp/sub", bash=True)
+        ps = hu.join_directory(start, "/tmp/sub", bash=False)
+        if _ON_WINDOWS:
+            assert bash == mount / "sub"
+            assert ps == Path(start.anchor) / "tmp" / "sub"
+            assert hu.joined_directories(start, "/tmp/sub", bash=True) == [bash, ps]
+        else:
+            assert bash == ps == Path("/tmp/sub")
+            assert hu.joined_directories(start, "/tmp/sub", bash=True) == [bash]
+        assert hu.joined_directories(start, "/tmp/sub", bash=False) == [ps]
+        assert hu.joined_directories(start, "sub", bash=True) == [start / "sub"]
+
+    def test_the_shell_has_no_default(self, tmp_path):
+        """A new call site names its shell: neither reading is inherited."""
+        import _hook_utils as hu
+        import pytest as _pytest
+        for call in (lambda: hu.join_directory(tmp_path, "x"),  # type: ignore[call-arg]
+                     lambda: hu.joined_directories(tmp_path, "x"),  # type: ignore[call-arg]
+                     lambda: hu.directory_exists(tmp_path)):  # type: ignore[call-arg]
+            with _pytest.raises(TypeError, match="bash"):
+                call()

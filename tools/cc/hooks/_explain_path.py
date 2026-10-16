@@ -107,8 +107,9 @@ def _plan_rule_label(rel: str, root: Path) -> str:
     names WHY, and must not drift from it — a wrong reason (e.g. offering a
     `./`-sentinel opt-out for a file that ``PLAN_REQUIRED_ROOT_FILES``
     short-circuits) is the same "read-out lies with authority" failure the
-    boolean pin exists to prevent. ``test_explain_path.py`` pins these labels."""
-    if Path(rel).is_absolute():
+    boolean pin exists to prevent. ``test_explain_path.py`` pins these labels.
+    Rooted is `_hook_utils.rooted`, the exemption's own judge (DEF-1175)."""
+    if _hook_utils.rooted(rel):
         return "exempt -- outside repo (absolute path)"
     folded = _hook_utils_normcase(rel)
     # The stack's own test roots, read from the producer rather
