@@ -63,9 +63,25 @@ gets a green that never ran the rest -- one command with one receipt closes
 that. ``--tier full`` forces the tier (the handoff's preflight runs the full
 suite whatever the diff earned).
 
+Beside the tier it prints the reviewers the diff's surface earns: the
+``review:`` line (``review`` and ``review_earned_by`` in ``--json``), the
+review rule of ``/implement-task`` and ``/preflight`` step 6 computed from the
+same changed paths -- ``none``, ``code-reviewer`` or ``both`` -- with each path
+that earned it. The bodies stated the rule in prose and the worker tick said
+"both reviewers" for every lane, so a records lane ran two reviewers it had not
+earned. A hook, a command / agent / skill / workflow body or a gate earns both;
+a gate is the CI definition, ``bench/`` and every repo file a workflow at the
+diff's head calls (its ``run:`` steps and local ``uses:``), a hook is also
+every ``tools/cc/`` module a hook loads, and ``espalier.toml`` and
+``pyproject.toml`` (configuration a hook or a gate reads) earn both too; each
+set is read from the head at classification time and never kept by hand, and
+a mirror-registry source earns what its mirrors earn. What cannot be read --
+the head, an unresolved ``--base`` -- reads both, never fewer. ``--quiet``
+prints the tier word alone and never reads any of it.
+
 Usage::
 
-    python3 scripts/proof_tier.py                    # prints the tier and its command line(s)
+    python3 scripts/proof_tier.py                    # prints the tier, the review line and the command line(s)
     python3 scripts/proof_tier.py --run              # ...and runs them, one receipt
     python3 scripts/proof_tier.py --run --tier full  # the handoff's preflight form
     python3 scripts/proof_tier.py --json
@@ -80,10 +96,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shlex
 import subprocess
 import sys
 from pathlib import Path
+from typing import Callable, Iterable
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -110,6 +128,37 @@ _CI_DEFINITION_PREFIXES: tuple[str, ...] = (".github/workflows/", ".github/actio
 #: earns the full tier everywhere: the contract slice cannot vouch for a suite
 #: whose selection it no longer knows (failure-mode review, 2026-09-25).
 _SUITE_CONFIG_FILES: tuple[str, ...] = ("pyproject.toml", "espalier.toml", "tests/conftest.py")
+
+#: The review rule of ``/implement-task`` and ``/preflight`` step 6, computed
+#: from the same changed paths as the tier (``review``): a path on the review
+#: surface earns ``code-reviewer``; a hook, a command / agent / skill /
+#: workflow body, or a gate earns ``failure-mode-reviewer`` beside it
+#: (``both``); anything else earns ``none``. The bodies stated it in prose and
+#: the worker tick said "both reviewers" for every lane, so records lanes ran
+#: two reviewers they had not earned (review rounds per reviewed pull request
+#: 1.8, then 2.6, over the 36 merges from 2026-10-14; air's assign, 2026-10-16).
+#: The surface is the step 6 list: the shipped runtime (``is_runtime``) and
+#: these roots, ``.github/actions/`` beside the workflows. The byte mirrors
+#: decide nothing alone, as in the tier: their sources do.
+_REVIEW_PREFIXES: tuple[str, ...] = (".claude/", "bench/", "scripts/") + _CI_DEFINITION_PREFIXES
+_HOOK_PREFIX = "tools/cc/hooks/"
+_BODY_PREFIXES: tuple[str, ...] = (
+    ".claude/commands/", ".claude/agents/", ".claude/skills/", ".claude/workflows/",
+)
+#: A gate is what CI runs as one: the CI definition (``is_ci_definition``),
+#: ``bench/`` (the release gate), and every repo file a workflow at the diff's
+#: head calls (``workflow_named_files``) -- derived at classification time and
+#: never kept by hand, so a script joins the moment a workflow calls it.
+_BENCH_PREFIX = "bench/"
+REVIEWS: tuple[str, ...] = ("none", "code-reviewer", "both")
+#: The harness's own configuration that a hook or a gate reads: plan_guard's
+#: exemptions, write_guard's zones and the dispatcher (``espalier.toml``); the
+#: hook type gate's mypy overrides and the ruff set CI blocks on
+#: (``pyproject.toml``). Both reviewers (air, 2026-10-16); the suite's shared
+#: test code (``is_suite_config``'s other members) earns the code reviewer.
+_CONFIG_BOTH_FILES: tuple[str, ...] = ("espalier.toml", "pyproject.toml")
+#: The characters that end a shell word outside quotes (``_shell_words``).
+_SHELL_OPERATORS = ";|&()<>`"
 
 #: The files that assert wall-clock budgets (a regex must finish inside 100 ms,
 #: a speed bump inside its window). Under ``-n auto`` the box is oversubscribed
@@ -410,17 +459,24 @@ def changed_paths(root: Path) -> tuple[list[str], list[str]]:
     """``(changed, untracked)`` repo-relative paths: everything modified, staged
     or intent-added versus HEAD, and the ``??`` files git does not track."""
     porcelain = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"],
+        ["git", "-C", str(root), "status", "--porcelain", "-z", "--untracked-files=all"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     ).stdout
     changed: list[str] = []
     untracked: list[str] = []
-    for line in porcelain.splitlines():
-        if len(line) < 4:
+    # -z: one NUL-ended field per entry, the path unquoted (a hook path with a
+    # space or a non-ASCII character read as typed; review, 2026-10-16), and a
+    # rename's or copy's original path as the next field, skipped here.
+    fields = porcelain.split("\0")
+    i = 0
+    while i < len(fields):
+        entry = fields[i]
+        i += 1
+        if len(entry) < 4:
             continue
-        code, path = line[:2], line[3:]
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
+        code, path = entry[:2], entry[3:]
+        if "R" in code or "C" in code:
+            i += 1
         if code == "??":
             untracked.append(path)
         else:
@@ -433,10 +489,10 @@ def unstaged_deletions(root: Path) -> list[str]:
     (porcelain `` D``): still index rows, so every ``git ls-files`` gate counts
     a file that is not there. The refusal twin of the untracked list."""
     porcelain = subprocess.run(
-        ["git", "-C", str(root), "status", "--porcelain"],
+        ["git", "-C", str(root), "status", "--porcelain", "-z"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
     ).stdout
-    return [line[3:] for line in porcelain.splitlines() if line[:2] == " D"]
+    return [field[3:] for field in porcelain.split("\0") if field[:2] == " D"]
 
 
 class BaseUnresolvable(Exception):
@@ -514,6 +570,576 @@ def tier(changed: list[str], *, workflows_are_runtime: bool = False) -> str:
     return "contract"
 
 
+def is_review_surface(rel: str) -> bool:
+    """A path on step 6's review surface: the shipped runtime (``tools/cc/``
+    and the engine's own ``.py``, the byte mirrors left out) or a
+    ``_REVIEW_PREFIXES`` root."""
+    rel = rel.replace("\\", "/")
+    return is_runtime(rel) or rel.startswith(_REVIEW_PREFIXES)
+
+
+#: A GitHub Actions expression (``${{ github.workspace }}``), read as one
+#: expansion before the words are split: its value is the runner's, unknown here.
+_ACTIONS_EXPRESSION_RE = re.compile(r"\$\{\{[^}\n]*\}\}")
+#: Where a quoted span that held an expansion ended inside a word: the shell's
+#: boundary between the expansion and the literal after it, which dequoting
+#: would otherwise lose (``python "$PREFIX"scripts/x.py``).
+_EXPANSION_END = "\0"
+
+
+def _shell_statements(script: str) -> list[list[tuple[str, bool]]]:
+    """The statements of a ``run:`` script, each its words as ``(word,
+    quoted)``: a quoted span joins its word unquoted (``quoted`` says it held
+    one), a ``$(...)`` inside double quotes is a script of its own whose
+    statements join the list (``tier="$(python scripts/proof_tier.py ...)"``),
+    a comment is dropped, a backslash escapes the next character and drops a
+    line break, and a word ends at whitespace while a statement ends at a
+    shell operator or a line break. An unterminated quote is read as a literal
+    character, so an apostrophe in heredoc prose cannot hide the calls after
+    it (review, 2026-10-16). A character scanner, not a regex."""
+    statements: list[list[tuple[str, bool]]] = []
+    words: list[tuple[str, bool]] = []
+    cur: list[str] = []
+    state = {"open": False, "quoted": False}
+
+    def flush() -> None:
+        if state["open"]:
+            words.append(("".join(cur), state["quoted"]))
+        cur.clear()
+        state["open"] = state["quoted"] = False
+
+    def end() -> None:
+        flush()
+        if words:
+            statements.append(list(words))
+            words.clear()
+
+    script = _ACTIONS_EXPRESSION_RE.sub("${GHA}", script)
+    i, n = 0, len(script)
+    while i < n:
+        c = script[i]
+        if c == "\\":
+            if i + 1 < n and script[i + 1] != "\n":
+                cur.append(script[i + 1])
+                state["open"] = True
+            i += 2
+            continue
+        if c == "'":
+            close = script.find("'", i + 1)
+            if close < 0:
+                cur.append(c)
+                state["open"] = True
+                i += 1
+                continue
+            cur.append(script[i + 1:close])
+            state["open"] = state["quoted"] = True
+            i = close + 1
+            continue
+        if c == '"':
+            j, buf, expands = i + 1, [], False
+            while j < n and script[j] != '"':
+                if script[j] == "\\" and j + 1 < n:
+                    buf.append(script[j + 1])
+                    j += 2
+                    continue
+                if script.startswith("$(", j):
+                    depth, k = 1, j + 2
+                    while k < n and depth:
+                        depth += {"(": 1, ")": -1}.get(script[k], 0)
+                        k += 1
+                    statements.extend(_shell_statements(script[j + 2:k - 1 if depth == 0 else k]))
+                    expands = True
+                    j = k
+                    continue
+                if script[j] == "$":
+                    expands = True
+                buf.append(script[j])
+                j += 1
+            if j >= n:
+                cur.append(c)
+                state["open"] = True
+                i += 1
+                continue
+            cur.append("".join(buf) + (_EXPANSION_END if expands else ""))
+            state["open"] = state["quoted"] = True
+            i = j + 1
+            continue
+        if c == "#" and not state["open"]:
+            newline = script.find("\n", i)
+            i = n if newline < 0 else newline
+            continue
+        if c == "\n" or c in _SHELL_OPERATORS:
+            end()
+        elif c.isspace():
+            flush()
+        else:
+            cur.append(c)
+            state["open"] = True
+        i += 1
+    end()
+    return statements
+
+
+def _after_expansion(word: str) -> str | None:
+    """The literal tail of a word after its last expansion (``$NAME``,
+    ``${...}``, an Actions expression, or a quoted span that held one), a
+    leading slash dropped: the path a call names under a root the expansion
+    supplies (``${{ github.workspace }}/scripts/gate.py``). None where the word
+    holds no expansion."""
+    if _EXPANSION_END in word:
+        tail = word[word.rfind(_EXPANSION_END) + 1:]
+    elif "$" in word:
+        rest = word[word.rfind("$") + 1:]
+        if rest.startswith("{"):
+            close = rest.find("}")
+            tail = rest[close + 1:] if close >= 0 else ""
+        else:
+            k = 0
+            while k < len(rest) and (rest[k].isalnum() or rest[k] == "_"):
+                k += 1
+            tail = rest[k:]
+    else:
+        return None
+    return tail.lstrip("/") or None
+
+
+#: The commands whose next word, quoted or not, is the script they run, and
+#: whose `-m pkg.mod` names a module file (air, 2026-10-16).
+_INTERPRETERS = frozenset({"python", "python3", "py", "bash", "sh", "pwsh", "node"})
+#: The commands whose words are data: text printed, or a test's operands
+#: (`[ -f espalier/__init__.py ]` checks a file, it does not call it).
+_DATA_COMMANDS = frozenset({"echo", "printf", "[", "[[", "test"})
+#: The shell words that open a statement before its command (`if [ -f x ]`
+#: is the test command, not an `if` command with operands).
+_SHELL_KEYWORDS = frozenset({"if", "then", "else", "elif", "while", "until", "do", "!", "time", "{"})
+
+
+def _command_name(word: str) -> str:
+    name = word.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _is_interpreter(name: str) -> bool:
+    return name in _INTERPRETERS or (name.startswith("python") and name[6:].replace(".", "").isdigit())
+
+
+def _statement_calls(words: list[tuple[str, bool]]) -> list[str]:
+    """The words of one statement that name a file it calls: the command word
+    itself, every unquoted word after it, the first word after an interpreter
+    and its flags (quoted or not), and an interpreter's `-m` module as a path;
+    an assignment before the command is skipped, and a data command's words
+    are none."""
+    k = 0
+    while k < len(words) and not words[k][1] and (
+            words[k][0] in _SHELL_KEYWORDS
+            or ("=" in words[k][0] and words[k][0].split("=", 1)[0].replace("_", "").isalnum())):
+        k += 1
+    if k >= len(words):
+        return []
+    command = words[k][0].replace(_EXPANSION_END, "")
+    name = _command_name(command)
+    if name in _DATA_COMMANDS:
+        return []
+    calls = [command]
+    interpreter = _is_interpreter(name)
+    script_seen = False
+    rest = words[k + 1:]
+    j = 0
+    while j < len(rest):
+        word, quoted = rest[j]
+        if interpreter and word == "-m" and j + 1 < len(rest):
+            module = rest[j + 1][0].replace(".", "/")
+            calls += [f"{module}.py", f"{module}/__main__.py"]
+            j += 2
+            script_seen = True
+            continue
+        if interpreter and not script_seen and not word.startswith("-"):
+            calls.append(word)
+            script_seen = True
+        elif not quoted:
+            calls.append(word)
+        j += 1
+    return calls
+
+
+def _scalar(value: str) -> str:
+    """One inline YAML value: a pair of enclosing quotes removed, or a plain
+    value's trailing `` #`` comment."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        return value[1:-1]
+    return value.split(" #", 1)[0].strip()
+
+
+#: The keys of an action file whose value is a file the action runs, beside
+#: its `run:` steps (a JavaScript action's entry points).
+_ACTION_ENTRY_KEYS = frozenset({"main", "pre", "post"})
+
+
+def _run_and_uses(text: str) -> tuple[list[tuple[str, str]], list[str], list[str]]:
+    """``(runs, uses, entries)`` of one workflow or action file, read by line
+    and indentation (stdlib only: the CI tier job runs this script before
+    anything is installed): each ``run:`` script with the ``working-directory``
+    its step names (``""`` for none), each ``uses:`` value, and each JavaScript
+    action entry point (``main:``, ``pre:``, ``post:``). A block scalar
+    (``key: |`` or ``key: >``) is every following line indented past its key,
+    blank lines included, and is skipped whole unless the key is ``run``, so a
+    line inside another key's block is never read as a key. Every other value
+    -- an ``env:`` entry, a ``with:`` input, a comment -- is not a call. A step
+    is a list item; its keys are the ones at its first key's column."""
+    runs: list[tuple[str, str]] = []
+    uses: list[str] = []
+    entries: list[str] = []
+    step_runs: list[str] = []
+    step = {"col": -1, "dir": ""}
+
+    def close_step() -> None:
+        runs.extend((script, step["dir"]) for script in step_runs)
+        step_runs.clear()
+        step["col"], step["dir"] = -1, ""
+
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        body = line.lstrip(" ")
+        col = len(line) - len(body)
+        if not body.strip() or body.startswith("#"):
+            continue
+        if body.startswith("- "):
+            close_step()
+            rest = body[2:].lstrip(" ")
+            col += len(body) - len(rest)
+            body = rest
+            step["col"] = col
+        elif step["col"] >= 0 and col < step["col"]:
+            close_step()
+        key, sep, value = body.partition(":")
+        if not sep:
+            continue
+        value = value.strip()
+        in_step = step["col"] >= 0 and col == step["col"]
+        if value[:1] in ("|", ">"):
+            block: list[str] = []
+            while i < len(lines):
+                nxt = lines[i]
+                if nxt.strip() and len(nxt) - len(nxt.lstrip(" ")) <= col:
+                    break
+                block.append(nxt)
+                i += 1
+            if key == "run" and in_step:
+                step_runs.append("\n".join(block))
+            elif key == "run":
+                runs.append(("\n".join(block), ""))
+        elif key == "run":
+            if in_step:
+                step_runs.append(_scalar(value))
+            else:
+                runs.append((_scalar(value), ""))
+        elif key == "working-directory" and in_step:
+            step["dir"] = _scalar(value)
+        elif key == "uses":
+            uses.append(_scalar(value))
+        elif key in _ACTION_ENTRY_KEYS:
+            entries.append(_scalar(value))
+    close_step()
+    return runs, uses, entries
+
+
+def _head_files(root: Path, at_head: bool) -> tuple[set[str] | None, Callable[[str], str | None]]:
+    """``(files, read)`` at the diff's head: with ``at_head`` (``--base``), the
+    files of ``HEAD``'s tree and a reader of their blobs; otherwise ``None``
+    (ask the disk) and a reader of the working tree. Raises
+    ``BaseUnresolvable`` when git cannot list ``HEAD`` or read a blob it
+    listed: an unread file is never read as an empty one."""
+    if not at_head:
+        def read_disk(rel: str) -> str | None:
+            path = root / rel
+            return path.read_text(encoding="utf-8", errors="replace") if path.is_file() else None
+        return None, read_disk
+    try:
+        listing = subprocess.run(
+            ["git", "-C", str(root), "ls-tree", "-r", "-z", "--name-only", "HEAD"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "stderr", "") or str(exc)
+        raise BaseUnresolvable(f"cannot list HEAD's files: {detail.strip()}") from exc
+    files = {p for p in listing.split("\0") if p}
+
+    def read_blob(rel: str) -> str | None:
+        if rel not in files:
+            return None
+        out = subprocess.run(
+            ["git", "-C", str(root), "show", f"HEAD:{rel}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        if out.returncode != 0:
+            raise BaseUnresolvable(f"cannot read HEAD:{rel}: {out.stderr.strip()}")
+        return out.stdout
+    return files, read_blob
+
+
+def _file_test(root: Path, files: set[str] | None) -> Callable[[str], bool]:
+    """Whether a repo-relative spelling names a file at the diff's head."""
+    def is_file(rel: str) -> bool:
+        if not rel or rel.startswith(("/", "../")) or ":" in rel or "/../" in rel:
+            return False
+        return rel in files if files is not None else (root / rel).is_file()
+    return is_file
+
+
+def workflow_named_files(root: Path = _ROOT, *, at_head: bool = False) -> dict[str, str]:
+    """Every repo file a workflow at the diff's head calls, mapped to the file
+    that names it: a call word of a ``run:`` script (`_statement_calls`) that
+    is a file there, read from the step's ``working-directory`` too and past
+    an expansion the runner fills in; a local action or reusable workflow
+    (``uses: ./...``), whose own ``run:`` steps and JavaScript entry points are
+    read in turn. The head is the working tree, or ``HEAD``'s tree with
+    ``at_head`` (``--base``: a pull request's own run). A path a workflow
+    names that is not a file at the head does not join; a remote ``uses:`` is
+    not a repo file."""
+    files, read = _head_files(root, at_head)
+    is_file = _file_test(root, files)
+
+    if files is not None:
+        sources = sorted(p for p in files if p.startswith(".github/workflows/")
+                         and p.endswith((".yml", ".yaml")) and p.count("/") == 2)
+    else:
+        found = (root / ".github" / "workflows").glob("*.y*ml")
+        sources = sorted(f".github/workflows/{p.name}" for p in found
+                         if p.is_file() and p.suffix in (".yml", ".yaml"))
+    named: dict[str, str] = {}
+    seen = set(sources)
+    queue = list(sources)
+    while queue:
+        src = queue.pop(0)
+        text = read(src)
+        if text is None:
+            continue
+        runs, uses, entries = _run_and_uses(text)
+        for script, directory in runs:
+            base_dir = (_after_expansion(directory) if "$" in directory else directory) or ""
+            base_dir = base_dir.strip("/").removeprefix("./")
+            for words in _shell_statements(script):
+                for word in _statement_calls(words):
+                    for spelling in (word.replace(_EXPANSION_END, ""), _after_expansion(word)):
+                        if not spelling:
+                            continue
+                        rel = spelling[2:] if spelling.startswith("./") else spelling
+                        for candidate in ((f"{base_dir}/{rel}", rel) if base_dir else (rel,)):
+                            if is_file(candidate):
+                                named.setdefault(candidate, src)
+        action_dir = src.rsplit("/", 1)[0] if src.rsplit("/", 1)[-1].startswith("action.") else ""
+        for entry in entries:
+            candidate = f"{action_dir}/{entry.removeprefix('./')}" if action_dir else entry
+            if is_file(candidate):
+                named.setdefault(candidate, src)
+        for value in uses:
+            if not value.startswith("./"):
+                continue
+            target = value[2:].rstrip("/")
+            if target.endswith((".yml", ".yaml")):
+                candidates: tuple[str, ...] = (target,)
+            else:
+                candidates = (f"{target}/action.yml", f"{target}/action.yaml")
+            for cand in candidates:
+                if is_file(cand):
+                    named.setdefault(cand, src)
+                    if cand not in seen:
+                        seen.add(cand)
+                        queue.append(cand)
+    return named
+
+
+def hook_loaded_files(root: Path = _ROOT, *, at_head: bool = False) -> dict[str, str]:
+    """Every ``tools/cc/`` module a hook loads, mapped to the file that loads
+    it: an ``import`` or ``from ... import`` of a name that is a module beside
+    the hooks or in ``tools/cc/`` (the hooks put both on ``sys.path``), and a
+    by-path load (a ``"<name>.py"`` joined to a path, or the first argument of
+    ``_load_beside_hooks``), read through every module so loaded. A break in
+    any of them makes the hook that loads it refuse every tool call (air,
+    2026-10-16: this morning's lock-out), so each earns a hook's review.
+    Derived from the hooks' own source at the diff's head, never a hand list."""
+    import ast
+
+    files, read = _head_files(root, at_head)
+    is_file = _file_test(root, files)
+    if files is not None:
+        hooks = sorted(p for p in files if p.startswith(_HOOK_PREFIX) and p.endswith(".py") and p.count("/") == 3)
+    else:
+        hooks = sorted(f"{_HOOK_PREFIX}{p.name}" for p in (root / _HOOK_PREFIX).glob("*.py"))
+
+    def module_file(name: str) -> str | None:
+        for cand in (f"{_HOOK_PREFIX}{name}.py", f"tools/cc/{name}.py"):
+            if is_file(cand):
+                return cand
+        return None
+
+    def loads(source: str) -> set[str]:
+        try:
+            tree = ast.parse(source)
+        except SyntaxError:
+            return set()
+        found: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                found.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                found.add(node.module.split(".")[0])
+            elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+                if isinstance(node.right, ast.Constant) and isinstance(node.right.value, str) \
+                        and node.right.value.endswith(".py") and "/" not in node.right.value:
+                    found.add(node.right.value[:-3])
+            elif isinstance(node, ast.Call) and getattr(node.func, "id", None) == "_load_beside_hooks" \
+                    and node.args and isinstance(node.args[0], ast.Constant) \
+                    and isinstance(node.args[0].value, str) and node.args[0].value.endswith(".py"):
+                found.add(node.args[0].value[:-3])
+        return found
+
+    loaded: dict[str, str] = {}
+    queue = list(hooks)
+    seen = set(hooks)
+    while queue:
+        src = queue.pop(0)
+        text = read(src)
+        if text is None:
+            continue
+        for name in sorted(loads(text)):
+            target = module_file(name)
+            if target is None or target in seen:
+                continue
+            seen.add(target)
+            queue.append(target)
+            if not target.startswith(_HOOK_PREFIX):
+                loaded[target] = src
+    return loaded
+
+
+def _mirror_rows(root: Path, at_head: bool) -> list[tuple[str, tuple[str, ...]]]:
+    """``(source, mirrors)`` per ``MirrorRow(...)`` of
+    ``espalier/mirror_registry.py`` at the diff's head, read from its literals
+    by ``ast`` (nothing of it runs), a glob source read as the directory
+    before its first wildcard; empty where the tree keeps no registry."""
+    import ast
+
+    _files, read = _head_files(root, at_head)
+    source = read("espalier/mirror_registry.py")
+    if source is None:
+        return []
+    rows = []
+    for node in ast.walk(ast.parse(source)):
+        if not (isinstance(node, ast.Call) and getattr(node.func, "id", None) == "MirrorRow"):
+            continue
+        fields = {kw.arg: kw.value for kw in node.keywords}
+        try:
+            sot = ast.literal_eval(fields["sot"])
+            mirrors = tuple(ast.literal_eval(fields["mirrors"]))
+        except (KeyError, ValueError):
+            continue
+        for wild in ("*", "{", "?"):
+            if wild in sot:
+                sot = sot[:sot.index(wild)]
+        rows.append((sot, mirrors))
+    return rows
+
+
+def _gitignore_touches_kill_switch(root: Path, base: str | None) -> bool:
+    """A changed ``.gitignore`` line names ``.claude/settings.json``: the
+    kill-switch's foreclosure (CLAUDE.md, Hooks), so the diff is a gate's
+    (air, 2026-10-16). Read from the diff the review reads: the merge-base
+    diff with ``base``, else the working tree's against ``HEAD``."""
+    # Literal argv lists, as `changed_since` keeps them: the subprocess-contract
+    # scanner resolves a literal and refuses a list chosen at run time.
+    try:
+        if base:
+            diff = subprocess.run(
+                ["git", "-C", str(root), "diff", f"{base}...HEAD", "--", ".gitignore"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+            ).stdout
+        else:
+            diff = subprocess.run(
+                ["git", "-C", str(root), "diff", "HEAD", "--", ".gitignore"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
+            ).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return True
+    return any(line[:1] in "+-" and not line.startswith(("+++", "---")) and ".claude/settings.json" in line
+               for line in diff.splitlines())
+
+
+#: The levels a review takes, lowest first (``REVIEWS`` in order).
+_NONE, _CODE, _BOTH = 0, 1, 2
+
+
+def review(changed: Iterable[str], root: Path = _ROOT, *, at_head: bool = False,
+           base: str | None = None) -> tuple[str, list[tuple[str, str]]]:
+    """``(verdict, earned_by)``: the reviewers the diff's surface earns, one of
+    ``REVIEWS``, and each path that earned the verdict with why. Both: a hook
+    or a module a hook loads, a command / agent / skill / workflow body, a
+    gate (the CI definition, ``bench/``, a file a workflow calls), the
+    harness's configuration that a hook or a gate reads (``espalier.toml``,
+    ``pyproject.toml``, the kill-switch's ``.gitignore`` line), and a
+    mirror-registry source whose mirror earns both. Code-reviewer: the review
+    surface, the suite's shared test code, any other ``.gitignore`` line.
+    The derived sets are read only when a path is left that no prefix
+    decides. ``base`` (``--base``) is the ref the ``.gitignore`` diff is read
+    against; ``at_head`` follows it."""
+    at_head = at_head or base is not None
+    cache: dict[str, object] = {}
+
+    def derived(key: str, make: Callable[[], object]) -> object:
+        if key not in cache:
+            cache[key] = make()
+        return cache[key]
+
+    def classify(rel: str, depth: int = 0) -> tuple[int, str]:
+        if rel.startswith(_HOOK_PREFIX):
+            return _BOTH, "a hook"
+        if rel.startswith(_BODY_PREFIXES):
+            return _BOTH, "a command, agent, skill or workflow body"
+        if is_ci_definition(rel):
+            return _BOTH, "the CI definition"
+        if rel.startswith(_BENCH_PREFIX):
+            return _BOTH, "the release bench"
+        if rel in _CONFIG_BOTH_FILES:
+            return _BOTH, "the configuration a hook or a gate reads"
+        best = (_NONE, "")
+        if rel.startswith("tools/cc/"):
+            loaded = derived("hooks", lambda: hook_loaded_files(root, at_head=at_head))
+            if rel in loaded:  # type: ignore[operator]
+                return _BOTH, f"loaded by a hook: {loaded[rel]} loads it"  # type: ignore[index]
+        named = derived("gates", lambda: workflow_named_files(root, at_head=at_head))
+        if rel in named:  # type: ignore[operator]
+            return _BOTH, f"a gate: {named[rel]} runs it"  # type: ignore[index]
+        if rel == ".gitignore":
+            if derived("gitignore", lambda: _gitignore_touches_kill_switch(root, base)):
+                return _BOTH, "the kill-switch's .gitignore line"
+            best = (_CODE, "the ignore rules")
+        if depth == 0:
+            for sot, mirrors in derived("mirrors", lambda: _mirror_rows(root, at_head)):  # type: ignore[attr-defined]
+                if rel == sot or (sot.endswith("/") and rel.startswith(sot)):
+                    for mirror in mirrors:
+                        image = mirror + rel[len(sot):] if sot.endswith("/") else mirror
+                        level, why = classify(image, depth + 1)
+                        if level > best[0]:
+                            best = (level, f"the source of {image} ({why})")
+        if best[0] < _CODE and is_review_surface(rel):
+            best = (_CODE, "on the review surface")
+        if best[0] < _CODE and is_suite_config(rel):
+            best = (_CODE, "the suite's shared test code")
+        return best
+
+    earned: dict[int, list[tuple[str, str]]] = {_NONE: [], _CODE: [], _BOTH: []}
+    for rel in sorted({p.replace("\\", "/") for p in changed}):
+        level, why = classify(rel)
+        earned[level].append((rel, why))
+    for level in (_BOTH, _CODE):
+        if earned[level]:
+            return REVIEWS[level], earned[level]
+    return "none", []
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", default=str(_ROOT))
@@ -536,6 +1162,7 @@ def main(argv: list[str] | None = None) -> int:
                          "exists, parallel is every other line; both (the default) is the tier")
     args = ap.parse_args(argv)
     root = Path(args.root).resolve()
+    diff_unread = False
     if args.base:
         try:
             changed = changed_since(root, args.base)
@@ -550,6 +1177,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"proof_tier: {exc}; running the forced {args.tier} tier over an empty diff",
                   file=sys.stderr)
             changed = []
+            diff_unread = True
         untracked = []
         deleted = []
     else:
@@ -557,6 +1185,28 @@ def main(argv: list[str] | None = None) -> int:
         deleted = unstaged_deletions(root)
     earned = tier(changed + untracked, workflows_are_runtime=bool(args.base))
     which = earned if args.tier == "auto" else args.tier
+    verdict = ""
+    earned_by: list[tuple[str, str]] = []
+    outside: list[str] = []
+    if not args.quiet:
+        # Not on --quiet: the CI tier job reads that one word and never pays for
+        # the workflow read. What cannot be read reads as both reviewers, never
+        # fewer: the workflows, the hooks or the registry at the head, and a
+        # --base that did not resolve (its empty diff is not a diff with nothing
+        # in it; failure-mode review, 2026-10-16).
+        if diff_unread:
+            verdict, earned_by = "both", [("(the diff)", f"unread: --base {args.base} did not resolve")]
+        else:
+            try:
+                verdict, earned_by = review(changed + untracked, root, base=args.base)
+            except BaseUnresolvable as exc:
+                print(f"proof_tier: {exc}; the review reads both", file=sys.stderr)
+                verdict, earned_by = "both", [("(the head)", "unread")]
+        if args.base:
+            # --base reads the committed diff alone; a dirty tree's paths are
+            # named so a lane run before its commit is not read as clean.
+            pending, fresh = changed_paths(root)
+            outside = sorted(set(pending + fresh))
     result = {
         "tier": which,
         "earned_tier": earned,
@@ -566,6 +1216,9 @@ def main(argv: list[str] | None = None) -> int:
         "suite_config_paths": sorted(p for p in changed + untracked if is_suite_config(p)),
         "corpus_paths": sorted(p for p in changed + untracked if is_recall_corpus(p)),
         "untracked": untracked,
+        "review": verdict,
+        "review_earned_by": [{"path": rel, "why": why} for rel, why in earned_by],
+        "outside_the_base_diff": outside,
         "heavy": args.heavy,
         "leg": args.leg,
         "commands": list(commands(which, changed + untracked, root, heavy=args.heavy, leg=args.leg)),
@@ -592,6 +1245,13 @@ def main(argv: list[str] | None = None) -> int:
             print("suite config changed: " + ", ".join(result["suite_config_paths"]))
         if result["corpus_paths"]:
             print("recall corpus changed: " + ", ".join(result["corpus_paths"]))
+        if earned_by:
+            print(f"review: {verdict} -- " + ", ".join(f"{rel} ({why})" for rel, why in earned_by))
+        else:
+            print("review: none -- no changed path is on the review surface")
+        if outside:
+            print(f"note: {len(outside)} uncommitted path(s) are outside the --base diff, so neither "
+                  "line read them: " + ", ".join(outside))
         for line in result["commands"]:
             print("run: " + line)
         if len(result["commands"]) > 1:

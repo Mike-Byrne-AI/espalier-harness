@@ -1404,3 +1404,427 @@ class TestTheLegsAndTheHeavyLane:
 class _Rc:
     def __init__(self, returncode: int) -> None:
         self.returncode = returncode
+
+
+
+#: A scratch workflow for the gate derivation (air's red, 2026-10-16): one
+#: planted call per shape that joins (a YAML-quoted value is the shell's text,
+#: so it joins), and one per shape that must not -- a
+#: comment, a quoted string either way, an assignment value, an ``env:`` value,
+#: a line inside another key's block, a sibling key after a ``run:`` block, and
+#: a path no file at the head answers.
+_PLANTED_WORKFLOW = """name: ci
+on: push
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    env:
+      GATE_ENV: scripts/env_value.py
+    steps:
+      - uses: actions/checkout@v4
+      - run: python scripts/new_gate.py --check
+      - run: "python scripts/yaml_quoted.py"
+      - name: block
+        run: |
+          # python scripts/commented.py
+          echo "python scripts/double_quoted.py"
+          echo 'scripts/single_quoted.py'
+          GATE=scripts/assigned.py true
+          python scripts/absent.py
+          python ./scripts/dotted.py && python scripts/chained.py
+          python "$PREFIX"scripts/prefixed.py
+          echo "say \\" python scripts/escaped_quote.py now"
+        working-directory: scripts/sibling_key.py
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            run: python scripts/other_block.py
+      - uses: ./.github/actions/local  # the local action
+"""
+_PLANTED_ACTION = """name: local
+runs:
+  using: composite
+  steps:
+    - run: python tools/from_action.py
+      shell: bash
+"""
+_JOINS = ("scripts/new_gate.py", "scripts/yaml_quoted.py", "scripts/dotted.py", "scripts/chained.py",
+          "scripts/prefixed.py",
+          ".github/actions/local/action.yml", "tools/from_action.py")
+_NOT_CALLS = ("scripts/commented.py", "scripts/double_quoted.py", "scripts/single_quoted.py",
+              "scripts/assigned.py", "scripts/env_value.py", "scripts/other_block.py",
+              "scripts/sibling_key.py", "scripts/escaped_quote.py")
+
+
+def _planted(tmp_path, *, workflow=_PLANTED_WORKFLOW):
+    r = tmp_path / "rv"
+    files = {rel: "x\n" for rel in _JOINS + _NOT_CALLS}
+    files[".github/actions/local/action.yml"] = _PLANTED_ACTION
+    if workflow is not None:
+        files[".github/workflows/ci.yml"] = workflow
+    for rel, text in files.items():
+        (r / rel).parent.mkdir(parents=True, exist_ok=True)
+        (r / rel).write_text(text, encoding="utf-8")
+    return r
+
+
+class TestTheReviewLine:
+    """``review`` is ``/implement-task`` and ``/preflight`` step 6's rule made
+    mechanical, over the tier's own changed paths: a path on the review surface
+    earns ``code-reviewer``; a hook, a command / agent / skill / workflow body,
+    or a gate earns ``both``; anything else ``none``. A gate is the CI
+    definition, ``bench/``, and every file a workflow at the diff's head calls,
+    derived and never kept by hand (air, 2026-10-16)."""
+
+    @pytest.mark.parametrize("rel,expected", [
+        ("docs/X.md", "none"),
+        ("memory/n.md", "none"),
+        ("task-packs/TP-1-x.md", "none"),
+        ("tests/test_x.py", "none"),
+        # the suite's shared test code reads the code reviewer, the harness
+        # configuration a hook or a gate reads both (air, 2026-10-16)
+        ("tests/conftest.py", "code-reviewer"),
+        ("tests/_helper.py", "code-reviewer"),
+        ("pyproject.toml", "both"),
+        ("espalier.toml", "both"),
+        ("espalier/assets/claude/commands/x.md", "none"),
+        ("espalier/_vendor/cc/hooks/h.py", "none"),
+        ("examples/dogfooding/.claude/commands/x.md", "none"),
+        ("scripts/s.py", "code-reviewer"),
+        ("espalier/cli.py", "code-reviewer"),
+        ("tools/cc/seat.py", "code-reviewer"),
+        (".claude/CLAUDE.md", "code-reviewer"),
+        ("tools/cc/hooks/h.py", "both"),
+        (".claude/commands/x.md", "both"),
+        (".claude/agents/a.md", "both"),
+        (".claude/skills/s/SKILL.md", "both"),
+        (".claude/workflows/w.js", "both"),
+        (".github/workflows/ci.yml", "both"),
+        (".github/actions/a/action.yml", "both"),
+        ("bench/x.py", "both"),
+    ])
+    def test_each_surface_earns_its_reviewers(self, pt, tmp_path, rel, expected):
+        verdict, earned_by = pt.review([rel], tmp_path)
+        assert verdict == expected, (rel, earned_by)
+        assert [p for p, _ in earned_by] == ([] if expected == "none" else [rel])
+
+    @pytest.mark.parametrize("rel,why", [
+        ("tools/cc/hooks/h.py", "a hook"),
+        (".claude/skills/s/SKILL.md", "a command, agent, skill or workflow body"),
+        (".github/workflows/ci.yml", "the CI definition"),
+        (".github/actions/a/action.yml", "the CI definition"),
+        ("bench/x.py", "the release bench"),
+        ("scripts/s.py", "on the review surface"),
+    ])
+    def test_the_line_says_why_each_path_earned_it(self, pt, tmp_path, rel, why):
+        assert pt.review([rel], tmp_path)[1] == [(rel, why)]
+
+    def test_the_heaviest_path_decides_and_is_the_one_named(self, pt, tmp_path):
+        verdict, earned_by = pt.review(
+            ["docs/X.md", "scripts/s.py", "tools/cc/hooks/h.py"], tmp_path)
+        assert (verdict, earned_by) == ("both", [("tools/cc/hooks/h.py", "a hook")])
+
+    def test_a_script_a_workflow_runs_reads_both(self, pt, tmp_path):
+        r = _planted(tmp_path)
+        assert pt.review(["scripts/new_gate.py"], r) == (
+            "both", [("scripts/new_gate.py", "a gate: .github/workflows/ci.yml runs it")])
+
+    def test_the_same_script_with_no_workflow_reads_code_reviewer(self, pt, tmp_path):
+        r = _planted(tmp_path, workflow=None)
+        assert pt.review(["scripts/new_gate.py"], r)[0] == "code-reviewer"
+
+    def test_the_derivation_is_exactly_the_calls(self, pt, tmp_path):
+        named = pt.workflow_named_files(_planted(tmp_path))
+        assert set(named) == set(_JOINS)
+        assert named["tools/from_action.py"] == ".github/actions/local/action.yml"
+
+    def test_a_path_a_workflow_names_that_is_absent_does_not_join(self, pt, tmp_path):
+        r = _planted(tmp_path)
+        assert "python scripts/absent.py" in _PLANTED_WORKFLOW
+        assert "scripts/absent.py" not in pt.workflow_named_files(r)
+        assert pt.review(["scripts/absent.py"], r)[0] == "code-reviewer"
+
+    @pytest.mark.parametrize("rel", _NOT_CALLS)
+    def test_a_word_that_is_not_a_call_does_not_join(self, pt, tmp_path, rel):
+        r = _planted(tmp_path)
+        assert rel in _PLANTED_WORKFLOW
+        assert pt.review([rel], r)[0] == "code-reviewer"
+
+    def test_base_mode_reads_the_head_not_the_working_tree(self, pt, tmp_path):
+        r = _planted(tmp_path)
+        subprocess.run(_git(r) + ["init", "-q"], check=True)
+        subprocess.run(_git(r) + ["add", "-A"], check=True, capture_output=True)
+        subprocess.run(_git(r) + ["commit", "-qm", "i"], check=True, capture_output=True)
+        wf = r / ".github" / "workflows" / "ci.yml"
+        wf.write_text(_PLANTED_WORKFLOW.replace("scripts/new_gate.py", "scripts/commented.py"),
+                      encoding="utf-8")
+        assert "scripts/new_gate.py" in pt.workflow_named_files(r, at_head=True)
+        assert "scripts/new_gate.py" not in pt.workflow_named_files(r)
+        assert "scripts/commented.py" in pt.workflow_named_files(r)
+        assert "scripts/commented.py" not in pt.workflow_named_files(r, at_head=True)
+        (r / "scripts" / "late.py").write_text("x\n", encoding="utf-8")
+        wf.write_text(_PLANTED_WORKFLOW + "      - run: python scripts/late.py\n", encoding="utf-8")
+        assert "scripts/late.py" in pt.workflow_named_files(r)
+        assert "scripts/late.py" not in pt.workflow_named_files(r, at_head=True)
+
+    def test_the_cli_prints_the_line_beside_the_tier(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        (r / "tools" / "cc" / "hooks" / "h.py").write_text("changed\n", encoding="utf-8")
+        assert pt.main(["--root", str(r)]) == 0
+        assert "review: both -- tools/cc/hooks/h.py (a hook)\n" in capsys.readouterr().out
+        assert pt.main(["--root", str(r), "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["review"] == "both"
+        assert data["review_earned_by"] == [{"path": "tools/cc/hooks/h.py", "why": "a hook"}]
+
+    def test_a_docs_diff_says_none_and_why(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        _commit(r, "docs/X.md")
+        assert pt.main(["--root", str(r), "--base", "HEAD~1"]) == 0
+        assert "review: none -- no changed path is on the review surface\n" in capsys.readouterr().out
+
+    def test_quiet_never_reads_the_workflows(self, pt, tmp_path, capsys, monkeypatch):
+        """The CI tier job captures ``--quiet``'s one word; a workflow read it
+        never needed must not be able to fail it."""
+        r = _repo(tmp_path)
+        _commit(r, "docs/X.md")
+
+        def boom(*a, **k):
+            raise AssertionError("--quiet read the workflows")
+        monkeypatch.setattr(pt, "workflow_named_files", boom)
+        assert pt.main(["--root", str(r), "--base", "HEAD~1", "--quiet"]) == 0
+        assert capsys.readouterr().out == "contract\n"
+
+    def test_unreadable_workflows_read_both_never_fewer(self, pt, tmp_path, capsys, monkeypatch):
+        r = _repo(tmp_path)
+        _commit(r, "docs/X.md")
+
+        def unreadable(*a, **k):
+            raise pt.BaseUnresolvable("cannot list HEAD's files: planted")
+        monkeypatch.setattr(pt, "_head_files", unreadable)
+        assert pt.main(["--root", str(r), "--base", "HEAD~1"]) == 0
+        captured = capsys.readouterr()
+        assert "review: both -- (the head) (unread)\n" in captured.out
+        assert "planted; the review reads both" in captured.err
+
+    def test_the_merge_gate_is_a_gate_on_this_tree(self, pt):
+        """The live derivation: ``ci_guard.py`` alone reads both because
+        harness-guard runs it (air: the merge gate's force-add backstop), and
+        every path the derivation names is a file here."""
+        named = pt.workflow_named_files(REPO_ROOT)
+        assert named.get("tools/cc/ci_guard.py") == ".github/workflows/harness-guard.yml"
+        assert all((REPO_ROOT / rel).is_file() for rel in named), named
+        assert pt.review(["tools/cc/ci_guard.py"], REPO_ROOT)[0] == "both"
+
+
+class TestTheBodiesCiteTheReviewLine:
+    """The step 6 bodies keep the review rule as prose (the adopter branch has
+    no script) and cite the script's line on this tree. The self-host surface
+    they list and the script's surface roots agree both ways: one list kept in
+    two places drifts on the cell nobody enumerated (FAILURE_MODES 1.12), and a
+    presence-only pin is blind to an addition (SHARP_EDGES)."""
+
+    _BODIES = {
+        "implement-task.md": ("6. **Review before the one full run.**", "7. **Run the proof tier once"),
+        "preflight.md": ("## Step 6: Diff review", "## Step 7:"),
+        "implement-pack.md": ("dispatch the orthogonal-context review here",
+                              "Stop conditions, per agent vocabulary"),
+    }
+
+    @classmethod
+    def _step(cls, name: str) -> str:
+        start, end = cls._BODIES[name]
+        text = (REPO_ROOT / ".claude" / "commands" / name).read_text(encoding="utf-8")
+        i = text.index(start)
+        return " ".join(text[i:text.index(end, i)].split())
+
+    @pytest.mark.parametrize("name", sorted(_BODIES))
+    def test_the_self_host_surface_list_is_the_scripts(self, pt, name):
+        step = self._step(name)
+        i = step.index("Espalier-Harness tree")
+        listed = step[i:step.index("engine code", i)].split("`")[1::2]
+        roots = {t for t in listed if t.endswith("/") and " " not in t}
+        assert roots == set(pt._REVIEW_PREFIXES) | set(pt._FULL_PREFIXES) | {pt._ENGINE_PREFIX}
+
+    @pytest.mark.parametrize("name", sorted(_BODIES))
+    def test_the_body_kinds_the_prose_names_are_the_scripts(self, pt, name):
+        """The bodies say which bodies earn both reviewers; the script's
+        `_BODY_PREFIXES` decide it. A workflow body once counted in the script
+        and not in the prose (failure-mode review, 2026-10-16)."""
+        step = self._step(name)
+        i = step.index("a command / ")
+        kinds = set(step[i + len("a "):step.index(" body", i)].split(" / "))
+        assert kinds == {prefix.split("/")[1][:-1] for prefix in pt._BODY_PREFIXES}, kinds
+
+    @pytest.mark.parametrize("name", sorted(_BODIES))
+    def test_each_body_cites_the_review_line(self, name):
+        step = self._step(name)
+        assert "scripts/proof_tier.py" in step and "`review:` line" in step, name
+
+
+#: Call shapes a gate is spelled with (both reviews and air, 2026-10-16): a
+#: quoted script after an interpreter, a `$(...)` inside double quotes, a
+#: module run with `-m`, a step's working directory, an Actions expression
+#: before the path, an apostrophe in heredoc prose ahead of a call, and a
+#: JavaScript action's entry point; and the shapes that stay data (printed
+#: text, a test's operand).
+_CALL_SHAPES_WORKFLOW = """name: ci
+on: push
+jobs:
+  t:
+    runs-on: ubuntu-latest
+    steps:
+      - run: python "scripts/quoted_call.py" --x
+      - run: tier="$(python scripts/substituted.py --quiet || echo full)"
+      - run: printf 'scripts/printed.py'; echo scripts/echoed.py
+      - run: if [ -f scripts/tested.py ]; then true; fi
+      - run: python -m tools.module_main
+      - run: python gate.py
+        working-directory: scripts
+      - run: python ${{ github.workspace }}/scripts/expression.py
+      - run: |
+          cat <<EOF
+          Don't stop
+          EOF
+          python scripts/after_apostrophe.py
+      - uses: ./tools/js_action
+"""
+_CALLED = ("scripts/quoted_call.py", "scripts/substituted.py", "tools/module_main.py", "scripts/gate.py",
+           "scripts/expression.py", "scripts/after_apostrophe.py", "tools/js_action/action.yml",
+           "tools/js_action/dist/index.js")
+_DATA = ("scripts/printed.py", "scripts/echoed.py", "scripts/tested.py")
+
+
+def _call_shapes(tmp_path):
+    r = tmp_path / "cs"
+    files = {rel: "x\n" for rel in _CALLED + _DATA}
+    files[".github/workflows/ci.yml"] = _CALL_SHAPES_WORKFLOW
+    files["tools/js_action/action.yml"] = "name: js\nruns:\n  using: node20\n  main: dist/index.js\n"
+    for rel, text in files.items():
+        (r / rel).parent.mkdir(parents=True, exist_ok=True)
+        (r / rel).write_text(text, encoding="utf-8")
+    return r
+
+
+def _hooked(tmp_path):
+    """A scratch tools/cc/ whose one hook loads modules every way a hook does."""
+    r = tmp_path / "hk"
+    files = {
+        "tools/cc/hooks/h.py": (
+            "import _imported\n"
+            "from _from_imported import x\n"
+            "from pathlib import Path\n"
+            "p = Path(__file__).resolve().parent.parent / 'by_path.py'\n"
+            "_load_beside_hooks('beside.py', 'alias')\n"
+        ),
+        "tools/cc/_imported.py": "import _transitive\n",
+        "tools/cc/_from_imported.py": "x = 1\n",
+        "tools/cc/by_path.py": "",
+        "tools/cc/beside.py": "",
+        "tools/cc/_transitive.py": "",
+        "tools/cc/unloaded.py": "",
+    }
+    for rel, text in files.items():
+        (r / rel).parent.mkdir(parents=True, exist_ok=True)
+        (r / rel).write_text(text, encoding="utf-8")
+    return r
+
+
+class TestWhatAHookOrAGateReads:
+    """The fix batch of both reviews (2026-10-16), under air's three answers:
+    a hook is tools/cc/hooks/ and every tools/cc module a hook loads, derived;
+    the configuration a hook or a gate reads earns both; a quoted script after
+    an interpreter and a `$(...)` inside double quotes are calls, printed text
+    and a test's operand are not; a mirror-registry source earns its mirrors'
+    class; what cannot be read reads both."""
+
+    def test_every_module_a_hook_loads_is_derived(self, pt, tmp_path):
+        r = _hooked(tmp_path)
+        assert set(pt.hook_loaded_files(r)) == {
+            "tools/cc/_imported.py", "tools/cc/_from_imported.py", "tools/cc/by_path.py",
+            "tools/cc/beside.py", "tools/cc/_transitive.py"}
+        assert pt.review(["tools/cc/_transitive.py"], r) == (
+            "both", [("tools/cc/_transitive.py", "loaded by a hook: tools/cc/_imported.py loads it")])
+        assert pt.review(["tools/cc/unloaded.py"], r)[0] == "code-reviewer"
+
+    def test_the_live_hooks_load_the_bounded_spawn(self, pt):
+        """`_hook_utils.py` imports `_json_safe`: a break there refused every
+        tool call on 2026-10-16, so the module reads as a hook does."""
+        assert pt.review(["tools/cc/_json_safe.py"], REPO_ROOT)[0] == "both"
+
+    @pytest.mark.parametrize("line,expected", [
+        ("build/", "code-reviewer"),
+        (".claude/settings.json", "both"),
+    ])
+    def test_the_kill_switch_line_of_gitignore_is_a_gates(self, pt, tmp_path, line, expected):
+        r = _repo(tmp_path)
+        _commit(r, ".gitignore", "build/\n.claude/settings.json\n")
+        (r / ".gitignore").write_text(
+            "build/\n.claude/settings.json\n".replace(line + "\n", ""), encoding="utf-8")
+        assert pt.review([".gitignore"], r)[0] == expected
+        subprocess.run(_git(r) + ["commit", "-qam", "drop"], check=True, capture_output=True)
+        assert pt.review([".gitignore"], r, base="HEAD~1")[0] == expected
+
+    def test_the_call_shapes_join_and_the_data_shapes_do_not(self, pt, tmp_path):
+        named = pt.workflow_named_files(_call_shapes(tmp_path))
+        assert set(named) == set(_CALLED)
+        assert named["tools/js_action/dist/index.js"] == "tools/js_action/action.yml"
+
+    def test_the_gates_ci_rests_on_stay_named_on_this_tree(self, pt):
+        """A floor, not the set: the scripts the required cells and the
+        release run, each named by a workflow today."""
+        named = set(pt.workflow_named_files(REPO_ROOT))
+        assert {"scripts/proof_tier.py", "tools/cc/ci_guard.py", "scripts/release_check.py",
+                "bench/run_benchmark.py", "tools/review_agent_audit.py"} <= named, sorted(named)
+
+    def test_every_mirror_source_earns_at_least_its_mirrors_review(self, pt):
+        """`espalier/assets/github/workflows/harness-guard.yml` is the source of
+        the merge gate's workflow (a SOT_IS_PACKAGED row) and read none until
+        the review; every row of the registry is held to the order."""
+        from tests._git_oracle import require_tracked_paths
+        tracked = require_tracked_paths(REPO_ROOT, minimum=1000, what="the tree the mirror rows read")
+        rows = pt._mirror_rows(REPO_ROOT, False)
+        assert any(sot == "espalier/assets/github/workflows/harness-guard.yml" for sot, _ in rows), rows
+        for sot, mirrors in rows:
+            source = sot if not sot.endswith("/") else next(p for p in tracked if p.startswith(sot))
+            for mirror in mirrors:
+                image = mirror + source[len(sot):] if sot.endswith("/") else mirror
+                assert pt.REVIEWS.index(pt.review([source], REPO_ROOT)[0]) >= \
+                    pt.REVIEWS.index(pt.review([image], REPO_ROOT)[0]), (source, image)
+
+    def test_an_unresolved_base_reads_both_never_fewer(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        assert pt.main(["--root", str(r), "--base", "no-such-ref", "--tier", "full", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["review"] == "both"
+        assert data["review_earned_by"][0]["path"] == "(the diff)"
+
+    def test_base_mode_names_the_uncommitted_paths_it_leaves_out(self, pt, tmp_path, capsys):
+        r = _repo(tmp_path)
+        _commit(r, "docs/X.md")
+        (r / "tools" / "cc" / "hooks" / "h.py").write_text("uncommitted\n", encoding="utf-8")
+        assert pt.main(["--root", str(r), "--base", "HEAD~1"]) == 0
+        out = capsys.readouterr().out
+        assert "review: none" in out
+        assert "note: 1 uncommitted path(s) are outside the --base diff" in out
+        assert "tools/cc/hooks/h.py" in out
+
+    def test_a_staged_rename_reads_as_its_new_path(self, pt, tmp_path):
+        """Under `-z` a rename's original path is a field of its own after the
+        new one; it is skipped, as the `old -> new` form's left side was."""
+        r = _repo(tmp_path)
+        subprocess.run(_git(r) + ["mv", "tools/cc/hooks/h.py", "tools/cc/hooks/renamed.py"],
+                       check=True, capture_output=True)
+        assert pt.changed_paths(r) == (["tools/cc/hooks/renamed.py"], [])
+
+    @pytest.mark.parametrize("name", ["my hook.py", "né.py"])
+    def test_a_changed_path_is_read_as_written(self, pt, tmp_path, name):
+        """`git status --porcelain` quotes a path with a space or a non-ASCII
+        character unless asked for `-z`."""
+        r = _repo(tmp_path)
+        _commit(r, f"tools/cc/hooks/{name}", "one\n")
+        (r / "tools" / "cc" / "hooks" / name).write_text("two\n", encoding="utf-8")
+        changed, _untracked = pt.changed_paths(r)
+        assert changed == [f"tools/cc/hooks/{name}"]
+        assert pt.tier(changed) == "full"
+        assert pt.review(changed, r)[0] == "both"
