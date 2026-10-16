@@ -967,6 +967,8 @@ class TestLiveTreeWalkRatchet:
                 f"{s.rel}:{s.line}: a `# live-tree: ok` marker without its `-- <reason>`"
             )
 
+    @pytest.mark.slow
+    @pytest.mark.timeout(240)
     def test_the_census_prints_its_verdict_from_the_root(self):
         """``python3 tests/_live_tree_census.py`` from the root prints ``True``
         while any enumeration in tests/ is pending or any engine site is listed,
@@ -975,7 +977,9 @@ class TestLiveTreeWalkRatchet:
         DEF-2013's probe until lane three closed the engine half and struck the
         row; a later row over a new walk takes the same line."""
         # The census reads every tests/ module from cold: 43.85 s on a Windows box
-        # on 2026-10-15, against the 45 s bound it had; a hang still ends.
+        # on 2026-10-15, against the 45 s bound it had; a hang still ends. A
+        # bound past the suite's 60 s ceiling needs the test's own timeout above
+        # it, and a test that long is slow (tests/test_test_suite_contract.py).
         out = subprocess.run(
             [sys.executable, str(REPO_ROOT / "tests" / "_live_tree_census.py")],
             cwd=REPO_ROOT, capture_output=True, encoding="utf-8", timeout=180, check=True,

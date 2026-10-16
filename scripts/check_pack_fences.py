@@ -146,6 +146,26 @@ _GIT_REDIRECT_ENV = (
 _VIEWS: dict[str, "list[str] | None"] = {}
 
 
+def _bounded_spawn():
+    """``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, loaded
+    by path (a standard-library module, so this script stays stdlib-only):
+    ``subprocess.run`` whose timeout holds on Windows, where Git for Windows's
+    ``git.exe`` is a launcher whose child holds the pipe past the cap
+    (DEF-3004). Read beside this script, never under ``_ROOT``, which a test
+    points at a scratch tree that has no ``tools/``."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_json_safe_for_check_pack_fences",
+        Path(__file__).resolve().parents[1] / "tools" / "cc" / "_json_safe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.run_bounded
+
+
+run_bounded = _bounded_spawn()
+
+
 def _checkout_view() -> "list[str] | None":
     """Git's view of ``_ROOT`` (tracked plus untracked, not ignored), as
     repo-relative paths, or None where git does not answer for it: no ``.git``
@@ -160,12 +180,12 @@ def _checkout_view() -> "list[str] | None":
         if os.path.lexists(_ROOT / ".git"):
             env = {k: v for k, v in os.environ.items() if k not in _GIT_REDIRECT_ENV}
             try:
-                proc = subprocess.run(
+                proc = run_bounded(
                     ["git", "-c", "core.quotePath=false", "ls-files", "-z", "--cached", "--others",
                      "--exclude-standard"],
                     cwd=_ROOT, env=env, capture_output=True, timeout=60,
                 )
-            except (OSError, subprocess.TimeoutExpired):
+            except (OSError, subprocess.SubprocessError):
                 proc = None
             if proc is not None and proc.returncode == 0:
                 # surrogateescape: a name that is not UTF-8 comes back as itself on

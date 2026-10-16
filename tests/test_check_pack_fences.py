@@ -1,11 +1,13 @@
-# pytest-marker: default-unit
 """Contract for ``scripts/check_pack_fences.py``.
 
 The checker resolves a pack's PRESCRIBED python fences against the module they
 land in. Every assertion here was written against a behaviour the checker got
 wrong first -- the dedent, the nesting, and the do-not-blame-the-pack rule each
 have a measured failure behind them, recorded in the test that pins it.
+
+Marker: ``integration`` (registered in ``tests/conftest.py::_MARKER_RULES``).
 """
+# slow-exempt: one `git init` scratch tree for the git-view lookup (about 0.1 s); the module runs in 2.4 s, measured 2026-10-16
 from __future__ import annotations
 
 import importlib.util

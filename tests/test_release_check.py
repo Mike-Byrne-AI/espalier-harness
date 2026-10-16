@@ -19,6 +19,7 @@ the gate intentionally.
 
 Marker: ``release`` (registered in ``tests/conftest.py::_MARKER_RULES``).
 """
+# slow-exempt: one `git init` scratch tree for the git-view doc test (about 0.1 s); the module's 69 s is its live-repo checks, measured 2026-10-16
 from __future__ import annotations
 
 import itertools
