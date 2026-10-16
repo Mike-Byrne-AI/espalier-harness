@@ -236,10 +236,10 @@ class TestPostMergeVerdict:
         assert any(f"/compare/{GREEN_SHA}...{RED_SHA}" in " ".join(c) for c in run.calls)
 
     def test_several_merges_name_suspects_and_no_revert(self, board, monkeypatch, tmp_path):
-        """The workflow cancels an older run when a newer push lands, so a red
-        run can carry several merges: naming the newest as the culprit would
-        revert an innocent seat's work. Dies to: a revert printed for one of
-        several suspects."""
+        """A red run carries several merges when a run between it and the last
+        green one was red, still going or cancelled: naming the newest as the
+        culprit would revert an innocent seat's work. Dies to: a revert printed
+        for one of several suspects."""
         _stub_channel(monkeypatch, board)
         run = _gh({"pr list": [], "run list": _RED_THEN_GREEN,
                    "api compare": {"commits": [_merge(41, "1" * 40), _merge(42, "2" * 40)]}})
@@ -253,6 +253,32 @@ class TestPostMergeVerdict:
         text = board.render(board.collect(tmp_path, run_=run))
         assert "no green run in the last 20, so every merge before it is a suspect" in text
         assert "git revert" not in text
+        assert "a newer run is going" not in text, "no run is in flight here"
+
+    def test_a_run_still_going_between_the_red_and_the_last_green_is_named(self, board, monkeypatch, tmp_path):
+        """Overlapping runs finish out of order: an older run can still be going
+        under a red verdict, and its result can narrow the suspects. Dies to: a
+        run between the red and the green read as nothing, or as newer."""
+        _stub_channel(monkeypatch, board)
+        mid = "c0ffee1" + "0" * 33
+        runs = [_run("completed", "failure", RED_SHA), _run("in_progress", "", mid),
+                _run("completed", "success", GREEN_SHA)]
+        run = _gh({"pr list": [], "run list": runs,
+                   "api compare": {"commits": [_merge(41, "1" * 40), _merge(42, "2" * 40)]}})
+        text = board.render(board.collect(tmp_path, run_=run))
+        assert "suspects #41, #42" in text
+        assert "a run between it and the last green is still going (on c0ffee1)" in text
+        assert "a newer run is going" not in text
+
+    def test_a_red_beside_a_newer_run_in_flight_says_so(self, board, monkeypatch, tmp_path):
+        """Runs overlap now (DEF-2015: no newer push cancels an older one), so a
+        red usually has a newer tip's proof going beside it, which the green line
+        already says. Dies to: the red line rendered without the running flag."""
+        _stub_channel(monkeypatch, board)
+        run = _gh({"pr list": [], "run list": _RED_THEN_GREEN,
+                   "api compare": {"commits": [_merge(41, "1" * 40), _merge(42, "2" * 40)]}})
+        text = board.render(board.collect(tmp_path, run_=run))
+        assert "suspects #41, #42" in text and "a newer run is going, and its verdict will supersede this one" in text
 
     def test_a_failed_suspects_read_keeps_the_red(self, board, monkeypatch, tmp_path):
         """The correctness review's major: a failed lookup turned a known red

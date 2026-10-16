@@ -95,6 +95,10 @@ _NOT_STANDALONE_REASONS: dict[str, str] = {
     "_NOT_REFUSED_HERE": "the what-is-not-refused clause of the seven recursive-delete wall texts",
     "_PS_CATASTROPHIC_TARGETS": "the PowerShell wall's target list, in its two wall texts and the forced remedy",
     "_SHALLOW_SYSTEM_PATHS": "the shallow-system-path clause, drive rule included, of both tools' meaning-judge wall texts",
+    # DEF-910: the name-collision remedy, composed into every harness-zone
+    # template, whose head carries the "protected harness" marker.
+    "_NAME_COLLISION_WRITE": "the relocate remedy of the harness-zone write, symlink and hardlink templates",
+    "_NAME_COLLISION_MUTATION": "the relocate remedy of the harness-zone delete and move templates",
     # The kill-switch deny's {ci_clause}, chosen by `kill_switch_ci_clause` on
     # whether the CI gate's files are present; the deny's head carries the marker.
     "KILL_SWITCH_CI_GATE_PRESENT": "the kill-switch deny's CI clause where the CI gate is installed",

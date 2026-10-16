@@ -59,13 +59,14 @@ Runner = Callable[..., tuple[int, str, str]]
 #: same file ``ship.py``'s ``POST_MERGE_WORKFLOW`` names.
 POST_MERGE_WORKFLOW = "post-merge.yml"
 #: The conclusions that are a red verdict. Everything else a completed run can
-#: conclude -- cancelled by a newer push, stale, skipped by a job-level `if`,
+#: conclude -- cancelled (by hand, or on a repository whose workflow cancels an
+#: older run at a newer push), stale, skipped by a job-level `if`,
 #: neutral, action required -- is no verdict, so a skipped run never reads as a
 #: red base that asks a seat to revert someone's merge.
 _RED = frozenset({"FAILURE", "TIMED_OUT", "STARTUP_FAILURE"})
-#: How many post-merge runs to read back. The workflow cancels an older run
-#: when a newer push lands, so the verdict and the last green before it can be
-#: several runs apart.
+#: How many post-merge runs to read back. Runs overlap (each push's goes to the
+#: end, beside the next one), and a red or still-going run sits between a red
+#: verdict and the last green before it, so the two can be several runs apart.
 RUN_WINDOW = 20
 #: A pull request's merge on the base: a merge commit ("Merge pull request
 #: #158 from ...") or a squash ("subject (#158)"), read from the first line.
@@ -169,13 +170,15 @@ def read_open_prs(root: Path, *, run_: Runner = run) -> list[dict]:
 def read_post_merge(root: Path, base: str, *, run_: Runner = run) -> dict:
     """The newest post-merge run on ``base`` that reached a verdict:
     ``{"verdict": "green"|"red"|"none"|"absent", "sha", "url", "running",
-    "green_sha", "suspects", "suspects_unread"}``. ``running`` says a run newer
-    than the verdict is going. On red, ``green_sha`` is the last green run
-    before it and ``suspects`` the pull requests merged in between, since the
-    workflow cancels an older run when a newer push lands and a red one can
-    carry several merges (None when no green run is in the window). A failed
+    "between", "green_sha", "suspects", "suspects_unread"}``. ``running`` says
+    a run newer than the verdict is going. On red, ``green_sha`` is the last
+    green run before it and ``suspects`` the pull requests merged in between,
+    several when a run between the two is red or still going (None when no
+    green run is in the window); ``between`` holds the head of each run still
+    going there, whose verdict can narrow the suspects (runs overlap since no
+    newer push cancels an older one). A failed
     suspects read keeps the red and says so; it never turns red into unread."""
-    out: dict = {"verdict": "none", "sha": "", "url": "", "running": False, "green_sha": "",
+    out: dict = {"verdict": "none", "sha": "", "url": "", "running": False, "between": [], "green_sha": "",
                  "suspects": None, "suspects_unread": ""}
     try:
         runs = _gh_json(root, "run", "list", "--workflow", POST_MERGE_WORKFLOW, "--branch", base, "--event", "push",
@@ -194,6 +197,8 @@ def read_post_merge(root: Path, base: str, *, run_: Runner = run) -> dict:
         if str(run_row.get("status") or "").lower() != "completed":
             if out["verdict"] == "none":
                 out["running"] = True
+            elif out["verdict"] == "red":
+                out["between"].append(str(run_row.get("headSha") or ""))
             continue
         conclusion = str(run_row.get("conclusion") or "").upper()
         sha = str(run_row.get("headSha") or "")
@@ -679,10 +684,10 @@ def _pr_line(pr: dict) -> str:
 
 
 def _red_line(pm: dict, base: str, prs: object) -> str:
-    """The red base and what to do about it. The post-merge workflow cancels an
-    older run when a newer push lands, so a red run can carry every merge since
-    the last green one: the revert is printed only when exactly one pull
-    request merged in between, and otherwise the suspects are named."""
+    """The red base and what to do about it. A red run's suspects are the
+    merges since the last green run before it, several when a run between the
+    two is red or still going: the revert is printed only when exactly one
+    pull request merged in between, and otherwise the suspects are named."""
     sha = str(pm.get("sha") or "")[:7]
     head = f"RED (post-merge proof on {sha}, {pm.get('url')})"
     suspects = pm.get("suspects")
@@ -711,6 +716,14 @@ def _red_line(pm: dict, base: str, prs: object) -> str:
     if armed:
         text += ("; auto-merge is armed on " + ", ".join(f"#{n}" for n in armed)
                  + ", which lands on the red base unless disarmed (gh pr merge --disable-auto <n>)")
+    between = [str(sha)[:7] for sha in pm.get("between") or [] if sha]
+    if between:
+        text += ("; a run between it and the last green is still going (on " + ", ".join(between)
+                 + "), and its verdict can narrow the suspects")
+    if pm.get("running"):
+        # Runs overlap (no newer push cancels an older one), so a newer tip's
+        # proof is often in flight beside a red: say so, as the green line does.
+        text += "; a newer run is going, and its verdict will supersede this one"
     return text
 
 

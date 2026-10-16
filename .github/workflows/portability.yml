@@ -26,7 +26,7 @@ on:
         default: all
         options: [all, ubuntu-latest, windows-latest, macos-latest]
       select:
-        description: "Extra pytest arguments -- e.g. `@.github/windows-reds.txt` (an argument file of node ids, one per line) or `-k <expr>`; empty runs the whole not-heavy_e2e suite"
+        description: "Extra pytest arguments -- e.g. `@.github/windows-reds.txt` (an argument file of node ids, one per line) or `-k <expr>`; empty runs the whole not-heavy_e2e suite. windows-latest runs at PYTEST_TIMEOUT=180: add `--timeout=60` to reproduce the suite's own ceiling there"
         type: string
         default: ""
 
@@ -60,6 +60,10 @@ jobs:
       matrix:
         os: ${{ (github.event.inputs.os == '' || github.event.inputs.os == 'all') && fromJSON('["ubuntu-latest", "windows-latest", "macos-latest"]') || fromJSON(format('["{0}"]', github.event.inputs.os)) }}
     runs-on: ${{ matrix.os }}
+    # A hang the per-test ceiling cannot reach (collection, a worker the controller
+    # waits on) ends here, not at GitHub's 360-minute default (DEF-1178). Above the
+    # measured worst case: windows-latest 172.9 min serial (12 jobs to 2026-10-16).
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
@@ -77,6 +81,10 @@ jobs:
         # ParserError before pytest starts (the first narrowed cycle,
         # 2026-09-24). One shell, one quoting rule, all three OSes.
         shell: bash
+        # Read through the environment for the emptiness test: a `-k "a and b"`
+        # selection holds double quotes, which would end a quoted `${{ }}` early.
+        env:
+          SELECT: ${{ github.event.inputs.select }}
         # `-m "not heavy_e2e"`: this workflow exists to answer "does the suite
         # pass on another OS", and the heavy_e2e stages
         # (tests/conftest.py::_HEAVY_E2E_TESTS) are the ones whose answer is the
@@ -88,20 +96,66 @@ jobs:
           # end the step before the guard below ran, so the guard would only ever run on
           # green runs. Keep the exit code by hand.
           set +e
-          # --color=no: forced colour (FORCE_COLOR, PY_COLORS) would ANSI-prefix the
-          # summary line and the anchored pattern below would read a green run as dead.
-          # Serial on purpose: -n auto measured 28 minutes on windows-latest (run 36694239254)
-          # and then redded a wall-clock-budget test on macos-latest on its first pull-request
-          # run (test_redos, run 36702093406) -- one of the five files the local tier keeps
-          # off xdist. The split invocation that takes the saving safely is a ledger row.
-          python -m pytest -q --color=no -m "not heavy_e2e" --durations=25 -rfEs ${{ github.event.inputs.select }} 2>&1 | tee pytest-out.txt
-          rc=${PIPESTATUS[0]}
+          # windows-latest is the slow host: on its 4 vCPUs a module setup that takes 37 s
+          # on Ubuntu crosses the suite's 60 s per-test ceiling (measured: the adopter Walk,
+          # 56-59 s where it passed and 16 named worker crashes past 60 s in run 38874132596;
+          # seen, its duration unmeasured: a doctor run's wired-hook start probe ended a
+          # session at 33 min in run 38888957685, and that probe's per-hook fallback can
+          # outrun this ceiling too, DEF-2019). One ceiling for this host, never a list of
+          # modules marked one crossing at a time; the other cells keep the suite's 60 s,
+          # and the run's summary lists every test that passed 60 s under this one.
+          # pytest-timeout reads PYTEST_TIMEOUT ahead of the ini, and a test's own mark wins.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export PYTEST_TIMEOUT=180
+            echo "windows-latest: per-test ceiling ${PYTEST_TIMEOUT} s (PYTEST_TIMEOUT)"
+          fi
           # A session pytest-timeout kill prints no summary line and reads like a
           # normal red (run 36518927194, 2026-09-29, seven minutes, "3 failed"-shaped).
           # Under -q the summary is `N passed, M failed in T` -- or `N deselected in T` when a
           # `-k` matches nothing, or `no tests ran in T`; every shape is admitted so that pytest's
           # own exit code (5 on an empty selection) reaches the step instead of this guard's 70.
-          if ! command grep -qE '^(=+ )?([0-9]+ (passed|failed|errors?|xfailed|xpassed|skipped|deselected|warnings?)|no tests ran)' pytest-out.txt; then
-            echo "::error::portability.yml Test step: pytest printed no summary line -- the session died (rc=$rc); exit 70 means the gate refused, not the tests (scripts/fresh_clone_gate.py::GATE_REFUSED)"; exit 70
+          # One guard per invocation, each over its own tee file. `died FILE RC`
+          # succeeds (returns 0) when FILE holds no summary line: the session died.
+          died() {
+            if ! command grep -qE '^(=+ )?([0-9]+ (passed|failed|errors?|xfailed|xpassed|skipped|deselected|warnings?)|no tests ran)' "$1"; then
+              echo "::error::portability.yml Test step: pytest printed no summary line in $1 -- the session died (rc=$2); exit 70 means the gate refused, not the tests (scripts/fresh_clone_gate.py::GATE_REFUSED)"
+              return 0
+            fi
+            return 1
+          }
+          # --color=no: forced colour (FORCE_COLOR, PY_COLORS) would ANSI-prefix the
+          # summary line and the anchored pattern above would read a green run as dead.
+          if [ -n "$SELECT" ]; then
+            # A dispatched selection (an `@file` of node ids, or `-k`) runs as one
+            # invocation at one worker, as the narrowed Windows loop always ran it
+            # serially, but under xdist, so a ceiling crossing names its test.
+            python -m pytest -q --color=no -n 1 -m "not heavy_e2e" --durations=25 -rfEs ${{ github.event.inputs.select }} 2>&1 | tee pytest-out.txt
+            rc=${PIPESTATUS[0]}
+            if died pytest-out.txt "$rc"; then exit 70; fi
+            exit "$rc"
           fi
-          exit "$rc"
+          # The local tier's two legs (DEF-979). Serial alone ran 1:38 to 2:51 on
+          # windows-latest (24 cells, 2026-10-14..16), and its one session death in those
+          # cells named no test: pytest-timeout's thread method ends the whole session at a
+          # ceiling, while under xdist the controller names the crashed test and replaces
+          # the worker. A single `-n auto` run redded a wall-clock-budget test on macos-latest
+          # (test_redos, run 36702093406): the five files the local tier keeps off the
+          # parallel pool run by themselves, at one worker -- no parallel load on their
+          # budgets, and a crossing still named. The list is proof_tier.py's own tuple,
+          # read here, never restated.
+          serial="$(python -c 'import sys; sys.path.insert(0, "scripts"); import proof_tier; print(" ".join(proof_tier.SERIAL_FILES))')"
+          if [ -z "$serial" ]; then
+            echo "::error::portability.yml Test step: proof_tier.py named no serial files"; exit 70
+          fi
+          ignores=""
+          for f in $serial; do ignores="$ignores --ignore=$f"; done
+          python -m pytest -q --color=no -n auto -m "not heavy_e2e" --durations=25 -rfEs $ignores 2>&1 | tee pytest-parallel.txt
+          rc_parallel=${PIPESTATUS[0]}
+          python -m pytest -q --color=no -n 1 -m "not heavy_e2e" --durations=25 -rfEs $serial 2>&1 | tee pytest-serial.txt
+          rc_serial=${PIPESTATUS[0]}
+          dead=0
+          if died pytest-parallel.txt "$rc_parallel"; then dead=1; fi
+          if died pytest-serial.txt "$rc_serial"; then dead=1; fi
+          if [ "$dead" = 1 ]; then exit 70; fi
+          if [ "$rc_parallel" != 0 ]; then exit "$rc_parallel"; fi
+          exit "$rc_serial"

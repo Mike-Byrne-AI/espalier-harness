@@ -872,19 +872,32 @@ class TestThePortabilityLegFailsLoudly:
         step = self._test_step()
         assert step.get("shell") == "bash", "PIPESTATUS and set +e are bash"
         body = step["run"]
-        for token in ("set +e", "${PIPESTATUS[0]}", "| tee ", "exit 70", 'exit "$rc"', "-rfEs", "--color=no"):
+        for token in ("set +e", "${PIPESTATUS[0]}", "| tee ", "exit 70", 'exit "$rc"', 'exit "$rc_serial"',
+                      "-rfEs", "--color=no"):
             assert token in body, token
-        invocations = [ln for ln in body.splitlines() if "python -m pytest" in ln]
-        assert len(invocations) == 1, invocations
-        words = invocations[0].split()
-        assert words.count("-q") == 1, "a second -q prints no summary line at all: every run would read as dead"
-        assert "-p" not in words, "the terminal plugin prints the line the guard reads"
-        assert body.index("python -m pytest") < body.index("rc=${PIPESTATUS[0]}") < body.index("exit 70") < body.index('exit "$rc"')
+        # The dispatched selection's one invocation, then the local tier's two legs
+        # (DEF-979); each keeps its exit code off the pipe on the very next line.
+        lines = body.splitlines()
+        invocations = [i for i, ln in enumerate(lines) if "python -m pytest" in ln]
+        assert len(invocations) == 3, [lines[i] for i in invocations]
+        for i in invocations:
+            words = lines[i].split()
+            assert words.count("-q") == 1, "a second -q prints no summary line at all: every run would read as dead"
+            assert "-p" not in words, "the terminal plugin prints the line the guard reads"
+            assert "--color=no" in words and "-rfEs" in words, lines[i]
+            assert "${PIPESTATUS[0]}" in lines[i + 1], lines[i + 1]
+        # The legs' refusal comes after both ran, and before either leg's own exit
+        # code: a dead leg beside a red one is still the gate's 70.
+        assert (body.rindex("python -m pytest") < body.rindex("exit 70")
+                < body.rindex('exit "$rc_parallel"') < body.rindex('exit "$rc_serial"'))
 
     def test_the_pattern_admits_every_summary_shape_and_no_other_line(self):
         body = self._test_step()["run"]
-        m = re.search(r"command grep -qE '([^']+)' pytest-out\.txt", body)
-        assert m, "the guard's pattern is one single-quoted -E argument over the tee file"
+        # One guard, `died`, over each invocation's own tee file (DEF-979).
+        m = re.search(r"""command grep -qE '([^']+)' "\$1\"""", body)
+        assert m, "the guard's pattern is one single-quoted -E argument over the tee file it is handed"
+        for tee in ("pytest-out.txt", "pytest-parallel.txt", "pytest-serial.txt"):
+            assert f"died {tee}" in body, tee
         pattern = re.compile(m.group(1))
         admitted = (
             "44 passed, 3 warnings in 5.58s",                       # the Windows dispatch, 2026-09-30

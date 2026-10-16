@@ -20,14 +20,19 @@ on:
 permissions:
   contents: read
 
-# A newer push proves a superset of what an older run was proving.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+# No concurrency group, on purpose: each push's run proves its own tip to the
+# end, beside the next one. A run takes 26 to 49 minutes and merges can land
+# closer together than that, so cancelling the older run on a newer push left
+# main with no verdict through whole stretches (DEF-2015: 8 of 23 runs cancelled
+# on 2026-10-15), and a red then named every merge since the last green. A group
+# without the cancel does not help: GitHub keeps one pending run per group and
+# cancels an older pending one when a newer one queues.
 
 jobs:
   full-tier:
     runs-on: ubuntu-latest
+    # DEF-1178: above the measured worst case, 48.2 min (10 runs to 2026-10-16).
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
