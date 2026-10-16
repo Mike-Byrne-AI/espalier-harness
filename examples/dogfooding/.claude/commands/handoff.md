@@ -641,8 +641,9 @@ python tools/cc/ship.py handoff
   mail channel (`/inbox` step 5): the claim's lifetime is the lane's time on
   this machine, so no claim is left warning the other box forever. Before
   either push, the verb folds: the rows other seats parked come into the lane
-  and the fragments are pruned to their cap, in commits of their own, so the
-  marker binds the head that is pushed.
+  and, once the fragments run past the cap's slack, they are pruned back to
+  the cap, in commits of their own, so the marker binds the head that is
+  pushed.
   **A lane that already merged** (no open pull request, and nothing in its diff
   with the base but Session Log rows it added) opens no pull request for the
   row alone: the verb parks the committed row on this seat's records ref

@@ -159,10 +159,16 @@ older than the kept window enters history once and never comes back; the
 slack spares most lanes a prune commit, and two lanes off one base that land a
 row past it are pruned at the next fold. A fragment directory with uncommitted
 changes, records git cannot read, or a step that fails skips the fold with a
-note and leaves the tree as it was. `python tools/cc/ship.py fold` runs the same
-fold on its own, for a push this verb does not make (a direct push to the
-default branch). Until 2026-10-16 every lane pruned to the exact cap in its own
-tree, a prune commit per lane carrying a row, and two lanes merged to 31.
+note and leaves the tree as it was. The `fold` verb runs the same fold on its
+own, for a push this verb does not make (a direct push to the default branch);
+`--dry-run` says how many parked rows it would bring in, and commits nothing:
+
+```bash
+python tools/cc/ship.py fold
+```
+
+Until 2026-10-16 every lane pruned to the exact cap in its own tree, a prune
+commit per lane carrying a row, and two lanes merged to 31.
 
 Then, in order: the diff against the base asked of the harness guard
 (`tools/cc/ci_guard.py`, loaded from the tree when it is there -- a tree

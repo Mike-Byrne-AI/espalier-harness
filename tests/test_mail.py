@@ -1649,9 +1649,8 @@ class TestTheRecordsRef:
         mac, win = machines["mac"], machines["win"]
         _park(mail, mac, "2026-10-16-010101-mac.md")
         self._lane(win)
-        hook = win / ".git" / "hooks" / "commit-msg"
-        hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-        hook.chmod(0o755)
+        from tests._stubs import write_stub
+        write_stub(win / ".git" / "hooks" / "commit-msg", "#!/bin/sh\nexit 1\n")
         assert ship_driver._fold_session_log(win, "main", keep=3, slack=0) == (0, 0)
         assert _git(win, "status", "--porcelain").stdout == ""
         assert not (win / _ROW_DIR / "2026-10-16-010101-mac.md").exists()

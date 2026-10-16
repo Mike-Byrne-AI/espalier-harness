@@ -1643,7 +1643,8 @@ class TestTheLanesOwnTreeKeepsTheSessionLogCap:
 
         def git(*argv: str, input: str | None = None) -> str:
             return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t.com", *argv], cwd=tmp_path,
-                                  check=True, capture_output=True, text=True, input=input).stdout.strip()
+                                  check=True, capture_output=True, text=True, encoding="utf-8",
+                                  input=input).stdout.strip()
 
         git("init", "-q", "-b", "main")
         git("add", "-A")
