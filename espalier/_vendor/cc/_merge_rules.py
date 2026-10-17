@@ -277,9 +277,10 @@ def stale_base(root: Path, *, base_ref: str, tested_when: str, pr_paths: list[st
     (its head, or the base when the head is not here). Returns ``{"tested",
     "now", "moved", "near", "unread"}``: ``moved`` counts the base's
     first-parent commits since, ``near`` names each meeting (a path both
-    changed, or an import between a file each changed), and ``unread`` says
-    what could not be read -- a read that failed is said, never a silent
-    "fresh"."""
+    changed, or an import between a file each changed; a Python path both
+    changed says in which function, from ``_symbol_clauses``), and ``unread``
+    says what could not be read -- a read that failed is said, never a
+    silent "fresh"."""
     out: dict = {"tested": "", "now": "", "moved": 0, "near": [], "unread": ""}
     now = _git_lines(root, run_, "rev-parse", "--verify", "-q", f"{base_ref}^{{commit}}")
     if not now:
@@ -303,7 +304,10 @@ def stale_base(root: Path, *, base_ref: str, tested_when: str, pr_paths: list[st
         out["unread"] = f"git diff {tested[0][:7]} {now[0][:7]} failed"
         return out
     mine, theirs = set(pr_paths), set(changed)
-    near = [f"{p} (both changed)" for p in sorted(mine & theirs)]
+    both = sorted(mine & theirs)
+    clauses = _symbol_clauses(root, both, base_ref=base_ref, tested=tested[0], now=now[0], pr_rev=pr_rev,
+                              run_=run_)
+    near = [f"{p} {clauses.get(p, '(both changed)')}" for p in both]
     tree_now = set(_git_lines(root, run_, "ls-tree", "-r", "--name-only", now[0]) or [])
     tree_pr = tree_now if pr_rev == now[0] else set(
         _git_lines(root, run_, "ls-tree", "-r", "--name-only", pr_rev) or []) | tree_now
@@ -319,6 +323,76 @@ def stale_base(root: Path, *, base_ref: str, tested_when: str, pr_paths: list[st
     for path, targets in sorted((base_imports or {}).items()):
         near += [f"{path} (changed on {base_ref}) imports {t}" for t in sorted(targets)]
     out["near"] = near
+    return out
+
+
+def _symbol_mapper() -> Any:
+    """``tools/cc/_symbols.py``, imported where ``stale_base`` runs (the board
+    and ship.py put this directory on the path); None where it cannot be,
+    which the clause says. Imported here and not at the top: the banner loads
+    this module by path alone and never calls ``stale_base``, so its
+    ``Merging:`` line never depends on the mapper."""
+    try:
+        import _symbols
+    except ImportError:  # fail-open: ok deliberate -- the clause says the symbols were not read, and why
+        return None
+    return _symbols
+
+
+def _git_text(root: Path, run_: Runner, *args: str) -> str | None:
+    rc, out, _ = run_(["git", *args], cwd=str(root), timeout=30.0)
+    return out if rc == 0 else None
+
+
+def _changed_in(root: Path, run_: Runner, mapper: Any, a: str, b: str, path: str) -> dict | None:
+    """What ``a..b`` changed in ``path``, placed by the mapper (raw blobs, the
+    mapper's own diff format); None where git could not answer."""
+    diff = _git_text(root, run_, "diff", "-U0", *mapper.DIFF_ARGS, a, b, "--", path)
+    if diff is None:
+        return None
+    old = _git_text(root, run_, "cat-file", "blob", f"{a}:{path}") or ""   # a file one side added
+    new = _git_text(root, run_, "cat-file", "blob", f"{b}:{path}") or ""
+    return mapper.changed_symbols(path, old, new, diff)
+
+
+def _symbol_clauses(root: Path, paths: list[str], *, base_ref: str, tested: str, now: str, pr_rev: str,
+                    run_: Runner) -> dict[str, str]:
+    """For each Python path both changed, what the catch-up will meet: the
+    pull request's own diff (from its merge base with the base) against the
+    base's moves since ``tested``, in the same function, in different ones,
+    or on lines no node holds. Where ``pr_rev`` is the base because the head
+    is not here, no function verdict: the base compared with itself is no
+    comparison. A path that is not Python keeps its bare clause."""
+    py = [p for p in paths if p.endswith(".py")]
+    if not py:
+        return {}
+
+    def not_read(why: str) -> dict[str, str]:
+        return {p: f"(both changed; symbols not read: {why})" for p in py}
+
+    if pr_rev in (base_ref, now):
+        return not_read("head not here")
+    mapper = _symbol_mapper()
+    if mapper is None:
+        return not_read("the symbol mapper (tools/cc/_symbols.py) is not importable here")
+    fork = _git_lines(root, run_, "merge-base", now, pr_rev)
+    if not fork:
+        return not_read(f"no merge base of the head with {base_ref}")
+    out: dict[str, str] = {}
+    for path in py:
+        lane = _changed_in(root, run_, mapper, fork[0], pr_rev, path)
+        moved = _changed_in(root, run_, mapper, tested, now, path)
+        if lane is None or moved is None:
+            out[path] = "(both changed; symbols not read: git could not diff it)"
+            continue
+        met = mapper.symbols_meet(lane["symbols"], moved["symbols"])
+        if met:
+            names = ", ".join(sorted(s.split("::", 1)[1] for s in met))
+            out[path] = f"(both changed, in the same function {names})"
+        elif lane["unplaced"] or moved["unplaced"] or not lane["changed"] or not moved["changed"]:
+            out[path] = "(both changed, unplaced lines)"
+        else:
+            out[path] = "(both changed, different functions)"
     return out
 
 

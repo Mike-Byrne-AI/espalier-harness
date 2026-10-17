@@ -48,6 +48,7 @@ from typing import Callable
 # deploy set; tests/test_deploy_set_import_closure.py pins the reachability).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _merge_rules  # noqa: E402  the merge-rules read, shared with the SessionStart banner
+import _symbols  # noqa: E402  the symbols a head changed and the one pair rule, shared with mail's claims
 import mail  # noqa: E402  the claims and assignments folds
 from _json_safe import os_error_text  # noqa: E402  an OSError rendered as its path and reason
 from _record_fragments import LEDGER_DIR, LEDGER_FILE  # noqa: E402  the ledger and its rows, named once by the loader
@@ -115,6 +116,11 @@ _BASE_COUNT = (
 )
 #: How many unanswered requests the asks line names before "and N more".
 ASKS_SHOWN = 6
+#: The one fetch of every open pull request's head that is not here yet, by
+#: object id: it lands objects and moves no ref.
+OVERLAP_FETCH_TIMEOUT = 60.0
+#: How many overlap pairs the section prints before "and N more".
+OVERLAPS_SHOWN = 12
 #: A seat with no live session here, no live claim or job naming it, and no
 #: mail for this many days folds into a count: a worktree seat's name outlives
 #: its worktree, so one row per name ever used would grow without end
@@ -426,6 +432,242 @@ def fetch_base(root: Path, base: str, *, run_: Runner = run) -> tuple[bool, str]
     return True, ""
 
 
+# ------------------------------------------------------------- the overlaps --
+
+def _have(root: Path, oid: str, *, run_: Runner) -> bool:
+    try:
+        rc, _, _ = run_(["git", "cat-file", "-e", f"{oid}^{{commit}}"], cwd=str(root), timeout=GH_TIMEOUT)
+    except Unresolvable:
+        return False
+    return rc == 0
+
+
+def _whole(path: str) -> dict:
+    """A file claimed without the symbols that say where in it: every line of
+    it could be the lane's, so it certifies nothing."""
+    if path.endswith(".py"):
+        return {"kind": "python", "symbols": set(), "changed": 1, "unplaced": 1}
+    return {"kind": "path", "symbols": {path}, "changed": 0, "unplaced": 0}
+
+
+def _claim_place(claims: list[dict]) -> dict[str, dict]:
+    """One seat's lane, from its live claims, as ``{folded path:
+    placement}``. A Python file counts as whole (unplaced) unless the claims
+    name symbols in it, carry no unplaced mark for it, and no count of
+    left-out symbols stands: only then is the list every changed line's.
+    Every list another seat wrote is read shape-checked."""
+    paths: set[str] = set()
+    symbols: set[str] = set()
+    more = 0
+    for claim in claims:
+        re_ = claim.get("re") or {}
+        paths |= {_symbols.canonical(p) for p in mail._str_list(re_.get("paths"))}
+        symbols |= {_symbols.canonical(s) for s in mail._str_list(re_.get(mail.SYMBOLS_KEY)) if "::" in s}
+        more += mail._count(re_.get(mail.SYMBOLS_MORE_KEY))
+    module = f"::{_symbols.MODULE}"
+    place: dict[str, dict] = {}
+    for path in sorted(paths | {s.split("::", 1)[0] for s in symbols}):
+        if not path.endswith(".py"):
+            place[path] = _whole(path)
+            continue
+        mine = {s for s in symbols if s.split("::", 1)[0] == path}
+        named = {s for s in mine if not s.endswith(module)}
+        # The symbols it names still meet; the rest of the file is unknown.
+        whole = not named or bool(more) or len(named) < len(mine)
+        place[path] = {"kind": "python", "symbols": named, "changed": max(1, len(named)),
+                       "unplaced": 1 if whole else 0}
+    return place
+
+
+def _covered(place: dict[str, dict], path: str) -> dict | None:
+    """``path``'s placement on one side: its own, or whole under a directory
+    the side claims (a claim past the path cap names folders), else None."""
+    if path in place:
+        return place[path]
+    if any(path.startswith(d.rstrip("/") + "/") for d in place):
+        return _whole(path)
+    return None
+
+
+def _pr_place(root: Path, base: str, pr: dict, present: set[str], *, run_: Runner) -> tuple[dict, str]:
+    """A pull request's lane from its head, ``(placement, "")``; where the
+    head is not here or cannot be read, GitHub's file list as paths and the
+    reason, so the pair says the symbols were not read."""
+    head = str(pr.get("headRefOid") or "")
+    listed = {_symbols.canonical(str(f.get("path"))): {"kind": "unread", "symbols": set(), "changed": 0,
+                                                       "unplaced": 0}
+              for f in pr.get("files") or [] if isinstance(f, dict) and f.get("path")}
+    if not head or head not in present:
+        return listed, "head not here"
+    try:
+        rc, out, err = run_(["git", "merge-base", f"origin/{base}", head], cwd=str(root), timeout=GH_TIMEOUT,
+                            env=_git_env())
+        if rc != 0 or not out.strip():
+            return listed, f"no merge base with origin/{base} ({(err.strip() or out.strip())[:120] or rc})"
+        return _symbols.symbols_between(out.strip(), head, root=root, run=run_, env=_git_env()), ""
+    except Unresolvable as exc:
+        return listed, str(exc)
+
+
+def read_overlaps_section(root: Path, base: str, claims: list[dict], prs: list[dict], *,
+                          run_: Runner = run) -> dict:
+    """``{"pairs", "notes"}``: every pair of lanes from different seats that
+    change a file in common, among the live claims (united per seat and lane)
+    and the open pull requests (read from their heads, which replace their
+    own lane's claims), each with the verdict ``_symbols.pair_verdict`` gives
+    it. The heads not here are fetched in one bounded call by object id,
+    which lands objects and moves no ref; a head still not here, or one that
+    cannot be read, is a path-level side whose symbols were not read."""
+    notes: list[str] = []
+    heads = list(dict.fromkeys(str(pr.get("headRefOid") or "") for pr in prs if pr.get("headRefOid")))
+    present = {h for h in heads if _have(root, h, run_=run_)}
+    missing = [h for h in heads if h not in present]
+    if missing:
+        what = f"fetching {len(missing)} head{'s' if len(missing) != 1 else ''} failed"
+        try:
+            rc, out, err = run_(["git", "fetch", "origin", *missing], cwd=str(root), timeout=OVERLAP_FETCH_TIMEOUT,
+                                env=_git_env())
+            if rc != 0:
+                lines = (err.strip() or out.strip()).splitlines()
+                notes.append(f"{what}: {(lines[-1] if lines else f'git fetch exited {rc}')[:160]}")
+        except Unresolvable as exc:
+            notes.append(f"{what}: {exc}")
+        present |= {h for h in missing if _have(root, h, run_=run_)}
+    with_pr = {str(pr.get("headRefName") or "") for pr in prs}
+    lanes: dict[tuple[str, str], list[dict]] = {}
+    for claim in claims:
+        lane = str((claim.get("re") or {}).get("lane") or "")
+        if lane and lane in with_pr:
+            continue   # the pull request's head replaces its lane's claims
+        lanes.setdefault((str(claim.get("from") or ""), lane), []).append(claim)
+    sides = []
+    for (seat, lane), on_lane in lanes.items():
+        ids = list(dict.fromkeys(i for c in on_lane for i in mail._str_list((c.get("re") or {}).get("ids"))))
+        label = f"{seat} ({', '.join([lane or '(no lane)', *ids])})"
+        sides.append({"seat": seat, "who": seat, "lane": lane, "label": label, "place": _claim_place(on_lane),
+                      "not_read": ""})
+    for pr in prs:
+        place, why = _pr_place(root, base, pr, present, run_=run_)
+        seat = pr.get("seat") or ""
+        label = f"#{pr.get('number')} {seat} ({pr.get('headRefName')})" if seat else \
+            f"#{pr.get('number')} ({pr.get('headRefName')})"
+        sides.append({"seat": seat, "who": f"#{pr.get('number')}", "lane": str(pr.get("headRefName") or ""),
+                      "label": label, "place": place, "not_read": f"#{pr.get('number')}: {why}" if why else ""})
+    pairs = []
+    for i, a in enumerate(sides):
+        for b in sides[i + 1:]:
+            if a["seat"] and a["seat"] == b["seat"]:
+                continue   # a seat never meets itself
+            one, two = {}, {}
+            for path in sorted(set(a["place"]) | set(b["place"])):
+                pa, pb = _covered(a["place"], path), _covered(b["place"], path)
+                if pa is not None and pb is not None:
+                    one[path], two[path] = pa, pb
+            if not one:
+                continue
+            pair = {"a": a["label"], "b": b["label"], "lanes": [a["lane"], b["lane"]], "files": sorted(one),
+                    "shared": [], "unplaced_on": [],
+                    "not_read": "; ".join(s["not_read"] for s in (a, b) if s["not_read"])}
+            if pair["not_read"]:
+                pairs.append({**pair, "verdict": "not read"})
+                continue
+            verdict = _symbols.pair_verdict(one, two)
+            key = {"shared symbol": "shared", "unplaced": "unplaced", "different functions": "certified",
+                   "path only": "paths"}.get(verdict["verdict"], "files")
+            pair.update(verdict=verdict["verdict"], files=verdict[key], shared=verdict["shared"])
+            if verdict["verdict"] == "unplaced":
+                pair["unplaced_on"] = [s["who"] for s, place in ((a, one), (b, two))
+                                       if any(place[f]["unplaced"] or not place[f]["changed"]
+                                              for f in verdict["unplaced"])]
+            pairs.append(pair)
+    return {"pairs": pairs, "notes": notes}
+
+
+def _overlap_text(pair: dict) -> str:
+    who = f"{pair.get('a')} and {pair.get('b')}"
+    files = ", ".join(pair.get("files") or [])
+    verdict = pair.get("verdict")
+    if verdict == "shared symbol":
+        return f"{who} meet in {', '.join(pair.get('shared') or [])}"
+    if verdict == "different functions":
+        return f"{who} both changed {files}: different functions"
+    if verdict == "unplaced":
+        on = pair.get("unplaced_on") or []
+        sides = " and ".join(f"{w}'s" for w in on) + (" sides" if len(on) > 1 else " side")
+        return f"{who} both changed {files}: unplaced lines" + (f" on {sides}" if on else "")
+    if verdict == "not read":
+        return f"{who} both changed {files} (symbols not read for {pair.get('not_read')})"
+    return f"{who} both changed {files} (not Python)"
+
+
+def overlap_lines(section: object) -> list[str]:
+    """The ``overlaps:`` lines: one per pair, then the notes; ``none`` when
+    no two lanes of different seats change a file in common."""
+    if not isinstance(section, dict) or "unread" in section:
+        why = section.get("unread") if isinstance(section, dict) else "not read"
+        return [f"overlaps: unread ({why})"]
+    pairs = section.get("pairs") or []
+    texts = [_overlap_text(p) for p in pairs[:OVERLAPS_SHOWN]] or ["none"]
+    if len(pairs) > OVERLAPS_SHOWN:
+        texts.append(f"and {len(pairs) - OVERLAPS_SHOWN} more (--json lists them)")
+    texts += [str(n) for n in section.get("notes") or []]
+    return [("overlaps: " if i == 0 else "          ") + t for i, t in enumerate(texts)]
+
+
+def _overlaps_or_unread(root: Path, base: str, claims: list[dict], prs: list[dict], notes: list[str], *,
+                        run_: Runner) -> dict:
+    """The section read on its own: a failure is its own line, never the board's."""
+    try:
+        section = read_overlaps_section(root, base, claims, prs, run_=run_)
+    except Unresolvable as exc:
+        return {"unread": str(exc)}
+    except Exception as exc:  # noqa: BLE001 -- each section is read on its own; the overlaps line says unread and why
+        return {"unread": f"{type(exc).__name__}: {os_error_text(exc)}"}
+    section["notes"] = [*section.get("notes", []), *notes]
+    return section
+
+
+def lane_overlap_lines(root: Path, base: str, lane: str, number: object, head: str, *,
+                       run_: Runner = run) -> list[str]:
+    """The ship notice: ``lane`` (just pushed, ``head``) against every live
+    claim of another seat and every open pull request, in the board's words.
+    The lane's side is read from ``head`` here, never from a listing that can
+    lag behind the create; only the pairs it is in are printed, and when there
+    are any, the rule they leave: the second to merge runs catch-up."""
+    machine, how = mail.machine_setting(root, run=run_)
+    notes: list[str] = []
+    if how.startswith(mail.MACHINE_UNREAD):
+        notes.append(f"this checkout's seat name could not be read ({how}), so its own other lanes read as "
+                     "another seat's")
+    claims: list[dict] = []
+    seat_of_lane: dict = {}
+    try:
+        if machine:
+            ok, problem = mail.fetch_mail(root, run=run_)
+            if not ok:
+                notes.append(f"the mail fetch failed ({problem}), so the claims are as last fetched")
+        by_machine, _skipped = mail.read_mail(root, run=run_)
+        claims, seat_of_lane = mail.live_claims(by_machine), mail.lane_seats(by_machine)
+    except Unresolvable as exc:
+        notes.append(f"the claims are unread ({exc})")
+    try:
+        prs = [pr for pr in read_open_prs(root, run_=run_) if pr.get("headRefName") != lane]
+    except Unresolvable as exc:
+        prs = []
+        notes.append(f"the open pull requests are unread ({exc})")
+    for pr in prs:
+        pr["seat"] = seat_of_lane.get(str(pr.get("headRefName") or ""), "")
+    mine = {"number": number, "headRefName": lane, "headRefOid": head, "seat": machine or "", "files": []}
+    section = _overlaps_or_unread(root, base, claims, [mine, *prs], notes, run_=run_)
+    if "unread" in section:
+        return overlap_lines(section)
+    pairs = [p for p in section.get("pairs") or [] if lane in (p.get("lanes") or [])]
+    lines = overlap_lines({"pairs": pairs, "notes": section.get("notes") or []})
+    if pairs:
+        lines.append("          the rule stands: the second of these to merge runs the ship driver's catch-up")
+    return lines
+
+
 def read_sessions(root: Path, *, run_: Runner = run, config_dir: Path | None = None,
                   inside_session: bool | None = None) -> dict:
     """This clone's checkouts with the live Claude Code sessions in each:
@@ -638,17 +880,22 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
     if fetch:
         ok, problem = fetch_base(root, base, run_=run_)
         board["base_fetch"] = {"state": "ok" if ok else "failed", "problem": problem}
+    overlap_claims = [] if board.get("mail_unread") else claims
+    overlap_notes = ["the claims are unread (the mail could not be read)"] if board.get("mail_unread") else []
     try:
         prs = read_open_prs(root, run_=run_)
         for pr in prs:
             pr["seat"] = (seat_of_lane.get(str(pr.get("headRefName") or ""), "")
                           if not board.get("mail_unread") else None)
         read_stale_section(root, base, prs, _merge_rules.strict(rules[1], rules[2]), fetch=False, run_=run_)
+        board["overlaps"] = _overlaps_or_unread(root, base, overlap_claims, prs, overlap_notes, run_=run_)
         for pr in prs:
-            pr.pop("files", None)   # read for the stale check; the board's JSON carries the verdict, not the list
+            pr.pop("files", None)   # read for the stale and overlap checks; the JSON carries verdicts, not the list
         board["open_prs"] = prs
     except Unresolvable as exc:
         board["open_prs"] = {"unread": str(exc)}
+        board["overlaps"] = _overlaps_or_unread(root, base, overlap_claims, [],
+                                                [*overlap_notes, "the open pull requests are unread"], run_=run_)
     try:
         board["post_merge"] = read_post_merge(root, base, run_=run_)
     except Unresolvable as exc:
@@ -893,6 +1140,8 @@ def render(board: dict) -> str:
             lines.append(("claims:   " if i == 0 else "          ")
                          + f"{c.get('from')}: {re_.get('lane') or '(no lane)'} ({n} path{'s' if n != 1 else ''}"
                          + (f", ids {', '.join(re_.get('ids'))}" if re_.get("ids") else "") + f") since {c.get('at')}")
+    if "overlaps" in board:
+        lines += overlap_lines(board["overlaps"])
     live = board.get("ledger_live")
     at = board.get("ledger_at") or {}
     if at.get("ref") and (live is None or isinstance(live, int)):

@@ -683,6 +683,45 @@ def _mail_module():
     return _MAIL
 
 
+#: The board (``tools/cc/board.py``), loaded by path on first use and never at
+#: import, as the mail channel is: its overlap notice is read after a push
+#: lands, and a tree without it ships as before. Tests stand a board in here.
+_BOARD = None
+
+
+def _board_module():
+    global _BOARD
+    if _BOARD is None:
+        path = Path(__file__).resolve().parent / "board.py"
+        if not path.is_file():
+            return None
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_ship_board", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["_ship_board"] = module  # registered before exec (3.14)
+        spec.loader.exec_module(module)
+        _BOARD = module
+    return _BOARD
+
+
+def _overlap_notice(root: Path, branch: str, base: str, number: object, head: str) -> None:
+    """After a push lands: the lane's overlaps with every live claim of
+    another seat and every open pull request, in the board's words. Advice
+    only: nothing else here changes, and the second to merge still runs
+    catch-up. A read that fails is one note, never a refusal of a push that
+    landed."""
+    try:
+        board = _board_module()
+        if board is None:
+            return
+        for line in board.lane_overlap_lines(root, base, branch, number, head):
+            _say(line)
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the lane is pushed; the notice is advice
+        _note(f"the overlap notice was not read ({os_error_text(exc)}); the board (tools/cc/board.py) reads it")
+
+
 #: The record loader (``tools/cc/_record_fragments.py``), loaded by path on first
 #: use: the Session Log's directory, cap, prune and fold trailer.
 _FRAGMENTS = None
@@ -1299,6 +1338,7 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         _release_claims(root, branch, "Lane pushed; claims closed.")
         raise
     _say(f"#{number} open, auto-merge armed, one push: {url}")
+    _overlap_notice(root, branch, base, number, sha)
     _release_claims(root, branch, f"Lane shipped as #{number}; claims closed.")
     return 0
 
@@ -1494,6 +1534,7 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     _wait_for_pr_head(branch, head_sha())
     rc = rebind()
     if rc == 0:
+        _overlap_notice(root, branch, base, pr.get("number"), head_sha())
         _release_claims(root, branch, "Handoff pushed onto the open pull request; claims closed.")
     return rc
 
