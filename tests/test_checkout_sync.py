@@ -836,8 +836,11 @@ def _seeded_with_tools_cc(repos, ignore: str = ".espalier-state/") -> None:
     state directory ignored as ``init``'s block ignores it (or by ``ignore``):
     the guard can then run in a worktree, and the worktree reads clean once
     its edit is restored."""
+    from tests._live_tree import copy_checkout
+
     seed, work = repos["seed"], repos["work"]
-    shutil.copytree(REPO_ROOT / "tools" / "cc", seed / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
+    # git's view of tools/cc, never the filesystem's (the live-tree ratchet)
+    copy_checkout(REPO_ROOT / "tools" / "cc", seed / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
     (seed / ".gitignore").write_bytes(f"{ignore}\n__pycache__/\n".encode("utf-8"))
     _git(seed, "add", "-A")
     _git(seed, "commit", "--quiet", "-m", "tools/cc")
