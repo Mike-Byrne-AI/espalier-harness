@@ -85,11 +85,46 @@ _HOOK_STARTED = time.monotonic()
 
 # Co-located helper modules -- same zero-espalier-import pattern as other hooks.
 sys.path.insert(0, str(Path(__file__).parent))
-import _hook_utils  # noqa: E402
-import _denial_reasons  # noqa: E402
-# The two imports above are the floor: a helper that cannot import at all, or a
-# reasons module that cannot, is not the skew below. Everything else this hook
-# needs from its siblings imports under one guard. An upgrade keeps an unmarked
+# The start refusal imports first and alone (DEF-3008): every failure below
+# reaches it, so it imports no sibling at its top. If it cannot import itself,
+# this is the refusal in its place: it names that one file and lets through the
+# one Bash call that restores it to HEAD, since an exit 1 here would be a
+# NON-BLOCKING error and every call would go through unjudged.
+try:
+    import _start_refusal  # noqa: E402
+except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot import (DEF-3008)
+    if __name__ != "__main__":
+        raise
+    _LAST_RESTORE = "git restore --source=HEAD -- :/tools/cc/hooks/_start_refusal.py"
+    try:
+        _call = json.loads(sys.stdin.buffer.read().decode("utf-8", errors="replace"))
+        _restores = _call["tool_name"] == "Bash" and _call["tool_input"]["command"] == _LAST_RESTORE
+    except Exception:  # noqa: BLE001 -- fail-open: ok deliberate an unread call is no restore, and is refused
+        _restores = False
+    _cause = "tools/cc/hooks/_start_refusal.py raised " + type(_floor).__name__
+    _out: dict = {"hookEventName": "PreToolUse"}
+    if _restores:
+        _out["additionalContext"] = (
+            "write_guard is wedged (" + _cause + "), so it refuses every call but one: a restore"
+            " of that file to HEAD. This call is that restore, so it was let through. No copy of"
+            " the file was saved first.")
+    else:
+        _out["permissionDecision"] = "deny"
+        _out["permissionDecisionReason"] = (
+            "write_guard cannot start: " + _cause + "; it is the start refusal every deny hook"
+            " imports first. Restore it to HEAD: `" + _LAST_RESTORE + "`, as one Bash command from"
+            " any directory of the checkout, is the one call this hook lets through while it is"
+            " wedged (no copy of the file is saved first); or run it from a terminal. If HEAD has no"
+            " such file (an upgrade that did not finish), run `espalier upgrade --execute .` from a"
+            " terminal instead. Every call this hook judges is refused until then.")
+    sys.stdout.write(json.dumps({"hookSpecificOutput": _out}) + "\n")
+    sys.stdout.flush()
+    raise SystemExit(0) from None
+# Everything else this hook needs from its siblings imports under one guard,
+# the floor too since DEF-3008: `_hook_utils` (with tools/cc/_json_safe.py
+# under it) and `_denial_reasons` (with `_maintenance_mode` under it) imported
+# outside it, so a floor that raised was exit 1 on all four deny hooks, every
+# call let through unjudged (driven 2026-10-16). An upgrade keeps an unmarked
 # `_hook_utils.py` as the adopter's and regenerates its siblings, which may then
 # import names the kept copy predates; dying here is exit 1, which the protocol
 # reads as a NON-BLOCKING error (DEF-1176: the whole guard off for every call).
@@ -99,6 +134,8 @@ import _denial_reasons  # noqa: E402
 # owns the judgment. The two budget names degrade in _speedbump and _reinject
 # (a verdict never depends on them), so a helper missing only those judges on.
 try:
+    import _hook_utils  # noqa: E402
+    import _denial_reasons  # noqa: E402
     from _hook_utils import os_error_text  # noqa: E402
     import _integrity  # noqa: E402
     import _maintenance_mode  # noqa: E402
@@ -136,7 +173,7 @@ try:
 except Exception as _skew:  # noqa: BLE001 -- a kept helper that predates its siblings (DEF-1176)
     if __name__ != "__main__":
         raise
-    _denial_reasons.refuse_on_helper_skew("write_guard", "PreToolUse", _skew)
+    _start_refusal.refuse_on_helper_skew("write_guard", "PreToolUse", _skew)
 
 MUTATION_TOOLS = _hook_utils.MUTATION_TOOLS
 
@@ -2827,16 +2864,16 @@ def _judge(seen: list[dict] | None = None) -> int:
         # import does (DEF-4025): the refusal names the innermost tools/cc
         # frame by class and line, and the one call it lets through is a Bash
         # restore to HEAD of that file, with context and no decision. All of it
-        # runs under a catch-all, so whatever it raises (a kept older
-        # _denial_reasons has none of the three names) leaves today's deny.
+        # runs under a catch-all, so whatever it raises (an older
+        # _start_refusal lacking one of the three names) leaves today's deny.
         passed: tuple[str, dict] | None = None
         crash_reason: str = _denial_reasons.WRITE_GUARD_INTERNAL_ERROR
         crash_details: dict = {}
         try:
-            reading = _denial_reasons.wedge_reading(exc)
-            passed = _denial_reasons.wedge_restore("write_guard", reading, error_type, data)
+            reading = _start_refusal.wedge_reading(exc)
+            passed = _start_refusal.wedge_restore("write_guard", reading, error_type, data)
             if passed is None:
-                named = _denial_reasons.crash_refusal(reading, error_type, data is not None)
+                named = _start_refusal.crash_refusal(reading, error_type, data is not None)
                 if named is not None:
                     crash_reason = _denial_reasons.WRITE_GUARD_CRASHED_AT.format(**named[0])
                     crash_details = named[1]

@@ -47,8 +47,8 @@ class TestStaticInventory:
 
     def test_hook_helper_count(self):
         helpers = get_hook_helper_files()
-        assert len(helpers) == 14, (
-            f"expected 14 hook helper modules (TP-79 added _bash_patterns.py + "
+        assert len(helpers) == 15, (
+            f"expected 15 hook helper modules (TP-79 added _bash_patterns.py + "
             f"_protected_zones.py to factor write_guard's dangerous-bash + "
             f"zone-classification primitives out of the 873-LOC dispatcher; "
             f"TP-112 added _denial_reasons.py as the SoT for deny()/block() "
@@ -59,7 +59,9 @@ class TestStaticInventory:
             f"TP-204e added _born_weak.py as the born-weak co-occurrence "
             f"observer extracted from post_write_check; TP-332 added "
             f"_explain_path.py as the /status --explain path-enforcement resolver; "
-            f"TP-476 A-1 added _zone_watch.py, the zone after-check), got "
+            f"TP-476 A-1 added _zone_watch.py, the zone after-check; DEF-3008 "
+            f"added _start_refusal.py, the start refusal every deny hook "
+            f"imports first), got "
             f"{len(helpers)}: {helpers}"
         )
         for path in helpers:
