@@ -886,10 +886,11 @@ class TestInitNamesARetiredDenyRule:
         assert "wrote it" not in err, err[-1500:]
 
     def test_a_plain_rerun_over_a_minimal_install_lists_no_allow_rules(self, tmp_path, capsys, monkeypatch):
-        """A plain re-run records the default profile over the one the file was
-        rendered from, so a gap read here would list the workflow profile's
-        rules (Write among them) to a minimal install, with an append that
-        widens its permissions. The re-run names the retired rule only."""
+        """A plain re-run keeps the profile the file was rendered from
+        (DEF-2004); before that it recorded the default, and a gap read here
+        would have listed the workflow profile's rules (Write among them) to a
+        minimal install, with an append that widens its permissions. The
+        re-run names the retired rule only."""
         monkeypatch.chdir(tmp_path)
         (tmp_path / "README.md").write_text("# t\n", encoding="utf-8")
         (tmp_path / ".git").mkdir()
@@ -1325,6 +1326,200 @@ def test_init_records_the_effective_settings_profile_and_refresh_keeps_it(tmp_pa
     )
     assert refresh.returncode == 0, refresh.stderr
     assert installed_settings_profile(target) == "minimal", "a report rebuild forgot the profile"
+
+
+class TestAPlainReInitKeepsTheRecordedProfile:
+    """DEF-2004: a plain re-run of ``init`` (the repair TROUBLESHOOTING names)
+    recorded the built-in default over the profile the settings file was
+    rendered from, so ``upgrade`` and ``doctor`` afterwards compared a
+    ``minimal`` or ``full`` file against ``workflow`` and offered an append
+    that widens it. With no flag and no ``default_profile`` the re-run keeps
+    the recorded profile. The flag and the config still choose, and a profile
+    only the flag may select is never re-selected from the record: the record
+    can be committed (``gitignore_declined``), and a committed record would
+    then widen every downstream operator's permissions, the rule the config
+    already keeps."""
+
+    @staticmethod
+    def _tree(tmp_path: Path, monkeypatch) -> Path:
+        from espalier import cli
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(cli, "_stream_isatty", lambda _stream: False)
+        (tmp_path / "README.md").write_text("# t\n", encoding="utf-8")
+        (tmp_path / ".git").mkdir()
+        return tmp_path
+
+    @staticmethod
+    def _init(root: Path, **extra) -> int:
+        import argparse
+        from espalier.cli import cmd_init
+
+        return cmd_init(argparse.Namespace(repo=str(root), config=None, write_gitignore=True, **extra))
+
+    @staticmethod
+    def _plan(root: Path) -> Path:
+        return root / "reports" / "harness_config.json"
+
+    def _recorded(self, root: Path) -> object:
+        import json
+
+        return json.loads(self._plan(root).read_text(encoding="utf-8")).get("settings_profile")
+
+    def _record(self, root: Path, name: str) -> None:
+        import json
+
+        plan = json.loads(self._plan(root).read_text(encoding="utf-8"))
+        plan["settings_profile"] = name
+        self._plan(root).write_bytes((json.dumps(plan, indent=2) + "\n").encode("utf-8"))
+
+    @pytest.mark.parametrize("profile", ["minimal", "full"])
+    def test_a_plain_rerun_keeps_the_profile_the_file_was_rendered_from(
+            self, tmp_path, monkeypatch, capsys, profile):
+        from espalier.cli import installed_settings_profile
+
+        root = self._tree(tmp_path, monkeypatch)
+        assert self._init(root, profile=profile) == 0
+        capsys.readouterr()
+        assert self._init(root) == 0
+        assert self._recorded(root) == profile
+        assert installed_settings_profile(root) == profile
+        assert f"Settings profile: {profile} (kept from this install's record" in capsys.readouterr().out
+
+    def test_a_committed_record_with_no_install_beside_it_is_the_default(self, tmp_path, monkeypatch):
+        """The failure-mode review's drive: a tree that commits its record
+        (``gitignore_declined``) handed a fresh clone, which has no settings
+        file, the recording operator's ``full``. The record describes the
+        file beside it; with none, the clone takes the default."""
+        import json
+
+        from espalier.settings_profiles import DEFAULT_PROFILE
+
+        root = self._tree(tmp_path, monkeypatch)
+        self._plan(root).parent.mkdir()
+        self._plan(root).write_bytes(json.dumps({"settings_profile": "full"}).encode("utf-8"))
+        assert self._init(root) == 0
+        assert self._recorded(root) == DEFAULT_PROFILE
+
+    @pytest.mark.parametrize("frame", [
+        pytest.param(b"  \n", id="whitespace"),
+        pytest.param(b"\xef\xbb\xbf\n", id="utf8-bom-only"),
+        pytest.param(b"\xff\xfe \x00\n\x00", id="utf16-blank"),
+    ])
+    def test_an_empty_settings_file_is_no_install_to_keep_a_profile_for(self, tmp_path, monkeypatch, frame):
+        """Empty as the deploy reads it (`is_effectively_empty_file`): nothing
+        but whitespace after any byte-order mark, the frame a PowerShell
+        `Out-File` or an editor leaves."""
+        from espalier.settings_profiles import DEFAULT_PROFILE
+
+        root = self._tree(tmp_path, monkeypatch)
+        assert self._init(root, profile="full") == 0
+        (root / ".claude" / "settings.json").write_bytes(frame)
+        assert self._init(root) == 0
+        assert self._recorded(root) == DEFAULT_PROFILE
+
+    def test_the_flag_still_chooses_over_the_record(self, tmp_path, monkeypatch):
+        root = self._tree(tmp_path, monkeypatch)
+        assert self._init(root, profile="minimal") == 0
+        assert self._init(root, profile="workflow") == 0
+        assert self._recorded(root) == "workflow"
+
+    def test_the_config_still_chooses_over_the_record(self, tmp_path, monkeypatch):
+        root = self._tree(tmp_path, monkeypatch)
+        assert self._init(root, profile="minimal") == 0
+        toml = root / "espalier.toml"
+        toml.write_bytes(b'default_profile = "full"\n' + toml.read_bytes())
+        assert self._init(root) == 0
+        assert self._recorded(root) == "full"
+
+    def test_a_profile_only_the_flag_selects_is_not_re_selected_from_the_record(
+            self, tmp_path, monkeypatch, capsys):
+        """Not kept, and the summary says which flag keeps it: a plain re-run
+        on a self-host tree quietly re-recorded the default before too."""
+        from espalier.cli import installed_settings_profile
+        from espalier.settings_profiles import DEFAULT_PROFILE, PROFILES
+
+        flag_only = sorted(name for name, p in PROFILES.items() if not p.config_selectable)
+        assert flag_only, "no flag-only profile left to hold the rule against"
+        root = self._tree(tmp_path, monkeypatch)
+        assert self._init(root) == 0
+        for name in flag_only:
+            self._record(root, name)
+            # Every other reader still takes the record as it is (the two
+            # readers differ on purpose; a merge of them would move doctor).
+            assert installed_settings_profile(root) == name
+            capsys.readouterr()
+            assert self._init(root) == 0
+            assert self._recorded(root) == DEFAULT_PROFILE, name
+            assert f"which only `--profile {name}` keeps" in capsys.readouterr().out, name
+
+    def test_an_unknown_recorded_name_is_the_default(self, tmp_path, monkeypatch):
+        from espalier.settings_profiles import DEFAULT_PROFILE
+
+        root = self._tree(tmp_path, monkeypatch)
+        assert self._init(root, profile="minimal") == 0
+        self._record(root, "no-such-profile")
+        assert self._init(root) == 0
+        assert self._recorded(root) == DEFAULT_PROFILE
+
+    @pytest.mark.parametrize("raw", [
+        pytest.param(b"{not json", id="not-json"),
+        pytest.param(b"[1]\n", id="not-an-object"),
+        pytest.param(b'{"settings_profile": 5}\n', id="not-a-name"),
+        pytest.param(b"\xff\xfe\x00", id="not-utf8"),
+    ])
+    def test_a_record_that_cannot_be_read_is_the_default(self, tmp_path, monkeypatch, raw):
+        from espalier.settings_profiles import DEFAULT_PROFILE
+
+        root = self._tree(tmp_path, monkeypatch)
+        assert self._init(root, profile="minimal") == 0
+        self._plan(root).write_bytes(raw)
+        assert self._init(root) == 0
+        assert self._recorded(root) == DEFAULT_PROFILE
+
+    def test_the_file_rendered_beside_a_kept_one_is_the_kept_profile(self, tmp_path, monkeypatch):
+        """A re-run leaves an edited settings file alone and renders the
+        profile beside it as `settings.json.new`; that render was the default's
+        too (the code review drove 14 allow rules beside a minimal install's
+        3), so taking it widened the file."""
+        import json
+
+        from espalier.cli import _build_settings_json
+
+        root = self._tree(tmp_path, monkeypatch)
+        assert self._init(root, profile="minimal") == 0
+        settings = root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["permissions"]["allow"].append("Bash(echo *)")
+        settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        assert self._init(root) == 0
+        rendered = root / ".claude" / "settings.json.new"
+        assert rendered.is_file()
+        allow = json.loads(rendered.read_text(encoding="utf-8"))["permissions"]["allow"]
+        assert allow == _build_settings_json(profile_name="minimal", repo_root=root)["permissions"]["allow"]
+        assert "Write" not in allow
+
+    def test_upgrade_renders_the_installed_profile_beside_a_kept_file(self, tmp_path, monkeypatch):
+        """The failure-mode review's sibling: ``upgrade --execute`` runs the
+        deploy init does, and with no profile it rendered the default beside
+        a minimal install (14 allow rules, Write among them)."""
+        import json
+
+        from espalier.cli import _build_settings_json
+
+        root = self._tree(tmp_path, monkeypatch)
+        assert self._init(root, profile="minimal") == 0
+        settings = root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["permissions"]["allow"].append("Bash(echo *)")
+        settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        (root / "cc" / "PACK_MANIFEST.txt").write_bytes(b"")  # a stale deploy, so --execute deploys
+        assert _upgrade(root, execute=True) == 0
+        rendered = root / ".claude" / "settings.json.new"
+        assert rendered.is_file()
+        allow = json.loads(rendered.read_text(encoding="utf-8"))["permissions"]["allow"]
+        assert allow == _build_settings_json(profile_name="minimal", repo_root=root)["permissions"]["allow"]
+        assert self._recorded(root) == "minimal"
 
 
 def _initialized_tree(tmp_path: Path) -> Path:

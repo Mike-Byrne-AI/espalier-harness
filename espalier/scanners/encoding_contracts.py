@@ -151,6 +151,10 @@ def _skip_nested_repos(dirpath: str, dirnames: list[str]) -> None:
         and not os.path.exists(os.path.join(dirpath, d, ".git"))
         and not os.path.exists(os.path.join(dirpath, d, "pyvenv.cfg"))
     ]
+    if os.path.basename(os.path.normpath(dirpath)) == ".claude":
+        # Claude Code's worktree folder holds other checkouts, one whose .git
+        # link is gone included (DEF-3000; espalier._safe_walk.WORKTREES_PARENT)
+        dirnames[:] = [d for d in dirnames if d != "worktrees"]
 
 
 def _safe_rglob(root, pattern: str = "*"):

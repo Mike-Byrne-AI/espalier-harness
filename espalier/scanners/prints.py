@@ -37,6 +37,10 @@ def _skip_nested_repos(dirpath: str, dirnames: list[str]) -> None:
         d for d in dirnames
         if not os.path.exists(os.path.join(dirpath, d, ".git"))
     ]
+    if os.path.basename(os.path.normpath(dirpath)) == ".claude":
+        # Claude Code's worktree folder holds other checkouts, one whose .git
+        # link is gone included (DEF-3000; espalier._safe_walk.WORKTREES_PARENT)
+        dirnames[:] = [d for d in dirnames if d != "worktrees"]
 
 
 def iter_py_files(root: str, exclude: set[str] | None = None) -> list[str]:

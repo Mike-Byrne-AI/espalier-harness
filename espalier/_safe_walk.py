@@ -151,6 +151,38 @@ def is_own_git_repo(path: Path) -> bool:
     return os.path.exists(path / ".git")
 
 
+#: Where Claude Code keeps the worktrees it makes (``claude --worktree``, this
+#: repository's own seats): a ``worktrees`` directory directly under a
+#: ``.claude`` one. Each entry there is another checkout, and one whose ``.git``
+#: link is gone is still not this tree's: an interrupted ``git worktree
+#: remove`` on Windows stops at the first locked file, the state
+#: ``tools/cc/checkout_sync.py`` reports as "its .git link is missing"
+#: (DEF-3000). The tests' twin is ``tests/_live_tree.py::EXCLUDED_DIR_PARTS``.
+WORKTREES_PARENT: tuple[str, str] = (".claude", "worktrees")
+
+
+def _is_worktrees_folder(path: Path) -> bool:
+    """True for Claude Code's worktree folder itself (:data:`WORKTREES_PARENT`),
+    read by name, never by content: the folder is Claude Code's, never an
+    adopter's source. Declared limit: the name is read as the path spells it,
+    so a checkout whose own root is a directory named ``.claude`` reads its
+    top-level ``worktrees/`` as that folder. Reading it relative to the
+    checkout instead would break a walk rooted AT ``.claude`` (the freshness
+    scanner reads ``.claude/**/*.md`` so), and no Claude Code checkout is
+    rooted there."""
+    return path.name == WORKTREES_PARENT[1] and path.parent.name == WORKTREES_PARENT[0]
+
+
+def holds_another_checkout(path: Path) -> bool:
+    """True for a directory a walk of THIS tree never enters: one carrying a
+    ``.git`` entry of its own (:func:`has_git_entry`), or Claude Code's
+    worktree folder (:func:`_is_worktrees_folder`), read by name so that a
+    worktree which lost its link is left out too. A walk that answers a
+    question about git's own view keeps :func:`has_git_entry` alone instead:
+    git stops at a link, never at a name."""
+    return _is_worktrees_folder(path) or has_git_entry(path)
+
+
 def has_git_entry(path: Path) -> bool:
     """True if ``path`` carries a ``.git`` entry of ANY kind — directory,
     gitlink file, or a dangling symlink to a moved or removed admin dir.
@@ -220,7 +252,8 @@ def safe_rglob(
     ``skip_nested_repos=True`` (the default) — it never descends into an
     embedded git repository (a nested ``.git`` entry of any kind marks a
     foreign project, never part of THIS repo's surface, per
-    :func:`has_git_entry`). Pass
+    :func:`has_git_entry`) nor into Claude Code's worktree folder
+    (:func:`holds_another_checkout`). Pass
     ``skip_nested_repos=False`` to walk into nested repos, restoring exact
     ``rglob`` parity. Yields files AND directories (not ``root`` itself); order
     is os.walk top-down, so callers needing the old sorted order should wrap in
@@ -237,7 +270,7 @@ def safe_rglob(
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         if skip_nested_repos:
             dirnames[:] = [
-                d for d in dirnames if not has_git_entry(Path(dirpath) / d)
+                d for d in dirnames if not holds_another_checkout(Path(dirpath) / d)
             ]
         if skip_dirs:
             dirnames[:] = [d for d in dirnames if d not in skip_dirs]
@@ -254,7 +287,8 @@ def _prefix_enters_nested_repo(root: Path, walk_root: Path) -> bool:
     this guard a pattern like ``vendor/**`` whose ``vendor/`` is an embedded repo
     would be walked in full — contradicting ``skip_nested_repos``. The caller's
     OWN ``root`` is never treated as foreign; only a nested repo on the prefix
-    path below it is."""
+    path below it is, and Claude Code's worktree folder (DEF-3000), so a
+    ``.claude/worktrees/**`` pattern enters no worktree that lost its link."""
     if walk_root == root:
         return False
     try:
@@ -264,7 +298,7 @@ def _prefix_enters_nested_repo(root: Path, walk_root: Path) -> bool:
     cur = root
     for part in parts:
         cur = cur / part
-        if is_own_git_repo(cur):
+        if is_own_git_repo(cur) or _is_worktrees_folder(cur):
             return True
     return False
 

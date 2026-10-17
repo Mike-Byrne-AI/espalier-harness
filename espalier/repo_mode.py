@@ -34,7 +34,7 @@ from espalier import surface_contract
 from espalier._safe_walk import (
     DEPENDENCY_TREE_DIRS,
     dependency_dirs_for,
-    has_git_entry,
+    holds_another_checkout,
     linked_worktree_main,
 )
 
@@ -227,13 +227,14 @@ def _walk_with_pruning(root: Path, skip_dirs: frozenset[str]):
     for dirpath, dirnames, filenames in os.walk(root):
         # Prune named cache/build dirs AND any embedded git repo (a nested
         # repo is a foreign project, not part of this repo's file list --
-        # dangling .git included, per _safe_walk.has_git_entry).
+        # dangling .git included, and Claude Code's worktree folder by name,
+        # per _safe_walk.holds_another_checkout).
         # The set handed in, not the module constant: the caller adds the
         # adopter's declared dependency directories to it (the stack-registry work;
         # before that the argument was accepted and never read).
         dirnames[:] = [
             d for d in dirnames
-            if not _walk_skip(d, skip_dirs) and not has_git_entry(Path(dirpath) / d)
+            if not _walk_skip(d, skip_dirs) and not holds_another_checkout(Path(dirpath) / d)
         ]
         yield dirpath, dirnames, filenames
 
