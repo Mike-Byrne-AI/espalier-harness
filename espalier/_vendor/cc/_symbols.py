@@ -45,6 +45,7 @@ fold.
 from __future__ import annotations
 
 import ast
+import hashlib
 import re
 import sys
 from pathlib import Path
@@ -72,18 +73,19 @@ START, END = "<start>", "<end>"
 AFTER = "<after:"
 #: Every verdict ``pair_verdict`` gives; a reader that words them covers each.
 VERDICTS = ("shared symbol", "unplaced", "different functions", "path only", "none")
-#: The placement rule the symbols on a claim were derived by. 1, the first
-#: rule and carried by no stamp, placed the changed lines alone; 2 also placed
-#: each hunk's neighbours, a file's edges and its runs of blank lines; 3 diffs
-#: as merge-ort does, by histogram. A reader
-#: takes a claim of any other rule as whole, since its list may lack the marks
-#: a meeting needs (both reviews of Wave 2's last delta, driven: an unstamped
-#: claim certified two shapes git conflicts on). Bump it on any change that can
-#: move a placement (``DIFF_ARGS``, ``spans``, the neighbour rule, a mark's
-#: spelling): a claim placed under the old rule then reads whole instead of
-#: certifying against a placement it cannot meet. A test pins each rule to a
-#: digest of the placements of a fixed corpus and says when to bump.
-RULE = 3
+#: The placement rule the symbols on a claim were derived by: a digest of this
+#: file's own source, its newlines read as LF so a checkout's line endings move
+#: nothing. A reader takes a claim of any other rule as whole, since a list
+#: placed by other code may lack, or spell otherwise, the marks a meeting needs
+#: (both reviews of Wave 2's third delta, driven: a claim from before the
+#: neighbour rule certified two shapes git conflicts on). Derived, not kept: a
+#: hand-bumped number, its record and the corpus that pinned it were each got
+#: past in turn by the reviews of the deltas after (a placement moved under the
+#: same number, an input kind no shape held, a record moved out of the check's
+#: reach, a claim sent from an edited working tree before any test ran). Any
+#: edit here is a new rule, even one no placement feels; it costs the live
+#: claims their certificates until their seats claim again.
+RULE = hashlib.sha256(Path(__file__).read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:16]
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 #: Every diff read here: rename detection off, so a moved file is a deletion at
 #: its old path and an addition at its new one, and another lane editing the old

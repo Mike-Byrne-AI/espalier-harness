@@ -978,9 +978,10 @@ class TestDerivedNotRestated:
         assert board._RED == ship.POST_MERGE_RED
 
 
-#: The placement rule a current claim is stamped with (``_symbols.RULE``),
-#: spelled here for the rows built at collection; pinned equal below.
-_RULE = 3
+#: The placement rule a current claim is stamped with: the mapper's own
+#: ``_symbols.RULE``, a digest of its source, read here for the rows built at
+#: collection; pinned equal to the board's below.
+_RULE = _load("_symbols", "_symbols_rule_for_board_rows").RULE
 
 
 def _claim(seat: str, lane: str, paths, symbols=(), ids=(), more: int = 0, rule: object = _RULE) -> dict:
@@ -1415,7 +1416,7 @@ class TestOverlapsSection:
     def test_the_rows_stamp_the_mappers_rule(self, board):
         assert _RULE == board._symbols.RULE and board.mail.SYMBOLS_RULE_KEY == "symbols_rule"
 
-    @pytest.mark.parametrize("rule", [None, _RULE - 1, _RULE + 1], ids=["unstamped", "older", "newer"])
+    @pytest.mark.parametrize("rule", [None, "0" * 16, 3], ids=["unstamped", "another-source", "a-number"])
     def test_a_claim_of_another_rule_never_certifies(self, board, tmp_path, by_head, rule):
         """Dies to: a claim from before the neighbour rule, or from a newer mapper, read as a
         complete list (it names `C.o` alone for a method appended to a class, with no mark for the
@@ -1458,6 +1459,18 @@ class TestOverlapsSection:
         notes = [line.strip() for line in board.overlap_lines(section) if "another symbol rule" in line]
         assert notes == ["s (lane/a): claims c-1, c-9 were placed under another symbol rule and read whole "
                          "(their files as unplaced lines) until their seat releases them and claims again"], notes
+
+    def test_no_rule_note_beside_a_pair_the_older_claim_does_not_decline(self, board, tmp_path, by_head):
+        """Through the section, not a hand-built pair. Dies to: a pair's declining sides named as
+        both (a lane whose older claim is on another file gets the note beside a pair a release
+        cannot change; the code review of Wave 2's sixth delta, driven)."""
+        claims = [_claim("air-work", "lane/y", ["a.py"], ["a.py::f"]),
+                  _claim("air-work", "lane/y", ["b.py"], ["b.py::g"], rule=None),
+                  _claim("win", "lane/x", ["a.py"])]
+        got = board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set()))
+        (pair,) = got["pairs"]
+        assert pair["verdict"] == "unplaced" and pair["unplaced_labels"] == ["win (lane/x)"], pair
+        assert not any("another symbol rule" in line for line in board.overlap_lines(got))
 
     def test_a_side_that_declines_on_an_insertion_naming_no_point_is_named(self, board, tmp_path, by_head):
         """Dies to: the side-naming left untaught of `beside` (the line said unplaced lines and

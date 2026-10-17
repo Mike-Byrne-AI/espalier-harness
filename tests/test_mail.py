@@ -859,7 +859,7 @@ class TestClaimSymbols:
         assert m["re"][mail.SYMBOLS_RULE_KEY] == rule
         assert mail.SYMBOLS_RULE_KEY not in _msg(mail, "mac", "claim", "", lane="l", symbols=["a.py::f"])["re"]
         assert mail.SYMBOLS_RULE_KEY not in _msg(mail, "mac", "claim", "", lane="l", paths=["a.py"])["re"]
-        for stamp in ({}, {mail.SYMBOLS_RULE_KEY: rule - 1}, {mail.SYMBOLS_RULE_KEY: rule + 1}):
+        for stamp in ({}, {mail.SYMBOLS_RULE_KEY: "0" * 16}, {mail.SYMBOLS_RULE_KEY: 3}):
             syms, _more, whole, _marked = mail.claim_view(
                 {"paths": ["a.py"], mail.SYMBOLS_KEY: ["a.py::f"], **stamp})
             assert syms == {"a.py::f"} and whole == {"a.py"}, (stamp, whole)
@@ -1110,6 +1110,22 @@ class TestSymbolsFromTheLane:
         assert rc == 0 and sent and old["id"] in err and stamped["id"] not in err, err
         rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [stamped], *args)
         assert rc == 0 and sent and "another symbol rule" not in capsys.readouterr().err
+
+    def test_a_path_an_older_claim_held_by_hand_rides_the_claim_that_replaces_it(self, mail, monkeypatch, tmp_path):
+        """Dies to: an older-rule claim's hand path, which the lane's diff does not name, left off
+        the claim that replaces it (the release the note asks for leaves it claimed by no one; the
+        code review of Wave 2's sixth delta, driven), or one a claim of this rule covers re-sent."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"],
+                   paths=["docs/plan.md"])
+        args = ("--type", "claim", "--lane", "lane/x", "--symbols-from", "origin/main")
+        for extra in ((), ("--delta",)):
+            rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], *args, *extra)
+            assert rc == 0 and "docs/plan.md" in sent[0]["re"]["paths"], (extra, sent)
+        current = _msg(mail, "mac", "claim", "", lane="lane/x", paths=["docs/x.md", "docs/plan.md"],
+                       symbols=["tools/cc/mail.py::send", "tools/cc/mail.py::new_message"],
+                       symbols_rule=mail._symbols.RULE)
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old, current], *args, "--delta")
+        assert rc == 0 and sent == [], sent
 
     def test_a_failed_read_for_the_note_costs_the_note_never_the_claim(self, mail, monkeypatch, tmp_path, capsys):
         """Dies to: the note's read let out of the send (a claim that went out before refused for

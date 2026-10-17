@@ -607,7 +607,7 @@ def read_overlaps_section(root: Path, base: str, claims: list[dict], prs: list[d
             if not one:
                 continue
             pair = {"a": a["label"], "b": b["label"], "seats": [a["seat"], b["seat"]], "lanes": [a["lane"], b["lane"]],
-                    "files": sorted(one), "paths": [], "shared": [], "unplaced_on": [],
+                    "files": sorted(one), "paths": [], "shared": [], "unplaced_on": [], "unplaced_labels": [],
                     "not_read": "; ".join(s["not_read"] for s in (a, b) if s["not_read"])}
             if pair["not_read"]:
                 pairs.append({**pair, "verdict": "not read"})

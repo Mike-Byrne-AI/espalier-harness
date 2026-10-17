@@ -288,7 +288,7 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
                 classes: tuple[str, ...] | list[str] = (), paths: tuple[str, ...] | list[str] = (),
                 ids: tuple[str, ...] | list[str] = (),
                 ack: str | None = None, now: datetime | None = None, seat: str | None = None,
-                symbols: tuple[str, ...] | list[str] = (), symbols_rule: int | None = None) -> dict:
+                symbols: tuple[str, ...] | list[str] = (), symbols_rule: str | None = None) -> dict:
     """A message in the pinned shape, validated: the type is one of
     :data:`TYPES`, the text is bounded, every path is repo-relative, every id
     is a row id, a claim names at least a lane, a class, a path or an id, a
@@ -1736,7 +1736,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "send":
             text = _read_text_file(args.text_file) if args.text_file is not None else args.text
             paths, symbols = list(args.paths), []
-            rule: int | None = None   # stamped only on symbols this mapper derived
+            rule: str | None = None   # stamped only on symbols this mapper derived
             if args.symbols_from is not None or args.delta:
                 if args.type != "claim":
                     raise Unresolvable("--symbols-from and --delta derive a claim's symbols: they go with --type claim")
@@ -1778,20 +1778,28 @@ def main(argv: list[str] | None = None) -> int:
                 if stale:
                     print(f"note: {machine}'s live claim{'s' if len(stale) > 1 else ''} {', '.join(stale)} on "
                           f"{args.lane} {'were' if len(stale) > 1 else 'was'} placed under another symbol rule, so "
-                          "every reader takes its files whole: this claim carries the lane under this rule; release "
+                          "every reader takes its files whole: this claim carries the lane, and every path it held, "
+                          "under this rule; release "
                           f"{'them' if len(stale) > 1 else 'it'} (send --type release --ack <id>)", file=sys.stderr)
                 given = [_repo_relative(p) for p in paths]
+                # What an older-rule claim holds that the lane's diff does not name (a path
+                # claimed by hand) rides this claim, so its release leaves nothing claimed by
+                # no one (the code review of Wave 2's sixth delta, driven).
+                carried = sorted({p for c in mine if other_rule(c.get("re") or {})
+                                  for p in _str_list((c.get("re") or {}).get("paths"))} - set(derived) - set(given))
                 # A path given by hand claims its file whole: the lane's symbols
                 # inside it would let a reader call another function apart.
                 symbols = [s for s in symbols if not any(_touches(s.split("::", 1)[0], g) for g in given)]
                 if args.delta:
                     symbols, derived = symbol_delta(own, symbols, derived)
-                    if not symbols and not derived:
+                    carried = symbol_delta(own, [], carried)[1]   # what no claim of this rule covers
+                    if not symbols and not derived and not carried:
                         print("no new symbols")
                         return 0
                     # The new symbols' files join the fold: the earlier claims'
                     # directories cover them there, never in this message.
                     derived = sorted(set(derived) | {s.split("::", 1)[0] for s in symbols})
+                given += carried
                 paths, folded = fit_paths(given, derived)
                 if folded:
                     print(f"note: {folded} changed paths folded into their directories to fit the cap of "
