@@ -71,7 +71,8 @@ except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot i
     if __name__ != "__main__":
         raise
     try:  # the protocol's loop signal: this Stop is the one continued after the last block
-        _again = bool(json.loads(sys.stdin.buffer.read().decode("utf-8", errors="replace"))["stop_hook_active"])
+        _stop = json.loads(sys.stdin.buffer.read().decode("utf-8", errors="replace"))
+        _again = isinstance(_stop, dict) and bool(_stop.get("stop_hook_active"))
     except Exception:  # noqa: BLE001 -- fail-open: ok deliberate an unread Stop is refused
         _again = False
     if _again:
