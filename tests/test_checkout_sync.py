@@ -831,6 +831,183 @@ class TestReapWorktrees:
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
 
 
+def _seeded_with_tools_cc(repos, ignore: str = ".espalier-state/") -> None:
+    """``tools/cc`` committed on origin's main and fetched into work, with the
+    state directory ignored as ``init``'s block ignores it (or by ``ignore``):
+    the guard can then run in a worktree, and the worktree reads clean once
+    its edit is restored."""
+    from tests._live_tree import copy_checkout
+
+    seed, work = repos["seed"], repos["work"]
+    # git's view of tools/cc, never the filesystem's (the live-tree ratchet)
+    copy_checkout(REPO_ROOT / "tools" / "cc", seed / "tools" / "cc", ignore=shutil.ignore_patterns("__pycache__"))
+    (seed / ".gitignore").write_bytes(f"{ignore}\n__pycache__/\n".encode("utf-8"))
+    _git(seed, "add", "-A")
+    _git(seed, "commit", "--quiet", "-m", "tools/cc")
+    _git(seed, "push", "--quiet", "origin", "main")
+    _git(work, "fetch", "--quiet", "origin")
+
+
+def _wedge_restore(wt: Path) -> tuple[bytes, list[Path]]:
+    """In ``wt``: the uncommitted edit that wedges the guard (a raise appended
+    to a sibling it imports), the guard asked about the restore it lets
+    through (it saves the copy first), then the restore run, as the Bash tool
+    would. Returns the edited bytes and the copies the guard wrote."""
+    reinject = wt / "tools" / "cc" / "hooks" / "_reinject.py"
+    edited = reinject.read_bytes() + b"\nraise KeyError(1)\n"
+    reinject.write_bytes(edited)
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE", "GIT_"))}
+    env.update(CLAUDE_PROJECT_DIR=str(wt), PYTHONDONTWRITEBYTECODE="1")
+    payload = {"tool_name": "Bash", "cwd": str(wt),
+               "tool_input": {"command": "git restore --source=HEAD -- tools/cc/hooks/_reinject.py"}}
+    guard = subprocess.run([HOOK_PYTHON, str(wt / "tools" / "cc" / "hooks" / "write_guard.py")],
+                           input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", cwd=wt, env=env, timeout=50)
+    assert guard.returncode == 0, guard.stderr
+    copies = sorted(wt.rglob("*.py.txt"))
+    _git(wt, "restore", "--source=HEAD", "--", "tools/cc/hooks/_reinject.py")
+    return edited, copies
+
+
+class TestTheReaperKeepsAWedgeRestoreCopy:
+    """DEF-3009: the one copy of the edit a wedge restore discards is saved
+    under ``.espalier-state/wedge-restore/``, which the reaper read as state
+    (a cache) and its ignored listing collapsed unread, so a clean, merged
+    worktree was removed at the next fresh session with the copy inside it
+    (driven 2026-10-17 at e336012: "removed 1 leftover (merged, clean)", the
+    copy gone). The worktree is now kept, the copy named, until it is read.
+    Earned red: the rows that drive the guard, the beside-other-state row,
+    the spelling pin and the new helper's own rows fail on main; the two
+    rows that remove hold on both."""
+
+    def test_a_wedge_restore_copy_keeps_the_worktree_and_is_named(self, cs, repos):
+        work = repos["work"]
+        _seeded_with_tools_cc(repos)
+        wt = _worktree(repos, "wedged")
+        edited, copies = _wedge_restore(wt)
+        assert len(copies) == 1 and copies[0].read_bytes() == edited, copies
+        assert _out(wt, "status", "--porcelain") == ""
+        report = cs.reap_worktrees(work, sessions=[])
+        assert report.removed == [] and copies[0].is_file(), report
+        rel = copies[0].relative_to(wt).as_posix()
+        (name, reason), = report.kept
+        assert name == "wedged"
+        assert reason == (f"1 saved edit a wedge restore discarded (.claude/worktrees/wedged/{rel}): read it, "
+                          "keep what you need, then delete it"), reason
+        assert f"wedged [{reason}]" in cs.worktrees_line(report)
+
+    def test_a_copy_beside_other_state_is_still_found(self, cs, repos):
+        """The state directory's other files (a session marker) are still a
+        cache: the copy is named alone, and the line counts nothing else."""
+        work = repos["work"]
+        _seeded_with_tools_cc(repos)
+        wt = _worktree(repos, "busy")
+        _edited, copies = _wedge_restore(wt)
+        (wt / ".espalier-state" / "sessions").mkdir(parents=True)
+        (wt / ".espalier-state" / "sessions" / "s.json").write_text("{}\n", encoding="utf-8")
+        report = cs.reap_worktrees(work, sessions=[])
+        (_name, reason), = report.kept
+        assert reason.startswith(
+            "1 saved edit a wedge restore discarded (.claude/worktrees/busy/.espalier-state/wedge-restore/")
+        assert "other ignored file" not in reason and copies[0].is_file()
+
+    def test_two_copies_and_another_ignored_file_are_counted(self, cs, repos):
+        """The plural reason and the other ignored files' count, in full."""
+        work = repos["work"]
+        _seeded_with_tools_cc(repos)
+        with open(work / ".git" / "info" / "exclude", "a", encoding="utf-8") as exclude:
+            exclude.write("notes.txt\n")
+        wt = _worktree(repos, "many")
+        kept = wt / ".espalier-state" / "wedge-restore"
+        kept.mkdir(parents=True)
+        for name in ("_reinject-20261017T000000000001Z.py.txt", "_hook_utils-20261017T000000000002Z.py.txt"):
+            (kept / name).write_bytes(b"edited\n")
+        (wt / "notes.txt").write_text("mine\n", encoding="utf-8")
+        (_name, reason), = cs.reap_worktrees(work, sessions=[]).kept
+        here = ".claude/worktrees/many/.espalier-state/wedge-restore"
+        assert reason == (f"2 saved edits a wedge restore discarded ({here}/_hook_utils-20261017T000000000002Z.py.txt, "
+                          f"{here}/_reinject-20261017T000000000001Z.py.txt): read them, keep what you need, then "
+                          "delete them (1 other ignored file too)"), reason
+
+    @pytest.mark.parametrize("ignore", [".espalier-state/", ".espalier-state/*"])
+    def test_the_copy_counts_once_and_its_empty_folder_holds_nothing(self, cs, repos, ignore):
+        """The failure-mode review, driven: a hand-written spelling listed the
+        state directory and the saved-edit folder both, naming the copy twice;
+        and once the copy was deleted, as the reason says, the empty folder
+        still kept the worktree."""
+        work = repos["work"]
+        _seeded_with_tools_cc(repos, ignore=ignore)
+        wt = _worktree(repos, "once")
+        _edited, copies = _wedge_restore(wt)
+        (_name, reason), = cs.reap_worktrees(work, sessions=[]).kept
+        assert reason.startswith("1 saved edit a wedge restore discarded ("), reason
+        copies[0].unlink()
+        assert cs.reap_worktrees(work, sessions=[]).removed == ["once"]
+
+    def test_every_worktree_holding_a_copy_is_named_on_the_line(self, cs):
+        """The failure-mode review, driven: with four kept, the line showed
+        three and "and 1 more", the copy-holder among the hidden."""
+        notes = "1 ignored file git status cannot see (notes.md); move what you need"
+        copy = "1 saved edit a wedge restore discarded (.claude/worktrees/zz/x): read it"
+        report = cs.Reap(kept=[("a", notes), ("b", notes), ("c", notes), ("d", notes), ("zz", copy)])
+        line = cs.worktrees_line(report)
+        assert line.startswith(f"kept 5: zz [{copy}], a [{notes}]"), line
+        assert line.endswith("and 1 more"), line
+
+    def test_other_state_alone_does_not_keep_it(self, cs, repos):
+        work = repos["work"]
+        _seeded_with_tools_cc(repos)
+        wt = _worktree(repos, "plain")
+        (wt / ".espalier-state" / "sessions").mkdir(parents=True)
+        (wt / ".espalier-state" / "sessions" / "s.json").write_text("{}\n", encoding="utf-8")
+        assert cs.reap_worktrees(work, sessions=[]).removed == ["plain"]
+
+    @pytest.mark.parametrize("rel", ["hooks/_reinject.py", "checkout_sync.py"])
+    def test_a_copy_its_file_still_holds_does_not_keep_it(self, cs, repos, rel):
+        """The copy is written before the permission prompt. Declined, the
+        restore never runs and the edit stays; committed and merged, the copy
+        holds nothing the branch does not, so it does not hold the worktree.
+        A restore can name a file in tools/cc/ or in tools/cc/hooks/: both."""
+        work = repos["work"]
+        _seeded_with_tools_cc(repos)
+        wt = _worktree(repos, "declined")
+        held = (wt / "tools" / "cc" / rel).read_bytes()
+        stem = rel.rsplit("/", 1)[-1][: -len(".py")]
+        (wt / ".espalier-state" / "wedge-restore").mkdir(parents=True)
+        (wt / ".espalier-state" / "wedge-restore" / f"{stem}-20261017T000000000000Z.py.txt").write_bytes(held)
+        assert cs.reap_worktrees(work, sessions=[]).removed == ["declined"]
+
+    @pytest.mark.parametrize("name, body", [
+        ("_reinject-20261017T000000000000Z.py.txt", None),          # unreadable (absent)
+        ("_reinject.py.txt", b"x"),                                  # the writer's shape lacks its stamp
+        ("_reinject-20261017T000000000000Z.txt", b"x"),             # nor its suffix
+        ("_no_such_stem-20261017T000000000000Z.py.txt", b"x"),      # no file of its name
+        ("_reinject-20261017T000000000000Z.py.txt", b"y"),          # its file, other bytes
+    ])
+    def test_a_copy_that_cannot_be_matched_to_its_file_is_kept(self, cs, tmp_path, name, body):
+        (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)
+        (tmp_path / "tools" / "cc" / "hooks" / "_reinject.py").write_bytes(b"x")
+        rel = f".espalier-state/wedge-restore/{name}"
+        if body is not None:
+            (tmp_path / rel).parent.mkdir(parents=True)
+            (tmp_path / rel).write_bytes(body)
+        assert cs._held_by_its_file(tmp_path, rel) is False
+
+    def test_the_reapers_spelling_is_the_writers(self, cs, tmp_path):
+        """Derived, not copied: the writer is driven, and the path it writes
+        is a saved edit to the reaper, never a cache."""
+        hooks = tmp_path / "tools" / "cc" / "hooks"
+        hooks.mkdir(parents=True)
+        shutil.copy2(REPO_ROOT / "tools" / "cc" / "hooks" / "_hook_utils.py", hooks / "_hook_utils.py")
+        (hooks / "_reinject.py").write_bytes(b"edited\n")
+        sr = _load(REPO_ROOT / "tools" / "cc" / "hooks" / "_start_refusal.py", "start_refusal_under_test")
+        said = sr._save_before_restore(hooks / "_reinject.py", tmp_path / "tools" / "cc")
+        copy, = (tmp_path / ".espalier-state").rglob("*.py.txt")
+        rel = copy.relative_to(tmp_path).as_posix()
+        assert rel in said and cs._disposable(rel) is False and cs._held_by_its_file(tmp_path, rel) is True
+        assert cs._KEPT_STATE_REL == f"{sr._state_dir_from_source(tmp_path / 'tools' / 'cc')}/wedge-restore"
+
+
 @pytest.fixture(scope="module")
 def ss():
     return _load(HOOKS_DIR / "session_start.py", "_ss_checkout_sync_wiring")
