@@ -75,7 +75,11 @@ interactive session as under `-p`; a killed session leaves the lock behind.
    crosses jobs, send the dispatcher one request. Never negotiate with another
    worker seat.
 2. **Claim the files a lane edits** on the mail channel, as before. Assignments
-   are for jobs; claims are for files.
+   are for jobs; claims are for files. A claim can name the functions too:
+   `send --type claim --symbols-from` derives them from the lane's diff, and
+   `mail.py refresh` re-claims what the diff has added since. The lane is the
+   branch: create it before the first claim and claim under its exact name,
+   since `refresh` and the ship driver's release read only the branch.
 
    A claimed file is not always a blocked lane: when the claimed site already
    calls an unclaimed shared helper, the fix can go in the helper and reach
@@ -103,6 +107,23 @@ interactive session as under `-p`; a killed session leaves the lock behind.
    Building on your own open lane's head when the next job shares its files
    (a stacked lane: merge `origin/main` in after the first merges, then open)
    is untested here, and enters this item only after one lane proves it.
+
+   Whether two lanes that share a file overlap is read, never certified by
+   hand. The board's `overlaps:` line names what both lanes change, and only
+   one of its readings is a certificate:
+   - `meet at` is an overlap;
+   - `different functions` is the certificate, and both lanes go on;
+   - `unplaced lines`, `no symbols` and `symbols not read` are a path hit,
+     not a certificate, so the job waits as it would on any shared file.
+
+   `overlaps: unread` and `none among what was read` certify nothing: what
+   was not read is read by path, as before. The plan's claim warning has
+   words of its own, and neither is a certificate: `symbol <name>` is an
+   overlap, and `path <P> (their <Q>)` is a path hit, `no symbol in common`
+   included (an import or a moved line is not a symbol).
+
+   The dispatcher no longer reads two lanes' hunks to certify them
+   (TP-702 Wave 3, 2026-10-17).
 5. **Ids are minted, never hand-picked.** Each seat owns one block per kind
    (`DEF`, `INV`, `TP`), and the table lives in the tracked `espalier.toml`
    under `[id_blocks]`. Read the blocks there; this note does not copy them.

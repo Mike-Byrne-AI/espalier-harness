@@ -1497,3 +1497,30 @@ class TestOverlapsSection:
         collected = board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW)
         json.dumps(collected)
         assert "overlaps: win (lane/x) and air-work (lane/y) meet at a.py::f" in board.render(collected).splitlines()
+
+
+class TestTheReadingsAreTheProtocols:
+    """The parallel-work protocol retired the dispatcher's hand read of two lanes' hunks (TP-702
+    Wave 3), so the readings it and /inbox's Step 2c list are the rule a seat reads the board by:
+    each verdict the board renders has its words in both, and the protocol says which is the
+    certificate. ``none`` is ``pair_verdict``'s answer for no file in common, which the board never
+    pairs."""
+
+    WORDS = {"shared symbol": "meet at", "not read": "symbols not read", "unplaced": "unplaced lines",
+             "path only": "no symbols", "different functions": "different functions"}
+
+    @pytest.mark.contract
+    def test_every_reading_the_board_renders_is_named_where_seats_read_it(self, board):
+        """Dies to: a verdict the board renders that the protocol or /inbox does not name (the
+        failure-mode review found `symbols not read` missing from the protocol), or a word here
+        the board no longer prints."""
+        assert set(self.WORDS) == set(board._VERDICT_ORDER) - {"none"}
+        for verdict, words in self.WORDS.items():
+            pair = {"a": "win (lane/x)", "b": "air-work (lane/y)", "verdict": verdict, "files": ["a.py"],
+                    "shared": ["a.py::f"], "paths": [], "unplaced_on": [], "not_read": "#7"}
+            assert words in board._overlap_text(pair), (verdict, board._overlap_text(pair))
+        for doc in ("memory/parallel-work-protocol.md", ".claude/commands/inbox.md"):
+            text = (REPO_ROOT / doc).read_text(encoding="utf-8")
+            assert not [w for w in self.WORDS.values() if f"`{w}" not in text], doc
+        protocol = (REPO_ROOT / "memory" / "parallel-work-protocol.md").read_text(encoding="utf-8")
+        assert "`different functions` is the certificate" in protocol

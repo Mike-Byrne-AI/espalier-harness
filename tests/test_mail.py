@@ -1325,6 +1325,265 @@ class TestSymbolsFromTheLane:
         assert capsys.readouterr().err.count("mail: refused") == 3
 
 
+class TestRefresh:
+    """`refresh`, the worker tick's one call: the lane is the branch checked out here (never
+    typed), the base the ship driver's default, and the send a `--delta` claim, so a tick writes
+    only what the lane's diff adds. Every way there is nothing to do prints a line and exits 0
+    (a worker stops on anything not green); a write that fails exits 1."""
+
+    PLACEMENTS = TestSymbolsFromTheLane.PLACEMENTS
+
+    def _run(self, mail, monkeypatch, tmp_path, own, branch="lane/x", *args: str, base=None):
+        sent: list[dict] = []
+        bases: list[str] = []
+        reads: list[str] = []   # each read of the ship driver's base, by the remedy it was given
+
+        def lane(root, base, **kw):
+            bases.append(base)
+            return {k: dict(v, symbols=set(v["symbols"])) for k, v in self.PLACEMENTS.items()}
+
+        def default_base(**kw):
+            reads.append(kw.get("remedy", ""))
+            return "origin/trunk"
+
+        monkeypatch.setattr(mail, "machine_setting", lambda root, **kw: ("mac", "git config espalier.machine = mac"))
+        monkeypatch.setattr(mail, "current_branch", lambda root, **kw: branch)
+        monkeypatch.setattr(mail, "_ship_default_base", base or default_base)
+        monkeypatch.setattr(mail._symbols, "symbols_of_lane", lane)
+        monkeypatch.setattr(mail, "read_mail", lambda root, **kw: ({"mac": list(own)}, {}))
+        monkeypatch.setattr(mail, "send", lambda root, message, **kw: sent.append(message))
+        rc = mail.main(["--root", str(tmp_path), "refresh", *args])
+        return rc, sent, bases, reads
+
+    def _claim(self, mail, **kw):
+        return _msg(mail, "mac", "claim", "", lane="lane/x", symbols_rule=mail._symbols.RULE, **kw)
+
+    def test_the_lane_is_the_branch_and_the_send_a_delta_against_the_ship_driver_s_base(
+            self, mail, monkeypatch, tmp_path):
+        """Dies to: the lane read from anything but the branch, a base other than the ship
+        driver's default, or the whole lane re-sent (not a delta) on every tick."""
+        own = [self._claim(mail, symbols=["tools/cc/mail.py::send"])]
+        rc, sent, bases, reads = self._run(mail, monkeypatch, tmp_path, own)
+        assert rc == 0 and bases == ["origin/trunk"] and len(reads) == 1, (bases, reads)
+        (m,) = sent
+        assert m["type"] == "claim" and m["re"]["lane"] == "lane/x", m
+        assert m["re"][mail.SYMBOLS_KEY] == ["tools/cc/mail.py::new_message"], m["re"]
+        assert m["re"][mail.SYMBOLS_RULE_KEY] == mail._symbols.RULE
+
+    def test_the_lane_is_never_typed(self, mail, monkeypatch, tmp_path, capsys):
+        """Dies to: a `--lane` on the verb (the lane spelled by hand, the footgun release_lane records)."""
+        with pytest.raises(SystemExit) as stop:
+            mail.main(["--root", str(tmp_path), "refresh", "--lane", "lane/x"])
+        assert stop.value.code == 2
+
+    @pytest.mark.parametrize("own, said", [
+        ([], "has sent no claim on lane/x"),
+        (["released"], "no live claim on this lane"),
+        (["current"], "no new symbols"),
+    ], ids=["never-claimed", "released", "nothing-new"])
+    def test_nothing_to_do_says_so_and_exits_zero(self, mail, monkeypatch, tmp_path, capsys, own, said):
+        """The three ways a tick has nothing to send. Dies to: any of them exiting 1 (a lane its seat
+        never claimed, or one whose claims a push released, would stop the worker on every tick),
+        sending anything, or a lane with no live claim reading the base (a `gh` call a tick with
+        nothing to add never needs)."""
+        claims = []
+        if own == ["released"]:
+            claims = [self._claim(mail, symbols=["tools/cc/mail.py::send"]),
+                      _msg(mail, "mac", "release", "", lane="lane/x")]
+        elif own == ["current"]:
+            claims = [self._claim(mail, symbols=["tools/cc/mail.py::send", "tools/cc/mail.py::new_message"],
+                                  paths=["docs/x.md"])]
+        rc, sent, _, reads = self._run(mail, monkeypatch, tmp_path, claims)
+        out = capsys.readouterr()
+        assert rc == 0 and sent == [] and said in out.out + out.err, (out.out, out.err)
+        assert len(reads) == (1 if own == ["current"] else 0), reads
+
+    @pytest.mark.parametrize("branch, said", [("", "HEAD is detached"), ("main", "has sent no claim on main")],
+                             ids=["detached", "the-default-branch"])
+    def test_no_lane_checked_out_says_so_and_exits_zero(self, mail, monkeypatch, tmp_path, capsys, branch, said):
+        """Dies to: a detached HEAD (mid-rebase) or a seat between lanes on the default branch read as
+        a refusal, which stops the worker, or as a lane to claim: a claim command spelled with the
+        branch in it is, on the default branch, a claim on `main` no push ever releases (failure-mode
+        review, driven)."""
+        rc, sent, _, _ = self._run(mail, monkeypatch, tmp_path, [], branch)
+        out = capsys.readouterr()
+        assert rc == 0 and sent == [] and said in out.out + out.err, (out.out, out.err)
+        assert "--lane" not in out.out + out.err, out.out
+
+    def test_a_claim_under_a_name_other_than_the_branch_is_named(self, mail, monkeypatch, tmp_path, capsys):
+        """A seat that claimed lane/y and works on lane/y-2 is never refreshed, and the other seat's
+        board then reads `overlaps: none` over one function both change (failure-mode review,
+        driven). Dies to: the line not naming the lanes this machine's live claims are on."""
+        own = [_msg(mail, "mac", "claim", "", lane="lane/y", paths=["pkg/a.py"])]
+        rc, sent, _, reads = self._run(mail, monkeypatch, tmp_path, own, "lane/y-2")
+        out = capsys.readouterr().out
+        assert rc == 0 and sent == [] and reads == [], out
+        assert "has sent no claim on lane/y-2" in out and "its live claims are on lane/y;" in out, out
+
+    def test_a_base_that_cannot_be_read_skips_the_tick_and_says_why(self, mail, monkeypatch, tmp_path, capsys):
+        """`gh` signed out or offline, on a lane with a live claim: each tick reads the base (both
+        reviews, driven). Dies to: the tick exiting 1, so every seat stops at once, or the line
+        offering `--symbols-from <base>`, send's flag that refresh refuses."""
+        class Refused(Exception):
+            pass
+
+        def default_branch():
+            raise Refused("gh could not name the default branch: sign in (gh auth status) or fix the remote")
+
+        monkeypatch.setitem(sys.modules, "_mail_ship", type(sys)("_mail_ship"))
+        sys.modules["_mail_ship"].Refused, sys.modules["_mail_ship"].default_branch = Refused, default_branch
+        own = [self._claim(mail, symbols=["tools/cc/mail.py::send"])]
+        rc, sent, bases, _ = self._run(mail, monkeypatch, tmp_path, own, base=mail._ship_default_base)
+        out = capsys.readouterr()
+        assert rc == 0 and sent == [] and bases == [], (out.out, out.err)
+        assert "the base could not be read" in out.out and "the next tick" in out.out, out.out
+        assert "sign in (gh auth status)" in out.out and "--lane=lane/x --delta" in out.out, out.out
+        assert "(--symbols-from <base>)" not in out.out, out.out
+
+    def test_a_branch_named_past_ascii_is_escaped_in_the_line(self, mail, monkeypatch, tmp_path, capsys):
+        """Dies to: the branch echoed raw (operator text is 7-bit ASCII here: a redirected Windows
+        stdout stops on the first letter past it; code review, driven)."""
+        own = [_msg(mail, "mac", "claim", "", lane="lane/café-2", paths=["a.py"])]
+        rc, _sent, _, _ = self._run(mail, monkeypatch, tmp_path, own, "lane/café")
+        out = capsys.readouterr().out
+        assert rc == 0 and out.isascii() and "lane/caf\\xe9" in out and "lane/caf\\xe9-2" in out, out
+
+    def test_a_branch_spelled_like_an_option_is_the_lane(self, mail, monkeypatch, tmp_path):
+        """Dies to: the lane handed to the send as an argument of its own, which argparse reads as an
+        option (a branch `-z` stopped the send with its usage, code review driven)."""
+        own = [_msg(mail, "mac", "claim", "", lane="-z", symbols_rule=mail._symbols.RULE,
+                    symbols=["tools/cc/mail.py::send"])]
+        rc, sent, _, _ = self._run(mail, monkeypatch, tmp_path, own, "-z")
+        assert rc == 0 and [m["re"]["lane"] for m in sent] == ["-z"], sent
+
+    def test_a_dry_run_prints_the_line_and_sends_nothing(self, mail, monkeypatch, tmp_path, capsys):
+        own = [self._claim(mail, symbols=["tools/cc/mail.py::send"])]
+        rc, sent, _, _ = self._run(mail, monkeypatch, tmp_path, own, "lane/x", "--dry-run")
+        assert rc == 0 and sent == [] and '"lane":"lane/x"' in capsys.readouterr().out
+
+    def test_a_lane_is_refreshed_on_real_git_from_outside_its_checkout(self, mail, machines, monkeypatch,
+                                                                       tmp_path, capsys):
+        """End to end on real git: a lane branch, its first claim by hand, an edit, two ticks run from
+        a directory outside the checkout, then a detached HEAD. Dies to: `--root` lost on the way to
+        the send (the cwd answers instead), the lane read some way other than `branch
+        --show-current` (a detached HEAD read as a lane named HEAD), or a tick sending again what the
+        lane's claims hold (code review, driven)."""
+        mac, origin = machines["mac"], machines["origin"]
+        _git(mac, "switch", "--quiet", "-c", "lane/r")
+        (mac / "pkg").mkdir()
+        (mac / "pkg" / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        _git(mac, "add", "pkg/a.py")
+        _git(mac, "commit", "--quiet", "-m", "f")
+        monkeypatch.setattr(mail, "_ship_default_base", lambda **kw: "origin/main")
+        monkeypatch.chdir(tmp_path)
+        root = ["--root", str(mac)]
+        assert mail.main([*root, "send", "--type", "claim", "--lane", "lane/r", "--symbols-from",
+                          "--text", "the first claim, by hand"]) == 0
+        (mac / "pkg" / "a.py").write_text("def f():\n    return 1\n\n\ndef g():\n    return 2\n", encoding="utf-8")
+        assert mail.main([*root, "refresh"]) == 0
+        assert mail.main([*root, "refresh"]) == 0
+        claims = [json.loads(x) for x in _origin_file(origin, "mac").splitlines()]
+        assert len(claims) == 2, claims
+        assert "pkg/a.py::g" not in claims[0]["re"].get(mail.SYMBOLS_KEY, []), claims[0]
+        assert "pkg/a.py::g" in claims[1]["re"].get(mail.SYMBOLS_KEY, []), claims[1]
+        assert capsys.readouterr().out.rstrip().endswith("no new symbols")
+        _git(mac, "switch", "--quiet", "--detach")
+        assert mail.main([*root, "refresh"]) == 0
+        assert "HEAD is detached" in capsys.readouterr().out
+
+
+class TestAWriteRacingTheSeatsOwn:
+    """The seat's ref moves by compare-and-swap, so a refresh racing the seat's own claim is
+    refused, says it raced, and loses nothing: the next tick sends it (driven on real git)."""
+
+    def test_two_sends_back_to_back_both_land(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        for text in ("one", "two"):
+            mail.send(mac, _msg(mail, "mac", "note", text), run=_real_run(mail), say=lambda _s: None)
+        assert [json.loads(x)["text"] for x in _origin_file(origin, "mac").splitlines()] == ["one", "two"]
+
+    def test_a_write_racing_another_is_refused_as_a_race_and_loses_nothing(self, mail, machines):
+        """Dies to: the ref moved without its compare-and-swap (the racing write overwritten), or the
+        refusal not saying it raced (a worker reads a generic git failure as one to stop on)."""
+        mac, origin = machines["mac"], machines["origin"]
+        real = _real_run(mail)
+        racer = _msg(mail, "mac", "claim", "the seat's own", lane="lane/x", paths=["a.py"])
+        raced = []
+
+        def run(argv, **kw):
+            if argv[:2] == ["git", "update-ref"] and not raced:
+                raced.append(True)   # the seat's own claim lands between this write's read and its swap
+                mail.send(mac, racer, run=real, say=lambda _s: None)
+            return real(argv, **kw)
+
+        refresh = _msg(mail, "mac", "claim", "the refresh", lane="lane/x", paths=["b.py"])
+        with pytest.raises(mail.Unresolvable, match="moved under this send"):
+            mail.send(mac, refresh, run=run, say=lambda _s: None)
+        assert [json.loads(x)["id"] for x in _origin_file(origin, "mac").splitlines()] == [racer["id"]]
+        mail.send(mac, refresh, run=real, say=lambda _s: None)   # the next tick
+        assert [json.loads(x)["id"] for x in _origin_file(origin, "mac").splitlines()] == [racer["id"], refresh["id"]]
+
+    def test_a_write_that_moved_the_ref_and_has_not_pushed_is_a_race(self, mail, machines):
+        """The racing write moved this checkout's ref and is still pushing. Dies to: the tip re-read
+        on the remote-tracking ref, which only a push or a fetch moves, so the race reads as git's
+        own refusal (code review, driven by mutation)."""
+        mac = machines["mac"]
+        real = _real_run(mail)
+        mail.send(mac, _msg(mail, "mac", "note", "one"), run=real, say=lambda _s: None)
+        ref = "refs/heads/mail/mac"
+        moved: list[str] = []
+
+        def run(argv, **kw):
+            if argv[:2] == ["git", "update-ref"] and not moved:
+                tip = real(["git", "rev-parse", ref], cwd=str(mac))[1].strip()
+                moved.append(mail._commit_blob(mac, "{}\n", tip, "the racing write", run=real))
+                assert real(["git", "update-ref", ref, moved[0], tip], cwd=str(mac))[0] == 0
+            return real(argv, **kw)
+
+        with pytest.raises(mail.Unresolvable, match="moved under this send"):
+            mail.send(mac, _msg(mail, "mac", "note", "two"), run=run, say=lambda _s: None)
+
+    def test_a_lock_left_behind_is_git_s_refusal_not_a_race(self, mail, machines):
+        """A stale `<ref>.lock` (a write killed mid-swap) fails every update-ref and moves nothing.
+        Dies to: the tip check dropped, so every failure reads as a race and the seat is told the
+        next tick sends it, on every tick from then on (code review, driven by mutation)."""
+        mac = machines["mac"]
+        lock = mac / ".git" / "refs" / "heads" / "mail" / "mac.lock"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text("", encoding="utf-8")
+        with pytest.raises(mail.Unresolvable) as refused:
+            mail.send(mac, _msg(mail, "mac", "note", "one"), run=_real_run(mail), say=lambda _s: None)
+        assert "update-ref" in str(refused.value) and "moved under" not in str(refused.value), refused.value
+
+    def test_a_swap_that_landed_before_its_run_failed_is_not_a_race(self, mail, machines):
+        """update-ref moved the ref and its run then failed (a timeout's kill after the write). Dies
+        to: the ref at this write's own commit read as another write's (code review)."""
+        mac = machines["mac"]
+        real = _real_run(mail)
+
+        def run(argv, **kw):
+            got = real(argv, **kw)
+            if argv[:2] == ["git", "update-ref"] and len(argv) == 5:
+                return 1, "", "the run was cut short"
+            return got
+
+        with pytest.raises(mail.Unresolvable) as refused:
+            mail.send(mac, _msg(mail, "mac", "note", "one"), run=run, say=lambda _s: None)
+        assert "moved under" not in str(refused.value), refused.value
+
+    def test_a_send_is_read_back_where_the_fetch_refspec_misses_the_mail(self, mail, machines):
+        """A clone that fetches only its branch has no remote-tracking ref a push moves, so a refresh
+        read this machine's claims one send behind and the next tick sent the same symbols again
+        (code review, driven on a single-branch clone). Dies to: the remote-tracking ref left where
+        the push found it."""
+        mac = machines["mac"]
+        _git(mac, "config", "remote.origin.fetch", "+refs/heads/main:refs/remotes/origin/main")
+        m = _msg(mail, "mac", "claim", "one", lane="lane/x", paths=["a.py"])
+        mail.send(mac, m, run=_real_run(mail), say=lambda _s: None)
+        by_machine, _skipped = mail.read_mail(mac, run=_real_run(mail))
+        assert [x["id"] for x in by_machine.get("mac", [])] == [m["id"]], by_machine
+
+
 @pytest.mark.skipif(not __import__("shutil").which("git"), reason="git is the oracle for per-worktree config")
 class TestInheritedWorktreeName:
     """A linked worktree reads its clone's config, so without a `--worktree`
