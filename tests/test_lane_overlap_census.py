@@ -147,4 +147,28 @@ class TestTheSummary:
         assert census.main(["--prs", "2"]) == 0
         out = capsys.readouterr().out
         assert "unplaced Python lines 1 of 7 (14.3%)" in out, out
-        assert "(beside, declined apart from that share): 3" in out, out
+        assert "(beside, apart from that share): 3 hunks, the only decline of 0 shared file(s)" in out, out
+
+    def test_a_file_declined_by_beside_alone_is_counted_and_a_mark_is_said_in_words(
+            self, census, monkeypatch, capsys):
+        """Dies to: the files beside alone declines left uncounted (the hunk count reads as that
+        many declines, though it may be none), or a pair's shared mark printed raw, not in the
+        renderer's words (the reviews of Wave 2's last delta, driven)."""
+        listed = [{"number": n, "createdAt": "2026-10-01T00:00:00Z", "mergedAt": f"2026-10-0{n + 1}T00:00:00Z",
+                   "headRefOid": f"h{n}", "mergeCommit": {"oid": f"m{n}"}} for n in (1, 2)]
+        place = {"h1": {"a.py": {"kind": "python", "symbols": {"a.py::f", "a.py::<after:f>"}, "changed": 2,
+                                 "unplaced": 0, "beside": 0},
+                        "b.py": {"kind": "python", "symbols": {"b.py::<module>"}, "changed": 1, "unplaced": 0,
+                                 "beside": 1}},
+                 "h2": {"a.py": {"kind": "python", "symbols": {"a.py::g", "a.py::<after:f>"}, "changed": 1,
+                                 "unplaced": 0, "beside": 0},
+                        "b.py": {"kind": "python", "symbols": {"b.py::h"}, "changed": 1, "unplaced": 0,
+                                 "beside": 0}}}
+        monkeypatch.setattr(census, "_gh", lambda *argv: json.dumps(listed))
+        monkeypatch.setattr(census, "_git", lambda *argv: "base\n" if argv[0] == "merge-base" else "")
+        monkeypatch.setattr(census, "symbols_between", lambda base, head: place[head])
+        assert census.census(prs=2)["beside_only_files"] == 1
+        assert census.main(["--prs", "2"]) == 0
+        out = capsys.readouterr().out
+        assert "1 hunks, the only decline of 1 shared file(s)" in out, out
+        assert "shared symbol (the blank lines after a.py::f)" in out, out

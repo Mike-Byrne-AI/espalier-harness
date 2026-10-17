@@ -77,7 +77,11 @@ VERDICTS = ("shared symbol", "unplaced", "different functions", "path only", "no
 #: each hunk's neighbours, a file's edges and its runs of blank lines. A reader
 #: takes a claim of any other rule as whole, since its list may lack the marks
 #: a meeting needs (both reviews of Wave 2's last delta, driven: an unstamped
-#: claim certified two shapes git conflicts on).
+#: claim certified two shapes git conflicts on). Bump it on any change that can
+#: move a placement (``DIFF_ARGS``, ``spans``, the neighbour rule, a mark's
+#: spelling): a claim placed under the old rule then reads whole instead of
+#: certifying against a placement it cannot meet. A test pins each rule to a
+#: digest of the placements of a fixed corpus and says when to bump.
 RULE = 2
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 #: Every diff read here: rename detection off, so a moved file is a deletion at
@@ -90,10 +94,15 @@ HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 #: slides an ambiguous hunk to where it reads best, away from where the merge
 #: places it (code review, driven: a pasted copy of a function sat at the top
 #: of its slide, the merge put it at the bottom, beside another lane's edit).
-#: Pinned by the tests.
+#: And the algorithm is the merge's own, histogram: merge-ort, the merge the
+#: ship driver's catch-up and the host run, diffs each side that way, and
+#: git's default places some hunks elsewhere (failure-mode review, driven: a
+#: constant added above a deleted function read clear of another lane's
+#: deletion beside it, which merge-ort conflicts on). It also pins a user's
+#: ``diff.algorithm``. Pinned by the tests.
 DIFF_ARGS: tuple[str, ...] = (
     "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "--inter-hunk-context=0",
-    "--no-indent-heuristic",
+    "--no-indent-heuristic", "--diff-algorithm=histogram",
 )
 #: The lines a ``-U0`` diff carries besides its hunks: git's own header lines.
 #: A Python file whose diff holds anything else and no hunk this reader can
@@ -296,9 +305,9 @@ def mark_words(symbol: str, *, in_file: bool = False) -> str:
         return f"the end of {where}"
     if name.startswith(AFTER) and name.endswith(">"):
         x = name[len(AFTER):-1]
-        if x == MODULE:
-            return f"a run of blank lines between module-level lines of {where}"
-        return f"the blank lines after {named(x)}"
+        if x == MODULE:   # every such run is this one mark: which run is not told apart
+            return f"runs of blank lines between module-level lines of {where} (which run is not told apart)"
+        return f"the blank lines after {' and '.join(named(t) for t in x.split('+'))}"
     return named(name)
 
 
@@ -394,8 +403,8 @@ def pair_verdict(one: dict[str, dict], two: dict[str, dict]) -> dict:
     """What two lanes' placements say about each other, over the files both
     changed: ``shared`` (symbols both changed, the module excluded), ``paths``
     (files that are not Python), ``unplaced`` (Python files where a side left
-    lines unplaced, touched a neighbour no node holds (``beside``), or read no
-    line at all, and no symbol is shared),
+    lines unplaced, inserted between two lines no node holds (``beside``), or
+    read no line at all, and no symbol is shared),
     ``verdict`` one of ``shared symbol``, ``unplaced``, ``different
     functions``, ``path only``, ``none``."""
     files = sorted(set(one) & set(two))

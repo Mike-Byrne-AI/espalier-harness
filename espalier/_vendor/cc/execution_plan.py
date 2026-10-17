@@ -356,6 +356,8 @@ def _unresolved_symbols(symbols: list[str], root: Path, mapper) -> list[str]:
     lines: list[str] = []
     for symbol in symbols:
         where, _sep, name = symbol.partition("::")
+        if name.startswith("<"):
+            continue   # a mark (`<module>`, a file's edges, a run of blanks) names no definition, and meets as written
         try:
             source = (root / where).read_text(encoding="utf-8", errors="replace")
         except OSError:

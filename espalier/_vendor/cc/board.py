@@ -576,7 +576,8 @@ def read_overlaps_section(root: Path, base: str, claims: list[dict], prs: list[d
         ids = list(dict.fromkeys(i for c in on_lane for i in mail._str_list((c.get("re") or {}).get("ids"))))
         label = f"{who} ({', '.join([lane or '(no lane)', *ids])})"
         sides.append({"seat": who, "who": who, "lane": lane, "label": label, "place": _claim_place(on_lane),
-                      "not_read": ""})
+                      "not_read": "",
+                      "stale": [str(c.get("id") or "") for c in on_lane if mail.other_rule(c.get("re") or {})]})
     unread_lanes: list[str] = []
     for pr in prs:
         head = str(pr.get("headRefOid") or "")
@@ -623,7 +624,10 @@ def read_overlaps_section(root: Path, base: str, claims: list[dict], prs: list[d
             pairs.append(pair)
     rank = {v: n for n, v in enumerate(_VERDICT_ORDER)}
     pairs.sort(key=lambda p: (0 if seat and seat in p["seats"] else 1, rank.get(p["verdict"], len(rank))))
-    return {"pairs": pairs, "notes": notes, "partial": bool(notes or unread_lanes), "unread_lanes": unread_lanes}
+    # A claim placed under another symbol rule is read, whole: no part of the read is missing,
+    # so it leaves "partial" alone; its note is keyed by its side, said only beside a pair of it.
+    return {"pairs": pairs, "notes": notes, "partial": bool(notes or unread_lanes), "unread_lanes": unread_lanes,
+            "stale_rule": {s["label"]: s["stale"] for s in sides if s.get("stale")}}
 
 
 def _symbol_words(symbol: str) -> str:
@@ -671,6 +675,11 @@ def overlap_lines(section: object) -> list[str]:
     if len(pairs) > OVERLAPS_SHOWN:
         texts.append(f"and {len(pairs) - OVERLAPS_SHOWN} more (--json lists them)")
     texts += [str(n) for n in section.get("notes") or []]
+    stale = section.get("stale_rule") or {}
+    said = list(dict.fromkeys(label for p in pairs[:OVERLAPS_SHOWN] for label in (p.get("a"), p.get("b"))
+                              if label in stale))
+    texts += [f"{label}: claim {', '.join(stale[label])} was placed under another symbol rule and reads whole "
+              "(its files as unplaced lines) until its seat releases it and claims again" for label in said]
     return [_ascii(("overlaps: " if i == 0 else "          ") + t) for i, t in enumerate(texts)]
 
 
@@ -738,7 +747,7 @@ def lane_overlap_lines(root: Path, base: str, lane: str, number: object, head: s
         return overlap_lines(section)
     pairs = [p for p in section.get("pairs") or [] if lane in (p.get("lanes") or [])]
     lines = overlap_lines({"pairs": pairs, "notes": section.get("notes") or [],
-                           "partial": section.get("partial")})
+                           "partial": section.get("partial"), "stale_rule": section.get("stale_rule") or {}})
     if pairs:
         lines.append("          the rule stands: the second of these to merge runs the ship driver's catch-up")
     return lines

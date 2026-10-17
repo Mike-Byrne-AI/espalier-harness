@@ -174,7 +174,7 @@ def census(*, prs: int | None = None, window: tuple[int, int] | None = None, bas
                               "changed": sum(p["changed"] for p in placements.values()),
                               "unplaced": sum(p["unplaced"] for p in placements.values())}
     pairs: list[dict] = []
-    concurrent_pairs = 0
+    concurrent_pairs = beside_only = 0
     for a, b in itertools.combinations(sorted(info), 2):
         if not _symbols.concurrent(info[a], info[b]):
             continue
@@ -182,10 +182,15 @@ def census(*, prs: int | None = None, window: tuple[int, int] | None = None, bas
         verdict = _symbols.pair_verdict(info[a]["placements"], info[b]["placements"])
         if verdict["verdict"] != "none":
             pairs.append({"a": a, "b": b, **verdict})
+        # A shared file declined by an insertion naming no point and nothing else: what beside costs.
+        sides = [(info[a]["placements"][f], info[b]["placements"][f]) for f in verdict["unplaced"]]
+        beside_only += sum(1 for x, y in sides if not x["unplaced"] and not y["unplaced"] and x["changed"]
+                           and y["changed"] and (x.get("beside") or y.get("beside")))
     verdicts = {v: sum(1 for p in pairs if p["verdict"] == v) for v in _symbols.VERDICTS if v != "none"}
     return {"prs": len(info), "unread": unread, "missing": missing, "mirrors_folded": _mirrors is not None,
             "concurrent_pairs": concurrent_pairs, "sharing_a_file": len(pairs), "verdicts": verdicts,
             "changed_lines": changed_total, "unplaced_lines": unplaced_total, "beside_insertions": beside_total,
+            "beside_only_files": beside_only,
             "per_pr": {n: {"changed": i["changed"], "unplaced": i["unplaced"]} for n, i in info.items()},
             "pairs": pairs}
 
@@ -223,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
           f"shared symbol {v['shared symbol']}, unplaced {v['unplaced']}, different functions "
           f"{v['different functions']}, path only {v['path only']}; unplaced Python lines "
           f"{result['unplaced_lines']} of {result['changed_lines']} ({rate:.1%}); insertions naming no point "
-          f"(beside, declined apart from that share): {result['beside_insertions']}"
+          f"(beside, apart from that share): {result['beside_insertions']} hunks, the only decline of "
+          f"{result['beside_only_files']} shared file(s)"
           + ("" if result["mirrors_folded"] else "; mirror twins NOT folded (registry unread)"))
     for p in result["pairs"]:
         files = ", ".join(p["files"][:3]) + (" ..." if len(p["files"]) > 3 else "")

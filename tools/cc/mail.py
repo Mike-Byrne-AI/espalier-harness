@@ -122,7 +122,9 @@ ASSIGN_SEAT_KEY = "seat"
 #: ``symbols`` (since 2026-10-17): the symbols a claim's lane
 #: changed, ``path::qualname`` as ``_symbols`` derives them (a function, a
 #: method, a class, a module-level name; ``path::<module>`` where the lane left
-#: lines no definition holds), sorted. Written into ``re`` on a claim only, and
+#: lines no definition holds or inserted between two such lines; the marks for
+#: what a change borders, ``path::<start>``, ``path::<end>`` and
+#: ``path::<after:X>``), names first, then marks. Written into ``re`` on a claim only, and
 #: only when given, so every other message, and a claim sent without them,
 #: keeps the shape above byte for byte and an older reader ignores the key.
 #: ``symbols_more`` counts what :data:`MAX_SYMBOLS` and :data:`MAX_MARKS` left
@@ -286,7 +288,7 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
                 classes: tuple[str, ...] | list[str] = (), paths: tuple[str, ...] | list[str] = (),
                 ids: tuple[str, ...] | list[str] = (),
                 ack: str | None = None, now: datetime | None = None, seat: str | None = None,
-                symbols: tuple[str, ...] | list[str] = ()) -> dict:
+                symbols: tuple[str, ...] | list[str] = (), symbols_rule: int | None = None) -> dict:
     """A message in the pinned shape, validated: the type is one of
     :data:`TYPES`, the text is bounded, every path is repo-relative, every id
     is a row id, a claim names at least a lane, a class, a path or an id, a
@@ -296,7 +298,10 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     else names a seat. ``symbols`` (a claim's only) are ``path::name`` with
     the path repo-relative; their paths join ``paths``, so a reader that
     knows only paths meets the lane, and past :data:`MAX_SYMBOLS` the rest
-    are a count. ``now`` is for tests."""
+    are a count. ``symbols_rule`` is the rule that derived them, stamped
+    beside them only when given: the derivation names it, never the message,
+    so symbols from anywhere else carry no stamp and read whole. ``now`` is
+    for tests."""
     if not _MACHINE_RE.match(machine or ""):
         raise Unresolvable(f"{machine!r} is not a machine name this channel takes")
     if type_ not in TYPES:
@@ -364,7 +369,8 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
         cut = max(0, len(names) - MAX_SYMBOLS) + max(0, len(marks) - MAX_MARKS)
         if cut:
             re_[SYMBOLS_MORE_KEY] = cut
-        re_[SYMBOLS_RULE_KEY] = _symbols.RULE
+        if symbols_rule is not None:
+            re_[SYMBOLS_RULE_KEY] = symbols_rule
     return {
         "v": SCHEMA_VERSION, "id": mid, "type": type_, "from": machine, "at": at,
         "re": re_, "text": text, "ack": ack,
@@ -710,6 +716,14 @@ def _touches(a: str, b: str) -> bool:
     return a == b or a.startswith(b + "/") or b.startswith(a + "/")
 
 
+def other_rule(re_: dict) -> bool:
+    """A claim's symbols were placed under another rule than this mapper's
+    (no ``SYMBOLS_RULE_KEY``, or not ``_symbols.RULE``): its list may lack the
+    marks a meeting needs, so every reader takes its files whole, and its seat
+    is told to release it and claim again. A claim without symbols has no rule."""
+    return any("::" in s for s in _str_list(re_.get(SYMBOLS_KEY))) and re_.get(SYMBOLS_RULE_KEY) != _symbols.RULE
+
+
 def claim_view(re_: dict) -> tuple[set[str], int, set[str], set[str]]:
     """One claim's ``re`` block read as the claims matcher and the board both
     read it: its symbols (the vendored twin folded onto its source), its count
@@ -728,7 +742,7 @@ def claim_view(re_: dict) -> tuple[set[str], int, set[str], set[str]]:
             syms.add(f"{fold(where)}::{name}")
     files = {s.split("::", 1)[0] for s in syms}
     paths = {fold(q) for q in _str_list(re_.get("paths"))}
-    if syms and re_.get(SYMBOLS_RULE_KEY) != _symbols.RULE:
+    if other_rule(re_):
         return syms, _count(re_.get(SYMBOLS_MORE_KEY)), paths | files, set()
     whole = {p for p in paths
              if not any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") for f in files)}
@@ -1254,8 +1268,12 @@ def symbol_delta(own: list[dict], symbols: list[str], paths: list[str]) -> tuple
     """What ``symbols`` and ``paths`` add to this machine's live claims
     ``own``: the symbols none of them names and the paths none of them covers.
     A symbol past an earlier claim's cap is named by none, so it is sent again:
-    the cap's cost, on a lane of more than :data:`MAX_SYMBOLS` symbols."""
-    named = {s for c in own for s in _str_list((c.get("re") or {}).get(SYMBOLS_KEY))}
+    the cap's cost, on a lane of more than :data:`MAX_SYMBOLS` symbols. A claim
+    placed under another rule names none either (:func:`other_rule`), so the
+    first delta after a rule change sends the lane's symbols whole under this
+    one, never "no new symbols" over a list no reader takes as complete."""
+    named = {s for c in own if not other_rule(c.get("re") or {})
+             for s in _str_list((c.get("re") or {}).get(SYMBOLS_KEY))}
     claimed = [p for c in own for p in _str_list((c.get("re") or {}).get("paths"))]
     return ([s for s in symbols if s not in named],
             [p for p in paths if not any(_touches(p, q) for q in claimed)])
@@ -1717,6 +1735,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "send":
             text = _read_text_file(args.text_file) if args.text_file is not None else args.text
             paths, symbols = list(args.paths), []
+            rule: int | None = None   # stamped only on symbols this mapper derived
             if args.symbols_from is not None or args.delta:
                 if args.type != "claim":
                     raise Unresolvable("--symbols-from and --delta derive a claim's symbols: they go with --type claim")
@@ -1743,6 +1762,16 @@ def main(argv: list[str] | None = None) -> int:
                             "that lane" + (f" (its live claims are on {', '.join(elsewhere)})" if elsewhere else "")
                             + ": send its first claim without --delta, or name the lane it was claimed under")
                 symbols, derived = lane_symbols(root, args.symbols_from or None)
+                rule = _symbols.RULE
+                # A claim beside one placed under another rule is united with it on the lane, and
+                # that one keeps its files whole: say which to release, delta or not.
+                mine = own if args.delta else (own_live_claims(read_mail(root)[0], machine, args.lane)
+                                               if args.lane else [])
+                stale = [str(c.get("id") or "") for c in mine if other_rule(c.get("re") or {})]
+                if stale:
+                    print(f"note: {len(stale)} of {machine}'s live claims on {args.lane} were placed under another "
+                          "symbol rule and are read whole by every reader until released: release "
+                          + ", ".join(stale) + " (send --type release --ack <id>) and claim again", file=sys.stderr)
                 given = [_repo_relative(p) for p in paths]
                 # A path given by hand claims its file whole: the lane's symbols
                 # inside it would let a reader call another function apart.
@@ -1760,7 +1789,8 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"note: {folded} changed paths folded into their directories to fit the cap of "
                           f"{MAX_PATHS}; a directory claims what is under it", file=sys.stderr)
             message = new_message(machine, args.type, text, lane=args.lane, classes=args.classes,
-                                  paths=paths, ids=args.ids, ack=args.ack, seat=args.seat, symbols=symbols)
+                                  paths=paths, ids=args.ids, ack=args.ack, seat=args.seat, symbols=symbols,
+                                  symbols_rule=rule)
             if args.type == "assign":
                 refusal = assign_refusal(root, machine)
                 if refusal:

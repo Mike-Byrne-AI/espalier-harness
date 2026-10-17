@@ -17,7 +17,9 @@ to."""
 from __future__ import annotations
 
 import difflib
+import hashlib
 import importlib.util
+import json
 import pathlib
 import re
 import subprocess
@@ -25,6 +27,8 @@ import sys
 
 import pytest
 
+from tests._git_oracle import _git_env
+from tests._quiet_git import NO_BACKGROUND_GIT
 from tests._stubs import write_stub
 
 _REPO = pathlib.Path(__file__).resolve().parents[1]
@@ -252,7 +256,7 @@ class TestSpans:
         """Dies to: a colour, external-diff or textconv setting in the box's git config turning the
         hunk header into something `HUNK_RE` does not match, so nothing is read and all is certified."""
         assert {"--no-color", "--no-ext-diff", "--no-textconv", "--inter-hunk-context=0",
-                "--no-indent-heuristic"} <= set(sym.DIFF_ARGS)
+                "--no-indent-heuristic", "--diff-algorithm=histogram"} <= set(sym.DIFF_ARGS)
 
 
 class TestNothingReadIsNeverCertified:
@@ -375,14 +379,58 @@ class TestPairVerdict:
 _TWO = "def f():\n    return 1\n\n\ndef g():\n    return 2\n"
 
 
-def _merge_rc(tmp_path: pathlib.Path, base: str, ours: str, theirs: str) -> int:
-    """git's own answer: ``git merge-file``'s exit code (0 clean, else the number of conflicts)."""
+def _merge_file_rc(tmp_path: pathlib.Path, base: str, ours: str, theirs: str) -> int:
+    """``git merge-file``'s exit code (0 clean, else the number of conflicts): a stand-in, which
+    diffs each side with git's default algorithm."""
     files = []
     for name, text in (("ours", ours), ("base", base), ("theirs", theirs)):
         path = tmp_path / f"{name}.py"
         path.write_bytes(text.encode("utf-8"))
         files.append(str(path))
     return subprocess.run(["git", "merge-file", "-p", *files], capture_output=True, timeout=30).returncode
+
+
+_WHO = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_AUTHOR_DATE": "1000000000 +0000",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
+        "GIT_COMMITTER_DATE": "1000000000 +0000"}
+
+
+def _ort_rc(tmp_path: pathlib.Path, base: str, ours: str, theirs: str) -> int:
+    """merge-ort's exit code (``git merge-tree --write-tree``: 0 clean, 1 conflicted), the merge
+    the ship driver's catch-up and the host run, in a bare scratch repository of three commits.
+    It needs git 2.38: older, the row is skipped, never read as clean."""
+    repo = tmp_path / f"ort{len(list(tmp_path.glob('ort*')))}"
+    repo.mkdir()
+    env = {**_git_env(), **_WHO}
+
+    def git(*args: str, data: str | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=repo, capture_output=True, env=env, timeout=30,
+                              input=None if data is None else data.encode("utf-8"))
+
+    git("init", "-q", "--bare")
+    for key, value in NO_BACKGROUND_GIT:
+        git("config", key, value)
+
+    def commit(text: str, *parents: str) -> str:
+        blob = git("hash-object", "-w", "--stdin", data=text).stdout.decode().strip()
+        tree = git("mktree", data=f"100644 blob {blob}\tp.py\n").stdout.decode().strip()
+        return git("commit-tree", tree, "-m", "c", *(a for p in parents for a in ("-p", p))).stdout.decode().strip()
+
+    first = commit(base)
+    result = git("merge-tree", "--write-tree", commit(ours, first), commit(theirs, first))
+    if result.returncode == 129:
+        pytest.skip("git merge-tree --write-tree needs git 2.38 or later")
+    assert result.returncode in (0, 1) and result.stdout.strip(), result.stderr
+    return result.returncode
+
+
+def _merge_rc(tmp_path: pathlib.Path, base: str, ours: str, theirs: str) -> int:
+    """git's own answer from both its mergers: 0 only where merge-file and merge-ort both merge
+    clean, else the conflicts either finds. A row that pins a conflict holds where either
+    conflicts, and a clean control only where both are clean (the failure-mode review of Wave 2's
+    last delta, driven: merge-file alone, diffing as git's default does, merged a pair merge-ort
+    conflicts on, and the row read clean)."""
+    return max(_merge_file_rc(tmp_path, base, ours, theirs), _ort_rc(tmp_path, base, ours, theirs))
 
 
 #: A test class with a method, then two blank lines, then another class: the commonest co-edit.
@@ -407,10 +455,11 @@ def _git_placement(sym, tmp_path: pathlib.Path, old: str, new: str) -> dict:
 
 class TestTouchingHunksAreNeverCertified:
     """Two changes git cannot merge (they touch, or both land at one point) must never read
-    "different functions", and one git merges must still read it. Each row places both sides
-    through git's own diff and pins the verdict beside git merge-file's exit code, so the rule
-    follows git and not a sentence (the failure-mode reviews of Wave 2, driven: every
-    conflicting shape here was certified before its fix)."""
+    "different functions", and one git merges must still read it, but for a row that records a
+    cost by name. Each row places both sides through git's own diff and pins the verdict beside
+    the exit codes of both git mergers (``_merge_rc``), so the rule follows git and not a
+    sentence (the failure-mode reviews of Wave 2, driven: every conflicting shape here was
+    certified before its fix)."""
 
     def _row(self, sym, tmp_path, ours: str, theirs: str, base: str = _TWO) -> tuple[str, int]:
         verdict = sym.pair_verdict({"p.py": _git_placement(sym, tmp_path, base, ours)},
@@ -521,12 +570,26 @@ class TestTouchingHunksAreNeverCertified:
                                 _TWO.replace("return 2", "return 20"))
         assert rc == 0 and verdict == "different functions", (verdict, rc)
 
+    def test_a_line_added_above_a_deleted_function_meets_a_deletion_beside_it(self, sym, tmp_path):
+        """Dies to: git's default diff algorithm in the mapper's diff (it reads the new constant
+        and the deletion as two replacements, the deleted function's blank lines untouched, clear
+        of the other lane's deletion right below them), or a twin-row oracle of merge-file alone,
+        which diffs that way too and merges the pair: merge-ort, which diffs by histogram,
+        conflicts (the failure-mode review of Wave 2's last delta, driven end to end)."""
+        base = "X = 1\n\n\ndef f0():\n    return x\n    pass\n\n\ndef f1():\n    x = 1\n    pass\n\n\ndef f2():\n    pass\n"
+        ours = "Cc = 1\n\n" + base.replace("def f0():\n    return x\n    pass\n\n\n", "")
+        theirs = base.replace("def f1():\n    x = 1\n    pass\n\n\n", "")
+        verdict, rc = self._row(sym, tmp_path, ours, theirs, base=base)
+        assert rc != 0 and verdict != "different functions", (verdict, rc)
+        assert _merge_file_rc(tmp_path, base, ours, theirs) == 0   # the stand-in alone reads it clean
+
     def test_two_runs_after_module_level_lines_meet_though_git_merges_them(self, sym, tmp_path):
         """A recorded cost, not a guarantee: every run of blanks after a line that names nothing
         is one mark, ``<after:<module>>``, so two functions added under two section comments meet
         though git merges them (the failure-mode review of Wave 2's last delta, shape 33). The
         direction is conservative; keying the run by its own lines is the change that flips this
-        row to a certificate."""
+        row to a certificate, and since that moves placements it is also a bump of
+        ``_symbols.RULE`` (``TestTheRuleNamesThePlacement`` says so when it is missed)."""
         base = "# one\n\n\ndef f():\n    return 1\n\n\n# two\n\n\ndef g():\n    return 2\n"
         ours = base.replace("# one\n\n", "# one\n\ndef h():\n    return 3\n\n")
         theirs = base.replace("# two\n\n", "# two\n\ndef k():\n    return 4\n\n")
@@ -558,9 +621,60 @@ class TestMarkWords:
             marks |= got
         for mark in sorted(marks):
             for words in (sym.mark_words(mark), sym.mark_words(mark, in_file=True)):
-                assert "<" not in words and ">" not in words, (mark, words)
+                assert "<" not in words and ">" not in words and "+" not in words, (mark, words)
             assert "p.py" not in sym.mark_words(mark, in_file=True), mark
             assert "p.py" in sym.mark_words(mark), mark
+
+    def test_the_words_say_what_a_mark_does_not_tell_apart(self, sym):
+        """Dies to: every run after a module-level line worded as one run (it is one mark for
+        every such run, so a meeting there may be two runs git merges apart), or a line's two
+        targets printed joined (the failure-mode review of Wave 2's last delta, driven)."""
+        assert "which run is not told apart" in sym.mark_words("p.py::<after:<module>>")
+        assert sym.mark_words("p.py::<after:a+b>") == "the blank lines after p.py::a and p.py::b"
+        assert sym.mark_words("p.py::<after:a+b>", in_file=True) == "the blank lines after a and b"
+
+
+#: The digest of the placements ``_rule_digest`` reads, per placement rule. A change that moves
+#: one is a new rule: bump ``_symbols.RULE`` and record the new digest under it, keeping the old.
+_RULE_DIGESTS = {2: "d5adadcc7e2a29ea"}
+
+
+def _rule_digest(sym) -> str:
+    """The mapper's placements of a fixed corpus (the twin rows' shapes and the marks' shapes,
+    each diffed by difflib so the digest is the same under any git), with ``DIFF_ARGS`` and the
+    marks' spellings beside them: what a claim placed under one rule must agree with."""
+    shapes = [(_TWO, _TWO.replace("return 1", "return 10")),
+              (_TWO, _TWO + "\n\ndef h():\n    return 3\n"),
+              (_TWO, _TWO.replace("\n\ndef g", "\n\ndef h():\n    return 3\n\n\ndef g")),
+              (_CLS, _CLS.replace("        assert 1\n", "        assert 1\n\n    def test_new(self):\n        pass\n")),
+              (_DOC, _DOC.replace("LIMIT = 3\n", "LIMIT = 3\nOTHER = 4\n")),
+              ("import os\nimport sys\n\n\ndef f():\n    return 1\n",
+               "import os\ndef h():\n    return 2\nimport sys\n\n\ndef f():\n    return 1\n"),
+              (OLD, OLD.replace("    return x + 1", "    return x + 2").replace("attr = 0", "attr = 1")),
+              *((TestMarkWords.BASE, new) for new in TestMarkWords.SHAPES.values())]
+    rows = []
+    for old, new in shapes:
+        got = sym.changed_symbols("p.py", old, new, _diff(old, new, "p.py"))
+        rows.append({key: sorted(value) if isinstance(value, set) else value for key, value in got.items()})
+    marks = [sym.MODULE, sym.START, sym.END, sym.AFTER]
+    blob = json.dumps({"diff_args": list(sym.DIFF_ARGS), "marks": marks, "rows": rows}, sort_keys=True)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+class TestTheRuleNamesThePlacement:
+    def test_the_placements_of_a_fixed_corpus_are_the_rule_s(self, sym):
+        """Dies to: a change that moves a placement (``DIFF_ARGS``, ``spans``, the neighbour rule,
+        a mark's spelling) with ``_symbols.RULE`` left as it was: a claim placed under the old
+        rule then reads as a complete list against placements it cannot meet, and certifies a
+        pair git conflicts on (the failure-mode review of Wave 2's last delta, driven with a run
+        of blanks keyed by its own lines). Failing on purpose: bump the rule, record the digest."""
+        digest = _rule_digest(sym)
+        assert max(_RULE_DIGESTS) == sym.RULE, (
+            f"_symbols.RULE is {sym.RULE}, the newest rule recorded here {max(_RULE_DIGESTS)}: record "
+            f"{digest} under {sym.RULE}")
+        assert _RULE_DIGESTS[sym.RULE] == digest, (
+            f"the mapper's placements moved under rule {sym.RULE} (digest {digest}, recorded "
+            f"{_RULE_DIGESTS[sym.RULE]}): bump _symbols.RULE and record {digest} under the new rule")
 
 
 class TestConcurrent:

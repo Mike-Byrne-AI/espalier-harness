@@ -94,7 +94,7 @@ Resolved at authoring time by `python3 tools/cc/hooks/_recall.py "parallel lanes
 
 ### Wave 3 — the refresh and the words *(fix shape, untested)*
 
-**3-A The refresh verb.** `tools/cc/mail.py` gains `refresh`: the lane from `git branch --show-current` (never typed, the lane-spelling footgun `release_lane` records), the base as `ship.py` derives it, then `send --type claim --delta --symbols-from <base>` with the three exits 1-B gives it (sent; `no new symbols`, 0; `no live claim on this lane`, 0). The seat's own mail ref is written by compare-and-swap (`::_push_ref`), so a refresh racing the seat's own claim is refused and retried next tick; a test drives two sends back to back. The one sentence for the worker tick, `run python tools/cc/mail.py refresh once; it writes nothing when nothing is new`, is proposed to the operator, whose paste `tools/cc/seat.py::WORKER_TICK` is (`tests/test_seat.py::_OPERATOR_TICK` pins it verbatim); the lane does not edit it, and a loop already running keeps its text until the operator restarts it. The verb must exist on every seat's checkout before the sentence is pasted, or an older seat's tick fails argument parsing: the sentence goes out after Wave 3 merges and every seat has caught up.
+**3-A The refresh verb.** `tools/cc/mail.py` gains `refresh`: the lane from `git branch --show-current` (never typed, the lane-spelling footgun `release_lane` records), the base as `ship.py` derives it, then `send --type claim --delta --symbols-from <base>` with the three exits 1-B gives it (sent; `no new symbols`, 0; `no live claim on this lane`, 0). The seat's own mail ref is written by compare-and-swap (`::_push_ref`), so a refresh racing the seat's own claim is refused and retried next tick; a test drives two sends back to back. The one sentence for the worker tick, `run python tools/cc/mail.py refresh once; it writes nothing when nothing is new`, is proposed to the operator, whose paste `tools/cc/seat.py::WORKER_TICK` is (`tests/test_seat.py::_OPERATOR_TICK` pins it verbatim); the lane does not edit it, and a loop already running keeps its text until the operator restarts it. A refresh after a rule change sends the lane whole under the new rule and names the older claims to release, never `no new symbols` (Wave 2's fourth delta review). The verb must exist on every seat's checkout before the sentence is pasted, or an older seat's tick fails argument parsing: the sentence goes out after Wave 3 merges and every seat has caught up.
 
 **3-B The words.** `.claude/commands/inbox.md`: the claim's symbols, `--symbols-from`, `--delta`, `refresh`, the board's `overlaps:` section and its three readings; `python3 scripts/sync_claude_mirrors.py` for its two mirrors. `memory/parallel-work-protocol.md`: the dispatcher no longer certifies hunks by hand; a seat reads the board's `overlaps:` line and the plan's warning, and an `unplaced` reading is a path hit, not a certificate. `docs/HOOKS.md` is not touched (no hook changes).
 
@@ -119,16 +119,22 @@ Both read "different functions" while `git merge-file` conflicts. The mapper now
 - a file's edges are `<start>` and `<end>`;
 - an insertion beside a blank line names its run of blanks, `<after:X>`, where X is what the nearest line above that is not blank names (two targets joined by `+`; `<start>` when no such line is above). The second delta review drove this shape: two methods appended to one class above another, which git sits in one gap and conflicts on;
 - an insertion between two lines no node holds names no point, so it is counted `beside` and marked `<module>`. That declines the pair without entering 0-C's share of changed lines. An edit beside such a line declines nothing: git merges two edits either side of an untouched import, and a twin row pins it;
-- both sides are diffed with git's indent heuristic off, which would otherwise slide a pasted copy of a function to where it reads clear of the other lane's edit.
+- both sides are diffed with git's indent heuristic off, which would otherwise slide a pasted copy of a function to where it reads clear of the other lane's edit;
+- both sides are diffed with histogram, merge-ort's algorithm (the merge catch-up and the host run). The fourth delta review drove a constant added above a deleted function: git's default algorithm read it clear of another lane's deletion beside it, which merge-ort conflicts on.
 
 The third delta review drove two more changes:
 - A claim now carries the rule it was placed under (`symbols_rule`). A claim from before this rule, or under another one, is read as its paths whole, so a seat that has not pulled cannot certify a pair under the old reading.
 - A claim keeps up to 64 of these marks apart from its 128 names, so marks never crowd out the names.
 
-"Different functions" now means no symbol shared, none next to the other's change, and no shared run of blanks. Twin rows in `tests/test_symbols.py` pin each shape beside git's exit code. Both sides are placed through git's own diff, not difflib's, which places some insertions elsewhere. Clean controls are among the rows.
+The fourth delta review drove three more:
+- `_symbols.RULE` is pinned to a digest of the placements of a fixed corpus (`tests/test_symbols.py::TestTheRuleNamesThePlacement`). A change that moves a placement fails it and says to bump the rule. A re-keyed run of blanks left at the old rule certified a conflict.
+- The stamp is written only where the lane's derivation names its rule, never by the message builder, so a list from anywhere else reads whole.
+- A claim placed under another rule gets a note under each pair it is in, naming the claim for its seat to release and claim again. The first `--delta` after a rule change sends the lane whole under the new rule (`mail.symbol_delta` reads the older claims as naming nothing).
+
+"Different functions" now means no symbol shared, none next to the other's change, and no shared run of blanks. Twin rows in `tests/test_symbols.py` pin each shape beside the exit codes of both git mergers, `git merge-file` and merge-ort (`git merge-tree --write-tree`); merge-file alone diffs as git's default does. Both sides are placed through git's own diff, not difflib's, which places some insertions elsewhere. Clean controls are among the rows.
 
 Measured on #246-#283 with Apple git 2.39.5:
-- **The neighbour rule** lost no certificate: the two "different functions" pairs stayed certified. 0-C reads 4.0% unplaced (1,000 of 24,750). A first cut that declined every insertion between blank lines lost #261/#263's certificate, and the gap mark replaced it.
+- **The neighbour rule** lost no certificate: the two "different functions" pairs stayed certified. 0-C reads 4.0% unplaced (1,000 of 24,750; 1,000 of 24,760 diffed by histogram, which keeps all 8 verdicts). The 35 insertions counted beside are the only decline of no shared file. A first cut that declined every insertion between blank lines lost #261/#263's certificate, and the gap mark replaced it.
 - **`git merge-tree --write-tree` over the 8 file-sharing pairs** merges all 8 clean. The mapper's 2 certificates agree with it. Its other 6 decline pairs git merges clean: 3 unplaced, 2 path only, and 1 shared symbol (`ADJUDICATED`, one dict two lanes added to in different places).
 - **Candidate for this wave:** git's own merge as the verdict wherever both heads are here, which would have certified those 6. It needs a fallback below git 2.38.
 
@@ -152,6 +158,10 @@ The walk is name-keyed: `handoff`, `render`, `collect`, `build_parser` and the m
 - `tools/cc/ship.py::open_pr` (the notice)
 - `tools/cc/ship.py::handoff` (the notice)
 - `scripts/lane_overlap_census.py` (imports the mapper from `tools/cc/_symbols.py`; keeps no copy)
+- `tools/cc/_symbols.py::changed_symbols` (Wave 2's review rounds: the neighbour rule, the gap mark, `beside`)
+- `tools/cc/_symbols.py::pair_verdict` (Wave 2's review rounds: `beside` declines)
+- `tools/cc/mail.py::symbol_delta` (Wave 2's review rounds: a claim of another rule names nothing)
+- `tools/cc/execution_plan.py::_unresolved_symbols` (Wave 2's review rounds: a mark is no typo)
 
 ### Renamed
 
@@ -174,6 +184,11 @@ The walk is name-keyed: `handoff`, `render`, `collect`, `build_parser` and the m
 - `tools/cc/mail.py::SYMBOLS_KEY`
 - `tools/cc/mail.py::MAX_SYMBOLS`
 - `tools/cc/board.py::read_overlaps_section`
+- `tools/cc/board.py::overlap_lines`
+- `tools/cc/board.py::lane_overlap_lines`
+- `tools/cc/board.py::fetch_heads`
+- `tools/cc/ship.py::_overlap_notice`
+- Added in Wave 2's review rounds: `tools/cc/_symbols.py::RULE`, `tools/cc/_symbols.py::mark_words`, `tools/cc/_symbols.py::VERDICTS`, `tools/cc/_symbols.py::START`, `tools/cc/_symbols.py::END`, `tools/cc/_symbols.py::AFTER`, `tools/cc/mail.py::claim_view`, `tools/cc/mail.py::other_rule`, `tools/cc/mail.py::SYMBOLS_RULE_KEY`, `tools/cc/mail.py::MAX_MARKS`
 - `espalier/_vendor/cc/_symbols.py`
 - `tests/test_symbols.py`
 

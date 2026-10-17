@@ -211,7 +211,8 @@ class TestClaimOverlapPreflight:
         mod = _load_plan_module()
         self._symbol_tree(mod, monkeypatch, tmp_path)
         mail = _load_mail_module()
-        claim = mail.new_message("win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"])
+        claim = mail.new_message("win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"],
+                                 symbols_rule=mail._symbols.RULE)   # as the lane's derivation stamps it
         stub = self._mail(monkeypatch, tmp_path, "mac", [claim])
         lines = mod._claim_overlaps("Fix the send; symbols: tools/cc/mail.py::send(); proof: x", mail=stub)
         assert len(lines) == 1, lines
@@ -232,6 +233,18 @@ class TestClaimOverlapPreflight:
         assert "tools/cc/mail.py::sned" in lines[0] and "no definition" in lines[0] and lines[0].startswith("WARN: ")
         assert "tools/cc/gone.py::f" in lines[1] and "not in the working tree" in lines[1]
         assert all(line.isascii() for line in lines)
+
+    def test_a_mark_copied_from_a_claim_is_no_typo(self, monkeypatch, tmp_path):
+        """Dies to: a mark the mapper writes on a claim (a file's edges, a run of blank lines)
+        warned as a definition the file lacks, though a claim meets it as written (the code
+        review of Wave 2's last delta, driven)."""
+        mod = _load_plan_module()
+        self._symbol_tree(mod, monkeypatch, tmp_path)
+        stub = self._mail(monkeypatch, tmp_path, "mac", [])
+        lines = mod._claim_overlaps(
+            "s; symbols: tools/cc/mail.py::<after:send>, tools/cc/mail.py::<start>, tools/cc/mail.py::<end>, "
+            "tools/cc/mail.py::sned; proof: x", mail=stub)
+        assert len(lines) == 1 and "tools/cc/mail.py::sned" in lines[0], lines
 
     def test_prose_naming_symbols_does_not_swallow_a_later_field(self):
         """One widened pattern let a `symbols:` match run on over a later `files:` in the same

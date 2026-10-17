@@ -850,15 +850,22 @@ class TestClaimSymbols:
         assert whole == set() and _syms == {"tools/cc/mail.py::send"}, (whole, _syms)
 
     def test_a_claim_derived_by_another_rule_is_read_whole_and_a_new_one_is_stamped(self, mail):
-        """Dies to: the rule left off a claim, or a claim from before it read as a complete list
-        (its list may lack the neighbour and run-of-blanks marks a meeting needs)."""
-        m = _msg(mail, "mac", "claim", "", lane="l", symbols=["a.py::f"])
-        assert m["re"][mail.SYMBOLS_RULE_KEY] == mail._symbols.RULE
+        """Dies to: the rule left off a derived claim, a stamp written on symbols no derivation
+        named (a hand list carries no marks, and would certify as complete), or a claim of an older
+        or a newer rule read as a complete list (its list may lack, or spell differently, the
+        neighbour and run-of-blanks marks a meeting needs)."""
+        rule = mail._symbols.RULE
+        m = _msg(mail, "mac", "claim", "", lane="l", symbols=["a.py::f"], symbols_rule=rule)
+        assert m["re"][mail.SYMBOLS_RULE_KEY] == rule
+        assert mail.SYMBOLS_RULE_KEY not in _msg(mail, "mac", "claim", "", lane="l", symbols=["a.py::f"])["re"]
         assert mail.SYMBOLS_RULE_KEY not in _msg(mail, "mac", "claim", "", lane="l", paths=["a.py"])["re"]
-        for stamp in ({}, {mail.SYMBOLS_RULE_KEY: 1}):
+        for stamp in ({}, {mail.SYMBOLS_RULE_KEY: rule - 1}, {mail.SYMBOLS_RULE_KEY: rule + 1}):
             syms, _more, whole, _marked = mail.claim_view(
                 {"paths": ["a.py"], mail.SYMBOLS_KEY: ["a.py::f"], **stamp})
             assert syms == {"a.py::f"} and whole == {"a.py"}, (stamp, whole)
+            assert mail.other_rule({mail.SYMBOLS_KEY: ["a.py::f"], **stamp}), stamp
+        assert not mail.other_rule({mail.SYMBOLS_KEY: ["a.py::f"], mail.SYMBOLS_RULE_KEY: rule})
+        assert not mail.other_rule({"paths": ["a.py"]})   # a claim without symbols has no rule
 
     def test_two_claims_sharing_a_symbol_hit_by_the_symbol(self, mail):
         """Dies to: the symbol hit missing (two lanes in one function meet only as a path)."""
@@ -869,9 +876,14 @@ class TestClaimSymbols:
     def test_one_file_and_different_symbols_is_a_path_hit_and_says_so(self, mail):
         """No certificate in this wave: a shared file is a path hit, worded to say no symbol is
         shared. Dies to: the symbols compared by file (two functions in one file read as met)."""
-        theirs = _msg(mail, "win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"])
+        theirs = _msg(mail, "win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"],
+                      symbols_rule=mail._symbols.RULE)
         found = mail.overlapping_claims([theirs], symbols=["tools/cc/mail.py::headline"])
         assert found[0][1] == ["path tools/cc/mail.py (their tools/cc/mail.py; no symbol in common)"]
+        # Placed under another rule, the same claim is no complete list: a path hit, no more.
+        older = _msg(mail, "win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"])
+        assert mail.overlapping_claims([older], symbols=["tools/cc/mail.py::headline"])[0][1] == [
+            "path tools/cc/mail.py (their tools/cc/mail.py)"]
 
     def test_a_class_covers_its_methods(self, mail):
         """Dies to: the matcher comparing names for equality only (`Board` and `Board.render`
@@ -1056,7 +1068,8 @@ class TestSymbolsFromTheLane:
 
     def test_the_delta_sends_only_what_no_live_claim_of_this_seat_names(self, mail, monkeypatch, tmp_path, capsys):
         """Dies to: the delta filter removed (every refresh resends the lane's whole set)."""
-        own = [_msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"])]
+        own = [_msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"],
+                    symbols_rule=mail._symbols.RULE)]
         args = ("--type", "claim", "--lane", "lane/x", "--symbols-from", "origin/main", "--delta")
         rc, sent, _ = self._run(mail, monkeypatch, tmp_path, own, *args)
         assert rc == 0 and sent[0]["re"][mail.SYMBOLS_KEY] == ["tools/cc/mail.py::new_message"]
@@ -1064,6 +1077,20 @@ class TestSymbolsFromTheLane:
         own.append(sent[0])
         rc, again, _ = self._run(mail, monkeypatch, tmp_path, own, *args)
         assert rc == 0 and again == [] and "no new symbols" in capsys.readouterr().out
+
+    def test_a_claim_of_another_rule_is_named_no_symbol_and_its_release_is_asked_for(
+            self, mail, monkeypatch, tmp_path, capsys):
+        """The first delta after a rule change. Dies to: an older-rule claim's symbols counted as
+        named (the delta prints "no new symbols" over a list every reader takes whole), the new
+        claim left unstamped, or the seat not told which claim keeps its files whole."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"])
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], "--type", "claim", "--lane", "lane/x",
+                                "--symbols-from", "origin/main", "--delta")
+        assert rc == 0 and sent, sent
+        assert sent[0]["re"][mail.SYMBOLS_KEY] == ["tools/cc/mail.py::new_message", "tools/cc/mail.py::send"]
+        assert sent[0]["re"][mail.SYMBOLS_RULE_KEY] == mail._symbols.RULE
+        err = capsys.readouterr().err
+        assert old["id"] in err and "another symbol rule" in err and "release" in err, err
 
     def test_the_delta_after_the_lane_s_release_sends_nothing(self, mail, monkeypatch, tmp_path, capsys):
         """Dies to: the release check removed (a lane fixing CI after its push re-opens the
@@ -1094,6 +1121,8 @@ class TestSymbolsFromTheLane:
         rc, sent, seen = self._run(mail, monkeypatch, tmp_path, [], "--type", "claim", "--lane", "lane/x",
                                    "--symbols-from")
         assert rc == 0 and seen == ["origin/trunk"] and sent
+        # The derivation stamps its rule (the one place a claim's symbols come from).
+        assert sent[0]["re"][mail.SYMBOLS_RULE_KEY] == mail._symbols.RULE
 
     def test_a_lane_past_the_path_cap_folds_its_derived_paths_into_directories(self, mail, monkeypatch,
                                                                                  tmp_path, capsys):

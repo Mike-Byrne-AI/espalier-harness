@@ -1200,6 +1200,23 @@ class TestOverlapsSection:
         lines = board.lane_overlap_lines(tmp_path, "main", "lane/x", 7, H1, run_=_heads({H1, H3}))
         assert lines == ["overlaps: none"], lines
 
+    def test_a_lane_notice_names_a_claim_of_another_rule_beside_its_own_pairs_only(
+            self, board, monkeypatch, tmp_path, by_head):
+        """Dies to: the ship notice dropping the rule note (the seat whose old claim keeps the
+        pair unplaced is never told which claim to release), or carrying the note of a pair the
+        lane is not in."""
+        by_head[H1] = _placed("a.py", "f")
+        claims = [_claim("win", "lane/y", ["a.py"], ["a.py::g"], rule=None),
+                  _claim("air", "lane/z", ["c.py"], ["c.py::h"], rule=None),
+                  _claim("win-3", "lane/v", ["c.py"], ["c.py::k"])]   # a pair the lane is not in
+        self._notice_channel(board, monkeypatch, claims, [_pr(5, "air-work", "lane/x", "0" * 40)])
+        lines = board.lane_overlap_lines(tmp_path, "main", "lane/x", 7, H1, run_=_heads({H1}))
+        assert lines == [
+            "overlaps: win (lane/y) and #7 air-work (lane/x) both changed a.py: unplaced lines on win's side",
+            "          win (lane/y): claim c-win-lane/y was placed under another symbol rule and reads whole "
+            "(its files as unplaced lines) until its seat releases it and claims again",
+            "          the rule stands: the second of these to merge runs the ship driver's catch-up"], lines
+
     def _notice_channel(self, board, monkeypatch, claims, listed):
         monkeypatch.setattr(board.mail, "machine_setting", lambda root, run=None: ("air-work", "stubbed"))
         monkeypatch.setattr(board.mail, "fetch_mail", lambda root, run=None: (True, ""))
@@ -1398,21 +1415,30 @@ class TestOverlapsSection:
     def test_the_rows_stamp_the_mappers_rule(self, board):
         assert _RULE == board._symbols.RULE and board.mail.SYMBOLS_RULE_KEY == "symbols_rule"
 
-    @pytest.mark.parametrize("rule", [None, 1], ids=["unstamped", "older"])
+    @pytest.mark.parametrize("rule", [None, _RULE - 1, _RULE + 1], ids=["unstamped", "older", "newer"])
     def test_a_claim_of_another_rule_never_certifies(self, board, tmp_path, by_head, rule):
-        """Dies to: a claim from before the neighbour rule read as a complete list (it names
-        `C.o` alone for a method appended to a class, with no mark for the run of blanks it
-        landed in; another seat's head appending `C.p` there meets it, and git conflicts)."""
+        """Dies to: a claim from before the neighbour rule, or from a newer mapper, read as a
+        complete list (it names `C.o` alone for a method appended to a class, with no mark for the
+        run of blanks it landed in; another seat's head appending `C.p` there meets it, and git
+        conflicts); or its seat not told which claim to release, the line naming only unplaced
+        lines it never left (the code review of Wave 2's last delta, driven)."""
         by_head[H1] = {"p.py": {"kind": "python", "symbols": {"p.py::C.p", "p.py::<after:C.n>"}, "changed": 2,
                                 "unplaced": 0, "beside": 0}}
         old = _claim("air-work", "lane/y", ["p.py"], ["p.py::C.o"], rule=rule)
         got = board.read_overlaps_section(tmp_path, "main", [old], [_pr(7, "win", "lane/x", H1, paths=("p.py",))],
                                           run_=_heads({H1}))
         assert got["pairs"][0]["verdict"] == "unplaced", got["pairs"]
+        lines = board.overlap_lines(got)
+        assert lines[1:] == ["          air-work (lane/y): claim c-air-work-lane/y was placed under another symbol "
+                             "rule and reads whole (its files as unplaced lines) until its seat releases it and "
+                             "claims again"], lines
+        assert not got["partial"], got   # read whole is read: nothing is missing
+        assert board.overlap_lines({**got, "pairs": []}) == ["overlaps: none"]   # said beside its pairs only
         stamped = _claim("air-work", "lane/y", ["p.py"], ["p.py::C.o", "p.py::<after:C.n>"])
         got = board.read_overlaps_section(tmp_path, "main", [stamped], [_pr(7, "win", "lane/x", H1, paths=("p.py",))],
                                           run_=_heads({H1}))
         assert got["pairs"][0]["verdict"] == "shared symbol", got["pairs"]
+        assert not any("another symbol rule" in line for line in board.overlap_lines(got))
 
     def test_a_side_that_declines_on_an_insertion_naming_no_point_is_named(self, board, tmp_path, by_head):
         """Dies to: the side-naming left untaught of `beside` (the line said unplaced lines and
