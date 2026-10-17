@@ -31,6 +31,7 @@ import pytest
 
 from tests._export_guard import pruned_from_this_tree
 from tests._git_oracle import require_is_gitignored, require_tracked_paths
+from tests._quiet_git import NO_BACKGROUND_GIT, background_git_settings
 
 # full-tree-exempt: the one live-tree read here (docs/RELEASE_CHECKLIST.md in
 # TestRecordRemoteResolver, export-ignored) is guarded in place through
@@ -120,6 +121,8 @@ def repo(tmp_path: Path) -> Path:
     (root / "docs").mkdir()
 
     _git(root.parent, "init", "-q", str(root))
+    for key, value in NO_BACKGROUND_GIT:  # the clone tests copy this repo right after its commits
+        _git(root, "config", key, value)
     _git(root, "config", "user.email", "t@example.invalid")
     _git(root, "config", "user.name", "T")
 
@@ -354,6 +357,11 @@ class TestRestoreSafety:
 
 class TestCloneAndRestore:
     """What a second machine actually gets."""
+
+    def test_the_fixture_repo_runs_no_background_git(self, repo):
+        """Dies to: the keys dropped after `git init` (DEF-1168's writer: a
+        clone here copies the repo right after its commits)."""
+        assert background_git_settings(repo) == dict(NO_BACKGROUND_GIT)
 
     def test_a_plain_clone_carries_the_record_ref(self, repo, patterns_file, tmp_path):
         _snapshot(repo, patterns_file)

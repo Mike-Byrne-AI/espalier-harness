@@ -47,6 +47,7 @@ import argparse
 import subprocess
 from pathlib import Path
 
+from _quiet_git import NO_BACKGROUND_GIT
 from _stack_trees import ADOPTER_PREFIX, ADOPTER_STACKS, write_stack
 from espalier import managed_inventory
 from espalier.cli import cmd_init, cmd_install_ci
@@ -111,6 +112,8 @@ def build_adopter_tree(
         return root
 
     _git(root, "init", "-q", "-b", branch, ".")
+    for key, value in NO_BACKGROUND_GIT:  # every module and session tree copied from this one
+        _git(root, "config", key, value)
     _git(root, "config", "user.email", "adopter@example.invalid")
     _git(root, "config", "user.name", "Adopter")
     _git(root, "add", "-A")

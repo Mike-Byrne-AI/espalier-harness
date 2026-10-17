@@ -26,6 +26,8 @@ from tests import _never_ran, _timeout_backstop
 # Stops a session whose interpreter imports another tree's engine before any
 # test runs: every CLI-spawning test would otherwise pass about the wrong code.
 from tests._engine_check import pytest_sessionstart  # noqa: F401
+# DEF-1168's keys: no fixture repository runs a background git.
+from tests._quiet_git import NO_BACKGROUND_GIT
 
 # The stack fixtures below write rows of the one stack table. Imported bare,
 # the way the selfcheck mirror's conftest imports its byte copy.
@@ -2530,8 +2532,10 @@ def _build_initialized_repo(tmp_path_factory, timeout: float = _BUILD_LAZY_STEP_
     # `.git/objects/pack/` and found a `tmp_pack_*` gone before it could copy
     # it (#123's `test (3.14)` cell, the writer never reproduced locally). One
     # writer per shared state: the only process that writes this `.git` is the
-    # fixture's own foreground command. Pinned by a GIT_TRACE of the build.
-    for key, value in (("gc.auto", "0"), ("gc.autoDetach", "false"), ("maintenance.auto", "false")):
+    # fixture's own foreground command. The keys live in tests/_quiet_git.py,
+    # with every sister site; this tree's are read back by
+    # tests/test_cli_deploy.py::TestACensusCopyThatFailsNamesWhatMovedItsSource.
+    for key, value in NO_BACKGROUND_GIT:
         _build_step(f"git config {key}", ["git", "config", key, value], cwd=str(dst), check=True,
                     capture_output=True, timeout=timeout)
     _build_step("git add -A", ["git", "add", "-A"], cwd=str(dst), check=True, capture_output=True,

@@ -47,6 +47,7 @@ import pytest
 
 from espalier.cli import REQUIRED_GITIGNORE, WORKTREE_INCLUDE_ENTRIES, _gitignore_entry_covering
 from tests._git_oracle import _git_env
+from tests._quiet_git import NO_BACKGROUND_GIT, background_git_settings
 from tools.cc import session_resume
 from tools.cc.session_resume import REQUIRED_PATHS, assess_repo_state, render_status_report
 
@@ -80,7 +81,7 @@ def _main_checkout(tmp_path: Path, *, initialized: bool = True, manifest: str = 
     main = tmp_path / "main"
     main.mkdir()
     _git(main, "init", "-q", "-b", "main")
-    for key, value in (("user.name", "t"), ("user.email", "t@example.invalid"),
+    for key, value in (*NO_BACKGROUND_GIT, ("user.name", "t"), ("user.email", "t@example.invalid"),
                        ("commit.gpgsign", "false")):
         _git(main, "config", key, value)
     _write(main, ".gitignore", ".claude/settings.json\nreports/\n.espalier/integrity.json\n")
@@ -112,6 +113,16 @@ def _seat(tmp_path: Path, *, copy: tuple[str, ...] = INCLUDED,
         shutil.copy2(main / rel, seat / rel)
     assert (seat / ".git").is_file(), "precondition: a linked worktree's .git is a gitlink file"
     return main, seat
+
+
+class TestTheMainCheckoutRunsNoBackgroundGit:
+    """DEF-1168's sister site (tests/_quiet_git.py): the main checkout is
+    cloned right after its commit, so no detached repack may be moving it."""
+
+    def test_the_main_checkout_runs_no_background_git(self, tmp_path):
+        """Dies to: the keys dropped after `git init` (DEF-1168's writer: a
+        test clones this checkout right after its commit)."""
+        assert background_git_settings(_main_checkout(tmp_path)) == dict(NO_BACKGROUND_GIT)
 
 
 class TestTheSeatRosters:

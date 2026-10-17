@@ -34,6 +34,7 @@ from pathlib import Path
 import pytest
 
 from _adopter_tree import _git, build_adopter_tree, deployed_python
+from _quiet_git import NO_BACKGROUND_GIT, background_git_settings
 from espalier.managed_markers import file_carries_marker
 
 _MARKER = "# espalier:managed v0.0.0 sha256:0000\n"
@@ -64,6 +65,8 @@ def fused_tree(tmp_path_factory) -> Path:
     (host / "bench").mkdir()
     (host / "bench" / "host_bench.py").write_text("def b():\n    return 1\n", encoding="utf-8")
     _git(host, "init", "-q", "-b", "main", ".")
+    for key, value in NO_BACKGROUND_GIT:  # fuse copies this .git right after the commit
+        _git(host, "config", key, value)
     _git(host, "config", "user.email", "adopter@example.invalid")
     _git(host, "config", "user.name", "Adopter")
     _git(host, "add", "-A")
@@ -205,6 +208,12 @@ class TestDeployedProbeOnAdopterTree:
         assert payload["scope"]["roots"] == ["lib/"]
         assert payload["scope"]["scanned"] == ["lib/clean.py"]
         assert payload["scope"]["explicit_roots"] is True
+
+    def test_the_fused_host_runs_no_background_git(self, fused_tree):
+        """Dies to: the keys dropped from the fused host (DEF-1168's writer:
+        fuse copies the host's .git right after its commit, and the fused
+        tree carries the host's config with it)."""
+        assert background_git_settings(fused_tree) == dict(NO_BACKGROUND_GIT)
 
     def test_fused_tree_gates_on_the_host_not_the_overlay(self, fused_tree):
         """Driven by the failure-mode pass on the first cut: rc=2, 98 files
