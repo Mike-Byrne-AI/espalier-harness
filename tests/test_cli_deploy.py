@@ -20,6 +20,7 @@ Pins three TP-54 sub-task contracts landing in the deploy helpers:
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
 import sys
 from collections.abc import Callable
@@ -3953,6 +3954,56 @@ def _census_committed(tree: Path, since: str) -> list[str]:
     return [rel for rel in raw.decode("utf-8", "replace").split("\0") if rel]
 
 
+def _census_copy_failed(src: Path, *, proc: Path = Path("/proc")) -> str:
+    """What moved the census tree under a copy that failed: whether the tree
+    is still there, what its object store holds (a new pack is a gc that ran
+    in it), and every process whose working directory or command line names
+    it (Linux's ``/proc``; elsewhere the processes are unread, and say so).
+    Every read tolerates the tree vanishing under it."""
+    names = {str(src), str(src.resolve())}
+    lines = [f"census tree {src} is {'there' if src.is_dir() else 'GONE'}"]
+    objects = src / ".git" / "objects"
+    if objects.is_dir():
+        try:
+            packs = sorted(p.name for p in (objects / "pack").glob("*.pack"))
+            loose = sum(1 for d in objects.iterdir() if len(d.name) == 2 and d.is_dir()
+                        for _ in d.iterdir())
+            lines.append(f"objects/pack: {', '.join(packs) or 'no pack'}; loose objects: {loose}")
+        except OSError as exc:
+            lines.append(f"objects/ moved while read: {type(exc).__name__}")
+    if not proc.is_dir():
+        lines.append(f"no {proc} here: processes unread")
+        return "\n".join(lines)
+    found = []
+    for entry in sorted(proc.iterdir(), key=lambda p: p.name):
+        if not entry.name.isdigit():
+            continue
+        try:
+            cwd = os.readlink(entry / "cwd")
+        except OSError:
+            cwd = ""
+        try:
+            cmd = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode("utf-8", "replace").strip()
+        except OSError:
+            cmd = ""
+        if any(cwd == n or cwd.startswith(n + os.sep) or n in cmd for n in names):
+            found.append(f"pid {entry.name} cwd {cwd or '?'}: {cmd[:300] or '?'}")
+    lines.append("processes naming the tree: " + ("; ".join(found) or "none"))
+    return "\n".join(lines)
+
+
+def _census_copy(src: Path, dst: Path) -> None:
+    """The census tree copied for one run. A copy that fails says what moved
+    its source (``_census_copy_failed``), not only which files vanished."""
+    import shutil
+
+    try:
+        shutil.copytree(src, dst)
+    except OSError:
+        pytest.fail("the census tree's copy failed, so something moved its source "
+                    "mid-copy:\n" + _census_copy_failed(src))
+
+
 @pytest.fixture(scope="module")
 def census_tree(tmp_path_factory):
     """An install-ci tree that tracks its settings file and its integrity
@@ -3988,15 +4039,13 @@ class TestEveryCommandThatWritesAGatedPathNamesTheMarker:
     def test_a_run_that_changes_a_gated_path_names_the_marker(
         self, census_id, census_tree, tmp_path, capsys, monkeypatch,
     ):
-        import shutil
-
         from espalier import surface_contract
         from espalier.cli import build_parser
 
         for var in ("CLAUDECODE", "CLAUDE_PROJECT_DIR"):
             monkeypatch.delenv(var, raising=False)
         tree = tmp_path / "t"
-        shutil.copytree(census_tree, tree)
+        _census_copy(census_tree, tree)
         argv = [arg.replace("{repo}", str(tree)) for arg in _CENSUS_VARIANTS[census_id]]
         unvalued = [arg for arg in argv if arg.startswith("<no census")]
         assert not unvalued, (
@@ -4064,6 +4113,80 @@ class TestEveryCommandThatWritesAGatedPathNamesTheMarker:
         assert not {cid for cid in _CENSUS_FLOOR if _census_refusal(cid)}, (
             "a floor writer cannot be excused")
         assert all(reason.strip() for reason in _CENSUS_REFUSES.values())
+
+
+class TestACensusCopyThatFailsNamesWhatMovedItsSource:
+    """The census tree's copy failed three times in CI with whole object
+    directories gone from the source mid-copy, and nothing said what moved
+    them. The report these pin is what the next red prints: a new pack is a
+    gc, a missing tree is a removal, a process is the culprit by pid."""
+
+    def test_a_repacked_tree_shows_its_pack(self, tmp_path):
+        """Dies to: the pack listing dropped (a gc in the source would read as
+        nothing found)."""
+        tree = tmp_path / "t"
+        tree.mkdir()
+        _git_q(tree, "init", "-q")
+        (tree / "f").write_text("x\n", encoding="utf-8")
+        _git_q(tree, "add", "f")
+        _git_q(tree, "commit", "-qm", "one")
+        _git_q(tree, "gc", "-q")
+        report = _census_copy_failed(tree, proc=tmp_path / "no-proc")
+        assert "is there" in report and ".pack" in report and "loose objects: 0" in report, report
+
+    def test_a_removed_tree_reads_gone(self, tmp_path):
+        """Dies to: the presence check dropped (a removal would read as a tree
+        with no objects)."""
+        report = _census_copy_failed(tmp_path / "t", proc=tmp_path / "no-proc")
+        assert "is GONE" in report and "objects/pack" not in report, report
+
+    def test_a_process_whose_command_names_the_tree_is_named(self, tmp_path):
+        """Dies to: the command-line read dropped (a `git -C <tree>` run from
+        elsewhere would go unnamed)."""
+        tree = tmp_path / "t"
+        tree.mkdir()
+        proc = tmp_path / "proc"
+        (proc / "4242").mkdir(parents=True)
+        (proc / "4242" / "cmdline").write_bytes(b"git\0-C\0" + str(tree).encode() + b"\0gc\0")
+        (proc / "4243").mkdir()
+        (proc / "4243" / "cmdline").write_bytes(b"sleep\x0030\0")
+        (proc / "self").mkdir()
+        report = _census_copy_failed(tree, proc=proc)
+        assert "pid 4242" in report and "gc" in report and "pid 4243" not in report, report
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="a /proc cwd entry is a symlink")
+    def test_a_process_working_in_the_tree_is_named(self, tmp_path):
+        """Dies to: the cwd read dropped (git's detached `gc --auto` names no
+        path on its command line; its working directory is the tree)."""
+        tree = tmp_path / "t"
+        tree.mkdir()
+        proc = tmp_path / "proc"
+        (proc / "77").mkdir(parents=True)
+        (proc / "77" / "cmdline").write_bytes(b"git\0gc\0--auto\0")
+        (proc / "77" / "cwd").symlink_to(tree)
+        report = _census_copy_failed(tree, proc=proc)
+        assert "pid 77" in report and "--auto" in report, report
+
+    def test_no_proc_says_the_processes_went_unread(self, tmp_path):
+        """Dies to: a missing /proc read as no process found (macOS and
+        Windows have none, so silence there would be a false all-clear)."""
+        tree = tmp_path / "t"
+        tree.mkdir()
+        report = _census_copy_failed(tree, proc=tmp_path / "no-proc")
+        assert "processes unread" in report and "none" not in report, report
+
+    def test_a_failed_copy_fails_the_run_with_the_report(self, tmp_path, monkeypatch):
+        """Dies to: the copy's handler dropped (the run reds on the bare
+        shutil.Error, which names only the files that vanished)."""
+        import shutil
+
+        def vanished(src, dst, **kwargs):
+            raise shutil.Error([(str(src), str(dst), "[Errno 2] No such file or directory")])
+
+        monkeypatch.setattr(shutil, "copytree", vanished)
+        with pytest.raises(pytest.fail.Exception, match="something moved its source") as caught:
+            _census_copy(tmp_path / "t", tmp_path / "copy")
+        assert "is GONE" in str(caught.value), caught.value
 
     def test_no_command_group_runs_on_its_own(self):
         """The census runs leaves. A group with subcommands that also runs by
