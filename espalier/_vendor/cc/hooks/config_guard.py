@@ -44,12 +44,28 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # tools/cc for _json_safe
-import _hook_utils  # noqa: E402
-import _denial_reasons  # noqa: E402
-# The floor and the guard: write_guard.py's import block is the sister site and
-# says why (DEF-1176). This hook's event shape is the Stop-style block, which the
-# refusal emits for ConfigChange.
+# The start refusal first and alone, then the guard over every other sibling,
+# the floor included: write_guard.py's import block is the sister site and says
+# why (DEF-1176, DEF-3008). This hook's event shape is the Stop-style block,
+# which the refusal emits for ConfigChange.
 try:
+    import _start_refusal  # noqa: E402
+except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot import (DEF-3008)
+    if __name__ != "__main__":
+        raise
+    sys.stdout.write(json.dumps({"decision": "block", "reason": (
+        "config_guard cannot start: tools/cc/hooks/_start_refusal.py raised " + type(_floor).__name__
+        + "; it is the start refusal every deny hook imports first. Restore it to HEAD:"
+        " `git restore --source=HEAD -- :/tools/cc/hooks/_start_refusal.py`, as one Bash command"
+        " (write_guard, wedged by the same file, lets that one call through) or from a terminal;"
+        " if HEAD has no such file (an upgrade that did not finish), run"
+        " `espalier upgrade --execute .` from a terminal instead. Every call this hook judges"
+        " is refused until then.")}) + "\n")
+    sys.stdout.flush()
+    raise SystemExit(0) from None
+try:
+    import _hook_utils  # noqa: E402
+    import _denial_reasons  # noqa: E402
     import _integrity  # noqa: E402
     from _hook_utils import os_error_text  # noqa: E402
     from _json_safe import decode_bom  # noqa: E402
@@ -63,7 +79,7 @@ try:
 except Exception as _skew:  # noqa: BLE001 -- a kept helper that predates its siblings (DEF-1176)
     if __name__ != "__main__":
         raise
-    _denial_reasons.refuse_on_helper_skew("config_guard", "ConfigChange", _skew)
+    _start_refusal.refuse_on_helper_skew("config_guard", "ConfigChange", _skew)
 
 
 # Sources Claude Code may pass on the ConfigChange event. We block changes

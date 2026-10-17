@@ -242,8 +242,18 @@ def _module_constants(tree: ast.Module) -> dict[str, str]:
 _DECLARED_CACHE: dict[str, str] | None = None
 
 
+def _reason_modules() -> list[Path]:
+    """The hook modules that declare reason templates, by their own
+    declaration of an operator-facing registry (``_OPERATOR_FACING_TEMPLATES``):
+    the shared module and the start refusal's, which every deny hook imports
+    first (DEF-3008). Derived as the portability contract's rule (e) is, so a
+    third declares itself in."""
+    return sorted(p for p in checkout_glob(HOOKS_DIR, "_*.py")
+                  if "_OPERATOR_FACING_TEMPLATES" in p.read_text(encoding="utf-8"))
+
+
 def _DECLARED_REASONS() -> dict[str, str]:
-    """Every module-level string constant declared in ``_denial_reasons.py``.
+    """Every module-level string constant declared in :func:`_reason_modules`.
 
     This is the SECOND, independent derivation. The call-site walk below finds
     what is passed to a funnel; this finds what is declared as a reason. They
@@ -253,11 +263,9 @@ def _DECLARED_REASONS() -> dict[str, str]:
     """
     global _DECLARED_CACHE
     if _DECLARED_CACHE is None:
-        path = HOOKS_DIR / "_denial_reasons.py"
-        _DECLARED_CACHE = (
-            _module_constants(ast.parse(path.read_text(encoding="utf-8")))
-            if path.exists() else {}
-        )
+        _DECLARED_CACHE = {}
+        for path in _reason_modules():
+            _DECLARED_CACHE.update(_module_constants(ast.parse(path.read_text(encoding="utf-8"))))
     return _DECLARED_CACHE
 
 

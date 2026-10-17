@@ -4520,9 +4520,24 @@ def _strip_span_tail(span: str, *, powershell: bool = False) -> str:
     backslash is a path separator, so a directory spelled with a trailing one
     (`.claude\\`, the form tab completion types) still loses the closer after
     it; and a backtick never opens a substitution, so it is never the closer
-    of one. The paren and comment rules are the same on both shells."""
+    of one. The paren and comment rules are the same on both shells. A brace
+    ends a bare word on PowerShell alone (DEF-1171): an unquoted `}` with no
+    unquoted `{` open in the span is the close of an enclosing scriptblock
+    (`& { Set-Content -Path <file>}`, the usual tight one-liner, landed on the
+    file without the brace on Windows PowerShell 5.1) and is cut as the paren
+    is, while a pair the span opens and closes itself -- a scriptblock
+    argument, a braced variable `${name}` -- is text, so the operands after
+    it are still read. On bash a glued brace is part of the word. PowerShell
+    also ends a bare word at a glued OPENING brace (`> a{b}.txt` writes `a`),
+    which this does not model: the operand reads `a{b}.txt`. The misread
+    costs a deny only for a protected name with a brace glued after it
+    (`.claude/settings.json{x}`), a spelling no agent writes; a format
+    placeholder copied into a name (`report-{0}.log`) is misread harmlessly.
+    `TestAGluedBraceEndsThePowerShellOperand` pins the reading. The speed
+    bump's word reader (`_speedbump._WORDS_END`) ends a word at both braces,
+    so the two readers agree on a closing brace and differ on an opening one."""
     escape = "`" if powershell else "\\"
-    i, n, depth = 0, len(span), 0
+    i, n, depth, braces = 0, len(span), 0, 0
     while i < n:
         c = span[i]
         if c == escape:
@@ -4554,6 +4569,12 @@ def _strip_span_tail(span: str, *, powershell: bool = False) -> str:
             if depth == 0:
                 return span[:i]
             depth -= 1
+        elif c == "{" and powershell:
+            braces += 1
+        elif c == "}" and powershell:
+            if braces == 0:
+                return span[:i]
+            braces -= 1
         elif c == "#" and (i == 0 or span[i - 1] in _SPAN_COMMENT_OPENERS):
             return span[:i]
         i += 1

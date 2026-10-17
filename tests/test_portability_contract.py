@@ -1028,10 +1028,24 @@ class TestOperatorStringsArePortable:
             "no module declares _OPERATOR_FACING_TEMPLATES; rule (e) now has no "
             "subject at all, so the widening is dead code"
         )
+        # Each declaring module: every template its registry names is in the
+        # net. A count floor read a small module as a dead walk (the start
+        # refusal holds four templates, DEF-3008); the largest module's own
+        # floor and content stay asserted below.
         for path in declaring:
-            assert len(_all_operator_strings(path)) >= 10, (
-                f"{path.name} declares the registry but rule (e) collects "
-                f"almost nothing from it"
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            registry = next((
+                {e.value for e in getattr(n.value, "elts", []) if isinstance(e, ast.Constant)}
+                for n in tree.body if isinstance(n, (ast.Assign, ast.AnnAssign))
+                and any(getattr(t, "id", None) == "_OPERATOR_FACING_TEMPLATES"
+                        for t in ([n.target] if isinstance(n, ast.AnnAssign) else n.targets))), set())
+            spans = [(n.lineno, n.end_lineno or n.lineno) for n in tree.body if isinstance(n, ast.Assign)
+                     and any(getattr(t, "id", None) in registry for t in n.targets)]
+            collected = {line for line, _ in _all_operator_strings(path)}
+            missed = [a for a, b in spans if not any(a <= line <= b for line in collected)]
+            assert registry and spans and not missed, (
+                f"{path.name} declares the registry but rule (e) does not collect "
+                f"every template it names (the templates at lines {missed})"
             )
 
         path = REPO_ROOT / "tools" / "cc" / "hooks" / "_denial_reasons.py"
@@ -1976,9 +1990,9 @@ class TestOsErrorsRenderAsPaths:
         "warn_exc": ("routes", "the hooks' one exception reporter (tools/cc/hooks/_hook_utils.py)"),
         "advise_exc": ("routes", "warn_exc's seen twin: the same line, kept for the hook's JSON object (tools/cc/hooks/_hook_utils.py)"),
         "say_crash": ("routes", "a reporter crash guard's once-a-session record and its stderr copy (tools/cc/hooks/_hook_utils.py)"),
-        "refuse_on_helper_skew": ("routes", "a blocking hook's start refusal: the failed import's text through _json_safe's os_error_text, str as the floor (tools/cc/hooks/_denial_reasons.py)"),
+        "refuse_on_helper_skew": ("routes", "a blocking hook's start refusal: the failed import's text through _json_safe's os_error_text, str as the floor (tools/cc/hooks/_start_refusal.py)"),
         "_is_permission_refusal": ("errno-only", "reads exc.errno and never the text (espalier/_rmtree.py)"),
-        "wedge_reading": ("errno-only", "a wedged guard's reading: the exception's class, traceback, filename and the helper name a sibling takes, never its text (tools/cc/hooks/_denial_reasons.py)"),
+        "wedge_reading": ("errno-only", "a wedged guard's reading: the exception's class, traceback, filename and the helper name a sibling takes, never its text (tools/cc/hooks/_start_refusal.py)"),
     }
     _CLEAN_CALLEES = frozenset({"isinstance", "issubclass", "type", "getattr", "hasattr"})
 

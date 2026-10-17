@@ -7,7 +7,7 @@ hook protocol reads as a NON-BLOCKING error: every tool call proceeded with no
 guard at all (measured 2026-10-07 and 2026-10-10 on a Node adopter tree, TP-474
 Task 0). Now each deny hook imports its siblings and reads the helper names it
 aliases under one module-top guard; under ``__main__`` a failure there is the
-structured refusal ``_denial_reasons.refuse_on_helper_skew`` emits (exit 0, one
+structured refusal ``_start_refusal.refuse_on_helper_skew`` emits (exit 0, one
 JSON object on stdout naming the repair), and an in-process importer sees the
 real error. The two budget names (``spawn_timeout``, ``STATE_WRITE_LOCK``) are
 read as attributes with a degrade in ``_speedbump.py`` and ``_reinject.py``,
@@ -29,9 +29,11 @@ anywhere in the graph is a degraded name, never on the floor, and the two sets
 are pinned disjoint: a degrade is whole or it is not one. Each cell copies
 ``tools/cc``, appends ``del <name>`` to the copy's helper and runs the hook on a
 no-op input for its event: exit 0 with the refusal for a floor name, exit 0 and
-judged for a budget name, never exit 1. The floor itself -- the helper
-unimportable, or ``_denial_reasons`` -- is not this contract's skew: no cell
-removes the file or breaks its syntax.
+judged for a budget name, never exit 1. The floor itself -- the helper, the
+reasons module and what each imports at its top -- joined the guard with
+DEF-3008: its cells make each raise at import, and the start refusal
+(``_start_refusal``), which every deny hook imports first and alone, falls to
+a last resort of each hook's own.
 
 Controls: the intact copy judges; a sibling planted to raise at import is
 refused the same way (the net is the import failure, not the helper's names);
@@ -62,6 +64,12 @@ CC_DIR = REPO_ROOT / "tools" / "cc"
 HOOKS_DIR = CC_DIR / "hooks"
 HELPER = "_hook_utils"
 REASONS = "_denial_reasons"
+#: The start refusal every deny hook imports first and alone (DEF-3008).
+REFUSAL = "_start_refusal"
+#: The floor plants (DEF-3008), each made to raise at import on every deny
+#: hook: the helper, the reasons module, what each imports at its top, and the
+#: start refusal itself, whose failure is each hook's own last resort.
+FLOOR_PLANTS = (HELPER, REASONS, "_maintenance_mode", "_json_safe", REFUSAL)
 
 #: The names the blocking hooks' graphs read with a getattr default -- the two
 #: budget names in ``_speedbump.py`` and ``_reinject.py``, the deadline setter
@@ -247,11 +255,12 @@ def reporter_hooks() -> dict[str, str]:
 def guard_roster(hook: str) -> tuple[str, ...] | None:
     """The tuple of helper names the hook's module-top guard reads once: the
     ``Assign`` of a tuple of string constants inside the first top-level ``try``
-    whose body imports a sibling."""
+    whose body imports the helper (the start refusal's own ``try``, before it,
+    imports that module alone: DEF-3008)."""
     for stmt in _parse(hook[:-3]).body:
         if not isinstance(stmt, ast.Try):
             continue
-        if not any(isinstance(n, (ast.Import, ast.ImportFrom)) for n in stmt.body):
+        if not any(isinstance(n, ast.Import) and any(a.name == HELPER for a in n.names) for n in stmt.body):
             continue
         for n in stmt.body:
             if (isinstance(n, ast.Assign) and isinstance(n.value, ast.Tuple)
@@ -268,7 +277,7 @@ class Cell:
     hook: str
     event: str
     name: str | None
-    kind: str        # "deny-hook" (a floor name gone) | "degraded" (a budget name gone) | "reporter" | "intact" | "planted"
+    kind: str        # "deny-hook" (a floor name gone) | "degraded" (a budget name gone) | "reporter" | "intact" | "planted" | "raised" | "syntax" | "floor" (a floor module raising)
     rc: int
     stdout: str
     stderr: str
@@ -293,6 +302,11 @@ def _skew(root: Path, *names: str) -> None:
     helper.write_text(helper.read_text(encoding="utf-8") + f"\ndel {', '.join(names)}\n", encoding="utf-8")
 
 
+def _floor_rel(name: str) -> str:
+    """A floor plant's file as the repository spells it."""
+    return "tools/cc/_json_safe.py" if name == "_json_safe" else f"tools/cc/hooks/{name}.py"
+
+
 def _cell(base: Path, job: tuple[str, str, str | None, str]) -> Cell:
     hook, event, name, kind = job
     root = base / f"{kind}-{hook[:-3]}-{name or 'none'}"
@@ -300,6 +314,9 @@ def _cell(base: Path, job: tuple[str, str, str | None, str]) -> Cell:
     if kind == "planted":
         (root / "tools" / "cc" / "hooks" / f"{name}.py").write_text(
             'raise ImportError("planted: this sibling cannot import")\n', encoding="utf-8")
+    elif kind == "floor" and name is not None:
+        floor = root / _floor_rel(name)
+        floor.write_bytes(floor.read_bytes() + _RAISE.encode("utf-8"))
     elif kind in ("raised", "syntax"):
         sibling = root / "tools" / "cc" / "hooks" / f"{name}.py"
         tail = "\nraise KeyError(1)\n" if kind == "raised" else "\ndef (:\n"
@@ -325,6 +342,8 @@ def cells(tmp_path_factory) -> list[Cell]:
         jobs.append((hook, event, "_integrity", "planted"))
         jobs.append((hook, event, "_integrity", "raised"))
         jobs.append((hook, event, "_integrity", "syntax"))
+        for name in FLOOR_PLANTS:
+            jobs.append((hook, event, name, "floor"))
     for hook, event in reporter_hooks().items():
         for name in sorted(BUDGET_NAMES):
             jobs.append((hook, event, name, "reporter"))
@@ -515,9 +534,24 @@ _WEDGE_PLANTS = {
     "crash": (f"{HELPER}.py", "\ndef payload_cwd(*args, **kwargs):\n    raise KeyError(2)\n"),
     # A fault in the payload read itself: nothing was read, so nothing passes.
     "unread": (f"{HELPER}.py", "\ndef read_stdin_safely(*args, **kwargs):\n    raise KeyError(3)\n"),
+    # DEF-3008: the floor raising at import -- the reasons module, the helper
+    # itself, and the start refusal, whose failure is the hook's last resort.
+    "floor": (f"{REASONS}.py", _RAISE),
+    "helper": (f"{HELPER}.py", _RAISE),
+    # the seam under the helper, and a name gone from one floor module that
+    # another reads at import (the failure-mode review)
+    "seam": ("../_json_safe.py", _RAISE),
+    "renamed": ("_maintenance_mode.py", "\ndel relaunch_hint\n"),
+    "refusal": (f"{REFUSAL}.py", _RAISE),
 }
 #: The plants whose table rows run both ways (``unread`` lets nothing through).
-_BOTH_WAYS = ("raised", "kept", "crash")
+_BOTH_WAYS = ("raised", "kept", "crash", "floor", "helper", "seam", "renamed", "refusal")
+#: The plant whose pass saves no copy, by the words its context says it in:
+#: the start refusal itself is what failed (DEF-3008).
+_NO_COPY = {"refusal": "No copy of the file was saved first"}
+#: The plants whose pass writes no record: the audit writer imports the
+#: helper, which did not import (DEF-3008), or the start refusal failed.
+_NO_RECORD = frozenset({"helper", "seam", "refusal"})
 #: A deny hook file no plant puts on write_guard's traceback.
 _UNRELATED = "tools/cc/hooks/session_start.py"
 _REINJECT = "tools/cc/hooks/_reinject.py"
@@ -581,6 +615,33 @@ _RESTORE_TABLE: list[tuple[str, dict, bool]] = [
     ("crash", _bash(f"git restore tools/cc/hooks/{HELPER}.py"), True),
     ("crash", _bash("git restore tools/cc/hooks/write_guard.py"), True),
     ("crash", _bash(f"git restore {_UNRELATED}"), False),
+    # DEF-3008: a floor module that raises is refused like any sibling, and its
+    # restore passes, with its copy even where the helper (or the seam under
+    # it) is what raised; a name gone from one floor module names that module;
+    # the start refusal's own raise passes one exact command, through the last
+    # resort, from any directory of the checkout.
+    ("floor", _bash(f"git restore --source=HEAD -- tools/cc/hooks/{REASONS}.py"), True),
+    ("floor", _bash(f"git restore {_REINJECT}"), False),
+    ("helper", _bash(f"git restore --source=HEAD -- tools/cc/hooks/{HELPER}.py"), True),
+    ("helper", _bash(f"git restore {_UNRELATED}"), False),
+    ("seam", _bash("git restore --source=HEAD -- tools/cc/_json_safe.py"), True),
+    ("seam", _bash(f"git restore {_UNRELATED}"), False),
+    ("renamed", _bash("git restore --source=HEAD -- tools/cc/hooks/_maintenance_mode.py"), True),
+    ("renamed", _bash(f"git restore {_REINJECT}"), False),
+    ("refusal", _bash(f"git restore --source=HEAD -- :/tools/cc/hooks/{REFUSAL}.py"), True),
+    ("refusal", {**_bash(f"git restore --source=HEAD -- :/tools/cc/hooks/{REFUSAL}.py"), "cwd": "tools/cc/hooks"},
+     True),
+    ("refusal", _bash(f"git restore --source=HEAD -- tools/cc/hooks/{REFUSAL}.py"), False),
+    ("refusal", _bash(f"git restore :/tools/cc/hooks/{REFUSAL}.py"), False),
+    ("refusal", _bash(f"git restore --source=HEAD -- :/tools/cc/hooks/{REFUSAL}.py; ls"), False),
+    ("refusal", _bash(f"git restore --source=HEAD -- :/tools/cc/hooks/{REFUSAL}.py "), False),
+    ("refusal", _bash("git restore --source=HEAD -- :/tools/cc/hooks/write_guard.py"), False),
+    ("refusal", {"tool_name": "PowerShell",
+                 "tool_input": {"command": f"git restore --source=HEAD -- :/tools/cc/hooks/{REFUSAL}.py"}}, False),
+    ("refusal", {"tool_name": "Write", "tool_input": {"file_path": f"tools/cc/hooks/{REFUSAL}.py", "content": ""}},
+     False),
+    # a call the last resort cannot read is no restore
+    ("refusal", {"tool_name": "Bash", "tool_input": {}}, False),
     ("unread", _bash(f"git restore --source=HEAD -- tools/cc/hooks/{HELPER}.py"), False),
 ]
 
@@ -698,6 +759,138 @@ class TestAWedgedGuardNamesWhatRaised:
                 assert "run from a terminal" in _reason(c), (c.hook, _reason(c))
 
 
+class TestAFloorThatRaisesIsRefused:
+    """DEF-3008: the floor of the guard -- the helper, with
+    ``tools/cc/_json_safe.py`` under it, and the reasons module, with
+    ``_maintenance_mode`` under it -- imported outside it, so a floor module
+    that raised was exit 1 on every deny hook (driven 2026-10-16, 16 of 16).
+    Now each deny hook imports the start refusal first and alone, and the floor
+    joins the guard; the start refusal's own failure is each hook's last
+    resort."""
+
+    def test_every_floor_plant_on_every_deny_hook_is_refused_never_exit_one(self, cells):
+        floor = [c for c in cells if c.kind == "floor"]
+        assert {(c.hook, c.name) for c in floor} == {(h, n) for h in deny_hooks() for n in FLOOR_PLANTS}
+        bad = [_summary(c) for c in floor if not (c.rc == 0 and _is_refusal(c) and not c.stderr.strip()
+                                                  and len(c.stdout.strip().splitlines()) == 1)]
+        assert not bad, bad
+
+    def test_a_floor_module_that_raises_is_named_with_its_line_and_restore(self, cells):
+        for c in (c for c in cells if c.kind == "floor" and c.name != REFUSAL):
+            reason, rel = _reason(c), _floor_rel(c.name)
+            assert reason.startswith(f"{c.hook[:-3]} cannot start: {rel} raised KeyError: 1 at line "), reason
+            assert f"`git restore --source=HEAD -- {rel}`" in reason, reason
+            assert "upgrade --execute" not in reason, reason
+
+    def test_a_start_refusal_that_cannot_import_is_each_hooks_last_resort(self, cells):
+        # The last resort names the one file, the one command (read from the
+        # top of the checkout, so it runs from any directory) and the upgrade
+        # for a HEAD without the file, and ends on the clause the end-to-end
+        # bench reads a start refusal by.
+        for c in (c for c in cells if c.kind == "floor" and c.name == REFUSAL):
+            reason = _reason(c)
+            assert reason.startswith(
+                f"{c.hook[:-3]} cannot start: tools/cc/hooks/{REFUSAL}.py raised KeyError;"), reason
+            assert f"`git restore --source=HEAD -- :/tools/cc/hooks/{REFUSAL}.py`" in reason, reason
+            assert "`espalier upgrade --execute .`" in reason, reason
+            assert reason.endswith("Every call this hook judges is refused until then."), reason
+
+    @pytest.mark.parametrize("plant", [REASONS, REFUSAL])
+    def test_a_stop_refused_at_start_lets_the_loop_signal_through(self, plant, tmp_path):
+        # The protocol's loop signal: the Stop a start refusal blocked is
+        # continued with stop_hook_active set, and that one goes through, so a
+        # broken start pauses a Stop once and never locks it (the
+        # failure-mode review: both refusals re-blocked it).
+        root = tmp_path / f"loop-{plant}"
+        _copy_cc(root)
+        _append(root, _floor_rel(plant), _RAISE)
+        runs = {}
+        for active in (False, True):
+            runs[active] = subprocess.run(
+                [sys.executable, str(root / "tools" / "cc" / "hooks" / "stop_gate.py")],
+                input=json.dumps({"hook_event_name": "Stop", "session_id": "loop", "cwd": str(root),
+                                  "stop_hook_active": active}),
+                cwd=str(root), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=45,
+                env={**_ENV, "CLAUDE_PROJECT_DIR": str(root), "ESPALIER_AUDIT_DIR": str(root / "audit"),
+                     "ESPALIER_STOP_GATE": "light"})
+        assert runs[False].returncode == 0 and json.loads(runs[False].stdout)["decision"] == "block", runs[False]
+        assert runs[True].returncode == 0 and not runs[True].stdout.strip() and not runs[True].stderr.strip(), \
+            runs[True]
+
+    def test_a_kept_deny_hook_that_calls_the_refusals_old_home_is_still_refused(self, tmp_path):
+        # An upgrade keeps a deny hook the adopter edited and regenerates the
+        # reasons module; a kept hook from before the move calls the refusal
+        # there, so the name stays reachable there (the failure-mode review:
+        # exit 1 on 4 of 4 without it).
+        root = tmp_path / "kept-hook"
+        _copy_cc(root)
+        hook = root / "tools" / "cc" / "hooks" / "write_guard.py"
+        text = hook.read_text(encoding="utf-8")
+        moved = f'{REFUSAL}.refuse_on_helper_skew("write_guard"'
+        assert text.count(moved) == 1, "the handler's shape moved; update this control with it"
+        hook.write_text(text.replace(moved, f'{REASONS}.refuse_on_helper_skew("write_guard"'), encoding="utf-8")
+        _append(root, "tools/cc/hooks/_integrity.py", _RAISE)
+        run = _run_hook(root, "write_guard.py", "PreToolUse")
+        out = json.loads(run.stdout)["hookSpecificOutput"]
+        assert run.returncode == 0 and out["permissionDecision"] == "deny", (run.returncode, run.stdout, run.stderr)
+        assert "tools/cc/hooks/_integrity.py raised KeyError" in out["permissionDecisionReason"], out
+
+    def test_the_start_refusal_deploys_before_the_hooks_that_import_it(self):
+        # init and upgrade write the deploy list in its order, so a deploy that
+        # stops partway never leaves a new deny hook without the module it
+        # imports first (the failure-mode review: the helpers came last).
+        from espalier.cli import INIT_HOOK_SCRIPTS
+        first = INIT_HOOK_SCRIPTS.index(f"tools/cc/hooks/{REFUSAL}.py")
+        assert all(first < INIT_HOOK_SCRIPTS.index(f"tools/cc/hooks/{h}") for h in deny_hooks()), INIT_HOOK_SCRIPTS
+
+    @pytest.mark.parametrize("hook", sorted(deny_hooks()))
+    def test_no_sibling_imports_at_the_module_top_outside_a_guard(self, hook):
+        # The class, read from the source: a module-level import of a sibling
+        # outside every `try` is one whose failure is exit 1, and so is one
+        # under a `try` that catches less than Exception (the `_json_safe`
+        # shape under the helper: a KeyError passes `except ImportError`).
+        bare: list[str] = []
+
+        def visit(stmts: list[ast.stmt]) -> None:
+            for s in stmts:
+                if isinstance(s, ast.Import):
+                    bare.extend(a.name for a in s.names if _is_sibling(a.name))
+                elif isinstance(s, ast.ImportFrom) and s.module and _is_sibling(s.module):
+                    bare.append(s.module)
+                elif isinstance(s, (ast.If, ast.With)):
+                    visit(s.body)
+                    visit(getattr(s, "orelse", []))
+
+        tree = _parse(hook[:-3])
+        visit(tree.body)
+        assert not bare, (hook, bare)
+        for s in tree.body:
+            if isinstance(s, ast.Try) and _sibling_imports(ast.Module(body=s.body, type_ignores=[])):
+                caught = {h.type.id for h in s.handlers if isinstance(h.type, ast.Name)}
+                assert caught & {"Exception", "BaseException"}, (hook, s.lineno, sorted(caught))
+
+    @pytest.mark.parametrize("hook", sorted(deny_hooks()))
+    def test_the_start_refusal_imports_first_and_alone(self, hook):
+        first = next(s for s in _parse(hook[:-3]).body
+                     if isinstance(s, ast.Try) and _sibling_imports(ast.Module(body=s.body, type_ignores=[])))
+        assert _sibling_imports(ast.Module(body=first.body, type_ignores=[])) == {REFUSAL}, hook
+        # and its last resort ends the process at exit 0: one that ran on
+        # would judge the call too, a second decision on the channel
+        (handler,) = first.handlers
+        last = handler.body[-1]
+        assert (isinstance(last, ast.Raise) and isinstance(last.exc, ast.Call)
+                and isinstance(last.exc.func, ast.Name) and last.exc.func.id == "SystemExit"
+                and [ast.literal_eval(a) for a in last.exc.args] == [0]), (hook, ast.dump(last))
+
+    def test_the_start_refusal_imports_no_sibling_at_its_top(self):
+        # Any sibling may be the one that failed, so the refusal reads them
+        # lazily, inside the functions that use them.
+        top = [n for s in _parse(REFUSAL).body
+               if not isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+               for n in ast.walk(s) if isinstance(n, (ast.Import, ast.ImportFrom))]
+        assert top and not _sibling_imports(ast.Module(body=top, type_ignores=[])), [ast.dump(n) for n in top]
+
+
 class TestTheOneRestoreAWedgedGuardLetsThrough:
     def test_the_table_is_both_polarities_on_each_plant(self):
         assert set(_WEDGE_PLANTS) == set(_BOTH_WAYS) | {"unread"}
@@ -719,10 +912,18 @@ class TestTheOneRestoreAWedgedGuardLetsThrough:
             assert "is wedged" in out["additionalContext"] and "was let through" in out["additionalContext"], out
 
     def test_a_restore_that_passes_saves_the_file_first_and_records_it(self, restores):
-        for r in (r for r in restores if r.passes):
-            assert len(r.copies) == 1 and r.copies[0].endswith(".py.txt"), (r.payload, r.copies)
+        for r in (r for r in restores if r.passes and r.plant not in _NO_COPY):
+            assert len(r.copies) == 1 and r.copies[0].endswith(".py.txt"), (r.plant, r.payload, r.copies)
             assert r.copies[0] in _output(r)["additionalContext"], _output(r)
-            assert "pretooluse_failed_open_wedge_restore" in r.audit, r.audit[-400:]
+            # the audit writer imports the helper, so where the helper did not
+            # import there is no record, and nothing says there is (DEF-3008)
+            recorded = "pretooluse_failed_open_wedge_restore" in r.audit
+            assert recorded == (r.plant not in _NO_RECORD), (r.plant, r.audit[-400:])
+        # The pass that cannot copy says so in its context: the start refusal,
+        # which saves the copy, is the module that failed (DEF-3008).
+        for r in (r for r in restores if r.passes and r.plant in _NO_COPY):
+            assert r.copies == [] and _NO_COPY[r.plant] in _output(r)["additionalContext"], (r.plant, _output(r))
+            assert "pretooluse_failed_open_wedge_restore" not in r.audit, r.audit[-400:]
         assert not [r.copies for r in restores if not r.passes and r.copies]
 
     def test_the_copy_holds_the_bytes_the_restore_discards(self, tmp_path):
@@ -754,7 +955,7 @@ class TestTheOneRestoreAWedgedGuardLetsThrough:
         # restorable file whose name holds `;` is refused when quoted. Driven
         # in a child, the hook modules' loader contract (never in-suite).
         script = (
-            "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import _denial_reasons as d\n"
+            "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import _start_refusal as d\n"
             "cc = Path(sys.argv[1]).resolve().parent\n"
             "r = d._SkewReading(cc / 'hooks' / 'a;b.py', 1, None, [cc / 'hooks' / 'a;b.py'], cc)\n"
             "pay = lambda c: {'tool_name': 'Bash', 'tool_input': {'command': c}, 'cwd': str(cc.parent.parent)}\n"
@@ -771,7 +972,7 @@ class TestTheOneRestoreAWedgedGuardLetsThrough:
         # fields: an AttributeError that names a name the helper has (raised by
         # hand, or by any code path but a missing name) is a plain raise.
         script = (
-            "import sys; sys.path.insert(0, sys.argv[1]); import _hook_utils as h, _denial_reasons as d\n"
+            "import sys; sys.path.insert(0, sys.argv[1]); import _hook_utils as h, _start_refusal as d\n"
             "print(d._missing_helper_name(AttributeError('x', name='STATE_DIR', obj=h)))\n"
             "print(d._missing_helper_name(AttributeError('x', name='no_such_helper_name', obj=h)))\n"
         )
@@ -800,7 +1001,7 @@ class TestTheOneRestoreAWedgedGuardLetsThrough:
         # with no traceback reads the unplaced template, and a template that
         # cannot format falls back to plain words.
         script = (
-            "import sys, json; sys.path.insert(0, sys.argv[1]); import _hook_utils, _denial_reasons as d\n"
+            "import sys, json; sys.path.insert(0, sys.argv[1]); import _hook_utils, _start_refusal as d\n"
             "if sys.argv[2] == 'broken': d.SIBLING_RAISED_UNPLACED = '{no_such_key}'\n"
             "d.refuse_on_helper_skew('plan_guard', 'PreToolUse', KeyError(9))\n"
         )
@@ -874,8 +1075,21 @@ def _merge_conflict(root: Path) -> str:
     return rel
 
 
+def _floor_raises(root: Path) -> str:
+    # DEF-3008: a floor module raises at import, outside every sibling's frame.
+    _append(root, "tools/cc/hooks/_denial_reasons.py", "\nraise KeyError(5)\n")
+    return "tools/cc/hooks/_denial_reasons.py"
+
+
+def _floor_name_gone(root: Path) -> str:
+    # A name gone from one floor module raises in the module that reads it;
+    # the file to restore is the one the name left (the failure-mode review).
+    _append(root, "tools/cc/hooks/_maintenance_mode.py", "\ndel relaunch_hint\n")
+    return "tools/cc/hooks/_maintenance_mode.py"
+
+
 _SCENARIOS = {"staged": _staged_name_error, "circular": _circular, "new-module": _new_module,
-              "merge-conflict": _merge_conflict}
+              "merge-conflict": _merge_conflict, "floor": _floor_raises, "floor-name-gone": _floor_name_gone}
 
 
 class TestTheNamedRestoreRepairsTheGuard:
@@ -899,6 +1113,28 @@ class TestTheNamedRestoreRepairsTheGuard:
         out = json.loads(passed.stdout)["hookSpecificOutput"]
         assert "permissionDecision" not in out and "was let through" in out["additionalContext"], out
         ran = _git(root, *command.split()[1:])
+        assert ran.returncode == 0, ran.stderr
+        judged = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+        assert judged.returncode == 0 and "deny" not in judged.stdout, (judged.stdout, judged.stderr[-300:])
+
+    def test_the_last_resorts_command_repairs_it_from_any_directory(self, tmp_path):
+        # DEF-3008: the start refusal itself cannot import. The last resort
+        # names one command; the guard lets exactly it through; git runs it
+        # from the hooks directory, where a maintainer editing them stands
+        # (the failure-mode review: a root-relative path failed there); and
+        # the guard judges again.
+        root = tmp_path / "last-resort"
+        _committed_copy(root)
+        _append(root, f"tools/cc/hooks/{REFUSAL}.py", _RAISE)
+        audit = root / "audit"
+        refused = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
+        reason = json.loads(refused.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+        command = reason.split("Restore it to HEAD: `", 1)[1].split("`", 1)[0]
+        assert command == f"git restore --source=HEAD -- :/tools/cc/hooks/{REFUSAL}.py", reason
+        passed = _run_payload(root, "write_guard.py", _bash(command), audit)
+        out = json.loads(passed.stdout)["hookSpecificOutput"]
+        assert "permissionDecision" not in out and "was let through" in out["additionalContext"], out
+        ran = _git(root / "tools" / "cc" / "hooks", *command.split()[1:])
         assert ran.returncode == 0, ran.stderr
         judged = _run_payload(root, "write_guard.py", _NOOP_INPUT["PreToolUse"], audit)
         assert judged.returncode == 0 and "deny" not in judged.stdout, (judged.stdout, judged.stderr[-300:])
@@ -944,10 +1180,41 @@ class TestTheGuardIsReachable:
         _copy_cc(root)
         hook = root / "tools" / "cc" / "hooks" / "write_guard.py"
         text = hook.read_text(encoding="utf-8")
-        armed = '    if __name__ != "__main__":\n        raise\n    _denial_reasons.refuse_on_helper_skew("write_guard", "PreToolUse", _skew)\n'
+        armed = '    if __name__ != "__main__":\n        raise\n    _start_refusal.refuse_on_helper_skew("write_guard", "PreToolUse", _skew)\n'
         assert text.count(armed) == 1, "the guard's shape moved; update this control with it"
         hook.write_text(text.replace(armed, "    raise\n"), encoding="utf-8")
         _skew(root, "payload_cwd")
         run = _run_hook(root, "write_guard.py", "PreToolUse")
         assert run.returncode == 1, (run.returncode, run.stdout, run.stderr)
         assert run.stdout.strip() == "", run.stdout
+
+    def test_the_last_resort_disarmed_exits_one_so_the_floor_cells_can_red(self, tmp_path):
+        # Earn the last resort's red (DEF-3008): on a copy, its handler becomes
+        # a bare re-raise and the start refusal raises at import; the hook dies
+        # with exit 1, the shape the floor cells exist to catch.
+        root = tmp_path / "lastresort"
+        _copy_cc(root)
+        hook = root / "tools" / "cc" / "hooks" / "write_guard.py"
+        text = hook.read_text(encoding="utf-8")
+        armed = '    if __name__ != "__main__":\n        raise\n    _LAST_RESTORE = '
+        assert text.count(armed) == 1, "the last resort's shape moved; update this control with it"
+        hook.write_text(text.replace(armed, "    raise\n    _LAST_RESTORE = "), encoding="utf-8")
+        refusal = root / "tools" / "cc" / "hooks" / f"{REFUSAL}.py"
+        refusal.write_bytes(refusal.read_bytes() + _RAISE.encode("utf-8"))
+        run = _run_hook(root, "write_guard.py", "PreToolUse")
+        assert run.returncode == 1 and run.stdout.strip() == "", (run.returncode, run.stdout, run.stderr)
+
+    def test_an_in_process_importer_of_a_broken_start_refusal_sees_the_real_error(self, tmp_path):
+        # The last resort keeps the __name__ gate: imported rather than run,
+        # each deny hook re-raises the start refusal's own error.
+        root = tmp_path / "imported-refusal"
+        _copy_cc(root)
+        hooks = root / "tools" / "cc" / "hooks"
+        refusal = hooks / f"{REFUSAL}.py"
+        refusal.write_bytes(refusal.read_bytes() + _RAISE.encode("utf-8"))
+        for hook in sorted(deny_hooks()):
+            r = subprocess.run(
+                [sys.executable, "-c", f"import sys; sys.path.insert(0, {str(hooks)!r}); import {hook[:-3]}"],
+                capture_output=True, text=True, encoding="utf-8", env={**_ENV, "CLAUDE_PROJECT_DIR": str(root)},
+                cwd=str(root), timeout=45)
+            assert r.returncode == 1 and "KeyError" in r.stderr and not r.stdout.strip(), (hook, r.stdout, r.stderr)

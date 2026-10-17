@@ -32,9 +32,9 @@ _DENY_REASON_MARKERS: tuple[str, ...] = (
     # the templates' lead, and the hint sentence they carry.
     "protected zone blocked",
     "This zone is YOURS",
-    # A deny hook that could not start (DEF-1176, DEF-2010): every text
-    # `_denial_reasons.refuse_on_helper_skew` emits ends on this clause, its
-    # plain-words fallback included.
+    # A deny hook that could not start (DEF-1176, DEF-2010, DEF-3008): every
+    # text `_start_refusal.refuse_on_helper_skew` emits ends on this clause,
+    # its plain-words fallback and each hook's own last resort included.
     "this hook judges is refused until then",
     # The one call a wedged write_guard lets through, a restore to HEAD of a
     # file its refusal names (DEF-4025): context, not a deny, and it teaches.

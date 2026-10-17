@@ -231,10 +231,13 @@ class TestTheBudgetSitsBelowTheWiring:
         kw = {k.arg: ast.unparse(k.value) for k in calls[0].keywords}
         assert kw == {"started": "_HOOK_STARTED", "exit_on_budget": "True"}, kw
         # The clock reads before the first co-located helper module imports
-        # (the import is most of an ordinary call's cost).
+        # (the import is most of an ordinary call's cost). Every helper imports
+        # under a guard since the start refusal moved out of the floor
+        # (DEF-3008), so a top-level `try` body is read as the top level.
         started_at = next(n.lineno for n in tree.body if isinstance(n, ast.Assign)
                           and any(isinstance(t, ast.Name) and t.id == "_HOOK_STARTED" for t in n.targets))
-        first_helper = next(n.lineno for n in tree.body if isinstance(n, ast.Import)
+        top = [m for n in tree.body for m in (n.body if isinstance(n, ast.Try) else [n])]
+        first_helper = next(n.lineno for n in top if isinstance(n, ast.Import)
                             and any(a.name.startswith("_") for a in n.names))
         assert started_at < first_helper
 

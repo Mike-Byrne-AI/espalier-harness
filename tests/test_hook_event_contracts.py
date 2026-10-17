@@ -53,11 +53,11 @@ _HOOK_EVENT_NAME_RE = r'"hookEventName":\s*"([A-Z][a-zA-Z]+)"'
 _EMIT_ADVISORIES_RE = r'emit_advisories\(\s*"([A-Z][a-zA-Z]+)"'
 #: The files allowed to emit ``"hookEventName"`` with a non-literal value: the
 #: shared emitter, whose every caller is a source pinned below, and the start
-#: refusal ``_denial_reasons.refuse_on_helper_skew``, whose event is the
+#: refusal ``_start_refusal.refuse_on_helper_skew``, whose event is the
 #: calling hook's (the four blocking hooks pass theirs; the start contract
 #: ``tests/test_hooks_start_on_a_kept_helper.py`` runs each).
 _PARAMETERISED_EMITTERS = frozenset({
-    "tools/cc/hooks/_hook_utils.py", "tools/cc/hooks/_denial_reasons.py",
+    "tools/cc/hooks/_hook_utils.py", "tools/cc/hooks/_start_refusal.py",
 })
 
 

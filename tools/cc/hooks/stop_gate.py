@@ -58,15 +58,38 @@ from pathlib import Path
 # is a standalone copy of espalier/hook_contract.py kept in sync by tests.
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # tools/cc for _json_safe
-import _hook_utils  # noqa: E402
-import _denial_reasons  # noqa: E402
-# The floor and the guard: write_guard.py's import block is the sister site and
-# says why (DEF-1176). A Stop hook that dies at import is exit 1, which the
+# The start refusal first and alone, then the guard over every other sibling,
+# the floor included: write_guard.py's import block is the sister site and says
+# why (DEF-1176, DEF-3008). A Stop hook that dies at import is exit 1, which the
 # protocol reads as non-blocking, so the four gates run nothing and the stop
 # goes through unjudged; under `__main__` it is the Stop-style block naming the
 # repair instead, which the protocol's loop signal lets through on the next
 # Stop (a pause, never a lockout).
 try:
+    import _start_refusal  # noqa: E402
+except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot import (DEF-3008)
+    if __name__ != "__main__":
+        raise
+    try:  # the protocol's loop signal: this Stop is the one continued after the last block
+        _stop = json.loads(sys.stdin.buffer.read().decode("utf-8", errors="replace"))
+        _again = isinstance(_stop, dict) and bool(_stop.get("stop_hook_active"))
+    except Exception:  # noqa: BLE001 -- fail-open: ok deliberate an unread Stop is refused
+        _again = False
+    if _again:
+        raise SystemExit(0) from None
+    sys.stdout.write(json.dumps({"decision": "block", "reason": (
+        "stop_gate cannot start: tools/cc/hooks/_start_refusal.py raised " + type(_floor).__name__
+        + "; it is the start refusal every deny hook imports first. Restore it to HEAD:"
+        " `git restore --source=HEAD -- :/tools/cc/hooks/_start_refusal.py`, as one Bash command"
+        " (write_guard, wedged by the same file, lets that one call through) or from a terminal;"
+        " if HEAD has no such file (an upgrade that did not finish), run"
+        " `espalier upgrade --execute .` from a terminal instead. Every call this hook judges"
+        " is refused until then.")}) + "\n")
+    sys.stdout.flush()
+    raise SystemExit(0) from None
+try:
+    import _hook_utils  # noqa: E402
+    import _denial_reasons  # noqa: E402
     from _hook_contract import STOP_INNER_BUDGET  # noqa: E402
     import _maintenance_mode  # noqa: E402
     import _integrity  # noqa: E402
@@ -85,7 +108,7 @@ try:
 except Exception as _skew:  # noqa: BLE001 -- a kept helper that predates its siblings (DEF-1176)
     if __name__ != "__main__":
         raise
-    _denial_reasons.refuse_on_helper_skew("stop_gate", "Stop", _skew)
+    _start_refusal.refuse_on_helper_skew("stop_gate", "Stop", _skew)
 
 STATE_DIR = _hook_utils.STATE_DIR  # single source of truth; see _hook_utils
 # The relief records Gates 2 and 3 read. subagent_stop is their only writer;
