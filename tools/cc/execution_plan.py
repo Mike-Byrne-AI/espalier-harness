@@ -317,6 +317,36 @@ def _step_symbols(steps: str) -> list[str]:
     return out
 
 
+def _repo_path(token: str, root: Path) -> str | None:
+    """A step entry as a repo path: an absolute path inside the checkout made
+    relative to it; an absolute path outside it None (it names nothing a claim
+    can name); any other spelling as written, for the matcher to read."""
+    text = token.replace("\\", "/")
+    if not (text.startswith("/") or re.match(r"^[A-Za-z]:/", text)):
+        return token
+    try:
+        return Path(text).resolve().relative_to(root.resolve()).as_posix()
+    except (OSError, ValueError):
+        return None
+
+
+def _repo_symbols(symbols: list[str], root: Path) -> tuple[list[str], list[str]]:
+    """``(the step symbols as repo paths, one warning per symbol outside the
+    checkout)``: an absolute path passed the definition check by its file and
+    then met no claim, the silence a plan reads as clear."""
+    kept: list[str] = []
+    lines: list[str] = []
+    for symbol in symbols:
+        where, _sep, name = symbol.partition("::")
+        rel = _repo_path(where, root)
+        if rel is None:
+            lines.append(f"WARN: symbols: {symbol} is not a repo path (absolute, outside this checkout), "
+                         "so it meets no claim; name it from the repository root")
+        else:
+            kept.append(f"{rel}::{name}")
+    return kept, [line.encode("ascii", "replace").decode("ascii") for line in lines]
+
+
 def _unresolved_symbols(symbols: list[str], root: Path, mapper) -> list[str]:
     """One advisory line per step symbol that names no definition in its file
     at the working tree, read by ``mapper.spans`` (``_symbols``, the mapper a
@@ -373,10 +403,12 @@ def _claim_overlaps(steps: str, mail=None) -> list[str]:
         if not paths and not classes and not ids and not symbols:
             return []
         root = _paths._repo_root()  # the plan file's own root, the single owner
+        paths = [p for p in (_repo_path(p, root) for p in paths) if p is not None]
+        symbols, typed = _repo_symbols(symbols, root)
         # A channel module from before claims carried symbols has no mapper and
         # no symbols key: its matcher meets the steps by path and class, as before.
         mapper = getattr(mail, "_symbols", None)
-        typed = _unresolved_symbols(symbols, root, mapper) if symbols and mapper is not None else []
+        typed += _unresolved_symbols(symbols, root, mapper) if symbols and mapper is not None else []
         machine, how = mail.machine_setting(root)
         if machine is None:
             unread = getattr(mail, "MACHINE_UNREAD", None)  # a channel module from before the phrase has none

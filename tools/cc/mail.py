@@ -449,7 +449,7 @@ def secret_hits(message: dict, *, matcher: Callable[[str], str | None] | None = 
             hits.append(f"`{tok}` ({label})")
     re_ = message.get("re") or {}
     seen: set[str] = set()
-    for p in [*(re_.get("paths") or []), *(str(s).split("::", 1)[0] for s in re_.get(SYMBOLS_KEY) or [])]:
+    for p in [*_str_list(re_.get("paths")), *(s.split("::", 1)[0] for s in _str_list(re_.get(SYMBOLS_KEY)))]:
         if p in seen:
             continue
         seen.add(p)
@@ -683,6 +683,15 @@ def _count(value: object) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
+def _str_list(value: object) -> list[str]:
+    """A list field another machine wrote (``paths``, ``classes``, ``ids``,
+    ``symbols``): its string entries, or nothing for any other shape, so one
+    malformed field costs itself and never the reader (an id refusal among them)."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [x for x in value if isinstance(x, str)]
+
+
 def _touches(a: str, b: str) -> bool:
     a, b = a.rstrip("/"), b.rstrip("/")
     return a == b or a.startswith(b + "/") or b.startswith(a + "/")
@@ -709,6 +718,7 @@ def overlapping_claims(claims: list[dict], *, paths: list[str] | tuple[str, ...]
     reported on the claim that names it. A claim without symbols meets by
     path exactly as before."""
     found: list[tuple[dict, list[str]]] = []
+    fold = _symbols.canonical  # the vendored twin is its source, on both sides
     mine: list[str] = []
     ours_symbols: set[str] = set()
     for s in symbols:
@@ -716,7 +726,7 @@ def overlapping_claims(claims: list[dict], *, paths: list[str] | tuple[str, ...]
         if not sep or not name.strip():
             continue
         try:
-            ours_symbols.add(f"{_repo_relative(where)}::{name.strip()}")
+            ours_symbols.add(f"{fold(_repo_relative(where))}::{name.strip()}")
         except Unresolvable:
             continue
     our_symbol_files = {s.split("::", 1)[0] for s in ours_symbols}
@@ -724,48 +734,66 @@ def overlapping_claims(claims: list[dict], *, paths: list[str] | tuple[str, ...]
         if not p or not str(p).strip():
             continue
         try:
-            q = _repo_relative(str(p))
+            q = fold(_repo_relative(str(p)))
         except Unresolvable:
             continue  # one token a plan wrote badly costs itself, never the warnings for the rest
         if q not in mine:
             mine.append(q)
+
+    def view(re_: dict) -> tuple[set[str], int, set[str], set[str]]:
+        """One claim's symbols, its count of left-out ones, the paths it claims
+        whole (no symbol of its own in them) and the files it marks unplaced."""
+        syms: set[str] = set()
+        for s in _str_list(re_.get(SYMBOLS_KEY)):
+            where, sep, name = s.partition("::")
+            if sep:
+                syms.add(f"{fold(where)}::{name}")
+        files = {s.split("::", 1)[0] for s in syms}
+        whole = {fold(p) for p in _str_list(re_.get("paths"))} - files
+        unplaced = {s.split("::", 1)[0] for s in syms if s.endswith(f"::{_symbols.MODULE}")}
+        return syms, _count(re_.get(SYMBOLS_MORE_KEY)), whole, unplaced
+
     # One lane, read whole: every live claim of a machine on a lane, its
-    # symbols united and any count of left-out symbols summed.
-    lanes: dict[tuple[str, str], tuple[set[str], int]] = {}
+    # symbols, files claimed whole and unplaced marks united, counts summed.
+    lanes: dict[tuple[str, str], tuple[set[str], int, set[str], set[str]]] = {}
     for claim in claims:
         re_ = claim.get("re") or {}
         if re_.get("lane"):
             key = (str(claim.get("from") or ""), str(re_["lane"]))
-            got, more = lanes.get(key, (set(), 0))
-            lanes[key] = (got | {str(s) for s in re_.get(SYMBOLS_KEY) or []},
-                          more + _count(re_.get(SYMBOLS_MORE_KEY)))
+            got = lanes.get(key, (set(), 0, set(), set()))
+            one = view(re_)
+            lanes[key] = (got[0] | one[0], got[1] + one[1], got[2] | one[2], got[3] | one[3])
     for claim in claims:
         if exclude_machine and claim.get("from") == exclude_machine:
             continue
         re_ = claim.get("re") or {}
         hits: list[str] = []
-        own_symbols = {str(s) for s in re_.get(SYMBOLS_KEY) or []}
-        lane_symbols_, lane_more = lanes.get((str(claim.get("from") or ""), str(re_.get("lane") or "")),
-                                             (own_symbols, _count(re_.get(SYMBOLS_MORE_KEY))))
-        lane_files = {s.split("::", 1)[0] for s in lane_symbols_}
-        met = _symbols.symbols_meet(ours_symbols, own_symbols) if ours_symbols and own_symbols else set()
-        lane_met = _symbols.symbols_meet(ours_symbols, lane_symbols_) if ours_symbols and lane_symbols_ else set()
+        own = view(re_)
+        lane_syms, lane_more, lane_whole, lane_unplaced = lanes.get(
+            (str(claim.get("from") or ""), str(re_.get("lane") or "")), own)
+        lane_files = {s.split("::", 1)[0] for s in lane_syms}
+        met = _symbols.symbols_meet(ours_symbols, own[0]) if ours_symbols and own[0] else set()
+        lane_met = _symbols.symbols_meet(ours_symbols, lane_syms) if ours_symbols and lane_syms else set()
         lane_met_files = {s.split("::", 1)[0] for s in lane_met}
-        for theirs in re_.get("paths") or []:
+        for theirs in _str_list(re_.get("paths")):
+            folded = fold(theirs)
             for ours in mine:
-                if not _touches(str(theirs), ours):
+                if not _touches(folded, ours):
                     continue
-                if ours == theirs and ours in lane_met_files:
+                if ours == folded and ours in lane_met_files:
                     continue  # a symbol hit on the lane names it
-                if ours == theirs and ours in our_symbol_files and ours in lane_files and not lane_more:
-                    hits.append(f"path {ours} (their {theirs}; no symbol in common)")
-                else:
-                    hits.append(f"path {ours} (their {theirs})")
+                # The lane's list for the file is whole only where no claim of
+                # it holds the file whole, none marks it unplaced and no count
+                # of left-out symbols stands.
+                listed = (ours in our_symbol_files and ours in lane_files and not lane_more
+                          and ours not in lane_unplaced and not any(_touches(w, ours) for w in lane_whole))
+                hits.append(f"path {ours} (their {theirs}; no symbol in common)" if ours == folded and listed
+                            else f"path {ours} (their {theirs})")
         hits += [f"symbol {s}" for s in sorted(met)]
-        for c in re_.get("classes") or []:
+        for c in _str_list(re_.get("classes")):
             if c in classes:
                 hits.append(f"class {c}")
-        for i in re_.get("ids") or []:
+        for i in _str_list(re_.get("ids")):
             if i in ids:
                 hits.append(f"id {i}")
         if lane and re_.get("lane") and re_.get("lane") == lane:
@@ -1190,7 +1218,8 @@ def fit_paths(given: list[str], derived: list[str], room: int = MAX_PATHS) -> tu
         folded = sorted({"/".join(p.split("/")[:depth]) for p in folded})
         folded = [p for p in folded if not any(p != q and p.startswith(q + "/") for q in folded)]
         depth -= 1
-    return paths + folded, len(rest)
+    kept = set(folded)
+    return paths + folded, sum(1 for p in rest if p not in kept)
 
 
 def symbol_delta(own: list[dict], symbols: list[str], paths: list[str]) -> tuple[list[str], list[str]]:
@@ -1198,8 +1227,8 @@ def symbol_delta(own: list[dict], symbols: list[str], paths: list[str]) -> tuple
     ``own``: the symbols none of them names and the paths none of them covers.
     A symbol past an earlier claim's cap is named by none, so it is sent again:
     the cap's cost, on a lane of more than :data:`MAX_SYMBOLS` symbols."""
-    named = {str(s) for c in own for s in (c.get("re") or {}).get(SYMBOLS_KEY) or []}
-    claimed = [str(p) for c in own for p in (c.get("re") or {}).get("paths") or []]
+    named = {s for c in own for s in _str_list((c.get("re") or {}).get(SYMBOLS_KEY))}
+    claimed = [p for c in own for p in _str_list((c.get("re") or {}).get("paths"))]
     return ([s for s in symbols if s not in named],
             [p for p in paths if not any(_touches(p, q) for q in claimed)])
 
@@ -1625,13 +1654,11 @@ def _print_message(m: dict) -> None:
         print(f"    seat: {re_[ASSIGN_SEAT_KEY]}")
     if re_.get("lane"):
         print(f"    lane: {re_['lane']}")
-    if re_.get("classes"):
-        print(f"    classes: {', '.join(str(c) for c in re_['classes'])}")
-    if re_.get("paths"):
-        print(f"    paths: {', '.join(str(p) for p in re_['paths'])}")
-    if re_.get("ids"):
-        print(f"    ids: {', '.join(str(i) for i in re_['ids'])}")
-    symbols = [str(s) for s in re_.get(SYMBOLS_KEY) or []]
+    for field in ("classes", "paths", "ids"):
+        entries = _str_list(re_.get(field))
+        if entries:
+            print(f"    {field}: {', '.join(entries)}")
+    symbols = _str_list(re_.get(SYMBOLS_KEY))
     if symbols:
         more = max(0, len(symbols) - _SYMBOLS_SHOWN) + _count(re_.get(SYMBOLS_MORE_KEY))
         line = f"    symbols: {', '.join(symbols[:_SYMBOLS_SHOWN])}" + (f" (+{more} more)" if more else "")
@@ -1677,15 +1704,30 @@ def main(argv: list[str] | None = None) -> int:
                     by_machine, _skipped = read_mail(root)
                     own = own_live_claims(by_machine, machine, args.lane)
                     if not own:
-                        print("no live claim on this lane")
-                        return 0
+                        if any(m.get("type") == "claim" and (m.get("re") or {}).get("lane") == args.lane
+                               for m in by_machine.get(machine, [])):
+                            print("no live claim on this lane: its claims were released")
+                            return 0
+                        elsewhere = sorted({str((c.get("re") or {}).get("lane") or "")
+                                            for c in live_claims(by_machine) if c.get("from") == machine} - {""})
+                        raise Unresolvable(
+                            f"--delta adds to {machine}'s live claims on {args.lane}, and {machine} never claimed "
+                            "that lane" + (f" (its live claims are on {', '.join(elsewhere)})" if elsewhere else "")
+                            + ": send its first claim without --delta, or name the lane it was claimed under")
                 symbols, derived = lane_symbols(root, args.symbols_from or None)
+                given = [_repo_relative(p) for p in paths]
+                # A path given by hand claims its file whole: the lane's symbols
+                # inside it would let a reader call another function apart.
+                symbols = [s for s in symbols if not any(_touches(s.split("::", 1)[0], g) for g in given)]
                 if args.delta:
                     symbols, derived = symbol_delta(own, symbols, derived)
                     if not symbols and not derived:
                         print("no new symbols")
                         return 0
-                paths, folded = fit_paths(paths, derived)
+                    # The new symbols' files join the fold: the earlier claims'
+                    # directories cover them there, never in this message.
+                    derived = sorted(set(derived) | {s.split("::", 1)[0] for s in symbols})
+                paths, folded = fit_paths(given, derived)
                 if folded:
                     print(f"note: {folded} changed paths folded into their directories to fit the cap of "
                           f"{MAX_PATHS}; a directory claims what is under it", file=sys.stderr)

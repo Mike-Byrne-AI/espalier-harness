@@ -405,8 +405,11 @@ def symbols_of_lane(root: Path | str, base_ref: str, *, run: Runner = run, env: 
     working tree counts, staged or not, and a base that moved after the branch
     point contributes nothing of its own; plus the untracked files
     ``git ls-files --others --exclude-standard`` names, each read as wholly
-    added. A base git cannot read is a named refusal, never an empty lane."""
-    root = Path(root)
+    added. A base git cannot read is a named refusal, never an empty lane.
+    Read from the top of the tree whatever directory ``root`` names, since
+    git names untracked files relative to the directory it runs in and diff
+    names relative to the top."""
+    root = Path(_git(Path(root), "rev-parse", "--show-toplevel", run=run, env=env).strip())
     try:
         merge_base = _git(root, "merge-base", base_ref, "HEAD", run=run, env=env).strip()
     except Unresolvable as exc:

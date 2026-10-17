@@ -452,6 +452,35 @@ class TestSymbolsOfLane:
         (repo / "m.py").write_text(MOD.replace("return 1", "return 10"), encoding="utf-8")
         assert sym.symbols_of_lane(repo, "main")["m.py"]["symbols"] == {"m.py::f"}
 
+    def test_an_ignored_file_is_not_the_lane_s(self, sym, repo):
+        """Dies to: `--exclude-standard` dropped from the untracked listing (a claim takes a
+        virtualenv, a dotenv file and the local settings, and parses thousands of files a tick)."""
+        (repo / ".gitignore").write_text("build/\n", encoding="utf-8")
+        _git(repo, "add", ".gitignore")
+        _git(repo, "commit", "-q", "-m", "ignore build")
+        (repo / "build").mkdir()
+        (repo / "build" / "gen.py").write_text("def made():\n    return 1\n", encoding="utf-8")
+        assert not any(p.startswith("build/") for p in sym.symbols_of_lane(repo, "main"))
+
+    def test_the_lane_folds_the_vendored_twin_onto_its_source(self, sym, repo):
+        """Dies to: the fold left out of the lane reader (a lane that synced its twin claims each
+        symbol twice, under two keys)."""
+        for rel in ("tools/cc/x.py", "espalier/_vendor/cc/x.py"):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text("def k():\n    return 1\n", encoding="utf-8")
+        got = sym.symbols_of_lane(repo, "main")
+        assert "espalier/_vendor/cc/x.py" not in got and got["tools/cc/x.py"]["symbols"] == {"tools/cc/x.py::k"}
+
+    def test_a_root_below_the_top_reads_top_relative_paths(self, sym, repo):
+        """Run from a subdirectory, git names untracked files relative to it and diff names relative
+        to the top, so one lane spoke two dialects (failure-mode review). Dies to: the reader keeping
+        the root it was handed instead of the top of its tree."""
+        (repo / "sub").mkdir()
+        (repo / "sub" / "n.py").write_text("def k():\n    return 3\n", encoding="utf-8")
+        (repo / "m.py").write_text(MOD.replace("return 1", "return 10"), encoding="utf-8")
+        got = sym.symbols_of_lane(repo / "sub", "main")
+        assert got["sub/n.py"]["symbols"] == {"sub/n.py::k"} and got["m.py"]["symbols"] == {"m.py::f"}, got
+
     def test_changed_paths_are_read_nul_separated(self, sym):
         """Dies to: `--name-only` output split on whitespace (`pkg/my file.py` becomes a path tier
         `pkg/my` and a Python `file.py` with empty sources, which is certified)."""

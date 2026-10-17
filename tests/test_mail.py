@@ -920,6 +920,48 @@ class TestClaimSymbols:
         found = mail.overlapping_claims([first, delta], symbols=["t/m.py::b"])
         assert [(c["id"], hits) for c, hits in found] == [(delta["id"], ["symbol t/m.py::b"])], found
 
+    def test_a_file_the_lane_claims_whole_never_says_no_symbol_in_common(self, mail):
+        """A hand claim on a file is a claim on all of it, and the seat's own later delta named
+        one function there: the clause then read as two functions apart (failure-mode review,
+        driven). Dies to: the clause given wherever the lane names a symbol in the file."""
+        stamp = datetime(2026, 10, 17, 5, 0, 0, tzinfo=timezone.utc)
+        whole = _msg(mail, "win", "claim", "", lane="lane/w", paths=["tools/cc/mail.py"], now=stamp)
+        delta = _msg(mail, "win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"],
+                     now=stamp.replace(minute=5))
+        found = mail.overlapping_claims([whole, delta], symbols=["tools/cc/mail.py::headline"])
+        assert [hits for _c, hits in found] == [["path tools/cc/mail.py (their tools/cc/mail.py)"]] * 2, found
+
+    def test_a_file_with_unplaced_lines_never_says_no_symbol_in_common(self, mail):
+        """`path::<module>` is a line no definition holds (an import, a lone comment): the pair
+        reading calls that unplaced, so the matcher may not call it apart. Dies to: the clause
+        given beside the lane's own unplaced marker for the file."""
+        theirs = _msg(mail, "win", "claim", "", lane="lane/w",
+                      symbols=["tools/cc/mail.py::send", "tools/cc/mail.py::<module>"])
+        found = mail.overlapping_claims([theirs], symbols=["tools/cc/mail.py::headline"])
+        assert found[0][1] == ["path tools/cc/mail.py (their tools/cc/mail.py)"], found
+
+    def test_the_vendored_twin_meets_its_source_on_both_sides(self, mail):
+        """The writer folds a twin onto its source; the reader did not, and a plan naming the
+        vendored copy met nothing (failure-mode review, driven). Dies to: our side left unfolded."""
+        theirs = _msg(mail, "win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"])
+        assert mail.overlapping_claims([theirs], symbols=["espalier/_vendor/cc/mail.py::send"])[0][1] == [
+            "symbol tools/cc/mail.py::send"]
+        hand = _msg(mail, "win", "claim", "", lane="lane/v", paths=["espalier/_vendor/cc/board.py"])
+        assert mail.overlapping_claims([hand], paths=["tools/cc/board.py"])[0][1] == [
+            "path tools/cc/board.py (their espalier/_vendor/cc/board.py)"]
+
+    def test_a_malformed_list_from_another_seat_costs_itself(self, mail, capsys):
+        """`symbols: 5` from another seat's ref raised in every reader, the ledger verbs' id
+        refusal among them, which then wrote without it (failure-mode review, driven). Dies to:
+        a list field read without its shape checked."""
+        for bad in (5, True, 1.5, "tools/cc/mail.py::send", {"x": 1}):
+            m = _msg(mail, "win", "claim", "", lane="lane/w", paths=["a.py"], ids=["DEF-1"])
+            m["re"][mail.SYMBOLS_KEY] = bad
+            assert [h for _c, h in mail.overlapping_claims([m], ids=["DEF-1"])] == [["id DEF-1"]], bad
+            assert mail.overlapping_claims([m], symbols=["a.py::f"])[0][1] == ["path a.py (their a.py)"], bad
+            mail._print_message(m)
+        assert "lane: lane/w" in capsys.readouterr().out
+
     def test_a_malformed_count_from_another_seat_prints_as_none(self, mail, capsys):
         """Another seat's ref is text this reader did not write. Dies to: the count read with a
         bare `int` (every listing of every reader is a traceback)."""
@@ -1029,14 +1071,68 @@ class TestSymbolsFromTheLane:
         assert len(paths) <= mail.MAX_PATHS and all(any(mail._touches(f, p) for p in paths) for f in files)
         assert "folded" in capsys.readouterr().err
 
-    def _run_with(self, mail, monkeypatch, tmp_path, own, lane, *args: str):
+    def _run_with(self, mail, monkeypatch, tmp_path, own, lane, *args: str, others=None):
         sent: list[dict] = []
         monkeypatch.setattr(mail, "machine_setting", lambda root, **kw: ("mac", "git config espalier.machine = mac"))
         monkeypatch.setattr(mail._symbols, "symbols_of_lane", lane)
-        monkeypatch.setattr(mail, "read_mail", lambda root, **kw: ({"mac": list(own)}, {}))
+        monkeypatch.setattr(mail, "read_mail", lambda root, **kw: ({"mac": list(own), **(others or {})}, {}))
         monkeypatch.setattr(mail, "send", lambda root, message, **kw: sent.append(message))
         rc = mail.main(["--root", str(tmp_path), "send", *args])
         return rc, sent, []
+
+    def test_a_path_given_by_hand_is_claimed_whole(self, mail, monkeypatch, tmp_path):
+        """A hand `--path` beside the derivation claims the whole file, so the claim carries no
+        symbols there that would let a reader call another function apart from it (failure-mode
+        review). Dies to: the derived symbols kept inside a file the seat claimed whole."""
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [], "--type", "claim", "--lane", "lane/x",
+                                "--symbols-from", "origin/main", "--path", "tools/cc/mail.py")
+        assert rc == 0 and mail.SYMBOLS_KEY not in sent[0]["re"], sent[0]["re"]
+        assert sent[0]["re"]["paths"] == ["tools/cc/mail.py", "docs/x.md"]
+
+    def test_the_delta_past_the_path_cap_folds_on_every_tick(self, mail, monkeypatch, tmp_path):
+        """The first claim folded seventy files into directories; the next tick's delta re-added
+        every new symbol's file and was refused at the cap, every tick (failure-mode review,
+        driven). Dies to: the delta's symbol files kept out of the fold."""
+        files = [f"pkg/m{i // 10}/f{i}.py" for i in range(70)]
+
+        def lane_with(*names):
+            return lambda root, base, **kw: {
+                p: {"kind": "python", "symbols": {f"{p}::{n}" for n in names}, "changed": 1, "unplaced": 0}
+                for p in files}
+
+        args = ("--type", "claim", "--lane", "lane/x", "--symbols-from", "origin/main")
+        rc, first, _ = self._run_with(mail, monkeypatch, tmp_path, [], lane_with("f"), *args)
+        assert rc == 0 and first
+        rc, second, _ = self._run_with(mail, monkeypatch, tmp_path, first, lane_with("f", "g"), *args, "--delta")
+        assert rc == 0 and second, second
+        assert len(second[0]["re"]["paths"]) <= mail.MAX_PATHS
+        assert {s.rsplit("::", 1)[1] for s in second[0]["re"][mail.SYMBOLS_KEY]} == {"g"}
+
+    def test_a_delta_on_a_lane_this_seat_never_claimed_is_refused_by_name(self, mail, monkeypatch, tmp_path,
+                                                                            capsys):
+        """`no live claim on this lane`, exit 0, read the same for a released lane and a lane
+        name never claimed (a typo, a lane named one way and claimed another): a refresh would say
+        it forever (failure-mode review, driven). Dies to: the two read as one."""
+        elsewhere = _msg(mail, "mac", "claim", "", lane="lane/y", paths=["a.py"])
+        rc, sent, _ = self._run_with(mail, monkeypatch, tmp_path, [elsewhere], lambda root, base, **kw: {},
+                                     "--type", "claim", "--lane", "lane/x", "--symbols-from", "origin/main", "--delta")
+        err = capsys.readouterr().err
+        assert rc == 1 and sent == [] and "lane/x" in err and "lane/y" in err, err
+
+    def test_another_seat_s_claim_on_the_lane_is_not_this_seat_s(self, mail, monkeypatch, tmp_path, capsys):
+        """Dies to: the delta's own-machine filter dropped (another seat's claim on a lane of the
+        same name read as this seat's, and its symbols left out of this seat's claim)."""
+        theirs = _msg(mail, "win", "claim", "", lane="lane/x", paths=["a.py"])
+        rc, sent, _ = self._run_with(mail, monkeypatch, tmp_path, [], lambda root, base, **kw: {},
+                                     "--type", "claim", "--lane", "lane/x", "--symbols-from", "origin/main", "--delta",
+                                     others={"win": [theirs]})
+        assert rc == 1 and sent == [], capsys.readouterr()
+
+    def test_the_fold_counts_the_paths_it_folded(self, mail):
+        """Dies to: every derived path counted as folded (a note saying 68 where 5 folded)."""
+        derived = [f"a{i}.py" for i in range(60)] + [f"d/x{i}.py" for i in range(10)]
+        paths, folded = mail.fit_paths([], derived)
+        assert folded == 10 and len(paths) == 61 and "d" in paths
 
     def test_the_flags_go_with_a_claim_on_a_lane(self, mail, monkeypatch, tmp_path, capsys):
         """Dies to: the flags taken on any message, or a delta with no lane to compare against."""

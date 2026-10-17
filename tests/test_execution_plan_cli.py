@@ -239,7 +239,22 @@ class TestClaimOverlapPreflight:
         driven). Dies to: one pattern for the three fields."""
         mod = _load_plan_module()
         prose = "Update the exported symbols: none. files: tools/cc/b.py, classes: C1"
-        assert mod._step_fields(prose) == (["tools/cc/b.py"], [])
+        assert mod._step_fields(prose)[0] == ["tools/cc/b.py"]
+
+    def test_a_path_written_absolute_reads_as_its_repo_path_or_warns(self, monkeypatch, tmp_path):
+        """An absolute `symbols:` entry passed the typo check by its file and then met no claim:
+        the silence a plan reads as clear (failure-mode review, driven). Dies to: the entry handed
+        on as written. Under the root it is the repo path; outside, a warning names it."""
+        mod = _load_plan_module()
+        self._symbol_tree(mod, monkeypatch, tmp_path)
+        mail = _load_mail_module()
+        claim = mail.new_message("win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"])
+        stub = self._mail(monkeypatch, tmp_path, "mac", [claim])
+        inside = (tmp_path / "tools" / "cc" / "mail.py").as_posix() + "::send"
+        lines = mod._claim_overlaps(f"s; symbols: {inside}; proof: x", mail=stub)
+        assert len(lines) == 1 and "claims symbol tools/cc/mail.py::send" in lines[0], lines
+        lines = mod._claim_overlaps("s; symbols: /elsewhere/x.py::f; proof: x", mail=stub)
+        assert len(lines) == 1 and "/elsewhere/x.py::f" in lines[0] and "not a repo path" in lines[0], lines
 
     def test_a_typed_symbol_warning_outlives_a_channel_that_cannot_be_read(self, monkeypatch, tmp_path):
         """The typo is about the plan's own text, not the channel. Dies to: the warning computed
