@@ -58,6 +58,7 @@ tools/cc/_pack_scope.py
 tools/cc/_paths.py
 tools/cc/_record_fragments.py
 tools/cc/_stack_table.py
+tools/cc/_symbols.py
 tools/cc/board.py
 tools/cc/check_ledger_probes.py
 tools/cc/checkout_sync.py
