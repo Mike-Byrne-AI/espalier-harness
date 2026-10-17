@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4030",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python -c \"import sys,os,io,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');[os.environ.pop(k) for k in list(os.environ) if k.startswith('ESPALIER') or k.startswith('CLAUDE')];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);os.environ['CLAUDE_PROJECT_DIR']=str(r);os.environ['ESPALIER_AUDIT_DIR']=str(r);import write_guard as g;Z=lambda f,c:(setattr(sys,'stdout',io.StringIO()),f(c,r,r),sys.stdout.getvalue(),setattr(sys,'stdout',sys.__stdout__));z=lambda f,c:'deny' in Z(f,c)[2];P=g.check_powershell_for_protected_mutations;L=g.check_powershell_for_protected_symlinks;B=g.check_bash_for_protected_mutations;BL=g.check_bash_for_protected_symlinks;refuse=lambda m:(sys.stderr.write(m+chr(10)),sys.exit(70));S=chr(92);W=['cmd /c mklink tools'+S+'cc'+S+'hooks'+S+'x.py C:'+S+'y.py','cmd /c mklink /D tools'+S+'cc'+S+'sub C:'+S+'elsewhere','cmd /c mklink /H tools'+S+'cc'+S+'hooks'+S+'x.py C:'+S+'y.py','cmd /c mklink /J tools'+S+'cc'+S+'sub C:'+S+'elsewhere','cmd.exe /c mklink tools'+S+'cc'+S+'hooks'+S+'x.py C:'+S+'y.py','& cmd /c mklink tools/cc/hooks/x.py C:/y.py'];X=['cmd /c mklink tools/cc/hooks/x.py /y.py','cmd.exe /c mklink /D tools/cc/sub /elsewhere'];ok=z(L,'New-Item -ItemType SymbolicLink -Path tools'+S+'cc'+S+'hooks'+S+'x.py -Target C:'+S+'y.py') and z(BL,'ln -s /y.py tools/cc/hooks/x.py');refuse('DEF-4030: a New-Item or ln control no longer denies; the lens is broken, UNRESOLVED') if not ok else print(sum(not (z(P,w) or z(L,w)) for w in W)+sum(not (z(B,x) or z(BL,x)) for x in X))\"",
+ "open_value": "8",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_bash_patterns.py"
+ ],
+ "row_sha": "60eaa1842cd6",
+ "text_sha": "4172d18bc210",
+ "verified_2026_10_17": "OPEN (filed 2026-10-17; probe driven at filing)"
+}
