@@ -1196,7 +1196,7 @@ class TestTheMixedClassShape:
         chk = lr._load("check_ledger_probes")
         assert p["row_sha"] == chk.row_sha(line) and p["text_sha"] == chk.text_sha(line)
         assert p["verified_2026_09_06"] == (
-            "STILL_OPEN (re-pinned value unchanged on 2026-09-06: its named user is an adopter)"
+            "STILL_OPEN (re-pinned value unchanged on 2026-09-06: its named user is an adopter) [changed: classes]"
         )
         assert chk.text_sha(line) == chk.text_sha("| `DEF-3` | site | what | nit | HYGIENE | MAINTAINER |")
 
@@ -1317,7 +1317,7 @@ class TestRepin:
         data, p = self._probe(tree)
         assert p["open_value"] == "drifted" and p["cmd"] == "echo drifted"
         assert p["verified_2026_09_06"] == (
-            "STILL_OPEN (re-pinned 'a' -> 'drifted' on 2026-09-06: count moved 1 -> 2)"
+            "STILL_OPEN (re-pinned 'a' -> 'drifted' on 2026-09-06: count moved 1 -> 2) [changed: probe, open value]"
         )
         text = tree["ledger"].read_text(encoding="utf-8")
         line = "| `DEF-1` | site | what | major |"
@@ -1375,8 +1375,41 @@ class TestRepin:
         assert probe["row_sha"] == chk.row_sha(line), "a re-grade must not stale the claim"
         assert probe["verified_2026_09_06"] == (
             "STILL_OPEN (re-pinned value unchanged; severity major -> nit on 2026-09-06: "
-            "re-graded: no adopter reaches it)"
+            "re-graded: no adopter reaches it) [changed: severity]"
         )
+
+    def test_repin_stamp_names_every_field_it_changed(self, lr, tree):
+        """DEF-3003 (air's 914037): the stamp's `moved` clause names the value,
+        the grade, the subject and the inputs but never the probe, so a
+        severity re-grade and a hand-written probe stamped alike, and the
+        engine's onboarding refresh could not tell an adopter's own probe from
+        a re-grade. The stamp now ends with every field the repin changed: a
+        re-grade names `severity` and no `probe`."""
+        assert self._repin(lr, tree, "--severity", "nit", "--reason", "re-graded") == 0
+        _data, probe = self._probe(tree)
+        assert probe["verified_2026_09_06"].endswith(") [changed: severity]"), probe["verified_2026_09_06"]
+
+    def test_repin_with_a_byte_equal_probe_names_no_probe(self, lr, tree):
+        assert self._repin(lr, tree, "--probe-cmd", "echo a", "--open-value", "a",
+                           "--reason", "re-witnessed") == 0
+        _data, probe = self._probe(tree)
+        assert probe["verified_2026_09_06"].endswith(") [changed: none]"), probe["verified_2026_09_06"]
+
+    def test_repin_with_a_new_probe_names_the_probe(self, lr, tree):
+        assert self._repin(lr, tree, "--probe-cmd", "python -c \"print('a')\"", "--open-value", "a",
+                           "--reason", "a probe of our own") == 0
+        _data, probe = self._probe(tree)
+        assert probe["verified_2026_09_06"].endswith(") [changed: probe]"), probe["verified_2026_09_06"]
+
+    def test_a_second_repin_on_one_day_carries_the_first_ones_list(self, lr, tree):
+        """DEF-3003, the failure-mode re-review: a second repin on one day
+        writes over that day's stamp, so a re-grade after a new probe read as
+        a re-grade alone; the first one's list is carried into it."""
+        assert self._repin(lr, tree, "--probe-cmd", "python -c \"print('a')\"", "--open-value", "a",
+                           "--reason", "a probe of our own") == 0
+        assert self._repin(lr, tree, "--severity", "nit", "--reason", "re-graded") == 0
+        _data, probe = self._probe(tree)
+        assert probe["verified_2026_09_06"].endswith(") [changed: probe, severity]"), probe["verified_2026_09_06"]
 
     def test_repin_without_severity_keeps_the_grade(self, lr, tree):
         """The false-deny twin: every other repin leg must leave cell 4 alone.
