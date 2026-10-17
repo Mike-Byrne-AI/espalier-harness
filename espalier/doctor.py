@@ -29,7 +29,7 @@ from espalier._integrity_bridge import load_integrity_module
 from espalier._text import plural
 from espalier._python_floor import (
     BANNER_PROBE_SECONDS, BANNER_PROBE_TRIES, START_PROBE_SECONDS, START_PROBE_TRIES,
-    START_TOO_SLOW, banner_unanswered_of, floor_text, interpreter_argv,
+    START_TOO_SLOW, floor_text, interpreter_argv,
     interpreter_banner, meets_python_floor,
     interpreter_banner_unanswered, interpreter_banner_within, interpreter_meets_floor,
     interpreter_start_failure, interpreter_start_failure_within,
@@ -571,6 +571,15 @@ def _blocking_hook_seconds() -> int:
     return int(CANONICAL_HOOK_WIRING["write_guard.py"]["timeout"])
 
 
+def _unheard_on_path() -> "str | None":
+    """``cli._unheard_on_path`` with doctor's patience: a candidate that never
+    answered ``--version`` is asked once more for a blocking hook's time, and
+    one that then answers as anything but a Python 3 has answered (``DEF-5015``).
+    Behind the same lazy-import seam as :func:`_remedy_hint`."""
+    from espalier.cli import _unheard_on_path as unheard
+    return unheard(patient_seconds=_blocking_hook_seconds())
+
+
 def _late_interpreter_hint(cmd: str, remedy: str, clears: bool, written: str) -> str:
     """The remedy for a wired interpreter that did not start, or answer
     ``--version``, in the time a blocking hook gets (``DEF-5014``,
@@ -1003,12 +1012,12 @@ def _check_python_resolver(
                             f" -- run `{remedy} -m espalier init . "
                             f"--rewire-interpreter` to rewire the hooks to it."
                         )
-                    elif (target_unheard := banner_unanswered_of(_resolver_hint())) is not None:
-                        # The rewire's candidate never answered `--version`
-                        # (DEF-5015): no proof that none is installed.
+                    elif (target_unheard := _unheard_on_path()) is not None:
+                        # A candidate never answered `--version` (DEF-5015): no
+                        # proof that none is installed.
                         start_hint = (
-                            f"the rewire's candidate on PATH resolves, but "
-                            f"{target_unheard}, so it has no confirmed target yet"
+                            f"{target_unheard}, so the rewire has no confirmed "
+                            f"target yet"
                         ) + (
                             f" -- run `{remedy} -m espalier doctor .` again when "
                             f"the host is less loaded before putting another "
@@ -1138,15 +1147,20 @@ def _check_python_resolver(
                     f"python3."
                 )
             elif (python3_mute := _interpreter_banner_unanswered(shutil.which("python3"))) and (
-                    _interpreter_banner_within(
-                        [shutil.which("python3") or "python3"], _blocking_hook_seconds()) is None):
-                # A `python3` whose `--version` never answered, even in a
-                # blocking hook's time, is no proof that none is installed
-                # (DEF-5015): say what was seen, not "install". One that
-                # answered on the longer ask answered: the arm below reads it.
+                    (python3_late := _interpreter_banner_within(
+                        [shutil.which("python3") or "python3"], _blocking_hook_seconds())) is None
+                    or is_python3_banner(python3_late)):
+                # A `python3` whose `--version` never answered, or answered as
+                # a Python 3 only on a blocking hook's longer ask, is no proof
+                # that none is installed (DEF-5015): say what was seen, never
+                # "install", as a fast Python 3 is never told to install. One
+                # that answered otherwise on the longer ask (a Python 2, a
+                # non-interpreter) gets the install arm below.
+                seen_late = (f"its `--version` answered only on a longer ask "
+                             f"({python3_late})" if python3_late else python3_mute)
                 hint = (
-                    f"a `python3` IS on PATH, but {python3_mute}: run doctor "
-                    f"again when the host is less loaded before installing one."
+                    f"a `python3` IS on PATH, but {seen_late}: run doctor again "
+                    f"when the host is less loaded before installing one."
                 )
             else:
                 hint = (
@@ -3232,13 +3246,14 @@ def run_doctor_check(
             "interpreter that resolves on this host and meets Python "
             f"{floor_text()}+ (changes only the interpreter name; keeps a .bak of the file)"
         )
-        if not resolver_clears_floor and banner_unanswered_of(_resolver_hint()) is not None:
-            # The rewire's candidate never answered `--version` (DEF-5015): no
-            # proof none is installed, so the first step is doctor again.
+        if not resolver_clears_floor and _unheard_on_path() is not None:
+            # A candidate never answered `--version`, the rewire's or one a
+            # below-floor answer outranked (DEF-5015): no proof none is
+            # installed, so the first step is doctor again.
             step = (
                 f"run `{hint} -m espalier doctor .` again when the host is less "
-                f"loaded first -- the rewire's candidate on PATH did not answer "
-                f"`--version` in time, which is no proof that none is installed -- "
+                f"loaded first -- a candidate on PATH did not answer `--version` "
+                f"in time, which is no proof that none is installed -- "
                 "then " + step
             )
         elif not resolver_clears_floor:

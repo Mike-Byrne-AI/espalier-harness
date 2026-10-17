@@ -1719,7 +1719,7 @@ class TestABannerThatNeverAnswers:
         assert late and "fails OPEN" in late[0], result["warnings"]
         assert "starts and clears the floor" not in late[0], late
         assert not any("brew install" in w for w in result["warnings"]), result["warnings"]
-        assert any("less loaded" in s for s in result["next_steps"]), result["next_steps"]
+        assert any("slow to answer here" in s for s in result["next_steps"]), result["next_steps"]
 
     def test_doctor_says_a_banner_that_answers_late_is_slow(self, tmp_path, monkeypatch, capsys, mute):
         """A banner that answers only in the time a blocking hook gets: doctor
@@ -1764,6 +1764,88 @@ class TestABannerThatNeverAnswers:
         assert "never answered" in said and "already starts" not in said, said
         assert path.read_bytes() == before, "a mute site was rewired to a mute target"
 
+
+    def test_a_mute_banner_ranks_below_a_venv_only_name(self, tmp_path, monkeypatch, mute):
+        """Pins the settled order (code re-check): the venv-only fallback, a
+        name that answered, outranks one whose banner never did."""
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, mute, working=("python", "python3"),
+                   modes={"python": "timeout"})
+        monkeypatch.setattr(cli, "_resolves_only_inside_a_virtualenv",
+                            lambda name, resolved: name == "python3")
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        assert cli._detect_python_command() == "python3"
+
+    def test_the_running_interpreters_banner_is_read_not_assumed(self):
+        """Code re-check: the running interpreter's banner is answered without
+        a spawn, so it must say what ``sys.executable --version`` says, never
+        a pass taken for granted (the floor pin's own rationale)."""
+        said = subprocess.run([sys.executable, "--version"], capture_output=True, text=True,
+                              encoding="utf-8", timeout=30)
+        real = _python_floor.parse_python_version((said.stdout or said.stderr).strip())
+        assert real is not None
+        assert _python_floor.parse_python_version(_python_floor._running_interpreter_banner()) == real
+
+    def test_doctors_cannot_start_hint_names_a_mute_target(self, tmp_path, monkeypatch, mute):
+        """Code re-check (S2b, unpinned): the wired ``python`` cannot start and
+        the rewire's only other candidate, ``python3``, never answers its
+        banner: the hint says so, never "nothing named ... a fresh install"."""
+        from espalier import doctor
+        from tests import _interpreter_hosts as hosts
+
+        bin_dir = hosts.build_cannot_start(tmp_path / "host", ("python",), working=("python3",))
+        monkeypatch.setenv("PATH", str(bin_dir))
+        mute.bin_dir = bin_dir
+        mute.modes["python3"] = "timeout"
+        monkeypatch.setattr(doctor, "resolves_only_inside", lambda cmd: False)
+        joined = " ".join(doctor._check_python_resolver(
+            tmp_path, TestAnInterpreterThatAnswersItsBannerAndCannotStart._settings(tmp_path, "python")))
+        assert "cannot start" in joined, joined
+        assert "so the rewire has no confirmed target yet" in joined, joined
+        assert "nothing named" not in joined, joined
+
+    def test_the_claims_remedy_names_a_mute_candidate(self, tmp_path, monkeypatch, capsys, mute):
+        """Code re-check (S2d, unpinned): the claim's remedy over a wired word
+        that is not a Python, beside a ``python3`` that never answered, says
+        doctor again, never "Put a Python 3.10+ on PATH"."""
+        import argparse
+
+        from espalier import cli
+
+        self._host(tmp_path, monkeypatch, mute, working=("python3",), stubbed=("python",),
+                   modes={"python3": "timeout"})
+        target = TestAStartProbeThatNeverAnswers._adopter(tmp_path, monkeypatch)
+        assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
+        TestAStartProbeThatNeverAnswers._wire(target, "python")
+        capsys.readouterr()
+        reason, remedies = cli._disarmed_diagnosis(target)
+        joined = " ".join(remedies)
+        assert "before putting another Python on PATH" in joined, joined
+        assert "Put a Python" not in joined, joined
+
+    def test_a_below_floor_best_candidate_beside_a_mute_one_is_not_install(
+        self, tmp_path, monkeypatch, capsys, mute
+    ):
+        """Code re-check (residual S2 shape): the best candidate is a 3.9 and a
+        ``python3`` beside it never answered: the rewire's no-target report and
+        doctor's next step said install or put a Python on PATH."""
+        import argparse
+
+        from espalier import cli, doctor
+
+        self._host(tmp_path, monkeypatch, mute, working=("python", "python3"),
+                   modes={"python": "py39", "python3": "timeout"})
+        target = TestAStartProbeThatNeverAnswers._adopter(tmp_path, monkeypatch)
+        assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
+        TestAStartProbeThatNeverAnswers._wire(target, "python")
+        capsys.readouterr()
+        assert cli._report_interpreter_rewire(target / ".claude" / "settings.json") == cli.REWIRE_NO_TARGET
+        report = capsys.readouterr().err
+        assert "Install Python 3.10 or newer first" not in report and "before installing" in report, report
+        result = doctor.run_doctor_check(target)
+        assert not any("neither name answers as one now" in s for s in result["next_steps"]), (
+            result["next_steps"])
 
     def test_the_running_interpreter_answers_its_own_banner(self, tmp_path, monkeypatch, capsys, mute):
         """Reviewed (both): a ``python3`` that is the interpreter running
@@ -1821,17 +1903,22 @@ class TestABannerThatNeverAnswers:
         monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
         assert cli._detect_python_command() != cli.LAUNCHER_CANDIDATE
 
-    def test_no_prescriber_says_install_over_a_mute_python3(self, tmp_path, monkeypatch, capsys, mute):
+    @pytest.mark.parametrize("mode", ["timeout", "patient"])
+    def test_no_prescriber_says_install_over_a_mute_python3(
+        self, tmp_path, monkeypatch, capsys, mute, mode
+    ):
         """Reviewed (both): the tree main's fallback left -- ``python`` wired,
         a Store stub -- on the same loaded host. doctor's next step, init's
         remedy and the rewire's report each told the operator to install or
-        put a Python on PATH, over a ``python3`` that only never answered."""
+        put a Python on PATH, over a ``python3`` that only never answered. The
+        "patient" row is the slow ``python3`` that answers in a blocking hook's
+        time: the verification round found the hint saying install again."""
         import argparse
 
         from espalier import cli, doctor
 
         self._host(tmp_path, monkeypatch, mute, working=("python3",), stubbed=("python",),
-                   modes={"python3": "timeout"})
+                   modes={"python3": mode})
         target = TestAStartProbeThatNeverAnswers._adopter(tmp_path, monkeypatch)
         assert cli.cmd_init(argparse.Namespace(repo=str(target), config=None)) == 0
         TestAStartProbeThatNeverAnswers._wire(target, "python")
@@ -1887,14 +1974,18 @@ class TestABannerThatNeverAnswers:
         assert "does not answer as Python 3" in joined, joined
         assert "probe did not answer" not in joined, joined
 
-    def test_a_mute_banner_ranks_below_a_below_floor_answer(self, tmp_path, monkeypatch, mute):
-        """Pins the settled order (the dispatcher's): mute is the last choice."""
+    def test_a_mute_banner_ranks_below_a_below_floor_answer(self, tmp_path, monkeypatch, capsys, mute):
+        """Pins the settled order (the dispatcher's): mute is the last choice,
+        and the below-floor warning names the mute candidate beside it rather
+        than tell the operator to install only."""
         from espalier import cli
 
         self._host(tmp_path, monkeypatch, mute, working=("python", "python3"),
                    modes={"python": "timeout", "python3": "py39"})
-        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", True, raising=False)
+        monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False, raising=False)
         assert cli._detect_python_command() == "python3"
+        warning = capsys.readouterr().err
+        assert "'python'" in warning and "did not answer `--version` in time here" in warning, warning
 
     def test_a_mute_banner_ranks_below_an_unconfirmed_start(self, tmp_path, monkeypatch, mute):
         from espalier import cli

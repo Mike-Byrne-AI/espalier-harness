@@ -35,10 +35,12 @@ from espalier._python_floor import (
     floor_text,
     interpreter_argv,
     interpreter_banner,
+    interpreter_banner_within,
     interpreter_meets_floor,
     interpreter_start_failure,
     interpreter_start_unconfirmed,
     is_below_floor_python3,
+    is_python3_banner,
     is_python_launcher,
     meets_python_floor,
     start_unconfirmed_of,
@@ -896,13 +898,16 @@ def _warn_interpreter_unanswered(
         return
     _INTERPRETER_WARNING_EMITTED = True
     why = banner_unanswered_of(name) or "its `--version` probe did not answer"
-    seen = (f" ({evidence[0]!r} at {evidence[1]} answered: {evidence[2]})"
-            if evidence is not None else "")
+    seen = ("" if evidence is None else
+            f" ({evidence[0]!r} at {evidence[1]} could not be asked: {evidence[2]})"
+            if evidence[2].startswith(BANNER_PROBE_FAILED) else
+            f" ({evidence[0]!r} at {evidence[1]} answered: {evidence[2]})")
     print(
         f"WARNING: no Python {floor_text()}+ interpreter on PATH could be "
         f"validated{seen}. {name!r} resolves to {resolved}, but {why}. Wiring "
         f"{name!r}, unconfirmed: it resolves, so it is a better guess than a "
-        f"name that may not. If it is slow, the guards work; if it hangs, every "
+        f"name that may not. If it is only slow, the guards may still decide in "
+        f"time; if it hangs, every "
         f"hook waits out its timeout and each guard fails OPEN. Run doctor on "
         f"this repository when the host is less loaded: it gives the "
         f"interpreter the time a blocking hook gets and says which.",
@@ -1195,12 +1200,29 @@ def _remedy_interpreter() -> tuple[str, bool]:
     return py, False
 
 
-def _resolver_answer_mute() -> str | None:
-    """The clause when the resolver's own answer never answered ``--version``
+def _unheard_on_path(patient_seconds: int = 0) -> str | None:
+    """A clause naming the first of the resolver's candidates (in its order,
+    the launcher last) that resolves and whose ``--version`` never answered
     (``DEF-5015``), else None. A prescriber reads it before saying "install
-    Python" or "put a Python on PATH": a mute interpreter may be the Python of
-    the floor this host already has, on a host too loaded to say so."""
-    return banner_unanswered_of(_detect_python_command())
+    Python" or "put a Python on PATH": such an interpreter may be the Python of
+    the floor this host already has, on a host too loaded to say so, whether
+    or not it is the resolver's own answer (a below-floor candidate outranks
+    it). With ``patient_seconds`` (doctor's blocking-hook time) a candidate is
+    asked once more for that long, and one that then answers as anything but a
+    Python 3 is no longer unheard: it answered."""
+    for name in (*RESOLVER_CANDIDATES, LAUNCHER_CANDIDATE):
+        clause = banner_unanswered_of(name)
+        if clause is None:
+            continue
+        if patient_seconds:
+            head, *flags = interpreter_argv(name)
+            resolved = shutil.which(head)
+            late = (interpreter_banner_within([resolved, *flags], patient_seconds)
+                    if resolved else None)
+            if late is not None and not is_python3_banner(late):
+                continue
+        return f"`{name}` on PATH resolves, but {clause}"
+    return None
 
 
 def _remedy_py() -> str:
@@ -8258,15 +8280,16 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
             f"create one.",
             file=sys.stderr,
         )
-    elif result.status == REWIRE_NO_TARGET and banner_unanswered_of(result.detail):
-        # The best candidate never answered `--version` (DEF-5015): no proof
-        # none is installed, so "install" is not the remedy yet.
+    elif result.status == REWIRE_NO_TARGET and (unheard := _unheard_on_path()):
+        # A candidate never answered `--version` (DEF-5015), the best one or
+        # one a below-floor answer outranked: no proof none is installed, so
+        # "install" is not the remedy yet.
         print(
             f"WARN: --rewire-interpreter found no interpreter on PATH that was "
-            f"seen to start and meet Python {floor_text()}+: the best candidate, "
-            f"`{result.detail}`, resolves, but {banner_unanswered_of(result.detail)}. "
-            f"Nothing was changed. Run `{_remedy_py()} -m espalier doctor .` when "
-            f"the host is less loaded before installing another Python.",
+            f"seen to start and meet Python {floor_text()}+ (best candidate: "
+            f"`{result.detail}`), but {unheard}. Nothing was changed. Run "
+            f"`{_remedy_py()} -m espalier doctor .` when the host is less loaded "
+            f"before installing another Python.",
             file=sys.stderr,
         )
     elif result.status == REWIRE_NO_TARGET:
@@ -8964,8 +8987,9 @@ def _not_python3_from_entries(
 
     Only python-shaped words are asked (:func:`_is_python_interpreter_site`);
     ``echo``, ``node`` and a shell string are the executability arm's shapes.
-    Each distinct word is probed once per call, so twelve sites cost one spawn
-    -- none at all when the word is the interpreter running this process -- and
+    Each distinct word is probed once per call, so twelve sites cost one probe
+    (two spawns at most when its first try times out) -- none at all when the
+    word is the interpreter running this process -- and
     the banner a word answered is the one kept for the process
     (:func:`_python_floor.interpreter_banner`, asked twice, ``DEF-5015``), so a
     second ask re-reads it rather than spawning. A shim that is slow ONCE
@@ -9736,13 +9760,12 @@ def _disarmed_diagnosis_shape(repo_root: Path) -> tuple[str, list[str], bool]:
             if resolver_clears_floor:
                 remedy = (f"Rewire the hook commands to one that does: {rewire} "
                           f"(changes only the interpreter name; keeps a .bak of the file).")
-            elif (unheard := _resolver_answer_mute()) is not None:
-                # The rewire's candidate never answered `--version` (DEF-5015):
-                # no proof that none is installed, so not "put a Python on PATH".
-                remedy = (f"The rewire's candidate on PATH resolves, but {unheard}, "
-                          f"so it has no confirmed target yet. Run "
-                          f"`{py} -m espalier doctor .` when the host is less loaded, "
-                          f"before putting another Python on PATH.")
+            elif (unheard := _unheard_on_path()) is not None:
+                # A candidate never answered `--version` (DEF-5015): no proof
+                # that none is installed, so not "put a Python on PATH".
+                remedy = (f"{unheard}, so the rewire has no confirmed target yet. "
+                          f"Run `{py} -m espalier doctor .` when the host is less "
+                          f"loaded, before putting another Python on PATH.")
             else:
                 # The rewire computes its target with the same resolver, so on
                 # this host it would refuse (REWIRE_NO_TARGET). The blocker is

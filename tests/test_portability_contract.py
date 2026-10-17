@@ -1546,10 +1546,6 @@ class TestRemediesSpellTheRemedyInterpreter:
             "three hand-edit sentences name the value to write (the `written` local)",
         ("espalier/doctor.py", "run_doctor_check", "_resolver_hint"):
             "three hand-edit sentences name the value to write (the `written` local)",
-        ("espalier/cli.py", "_resolver_answer_mute", "_detect_python_command"):
-            "asks whether the resolver's own answer never answered --version "
-            "(DEF-5015), so a prescriber does not say install; returns a clause, "
-            "never the name",
         ("espalier/doctor.py", "_check_python_resolver", "_resolver_hint"):
             "two remedy sentences name the rewire target, which settings.json will "
             "carry, in strings of their own (the `written` local); their commands "

@@ -865,6 +865,19 @@ class TestPythonResolverCheck:
     (Windows ships ``python.exe``, not ``python3``; macOS may need a
     brew install)."""
 
+    @staticmethod
+    def _seen_to_answer(doctor_module, monkeypatch):
+        """Say the banner and the start-up probe answered (DEF-5014, DEF-5015).
+        ``which`` is fabricated in these tests, so the real probes behind the
+        "not confirmed" seams would spawn the host's own ``/usr/bin/python3``
+        and, on a loaded runner, read it as slow: #271's macOS portability
+        cell went red that way on 2026-10-17, a pass that hung on the
+        runner's load."""
+        monkeypatch.setattr(doctor_module, "_interpreter_banner_unanswered",
+                            lambda path, *flags: None)
+        monkeypatch.setattr(doctor_module, "_interpreter_start_unconfirmed",
+                            lambda argv: None)
+
     def test_warns_when_python3_missing(self, tmp_path, monkeypatch):
         settings = tmp_path / ".claude" / "settings.json"
         settings.parent.mkdir(parents=True)
@@ -912,6 +925,7 @@ class TestPythonResolverCheck:
             doctor_module, "_interpreter_meets_floor",
             lambda path: path == "/usr/bin/python3",
         )
+        self._seen_to_answer(doctor_module, monkeypatch)
         issues = doctor_module._check_python_resolver(tmp_path, settings)
         assert issues == []
 
@@ -1061,6 +1075,7 @@ class TestPythonResolverCheck:
             doctor_module, "_interpreter_meets_floor",
             lambda path: path == "/usr/bin/python3",
         )
+        self._seen_to_answer(doctor_module, monkeypatch)
         assert doctor_module._check_python_resolver(tmp_path, settings) == []
 
     def test_present_python3_nudges_reinit_not_brew(self, tmp_path, monkeypatch):
@@ -1107,6 +1122,7 @@ class TestPythonResolverCheck:
             doctor_module, "_interpreter_start_failure",
             lambda argv: None if list(argv) == ["/usr/bin/python3"] else "cannot start: stub",
         )
+        self._seen_to_answer(doctor_module, monkeypatch)
         issues = doctor_module._check_python_resolver(tmp_path, settings)
         assert any("python" in i for i in issues)
         joined = " ".join(issues)
