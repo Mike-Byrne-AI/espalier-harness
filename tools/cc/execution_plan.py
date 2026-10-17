@@ -260,6 +260,12 @@ def _plan_lock():
 #: The two step-text fields a claim can meet: `files: a, b; ...` (the step
 #: convention every command body shows) and `classes: C13, C24` (optional).
 _STEP_FIELD_RE = re.compile(r"\b(files|classes):\s*([^;|]+)")
+#: The third, read on its own: `symbols: path::name, ...`, the
+#: functions, methods, classes or module-level names a step changes, as a
+#: claim carries them. Its own pattern, so a prose `symbols:` never runs on
+#: over a later `files:` in the same segment and takes it from the field
+#: above (code review, driven: one widened pattern lost a path warning).
+_STEP_SYMBOLS_RE = re.compile(r"\bsymbols:\s*([^;|]+)")
 #: A pack or ledger row id anywhere in the step text (`DEF-1127`, `DEF-371a`,
 #: a pack's id): the shape the mail channel's ids take. An assignment is matched
 #: by string, so a token of this shape that names no job meets nothing.
@@ -272,18 +278,64 @@ def _step_fields(steps: str) -> tuple[list[str], list[str]]:
     dot) or a class id; a note in parentheses is not an entry."""
     paths: list[str] = []
     classes: list[str] = []
-    for kind, value in _STEP_FIELD_RE.findall(steps):
-        value = re.sub(r"\([^)]*\)", " ", value)  # a note in parentheses, commas and all, is not an entry
-        for entry in value.split(","):
-            tok = entry.strip().strip("`'\"").split(" ")[0].strip().strip("`'\"")
-            if not tok or tok.startswith("("):
-                continue
-            if kind == "files":
-                if "/" in tok or "." in tok:
-                    paths.append(tok)
-            else:
-                classes.append(tok)
+    for kind, tok in _step_entries(steps):
+        if kind == "files":
+            if "/" in tok or "." in tok:
+                paths.append(tok)
+        elif kind == "classes":
+            classes.append(tok)
     return paths, classes
+
+
+def _field_entries(value: str) -> list[str]:
+    """The entries of one field's value: the first token of each
+    comma-separated entry, quotes and backticks stripped; a note in
+    parentheses, commas and all, is not an entry (nor a call's parentheses
+    after a symbol, `path::f()`)."""
+    value = re.sub(r"\([^)]*\)", " ", value)
+    out: list[str] = []
+    for entry in value.split(","):
+        tok = entry.strip().strip("`'\"").split(" ")[0].strip().strip("`'\"")
+        if tok and not tok.startswith("("):
+            out.append(tok)
+    return out
+
+
+def _step_entries(steps: str) -> list[tuple[str, str]]:
+    """``(field, entry)`` for every entry of every `files:` and `classes:` field."""
+    return [(kind, tok) for kind, value in _STEP_FIELD_RE.findall(steps) for tok in _field_entries(value)]
+
+
+def _step_symbols(steps: str) -> list[str]:
+    """The ``symbols:`` a plan's steps name, ``path::name``, in order and
+    once each; an entry with no ``::`` is not a symbol."""
+    out: list[str] = []
+    for value in _STEP_SYMBOLS_RE.findall(steps):
+        for tok in _field_entries(value):
+            if "::" in tok and tok not in out:
+                out.append(tok)
+    return out
+
+
+def _unresolved_symbols(symbols: list[str], root: Path, mapper) -> list[str]:
+    """One advisory line per step symbol that names no definition in its file
+    at the working tree, read by ``mapper.spans`` (``_symbols``, the mapper a
+    claim's symbols come from): a typo meets no claim, and a symbol is the one
+    thing here a seat spells by hand. A file that is not there is said too.
+    Either may be what the plan adds; a claim meets it by its file meanwhile."""
+    lines: list[str] = []
+    for symbol in symbols:
+        where, _sep, name = symbol.partition("::")
+        try:
+            source = (root / where).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            lines.append(f"WARN: symbols: {symbol} names {where}, which is not in the working tree "
+                         "(a file this plan adds, or a typo); claims meet it by the file until it is")
+            continue
+        if name not in {n for n, *_ in mapper.spans(source)}:
+            lines.append(f"WARN: symbols: {symbol} names no definition in {where} at the working tree "
+                         "(a typo, or one this plan adds); claims meet it by the file until it does")
+    return [line.encode("ascii", "replace").decode("ascii") for line in lines]
 
 
 def _claim_overlaps(steps: str, mail=None) -> list[str]:
@@ -297,7 +349,10 @@ def _claim_overlaps(steps: str, mail=None) -> list[str]:
     wall. Where this box's name could not be read (a timeout, a config git
     cannot parse), one warning says the plan was not checked, since silence
     would read as a plan that meets no claim. Local refs only; the fetch is
-    SessionStart's. ``mail`` is the channel module, injectable for tests."""
+    SessionStart's. A step's ``symbols:`` that name no definition warn
+    whether or not the channel can be read, since a typo is the plan's own.
+    ``mail`` is the channel module, injectable for tests."""
+    typed: list[str] = []
     try:
         if mail is None:
             path = Path(__file__).resolve().parent / "mail.py"
@@ -313,30 +368,36 @@ def _claim_overlaps(steps: str, mail=None) -> list[str]:
                 sys.modules[alias] = mail
                 spec.loader.exec_module(mail)
         paths, classes = _step_fields(steps)
+        symbols = _step_symbols(steps)
         ids = sorted(set(_STEP_ID_RE.findall(steps)))
-        if not paths and not classes and not ids:
+        if not paths and not classes and not ids and not symbols:
             return []
         root = _paths._repo_root()  # the plan file's own root, the single owner
+        # A channel module from before claims carried symbols has no mapper and
+        # no symbols key: its matcher meets the steps by path and class, as before.
+        mapper = getattr(mail, "_symbols", None)
+        typed = _unresolved_symbols(symbols, root, mapper) if symbols and mapper is not None else []
         machine, how = mail.machine_setting(root)
         if machine is None:
             unread = getattr(mail, "MACHINE_UNREAD", None)  # a channel module from before the phrase has none
             if unread and str(how).startswith(unread):
                 # Not an unnamed box: silence here reads as a plan that meets no claim.
-                return [f"WARN: this seat's machine name could not be read ({how}), so this plan was not "
-                        "checked against the other machines' live claims or the dispatcher's jobs; /inbox "
-                        "reads them once git answers"]
-            return []
+                return typed + [f"WARN: this seat's machine name could not be read ({how}), so this plan was not "
+                                "checked against the other machines' live claims or the dispatcher's jobs; /inbox "
+                                "reads them once git answers"]
+            return typed
         by_machine, _skipped = mail.read_mail(root)
+        by_symbol = {"symbols": symbols} if hasattr(mail, "SYMBOLS_KEY") else {}
         found = mail.overlapping_claims(mail.live_claims(by_machine), paths=paths, classes=classes,
-                                        exclude_machine=machine)
+                                        exclude_machine=machine, **by_symbol)
         jobs: list = []
         if hasattr(mail, "live_assignments"):  # a channel module from before the assign type has no assignments
             dispatcher, _how = mail.dispatcher_setting(root)
             jobs = mail.overlapping_assignments(mail.live_assignments(by_machine, dispatcher),
                                                 classes=classes, ids=ids, seat=machine)
-    except Exception:  # noqa: BLE001 -- fail-open: ok advisory pre-flight; silent where the channel's module or refs cannot be read (a scratch tree), the plan is never held; a name read that failed warns above
-        return []
-    lines: list[str] = []
+    except Exception:  # noqa: BLE001 -- fail-open: ok advisory pre-flight; silent where the channel's module or refs cannot be read (a scratch tree), the plan is never held; a name read that failed warns above, a typed symbol's warning is kept
+        return typed
+    lines: list[str] = list(typed)
     for claim, hits in found:
         re_ = claim.get("re") or {}
         lane = f" on {re_['lane']}" if re_.get("lane") else ""

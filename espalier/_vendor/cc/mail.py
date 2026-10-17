@@ -82,6 +82,7 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _json_safe import decode_text_or_problem, os_error_text  # noqa: E402
 from record_merge import Unresolvable, run  # noqa: E402  the one spawn and the named stop
+import _symbols  # noqa: E402  the symbols a lane changes, derived from its diff, carried by claims
 
 #: The git config key that names this box and turns the channel on; per clone
 #: (``.git/config``), never tracked.
@@ -118,6 +119,16 @@ RE_KEYS: tuple[str, ...] = ("lane", "classes", "paths", "ids")
 #: Written into ``re`` on an assign only, so every other message keeps the
 #: shape above byte for byte and an older reader ignores the key.
 ASSIGN_SEAT_KEY = "seat"
+#: ``symbols`` (since 2026-10-17): the symbols a claim's lane
+#: changed, ``path::qualname`` as ``_symbols`` derives them (a function, a
+#: method, a class, a module-level name; ``path::<module>`` where the lane left
+#: lines no definition holds), sorted. Written into ``re`` on a claim only, and
+#: only when given, so every other message, and a claim sent without them,
+#: keeps the shape above byte for byte and an older reader ignores the key.
+#: ``symbols_more`` counts what :data:`MAX_SYMBOLS` left out, written only when
+#: it is not zero.
+SYMBOLS_KEY = "symbols"
+SYMBOLS_MORE_KEY = "symbols_more"
 #: The tracked ``espalier.toml`` key naming the dispatcher seat. A team setting,
 #: the same on every clone, so it is tracked; the machine name is per clone and
 #: never is. Declared in espalier/config.py::FOREIGN_KEYS.
@@ -127,6 +138,11 @@ MAX_TEXT = 2000
 MAX_PATHS = 64
 MAX_CLASSES = 16
 MAX_IDS = 64
+#: The symbols one claim carries; the rest are a count (``SYMBOLS_MORE_KEY``),
+#: and their paths are kept whole in ``paths``.
+MAX_SYMBOLS = 128
+#: How many of a claim's symbols a listing prints before the count.
+_SYMBOLS_SHOWN = 8
 #: A ledger row id: an UPPERCASE prefix, a hyphen, digits, an optional
 #: lowercase suffix (``DEF-1127``, ``LG-6``, ``DEF-371a``; every one of the
 #: 422 ids on the live ledger, 2026-10-05). The shape only; the ledger's own
@@ -261,14 +277,18 @@ def _repo_relative(path: str) -> str:
 def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
                 classes: tuple[str, ...] | list[str] = (), paths: tuple[str, ...] | list[str] = (),
                 ids: tuple[str, ...] | list[str] = (),
-                ack: str | None = None, now: datetime | None = None, seat: str | None = None) -> dict:
+                ack: str | None = None, now: datetime | None = None, seat: str | None = None,
+                symbols: tuple[str, ...] | list[str] = ()) -> dict:
     """A message in the pinned shape, validated: the type is one of
     :data:`TYPES`, the text is bounded, every path is repo-relative, every id
     is a row id, a claim names at least a lane, a class, a path or an id, a
     release names the id it answers or the lane it closes, an ack names the
     id it answers (never a lane: nothing reads a lane-only ack), and an
     assign names a seat and a job (a lane, a class or an id) while nothing
-    else names a seat. ``now`` is for tests."""
+    else names a seat. ``symbols`` (a claim's only) are ``path::name`` with
+    the path repo-relative; their paths join ``paths``, so a reader that
+    knows only paths meets the lane, and past :data:`MAX_SYMBOLS` the rest
+    are a count. ``now`` is for tests."""
     if not _MACHINE_RE.match(machine or ""):
         raise Unresolvable(f"{machine!r} is not a machine name this channel takes")
     if type_ not in TYPES:
@@ -279,6 +299,17 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     if not text and type_ in ("note", "request"):
         raise Unresolvable(f"a {type_} needs text")
     norm_paths = [_repo_relative(p) for p in paths]
+    norm_symbols: set[str] = set()
+    for raw in symbols:
+        where, sep, name = str(raw).strip().partition("::")
+        if not sep or not name.strip():
+            raise Unresolvable(f"a symbol is `path::name`, not `{raw}`")
+        norm_symbols.add(f"{_repo_relative(where)}::{name.strip()}")
+    if norm_symbols and type_ != "claim":
+        raise Unresolvable(f"symbols belong to a claim, not a {type_}")
+    for where in sorted({s.split("::", 1)[0] for s in norm_symbols}):
+        if not any(where == p or where.startswith(p + "/") for p in norm_paths):  # a directory claims its files
+            norm_paths.append(where)
     if len(norm_paths) > MAX_PATHS:
         raise Unresolvable(f"{len(norm_paths)} paths; the cap is {MAX_PATHS}")
     norm_classes = [c.strip() for c in classes if c and c.strip()]
@@ -316,6 +347,11 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     re_: dict = {"lane": lane, "classes": norm_classes, "paths": norm_paths, "ids": norm_ids}
     if type_ == "assign":
         re_[ASSIGN_SEAT_KEY] = seat
+    if norm_symbols:
+        kept = sorted(norm_symbols)
+        re_[SYMBOLS_KEY] = kept[:MAX_SYMBOLS]
+        if len(kept) > MAX_SYMBOLS:
+            re_[SYMBOLS_MORE_KEY] = len(kept) - MAX_SYMBOLS
     return {
         "v": SCHEMA_VERSION, "id": mid, "type": type_, "from": machine, "at": at,
         "re": re_, "text": text, "ack": ack,
@@ -401,15 +437,22 @@ def _secret_matcher() -> Callable[[str], str | None]:
 
 
 def secret_hits(message: dict, *, matcher: Callable[[str], str | None] | None = None) -> list[str]:
-    """Every token of the text and every path that the guard reads as a
-    secret-bearing path, labelled; empty when the message may go."""
+    """Every token of the text, every path and every symbol's path that the
+    guard reads as a secret-bearing path, labelled; empty when the message
+    may go. A symbol's path fills ``paths`` at the writer, and is scanned on
+    its own too, so a block built any other way is checked the same."""
     match = matcher or _secret_matcher()
     hits: list[str] = []
     for tok in _TOKEN_SPLIT_RE.split(message.get("text") or ""):
         label = match(tok) if tok else None
         if label:
             hits.append(f"`{tok}` ({label})")
-    for p in (message.get("re") or {}).get("paths") or []:
+    re_ = message.get("re") or {}
+    seen: set[str] = set()
+    for p in [*(re_.get("paths") or []), *(str(s).split("::", 1)[0] for s in re_.get(SYMBOLS_KEY) or [])]:
+        if p in seen:
+            continue
+        seen.add(p)
         label = match(p)
         if label:
             hits.append(f"`{p}` ({label})")
@@ -634,6 +677,12 @@ def live_requests(by_machine: dict[str, list[dict]], *, now: datetime | None = N
     return [{**m, "age_s": age_seconds(m, now)} for _at, _who, _i, m in asks]
 
 
+def _count(value: object) -> int:
+    """A count another machine wrote (``SYMBOLS_MORE_KEY``): its whole number,
+    or 0 for anything else, since a reader never trusts a text it did not write."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
 def _touches(a: str, b: str) -> bool:
     a, b = a.rstrip("/"), b.rstrip("/")
     return a == b or a.startswith(b + "/") or b.startswith(a + "/")
@@ -642,31 +691,77 @@ def _touches(a: str, b: str) -> bool:
 def overlapping_claims(claims: list[dict], *, paths: list[str] | tuple[str, ...] = (),
                        classes: list[str] | tuple[str, ...] = (), lane: str | None = None,
                        ids: list[str] | tuple[str, ...] = (),
-                       exclude_machine: str | None = None) -> list[tuple[dict, list[str]]]:
+                       exclude_machine: str | None = None,
+                       symbols: list[str] | tuple[str, ...] = ()) -> list[tuple[dict, list[str]]]:
     """``[(claim, [what overlaps])]`` for live claims from OTHER machines whose
-    paths (a directory covers what is under it, either way), classes, row ids
-    or lane meet the given ones. An ``id`` hit is the one the ledger verbs
-    refuse on (one id minted twice, or one row touched on both sides, is what
-    the record merge cannot take); a ``class`` hit is advisory there, since two
-    rows in one class merge cleanly."""
+    paths (a directory covers what is under it, either way), symbols, classes,
+    row ids or lane meet the given ones. An ``id`` hit is the one the ledger
+    verbs refuse on (one id minted twice, or one row touched on both sides, is
+    what the record merge cannot take); a ``class`` hit is advisory there,
+    since two rows in one class merge cleanly. A ``symbol`` hit is
+    ``_symbols.symbols_meet``'s, the one rule (a class covers its methods), and
+    a symbol's file counts as a path given; where both sides name symbols in
+    one file and none meets, the hit stays a path hit and says no symbol is in
+    common, which is no certificate (an import or a moved line is not a
+    symbol), and it says so only where the lane's symbol list is whole. A
+    machine's live claims on one lane are read as one lane (a claim and its
+    ``--delta`` follow-up), so a symbol one names is met for all; the hit is
+    reported on the claim that names it. A claim without symbols meets by
+    path exactly as before."""
     found: list[tuple[dict, list[str]]] = []
     mine: list[str] = []
-    for p in paths:
+    ours_symbols: set[str] = set()
+    for s in symbols:
+        where, sep, name = str(s).strip().partition("::")
+        if not sep or not name.strip():
+            continue
+        try:
+            ours_symbols.add(f"{_repo_relative(where)}::{name.strip()}")
+        except Unresolvable:
+            continue
+    our_symbol_files = {s.split("::", 1)[0] for s in ours_symbols}
+    for p in [*paths, *sorted(our_symbol_files)]:
         if not p or not str(p).strip():
             continue
         try:
-            mine.append(_repo_relative(str(p)))
+            q = _repo_relative(str(p))
         except Unresolvable:
             continue  # one token a plan wrote badly costs itself, never the warnings for the rest
+        if q not in mine:
+            mine.append(q)
+    # One lane, read whole: every live claim of a machine on a lane, its
+    # symbols united and any count of left-out symbols summed.
+    lanes: dict[tuple[str, str], tuple[set[str], int]] = {}
+    for claim in claims:
+        re_ = claim.get("re") or {}
+        if re_.get("lane"):
+            key = (str(claim.get("from") or ""), str(re_["lane"]))
+            got, more = lanes.get(key, (set(), 0))
+            lanes[key] = (got | {str(s) for s in re_.get(SYMBOLS_KEY) or []},
+                          more + _count(re_.get(SYMBOLS_MORE_KEY)))
     for claim in claims:
         if exclude_machine and claim.get("from") == exclude_machine:
             continue
         re_ = claim.get("re") or {}
         hits: list[str] = []
+        own_symbols = {str(s) for s in re_.get(SYMBOLS_KEY) or []}
+        lane_symbols_, lane_more = lanes.get((str(claim.get("from") or ""), str(re_.get("lane") or "")),
+                                             (own_symbols, _count(re_.get(SYMBOLS_MORE_KEY))))
+        lane_files = {s.split("::", 1)[0] for s in lane_symbols_}
+        met = _symbols.symbols_meet(ours_symbols, own_symbols) if ours_symbols and own_symbols else set()
+        lane_met = _symbols.symbols_meet(ours_symbols, lane_symbols_) if ours_symbols and lane_symbols_ else set()
+        lane_met_files = {s.split("::", 1)[0] for s in lane_met}
         for theirs in re_.get("paths") or []:
             for ours in mine:
-                if _touches(str(theirs), ours):
+                if not _touches(str(theirs), ours):
+                    continue
+                if ours == theirs and ours in lane_met_files:
+                    continue  # a symbol hit on the lane names it
+                if ours == theirs and ours in our_symbol_files and ours in lane_files and not lane_more:
+                    hits.append(f"path {ours} (their {theirs}; no symbol in common)")
+                else:
                     hits.append(f"path {ours} (their {theirs})")
+        hits += [f"symbol {s}" for s in sorted(met)]
         for c in re_.get("classes") or []:
             if c in classes:
                 hits.append(f"class {c}")
@@ -1031,6 +1126,82 @@ def own_live_claims(by_machine: dict[str, list[dict]], machine: str, lane: str) 
     would close."""
     return [c for c in live_claims(by_machine)
             if c.get("from") == machine and (c.get("re") or {}).get("lane") == lane]
+
+
+def _ship_default_base() -> str:
+    """The base a lane is read against when none is named: the default branch
+    on origin, as the ship driver reads it (``ship.default_branch``, loaded by
+    path at the call, the way ship.py loads this module)."""
+    path = Path(__file__).resolve().parent / "ship.py"
+    if not path.is_file():
+        raise Unresolvable("ship.py is not beside this script, so the default branch cannot be read: "
+                           "name the base (--symbols-from <base>)")
+    alias = "_mail_ship"
+    mod = sys.modules.get(alias)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(alias, path)
+        if spec is None or spec.loader is None:
+            raise Unresolvable("ship.py could not be loaded: name the base (--symbols-from <base>)")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except OSError as exc:
+            sys.modules.pop(alias, None)
+            raise Unresolvable(f"ship.py could not be loaded ({os_error_text(exc)}): "
+                               "name the base (--symbols-from <base>)") from None
+        except Exception as exc:  # noqa: BLE001 -- any load failure is the same refusal, the half-loaded module dropped
+            sys.modules.pop(alias, None)
+            raise Unresolvable(f"ship.py could not be loaded (a {type(exc).__name__} at its import): "
+                               "name the base (--symbols-from <base>)") from None
+    try:
+        return f"{REMOTE}/{mod.default_branch()}"
+    except mod.Refused as exc:
+        raise Unresolvable(f"{exc}; or name the base (--symbols-from <base>)") from None
+
+
+def lane_symbols(root: Path, base: str | None = None, *, run: Runner = run) -> tuple[list[str], list[str]]:
+    """``(symbols, paths)`` the lane checked out at ``root`` changes, read
+    against the merge-base of ``base`` (default: the default branch on origin,
+    as the ship driver reads it) and HEAD, its working tree and untracked
+    files included (``_symbols.symbols_of_lane``): every Python file's
+    symbols, sorted, and every changed path, mirror twins folded onto their
+    source."""
+    placements = _symbols.symbols_of_lane(root, base or _ship_default_base(), run=run, env=git_env())
+    symbols = sorted(s for p in placements.values() if p["kind"] == "python" for s in p["symbols"])
+    return symbols, sorted(placements)
+
+
+def fit_paths(given: list[str], derived: list[str], room: int = MAX_PATHS) -> tuple[list[str], int]:
+    """``given`` and then ``derived`` paths within ``room``: past it, the
+    derived paths fold to their directories, one level at a time from the
+    deepest, until they fit (a directory claims what is under it, so every
+    derived file stays met, at the cost of naming its neighbours too).
+    ``(paths, how many derived paths were folded)``; the given paths are
+    never folded, and when even the top directories do not fit the cap
+    refuses at the message as before."""
+    paths = list(given)
+    rest = [p for p in derived if not any(p == q or p.startswith(q.rstrip("/") + "/") for q in paths)]
+    if len(paths) + len(rest) <= room:
+        return paths + rest, 0
+    depth = max((p.count("/") for p in rest), default=0)
+    folded = rest
+    while depth > 0 and len(paths) + len(folded) > room:
+        folded = sorted({"/".join(p.split("/")[:depth]) for p in folded})
+        folded = [p for p in folded if not any(p != q and p.startswith(q + "/") for q in folded)]
+        depth -= 1
+    return paths + folded, len(rest)
+
+
+def symbol_delta(own: list[dict], symbols: list[str], paths: list[str]) -> tuple[list[str], list[str]]:
+    """What ``symbols`` and ``paths`` add to this machine's live claims
+    ``own``: the symbols none of them names and the paths none of them covers.
+    A symbol past an earlier claim's cap is named by none, so it is sent again:
+    the cap's cost, on a lane of more than :data:`MAX_SYMBOLS` symbols."""
+    named = {str(s) for c in own for s in (c.get("re") or {}).get(SYMBOLS_KEY) or []}
+    claimed = [str(p) for c in own for p in (c.get("re") or {}).get("paths") or []]
+    return ([s for s in symbols if s not in named],
+            [p for p in paths if not any(_touches(p, q) for q in claimed)])
 
 
 def release_lane(root: Path, lane: str, text: str = "", *, run: Runner = run,
@@ -1405,6 +1576,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--ack", default=None, help="the id of the message this answers or the claim it releases")
     s.add_argument("--seat", default=None,
                    help="an assign's seat: the machine name the dispatcher gives the job to")
+    s.add_argument("--symbols-from", dest="symbols_from", nargs="?", const="", default=None, metavar="BASE",
+                   help="a claim's symbols, derived from the lane's diff against the merge-base with BASE "
+                        "(default: the default branch on origin, as ship.py reads it), the working tree and "
+                        "untracked files included; their paths join the claim's paths")
+    s.add_argument("--delta", action="store_true",
+                   help="with --symbols-from and --lane: send only what no live claim of this machine on the "
+                        "lane names; send nothing, and say so, when nothing is new or the lane's claims were released")
     s.add_argument("--dry-run", action="store_true", help="print the line that would be sent; touch nothing")
 
     i = sub.add_parser("inbox", help="the messages from the other machines (bodies)")
@@ -1453,6 +1631,11 @@ def _print_message(m: dict) -> None:
         print(f"    paths: {', '.join(str(p) for p in re_['paths'])}")
     if re_.get("ids"):
         print(f"    ids: {', '.join(str(i) for i in re_['ids'])}")
+    symbols = [str(s) for s in re_.get(SYMBOLS_KEY) or []]
+    if symbols:
+        more = max(0, len(symbols) - _SYMBOLS_SHOWN) + _count(re_.get(SYMBOLS_MORE_KEY))
+        line = f"    symbols: {', '.join(symbols[:_SYMBOLS_SHOWN])}" + (f" (+{more} more)" if more else "")
+        print(line.encode("ascii", "replace").decode("ascii"))
     if m.get("ack"):
         print(f"    ack: {m['ack']}")
     text = m.get("text") or ""
@@ -1478,8 +1661,36 @@ def main(argv: list[str] | None = None) -> int:
             raise Unresolvable(_off_reason(how))
         if args.verb == "send":
             text = _read_text_file(args.text_file) if args.text_file is not None else args.text
+            paths, symbols = list(args.paths), []
+            if args.symbols_from is not None or args.delta:
+                if args.type != "claim":
+                    raise Unresolvable("--symbols-from and --delta derive a claim's symbols: they go with --type claim")
+                if args.symbols_from is None:
+                    raise Unresolvable("--delta sends what the lane's diff adds to this machine's claims: "
+                                       "it goes with --symbols-from")
+                if args.delta and not args.lane:
+                    raise Unresolvable("--delta compares with this machine's live claims on a lane: name it (--lane)")
+                own: list[dict] = []
+                if args.delta:
+                    # The claims first: a released lane sends nothing, and says so, before
+                    # anything is derived (a base read can need the network).
+                    by_machine, _skipped = read_mail(root)
+                    own = own_live_claims(by_machine, machine, args.lane)
+                    if not own:
+                        print("no live claim on this lane")
+                        return 0
+                symbols, derived = lane_symbols(root, args.symbols_from or None)
+                if args.delta:
+                    symbols, derived = symbol_delta(own, symbols, derived)
+                    if not symbols and not derived:
+                        print("no new symbols")
+                        return 0
+                paths, folded = fit_paths(paths, derived)
+                if folded:
+                    print(f"note: {folded} changed paths folded into their directories to fit the cap of "
+                          f"{MAX_PATHS}; a directory claims what is under it", file=sys.stderr)
             message = new_message(machine, args.type, text, lane=args.lane, classes=args.classes,
-                                  paths=args.paths, ids=args.ids, ack=args.ack, seat=args.seat)
+                                  paths=paths, ids=args.ids, ack=args.ack, seat=args.seat, symbols=symbols)
             if args.type == "assign":
                 refusal = assign_refusal(root, machine)
                 if refusal:

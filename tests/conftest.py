@@ -1233,6 +1233,12 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # other machine's fetch and read, the same-name refusal): the ref
             # mechanics are the thing under test, so no mock stands in.
             "test_mail",
+            # Drives tools/cc/_symbols.py's lane reader through real git in a
+            # scratch repository (a merge-base, a moved base, the working tree
+            # and untracked files, a move with renames off): what git reports
+            # as changed is the thing under test. The mapper cases beside them
+            # are in-process.
+            "test_symbols",
             # Drives tools/cc/checkout_sync.py through real git in a bare-origin-
             # plus-clones scratch repo (a merged lane, a fast-forward, worktrees
             # added, locked and removed): git's own refusals and ancestry answers

@@ -197,6 +197,71 @@ class TestClaimOverlapPreflight:
         assert len(lines) == 1 and "path tools/cc/mail.py (their tools/cc)" in lines[0]
         assert mod._step_fields("s; files: a.py (also touches b.py, c.py), d.py") == (["a.py", "d.py"], [])
 
+    def _symbol_tree(self, mod, monkeypatch, tmp_path):
+        """A working tree whose `tools/cc/mail.py` defines `send` and `Board.render`."""
+        (tmp_path / "tools" / "cc").mkdir(parents=True)
+        (tmp_path / "tools" / "cc" / "mail.py").write_text(
+            "def send():\n    return 1\n\n\nclass Board:\n    def render(self):\n        return 2\n", encoding="utf-8")
+        monkeypatch.setattr(mod._paths, "_repo_root", lambda: tmp_path)
+
+    def test_a_symbols_step_meets_a_live_claim_by_the_symbol(self, monkeypatch, tmp_path):
+        """TP-702 Wave 1 (1-C): a step's `symbols:` reach the claims matcher, and a claim naming
+        the same function warns by it. Dies to: the field not read, or not handed to the matcher
+        (the step meets the claim as a path only, or not at all with no `files:`)."""
+        mod = _load_plan_module()
+        self._symbol_tree(mod, monkeypatch, tmp_path)
+        mail = _load_mail_module()
+        claim = mail.new_message("win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"])
+        stub = self._mail(monkeypatch, tmp_path, "mac", [claim])
+        lines = mod._claim_overlaps("Fix the send; symbols: tools/cc/mail.py::send(); proof: x", mail=stub)
+        assert len(lines) == 1, lines
+        assert lines[0].startswith("WARN: win claims symbol tools/cc/mail.py::send on lane/w (since "), lines[0]
+        other = mod._claim_overlaps("Render; symbols: tools/cc/mail.py::Board.render; proof: x", mail=stub)
+        assert other == [l for l in other if "no symbol in common" in l] and len(other) == 1, other
+
+    def test_a_typed_symbol_that_resolves_to_nothing_warns(self, monkeypatch, tmp_path):
+        """A symbol is the one thing a seat spells by hand here. Dies to: the step's symbols
+        never checked against the file's definitions (a typo meets no claim, in silence)."""
+        mod = _load_plan_module()
+        self._symbol_tree(mod, monkeypatch, tmp_path)
+        stub = self._mail(monkeypatch, tmp_path, "mac", [])
+        lines = mod._claim_overlaps(
+            "s; symbols: tools/cc/mail.py::sned, tools/cc/mail.py::Board.render, tools/cc/gone.py::f; proof: x",
+            mail=stub)
+        assert len(lines) == 2, lines
+        assert "tools/cc/mail.py::sned" in lines[0] and "no definition" in lines[0] and lines[0].startswith("WARN: ")
+        assert "tools/cc/gone.py::f" in lines[1] and "not in the working tree" in lines[1]
+        assert all(line.isascii() for line in lines)
+
+    def test_prose_naming_symbols_does_not_swallow_a_later_field(self):
+        """One widened pattern let a `symbols:` match run on over a later `files:` in the same
+        segment, and an approved plan's prose lost a path warning it gets today (code review,
+        driven). Dies to: one pattern for the three fields."""
+        mod = _load_plan_module()
+        prose = "Update the exported symbols: none. files: tools/cc/b.py, classes: C1"
+        assert mod._step_fields(prose) == (["tools/cc/b.py"], [])
+
+    def test_a_typed_symbol_warning_outlives_a_channel_that_cannot_be_read(self, monkeypatch, tmp_path):
+        """The typo is about the plan's own text, not the channel. Dies to: the warning computed
+        where a failed mail read drops it with the claim warnings."""
+        mod = _load_plan_module()
+        self._symbol_tree(mod, monkeypatch, tmp_path)
+        stub = self._mail(monkeypatch, tmp_path, "mac", [])
+
+        def broken(root, run=None):
+            raise OSError("no refs here")
+
+        monkeypatch.setattr(stub, "read_mail", broken)
+        lines = mod._claim_overlaps("s; symbols: tools/cc/mail.py::sned; proof: x", mail=stub)
+        assert len(lines) == 1 and "tools/cc/mail.py::sned" in lines[0], lines
+
+    def test_step_fields_keep_their_shape_beside_a_symbols_field(self):
+        """Dies to: a `symbols:` entry read as a class (or the 2-tuple widened under its callers)."""
+        mod = _load_plan_module()
+        assert mod._step_fields("s; symbols: a.py::f; files: b.py; classes: C1") == (["b.py"], ["C1"])
+        assert mod._step_symbols("s; symbols: a.py::f, `b.py::C.m` (new), c.py; files: d.py") == [
+            "a.py::f", "b.py::C.m"]
+
     def test_an_unread_seat_name_is_one_warning_never_silence(self, monkeypatch, tmp_path):
         """A name read that failed (a timeout, a config git cannot parse) is not
         "no machine is named here": the pre-flight skipped every claim and job
