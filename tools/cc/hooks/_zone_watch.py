@@ -34,7 +34,7 @@ import re
 import stat
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -296,14 +296,73 @@ def mid_operation(root: Path) -> str | None:
     return None
 
 
-def _git_objects(root: Path, requests: list[str]) -> list[bytes | None] | None:
+# -- Nested checkouts --------------------------------------------------------
+#
+# A clone, a submodule or a worktree under an adopter's protected path is
+# walked like the rest of the zone (only its ``.git`` is pruned), and the
+# outer HEAD never holds its files, so a pull inside it is judged by its own
+# git (DEF-4012). Only an adopter's protected paths are asked of a nested
+# git: the harness's own zones never hold a checkout, and one planted there
+# would account for whatever its own commit holds.
+
+
+def _adopter_tops(root: Path) -> tuple[str, ...]:
+    """The adopter's protected prefixes, the only ones a nested checkout is sought under."""
+    return tuple(p for p, kind in _hook_utils.adopter_protected_prefixes(root) if kind == "protected")
+
+
+def _checkout_of(root: Path, rel: str, tops: tuple[str, ...], memo: dict[str, bool]) -> str:
+    """The repo-relative directory of the nearest checkout holding ``rel`` at
+    or under one of ``tops`` (a directory whose ``.git`` names a git dir: a
+    clone's directory, or a submodule's or a worktree's gitlink file), or
+    ``""`` for the outer checkout. ``memo`` keeps each directory's answer for
+    one pass."""
+    parts = rel.split("/")[:-1]
+    for depth in range(len(parts), 0, -1):
+        top = "/".join(parts[:depth])
+        if not (top + "/").startswith(tops):
+            break   # above every adopter prefix: what is shallower is not under one either
+        if top not in memo:
+            memo[top] = _hook_utils._git_dir_of(root / top) is not None
+        if memo[top]:
+            return top
+    return ""
+
+
+def nested_heads(root: Path, rels: Iterable[str]) -> dict[str, str]:
+    """``{checkout: HEAD}`` for each nested checkout holding one of ``rels``
+    under an adopter's protected path, read from its own files (no spawn).
+    One with no commit yet is left out: nothing it holds is git's."""
+    tops = _adopter_tops(root)
+    if not tops:
+        return {}
+    memo: dict[str, bool] = {}
+    out: dict[str, str] = {}
+    for top in sorted({_checkout_of(root, rel, tops, memo) for rel in rels} - {""}):
+        head = head_commit(root / top)
+        if head is not None:
+            out[top] = head
+    return out
+
+
+def _nested_operation(root: Path, nested: dict[str, str]) -> str | None:
+    """A git operation half done in a nested checkout the previous check
+    knew, as ``<name> in <checkout>/``, or None."""
+    for top in sorted(nested):
+        name = mid_operation(root / top)
+        if name is not None:
+            return f"{name} in {top}/"
+    return None
+
+
+def _git_objects(root: Path, requests: list[str], *, cwd: Path | None = None) -> list[bytes | None] | None:
     """One ``git cat-file --batch`` for every request (``<rev>:./<path>``,
-    resolved from ``root``): each blob's bytes, or None for a request git has
-    no blob for. None when git cannot answer at all (not installed, not a
-    repository, a timeout, an answer it cannot parse). Every request names a
-    commit id or HEAD, never a reflog entry, so one missing object is a
-    ``missing`` line and never ends the batch. Bytes throughout: a blob is
-    never decoded, only hashed."""
+    resolved from ``cwd``, by default ``root``): each blob's bytes, or None
+    for a request git has no blob for. None when git cannot answer at all
+    (not installed, not a repository, a timeout, an answer it cannot parse).
+    Every request names a commit id or HEAD, never a reflog entry, so one
+    missing object is a ``missing`` line and never ends the batch. Bytes
+    throughout: a blob is never decoded, only hashed."""
     import subprocess
 
     if any("\n" in r for r in requests):
@@ -312,7 +371,7 @@ def _git_objects(root: Path, requests: list[str]) -> list[bytes | None] | None:
         result = _hook_utils.spawn_checked(
             ["git", "cat-file", "--batch"], root=root,
             input=b"".join(os.fsencode(r) + b"\n" for r in requests),
-            capture_output=True, timeout=5, cwd=str(root),
+            capture_output=True, timeout=5, cwd=str(cwd or root),
         )
     except (subprocess.SubprocessError, OSError):  # fail-open: ok deliberate -- None makes the caller report the change and say git could not answer
         return None
@@ -361,6 +420,7 @@ def new_baseline(root: Path, files: dict[str, Entry], taken_ns: int, *,
     record: dict[str, Any] = {
         "v": BASELINE_VERSION, "taken_ns": taken_ns, "files": files, "known": {},
         "told": [], "head": head_commit(root), "watched": watched_prefixes(root),
+        "nested": nested_heads(root, files),
     }
     if disabled:
         record["disabled"] = disabled
@@ -375,7 +435,9 @@ def _valid_entry(entry: object) -> bool:
 
 def read_baseline(path: Path) -> dict[str, Any] | None:
     """The baseline at ``path``, or None when there is no usable one (absent,
-    unreadable, another schema, a malformed entry): the caller takes a new one."""
+    unreadable, another schema, a malformed entry): the caller takes a new one.
+    ``nested`` (each nested checkout's HEAD) is optional, so a baseline written
+    before it reads as one with none known."""
     try:
         raw = path.read_bytes()
     except OSError:  # fail-open: ok deliberate -- no readable baseline: the caller takes one and says the call was unchecked
@@ -385,6 +447,7 @@ def read_baseline(path: Path) -> dict[str, Any] | None:
         return None
     files, known, told = record.get("files"), record.get("known"), record.get("told")
     taken, head, watched = record.get("taken_ns"), record.get("head"), record.get("watched")
+    nested = record.setdefault("nested", {})
     if not (isinstance(files, dict) and all(_valid_entry(e) for e in files.values())
             and isinstance(known, dict)
             and all(isinstance(v, list) and all(isinstance(d, str) for d in v) for v in known.values())
@@ -392,6 +455,7 @@ def read_baseline(path: Path) -> dict[str, Any] | None:
             and isinstance(taken, int) and not isinstance(taken, bool)
             and (head is None or isinstance(head, str))
             and isinstance(watched, list) and all(isinstance(p, str) for p in watched)
+            and isinstance(nested, dict) and all(isinstance(v, str) for v in nested.values())
             and isinstance(record.get("disabled", ""), str)):
         return None
     return record
@@ -576,11 +640,13 @@ def _blob_holds(blob: bytes | None, digest: str | None) -> bool:
 def account(root: Path, sid: object, moved: dict[str, list[str]],
             before: dict[str, Entry], after: dict[str, Entry],
             own_known: dict[str, list[str]], since_ns: int,
-            base_head: str | None) -> tuple[dict[str, list[str]], list[str]]:
+            base_head: str | None,
+            base_nested: dict[str, str] | None = None) -> tuple[dict[str, list[str]], list[str]]:
     """The moved paths no legitimate path accounts for, by kind, and notes on
     any path that could not be asked. Checked only for what moved, so a call
     that changed nothing never reaches here; accounting is an OR, so the
-    cheap paths run first and git, the one spawn, runs last:
+    cheap paths run first and git, the one spawn (one per checkout asked),
+    runs last:
 
     1. known content: a file tool wrote it (judged by path before it ran), or
        a path accounted for it, or this check reported it -- in this session
@@ -592,7 +658,9 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
        that ended after ``since_ns``, the previous check;
     2. git: the file now holds its content at HEAD; a removed file is absent
        at HEAD and was present at ``base_head``, the HEAD of the previous
-       check, through any number of moves in one call.
+       check, through any number of moves in one call. A file in a nested
+       checkout under an adopter's protected path is asked of that checkout's
+       own git, its HEAD then against ``base_nested``'s (``nested_heads``).
     """
     remaining = {kind: list(paths) for kind, paths in moved.items()}
     notes: list[str] = []
@@ -621,21 +689,36 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
     if any(remaining.values()):
         kept = remaining["changed"] + remaining["added"]
         gone = remaining["removed"]
-        requests = [f"HEAD:./{r}" for r in kept + gone]
-        if base_head is not None:
-            requests += [f"{base_head}:./{r}" for r in gone]
-        answers = _git_objects(root, requests)
-        if answers is None:
-            notes.append("git could not be asked, so committed content was not checked")
-        else:
-            at_head = dict(zip(kept + gone, answers[:len(kept) + len(gone)]))
-            at_base = dict(zip(gone, answers[len(kept) + len(gone):])) if base_head is not None else {}
-            for kind in ("changed", "added"):
-                remaining[kind] = [r for r in remaining[kind] if not _blob_holds(at_head.get(r), present(r))]
-            remaining["removed"] = [
-                r for r in gone
-                if not (at_head.get(r) is None
-                        and (at_base.get(r) is not None or before[r][2] in known.get(r, ())))]
+        tops = _adopter_tops(root)
+        memo: dict[str, bool] = {}
+        by_checkout: dict[str, list[str]] = {}
+        for r in kept + gone:
+            by_checkout.setdefault(_checkout_of(root, r, tops, memo) if tops else "", []).append(r)
+        gone_set = set(gone)
+        asked: set[str] = set()
+        at_head: dict[str, bytes | None] = {}
+        at_base: dict[str, bytes | None] = {}
+        for top, rels in sorted(by_checkout.items()):
+            inside = {r: r[len(top) + 1:] if top else r for r in rels}
+            base = base_head if not top else (base_nested or {}).get(top)
+            gone_here = [r for r in rels if r in gone_set] if base is not None else []
+            requests = [f"HEAD:./{inside[r]}" for r in rels] + [f"{base}:./{inside[r]}" for r in gone_here]
+            answers = _git_objects(root, requests, cwd=root / top if top else None)
+            if answers is None:
+                notes.append("git could not be asked, so committed content was not checked" if not top else
+                             f"the git of {top.encode('unicode_escape').decode('ascii')}/ could not be asked, "
+                             "so its committed content was not checked")
+                continue
+            asked.update(rels)
+            at_head.update(zip(rels, answers[:len(rels)]))
+            at_base.update(zip(gone_here, answers[len(rels):]))
+        for kind in ("changed", "added"):
+            remaining[kind] = [r for r in remaining[kind]
+                               if r not in asked or not _blob_holds(at_head.get(r), present(r))]
+        remaining["removed"] = [
+            r for r in gone
+            if not (r in asked and at_head.get(r) is None
+                    and (at_base.get(r) is not None or before[r][2] in known.get(r, ())))]
     return remaining, notes
 
 
@@ -716,12 +799,13 @@ def after_shell_call(root: Path, sid: object, duration_ms: object = None) -> dic
     if peek is not None:
         try:
             unmoved = (snapshot(root, peek["files"], peek["taken_ns"]) == peek["files"]
-                       and head == peek["head"] and watched_prefixes(root) == peek["watched"])
+                       and head == peek["head"] and watched_prefixes(root) == peek["watched"]
+                       and all(head_commit(root / top) == sha for top, sha in peek["nested"].items()))
         except WatchSetTooLarge:  # fail-open: ok deliberate -- too large to peek: the locked pass below turns the check off and says so
             unmoved = False
         if unmoved:
             return None
-        if mid_operation(root) or writer_running(root):
+        if mid_operation(root) or _nested_operation(root, peek["nested"]) or writer_running(root):
             return None
     with baseline_lock(path):
         record = read_baseline(path)
@@ -755,7 +839,7 @@ def after_shell_call(root: Path, sid: object, duration_ms: object = None) -> dic
             compare_after = after
         moved = diff(before, compare_after)
         unaccounted, notes = (account(root, sid, moved, before, compare_after, record["known"],
-                                      record["taken_ns"], record["head"])
+                                      record["taken_ns"], record["head"], record["nested"])
                               if any(moved.values()) else ({k: [] for k in moved}, []))
         for rel in moved["changed"] + moved["added"]:
             _remember(record["known"], rel, compare_after[rel][2])
@@ -765,7 +849,7 @@ def after_shell_call(root: Path, sid: object, duration_ms: object = None) -> dic
                 for r in unaccounted[kind]]
         operator = [k.rsplit("@", 1)[0] for k in keys if k not in told]
         record.update(files=after, taken_ns=taken, head=head, watched=watched_now,
-                      told=sorted(told | set(keys)))
+                      nested=nested_heads(root, after), told=sorted(told | set(keys)))
         try:
             write_baseline(path, record)
         except OSError:  # fail-open: ok deliberate -- the finding still reports; the note says the next call may repeat it
