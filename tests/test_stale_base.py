@@ -39,6 +39,13 @@ def rules():
     return _load()
 
 
+@pytest.fixture
+def mapper(monkeypatch):
+    """tools/cc on the path, as the board and ship.py put it, so the symbol
+    reading's import of ``_symbols`` resolves as it does for them."""
+    monkeypatch.syspath_prepend(str(TOOLS_CC))
+
+
 def _run(argv, *, cwd=None, timeout=30.0, input=None):
     result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, encoding="utf-8",
                             errors="replace", timeout=timeout, input=input)
@@ -111,14 +118,15 @@ class TestStaleBase:
         assert result["tested"] == result["now"] == now
         assert rules.stale_line(result, "main", 7) == ""
 
-    def test_a_path_both_changed_is_near(self, rules, tmp_path):
+    def test_a_path_both_changed_is_near(self, rules, tmp_path, mapper):
         repo = _Repo(tmp_path)
         head, _ = _lane(repo, {"tools/a.py": _BASE_FILES["tools/a.py"] + "MAIN = 4\n"})
         result = _judge(rules, repo, head)
         assert result["moved"] == 1
-        assert result["near"] == ["tools/a.py (both changed)"]
+        # Both appended at the end, after VALUE's line: git conflicts there, and the clause says so.
+        assert result["near"] == ["tools/a.py (both changed, meeting at the end of the file, VALUE)"]
         line = rules.stale_line(result, "main", 7)
-        assert "main moved 1 merge(s) since #7's CI" in line and "tools/a.py (both changed)" in line
+        assert "main moved 1 merge(s) since #7's CI" in line and "tools/a.py (both changed" in line
         assert "python tools/cc/ship.py catch-up" in line and line.isascii()
 
     def test_a_module_the_lane_imports_changed_on_the_base_is_near(self, rules, tmp_path):
@@ -167,6 +175,127 @@ class TestStaleBase:
         head, _ = _lane(repo, {"tools/a.py": "changed\n"})
         result = _judge(rules, repo, head, tested_when="")
         assert result["near"] == [] and "tested anything yet" in result["unread"]
+
+
+#: A module of two functions, for the symbol clauses (TP-702 Wave 2, 2-B).
+_FUNCS = "import sys\n\n\ndef f():\n    return 1\n\n\ndef g():\n    return 2\n"
+
+
+def _function_lane(repo: _Repo, lane_text: str, main_text: str) -> str:
+    """Base at 05:00 holds tools/a.py as ``_FUNCS``; the lane writes
+    ``lane_text`` there, CI ran at 05:30, then main writes ``main_text``."""
+    repo.commit({**_BASE_FILES, "tools/a.py": _FUNCS}, "2026-10-10T05:00:00Z", "base")
+    repo.git("switch", "-q", "-c", "lane")
+    head = repo.commit({"tools/a.py": lane_text}, "2026-10-10T05:10:00Z", "lane")
+    repo.git("switch", "-q", "main")
+    repo.commit({"tools/a.py": main_text}, "2026-10-10T06:00:00Z", "main moves")
+    return head
+
+
+class TestTheSymbolClause:
+    """Where a path both changed is Python and the head is here, the entry
+    says what the catch-up will meet: the same function, different ones, or
+    lines no node holds. The verdict itself is unchanged."""
+
+    def test_the_same_function_is_named(self, rules, tmp_path, mapper):
+        """Dies to: the meeting read from one side alone."""
+        repo = _Repo(tmp_path)
+        head = _function_lane(repo, _FUNCS.replace("return 1", "return 10"), _FUNCS.replace("return 1", "return 11"))
+        assert _judge(rules, repo, head)["near"] == ["tools/a.py (both changed, meeting at f)"]
+
+    def test_different_functions_are_said(self, rules, tmp_path, mapper):
+        """Dies to: the certificate inverted (two functions read as one)."""
+        repo = _Repo(tmp_path)
+        head = _function_lane(repo, _FUNCS.replace("return 1", "return 10"), _FUNCS.replace("return 2", "return 20"))
+        assert _judge(rules, repo, head)["near"] == [
+            "tools/a.py (both changed, different functions, none shared or next to the other's)"]
+
+    def test_two_methods_appended_to_one_class_meet_in_its_blank_lines(self, rules, tmp_path, mapper):
+        """Dies to: an insertion between blank lines certified (git sits both lanes' new methods
+        in the run of blanks below the class and conflicts there; the code review of Wave 2's
+        delta, driven)."""
+        cls = ("class TestA:\n    def test_one(self):\n        assert 1\n\n\n"
+               "class TestB:\n    def test_two(self):\n        assert 2\n")
+        add = "        assert 1\n\n    def test_{0}(self):\n        assert 3\n"
+        repo = _Repo(tmp_path)
+        repo.commit({**_BASE_FILES, "tools/a.py": cls}, "2026-10-10T05:00:00Z", "base")
+        repo.git("switch", "-q", "-c", "lane")
+        head = repo.commit({"tools/a.py": cls.replace("        assert 1\n", add.format("a"))},
+                           "2026-10-10T05:10:00Z", "lane")
+        repo.git("switch", "-q", "main")
+        repo.commit({"tools/a.py": cls.replace("        assert 1\n", add.format("b"))}, "2026-10-10T06:00:00Z", "main")
+        assert _judge(rules, repo, head)["near"] == [
+            "tools/a.py (both changed, meeting at the blank lines after TestA.test_one)"]
+
+    def test_a_symbol_read_that_fails_keeps_the_advisory(self, rules, tmp_path, mapper):
+        """Dies to: the clause's failure raised out of stale_base (the advisory
+        it decorates, which read fine, would be lost to a timed-out blob read)."""
+        repo = _Repo(tmp_path)
+        head = _function_lane(repo, _FUNCS.replace("return 1", "return 10"), _FUNCS.replace("return 2", "return 20"))
+
+        def slow_blobs(argv, **kw):
+            if argv[1:3] == ["cat-file", "blob"]:
+                raise rules_timeout("git cat-file took longer than 30s")
+            return _run(argv, **kw)
+
+        class rules_timeout(Exception):
+            pass
+
+        result = rules.stale_base(repo.root, base_ref="main", tested_when=CI_RAN, pr_paths=["tools/a.py"],
+                                  pr_rev=head, run_=slow_blobs)
+        assert result["near"] == ["tools/a.py (both changed; symbols not read: rules_timeout)"], result
+        assert "main moved 1 merge(s)" in rules.stale_line(result, "main", 7)
+
+    def test_a_line_no_node_holds_is_unplaced(self, rules, tmp_path, mapper):
+        """Dies to: an unplaced side certified (main's new import is at the
+        top of the module, in no function)."""
+        repo = _Repo(tmp_path)
+        head = _function_lane(repo, _FUNCS.replace("return 1", "return 10"),
+                              _FUNCS.replace("import sys\n", "import sys\nimport os\n"))
+        assert _judge(rules, repo, head)["near"] == ["tools/a.py (both changed, unplaced lines)"]
+
+    def test_a_head_not_here_is_never_given_a_function_verdict(self, rules, tmp_path, mapper):
+        """Dies to: the fallback to the base printing a verdict (the base
+        compared with itself is no comparison)."""
+        repo = _Repo(tmp_path)
+        _function_lane(repo, _FUNCS.replace("return 1", "return 10"), _FUNCS.replace("return 2", "return 20"))
+        result = rules.stale_base(repo.root, base_ref="main", tested_when=CI_RAN, pr_paths=["tools/a.py"],
+                                  pr_rev="main", run_=_run)
+        assert result["near"] == ["tools/a.py (both changed; symbols not read: head not here)"]
+
+    def test_a_mapper_that_cannot_be_imported_is_said(self, rules, tmp_path, monkeypatch):
+        """Dies to: an import failure read as no reading (the clause would fall
+        back to the bare path silently)."""
+        monkeypatch.setitem(sys.modules, "_symbols", None)
+        repo = _Repo(tmp_path)
+        head = _function_lane(repo, _FUNCS.replace("return 1", "return 10"), _FUNCS.replace("return 2", "return 20"))
+        (entry,) = _judge(rules, repo, head)["near"]
+        assert entry.startswith("tools/a.py (both changed; symbols not read: the symbol mapper"), entry
+
+    def test_a_mapper_that_breaks_at_import_costs_only_the_clause(self, rules, tmp_path, monkeypatch):
+        """Dies to: only an ImportError contained (a `_symbols.py` that raises anything else at
+        import escaped stale_base and took the advisory with it)."""
+        broken = tmp_path / "broken"
+        broken.mkdir()
+        (broken / "_symbols.py").write_text("raise RuntimeError('half-written mapper')\n", encoding="utf-8")
+        monkeypatch.delitem(sys.modules, "_symbols", raising=False)
+        monkeypatch.syspath_prepend(str(broken))
+        (tmp_path / "repo").mkdir()
+        repo = _Repo(tmp_path / "repo")
+        head = _function_lane(repo, _FUNCS.replace("return 1", "return 10"), _FUNCS.replace("return 2", "return 20"))
+        (entry,) = _judge(rules, repo, head)["near"]
+        assert entry.startswith("tools/a.py (both changed; symbols not read: the symbol mapper"), entry
+
+    def test_a_path_that_is_not_python_keeps_its_bare_clause(self, rules, tmp_path, mapper):
+        repo = _Repo(tmp_path)
+        repo.commit(_BASE_FILES, "2026-10-10T05:00:00Z", "base")
+        repo.git("switch", "-q", "-c", "lane")
+        head = repo.commit({"notes.txt": "the lane's note\n"}, "2026-10-10T05:10:00Z", "lane")
+        repo.git("switch", "-q", "main")
+        repo.commit({"notes.txt": "main's note\n"}, "2026-10-10T06:00:00Z", "main moves")
+        result = rules.stale_base(repo.root, base_ref="main", tested_when=CI_RAN, pr_paths=["notes.txt"],
+                                  pr_rev=head, run_=_run)
+        assert result["near"] == ["notes.txt (both changed)"]
 
 
 class TestTestedAt:

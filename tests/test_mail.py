@@ -834,6 +834,39 @@ class TestClaimSymbols:
         m = _msg(mail, "mac", "claim", "", lane="lane/x", paths=["a.py"], ids=["DEF-1"])
         assert '"re":{"lane":"lane/x","classes":[],"paths":["a.py"],"ids":["DEF-1"]},"text"' in mail.encode(m)
 
+    def test_a_folder_the_cap_folded_keeps_its_symbols_and_one_given_by_hand_is_whole(self, mail):
+        """``claim_view``, the one reading the matcher and the board share (TP-702 Wave 2). Dies to:
+        a folder that carries symbols under it read as claimed whole (a lane past the path cap would
+        never be certified), or a folder given by hand read as listed (a hand claim and a later
+        symbol claim on one lane would be certified)."""
+        rule = {mail.SYMBOLS_RULE_KEY: mail._symbols.RULE}
+        _syms, _more, whole, _marked = mail.claim_view(
+            {"paths": ["tools/cc"], mail.SYMBOLS_KEY: ["tools/cc/mail.py::send"], **rule})
+        assert whole == set(), whole
+        _syms, _more, whole, _marked = mail.claim_view({"paths": ["tools/cc", "docs"]})
+        assert whole == {"tools/cc", "docs"}, whole
+        _syms, _more, whole, _marked = mail.claim_view(
+            {"paths": ["espalier/_vendor/cc/mail.py"], mail.SYMBOLS_KEY: ["espalier/_vendor/cc/mail.py::send"], **rule})
+        assert whole == set() and _syms == {"tools/cc/mail.py::send"}, (whole, _syms)
+
+    def test_a_claim_derived_by_another_rule_is_read_whole_and_a_new_one_is_stamped(self, mail):
+        """Dies to: the rule left off a derived claim, a stamp written on symbols no derivation
+        named (a hand list carries no marks, and would certify as complete), or a claim of an older
+        or a newer rule read as a complete list (its list may lack, or spell differently, the
+        neighbour and run-of-blanks marks a meeting needs)."""
+        rule = mail._symbols.RULE
+        m = _msg(mail, "mac", "claim", "", lane="l", symbols=["a.py::f"], symbols_rule=rule)
+        assert m["re"][mail.SYMBOLS_RULE_KEY] == rule
+        assert mail.SYMBOLS_RULE_KEY not in _msg(mail, "mac", "claim", "", lane="l", symbols=["a.py::f"])["re"]
+        assert mail.SYMBOLS_RULE_KEY not in _msg(mail, "mac", "claim", "", lane="l", paths=["a.py"])["re"]
+        for stamp in ({}, {mail.SYMBOLS_RULE_KEY: "0" * 16}, {mail.SYMBOLS_RULE_KEY: 3}):
+            syms, _more, whole, _marked = mail.claim_view(
+                {"paths": ["a.py"], mail.SYMBOLS_KEY: ["a.py::f"], **stamp})
+            assert syms == {"a.py::f"} and whole == {"a.py"}, (stamp, whole)
+            assert mail.other_rule({mail.SYMBOLS_KEY: ["a.py::f"], **stamp}), stamp
+        assert not mail.other_rule({mail.SYMBOLS_KEY: ["a.py::f"], mail.SYMBOLS_RULE_KEY: rule})
+        assert not mail.other_rule({"paths": ["a.py"]})   # a claim without symbols has no rule
+
     def test_two_claims_sharing_a_symbol_hit_by_the_symbol(self, mail):
         """Dies to: the symbol hit missing (two lanes in one function meet only as a path)."""
         theirs = _msg(mail, "win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"])
@@ -843,9 +876,14 @@ class TestClaimSymbols:
     def test_one_file_and_different_symbols_is_a_path_hit_and_says_so(self, mail):
         """No certificate in this wave: a shared file is a path hit, worded to say no symbol is
         shared. Dies to: the symbols compared by file (two functions in one file read as met)."""
-        theirs = _msg(mail, "win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"])
+        theirs = _msg(mail, "win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"],
+                      symbols_rule=mail._symbols.RULE)
         found = mail.overlapping_claims([theirs], symbols=["tools/cc/mail.py::headline"])
         assert found[0][1] == ["path tools/cc/mail.py (their tools/cc/mail.py; no symbol in common)"]
+        # Placed under another rule, the same claim is no complete list: a path hit, no more.
+        older = _msg(mail, "win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"])
+        assert mail.overlapping_claims([older], symbols=["tools/cc/mail.py::headline"])[0][1] == [
+            "path tools/cc/mail.py (their tools/cc/mail.py)"]
 
     def test_a_class_covers_its_methods(self, mail):
         """Dies to: the matcher comparing names for equality only (`Board` and `Board.render`
@@ -892,6 +930,19 @@ class TestClaimSymbols:
         assert len(m["re"][mail.SYMBOLS_KEY]) == mail.MAX_SYMBOLS
         assert m["re"][mail.SYMBOLS_MORE_KEY] == 5
         assert set(m["re"]["paths"]) == {s.split("::")[0] for s in many}
+
+    def test_the_marks_ride_on_their_own_cap_after_the_names(self, mail):
+        """Dies to: the marks sorted with the names (`<end>`, `<after:f>` and `<module>` sort before
+        letters, so the listing led with them), or counted against the symbol cap (a lane's marks
+        pushing a real symbol out, which reads every file of the lane whole)."""
+        names = [f"a.py::f{i:03d}" for i in range(mail.MAX_SYMBOLS)]
+        marks = ["a.py::<end>", "a.py::<after:f000>", "a.py::<module>"]
+        m = _msg(mail, "mac", "claim", "", lane="l", symbols=marks + names)
+        assert m["re"][mail.SYMBOLS_KEY] == sorted(names) + sorted(marks), m["re"][mail.SYMBOLS_KEY][:4]
+        assert mail.SYMBOLS_MORE_KEY not in m["re"]
+        many = [f"a.py::<after:f{i:03d}>" for i in range(mail.MAX_MARKS + 2)]
+        m = _msg(mail, "mac", "claim", "", lane="l", symbols=["a.py::g", *many])
+        assert m["re"][mail.SYMBOLS_MORE_KEY] == 2 and m["re"][mail.SYMBOLS_KEY][0] == "a.py::g"
 
     def test_a_symbol_path_the_guard_reads_as_secret_bearing_is_named(self, mail):
         """Dies to: the secret scan skipping the symbols (a block whose `paths` the symbol did not fill)."""
@@ -1017,7 +1068,8 @@ class TestSymbolsFromTheLane:
 
     def test_the_delta_sends_only_what_no_live_claim_of_this_seat_names(self, mail, monkeypatch, tmp_path, capsys):
         """Dies to: the delta filter removed (every refresh resends the lane's whole set)."""
-        own = [_msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"])]
+        own = [_msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"],
+                    symbols_rule=mail._symbols.RULE)]
         args = ("--type", "claim", "--lane", "lane/x", "--symbols-from", "origin/main", "--delta")
         rc, sent, _ = self._run(mail, monkeypatch, tmp_path, own, *args)
         assert rc == 0 and sent[0]["re"][mail.SYMBOLS_KEY] == ["tools/cc/mail.py::new_message"]
@@ -1025,6 +1077,133 @@ class TestSymbolsFromTheLane:
         own.append(sent[0])
         rc, again, _ = self._run(mail, monkeypatch, tmp_path, own, *args)
         assert rc == 0 and again == [] and "no new symbols" in capsys.readouterr().out
+
+    def test_a_claim_of_another_rule_is_named_no_symbol_and_its_release_is_asked_for(
+            self, mail, monkeypatch, tmp_path, capsys):
+        """The first delta after a rule change. Dies to: an older-rule claim's symbols counted as
+        named (the delta prints "no new symbols" over a list every reader takes whole), its paths
+        counted as claimed (the delta carries the symbols and not `docs/x.md`, which the release the
+        note asks for leaves claimed by no one; both reviews of Wave 2's last delta, driven), the new
+        claim left unstamped, or the seat not told which claim keeps its files whole."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"],
+                   paths=["docs/x.md"])
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], "--type", "claim", "--lane", "lane/x",
+                                "--symbols-from", "origin/main", "--delta")
+        assert rc == 0 and sent, sent
+        assert sent[0]["re"][mail.SYMBOLS_KEY] == ["tools/cc/mail.py::new_message", "tools/cc/mail.py::send"]
+        assert "docs/x.md" in sent[0]["re"]["paths"], sent[0]["re"]
+        assert sent[0]["re"][mail.SYMBOLS_RULE_KEY] == mail._symbols.RULE
+        err = capsys.readouterr().err
+        assert old["id"] in err and "another symbol rule" in err and "release" in err, err
+
+    def test_a_whole_claim_names_the_older_claims_it_replaces_and_only_those(
+            self, mail, monkeypatch, tmp_path, capsys):
+        """Without --delta too: the new claim is united with the older one on the lane, which keeps
+        its files whole until released. Dies to: the note asked for on the delta only, or for a
+        claim of this rule (the code review of Wave 2's last delta: both survived as mutants)."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"])
+        stamped = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"],
+                       symbols_rule=mail._symbols.RULE)
+        args = ("--type", "claim", "--lane", "lane/x", "--symbols-from", "origin/main")
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old, stamped], *args)
+        err = capsys.readouterr().err
+        assert rc == 0 and sent and old["id"] in err and stamped["id"] not in err, err
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [stamped], *args)
+        assert rc == 0 and sent and "another symbol rule" not in capsys.readouterr().err
+
+    def test_a_path_an_older_claim_held_by_hand_rides_the_claim_that_replaces_it(self, mail, monkeypatch, tmp_path):
+        """Dies to: an older-rule claim's hand path, which the lane's diff does not name, left off
+        the claim that replaces it (the release the note asks for leaves it claimed by no one; the
+        code review of Wave 2's sixth delta, driven), or one a claim of this rule covers re-sent."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"],
+                   paths=["docs/plan.md"])
+        args = ("--type", "claim", "--lane", "lane/x", "--symbols-from", "origin/main")
+        for extra in ((), ("--delta",)):
+            rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], *args, *extra)
+            assert rc == 0 and "docs/plan.md" in sent[0]["re"]["paths"], (extra, sent)
+        current = _msg(mail, "mac", "claim", "", lane="lane/x", paths=["docs/x.md", "docs/plan.md"],
+                       symbols=["tools/cc/mail.py::send", "tools/cc/mail.py::new_message"],
+                       symbols_rule=mail._symbols.RULE)
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old, current], *args, "--delta")
+        assert rc == 0 and sent == [], sent
+
+    @pytest.mark.parametrize("held", ["tools/cc/mail.py", "tools/cc"], ids=["a-file-the-lane-changes", "a-folder"])
+    @pytest.mark.parametrize("extra", [(), ("--delta",)], ids=["whole", "delta"])
+    def test_what_an_older_claim_held_whole_stays_whole_on_the_claim_that_replaces_it(
+            self, mail, monkeypatch, tmp_path, held, extra):
+        """Dies to: a path the seat held whole by hand dropped from the replacing claim because
+        the lane's diff names it, or symbols sit under it (the lane's symbols in it are sent
+        instead, and once the older claim is released the pair reads "different functions";
+        both reviews of Wave 2's seventh delta, driven)."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["scripts/x.py::f"], paths=[held])
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], "--type", "claim", "--lane", "lane/x",
+                                "--symbols-from", "origin/main", *extra)
+        assert rc == 0 and held in sent[0]["re"]["paths"], sent
+        assert not [s for s in sent[0]["re"].get(mail.SYMBOLS_KEY, []) if s.startswith("tools/cc/mail.py::")], sent
+
+    def test_a_file_an_older_claim_named_symbols_in_is_derived_again_not_carried(self, mail, monkeypatch, tmp_path):
+        """Dies to: every path of the older claim carried (a file the lane has since reverted is
+        held whole until the lane ships, and a claim the path cap folded refuses on every tick;
+        the code review of Wave 2's seventh delta, driven)."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["a.py::f"])
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], "--type", "claim", "--lane", "lane/x",
+                                "--symbols-from", "origin/main")
+        assert rc == 0 and "a.py" not in sent[0]["re"]["paths"], sent
+
+    def test_an_older_claim_s_ids_and_classes_ride_the_claim_that_replaces_it(
+            self, mail, monkeypatch, tmp_path, capsys):
+        """Dies to: the ids and classes of the claim the note asks to release left behind (the
+        ledger verbs and the plan warnings meet a row or a class by them; the code review of Wave 2's
+        seventh delta, driven), or the delta sending again what a claim of this rule already names."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"], ids=["DEF-1"],
+                   classes=["cli-deploy"])
+        args = ("--type", "claim", "--lane", "lane/x", "--symbols-from", "origin/main")
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], *args)
+        assert rc == 0 and "DEF-1" in sent[0]["re"]["ids"] and "cli-deploy" in sent[0]["re"]["classes"], sent
+        current = dict(sent[0], id="c-current")
+        capsys.readouterr()
+        rc, again, _ = self._run(mail, monkeypatch, tmp_path, [old, current], *args, "--delta")
+        out = capsys.readouterr()
+        assert rc == 0 and again == [] and "no new symbols" in out.out, again
+        assert old["id"] in out.err and "hold all of it" in out.err, out.err
+
+    def test_a_folder_is_not_held_by_a_file_under_it(self, mail, monkeypatch, tmp_path):
+        """Dies to: the delta's cover test read both ways (a folder the older claim held whole is
+        dropped as covered by one file of this rule under it, and after the release no one holds
+        the rest of the folder; the failure-mode review of Wave 2's seventh delta, driven)."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["scripts/x.py::f"], paths=["tools/cc"])
+        current = _msg(mail, "mac", "claim", "", lane="lane/x", paths=["tools/cc/mail.py", "docs/x.md"],
+                       symbols=["tools/cc/mail.py::send", "tools/cc/mail.py::new_message"],
+                       symbols_rule=mail._symbols.RULE)
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old, current], "--type", "claim", "--lane", "lane/x",
+                                "--symbols-from", "origin/main", "--delta")
+        assert rc == 0 and sent and "tools/cc" in sent[0]["re"]["paths"], sent
+
+    def test_a_folder_an_older_claim_was_folded_into_covers_nothing_on_the_delta(self, mail, monkeypatch, tmp_path):
+        """Dies to: the delta counting an older-rule claim's paths as claimed (a folder the path
+        cap folded the older claim into, with symbols under it, is derived again and not carried,
+        so a changed file under it that names no symbol goes unsent, and is held by no one once
+        the older claim is released)."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["docs/gen.py::f"], paths=["docs"])
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], "--type", "claim", "--lane", "lane/x",
+                                "--symbols-from", "origin/main", "--delta")
+        assert rc == 0 and "docs/x.md" in sent[0]["re"]["paths"] and "docs" not in sent[0]["re"]["paths"], sent
+
+    def test_a_failed_read_for_the_note_costs_the_note_never_the_claim(self, mail, monkeypatch, tmp_path, capsys):
+        """Dies to: the note's read let out of the send (a claim that went out before refused for
+        a line of advice; the failure-mode review of Wave 2's last delta)."""
+        def broken(root, **kw):
+            raise mail.Unresolvable("git for-each-ref failed")
+
+        sent: list[dict] = []
+        monkeypatch.setattr(mail, "machine_setting", lambda root, **kw: ("mac", "git config espalier.machine = mac"))
+        monkeypatch.setattr(mail._symbols, "symbols_of_lane", lambda root, base, **kw: {
+            k: dict(v, symbols=set(v["symbols"])) for k, v in self.PLACEMENTS.items()})
+        monkeypatch.setattr(mail, "read_mail", broken)
+        monkeypatch.setattr(mail, "send", lambda root, message, **kw: sent.append(message))
+        rc = mail.main(["--root", str(tmp_path), "send", "--type", "claim", "--lane", "lane/x",
+                        "--symbols-from", "origin/main"])
+        assert rc == 0 and sent and "could not be read" in capsys.readouterr().err
 
     def test_the_delta_after_the_lane_s_release_sends_nothing(self, mail, monkeypatch, tmp_path, capsys):
         """Dies to: the release check removed (a lane fixing CI after its push re-opens the
@@ -1055,6 +1234,8 @@ class TestSymbolsFromTheLane:
         rc, sent, seen = self._run(mail, monkeypatch, tmp_path, [], "--type", "claim", "--lane", "lane/x",
                                    "--symbols-from")
         assert rc == 0 and seen == ["origin/trunk"] and sent
+        # The derivation stamps its rule (the one place a claim's symbols come from).
+        assert sent[0]["re"][mail.SYMBOLS_RULE_KEY] == mail._symbols.RULE
 
     def test_a_lane_past_the_path_cap_folds_its_derived_paths_into_directories(self, mail, monkeypatch,
                                                                                  tmp_path, capsys):
