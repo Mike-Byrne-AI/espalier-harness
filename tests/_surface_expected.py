@@ -204,8 +204,8 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     "mail_latency_census.py",
     # 2026-10-16 (TP-702 Task 0): which concurrently open pull requests shared a
     # file and which shared a symbol (a def, method, class or top-level name, mapped
-    # from the diff by ast); until Wave 1 moves the mapper into tools/cc/_symbols.py
-    # it lives here. Guarded by tests/test_lane_overlap_census.py.
+    # from the diff by ast); the mapper moved into tools/cc/_symbols.py at Wave 1,
+    # which this script loads by path. Guarded by tests/test_lane_overlap_census.py.
     "lane_overlap_census.py",
     "proof_tier.py",
     "handoff_mechanics.py",

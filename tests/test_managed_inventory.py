@@ -234,7 +234,9 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
         path, so an adopter's `session_catch_up = true` needs it deployed.
         The board and the merge-rules read joined on 2026-10-09: the deployed
         /inbox body runs the board, and session_start.py imports the read, so
-        a fresh init without it would raise ModuleNotFoundError at SessionStart."""
+        a fresh init without it would raise ModuleNotFoundError at SessionStart.
+        The symbol mapper joined on 2026-10-17 (TP-702 Wave 1): mail.py imports
+        it as a sibling, so every reader of the mail channel reaches it."""
         from espalier.cli import INIT_TOOL_SCRIPTS
 
         # Declaration order, not sorted. The first draft of this pin was typed
@@ -255,6 +257,7 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
             "tools/cc/ship.py",
             "tools/cc/record_merge.py",
             "tools/cc/mail.py",
+            "tools/cc/_symbols.py",
             "tools/cc/board.py",
             "tools/cc/_merge_rules.py",
             "tools/cc/_record_fragments.py",

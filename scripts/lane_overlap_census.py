@@ -17,8 +17,10 @@ inside one and neutral elsewhere; a file no line of which was read is never
 certified. A file that is not Python is a path tier
 of its own, never a symbol. Mirror twins (``espalier/mirror_registry.py``) are
 collapsed onto their source, so a lane that edits a hook and its vendored copy
-meets another lane once. That pack's Wave 1 moves the pure functions into
-``tools/cc/_symbols.py`` and this script then imports them.
+meets another lane once. The mapper and the pair verdict live in
+``tools/cc/_symbols.py``, which this script loads by path and keeps no copy
+of; the window, the listing, the spawns and the registry's full fold of the
+twins are its own.
 
 Reads the merged pull requests of a window through ``gh``, fetches the base and
 each head, and for every pair whose open windows overlapped prints one of four
@@ -33,22 +35,12 @@ tier for files that are not Python. Standard library, ``git`` and ``gh``.
 from __future__ import annotations
 
 import argparse
-import ast
+import importlib.util
 import itertools
 import json
 import os
-import re
 import sys
 from pathlib import Path
-
-MODULE = "<module>"
-HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
-#: Every diff this script reads: rename detection off, so a moved file is a
-#: deletion at its old path and an addition at its new one, and another lane
-#: editing the old path meets it. Pinned by the test.
-DIFF_ARGS: tuple[str, ...] = ("--no-renames", "--no-color", "--no-ext-diff", "--no-textconv")
-_DEF_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-_ASSIGN_NODES = (ast.Assign, ast.AnnAssign, ast.AugAssign)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -77,232 +69,19 @@ def _bounded_spawn():
 run_bounded = _bounded_spawn()
 
 
-# ---------------------------------------------------------------- placement
-
-def _target_names(node: ast.AST) -> list[str]:
-    """Each name an assignment target binds: ``a`` for ``a = 1``, ``a`` and
-    ``b`` for ``a, b = ...``, the root name for an attribute or subscript
-    (``X`` for ``X[1, 2] = ...``, so no comma reaches a symbol)."""
-    if isinstance(node, ast.Name):
-        return [node.id]
-    if isinstance(node, (ast.Tuple, ast.List)):
-        return [n for elt in node.elts for n in _target_names(elt)]
-    if isinstance(node, ast.Starred):
-        return _target_names(node.value)
-    while isinstance(node, (ast.Subscript, ast.Attribute)):
-        node = node.value
-    if isinstance(node, ast.Name):
-        return [node.id]
-    return [ast.unparse(node)]
+def _load_symbols():
+    """``tools/cc/_symbols.py`` from this checkout, loaded by path: the mapper's
+    and the pair verdict's one home, never a copy here."""
+    spec = importlib.util.spec_from_file_location(
+        "_symbols_for_lane_overlap_census", REPO_ROOT / "tools" / "cc" / "_symbols.py")
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def spans(source: str) -> list[tuple[str, int, int, str]]:
-    """``[(qualname, first_line, last_line, kind)]``, ``kind`` one of ``def``,
-    ``class`` and ``name``, for every function, async
-    function and class at any depth (qualified by the definitions above it:
-    ``C.m``; a block such as ``if TYPE_CHECKING:`` or ``try:`` adds nothing),
-    a definition's span starting at its first decorator, and for every
-    module-level assignment by each target it binds. An assignment inside a
-    class body is the class's, not a symbol of its own. Unparseable source
-    maps nothing, so its lines read as unplaced."""
-    out: list[tuple[str, int, int]] = []
-    try:
-        tree = ast.parse(source)
-    except (SyntaxError, ValueError):   # 3.10 raises ValueError for a NUL byte
-        return out
-
-    def walk(node: ast.AST, prefix: str) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, _DEF_NODES):
-                name = f"{prefix}{child.name}"
-                lo = min([child.lineno] + [d.lineno for d in child.decorator_list])
-                kind = "class" if isinstance(child, ast.ClassDef) else "def"
-                out.append((name, lo, child.end_lineno or child.lineno, kind))
-                walk(child, name + ".")
-            elif prefix == "" and isinstance(child, _ASSIGN_NODES):
-                targets = child.targets if isinstance(child, ast.Assign) else [child.target]
-                for target in targets:
-                    for name in _target_names(target):
-                        out.append((name, child.lineno, child.end_lineno or child.lineno, "name"))
-            else:
-                walk(child, prefix)
-
-    walk(tree, "")
-    return out
-
-
-def innermost_spans(nodes: list[tuple[str, int, int, str]], line: int) -> list[tuple[str, int, int, str]]:
-    """Every span that is the shortest one holding ``line``: one for a line
-    inside a definition, each name of a tuple target for the line of
-    ``a, b = ...`` (they share one span), nothing outside every node."""
-    best: int | None = None
-    found: list[tuple[str, int, int, str]] = []
-    for span in nodes:
-        _name, lo, hi, _kind = span
-        if not (lo <= line <= hi):
-            continue
-        if best is None or (hi - lo) < best:
-            best, found = hi - lo, [span]
-        elif (hi - lo) == best:
-            found.append(span)
-    return found
-
-
-def innermost(nodes: list[tuple[str, int, int, str]], line: int) -> list[str]:
-    """The names of `innermost_spans`."""
-    return [name for name, *_ in innermost_spans(nodes, line)]
-
-
-def enclosing(nodes: list[tuple[str, int, int, str]], line: int) -> str:
-    """The innermost span holding ``line`` (the first of `innermost`), else the module."""
-    names = innermost(nodes, line)
-    return names[0] if names else MODULE
-
-
-def _indent(text: str) -> int:
-    return len(text) - len(text.lstrip())
-
-
-def placed(nodes: list[tuple[str, int, int, str]], lines: list[str], line: int) -> list[str]:
-    """Where ``line`` (1-based) lands: a line the source does not have is the
-    module, unplaced (a side that could not be read certifies nothing); a
-    blank line is its function's when a function's span holds it (git
-    conflicts on the edit beside it) and nothing elsewhere, neutral (the
-    blank between two methods and a deletion's trailing blanks name no
-    symbol, so an edit never flags a neighbour it did not touch); else its
-    innermost node or nodes; for a comment outside every node, the node that
-    starts right after an unbroken run of comments, when the comment is not
-    indented deeper than that node (a blank breaks the run, and a comment
-    indented as the body above it is unplaced); else the module, unplaced."""
-    if not 0 < line <= len(lines):
-        return [MODULE]
-    text = lines[line - 1]
-    stripped = text.strip()
-    here = innermost_spans(nodes, line)
-    if not stripped:
-        return [name for name, _lo, _hi, kind in here if kind == "def"]
-    if here:
-        return [name for name, *_ in here]
-    if not stripped.startswith("#"):
-        return [MODULE]
-    cursor = line
-    while cursor <= len(lines):
-        found = innermost_spans(nodes, cursor)
-        if found:
-            if _indent(text) <= _indent(lines[found[0][1] - 1]):
-                return [name for name, *_ in found]
-            return [MODULE]
-        run = lines[cursor - 1].strip()
-        if not run or not run.startswith("#"):
-            return [MODULE]
-        cursor += 1
-    return [MODULE]
-
-
-def symbols_meet(one: set[str], two: set[str]) -> set[str]:
-    """The symbols two lanes both touch, the one rule every reader uses: an
-    equal name, or a class on one side with a member of it on the other
-    (``path::C`` meets ``path::C.m``, reported as the class); never the
-    module, which is unplaced on both sides and a path hit at most."""
-    met = {s for s in one & two if not s.endswith(f"::{MODULE}")}
-    for a, b in ((one, two), (two, one)):
-        for symbol in a:
-            if symbol.endswith(f"::{MODULE}"):
-                continue
-            if any(other.startswith(symbol + ".") for other in b):
-                met.add(symbol)
-    return met
-
-
-def _lines(source: str) -> list[str]:
-    """The lines as git and ``ast`` count them: split on newlines only
-    (``str.splitlines`` also splits on form feed and U+2028, and every line
-    after one would read one off), without the empty tail a final newline leaves."""
-    lines = source.split("\n")
-    if lines and lines[-1] == "":
-        lines.pop()
-    return lines
-
-
-def changed_symbols(path: str, old_source: str, new_source: str, unified_diff: str) -> dict:
-    """``{"kind", "symbols", "changed", "unplaced"}`` for one file's diff
-    (``-U0`` from any producer): ``kind`` is ``python`` or ``path``; for Python
-    every removed or changed line is placed in the old source and every added
-    or changed line in the new, ``changed`` counts the lines read and
-    ``unplaced`` the ones no node holds; for any other file the path is the
-    one symbol and nothing is unplaced."""
-    if not path.endswith(".py"):
-        return {"kind": "path", "symbols": {path}, "changed": 0, "unplaced": 0}
-    new_nodes, old_nodes = spans(new_source), spans(old_source)
-    new_lines, old_lines = _lines(new_source), _lines(old_source)
-    symbols: set[str] = set()
-    changed = unplaced = 0
-    for line in unified_diff.splitlines():
-        m = HUNK_RE.match(line)
-        if not m:
-            continue
-        old_start, old_len = int(m.group(1)), int(m.group(2) or 1)
-        new_start, new_len = int(m.group(3)), int(m.group(4) or 1)
-        sides = []
-        if old_len > 0 and m.group(2) != "0":
-            sides.append((old_nodes, old_lines, range(old_start, old_start + old_len)))
-        if new_len > 0 and m.group(4) != "0":
-            sides.append((new_nodes, new_lines, range(new_start, new_start + new_len)))
-        for nodes, lines, span in sides:
-            for ln in span:
-                names = placed(nodes, lines, ln)
-                if not names:                 # a blank line: neutral, neither placed nor unplaced
-                    continue
-                changed += 1
-                if names == [MODULE]:
-                    unplaced += 1
-                for where in names:
-                    symbols.add(f"{path}::{where}")
-    return {"kind": "python", "symbols": symbols, "changed": changed, "unplaced": unplaced}
-
-
-# ---------------------------------------------------------------- the pair
-
-def concurrent(a: dict, b: dict) -> bool:
-    """Two pull requests were open at once: each was created before the other merged."""
-    return a["created"] < b["merged"] and b["created"] < a["merged"]
-
-
-def pair_verdict(one: dict[str, dict], two: dict[str, dict]) -> dict:
-    """What two lanes' placements say about each other, over the files both
-    changed: ``shared`` (symbols both changed, the module excluded), ``paths``
-    (files that are not Python), ``unplaced`` (Python files where a side left
-    lines unplaced, or read no line at all, and no symbol is shared), ``verdict`` one of ``shared
-    symbol``, ``unplaced``, ``different functions``, ``path only``, ``none``."""
-    files = sorted(set(one) & set(two))
-    shared: set[str] = set()
-    paths: list[str] = []
-    unplaced: list[str] = []
-    certified: list[str] = []
-    for path in files:
-        a, b = one[path], two[path]
-        if a["kind"] != "python" or b["kind"] != "python":
-            paths.append(path)
-            continue
-        meet = symbols_meet(a["symbols"], b["symbols"])
-        if meet:
-            shared |= meet
-        elif a["unplaced"] or b["unplaced"] or not a["changed"] or not b["changed"]:
-            unplaced.append(path)   # a side that read no line certifies nothing
-        else:
-            certified.append(path)
-    if shared:
-        verdict = "shared symbol"
-    elif unplaced:
-        verdict = "unplaced"
-    elif certified:
-        verdict = "different functions"
-    elif paths:
-        verdict = "path only"
-    else:
-        verdict = "none"
-    return {"files": files, "shared": sorted(shared), "paths": paths, "unplaced": unplaced,
-            "certified": certified, "verdict": verdict}
+_symbols = _load_symbols()
 
 
 # ---------------------------------------------------------------- git and gh
@@ -349,25 +128,10 @@ def canonical(path: str) -> str:
 
 
 def symbols_between(base: str, head: str) -> dict[str, dict]:
-    """``{canonical path: placement}`` for every file ``base..head`` changes,
-    mirror twins folded onto their source (symbols united, counts summed)."""
-    out: dict[str, dict] = {}
-    for path in filter(None, _git("diff", "--name-only", "-z", *DIFF_ARGS, base, head).split("\0")):
-        new = _git("show", f"{head}:{path}") if path.endswith(".py") else ""
-        old = _git("show", f"{base}:{path}") if path.endswith(".py") else ""
-        diff = _git("diff", "-U0", *DIFF_ARGS, base, head, "--", path)
-        here = changed_symbols(path, old, new, diff)
-        key = canonical(path)
-        if key != path:
-            here["symbols"] = {s.replace(path, key, 1) for s in here["symbols"]}
-        if key in out:
-            got = out[key]
-            got["symbols"] |= here["symbols"]
-            got["changed"] += here["changed"]
-            got["unplaced"] += here["unplaced"]
-        else:
-            out[key] = here
-    return out
+    """``{canonical path: placement}`` for every file ``base..head`` changes:
+    the module's reading at the repository root, every mirror twin the
+    registry names folded onto its source (symbols united, counts summed)."""
+    return _symbols.symbols_between(base, head, root=REPO_ROOT, fold=canonical)
 
 
 def census(*, prs: int | None = None, window: tuple[int, int] | None = None, base: str = "main") -> dict:
@@ -410,10 +174,10 @@ def census(*, prs: int | None = None, window: tuple[int, int] | None = None, bas
     pairs: list[dict] = []
     concurrent_pairs = 0
     for a, b in itertools.combinations(sorted(info), 2):
-        if not concurrent(info[a], info[b]):
+        if not _symbols.concurrent(info[a], info[b]):
             continue
         concurrent_pairs += 1
-        verdict = pair_verdict(info[a]["placements"], info[b]["placements"])
+        verdict = _symbols.pair_verdict(info[a]["placements"], info[b]["placements"])
         if verdict["verdict"] != "none":
             pairs.append({"a": a, "b": b, **verdict})
     verdicts = {v: sum(1 for p in pairs if p["verdict"] == v)
