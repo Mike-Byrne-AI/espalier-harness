@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from tests._hook_spawn import run_hook_through
 from tests._symlink_support import requires_symlink
 
 
@@ -43,13 +43,11 @@ def _run(env: dict | None = None, cwd: Path | None = None) -> str:
         proc_env.pop(var, None)
     if env:
         proc_env.update(env)
-    result = subprocess.run(
+    result = run_hook_through(
         [sys.executable, str(STATUSLINE)],
         env=proc_env,
         cwd=str(cwd or Path.cwd()),
-        capture_output=True,
-        text=True,
-        timeout=5, encoding="utf-8",
+        statusline=True,
     )
     assert result.returncode == 0, (
         f"statusline exited {result.returncode}; stderr={result.stderr!r}"
@@ -169,7 +167,8 @@ class TestStatuslineHardening:
         bp_dir.mkdir(parents=True)
         bp = bp_dir / "latest.json"
         bp.symlink_to("/dev/zero")
-        # _run has timeout=5; if the read blocks, this raises.
+        # A read that blocks misses both of _run's bounded attempts and fails
+        # the row (tests/_hook_spawn.py).
         out = _run(
             env={"CLAUDE_PROJECT_DIR": str(tmp_path)},
             cwd=tmp_path,

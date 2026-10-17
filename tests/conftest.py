@@ -842,6 +842,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # the live checkout; every executable stand-in is warmed.
             "test_live_root_gate_writers",
             "test_stub_warmup",
+            # Where the hook rows' one spawn must be used, read from tests/
+            # (DEF-2014): a tests-only diff that adds a bare write_guard spawn
+            # earns this slice alone, so the pin lives here.
+            "test_hook_spawn_routing",
             "test_test_quality",
             "test_count_claims",
             "test_corpus_count_parity",
@@ -1197,6 +1201,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_speedbump_v1_1",
             "test_statusline",
             "test_statusline_freshness_segment",
+            # The hook rows' one spawn: its rows run small child scripts past
+            # a bound (DEF-2014).
+            "test_hook_spawn",
             "test_sync_github_workflow_asset",
             "test_verify_pins",
             # Drives scripts/archive_transcripts.py through its real CLI
@@ -1643,6 +1650,8 @@ _SLOW_FILES: set[str] = {
     "test_speedbump_v1_1",
     "test_statusline",
     "test_statusline_freshness_segment",
+    # Child scripts that sleep past a 3 s bound, twice in the two-miss rows.
+    "test_hook_spawn",
     "test_subagent_stop",
     "test_subprocess_cli_contract",
     "test_subprocess_env_isolation",
@@ -2669,6 +2678,30 @@ def _ceilings(config) -> tuple[float, float]:
         return 0.0, 0.0
 
 
+#: How many retried rows the summary names (the count is always whole).
+_HOOK_RETRIES_SHOWN = 20
+
+
+def report_hook_spawn_retries(terminalreporter) -> None:
+    """The hook rows whose first attempt missed and whose retry answered
+    (tests/_hook_spawn.py, DEF-2014), read from the warnings the run kept
+    (xdist ships each worker's to this process), so a slow runner's rate is
+    on every run's last screen, and under GitHub Actions on the checks page
+    as a warning annotation too."""
+    rows = sorted({
+        report.nodeid for report in terminalreporter.stats.get("warnings", [])
+        if "HookSpawnRetried" in str(getattr(report, "message", ""))
+    })
+    if not rows:
+        return
+    head = f"hook spawn retries: {len(rows)} row(s) missed once and answered on the retry"
+    terminalreporter.write_line(head + ":")
+    for nodeid in rows[:_HOOK_RETRIES_SHOWN]:
+        terminalreporter.write_line(f"  {nodeid}")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        terminalreporter.write_line(f"::warning::{head}: " + "; ".join(rows[:_HOOK_RETRIES_SHOWN]))
+
+
 def pytest_terminal_summary(terminalreporter, exitstatus, config):
     """One line per process that built the tree, every run that built one: the
     build runs before the first test, so ``--durations`` cannot show it, and a
@@ -2684,6 +2717,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         terminalreporter.write_line(f"{_INITIALIZED_REPO_FIXTURE} build, before the first test:")
         for report in sorted(reports, key=lambda r: r["place"]):
             terminalreporter.write_line("  " + _build_report_line(report))
+    report_hook_spawn_retries(terminalreporter)
     ceiling, suite = _ceilings(config)
     if not suite or ceiling <= suite:
         return

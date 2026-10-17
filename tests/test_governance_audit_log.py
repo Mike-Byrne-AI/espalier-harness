@@ -31,6 +31,7 @@ import pytest
 
 from _site_path import site_path
 from tests._live_tree import checkout_glob
+from tests._hook_spawn import run_hook_through
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -42,13 +43,10 @@ def _run_hook(script: str, payload: dict, tmp_path: Path) -> subprocess.Complete
     # plan-required checks; delete it so the denial (and its audit record) fires.
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
-    return subprocess.run(
+    return run_hook_through(
         [sys.executable, str(HOOKS_DIR / script)],
         input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=env, encoding="utf-8",
+        env=env,
     )
 
 

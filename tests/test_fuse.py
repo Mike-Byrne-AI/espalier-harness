@@ -23,6 +23,7 @@ from espalier import fuse
 from tests._git_oracle import _git_env
 from tests._quiet_git import NO_BACKGROUND_GIT, background_git_settings
 from tests._symlink_support import requires_symlink
+from tests._hook_spawn import run_hook_through
 
 
 def _no_background_git(host: Path) -> None:
@@ -1254,8 +1255,11 @@ class TestFuseEndToEnd:
                  "tool_input": {"file_path": ".claude/settings.json"}}
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(out)}
         env.pop("ESPALIER_MAINTENANCE_MODE", None)  # don't let the parent shell bypass
-        r = subprocess.run([sys.executable, str(guard)], input=json.dumps(event),
-                           capture_output=True, text=True, timeout=15, env=env, encoding="utf-8")
+        r = run_hook_through(
+            [sys.executable, str(guard)],
+            input=json.dumps(event),
+            env=env,
+        )
         assert r.returncode == 0, (r.returncode, r.stderr)
         decision = json.loads(r.stdout)["hookSpecificOutput"]
         assert decision["permissionDecision"] == "deny", decision

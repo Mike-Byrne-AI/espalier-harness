@@ -28,6 +28,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests._hook_spawn import run_hook_through
+
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -44,13 +46,10 @@ def _run_write_guard(command: str, tmp_path: Path) -> subprocess.CompletedProces
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
     payload = {"tool_name": "Bash", "tool_input": {"command": command}}
-    return subprocess.run(
+    return run_hook_through(
         [sys.executable, str(script)],
         input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=env, encoding="utf-8",
+        env=env,
     )
 
 

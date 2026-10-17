@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 from tests._hook_assertions import assert_hook_allowed
+from tests._hook_spawn import run_hook_through
 
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
@@ -32,13 +33,10 @@ def run_hook(script_name: str, input_data, env_overrides=None):
     if env_overrides:
         env.update(env_overrides)
     raw = json.dumps(input_data) if not isinstance(input_data, str) else input_data
-    return subprocess.run(
+    return run_hook_through(
         [sys.executable, str(script)],
         input=raw,
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=env, encoding="utf-8",
+        env=env,
     )
 
 

@@ -32,7 +32,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
@@ -43,6 +42,8 @@ if str(HOOKS_DIR) not in sys.path:
     sys.path.insert(0, str(HOOKS_DIR))
 
 import _speedbump  # noqa: E402
+
+from tests._hook_spawn import run_hook_through
 
 
 def _pred(tool_name):
@@ -332,10 +333,10 @@ class TestNoDispatchChange:
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
         env.pop("ESPALIER_MAINTENANCE_MODE", None)
-        return subprocess.run(
+        return run_hook_through(
             [sys.executable, str(HOOKS_DIR / "write_guard.py")],
-            input=json.dumps(payload), capture_output=True, text=True,
-            timeout=15, env=env, encoding="utf-8",
+            input=json.dumps(payload),
+            env=env,
         )
 
     def test_mcp_side_effect_denied_via_write_guard(self, tmp_path):

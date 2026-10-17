@@ -20,6 +20,8 @@ from pathlib import Path
 
 from espalier.cli import INIT_HOOK_SCRIPTS, INIT_TOOL_SCRIPTS, cmd_init
 
+from tests._hook_spawn import run_hook_through
+
 # R13: derive the exercised set from the deploy SoT (espalier.cli.INIT_*) so a
 # newly added hook automatically enters coverage instead of silently shipping
 # an import-time crash the guard claims to prevent. Entry hooks = basenames
@@ -164,13 +166,10 @@ class TestHookExecutionNoModuleError:
 
     def _run_hook(self, hook_path: Path, stdin_json: str, cwd: Path) -> subprocess.CompletedProcess:
         payload = stdin_json.replace("__TARGET__", str(cwd))
-        return subprocess.run(
+        return run_hook_through(
             [sys.executable, str(hook_path)],
             input=payload,
-            capture_output=True,
-            text=True,
             cwd=str(cwd),
-            timeout=15, encoding="utf-8",
         )
 
     def test_no_module_not_found_error_on_any_hook(self, tmp_path):

@@ -670,6 +670,14 @@ class TestSecurityMarkerCoverage:
         # D1 fix) so every tier a re-pin earns runs it;
         # tests/test_proof_tier.py pins that placement.
         "test_freshness_hook_count_migration",
+        # test_hook_spawn and test_hook_spawn_routing match the "hook" token
+        # by name: their subject is tests/_hook_spawn.py, the hook rows' spawn
+        # helper (DEF-2014), a test fixture that judges no tool call. The first
+        # runs small child scripts (`integration`), the second reads source to
+        # pin where the helper is used (`contract`, so a tests-only diff that
+        # adds a bare spawn earns it).
+        "test_hook_spawn",
+        "test_hook_spawn_routing",
     })
 
     def _security_relevant_test_stems(self) -> list[str]:
