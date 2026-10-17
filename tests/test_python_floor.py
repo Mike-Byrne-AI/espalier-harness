@@ -2018,9 +2018,10 @@ class TestABannerThatNeverAnswers:
         is derived here against the engine's own module-level ``_*_VERDICTS``
         dicts: a new memo that is not cleared reds rather than leaking."""
         from tests import conftest
+        from tests._live_tree import checkout_glob
 
         found = set()
-        for path in sorted((REPO_ROOT / "espalier").glob("*.py")):
+        for path in sorted(checkout_glob(REPO_ROOT / "espalier", "*.py")):
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for node in tree.body:
                 targets = ([node.target] if isinstance(node, ast.AnnAssign)
