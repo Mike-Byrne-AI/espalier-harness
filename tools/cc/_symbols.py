@@ -14,6 +14,14 @@ path hit at most, and never read as "different functions"; nor is a file no
 line of which was read. A file that is not Python is a path tier of its own,
 never a symbol.
 
+Two changes that touch conflict in git even in different functions, so each
+hunk also places the old lines beside it: the line before and the line after
+an edit, and the two lines an insertion sits between. A blank neighbour
+between nodes stays neutral; one before the first line or past the last is
+the file's own ``<start>`` or ``<end>``, so two appends to one file meet
+there. "Different functions" therefore means no symbol shared and none next
+to the other's change.
+
 The mapper moved here from ``scripts/lane_overlap_census.py`` (the oracle that
 measured it over thirty merged pull requests), which now imports it and keeps no
 copy. Read by the mail channel's claims (``mail.py``: a claim carries the
@@ -50,6 +58,10 @@ __all__ = [
 Runner = Callable[..., tuple[int, str, str]]
 
 MODULE = "<module>"
+#: The edges of a file, as the neighbours a hunk at either end touches.
+START, END = "<start>", "<end>"
+#: Every verdict ``pair_verdict`` gives; a reader that words them covers each.
+VERDICTS = ("shared symbol", "unplaced", "different functions", "path only", "none")
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 #: Every diff read here: rename detection off, so a moved file is a deletion at
 #: its old path and an addition at its new one, and another lane editing the old
@@ -274,6 +286,19 @@ def changed_symbols(path: str, old_source: str, new_source: str, unified_diff: s
                     unplaced += 1
                 for where in names:
                     symbols.add(f"{path}::{where}")
+        # The old lines touching the hunk: git conflicts on two changes that touch, so a
+        # change also names what sits right beside it (an insertion, the two lines it is
+        # between; an edit, the line before and the line after).
+        around = (old_start, old_start + 1) if m.group(2) == "0" else (old_start - 1, old_start + old_len)
+        for ln in around:
+            if ln < 1 or ln > len(old_lines):
+                symbols.add(f"{path}::{START if ln < 1 else END}")
+                continue
+            names = placed(old_nodes, old_lines, ln)
+            if names == [MODULE]:
+                unplaced += 1
+            for where in names:               # a blank between nodes names nothing: neutral
+                symbols.add(f"{path}::{where}")
     if unread and not hunks:
         changed += 1
         unplaced += 1

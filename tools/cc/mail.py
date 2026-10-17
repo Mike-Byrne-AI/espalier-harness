@@ -697,6 +697,26 @@ def _touches(a: str, b: str) -> bool:
     return a == b or a.startswith(b + "/") or b.startswith(a + "/")
 
 
+def claim_view(re_: dict) -> tuple[set[str], int, set[str], set[str]]:
+    """One claim's ``re`` block read as the claims matcher and the board both
+    read it: its symbols (the vendored twin folded onto its source), its count
+    of left-out ones, the paths it claims whole and the files it marks
+    unplaced. A path is whole where no symbol of this same claim is at or
+    under it: a path given by hand claims its file, or its directory, whole,
+    while a directory the path cap folded keeps the symbols listed under it."""
+    fold = _symbols.canonical
+    syms: set[str] = set()
+    for s in _str_list(re_.get(SYMBOLS_KEY)):
+        where, sep, name = s.partition("::")
+        if sep:
+            syms.add(f"{fold(where)}::{name}")
+    files = {s.split("::", 1)[0] for s in syms}
+    whole = {p for p in (fold(q) for q in _str_list(re_.get("paths")))
+             if not any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") for f in files)}
+    unplaced = {s.split("::", 1)[0] for s in syms if s.endswith(f"::{_symbols.MODULE}")}
+    return syms, _count(re_.get(SYMBOLS_MORE_KEY)), whole, unplaced
+
+
 def overlapping_claims(claims: list[dict], *, paths: list[str] | tuple[str, ...] = (),
                        classes: list[str] | tuple[str, ...] = (), lane: str | None = None,
                        ids: list[str] | tuple[str, ...] = (),
@@ -740,18 +760,7 @@ def overlapping_claims(claims: list[dict], *, paths: list[str] | tuple[str, ...]
         if q not in mine:
             mine.append(q)
 
-    def view(re_: dict) -> tuple[set[str], int, set[str], set[str]]:
-        """One claim's symbols, its count of left-out ones, the paths it claims
-        whole (no symbol of its own in them) and the files it marks unplaced."""
-        syms: set[str] = set()
-        for s in _str_list(re_.get(SYMBOLS_KEY)):
-            where, sep, name = s.partition("::")
-            if sep:
-                syms.add(f"{fold(where)}::{name}")
-        files = {s.split("::", 1)[0] for s in syms}
-        whole = {fold(p) for p in _str_list(re_.get("paths"))} - files
-        unplaced = {s.split("::", 1)[0] for s in syms if s.endswith(f"::{_symbols.MODULE}")}
-        return syms, _count(re_.get(SYMBOLS_MORE_KEY)), whole, unplaced
+    view = claim_view
 
     # One lane, read whole: every live claim of a machine on a lane, its
     # symbols, files claimed whole and unplaced marks united, counts summed.

@@ -375,24 +375,30 @@ def _symbol_clauses(root: Path, paths: list[str], *, base_ref: str, tested: str,
     mapper = _symbol_mapper()
     if mapper is None:
         return not_read("the symbol mapper (tools/cc/_symbols.py) is not importable here")
-    fork = _git_lines(root, run_, "merge-base", now, pr_rev)
-    if not fork:
-        return not_read(f"no merge base of the head with {base_ref}")
+    edges = {getattr(mapper, "START", "<start>"): "the start of the file",
+             getattr(mapper, "END", "<end>"): "the end of the file"}
     out: dict[str, str] = {}
-    for path in py:
-        lane = _changed_in(root, run_, mapper, fork[0], pr_rev, path)
-        moved = _changed_in(root, run_, mapper, tested, now, path)
-        if lane is None or moved is None:
-            out[path] = "(both changed; symbols not read: git could not diff it)"
-            continue
-        met = mapper.symbols_meet(lane["symbols"], moved["symbols"])
-        if met:
-            names = ", ".join(sorted(s.split("::", 1)[1] for s in met))
-            out[path] = f"(both changed, in the same function {names})"
-        elif lane["unplaced"] or moved["unplaced"] or not lane["changed"] or not moved["changed"]:
-            out[path] = "(both changed, unplaced lines)"
-        else:
-            out[path] = "(both changed, different functions)"
+    try:
+        fork = _git_lines(root, run_, "merge-base", now, pr_rev)
+        if not fork:
+            return not_read(f"no merge base of the head with {base_ref}")
+        for path in py:
+            lane = _changed_in(root, run_, mapper, fork[0], pr_rev, path)
+            moved = _changed_in(root, run_, mapper, tested, now, path)
+            if lane is None or moved is None:
+                out[path] = "(both changed; symbols not read: git could not diff it)"
+                continue
+            verdict = mapper.pair_verdict({path: lane}, {path: moved})
+            if verdict["verdict"] == "shared symbol":
+                names = [s.split("::", 1)[1] for s in verdict["shared"]]
+                out[path] = f"(both changed, meeting at {', '.join(edges.get(n, n) for n in names)})"
+            elif verdict["verdict"] == "different functions":
+                out[path] = "(both changed, different functions, none shared or next to the other's)"
+            else:
+                out[path] = "(both changed, unplaced lines)"
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the symbol reading is a clause on the verdict, never the verdict
+        for path in py:
+            out.setdefault(path, f"(both changed; symbols not read: {type(exc).__name__})")
     return out
 
 

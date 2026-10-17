@@ -145,9 +145,10 @@ Read live state in the same turn before you state it: the SessionStart
 banner, a handoff note, the mail and a session's own context are snapshots,
 and with several seats (sessions, each in its own named worktree) pushing,
 they go stale within the hour. The board writes nothing into the tree; what it
-moves is the mail fetch and the base branch's remote-tracking ref, both skipped
-with `--no-fetch` (`--json` gives the same as data). Each section is read on its
-own, and one that cannot be read says so on its own line:
+moves is the mail fetch and the base branch's remote-tracking ref, and it
+fetches the open pull requests' heads by object id (objects only, no ref), all
+three skipped with `--no-fetch` (`--json` gives the same as data). Each section
+is read on its own, and one that cannot be read says so on its own line:
 
 - **merging:** whether a pull request must be caught up with the base before
   it merges (the up-to-date rule) and how many checks are required, read from
@@ -213,6 +214,17 @@ own, and one that cannot be read says so on its own line:
   skipped it. It counts the working tree, and says why, on a clone without that
   ref or a base whose archive leaves the ledger out (an `export-ignore`), and
   reads unread when the base keeps its ledger where this checkout does not look.
+- **overlaps:** every pair of lanes from different seats that change a file in
+  common, among the live claims and the open pull requests (read from their
+  heads), the pairs a reading seat must answer first:
+  - `meet at` a symbol they both change, or one next to the other's change
+    (git conflicts on two changes that touch);
+  - `unplaced lines` where a side changed lines no definition holds;
+  - `different functions, none shared or next to the other's`;
+  - `not Python`, or `symbols not read` where a head is not here.
+  `none among what was read` means something was not read. The ship driver
+  prints the same lines for a lane after `open` and `handoff` push. The rule
+  stays the same: the second to merge runs catch-up.
 
 If the board and your own account disagree, the board is the one that read
 GitHub just now.

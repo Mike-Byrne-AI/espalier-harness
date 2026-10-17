@@ -1338,8 +1338,9 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         _release_claims(root, branch, "Lane pushed; claims closed.")
         raise
     _say(f"#{number} open, auto-merge armed, one push: {url}")
-    _overlap_notice(root, branch, base, number, sha)
+    # The release first: a notice that is slow or interrupted never leaves the claims live.
     _release_claims(root, branch, f"Lane shipped as #{number}; claims closed.")
+    _overlap_notice(root, branch, base, number, sha)
     return 0
 
 
@@ -1531,11 +1532,12 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     rc, _, err = _git("push", "origin", branch, cwd=str(root))
     if rc != 0:
         raise Refused(f"git push failed: {err.strip()[:200]}")
-    _wait_for_pr_head(branch, head_sha())
+    pushed = head_sha()
+    _wait_for_pr_head(branch, pushed)
     rc = rebind()
     if rc == 0:
-        _overlap_notice(root, branch, base, pr.get("number"), head_sha())
         _release_claims(root, branch, "Handoff pushed onto the open pull request; claims closed.")
+        _overlap_notice(root, branch, base, pr.get("number"), pushed)
     return rc
 
 

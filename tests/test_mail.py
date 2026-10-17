@@ -834,6 +834,20 @@ class TestClaimSymbols:
         m = _msg(mail, "mac", "claim", "", lane="lane/x", paths=["a.py"], ids=["DEF-1"])
         assert '"re":{"lane":"lane/x","classes":[],"paths":["a.py"],"ids":["DEF-1"]},"text"' in mail.encode(m)
 
+    def test_a_folder_the_cap_folded_keeps_its_symbols_and_one_given_by_hand_is_whole(self, mail):
+        """``claim_view``, the one reading the matcher and the board share (TP-702 Wave 2). Dies to:
+        a folder that carries symbols under it read as claimed whole (a lane past the path cap would
+        never be certified), or a folder given by hand read as listed (a hand claim and a later
+        symbol claim on one lane would be certified)."""
+        _syms, _more, whole, _marked = mail.claim_view(
+            {"paths": ["tools/cc"], mail.SYMBOLS_KEY: ["tools/cc/mail.py::send"]})
+        assert whole == set(), whole
+        _syms, _more, whole, _marked = mail.claim_view({"paths": ["tools/cc", "docs"]})
+        assert whole == {"tools/cc", "docs"}, whole
+        _syms, _more, whole, _marked = mail.claim_view(
+            {"paths": ["espalier/_vendor/cc/mail.py"], mail.SYMBOLS_KEY: ["espalier/_vendor/cc/mail.py::send"]})
+        assert whole == set() and _syms == {"tools/cc/mail.py::send"}, (whole, _syms)
+
     def test_two_claims_sharing_a_symbol_hit_by_the_symbol(self, mail):
         """Dies to: the symbol hit missing (two lanes in one function meet only as a path)."""
         theirs = _msg(mail, "win", "claim", "", lane="lane/w", symbols=["tools/cc/mail.py::send"])

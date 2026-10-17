@@ -2541,9 +2541,10 @@ class TestTheNoticeAfterAPush:
     """TP-702 Wave 2 (2-C): once `open` or `handoff` has pushed, the driver
     prints the lane's overlaps with every live claim of another seat and every
     open pull request, in the board's words, and changes nothing else: a
-    failed read is one note and the push stands. Driven on the scratch root
-    with every spawn tabled; the board's own read is pinned in
-    tests/test_board.py::TestTheLaneOverlapNotice."""
+    failed read is one note and the push stands. The release comes first, so
+    a notice that is slow or interrupted never leaves the claims live. Driven
+    on the scratch root with every spawn tabled; the board's own read is
+    pinned in tests/test_board.py::TestOverlapsSection (its lane-notice rows)."""
 
     @staticmethod
     def _board(seen: list, lines=("overlaps: none",), raises: Exception | None = None):
@@ -2558,17 +2559,18 @@ class TestTheNoticeAfterAPush:
     def _channel(seen: list):
         return types.SimpleNamespace(release_lane=lambda root, lane, text="", **kw: seen.append(("release", lane)))
 
-    def test_open_prints_the_notice_after_the_push_and_before_the_release(
+    def test_open_prints_the_notice_after_the_push_and_the_release(
             self, ship, tmp_path, forget_guard, monkeypatch, capsys):
-        """Dies to: the notice dropped from `open`, or read before the push."""
+        """Dies to: the notice dropped from `open`, read before the push, or read
+        before the release (an interrupted notice would leave the claims live)."""
         _write_guard(tmp_path)
         seen: list = []
-        line = "overlaps: win (lane/y) and #7 air-work (lane/x) meet in a.py::f"
+        line = "overlaps: win (lane/y) and #7 air-work (lane/x) meet at a.py::f"
         monkeypatch.setattr(ship, "_BOARD", self._board(seen, lines=(line,)))
         monkeypatch.setattr(ship, "_MAIL", self._channel(seen))
         spawns = _arm(ship, _open_answers(tmp_path))
         assert ship.open_pr() == 0
-        assert seen == [("notice", tmp_path, "main", "lane/x", "7", HEAD), ("release", "lane/x")]
+        assert seen == [("release", "lane/x"), ("notice", tmp_path, "main", "lane/x", "7", HEAD)]
         assert spawns.count(("git", "push")) == 1
         out = capsys.readouterr().out
         assert out.index("#7 open, auto-merge armed") < out.index(line)
@@ -2582,7 +2584,7 @@ class TestTheNoticeAfterAPush:
         _arm(ship, TestHandoffVerb()._existing_pr_answers(tmp_path))
         monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 0)
         assert ship.handoff() == 0
-        assert [s[0] for s in seen] == ["notice", "release"] and seen[0][3] == "lane/x"
+        assert [s[0] for s in seen] == ["release", "notice"] and seen[1][3] == "lane/x" and seen[1][5] == HEAD
 
     def test_a_failed_read_is_one_note_and_the_push_stands(
             self, ship, tmp_path, forget_guard, monkeypatch, capsys):
@@ -2602,6 +2604,13 @@ class TestTheNoticeAfterAPush:
         _arm(ship, _open_answers(tmp_path))
         assert ship.open_pr() == 0
         assert "overlap" not in capsys.readouterr().out
+
+    def test_the_real_board_loads_beside_the_driver(self, ship, monkeypatch):
+        """Dies to: a board that no longer loads by path (every notice would read
+        'not read' while every stand-in row stays green)."""
+        monkeypatch.setattr(ship, "_BOARD", None)
+        board = ship._board_module()
+        assert callable(board.lane_overlap_lines) and callable(board.overlap_lines)
 
 
 # ── TP-701 B-3: a push from a checkout two live sessions share is refused ────

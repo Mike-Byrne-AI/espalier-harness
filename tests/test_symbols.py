@@ -59,6 +59,12 @@ def _placement(sym, old: str, new: str, path: str = "p.py") -> dict:
     return sym.changed_symbols(path, old, new, _diff(old, new, path))
 
 
+def _named(symbols: set[str]) -> set[str]:
+    """The symbols without the file-edge marks a hunk at either end touches (``<start>``,
+    ``<end>``): for a row about which symbol a change lands on, not about what it borders."""
+    return {s for s in symbols if not s.endswith(("::<start>", "::<end>"))}
+
+
 OLD = '''import os
 
 LIMIT = 3
@@ -112,9 +118,11 @@ class TestChangedSymbols:
         assert _symbols(sym, OLD, OLD.replace('"a": 1,', '"a": 1,\n    "b": 2,')) == {"p.py::TABLE"}
 
     def test_a_tuple_target_binds_each_name(self, sym):
-        """Dies to: the target spelled whole (`p.py::(first, second)`, a comma a step field splits on)."""
-        assert _symbols(sym, OLD, OLD.replace("first, second = 1, 2", "first, second = 3, 4")) == {
-            "p.py::first", "p.py::second"}
+        """Dies to: the target spelled whole (`p.py::(first, second)`, a comma a step field splits on).
+        TABLE is the line above the edit, its closing brace, which git conflicts with."""
+        got = _symbols(sym, OLD, OLD.replace("first, second = 1, 2", "first, second = 3, 4"))
+        assert got == {"p.py::first", "p.py::second", "p.py::TABLE"}, got
+        assert not any("," in s for s in got), got
 
     def test_a_class_body_assignment_is_the_class_s(self, sym):
         """Dies to: class-body assignments made symbols of their own (`p.py::attr`)."""
@@ -124,17 +132,20 @@ class TestChangedSymbols:
         """Dies to: deletions placed in the new file (they land on `f` or the module there)."""
         new = OLD.replace("def g(y):\n    return y - 1\n\n\n", "")
         got = _symbols(sym, OLD, new)
-        assert "p.py::g" in got and "p.py::f" not in got and "p.py::C" not in got, got
+        # difflib slides the hunk up to f's last line, which it then borders: f is that neighbour.
+        assert "p.py::g" in got and "p.py::C" not in got, got
 
-    def test_the_git_shaped_hunk_for_a_whole_deletion_names_only_the_deleted_def(self, sym):
+    def test_the_git_shaped_hunk_for_a_whole_deletion_counts_only_the_deleted_def(self, sym):
         """Git slides the hunk for "delete `g` whole" to the def, its body and the two blanks
         below it (`@@ -14,4 +13,0 @@`), where difflib slides it two lines up. Dies to: blank lines
-        attached to the next definition (the decorated class), which named `C` beside `g`."""
+        attached to the next definition (the decorated class), which counted `C`'s lines beside
+        `g`'s. `C` is named all the same, as the line below the hunk (its comment), which git
+        conflicts with; its lines are not counted as changed."""
         new = OLD.replace("def g(y):\n    return y - 1\n\n\n", "")
         line_of_g = OLD.splitlines().index("def g(y):") + 1
         hunk = f"@@ -{line_of_g},4 +{line_of_g - 1},0 @@\n"
         got = sym.changed_symbols("p.py", OLD, new, hunk)
-        assert got["symbols"] == {"p.py::g"} and got["changed"] == 2 and got["unplaced"] == 0, got
+        assert got["symbols"] == {"p.py::g", "p.py::C"} and got["changed"] == 2 and got["unplaced"] == 0, got
 
     def test_a_method_added_at_the_end_of_a_class_names_only_that_method(self, sym):
         """Dies to: the blank line before the new method attached to the next top-level def."""
@@ -145,13 +156,16 @@ class TestChangedSymbols:
         """Dies to: a comment run that a blank line breaks still walking forward to the next def."""
         new = OLD.replace("    return x + 1\n", "    return x + 1\n# tail\n")
         got = _placement(sym, OLD, new)
-        assert got["symbols"] == {"p.py::<module>"} and got["unplaced"] == 1, got
+        # f is the line the insertion follows; g, past the blank lines, is not touched.
+        assert got["symbols"] == {"p.py::<module>", "p.py::f"} and got["unplaced"] == 1, got
 
     def test_a_blank_line_between_methods_names_nothing(self, sym):
         """Dies to: a blank inside a class span producing the class (the two-rules finding)."""
         new = OLD.replace("        return 1\n\n    async def n", "        return 1\n\n\n    async def n")
         got = _placement(sym, OLD, new)
-        assert got["symbols"] == set() and got["changed"] == 0, got
+        # The blank names nothing and is not counted; `n`, the line it sits above, is its neighbour.
+        assert "p.py::C" not in got["symbols"] and got["changed"] == 0, got
+        assert got["symbols"] == {"p.py::C.n"}, got
 
     def test_a_rename_reports_both_names(self, sym):
         """Dies to: only the new side of a changed hunk placed (`f` vanishes, the other lane meets nothing)."""
@@ -173,12 +187,14 @@ class TestChangedSymbols:
 
     def test_a_definition_under_a_module_level_block_is_found(self, sym):
         """Dies to: the walk stopping at `if`/`try` blocks (the line reads unplaced)."""
-        assert _symbols(sym, OLD, OLD.replace("return 3", "return 30")) == {"p.py::h"}
+        assert _named(_symbols(sym, OLD, OLD.replace("return 3", "return 30"))) == {"p.py::h"}
 
     def test_an_added_import_is_unplaced_and_counted(self, sym):
         """Dies to: unplaced lines dropped from the symbols, or not counted."""
         got = _placement(sym, OLD, OLD.replace("import os\n", "import os\nimport sys\n"))
-        assert got["symbols"] == {"p.py::<module>"} and got["unplaced"] == 1 and got["changed"] == 1, got
+        # The line it follows, `import os`, is module-level too: a second unplaced line, read
+        # beside the hunk and not counted as changed.
+        assert got["symbols"] == {"p.py::<module>"} and got["unplaced"] == 2 and got["changed"] == 1, got
 
     def test_a_file_that_is_not_python_is_a_path_tier(self, sym):
         """Dies to: a prose file mapped as if it were Python (symbols by line)."""
@@ -268,7 +284,8 @@ class TestPlacementEdges:
         old = "def f(x):\n    return x\n\n\ndef g():\n    return 2\n"
         new = old.replace("\n\n\ndef g", "\n\n\n\ndef g")
         got = _placement(sym, old, new)
-        assert got["symbols"] == set() and got["changed"] == 0, got
+        # The blank is not counted (changed stays 0); `g`, the line it sits above, is its neighbour.
+        assert got["symbols"] == {"p.py::g"} and got["changed"] == 0, got
 
     def test_an_indented_trailing_comment_is_unplaced_not_the_next_def(self, sym):
         """Dies to: the forward walk ignoring indentation, so a comment indented as `f`'s body with
@@ -276,13 +293,15 @@ class TestPlacementEdges:
         old = "def f():\n    return 1\n    # done\ndef g():\n    return 2\n"
         new = old.replace("# done", "# finished")
         got = _placement(sym, old, new)
-        assert "p.py::g" not in got["symbols"] and got["unplaced"] == 2, got
+        # g is named all the same, as the line below the edit with no blank between (git
+        # conflicts with an edit there); the comment's own two lines stay unplaced.
+        assert got["unplaced"] == 2 and got["symbols"] == {"p.py::<module>", "p.py::f", "p.py::g"}, got
 
     def test_a_subscript_target_is_its_root_name(self, sym):
         """Dies to: `ast.unparse` of a subscript target (`X[1, 2]`), which carries the comma the
         tuple-target test exists to keep out of a symbol."""
         old = "X = {}\nX[1, 2] = 3\n"
-        assert _symbols(sym, old, old.replace("= 3", "= 4")) == {"p.py::X"}
+        assert _named(_symbols(sym, old, old.replace("= 3", "= 4"))) == {"p.py::X"}
 
 
 class TestPairVerdict:
@@ -326,6 +345,69 @@ class TestPairVerdict:
     def test_no_shared_file_is_no_verdict(self, sym):
         got = sym.pair_verdict({"a.py": self._py({"a.py::f"})}, {"b.py": self._py({"b.py::f"})})
         assert got["verdict"] == "none" and got["files"] == []
+
+
+#: Two functions, two blank lines between, and no blank line at the end.
+_TWO = "def f():\n    return 1\n\n\ndef g():\n    return 2\n"
+
+
+def _merge_rc(tmp_path: pathlib.Path, base: str, ours: str, theirs: str) -> int:
+    """git's own answer: ``git merge-file``'s exit code (0 clean, else the number of conflicts)."""
+    files = []
+    for name, text in (("ours", ours), ("base", base), ("theirs", theirs)):
+        path = tmp_path / f"{name}.py"
+        path.write_bytes(text.encode("utf-8"))
+        files.append(str(path))
+    return subprocess.run(["git", "merge-file", "-p", *files], capture_output=True, timeout=30).returncode
+
+
+class TestTouchingHunksAreNeverCertified:
+    """Two changes git cannot merge (they touch, or both land at one point) must never read
+    "different functions", and one git merges must still read it. Each row pins the verdict
+    beside git merge-file's exit code, so the rule follows git and not a sentence (the
+    failure-mode review of Wave 2, driven: both shapes certified before the fix)."""
+
+    def _row(self, sym, tmp_path, ours: str, theirs: str) -> tuple[str, int]:
+        verdict = sym.pair_verdict({"p.py": _placement(sym, _TWO, ours)},
+                                   {"p.py": _placement(sym, _TWO, theirs)})["verdict"]
+        return verdict, _merge_rc(tmp_path, _TWO, ours, theirs)
+
+    def test_two_appends_at_the_end_of_a_file_meet(self, sym, tmp_path):
+        """Dies to: an insertion placed by its own lines alone (two new functions appended read
+        as different functions; git conflicts, both land after the last line)."""
+        verdict, rc = self._row(sym, tmp_path, _TWO + "\n\ndef h1():\n    return 3\n",
+                                _TWO + "\n\ndef h2():\n    return 4\n")
+        assert rc != 0 and verdict != "different functions", (verdict, rc)
+
+    def test_two_appends_after_a_trailing_blank_meet_at_the_end(self, sym, tmp_path):
+        """Dies to: a neighbour past the last line read as nothing (behind a trailing blank, the
+        last line names no symbol, so only the end of the file says they meet)."""
+        base = _TWO + "\n"
+        a, b = base + "\ndef h1():\n    return 3\n", base + "\ndef h2():\n    return 4\n"
+        got = sym.pair_verdict({"p.py": _placement(sym, base, a)}, {"p.py": _placement(sym, base, b)})
+        assert _merge_rc(tmp_path, base, a, b) != 0 and got["verdict"] == "shared symbol", got
+        assert got["shared"] == ["p.py::<end>"], got
+
+    def test_an_edit_and_an_insertion_right_after_it_meet(self, sym, tmp_path):
+        """Dies to: an edit's neighbours left unplaced (f's last line edited, a new function
+        inserted right after it with no blank between; git conflicts, the hunks touch)."""
+        verdict, rc = self._row(sym, tmp_path, _TWO.replace("return 1", "return 10"),
+                                _TWO.replace("    return 1\n", "    return 1\ndef h():\n    return 3\n"))
+        assert rc != 0 and verdict == "shared symbol", (verdict, rc)
+
+    def test_an_edit_and_an_insertion_two_lines_on_stay_certified(self, sym, tmp_path):
+        """The clean control. Dies to: a rule wider than git's (an unchanged line between the
+        two changes, which git merges, read as a meeting: a certificate lost for nothing)."""
+        verdict, rc = self._row(sym, tmp_path, _TWO.replace("return 1", "return 10"),
+                                _TWO.replace("\n\ndef g", "\n\ndef h():\n    return 3\n\n\ndef g"))
+        assert rc == 0 and verdict == "different functions", (verdict, rc)
+
+    def test_an_edit_at_the_first_line_keeps_its_certificate_elsewhere(self, sym, tmp_path):
+        """Dies to: the start of the file read as unplaced (every edit to line 1 would decline,
+        though git merges it with an edit far below)."""
+        verdict, rc = self._row(sym, tmp_path, _TWO.replace("def f():", "def f(x=0):"),
+                                _TWO.replace("return 2", "return 20"))
+        assert rc == 0 and verdict == "different functions", (verdict, rc)
 
 
 class TestConcurrent:
@@ -411,8 +493,8 @@ class TestSymbolsOfLane:
         (repo / "m.py").write_text(MOD.replace("return 2", "return 20"), encoding="utf-8")
         (repo / "n.py").write_text("def k():\n    return 3\n", encoding="utf-8")
         got = sym.symbols_of_lane(repo, "main")
-        assert got["m.py"]["symbols"] == {"m.py::g"}
-        assert got["n.py"]["symbols"] == {"n.py::k"} and got["n.py"]["unplaced"] == 0
+        assert _named(got["m.py"]["symbols"]) == {"m.py::g"}
+        assert _named(got["n.py"]["symbols"]) == {"n.py::k"} and got["n.py"]["unplaced"] == 0
 
     def test_an_uncommitted_edit_is_placed_in_the_working_tree_s_lines(self, sym, repo):
         """The working tree adds lines above the edited function, so HEAD's text places the
@@ -421,7 +503,9 @@ class TestSymbolsOfLane:
         source read from HEAD instead of the working tree."""
         grown = "def e():\n    return 0\n\n\n" + MOD.replace("return 2", "return 20")
         (repo / "m.py").write_text(grown, encoding="utf-8")
-        assert sym.symbols_of_lane(repo, "main")["m.py"]["symbols"] == {"m.py::e", "m.py::g"}
+        got = sym.symbols_of_lane(repo, "main")["m.py"]
+        # f is named too, as the first line the insertion at the top sits above.
+        assert {"m.py::e", "m.py::g"} <= got["symbols"] and got["unplaced"] == 0, got
 
     def test_the_user_s_diff_settings_do_not_change_the_reading(self, sym, repo):
         """A colour forced on, and hunks merged across a context gap, are the user's git
@@ -440,7 +524,7 @@ class TestSymbolsOfLane:
         _git(repo, "config", "color.diff", "always")
         _git(repo, "config", "diff.interHunkContext", "10")
         got = sym.symbols_of_lane(repo, "main")["m.py"]
-        assert got["symbols"] == {"m.py::a", "m.py::c"} and got["changed"] == 4, got
+        assert _named(got["symbols"]) == {"m.py::a", "m.py::c"} and got["changed"] == 4, got
 
     @pytest.mark.skipif(sys.platform == "win32", reason="a POSIX shell script as the external differ")
     def test_an_external_differ_the_user_set_is_not_the_reading(self, sym, repo, tmp_path):
@@ -469,7 +553,7 @@ class TestSymbolsOfLane:
             (repo / rel).parent.mkdir(parents=True, exist_ok=True)
             (repo / rel).write_text("def k():\n    return 1\n", encoding="utf-8")
         got = sym.symbols_of_lane(repo, "main")
-        assert "espalier/_vendor/cc/x.py" not in got and got["tools/cc/x.py"]["symbols"] == {"tools/cc/x.py::k"}
+        assert "espalier/_vendor/cc/x.py" not in got and _named(got["tools/cc/x.py"]["symbols"]) == {"tools/cc/x.py::k"}
 
     def test_a_root_below_the_top_reads_top_relative_paths(self, sym, repo):
         """Run from a subdirectory, git names untracked files relative to it and diff names relative
@@ -479,7 +563,7 @@ class TestSymbolsOfLane:
         (repo / "sub" / "n.py").write_text("def k():\n    return 3\n", encoding="utf-8")
         (repo / "m.py").write_text(MOD.replace("return 1", "return 10"), encoding="utf-8")
         got = sym.symbols_of_lane(repo / "sub", "main")
-        assert got["sub/n.py"]["symbols"] == {"sub/n.py::k"} and got["m.py"]["symbols"] == {"m.py::f"}, got
+        assert _named(got["sub/n.py"]["symbols"]) == {"sub/n.py::k"} and _named(got["m.py"]["symbols"]) == {"m.py::f"}, got
 
     def test_changed_paths_are_read_nul_separated(self, sym):
         """Dies to: `--name-only` output split on whitespace (`pkg/my file.py` becomes a path tier
@@ -503,7 +587,7 @@ class TestSymbolsOfLane:
         _git(repo, "commit", "-q", "-m", "move")
         got = sym.symbols_of_lane(repo, "main")
         assert {"m.py", "moved.py"} <= set(got)
-        assert got["m.py"]["symbols"] == {"m.py::f", "m.py::g"}
+        assert _named(got["m.py"]["symbols"]) == {"m.py::f", "m.py::g"}
 
     def test_a_base_git_cannot_read_is_a_named_refusal(self, sym, repo):
         """Dies to: a failed merge-base read as an empty lane (no symbols, so nothing meets it),

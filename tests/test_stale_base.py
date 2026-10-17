@@ -123,7 +123,8 @@ class TestStaleBase:
         head, _ = _lane(repo, {"tools/a.py": _BASE_FILES["tools/a.py"] + "MAIN = 4\n"})
         result = _judge(rules, repo, head)
         assert result["moved"] == 1
-        assert result["near"] == ["tools/a.py (both changed, different functions)"]
+        # Both appended at the end, after VALUE's line: git conflicts there, and the clause says so.
+        assert result["near"] == ["tools/a.py (both changed, meeting at the end of the file, VALUE)"]
         line = rules.stale_line(result, "main", 7)
         assert "main moved 1 merge(s) since #7's CI" in line and "tools/a.py (both changed" in line
         assert "python tools/cc/ship.py catch-up" in line and line.isascii()
@@ -200,13 +201,33 @@ class TestTheSymbolClause:
         """Dies to: the meeting read from one side alone."""
         repo = _Repo(tmp_path)
         head = _function_lane(repo, _FUNCS.replace("return 1", "return 10"), _FUNCS.replace("return 1", "return 11"))
-        assert _judge(rules, repo, head)["near"] == ["tools/a.py (both changed, in the same function f)"]
+        assert _judge(rules, repo, head)["near"] == ["tools/a.py (both changed, meeting at f)"]
 
     def test_different_functions_are_said(self, rules, tmp_path, mapper):
         """Dies to: the certificate inverted (two functions read as one)."""
         repo = _Repo(tmp_path)
         head = _function_lane(repo, _FUNCS.replace("return 1", "return 10"), _FUNCS.replace("return 2", "return 20"))
-        assert _judge(rules, repo, head)["near"] == ["tools/a.py (both changed, different functions)"]
+        assert _judge(rules, repo, head)["near"] == [
+            "tools/a.py (both changed, different functions, none shared or next to the other's)"]
+
+    def test_a_symbol_read_that_fails_keeps_the_advisory(self, rules, tmp_path, mapper):
+        """Dies to: the clause's failure raised out of stale_base (the advisory
+        it decorates, which read fine, would be lost to a timed-out blob read)."""
+        repo = _Repo(tmp_path)
+        head = _function_lane(repo, _FUNCS.replace("return 1", "return 10"), _FUNCS.replace("return 2", "return 20"))
+
+        def slow_blobs(argv, **kw):
+            if argv[1:3] == ["cat-file", "blob"]:
+                raise rules_timeout("git cat-file took longer than 30s")
+            return _run(argv, **kw)
+
+        class rules_timeout(Exception):
+            pass
+
+        result = rules.stale_base(repo.root, base_ref="main", tested_when=CI_RAN, pr_paths=["tools/a.py"],
+                                  pr_rev=head, run_=slow_blobs)
+        assert result["near"] == ["tools/a.py (both changed; symbols not read: rules_timeout)"], result
+        assert "main moved 1 merge(s)" in rules.stale_line(result, "main", 7)
 
     def test_a_line_no_node_holds_is_unplaced(self, rules, tmp_path, mapper):
         """Dies to: an unplaced side certified (main's new import is at the
