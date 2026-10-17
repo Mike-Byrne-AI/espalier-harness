@@ -217,11 +217,14 @@ is read on its own, and one that cannot be read says so on its own line:
 - **overlaps:** every pair of lanes from different seats that change a file in
   common, among the live claims and the open pull requests (read from their
   heads), the pairs a reading seat must answer first:
-  - `meet at` a symbol they both change, or one next to the other's change
-    (git conflicts on two changes that touch);
-  - `unplaced lines` where a side changed lines no definition holds;
+  - `meet at` a symbol they both change, one next to the other's change, a
+    file's start or end, or a run of blank lines both insert into (git
+    conflicts on two changes that touch);
+  - `unplaced lines` where a side changed lines no definition holds, or
+    inserted between two such lines;
   - `different functions, none shared or next to the other's`;
-  - `not Python`, or `symbols not read` where a head is not here.
+  - `no symbols` for a file that is not Python or a folder claimed whole, or
+    `symbols not read` where a head is not here.
   `none among what was read` means something was not read. The ship driver
   prints the same lines for a lane after `open` and `handoff` push. The rule
   stays the same: the second to merge runs catch-up.

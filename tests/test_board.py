@@ -1127,7 +1127,8 @@ class TestOverlapsSection:
         claims = [_claim("win", "lane/x", ["docs/a.md"]), _claim("air-work", "lane/y", ["docs/a.md"])]
         got = board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set()))
         assert board.overlap_lines(got) == [
-            "overlaps: win (lane/x) and air-work (lane/y) both changed docs/a.md (not Python)"]
+            "overlaps: win (lane/x) and air-work (lane/y) both changed docs/a.md "
+            "(no symbols: not Python, or a folder claimed whole)"]
 
     def test_a_directory_claim_covers_the_files_under_it(self, board, tmp_path, by_head):
         """Dies to: a folded directory claim matched by its spelling alone (a
@@ -1191,6 +1192,50 @@ class TestOverlapsSection:
         lines = board.lane_overlap_lines(tmp_path, "main", "lane/x", 7, H1, run_=_heads({H1, H3}))
         assert lines == ["overlaps: none"], lines
 
+    def _notice_channel(self, board, monkeypatch, claims, listed):
+        monkeypatch.setattr(board.mail, "machine_setting", lambda root, run=None: ("air-work", "stubbed"))
+        monkeypatch.setattr(board.mail, "fetch_mail", lambda root, run=None: (True, ""))
+        monkeypatch.setattr(board.mail, "read_mail", lambda root, run=None: ({}, {}))
+        monkeypatch.setattr(board.mail, "live_claims", lambda by_machine: claims)
+        monkeypatch.setattr(board.mail, "lane_seats", lambda by_machine: {"lane/w": "win-2"})
+        monkeypatch.setattr(board, "read_open_prs", lambda root, run_=None: [dict(p) for p in listed])
+
+    def test_a_lane_notice_reads_only_the_heads_that_can_meet_it_and_its_own_once(
+            self, board, monkeypatch, tmp_path, by_head):
+        """Dies to: the prefilter dropped (every open head read for a notice that prints one
+        lane's pairs; a head with no table entry here raises if it is read), or the pushed head
+        read twice."""
+        reads: list = []
+        table = {H1: _placed("a.py", "f"), H2: _placed("a.py", "f")}
+
+        def between(base, head, **kw):
+            reads.append(head)
+            return table[head]
+
+        monkeypatch.setattr(board._symbols, "symbols_between", between)
+        listed = [_pr(8, "win-2", "lane/w", H2), _pr(9, "air", "lane/z", H3, paths=("c.py",))]
+        self._notice_channel(board, monkeypatch, [], listed)
+        lines = board.lane_overlap_lines(tmp_path, "main", "lane/x", 7, H1, run_=_heads({H1, H2, H3}))
+        assert lines[0] == "overlaps: #7 air-work (lane/x) and #8 win-2 (lane/w) meet at a.py::f", lines
+        assert sorted(reads) == [H1, H2], reads
+
+    def test_a_lane_notice_reads_a_pull_request_at_githubs_file_cap(self, board, monkeypatch, tmp_path, by_head):
+        """Dies to: the prefilter trusting a capped list (the meeting file past GitHub's 100th
+        never listed, so the notice said none where the board read the pair)."""
+        by_head.update({H1: _placed("z.py", "f"), H2: _placed("z.py", "f")})
+        capped = _pr(8, "win-2", "lane/w", H2, paths=tuple(f"f{i}.py" for i in range(board.GH_FILES_CAP)))
+        self._notice_channel(board, monkeypatch, [], [capped])
+        lines = board.lane_overlap_lines(tmp_path, "main", "lane/x", 7, H1, run_=_heads({H1, H2}))
+        assert lines[0] == "overlaps: #7 air-work (lane/x) and #8 win-2 (lane/w) meet at z.py::f", lines
+
+    def test_a_pair_with_no_symbols_ranks_above_a_certificate(self, board, tmp_path, by_head):
+        """Dies to: prose and whole-folder pairs sorted under the certificates (the pairs that
+        can conflict at catch-up hidden past the cap)."""
+        claims = [_claim("win", "lane/x", ["a.py"], ["a.py::f"]), _claim("air-work", "lane/y", ["a.py"], ["a.py::g"]),
+                  _claim("s1", "lane/1", ["docs/x.md"]), _claim("s2", "lane/2", ["docs/x.md"])]
+        got = board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set()))
+        assert [p["verdict"] for p in got["pairs"]] == ["path only", "different functions"], got["pairs"]
+
     def test_a_lane_notice_says_what_it_could_not_read(self, board, monkeypatch, tmp_path, by_head):
         by_head[H1] = _placed("a.py", "f")
         failed = f"{board.mail.MACHINE_UNREAD} (git config exited 1)"
@@ -1230,7 +1275,15 @@ class TestOverlapsSection:
                   _claim("air-work", "lane/y", ["a.py", "docs/x.md"], ["a.py::g"])]
         lines = board.overlap_lines(board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set())))
         assert lines == ["overlaps: win (lane/x) and air-work (lane/y) both changed a.py: different functions, "
-                         "none shared or next to the other's; also both changed docs/x.md (not Python)"], lines
+                         "none shared or next to the other's; also both changed docs/x.md "
+                         "(no symbols: not Python, or a folder claimed whole)"], lines
+
+    def test_a_meeting_in_a_run_of_blank_lines_is_said_in_words(self, board, tmp_path, by_head):
+        claims = [_claim("win", "lane/x", ["a.py"], ["a.py::<after TestA.test_one>", "a.py::TestA.test_a"]),
+                  _claim("air-work", "lane/y", ["a.py"], ["a.py::<after TestA.test_one>", "a.py::TestA.test_b"])]
+        lines = board.overlap_lines(board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set())))
+        assert lines == ["overlaps: win (lane/x) and air-work (lane/y) meet at the blank lines after "
+                         "a.py::TestA.test_one"], lines
 
     def test_a_meeting_at_the_end_of_a_file_is_said_in_words(self, board, tmp_path, by_head):
         claims = [_claim("win", "lane/x", ["a.py"], ["a.py::<end>", "a.py::h1"]),
@@ -1316,7 +1369,7 @@ class TestOverlapsSection:
             text = board._overlap_text({"a": "A", "b": "B", "verdict": verdict, "files": ["a.py"],
                                         "shared": ["a.py::f"], "paths": [], "unplaced_on": []})
             assert text.startswith("A and B"), text
-            assert verdict == "path only" or "(not Python)" not in text, (verdict, text)
+            assert verdict == "path only" or "(no symbols" not in text, (verdict, text)
 
     def test_the_lines_are_ascii(self, board, tmp_path, by_head):
         claims = [_claim("win", "lane/x", ["docs/café.md"]), _claim("air-work", "lane/y", ["docs/café.md"])]

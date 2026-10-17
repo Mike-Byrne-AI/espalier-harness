@@ -334,7 +334,7 @@ def _symbol_mapper() -> Any:
     ``Merging:`` line never depends on the mapper."""
     try:
         import _symbols
-    except ImportError:  # fail-open: ok deliberate -- the clause says the symbols were not read, and why
+    except Exception:  # noqa: BLE001 -- fail-open: ok deliberate -- a missing or broken mapper: the clause says the symbols were not read, and why
         return None
     return _symbols
 
@@ -359,10 +359,13 @@ def _symbol_clauses(root: Path, paths: list[str], *, base_ref: str, tested: str,
                     run_: Runner) -> dict[str, str]:
     """For each Python path both changed, what the catch-up will meet: the
     pull request's own diff (from its merge base with the base) against the
-    base's moves since ``tested``, in the same function, in different ones,
-    or on lines no node holds. Where ``pr_rev`` is the base because the head
-    is not here, no function verdict: the base compared with itself is no
-    comparison. A path that is not Python keeps its bare clause."""
+    base's moves since ``tested``, read by ``pair_verdict``: meeting at a
+    symbol both change or one next to the other's change, different functions
+    with none shared or next to the other's, or lines no node holds. Where
+    ``pr_rev`` is the base because the head is not here, no function verdict:
+    the base compared with itself is no comparison. A path that is not Python
+    keeps its bare clause; a mapper that cannot be read, or a read that fails,
+    costs this clause alone, never the verdict it decorates."""
     py = [p for p in paths if p.endswith(".py")]
     if not py:
         return {}
@@ -372,13 +375,13 @@ def _symbol_clauses(root: Path, paths: list[str], *, base_ref: str, tested: str,
 
     if pr_rev in (base_ref, now):
         return not_read("head not here")
-    mapper = _symbol_mapper()
-    if mapper is None:
-        return not_read("the symbol mapper (tools/cc/_symbols.py) is not importable here")
-    edges = {getattr(mapper, "START", "<start>"): "the start of the file",
-             getattr(mapper, "END", "<end>"): "the end of the file"}
     out: dict[str, str] = {}
     try:
+        mapper = _symbol_mapper()
+        if mapper is None:
+            return not_read("the symbol mapper (tools/cc/_symbols.py) is not importable here")
+        edges = {getattr(mapper, "START", "<start>"): "the start of the file",
+                 getattr(mapper, "END", "<end>"): "the end of the file"}
         fork = _git_lines(root, run_, "merge-base", now, pr_rev)
         if not fork:
             return not_read(f"no merge base of the head with {base_ref}")
@@ -391,7 +394,9 @@ def _symbol_clauses(root: Path, paths: list[str], *, base_ref: str, tested: str,
             verdict = mapper.pair_verdict({path: lane}, {path: moved})
             if verdict["verdict"] == "shared symbol":
                 names = [s.split("::", 1)[1] for s in verdict["shared"]]
-                out[path] = f"(both changed, meeting at {', '.join(edges.get(n, n) for n in names)})"
+                words = [edges.get(n) or (f"the blank lines after {n[len('<after '):-1]}"
+                                          if n.startswith("<after ") else n) for n in names]
+                out[path] = f"(both changed, meeting at {', '.join(words)})"
             elif verdict["verdict"] == "different functions":
                 out[path] = "(both changed, different functions, none shared or next to the other's)"
             else:

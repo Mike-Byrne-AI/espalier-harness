@@ -25,9 +25,10 @@ twins are its own.
 Reads the merged pull requests of a window through ``gh``, fetches the base and
 each head, and for every pair whose open windows overlapped prints one of four
 verdicts per shared Python file: a shared symbol, different functions (every
-changed line on both sides placed, none shared), unplaced (a shared file where
-a side has unplaced lines and no symbol is shared: no certificate), or a path
-tier for files that are not Python. Standard library, ``git`` and ``gh``.
+changed line on both sides placed, none shared or next to the other's change),
+unplaced (a shared file where a side has unplaced lines, or a change beside
+lines no node holds, and no symbol is shared: no certificate), or a path tier
+for files that are not Python. Standard library, ``git`` and ``gh``.
 
     python3 scripts/lane_overlap_census.py --prs 30
     python3 scripts/lane_overlap_census.py --window 180-209 --json
@@ -180,8 +181,7 @@ def census(*, prs: int | None = None, window: tuple[int, int] | None = None, bas
         verdict = _symbols.pair_verdict(info[a]["placements"], info[b]["placements"])
         if verdict["verdict"] != "none":
             pairs.append({"a": a, "b": b, **verdict})
-    verdicts = {v: sum(1 for p in pairs if p["verdict"] == v)
-                for v in ("shared symbol", "unplaced", "different functions", "path only")}
+    verdicts = {v: sum(1 for p in pairs if p["verdict"] == v) for v in _symbols.VERDICTS if v != "none"}
     return {"prs": len(info), "unread": unread, "missing": missing, "mirrors_folded": _mirrors is not None,
             "concurrent_pairs": concurrent_pairs, "sharing_a_file": len(pairs), "verdicts": verdicts,
             "changed_lines": changed_total, "unplaced_lines": unplaced_total,
@@ -223,11 +223,20 @@ def main(argv: list[str] | None = None) -> int:
           f"{v['different functions']}, path only {v['path only']}; unplaced Python lines "
           f"{result['unplaced_lines']} of {result['changed_lines']} ({rate:.1%})"
           + ("" if result["mirrors_folded"] else "; mirror twins NOT folded (registry unread)"))
+    edges = {_symbols.START: "the start of {}", _symbols.END: "the end of {}"}
+
+    def worded(symbol: str) -> str:
+        path, _, name = symbol.partition("::")
+        if name.startswith("<after ") and name.endswith(">"):
+            return f"the blank lines after {path}::{name[len('<after '):-1]}"
+        return edges[name].format(path) if name in edges else symbol
+
     for p in result["pairs"]:
         files = ", ".join(p["files"][:3]) + (" ..." if len(p["files"]) > 3 else "")
-        detail = {"shared symbol": ", ".join(p["shared"]), "unplaced": "unplaced lines in " + ", ".join(p["unplaced"]),
-                  "different functions": "every changed line placed, none shared",
-                  "path only": "not Python: " + ", ".join(p["paths"])}[p["verdict"]]
+        shared = [worded(s) for s in p["shared"]]
+        detail = {"shared symbol": ", ".join(shared), "unplaced": "unplaced lines in " + ", ".join(p["unplaced"]),
+                  "different functions": "every changed line placed, none shared or next to the other's",
+                  "path only": "not Python: " + ", ".join(p["paths"])}.get(p["verdict"], p["verdict"])
         print(f"  #{p['a']} & #{p['b']}: {len(p['files'])} file(s) [{files}]: {p['verdict']} ({detail})")
     return 0
 

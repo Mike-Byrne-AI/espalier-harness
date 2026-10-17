@@ -545,11 +545,12 @@ def fetch_heads(root: Path, prs: list[dict], *, run_: Runner = run) -> list[str]
 
 #: The pair verdicts in the order the section prints them: what a seat must
 #: answer first. Every verdict ``_symbols.pair_verdict`` gives has a place.
-_VERDICT_ORDER = ("shared symbol", "not read", "unplaced", "different functions", "path only", "none")
+_VERDICT_ORDER = ("shared symbol", "not read", "unplaced", "path only", "different functions", "none")
 
 
 def read_overlaps_section(root: Path, base: str, claims: list[dict], prs: list[dict], *,
-                          run_: Runner = run, fetch: bool = True, seat: str = "") -> dict:
+                          run_: Runner = run, fetch: bool = True, seat: str = "",
+                          known: dict[str, tuple[dict, str]] | None = None) -> dict:
     """``{"pairs", "notes", "partial", "unread_lanes"}``: every pair of lanes
     from different seats that change a file in common, among the live claims
     (united per seat and lane) and the open pull requests (read from their
@@ -578,7 +579,8 @@ def read_overlaps_section(root: Path, base: str, claims: list[dict], prs: list[d
                       "not_read": ""})
     unread_lanes: list[str] = []
     for pr in prs:
-        place, why = _pr_place(root, base, pr, present, run_=run_)
+        head = str(pr.get("headRefOid") or "")
+        place, why = (known or {}).get(head) or _pr_place(root, base, pr, present, run_=run_)
         number, branch, owned = pr.get("number"), str(pr.get("headRefName") or ""), pr.get("seat")
         label = (f"#{number} {owned} ({branch})" if owned else
                  f"#{number} ({branch}; seat unread)" if owned is None else
@@ -625,19 +627,18 @@ def read_overlaps_section(root: Path, base: str, claims: list[dict], prs: list[d
 
 
 def _symbol_words(symbol: str) -> str:
-    """A symbol as the line names it; a file's edges in words."""
+    """A symbol as the line names it; a file's edges and a run of blank lines in words."""
     path, _, name = symbol.partition("::")
+    if name.startswith("<after ") and name.endswith(">"):
+        return f"the blank lines after {path}::{name[len('<after '):-1]}"
     return {_symbols.START: f"the start of {path}", _symbols.END: f"the end of {path}"}.get(name, symbol)
 
 
 def _path_words(paths: list[str]) -> str:
-    """Paths that are not Python, a folder a claim holds whole said so."""
-    folders = [p for p in paths if "." not in p.rstrip("/").rsplit("/", 1)[-1]]
-    files = [p for p in paths if p not in folders]
-    parts = [f"{', '.join(files)} (not Python)"] if files else []
-    if folders:
-        parts.append(f"{', '.join(folders)} (a folder claimed whole)")
-    return "; ".join(parts)
+    """Paths read with no symbols: a file that is not Python, or a folder a
+    claim holds whole. Which one is not guessed from the spelling (a
+    ``Makefile`` has no dot, a folder may have one)."""
+    return f"{', '.join(paths)} (no symbols: not Python, or a folder claimed whole)"
 
 
 def _overlap_text(pair: dict) -> str:
@@ -677,10 +678,11 @@ def overlap_lines(section: object) -> list[str]:
 
 
 def _overlaps_or_unread(root: Path, base: str, claims: list[dict], prs: list[dict], notes: list[str], *,
-                        run_: Runner, fetch: bool = True, seat: str = "") -> dict:
+                        run_: Runner, fetch: bool = True, seat: str = "",
+                        known: dict[str, tuple[dict, str]] | None = None) -> dict:
     """The section read on its own: a failure is its own line, never the board's."""
     try:
-        section = read_overlaps_section(root, base, claims, prs, run_=run_, fetch=fetch, seat=seat)
+        section = read_overlaps_section(root, base, claims, prs, run_=run_, fetch=fetch, seat=seat, known=known)
     except Unresolvable as exc:
         return {"unread": str(exc)}
     except Exception as exc:  # noqa: BLE001 -- each section is read on its own; the overlaps line says unread and why
@@ -726,12 +728,15 @@ def lane_overlap_lines(root: Path, base: str, lane: str, number: object, head: s
         notes.append(f"the open pull requests are unread ({exc})")
     # Only a pull request whose files meet the lane's needs its head read: the
     # notice prints the lane's pairs alone.
+    # A list at GitHub's cap may hold back the very file that meets, so it is read.
     prs = [pr for pr in prs
-           if any(mail._touches(_symbols.canonical(str(f.get("path"))), p)
+           if len(pr.get("files") or []) >= GH_FILES_CAP
+           or any(mail._touches(_symbols.canonical(str(f.get("path"))), p)
                   for f in pr.get("files") or [] if isinstance(f, dict) and f.get("path") for p in own)]
     for pr in prs:
         pr["seat"] = seat_of_lane.get(str(pr.get("headRefName") or ""), "")
-    section = _overlaps_or_unread(root, base, claims, [mine, *prs], notes, run_=run_, seat=machine or "")
+    section = _overlaps_or_unread(root, base, claims, [mine, *prs], notes, run_=run_, seat=machine or "",
+                                  known={head: (own, "")})
     if "unread" in section:
         return overlap_lines(section)
     pairs = [p for p in section.get("pairs") or [] if lane in (p.get("lanes") or [])]

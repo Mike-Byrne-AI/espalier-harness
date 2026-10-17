@@ -348,7 +348,9 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     if type_ == "assign":
         re_[ASSIGN_SEAT_KEY] = seat
     if norm_symbols:
-        kept = sorted(norm_symbols)
+        # The marks (`<module>`, a file's `<start>` and `<end>`) last: under the cap the real
+        # symbols are kept, and a cut list reads as whole anyway; the listing shows names first.
+        kept = sorted(norm_symbols, key=lambda s: (s.partition("::")[2].startswith("<"), s))
         re_[SYMBOLS_KEY] = kept[:MAX_SYMBOLS]
         if len(kept) > MAX_SYMBOLS:
             re_[SYMBOLS_MORE_KEY] = len(kept) - MAX_SYMBOLS

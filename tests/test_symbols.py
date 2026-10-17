@@ -60,9 +60,9 @@ def _placement(sym, old: str, new: str, path: str = "p.py") -> dict:
 
 
 def _named(symbols: set[str]) -> set[str]:
-    """The symbols without the file-edge marks a hunk at either end touches (``<start>``,
-    ``<end>``): for a row about which symbol a change lands on, not about what it borders."""
-    return {s for s in symbols if not s.endswith(("::<start>", "::<end>"))}
+    """The symbols without the marks for what a hunk borders (a file's ``<start>`` and
+    ``<end>``, a run of blanks ``<after X>``): for a row about which symbol a change lands on."""
+    return {s for s in symbols if not s.endswith(("::<start>", "::<end>")) and "::<after " not in s}
 
 
 OLD = '''import os
@@ -145,27 +145,34 @@ class TestChangedSymbols:
         line_of_g = OLD.splitlines().index("def g(y):") + 1
         hunk = f"@@ -{line_of_g},4 +{line_of_g - 1},0 @@\n"
         got = sym.changed_symbols("p.py", OLD, new, hunk)
-        assert got["symbols"] == {"p.py::g", "p.py::C"} and got["changed"] == 2 and got["unplaced"] == 0, got
+        # The two blanks it deletes are the run after g: the mark for that point.
+        assert got["symbols"] == {"p.py::g", "p.py::C", "p.py::<after g>"} and got["changed"] == 2, got
+        assert got["unplaced"] == 0, got
 
     def test_a_method_added_at_the_end_of_a_class_names_only_that_method(self, sym):
-        """Dies to: the blank line before the new method attached to the next top-level def."""
+        """Dies to: the blank line before the new method attached to the next top-level def. The
+        insertion sits in the run of blanks below the class, and names that point: two lanes
+        appending there conflict in git, and meet at it."""
         new = OLD.replace("        return 2\n", "        return 2\n\n    def o(self):\n        return 4\n")
-        assert _symbols(sym, OLD, new) == {"p.py::C.o"}
+        got = _placement(sym, OLD, new)
+        assert got["symbols"] == {"p.py::C.o", "p.py::<after C.n>"} and got["beside"] == 0, got
 
     def test_a_trailing_comment_after_a_body_is_unplaced_not_the_next_def(self, sym):
         """Dies to: a comment run that a blank line breaks still walking forward to the next def."""
         new = OLD.replace("    return x + 1\n", "    return x + 1\n# tail\n")
         got = _placement(sym, OLD, new)
-        # f is the line the insertion follows; g, past the blank lines, is not touched.
-        assert got["symbols"] == {"p.py::<module>", "p.py::f"} and got["unplaced"] == 1, got
+        # f is the line the insertion follows, and the run of blanks after f the line below it;
+        # g, past those blanks, is not touched.
+        assert got["symbols"] == {"p.py::<module>", "p.py::f", "p.py::<after f>"} and got["unplaced"] == 1, got
 
     def test_a_blank_line_between_methods_names_nothing(self, sym):
         """Dies to: a blank inside a class span producing the class (the two-rules finding)."""
         new = OLD.replace("        return 1\n\n    async def n", "        return 1\n\n\n    async def n")
         got = _placement(sym, OLD, new)
-        # The blank names nothing and is not counted; `n`, the line it sits above, is its neighbour.
+        # The blank names no definition and is not counted; `n`, the line it sits above, is its
+        # neighbour, and the run of blanks after `m` the point it lands in.
         assert "p.py::C" not in got["symbols"] and got["changed"] == 0, got
-        assert got["symbols"] == {"p.py::C.n"}, got
+        assert got["symbols"] == {"p.py::C.n", "p.py::<after C.m>"}, got
 
     def test_a_rename_reports_both_names(self, sym):
         """Dies to: only the new side of a changed hunk placed (`f` vanishes, the other lane meets nothing)."""
@@ -192,14 +199,15 @@ class TestChangedSymbols:
     def test_an_added_import_is_unplaced_and_counted(self, sym):
         """Dies to: unplaced lines dropped from the symbols, or not counted."""
         got = _placement(sym, OLD, OLD.replace("import os\n", "import os\nimport sys\n"))
-        # The line it follows, `import os`, is module-level too: a second unplaced line, read
-        # beside the hunk and not counted as changed.
-        assert got["symbols"] == {"p.py::<module>"} and got["unplaced"] == 2 and got["changed"] == 1, got
+        # The line it follows, `import os`, names nothing; the blank line below it is the run of
+        # blanks the insertion lands in, the point it names.
+        assert got["symbols"] == {"p.py::<module>", "p.py::<after <module>>"}, got
+        assert got["unplaced"] == 1 and got["changed"] == 1 and got["beside"] == 0, got
 
     def test_a_file_that_is_not_python_is_a_path_tier(self, sym):
         """Dies to: a prose file mapped as if it were Python (symbols by line)."""
         got = _placement(sym, "a\n", "b\n", "docs/x.md")
-        assert got == {"kind": "path", "symbols": {"docs/x.md"}, "changed": 0, "unplaced": 0}
+        assert got == {"kind": "path", "symbols": {"docs/x.md"}, "changed": 0, "unplaced": 0, "beside": 0}
 
     def test_unparseable_new_source_places_the_old_side_and_counts_the_new_as_unplaced(self, sym):
         """Dies to: a SyntaxError on one side emptying both sides' placement."""
@@ -284,8 +292,9 @@ class TestPlacementEdges:
         old = "def f(x):\n    return x\n\n\ndef g():\n    return 2\n"
         new = old.replace("\n\n\ndef g", "\n\n\n\ndef g")
         got = _placement(sym, old, new)
-        # The blank is not counted (changed stays 0); `g`, the line it sits above, is its neighbour.
-        assert got["symbols"] == {"p.py::g"} and got["changed"] == 0, got
+        # The blank is not counted (changed stays 0); `g`, the line it sits above, is its
+        # neighbour, and the run of blanks after `f` the point it lands in.
+        assert got["symbols"] == {"p.py::g", "p.py::<after f>"} and got["changed"] == 0, got
 
     def test_an_indented_trailing_comment_is_unplaced_not_the_next_def(self, sym):
         """Dies to: the forward walk ignoring indentation, so a comment indented as `f`'s body with
@@ -346,6 +355,20 @@ class TestPairVerdict:
         got = sym.pair_verdict({"a.py": self._py({"a.py::f"})}, {"b.py": self._py({"b.py::f"})})
         assert got["verdict"] == "none" and got["files"] == []
 
+    def test_the_verdicts_named_are_the_ones_pair_verdict_gives(self, sym):
+        """Derived, not restated: every string `pair_verdict` assigns to `verdict` is in
+        `VERDICTS` and the other way round. Dies to: a new verdict added to the function and not
+        to the constant (the board would sort it past the cap and word it as prose, the census
+        would leave it out of its counts)."""
+        import ast
+        import inspect
+
+        tree = ast.parse(inspect.getsource(sym.pair_verdict))
+        given = {node.value.value for node in ast.walk(tree)
+                 if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "verdict" for t in node.targets)
+                 and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)}
+        assert given and given == set(sym.VERDICTS), (given, sym.VERDICTS)
+
 
 #: Two functions, two blank lines between, and no blank line at the end.
 _TWO = "def f():\n    return 1\n\n\ndef g():\n    return 2\n"
@@ -361,16 +384,37 @@ def _merge_rc(tmp_path: pathlib.Path, base: str, ours: str, theirs: str) -> int:
     return subprocess.run(["git", "merge-file", "-p", *files], capture_output=True, timeout=30).returncode
 
 
+#: A test class with a method, then two blank lines, then another class: the commonest co-edit.
+_CLS = ("class TestA:\n    def test_one(self):\n        assert 1\n\n\n"
+        "class TestB:\n    def test_two(self):\n        assert 2\n")
+#: Documented constants one blank line apart, this repository's own idiom.
+_DOC = "def f():\n    return 1\n\n\n#: doc\nLIMIT = 3\n\n\ndef g():\n    return 2\n"
+
+
+def _git_placement(sym, tmp_path: pathlib.Path, old: str, new: str) -> dict:
+    """One side's placement from git's own diff (``git diff --no-index -U0`` with the mapper's
+    ``DIFF_ARGS``), the differ production reads: where a hunk sits is what the neighbour rule
+    reads, and difflib sits some insertions elsewhere."""
+    where = tmp_path / f"side{len(list(tmp_path.glob('side*')))}"
+    where.mkdir()
+    (where / "old.py").write_bytes(old.encode("utf-8"))
+    (where / "new.py").write_bytes(new.encode("utf-8"))
+    diff = subprocess.run(["git", "diff", "--no-index", "-U0", *sym.DIFF_ARGS, "old.py", "new.py"],
+                          cwd=where, capture_output=True, text=True, encoding="utf-8", timeout=30).stdout
+    return sym.changed_symbols("p.py", old, new, diff)
+
+
 class TestTouchingHunksAreNeverCertified:
     """Two changes git cannot merge (they touch, or both land at one point) must never read
-    "different functions", and one git merges must still read it. Each row pins the verdict
-    beside git merge-file's exit code, so the rule follows git and not a sentence (the
-    failure-mode review of Wave 2, driven: both shapes certified before the fix)."""
+    "different functions", and one git merges must still read it. Each row places both sides
+    through git's own diff and pins the verdict beside git merge-file's exit code, so the rule
+    follows git and not a sentence (the failure-mode reviews of Wave 2, driven: every
+    conflicting shape here was certified before its fix)."""
 
-    def _row(self, sym, tmp_path, ours: str, theirs: str) -> tuple[str, int]:
-        verdict = sym.pair_verdict({"p.py": _placement(sym, _TWO, ours)},
-                                   {"p.py": _placement(sym, _TWO, theirs)})["verdict"]
-        return verdict, _merge_rc(tmp_path, _TWO, ours, theirs)
+    def _row(self, sym, tmp_path, ours: str, theirs: str, base: str = _TWO) -> tuple[str, int]:
+        verdict = sym.pair_verdict({"p.py": _git_placement(sym, tmp_path, base, ours)},
+                                   {"p.py": _git_placement(sym, tmp_path, base, theirs)})["verdict"]
+        return verdict, _merge_rc(tmp_path, base, ours, theirs)
 
     def test_two_appends_at_the_end_of_a_file_meet(self, sym, tmp_path):
         """Dies to: an insertion placed by its own lines alone (two new functions appended read
@@ -384,9 +428,10 @@ class TestTouchingHunksAreNeverCertified:
         last line names no symbol, so only the end of the file says they meet)."""
         base = _TWO + "\n"
         a, b = base + "\ndef h1():\n    return 3\n", base + "\ndef h2():\n    return 4\n"
-        got = sym.pair_verdict({"p.py": _placement(sym, base, a)}, {"p.py": _placement(sym, base, b)})
+        got = sym.pair_verdict({"p.py": _git_placement(sym, tmp_path, base, a)},
+                               {"p.py": _git_placement(sym, tmp_path, base, b)})
         assert _merge_rc(tmp_path, base, a, b) != 0 and got["verdict"] == "shared symbol", got
-        assert got["shared"] == ["p.py::<end>"], got
+        assert "p.py::<end>" in got["shared"], got
 
     def test_an_edit_and_an_insertion_right_after_it_meet(self, sym, tmp_path):
         """Dies to: an edit's neighbours left unplaced (f's last line edited, a new function
@@ -394,6 +439,46 @@ class TestTouchingHunksAreNeverCertified:
         verdict, rc = self._row(sym, tmp_path, _TWO.replace("return 1", "return 10"),
                                 _TWO.replace("    return 1\n", "    return 1\ndef h():\n    return 3\n"))
         assert rc != 0 and verdict == "shared symbol", (verdict, rc)
+
+    def test_two_methods_appended_to_a_class_above_another_never_certify(self, sym, tmp_path):
+        """Dies to: an insertion between two blank lines read as placed (git sits both
+        insertions in the blank gap below the class, so neither neighbour names anything; the
+        code review of the delta, driven: certified while git conflicts)."""
+        add = "        assert 1\n\n    def test_{0}(self):\n        assert 3\n"
+        verdict, rc = self._row(sym, tmp_path, _CLS.replace("        assert 1\n", add.format("a")),
+                                _CLS.replace("        assert 1\n", add.format("b")), base=_CLS)
+        assert rc != 0 and verdict != "different functions", (verdict, rc)
+
+    def test_two_lines_inserted_into_one_blank_gap_never_certify(self, sym, tmp_path):
+        """Dies to: the same, for two statements set into the two blank lines between functions."""
+        verdict, rc = self._row(sym, tmp_path, _TWO.replace("    return 1\n\n\n", "    return 1\n\nX = 1\n\n"),
+                                _TWO.replace("    return 1\n\n\n", "    return 1\n\nY = 2\n\n"))
+        assert rc != 0 and verdict != "different functions", (verdict, rc)
+
+    def test_two_documented_constants_added_below_one_never_certify(self, sym, tmp_path):
+        """Dies to: the same, in this repository's own idiom (a `#:` constant one blank line
+        below another; the failure-mode review of the delta, driven)."""
+        verdict, rc = self._row(sym, tmp_path, _DOC.replace("LIMIT = 3\n", "LIMIT = 3\n\n#: a\nA = 1\n"),
+                                _DOC.replace("LIMIT = 3\n", "LIMIT = 3\n\n#: b\nB = 2\n"), base=_DOC)
+        assert rc != 0 and verdict != "different functions", (verdict, rc)
+
+    def test_two_insertions_between_two_module_lines_never_certify(self, sym, tmp_path):
+        """Dies to: an insertion that names no point read as placed (between two imports, its
+        neighbours name nothing and its own lines name a new function each; git conflicts at
+        the one point both land on)."""
+        base = "import os\nimport sys\n\n\ndef f():\n    return 1\n"
+        verdict, rc = self._row(sym, tmp_path, base.replace("import os\n", "import os\ndef h():\n    return 2\n"),
+                                base.replace("import os\n", "import os\ndef k():\n    return 3\n"), base=base)
+        assert rc != 0 and verdict != "different functions", (verdict, rc)
+
+    def test_two_edits_either_side_of_an_import_stay_certified(self, sym, tmp_path):
+        """The clean control for the line above. Dies to: an edit's neighbour that no node holds
+        read as a decline (the untouched import between the two edits keeps them apart; git
+        merges them)."""
+        base = "def f(): return 1\nimport os\ndef g(): return 2\n"
+        verdict, rc = self._row(sym, tmp_path, base.replace("return 1", "return 10"),
+                                base.replace("return 2", "return 20"), base=base)
+        assert rc == 0 and verdict == "different functions", (verdict, rc)
 
     def test_an_edit_and_an_insertion_two_lines_on_stay_certified(self, sym, tmp_path):
         """The clean control. Dies to: a rule wider than git's (an unchanged line between the

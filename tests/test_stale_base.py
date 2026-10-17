@@ -210,6 +210,23 @@ class TestTheSymbolClause:
         assert _judge(rules, repo, head)["near"] == [
             "tools/a.py (both changed, different functions, none shared or next to the other's)"]
 
+    def test_two_methods_appended_to_one_class_meet_in_its_blank_lines(self, rules, tmp_path, mapper):
+        """Dies to: an insertion between blank lines certified (git sits both lanes' new methods
+        in the run of blanks below the class and conflicts there; the code review of Wave 2's
+        delta, driven)."""
+        cls = ("class TestA:\n    def test_one(self):\n        assert 1\n\n\n"
+               "class TestB:\n    def test_two(self):\n        assert 2\n")
+        add = "        assert 1\n\n    def test_{0}(self):\n        assert 3\n"
+        repo = _Repo(tmp_path)
+        repo.commit({**_BASE_FILES, "tools/a.py": cls}, "2026-10-10T05:00:00Z", "base")
+        repo.git("switch", "-q", "-c", "lane")
+        head = repo.commit({"tools/a.py": cls.replace("        assert 1\n", add.format("a"))},
+                           "2026-10-10T05:10:00Z", "lane")
+        repo.git("switch", "-q", "main")
+        repo.commit({"tools/a.py": cls.replace("        assert 1\n", add.format("b"))}, "2026-10-10T06:00:00Z", "main")
+        assert _judge(rules, repo, head)["near"] == [
+            "tools/a.py (both changed, meeting at the blank lines after TestA.test_one)"]
+
     def test_a_symbol_read_that_fails_keeps_the_advisory(self, rules, tmp_path, mapper):
         """Dies to: the clause's failure raised out of stale_base (the advisory
         it decorates, which read fine, would be lost to a timed-out blob read)."""

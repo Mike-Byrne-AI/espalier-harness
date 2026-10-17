@@ -907,6 +907,16 @@ class TestClaimSymbols:
         assert m["re"][mail.SYMBOLS_MORE_KEY] == 5
         assert set(m["re"]["paths"]) == {s.split("::")[0] for s in many}
 
+    def test_the_marks_go_last_so_the_cap_keeps_the_real_symbols(self, mail):
+        """Dies to: the marks sorted with the names (`<end>`, `<after f>` and `<module>` sort before
+        letters, so a lane near the cap kept the marks and lost real symbols, and the listing
+        led with them)."""
+        names = [f"a.py::f{i:03d}" for i in range(mail.MAX_SYMBOLS)]
+        marks = ["a.py::<end>", "a.py::<after f000>", "a.py::<module>"]
+        m = _msg(mail, "mac", "claim", "", lane="l", symbols=marks + names)
+        assert m["re"][mail.SYMBOLS_KEY] == sorted(names), m["re"][mail.SYMBOLS_KEY][:4]
+        assert m["re"][mail.SYMBOLS_MORE_KEY] == len(marks)
+
     def test_a_symbol_path_the_guard_reads_as_secret_bearing_is_named(self, mail):
         """Dies to: the secret scan skipping the symbols (a block whose `paths` the symbol did not fill)."""
         m = _msg(mail, "mac", "claim", "", lane="l", symbols=["secrets/keys.py::load"])
