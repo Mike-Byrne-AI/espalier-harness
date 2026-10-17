@@ -1991,6 +1991,7 @@ class TestOsErrorsRenderAsPaths:
         "advise_exc": ("routes", "warn_exc's seen twin: the same line, kept for the hook's JSON object (tools/cc/hooks/_hook_utils.py)"),
         "say_crash": ("routes", "a reporter crash guard's once-a-session record and its stderr copy (tools/cc/hooks/_hook_utils.py)"),
         "refuse_on_helper_skew": ("routes", "a blocking hook's start refusal: the failed import's text through _json_safe's os_error_text, str as the floor (tools/cc/hooks/_start_refusal.py)"),
+        "_late_load_failed": ("routes", "SessionStart's reporter for a block after the catch-up: the move's cost by its label alone, else the exception to advise_exc (tools/cc/hooks/session_start.py)"),
         "_is_permission_refusal": ("errno-only", "reads exc.errno and never the text (espalier/_rmtree.py)"),
         "wedge_reading": ("errno-only", "a wedged guard's reading: the exception's class, traceback, filename and the helper name a sibling takes, never its text (tools/cc/hooks/_start_refusal.py)"),
     }
@@ -2072,22 +2073,38 @@ class TestOsErrorsRenderAsPaths:
     def test_every_routing_renderer_calls_the_seam_in_its_own_body(self):
         """The roster is where a red would be silenced by one added line, so
         a ``routes`` entry is held to its claim: its ``def`` in the shipped
-        modules calls ``os_error_text``. The seam is exempt as the root; the
-        errno-only entry is the one argued exemption and must NOT render."""
-        for name, (kind, _why) in self._RENDERERS.items():
-            defs = [
-                node
-                for path in _SHIPPED_PY_MODULES
-                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        modules calls ``os_error_text``, or a ``routes`` entry already proven
+        to (a reporter that hands the exception to ``advise_exc``). The proof
+        grows from the seam outward, so entries that only call each other
+        prove nothing. The seam is exempt as the root; the errno-only entry is
+        the one argued exemption and must NOT render."""
+        trees = [ast.parse(path.read_text(encoding="utf-8")) for path in _SHIPPED_PY_MODULES]
+        defs_of = {
+            name: [
+                node for tree in trees for node in ast.walk(tree)
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name
             ]
+            for name in self._RENDERERS
+        }
+        for name, defs in defs_of.items():
             assert defs, f"roster entry {name!r} has no def in the shipped modules"
-            calls_seam = [
-                any(isinstance(n, ast.Call) and _ast_callee(n) == "os_error_text" for n in ast.walk(d))
-                for d in defs
-            ]
+
+        def calls(name, callees):
+            return all(
+                any(isinstance(n, ast.Call) and _ast_callee(n) in callees for n in ast.walk(d))
+                for d in defs_of[name]
+            )
+
+        routes = {name for name, (kind, _why) in self._RENDERERS.items() if kind == "routes"}
+        proven = {"os_error_text"}
+        while grown := {name for name in routes - proven if calls(name, proven)}:
+            proven |= grown
+        assert routes <= proven, (
+            f"{sorted(routes - proven)} on the roster as routing through the seam and do not")
+        for name, (kind, _why) in self._RENDERERS.items():
+            defs = defs_of[name]
             if kind == "routes":
-                assert all(calls_seam), f"{name}() is on the roster as routing through the seam and does not"
+                continue
             elif kind == "errno-only":
                 renders = [
                     n for d in defs for n in ast.walk(d)

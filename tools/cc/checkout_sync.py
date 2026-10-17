@@ -1395,8 +1395,13 @@ def seat_live_claims(root: Path, seat: str, timeout: float) -> list[dict]:
     (``mail.py``, a deployed sibling; [] where it is not deployed)."""
     try:
         import mail
-    except ImportError:  # fail-open: ok deliberate -- a deploy set without the channel has no claims to strand
-        return []
+    except ImportError:
+        # Not deployed: no claims to strand. Deployed but not importable (a
+        # SessionStart catch-up that moved a helper this process had already
+        # imported, DEF-2003) is an unread claim list, which keeps the worktree.
+        if (Path(__file__).resolve().parent / "mail.py").is_file():
+            raise
+        return []  # fail-open: ok deliberate -- a deploy set without the channel has no claims to strand
     by_machine, _ = mail.read_mail(root, timeout=timeout)
     return [c for c in mail.live_claims(by_machine) if str(c.get("from") or "") == seat]
 

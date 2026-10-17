@@ -92,7 +92,10 @@ RECORDED = frozenset({
 #: Speakers that keep a line for the additionalContext of the hook's ONE
 #: stdout JSON object (``_hook_utils.advise``); seen only where the hook renders
 #: them, which ``TestCollectedAdvisoriesAreRendered`` checks.
-COLLECTED = frozenset({"advise", "advise_warn", "advise_exc"})
+#: ``_late_load_failed`` is session_start's face of ``advise_exc`` for the blocks
+#: after its catch-up: the WARN, or (after a helper move no fresh start took
+#: over) the same failure named on the banner's Checkout line (DEF-2003).
+COLLECTED = frozenset({"advise", "advise_warn", "advise_exc", "_late_load_failed"})
 SEEN = RECORDED | COLLECTED
 #: The seen speakers a stderr LINE may pair with: every SEEN speaker but the
 #: one that speaks only on a condition of its own -- ``say_bad_stdin`` is
