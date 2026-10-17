@@ -1741,6 +1741,48 @@ def installed_settings_profile(repo_root: Path) -> str:
     return DEFAULT_PROFILE
 
 
+def _recorded_settings_profile(repo_root: Path) -> tuple[str | None, str | None]:
+    """The profile a plain ``init`` re-run keeps, and the line that says why:
+    (the name, the note), or (None, the note) for a record it does not keep,
+    or (None, None).
+
+    The record (``reports/harness_config.json``'s ``settings_profile``) is
+    the profile this install's settings file was rendered from, so it is read
+    only beside an install: a non-empty ``.claude/settings.json``. A re-run
+    over a ``minimal`` or ``full`` install then keeps its profile, where it
+    used to record the default and send every later reader the default's
+    rules with an append that changes the file's posture (DEF-2004). With no
+    file beside it the record describes nothing, so a fresh clone of a tree
+    that committed its record (``gitignore_declined``) takes the default, not
+    one operator's flag. A flag-only profile is never kept, beside an install
+    or not: a committed one would widen every downstream operator's
+    permissions, the rule ``default_profile`` keeps."""
+    from espalier.settings_profiles import PROFILES
+
+    # Empty as `surface_contract.is_effectively_empty_file` reads it (nothing
+    # but whitespace after a BOM, DEF-700), and absent: no install either way.
+    try:
+        raw = (repo_root / ".claude" / "settings.json").read_bytes()
+        beside_an_install = bool(surface_contract.decode_bom(raw).strip())
+    except (OSError, UnicodeDecodeError, ValueError):
+        beside_an_install = False
+    if not beside_an_install:
+        return None, None
+    plan_path = repo_root / "reports" / "harness_config.json"
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None, None
+    recorded = plan.get("settings_profile") if isinstance(plan, dict) else None
+    profile = PROFILES.get(recorded) if isinstance(recorded, str) else None
+    if profile is None:
+        return None, None
+    if not profile.config_selectable:
+        return None, (f"this install's record names {recorded}, which only "
+                      f"`--profile {recorded}` keeps")
+    return recorded, "kept from this install's record; `--profile` changes it"
+
+
 def _merge_settings_hint(profile: str) -> str:
     """The one command that appends the gap, spelled for THIS install's profile
     (the wrong profile appended is a posture change, not a top-up)."""
@@ -6741,6 +6783,7 @@ def _print_init_summary(
     write_gitignore: bool,
     suppress_epilogue: bool = False,
     declined: "Sequence[str] | None" = None,
+    profile_note: str | None = None,
 ) -> None:
     """Emit cmd_init's post-deploy operator report. Pure presentation:
     filesystem install counts, the ownership tally, the honest hooks-wired
@@ -6813,7 +6856,7 @@ def _print_init_summary(
             "espalier-harness (wheel installs) or `pip install -e .` in the "
             "harness checkout (editable installs)."
         )
-    print(f"Settings profile: {profile_name}")
+    print(f"Settings profile: {profile_name}" + (f" ({profile_note})" if profile_note else ""))
     print(f"Deployed: {len(result['deployed'])} files")
     # Ownership tally — `created` (new), `updated_managed` (regenerated
     # managed file), `skipped_no_drift` (already-matching content),
@@ -7237,7 +7280,13 @@ def cmd_init(args: argparse.Namespace) -> int:
     # Settings profile selection precedence:
     #   1. --profile CLI flag
     #   2. espalier.toml `default_profile`
-    #   3. settings_profiles.DEFAULT_PROFILE ("workflow")
+    #   3. the profile an earlier init recorded, read only beside an install
+    #      (a non-empty .claude/settings.json) and only when the config could
+    #      select it (`_recorded_settings_profile`, DEF-2004: a plain re-run
+    #      re-recorded a minimal or full install as the default). A recorded
+    #      flag-only profile (`self-host`) is not kept, and the summary says
+    #      so; its file is the wider one, so no reader offers it an append.
+    #   4. settings_profiles.DEFAULT_PROFILE ("workflow")
     # Raise a clear error if espalier.toml names an unknown profile so the
     # user catches typos at init time rather than via downstream validation.
     # Attribute the error source (CLI flag vs config file) so the operator
@@ -7273,10 +7322,14 @@ def cmd_init(args: argparse.Namespace) -> int:
                 )
                 return 2
 
-    profile_name = cli_profile or cfg_profile or DEFAULT_PROFILE
+    recorded_profile, profile_note = (
+        (None, None) if (cli_profile or cfg_profile) else _recorded_settings_profile(repo_root)
+    )
+    profile_name = cli_profile or cfg_profile or recorded_profile or DEFAULT_PROFILE
     profile_source = (
         "--profile flag" if cli_profile
         else "espalier.toml default_profile" if cfg_profile
+        else "the profile this install recorded" if recorded_profile
         else "built-in default"
     )
     try:
@@ -7486,6 +7539,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         suppress_epilogue=getattr(args, "suppress_epilogue", False),
         # The loaded configuration's declines, so `--config` is honoured.
         declined=declined_gitignore_entries(config),
+        # Why a plain re-run kept (or did not keep) the recorded profile.
+        profile_note=profile_note,
     )
     # A re-run over an install-ci tree regenerates every drifted hook, which
     # the guard refuses to merge unmarked (§C68). fuse runs init before its
@@ -10924,7 +10979,13 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         fp = fingerprint_repo(repo_root, config)
         harness = build_harness_config(fp, config)
         # The merge below names a retired deny rule; the deploy must not too.
-        result = deploy_harness(repo_root, harness, fp, caller_reports_permissions=True)
+        # The installed profile, as this command's own gap report reads it: a
+        # deploy with none renders the default beside a minimal install, the
+        # posture change DEF-2004 closed for init (the failure-mode review).
+        result = deploy_harness(
+            repo_root, harness, fp, caller_reports_permissions=True,
+            profile_name=installed_settings_profile(repo_root),
+        )
         written = list(result["deployed"])
         # Every file, never truncated (DEF-1064), and the marker sentence on
         # the line that names them.
@@ -14538,7 +14599,8 @@ def build_parser() -> argparse.ArgumentParser:
              "themselves (Espalier on Espalier) — adds `python -m "
              "espalier *` and broader git inspection; full = v0.6.x "
              "broad-bash defaults (advanced). Overrides espalier.toml's "
-             "default_profile.",
+             "default_profile. Without either, a re-run over an install "
+             "keeps the profile it recorded (self-host only by this flag).",
     )
     p_init.add_argument(
         "--dry-run",

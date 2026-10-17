@@ -233,7 +233,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        25, "d399fc45625607db4d68ab48ed2b8a29d220bc025e10d65faa46845df651c12f",
+        26, "52910ececbf1d8bf6fcc904294673315111a7f3eb5ab4fabfb0f957aef6e34c2",
         "MIXED",
         "Lane 6 (DEF-806). Seven rows walk `PLAN_READERS`, the engine's hand-kept "
         "pair of plan-reading cc/ docs, asserting per member that a plan writer "
@@ -292,7 +292,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         " The twenty-fifth (2026-10-13, the row-files lane: an opted-in install files its "
         "onboarding rows as files) holds the stems of the row files the install wrote EQUAL to "
         "`_ONBOARDING_ROWS`' ids, both directions: a row filed into the big file instead, or one "
-        "missing, reds by name; a row dropped from the tuple is a design change, same verdict.",
+        "missing, reds by name; a row dropped from the tuple is a design change, same verdict."
+        " The twenty-sixth (2026-10-17, DEF-2004) derives the flag-only profiles from "
+        "`PROFILES.items()` (`config_selectable` false) and asserts per member that a plain "
+        "re-run never keeps one from the record, with a floor that the set is not empty: a "
+        "per-member property, and its one member is pinned one file over, "
+        "tests/test_settings_profiles.py:446 (self-host refused from espalier.toml by its exact "
+        "text), so self-host leaving the set reds there; same verdict.",
     ),
     # 1 row(s), shapes: for-assert
     "tests/test_fuse.py": (
