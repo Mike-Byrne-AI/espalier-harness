@@ -1717,7 +1717,15 @@ new state as the next one to compare with.
      a merge, a checkout, the session catch-up), or a removed file that is
      absent at `HEAD` and was present at the `HEAD` of the previous check (a
      branch switch or a rebase that drops it, however many moves the call
-     made). A deleted untracked file is never git's;
+     made). A deleted untracked file is never git's. A file inside a nested
+     checkout under your `protected_paths` -- a vendored clone, a submodule,
+     a worktree -- is asked of that checkout's own git, the same way, when the
+     previous check already knew the checkout: a pull or a submodule update
+     inside it stays quiet. A checkout that appears during a call (a clone or
+     a copy into a protected path, a submodule's first update) reports its
+     files once, since nothing had vouched for them, and is judged by its own
+     git from then on. The harness's own zones are never asked of a nested
+     git;
   3. on the harness's own source tree only, a byte mirror that now equals its
      source (the vendored hook copies, the packaged docs and `.claude` assets);
   4. an `espalier` command that rewrites protected files (`init`, `upgrade`,
@@ -1729,7 +1737,9 @@ new state as the next one to compare with.
 - **What it holds back:** while git is half way through an operation (a merge
   or rebase stopped on a conflict, a cherry-pick, a bisect) or an `espalier`
   writer is still running, a change is not judged and the snapshot is kept;
-  the result is judged once they are done.
+  the result is judged once they are done. An operation half done inside a
+  nested checkout holds that checkout's files alone; every other protected
+  file is judged as usual.
 - **What it reports** is a protected file whose content none of these
   accounts for, split by when it landed. A change that landed **during** the
   shell call (this call or a parallel one; the call began `duration_ms`
@@ -1753,7 +1763,10 @@ new state as the next one to compare with.
 - **Limits.**
   - A bad edit committed in the same shell call (`python fix.py && git commit
     -am wip`) is silent: the file then holds its content at `HEAD`. The
-    commit still reaches `main` only through the pull request and CI.
+    commit still reaches `main` only through the pull request and CI. Inside a
+    nested checkout your repository does not track (a gitignored clone), the
+    same commit (`git -C models/clone commit -am wip`) is silent too, and no
+    pull request or CI ever sees it.
   - A rewrite that keeps the file's size and modification time (`cp -p`,
     `touch -r`, an archive extracted with its times) is not seen; nor is a
     same-size rewrite within one timestamp tick of the previous write on a
