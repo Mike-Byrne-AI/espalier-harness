@@ -3106,8 +3106,8 @@ def _handoff_argv() -> list[str]:
     return [getattr(sys, "_base_executable", None) or sys.executable, str(Path(__file__).resolve())]
 
 
-def _banner_in(raw: Any) -> str | None:
-    """The SessionStart banner a fresh start printed, or None."""
+def _banner_in(raw: Any) -> dict | None:
+    """The SessionStart banner a fresh start printed, parsed, or None."""
     out = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else (raw or "")
     out = out.strip()
     try:
@@ -3115,11 +3115,11 @@ def _banner_in(raw: Any) -> str | None:
     except ValueError:  # fail-open: ok deliberate -- no banner, so the parent gives its own
         return None
     hso = data.get("hookSpecificOutput") if isinstance(data, dict) else None
-    return out if isinstance(hso, dict) and hso.get("hookEventName") == "SessionStart" else None
+    return data if isinstance(hso, dict) and hso.get("hookEventName") == "SessionStart" else None
 
 
 def _hand_off(payload: Any, lines: tuple[str, str, list[str]], hook_start: float,
-              moved: tuple[str, ...], window: tuple[int, bool]) -> tuple[str | None, str, bool]:
+              moved: tuple[str, ...], window: tuple[int, bool]) -> tuple[dict | None, str, bool]:
     """Run the rest of this start in a fresh process: (its banner, "", False),
     or (None, why not, whether it ran out of time). A banner the child printed
     before it ran past its time is still its banner. On any failure the
@@ -3190,7 +3190,7 @@ def _with_move_cost(checkout_line: str) -> str:
     return f"{checkout_line}; {clause}" if checkout_line else clause
 
 
-def _short_banner(checkout_line: str, worktrees_line: str) -> str:
+def _short_banner(checkout_line: str, worktrees_line: str) -> dict:
     """The banner a parent gives when its fresh start ran past the budget:
     the catch-up's lines, the move and its cost named, the parent's warnings;
     nothing re-run, since a second full pass would cross the 15 s ceiling and
@@ -3202,8 +3202,8 @@ def _short_banner(checkout_line: str, worktrees_line: str) -> str:
     warnings = _hook_utils.take_advisories()
     if warnings:
         lines += ["", "--- WARNINGS ---", *warnings]
-    return json.dumps({"hookSpecificOutput": {
-        "hookEventName": "SessionStart", "additionalContext": "\n".join(lines)}})
+    return {"hookSpecificOutput": {
+        "hookEventName": "SessionStart", "additionalContext": "\n".join(lines)}}
 
 
 def _catch_up_setting(root: Path, self_host: bool) -> tuple[bool, bool]:
@@ -4257,11 +4257,11 @@ def _run_main() -> int:
             banner, why, timed_out = _hand_off(
                 payload, (checkout_line, worktrees_line, reaper_kept), hook_start, moved, (window, window_found))
             if banner is not None:
-                print(banner)
+                print(json.dumps(banner))
                 return 0
             _note_move(moved, why, chain_advanced=_chain_stamp(root) != chain_before)
             if timed_out:
-                print(_short_banner(checkout_line, worktrees_line))
+                print(json.dumps(_short_banner(checkout_line, worktrees_line)))
                 return 0
 
     # The protected files as this session finds them, after the
