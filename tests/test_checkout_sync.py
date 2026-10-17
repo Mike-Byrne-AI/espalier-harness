@@ -861,7 +861,8 @@ def _wedge_restore(wt: Path) -> tuple[bytes, list[Path]]:
     payload = {"tool_name": "Bash", "cwd": str(wt),
                "tool_input": {"command": "git restore --source=HEAD -- tools/cc/hooks/_reinject.py"}}
     guard = subprocess.run([HOOK_PYTHON, str(wt / "tools" / "cc" / "hooks" / "write_guard.py")],
-                           input=json.dumps(payload), capture_output=True, text=True, cwd=wt, env=env, timeout=50)
+                           input=json.dumps(payload), capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", cwd=wt, env=env, timeout=50)
     assert guard.returncode == 0, guard.stderr
     copies = sorted(wt.rglob("*.py.txt"))
     _git(wt, "restore", "--source=HEAD", "--", "tools/cc/hooks/_reinject.py")
