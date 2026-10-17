@@ -765,6 +765,149 @@ def test_the_hook_side_prune_is_the_named_helper_on_lexists():
         assert calls, f"{walk} no longer prunes through _skip_nested_repos"
 
 
+@pytest.mark.parametrize("rel, holds", [
+    (".claude/worktrees", True), ("pkg/.claude/worktrees", True), ("worktrees", False),
+    (".claude", False), (".claude/agents", False), ("docs/worktrees", False),
+])
+def test_claude_codes_worktree_folder_is_another_checkout_by_name(tmp_path, rel, holds):
+    """DEF-3000: the folder is read by its name pair, never by what it holds,
+    so it is another checkout whether or not any worktree in it kept its link;
+    a ``worktrees`` directory anywhere else is ordinary."""
+    from espalier._safe_walk import holds_another_checkout
+    assert holds_another_checkout(tmp_path / rel) is holds
+
+
+def test_no_walk_enters_a_worktree_folder_whose_git_link_is_gone(tmp_path):
+    """DEF-3000: an interrupted ``git worktree remove`` on Windows stops at the
+    first locked file and can leave the folder without its ``.git`` link (the
+    state ``tools/cc/checkout_sync.py`` reports). Every prune above keys on that
+    link, so the leftover folder read as this tree's own files. Earned red: on
+    main every walker below read it, the build staging copied it and the
+    freshness scanner took its fragment. Each now leaves Claude Code's worktree
+    folder out by name (``_safe_walk.holds_another_checkout``; the stdlib-only
+    copies inline), while ``.claude`` itself and the tree's own files are
+    still read. ``cleanup`` keeps git's view instead (the next row)."""
+    from espalier import repo_mode
+    from espalier import reflect_protocol as engine_reflect
+    from espalier.artifact_parity import stage_build_tree
+    from espalier.scanners.freshness import discover_fragments
+
+    root = tmp_path / "root"
+    _plant_worktree(root, lambda git: None)
+    marker = "<!-- espalier:fragment id={} bound=a.py policy=weekly -->\n"
+    (root / "docs").mkdir()
+    (root / "docs" / "own.md").write_text(marker.format("own"), encoding="utf-8")
+    (root / ".claude" / "worktrees" / "wt" / "docs" / "guide.md").write_text(marker.format("own"), encoding="utf-8")
+
+    _assert_worktree_unread(root)
+    assert _hook_reflect()._walk_router_docs(root) == []
+    assert engine_reflect._walk_router_docs(root) == []
+    for walker, seen in (
+        ("safe_rglob", {p.relative_to(root).as_posix() for p in safe_rglob(root, "*.md")}),
+        ("the non-git file list", set(repo_mode.list_repo_files_via_filesystem(root))),
+    ):
+        assert "docs/own.md" in seen, f"{walker} lost the tree's own file: {sorted(seen)}"
+        leaked = sorted(rel for rel in seen if rel.startswith(".claude/worktrees/"))
+        assert not leaked, f"{walker} entered the worktree folder: {leaked}"
+    staged = stage_build_tree(root, tmp_path / "staged")
+    assert (staged / ".claude" / "notes" / "x.md").is_file()
+    assert not (staged / ".claude" / "worktrees").exists()
+    # one fragment id in both places: the scanner raised on the duplicate
+    sources = [f.source_path.replace("\\", "/") for f in discover_fragments(root)]
+    assert len(sources) == 1 and sources[0].endswith("docs/own.md"), sources
+
+
+def test_cleanup_answers_as_git_sees_a_worktree_folder(tmp_path):
+    """DEF-3000's failure-mode review: ``cleanup._survives_anywhere`` asks
+    git's question -- would retiring an ignore entry expose a file? -- and git
+    stops at a ``.git`` link, never at a name. So a leftover worktree folder's
+    bytecode is a survivor there while a live worktree's is not: the one walk
+    the name rule stays out of. Driven: with the name rule here, a temp repo
+    whose leftover folder held bytecode read no survivor while
+    ``git ls-files --others`` listed the file once the entries were gone."""
+    from espalier import cleanup
+
+    root = tmp_path / "root"
+    gone = root / ".claude" / "worktrees" / "gone"
+    live = root / ".claude" / "worktrees" / "live"
+    for wt in (gone, live):
+        (wt / "pkg").mkdir(parents=True)
+    (live / ".git").write_text("gitdir: /elsewhere/.git/worktrees/live\n", encoding="utf-8")
+    (live / "pkg" / "m.pyc").write_bytes(b"")
+    assert cleanup._survives_anywhere(root, "*.pyc", set(), want_dir=False) is None
+    (gone / "pkg" / "m.pyc").write_bytes(b"")
+    assert cleanup._survives_anywhere(root, "*.pyc", set(), want_dir=False) == ".claude/worktrees/gone/pkg/m.pyc"
+
+
+def test_a_glob_prefix_into_the_worktree_folder_enters_no_worktree(tmp_path):
+    """``safe_glob``'s prefix guard reads the folder too (DEF-3000's review):
+    a ``.claude/worktrees/**`` pattern yielded a folder that lost its link,
+    while a ``.claude/**`` pattern still reads ``.claude`` itself."""
+    _plant_worktree(tmp_path, lambda git: None)
+    assert list(safe_glob(tmp_path, ".claude/worktrees/**/*.md")) == []
+    seen = [p.relative_to(tmp_path).as_posix() for p in safe_glob(tmp_path, ".claude/**/*.md")]
+    assert seen == [".claude/notes/x.md"], seen
+
+
+def _tools_cc_module(name: str):
+    """A tools/cc module, loaded by path with tools/cc resolvable for its
+    sibling imports while it executes (``_hook_probe``'s shape)."""
+    import importlib.util
+    import sys
+
+    tools_cc = REPO_ROOT / "tools" / "cc"
+    added = str(tools_cc) not in sys.path
+    if added:
+        sys.path.insert(0, str(tools_cc))
+    try:
+        spec = importlib.util.spec_from_file_location(f"_safe_walk_{name}", tools_cc / f"{name}.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[f"_safe_walk_{name}"] = mod
+        spec.loader.exec_module(mod)
+    finally:
+        if added:
+            sys.path.remove(str(tools_cc))
+    return mod
+
+
+def test_the_worktree_folder_has_one_name_pair_everywhere():
+    """DEF-3000's review: the pair lives in the engine, in the tests' own walk
+    rule and in the worktree reaper, and the inline copies' rows are built
+    from the engine's, so a relocation edits all three or this reds."""
+    from espalier._safe_walk import WORKTREES_PARENT
+    from tests._live_tree import EXCLUDED_DIR_PARTS
+
+    assert WORKTREES_PARENT == EXCLUDED_DIR_PARTS[0] == tuple(_tools_cc_module("checkout_sync").WORKTREES_REL)
+
+
+def test_a_checkout_rooted_in_a_folder_named_dot_claude_is_the_declared_limit(tmp_path):
+    """Declared limit, pinned exactly (``_safe_walk._is_worktrees_folder``):
+    the folder is read by the name the path spells, so a checkout whose own
+    root is a directory named ``.claude`` drops its top-level ``worktrees/``.
+    Reading it relative to the checkout would break a walk rooted AT
+    ``.claude``."""
+    root = tmp_path / ".claude"
+    (root / "worktrees").mkdir(parents=True)
+    (root / "worktrees" / "notes.md").write_text("# n\n", encoding="utf-8")
+    (root / "own.md").write_text("# o\n", encoding="utf-8")
+    assert {p.name for p in safe_rglob(root, "*.md")} == {"own.md"}
+
+
+def test_the_hook_side_prune_leaves_the_worktree_folder_by_name(tmp_path):
+    """The hook copy's half of DEF-3000, beside the lexists pin above: the
+    folder goes by its name pair, and a ``worktrees`` directory elsewhere stays."""
+    from espalier._safe_walk import WORKTREES_PARENT
+
+    parent, folder = WORKTREES_PARENT
+    hook = _hook_reflect()
+    names = [folder, "agents"]
+    hook._skip_nested_repos(str(tmp_path / parent), names)
+    assert names == ["agents"]
+    elsewhere = [folder]
+    hook._skip_nested_repos(str(tmp_path / "docs"), elsewhere)
+    assert elsewhere == [folder]
+
+
 # --- §C28 (DEF-479 / DEF-489, 2026-10-06): hidden names are never members ---
 
 def test_is_hidden_name_is_true_for_the_names_a_file_manager_leaves():

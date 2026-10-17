@@ -5663,7 +5663,10 @@ was added by a different fix, so no single sibling is guaranteed to show you all
 - `os.walk(followlinks=False)` — a bare `rglob` / recursive `glob` follows directory symlinks
   below CPython 3.13 and raises `OSError(ELOOP)` on an adopter tree with a symlink loop.
 - the inline `_skip_nested_repos` prune — an embedded repo otherwise gets walked as if it were
-  the adopter's own source.
+  the adopter's own source; so does Claude Code's worktree folder, `.claude/worktrees/`, which
+  the inline prune leaves out by name too (the engine's walks by
+  `espalier/_safe_walk.py::holds_another_checkout`), since a worktree can lose its `.git` link
+  (an interrupted removal on Windows).
 - a per-file `except OSError` read guard — one unreadable file (dangling symlink, permission,
   a path that vanished mid-walk) must not abort the whole scan.
 
