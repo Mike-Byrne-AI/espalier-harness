@@ -1790,18 +1790,27 @@ def _merge_settings_hint(profile: str) -> str:
             f"--profile {profile} --add-allows`")
 
 
+def _and_list(items: "list[str]") -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
 def _report_allow_gaps_read_only(
     repo_root: Path, *, profile: str, prefix: str, stream: "TextIO | None" = None,
     blockers: object = _ARMAMENT_UNREAD,
-) -> bool:
+) -> tuple[bool, str]:
     """Report the gap without touching the file (``upgrade`` in both modes).
-    Returns whether the file lacks anything, so a "nothing to do" can be true
-    when it is said. ``blockers`` is the caller's armament read, so one run
-    asks the interpreters once (:func:`_retired_rules_to_name`)."""
+    Returns ``(lacking, note)``: whether the file lacks a profile rule, and
+    the note when ``permissions`` or its ``allow`` has a shape no merge
+    compares (the WARN says to fix it by hand; ``""`` otherwise), so a
+    "nothing to do" can be true when it is said and the sentence can name
+    the block the WARN names (DEF-2007). ``blockers`` is the caller's
+    armament read, so one run asks the interpreters once
+    (:func:`_retired_rules_to_name`)."""
     settings_path = repo_root / ".claude" / "settings.json"
     gaps = settings_allow_gaps(settings_path, profile=profile, repo_root=repo_root)
     if gaps is None:
-        return False
+        return False, ""
     missing, note = gaps
     _report_allow_gaps(
         missing=missing, added=(), note=note, profile=profile, prefix=prefix,
@@ -1811,7 +1820,7 @@ def _report_allow_gaps_read_only(
                                      blockers=blockers),
         scoped=settings_scoped_allows(settings_path, profile=profile, repo_root=repo_root),
     )
-    return bool(missing)
+    return bool(missing), note or ""
 
 
 #: What the statusline shows when its own command did not run. An OBSERVATION,
@@ -3861,11 +3870,12 @@ def _wire_hooks_into_existing(
         blockers = _enforcement_claim_blockers(repo_root, settings_path)
         if blockers is None:
             print(wired_line, file=sys.stderr)
-            print(_unverifiable_settings_warning(settings_path), file=sys.stderr)
+            print(_unverifiable_settings_warning(settings_path, prefix="--wire-hooks"), file=sys.stderr)
         elif blockers:
             print(wired_line, file=sys.stderr)
+            # Past tense only for a run that wired a hook event (DEF-2007).
             print(_disarmed_hook_tree_warning(
-                repo_root, prefix="--wire-hooks", wrote_settings=True,
+                repo_root, prefix="--wire-hooks", wrote_settings=bool(merge_result.event_count),
             ), file=sys.stderr)
         else:
             print(wired_line + _merge_claim(merge_result), file=sys.stderr)
@@ -10135,13 +10145,15 @@ def _disarmed_diagnosis(repo_root: Path) -> tuple[str, list[str]]:
     return reason, remedies
 
 
-def _unverifiable_settings_warning(settings_path: Path, *, prefix: str = "merge-settings") -> str:
+def _unverifiable_settings_warning(settings_path: Path, *, prefix: str) -> str:
     """WARN for the case where the wired settings cannot be read back.
 
     Withholding the enforcement claim is the whole point: the operator gets a
     smaller, honest statement instead of a confident wrong one. Not a refusal --
     the merge itself already succeeded and the file on disk is correct.
-    ``prefix`` names the command the operator ran.
+    ``prefix`` names the command the operator ran; it has no default, since a
+    defaulted ``merge-settings`` is how ``init --wire-hooks`` came to wear
+    another command's label (DEF-2007).
     """
     return (
         f"{prefix}: WARNING -- could not re-read "
@@ -10310,18 +10322,19 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
         )
         # "Nothing to do" only when it is whole (upgrade's rule, 2026-09-29): a
         # wired file can still lack the profile's allow rules, carry a retired
-        # deny rule, or run no hooks, and each is reported right below.
+        # deny rule, carry a permissions.allow no merge can compare (DEF-2007),
+        # or run no hooks, and each is reported right below.
         named_stale = _retired_rules_to_name(result.stale_denies, repo_root=repo_root,
                                              settings_path=settings_path, blockers=missing)
         if result.missing_allows:
             tail = " Hook events are current; the allow rules below are not."
-        elif repaired or named_stale or missing != []:
+        elif repaired or named_stale or missing != [] or result.allow_note:
             tail = ""
         else:
             tail = " Nothing to do."
         if unverified:
             print(head + "." + tail, flush=True)
-            print(_unverifiable_settings_warning(settings_path), file=sys.stderr)
+            print(_unverifiable_settings_warning(settings_path, prefix="merge-settings"), file=sys.stderr)
         elif missing:
             print(head + "." + tail, flush=True)
             print(_disarmed_hook_tree_warning(
@@ -10353,11 +10366,13 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
         )
     if unverified:
         print(wired, flush=True)
-        print(_unverifiable_settings_warning(settings_path), file=sys.stderr)
+        print(_unverifiable_settings_warning(settings_path, prefix="merge-settings"), file=sys.stderr)
     elif missing:
         print(wired, flush=True)
+        # Past tense only for a run that wired a hook event; a statusLine-only
+        # or allow-only write wired none (DEF-2007; upgrade's site since DEF-4017).
         print(_disarmed_hook_tree_warning(
-            repo_root, prefix="merge-settings", wrote_settings=True,
+            repo_root, prefix="merge-settings", wrote_settings=bool(result.event_count),
         ), file=sys.stderr)
     else:
         print(wired + claim)
@@ -10924,6 +10939,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # version-current install is the steady state of the installed base,
             # and it was the one state that never heard the profile had moved.
             lacking = False
+            uncompared = ""
             stale_rules: tuple = ()
             # One armament read for the whole branch: the retired-rule WARN, the
             # sentence that points at it and the disarmed narration below must
@@ -10934,7 +10950,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 vc_blockers = _enforcement_claim_blockers(
                     repo_root, repo_root / ".claude" / "settings.json",
                 )
-                lacking = _report_allow_gaps_read_only(
+                lacking, uncompared = _report_allow_gaps_read_only(
                     repo_root, profile=installed_settings_profile(repo_root), prefix="[upgrade]",
                     blockers=vc_blockers,
                 )
@@ -11008,31 +11024,38 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             if needed_entries or not gitignore_status(repo_root, declined=declined).ok:
                 qualifiers.append("see the .gitignore report above")
             qualifiers.extend(f"not compared: {item}" for item in not_compared)
-            if lacking or disarmed or no_statusline or stale_rules:
-                states: list[str] = []
-                if disarmed:
-                    states.append("the hook tree above is not armed")
-                if lacking:
-                    states.append(("it" if states else "your .claude/settings.json")
-                                  + " lacks the allow rules above")
-                if stale_rules:
-                    states.append(("it" if states else "your .claude/settings.json")
-                                  + " carries a retired deny rule (the WARN above names it)")
-                if no_statusline:
-                    states.append(("it" if states else "your .claude/settings.json")
-                                  + " has no statusLine")
+            # The settings file's states share one subject, named once, and the
+            # hook tree is its own: a joining "it" read as the tree, or as the
+            # allow block, in combined states (DEF-2007's reviews, driven). Built
+            # before the branch, so no state reaches the "if" without its clause.
+            file_states: list[str] = []
+            if lacking:
+                file_states.append("lacks the allow rules above")
+            if uncompared:
+                # The block the WARN names: permissions itself, or its allow list
+                # ("nothing to do" was said under it, DEF-2007).
+                file_states.append(f"has a {uncompared.split(' is ', 1)[0]} block to fix by hand "
+                                   "(the WARN above)")
+            if stale_rules:
+                file_states.append("carries a retired deny rule (the WARN above names it)")
+            if no_statusline:
+                file_states.append("has no statusLine")
+            states = (["the hook tree above is not armed"] if disarmed else []) + (
+                ["your .claude/settings.json " + _and_list(file_states)] if file_states else [])
+            if states:
                 if disarmed:
                     remedy = " -- `merge-settings . --repair` does, on request"
+                    if uncompared or stale_rules:
+                        # --repair re-arms espalier's entries and touches no rule.
+                        remedy += ", for the hooks; what the WARN above names is yours to fix by hand"
                 elif no_statusline:
                     remedy = (f" -- `{_remedy_py()} -m espalier merge-settings .` adds "
                               "espalier's statusLine, on request, and never touches one "
                               "of yours (set the key to null to keep the statusline off)")
                 else:
                     remedy = ""
-                joined = (states[0] if len(states) == 1
-                          else ", ".join(states[:-1]) + " and " + states[-1])
                 print(f"[upgrade] harness is current ({__version__}); "
-                      + joined
+                      + "; ".join(states)
                       + ", and upgrade never rewrites your settings.json"
                       + remedy + ".")
                 for qualifier in qualifiers:

@@ -3152,3 +3152,139 @@ class TestASettingsFileOutsideClaudeKeepsItsBackupBesideIt:
         assert not (tmp_path.parent / ".espalier").exists() or True  # never under the parent either
         assert _settings_backup_rungs_on_disk(p) == [copy]
         assert _back_up_settings(p) == copy, "the same bytes are the rung already on disk"
+
+
+def _upgrade(target: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-m", "espalier.cli", "upgrade", str(target)],
+        capture_output=True, text=True, timeout=45, encoding="utf-8",
+    )
+
+
+class TestTheNarratorsSayWhatTheRunDid:
+    """DEF-2007: three narrators said something the run did not do, read by an
+    operator from the run's last lines to decide whether anything is left.
+    (H) "Nothing to do" above a WARN that names something to do: a
+    ``permissions.allow`` of the wrong type, which no merge compares or
+    appends to. (I) ``init --wire-hooks`` labelled its could-not-re-read WARN
+    ``merge-settings``. (J) "The settings were wired anyway" after a run that
+    wrote only the statusLine. Each row drives the run the row names."""
+
+    @staticmethod
+    def _edit(target: Path, change) -> Path:
+        settings = target / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        change(data)
+        settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        return settings
+
+    @classmethod
+    def _allow_of_the_wrong_type(cls, target: Path) -> None:
+        cls._edit(target, lambda d: d.setdefault("permissions", {}).__setitem__("allow", "Bash(git status)"))
+
+    def test_merge_settings_names_the_allow_block_rather_than_nothing_to_do(self, tmp_path):
+        target = _git_target(tmp_path)
+        assert _init(target).returncode == 0
+        assert "Nothing to do" in _merge(target).stdout, "the control: a clean wired tree says it"
+        self._allow_of_the_wrong_type(target)
+        result = _merge(target)
+        assert "permissions.allow is str" in result.stderr and "Fix the block by hand" in result.stderr, result.stderr
+        assert "Nothing to do" not in result.stdout, result.stdout
+
+    def test_upgrade_on_a_current_tree_names_the_allow_block_rather_than_nothing_to_do(self, tmp_path):
+        target = _git_target(tmp_path)
+        assert _init(target).returncode == 0
+        assert "nothing to do" in _upgrade(target).stdout, "the control: a clean current tree says it"
+        self._allow_of_the_wrong_type(target)
+        result = _upgrade(target)
+        assert "Fix the block by hand" in result.stderr, result.stderr
+        assert "nothing to do" not in result.stdout, result.stdout
+        assert "permissions.allow" in result.stdout, "the sentence names the state it stands on:\n" + result.stdout
+
+    def test_wire_hooks_labels_its_could_not_re_read_warning_with_its_own_flag(self, tmp_path, monkeypatch, capsys):
+        """The read-back of a file just written failing is not drivable from
+        outside, so the read is made to fail in process."""
+        from espalier import cli
+
+        target = _git_target(tmp_path)
+        assert _init(target).returncode == 0
+        settings = self._edit(target, lambda d: d["hooks"].pop("Stop", None))  # a real top-up: MERGE_WIRED
+        monkeypatch.chdir(target)
+        monkeypatch.setattr(cli, "_enforcement_claim_blockers", lambda *a, **k: None)
+        cli._wire_hooks_into_existing(
+            settings, existing=json.loads(settings.read_text(encoding="utf-8")),
+            profile_name=None, repo_root=target,
+        )
+        err = capsys.readouterr().err
+        assert "--wire-hooks: WARNING -- could not re-read" in err, err
+        assert "merge-settings: WARNING" not in err, err
+
+    @pytest.mark.parametrize("command", ["merge-settings", "init --wire-hooks"])
+    def test_a_run_that_wrote_only_the_statusline_does_not_say_it_wired_the_settings(self, tmp_path, command):
+        target = _git_target(tmp_path)
+        assert _init(target).returncode == 0
+        TestDisarmedNarrationMatchesTheActualShape._neuter(target / ".claude" / "settings.json")
+        self._edit(target, lambda d: d.pop("statusLine", None))
+        result = _merge(target) if command == "merge-settings" else _init(target, "--wire-hooks")
+        combined = result.stdout + result.stderr
+        assert "added espalier's statusLine" in combined and "WARNING" in result.stderr, combined
+        assert "wired anyway" not in combined, combined
+
+    _NOTED_SHAPES = {
+        "permissions a string": lambda d: d.__setitem__("permissions", "nope"),
+        "permissions a list": lambda d: d.__setitem__("permissions", []),
+        "permissions a boolean": lambda d: d.__setitem__("permissions", False),
+        "allow an object": lambda d: d.setdefault("permissions", {}).__setitem__("allow", {}),
+        "allow a string": lambda d: d.setdefault("permissions", {}).__setitem__("allow", "Bash(git status)"),
+    }
+
+    @pytest.mark.parametrize("shape", list(_NOTED_SHAPES))
+    def test_upgrade_names_the_block_its_warning_names(self, tmp_path, shape):
+        """The note can be about ``permissions`` itself or its ``allow``; the
+        sentence names the block the WARN names, never the other."""
+        target = _git_target(tmp_path)
+        assert _init(target).returncode == 0
+        self._edit(target, self._NOTED_SHAPES[shape])
+        result = _upgrade(target)
+        warned = re.search(r"\[upgrade\] WARN: (\S+) is \w+, not an? ", result.stderr)
+        assert warned, result.stderr
+        assert f"has a {warned.group(1)} block to fix by hand (the WARN above)" in result.stdout, result.stdout
+        assert "nothing to do" not in result.stdout, result.stdout
+
+    def test_merge_settings_names_an_allow_object_too(self, tmp_path):
+        target = _git_target(tmp_path)
+        assert _init(target).returncode == 0
+        self._edit(target, self._NOTED_SHAPES["allow an object"])
+        result = _merge(target)
+        assert "permissions.allow is dict" in result.stderr, result.stderr
+        assert "Nothing to do" not in result.stdout, result.stdout
+
+    def test_upgrade_says_each_state_of_its_own_subject_in_one_sentence(self, tmp_path):
+        """Combined states: the hook tree is one subject, the settings file the
+        other, named once; a joining "it" used to read as the tree or the
+        allow block. The remedy says what --repair does not fix."""
+        from espalier import __version__
+
+        target = _git_target(tmp_path)
+        assert _init(target).returncode == 0
+        TestDisarmedNarrationMatchesTheActualShape._neuter(target / ".claude" / "settings.json")
+        self._edit(target, lambda d: (d.pop("statusLine", None),
+                                      d.setdefault("permissions", {}).__setitem__("allow", "Bash(git status)")))
+        line = next((ln for ln in _upgrade(target).stdout.splitlines() if "harness is current" in ln), "")
+        assert line == (
+            f"[upgrade] harness is current ({__version__}); the hook tree above is not armed; "
+            "your .claude/settings.json has a permissions.allow block to fix by hand (the WARN above) "
+            "and has no statusLine, and upgrade never rewrites your settings.json -- "
+            "`merge-settings . --repair` does, on request, for the hooks; what the WARN above "
+            "names is yours to fix by hand."
+        ), line
+
+    @pytest.mark.parametrize("command", ["merge-settings", "init --wire-hooks"])
+    def test_a_run_that_wired_a_hook_event_still_says_so(self, tmp_path, command):
+        """The control: the clause is past tense and true after a top-up."""
+        target = _git_target(tmp_path)
+        assert _init(target).returncode == 0
+        TestDisarmedNarrationMatchesTheActualShape._neuter(target / ".claude" / "settings.json")
+        self._edit(target, lambda d: d["hooks"].pop("Stop", None))
+        result = _merge(target) if command == "merge-settings" else _init(target, "--wire-hooks")
+        assert "wired anyway" in result.stdout + result.stderr, result.stdout + result.stderr
