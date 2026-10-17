@@ -20,7 +20,15 @@ import pytest
 
 from espalier import fuse
 
+from tests._quiet_git import NO_BACKGROUND_GIT, background_git_settings
 from tests._symlink_support import requires_symlink
+
+
+def _no_background_git(host: Path) -> None:
+    """Right after ``git init``: ``fuse_repos`` copies the host's ``.git``
+    right after its commit, so no detached repack may be moving it."""
+    for key, value in NO_BACKGROUND_GIT:
+        subprocess.run(["git", "-C", str(host), "config", key, value], check=True)
 
 
 def _make_host(tmp_path: Path, *, with_tools: bool = False) -> Path:
@@ -35,6 +43,7 @@ def _make_host(tmp_path: Path, *, with_tools: bool = False) -> Path:
         (host / "tools" / "cc" / "hooks").mkdir(parents=True)
         (host / "tools" / "cc" / "hooks" / "write_guard.py").write_text("# my own\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(host)], check=True)
+    _no_background_git(host)
     subprocess.run(["git", "-C", str(host), "config", "user.email", "t@t.com"], check=True)
     subprocess.run(["git", "-C", str(host), "config", "user.name", "t"], check=True)
     subprocess.run(["git", "-C", str(host), "add", "-A"], check=True)
@@ -54,6 +63,7 @@ def _make_nonpython_host(tmp_path: Path) -> Path:
     )
     (host / "README.md").write_text("# node demo\n", encoding="utf-8")
     subprocess.run(["git", "init", "-q", str(host)], check=True)
+    _no_background_git(host)
     subprocess.run(["git", "-C", str(host), "config", "user.email", "t@t.com"], check=True)
     subprocess.run(["git", "-C", str(host), "config", "user.name", "t"], check=True)
     subprocess.run(["git", "-C", str(host), "add", "-A"], check=True)
@@ -1352,6 +1362,7 @@ class TestFuseSymlinkFidelity:
         (host / "real.txt").write_text("hi\n", encoding="utf-8")
         (host / "link.txt").symlink_to("real.txt")
         subprocess.run(["git", "init", "-q", str(host)], check=True)
+        _no_background_git(host)
         subprocess.run(["git", "-C", str(host), "config", "user.email", "t@t.com"], check=True)
         subprocess.run(["git", "-C", str(host), "config", "user.name", "t"], check=True)
         subprocess.run(["git", "-C", str(host), "add", "-A"], check=True)
@@ -1382,6 +1393,24 @@ class TestFuseSymlinkFidelity:
             "tracked symlink shows dirty (typechange/modified) after fusion:\n"
             + status.stdout
         )
+
+    @requires_symlink
+    def test_the_symlink_host_runs_no_background_git(self, tmp_path):
+        """Dies to: the keys dropped from this host (DEF-1168's writer: fuse
+        copies the host's .git right after its commit)."""
+        assert background_git_settings(self._host_with_symlink(tmp_path)) == dict(NO_BACKGROUND_GIT)
+
+
+class TestTheHostsRunNoBackgroundGit:
+    """DEF-1168's sister sites: ``fuse_repos`` copies each host's ``.git``
+    right after the host's commit, the shape that lost files to git's
+    detached repack in CI."""
+
+    @pytest.mark.parametrize("make", [_make_host, _make_nonpython_host],
+                             ids=["python-host", "node-host"])
+    def test_the_host_runs_no_background_git(self, tmp_path, make):
+        """Dies to: the keys dropped from that builder."""
+        assert background_git_settings(make(tmp_path)) == dict(NO_BACKGROUND_GIT)
 
 
 class TestFuseSharpEdgesSeed:

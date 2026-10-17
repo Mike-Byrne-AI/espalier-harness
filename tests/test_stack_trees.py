@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from _adopter_tree import TREE_DEPTHS, build_adopter_tree
+from _quiet_git import NO_BACKGROUND_GIT, background_git_settings
 from _stack_trees import ADOPTER_PREFIX, ADOPTER_STACKS, STACKS, write_stack
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -179,6 +180,12 @@ class TestBuildAdopterTree:
         assert sorted(_git(root, "ls-files").split()) == sorted(_row("adopter-node")[0])
         assert _git(root, "status", "--porcelain") == ""
         assert not (root / ".claude").exists(), "the git depth must not run init"
+
+    def test_the_git_depth_runs_no_background_git(self, tmp_path):
+        """Dies to: the keys dropped after `git init` (DEF-1168's writer: every
+        module and session tree built here is copied or read by many tests)."""
+        root = build_adopter_tree(tmp_path, stack="node", tree="git")
+        assert background_git_settings(root) == dict(NO_BACKGROUND_GIT)
 
     def test_the_default_is_the_python_tree_at_full_depth(self):
         # The default call's tree is built by the session-scoped `adopter_tree`
