@@ -185,7 +185,7 @@ class TestSpans:
     def test_nested_definitions_are_qualified_and_the_innermost_wins(self, census):
         """Dies to: the outermost span winning (a method's line reads as its class)."""
         nodes = census.spans(OLD)
-        names = {n for n, _, _ in nodes}
+        names = {n for n, *_ in nodes}
         assert {"LIMIT", "TABLE", "first", "second", "f", "g", "C", "C.m", "C.n", "h"} <= names
         assert "attr" not in names
         line_of_m = OLD.splitlines().index("        return 1") + 1
@@ -267,3 +267,126 @@ class TestCanonical:
         assert census.canonical("espalier/_vendor/cc/hooks/write_guard.py") == "tools/cc/hooks/write_guard.py"
         assert census.canonical("tools/cc/hooks/write_guard.py") == "tools/cc/hooks/write_guard.py"
         assert census.canonical("docs/HOOKS.md") == "docs/HOOKS.md"
+
+
+class TestNothingReadIsNeverCertified:
+    def test_a_file_with_no_counted_lines_is_unplaced_not_certified(self, census):
+        """Dies to: a side with zero counted lines certified (a diff the mapper never read: an
+        empty diff from a subdirectory run, a hunk header a colour config broke, a side `git show`
+        could not read, a blank-only edit) printed as different functions, where git conflicts."""
+        nothing = {"p.py": {"kind": "python", "symbols": set(), "changed": 0, "unplaced": 0}}
+        some = {"p.py": {"kind": "python", "symbols": {"p.py::f"}, "changed": 1, "unplaced": 0}}
+        assert census.pair_verdict(nothing, some)["verdict"] == "unplaced"
+        assert census.pair_verdict(some, nothing)["verdict"] == "unplaced"
+        assert census.pair_verdict(nothing, nothing)["verdict"] == "unplaced"
+
+    def test_a_line_the_source_does_not_have_is_unplaced_and_counted(self, census):
+        """Dies to: a line past the end of a side (a side `git show` could not read) read as a
+        blank, so it counts for nothing and the file is certified."""
+        got = census.changed_symbols("p.py", "", "", "@@ -0,0 +1,3 @@\n")
+        assert got["changed"] == 3 and got["unplaced"] == 3, got
+
+    def test_a_form_feed_line_does_not_shift_the_line_index(self, census):
+        """Dies to: `str.splitlines()`, which also splits on form feed, U+2028 and friends where
+        git and `ast` split on newlines only, so every line after one is read one off."""
+        old, new = "\x0c\nimport os\n", "\x0c\nimport sys\n"
+        got = census.changed_symbols("p.py", old, new, "@@ -2 +2 @@\n")
+        assert got["changed"] == 2 and got["unplaced"] == 2, got
+
+    def test_a_nul_byte_maps_nothing_without_raising(self, census):
+        """Dies to: `ValueError` uncaught in `spans` (Python 3.10 raises it for a NUL byte where
+        3.11 and later raise `SyntaxError`), a traceback instead of an unplaced file."""
+        assert census.spans("x = 1\n\x00") == []
+
+
+class TestPlacementEdges:
+    def test_a_blank_line_inside_a_function_is_the_function_s(self, census):
+        """Dies to: every blank line neutral, where git conflicts on the edit beside this one."""
+        old = "def f(x):\n    y = x\n    return y\n\n\ndef g():\n    return 2\n"
+        new = old.replace("    y = x\n", "    y = x\n\n")
+        got = _placement(census, old, new)
+        assert got["symbols"] == {"p.py::f"} and got["changed"] == 1 and got["unplaced"] == 0, got
+
+    def test_a_blank_line_between_top_level_definitions_stays_neutral(self, census):
+        """Dies to: a blank line outside every node handed to a neighbour."""
+        old = "def f(x):\n    return x\n\n\ndef g():\n    return 2\n"
+        new = old.replace("\n\n\ndef g", "\n\n\n\ndef g")
+        got = _placement(census, old, new)
+        assert got["symbols"] == set() and got["changed"] == 0, got
+
+    def test_an_indented_trailing_comment_is_unplaced_not_the_next_def(self, census):
+        """Dies to: the forward walk ignoring indentation, so a comment indented as `f`'s body with
+        no blank before `def g` is handed to `g` (git conflicts with an edit on `f`'s last line)."""
+        old = "def f():\n    return 1\n    # done\ndef g():\n    return 2\n"
+        new = old.replace("# done", "# finished")
+        got = _placement(census, old, new)
+        assert "p.py::g" not in got["symbols"] and got["unplaced"] == 2, got
+
+    def test_a_subscript_target_is_its_root_name(self, census):
+        """Dies to: `ast.unparse` of a subscript target (`X[1, 2]`), which carries the comma the
+        tuple-target test exists to keep out of a symbol."""
+        old = "X = {}\nX[1, 2] = 3\n"
+        assert _symbols(census, old, old.replace("= 3", "= 4")) == {"p.py::X"}
+
+
+class TestSpawns:
+    def test_every_spawn_runs_at_the_repo_root_with_the_binary_first(self, census, monkeypatch):
+        """Dies to: `cwd` dropped (a `git diff -- path` from a subdirectory reads the pathspec
+        relative to it, every diff comes back empty and every file is certified), or the binary
+        built into the argv at the call site, which the subprocess-contract scanner cannot read."""
+        calls = []
+
+        class Done:
+            stdout = ""
+
+        def fake(argv, **kw):
+            calls.append((argv, kw))
+            return Done()
+
+        monkeypatch.setattr(census, "run_bounded", fake)
+        census._git("status")
+        census._gh("pr", "list")
+        assert [c[0] for c in calls] == [["git", "status"], ["gh", "pr", "list"]]
+        assert all(c[1]["cwd"] == census.REPO_ROOT for c in calls), calls
+        assert all(c[1]["encoding"] == "utf-8" for c in calls), calls
+
+    def test_changed_paths_are_read_nul_separated(self, census, monkeypatch):
+        """Dies to: `--name-only` output split on whitespace (`pkg/my file.py` becomes a path tier
+        `pkg/my` and a Python `file.py` with empty sources, which is certified)."""
+        seen = []
+
+        def fake_git(*args):
+            seen.append(args)
+            return "pkg/my file.py\0other.py\0" if "--name-only" in args else ""
+
+        monkeypatch.setattr(census, "_git", fake_git)
+        out = census.symbols_between("base", "head")
+        assert set(out) == {"pkg/my file.py", "other.py"}, out
+        assert "-z" in seen[0], seen[0]
+
+    def test_every_diff_reads_plain_text(self, census):
+        """Dies to: a colour, external-diff or textconv setting in the box's git config turning the
+        hunk header into something `HUNK_RE` does not match, so nothing is read and all is certified."""
+        assert {"--no-color", "--no-ext-diff", "--no-textconv"} <= set(census.DIFF_ARGS)
+
+
+class TestCanonicalFolding:
+    def test_a_twin_of_a_region_host_folds_onto_the_region_s_source(self, census):
+        """Dies to: one-hop folding (a region row's byte twins fold onto the region's host file,
+        which itself folds onto the region's source, so one synced lane lands on two keys)."""
+        if census._mirrors is None:
+            pytest.skip("the mirror registry is not importable here")
+        rows = census._mirrors.MIRROR_ROWS
+
+        def base_dir(sot):
+            glob = census._mirrors.glob_row_parts(sot)
+            return glob[0] if glob is not None else sot
+
+        hosts = [m for row in rows for m in row.mirrors if not m.endswith("/")]
+        dirs = [(m, base_dir(row.sot)) for row in rows for m in row.mirrors if m.endswith("/")]
+        pairs = [(d + host[len(sot):], host) for host in hosts for d, sot in dirs if host.startswith(sot)]
+        if not pairs:
+            pytest.skip("no region host under a mirrored directory in this registry")
+        for twin, host in pairs:
+            assert census.canonical(twin) == census.canonical(host), (twin, host)
+            assert census.canonical(census.canonical(twin)) == census.canonical(twin), twin

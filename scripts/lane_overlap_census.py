@@ -8,10 +8,13 @@ diff by the standard library's ``ast``, on BOTH sides of every hunk: added and
 changed lines in the head's version of a file, removed and changed lines in the
 base's, so a rename reports both names and a hunk that deletes one function
 while extending another reports both. A decorator or a comment block directly
-above a definition belongs to it. A changed line no node holds (an import, a
-blank, a lone comment, a line of a file one side cannot parse) is UNPLACED:
-it is counted, it meets another lane's unplaced line as a path hit, and it is
-never read as "different functions". A file that is not Python is a path tier
+above a definition belongs to it, when the comment is not indented deeper
+than the definition. A changed line no node holds (an import, a lone comment,
+a line of a file one side cannot parse, a line a side does not have) is
+UNPLACED: it is counted, it meets another lane's unplaced line as a path hit,
+and it is never read as "different functions"; a blank line is its function's
+inside one and neutral elsewhere; a file no line of which was read is never
+certified. A file that is not Python is a path tier
 of its own, never a symbol. Mirror twins (``espalier/mirror_registry.py``) are
 collapsed onto their source, so a lane that edits a hook and its vendored copy
 meets another lane once. That pack's Wave 1 moves the pure functions into
@@ -43,7 +46,7 @@ HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 #: Every diff this script reads: rename detection off, so a moved file is a
 #: deletion at its old path and an addition at its new one, and another lane
 #: editing the old path meets it. Pinned by the test.
-DIFF_ARGS: tuple[str, ...] = ("--no-renames",)
+DIFF_ARGS: tuple[str, ...] = ("--no-renames", "--no-color", "--no-ext-diff", "--no-textconv")
 _DEF_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
 _ASSIGN_NODES = (ast.Assign, ast.AnnAssign, ast.AugAssign)
 
@@ -78,18 +81,24 @@ run_bounded = _bounded_spawn()
 
 def _target_names(node: ast.AST) -> list[str]:
     """Each name an assignment target binds: ``a`` for ``a = 1``, ``a`` and
-    ``b`` for ``a, b = ...``, the spelled form for an attribute or subscript."""
+    ``b`` for ``a, b = ...``, the root name for an attribute or subscript
+    (``X`` for ``X[1, 2] = ...``, so no comma reaches a symbol)."""
     if isinstance(node, ast.Name):
         return [node.id]
     if isinstance(node, (ast.Tuple, ast.List)):
         return [n for elt in node.elts for n in _target_names(elt)]
     if isinstance(node, ast.Starred):
         return _target_names(node.value)
+    while isinstance(node, (ast.Subscript, ast.Attribute)):
+        node = node.value
+    if isinstance(node, ast.Name):
+        return [node.id]
     return [ast.unparse(node)]
 
 
-def spans(source: str) -> list[tuple[str, int, int]]:
-    """``[(qualname, first_line, last_line)]`` for every function, async
+def spans(source: str) -> list[tuple[str, int, int, str]]:
+    """``[(qualname, first_line, last_line, kind)]``, ``kind`` one of ``def``,
+    ``class`` and ``name``, for every function, async
     function and class at any depth (qualified by the definitions above it:
     ``C.m``; a block such as ``if TYPE_CHECKING:`` or ``try:`` adds nothing),
     a definition's span starting at its first decorator, and for every
@@ -99,7 +108,7 @@ def spans(source: str) -> list[tuple[str, int, int]]:
     out: list[tuple[str, int, int]] = []
     try:
         tree = ast.parse(source)
-    except SyntaxError:
+    except (SyntaxError, ValueError):   # 3.10 raises ValueError for a NUL byte
         return out
 
     def walk(node: ast.AST, prefix: str) -> None:
@@ -107,13 +116,14 @@ def spans(source: str) -> list[tuple[str, int, int]]:
             if isinstance(child, _DEF_NODES):
                 name = f"{prefix}{child.name}"
                 lo = min([child.lineno] + [d.lineno for d in child.decorator_list])
-                out.append((name, lo, child.end_lineno or child.lineno))
+                kind = "class" if isinstance(child, ast.ClassDef) else "def"
+                out.append((name, lo, child.end_lineno or child.lineno, kind))
                 walk(child, name + ".")
             elif prefix == "" and isinstance(child, _ASSIGN_NODES):
                 targets = child.targets if isinstance(child, ast.Assign) else [child.target]
                 for target in targets:
                     for name in _target_names(target):
-                        out.append((name, child.lineno, child.end_lineno or child.lineno))
+                        out.append((name, child.lineno, child.end_lineno or child.lineno, "name"))
             else:
                 walk(child, prefix)
 
@@ -121,50 +131,69 @@ def spans(source: str) -> list[tuple[str, int, int]]:
     return out
 
 
-def innermost(nodes: list[tuple[str, int, int]], line: int) -> list[str]:
-    """Every name whose span is the shortest one holding ``line``: one name
-    for a line inside a definition, each name of a tuple target for the line
-    of ``a, b = ...`` (they share one span), nothing outside every node."""
+def innermost_spans(nodes: list[tuple[str, int, int, str]], line: int) -> list[tuple[str, int, int, str]]:
+    """Every span that is the shortest one holding ``line``: one for a line
+    inside a definition, each name of a tuple target for the line of
+    ``a, b = ...`` (they share one span), nothing outside every node."""
     best: int | None = None
-    names: list[str] = []
-    for name, lo, hi in nodes:
+    found: list[tuple[str, int, int, str]] = []
+    for span in nodes:
+        _name, lo, hi, _kind = span
         if not (lo <= line <= hi):
             continue
         if best is None or (hi - lo) < best:
-            best, names = hi - lo, [name]
+            best, found = hi - lo, [span]
         elif (hi - lo) == best:
-            names.append(name)
-    return names
+            found.append(span)
+    return found
 
 
-def enclosing(nodes: list[tuple[str, int, int]], line: int) -> str:
+def innermost(nodes: list[tuple[str, int, int, str]], line: int) -> list[str]:
+    """The names of `innermost_spans`."""
+    return [name for name, *_ in innermost_spans(nodes, line)]
+
+
+def enclosing(nodes: list[tuple[str, int, int, str]], line: int) -> str:
     """The innermost span holding ``line`` (the first of `innermost`), else the module."""
     names = innermost(nodes, line)
     return names[0] if names else MODULE
 
 
-def placed(nodes: list[tuple[str, int, int]], lines: list[str], line: int) -> list[str]:
-    """Where ``line`` (1-based) lands: nothing for a blank line, which is
-    neutral (a deletion's trailing blanks and the blank between two methods
-    name no symbol, so an edit never flags a neighbour it did not touch); its
+def _indent(text: str) -> int:
+    return len(text) - len(text.lstrip())
+
+
+def placed(nodes: list[tuple[str, int, int, str]], lines: list[str], line: int) -> list[str]:
+    """Where ``line`` (1-based) lands: a line the source does not have is the
+    module, unplaced (a side that could not be read certifies nothing); a
+    blank line is its function's when a function's span holds it (git
+    conflicts on the edit beside it) and nothing elsewhere, neutral (the
+    blank between two methods and a deletion's trailing blanks name no
+    symbol, so an edit never flags a neighbour it did not touch); else its
     innermost node or nodes; for a comment outside every node, the node that
-    starts right after an unbroken run of comments (a blank breaks the run and
-    the comment is unplaced); else the module, unplaced."""
-    text = lines[line - 1].strip() if 0 < line <= len(lines) else ""
-    if not text:
-        return []
-    names = innermost(nodes, line)
-    if names:
-        return names
-    if not text.startswith("#"):
+    starts right after an unbroken run of comments, when the comment is not
+    indented deeper than that node (a blank breaks the run, and a comment
+    indented as the body above it is unplaced); else the module, unplaced."""
+    if not 0 < line <= len(lines):
+        return [MODULE]
+    text = lines[line - 1]
+    stripped = text.strip()
+    here = innermost_spans(nodes, line)
+    if not stripped:
+        return [name for name, _lo, _hi, kind in here if kind == "def"]
+    if here:
+        return [name for name, *_ in here]
+    if not stripped.startswith("#"):
         return [MODULE]
     cursor = line
     while cursor <= len(lines):
-        names = innermost(nodes, cursor)
-        if names:
-            return names
-        stripped = lines[cursor - 1].strip()
-        if not stripped or not stripped.startswith("#"):
+        found = innermost_spans(nodes, cursor)
+        if found:
+            if _indent(text) <= _indent(lines[found[0][1] - 1]):
+                return [name for name, *_ in found]
+            return [MODULE]
+        run = lines[cursor - 1].strip()
+        if not run or not run.startswith("#"):
             return [MODULE]
         cursor += 1
     return [MODULE]
@@ -185,6 +214,16 @@ def symbols_meet(one: set[str], two: set[str]) -> set[str]:
     return met
 
 
+def _lines(source: str) -> list[str]:
+    """The lines as git and ``ast`` count them: split on newlines only
+    (``str.splitlines`` also splits on form feed and U+2028, and every line
+    after one would read one off), without the empty tail a final newline leaves."""
+    lines = source.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 def changed_symbols(path: str, old_source: str, new_source: str, unified_diff: str) -> dict:
     """``{"kind", "symbols", "changed", "unplaced"}`` for one file's diff
     (``-U0`` from any producer): ``kind`` is ``python`` or ``path``; for Python
@@ -195,7 +234,7 @@ def changed_symbols(path: str, old_source: str, new_source: str, unified_diff: s
     if not path.endswith(".py"):
         return {"kind": "path", "symbols": {path}, "changed": 0, "unplaced": 0}
     new_nodes, old_nodes = spans(new_source), spans(old_source)
-    new_lines, old_lines = new_source.splitlines(), old_source.splitlines()
+    new_lines, old_lines = _lines(new_source), _lines(old_source)
     symbols: set[str] = set()
     changed = unplaced = 0
     for line in unified_diff.splitlines():
@@ -233,7 +272,7 @@ def pair_verdict(one: dict[str, dict], two: dict[str, dict]) -> dict:
     """What two lanes' placements say about each other, over the files both
     changed: ``shared`` (symbols both changed, the module excluded), ``paths``
     (files that are not Python), ``unplaced`` (Python files where a side left
-    lines unplaced and no symbol is shared), ``verdict`` one of ``shared
+    lines unplaced, or read no line at all, and no symbol is shared), ``verdict`` one of ``shared
     symbol``, ``unplaced``, ``different functions``, ``path only``, ``none``."""
     files = sorted(set(one) & set(two))
     shared: set[str] = set()
@@ -248,8 +287,8 @@ def pair_verdict(one: dict[str, dict], two: dict[str, dict]) -> dict:
         meet = symbols_meet(a["symbols"], b["symbols"])
         if meet:
             shared |= meet
-        elif a["unplaced"] or b["unplaced"]:
-            unplaced.append(path)
+        elif a["unplaced"] or b["unplaced"] or not a["changed"] or not b["changed"]:
+            unplaced.append(path)   # a side that read no line certifies nothing
         else:
             certified.append(path)
     if shared:
@@ -271,20 +310,16 @@ def pair_verdict(one: dict[str, dict], two: dict[str, dict]) -> dict:
 def _git(*args: str) -> str:
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
     return run_bounded(["git", *args], capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", timeout=120, env=env).stdout
+                       errors="replace", timeout=120, env=env, cwd=REPO_ROOT).stdout
 
 
 def _gh(*args: str) -> str:
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
     return run_bounded(["gh", *args], capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", timeout=120, env=env).stdout
+                       errors="replace", timeout=120, env=env, cwd=REPO_ROOT).stdout
 
 
-def canonical(path: str) -> str:
-    """A mirror path folded onto its source of truth, by the registry; a path
-    on no row, or any path when the registry is not importable, as spelled."""
-    if _mirrors is None:
-        return path
+def _fold_once(path: str) -> str:
     for row in _mirrors.MIRROR_ROWS:
         for mirror in row.mirrors:
             if mirror.endswith("/") and path.startswith(mirror):
@@ -297,11 +332,27 @@ def canonical(path: str) -> str:
     return path
 
 
+def canonical(path: str) -> str:
+    """A mirror path folded onto its source of truth, by the registry, until
+    it stops moving (a region row's host file is itself another row's twin,
+    so a synced lane would land on two keys after one hop; eight hops bound
+    a registry that cycles); a path on no row, or any path when the registry
+    is not importable, as spelled."""
+    if _mirrors is None:
+        return path
+    for _ in range(8):
+        folded = _fold_once(path)
+        if folded == path:
+            return path
+        path = folded
+    return path
+
+
 def symbols_between(base: str, head: str) -> dict[str, dict]:
     """``{canonical path: placement}`` for every file ``base..head`` changes,
     mirror twins folded onto their source (symbols united, counts summed)."""
     out: dict[str, dict] = {}
-    for path in _git("diff", "--name-only", *DIFF_ARGS, base, head).split():
+    for path in filter(None, _git("diff", "--name-only", "-z", *DIFF_ARGS, base, head).split("\0")):
         new = _git("show", f"{head}:{path}") if path.endswith(".py") else ""
         old = _git("show", f"{base}:{path}") if path.endswith(".py") else ""
         diff = _git("diff", "-U0", *DIFF_ARGS, base, head, "--", path)
@@ -378,7 +429,7 @@ def window_limit(newest: int, lo: int) -> int:
     """How many merged pull requests, newest first, the listing must read to
     reach number ``lo``: every number from the newest down to it, since the
     listing counts from the newest and a fixed limit truncates a pinned
-    window as merges accumulate above it (bounded at 1000, the API's page)."""
+    window as merges accumulate above it (bounded at 1000, a cap on one listing)."""
     return max(1, min(1000, newest - lo + 1))
 
 
