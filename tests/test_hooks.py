@@ -39,6 +39,7 @@ from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
 from tests._interpreter_hosts import HOOK_PYTHON
 from tests._symlink_support import requires_symlink
 from tests._live_tree import copy_checkout
+from tests._hook_spawn import run_hook_through
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 
@@ -89,13 +90,10 @@ def run_hook(script_name: str, input_data: dict, env_overrides: dict | None = No
                 env.pop(k, None)
             else:
                 env[k] = v
-    return subprocess.run(
+    return run_hook_through(
         [HOOK_PYTHON, str(script)],
         input=json.dumps(input_data),
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=env, encoding="utf-8",
+        env=env,
     )
 
 
@@ -1157,8 +1155,11 @@ class TestKillSwitchTextsNameOnlyTheCIGateThisTreeHas:
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tree)}
 
         def run(script: str, payload: dict) -> subprocess.CompletedProcess:
-            return subprocess.run([HOOK_PYTHON, str(hooks / "hooks" / script)], input=json.dumps(payload),
-                                  capture_output=True, text=True, timeout=15, env=env, encoding="utf-8")
+            return run_hook_through(
+                [HOOK_PYTHON, str(hooks / "hooks" / script)],
+                input=json.dumps(payload),
+                env=env,
+            )
 
         denied = run("write_guard.py", {"tool_name": "Read", "tool_input": {}})
         assert denied.returncode == 0, denied.stderr

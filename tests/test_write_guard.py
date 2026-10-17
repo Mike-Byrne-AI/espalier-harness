@@ -19,6 +19,7 @@ from types import ModuleType
 import pytest
 
 from tests._hook_assertions import assert_hook_allowed, assert_hook_denied
+from tests._hook_spawn import run_hook_through
 from tests._symlink_support import requires_symlink
 
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
@@ -69,13 +70,10 @@ def run_bash_guard(command: str, tmp_path: Path) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
     payload = {"tool_name": "Bash", "tool_input": {"command": command}}
-    return subprocess.run(
+    return run_hook_through(
         [sys.executable, str(script)],
         input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=env, encoding="utf-8",
+        env=env,
     )
 
 
@@ -91,13 +89,10 @@ def run_guard_from(
     payload: dict = {"tool_name": tool_name, "tool_input": {"command": command}}
     if cwd is not None:
         payload["cwd"] = str(cwd)
-    return subprocess.run(
+    return run_hook_through(
         [sys.executable, str(script)],
         input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=env, encoding="utf-8",
+        env=env,
     )
 
 
@@ -1139,6 +1134,9 @@ def _delete_verdict(result: subprocess.CompletedProcess) -> str:
         return "bump"
     # The time budget's refusal is a deny no tier made: a row whose judgment
     # outran the budget (a slow runner) fails here by name, never as a wall.
+    # The spawn helper retries a refusal and fails a second one itself
+    # (tests/_hook_spawn.py), so this is the backstop for a result read here
+    # from any other spawn.
     if "could not finish judging" in out:
         pytest.fail(f"write_guard ran out of its time budget, so no tier judged this row: {out[:200]}")
     if result.returncode == 2 or '"permissionDecision": "deny"' in out:
@@ -1806,10 +1804,10 @@ class TestCatastrophicFindDelete:
         """The one tier the bypass never reaches."""
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
                "ESPALIER_MAINTENANCE_MODE": "1"}
-        result = subprocess.run(
+        result = run_hook_through(
             [sys.executable, str(HOOKS_DIR / "write_guard.py")],
             input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "find . -delete"}}),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
         assert _delete_verdict(result) == "wall", result.stdout
 
@@ -1973,10 +1971,10 @@ class TestCatastrophicFindDelete:
     def test_the_powershell_wall_stands_under_maintenance_mode(self, tmp_path):
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
                "ESPALIER_MAINTENANCE_MODE": "1"}
-        result = subprocess.run(
+        result = run_hook_through(
             [sys.executable, str(HOOKS_DIR / "write_guard.py")],
             input=json.dumps({"tool_name": "PowerShell", "tool_input": {"command": "find . -delete"}}),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
         assert _delete_verdict(result) == "wall", result.stdout
 
@@ -2336,10 +2334,10 @@ class TestCatastrophicEnumeratorCarrier:
     def test_the_wall_stands_under_maintenance_mode_carrier(self, tmp_path, cmd):
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
                "ESPALIER_MAINTENANCE_MODE": "1"}
-        result = subprocess.run(
+        result = run_hook_through(
             [sys.executable, str(HOOKS_DIR / "write_guard.py")],
             input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
         assert _delete_verdict(result) == "wall", result.stdout
 
@@ -2458,10 +2456,10 @@ class TestCatastrophicEnumeratorCarrier:
     def test_the_powershell_wall_stands_under_maintenance_mode_carrier(self, tmp_path):
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
                "ESPALIER_MAINTENANCE_MODE": "1"}
-        result = subprocess.run(
+        result = run_hook_through(
             [sys.executable, str(HOOKS_DIR / "write_guard.py")],
             input=json.dumps({"tool_name": "PowerShell", "tool_input": {"command": "gci -Recurse -Name | xargs rm -rf"}}),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
         assert _delete_verdict(result) == "wall", result.stdout
 
@@ -2834,10 +2832,10 @@ class TestCatastrophicLoopCarrier:
         claim alone is a string)."""
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path),
                "ESPALIER_MAINTENANCE_MODE": "1"}
-        result = subprocess.run(
+        result = run_hook_through(
             [sys.executable, str(HOOKS_DIR / "write_guard.py")],
             input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
         assert _delete_verdict(result) == "wall", result.stdout
 
@@ -3283,10 +3281,10 @@ class TestPathTraversalBlocked:
             payload = {"tool_name": tool_name, "tool_input": {
                 "file_path": file_path, "content": "x"
             }}
-        return subprocess.run(
+        return run_hook_through(
             [sys.executable, str(script)],
             input=json.dumps(payload),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
 
     @pytest.mark.parametrize("traversal_path", [
@@ -3330,10 +3328,10 @@ class TestCaseInsensitiveBypassBlocked:
         payload = {"tool_name": tool_name, "tool_input": {
             "file_path": file_path, "content": "x",
         }}
-        return subprocess.run(
+        return run_hook_through(
             [sys.executable, str(script)],
             input=json.dumps(payload),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
 
     @pytest.mark.parametrize("case_varied_path", [
@@ -3369,10 +3367,10 @@ class TestCaseInsensitiveBypassBlocked:
         payload = {"tool_name": "Write", "tool_input": {
             "file_path": case_varied_path, "content": "x",
         }}
-        result = subprocess.run(
+        result = run_hook_through(
             [sys.executable, str(script)],
             input=json.dumps(payload),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
         assert result.returncode == 0
         # plan_guard's protected/exempt check fires regardless of plan
@@ -3517,10 +3515,10 @@ class TestTildeAndEnvVarInWritePath:
         payload = {"tool_name": "Write", "tool_input": {
             "file_path": file_path, "content": "x",
         }}
-        return subprocess.run(
+        return run_hook_through(
             [sys.executable, str(script)],
             input=json.dumps(payload),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
 
     def test_claude_project_dir_dollar_form_does_not_bypass(self, tmp_path):
@@ -3940,10 +3938,10 @@ class TestCcContinuityDocsCarveOut:
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
         env.pop("ESPALIER_MAINTENANCE_MODE", None)  # the adversarial condition
         payload = {"tool_name": "Write", "tool_input": {"file_path": rel, "content": "x"}}
-        return subprocess.run(
+        return run_hook_through(
             [sys.executable, str(script)],
             input=json.dumps(payload),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
 
     @pytest.mark.parametrize("rel", ["cc/GOAL.md", "cc/_working_summary.md"])
@@ -3982,10 +3980,10 @@ class TestClassA1ChokepointEndToEnd:
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
         env.pop("ESPALIER_MAINTENANCE_MODE", None)
-        return subprocess.run(
+        return run_hook_through(
             [sys.executable, str(script)],
             input=json.dumps(payload),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
 
     def _assert_protected_zone_deny(self, result):
@@ -4129,10 +4127,10 @@ class TestClassA2MCPLeafWalk:
         env = os.environ.copy()
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
         env.pop("ESPALIER_MAINTENANCE_MODE", None)
-        return subprocess.run(
+        return run_hook_through(
             [sys.executable, str(script)],
             input=json.dumps(payload),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
 
     def _mcp(self, tool_input):
@@ -6075,13 +6073,10 @@ def _run_ps_guard(command: str, tmp_path: Path) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
     payload = {"tool_name": "PowerShell", "tool_input": {"command": command}}
-    return subprocess.run(
+    return run_hook_through(
         [sys.executable, str(script)],
         input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=env, encoding="utf-8",
+        env=env,
     )
 
 
@@ -6146,13 +6141,10 @@ class TestMaintenanceModeBypass:
             env["ESPALIER_MAINTENANCE_MODE"] = mode
         else:
             env.pop("ESPALIER_MAINTENANCE_MODE", None)
-        return subprocess.run(
+        return run_hook_through(
             [sys.executable, str(script)],
             input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env=env, encoding="utf-8",
+            env=env,
         )
 
     def test_write_to_protected_zone_denied_without_flag(self, tmp_path):
@@ -6246,13 +6238,10 @@ class TestMaintenanceModeBypassCoherence:
             env["ESPALIER_MAINTENANCE_MODE"] = mode
         else:
             env.pop("ESPALIER_MAINTENANCE_MODE", None)
-        return subprocess.run(
+        return run_hook_through(
             [sys.executable, str(script)],
             input=json.dumps(payload),
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env=env, encoding="utf-8",
+            env=env,
         )
 
     def test_dangerous_bash_pattern_still_fires_under_maintenance(self, tmp_path):
@@ -8011,10 +8000,10 @@ class TestCatastrophicRmFlagOrderIndependent:
         bypasses, as the forced spelling's is (the failure-mode review
         verified it at the hook; nothing pinned it)."""
         env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path), "ESPALIER_MAINTENANCE_MODE": "1"}
-        result = subprocess.run(
+        result = run_hook_through(
             [sys.executable, str(HOOKS_DIR / "write_guard.py")],
             input=json.dumps({"tool_name": tool, "tool_input": {"command": cmd}}),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
         assert_hook_denied(result, contains_reason=reason)
 
@@ -8028,9 +8017,10 @@ class TestCatastrophicRmFlagOrderIndependent:
         env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
         env["ESPALIER_MAINTENANCE_MODE"] = "1"
         payload = {"tool_name": "Bash", "tool_input": {"command": "rm -fr /"}}
-        result = subprocess.run(
-            [sys.executable, str(script)], input=json.dumps(payload),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+        result = run_hook_through(
+            [sys.executable, str(script)],
+            input=json.dumps(payload),
+            env=env,
         )
         assert_hook_denied(result, contains_reason="recursive delete")
 
@@ -8352,10 +8342,10 @@ def _run_ps_guard_with_temp(command: str, tmp_path: Path, temp: str,
         env[var] = temp
     if home is not None:
         env["HOME"] = env["USERPROFILE"] = home
-    return subprocess.run(
+    return run_hook_through(
         [sys.executable, str(HOOKS_DIR / "write_guard.py")],
         input=json.dumps({"tool_name": "PowerShell", "tool_input": {"command": command}}),
-        capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+        env=env,
     )
 
 
@@ -8511,10 +8501,10 @@ class TestPowerShellScratchRootRung:
         return scratch, home, env
 
     def _ps(self, command: str, env: dict) -> subprocess.CompletedProcess:
-        return subprocess.run(
+        return run_hook_through(
             [sys.executable, str(HOOKS_DIR / "write_guard.py")],
             input=json.dumps({"tool_name": "PowerShell", "tool_input": {"command": command}}),
-            capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+            env=env,
         )
 
     def test_a_home_directory_below_a_scratch_root_is_still_the_wall(self, tmp_path):
@@ -9257,10 +9247,10 @@ def run_guard_tool(tool_name: str, tool_input: dict, tmp_path: Path) -> subproce
     script = HOOKS_DIR / "write_guard.py"
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
-    return subprocess.run(
+    return run_hook_through(
         [sys.executable, str(script)],
         input=json.dumps({"tool_name": tool_name, "tool_input": tool_input}),
-        capture_output=True, text=True, timeout=15, env=env, encoding="utf-8",
+        env=env,
     )
 
 

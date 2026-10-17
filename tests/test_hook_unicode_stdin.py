@@ -37,6 +37,8 @@ import pytest
 
 from espalier.surface_contract import get_canonical_hook_scripts
 
+from tests._hook_spawn import run_hook_through
+
 HOOKS_DIR = Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks"
 HOOKS = list(get_canonical_hook_scripts())
 
@@ -46,11 +48,9 @@ def _run_hook(hook_name: str, stdin_bytes: bytes, tmp_path: Path) -> subprocess.
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(tmp_path)
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
-    return subprocess.run(
+    return run_hook_through(
         [sys.executable, str(script)],
         input=stdin_bytes,
-        capture_output=True,
-        timeout=15,
         env=env,
     )
 

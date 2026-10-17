@@ -34,6 +34,7 @@ from pathlib import Path
 
 import pytest
 from tests._live_tree import checkout_glob
+from tests._hook_spawn import run_hook_through
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -43,13 +44,10 @@ def _run_hook(script_name: str, payload: dict, env_overrides: dict | None = None
     env = os.environ.copy()
     if env_overrides:
         env.update(env_overrides)
-    return subprocess.run(
+    return run_hook_through(
         [sys.executable, str(HOOKS_DIR / script_name)],
         input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        timeout=15,
-        env=env, encoding="utf-8",
+        env=env,
     )
 
 

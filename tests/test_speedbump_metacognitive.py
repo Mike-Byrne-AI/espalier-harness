@@ -33,6 +33,8 @@ if str(HOOKS_DIR) not in sys.path:
 
 import _speedbump  # noqa: E402
 
+from tests._hook_spawn import run_hook_through
+
 
 def _check_gw(tool_name, tool_input, root):
     """check() scoped to CP-GATEWEAKEN only (registry-independent)."""
@@ -283,10 +285,10 @@ class TestCpGateweakenUnderMaintenance:
             env["ESPALIER_MAINTENANCE_MODE"] = mode
         else:
             env.pop("ESPALIER_MAINTENANCE_MODE", None)
-        return subprocess.run(
+        return run_hook_through(
             [sys.executable, str(HOOKS_DIR / "write_guard.py")],
-            input=json.dumps(payload), capture_output=True, text=True,
-            timeout=15, env=env, encoding="utf-8",
+            input=json.dumps(payload),
+            env=env,
         )
 
     def _payload(self):

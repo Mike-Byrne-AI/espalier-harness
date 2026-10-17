@@ -27,6 +27,7 @@ import pytest
 from tests._git_oracle import require_tracked_paths
 from tests.test_doc_source_citations import _RECORD_SURFACE_DOCS
 from tests._live_tree import checkout_glob
+from tests._hook_spawn import run_hook_through
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEMO_DOC = REPO_ROOT / "docs" / "DEMO.md"
@@ -66,10 +67,11 @@ def _drive_write_guard(payload: dict) -> str:
     """The live deny reason for ``payload``, from the hook as a subprocess with
     maintenance mode scrubbed (set, the guard allows and prints nothing)."""
     env = {k: v for k, v in os.environ.items() if k != "ESPALIER_MAINTENANCE_MODE"}
-    result = subprocess.run(
+    result = run_hook_through(
         [sys.executable, "tools/cc/hooks/write_guard.py"],
-        input=json.dumps(payload), capture_output=True, text=True, timeout=15,
-        cwd=str(REPO_ROOT), encoding="utf-8", env=env,
+        input=json.dumps(payload),
+        cwd=str(REPO_ROOT),
+        env=env,
     )
     assert result.returncode == 0, result.stderr
     out = json.loads(result.stdout)["hookSpecificOutput"]
@@ -227,10 +229,10 @@ def test_demo_beat1_write_guard_denies_protected():
         "tool_name": "Write",
         "tool_input": {"file_path": "tools/cc/hooks/demo_target.py"},
     })
-    result = subprocess.run(
+    result = run_hook_through(
         [sys.executable, "tools/cc/hooks/write_guard.py"],
-        input=payload, capture_output=True, text=True, timeout=15,
-        cwd=str(REPO_ROOT), encoding="utf-8",
+        input=payload,
+        cwd=str(REPO_ROOT),
     )
     # TP-9 protocol: exit 0 + structured JSON on stdout
     assert result.returncode == 0, (
@@ -406,13 +408,13 @@ def test_demo_storyboard_other_quoted_outputs_are_pinned_too():
     )
 
     env = {**os.environ, "ESPALIER_MAINTENANCE_MODE": "1"}
-    result = subprocess.run(
+    result = run_hook_through(
         [sys.executable, "tools/cc/hooks/write_guard.py"],
         input=json.dumps({"tool_name": "Edit", "tool_input": {
             "file_path": "tools/cc/hooks/session_start.py",
             "old_string": "a", "new_string": "b"}}),
-        capture_output=True, text=True, timeout=15, cwd=str(REPO_ROOT),
-        encoding="utf-8", env=env,
+        cwd=str(REPO_ROOT),
+        env=env,
     )
     assert result.returncode == 0, result.stderr
     advisory = [ln for ln in result.stderr.splitlines() if "MAINTENANCE_MODE" in ln]
