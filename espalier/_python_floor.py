@@ -61,7 +61,16 @@ def parse_python_version(version_output: str) -> tuple[int, int] | None:
     Store App Execution Alias. Callers treat None as "does not clear the floor",
     never as "assume it is fine": an unreadable answer is the case this module
     exists for.
+
+    A ``version_output`` of None raises TypeError: it is what
+    :func:`interpreter_banner` returns for a probe that never answered
+    (``DEF-5015``), no answer either way, and read here it would be refused in
+    silence, the defect that row closed. Every reader tests for None first.
     """
+    if version_output is None:
+        raise TypeError(
+            "a banner probe that never answered (None) is no answer either way; "
+            "test for it before reading a version from it (DEF-5015)")
     if not version_output:
         return None
     match = _VERSION_RE.search(version_output)
@@ -332,7 +341,8 @@ def _probe_key(
         st = os.stat(head)
     except (OSError, ValueError):
         return None
-    return (tuple(argv), seconds, tries, st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+    return (tuple(argv), seconds, tries, st.st_dev, st.st_ino, st.st_size,
+            st.st_mtime_ns, st.st_ctime_ns)
 
 
 #: The ``--version`` probe's time per try and its tries (``DEF-5015``): the
@@ -382,9 +392,9 @@ def interpreter_banner_unanswered(argv: "list[str] | tuple[str, ...]") -> str | 
     if interpreter_banner(argv) is not None:
         return None
     return (
-        f"its `--version` probe did not answer within {BANNER_PROBE_SECONDS} s, "
-        f"twice, which a loaded host does to a working interpreter, and an "
-        f"interpreter that hangs at start-up does too"
+        f"its `--version` probe did not answer within {BANNER_PROBE_SECONDS} s "
+        f"in {BANNER_PROBE_TRIES} tries, which a loaded host does to a working "
+        f"interpreter, and an interpreter that hangs at start-up does too"
     )
 
 
@@ -405,7 +415,27 @@ def banner_unanswered_of(name_or_path: str | None) -> str | None:
 def _banner_verdict(
     argv: "list[str] | tuple[str, ...]", seconds: int, tries: int,
 ) -> str | None:
-    """The kept ``--version`` answer for ``argv`` (:func:`interpreter_banner`)."""
+    """The kept ``--version`` answer for ``argv`` (:func:`interpreter_banner`).
+
+    A one-word argv that is the interpreter running this, by file
+    (``samefile``), is answered from ``sys.version_info`` without a spawn: the
+    same binary prints the same version from any path that reaches it, so the
+    answer is read, not assumed, and a 3.9 running interpreter still reads
+    3.9. Asked by spawn, a loaded host could leave the very interpreter
+    running doctor unanswered, and doctor called it "older than 3.10" (both
+    reviews of DEF-5015, the common pip, pipx and Homebrew install). The
+    start-up probe keys its own shortcut on the invoked path instead, since a
+    start depends on where the interpreter is invoked from.
+    """
+    import os
+    import sys
+
+    if len(argv) == 1 and sys.executable:
+        try:
+            if os.path.samefile(argv[0], sys.executable):
+                return _running_interpreter_banner()
+        except (OSError, ValueError):
+            pass
     key = _probe_key(argv, seconds, tries)
     if key is not None and key in _BANNER_VERDICTS:
         return _BANNER_VERDICTS[key]
@@ -413,6 +443,15 @@ def _banner_verdict(
     if key is not None:
         _BANNER_VERDICTS[key] = banner
     return banner
+
+
+def _running_interpreter_banner() -> str:
+    """The banner the interpreter running this would print, read from
+    ``sys.version_info``. A seam: a test that fakes ``sys.executable`` as an
+    interpreter of another version fakes this with it."""
+    import sys
+
+    return "Python {}.{}.{}".format(*sys.version_info[:3])
 
 
 def _ask_banner(argv: "list[str] | tuple[str, ...]", seconds: int, tries: int) -> str | None:
@@ -492,14 +531,21 @@ def interpreter_meets_floor(name_or_path: str | None) -> bool:
     serves hook-side warnings and remedy hints, not wiring, where the wired
     interpreter it is usually asked about is the one running the hook, and a
     spawn there is paid on every SessionStart. Its other askers (the
-    ``python3``/``python``/``py -3`` a hint spells) are the one gap left.
+    ``python3``/``python``/``py -3`` a hint spells) are the one gap left. Nor
+    does the twin keep or retry its banner: one 2 s try, with a timeout read
+    as below the floor by a deliberate fail-open, where this copy asks twice
+    and reads a probe that never answered as no answer (``DEF-5015``; the hook
+    side has a row of its own).
 
-    ⚠ No ``samefile(sys.executable)`` short-circuit, unlike the IDENTITY probes.
-    That shortcut is sound for "is this a Python 3" -- the process asking
-    demonstrably is one -- but it cannot answer the floor question without
-    assuming its own answer, and a 3.9 host is exactly where it would be asked.
-    (The start-up probe skips a spawn for the running interpreter's own path,
-    for the start question only: the version is still read here.)
+    ⚠ No ``samefile(sys.executable)`` short-circuit in this body, unlike the
+    IDENTITY probes. That shortcut is sound for "is this a Python 3" -- the
+    process asking demonstrably is one -- but it cannot answer the floor
+    question without assuming its own answer, and a 3.9 host is exactly where
+    it would be asked. (The start-up probe skips a spawn for the running
+    interpreter's own path, for the start question only. The banner this
+    reads answers the running interpreter's own file from
+    ``sys.version_info``, which reads the version rather than assuming it, so
+    a 3.9 host still reads 3.9: see :func:`_banner_verdict`.)
 
     False for an unresolvable name, a non-interpreter, a probe that cannot
     run, or an interpreter that cannot start: an unreadable answer is not a

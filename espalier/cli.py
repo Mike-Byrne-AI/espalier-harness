@@ -26,6 +26,8 @@ from espalier._atomic_io import atomic_write_bytes, atomic_write_text
 from espalier._integrity_bridge import load_integrity_module
 from espalier._python_floor import (
     BANNER_PROBE_FAILED,
+    BANNER_PROBE_SECONDS,
+    BANNER_PROBE_TRIES,
     LAUNCHER_VERSION_FLAG,
     START_PROBE_SECONDS,
     START_PROBE_TRIES,
@@ -33,7 +35,6 @@ from espalier._python_floor import (
     floor_text,
     interpreter_argv,
     interpreter_banner,
-    interpreter_banner_unanswered,
     interpreter_meets_floor,
     interpreter_start_failure,
     interpreter_start_unconfirmed,
@@ -769,7 +770,9 @@ def resolver_candidate_names() -> str:
 _INTERPRETER_WARNING_EMITTED = False
 
 
-def _warn_interpreter_below_floor(probe: "tuple[str, str, str]") -> None:
+def _warn_interpreter_below_floor(
+    probe: "tuple[str, str, str]", mute: "tuple[str, str] | None" = None,
+) -> None:
     """Say, once and loudly, that the wired interpreter is too OLD.
 
     Distinct from :func:`_warn_interpreter_unvalidated`, because the state and
@@ -806,6 +809,13 @@ def _warn_interpreter_below_floor(probe: "tuple[str, str, str]") -> None:
         )
     else:
         after = f"After upgrading, re-wire with `{remedy} -m espalier init . --rewire-interpreter`."
+    # A candidate whose banner never answered (DEF-5015) may be the Python of
+    # the floor this host already has: said, so "install" is not the only
+    # reading.
+    unheard = (
+        f" {mute[0]!r} ({mute[1]}) did not answer `--version` in time here; if "
+        f"it is a Python {floor}+, run doctor when the host is less loaded "
+        f"before installing one." if mute is not None else "")
     print(
         f"WARNING: {name!r} ({resolved}) reports {said}, which is BELOW the "
         f"Python {floor} this package requires. Wiring it anyway so the "
@@ -813,7 +823,7 @@ def _warn_interpreter_below_floor(probe: "tuple[str, str, str]") -> None:
         f"disarm them entirely. What will NOT work until you install Python "
         f"{floor} or newer: the blueprint chain, Gate 4 finalize, and "
         f"subagent-reasoning capture. SessionStart will say 'No active "
-        f"blueprint' every session. " + after,
+        f"blueprint' every session." + unheard + " " + after,
         file=sys.stderr,
     )
 
@@ -870,24 +880,32 @@ def _warn_interpreter_unvalidated(
     )
 
 
-def _warn_interpreter_unanswered(name: str, resolved: str) -> None:
+def _warn_interpreter_unanswered(
+    name: str, resolved: str, evidence: "tuple[str, str, str] | None" = None,
+) -> None:
     """Say once, on stderr, that the name wired is one whose ``--version``
-    probe never answered (``DEF-5015``): nothing on PATH answered as a Python
-    of the floor, and this one is wired ahead of the literal ``python``
-    because it resolves, and a loaded host is the likeliest reason it was
-    silent. Shares :func:`_warn_interpreter_unvalidated`'s once-flag: the two
-    are alternatives at one decision."""
+    probe never answered (``DEF-5015``): nothing on PATH validated, and this
+    one is wired ahead of the literal ``python`` because it resolves, and a
+    loaded host is the likeliest reason it was silent. ``evidence`` is what an
+    earlier candidate answered, kept as DEF-804's first-informative evidence.
+    The trade is said: if it hangs instead, every hook waits out its timeout
+    and each guard fails open. Shares :func:`_warn_interpreter_unvalidated`'s
+    once-flag: the two are alternatives at one decision."""
     global _INTERPRETER_WARNING_EMITTED
     if _INTERPRETER_WARNING_EMITTED:
         return
     _INTERPRETER_WARNING_EMITTED = True
-    why = interpreter_banner_unanswered([resolved]) or "its `--version` probe did not answer"
+    why = banner_unanswered_of(name) or "its `--version` probe did not answer"
+    seen = (f" ({evidence[0]!r} at {evidence[1]} answered: {evidence[2]})"
+            if evidence is not None else "")
     print(
-        f"WARNING: no Python {floor_text()}+ interpreter on PATH answered "
-        f"`--version` in time -- {name!r} resolves to {resolved}, but {why}. "
-        f"Wiring {name!r}, unconfirmed: it resolves, where the literal 'python' "
-        f"may not. Run doctor on this repository when the host is less loaded: "
-        f"it gives the interpreter the time a blocking hook gets.",
+        f"WARNING: no Python {floor_text()}+ interpreter on PATH could be "
+        f"validated{seen}. {name!r} resolves to {resolved}, but {why}. Wiring "
+        f"{name!r}, unconfirmed: it resolves, so it is a better guess than a "
+        f"name that may not. If it is slow, the guards work; if it hangs, every "
+        f"hook waits out its timeout and each guard fails OPEN. Run doctor on "
+        f"this repository when the host is less loaded: it gives the "
+        f"interpreter the time a blocking hook gets and says which.",
         file=sys.stderr,
     )
 
@@ -980,6 +998,18 @@ def _detect_python_command() -> str:
     did: ahead of the venv-only, below-floor and literal fallbacks, which are
     known to be worse. Two timeouts once sent a ``python3``-only host to the
     literal ``python``, which was not there.
+
+    A candidate whose ``--version`` never answered (``DEF-5015``; the launcher
+    included) is weaker evidence still: no banner says it is a Python at all.
+    It is kept as the LAST choice, after the venv-only and below-floor
+    fallbacks and just ahead of the literal ``python`` (the dispatcher's
+    settled order). The trade, stated so it is not rediscovered: on a loaded
+    host it wires a working Python where the literal may not exist, which is
+    the case the row was filed for; on a host where that name genuinely
+    hangs (a blocking wrapper, a dead network mount) every hook then waits
+    out its configured timeout before it fails open, where the literal would
+    fail at once. Both fail open there; the warning says so, and ``doctor``
+    tells the two apart with a blocking hook's time.
     """
     last_resort = None
     # The first floor-clearing candidate whose start the probe never saw.
@@ -1109,13 +1139,18 @@ def _detect_python_command() -> str:
         return unconfirmed
     if launcher:
         return LAUNCHER_CANDIDATE
+    # The launcher's banner may be mute too (DEF-5015, the code review): on a
+    # launcher-only host it is the one spelling that may run, so it is a mute
+    # candidate like a bare name, after them.
+    if mute is None and banner_unanswered_of(LAUNCHER_CANDIDATE) is not None:
+        mute = (LAUNCHER_CANDIDATE, shutil.which(interpreter_argv(LAUNCHER_CANDIDATE)[0]) or "")
     if last_resort is not None:
         return last_resort
     if below_floor is not None:
-        _warn_interpreter_below_floor(below_floor)
+        _warn_interpreter_below_floor(below_floor, mute)
         return below_floor[0]
     if mute is not None:
-        _warn_interpreter_unanswered(*mute)
+        _warn_interpreter_unanswered(mute[0], mute[1], first_probe or first_failure)
         return mute[0]
     _warn_interpreter_unvalidated(first_probe or first_failure)
     return "python"
@@ -1158,6 +1193,14 @@ def _remedy_interpreter() -> tuple[str, bool]:
         # durable interpreter on PATH first.
         return quoted_if_spaced(sys.executable), False
     return py, False
+
+
+def _resolver_answer_mute() -> str | None:
+    """The clause when the resolver's own answer never answered ``--version``
+    (``DEF-5015``), else None. A prescriber reads it before saying "install
+    Python" or "put a Python on PATH": a mute interpreter may be the Python of
+    the floor this host already has, on a host too loaded to say so."""
+    return banner_unanswered_of(_detect_python_command())
 
 
 def _remedy_py() -> str:
@@ -8178,9 +8221,10 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
         print(
             f"WARN: --rewire-interpreter left "
             f"{plural(count, 'interpreter command')} alone whose `--version` "
-            f"or start-up probe never answered (no answer within "
-            f"{START_PROBE_SECONDS} s, in {START_PROBE_TRIES} tries), and no "
-            f"interpreter on PATH that was seen to answer and start is there to "
+            f"probe (no answer within {BANNER_PROBE_SECONDS} s in "
+            f"{BANNER_PROBE_TRIES} tries) or start-up probe (within "
+            f"{START_PROBE_SECONDS} s in {START_PROBE_TRIES} tries) never "
+            f"answered, and no interpreter on PATH that was seen to answer and start is there to "
             f"rewire to. Run `{_remedy_py()} -m espalier doctor .`: it gives each "
             f"the {_doctor._blocking_hook_seconds()} s a blocking hook gets.",
             file=sys.stderr,
@@ -8212,6 +8256,17 @@ def _report_interpreter_rewire(settings_path: Path) -> str:
             f"--rewire-interpreter: no .claude/settings.json to rewire. Run "
             f"`{_remedy_py()} -m espalier init .` first to "
             f"create one.",
+            file=sys.stderr,
+        )
+    elif result.status == REWIRE_NO_TARGET and banner_unanswered_of(result.detail):
+        # The best candidate never answered `--version` (DEF-5015): no proof
+        # none is installed, so "install" is not the remedy yet.
+        print(
+            f"WARN: --rewire-interpreter found no interpreter on PATH that was "
+            f"seen to start and meet Python {floor_text()}+: the best candidate, "
+            f"`{result.detail}`, resolves, but {banner_unanswered_of(result.detail)}. "
+            f"Nothing was changed. Run `{_remedy_py()} -m espalier doctor .` when "
+            f"the host is less loaded before installing another Python.",
             file=sys.stderr,
         )
     elif result.status == REWIRE_NO_TARGET:
@@ -8604,7 +8659,7 @@ def rewire_interpreter_in_settings(
     # 3.9 would report success and change nothing -- the exact shape of the
     # defect this function exists to close.
     if not interpreter_meets_floor(target):
-        return RewireResult(REWIRE_NO_TARGET, detail=target)
+        return RewireResult(REWIRE_NO_TARGET, detail=target, unconfirmed=left)
 
     # ⚠ DEF-636, RE-CREATED INSIDE ITS OWN REPAIR, and driven on this host: the
     # floor above is checked against the PATH of the shell running THIS command,
@@ -8911,12 +8966,14 @@ def _not_python3_from_entries(
     ``echo``, ``node`` and a shell string are the executability arm's shapes.
     Each distinct word is probed once per call, so twelve sites cost one spawn
     -- none at all when the word is the interpreter running this process -- and
-    a word that resolved but did not answer is asked once more before the claim
-    is withheld: the probe has a 2 s timeout, and a shim that is slow ONCE
-    (pyenv/asdf on a loaded box) reads as not-Python-3 -- the flake
-    :func:`rewire_interpreter_in_settings` records. A false "NOT yet active"
-    is a false alarm the operator can re-run, never a false all-clear, so the
-    arm asserts rather than abstains; the retry keeps the alarm rare.
+    the banner a word answered is the one kept for the process
+    (:func:`_python_floor.interpreter_banner`, asked twice, ``DEF-5015``), so a
+    second ask re-reads it rather than spawning. A shim that is slow ONCE
+    (pyenv/asdf on a loaded box) gets that retry inside the probe; one that
+    never answers withholds the claim with its own clause ("not confirmed"),
+    never "does not answer as Python 3". A false "NOT yet active" is a false
+    alarm the operator can re-run, never a false all-clear, so the arm
+    asserts rather than abstains.
     """
     verdicts: dict[str, tuple[str | None, bool, str]] = {}
     failing: dict[str, list[str]] = {}
@@ -9679,6 +9736,13 @@ def _disarmed_diagnosis_shape(repo_root: Path) -> tuple[str, list[str], bool]:
             if resolver_clears_floor:
                 remedy = (f"Rewire the hook commands to one that does: {rewire} "
                           f"(changes only the interpreter name; keeps a .bak of the file).")
+            elif (unheard := _resolver_answer_mute()) is not None:
+                # The rewire's candidate never answered `--version` (DEF-5015):
+                # no proof that none is installed, so not "put a Python on PATH".
+                remedy = (f"The rewire's candidate on PATH resolves, but {unheard}, "
+                          f"so it has no confirmed target yet. Run "
+                          f"`{py} -m espalier doctor .` when the host is less loaded, "
+                          f"before putting another Python on PATH.")
             else:
                 # The rewire computes its target with the same resolver, so on
                 # this host it would refuse (REWIRE_NO_TARGET). The blocker is
