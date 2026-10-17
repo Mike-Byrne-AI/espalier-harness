@@ -56,6 +56,7 @@ Verbs::
     python tools/cc/mail.py claims [--no-fetch] [--json]
     python tools/cc/mail.py send --type assign --seat win --lane "the pack's wave B" --class C13
     python tools/cc/mail.py assignments [--no-fetch] [--json]
+    python tools/cc/mail.py refresh [--dry-run]
     python tools/cc/mail.py status
 
 Stdlib-only (``tools/cc/`` runs standalone, zero espalier imports); the one
@@ -1197,6 +1198,34 @@ def assign_refusal(root: Path, machine: str, *, run: Runner = run) -> str | None
     return None
 
 
+def current_branch(root: Path, *, run: Runner = run) -> str:
+    """The branch checked out at ``root``, as ``git branch --show-current``
+    prints it: empty where HEAD is detached (a rebase or a bisect in progress)."""
+    return _git(root, "branch", "--show-current", run=run)
+
+
+def refresh_argv(root: Path, machine: str, *, run: Runner = run) -> tuple[list[str] | None, str]:
+    """What ``refresh`` sends, as ``send``'s arguments, or None and the line
+    that says why nothing is: the lane is the branch checked out here (never
+    typed, the spelling ``release_lane`` warns of), the base the ship driver's
+    default, and the send a ``--delta`` claim, so a tick writes only what the
+    lane's diff adds. Each way there is nothing to do is a line and exit 0, for
+    a worker stops on anything not green: a detached HEAD, and a lane this
+    machine never claimed (the default branch between jobs among them; a
+    lane's first claim is sent by hand). A released lane and nothing new are
+    ``send --delta``'s own two lines."""
+    lane = current_branch(root, run=run)
+    if not lane:
+        return None, "refresh: HEAD is detached here, so no lane is checked out to refresh; nothing sent"
+    by_machine, _skipped = read_mail(root, run=run)
+    if not any(m.get("type") == "claim" and (m.get("re") or {}).get("lane") == lane
+               for m in by_machine.get(machine, [])):
+        return None, (f"refresh: {machine} has sent no claim on {lane}, so nothing is added to; a lane's first "
+                      f"claim is sent by hand (send --type claim --lane {lane} --symbols-from); nothing sent")
+    return (["send", "--type", "claim", "--lane", lane, "--delta", "--symbols-from",
+             "--text", f"{machine}, a refresh of {lane}: what its diff adds to this machine's claims on it"], "")
+
+
 def own_live_claims(by_machine: dict[str, list[dict]], machine: str, lane: str) -> list[dict]:
     """This machine's live claims on ``lane``: what a release of the lane
     would close."""
@@ -1524,7 +1553,16 @@ def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callab
     if not _tree_records(root, commit, run=run, timeout=timeout):
         raise Unresolvable(f"the {noun} built a commit whose tree is empty; nothing was moved or {past}"
                            + _NOT_TRANSIENT)
-    _git(root, "update-ref", ref, commit, local_tip or _ZERO, run=run)
+    try:
+        _git(root, "update-ref", ref, commit, local_tip or _ZERO, run=run)
+    except Unresolvable:
+        if _tip(root, ref, run=run) == local_tip:
+            raise
+        # The compare-and-swap refused: another write from this checkout moved the ref
+        # between this one's read and its swap. That write stands, and this one is refused.
+        raise Unresolvable(f"{ref} moved under this {noun} (another write from this checkout, at the same "
+                           f"moment); that write stands and nothing was {past} -- {noun} again (a refresh does, "
+                           "on the next tick)") from None
     rc, _out, err = run(["git", "push", "--quiet", REMOTE, f"{ref}:{ref}"], cwd=str(root), timeout=timeout,
                         env=git_env())
     if rc != 0:
@@ -1681,6 +1719,9 @@ def build_parser() -> argparse.ArgumentParser:
     a.add_argument("--no-fetch", action="store_true")
     a.add_argument("--json", action="store_true")
 
+    r = sub.add_parser("refresh", help="the lane checked out here, re-claimed by what its diff adds (a --delta claim; "
+                                       "the lane from the branch, the base the ship driver's)")
+    r.add_argument("--dry-run", action="store_true", help="print the line that would be sent; touch nothing")
     sub.add_parser("status", help="this machine's name and the channel's refs")
     return parser
 
@@ -1739,6 +1780,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if machine is None:
             raise Unresolvable(_off_reason(how))
+        if args.verb == "refresh":
+            argv_, why = refresh_argv(root, machine)
+            if argv_ is None:
+                print(why)
+                return 0
+            return main(["--root", str(root), *argv_, *(["--dry-run"] if args.dry_run else [])])
         if args.verb == "send":
             text = _read_text_file(args.text_file) if args.text_file is not None else args.text
             paths, symbols = list(args.paths), []

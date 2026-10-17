@@ -254,6 +254,31 @@ up. The cap is the same 2,000 characters; `--dry-run` prints the line it would
 send and, beside it, the body's count against the cap. An ack names the full
 id of what it answers; a lane is closed by a release, never an ack.
 
+A claim can name the functions its lane changes, not only its files:
+
+```bash
+python tools/cc/mail.py send --type claim --lane lane/<name> --symbols-from --text "<what and why>"
+python tools/cc/mail.py send --type claim --lane lane/<name> --symbols-from --delta
+python tools/cc/mail.py refresh
+```
+
+- **`--symbols-from [<base>]`** derives them from the lane's diff against its
+  merge-base with the base (the ship driver's default branch when none is
+  named), the working tree and untracked files included. Their files join
+  the claim's paths. The claim is stamped with the rule that placed them, a
+  digest of `tools/cc/_symbols.py`.
+- **`--delta`** sends only what this machine's live claims on the lane do not
+  yet name. It says `no new symbols` when there is nothing, and sends nothing
+  once the lane's claims were released.
+- **`refresh`** is that delta with nothing typed. The lane is the branch
+  checked out here and the base is the ship driver's. A lane's first claim is
+  sent by hand; `refresh` only adds to it. Each way there is nothing to do is
+  a line and exit 0: no new symbols, a released lane, a lane never claimed (the
+  default branch between jobs among them), and a detached HEAD.
+
+The board reads a claim's symbols as its `overlaps:` section says (Step 2c). A
+claim with no symbols meets by path, as before.
+
 The driver builds the commit under a scratch index from the message alone
 (the worktree, HEAD and the live index are never touched), moves this
 machine's ref by compare-and-swap and pushes without force; origin's tip for
