@@ -682,10 +682,15 @@ def overlap_lines(section: object) -> list[str]:
     stale = section.get("stale_rule") or {}
     said = list(dict.fromkeys(label for p in pairs[:OVERLAPS_SHOWN]
                               for label in p.get("unplaced_labels") or [] if label in stale))
-    texts += [f"{label}: claim {', '.join(stale[label])} was placed under another symbol rule and reads whole "
-              "(its files as unplaced lines) until its seat releases it and claims again" if len(stale[label]) == 1
-              else f"{label}: claims {', '.join(stale[label])} were placed under another symbol rule and read whole "
-              "(their files as unplaced lines) until their seat releases them and claims again" for label in said]
+    # A claim another copy of the mapper placed reads whole until both checkouts hold one copy: a
+    # release and a new claim from the same checkout carry the same stamp, so the words say which
+    # change ends it (both reviews of Wave 2's seventh delta, driven with two checkouts).
+    texts += [f"{label}: claim {', '.join(stale[label])} was placed by another copy of tools/cc/_symbols.py and "
+              "reads whole (its files as unplaced lines) until both checkouts hold the same copy (the older lane "
+              "merges main, or ships) and its seat claims again" if len(stale[label]) == 1
+              else f"{label}: claims {', '.join(stale[label])} were placed by another copy of tools/cc/_symbols.py "
+              "and read whole (their files as unplaced lines) until both checkouts hold the same copy (the older "
+              "lane merges main, or ships) and their seat claims again" for label in said]
     return [_ascii(("overlaps: " if i == 0 else "          ") + t) for i, t in enumerate(texts)]
 
 

@@ -1127,6 +1127,68 @@ class TestSymbolsFromTheLane:
         rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old, current], *args, "--delta")
         assert rc == 0 and sent == [], sent
 
+    @pytest.mark.parametrize("held", ["tools/cc/mail.py", "tools/cc"], ids=["a-file-the-lane-changes", "a-folder"])
+    @pytest.mark.parametrize("extra", [(), ("--delta",)], ids=["whole", "delta"])
+    def test_what_an_older_claim_held_whole_stays_whole_on_the_claim_that_replaces_it(
+            self, mail, monkeypatch, tmp_path, held, extra):
+        """Dies to: a path the seat held whole by hand dropped from the replacing claim because
+        the lane's diff names it, or symbols sit under it (the lane's symbols in it are sent
+        instead, and once the older claim is released the pair reads "different functions";
+        both reviews of Wave 2's seventh delta, driven)."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["scripts/x.py::f"], paths=[held])
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], "--type", "claim", "--lane", "lane/x",
+                                "--symbols-from", "origin/main", *extra)
+        assert rc == 0 and held in sent[0]["re"]["paths"], sent
+        assert not [s for s in sent[0]["re"].get(mail.SYMBOLS_KEY, []) if s.startswith("tools/cc/mail.py::")], sent
+
+    def test_a_file_an_older_claim_named_symbols_in_is_derived_again_not_carried(self, mail, monkeypatch, tmp_path):
+        """Dies to: every path of the older claim carried (a file the lane has since reverted is
+        held whole until the lane ships, and a claim the path cap folded refuses on every tick;
+        the code review of Wave 2's seventh delta, driven)."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["a.py::f"])
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], "--type", "claim", "--lane", "lane/x",
+                                "--symbols-from", "origin/main")
+        assert rc == 0 and "a.py" not in sent[0]["re"]["paths"], sent
+
+    def test_an_older_claim_s_ids_and_classes_ride_the_claim_that_replaces_it(
+            self, mail, monkeypatch, tmp_path, capsys):
+        """Dies to: the ids and classes of the claim the note asks to release left behind (the
+        ledger verbs and the plan warnings meet a row or a class by them; the code review of Wave 2's
+        seventh delta, driven), or the delta sending again what a claim of this rule already names."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"], ids=["DEF-1"],
+                   classes=["cli-deploy"])
+        args = ("--type", "claim", "--lane", "lane/x", "--symbols-from", "origin/main")
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], *args)
+        assert rc == 0 and "DEF-1" in sent[0]["re"]["ids"] and "cli-deploy" in sent[0]["re"]["classes"], sent
+        current = dict(sent[0], id="c-current")
+        capsys.readouterr()
+        rc, again, _ = self._run(mail, monkeypatch, tmp_path, [old, current], *args, "--delta")
+        out = capsys.readouterr()
+        assert rc == 0 and again == [] and "no new symbols" in out.out, again
+        assert old["id"] in out.err and "hold all of it" in out.err, out.err
+
+    def test_a_folder_is_not_held_by_a_file_under_it(self, mail, monkeypatch, tmp_path):
+        """Dies to: the delta's cover test read both ways (a folder the older claim held whole is
+        dropped as covered by one file of this rule under it, and after the release no one holds
+        the rest of the folder; the failure-mode review of Wave 2's seventh delta, driven)."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["scripts/x.py::f"], paths=["tools/cc"])
+        current = _msg(mail, "mac", "claim", "", lane="lane/x", paths=["tools/cc/mail.py", "docs/x.md"],
+                       symbols=["tools/cc/mail.py::send", "tools/cc/mail.py::new_message"],
+                       symbols_rule=mail._symbols.RULE)
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old, current], "--type", "claim", "--lane", "lane/x",
+                                "--symbols-from", "origin/main", "--delta")
+        assert rc == 0 and sent and "tools/cc" in sent[0]["re"]["paths"], sent
+
+    def test_a_folder_an_older_claim_was_folded_into_covers_nothing_on_the_delta(self, mail, monkeypatch, tmp_path):
+        """Dies to: the delta counting an older-rule claim's paths as claimed (a folder the path
+        cap folded the older claim into, with symbols under it, is derived again and not carried,
+        so a changed file under it that names no symbol goes unsent, and is held by no one once
+        the older claim is released)."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["docs/gen.py::f"], paths=["docs"])
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], "--type", "claim", "--lane", "lane/x",
+                                "--symbols-from", "origin/main", "--delta")
+        assert rc == 0 and "docs/x.md" in sent[0]["re"]["paths"] and "docs" not in sent[0]["re"]["paths"], sent
+
     def test_a_failed_read_for_the_note_costs_the_note_never_the_claim(self, mail, monkeypatch, tmp_path, capsys):
         """Dies to: the note's read let out of the send (a claim that went out before refused for
         a line of advice; the failure-mode review of Wave 2's last delta)."""

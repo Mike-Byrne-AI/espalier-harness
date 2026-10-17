@@ -17,6 +17,7 @@ to."""
 from __future__ import annotations
 
 import difflib
+import hashlib
 import importlib.util
 import pathlib
 import re
@@ -645,14 +646,15 @@ class TestTheRuleIsTheSource:
     and a claim placed by other code reads whole. A hand-bumped number, its record and the corpus
     that pinned it were each got past in turn (the failure-mode reviews of Wave 2's fourth to
     sixth deltas, driven: a placement moved under the same number, an input kind no shape held,
-    a record moved out of the check's reach, a claim sent from an edited working tree)."""
+    a record moved out of the check's reach, a claim sent from an edited working tree). It names
+    these bytes only: not the interpreter (a digest of the parse splits seats by Python version),
+    git's diff, or how mail.py shapes the list."""
 
     def _load(self, tmp_path: pathlib.Path, source: bytes, name: str):
-        """The mapper from ``source``, loaded from a scratch copy beside its sibling."""
+        """The mapper from ``source``, loaded from a scratch copy; its sibling is the real one."""
         where = tmp_path / name
         where.mkdir()
         (where / "_symbols.py").write_bytes(source)
-        (where / "record_merge.py").write_bytes((_MODULE.parent / "record_merge.py").read_bytes())
         spec = importlib.util.spec_from_file_location(f"_symbols_rule_{name}", where / "_symbols.py")
         module = importlib.util.module_from_spec(spec)
         assert spec.loader is not None
@@ -660,16 +662,24 @@ class TestTheRuleIsTheSource:
         spec.loader.exec_module(module)
         return module
 
-    def test_any_edit_is_a_new_rule_and_line_endings_are_none(self, sym, tmp_path):
-        """Dies to: a rule kept by hand or read from anything but the source (an edit, even one
-        no placement feels, left at the old rule: a claim from the edited tree certifies against
-        readers of the other), or a checkout's line endings read as an edit (a Windows seat and a
-        Mac seat on one commit would read each other's claims whole)."""
+    def test_any_edit_is_a_new_rule_and_line_endings_are_none(self, sym, tmp_path, monkeypatch):
+        """Dies to: a rule kept by hand or read from anything but these bytes (an edit left at the
+        old rule: a claim from the edited tree certifies against readers of the other; salted by
+        the interpreter, it splits seats by Python version, and each CI cell computes its own, so
+        nothing would notice), a digest blind to whitespace or to comments (one space, or one
+        comment byte, left at the old rule), or a checkout's line endings read as an edit (a
+        Windows seat and a Mac seat on one commit would read each other's claims whole)."""
+        # Each copy puts its own folder first on the path at import: none outlives this row.
+        monkeypatch.setattr(sys, "path", list(sys.path))
+        monkeypatch.setattr(sys, "modules", dict(sys.modules))
         lf = _MODULE.read_bytes().replace(b"\r\n", b"\n")
-        assert self._load(tmp_path, lf, "lf").RULE == sym.RULE
+        assert sym.RULE == hashlib.sha256(lf).hexdigest()[:16]
         assert self._load(tmp_path, lf.replace(b"\n", b"\r\n"), "crlf").RULE == sym.RULE
-        edited = self._load(tmp_path, lf + b"\n# an edit no placement feels\n", "edited")
-        assert edited.RULE != sym.RULE and len(sym.RULE) == 16 and isinstance(sym.RULE, str)
+        comment = lf.replace(b"#: The edges of a file", b"#: the edges of a file", 1)
+        space = lf.replace(b'MODULE = "<module>"\n', b'MODULE = "<module>" \n', 1)
+        assert comment != lf and space != lf
+        assert self._load(tmp_path, comment, "comment").RULE != sym.RULE
+        assert self._load(tmp_path, space, "space").RULE != sym.RULE
 
 
 class TestConcurrent:

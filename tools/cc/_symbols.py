@@ -83,8 +83,11 @@ VERDICTS = ("shared symbol", "unplaced", "different functions", "path only", "no
 #: past in turn by the reviews of the deltas after (a placement moved under the
 #: same number, an input kind no shape held, a record moved out of the check's
 #: reach, a claim sent from an edited working tree before any test ran). Any
-#: edit here is a new rule, even one no placement feels; it costs the live
-#: claims their certificates until their seats claim again.
+#: edit here is a new rule, even one no placement feels. It names these bytes
+#: only: not the interpreter, git's diff or the claim's shaping in mail.py. The
+#: cost: a lane cut before an edit here reads whole to the readers after it
+#: until its checkout holds the same file (it merges main, or ships) and its
+#: seat claims again.
 RULE = hashlib.sha256(Path(__file__).read_bytes().replace(b"\r\n", b"\n")).hexdigest()[:16]
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 #: Every diff read here: rename detection off, so a moved file is a deletion at

@@ -724,6 +724,13 @@ def other_rule(re_: dict) -> bool:
     return any("::" in s for s in _str_list(re_.get(SYMBOLS_KEY))) and re_.get(SYMBOLS_RULE_KEY) != _symbols.RULE
 
 
+def held_whole(paths: set[str] | list[str], files: set[str]) -> set[str]:
+    """The paths a claim holds whole: each with no file of the claim's own
+    symbols at or under it (a path given by hand, or a folder over one), the
+    one rule ``claim_view`` and a replacing claim's carry both read."""
+    return {p for p in paths if not any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") for f in files)}
+
+
 def claim_view(re_: dict) -> tuple[set[str], int, set[str], set[str]]:
     """One claim's ``re`` block read as the claims matcher and the board both
     read it: its symbols (the vendored twin folded onto its source), its count
@@ -744,8 +751,7 @@ def claim_view(re_: dict) -> tuple[set[str], int, set[str], set[str]]:
     paths = {fold(q) for q in _str_list(re_.get("paths"))}
     if other_rule(re_):
         return syms, _count(re_.get(SYMBOLS_MORE_KEY)), paths | files, set()
-    whole = {p for p in paths
-             if not any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") for f in files)}
+    whole = held_whole(paths, files)
     unplaced = {s.split("::", 1)[0] for s in syms if s.endswith(f"::{_symbols.MODULE}")}
     return syms, _count(re_.get(SYMBOLS_MORE_KEY)), whole, unplaced
 
@@ -1736,6 +1742,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "send":
             text = _read_text_file(args.text_file) if args.text_file is not None else args.text
             paths, symbols = list(args.paths), []
+            ids, classes = list(args.ids), list(args.classes)
             rule: str | None = None   # stamped only on symbols this mapper derived
             if args.symbols_from is not None or args.delta:
                 if args.type != "claim":
@@ -1774,38 +1781,60 @@ def main(argv: list[str] | None = None) -> int:
                     except Unresolvable as exc:
                         print(f"note: {machine}'s other claims on {args.lane} could not be read ({exc}), so "
                               "none placed under another symbol rule is named", file=sys.stderr)
-                stale = [str(c.get("id") or "") for c in mine if other_rule(c.get("re") or {})]
-                if stale:
-                    print(f"note: {machine}'s live claim{'s' if len(stale) > 1 else ''} {', '.join(stale)} on "
-                          f"{args.lane} {'were' if len(stale) > 1 else 'was'} placed under another symbol rule, so "
-                          "every reader takes its files whole: this claim carries the lane, and every path it held, "
-                          "under this rule; release "
-                          f"{'them' if len(stale) > 1 else 'it'} (send --type release --ack <id>)", file=sys.stderr)
+                stale_claims = [c for c in mine if other_rule(c.get("re") or {})]
+                stale = [str(c.get("id") or "") for c in stale_claims]
                 given = [_repo_relative(p) for p in paths]
-                # What an older-rule claim holds that the lane's diff does not name (a path
-                # claimed by hand) rides this claim, so its release leaves nothing claimed by
-                # no one (the code review of Wave 2's sixth delta, driven).
-                carried = sorted({p for c in mine if other_rule(c.get("re") or {})
-                                  for p in _str_list((c.get("re") or {}).get("paths"))} - set(derived) - set(given))
+                # What an older-rule claim held whole (a path given by hand, or a folder over one:
+                # no symbol of its own at or under it) rides this claim, named by the lane's diff or
+                # not, with its ids and classes, so its release leaves nothing held by no one; a
+                # path it named symbols under is derived again (both reviews of Wave 2's seventh
+                # delta, driven). It joins the hand paths before their filter: held whole, as before.
+                held = sorted({p for c in stale_claims for p in held_whole(
+                    _str_list((c.get("re") or {}).get("paths")),
+                    {s.split("::", 1)[0] for s in _str_list((c.get("re") or {}).get(SYMBOLS_KEY))})} - set(given))
+                old_ids = [i for c in stale_claims for i in _str_list((c.get("re") or {}).get("ids"))]
+                old_classes = [k for c in stale_claims for k in _str_list((c.get("re") or {}).get("classes"))]
+                if args.delta:
+                    # What a claim of this rule already holds is not sent again; a path is held
+                    # where a held path is it or a folder over it, never the other way round.
+                    current = [(c.get("re") or {}) for c in own if not other_rule(c.get("re") or {})]
+                    holds = [q for re_c in current for q in _str_list(re_c.get("paths"))]
+                    held = [p for p in held if not any(p == q or p.startswith(q.rstrip("/") + "/") for q in holds)]
+                    old_ids = [i for i in old_ids if not any(i in _str_list(re_c.get("ids")) for re_c in current)]
+                    old_classes = [k for k in old_classes
+                                   if not any(k in _str_list(re_c.get("classes")) for re_c in current)]
+                ids = list(dict.fromkeys([*ids, *old_ids]))
+                classes = list(dict.fromkeys([*classes, *old_classes]))
+                given += held
                 # A path given by hand claims its file whole: the lane's symbols
                 # inside it would let a reader call another function apart.
                 symbols = [s for s in symbols if not any(_touches(s.split("::", 1)[0], g) for g in given)]
                 if args.delta:
                     symbols, derived = symbol_delta(own, symbols, derived)
-                    carried = symbol_delta(own, [], carried)[1]   # what no claim of this rule covers
-                    if not symbols and not derived and not carried:
+                    if not symbols and not derived and not held and not old_ids and not old_classes:
                         print("no new symbols")
+                        if stale:
+                            print(f"note: {machine}'s live claim{'s' if len(stale) > 1 else ''} {', '.join(stale)} "
+                                  f"on {args.lane} {'were' if len(stale) > 1 else 'was'} placed under another symbol "
+                                  "rule, and its claims under this rule hold all of it: release "
+                                  f"{'them' if len(stale) > 1 else 'it'} (send --type release --ack <id>)",
+                                  file=sys.stderr)
                         return 0
                     # The new symbols' files join the fold: the earlier claims'
                     # directories cover them there, never in this message.
                     derived = sorted(set(derived) | {s.split("::", 1)[0] for s in symbols})
-                given += carried
+                if stale:
+                    print(f"note: {machine}'s live claim{'s' if len(stale) > 1 else ''} {', '.join(stale)} on "
+                          f"{args.lane} {'were' if len(stale) > 1 else 'was'} placed under another symbol rule, so "
+                          "every reader takes its files whole: this claim carries the lane, and what it held whole, "
+                          "its ids and its classes, under this rule; release "
+                          f"{'them' if len(stale) > 1 else 'it'} (send --type release --ack <id>)", file=sys.stderr)
                 paths, folded = fit_paths(given, derived)
                 if folded:
                     print(f"note: {folded} changed paths folded into their directories to fit the cap of "
                           f"{MAX_PATHS}; a directory claims what is under it", file=sys.stderr)
-            message = new_message(machine, args.type, text, lane=args.lane, classes=args.classes,
-                                  paths=paths, ids=args.ids, ack=args.ack, seat=args.seat, symbols=symbols,
+            message = new_message(machine, args.type, text, lane=args.lane, classes=classes,
+                                  paths=paths, ids=ids, ack=args.ack, seat=args.seat, symbols=symbols,
                                   symbols_rule=rule)
             if args.type == "assign":
                 refusal = assign_refusal(root, machine)

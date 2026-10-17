@@ -223,9 +223,10 @@ is read on its own, and one that cannot be read says so on its own line:
     are one mark, so a meeting there may be two runs git merges apart, and
     the line says so;
   - `unplaced lines` where a side changed lines no definition holds, or
-    inserted between two such lines, or claimed under another symbol rule:
-    a claim sent before a rule change is read whole, and a note under the
-    pair names it, for its seat to release and claim again;
+    inserted between two such lines, or claimed from a checkout holding
+    another copy of `tools/cc/_symbols.py`: such a claim is read whole until
+    both checkouts hold the same copy (the older lane merges main, or
+    ships) and its seat claims again, and a note under the pair names it;
   - `different functions, none shared or next to the other's`;
   - `no symbols` for a file that is not Python or a folder claimed whole, or
     `symbols not read` where a head is not here.
