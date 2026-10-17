@@ -1177,15 +1177,18 @@ def _held_by_its_file(worktree: Path, rel: str) -> bool:
     under ``tools/cc/`` in ``worktree``: the restore never ran (its permission
     prompt was declined) or the edit was put back, so in a clean, merged
     worktree the copy holds nothing the branch does not. The copy is named
-    ``<stem>-<UTC>.py.txt``. Unreadable, or a name of another shape: False,
-    so the worktree is kept."""
+    ``<stem>-<UTC>.py.txt``, and the files a restore can name sit in
+    ``tools/cc/`` and ``tools/cc/hooks/``: those two are read, never walked
+    (a walk follows a symlinked folder into a loop). Unreadable, or a name of
+    another shape: False, so the worktree is kept."""
     name = rel.rsplit("/", 1)[-1]
     if not name.endswith(".py.txt") or "-" not in name:
         return False
     stem = name[: -len(".py.txt")].rsplit("-", 1)[0]
+    cc = worktree / "tools" / "cc"
     try:
         saved = (worktree / rel).read_bytes()
-        return any(p.read_bytes() == saved for p in (worktree / "tools" / "cc").rglob(f"{stem}.py"))
+        return any(p.is_file() and p.read_bytes() == saved for p in (cc / f"{stem}.py", cc / "hooks" / f"{stem}.py"))
     except OSError:  # fail-open: ok deliberate -- unreadable means "not held": keep the worktree
         return False
 
