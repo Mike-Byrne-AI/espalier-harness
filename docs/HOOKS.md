@@ -343,6 +343,13 @@ the root first (compaction legs and the working summary into
 `cc/blueprints/from-worktrees/<name>/`, never over a file). Any other ignored
 file -- an ignored draft or notes file, a `.env` -- keeps the
 worktree, because `git worktree remove` deletes ignored files without asking.
+So does a saved edit under `.espalier-state/wedge-restore/`, the one copy of
+an edit a wedge restore discarded (below), though the rest of that state
+directory is a cache to the reaper: the line names it (`1 saved edit a wedge
+restore discarded (...)`), and it holds the worktree until you read it and
+delete it. A copy whose bytes a file of its name under `tools/cc/` still holds
+saves nothing (the restore's prompt was declined, or the edit was put back)
+and holds nothing.
 So does a seat named for the worktree alone (its own `espalier.machine`,
 which SessionStart sets) that still holds a live claim on the mail channel:
 only that name can release it, so removing the worktree would leave the
@@ -776,6 +783,12 @@ text is `git restore [--source=HEAD] [--] <file>`, `git checkout -- <file>` or
   bytes to `.espalier-state/wedge-restore/<stem>-<UTC>.py.txt`. While the guard
   is wedged the discard speed bump's snapshot cannot run, and the restore
   discards the file's uncommitted edit. A failed copy never blocks the restore.
+  Espalier never prunes the copies: delete one once you have read it. In a
+  worktree under `.claude/worktrees/` its session-start reaper keeps the
+  worktree while it holds one, and the `Worktrees:` line names the copy, first.
+  Claude Code's own sweep of the worktrees it created keeps one for changed or
+  untracked files and unpushed commits (`docs/external/cc-worktrees.md`) and
+  names no ignored file, so read a copy there before that sweep runs.
 - **The pass.** The call carries no permission decision, so your permission
   mode decides it as it would any other. Its context tells Claude why it passed,
   and it writes a `pretooluse_failed_open_wedge_restore` record.
