@@ -1707,7 +1707,9 @@ new state as the next one to compare with.
   (the stack's `node_modules` and its siblings, `__pycache__`, `.mypy_cache`,
   a virtualenv, and your `dependency_dirs`) and editor and OS clutter (swap
   and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its
-  size and modification time and never read.
+  size and modification time and never read by the hook: when git is asked
+  about it (below), git hashes it through the checkout's own filters, up to
+  1 GiB of such files in one call, past which the rest report and are named.
 - **What it stays quiet about**, because a legitimate path accounts for it:
   1. content a file tool wrote (Write, Edit, NotebookEdit, an MCP write) --
      in this session or in another live session in the same checkout -- or
