@@ -40,6 +40,6 @@ def background_git_settings(tree: Path) -> dict[str, str]:
     ``GIT_DIR`` (``git rebase --exec``, a hook) outranks ``-C`` and would
     read the outer repository's config instead."""
     return {key: subprocess.run(["git", "-C", str(tree), "config", "--local", "--get", key],
-                                capture_output=True, text=True, timeout=15,
+                                capture_output=True, text=True, encoding="utf-8", timeout=15,
                                 env=_git_env()).stdout.strip()
             for key, _ in NO_BACKGROUND_GIT}

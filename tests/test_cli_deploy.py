@@ -3998,11 +3998,11 @@ def _names_the_tree(value: str, roots: set[str]) -> bool:
     """``value`` (an argument, or a link a process holds) is a root or a path
     under one, at a separator: ``census0/tx`` is not ``census0/t``. A
     ``--key=<path>`` argument is read by its path, and a link to a removed
-    folder by the path it had."""
-    value = value.removesuffix(" (deleted)")
-    if "=" in value and not value.startswith(os.sep):
+    folder by the path it had. Both sides compare with forward slashes."""
+    value = value.removesuffix(" (deleted)").replace("\\", "/")
+    if "=" in value and not value.startswith("/"):
         value = value.split("=", 1)[1]
-    return any(value == root or value.startswith(root + os.sep) for root in roots)
+    return any(value == root or value.startswith(root + "/") for root in roots)
 
 
 def _processes_naming(roots: set[str], proc: Path) -> str:
@@ -4046,7 +4046,7 @@ def _census_copy_failed(src: Path, *, proc: Path = Path("/proc"), built: "str | 
     lock files, git's version, and every process naming the tree or the
     folder holding it (Linux's ``/proc``; elsewhere unread, and saying so).
     Every read tolerates the tree vanishing under it."""
-    roots = {str(src.parent), str(src.parent.resolve())}
+    roots = {str(p).replace("\\", "/") for p in (src.parent, src.parent.resolve())}
     lines = [f"census tree {src} is {'there' if src.is_dir() else 'GONE'}",
              f"  at build: {built or 'unrecorded'}",
              f"  now:      {_object_store(src)}"]
@@ -4060,7 +4060,7 @@ def _census_copy_failed(src: Path, *, proc: Path = Path("/proc"), built: "str | 
         lines.append(f"  .git unread ({type(exc).__name__})")
     try:
         version = subprocess.run(["git", "--version"], capture_output=True, text=True,
-                                 timeout=10).stdout.strip()
+                                 encoding="utf-8", timeout=10).stdout.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         version = f"unread ({type(exc).__name__})"
     lines.append(f"  git: {version or 'unread'}")
@@ -4249,7 +4249,8 @@ class TestACensusCopyThatFailsNamesWhatMovedItsSource:
         _git_q(tree, "add", "f")
         traced = subprocess.run(
             ["git", "-C", str(tree), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "f"],
-            capture_output=True, text=True, env={**os.environ, "GIT_TRACE": "1"}, check=True)
+            capture_output=True, text=True, encoding="utf-8", env={**os.environ, "GIT_TRACE": "1"},
+            check=True)
         assert "built-in: git commit" in traced.stderr, traced.stderr  # the trace was captured
         spawned = [line for line in traced.stderr.splitlines() if "run_command" in line]
         assert not [line for line in spawned if "maintenance" in line or " gc" in line], spawned
