@@ -233,7 +233,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        26, "52910ececbf1d8bf6fcc904294673315111a7f3eb5ab4fabfb0f957aef6e34c2",
+        29, "06cba0df6e83c1a64c08ec746a38929655c17a403d2f39de7aec193cef0d8c48",
         "MIXED",
         "Lane 6 (DEF-806). Seven rows walk `PLAN_READERS`, the engine's hand-kept "
         "pair of plan-reading cc/ docs, asserting per member that a plan writer "
@@ -298,7 +298,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "re-run never keeps one from the record, with a floor that the set is not empty: a "
         "per-member property, and its one member is pinned one file over, "
         "tests/test_settings_profiles.py:446 (self-host refused from espalier.toml by its exact "
-        "text), so self-host leaving the set reds there; same verdict.",
+        "text), so self-host leaving the set reds there; same verdict."
+        " The twenty-seventh to twenty-ninth (2026-10-17, DEF-2006, all at :1387, "
+        "test_every_retired_rule_stands_in_for_write_guard) walk `RETIRED_DENY_RULES` "
+        "and assert per member that its reason names write_guard, since the advice to "
+        "drop a retired rule is now held back while write_guard does not run: a "
+        "per-member property with a floor that the roster is not empty, and its "
+        "members are pinned by name one file over, tests/test_settings_profiles.py:144 "
+        "(the trailing-star root rule) and :167 (the five Read rules), so a member "
+        "dropped from the roster reds there; same verdict.",
     ),
     # 1 row(s), shapes: for-assert
     "tests/test_fuse.py": (

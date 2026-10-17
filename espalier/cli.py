@@ -121,6 +121,7 @@ from espalier.worktree import build_worktree_plan, render_worktree_plan
 
 from espalier.harness_config import CANONICAL_HOOK_WIRING  # noqa: E402
 from espalier.harness_config import unwired_governance_gates  # noqa: E402
+from espalier.harness_config import governance_gate_runs_as_wired  # noqa: E402
 from espalier.harness_config import (  # noqa: E402
     GATE_ABSENT,
     GATE_EVENT_OF,
@@ -1579,10 +1580,33 @@ def settings_superseded_allows(
 _ARMAMENT_UNREAD: object = object()
 
 
+#: The line every retired-rule advice carries (cli and doctor), so a tree that
+#: hears of the rule late, or not at all, is told why (DEF-2006).
+RETIRED_RULE_KEPT_WHY = (
+    "Named only because write_guard runs here: where it does not (paused, or "
+    "not wired), the rule is the only guard left and is kept."
+)
+
+
+class RetiredRules(tuple):
+    """The retired deny rules a surface may name, ``(rule, why)`` pairs, and
+    ``held``: why they are held back on a tree the enforcement claim reads as
+    armed, ``""`` when they are named or the disarmed narration speaks for
+    them (DEF-2006). One verdict, so no surface names the rules from one read
+    and explains their absence from another; a plain tuple everywhere else."""
+
+    held: str
+
+    def __new__(cls, rules: "Sequence[tuple[str, str]]" = (), held: str = "") -> "RetiredRules":
+        obj = super().__new__(cls, rules)
+        obj.held = held
+        return obj
+
+
 def _retired_rules_to_name(
     stale: "Sequence[tuple[str, str]]", *, repo_root: Path, settings_path: Path,
     blockers: object = _ARMAMENT_UNREAD,
-) -> tuple[tuple[str, str], ...]:
+) -> RetiredRules:
     """The retired deny rules a surface may name, with their "delete that
     line" advice: all of ``stale`` when the file wires Espalier hooks and they
     run, else none. Every surface that names one asks here (init, doctor,
@@ -1594,18 +1618,48 @@ def _retired_rules_to_name(
     disarmed hooks instead, and the run after the repair names the rule.
     ``blockers`` is an armament read the caller already made
     (:func:`_enforcement_claim_blockers`, which spawns each wired interpreter);
-    ``[]`` is armed, and ``None`` (unverifiable) is not."""
+    ``[]`` is armed, and ``None`` (unverifiable) is not.
+
+    On a tree the claim reads as armed, the rules are still held back while
+    write_guard itself does not run (DEF-2006), and the verdict's ``held``
+    says why and what names them, for the surface to print in place of the
+    advice (``_report_allow_gaps``)."""
     if not stale:
-        return ()
+        return RetiredRules()
     try:
         existing = json.loads(surface_contract.decode_bom(Path(settings_path).read_bytes()))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
-        return ()
+        return RetiredRules()
     if not _settings_has_espalier_hooks(existing):
-        return ()
+        return RetiredRules()
     if blockers is _ARMAMENT_UNREAD:
         blockers = _enforcement_claim_blockers(repo_root, settings_path)
-    return tuple(stale) if blockers == [] else ()
+    if blockers != []:
+        return RetiredRules()  # the disarmed narration names that tree
+    # Every row's rule stands in for write_guard (settings_profiles'
+    # RETIRED_DENY_RULES; tests/test_cli_deploy.py pins each reason naming
+    # it), so the advice also needs write_guard itself to run: no kill switch
+    # (the claim does not read one), and wired the strict way, a different
+    # oracle from the claim's. The claim lets a pre-v0.6.5 shell-form entry
+    # through on purpose (its legacy policy), a commented one included. The
+    # price, chosen: a genuine shell-form install hears of the rule only after
+    # `merge-settings --repair`; the other side was an unguarded wipe.
+    from espalier.selfcheck import check_live_kill_switch_absent  # lazy, as cmd_selfcheck's is
+
+    if not check_live_kill_switch_absent(repo_root).passed:
+        return RetiredRules(held=(
+            "a kill switch (disableAllHooks) stops every hook, write_guard included, "
+            "and the rule is the guard left; the run after the switch is off names it"
+        ))
+    if not governance_gate_runs_as_wired(repo_root, "write_guard.py"):
+        return RetiredRules(held=(
+            "write_guard is not wired to run in a form this check can verify "
+            "(commented out, the old shell form, interpreter flags, or its file not "
+            "deployed), and the rule is the guard left; "
+            f"`{_remedy_py()} -m espalier merge-settings . --repair` re-wires it, and "
+            "the run after names the rule"
+        ))
+    return RetiredRules(stale)
 
 
 def settings_stale_denies(settings_path: Path) -> tuple[tuple[str, str], ...] | None:
@@ -1710,8 +1764,14 @@ def _report_allow_gaps(
               f"{rule}: {why}. Delete that line by hand and check "
               f".claude/settings.local.json and ~/.claude/settings.json for the same "
               f"line -- a deny rule in any of them blocks in every permission mode, "
-              f"and nothing here removes a rule.",
+              f"and nothing here removes a rule. {RETIRED_RULE_KEPT_WHY}",
               file=sys.stderr)
+    # Held back on a tree the claim reads as armed (DEF-2006): said, with what
+    # names the rule, so the run is not silent where it once gave the advice.
+    held = getattr(stale, "held", "")
+    if held:
+        print(f"{prefix} WARN: .claude/settings.json carries a retired deny rule, kept "
+              f"because {held}.", file=sys.stderr)
 
 
 def installed_settings_profile(repo_root: Path) -> str:
@@ -3763,7 +3823,9 @@ def _reconcile_existing_settings(
                 named = _retired_rules_to_name(
                     stale, repo_root=repo_root, settings_path=settings_path, blockers=armament,
                 )
-                if named:
+                # A rule held back on a tree the claim reads as armed is said
+                # too, with its reason (DEF-2006); an empty verdict is falsy.
+                if named or named.held:
                     _report_allow_gaps(
                         missing=(), added=(), note="", stale=named, prefix="[init]",
                         # Read for allow gaps only, and none are passed.
@@ -10328,7 +10390,7 @@ def cmd_merge_settings(args: argparse.Namespace) -> int:
                                              settings_path=settings_path, blockers=missing)
         if result.missing_allows:
             tail = " Hook events are current; the allow rules below are not."
-        elif repaired or named_stale or missing != [] or result.allow_note:
+        elif repaired or named_stale or named_stale.held or missing != [] or result.allow_note:
             tail = ""
         else:
             tail = " Nothing to do."
@@ -11038,6 +11100,10 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                                    "(the WARN above)")
             if stale_rules:
                 file_states.append("carries a retired deny rule (the WARN above names it)")
+            elif getattr(stale_rules, "held", ""):
+                # Held back on a tree the claim reads as armed (DEF-2006).
+                file_states.append("keeps a retired deny rule while write_guard does not run "
+                                   "(the WARN above says why)")
             if no_statusline:
                 file_states.append("has no statusLine")
             states = (["the hook tree above is not armed"] if disarmed else []) + (
@@ -11387,10 +11453,14 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 preview_blockers = _enforcement_claim_blockers(repo_root, settings_path)
                 # Exactly when the gate holds the rule back (no Espalier hooks
                 # wired, or wired hooks that do not run), not merely when the
-                # armament read finds fault.
-                if not _retired_rules_to_name(preview_stale, repo_root=repo_root,
-                                              settings_path=settings_path,
-                                              blockers=preview_blockers):
+                # armament read finds fault. A rule held back on a tree the
+                # claim reads as armed (DEF-2006) is said by the report below,
+                # with its own reason; the disarmed WARN would contradict the
+                # claim there (the code review, predicted).
+                preview_named = _retired_rules_to_name(preview_stale, repo_root=repo_root,
+                                                       settings_path=settings_path,
+                                                       blockers=preview_blockers)
+                if not preview_named and not preview_named.held:
                     print(_disarmed_hook_tree_warning(
                         repo_root, prefix="[upgrade]", wrote_settings=False,
                     ), file=sys.stderr)
