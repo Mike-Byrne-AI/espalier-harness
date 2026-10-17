@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -651,6 +652,8 @@ class TestTheLiveProbeFile:
         "DEF-741": {"WALK2_FINDINGS.md", "WINDOWS_FUSE_NOTES.md"},  # classifier arguments, never opened
         "DEF-1155": {".claude/settings.json", "reports/harness_config.json",
                      "reports/repo_fingerprint.json"},         # fixtures it writes inside its temp tree (the DEF-999 shape)
+        "DEF-4029": {".claude/settings.json"},  # guard spellings judged against a scratch root, never opened (the DEF-741 shape)
+        "DEF-4031": {".claude/settings.json"},  # the same: the spellings are the command text under judgment
         # DEF-940 left this set on 2026-09-29 with its row (struck: the three
         # session files it named are required ignore entries now), so its probe
         # retired and a baseline for a retired probe is dead. DEF-884 left it
@@ -696,7 +699,14 @@ class TestTheLiveProbeFile:
                 if isinstance(x, str)
             }
             baseline = self._NAMED_NOT_READ.get(p["id"], set())
-            for tok in {m.group(1).rstrip("/.") for m in self._PATH_LITERAL.finditer(cmd)}:
+            toks = set()
+            for m in self._PATH_LITERAL.finditer(cmd):
+                raw = m.group(1).rstrip("/.")
+                if raw:
+                    # `./tools` is the tracked `tools`: the same normpath the
+                    # declared-input test below applies, for the same reason.
+                    toks.add(os.path.normpath(raw).replace("\\", "/"))
+            for tok in toks:
                 if not tok or tok == subject or tok in declared or tok in baseline:
                     continue
                 if (REPO_ROOT / tok).exists() and not is_tracked(tok):
