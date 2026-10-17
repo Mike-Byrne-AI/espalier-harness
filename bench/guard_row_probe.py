@@ -33,8 +33,8 @@ TIERS. ``ALLOW`` = no verdict. ``SOFT`` = denied once, cleared by re-issuing.
 ``HARD`` = unrecoverable. A soft speed-bump is deny-once-then-allow, so ONE
 invocation cannot tell a bump from a wall; each row is invoked twice in a
 throwaway project carrying every protected directory, under each of the
-three project-root shapes the rehearsal defines (plain, spaced, paren). A
-row that differs across shapes is the finding.
+five project-root shapes the rehearsal defines (plain, spaced, paren, amp,
+semi). A row that differs across shapes is the finding.
 
 DECLARED GAPS. ``KNOWN_GAPS`` names the rows whose expected tier is the
 correct answer and is NOT what the guard does today, each with the ledger
@@ -59,11 +59,20 @@ separator-stop class's four keys the day they were declared, when the fix
 fired GAPFIXED on all four. The expectations that differ by platform say so
 in their note.
 
-Run it on the Windows box, or anywhere:
+Run it on the Windows box, or anywhere, from the checkout under test (the
+rehearsal's tree check refuses a guard other than the rows' own):
 
-    python bench/guard_row_probe.py --repo-root C:\\path\\to\\Espalier-Harness
+    python bench/guard_row_probe.py --repo-root .
     python bench/guard_row_probe.py --repo-root . --root-shape paren
     python bench/guard_row_probe.py --repo-root . --command "rm -rf C:/Temp"
+    python bench/guard_row_probe.py --repo-root . --baseline <another host's receipt>
+
+The receipt (by default the gitignored ``bench/row-probe-results.json``) names
+the tree and the guard, and ``--baseline`` diffs this run against another
+host's on the rehearsal's rule (see its THE DIFF): refused before a row runs
+unless it is this oracle's, from another host, at this commit, with this guard
+and these rows, and shares a shape with this run (exit 5); a verdict that
+differs fails the run.
 
 Stdlib only. Works on 3.10+.
 """
@@ -80,9 +89,13 @@ from pathlib import Path
 # them learned a new fixture shape.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from powershell_guard_rehearsal import (  # noqa: E402
-    ROOT, ROOT_SHAPES, _tier, add_common_args, bash_spelling, drive,
-    refuse_stale_tree, report_gaps, stale_declarations, tree_facts,
+    BASELINE_REFUSED, ROOT, ROOT_SHAPES, _tier, add_common_args, bash_spelling, drive,
+    read_baseline, refuse_stale_tree, report_baseline, report_gaps, same_file,
+    stale_declarations, tree_facts, tree_record,
 )
+
+#: The name a receipt carries: a baseline from the other oracle is another table.
+ORACLE = Path(__file__).stem
 
 #: The running user's home as the Bash tool spells it. DERIVED, never a
 #: literal: a home path in a shipped file names a person and a machine, and
@@ -349,14 +362,22 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         return 2
 
+    if args.command and args.baseline:
+        print("--baseline diffs a row run; one --command has no rows to diff", file=sys.stderr)
+        return 2
+    if args.baseline and same_file(args.baseline, args.out):
+        print("--baseline and --out name one file: this run's receipt would overwrite "
+              "the baseline it reads", file=sys.stderr)
+        return 2
+
     # Name the tree on EVERY path, the ad-hoc one included, and refuse a
     # stale one before a single row runs (see refuse_stale_tree).
-    sha, has_fixes = tree_facts(root)
+    facts = tree_facts(root)
     shapes = list(ROOT_SHAPES) if args.root_shape == "all" else [args.root_shape]
 
     if args.command:
-        print(f"tree     : {sha}")
-        if refuse_stale_tree(has_fixes):
+        print(f"tree     : {facts.sha} (guard {facts.guard})")
+        if refuse_stale_tree(facts):
             return 4
         for shape in shapes:
             print(f"{args.tool} @{shape}: {args.command}\n"
@@ -365,13 +386,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.json:
         print(f"hook     : {hook}")
-        print(f"tree     : {sha}")
+        print(f"tree     : {facts.sha} (guard {facts.guard})")
         print(f"python   : {sys.version.split()[0]}  ({sys.executable})")
         print(f"platform : {platform.platform()}")
         print(f"shapes   : {', '.join(shapes)}")
         print()
-    if refuse_stale_tree(has_fixes):
+    if refuse_stale_tree(facts):
         return 4
+    baseline = None
+    if args.baseline:
+        baseline = read_baseline(Path(args.baseline), facts, oracle=ORACLE, shapes=shapes)
+        if baseline is None:
+            return BASELINE_REFUSED
 
     stale = stale_declarations(ROWS, KNOWN_GAPS)
     if stale:
@@ -391,16 +417,19 @@ def main(argv: list[str] | None = None) -> int:
             sys.stdout = real_stdout
 
     record = {"platform": platform.platform(), "python": sys.version.split()[0],
-              "repo_root": str(root), "tree_sha": sha, "has_fixes": has_fixes,
+              "repo_root": str(root), **tree_record(facts, ORACLE),
+              # Always true in a receipt (a refused run writes none); kept
+              # only for tests/test_write_guard.py's call-site pin (DEF-860).
+              "has_fixes": True,
               "shapes": shapes, **result}
     headline = (f"{result['passed']} passed, {result['mismatched']} MISMATCHED, "
                 f"{result['known_gaps']} KNOWN GAP, of {len(ROWS)} rows x {len(shapes)} shape(s)")
+    said = sys.stderr if args.json else sys.stdout
     if args.json:
         # The gap block is still SAID, on stderr, so a human watching the run
         # is told the leg is not whole; the document on stdout stays one.
         report_gaps(result, file=sys.stderr)
         print(headline, file=sys.stderr)
-        print(json.dumps(record, indent=2))
     else:
         report_gaps(result)
         print()
@@ -408,10 +437,15 @@ def main(argv: list[str] | None = None) -> int:
         if result["mismatched"]:
             print("A MISMATCH is a platform-specific verdict or a regression and is the "
                   "first thing to record -- with the row id, shape, expected and actual tier.")
+    if baseline is not None:
+        record["baseline"] = report_baseline(baseline, args.baseline, result["rows"], file=said)
+    if args.json:
+        print(json.dumps(record, indent=2))
     out = Path(args.out)
     out.write_text(json.dumps(record, indent=2), encoding="utf-8")
-    print(f"results written to: {out}", file=sys.stderr if args.json else sys.stdout)
-    return 1 if (result["mismatched"] or result["gaps_closed"]) else 0
+    print(f"results written to: {out}", file=said)
+    differs = bool(baseline is not None and record["baseline"]["differences"])
+    return 1 if (result["mismatched"] or result["gaps_closed"] or differs) else 0
 
 
 if __name__ == "__main__":

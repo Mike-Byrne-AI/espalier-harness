@@ -156,15 +156,18 @@ For one bounded change, one main proof path, or a small localized edit.
    # Espalier-Harness tree: ONE command runs the tier the diff earns and prints
    # a receipt naming every command it ran -- full is four (the hook type gate,
    # the lint line, xdist across the cores with the five serial files left out,
-   # then those five serially; the two pytest lines took about six and a half
-   # minutes, measured twice), recall is the lint line, the contract slice, then
-   # the recall engine's test files (the recall files about three and a half
-   # minutes on top of the slice), contract is two (the lint
-   # line, then the tree-wide contracts; the slice about three minutes serial);
+   # then those five at one xdist worker; the two pytest lines took about six
+   # and a half minutes, measured twice), recall is the lint line, the contract
+   # slice, then the recall engine's test files (the recall files about three and
+   # a half minutes on top of the slice), contract is two (the lint line, then
+   # the tree-wide contracts at `-n auto`; about six minutes on four workers);
+   # every pytest line runs under xdist, so a ceiling crossing names its test
+   # (up to xdist's four restarts per worker);
    # on the two cheaper tiers a changed
-   # `scripts/<name>.py` adds one more line running its own `tests/test_<name>.py`
+   # `scripts/<name>.py` adds a line running its own `tests/test_<name>.py`
    # when that file exists (derived from the diff -- a script's tests are
-   # integration-classified, so the contract slice alone never collected them)
+   # integration-classified, so the contract slice alone never collected them);
+   # a changed file among the five serial files rides a second line, at one worker
    if [ -f scripts/proof_tier.py ]; then   # Espalier-Harness tree: its tier script
      python scripts/proof_tier.py --run   # Espalier-Harness tree: the tier the diff earns, one receipt
    else

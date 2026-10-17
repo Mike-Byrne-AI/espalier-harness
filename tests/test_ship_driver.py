@@ -2728,6 +2728,38 @@ class TestARedBaseRefusesOpen:
         assert "gh pr merge --disable-auto 7 until the revert merges" in capsys.readouterr().out
 
 
+class TestTheRedBaseReadsTheBoardsWindow:
+    """DEF-2018: each push's post-merge proof runs to the end beside the next
+    (DEF-2015), so a burst of merges holds several runs still going above the
+    newest verdict. The read took five runs while the board took twenty, and five
+    still going hid a red the board named: `open` armed over it."""
+
+    @staticmethod
+    def _gh_by_limit(rows: list[dict]):
+        """`gh run list` as gh answers it: at most `--limit` rows, newest first."""
+        def gh_json(*args, **_kwargs):
+            return rows[:int(args[list(args).index("--limit") + 1])]
+        return gh_json
+
+    def test_a_burst_of_runs_still_going_cannot_hide_a_red(self, ship, monkeypatch):
+        """Dies to: a window shorter than the burst (the five this read took)."""
+        red = {"status": "completed", "conclusion": "failure", "headSha": "a" * 40, "databaseId": 905,
+               "url": "https://example/run/905"}
+        monkeypatch.setattr(ship, "_gh_json", self._gh_by_limit([{"status": "in_progress", "conclusion": ""}] * 5
+                                                                + [red]))
+        line = ship.base_red_after_merge("main")
+        assert line is not None and "main red after merge: post-merge.yml run 905 on aaaaaaa" in line, line
+
+    def test_the_window_is_the_boards(self, ship, monkeypatch):
+        """One window, not two hand numbers, as the red set is one set (that pin
+        is tests/test_board.py's)."""
+        spec = importlib.util.spec_from_file_location("board_for_ship_test", SHIP.parent / "board.py")
+        board = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, spec.name, board)
+        spec.loader.exec_module(board)
+        assert ship.POST_MERGE_RUN_WINDOW == board.RUN_WINDOW
+
+
 class TestOneOpenPullRequestPerSeat:
     """`open` notes the seat's other open pull request, by the seat whose
     latest claim or release names each lane: every seat may push as one

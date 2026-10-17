@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4028",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c \"import os, sys, pathlib; [os.environ.pop(k) for k in list(os.environ) if k.startswith('CLAUDE')]; (sys.stderr.write('DEF-4028 is a POSIX arm: the identity clause has no Windows twin, so this probe refuses here (UNRESOLVED, never a verdict)' + chr(10)), sys.exit(70)) if os.name == 'nt' else None; sys.path.insert(0, os.path.abspath('tools/cc/hooks')); import _bash_patterns as bp, write_guard as wg; repo = pathlib.Path.home() / 'def4028-no-such-repo'; pairs = [(t, tool) for t in bp._TEMP_ROOTS for tool, cmd in (('Bash', 'rm ' + '-r' + 'f ' + t), ('PowerShell', 'Remove-Item ' + '-Rec' + 'urse -Force ' + t)) if (wg._bash_dangerous_reason(cmd, repo, cwd=repo) if tool == 'Bash' else wg._ps_dangerous_reason(cmd, repo, cwd=repo)) is None]; print(len(pairs))\"",
+ "open_value": "7",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "65ddf74a84f7",
+ "text_sha": "1c1cc0116661",
+ "verified_2026_10_16": "OPEN (filed 2026-10-16; probe driven at filing)"
+}

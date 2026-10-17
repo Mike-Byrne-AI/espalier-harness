@@ -84,9 +84,12 @@ python -m pytest -m "not slow"
 
 # per-batch truth tier (self-host): the tree-wide contracts -- enumerations,
 # mirrors, citations, doc claims, census, scanners. Measured 2026-09-06:
-# 2,834 tests, 164 s serial. Run it serially; its `-n auto` form (62 s)
-# raced on the live tree three times in one run.
-python -m pytest -m contract
+# 2,834 tests, 164 s serial; its `-n auto` form (62 s) raced on the live tree
+# three times in one run that day, from writers since closed (DEF-1138 on
+# 2026-10-06, DEF-973 on 2026-10-14), so the slice runs at `-n auto` since
+# 2026-10-16 (DEF-2017): 5,113 passed in 5:47 on four workers on the Windows
+# host, and two more halves at `-n 3` green in a review's clone.
+python -m pytest -n auto -m contract
 
 # release confidence:
 python -m pytest -m "contract or release or security"
@@ -263,7 +266,11 @@ When you add a new test file:
   parameter default) below the per-test ceiling of the tests that run it:
   pyproject's `timeout = 60`, unless the test raises its own with
   `@pytest.mark.timeout(M)` (and `slow`). A budget at or above the ceiling never
-  fires, and on Windows the ceiling then ends the whole run with no test named.
+  fires, and on Windows the ceiling then ends a plain run with no test named.
+  Under xdist, which every proof tier's lines use since `DEF-2017`, it ends the
+  worker instead; xdist names the test and replaces the worker up to its restart
+  cap, and past the cap `tests/_never_ran.py` counts the tests that never ran,
+  just above the final counts (`DEF-2020`).
   `test_no_wait_budget_meets_the_ceiling_of_a_test_that_runs_it` in
   `tests/test_test_suite_contract.py` reds on one and names the file and line.
   A file that arms SIGALRM itself carries

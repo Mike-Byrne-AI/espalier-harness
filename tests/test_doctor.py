@@ -865,6 +865,19 @@ class TestPythonResolverCheck:
     (Windows ships ``python.exe``, not ``python3``; macOS may need a
     brew install)."""
 
+    @staticmethod
+    def _seen_to_answer(doctor_module, monkeypatch):
+        """Say the banner and the start-up probe answered (DEF-5014, DEF-5015).
+        ``which`` is fabricated in these tests, so the real probes behind the
+        "not confirmed" seams would spawn the host's own ``/usr/bin/python3``
+        and, on a loaded runner, read it as slow: #271's macOS portability
+        cell went red that way on 2026-10-17, a pass that hung on the
+        runner's load."""
+        monkeypatch.setattr(doctor_module, "_interpreter_banner_unanswered",
+                            lambda path, *flags: None)
+        monkeypatch.setattr(doctor_module, "_interpreter_start_unconfirmed",
+                            lambda argv: None)
+
     def test_warns_when_python3_missing(self, tmp_path, monkeypatch):
         settings = tmp_path / ".claude" / "settings.json"
         settings.parent.mkdir(parents=True)
@@ -912,6 +925,7 @@ class TestPythonResolverCheck:
             doctor_module, "_interpreter_meets_floor",
             lambda path: path == "/usr/bin/python3",
         )
+        self._seen_to_answer(doctor_module, monkeypatch)
         issues = doctor_module._check_python_resolver(tmp_path, settings)
         assert issues == []
 
@@ -1061,6 +1075,7 @@ class TestPythonResolverCheck:
             doctor_module, "_interpreter_meets_floor",
             lambda path: path == "/usr/bin/python3",
         )
+        self._seen_to_answer(doctor_module, monkeypatch)
         assert doctor_module._check_python_resolver(tmp_path, settings) == []
 
     def test_present_python3_nudges_reinit_not_brew(self, tmp_path, monkeypatch):
@@ -1107,6 +1122,7 @@ class TestPythonResolverCheck:
             doctor_module, "_interpreter_start_failure",
             lambda argv: None if list(argv) == ["/usr/bin/python3"] else "cannot start: stub",
         )
+        self._seen_to_answer(doctor_module, monkeypatch)
         issues = doctor_module._check_python_resolver(tmp_path, settings)
         assert any("python" in i for i in issues)
         joined = " ".join(issues)
@@ -1916,7 +1932,7 @@ class TestEveryWarningCarriesANextStep:
         })
         mp.setattr(d, "_surface_presence", _clean_presence)
         mp.setattr(d, "_check_doc_drift", lambda root: [])
-        mp.setattr(d, "_check_python_resolver", lambda root: [])
+        mp.setattr(d, "_check_python_resolver", lambda root, out_of_time=None: [])
         mp.setattr(d, "_check_external_tool", lambda tool, hint: [])
         mp.setattr(d, "_check_reporter_hook_wiring", lambda root: [])
         mp.setattr(d, "_check_config_unknown_keys", lambda root, cfg=None: [])
@@ -1925,7 +1941,7 @@ class TestEveryWarningCarriesANextStep:
         # fixture alone arms it.
         mp.setattr(d, "_check_sandbox_posture", lambda root: ([], [], []))
         mp.setattr(d, "_check_package_manager", lambda root: [])
-        mp.setattr(d, "_check_wired_hooks_start", lambda root: [])
+        mp.setattr(d, "_check_wired_hooks_start", lambda root, warnings=None: [])
 
         # The gitignore branch reads espalier.cli.gitignore_status via a lazy
         # import, so it must be silenced at the SOURCE module, not on `d`.
@@ -1999,7 +2015,7 @@ class TestEveryWarningCarriesANextStep:
         from espalier import doctor as d
         mp.setattr(
             d, "_check_python_resolver",
-            lambda root: ["hook interpreter 'python' does not resolve on this host"],
+            lambda root, out_of_time=None: ["hook interpreter 'python' does not resolve on this host"],
         )
 
     @staticmethod
@@ -2059,6 +2075,17 @@ class TestEveryWarningCarriesANextStep:
             oracle="git", reincludes_blocked=(), left_to_adopter={},
             retire_from_block={"/task-packs/*": ["task-packs/TP-1_first.md"]},
         ))
+
+    @staticmethod
+    def _hook_start_probe_unreached(mp):
+        """DEF-2019: a host too slow for the start probe to reach every hook."""
+        from espalier import doctor as d
+        mp.setattr(
+            d, "_check_wired_hooks_start",
+            lambda root, warnings=None: (warnings.append(
+                "hook start probe: 0 of 12 wired hooks probed; the host did not start the probe's "
+                "interpreter within 20 s (a slow host), which says nothing against config_guard.py"), [])[1],
+        )
 
     @staticmethod
     def _dead_reporter(mp):
@@ -2176,6 +2203,7 @@ class TestEveryWarningCarriesANextStep:
         "_retired_deny_rule",
         "_superseded_allow_rule",
         "_dead_reporter",
+        "_hook_start_probe_unreached",
         "_gitignore_missing",
         "_gitignore_declined_unknown",
         "_stale_saved_paths",
@@ -4032,7 +4060,7 @@ class TestReporterHookWiring:
 
         monkeypatch.setattr(
             doctor_module, "_check_python_resolver",
-            lambda root: ["hook interpreter 'python' does not resolve on this host"],
+            lambda root, out_of_time=None: ["hook interpreter 'python' does not resolve on this host"],
         )
         data = _load_settings(harness_repo)
         data["hooks"].pop("PostCompact")
@@ -4551,31 +4579,160 @@ class TestDoctorNamesAHookThatCannotStart:
         tree = self._init_tree(tmp_path)
         helper = tree / "tools" / "cc" / "hooks" / "_hook_utils.py"
         helper.write_text(helper.read_text(encoding="utf-8") + "\ndel payload_cwd, hook_cwd\n", encoding="utf-8")
-        monkeypatch.setattr(doctor_module, "_check_wired_hooks_start", lambda root: [])
+        monkeypatch.setattr(doctor_module, "_check_wired_hooks_start", lambda root, warnings=None: [])
         result = run_doctor_check(tree, skip_self_host=True)
         assert self._start_lines(result) == [], result["failures"]
 
-    def test_a_batch_that_does_not_answer_falls_back_per_hook_and_fails_the_silent_one(self, tmp_path, monkeypatch):
-        # A hook that hangs at import would hide its siblings behind one silent
-        # batch, and a WARN there was a fail-open (the failure-mode review,
-        # 2026-10-10): the batch's silence re-probes each hook alone, and the one
-        # that still does not answer is a FAIL by name, never a warning.
+    @staticmethod
+    def _stub_children(doctor_module, monkeypatch, *, hang: str | None = None, slow: bool = False,
+                       mute: bool = False, as_text: bool = False, alone_slow: bool = False,
+                       ends: str | None = None) -> list[tuple[list[str], float]]:
+        """Stand in for every start-probe child at the spawn layer, and return
+        each spawn's ``(scripts, budget)`` in order. A child prints a ready line,
+        one JSON line per hook it imports, then the whole answer (the reader
+        before DEF-2019 read only that last line). ``slow``: no child prints
+        anything inside its budget (a host too slow to start the interpreter);
+        ``mute``: each prints its ready line and then answers for nothing;
+        ``hang``: that hook never returns from its import, so the child that
+        reaches it times out with what it printed before (as bytes, POSIX's
+        capture, or with ``as_text`` as the text a Windows drain reads);
+        ``alone_slow``: a child given one hook never starts; ``ends``: that
+        hook ends the interpreter at import, so the child exits 1 there."""
+        import json
+        import subprocess
+        spawns: list[tuple[list[str], float]] = []
+
+        def child(argv, *args, **kwargs):
+            if not (len(argv) > 2 and argv[2] == doctor_module._HOOK_START_PROBE):
+                raise AssertionError(f"an unexpected spawn: {argv[:2]}")
+            scripts, budget = list(argv[4:]), kwargs.get("timeout") or 0
+            spawns.append((scripts, budget))
+            if slow or (alone_slow and len(scripts) == 1):
+                raise subprocess.TimeoutExpired(argv, budget)
+            lines = [json.dumps({"start_probe_ready": True})]
+            for script in scripts:
+                if script == ends:
+                    return subprocess.CompletedProcess(argv, 1, "\n".join(lines) + "\n", "")
+                if mute or script == hang:
+                    printed = "\n".join(lines)
+                    raise subprocess.TimeoutExpired(argv, budget, output=printed if as_text else printed.encode())
+                lines.append(json.dumps({"start_probe": script, "ok": True, "error": ""}))
+            return subprocess.CompletedProcess(argv, 0, "\n".join(lines) + "\n", "")
+
+        monkeypatch.setattr(doctor_module, "run_bounded", child)
+        return spawns
+
+    @pytest.mark.parametrize("as_text", [False, True], ids=["bytes", "text"])
+    def test_a_hook_that_hangs_is_named_and_its_siblings_are_read_in_one_retry(self, tmp_path, monkeypatch, as_text):
+        """DEF-2019: a batch that stops on one hook re-probes that hook alone
+        and the hooks after it together -- three spawns, never one per hook --
+        and the hook that still does not answer on its own full budget is a
+        FAIL by name, never a warning (a hang hides its siblings; the
+        failure-mode review, 2026-10-10). What the stopped child printed is
+        read as POSIX captures it and as a Windows drain does."""
         from espalier import doctor as doctor_module
         tree = self._init_tree(tmp_path)
-        calls: list[list[str]] = []
+        spawns = self._stub_children(doctor_module, monkeypatch, hang="post_compact.py", as_text=as_text)
+        answer = doctor_module._probe_wired_hooks_start(tree)
+        assert len(spawns) == 3, [s for s, _ in spawns]
+        assert spawns[1][0] == ["post_compact.py"] and "post_compact.py" not in spawns[2][0], spawns
+        assert [s for s, v in answer.items() if v["ok"] is False] == ["post_compact.py"], answer
+        assert "did not answer within" in answer["post_compact.py"]["error"], answer
+        assert all(v["ok"] is True for s, v in answer.items() if s != "post_compact.py"), answer
 
-        def fake_probe(repo_root, hooks_dir, scripts):
-            calls.append(list(scripts))
-            if len(scripts) > 1:
-                return None                       # the batch did not answer
-            if scripts == ["write_guard.py"]:
-                return None                       # this one hangs on its own too
-            return {scripts[0]: {"ok": True, "error": ""}}
+    def test_a_host_too_slow_to_start_the_probe_is_said_never_blamed_on_a_hook(self, tmp_path, monkeypatch):
+        """A child that prints nothing inside its budget says the host is slow,
+        not that a hook cannot start: one spawn, no FAIL, one warning that says
+        how many hooks were probed. Until DEF-2019 the batch's miss re-probed
+        every hook alone, 13 spawns and 260 s with the twelve canonical hooks,
+        and on a host where each of those missed too every hook was a FAIL."""
+        from espalier import doctor as doctor_module
+        tree = self._init_tree(tmp_path)
+        spawns = self._stub_children(doctor_module, monkeypatch, slow=True)
+        answer = doctor_module._probe_wired_hooks_start(tree)
+        assert len(spawns) == 1, len(spawns)
+        assert not [s for s, v in answer.items() if v["ok"] is False], answer
+        assert all(v["ok"] is None for v in answer.values()) and len(answer) == 12, answer
+        warnings: list[str] = []
+        assert doctor_module._check_wired_hooks_start(tree, warnings=warnings) == []
+        assert len(warnings) == 1 and "0 of 12" in warnings[0] and "slow" in warnings[0], warnings
 
-        monkeypatch.setattr(doctor_module, "_run_start_probe", fake_probe)
-        failures = doctor_module._check_wired_hooks_start(tree)
-        assert len(calls) >= 2 and len(calls[0]) > 1 and all(len(c) == 1 for c in calls[1:]), calls
-        assert len(failures) == 1 and "write_guard.py" in failures[0] and "did not answer within" in failures[0], failures
+    def test_the_probe_spends_one_bounded_total_whatever_the_children_do(self, tmp_path, monkeypatch):
+        """The worst case is pinned: every child starts and answers for nothing,
+        so each retry finds a new suspect. The spawns stop at the shared total
+        (three of the per-child budget), the one hook probed alone on its full
+        budget is the only FAIL, and the rest are said, not failed."""
+        from espalier import doctor as doctor_module
+        tree = self._init_tree(tmp_path)
+        spawns = self._stub_children(doctor_module, monkeypatch, mute=True)
+        answer = doctor_module._probe_wired_hooks_start(tree)
+        total = getattr(doctor_module, "_HOOK_START_TOTAL_S", 60)
+        assert len(spawns) == 3 and sum(b for _, b in spawns) <= total, [(len(s), b) for s, b in spawns]
+        failed = [s for s, v in answer.items() if v["ok"] is False]
+        assert len(failed) == 1 and "did not answer within" in answer[failed[0]]["error"], answer
+        assert sum(v["ok"] is None for v in answer.values()) == 11, answer
+
+    def test_a_retry_that_never_starts_judges_no_hook(self, tmp_path, monkeypatch):
+        """The batch stops on a hook, and the child given that hook alone never
+        starts: that is the host, not the hook, so it is no FAIL (code review,
+        driven 2026-10-16: the mutant reading it as a FAIL survived)."""
+        from espalier import doctor as doctor_module
+        tree = self._init_tree(tmp_path)
+        spawns = self._stub_children(doctor_module, monkeypatch, hang="post_compact.py", alone_slow=True)
+        answer = doctor_module._probe_wired_hooks_start(tree)
+        assert len(spawns) == 2, [s for s, _ in spawns]
+        assert not [s for s, v in answer.items() if v["ok"] is False], answer
+        assert answer["post_compact.py"]["ok"] is None and "slow" in answer["post_compact.py"]["error"], answer
+
+    def test_a_hook_that_ends_the_child_is_named_without_a_retry(self, tmp_path, monkeypatch):
+        """A child that exits at a hook's import was ended by that hook: it is a
+        FAIL by name at once, its siblings are read in the next child, and the
+        warning never blames a slow host for it (code review, driven: an
+        `os._exit` hook read as "did not answer within 20 s")."""
+        from espalier import doctor as doctor_module
+        tree = self._init_tree(tmp_path)
+        spawns = self._stub_children(doctor_module, monkeypatch, ends="post_compact.py")
+        answer = doctor_module._probe_wired_hooks_start(tree)
+        assert len(spawns) == 2 and "post_compact.py" not in spawns[1][0], [s for s, _ in spawns]
+        assert [s for s, v in answer.items() if v["ok"] is False] == ["post_compact.py"], answer
+        assert answer["post_compact.py"]["error"] == "ended the probe at import (exit 1)", answer
+        assert all(v["ok"] is True for s, v in answer.items() if s != "post_compact.py"), answer
+
+    def test_the_real_child_says_it_started_and_answers_per_hook(self, tmp_path, monkeypatch):
+        """The child script itself, run for real: it says it started and
+        answers for each hook, which is what lets a stopped child give what it
+        reached (the stubs above print the protocol themselves, so dropping
+        either line from the child survived them; code review). A generous
+        budget: this pins the protocol, not a host's speed."""
+        from espalier import doctor as doctor_module
+        hooks = tmp_path / "hooks"
+        hooks.mkdir()
+        (hooks / "fine.py").write_text("X = 1\n", encoding="utf-8")
+        (hooks / "broken.py").write_text("raise KeyError('floor')\n", encoding="utf-8")
+        monkeypatch.setattr(doctor_module, "_HOOK_START_BUDGET_S", 120)
+        answer, how = doctor_module._run_start_probe(tmp_path, hooks, ["fine.py", "broken.py"])
+        assert how == "exit 0", how
+        assert answer == {"fine.py": {"ok": True, "error": ""},
+                          "broken.py": {"ok": False, "error": "KeyError: 'floor'"}}, answer
+
+    def test_the_slow_host_warning_reaches_the_report(self, tmp_path, monkeypatch):
+        """End to end: the report carries the warning, its next step, and no
+        start FAIL."""
+        import subprocess
+        from espalier import doctor as doctor_module
+        tree = self._init_tree(tmp_path)
+        real = doctor_module.run_bounded
+
+        def child(argv, *args, **kwargs):
+            if len(argv) > 2 and argv[2] == doctor_module._HOOK_START_PROBE:
+                raise subprocess.TimeoutExpired(argv, kwargs.get("timeout") or 0)
+            return real(argv, *args, **kwargs)
+
+        monkeypatch.setattr(doctor_module, "run_bounded", child)
+        result = run_doctor_check(tree, skip_self_host=True)
+        assert self._start_lines(result) == [], result["failures"]
+        assert any(w.startswith("hook start probe:") for w in result["warnings"]), result["warnings"]
+        assert any("hook start probe did not reach" in s for s in result["next_steps"]), result["next_steps"]
 
     def test_a_tree_wiring_no_readable_script_adds_nothing(self, tmp_path):
         # Presence and the wiring check own a settings file that wires nothing;
@@ -4584,7 +4741,7 @@ class TestDoctorNamesAHookThatCannotStart:
         (tmp_path / ".claude").mkdir()
         (tmp_path / ".claude" / "settings.json").write_text('{"hooks": {}}', encoding="utf-8")
         assert doctor_module._probe_wired_hooks_start(tmp_path) is None
-        assert doctor_module._check_wired_hooks_start(tmp_path) == []
+        assert doctor_module._check_wired_hooks_start(tmp_path, []) == []
 
 
 class TestDoctorNamesTheStopGatePosture:

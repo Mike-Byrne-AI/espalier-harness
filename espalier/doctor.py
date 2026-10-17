@@ -28,8 +28,12 @@ from espalier._venv import (
 from espalier._integrity_bridge import load_integrity_module
 from espalier._text import plural
 from espalier._python_floor import (
-    floor_text, interpreter_argv, interpreter_meets_floor, interpreter_start_failure,
-    is_python3_banner,
+    BANNER_PROBE_SECONDS, BANNER_PROBE_TRIES, START_PROBE_SECONDS, START_PROBE_TRIES,
+    START_TOO_SLOW, floor_text, interpreter_argv,
+    interpreter_banner, meets_python_floor,
+    interpreter_banner_unanswered, interpreter_banner_within, interpreter_meets_floor,
+    interpreter_start_failure, interpreter_start_failure_within,
+    interpreter_start_unconfirmed, is_python3_banner, start_unconfirmed_of,
 )
 from espalier._report_io import load_harness_plan, report_is_json_object
 from espalier._spawn import run_bounded
@@ -485,7 +489,6 @@ def _interpreter_is_python3(path: "str | None", *flags: str) -> bool:
     """
     if not path:
         return False
-    import subprocess
     import sys
     # The process running this code IS a working Python 3. Short-circuiting it
     # removes a subprocess spawn from the common case and, more importantly,
@@ -498,20 +501,31 @@ def _interpreter_is_python3(path: "str | None", *flags: str) -> bool:
             return True
     except OSError:
         pass
-    try:
-        result = run_bounded(
-            [path, *flags, "--version"], capture_output=True, text=True,
-            encoding="utf-8", timeout=2,
-        )
-    except (subprocess.SubprocessError, OSError, ValueError):  # strict decode: a structured answer (DEF-821)
-        return False
+    # The kept banner, asked twice (DEF-5015), the one the resolver and the
+    # floor check read too. One that never answered is not accepted here; a
+    # claim asks `_interpreter_banner_unanswered` to say so.
+    banner = interpreter_banner([path, *flags])
     # Through the ONE banner rule, not `startswith("Python 3.")`: the floor
     # parser searches anywhere in the output, and a banner with a line before
     # it split the two readings -- `init` then called one interpreter both
     # "below-floor, guards keep working" and "not Python 3, guards fail OPEN"
     # in one run (DEF-727 review). The hook-side twin reads through its own
     # parity copy of the same rule.
-    return is_python3_banner((result.stdout or result.stderr).strip())
+    return banner is not None and is_python3_banner(banner)
+
+
+def _interpreter_banner_unanswered(path: "str | None", *flags: str) -> "str | None":
+    """The clause when ``path``'s ``--version`` probe never answered in its
+    tries (``DEF-5015``), else None: the same kept answer
+    :func:`_interpreter_is_python3` read, behind a seam of its own for the
+    claims (``cli``'s enforcement claim and this module's resolver check).
+    The running interpreter's own file is answered by the banner itself
+    (:func:`_python_floor._banner_verdict`), never by a shortcut here: two
+    shortcuts in two readers let the floor check, which had none, read it
+    alone as below the floor (both reviews of DEF-5015)."""
+    if not path:
+        return None
+    return interpreter_banner_unanswered([path, *flags])
 
 
 # ``_interpreter_meets_floor(path)`` -- does the interpreter at ``path`` clear
@@ -532,12 +546,58 @@ _interpreter_meets_floor = interpreter_meets_floor
 
 # ``_interpreter_start_failure(argv)`` -- why the interpreter at ``argv``
 # cannot start, or None (DEF-915). An alias seam like the one above, read by
-# the two callers that need its EVIDENCE (this module's resolver check and
-# ``cli``'s enforcement-claim identity arm), so a test can patch both here.
-# The floor probe calls ``_python_floor.interpreter_start_failure`` itself, so
-# a patch on this name does NOT reach it: patch ``_interpreter_meets_floor``
-# for that.
+# the callers that need its EVIDENCE (this module's resolver check, at three
+# sites, and ``cli``'s enforcement-claim identity arm and its narration), so a
+# test can patch them all here. The floor probe calls
+# ``_python_floor.interpreter_start_failure`` itself, so a patch on this name
+# does NOT reach it: patch ``_interpreter_meets_floor`` for that.
 _interpreter_start_failure = interpreter_start_failure
+
+# ``_interpreter_start_unconfirmed(argv)`` -- the clause when the start-up
+# probe never answered, or None -- and ``_interpreter_start_failure_within(argv,
+# seconds)`` -- why it does not start in that time (DEF-5014). Alias seams like
+# the one above, for the same readers.
+_interpreter_start_unconfirmed = interpreter_start_unconfirmed
+_interpreter_start_failure_within = interpreter_start_failure_within
+# ``_interpreter_banner_within(argv, seconds)`` -- the ``--version`` answer on
+# one try of ``seconds``, or None (DEF-5015). The same kind of seam.
+_interpreter_banner_within = interpreter_banner_within
+
+
+def _blocking_hook_seconds() -> int:
+    """The time a blocking hook gets per tool call: ``write_guard``'s timeout,
+    read from the wiring every hook command is built from."""
+    from espalier.harness_config import CANONICAL_HOOK_WIRING
+    return int(CANONICAL_HOOK_WIRING["write_guard.py"]["timeout"])
+
+
+def _unheard_on_path() -> "str | None":
+    """``cli._unheard_on_path`` with doctor's patience: a candidate that never
+    answered ``--version`` is asked once more for a blocking hook's time, and
+    one that then answers as anything but a Python 3 has answered (``DEF-5015``).
+    Behind the same lazy-import seam as :func:`_remedy_hint`."""
+    from espalier.cli import _unheard_on_path as unheard
+    return unheard(patient_seconds=_blocking_hook_seconds())
+
+
+def _late_interpreter_hint(cmd: str, remedy: str, clears: bool, written: str) -> str:
+    """The remedy for a wired interpreter that did not start, or answer
+    ``--version``, in the time a blocking hook gets (``DEF-5014``,
+    ``DEF-5015``): the rewire when its target was seen to answer and start,
+    else doctor again on a less loaded host. ``remedy`` is the remedy answer a
+    typed command spells; ``written`` is the rewire's target, which
+    settings.json will carry, named in a string of its own."""
+    if clears and start_unconfirmed_of(written) is None:
+        return f"`{written}` starts and clears the floor" + (
+            f" -- run `{remedy} -m espalier init . --rewire-interpreter` "
+            f"to rewire the hooks to it."
+        )
+    return (
+        f"Run `{remedy} -m espalier doctor .` again when the host is less "
+        f"loaded; if `{cmd}` still does not answer and start in time, put a Python "
+        f"{floor_text()}+ that starts on PATH and run "
+        f"`{remedy} -m espalier init . --rewire-interpreter`."
+    )
 
 
 def _host_is_windows() -> bool:
@@ -669,10 +729,15 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
 
 
 def _check_python_resolver(
-    repo_root: Path, settings_path: Path | None = None
+    repo_root: Path, settings_path: Path | None = None,
+    out_of_time: list[str] | None = None,
 ) -> list[str]:
     """Verify the python interpreter named in ``.claude/settings.json`` resolves
     on the current host. Returns a list of warning strings (empty if no issue).
+
+    ``out_of_time`` collects each wired command whose interpreter did not start
+    within the time a blocking hook gets (``DEF-5014``), so the caller can give
+    those their own next step, read from this list and never from the text.
 
     Reads ``hooks[*].hooks[*].command`` from settings.json; for python-like
     names (``python``, ``python3``, ``python3.12``, ``py``), runs
@@ -820,6 +885,83 @@ def _check_python_resolver(
                 problem = (
                     f"hook interpreter `{cmd}` does not resolve on current host. "
                 )
+            elif _interpreter_banner_unanswered(resolved, *flags) is not None:
+                # Its `--version` probe never answered in its tries (DEF-5015):
+                # no verdict either way, so, as an unseen start is, it gets one
+                # try with the time a blocking hook gets per tool call.
+                seconds = _blocking_hook_seconds()
+                late = _interpreter_banner_within([resolved, *flags], seconds)
+                late_start = (
+                    _interpreter_start_failure_within([resolved, *flags], seconds)
+                    if late is not None and is_python3_banner(late) and meets_python_floor(late)
+                    else None
+                )
+                if late is not None and is_python3_banner(late) and not meets_python_floor(late):
+                    # A late banner is still read for the floor (DEF-636), and
+                    # a late Python 3 for its start (DEF-915), before "slow" is
+                    # said (both reviews of DEF-5015).
+                    problem = (
+                        f"hook interpreter `{cmd}` resolves to `{resolved}` and IS "
+                        f"Python 3 (its `--version` answered only after more than "
+                        f"{BANNER_PROBE_SECONDS} s), but is older than the "
+                        f"{floor_text()} this package requires: the blueprint chain, "
+                        f"Gate 4 finalize and subagent-reasoning capture spawn a file "
+                        f"that raises SyntaxError every session. Install Python "
+                        f"{floor_text()} or newer and re-wire the hooks to it. "
+                    )
+                elif late_start is not None and not late_start.startswith(START_TOO_SLOW):
+                    problem = (
+                        f"hook interpreter `{cmd}` resolves to `{resolved}` and "
+                        f"answers `--version` as Python 3, but {late_start} -- so "
+                        f"every hook spawned with it exits outside the blocking range "
+                        f"and each guard fails OPEN while init reports success. "
+                    )
+                    remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
+                    start_hint = _late_interpreter_hint(cmd, remedy, clears, _resolver_hint())
+                elif late is not None and is_python3_banner(late):
+                    if out_of_time is not None:
+                        out_of_time.append(cmd)
+                    if late_start is None:
+                        issues.append(
+                            f"hook interpreter `{cmd}` resolves to `{resolved}` and "
+                            f"answers `--version` as Python 3, but not within "
+                            f"{BANNER_PROBE_SECONDS} s in {BANNER_PROBE_TRIES} tries: a "
+                            f"blocking hook gets {seconds} s per tool call for its "
+                            f"whole run, so while this host is this loaded a blocking "
+                            f"guard wired with it may run out of time before it "
+                            f"decides and fail OPEN."
+                        )
+                        continue
+                    problem = (
+                        f"hook interpreter `{cmd}` resolves to `{resolved}` and "
+                        f"answers `--version` as Python 3, slowly, but did not start "
+                        f"within {seconds} s, the time a blocking hook gets per tool "
+                        f"call, so every blocking guard wired with it runs out of "
+                        f"time before it decides and fails OPEN: this host is that "
+                        f"loaded now, or the interpreter hangs at start-up. "
+                    )
+                    remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
+                    start_hint = _late_interpreter_hint(cmd, remedy, clears, _resolver_hint())
+                elif late is not None:
+                    problem = (
+                        f"hook interpreter `{cmd}` resolves to `{resolved}` but does "
+                        f"not answer as Python 3, so every hook spawned with it exits "
+                        f"outside the blocking range and each guard fails OPEN while "
+                        f"init reports success. "
+                    )
+                else:
+                    if out_of_time is not None:
+                        out_of_time.append(cmd)
+                    problem = (
+                        f"hook interpreter `{cmd}` resolves to `{resolved}`, but did "
+                        f"not answer `--version` within {seconds} s, the time a "
+                        f"blocking hook gets per tool call, so every blocking guard "
+                        f"wired with it runs out of time before it decides and fails "
+                        f"OPEN: this host is that loaded now, or the interpreter "
+                        f"hangs at start-up. "
+                    )
+                    remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
+                    start_hint = _late_interpreter_hint(cmd, remedy, clears, _resolver_hint())
             elif not _interpreter_is_python3(resolved, *flags):
                 problem = (
                     f"hook interpreter `{cmd}` resolves to `{resolved}` but does "
@@ -835,6 +977,10 @@ def _check_python_resolver(
                 # interpreter initialises (DEF-915): one that cannot start
                 # runs NO guard, while a below-floor 3.9 runs them all.
                 cannot_start = _interpreter_start_failure([resolved, *flags])
+                # A start-up probe that never answered kept the banner's
+                # verdict in the floor check (DEF-5014), so a False here with
+                # no failure to start is a banner below the floor, or a banner
+                # probe that did not answer in its time (DEF-5015).
                 if cannot_start is not None:
                     problem = (
                         f"hook interpreter `{cmd}` resolves to `{resolved}` and "
@@ -852,10 +998,30 @@ def _check_python_resolver(
                     # exactly when the rewire has a target that starts.
                     remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
                     if clears:
+                        # "starts" only of a start that was seen (DEF-5014):
+                        # the rewire takes its target on the banner when the
+                        # probe never answered, so the remedy stands, and the
+                        # sentence names the target (what the rewire WRITES,
+                        # in a string of its own) and says only what was seen.
+                        written = _resolver_hint()
+                        unseen = start_unconfirmed_of(written)
+                        target_said = (
+                            f"`{written}` starts and clears the floor" if unseen is None
+                            else f"`{written}` answers as Python {floor_text()}+ ({unseen})")
+                        start_hint = target_said + (
+                            f" -- run `{remedy} -m espalier init . "
+                            f"--rewire-interpreter` to rewire the hooks to it."
+                        )
+                    elif (target_unheard := _unheard_on_path()) is not None:
+                        # A candidate never answered `--version` (DEF-5015): no
+                        # proof that none is installed.
                         start_hint = (
-                            f"`{remedy}` starts and clears the floor -- run "
-                            f"`{remedy} -m espalier init . --rewire-interpreter` "
-                            f"to rewire the hooks to it."
+                            f"{target_unheard}, so the rewire has no confirmed "
+                            f"target yet"
+                        ) + (
+                            f" -- run `{remedy} -m espalier doctor .` again when "
+                            f"the host is less loaded before putting another "
+                            f"Python on PATH."
                         )
                     else:
                         start_hint = (
@@ -882,8 +1048,57 @@ def _check_python_resolver(
                         f"raises SyntaxError every session. Install Python "
                         f"{floor_text()} or newer and re-wire the hooks to it. "
                     )
+            elif _interpreter_start_unconfirmed([resolved, *flags]) is None:
+                continue  # resolves, is Python 3, clears the floor, starts.
             else:
-                continue  # resolves, is Python 3, clears the floor.
+                # The floor check kept the banner's verdict on a start-up probe
+                # that never answered (DEF-5014). Health is not claimed on a
+                # start nobody saw, nor is "cannot start": the interpreter gets
+                # one try with the time a blocking hook gets per tool call.
+                seconds = _blocking_hook_seconds()
+                late = _interpreter_start_failure_within([resolved, *flags], seconds)
+                if late is None:
+                    # It starts, but not within the start-up probe's time: a
+                    # hook runs for several times a bare start (9.4 times on
+                    # the Air, measured by the failure-mode review), so while
+                    # the host is this loaded a blocking guard may still run
+                    # out of its time. Said, never passed over as healthy.
+                    if out_of_time is not None:
+                        out_of_time.append(cmd)
+                    issues.append(
+                        f"hook interpreter `{cmd}` resolves to `{resolved}` and "
+                        f"answers `--version` as Python {floor_text()}+, and starts, "
+                        f"but not within {START_PROBE_SECONDS} s in "
+                        f"{START_PROBE_TRIES} tries: a blocking hook gets {seconds} s "
+                        f"per tool call for its whole run, which takes several times "
+                        f"a bare start, so while this host is this loaded a blocking "
+                        f"guard wired with it may run out of time before it decides "
+                        f"and fail OPEN."
+                    )
+                    continue
+                if not late.startswith(START_TOO_SLOW):
+                    problem = (
+                        f"hook interpreter `{cmd}` resolves to `{resolved}` and "
+                        f"answers `--version` as Python 3, but {late} -- so every "
+                        f"hook spawned with it exits outside the blocking range "
+                        f"and each guard fails OPEN while init reports success. "
+                    )
+                else:
+                    if out_of_time is not None:
+                        out_of_time.append(cmd)
+                    problem = (
+                        f"hook interpreter `{cmd}` resolves to `{resolved}` and "
+                        f"answers `--version` as Python {floor_text()}+, but did "
+                        f"not start within {seconds} s, the time a blocking hook "
+                        f"gets per tool call, so every blocking guard wired with "
+                        f"it runs out of time before it decides and fails OPEN: "
+                        f"this host is that loaded now, or the interpreter hangs "
+                        f"at start-up. "
+                    )
+                # The rewire takes only a target whose start it saw for a site
+                # like this one, so the remedy is keyed on that.
+                remedy, clears, probed = remedy_answer = remedy_answer or _remedy_hint()
+                start_hint = _late_interpreter_hint(cmd, remedy, clears, _resolver_hint())
             py = py or _remedy_py()
             # DEF-620, one more time: do not prescribe `--rewire-interpreter`
             # for a site that verb will DECLINE. An unterminated quote and a
@@ -914,15 +1129,38 @@ def _check_python_resolver(
                 # alone is what `py3_present` read (DEF-915), and on a host
                 # whose `python3` is a copied venv that cannot start this
                 # sentence sent the operator to a rewire that then found no
-                # target. Asked here, on the failure path only.
+                # target. Asked here, on the failure path only. A probe that
+                # never answered (DEF-5014) keeps the banner's verdict: the
+                # rewire takes that `python3` on it, so it is still the
+                # remedy, and the sentence says only what was seen.
                 # The common case -- `python3` IS on PATH but settings
                 # wired a different name (e.g. `python`) or a stale path.
                 # Re-init/symlink is the real fix, not installing python.
+                python3_unseen = _interpreter_start_unconfirmed(
+                    [shutil.which("python3") or "python3"])
+                python3_said = ("a WORKING `python3`" if python3_unseen is None else
+                                f"a `python3` that answers as Python 3 ({python3_unseen})")
                 hint = (
-                    f"a WORKING `python3` IS on PATH -- re-run "
+                    f"{python3_said} IS on PATH -- re-run "
                     f"`{py} -m espalier init . --rewire-interpreter` "
                     f"to rewire the wired interpreter, or symlink `{cmd}` -> "
                     f"python3."
+                )
+            elif (python3_mute := _interpreter_banner_unanswered(shutil.which("python3"))) and (
+                    (python3_late := _interpreter_banner_within(
+                        [shutil.which("python3") or "python3"], _blocking_hook_seconds())) is None
+                    or is_python3_banner(python3_late)):
+                # A `python3` whose `--version` never answered, or answered as
+                # a Python 3 only on a blocking hook's longer ask, is no proof
+                # that none is installed (DEF-5015): say what was seen, never
+                # "install", as a fast Python 3 is never told to install. One
+                # that answered otherwise on the longer ask (a Python 2, a
+                # non-interpreter) gets the install arm below.
+                seen_late = (f"its `--version` answered only on a longer ask "
+                             f"({python3_late})" if python3_late else python3_mute)
+                hint = (
+                    f"a `python3` IS on PATH, but {seen_late}: run doctor again "
+                    f"when the host is less loaded before installing one."
                 )
             else:
                 hint = (
@@ -1152,6 +1390,12 @@ _HOOK_START_PROBE = r"""
 import importlib, json, sys
 hooks_dir, scripts = sys.argv[1], sys.argv[2:]
 sys.path.insert(0, hooks_dir)
+
+def say(obj):
+    sys.stdout.write("\n" + json.dumps(obj) + "\n")
+    sys.stdout.flush()
+
+say({"start_probe_ready": True})
 out = {}
 for script in scripts:
     stem = script[:-3] if script.endswith(".py") else script
@@ -1164,18 +1408,27 @@ for script in scripts:
     except BaseException as exc:  # one line per module, never a crash
         first = (str(exc).splitlines() or [""])[0]
         out[script] = {"ok": False, "error": f"{type(exc).__name__}: {first}"}
-sys.stdout.write("\n" + json.dumps(out) + "\n")
+    say({"start_probe": script, **out[script]})
 """
 
-#: The wired-hook start probe's budget, in seconds; named in the warning.
+#: One start-probe child's budget, in seconds; named in the FAIL.
 _HOOK_START_BUDGET_S = 20
 
+#: The whole probe's budget (DEF-2019): the batch and its retries share it, so
+#: it is spent in at most three children, never one per hook.
+_HOOK_START_TOTAL_S = 60
 
-def _run_start_probe(repo_root: Path, hooks_dir: Path, scripts: list[str]) -> dict | None:
+
+def _run_start_probe(repo_root: Path, hooks_dir: Path, scripts: list[str]) -> tuple[dict | None, str]:
     """One bounded child importing ``scripts`` by name with ``hooks_dir`` first
-    on its ``sys.path`` and the tree as cwd. ``None`` when the child does not
-    answer: past the budget, dead before its JSON line, or unspawnable. The
-    hook's own stdout may precede the answer, so the last line is the JSON."""
+    on its ``sys.path`` and the tree as cwd. The child says it started, then
+    answers for each hook as it imports it, so a child that stops still gives
+    what it reached. Returns ``(answers, how)``: ``answers`` holds every hook
+    the child answered for (empty when it started and reached none), or is
+    ``None`` when the child never said it started; ``how`` is ``"timeout"``
+    when its budget ran out, ``"exit <code>"`` when it ended on its own (a hook
+    that ends the interpreter at import ends the child with it), and
+    ``"unspawnable"``. A hook's own stdout may sit between the lines."""
     import json as _json
     import subprocess
     import sys as _sys
@@ -1185,16 +1438,40 @@ def _run_start_probe(repo_root: Path, hooks_dir: Path, scripts: list[str]) -> di
             cwd=str(repo_root), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=_HOOK_START_BUDGET_S,
         )
+        text, how = proc.stdout or "", f"exit {proc.returncode}"
+    except subprocess.TimeoutExpired as exc:
+        # What the child printed before its budget ran out: bytes on POSIX, the
+        # text a second drain read on Windows (espalier._spawn.run_bounded).
+        printed = exc.stdout or b""
+        text = printed.decode("utf-8", "replace") if isinstance(printed, bytes) else str(printed)
+        how = "timeout"
     except (OSError, subprocess.SubprocessError, ValueError):
-        return None
-    lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
-    if not lines:
-        return None
-    try:
-        answer = _json.loads(lines[-1])
-    except ValueError:
-        return None
-    return answer if isinstance(answer, dict) else None
+        return None, "unspawnable"
+    started = False
+    answers: dict = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            obj = _json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("start_probe_ready") is True:
+            started = True
+        elif isinstance(obj.get("start_probe"), str):
+            answers[obj["start_probe"]] = {"ok": bool(obj.get("ok")), "error": str(obj.get("error") or "")}
+    return (answers if started else None), how
+
+
+def _never_started(how: str) -> str:
+    """Why the hooks a probe child never reached went unprobed, from how that
+    child ended: a timeout before it said it started is a slow host."""
+    if how == "timeout":
+        return f"the host did not start the probe's interpreter within {_HOOK_START_BUDGET_S} s (a slow host)"
+    return f"the probe's interpreter could not run ({how})"
 
 
 def _probe_wired_hooks_start(repo_root: Path) -> dict | None:
@@ -1206,14 +1483,20 @@ def _probe_wired_hooks_start(repo_root: Path) -> dict | None:
     imports, while a start of ``session_start.py`` writes a session marker and a
     start of ``stop_gate.py`` can run a gate, and a diagnostic must not mutate
     the tree it reads. ``None`` when settings wire no readable script that is on
-    disk (presence and the wiring check own those trees). When the batch does
-    not answer -- one hook hanging or dying would otherwise hide its siblings --
-    each hook is probed in a child of its own, and one that still does not
-    answer within the budget is reported as unable to start: a hook whose import
-    outruns the budget cannot run under Claude Code's own wired timeout either,
-    so the failure-mode review's fail-open (a WARN and exit 0 on the exact tree
-    DEF-1188 was filed for) is closed. Returns
-    ``{script: {"ok": bool, "error": "<type>: <first line>"}}``."""
+    disk (presence and the wiring check own those trees). When the batch stops
+    on a hook -- one hanging would otherwise hide its siblings -- that hook is
+    probed in a child of its own on the full budget, and the hooks after it in
+    one more child: a hook that does not answer alone is reported as unable to
+    start (a hook whose import outruns the budget cannot run under Claude
+    Code's own wired timeout either, so the failure-mode review's fail-open, a
+    WARN and exit 0 on the exact tree DEF-1188 was filed for, stays closed).
+    The batch and its retries share one total, ``_HOOK_START_TOTAL_S``: at most
+    three children of ``_HOOK_START_BUDGET_S`` each (DEF-2019: a batch miss
+    used to re-probe every hook alone, 13 children and 260 s with the twelve
+    canonical hooks, and on a slow host each of those missed too). A child that
+    never says it started means the host is slow, so no hook is judged on it.
+    Returns ``{script: {"ok": bool | None, "error": "<type>: <first line>"}}``;
+    ``ok`` is ``None`` for a hook the budget never reached."""
     hooks_dir = repo_root / "tools" / "cc" / "hooks"
     scripts = sorted({
         str(w["script"]).rsplit("/", 1)[-1]
@@ -1223,34 +1506,74 @@ def _probe_wired_hooks_start(repo_root: Path) -> dict | None:
     })
     if not scripts:
         return None
-    answer = _run_start_probe(repo_root, hooks_dir, scripts)
-    if answer is not None:
-        return answer
     out: dict = {}
-    for script in scripts:
-        one = _run_start_probe(repo_root, hooks_dir, [script])
-        verdict = one.get(script) if isinstance(one, dict) else None
-        out[script] = verdict if isinstance(verdict, dict) else {
-            "ok": False, "error": f"did not answer within {_HOOK_START_BUDGET_S} s"}
+    pending = list(scripts)
+    children = max(1, _HOOK_START_TOTAL_S // _HOOK_START_BUDGET_S)
+    unreached = f"the probe's {children} children of {_HOOK_START_BUDGET_S} s each ran out before them"
+    while pending and children:
+        children -= 1
+        answer, how = _run_start_probe(repo_root, hooks_dir, pending)
+        if answer is None:
+            unreached = _never_started(how)        # no hook is judged on a child that never started
+            break
+        for script in pending:
+            verdict = answer.get(script)
+            if isinstance(verdict, dict):
+                out[script] = verdict
+        pending = [script for script in pending if script not in out]
+        if not pending:
+            break
+        culprit = pending[0]                       # the hook the child stopped on
+        if how != "timeout":
+            # The child ended at this hook's import: the hook ended it, not the host.
+            out[culprit] = {"ok": False, "error": f"ended the probe at import ({how})"}
+            pending = pending[1:]
+            continue
+        if not children:
+            break
+        children -= 1
+        alone, alone_how = _run_start_probe(repo_root, hooks_dir, [culprit])
+        if alone is None:
+            unreached = _never_started(alone_how)
+            break
+        verdict = alone.get(culprit)
+        out[culprit] = verdict if isinstance(verdict, dict) else {
+            "ok": False,
+            "error": (f"did not answer within {_HOOK_START_BUDGET_S} s" if alone_how == "timeout"
+                      else f"ended the probe at import ({alone_how})"),
+        }
+        pending = pending[1:]
+    for script in pending:
+        out[script] = {"ok": None, "error": unreached}
     return out
 
 
-def _check_wired_hooks_start(repo_root: Path) -> list[str]:
+def _check_wired_hooks_start(repo_root: Path, warnings: list[str]) -> list[str]:
     """One FAIL per wired hook that cannot start, naming the hook and the error
     (DEF-1188: ``doctor`` read ``pass`` on a tree where two wired hooks exited 1
     at import, so the diagnostic the README tells an adopter to run after an
     upgrade called an unguarded tree healthy; an exit 1 from a PreToolUse hook is
     non-blocking to Claude Code, so a hook that cannot start judges nothing).
-    Nothing when settings wire no readable script, so the parity of the
-    governance lines on a malformed settings file is untouched. The remedy is
-    the caller's next step."""
+    Hooks the probe's budget never reached are no FAIL: one line goes to
+    ``warnings`` saying how many were probed and that the host was slow
+    (DEF-2019). Nothing when settings wire no readable script, so the parity of
+    the governance lines on a malformed settings file is untouched. The remedy
+    is the caller's next step."""
     answer = _probe_wired_hooks_start(repo_root)
     if answer is None:
         return []
+    unreached = sorted(script for script, verdict in answer.items()
+                       if isinstance(verdict, dict) and verdict.get("ok") is None)
+    if unreached:
+        why = str(answer[unreached[0]].get("error") or "the probe stopped before them")
+        warnings.append(
+            f"hook start probe: {len(answer) - len(unreached)} of {len(answer)} wired hooks probed; "
+            f"{why}, which says nothing against {', '.join(unreached)}"
+        )
     return [
         f"hook cannot start: tools/cc/hooks/{script} -- {str(verdict.get('error') or 'no error text')}"
         for script, verdict in sorted(answer.items())
-        if not (isinstance(verdict, dict) and verdict.get("ok"))
+        if not (isinstance(verdict, dict) and verdict.get("ok") in (True, None))
     ]
 
 
@@ -2878,9 +3201,29 @@ def run_doctor_check(
             "(`*.py[cod]` for `*.pyc`) is reported missing under that check"
         )
 
-    python_resolver_issues = _check_python_resolver(repo_root)
+    late_starts: list[str] = []
+    python_resolver_issues = _check_python_resolver(repo_root, out_of_time=late_starts)
     warnings.extend(python_resolver_issues)
-    if python_resolver_issues:
+    hint, resolver_clears_floor, probed = (
+        _remedy_hint() if python_resolver_issues else ("", False, ""))
+    # A wired interpreter that did not start in a blocking hook's time
+    # (DEF-5014), on a PATH with no target whose start was seen: the rewire
+    # would reach no interpreter that starts, so the step is doctor again on a
+    # less loaded host. Decided from the list `_check_python_resolver` fills,
+    # never from the warning text.
+    target_seen = resolver_clears_floor and start_unconfirmed_of(_resolver_hint()) is None
+    if late_starts and not target_seen:
+        _append_step(
+            next_steps,
+            f"run `{hint} -m espalier doctor .` again when "
+            f"the host is less loaded: the hook interpreter "
+            f"{', '.join(f'`{c}`' for c in late_starts)} was slow to answer here "
+            f"(its `--version` or its start), against the {_blocking_hook_seconds()} "
+            f"s a blocking hook gets for its whole run; if it still is, put a "
+            f"Python {floor_text()}+ that answers quickly on PATH and rewire the "
+            f"hooks to it",
+        )
+    if python_resolver_issues and (target_seen or len(late_starts) < len(python_resolver_issues)):
         # DEF-620: this used to say plain `init .`, which does NOT overwrite an
         # existing settings.json (user sovereignty) -- measured before and
         # after, `group_unwired_gates_by_shape` returned the identical
@@ -2895,15 +3238,25 @@ def run_doctor_check(
         # rewire would even find a target. When it would not, the blocker is
         # PATH, not a missing install: this command is running under a Python
         # that clears the floor, so "install Python" prescribed an install the
-        # operator had already done (driven by the code review).
-        hint, resolver_clears_floor, probed = _remedy_hint()
+        # operator had already done (driven by the code review). Spelled with
+        # an interpreter whose start was seen (DEF-5014): the command is typed.
         step = (
             f"run `{hint} -m espalier init . "
             "--rewire-interpreter` to rewire the hook commands to an "
             "interpreter that resolves on this host and meets Python "
             f"{floor_text()}+ (changes only the interpreter name; keeps a .bak of the file)"
         )
-        if not resolver_clears_floor:
+        if not resolver_clears_floor and _unheard_on_path() is not None:
+            # A candidate never answered `--version`, the rewire's or one a
+            # below-floor answer outranked (DEF-5015): no proof none is
+            # installed, so the first step is doctor again.
+            step = (
+                f"run `{hint} -m espalier doctor .` again when the host is less "
+                f"loaded first -- a candidate on PATH did not answer `--version` "
+                f"in time, which is no proof that none is installed -- "
+                "then " + step
+            )
+        elif not resolver_clears_floor:
             step = (
                 f"put a Python {floor_text()}+ on PATH as {probed} first -- "
                 f"neither name answers as one now, so the rewire has no target "
@@ -3076,9 +3429,18 @@ def run_doctor_check(
     # What /recall reaches here, from the deployed hook (DEF-1087): an info row.
     info.extend(_check_recall_corpus(repo_root))
     # Every wired hook starts: one FAIL per hook that
-    # cannot, with the repair; a hook that dies at import judges nothing.
-    start_failures = _check_wired_hooks_start(repo_root)
+    # cannot, with the repair; a hook that dies at import judges nothing. Hooks
+    # a slow host kept the probe from reaching are a warning (DEF-2019).
+    start_warnings: list[str] = []
+    start_failures = _check_wired_hooks_start(repo_root, start_warnings)
     failures.extend(start_failures)
+    warnings.extend(start_warnings)
+    if start_warnings:
+        _append_step(
+            next_steps,
+            f"the hook start probe did not reach every wired hook: run `{_remedy_py()} -m espalier doctor .` "
+            "again on a less loaded machine; a hook it reached and could not start is a FAIL of its own",
+        )
     if start_failures:
         _append_step(
             next_steps,

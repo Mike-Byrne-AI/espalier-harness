@@ -153,8 +153,16 @@ def plan_steps(facts: dict, skip: set[str] | None = None) -> list[dict]:
     has_ps = bool(facts["tools"]["pwsh"] or facts["tools"]["powershell"]
                   or facts["espalier_pwsh_override"])
     steps = [
+        # At one xdist worker (DEF-2017): this host is often the slow one, and on
+        # Windows pytest-timeout's thread method ends a plain session at the first
+        # test past the ceiling with no test named; under xdist that test fails by
+        # name, its worker is replaced and the run goes on, up to xdist's restart
+        # cap (four at one worker: past it the run stops scheduling, -q hides
+        # xdist's line saying so, and the suite's summary counts the tests that
+        # never ran, DEF-2020). One worker keeps the serial files off
+        # parallel load, as the run always did.
         {"name": "pytest",
-         "argv": [py, "-m", "pytest", "-q", "-m", "not heavy_e2e", "-p", "no:cacheprovider"],
+         "argv": [py, "-m", "pytest", "-q", "-n", "1", "-m", "not heavy_e2e", "-p", "no:cacheprovider"],
          "env": child_env(), "skip": None, "timeout": 3 * 3600},
         # `--root-shape all` is the default; spelled so the argv states the
         # workload the budget was sized for (three shapes: ~900 hook spawns, at
