@@ -129,6 +129,15 @@ _COPIED_FROM_ROOT = (".claude/settings.json", ".claude/settings.local.json", ".l
 _PLAN_REL = ("cc", "execution_plan.json")
 _ARCHIVE_REL = ("cc", "blueprints", "compact_summaries")
 _SAVED_REL = ("cc", "blueprints", "from-worktrees")
+# The one copy of an edit a wedge restore discarded (DEF-3009): the guard's
+# start refusal saves it here before it lets the restore through
+# (`hooks/_start_refusal.py::_save_before_restore`, under the helper's
+# STATE_DIR), inside the state directory that is otherwise a cache to the
+# reaper. A worktree holding one is kept, named, until it is read.
+_KEPT_STATE_REL = ".espalier-state/wedge-restore"
+# The words of the reason a saved edit keeps a worktree with, which the
+# Worktrees: line reads to name every such worktree first.
+_SAVED_EDIT_WORDS = "a wedge restore discarded"
 
 Runner = Callable[..., "subprocess.CompletedProcess[str] | None"]
 
@@ -1095,8 +1104,16 @@ def parse_worktrees(porcelain: str) -> list[dict[str, str]]:
     return blocks
 
 
+def _saved_edit(rel: str) -> bool:
+    """Whether ``rel`` is under :data:`_KEPT_STATE_REL` (or is it)."""
+    return rel == _KEPT_STATE_REL or rel.startswith(_KEPT_STATE_REL + "/")
+
+
 def _disposable(rel: str) -> bool:
-    """A cache, a regenerable output, or ``cc/`` session state (saved first)."""
+    """A cache, a regenerable output, or ``cc/`` session state (saved first);
+    never a saved edit, though it sits in the state directory (DEF-3009)."""
+    if _saved_edit(rel):
+        return False
     parts = rel.split("/")
     if parts[0] == "cc" or parts[0] in _DISPOSABLE_TOPS or parts[0].startswith("build"):
         return True
@@ -1107,30 +1124,43 @@ def _ignored_entries(git: _Git) -> list[str] | None:
     """The worktree's ignored entries; None when git cannot list them. A
     directory git collapses (every file in it ignored) is listed by its files
     unless it is disposable as a whole, so a ``.worktreeinclude`` copy inside a
-    fully-ignored ``.claude/`` is still compared, not lost unread."""
+    fully-ignored ``.claude/`` is still compared, not lost unread. The state
+    directory is listed by its files too, since it holds the saved edits
+    (DEF-3009: collapsed, it hid them, and the worktree went with them)."""
     listing = git.out("ls-files", "--others", "--ignored", "--exclude-standard", "--directory")
     if listing is None:
         return None
     entries: list[str] = []
     for line in (line for line in listing.splitlines() if line):
-        if line.endswith("/") and not _disposable(line.rstrip("/")):
+        folder = line.rstrip("/")
+        # The state directory is opened only when the saved-edit folder is in
+        # it: otherwise the extra listing would cost a spawn for nothing.
+        holds_saved = _KEPT_STATE_REL.startswith(folder + "/") and (git.cwd / _KEPT_STATE_REL).is_dir()
+        if line.endswith("/") and (not _disposable(folder) or holds_saved):
             inside = git.out("ls-files", "--others", "--ignored", "--exclude-standard", "--", line)
             if inside is None:
                 return None
             entries += [f for f in inside.splitlines() if f] or [line]
         else:
             entries.append(line)
-    return entries
+    # A hand-written spelling (`.espalier-state/*`) lists the state directory
+    # and the saved-edit folder both, and each is opened: one entry once.
+    return list(dict.fromkeys(entries))
 
 
 def unsaved_ignored(entries: list[str], worktree: Path, root: Path) -> list[str]:
     """The ignored entries a removal would lose: everything but caches and
-    regenerable outputs, ``cc/`` (saved by :func:`save_cc_state` first), and a
-    ``.worktreeinclude`` copy byte-identical to the root's."""
+    regenerable outputs, ``cc/`` (saved by :func:`save_cc_state` first), a
+    ``.worktreeinclude`` copy byte-identical to the root's, and a saved edit
+    whose bytes its file still holds (:func:`_held_by_its_file`)."""
     lost: list[str] = []
     for entry in entries:
         rel = entry.rstrip("/")
         if _disposable(rel):
+            continue
+        # A saved-edit folder listed as a folder has no file in it (git
+        # lists an empty directory under --directory): it holds no edit.
+        if _saved_edit(rel) and (entry.endswith("/") or _held_by_its_file(worktree, rel)):
             continue
         if rel in _COPIED_FROM_ROOT:
             try:
@@ -1140,6 +1170,27 @@ def unsaved_ignored(entries: list[str], worktree: Path, root: Path) -> list[str]
                 pass
         lost.append(entry)
     return lost
+
+
+def _held_by_its_file(worktree: Path, rel: str) -> bool:
+    """Whether a saved edit's bytes are still those of a file of its name
+    under ``tools/cc/`` in ``worktree``: the restore never ran (its permission
+    prompt was declined) or the edit was put back, so in a clean, merged
+    worktree the copy holds nothing the branch does not. The copy is named
+    ``<stem>-<UTC>.py.txt``, and the files a restore can name sit in
+    ``tools/cc/`` and ``tools/cc/hooks/``: those two are read, never walked
+    (a walk follows a symlinked folder into a loop). Unreadable, or a name of
+    another shape: False, so the worktree is kept."""
+    name = rel.rsplit("/", 1)[-1]
+    if not name.endswith(".py.txt") or "-" not in name:
+        return False
+    stem = name[: -len(".py.txt")].rsplit("-", 1)[0]
+    cc = worktree / "tools" / "cc"
+    try:
+        saved = (worktree / rel).read_bytes()
+        return any(p.is_file() and p.read_bytes() == saved for p in (cc / f"{stem}.py", cc / "hooks" / f"{stem}.py"))
+    except OSError:  # fail-open: ok deliberate -- unreadable means "not held": keep the worktree
+        return False
 
 
 def _copy_new(src: Path, target: Path) -> Path | None:
@@ -1384,6 +1435,20 @@ def _why_kept(git: _Git, block: dict[str, str], path: Path, upstream: str | None
     if ignored is None:
         return "git could not list its ignored files"
     lost = unsaved_ignored(ignored, path, root)
+    saved = [entry for entry in lost if _saved_edit(entry.rstrip("/"))]
+    if saved:
+        # Named from the root, where the banner is read: the root has a
+        # state directory of its own, and a path read there would miss.
+        try:
+            where = path.resolve().relative_to(root.resolve()).as_posix() + "/"
+        except ValueError:  # fail-open: ok deliberate -- a worktree outside the root is named by its own path
+            where = path.as_posix().rstrip("/") + "/"
+        them = "it" if len(saved) == 1 else "them"
+        others = len(lost) - len(saved)
+        return (f"{_plural(len(saved), 'saved edit')} {_SAVED_EDIT_WORDS} ({_names([where + e for e in saved])}): "
+                f"read {them}, "
+                f"keep what you need, then delete {them}"
+                + (f" ({_plural(others, 'other ignored file')} too)" if others else ""))
     if lost:
         return (f"{_plural(len(lost), 'ignored file')} git status cannot see ({_names(lost)}); move what you "
                 "need, then `git worktree remove --force` it")
@@ -1502,8 +1567,11 @@ def worktrees_line(report: Reap) -> str:
     if report.note:
         parts.append(f"{report.note}: {_names([n for n, _ in report.kept])}")
     elif report.kept:
-        kept = [f"{name} [{why}]" for name, why in report.kept]
-        parts.append(f"kept {len(report.kept)}: {_names(kept)}")
+        # A saved edit is the one copy of an edit (DEF-3009): every worktree
+        # holding one is named, first, whatever the count.
+        saved = [f"{name} [{why}]" for name, why in report.kept if _SAVED_EDIT_WORDS in why]
+        rest = [f"{name} [{why}]" for name, why in report.kept if _SAVED_EDIT_WORDS not in why]
+        parts.append(f"kept {len(report.kept)}: " + ", ".join(saved + ([_names(rest)] if rest else [])))
     if report.saved:
         parts.append(f"their session notes saved under cc/blueprints/ ({_plural(len(report.saved), 'file')})")
     return _ascii("; ".join(parts))
