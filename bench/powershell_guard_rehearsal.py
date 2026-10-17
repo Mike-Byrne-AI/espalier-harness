@@ -20,7 +20,7 @@ assignment form, which in PowerShell RUNS the command and which the guard
 allowed, because ``=`` was not treated as a command position.
 
 This turns a real Windows box into that missing oracle. Derived from the
-module: 264 rows x 5 root shapes, 1315 of 1320 verdicts as expected and 5
+module: 266 rows x 5 root shapes, 1325 of 1330 verdicts as expected and 5
 declared gaps (every number in that sentence is derived by
 ``tests/test_write_guard.py``, so it cannot drift again -- it had, to a third
 of the table; the five are the DEF-827 variable row under every shape). The
@@ -355,6 +355,17 @@ ROWS: list[tuple[str, str, str, str]] = [
     ("interp-piped-pwsh", "HARD",
      "@'\nSet-Content -Path tools/cc/hooks/write_guard.py -Value x\n'@ | pwsh -Command -",
      "a piped PowerShell program is re-scanned"),
+
+    # A WRITE LAST IN A TIGHT SCRIPTBLOCK (DEF-1171, 2026-10-17). The closing
+    # brace ends the word on PowerShell, so these land on the protected file
+    # itself (driven on Windows PowerShell 5.1); the target was read with the
+    # brace on it and the zone deny the unwrapped write gets did not fire.
+    ("block-glued-path-flag", "HARD",
+     "& {Set-Content -Value x -Path .claude/settings.json}",
+     "the call operator's block, no blank before its close"),
+    ("block-glued-redirect", "HARD",
+     "1 | ForEach-Object { Write-Output x > .claude/settings.json}",
+     "the redirect target glued to a per-item block's close"),
 
     # SAME-LINE VARIABLE INDIRECTION (DEF-801, 2026-09-15). Walk 3's leg 4-B
     # rows: `$p='<hook>'; Set-Content -Path $p` and the .NET spelling ALLOWED

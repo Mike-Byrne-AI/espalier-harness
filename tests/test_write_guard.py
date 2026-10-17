@@ -11563,10 +11563,17 @@ def _exact_protected_files() -> list[str]:
 
 #: Each shell tool's wrapper shapes as (shape, opener, closer). PowerShell has
 #: no backtick substitution -- a backtick is its escape character -- so its
-#: third shape is the array subexpression, and every closer it has is a paren.
+#: third shape is the array subexpression. Its scriptblocks close with a brace,
+#: which ends a bare word there (DEF-1171, driven on Windows PowerShell 5.1:
+#: every glued write landed on the name without the brace, the redirect's
+#: too): the call operator's block, a remote-invoke block, a per-item block
+#: and an `if` body, each written tight, the usual one-liner style. On bash a
+#: glued brace is part of the word, so the Bash shapes have none.
 _WRAPPER_SHAPES = {
     "Bash": (("subshell", "(", ")"), ("substitution", "v=$(", ")"), ("backticks", "v=`", "`")),
-    "PowerShell": (("grouping", "(", ")"), ("subexpression", "$(", ")"), ("array", "@(", ")")),
+    "PowerShell": (("grouping", "(", ")"), ("subexpression", "$(", ")"), ("array", "@(", ")"),
+                   ("call-block", "& { ", "}"), ("remote-block", "Invoke-Command -ScriptBlock { ", "}"),
+                   ("per-item-block", "1 | ForEach-Object { ", "}"), ("if-body", "if ($true) { ", "}")),
 }
 
 #: Each shell tool's single-target legs whose target can be the last thing
@@ -11851,6 +11858,92 @@ class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
                     statements.append(ast.unparse(stmt).splitlines()[0])
             found[fn.name] = sorted(statements)
         assert found == pinned
+
+
+class TestAGluedBraceEndsThePowerShellOperand:
+    """DEF-1171: on the PowerShell tool a scriptblock's closing brace ends the
+    bare word before it, so a write that is the last thing in a tight block
+    lands on the name without the brace. The composition above holds the
+    block shapes on every leg; these rows hold the rule's edges. Each spelling
+    was driven on Windows PowerShell 5.1 in a throwaway directory (2026-10-17)
+    for the file it lands, and the row's comment names that file."""
+
+    S = ".claude/settings.json"
+
+    @staticmethod
+    def _denied(command: str, root: Path) -> bool:
+        return TestAWrapperCloserDoesNotHideAnExactProtectedFile._denied("PowerShell", command, root)
+
+    @staticmethod
+    def _candidates(tool: str, command: str) -> list[str]:
+        return TestAWrapperCloserDoesNotHideAnExactProtectedFile._candidates(tool, command)
+
+    def test_a_scriptblock_argument_does_not_end_the_span(self, tmp_path):
+        """`& { Set-Content -Value {x} -Path note.txt}` lands `note.txt`: a
+        brace the span opens and closes itself is an argument, and the
+        operands after it are still read; the unmatched one is the block's."""
+        bp = _bash_patterns_module()
+        assert bp._strip_span_tail("-Value {x} -Path a.txt} more", powershell=True) == "-Value {x} -Path a.txt"
+        assert self._denied(f"& {{ Set-Content -Value {{x}} -Path {self.S}}}", tmp_path)
+
+    def test_a_braced_variable_is_read_whole(self):
+        """`& { Write-Output x > ${n}}` lands on the variable's value: the
+        brace that closes `${...}` is the variable's, the next one the block's."""
+        bp = _bash_patterns_module()
+        assert bp._strip_tail_kept_nonempty("${env:TEMP}/x}", powershell=True) == "${env:TEMP}/x"
+
+    @pytest.mark.parametrize("command,lands", [
+        # `& { Write-Output x > "r}.txt"}` lands `r}.txt`
+        pytest.param('& {{ Write-Output x > "{s}}}"}}', "{s}}}", id="double-quoted"),
+        # `& { Set-Content -Value x -Path 'q}.txt'}` lands `q}.txt`
+        pytest.param("& {{ Set-Content -Value x -Path '{s}}}'}}", "{s}}}", id="single-quoted"),
+        # `& { Write-Output x > a`}.txt}` lands `a}.txt`; the candidate is the
+        # raw spelling, its backtick kept
+        pytest.param("& {{ Write-Output x > {s}`}}}}", "{s}`}}", id="escaped"),
+    ])
+    def test_a_quoted_or_escaped_brace_is_part_of_the_name(self, command, lands, tmp_path):
+        """The false-deny control: the file these write is not the protected
+        one, so the brace stays on the name and nothing is denied."""
+        command, lands = command.format(s=self.S), lands.format(s=self.S)
+        assert self._candidates("PowerShell", command) == [lands]
+        assert not self._denied(command, tmp_path)
+
+    def test_a_link_made_last_in_a_tight_block_is_denied(self, tmp_path):
+        """The link-location reader is judged by the symlink check, outside the
+        composition above (the code review): its operand loses the brace too."""
+        import contextlib
+        import io
+
+        _bash_patterns_module()
+        import write_guard as wg
+
+        statement = f"New-Item -ItemType SymbolicLink -Target x.json -Path {self.S}"
+        for command in (statement, f"& {{ {statement}}}"):
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert wg.check_powershell_for_protected_symlinks(command, tmp_path, tmp_path), command
+
+    def test_the_root_readers_drop_the_blocks_close(self):
+        """`_ps_operand_tokens` feeds the wall and nudge root readers as well as
+        the zone check: a `}` token is the enclosing block's close, not a second
+        operand, so it no longer reads as a filter that narrows a listing (the
+        failure-mode review measured the plain spelling's tier coming back)."""
+        bp = _bash_patterns_module()
+        assert bp._ps_operand_tokens(". }") == ["."]
+        assert bp._ps_operand_tokens(".}") == ["."]
+
+    def test_a_glued_opening_brace_is_read_with_the_word(self):
+        """Not modelled, on purpose (`_strip_span_tail`'s docstring says what it
+        costs): Windows PowerShell 5.1 ends a bare word at a glued `{` too, and
+        `> a{b}.txt` writes `a`, but the reader keeps the pair as text. Pinned
+        so the reading is a decision a change has to meet here."""
+        assert self._candidates("PowerShell", "echo x > a{b}.txt") == ["a{b}.txt"]
+
+    def test_on_bash_a_glued_brace_is_part_of_the_word(self):
+        """Bash writes `echo x > a.txt}` to `a.txt}`: the brace rule is the
+        PowerShell grammar's alone."""
+        bp = _bash_patterns_module()
+        assert bp._strip_span_tail("a.txt}", powershell=False) == "a.txt}"
+        assert self._candidates("Bash", f"echo x > {self.S}}}") == [f"{self.S}}}"]
 
 
 class TestAMetacharacterRootIsReadWhole:
