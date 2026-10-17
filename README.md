@@ -667,7 +667,9 @@ Or set the per-project default in `espalier.toml` at the repo root:
 default_profile = "minimal"
 ```
 
-The CLI `--profile` flag overrides `espalier.toml`. Generated
+The CLI `--profile` flag overrides `espalier.toml`. With neither, a
+re-run of `init` over an install keeps the profile it was made with
+(recorded in `reports/harness_config.json`); `--profile` changes it. Generated
 `.claude/settings.json` includes a `$schema` link to
 [schemastore.org](https://json.schemastore.org/claude-code-settings.json)
 so editors with schema-aware completion validate the file. The shared

@@ -177,7 +177,9 @@ Or set the default per-project in `espalier.toml` at the repo root:
 default_profile = "minimal"
 ```
 
-The CLI `--profile` flag overrides the file. Settings profiles are
+The CLI `--profile` flag overrides the file. With neither, a re-run of
+`init` over an install keeps the profile it was made with; `--profile`
+changes it. Settings profiles are
 governance defaults, not a security sandbox — see
 [`docs/SHARP_EDGES.md`](SHARP_EDGES.md) for the boundary.
 
