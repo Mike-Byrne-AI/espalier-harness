@@ -202,6 +202,11 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     # 2026-10-15 (TP-701 Wave C): the request-to-ack latency of a worker's ask, the
     # dispatcher split's metric, read off every mail ref; until then a hand count.
     "mail_latency_census.py",
+    # 2026-10-16 (TP-702 Task 0): which concurrently open pull requests shared a
+    # file and which shared a symbol (a def, method, class or top-level name, mapped
+    # from the diff by ast); until Wave 1 moves the mapper into tools/cc/_symbols.py
+    # it lives here. Guarded by tests/test_lane_overlap_census.py.
+    "lane_overlap_census.py",
     "proof_tier.py",
     "handoff_mechanics.py",
     "ledger_trend.py",
