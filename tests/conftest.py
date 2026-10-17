@@ -2688,8 +2688,9 @@ def report_hook_spawn_retries(terminalreporter) -> None:
     (xdist ships each worker's to this process), so a slow runner's rate is
     on every run's last screen, and under GitHub Actions on the checks page
     as a warning annotation too."""
+    # A reporter with no stats (a test's stand-in) has no warnings to count.
     rows = sorted({
-        report.nodeid for report in terminalreporter.stats.get("warnings", [])
+        report.nodeid for report in (getattr(terminalreporter, "stats", None) or {}).get("warnings", [])
         if "HookSpawnRetried" in str(getattr(report, "message", ""))
     })
     if not rows:
