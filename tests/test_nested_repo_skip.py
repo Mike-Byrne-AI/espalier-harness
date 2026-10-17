@@ -289,7 +289,12 @@ def test_bare_os_walk_walkers_prune_nested_repos():
     # Split-bucket (TP-389): engine walkers prune via `has_git_entry` (the
     # PRUNE predicate: any `.git` entry, a dangling symlink included -- DEF-673
     # third failure-mode pass) or the stricter `is_own_git_repo` (both imported
-    # from _safe_walk); scanner walkers are stdlib-only and prune via the inline
+    # from _safe_walk) until DEF-3000, and since then `holds_another_checkout`
+    # alone, which is `has_git_entry` plus Claude Code's worktree folder by
+    # name, so a new walker that prunes by the link alone reds here (the
+    # lane's review); a walk that answers git's own question keeps the link
+    # rule under a pragma saying so. Scanner walkers
+    # are stdlib-only and prune via the inline
     # `_skip_nested_repos` helper. Each bucket accepts ONLY its own marker(s),
     # so an engine walker cannot "pass" on a scanner-only name (or vice-versa).
     # `espalier/_vendor/` stays excluded (byte-mirror of tools/cc, governed there
@@ -304,7 +309,7 @@ def test_bare_os_walk_walkers_prune_nested_repos():
         is_scanner = "espalier/scanners/" in rel
         markers = (
             ("_skip_nested_repos",) if is_scanner
-            else ("has_git_entry", "is_own_git_repo")
+            else ("holds_another_checkout",)
         )
         text = py.read_text(encoding="utf-8")
         lines = text.splitlines()

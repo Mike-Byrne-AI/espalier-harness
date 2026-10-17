@@ -211,17 +211,20 @@ class TestLiveTreeCopyKeepsTheWorktreeBoundary:
         live = self._plant(tmp_path / "live")
         assert [f.source_path for f in discover_fragments(live)] == ["docs/x.md"]
 
-    def test_a_copy_that_drops_git_alone_hands_the_scanner_the_worktree(self, tmp_path: Path) -> None:
-        """The fixture's old shape, kept as the red the helper answers: without
-        the gitlink, nothing in the copy marks the worktree as another checkout."""
-        from espalier.freshness import FreshnessError, discover_fragments
+    def test_a_copy_that_drops_git_alone_still_keeps_the_scanner_out_of_the_worktree(self, tmp_path: Path) -> None:
+        """The fixture's old shape: without the gitlink, nothing in the copy
+        marks the worktree as another checkout by its link. Until DEF-3000 this
+        row was the red the helper answers (the scanner raised "duplicate
+        fragment id 'planted'" on the copy); re-recorded 2026-10-17, since the
+        scanner now leaves Claude Code's worktree folder out by name as well,
+        so the copy reads as the live tree does."""
+        from espalier.freshness import discover_fragments
 
         live = self._plant(tmp_path / "live")
         copy = tmp_path / "copy"
         shutil.copytree(live, copy, ignore=shutil.ignore_patterns(".git"))
         assert (copy / ".claude" / "worktrees" / "probe" / "docs" / "x.md").is_file()
-        with pytest.raises(FreshnessError, match="duplicate fragment id 'planted'"):
-            discover_fragments(copy)
+        assert [f.source_path for f in discover_fragments(copy)] == ["docs/x.md"]
 
     def test_the_live_tree_copy_ignore_leaves_the_worktree_out(self, tmp_path: Path) -> None:
         from espalier.freshness import discover_fragments

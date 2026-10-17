@@ -293,8 +293,10 @@ def _build_tree_ignore(repo_root: Path) -> Callable[[str, list[str]], set[str]]:
     holding a ``.git`` of its own -- a linked worktree, a submodule, an
     embedded clone -- is another checkout and is left out whole, at any depth:
     ``BUILD_TREE_SKIP_PATHS`` matches from the root only, so a worktree under
-    ``.claude/worktrees/`` was copied with its ``cc/blueprints/`` (DEF-2013)."""
-    from espalier._safe_walk import has_git_entry
+    ``.claude/worktrees/`` was copied with its ``cc/blueprints/`` (DEF-2013).
+    Claude Code's worktree folder itself is left out by name as well, so a
+    worktree that lost its ``.git`` link is not copied either (DEF-3000)."""
+    from espalier._safe_walk import holds_another_checkout
 
     root = repo_root.resolve()
 
@@ -304,7 +306,7 @@ def _build_tree_ignore(repo_root: Path) -> Callable[[str, list[str]], set[str]]:
             n for n in names
             if n in BUILD_TREE_SKIP_NAMES or n.endswith(BUILD_TREE_SKIP_SUFFIX)
             or (rel / n).as_posix() in BUILD_TREE_SKIP_PATHS
-            or has_git_entry(Path(directory) / n)
+            or holds_another_checkout(Path(directory) / n)
         }
 
     return ignore
