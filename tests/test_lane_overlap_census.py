@@ -159,10 +159,15 @@ class TestTheSummary:
         place = {"h1": {"a.py": {"kind": "python", "symbols": {"a.py::f", "a.py::<after:f>"}, "changed": 2,
                                  "unplaced": 0, "beside": 0},
                         "b.py": {"kind": "python", "symbols": {"b.py::<module>"}, "changed": 1, "unplaced": 0,
+                                 "beside": 1},
+                        # unplaced lines besides: beside is not its only decline (the code review: survived)
+                        "c.py": {"kind": "python", "symbols": {"c.py::<module>"}, "changed": 2, "unplaced": 1,
                                  "beside": 1}},
                  "h2": {"a.py": {"kind": "python", "symbols": {"a.py::g", "a.py::<after:f>"}, "changed": 1,
                                  "unplaced": 0, "beside": 0},
                         "b.py": {"kind": "python", "symbols": {"b.py::h"}, "changed": 1, "unplaced": 0,
+                                 "beside": 0},
+                        "c.py": {"kind": "python", "symbols": {"c.py::k"}, "changed": 1, "unplaced": 0,
                                  "beside": 0}}}
         monkeypatch.setattr(census, "_gh", lambda *argv: json.dumps(listed))
         monkeypatch.setattr(census, "_git", lambda *argv: "base\n" if argv[0] == "merge-base" else "")
@@ -170,5 +175,5 @@ class TestTheSummary:
         assert census.census(prs=2)["beside_only_files"] == 1
         assert census.main(["--prs", "2"]) == 0
         out = capsys.readouterr().out
-        assert "1 hunks, the only decline of 1 shared file(s)" in out, out
+        assert "2 hunks, the only decline of 1 shared file(s)" in out, out
         assert "shared symbol (the blank lines after a.py::f)" in out, out

@@ -16,10 +16,12 @@ to."""
 # slow-exempt: five scratch-repository cases of a few git calls each beside 29 in-process ones, measured 2026-10-17: 34 tests in 1.1 s on the Air
 from __future__ import annotations
 
+import ast
 import difflib
 import hashlib
 import importlib.util
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -398,10 +400,18 @@ _WHO = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid", "GIT_AU
 def _ort_rc(tmp_path: pathlib.Path, base: str, ours: str, theirs: str) -> int:
     """merge-ort's exit code (``git merge-tree --write-tree``: 0 clean, 1 conflicted), the merge
     the ship driver's catch-up and the host run, in a bare scratch repository of three commits.
-    It needs git 2.38: older, the row is skipped, never read as clean."""
+    It needs git 2.38: older, the row is skipped, never read as clean. The box's own config and
+    attributes are kept out (a ``merge=union`` there merges every conflict clean; the code
+    review of Wave 2's last delta, driven)."""
+    version = re.search(r"(\d+)\.(\d+)", subprocess.run(["git", "--version"], capture_output=True, text=True,
+                                                         encoding="utf-8", timeout=30).stdout)
+    if not version or (int(version.group(1)), int(version.group(2))) < (2, 38):
+        pytest.skip("git merge-tree --write-tree needs git 2.38 or later")
     repo = tmp_path / f"ort{len(list(tmp_path.glob('ort*')))}"
     repo.mkdir()
-    env = {**_git_env(), **_WHO}
+    (repo / "empty.gitconfig").write_bytes(b"")
+    env = {**_git_env(), **_WHO, "HOME": str(repo), "XDG_CONFIG_HOME": str(repo), "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_ATTR_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": str(repo / "empty.gitconfig")}
 
     def git(*args: str, data: str | None = None) -> subprocess.CompletedProcess:
         return subprocess.run(["git", *args], cwd=repo, capture_output=True, env=env, timeout=30,
@@ -418,8 +428,6 @@ def _ort_rc(tmp_path: pathlib.Path, base: str, ours: str, theirs: str) -> int:
 
     first = commit(base)
     result = git("merge-tree", "--write-tree", commit(ours, first), commit(theirs, first))
-    if result.returncode == 129:
-        pytest.skip("git merge-tree --write-tree needs git 2.38 or later")
     assert result.returncode in (0, 1) and result.stdout.strip(), result.stderr
     return result.returncode
 
@@ -634,47 +642,204 @@ class TestMarkWords:
         assert sym.mark_words("p.py::<after:a+b>", in_file=True) == "the blank lines after a and b"
 
 
-#: The digest of the placements ``_rule_digest`` reads, per placement rule. A change that moves
-#: one is a new rule: bump ``_symbols.RULE`` and record the new digest under it, keeping the old.
-_RULE_DIGESTS = {2: "d5adadcc7e2a29ea"}
+#: The digest of the placements ``_rule_digest`` reads, per placement rule, a record: a change that
+#: moves one is a new rule. Bump ``_symbols.RULE`` and add the new digest under it, the old ones kept
+#: as they are (``test_no_rule_s_digest_is_re_recorded`` reads the merge base's copy and holds
+#: that). Rule 2 was this lane's first stamp, placed by git's default diff algorithm; it never
+#: reached the base.
+_RULE_DIGESTS = {3: "76837eb8a7cc37d8"}
+
+#: The bases the digest's corpus is generated over: every branch of the placement, each
+#: reached (``test_the_corpus_runs_every_line_of_the_placement`` says by name which is not).
+_RULE_BASES = (
+    '"""Doc."""\nimport os\nimport sys\n\n#: doc\nLIMIT = 3\nNAMES = ["a", "b"]\n\n\ndef f(x):\n'
+    "    return x + 1\n\n\n@decorator\ndef g(y):\n    # comment\n    return y * 2\n\n\nclass C:\n"
+    "    attr = 1\n\n    def m(self):\n        return 1\n\n    @property\n    def n(self):\n"
+    '        return 2\n\n\ndef h():\n    pass\n\n\nif __name__ == "__main__":\n    main()\n',
+    "import os\n\n\n\ndef f():\n    return 1\n\n\n\n# a section comment\n\ndef g():\n    return 2\n\n\n"
+    "X = 1\n\nY = 2\n\n\ndef k():\n    return 3\n",
+    '"""Module."""\nimport os\n\n# ---- constants ----\n\nLIMIT = 3\n\n\n# ---- helpers ----\n\n'
+    "def f():\n    return 1\n    # tail of f\n\n\ndef g():\n    return 2\n# trailing note\n\ndef k():\n"
+    "    return 3\n",
+    "*rest, last = items\nTABLE['k'] = 1\nobj.attr = 2\nf().x = 3\n\n\ndef g():\n    return 1\n",
+    "\n\ndef f():\n    return 1\n        # a comment deeper than what follows\ndef g():\n    return 2\n",
+)
+
+
+def _rule_shapes(base: str) -> list[str]:
+    """Every one-line edit and deletion of ``base``, every insertion of a block of each kind at
+    each line, and every definition deleted whole (the code review of Wave 2's last delta, whose
+    generated corpus caught every change that moves a placement)."""
+    lines = base.split("\n")[:-1]
+
+    def text(parts: list[str]) -> str:
+        return "\n".join(parts) + "\n"
+
+    def indent(s: str) -> int:
+        return len(s) - len(s.lstrip())
+
+    out = []
+    for i, line in enumerate(lines):
+        out.append(text(lines[:i] + [line + "  # e" if line.strip() else "# e"] + lines[i + 1:]))
+        out.append(text(lines[:i] + lines[i + 1:]))
+    for k in range(len(lines) + 1):
+        nxt = " " * next((indent(x) for x in lines[k:] if x.strip()), 0)
+        prv = next((indent(x) for x in reversed(lines[:k]) if x.strip()), 0)
+        prv_pad = " " * (prv + 4 if k and lines[k - 1].rstrip().endswith(":") else prv)
+        for block in (["", "", f"{nxt}def n{k}():", f"{nxt}    return {k}"],
+                      [f"{nxt}def n{k}():", f"{nxt}    return {k}", "", ""],
+                      ["", f"{nxt}def n{k}(self):", f"{nxt}    return {k}"],
+                      [f"{nxt}N{k} = {k}"], [f"import mod{k}"], [f"{nxt}# note {k}"], [f"{nxt}@cache{k}"],
+                      [f"{prv_pad}x{k} = {k}"]):
+            out.append(text(lines[:k] + block + lines[k:]))
+    for a, line in enumerate(lines):
+        if line.startswith(("def ", "class ", "@")) and (a == 0 or not lines[a - 1].startswith("@")):
+            b = a + 1
+            while b < len(lines) and (not lines[b].strip() or lines[b].startswith((" ", "\t"))):
+                b += 1
+            out.append(text(lines[:a] + lines[b:]))
+    return list(dict.fromkeys(new for new in out if new != base))
+
+
+def _rule_corpus() -> list[tuple[str, str, str, str]]:
+    """``(path, old, new, diff)`` for the digest: the shapes generated over every base, the twin
+    rows' and the marks' bases among them, each diffed by difflib so no git version reaches the
+    digest; and the three inputs no generated shape gives (a file that is not Python, a hunk past
+    the end of the file, a diff with no hunk this reader can parse)."""
+    rows = [("p.py", base, new, _diff(base, new, "p.py"))
+            for base in (*_RULE_BASES, OLD, TestMarkWords.BASE, _TWO, _CLS, _DOC) for new in _rule_shapes(base)]
+    return rows + [("notes.txt", "a\n", "b\n", _diff("a\n", "b\n", "notes.txt")),
+                   ("p.py", "x = 1\n", "x = 1\n", "@@ -5 +5 @@\n-a\n+b\n"),
+                   ("p.py", "x = 1\n", "x = 2\n", "Binary files a/p.py and b/p.py differ\n")]
 
 
 def _rule_digest(sym) -> str:
-    """The mapper's placements of a fixed corpus (the twin rows' shapes and the marks' shapes,
-    each diffed by difflib so the digest is the same under any git), with ``DIFF_ARGS`` and the
-    marks' spellings beside them: what a claim placed under one rule must agree with."""
-    shapes = [(_TWO, _TWO.replace("return 1", "return 10")),
-              (_TWO, _TWO + "\n\ndef h():\n    return 3\n"),
-              (_TWO, _TWO.replace("\n\ndef g", "\n\ndef h():\n    return 3\n\n\ndef g")),
-              (_CLS, _CLS.replace("        assert 1\n", "        assert 1\n\n    def test_new(self):\n        pass\n")),
-              (_DOC, _DOC.replace("LIMIT = 3\n", "LIMIT = 3\nOTHER = 4\n")),
-              ("import os\nimport sys\n\n\ndef f():\n    return 1\n",
-               "import os\ndef h():\n    return 2\nimport sys\n\n\ndef f():\n    return 1\n"),
-              (OLD, OLD.replace("    return x + 1", "    return x + 2").replace("attr = 0", "attr = 1")),
-              *((TestMarkWords.BASE, new) for new in TestMarkWords.SHAPES.values())]
+    """The mapper's placements of the corpus, with ``DIFF_ARGS`` (as a set: their order moves no
+    placement) and the marks' spellings beside them: what a claim placed under one rule must
+    agree with to be read as complete."""
     rows = []
-    for old, new in shapes:
-        got = sym.changed_symbols("p.py", old, new, _diff(old, new, "p.py"))
+    for path, old, new, diff in _rule_corpus():
+        got = sym.changed_symbols(path, old, new, diff)
         rows.append({key: sorted(value) if isinstance(value, set) else value for key, value in got.items()})
     marks = [sym.MODULE, sym.START, sym.END, sym.AFTER]
-    blob = json.dumps({"diff_args": list(sym.DIFF_ARGS), "marks": marks, "rows": rows}, sort_keys=True)
+    blob = json.dumps({"diff_args": sorted(sym.DIFF_ARGS), "marks": marks, "rows": rows}, sort_keys=True)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
 
+#: The functions a claim's symbols come out of: every executable line of each is run by the corpus.
+_PLACEMENT = ("_target_names", "spans", "innermost_spans", "placed", "_lines", "_gap", "changed_symbols",
+              "_indent")
+
+
+def _literal(source: str, name: str) -> object:
+    """The literal a module-level ``name = ...`` binds in ``source``, or None (no such binding)."""
+    for node in ast.parse(source).body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == name):
+            return ast.literal_eval(node.value)
+    return None
+
+
+def _base_record() -> tuple[object, dict] | None:
+    """The merge base's ``RULE`` and ``_RULE_DIGESTS``, read from its own copies of the two files:
+    on a pull request's CI the base ``BASE_SHA`` names, else the merge base with ``origin/main``;
+    None where no base is here (an archive, a clone without it). A base named and unreadable
+    fails: the check never passes by reading nothing."""
+    named = os.environ.get("BASE_SHA", "").strip()
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=_REPO, capture_output=True, text=True, encoding="utf-8",
+                              env=_git_env(), timeout=30)
+
+    base = named or (git("merge-base", "HEAD", "origin/main").stdout.strip())
+    if not base or git("cat-file", "-e", f"{base}^{{commit}}").returncode != 0:
+        assert not named, f"the pull request's base {named} is not readable here"
+        return None
+    sources = [git("show", f"{base}:{rel}") for rel in ("tools/cc/_symbols.py", "tests/test_symbols.py")]
+    rule, digests = (_literal(s.stdout, n) if s.returncode == 0 else None
+                     for s, n in zip(sources, ("RULE", "_RULE_DIGESTS")))
+    return rule, dict(digests or {})
+
+
+def _re_recorded(base: tuple[object, dict], digests: dict, rule: int, digest: str) -> list[str]:
+    """What a lane did to the merge base's record that it may not: change a rule's recorded digest
+    (a record, never re-recorded), or move the placements while keeping the base's rule."""
+    base_rule, base_digests = base
+    problems = [f"rule {r}'s digest is {d} at the base and {digests.get(r)} here: a rule's digest is a "
+                "record; bump _symbols.RULE and add the new digest under it"
+                for r, d in base_digests.items() if digests.get(r) != d]
+    if isinstance(base_rule, int) and base_digests.get(base_rule) not in (None, digest) and rule <= base_rule:
+        problems.append(f"the placements moved since the base's rule {base_rule}: bump RULE")
+    return problems
+
+
 class TestTheRuleNamesThePlacement:
-    def test_the_placements_of_a_fixed_corpus_are_the_rule_s(self, sym):
+    def test_the_placements_of_the_corpus_are_the_rule_s(self, sym):
         """Dies to: a change that moves a placement (``DIFF_ARGS``, ``spans``, the neighbour rule,
         a mark's spelling) with ``_symbols.RULE`` left as it was: a claim placed under the old
         rule then reads as a complete list against placements it cannot meet, and certifies a
-        pair git conflicts on (the failure-mode review of Wave 2's last delta, driven with a run
-        of blanks keyed by its own lines). Failing on purpose: bump the rule, record the digest."""
+        pair git conflicts on (the failure-mode reviews of Wave 2's last deltas, driven with a
+        run of blanks keyed by its own lines). Failing on purpose: bump the rule, add its digest."""
         digest = _rule_digest(sym)
         assert max(_RULE_DIGESTS) == sym.RULE, (
-            f"_symbols.RULE is {sym.RULE}, the newest rule recorded here {max(_RULE_DIGESTS)}: record "
-            f"{digest} under {sym.RULE}")
+            f"_symbols.RULE is {sym.RULE}, the newest rule recorded here {max(_RULE_DIGESTS)}: add "
+            f"{sym.RULE}: {digest!r} to _RULE_DIGESTS")
         assert _RULE_DIGESTS[sym.RULE] == digest, (
             f"the mapper's placements moved under rule {sym.RULE} (digest {digest}, recorded "
-            f"{_RULE_DIGESTS[sym.RULE]}): bump _symbols.RULE and record {digest} under the new rule")
+            f"{_RULE_DIGESTS[sym.RULE]}): bump _symbols.RULE and add {digest!r} under the new rule, "
+            f"keeping rule {sym.RULE}'s as it is")
+
+    def test_no_rule_s_digest_is_re_recorded(self, sym):
+        """Dies to: a moved placement recorded under the rule it moved from (the same one-line
+        edit as the bump, and the one the failure message could be misread into; the failure-mode
+        review of Wave 2's last delta, driven): the merge base's record is kept, and a digest
+        other than the base's newest comes with a rule above the base's."""
+        record = _base_record()
+        if record is None:
+            pytest.skip("no merge base is readable here (an archive, or a clone without origin/main)")
+        assert not _re_recorded(record, _RULE_DIGESTS, sym.RULE, _rule_digest(sym))
+
+    def test_the_re_record_check_reads_each_way_a_record_can_be_defeated(self):
+        """The check itself, on records given to it (the base of this lane holds none, so the live
+        row above reads nothing yet). Dies to: a changed digest under a kept rule passed, a moved
+        digest passed with the rule left as the base's, or a bump read as a re-record."""
+        assert _re_recorded((3, {3: "aa"}), {3: "aa"}, 3, "aa") == []
+        assert _re_recorded((3, {3: "aa"}), {3: "aa", 4: "bb"}, 4, "bb") == []      # the bump
+        assert _re_recorded((None, {}), {3: "bb"}, 3, "bb") == []                  # a base before any record
+        assert "a rule's digest is a record" in _re_recorded((3, {3: "aa"}), {3: "bb"}, 3, "bb")[0]
+        assert "bump RULE" in _re_recorded((3, {3: "aa"}), {3: "aa"}, 3, "bb")[0]  # moved, unrecorded
+        assert len(_re_recorded((3, {2: "zz", 3: "aa"}), {3: "aa"}, 3, "aa")) == 1  # an old rule dropped
+
+    def test_the_corpus_runs_every_line_of_the_placement(self, sym):
+        """Dies to: a branch of the placement no shape in the corpus reaches (a change there moves
+        claims' symbols and leaves the digest as it was; the failure-mode review of Wave 2's last
+        delta, driven: 22 lines of the placement were never run, and a change to the comment
+        walk shipped under the old rule). The line that is missed is named."""
+        codes = []
+        for name in _PLACEMENT:
+            code = getattr(sym, name).__code__
+            codes += [code, *(c for c in code.co_consts if hasattr(c, "co_lines"))]
+        want = {line for code in codes for _start, _end, line in code.co_lines()
+                if line is not None and line != code.co_firstlineno}
+        hit: set[int] = set()
+        where = sym.__file__
+
+        def tracer(frame, event, arg):
+            if frame.f_code.co_filename != where:
+                return None
+            if event == "line":
+                hit.add(frame.f_lineno)
+            return tracer
+
+        before = sys.gettrace()
+        sys.settrace(tracer)
+        try:
+            _rule_digest(sym)
+        finally:
+            sys.settrace(before)
+        source = pathlib.Path(where).read_text(encoding="utf-8").splitlines()
+        missed = [f"line {n}: {source[n - 1].strip()}" for n in sorted(want - hit)]
+        assert not missed, "no shape in the digest's corpus runs " + "; ".join(missed)
 
 
 class TestConcurrent:

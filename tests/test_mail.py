@@ -1081,16 +1081,51 @@ class TestSymbolsFromTheLane:
     def test_a_claim_of_another_rule_is_named_no_symbol_and_its_release_is_asked_for(
             self, mail, monkeypatch, tmp_path, capsys):
         """The first delta after a rule change. Dies to: an older-rule claim's symbols counted as
-        named (the delta prints "no new symbols" over a list every reader takes whole), the new
+        named (the delta prints "no new symbols" over a list every reader takes whole), its paths
+        counted as claimed (the delta carries the symbols and not `docs/x.md`, which the release the
+        note asks for leaves claimed by no one; both reviews of Wave 2's last delta, driven), the new
         claim left unstamped, or the seat not told which claim keeps its files whole."""
-        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"])
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"],
+                   paths=["docs/x.md"])
         rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old], "--type", "claim", "--lane", "lane/x",
                                 "--symbols-from", "origin/main", "--delta")
         assert rc == 0 and sent, sent
         assert sent[0]["re"][mail.SYMBOLS_KEY] == ["tools/cc/mail.py::new_message", "tools/cc/mail.py::send"]
+        assert "docs/x.md" in sent[0]["re"]["paths"], sent[0]["re"]
         assert sent[0]["re"][mail.SYMBOLS_RULE_KEY] == mail._symbols.RULE
         err = capsys.readouterr().err
         assert old["id"] in err and "another symbol rule" in err and "release" in err, err
+
+    def test_a_whole_claim_names_the_older_claims_it_replaces_and_only_those(
+            self, mail, monkeypatch, tmp_path, capsys):
+        """Without --delta too: the new claim is united with the older one on the lane, which keeps
+        its files whole until released. Dies to: the note asked for on the delta only, or for a
+        claim of this rule (the code review of Wave 2's last delta: both survived as mutants)."""
+        old = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"])
+        stamped = _msg(mail, "mac", "claim", "", lane="lane/x", symbols=["tools/cc/mail.py::send"],
+                       symbols_rule=mail._symbols.RULE)
+        args = ("--type", "claim", "--lane", "lane/x", "--symbols-from", "origin/main")
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [old, stamped], *args)
+        err = capsys.readouterr().err
+        assert rc == 0 and sent and old["id"] in err and stamped["id"] not in err, err
+        rc, sent, _ = self._run(mail, monkeypatch, tmp_path, [stamped], *args)
+        assert rc == 0 and sent and "another symbol rule" not in capsys.readouterr().err
+
+    def test_a_failed_read_for_the_note_costs_the_note_never_the_claim(self, mail, monkeypatch, tmp_path, capsys):
+        """Dies to: the note's read let out of the send (a claim that went out before refused for
+        a line of advice; the failure-mode review of Wave 2's last delta)."""
+        def broken(root, **kw):
+            raise mail.Unresolvable("git for-each-ref failed")
+
+        sent: list[dict] = []
+        monkeypatch.setattr(mail, "machine_setting", lambda root, **kw: ("mac", "git config espalier.machine = mac"))
+        monkeypatch.setattr(mail._symbols, "symbols_of_lane", lambda root, base, **kw: {
+            k: dict(v, symbols=set(v["symbols"])) for k, v in self.PLACEMENTS.items()})
+        monkeypatch.setattr(mail, "read_mail", broken)
+        monkeypatch.setattr(mail, "send", lambda root, message, **kw: sent.append(message))
+        rc = mail.main(["--root", str(tmp_path), "send", "--type", "claim", "--lane", "lane/x",
+                        "--symbols-from", "origin/main"])
+        assert rc == 0 and sent and "could not be read" in capsys.readouterr().err
 
     def test_the_delta_after_the_lane_s_release_sends_nothing(self, mail, monkeypatch, tmp_path, capsys):
         """Dies to: the release check removed (a lane fixing CI after its push re-opens the

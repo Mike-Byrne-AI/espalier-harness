@@ -1269,12 +1269,13 @@ def symbol_delta(own: list[dict], symbols: list[str], paths: list[str]) -> tuple
     ``own``: the symbols none of them names and the paths none of them covers.
     A symbol past an earlier claim's cap is named by none, so it is sent again:
     the cap's cost, on a lane of more than :data:`MAX_SYMBOLS` symbols. A claim
-    placed under another rule names none either (:func:`other_rule`), so the
-    first delta after a rule change sends the lane's symbols whole under this
-    one, never "no new symbols" over a list no reader takes as complete."""
-    named = {s for c in own if not other_rule(c.get("re") or {})
-             for s in _str_list((c.get("re") or {}).get(SYMBOLS_KEY))}
-    claimed = [p for c in own for p in _str_list((c.get("re") or {}).get("paths"))]
+    placed under another rule names and covers nothing (:func:`other_rule`), so
+    the first delta after a rule change sends the lane whole, its symbols and
+    its paths, under this one: never "no new symbols" over a list no reader
+    takes as complete, and nothing left only on the claim its seat releases."""
+    current = [c for c in own if not other_rule(c.get("re") or {})]
+    named = {s for c in current for s in _str_list((c.get("re") or {}).get(SYMBOLS_KEY))}
+    claimed = [p for c in current for p in _str_list((c.get("re") or {}).get("paths"))]
     return ([s for s in symbols if s not in named],
             [p for p in paths if not any(_touches(p, q) for q in claimed)])
 
@@ -1764,14 +1765,21 @@ def main(argv: list[str] | None = None) -> int:
                 symbols, derived = lane_symbols(root, args.symbols_from or None)
                 rule = _symbols.RULE
                 # A claim beside one placed under another rule is united with it on the lane, and
-                # that one keeps its files whole: say which to release, delta or not.
-                mine = own if args.delta else (own_live_claims(read_mail(root)[0], machine, args.lane)
-                                               if args.lane else [])
+                # that one keeps its files whole: say which to release, delta or not. The read is
+                # for a note, so a failed one costs the note and never the claim.
+                mine = own
+                if not args.delta and args.lane:
+                    try:
+                        mine = own_live_claims(read_mail(root)[0], machine, args.lane)
+                    except Unresolvable as exc:
+                        print(f"note: {machine}'s other claims on {args.lane} could not be read ({exc}), so "
+                              "none placed under another symbol rule is named", file=sys.stderr)
                 stale = [str(c.get("id") or "") for c in mine if other_rule(c.get("re") or {})]
                 if stale:
-                    print(f"note: {len(stale)} of {machine}'s live claims on {args.lane} were placed under another "
-                          "symbol rule and are read whole by every reader until released: release "
-                          + ", ".join(stale) + " (send --type release --ack <id>) and claim again", file=sys.stderr)
+                    print(f"note: {machine}'s live claim{'s' if len(stale) > 1 else ''} {', '.join(stale)} on "
+                          f"{args.lane} {'were' if len(stale) > 1 else 'was'} placed under another symbol rule, so "
+                          "every reader takes its files whole: this claim carries the lane under this rule; release "
+                          f"{'them' if len(stale) > 1 else 'it'} (send --type release --ack <id>)", file=sys.stderr)
                 given = [_repo_relative(p) for p in paths]
                 # A path given by hand claims its file whole: the lane's symbols
                 # inside it would let a reader call another function apart.

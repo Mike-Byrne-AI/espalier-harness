@@ -73,8 +73,9 @@ AFTER = "<after:"
 #: Every verdict ``pair_verdict`` gives; a reader that words them covers each.
 VERDICTS = ("shared symbol", "unplaced", "different functions", "path only", "none")
 #: The placement rule the symbols on a claim were derived by. 1, the first
-#: rule and carried by no stamp, placed the changed lines alone; 2 also places
-#: each hunk's neighbours, a file's edges and its runs of blank lines. A reader
+#: rule and carried by no stamp, placed the changed lines alone; 2 also placed
+#: each hunk's neighbours, a file's edges and its runs of blank lines; 3 diffs
+#: as merge-ort does, by histogram. A reader
 #: takes a claim of any other rule as whole, since its list may lack the marks
 #: a meeting needs (both reviews of Wave 2's last delta, driven: an unstamped
 #: claim certified two shapes git conflicts on). Bump it on any change that can
@@ -82,7 +83,7 @@ VERDICTS = ("shared symbol", "unplaced", "different functions", "path only", "no
 #: spelling): a claim placed under the old rule then reads whole instead of
 #: certifying against a placement it cannot meet. A test pins each rule to a
 #: digest of the placements of a fixed corpus and says when to bump.
-RULE = 2
+RULE = 3
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 #: Every diff read here: rename detection off, so a moved file is a deletion at
 #: its old path and an addition at its new one, and another lane editing the old

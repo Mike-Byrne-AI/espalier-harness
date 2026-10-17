@@ -980,7 +980,7 @@ class TestDerivedNotRestated:
 
 #: The placement rule a current claim is stamped with (``_symbols.RULE``),
 #: spelled here for the rows built at collection; pinned equal below.
-_RULE = 2
+_RULE = 3
 
 
 def _claim(seat: str, lane: str, paths, symbols=(), ids=(), more: int = 0, rule: object = _RULE) -> dict:
@@ -1439,6 +1439,25 @@ class TestOverlapsSection:
                                           run_=_heads({H1}))
         assert got["pairs"][0]["verdict"] == "shared symbol", got["pairs"]
         assert not any("another symbol rule" in line for line in board.overlap_lines(got))
+
+    def test_the_rule_note_stays_beside_a_shown_pair_its_claim_declines(self, board):
+        """Dies to: the note said beside a pair a release and a new claim cannot change (a
+        meeting), or beside one hidden past the cap, or for a side the pair does not decline on
+        (the code review of Wave 2's last delta: the cap's case survived as a mutant)."""
+        def pair(a, verdict, on=()):
+            return {"a": a, "b": "#7 win (lane/x)", "verdict": verdict, "files": ["p.py"], "paths": [],
+                    "shared": ["p.py::f"] if verdict == "shared symbol" else [], "not_read": "",
+                    "unplaced_on": [s.split()[0] for s in on], "unplaced_labels": list(on)}
+
+        fill = [pair(f"x{i} (lane/z)", "unplaced", on=["#7 win (lane/x)"]) for i in range(board.OVERLAPS_SHOWN - 2)]
+        section = {"pairs": [pair("s (lane/a)", "unplaced", on=["s (lane/a)"]), pair("m (lane/b)", "shared symbol"),
+                             *fill, pair("h (lane/c)", "unplaced", on=["h (lane/c)"])],
+                   "notes": [], "partial": False,
+                   "stale_rule": {"s (lane/a)": ["c-1", "c-9"], "m (lane/b)": ["c-2"], "h (lane/c)": ["c-3"],
+                                  "x0 (lane/z)": ["c-4"]}}
+        notes = [line.strip() for line in board.overlap_lines(section) if "another symbol rule" in line]
+        assert notes == ["s (lane/a): claims c-1, c-9 were placed under another symbol rule and read whole "
+                         "(their files as unplaced lines) until their seat releases them and claims again"], notes
 
     def test_a_side_that_declines_on_an_insertion_naming_no_point_is_named(self, board, tmp_path, by_head):
         """Dies to: the side-naming left untaught of `beside` (the line said unplaced lines and

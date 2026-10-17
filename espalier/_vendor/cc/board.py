@@ -618,9 +618,11 @@ def read_overlaps_section(root: Path, base: str, claims: list[dict], prs: list[d
             pair.update(verdict=verdict["verdict"], files=verdict[key], shared=verdict["shared"],
                         paths=[] if key == "paths" else verdict["paths"])
             if verdict["verdict"] == "unplaced":
-                pair["unplaced_on"] = [s["who"] for s, place in ((a, one), (b, two))
-                                       if any(place[f]["unplaced"] or place[f].get("beside")
-                                              or not place[f]["changed"] for f in verdict["unplaced"])]
+                declining = [s for s, place in ((a, one), (b, two))
+                             if any(place[f]["unplaced"] or place[f].get("beside")
+                                    or not place[f]["changed"] for f in verdict["unplaced"])]
+                pair["unplaced_on"] = [s["who"] for s in declining]
+                pair["unplaced_labels"] = [s["label"] for s in declining]
             pairs.append(pair)
     rank = {v: n for n, v in enumerate(_VERDICT_ORDER)}
     pairs.sort(key=lambda p: (0 if seat and seat in p["seats"] else 1, rank.get(p["verdict"], len(rank))))
@@ -675,11 +677,15 @@ def overlap_lines(section: object) -> list[str]:
     if len(pairs) > OVERLAPS_SHOWN:
         texts.append(f"and {len(pairs) - OVERLAPS_SHOWN} more (--json lists them)")
     texts += [str(n) for n in section.get("notes") or []]
+    # Said only beside a shown pair it declines (only an unplaced pair names the sides it
+    # declines on): a release and a new claim change no other.
     stale = section.get("stale_rule") or {}
-    said = list(dict.fromkeys(label for p in pairs[:OVERLAPS_SHOWN] for label in (p.get("a"), p.get("b"))
-                              if label in stale))
+    said = list(dict.fromkeys(label for p in pairs[:OVERLAPS_SHOWN]
+                              for label in p.get("unplaced_labels") or [] if label in stale))
     texts += [f"{label}: claim {', '.join(stale[label])} was placed under another symbol rule and reads whole "
-              "(its files as unplaced lines) until its seat releases it and claims again" for label in said]
+              "(its files as unplaced lines) until its seat releases it and claims again" if len(stale[label]) == 1
+              else f"{label}: claims {', '.join(stale[label])} were placed under another symbol rule and read whole "
+              "(their files as unplaced lines) until their seat releases them and claims again" for label in said]
     return [_ascii(("overlaps: " if i == 0 else "          ") + t) for i, t in enumerate(texts)]
 
 

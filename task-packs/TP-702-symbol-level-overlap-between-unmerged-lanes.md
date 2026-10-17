@@ -131,6 +131,15 @@ The fourth delta review drove three more:
 - The stamp is written only where the lane's derivation names its rule, never by the message builder, so a list from anywhere else reads whole.
 - A claim placed under another rule gets a note under each pair it is in, naming the claim for its seat to release and claim again. The first `--delta` after a rule change sends the lane whole under the new rule (`mail.symbol_delta` reads the older claims as naming nothing).
 
+The fifth delta review drove the pin's own gaps:
+- The diff algorithm changed under the same rule: rule 2 was re-recorded, not bumped. The rule is now 3, and rule 2 never reached the base.
+- `test_no_rule_s_digest_is_re_recorded` reads the merge base's record: a rule's digest is never changed, and a moved digest comes with a higher rule.
+- The corpus missed whole branches of the placement: 7 of 18 changes that move one left the digest unchanged. It is now generated (every one-line edit and deletion, every block insertion, every definition deleted, over eight bases). It catches all 23 of the code review's mutants.
+- `test_the_corpus_runs_every_line_of_the_placement` names any line of the placement no shape reaches.
+- The delta after a rule change carries the older claims' paths too, so their release leaves nothing claimed by no one.
+- The rule note sits only beside a shown pair that its claim declines.
+- Neither review found a false certificate against merge-ort at this delta: 0 in 225,576 generated pairs and 0 in 15,259 fuzzed ones. Against merge-file alone, 62 of the generated pairs read as false certificates, and merge-ort merges each of them clean.
+
 "Different functions" now means no symbol shared, none next to the other's change, and no shared run of blanks. Twin rows in `tests/test_symbols.py` pin each shape beside the exit codes of both git mergers, `git merge-file` and merge-ort (`git merge-tree --write-tree`); merge-file alone diffs as git's default does. Both sides are placed through git's own diff, not difflib's, which places some insertions elsewhere. Clean controls are among the rows.
 
 Measured on #246-#283 with Apple git 2.39.5:
