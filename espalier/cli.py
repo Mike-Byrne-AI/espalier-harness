@@ -169,6 +169,10 @@ def _load_config(repo_root: Path, args: argparse.Namespace):
 # Paths relative to repo root that init deploys
 # sister-site: ok purpose-scoped: init DEPLOY list, not the integrity-hash set (_integrity.MANIFEST_FILES)
 INIT_HOOK_SCRIPTS = [
+    # The start refusal every deny hook imports first, before the floor
+    # (DEF-3008): first here, so a deploy that stops partway never leaves a
+    # new deny hook without it (missing, each one's last resort refuses).
+    "tools/cc/hooks/_start_refusal.py",
     "tools/cc/hooks/session_start.py",
     "tools/cc/hooks/task_router.py",
     "tools/cc/hooks/plan_guard.py",

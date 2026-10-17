@@ -722,6 +722,29 @@ doctor` names a wired hook that cannot start. Maintenance mode (the friction
 bypass below) does not lift this refusal -- the guard runs before that gate is
 read, and the PreToolUse guard matches every tool.
 
+**The floor starts or refuses too.** Until 2026-10-16 the floor of that guard
+-- `_hook_utils.py`, with `tools/cc/_json_safe.py` under it, and
+`_denial_reasons.py`, with `_maintenance_mode.py` under it -- imported outside
+it, so a floor module that raised was exit 1 on all four deny hooks and every
+call went through unjudged (driven on all four, 2026-10-16). Now each deny hook
+imports `tools/cc/hooks/_start_refusal.py` first and alone, and the floor joins
+the guard: a floor module that raises is refused like any other sibling, named
+with its line, and the restore below lets it through. `_start_refusal.py`
+imports only the standard library at its top, because any sibling may be the
+one that failed. A name removed from one floor module names that module's file
+for the restore too, not only the module that read the name. If
+`_start_refusal.py` cannot import itself, each hook's own last resort refuses
+naming that one file, and `write_guard`'s lets through exactly `git restore
+--source=HEAD -- :/tools/cc/hooks/_start_refusal.py` (the `:/` reads the path
+from the top of the checkout, so it works from any directory), with no copy
+saved and no record written, since the module that writes both is the one that
+failed; where HEAD has no such file, an upgrade that did not finish, the repair
+is `espalier upgrade --execute .` from a terminal. When `_hook_utils.py`, or
+`tools/cc/_json_safe.py` under it, is the module that raised, a restore goes
+through with its copy but without a record, which the helper writes. On the
+Stop hook each of these refusals lets the protocol's loop signal through, so a
+broken start pauses a Stop once and never locks it.
+
 **One call gets through a wedged guard.** A wedged guard used to refuse the
 call that would repair it, so the operator restored the file from a terminal
 (six lock-outs from 2026-09-08 to 10-16). Now `write_guard`'s refusal reads

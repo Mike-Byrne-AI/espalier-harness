@@ -1,6 +1,6 @@
 {
  "id": "DEF-3009",
- "subject": "tools/cc/hooks/_denial_reasons.py",
+ "subject": "tools/cc/hooks/_start_refusal.py",
  "cmd": "python -c \"import json, os, shutil, subprocess, sys, tempfile, pathlib; t = pathlib.Path(tempfile.mkdtemp()); shutil.copytree('tools/cc', t / 'tools' / 'cc'); h = t / 'tools' / 'cc' / 'hooks'; p = h / '_reinject.py'; p.write_bytes(p.read_bytes() + bytes([10]) + b'raise KeyError(1)' + bytes([10])); env = {k: v for k, v in os.environ.items() if not k.startswith('CLAUDE')}; env['CLAUDE_PROJECT_DIR'] = str(t); subprocess.run([sys.executable, str(h / 'write_guard.py')], input=json.dumps({'tool_name': 'Bash', 'tool_input': {'command': 'git restore --source=HEAD -- tools/cc/hooks/_reinject.py'}, 'cwd': str(t)}), capture_output=True, text=True, cwd=t, env=env, timeout=60); sys.path.insert(0, 'tools/cc'); import checkout_sync; cs = [c.relative_to(t).as_posix() for c in t.rglob('*.py.txt')]; print(bool(cs) and any(checkout_sync._disposable(c) for c in cs))\"",
  "open_value": "True",
  "why_not": null,
@@ -8,7 +8,7 @@
   "tools/cc/checkout_sync.py",
   "tools/cc/hooks/write_guard.py"
  ],
- "row_sha": "e766da1fbd30",
- "text_sha": "9b5d12787cb8",
- "verified_2026_10_16": "OPEN (filed 2026-10-16; probe driven at filing)"
+ "row_sha": "6fc8c5697b3b",
+ "text_sha": "63177a497df1",
+ "verified_2026_10_16": "STILL_OPEN (re-pinned value unchanged; subject 'tools/cc/hooks/_denial_reasons.py' -> 'tools/cc/hooks/_start_refusal.py' on 2026-10-16: the copy's writer moved from _denial_reasons to _start_refusal with DEF-3008 (lane/deny-hook-floor-refuses); the anchor, text and probe subject follow it, and the value and the claim stand)"
 }

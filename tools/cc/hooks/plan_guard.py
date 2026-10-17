@@ -46,12 +46,30 @@ from pathlib import Path
 
 # Co-located helper module — same zero-espalier-import pattern as other hooks.
 sys.path.insert(0, str(Path(__file__).parent))
-import _hook_utils  # noqa: E402
-import _denial_reasons  # noqa: E402
-# The floor and the guard: write_guard.py's import block is the sister site and
-# says why (DEF-1176). A sibling import that fails here would be exit 1, a
+# The start refusal first and alone, then the guard over every other sibling,
+# the floor included: write_guard.py's import block is the sister site and says
+# why (DEF-1176, DEF-3008). A sibling import that fails here would be exit 1, a
 # NON-BLOCKING error to the protocol; under `__main__` it is the structured deny.
 try:
+    import _start_refusal  # noqa: E402
+except Exception as _floor:  # noqa: BLE001 -- the start refusal itself cannot import (DEF-3008)
+    if __name__ != "__main__":
+        raise
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": (
+            "plan_guard cannot start: tools/cc/hooks/_start_refusal.py raised " + type(_floor).__name__
+            + "; it is the start refusal every deny hook imports first. Restore it to HEAD:"
+            " `git restore --source=HEAD -- :/tools/cc/hooks/_start_refusal.py`, as one Bash command"
+            " (write_guard, wedged by the same file, lets that one call through) or from a terminal;"
+            " if HEAD has no such file (an upgrade that did not finish), run"
+            " `espalier upgrade --execute .` from a terminal instead. Every call this hook judges"
+            " is refused until then.")}}) + "\n")
+    sys.stdout.flush()
+    raise SystemExit(0) from None
+try:
+    import _hook_utils  # noqa: E402
+    import _denial_reasons  # noqa: E402
     import _integrity  # noqa: E402
     import _maintenance_mode  # noqa: E402
     from _hook_utils import os_error_text  # noqa: E402
@@ -69,7 +87,7 @@ try:
 except Exception as _skew:  # noqa: BLE001 -- a kept helper that predates its siblings (DEF-1176)
     if __name__ != "__main__":
         raise
-    _denial_reasons.refuse_on_helper_skew("plan_guard", "PreToolUse", _skew)
+    _start_refusal.refuse_on_helper_skew("plan_guard", "PreToolUse", _skew)
 
 # stdlib TOML for adopter-configured exempt prefixes. The
 # zero-espalier-imports contract forbids reaching into espalier/_compat.py,
