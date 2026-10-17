@@ -375,7 +375,12 @@ def _survives_anywhere(
     Otherwise unpruned by design: a ``.venv`` or ``node_modules`` is walked
     (a ``.venv`` full of bytecode reaches the early return at once), and the
     no-survivor worst case measured 0.04 s over 10,800 files -- an uninstall
-    pays it at most twice."""
+    pays it at most twice. The prune is the ``.git`` entry alone, never Claude
+    Code's worktree folder by name (``_safe_walk.holds_another_checkout``):
+    the question is git's -- would retiring the entry expose a file -- and git
+    stops at a link, not at a name, so a worktree folder that lost its link is
+    walked here as git would read it (DEF-3000's failure-mode review)."""
+    # nested-repo-ok prunes by has_git_entry alone, git's own view (DEF-3000)
     for dirpath, dirnames, filenames in os.walk(repo_root, followlinks=False):
         dirnames[:] = sorted(
             d for d in dirnames

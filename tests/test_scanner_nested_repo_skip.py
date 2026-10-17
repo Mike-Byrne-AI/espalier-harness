@@ -181,3 +181,49 @@ class TestNestedRepoSkip:
         yielded = [str(p).replace("\\", "/") for p in _safe_rglob(Path(outer), "*.py")]
         assert not any("/sub/" in p for p in yielded), f"gitlink-file repo not pruned: {yielded}"
         assert any("own.py" in os.path.basename(p) for p in yielded), f"own code lost: {yielded}"
+
+
+#: Every scanner carrying the inline prune: the two behavioural lists above,
+#: which ``test_every_os_walk_scanner_is_behaviorally_covered`` keeps whole.
+_PRUNE_SCANNERS = sorted({m for m, _ in _WALKERS} | set(_SAFE_RGLOB_SCANNERS))
+
+
+class TestAWorktreeFolderIsAnotherCheckout:
+    """DEF-3000: a Claude Code worktree folder under ``.claude/worktrees/``
+    whose ``.git`` link is gone (an interrupted removal on Windows) was walked
+    like the tree's own files, since each scanner-local prune keyed on that
+    link alone; the freshness scanner then raised on a fragment id the folder
+    repeated. Each copy now leaves the folder out by its name pair, as
+    ``espalier._safe_walk.holds_another_checkout`` does. Earned red: all twelve
+    kept it on main."""
+
+    def test_the_population_is_every_scanner(self):
+        assert len(_PRUNE_SCANNERS) >= 12, _PRUNE_SCANNERS
+
+    @pytest.mark.parametrize("modname", _PRUNE_SCANNERS)
+    def test_each_prune_leaves_the_worktree_folder_by_name(self, tmp_path, modname):
+        # the engine's pair, so the inline copies are read against it
+        from espalier._safe_walk import WORKTREES_PARENT
+
+        parent, folder = WORKTREES_PARENT
+        mod = importlib.import_module(f"espalier.scanners.{modname}")
+        names = [folder, "agents"]
+        mod._skip_nested_repos(str(tmp_path / parent), names)
+        assert names == ["agents"], (modname, names)
+        elsewhere = [folder]
+        mod._skip_nested_repos(str(tmp_path / "docs"), elsewhere)
+        assert elsewhere == [folder], (modname, elsewhere)
+
+    @pytest.mark.parametrize("modname", _SAFE_RGLOB_SCANNERS)
+    def test_safe_rglob_scanner_skips_a_worktree_whose_link_is_gone(self, tmp_path, modname):
+        outer = tmp_path / "outer"
+        wt = outer / ".claude" / "worktrees" / "wt"
+        wt.mkdir(parents=True)
+        (wt / "bad.py").write_text(_VIOLATION, encoding="utf-8")
+        (outer / ".claude" / "own_hook.py").write_text(_VIOLATION, encoding="utf-8")
+        (outer / "own.py").write_text(_VIOLATION, encoding="utf-8")
+        mod = importlib.import_module(f"espalier.scanners.{modname}")
+        yielded = [str(p).replace("\\", "/") for p in mod._safe_rglob(Path(outer), "*.py")]
+        assert not any("/worktrees/" in p for p in yielded), f"{modname} walked the worktree folder: {yielded}"
+        assert any(p.endswith("/own.py") for p in yielded), f"{modname} lost own code: {yielded}"
+        assert any(p.endswith("/.claude/own_hook.py") for p in yielded), f"{modname} stopped walking .claude: {yielded}"

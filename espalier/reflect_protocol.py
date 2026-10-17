@@ -30,7 +30,7 @@ from typing import Any
 
 from espalier._report_io import safe_text
 from espalier import _stack_table
-from espalier._safe_walk import DEPENDENCY_TREE_DIRS, dependency_dirs_for, has_git_entry, safe_rglob, visible
+from espalier._safe_walk import DEPENDENCY_TREE_DIRS, dependency_dirs_for, holds_another_checkout, safe_rglob, visible
 from espalier import surface_contract
 from espalier.claim_extractor import RECORD_SURFACES
 from espalier.managed_markers import path_has_seed_stamp
@@ -201,7 +201,7 @@ def _walk_router_docs(repo_root: Path) -> list[str]:
             d for d in dirnames
             if not (d.startswith(".") and d != ".claude")
             and d not in skip
-            and not has_git_entry(Path(dirpath) / d))
+            and not holds_another_checkout(Path(dirpath) / d))
         if "CLAUDE.md" in filenames:
             rels.append((Path(dirpath) / "CLAUDE.md").relative_to(repo_root).as_posix())
     return sorted(rels)

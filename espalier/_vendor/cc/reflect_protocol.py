@@ -166,8 +166,13 @@ def _skip_nested_repos(dirpath: str, dirnames: list[str]) -> None:
     the rule in espalier/_safe_walk.py::has_git_entry, which the engine's
     reflect walk prunes by; ``os.path.lexists`` for that rule's two reasons
     (a dangling link still prunes, and a parent that denies traversal answers
-    False instead of raising)."""
+    False instead of raising). Claude Code's worktree folder is left out by
+    name too (espalier/_safe_walk.py::holds_another_checkout's other half)."""
     dirnames[:] = [d for d in dirnames if not os.path.lexists(os.path.join(dirpath, d, ".git"))]
+    if os.path.basename(os.path.normpath(dirpath)) == ".claude":
+        # Claude Code's worktree folder holds other checkouts, one whose .git
+        # link is gone included (DEF-3000; espalier._safe_walk.WORKTREES_PARENT)
+        dirnames[:] = [d for d in dirnames if d != "worktrees"]
 
 
 def _safe_rglob(root, pattern="*"):
