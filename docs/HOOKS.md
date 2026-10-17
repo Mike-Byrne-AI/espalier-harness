@@ -787,8 +787,8 @@ text is `git restore [--source=HEAD] [--] <file>`, `git checkout -- <file>` or
   worktree under `.claude/worktrees/` its session-start reaper keeps the
   worktree while it holds one, and the `Worktrees:` line names the copy, first.
   Claude Code's own sweep of the worktrees it created keeps one for changed or
-  untracked files and unpushed commits (`docs/external/cc-worktrees.md`) and
-  names no ignored file, so read a copy there before that sweep runs.
+  untracked files and unpushed commits, as Claude Code's worktree docs put it,
+  and names no ignored file, so read a copy there before that sweep runs.
 - **The pass.** The call carries no permission decision, so your permission
   mode decides it as it would any other. Its context tells Claude why it passed,
   and it writes a `pretooluse_failed_open_wedge_restore` record.
