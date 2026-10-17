@@ -157,7 +157,7 @@ def census(*, prs: int | None = None, window: tuple[int, int] | None = None, bas
                                 "--json", "number,createdAt,mergedAt,headRefOid,mergeCommit"))
     info: dict[int, dict] = {}
     unread: list[int] = []
-    changed_total = unplaced_total = 0
+    changed_total = unplaced_total = beside_total = 0
     for pr in listed:
         head = pr["headRefOid"]
         merge = (pr.get("mergeCommit") or {}).get("oid")
@@ -169,6 +169,7 @@ def census(*, prs: int | None = None, window: tuple[int, int] | None = None, bas
         placements = symbols_between(merge_base, head)
         changed_total += sum(p["changed"] for p in placements.values())
         unplaced_total += sum(p["unplaced"] for p in placements.values())
+        beside_total += sum(p.get("beside", 0) for p in placements.values())
         info[pr["number"]] = {"created": pr["createdAt"], "merged": pr["mergedAt"], "placements": placements,
                               "changed": sum(p["changed"] for p in placements.values()),
                               "unplaced": sum(p["unplaced"] for p in placements.values())}
@@ -184,7 +185,7 @@ def census(*, prs: int | None = None, window: tuple[int, int] | None = None, bas
     verdicts = {v: sum(1 for p in pairs if p["verdict"] == v) for v in _symbols.VERDICTS if v != "none"}
     return {"prs": len(info), "unread": unread, "missing": missing, "mirrors_folded": _mirrors is not None,
             "concurrent_pairs": concurrent_pairs, "sharing_a_file": len(pairs), "verdicts": verdicts,
-            "changed_lines": changed_total, "unplaced_lines": unplaced_total,
+            "changed_lines": changed_total, "unplaced_lines": unplaced_total, "beside_insertions": beside_total,
             "per_pr": {n: {"changed": i["changed"], "unplaced": i["unplaced"]} for n, i in info.items()},
             "pairs": pairs}
 
@@ -221,19 +222,12 @@ def main(argv: list[str] | None = None) -> int:
           f"{result['concurrent_pairs']}; sharing a file: {result['sharing_a_file']}: "
           f"shared symbol {v['shared symbol']}, unplaced {v['unplaced']}, different functions "
           f"{v['different functions']}, path only {v['path only']}; unplaced Python lines "
-          f"{result['unplaced_lines']} of {result['changed_lines']} ({rate:.1%})"
+          f"{result['unplaced_lines']} of {result['changed_lines']} ({rate:.1%}); insertions naming no point "
+          f"(beside, declined apart from that share): {result['beside_insertions']}"
           + ("" if result["mirrors_folded"] else "; mirror twins NOT folded (registry unread)"))
-    edges = {_symbols.START: "the start of {}", _symbols.END: "the end of {}"}
-
-    def worded(symbol: str) -> str:
-        path, _, name = symbol.partition("::")
-        if name.startswith("<after ") and name.endswith(">"):
-            return f"the blank lines after {path}::{name[len('<after '):-1]}"
-        return edges[name].format(path) if name in edges else symbol
-
     for p in result["pairs"]:
         files = ", ".join(p["files"][:3]) + (" ..." if len(p["files"]) > 3 else "")
-        shared = [worded(s) for s in p["shared"]]
+        shared = [_symbols.mark_words(s) for s in p["shared"]]
         detail = {"shared symbol": ", ".join(shared), "unplaced": "unplaced lines in " + ", ".join(p["unplaced"]),
                   "different functions": "every changed line placed, none shared or next to the other's",
                   "path only": "not Python: " + ", ".join(p["paths"])}.get(p["verdict"], p["verdict"])

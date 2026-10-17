@@ -117,8 +117,13 @@ Found early, at Wave 2 (2026-10-17): what line 5 watches for was found by constr
 - an edit right beside another lane's insertion.
 Both read "different functions" while `git merge-file` conflicts. The mapper now also places each hunk's old-side neighbours (`_symbols.changed_symbols`):
 - a file's edges are `<start>` and `<end>`;
-- an insertion beside a blank line names its run of blanks, `<after X>`, where X is the nearest line above that is not blank. The second delta review drove this shape: two methods appended to one class above another, which git sits in one gap and conflicts on;
-- an insertion between two lines no node holds names no point, so it is counted `beside`. That declines the pair without entering 0-C's share of changed lines. An edit beside such a line declines nothing: git merges two edits either side of an untouched import, and a twin row pins it.
+- an insertion beside a blank line names its run of blanks, `<after:X>`, where X is what the nearest line above that is not blank names (two targets joined by `+`; `<start>` when no such line is above). The second delta review drove this shape: two methods appended to one class above another, which git sits in one gap and conflicts on;
+- an insertion between two lines no node holds names no point, so it is counted `beside` and marked `<module>`. That declines the pair without entering 0-C's share of changed lines. An edit beside such a line declines nothing: git merges two edits either side of an untouched import, and a twin row pins it;
+- both sides are diffed with git's indent heuristic off, which would otherwise slide a pasted copy of a function to where it reads clear of the other lane's edit.
+
+The third delta review drove two more changes:
+- A claim now carries the rule it was placed under (`symbols_rule`). A claim from before this rule, or under another one, is read as its paths whole, so a seat that has not pulled cannot certify a pair under the old reading.
+- A claim keeps up to 64 of these marks apart from its 128 names, so marks never crowd out the names.
 
 "Different functions" now means no symbol shared, none next to the other's change, and no shared run of blanks. Twin rows in `tests/test_symbols.py` pin each shape beside git's exit code. Both sides are placed through git's own diff, not difflib's, which places some insertions elsewhere. Clean controls are among the rows.
 

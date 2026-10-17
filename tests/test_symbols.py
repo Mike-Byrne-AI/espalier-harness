@@ -61,8 +61,8 @@ def _placement(sym, old: str, new: str, path: str = "p.py") -> dict:
 
 def _named(symbols: set[str]) -> set[str]:
     """The symbols without the marks for what a hunk borders (a file's ``<start>`` and
-    ``<end>``, a run of blanks ``<after X>``): for a row about which symbol a change lands on."""
-    return {s for s in symbols if not s.endswith(("::<start>", "::<end>")) and "::<after " not in s}
+    ``<end>``, a run of blanks ``<after:X>``): for a row about which symbol a change lands on."""
+    return {s for s in symbols if not s.endswith(("::<start>", "::<end>")) and "::<after:" not in s}
 
 
 OLD = '''import os
@@ -146,7 +146,7 @@ class TestChangedSymbols:
         hunk = f"@@ -{line_of_g},4 +{line_of_g - 1},0 @@\n"
         got = sym.changed_symbols("p.py", OLD, new, hunk)
         # The two blanks it deletes are the run after g: the mark for that point.
-        assert got["symbols"] == {"p.py::g", "p.py::C", "p.py::<after g>"} and got["changed"] == 2, got
+        assert got["symbols"] == {"p.py::g", "p.py::C", "p.py::<after:g>"} and got["changed"] == 2, got
         assert got["unplaced"] == 0, got
 
     def test_a_method_added_at_the_end_of_a_class_names_only_that_method(self, sym):
@@ -155,7 +155,7 @@ class TestChangedSymbols:
         appending there conflict in git, and meet at it."""
         new = OLD.replace("        return 2\n", "        return 2\n\n    def o(self):\n        return 4\n")
         got = _placement(sym, OLD, new)
-        assert got["symbols"] == {"p.py::C.o", "p.py::<after C.n>"} and got["beside"] == 0, got
+        assert got["symbols"] == {"p.py::C.o", "p.py::<after:C.n>"} and got["beside"] == 0, got
 
     def test_a_trailing_comment_after_a_body_is_unplaced_not_the_next_def(self, sym):
         """Dies to: a comment run that a blank line breaks still walking forward to the next def."""
@@ -163,7 +163,7 @@ class TestChangedSymbols:
         got = _placement(sym, OLD, new)
         # f is the line the insertion follows, and the run of blanks after f the line below it;
         # g, past those blanks, is not touched.
-        assert got["symbols"] == {"p.py::<module>", "p.py::f", "p.py::<after f>"} and got["unplaced"] == 1, got
+        assert got["symbols"] == {"p.py::<module>", "p.py::f", "p.py::<after:f>"} and got["unplaced"] == 1, got
 
     def test_a_blank_line_between_methods_names_nothing(self, sym):
         """Dies to: a blank inside a class span producing the class (the two-rules finding)."""
@@ -172,7 +172,7 @@ class TestChangedSymbols:
         # The blank names no definition and is not counted; `n`, the line it sits above, is its
         # neighbour, and the run of blanks after `m` the point it lands in.
         assert "p.py::C" not in got["symbols"] and got["changed"] == 0, got
-        assert got["symbols"] == {"p.py::C.n", "p.py::<after C.m>"}, got
+        assert got["symbols"] == {"p.py::C.n", "p.py::<after:C.m>"}, got
 
     def test_a_rename_reports_both_names(self, sym):
         """Dies to: only the new side of a changed hunk placed (`f` vanishes, the other lane meets nothing)."""
@@ -201,7 +201,7 @@ class TestChangedSymbols:
         got = _placement(sym, OLD, OLD.replace("import os\n", "import os\nimport sys\n"))
         # The line it follows, `import os`, names nothing; the blank line below it is the run of
         # blanks the insertion lands in, the point it names.
-        assert got["symbols"] == {"p.py::<module>", "p.py::<after <module>>"}, got
+        assert got["symbols"] == {"p.py::<module>", "p.py::<after:<module>>"}, got
         assert got["unplaced"] == 1 and got["changed"] == 1 and got["beside"] == 0, got
 
     def test_a_file_that_is_not_python_is_a_path_tier(self, sym):
@@ -251,7 +251,8 @@ class TestSpans:
     def test_every_diff_reads_plain_text(self, sym):
         """Dies to: a colour, external-diff or textconv setting in the box's git config turning the
         hunk header into something `HUNK_RE` does not match, so nothing is read and all is certified."""
-        assert {"--no-color", "--no-ext-diff", "--no-textconv", "--inter-hunk-context=0"} <= set(sym.DIFF_ARGS)
+        assert {"--no-color", "--no-ext-diff", "--no-textconv", "--inter-hunk-context=0",
+                "--no-indent-heuristic"} <= set(sym.DIFF_ARGS)
 
 
 class TestNothingReadIsNeverCertified:
@@ -294,7 +295,7 @@ class TestPlacementEdges:
         got = _placement(sym, old, new)
         # The blank is not counted (changed stays 0); `g`, the line it sits above, is its
         # neighbour, and the run of blanks after `f` the point it lands in.
-        assert got["symbols"] == {"p.py::g", "p.py::<after f>"} and got["changed"] == 0, got
+        assert got["symbols"] == {"p.py::g", "p.py::<after:f>"} and got["changed"] == 0, got
 
     def test_an_indented_trailing_comment_is_unplaced_not_the_next_def(self, sym):
         """Dies to: the forward walk ignoring indentation, so a comment indented as `f`'s body with
@@ -467,9 +468,35 @@ class TestTouchingHunksAreNeverCertified:
         neighbours name nothing and its own lines name a new function each; git conflicts at
         the one point both land on)."""
         base = "import os\nimport sys\n\n\ndef f():\n    return 1\n"
-        verdict, rc = self._row(sym, tmp_path, base.replace("import os\n", "import os\ndef h():\n    return 2\n"),
+        ours = base.replace("import os\n", "import os\ndef h():\n    return 2\n")
+        verdict, rc = self._row(sym, tmp_path, ours,
                                 base.replace("import os\n", "import os\ndef k():\n    return 3\n"), base=base)
         assert rc != 0 and verdict != "different functions", (verdict, rc)
+        # The decline reaches a claim only through the mark the placement carries.
+        got = _git_placement(sym, tmp_path, base, ours)
+        assert got["beside"] == 1 and "p.py::<module>" in got["symbols"], got
+
+    def test_a_pasted_copy_beside_another_lanes_edit_never_certifies(self, sym, tmp_path):
+        """Dies to: git diff's indent heuristic left on (it slides the pasted copy to the top of
+        its range, where it reads clear of the edit, while the merge places it at the bottom,
+        beside the edit; the code review of Wave 2's last delta, driven)."""
+        base = "X = 1\n\n\ndef f(x):\n    return x + 1\n\n\ndef g(y):\n    return y\n"
+        pasted = base.replace("\n\n\ndef g", "\n\n\ndef f(x):\n    return x + 1\n\n\ndef g")
+        verdict, rc = self._row(sym, tmp_path, pasted, base.replace("def g(y):", "def g(y=0):"), base=base)
+        assert rc != 0 and verdict != "different functions", (verdict, rc)
+
+    def test_a_run_of_blanks_at_the_top_of_a_file_is_its_start(self, sym, tmp_path):
+        """Dies to: the walk up a run of blanks past the first line naming the module (two lanes
+        inserting into the blank lines a file opens with meet at its start)."""
+        base = "\n\ndef f():\n    return 1\n"
+        got = _git_placement(sym, tmp_path, base, base.replace("\n\ndef f", "\nX = 1\n\ndef f", 1))
+        assert "p.py::<start>" in got["symbols"], got
+
+    def test_a_run_of_blanks_after_a_tuple_target_names_each_target(self, sym, tmp_path):
+        """Dies to: the names a line binds joined with a comma (the comma a step field splits on)."""
+        base = "a, b = 1, 2\n\n\ndef f():\n    return 1\n"
+        got = _git_placement(sym, tmp_path, base, base.replace("a, b = 1, 2\n\n", "a, b = 1, 2\n\nY = 3\n"))
+        assert "p.py::<after:a+b>" in got["symbols"], got
 
     def test_two_edits_either_side_of_an_import_stay_certified(self, sym, tmp_path):
         """The clean control for the line above. Dies to: an edit's neighbour that no node holds
@@ -493,6 +520,47 @@ class TestTouchingHunksAreNeverCertified:
         verdict, rc = self._row(sym, tmp_path, _TWO.replace("def f():", "def f(x=0):"),
                                 _TWO.replace("return 2", "return 20"))
         assert rc == 0 and verdict == "different functions", (verdict, rc)
+
+    def test_two_runs_after_module_level_lines_meet_though_git_merges_them(self, sym, tmp_path):
+        """A recorded cost, not a guarantee: every run of blanks after a line that names nothing
+        is one mark, ``<after:<module>>``, so two functions added under two section comments meet
+        though git merges them (the failure-mode review of Wave 2's last delta, shape 33). The
+        direction is conservative; keying the run by its own lines is the change that flips this
+        row to a certificate."""
+        base = "# one\n\n\ndef f():\n    return 1\n\n\n# two\n\n\ndef g():\n    return 2\n"
+        ours = base.replace("# one\n\n", "# one\n\ndef h():\n    return 3\n\n")
+        theirs = base.replace("# two\n\n", "# two\n\ndef k():\n    return 4\n\n")
+        verdict, rc = self._row(sym, tmp_path, ours, theirs, base=base)
+        assert rc == 0 and verdict == "shared symbol", (verdict, rc)
+
+
+class TestMarkWords:
+    """Every mark a placement emits is said in words by the one renderer the board, the stale
+    clause and the census share, so a mark is worded once and never reaches a line raw."""
+
+    BASE = "a, b = 1, 2\n\n\nclass C:\n    def m(self):\n        return 1\n\n\n# one\n\nX = 1\n"
+    SHAPES = {
+        "<start>": "Z = 0\n" + BASE,
+        "<end>": BASE + "Y = 2\n",
+        "<after:a+b>": BASE.replace("a, b = 1, 2\n\n", "a, b = 1, 2\n\nW = 3\n"),
+        "<after:<module>>": BASE.replace("# one\n\n", "# one\n\nV = 4\n"),
+    }
+
+    def test_every_mark_a_placement_emits_is_said_in_words(self, sym, tmp_path):
+        """Dies to: a mark kind the renderer does not know (a new or renamed mark falls back to
+        its raw spelling on every reader's line). The marks are read from placements, not
+        written here; ``<module>`` alone is left out, since no reader ever names it as met."""
+        marks = set()
+        for want, new in self.SHAPES.items():
+            got = {s for s in _git_placement(sym, tmp_path, self.BASE, new)["symbols"]
+                   if "::<" in s and not s.endswith(f"::{sym.MODULE}")}
+            assert f"p.py::{want}" in got, (want, got)
+            marks |= got
+        for mark in sorted(marks):
+            for words in (sym.mark_words(mark), sym.mark_words(mark, in_file=True)):
+                assert "<" not in words and ">" not in words, (mark, words)
+            assert "p.py" not in sym.mark_words(mark, in_file=True), mark
+            assert "p.py" in sym.mark_words(mark), mark
 
 
 class TestConcurrent:

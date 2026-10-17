@@ -380,8 +380,6 @@ def _symbol_clauses(root: Path, paths: list[str], *, base_ref: str, tested: str,
         mapper = _symbol_mapper()
         if mapper is None:
             return not_read("the symbol mapper (tools/cc/_symbols.py) is not importable here")
-        edges = {getattr(mapper, "START", "<start>"): "the start of the file",
-                 getattr(mapper, "END", "<end>"): "the end of the file"}
         fork = _git_lines(root, run_, "merge-base", now, pr_rev)
         if not fork:
             return not_read(f"no merge base of the head with {base_ref}")
@@ -393,9 +391,7 @@ def _symbol_clauses(root: Path, paths: list[str], *, base_ref: str, tested: str,
                 continue
             verdict = mapper.pair_verdict({path: lane}, {path: moved})
             if verdict["verdict"] == "shared symbol":
-                names = [s.split("::", 1)[1] for s in verdict["shared"]]
-                words = [edges.get(n) or (f"the blank lines after {n[len('<after '):-1]}"
-                                          if n.startswith("<after ") else n) for n in names]
+                words = [mapper.mark_words(s, in_file=True) for s in verdict["shared"]]
                 out[path] = f"(both changed, meeting at {', '.join(words)})"
             elif verdict["verdict"] == "different functions":
                 out[path] = "(both changed, different functions, none shared or next to the other's)"

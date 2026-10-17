@@ -272,6 +272,20 @@ class TestTheSymbolClause:
         (entry,) = _judge(rules, repo, head)["near"]
         assert entry.startswith("tools/a.py (both changed; symbols not read: the symbol mapper"), entry
 
+    def test_a_mapper_that_breaks_at_import_costs_only_the_clause(self, rules, tmp_path, monkeypatch):
+        """Dies to: only an ImportError contained (a `_symbols.py` that raises anything else at
+        import escaped stale_base and took the advisory with it)."""
+        broken = tmp_path / "broken"
+        broken.mkdir()
+        (broken / "_symbols.py").write_text("raise RuntimeError('half-written mapper')\n", encoding="utf-8")
+        monkeypatch.delitem(sys.modules, "_symbols", raising=False)
+        monkeypatch.syspath_prepend(str(broken))
+        (tmp_path / "repo").mkdir()
+        repo = _Repo(tmp_path / "repo")
+        head = _function_lane(repo, _FUNCS.replace("return 1", "return 10"), _FUNCS.replace("return 2", "return 20"))
+        (entry,) = _judge(rules, repo, head)["near"]
+        assert entry.startswith("tools/a.py (both changed; symbols not read: the symbol mapper"), entry
+
     def test_a_path_that_is_not_python_keeps_its_bare_clause(self, rules, tmp_path, mapper):
         repo = _Repo(tmp_path)
         repo.commit(_BASE_FILES, "2026-10-10T05:00:00Z", "base")

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import json
 import pathlib
 
 import pytest
@@ -124,3 +125,26 @@ class TestCanonicalFolding:
         for twin, host in pairs:
             assert census.canonical(twin) == census.canonical(host), (twin, host)
             assert census.canonical(census.canonical(twin)) == census.canonical(twin), twin
+
+
+class TestTheSummary:
+    def test_the_beside_insertions_are_summed_and_printed_apart_from_the_unplaced_share(
+            self, census, monkeypatch, capsys):
+        """Dies to: the beside count dropped from the sum or from the printed line (an insertion
+        naming no point declines its pair outside 0-C's share, and the census would hide how many
+        did)."""
+        listed = [{"number": n, "createdAt": "2026-10-01T00:00:00Z", "mergedAt": f"2026-10-0{n + 1}T00:00:00Z",
+                   "headRefOid": f"h{n}", "mergeCommit": {"oid": f"m{n}"}} for n in (1, 2)]
+        place = {"h1": {"a.py": {"kind": "python", "symbols": {"a.py::<module>"}, "changed": 4, "unplaced": 1,
+                                 "beside": 2}},
+                 "h2": {"b.py": {"kind": "python", "symbols": {"b.py::f"}, "changed": 3, "unplaced": 0,
+                                 "beside": 1}}}
+        monkeypatch.setattr(census, "_gh", lambda *argv: json.dumps(listed))
+        monkeypatch.setattr(census, "_git", lambda *argv: "base\n" if argv[0] == "merge-base" else "")
+        monkeypatch.setattr(census, "symbols_between", lambda base, head: place[head])
+        result = census.census(prs=2)
+        assert (result["beside_insertions"], result["unplaced_lines"], result["changed_lines"]) == (3, 1, 7)
+        assert census.main(["--prs", "2"]) == 0
+        out = capsys.readouterr().out
+        assert "unplaced Python lines 1 of 7 (14.3%)" in out, out
+        assert "(beside, declined apart from that share): 3" in out, out

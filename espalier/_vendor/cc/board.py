@@ -618,8 +618,8 @@ def read_overlaps_section(root: Path, base: str, claims: list[dict], prs: list[d
                         paths=[] if key == "paths" else verdict["paths"])
             if verdict["verdict"] == "unplaced":
                 pair["unplaced_on"] = [s["who"] for s, place in ((a, one), (b, two))
-                                       if any(place[f]["unplaced"] or not place[f]["changed"]
-                                              for f in verdict["unplaced"])]
+                                       if any(place[f]["unplaced"] or place[f].get("beside")
+                                              or not place[f]["changed"] for f in verdict["unplaced"])]
             pairs.append(pair)
     rank = {v: n for n, v in enumerate(_VERDICT_ORDER)}
     pairs.sort(key=lambda p: (0 if seat and seat in p["seats"] else 1, rank.get(p["verdict"], len(rank))))
@@ -627,11 +627,8 @@ def read_overlaps_section(root: Path, base: str, claims: list[dict], prs: list[d
 
 
 def _symbol_words(symbol: str) -> str:
-    """A symbol as the line names it; a file's edges and a run of blank lines in words."""
-    path, _, name = symbol.partition("::")
-    if name.startswith("<after ") and name.endswith(">"):
-        return f"the blank lines after {path}::{name[len('<after '):-1]}"
-    return {_symbols.START: f"the start of {path}", _symbols.END: f"the end of {path}"}.get(name, symbol)
+    """A symbol as the line names it: the mapper's own words for its marks."""
+    return _symbols.mark_words(symbol)
 
 
 def _path_words(paths: list[str]) -> str:

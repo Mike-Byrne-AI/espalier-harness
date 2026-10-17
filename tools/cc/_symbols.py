@@ -22,7 +22,7 @@ the file's own ``<start>`` or ``<end>``, so two appends to one file meet
 there. An insertion beside a blank line lands in that run of blanks, where
 git sits two lanes' insertions at one point (two methods appended to a class
 above another, two constants added below one), so it names the run,
-``<after X>`` (X what the nearest line above that is not blank names). An
+``<after:X>`` (X what the nearest line above that is not blank names). An
 insertion between two lines no node holds names no point at all, so it
 declines, counted ``beside`` apart from the changed lines' unplaced share.
 "Different functions" therefore means no symbol shared, none next to the
@@ -56,8 +56,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from record_merge import Unresolvable, run  # noqa: E402
 
 __all__ = [
-    "DIFF_ARGS", "END", "MODULE", "START", "Unresolvable", "VENDOR_MIRROR", "VENDOR_SOURCE", "VERDICTS", "canonical",
-    "changed_symbols", "concurrent", "enclosing", "innermost", "innermost_spans", "pair_verdict", "placed", "spans",
+    "AFTER", "DIFF_ARGS", "END", "MODULE", "RULE", "START", "Unresolvable", "VENDOR_MIRROR", "VENDOR_SOURCE",
+    "VERDICTS", "canonical", "changed_symbols", "concurrent", "enclosing", "innermost", "innermost_spans",
+    "mark_words", "pair_verdict", "placed", "spans",
     "symbols_between", "symbols_meet", "symbols_of_lane",
 ]
 
@@ -66,8 +67,18 @@ Runner = Callable[..., tuple[int, str, str]]
 MODULE = "<module>"
 #: The edges of a file, as the neighbours a hunk at either end touches.
 START, END = "<start>", "<end>"
+#: A run of blank lines, as the one point two lanes' insertions land on:
+#: ``path::<after:X>`` (no space, so a plan step's ``symbols:`` field keeps it whole).
+AFTER = "<after:"
 #: Every verdict ``pair_verdict`` gives; a reader that words them covers each.
 VERDICTS = ("shared symbol", "unplaced", "different functions", "path only", "none")
+#: The placement rule the symbols on a claim were derived by. 1, the first
+#: rule and carried by no stamp, placed the changed lines alone; 2 also places
+#: each hunk's neighbours, a file's edges and its runs of blank lines. A reader
+#: takes a claim of any other rule as whole, since its list may lack the marks
+#: a meeting needs (both reviews of Wave 2's last delta, driven: an unstamped
+#: claim certified two shapes git conflicts on).
+RULE = 2
 HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 #: Every diff read here: rename detection off, so a moved file is a deletion at
 #: its old path and an addition at its new one, and another lane editing the old
@@ -75,9 +86,14 @@ HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 #: otherwise reaches this reader (code review, driven): an external differ or a
 #: textconv filter replaces git's own text, a forced colour puts a code before
 #: every hunk header, and a wider inter-hunk context merges two hunks over an
-#: untouched function between them. Pinned by the tests.
+#: untouched function between them. The indent heuristic is off as well: it
+#: slides an ambiguous hunk to where it reads best, away from where the merge
+#: places it (code review, driven: a pasted copy of a function sat at the top
+#: of its slide, the merge put it at the bottom, beside another lane's edit).
+#: Pinned by the tests.
 DIFF_ARGS: tuple[str, ...] = (
     "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color", "--inter-hunk-context=0",
+    "--no-indent-heuristic",
 )
 #: The lines a ``-U0`` diff carries besides its hunks: git's own header lines.
 #: A Python file whose diff holds anything else and no hunk this reader can
@@ -251,7 +267,7 @@ def symbols_meet(one: set[str], two: set[str]) -> set[str]:
 
 def _gap(path: str, nodes: list[Span], lines: list[str], line: int) -> str:
     """A blank line that names nothing, read as its run of blanks: one point,
-    ``path::<after X>`` where X is what the nearest line above it that is not
+    ``path::<after:X>`` where X is what the nearest line above it that is not
     blank names (the start of the file where there is none). Two changes in
     one run of blanks meet there; nothing else does, and a class's methods
     do not, since the mark is no member of it."""
@@ -260,18 +276,42 @@ def _gap(path: str, nodes: list[Span], lines: list[str], line: int) -> str:
         up -= 1
     if up < 1:
         return f"{path}::{START}"
-    return f"{path}::<after {'+'.join(placed(nodes, lines, up) or [MODULE])}>"
+    return f"{path}::{AFTER}{'+'.join(placed(nodes, lines, up) or [MODULE])}>"
+
+
+def mark_words(symbol: str, *, in_file: bool = False) -> str:
+    """A symbol as a reader's line names it: a file's edges and a run of
+    blank lines in words, any other symbol as written. ``in_file`` words it
+    for a line already about the file (no path). The one renderer the board,
+    the stale clause and the census use, so a new mark is worded once."""
+    path, _, name = symbol.partition("::")
+    where = "the file" if in_file else path
+
+    def named(x: str) -> str:
+        return x if in_file else f"{path}::{x}"
+
+    if name == START:
+        return f"the start of {where}"
+    if name == END:
+        return f"the end of {where}"
+    if name.startswith(AFTER) and name.endswith(">"):
+        x = name[len(AFTER):-1]
+        if x == MODULE:
+            return f"a run of blank lines between module-level lines of {where}"
+        return f"the blank lines after {named(x)}"
+    return named(name)
 
 
 def changed_symbols(path: str, old_source: str, new_source: str, unified_diff: str) -> dict:
-    """``{"kind", "symbols", "changed", "unplaced"}`` for one file's diff
-    (``-U0`` from any producer): ``kind`` is ``python`` or ``path``; for Python
-    every removed or changed line is placed in the old source and every added
-    or changed line in the new, ``changed`` counts the lines read and
-    ``unplaced`` the ones no node holds, while ``beside`` counts the hunks'
-    old-side neighbours no node holds and the insertions set between two
-    blank lines (each declines a pair, apart from the changed lines' share);
-    for any other file the path is the one symbol and nothing is unplaced. Lines are counted by the newline
+    """``{"kind", "symbols", "changed", "unplaced", "beside"}`` for one file's
+    diff (``-U0`` from any producer): ``kind`` is ``python`` or ``path``; for
+    Python every removed or changed line is placed in the old source and every
+    added or changed line in the new, ``changed`` counts the lines read and
+    ``unplaced`` the ones no node holds. Each hunk also names its old-side
+    neighbours (the module docstring says how), and ``beside`` counts the
+    insertions that name no point at all, between two lines no node holds
+    (each declines a pair, apart from the changed lines' share); for any
+    other file the path is the one symbol and nothing is unplaced. Lines are counted by the newline
     alone (`_lines`), as git and the parser count them, and so is the diff.
     A diff that holds text other than git's headers and no hunk this reader
     can parse counts one unplaced line: whatever produced it, the file

@@ -839,14 +839,26 @@ class TestClaimSymbols:
         a folder that carries symbols under it read as claimed whole (a lane past the path cap would
         never be certified), or a folder given by hand read as listed (a hand claim and a later
         symbol claim on one lane would be certified)."""
+        rule = {mail.SYMBOLS_RULE_KEY: mail._symbols.RULE}
         _syms, _more, whole, _marked = mail.claim_view(
-            {"paths": ["tools/cc"], mail.SYMBOLS_KEY: ["tools/cc/mail.py::send"]})
+            {"paths": ["tools/cc"], mail.SYMBOLS_KEY: ["tools/cc/mail.py::send"], **rule})
         assert whole == set(), whole
         _syms, _more, whole, _marked = mail.claim_view({"paths": ["tools/cc", "docs"]})
         assert whole == {"tools/cc", "docs"}, whole
         _syms, _more, whole, _marked = mail.claim_view(
-            {"paths": ["espalier/_vendor/cc/mail.py"], mail.SYMBOLS_KEY: ["espalier/_vendor/cc/mail.py::send"]})
+            {"paths": ["espalier/_vendor/cc/mail.py"], mail.SYMBOLS_KEY: ["espalier/_vendor/cc/mail.py::send"], **rule})
         assert whole == set() and _syms == {"tools/cc/mail.py::send"}, (whole, _syms)
+
+    def test_a_claim_derived_by_another_rule_is_read_whole_and_a_new_one_is_stamped(self, mail):
+        """Dies to: the rule left off a claim, or a claim from before it read as a complete list
+        (its list may lack the neighbour and run-of-blanks marks a meeting needs)."""
+        m = _msg(mail, "mac", "claim", "", lane="l", symbols=["a.py::f"])
+        assert m["re"][mail.SYMBOLS_RULE_KEY] == mail._symbols.RULE
+        assert mail.SYMBOLS_RULE_KEY not in _msg(mail, "mac", "claim", "", lane="l", paths=["a.py"])["re"]
+        for stamp in ({}, {mail.SYMBOLS_RULE_KEY: 1}):
+            syms, _more, whole, _marked = mail.claim_view(
+                {"paths": ["a.py"], mail.SYMBOLS_KEY: ["a.py::f"], **stamp})
+            assert syms == {"a.py::f"} and whole == {"a.py"}, (stamp, whole)
 
     def test_two_claims_sharing_a_symbol_hit_by_the_symbol(self, mail):
         """Dies to: the symbol hit missing (two lanes in one function meet only as a path)."""
@@ -907,15 +919,18 @@ class TestClaimSymbols:
         assert m["re"][mail.SYMBOLS_MORE_KEY] == 5
         assert set(m["re"]["paths"]) == {s.split("::")[0] for s in many}
 
-    def test_the_marks_go_last_so_the_cap_keeps_the_real_symbols(self, mail):
-        """Dies to: the marks sorted with the names (`<end>`, `<after f>` and `<module>` sort before
-        letters, so a lane near the cap kept the marks and lost real symbols, and the listing
-        led with them)."""
+    def test_the_marks_ride_on_their_own_cap_after_the_names(self, mail):
+        """Dies to: the marks sorted with the names (`<end>`, `<after:f>` and `<module>` sort before
+        letters, so the listing led with them), or counted against the symbol cap (a lane's marks
+        pushing a real symbol out, which reads every file of the lane whole)."""
         names = [f"a.py::f{i:03d}" for i in range(mail.MAX_SYMBOLS)]
-        marks = ["a.py::<end>", "a.py::<after f000>", "a.py::<module>"]
+        marks = ["a.py::<end>", "a.py::<after:f000>", "a.py::<module>"]
         m = _msg(mail, "mac", "claim", "", lane="l", symbols=marks + names)
-        assert m["re"][mail.SYMBOLS_KEY] == sorted(names), m["re"][mail.SYMBOLS_KEY][:4]
-        assert m["re"][mail.SYMBOLS_MORE_KEY] == len(marks)
+        assert m["re"][mail.SYMBOLS_KEY] == sorted(names) + sorted(marks), m["re"][mail.SYMBOLS_KEY][:4]
+        assert mail.SYMBOLS_MORE_KEY not in m["re"]
+        many = [f"a.py::<after:f{i:03d}>" for i in range(mail.MAX_MARKS + 2)]
+        m = _msg(mail, "mac", "claim", "", lane="l", symbols=["a.py::g", *many])
+        assert m["re"][mail.SYMBOLS_MORE_KEY] == 2 and m["re"][mail.SYMBOLS_KEY][0] == "a.py::g"
 
     def test_a_symbol_path_the_guard_reads_as_secret_bearing_is_named(self, mail):
         """Dies to: the secret scan skipping the symbols (a block whose `paths` the symbol did not fill)."""

@@ -125,10 +125,13 @@ ASSIGN_SEAT_KEY = "seat"
 #: lines no definition holds), sorted. Written into ``re`` on a claim only, and
 #: only when given, so every other message, and a claim sent without them,
 #: keeps the shape above byte for byte and an older reader ignores the key.
-#: ``symbols_more`` counts what :data:`MAX_SYMBOLS` left out, written only when
-#: it is not zero.
+#: ``symbols_more`` counts what :data:`MAX_SYMBOLS` and :data:`MAX_MARKS` left
+#: out, written only when it is not zero. ``symbols_rule`` is the placement
+#: rule that derived the symbols (``_symbols.RULE``), written beside them; a
+#: claim without it, or with another, is read as whole by ``claim_view``.
 SYMBOLS_KEY = "symbols"
 SYMBOLS_MORE_KEY = "symbols_more"
+SYMBOLS_RULE_KEY = "symbols_rule"
 #: The tracked ``espalier.toml`` key naming the dispatcher seat. A team setting,
 #: the same on every clone, so it is tracked; the machine name is per clone and
 #: never is. Declared in espalier/config.py::FOREIGN_KEYS.
@@ -141,6 +144,11 @@ MAX_IDS = 64
 #: The symbols one claim carries; the rest are a count (``SYMBOLS_MORE_KEY``),
 #: and their paths are kept whole in ``paths``.
 MAX_SYMBOLS = 128
+#: The marks one claim carries beside them (a file's edges, a run of blank
+#: lines, an unplaced file), on a cap of their own, so a lane's marks never
+#: push a real symbol out (the failure-mode review, driven: the marks took two
+#: lanes of the window past the symbol cap, which reads every file whole).
+MAX_MARKS = 64
 #: How many of a claim's symbols a listing prints before the count.
 _SYMBOLS_SHOWN = 8
 #: A ledger row id: an UPPERCASE prefix, a hyphen, digits, an optional
@@ -348,12 +356,15 @@ def new_message(machine: str, type_: str, text: str, *, lane: str | None = None,
     if type_ == "assign":
         re_[ASSIGN_SEAT_KEY] = seat
     if norm_symbols:
-        # The marks (`<module>`, a file's `<start>` and `<end>`) last: under the cap the real
-        # symbols are kept, and a cut list reads as whole anyway; the listing shows names first.
-        kept = sorted(norm_symbols, key=lambda s: (s.partition("::")[2].startswith("<"), s))
-        re_[SYMBOLS_KEY] = kept[:MAX_SYMBOLS]
-        if len(kept) > MAX_SYMBOLS:
-            re_[SYMBOLS_MORE_KEY] = len(kept) - MAX_SYMBOLS
+        # The names first and the marks (`<module>`, a file's edges, a run of blank lines) after
+        # them, each on its own cap: the listing leads with names, and no mark costs one.
+        names = sorted(s for s in norm_symbols if not s.partition("::")[2].startswith("<"))
+        marks = sorted(s for s in norm_symbols if s.partition("::")[2].startswith("<"))
+        re_[SYMBOLS_KEY] = names[:MAX_SYMBOLS] + marks[:MAX_MARKS]
+        cut = max(0, len(names) - MAX_SYMBOLS) + max(0, len(marks) - MAX_MARKS)
+        if cut:
+            re_[SYMBOLS_MORE_KEY] = cut
+        re_[SYMBOLS_RULE_KEY] = _symbols.RULE
     return {
         "v": SCHEMA_VERSION, "id": mid, "type": type_, "from": machine, "at": at,
         "re": re_, "text": text, "ack": ack,
@@ -705,7 +716,10 @@ def claim_view(re_: dict) -> tuple[set[str], int, set[str], set[str]]:
     of left-out ones, the paths it claims whole and the files it marks
     unplaced. A path is whole where no symbol of this same claim is at or
     under it: a path given by hand claims its file, or its directory, whole,
-    while a directory the path cap folded keeps the symbols listed under it."""
+    while a directory the path cap folded keeps the symbols listed under it.
+    A claim whose symbols another placement rule derived (no
+    ``SYMBOLS_RULE_KEY``, or not ``_symbols.RULE``) claims every file whole:
+    its symbols still meet, but its list may lack the marks a meeting needs."""
     fold = _symbols.canonical
     syms: set[str] = set()
     for s in _str_list(re_.get(SYMBOLS_KEY)):
@@ -713,7 +727,10 @@ def claim_view(re_: dict) -> tuple[set[str], int, set[str], set[str]]:
         if sep:
             syms.add(f"{fold(where)}::{name}")
     files = {s.split("::", 1)[0] for s in syms}
-    whole = {p for p in (fold(q) for q in _str_list(re_.get("paths")))
+    paths = {fold(q) for q in _str_list(re_.get("paths"))}
+    if syms and re_.get(SYMBOLS_RULE_KEY) != _symbols.RULE:
+        return syms, _count(re_.get(SYMBOLS_MORE_KEY)), paths | files, set()
+    whole = {p for p in paths
              if not any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") for f in files)}
     unplaced = {s.split("::", 1)[0] for s in syms if s.endswith(f"::{_symbols.MODULE}")}
     return syms, _count(re_.get(SYMBOLS_MORE_KEY)), whole, unplaced

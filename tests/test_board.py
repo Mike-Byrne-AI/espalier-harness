@@ -978,12 +978,20 @@ class TestDerivedNotRestated:
         assert board._RED == ship.POST_MERGE_RED
 
 
-def _claim(seat: str, lane: str, paths, symbols=(), ids=(), more: int = 0) -> dict:
+#: The placement rule a current claim is stamped with (``_symbols.RULE``),
+#: spelled here for the rows built at collection; pinned equal below.
+_RULE = 2
+
+
+def _claim(seat: str, lane: str, paths, symbols=(), ids=(), more: int = 0, rule: object = _RULE) -> dict:
     """One live claim as ``mail.live_claims`` returns it, symbols under the
-    optional key the derivation writes."""
+    optional key the derivation writes, stamped with the rule that derived
+    them (``rule=None``: a claim from before the stamp)."""
     re_ = {"lane": lane, "classes": [], "paths": list(paths), "ids": list(ids)}
     if symbols:
         re_["symbols"] = list(symbols)
+        if rule is not None:
+            re_["symbols_rule"] = rule
     if more:
         re_["symbols_more"] = more
     return {"id": f"c-{seat}-{lane}", "from": seat, "type": "claim", "at": "2026-10-17T09:00:00Z", "re": re_}
@@ -1279,8 +1287,8 @@ class TestOverlapsSection:
                          "(no symbols: not Python, or a folder claimed whole)"], lines
 
     def test_a_meeting_in_a_run_of_blank_lines_is_said_in_words(self, board, tmp_path, by_head):
-        claims = [_claim("win", "lane/x", ["a.py"], ["a.py::<after TestA.test_one>", "a.py::TestA.test_a"]),
-                  _claim("air-work", "lane/y", ["a.py"], ["a.py::<after TestA.test_one>", "a.py::TestA.test_b"])]
+        claims = [_claim("win", "lane/x", ["a.py"], ["a.py::<after:TestA.test_one>", "a.py::TestA.test_a"]),
+                  _claim("air-work", "lane/y", ["a.py"], ["a.py::<after:TestA.test_one>", "a.py::TestA.test_b"])]
         lines = board.overlap_lines(board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set())))
         assert lines == ["overlaps: win (lane/x) and air-work (lane/y) meet at the blank lines after "
                          "a.py::TestA.test_one"], lines
@@ -1386,6 +1394,36 @@ class TestOverlapsSection:
     @staticmethod
     def _real_section(*a, **k):
         return _REAL_SECTION(*a, **k)
+
+    def test_the_rows_stamp_the_mappers_rule(self, board):
+        assert _RULE == board._symbols.RULE and board.mail.SYMBOLS_RULE_KEY == "symbols_rule"
+
+    @pytest.mark.parametrize("rule", [None, 1], ids=["unstamped", "older"])
+    def test_a_claim_of_another_rule_never_certifies(self, board, tmp_path, by_head, rule):
+        """Dies to: a claim from before the neighbour rule read as a complete list (it names
+        `C.o` alone for a method appended to a class, with no mark for the run of blanks it
+        landed in; another seat's head appending `C.p` there meets it, and git conflicts)."""
+        by_head[H1] = {"p.py": {"kind": "python", "symbols": {"p.py::C.p", "p.py::<after:C.n>"}, "changed": 2,
+                                "unplaced": 0, "beside": 0}}
+        old = _claim("air-work", "lane/y", ["p.py"], ["p.py::C.o"], rule=rule)
+        got = board.read_overlaps_section(tmp_path, "main", [old], [_pr(7, "win", "lane/x", H1, paths=("p.py",))],
+                                          run_=_heads({H1}))
+        assert got["pairs"][0]["verdict"] == "unplaced", got["pairs"]
+        stamped = _claim("air-work", "lane/y", ["p.py"], ["p.py::C.o", "p.py::<after:C.n>"])
+        got = board.read_overlaps_section(tmp_path, "main", [stamped], [_pr(7, "win", "lane/x", H1, paths=("p.py",))],
+                                          run_=_heads({H1}))
+        assert got["pairs"][0]["verdict"] == "shared symbol", got["pairs"]
+
+    def test_a_side_that_declines_on_an_insertion_naming_no_point_is_named(self, board, tmp_path, by_head):
+        """Dies to: the side-naming left untaught of `beside` (the line said unplaced lines and
+        named nobody's side)."""
+        by_head[H1] = {"a.py": {"kind": "python", "symbols": {"a.py::h", "a.py::<module>"}, "changed": 2,
+                                "unplaced": 0, "beside": 1}}
+        claims = [_claim("air-work", "lane/y", ["a.py"], ["a.py::g"])]
+        lines = board.overlap_lines(board.read_overlaps_section(
+            tmp_path, "main", claims, [_pr(7, "win", "lane/x", H1)], run_=_heads({H1})))
+        assert lines == ["overlaps: air-work (lane/y) and #7 win (lane/x) both changed a.py: "
+                         "unplaced lines on #7's side"], lines
 
     def test_the_section_reaches_the_board(self, board, monkeypatch, tmp_path):
         _stub_channel(monkeypatch, board)
