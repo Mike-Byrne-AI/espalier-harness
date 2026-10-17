@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3011",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c \"import os,sys,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');[os.environ.pop(k) for k in list(os.environ) if k.startswith('ESPALIER')];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);os.environ['CLAUDE_PROJECT_DIR']=str(r);os.environ['ESPALIER_AUDIT_DIR']=str(r/'a');import write_guard as g;q=chr(39);C=['Start-Process powershell -ArgumentList '+q+'-NoProfile -Command Remove-Item -Recurse -Force .'+q,'Start-Process pwsh -ArgumentList '+q+'-c'+q+','+q+'Remove-Item -Recurse -Force .'+q,'Start-Process bash -ArgumentList '+q+'-c'+q+','+q+'rm -rf .'+q];print(sum(g._ps_dangerous_reason(c,r,cwd=r) is None for c in C))\"",
+ "open_value": "3",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "f800706a4b21",
+ "text_sha": "008209b8a73b",
+ "verified_2026_10_16": "OPEN (filed 2026-10-16; probe driven at filing)"
+}

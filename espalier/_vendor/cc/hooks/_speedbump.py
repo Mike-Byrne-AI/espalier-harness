@@ -542,9 +542,11 @@ _PS_SHIP_RELEASE_RE = re.compile(_bash_patterns._PS_CMD_POS + _SHIP_RELEASE_TAIL
 # stays prefix-disjoint and linear (no nested ambiguous quantifier).
 #
 # The verb admits `gh.exe` and a quoted verb (`& 'gh' release create`), as
-# `_GIT_VERB` and `_QUOTED_VERB_TAIL` do for git (a review finding, 2026-10-16).
+# `_GIT_VERB` and `_QUOTED_VERB_TAIL` do for git (a review finding, 2026-10-16),
+# case-blind as every binary verb is (DEF-1161: `GH release create` skipped
+# the checkpoint, the failure-mode review).
 _GH_RELEASE_TAIL = (
-    r"gh(?:\.exe)?\b" + _bash_patterns._QUOTED_VERB_TAIL
+    r"(?i:gh)" + _bash_patterns._EXE_SUFFIX + r"\b" + _bash_patterns._QUOTED_VERB_TAIL
     + r"[ \t]+(?:-[^\s;|&]+[ \t]+(?:[^-\s;|&][^\s;|&]*[ \t]+)?)*release[ \t]+create\b"
 )
 _GH_RELEASE_CREATE_RE = re.compile(_bash_patterns._CMD_POS + _GH_RELEASE_TAIL)
@@ -916,11 +918,16 @@ def _pred_rmrf(tool_name: str, tool_input: dict, root: Path, cwd: Path | None = 
                 # checkout below a temp root keeps it.
                 if _bash_patterns.powershell_removal_is_plainly_relative(cmd, raw=twin):
                     return True
-                return (
+                if (
                     _bash_patterns.powershell_removal_is_below_a_scratch_root(raw, str(root))
                     and not _bash_patterns.powershell_removal_is_below_a_scratch_root(
                         raw, str(root), quiet=True)
-                )
+                ):
+                    return True
+                # each target by the rung it qualifies for (DEF-1174): the
+                # hard tier steps aside on this same reading, so the nudge
+                # owns its worst element
+                return _bash_patterns.powershell_removal_element_tier(raw, str(root)) == "bump"
         # DEF-824 / DEF-822: the sweeps on this tool -- the find family (GNU
         # find runs verbatim under pwsh on a POSIX host), the enumerator
         # piped into a remove verb (`gci src -r -File | ri`, the shape the
@@ -1681,10 +1688,13 @@ _INERT_REDIRECT_RE = re.compile(
 )
 _WRITING_BASH_RE = re.compile(
     r">>?"                                              # output redirect (see above)
-    r"|" + _bash_patterns._CMD_POS + r"tee\b"           # tee
-    r"|" + _bash_patterns._CMD_POS + r"sed\b[^|;&\n]*[ \t]-i"   # sed -i (in-place)
+    # every binary verb case-blind with an optional `.exe` (DEF-1161), as the
+    # guard's own arms read it: Git Bash runs `CP` and `cp.exe` as `cp`
+    r"|" + _bash_patterns._CMD_POS + r"(?i:tee)" + _bash_patterns._EXE_SUFFIX + r"\b"   # tee
+    r"|" + _bash_patterns._CMD_POS + r"(?i:sed)" + _bash_patterns._EXE_SUFFIX
+    + r"\b[^|;&\n]*[ \t]-i"                             # sed -i (in-place)
     r"|" + _bash_patterns._CMD_POS
-    + r"(?:cp|mv|dd|install|rsync|truncate|patch|mkdir|touch|ln)\b"
+    + r"(?i:cp|mv|dd|install|rsync|truncate|patch|mkdir|touch|ln)" + _bash_patterns._EXE_SUFFIX + r"\b"
 )
 
 

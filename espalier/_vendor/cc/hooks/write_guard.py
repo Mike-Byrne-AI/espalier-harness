@@ -668,6 +668,12 @@ def _cmd_set_launches_claude(scan: str, opener_re: "re.Pattern[str]", program_te
     for opener in opener_re.finditer(scan):
         program = _cmd_program(source, opener.end())
         if program is None:
+            # a cmd started by Start-Process reads its program from the
+            # argument list (DEF-1071 (e), the delete reader's twin)
+            got = _bash_patterns.start_process_cmd_line(source, opener)
+            if got is not None:
+                program = got[1]
+        if program is None:
             continue
         starts = [0, *(m.end() for m in _CMD_SEPARATOR_RE.finditer(program))]
         for start in starts:
@@ -706,7 +712,7 @@ DANGEROUS_PS_PATTERNS: tuple[BashPatternRecord, ...] = (
     BashPatternRecord(
         "ps-remove-item-recurse-force-prefix",
         re.compile(
-            _PS_CMD_POS + _PS_REMOVE_VERB + _bash_patterns._QUOTED_VERB_TAIL
+            _bash_patterns._PS_REMOVE_AT + _bash_patterns._QUOTED_VERB_TAIL
             + r"\s+" + _bash_patterns._PS_RECURSE_SWITCH
             + r"\s+" + _bash_patterns._PS_FORCE_SWITCH, re.IGNORECASE,
         ),
@@ -720,7 +726,7 @@ DANGEROUS_PS_PATTERNS: tuple[BashPatternRecord, ...] = (
         # clusters sit far inside 200 chars. The tail is the soft tier's:
         # either order, or one cluster carrying both letters.
         re.compile(
-            _PS_CMD_POS + _PS_REMOVE_VERB + _bash_patterns._QUOTED_VERB_TAIL
+            _bash_patterns._PS_REMOVE_AT + _bash_patterns._QUOTED_VERB_TAIL
             + r"\s+[^\n;|&]{0,200}?" + _bash_patterns._PS_RECURSIVE_FORCE_TAIL,
             re.IGNORECASE,
         ),
@@ -2160,6 +2166,13 @@ def _ps_dangerous_reason_here(
                     raw, str(root) if root else None,
                 ):
                     continue  # -> the same speed-bump, which reads this predicate
+                # each target by the rung it qualifies for (DEF-1174): an
+                # array of a roster directory and its scratch passes as its
+                # parts do, and the soft tier gives the worst element's tier
+                if _bash_patterns.powershell_removal_element_tier(
+                    raw, str(root) if root else None,
+                ) is not None:
+                    continue
             # Same carve-out as the Bash twin: the env-prefix lesson is false
             # when the assignment actually invokes something.
             if (
