@@ -12,14 +12,18 @@ mid-copy, both in CI only.
 
 Set :data:`NO_BACKGROUND_GIT` right after ``git init``, with the builder's
 own git runner. ``.git/config`` keeps the keys for every later command in
-the repository and for every copy of it. ``tests/conftest.py``'s
-``_build_initialized_repo`` was the first site; it sets the same three keys
-in its own timed build steps.
+the repository and for every file copy of it (``shutil.copytree``, fuse's
+copy). A ``git clone`` writes a fresh config, which is enough where the
+source is what a clone reads and nothing copies the clone.
+``tests/conftest.py``'s ``_build_initialized_repo`` was the first site and
+loops over the same tuple in its own timed build steps.
 """
 from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+
+from tests._git_oracle import _git_env
 
 NO_BACKGROUND_GIT: tuple[tuple[str, str], ...] = (
     ("gc.auto", "0"),
@@ -31,7 +35,11 @@ NO_BACKGROUND_GIT: tuple[tuple[str, str], ...] = (
 def background_git_settings(tree: Path) -> dict[str, str]:
     """What ``tree``'s own config holds for each key (an empty string when
     unset), read without a write: a builder's pin compares it with
-    ``dict(NO_BACKGROUND_GIT)``, so a shared tree is pinned in place."""
+    ``dict(NO_BACKGROUND_GIT)``, so a shared tree is pinned in place. The
+    read strips git's repo-selecting overrides, since an exported
+    ``GIT_DIR`` (``git rebase --exec``, a hook) outranks ``-C`` and would
+    read the outer repository's config instead."""
     return {key: subprocess.run(["git", "-C", str(tree), "config", "--local", "--get", key],
-                                capture_output=True, text=True, timeout=15).stdout.strip()
+                                capture_output=True, text=True, timeout=15,
+                                env=_git_env()).stdout.strip()
             for key, _ in NO_BACKGROUND_GIT}

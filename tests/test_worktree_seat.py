@@ -116,6 +116,9 @@ def _seat(tmp_path: Path, *, copy: tuple[str, ...] = INCLUDED,
 
 
 class TestTheMainCheckoutRunsNoBackgroundGit:
+    """DEF-1168's sister site (tests/_quiet_git.py): the main checkout is
+    cloned right after its commit, so no detached repack may be moving it."""
+
     def test_the_main_checkout_runs_no_background_git(self, tmp_path):
         """Dies to: the keys dropped after `git init` (DEF-1168's writer: a
         test clones this checkout right after its commit)."""

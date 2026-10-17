@@ -20,6 +20,7 @@ import pytest
 
 from espalier import fuse
 
+from tests._git_oracle import _git_env
 from tests._quiet_git import NO_BACKGROUND_GIT, background_git_settings
 from tests._symlink_support import requires_symlink
 
@@ -27,8 +28,8 @@ from tests._symlink_support import requires_symlink
 def _no_background_git(host: Path) -> None:
     """Right after ``git init``: ``fuse_repos`` copies the host's ``.git``
     right after its commit, so no detached repack may be moving it."""
-    for key, value in NO_BACKGROUND_GIT:
-        subprocess.run(["git", "-C", str(host), "config", key, value], check=True)
+    for key, value in NO_BACKGROUND_GIT:  # an exported GIT_DIR would take the keys elsewhere
+        subprocess.run(["git", "-C", str(host), "config", key, value], check=True, env=_git_env())
 
 
 def _make_host(tmp_path: Path, *, with_tools: bool = False) -> Path:

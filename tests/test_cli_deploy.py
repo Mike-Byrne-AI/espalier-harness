@@ -30,7 +30,7 @@ import pytest
 
 from tests._source_segment import segment, source_lines
 from tests._live_tree import checkout_glob, checkout_rglob
-from tests._quiet_git import NO_BACKGROUND_GIT
+from tests._quiet_git import NO_BACKGROUND_GIT, background_git_settings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CLI_PATH = REPO_ROOT / "espalier" / "cli.py"
@@ -4053,6 +4053,8 @@ def _census_copy_failed(src: Path, *, proc: Path = Path("/proc"), built: "str | 
     try:
         markers = sorted(p.name for p in (src / ".git").iterdir()
                          if p.name in ("gc.pid", "gc.log") or p.name.endswith(".lock"))
+        if (src / ".git" / "objects" / "maintenance.lock").exists():  # held by `maintenance run`
+            markers.append("objects/maintenance.lock")
         lines.append("  gc.pid, gc.log, *.lock in .git: " + (", ".join(markers) or "none"))
     except OSError as exc:
         lines.append(f"  .git unread ({type(exc).__name__})")
@@ -4075,10 +4077,11 @@ def _census_copy(src: Path, dst: Path) -> None:
     try:
         shutil.copytree(src, dst)
     except OSError as exc:
-        failed = len(exc.args[0]) if isinstance(exc, shutil.Error) and exc.args else 1
-        pytest.fail(f"the census tree's copy failed ({type(exc).__name__}, {failed} entries, "
-                    "the error above); what its source looks like now:\n"
-                    + _census_copy_failed(src, built=_CENSUS_BUILT.get(str(src))))
+        what = type(exc).__name__
+        if isinstance(exc, shutil.Error) and exc.args and isinstance(exc.args[0], list):
+            what += f", {len(exc.args[0])} entries"
+        pytest.fail(f"the census tree's copy failed ({what}, the error above); what its source "
+                    "looks like now:\n" + _census_copy_failed(src, built=_CENSUS_BUILT.get(str(src))))
 
 
 @pytest.fixture(scope="module")
@@ -4247,8 +4250,43 @@ class TestACensusCopyThatFailsNamesWhatMovedItsSource:
         traced = subprocess.run(
             ["git", "-C", str(tree), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "f"],
             capture_output=True, text=True, env={**os.environ, "GIT_TRACE": "1"}, check=True)
+        assert "built-in: git commit" in traced.stderr, traced.stderr  # the trace was captured
         spawned = [line for line in traced.stderr.splitlines() if "run_command" in line]
         assert not [line for line in spawned if "maintenance" in line or " gc" in line], spawned
+
+    def test_the_keys_are_def_1168s_three(self):
+        """Dies to: a key dropped from the tuple (every site's pin compares with
+        the tuple, so it would pass; with `gc.auto 0` and `gc.autoDetach
+        false` alone, a commit still spawns `maintenance run --auto`)."""
+        assert NO_BACKGROUND_GIT == (("gc.auto", "0"), ("gc.autoDetach", "false"),
+                                     ("maintenance.auto", "false"))
+
+    def test_the_first_site_reads_its_keys_back(self, initialized_repo_root):
+        """Dies to: the keys dropped from conftest's initialized_repo_root build
+        (DEF-1168's own site, whose tree several tests copy with its .git)."""
+        assert background_git_settings(initialized_repo_root) == dict(NO_BACKGROUND_GIT)
+
+    def test_the_read_back_ignores_an_exported_git_dir(self, tmp_path, monkeypatch):
+        """Dies to: the reader keeping git's repo-selecting overrides (under
+        `git rebase --exec pytest` an exported GIT_DIR outranks `-C`, and every
+        pin would read the outer repository instead)."""
+        outer, tree = tmp_path / "outer", tmp_path / "t"
+        for repo in (outer, tree):
+            repo.mkdir()
+            _git_q(repo, "init", "-q")
+        for key, value in NO_BACKGROUND_GIT:
+            _git_q(tree, "config", key, value)
+        monkeypatch.setenv("GIT_DIR", str(outer / ".git"))
+        assert background_git_settings(tree) == dict(NO_BACKGROUND_GIT)
+
+    def test_the_maintenance_lock_is_reported(self, tmp_path):
+        """Dies to: the objects/ lock left unread (`git maintenance run` holds
+        `objects/maintenance.lock` while it works: the writer's own witness)."""
+        tree = tmp_path / "census0" / "t"
+        (tree / ".git" / "objects").mkdir(parents=True)
+        (tree / ".git" / "objects" / "maintenance.lock").write_text("", encoding="utf-8")
+        report = _census_copy_failed(tree, proc=tmp_path / "no-proc")
+        assert "*.lock in .git: objects/maintenance.lock" in report, report
 
     def test_the_census_tree_records_its_store_at_build(self, census_tree):
         """Dies to: the build record dropped (a report could not say what

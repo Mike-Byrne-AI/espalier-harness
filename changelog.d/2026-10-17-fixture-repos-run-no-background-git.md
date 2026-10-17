@@ -12,16 +12,17 @@
     `maintenance.auto false`, set right after `git init`. They now live in
     `tests/_quiet_git.py`.
   - **The sweep:** 13 committed trees that a test copies or several tests
-    share, of which only `initialized_repo_root` set the keys. They are now
-    set by:
+    share, of which only `initialized_repo_root` set the keys. The other 12
+    now set them too:
     - the census tree's builder;
     - the adopter-tree builder, whose trees back seven of the 13;
     - the four fuse hosts, since fuse copies a host's `.git` right after
-      its commit;
-    - two repositories a test clones right after committing to them.
+      its commit.
 
-    Each site has a pin that reads the keys back, and the census tree's pin
-    traces a commit for the spawn.
+    So do two more repositories that a test clones right after committing
+    to them. `initialized_repo_root` now reads its keys from the same
+    tuple. Every site has a pin that reads the keys back. The census
+    tree's pin traces a commit for the spawn.
   - **Left as they are:**
     - about 185 function-scoped repositories that no other test reads and
       nothing copies;
