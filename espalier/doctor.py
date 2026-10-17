@@ -2662,9 +2662,12 @@ def run_doctor_check(
                 f"appends what is missing and never removes yours"
             )
         elif gaps is not None and gaps[1]:
+            # The same words merge-settings and upgrade say (DEF-2007): the
+            # block is the operator's to fix by hand.
             info.append(
                 f".claude/settings.json: {gaps[1]}; the {profile!r} profile's allow "
-                "rules could not be compared (merge-settings says the same)"
+                "rules could not be compared; fix the block by hand (merge-settings "
+                "and upgrade say the same)"
             )
         # A bare profile rule the file scopes by path (DEF-989): a union, so the
         # bare rule would allow every path. Not a gap; said, never appended.
