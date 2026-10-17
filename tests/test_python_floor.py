@@ -1858,10 +1858,28 @@ class TestABannerThatNeverAnswers:
 
         bin_dir = self._host(tmp_path, monkeypatch, mute, working=(), stubbed=("python",))
         link = bin_dir / ("python3" + Path(sys.executable).suffix)
+        target = sys.executable
+        if os.name == "nt":
+            # On Windows no link to the running interpreter in another folder
+            # starts under this host's PATH (measured on the Windows box,
+            # 2026-10-17): a venv's python.exe is a redirector that needs the
+            # pyvenv.cfg beside it (exit 106), and the base binary
+            # (`tests/_interpreter_hosts.py::HOOK_PYTHON`) needs its DLLs beside
+            # it (STATUS_DLL_NOT_FOUND unless its folder is on PATH). The start
+            # probe rightly reads either as cannot start. So here the link IS the
+            # running interpreter's path, the shape an espalier started as
+            # `python3.exe` has, and both the banner and the start shortcut read
+            # it without a spawn; on POSIX the link is another path to the
+            # running file, and the start probe spawns it.
+            from tests._interpreter_hosts import HOOK_PYTHON
+
+            target = HOOK_PYTHON
         try:
-            os.symlink(sys.executable, link)
+            os.symlink(target, link)
         except OSError as exc:  # no symlinks here (Windows without the privilege)
             pytest.skip(f"no symlink here: {exc}")
+        if os.name == "nt":
+            monkeypatch.setattr(sys, "executable", str(link))
         mute.modes["python3"] = "timeout"
         monkeypatch.setattr(cli, "_INTERPRETER_WARNING_EMITTED", False, raising=False)
         assert cli._detect_python_command() == "python3"
