@@ -1580,6 +1580,8 @@ def _memory_toc(root: Path) -> str:
     elif (root / "memory" / "session-log.d").is_dir():
         unread = (_hook_utils.RECORD_FRAGMENTS_LOAD_ERROR
                   or "tools/cc/_record_fragments.py is not beside the hooks")
+        if _MOVED_HELPERS and unread.startswith(("ImportError", "AttributeError")):
+            unread = "the catch-up moved a helper this start had loaded; it is read at the next start"
     if rows is not None:
         if not rows:
             return ""
@@ -2258,7 +2260,9 @@ def _kill_switch_recheck_clause(root: Path) -> str:
     try:
         import _denial_reasons  # noqa: E402  # sibling; lazy so a kept copy cannot sink the banner
         return " Past them, " + _denial_reasons.kill_switch_ci_clause(root)
-    except Exception:  # noqa: BLE001 -- a kept or broken sibling  # fail-open: ok deliberate the WARN still names the kill-switch and its findings; only the CI clause is lost
+    except Exception as exc:  # noqa: BLE001 -- a kept or broken sibling  # fail-open: ok deliberate the WARN still names the kill-switch and its findings; only the CI clause is lost
+        if _MOVED_HELPERS and isinstance(exc, (ImportError, AttributeError)):
+            _MOVE_COSTS.append("kill-switch CI clause")   # named on the Checkout line (DEF-2003)
         return ""
 
 
@@ -2941,6 +2945,265 @@ CATCH_UP_ENV = "ESPALIER_SESSION_CATCH_UP"
 # clipped to when a slow catch-up has spent the room.
 _CATCH_UP_BUDGET_SECONDS = 6.0
 _HOOK_BUDGET_SECONDS = 12.0
+
+# ---------------------------------------------- a catch-up that moves a helper
+# This hook imports its sibling helpers at module load and only then catches
+# the checkout up, so a catch-up across a commit that changed one of them leaves
+# the old copy in sys.modules, and every module first loaded after it (the mail
+# and seat drivers and the merge rules by path, the record-fragment loader, the
+# zone watch, the denial reasons) runs its new bytes against that old copy: a
+# name the new copy added is an ImportError, and the line it fed is lost under
+# a WARN that reads as a broken install (DEF-2003, seen 2026-10-13 across #206;
+# 3 of the 30 merges to main before 2026-10-17 changed a helper this hook
+# imports). When the catch-up moved one, the rest of the start runs in a fresh
+# process that imports the moved tree whole, one more interpreter start on
+# those starts only (118 ms median on the Windows box, 2026-10-17): the parent
+# hands it the catch-up's lines, its own warnings, the window it read and the
+# hook's clock, and relays its banner, whose Checkout line says the hand-off
+# happened. At most once: the child reads the marker its own parent wrote,
+# skips the state jobs and the catch-up (the parent ran each once) and never
+# hands off. The child's budget leaves the parent a reserve: if it runs past,
+# the parent prints a short banner (a full second pass would cross the 15 s
+# ceiling and lose the banner); if it fails fast, the parent goes on itself,
+# never advancing a chain the child already advanced, and the Checkout line
+# names what the move cost in place of the WARNs.
+_HANDOFF_ENV = "ESPALIER_SESSION_START_HANDOFF"
+# The share of the hook's network budget the fresh start does not get: the
+# parent's kill margin and its short banner, inside the 15 s ceiling.
+_HANDOFF_RESERVE_SECONDS = 3.0
+# The fresh start's local work after its last bounded read (the context build).
+_HANDOFF_TAIL_SECONDS = 1.0
+_MOVED_HELPERS: tuple[str, ...] = ()
+_MOVE_FALLBACK_WHY = ""
+_MOVE_COSTS: list[str] = []
+_CHILD_ADVANCED_CHAIN = False
+
+
+def _reset_move_state() -> None:
+    """One start's move state, empty (an in-process caller runs main twice)."""
+    global _MOVED_HELPERS, _MOVE_FALLBACK_WHY, _CHILD_ADVANCED_CHAIN
+    _MOVED_HELPERS, _MOVE_FALLBACK_WHY, _CHILD_ADVANCED_CHAIN = (), "", False
+    _MOVE_COSTS.clear()
+
+
+def _read_handoff() -> dict | None:
+    """The parent's hand-off, when this process is the fresh start its own
+    parent handed itself to; None for every other start. Popped, so nothing
+    this start spawns inherits it, and honoured only when the process that
+    wrote it is this one's parent: a marker inherited from a shell runs the
+    start as a parent, catch-up and state jobs included."""
+    raw = os.environ.pop(_HANDOFF_ENV, None)
+    if raw is None:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:  # fail-open: ok deliberate -- a marker that is not this hook's own runs the start as a parent, with its catch-up
+        return None
+    if not isinstance(data, dict) or data.get("parent") != os.getppid():
+        return None
+    return data
+
+
+def _handoff_clock(handoff: dict | None) -> float:
+    """The hook's start: the parent's own reading for the fresh start (the
+    monotonic clock is the machine's, so the child's spawn is inside the
+    budget), now for every other start."""
+    now = time.monotonic()
+    value = handoff.get("hook_start") if handoff is not None else None
+    if isinstance(value, float) and 0 <= now - value < 60:
+        return value
+    return now
+
+
+def _handoff_budget(handoff: dict | None) -> float:
+    """The network budget this start's blocks share: the hook's, or the
+    smaller one the parent gave its fresh start."""
+    value = handoff.get("budget") if handoff is not None else None
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value <= _HOOK_BUDGET_SECONDS:
+        return float(value)
+    return _HOOK_BUDGET_SECONDS
+
+
+def _handed_window(handoff: dict | None) -> tuple[int, bool] | None:
+    """The window key the parent read. The fresh start's own parent is the
+    hook, not the window, so its own reading would keep a /clear from
+    retiring the window's previous marker (the failure-mode review)."""
+    window = handoff.get("window") if handoff is not None else None
+    found = handoff.get("window_found") if handoff is not None else None
+    if isinstance(window, int) and not isinstance(window, bool) and isinstance(found, bool):
+        return window, found
+    return None
+
+
+def _handed_lines(handoff: dict) -> tuple[str, str, list[str]]:
+    """The catch-up's Checkout and Worktrees lines and the reaper's kept list,
+    as the parent read them, the Checkout line naming the hand-off; the
+    parent's warnings are kept again here."""
+    for line in handoff.get("advisories") or []:
+        if isinstance(line, str):
+            _hook_utils.advise(line, echo=False)
+    checkout, worktrees, kept = handoff.get("checkout"), handoff.get("worktrees"), handoff.get("kept")
+    checkout = checkout if isinstance(checkout, str) else ""
+    moved = [name for name in handoff.get("moved") or [] if isinstance(name, str)]
+    if moved:
+        clause = f"the catch-up moved {', '.join(moved)}, so the rest of this start ran in a fresh process"
+        checkout = f"{checkout}; {clause}" if checkout else clause
+    return (checkout, worktrees if isinstance(worktrees, str) else "",
+            [k for k in kept if isinstance(k, str)] if isinstance(kept, list) else [])
+
+
+def _imported_helper_stamps() -> dict[str, tuple[int, int]]:
+    """(size, mtime_ns) of every module this process imported from tools/cc/
+    or tools/cc/hooks/, this hook's own file among them, read before the
+    catch-up."""
+    cc = Path(__file__).resolve().parent.parent
+    homes = {cc, cc / "hooks"}
+    stamps: dict[str, tuple[int, int]] = {}
+    for mod in list(sys.modules.values()):
+        name = getattr(mod, "__file__", None)
+        if not isinstance(name, str):
+            continue
+        try:
+            path = Path(name).resolve()
+            if path.parent not in homes:
+                continue
+            st = path.stat()
+        except OSError:  # fail-open: ok deliberate -- a file not readable now is not stamped; a load that then meets it is still named by its own block
+            continue
+        stamps[str(path)] = (st.st_size, st.st_mtime_ns)
+    return stamps
+
+
+def _moved_helpers(before: dict[str, tuple[int, int]]) -> tuple[str, ...]:
+    """The file names among ``before`` the catch-up moved: a changed size or
+    mtime, or a file gone."""
+    moved = []
+    for path, stamp in before.items():
+        try:
+            st = Path(path).stat()
+            now: tuple[int, int] | None = (st.st_size, st.st_mtime_ns)
+        except OSError:  # fail-open: ok deliberate -- a file the catch-up took away is a move
+            now = None
+        if now != stamp:
+            moved.append(Path(path).name)
+    return tuple(sorted(moved))
+
+
+def _chain_stamp(root: Path) -> tuple[int, int] | None:
+    """(size, mtime_ns) of the blueprint chain's pointer, so a parent can tell
+    whether a fresh start that failed had already advanced the chain."""
+    try:
+        st = (root / "cc" / "blueprints" / "latest.json").stat()
+    except OSError:  # fail-open: ok deliberate -- no pointer reads as unchanged
+        return None
+    return st.st_size, st.st_mtime_ns
+
+
+def _handoff_argv() -> list[str]:
+    """This hook's own file under the base interpreter, the form
+    tests/_interpreter_hosts.py pins: a Windows venv's python.exe is a
+    redirector that would put a process between."""
+    return [getattr(sys, "_base_executable", None) or sys.executable, str(Path(__file__).resolve())]
+
+
+def _banner_in(raw: Any) -> str | None:
+    """The SessionStart banner a fresh start printed, or None."""
+    out = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else (raw or "")
+    out = out.strip()
+    try:
+        data = json.loads(out) if out else None
+    except ValueError:  # fail-open: ok deliberate -- no banner, so the parent gives its own
+        return None
+    hso = data.get("hookSpecificOutput") if isinstance(data, dict) else None
+    return out if isinstance(hso, dict) and hso.get("hookEventName") == "SessionStart" else None
+
+
+def _hand_off(payload: Any, lines: tuple[str, str, list[str]], hook_start: float,
+              moved: tuple[str, ...], window: tuple[int, bool]) -> tuple[str | None, str, bool]:
+    """Run the rest of this start in a fresh process: (its banner, "", False),
+    or (None, why not, whether it ran out of time). A banner the child printed
+    before it ran past its time is still its banner. On any failure the
+    parent's own warnings are kept again for its own."""
+    budget = _HOOK_BUDGET_SECONDS - _HANDOFF_RESERVE_SECONDS
+    left = hook_start + budget + _ENGINE_CAP_SECONDS + _HANDOFF_TAIL_SECONDS - time.monotonic()
+    if left <= 0:
+        return None, "no time was left", True
+    checkout, worktrees, kept = lines
+    pending = _hook_utils.take_advisories()
+    env = dict(os.environ)
+    env[_HANDOFF_ENV] = json.dumps({
+        "parent": os.getpid(), "hook_start": hook_start, "budget": budget,
+        "window": window[0], "window_found": window[1], "moved": list(moved),
+        "checkout": checkout, "worktrees": worktrees, "kept": list(kept), "advisories": pending,
+    })
+    body = json.dumps(dict(payload) if isinstance(payload, dict) else {}).encode("utf-8")
+    banner, why, timed_out = None, "", False
+    try:
+        # subprocess-contract: ok this hook's own file under the base interpreter (_handoff_argv), not an espalier CLI call; driven end to end by tests/test_checkout_sync.py::TestACatchUpThatMovesAnImportedHelper
+        proc = _hook_utils.run_bounded(  # spawn: ok reporter -- the fresh start this hook hands the rest of itself to, bounded by the hook's budget
+            _handoff_argv(), input=body, capture_output=True, timeout=left, env=env)
+    except subprocess.TimeoutExpired as exc:  # fail-open: ok deliberate -- the parent gives a short banner and names the cost
+        banner = _banner_in(exc.stdout)
+        if banner is None:
+            why, timed_out = "it ran past the hook's budget", True
+    except Exception as exc:  # noqa: BLE001 -- fail-open: ok deliberate -- the parent goes on itself and names the cost
+        why = f"it could not start ({type(exc).__name__})"
+    else:
+        banner = _banner_in(proc.stdout) if proc.returncode == 0 else None
+        if banner is None:
+            why = f"it exited {proc.returncode}" if proc.returncode != 0 else "it gave no banner"
+    if banner is None:
+        for line in pending:
+            _hook_utils.advise(line, echo=False)
+    return banner, why, timed_out
+
+
+def _note_move(moved: tuple[str, ...], why: str, *, chain_advanced: bool) -> None:
+    """The parent goes on itself after a move: remember what moved, why no
+    fresh start took over, and whether that start had already advanced the
+    blueprint chain (then the parent does not advance it again)."""
+    global _MOVED_HELPERS, _MOVE_FALLBACK_WHY, _CHILD_ADVANCED_CHAIN
+    _MOVED_HELPERS, _MOVE_FALLBACK_WHY, _CHILD_ADVANCED_CHAIN = moved, why, chain_advanced
+
+
+def _late_load_failed(label: str, exc: BaseException) -> None:
+    """A block after the catch-up failed. After a move no fresh start took
+    over, an ImportError or AttributeError there is the move's one-start
+    cost, named on the Checkout line; anything else is the block's own WARN.
+    Every block after the catch-up speaks through here (pinned in
+    tests/test_checkout_sync.py)."""
+    if _MOVED_HELPERS and isinstance(exc, (ImportError, AttributeError)):
+        _MOVE_COSTS.append(label.removeprefix("session_start: ").removesuffix(" failed"))
+        return
+    _hook_utils.advise_exc(label, exc)
+
+
+def _with_move_cost(checkout_line: str) -> str:
+    """The Checkout line, with what a move cost this start when no fresh start
+    took over (DEF-2003)."""
+    if not _MOVED_HELPERS:
+        return checkout_line
+    clause = (f"the catch-up moved {', '.join(_MOVED_HELPERS)}, which this start had already loaded, "
+              f"and no fresh start took over ({_MOVE_FALLBACK_WHY})")
+    if _MOVE_COSTS:
+        clause += f"; the {', '.join(_MOVE_COSTS)} line(s) resume at the next start"
+    return f"{checkout_line}; {clause}" if checkout_line else clause
+
+
+def _short_banner(checkout_line: str, worktrees_line: str) -> str:
+    """The banner a parent gives when its fresh start ran past the budget:
+    the catch-up's lines, the move and its cost named, the parent's warnings;
+    nothing re-run, since a second full pass would cross the 15 s ceiling and
+    Claude Code would drop the banner whole."""
+    lines = ["=== Espalier-Harness === SessionStart (short: the rest resumes at the next start) ==="]
+    lines.append(f"Checkout:  {_with_move_cost(checkout_line)}")
+    if worktrees_line:
+        lines.append(f"Worktrees: {worktrees_line}")
+    warnings = _hook_utils.take_advisories()
+    if warnings:
+        lines += ["", "--- WARNINGS ---", *warnings]
+    return json.dumps({"hookSpecificOutput": {
+        "hookEventName": "SessionStart", "additionalContext": "\n".join(lines)}})
 
 
 def _catch_up_setting(root: Path, self_host: bool) -> tuple[bool, bool]:
@@ -3917,10 +4180,14 @@ def _run_main() -> int:
     # protocol pin). Start the collector empty -- a line an in-process caller
     # left is not this run's.
     _hook_utils.take_advisories()
+    _reset_move_state()
+    # A start this hook handed itself to after a catch-up that moved a helper
+    # (DEF-2003): its parent ran the state jobs and the catch-up.
+    handoff = _read_handoff()
 
     # The SessionStart payload carries `source` (startup|resume|clear|compact).
     # It decides whether to advance the blueprint chain (see _load_blueprint).
-    hook_start = time.monotonic()
+    hook_start = _handoff_clock(handoff)
     payload = read_stdin_safely()
     src = payload.get("source") if isinstance(payload, dict) else None
     source = src if isinstance(src, str) else ""
@@ -3941,7 +4208,7 @@ def _run_main() -> int:
     # The window's pid, read once: the marker records it and a clear retires
     # the predecessor by it. Never raises; its fallback is the hook's parent,
     # recorded as not named by the registry, so its exit says nothing.
-    window, window_found = _hook_utils.window_key()
+    window, window_found = _handed_window(handoff) or _hook_utils.window_key()
 
     def _marker_job() -> None:
         # A compact or resume re-fires SessionStart mid-session; the session did
@@ -3955,12 +4222,13 @@ def _run_main() -> int:
         ):
             raise OSError("the session marker could not be written")
 
-    for _flagjob, _flaglabel in (
+    # The hand-off child skips them: its parent ran each once (DEF-2003).
+    for _flagjob, _flaglabel in (() if handoff is not None else (
         (lambda: _clean_state_flags(root, source), "session_start: state-flag cleanup failed"),
         (lambda: _set_cold_open_flag(root, source), "session_start: cold-open flag write failed"),
         (_marker_job, "session_start: session marker write failed"),
         (lambda: _record_wired_gates(root, source), "session_start: wired-gates snapshot failed"),
-    ):
+    )):
         try:
             _flagjob()
         except Exception as e:  # noqa: BLE001 — flag I/O is best-effort; never lose the banner
@@ -3971,12 +4239,30 @@ def _run_main() -> int:
     # the tree the session will work in. It has its own budget, so the
     # pull-request block below keeps its eight seconds; the two together stay
     # under _HOOK_BUDGET_SECONDS of the hook's 15 s ceiling.
-    try:
-        checkout_line, worktrees_line, reaper_kept = _sync_checkout(
-            root, payload, sid, source, self_host, time.monotonic() + _CATCH_UP_BUDGET_SECONDS)
-    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _hook_utils.advise_exc("session_start: checkout catch-up failed", e)
-        checkout_line, worktrees_line, reaper_kept = "", "", []
+    if handoff is not None:
+        checkout_line, worktrees_line, reaper_kept = _handed_lines(handoff)
+    else:
+        before = _imported_helper_stamps()
+        try:
+            checkout_line, worktrees_line, reaper_kept = _sync_checkout(
+                root, payload, sid, source, self_host, time.monotonic() + _CATCH_UP_BUDGET_SECONDS)
+        except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+            _hook_utils.advise_exc("session_start: checkout catch-up failed", e)
+            checkout_line, worktrees_line, reaper_kept = "", "", []
+        # A move of a helper this process imported: the rest of the start runs
+        # in a fresh process on the moved tree (DEF-2003).
+        moved = _moved_helpers(before)
+        if moved:
+            chain_before = _chain_stamp(root)
+            banner, why, timed_out = _hand_off(
+                payload, (checkout_line, worktrees_line, reaper_kept), hook_start, moved, (window, window_found))
+            if banner is not None:
+                print(banner)
+                return 0
+            _note_move(moved, why, chain_advanced=_chain_stamp(root) != chain_before)
+            if timed_out:
+                print(_short_banner(checkout_line, worktrees_line))
+                return 0
 
     # The protected files as this session finds them, after the
     # catch-up has moved the checkout, so neither the catch-up nor a change
@@ -3989,7 +4275,7 @@ def _run_main() -> int:
         if sid and not _zone_watch.take_baseline(root, sid, keep_valid=source == "compact"):
             raise OSError("the zone baseline could not be written; the first shell call is taken as it, unchecked")
     except Exception as e:  # noqa: BLE001 — best-effort; never lose the banner
-        _hook_utils.advise_exc("session_start: zone baseline failed", e)
+        _late_load_failed("session_start: zone baseline failed", e)
 
     # The boot warnings are advisory reporters — each must fail open (warn +
     # continue, never block the session). One handler in a loop keeps that
@@ -4004,7 +4290,7 @@ def _run_main() -> int:
     try:
         integrity_line = _report_integrity_state(root)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _hook_utils.advise_exc("session_start: integrity check failed", e)
+        _late_load_failed("session_start: integrity check failed", e)
         integrity_line = "unverified (check failed)"
 
     _boot_warnings = [
@@ -4021,7 +4307,7 @@ def _run_main() -> int:
         try:
             _job()
         except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-            _hook_utils.advise_exc(_label, e)
+            _late_load_failed(_label, e)
 
     # The process table, read once here (never inside the builders, which the
     # banner tests drive on scratch trees): a reporter, so a missing `ps` or a
@@ -4029,7 +4315,7 @@ def _run_main() -> int:
     try:
         loose_line = _loose_processes_line()
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _hook_utils.advise_exc("session_start: loose-process scan failed", e)
+        _late_load_failed("session_start: loose-process scan failed", e)
         loose_line = ""
 
     # The sibling sessions' markers, read once here like the process table: a
@@ -4046,7 +4332,7 @@ def _run_main() -> int:
         _hook_utils.prune_session_markers(root)
         sessions_line = _sessions_line(root, sid)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _hook_utils.advise_exc("session_start: session marker scan failed", e)
+        _late_load_failed("session_start: session marker scan failed", e)
         sessions_line = ""
 
     # A bypassPermissions default, read once here like the markers: a reporter,
@@ -4054,7 +4340,7 @@ def _run_main() -> int:
     try:
         permissions_line = _permissions_line(root)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _hook_utils.advise_exc("session_start: permissions read failed", e)
+        _late_load_failed("session_start: permissions read failed", e)
         permissions_line = ""
 
     # The operator's pull requests, read here for the same reason: two bounded
@@ -4063,16 +4349,16 @@ def _run_main() -> int:
     # merged question (the one that shells out to git per row) cannot take
     # the already-computed open line down with it. The deadline is clipped to
     # the hook's budget, which only a slow catch-up above ever reaches.
-    pr_deadline = min(_pr_deadline(), hook_start + _HOOK_BUDGET_SECONDS)
+    pr_deadline = min(_pr_deadline(), hook_start + _handoff_budget(handoff))
     try:
         open_prs_line = _open_prs_line(_read_open_prs(root, pr_deadline), root, deadline=pr_deadline)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _hook_utils.advise_exc("session_start: open pull-request scan failed", e)
+        _late_load_failed("session_start: open pull-request scan failed", e)
         open_prs_line = ""
     try:
         merged_prs_line = _merged_prs_line(_read_merged_prs(root, pr_deadline), root, deadline=pr_deadline)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _hook_utils.advise_exc("session_start: merged pull-request scan failed", e)
+        _late_load_failed("session_start: merged pull-request scan failed", e)
         merged_prs_line = ""
 
     # A linked worktree still answering its clone's machine name gets its own
@@ -4081,7 +4367,7 @@ def _run_main() -> int:
     try:
         seat_line = _seat_line(root, source=source, deadline=pr_deadline)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _hook_utils.advise_exc("session_start: worktree naming failed", e)
+        _late_load_failed("session_start: worktree naming failed", e)
         seat_line = ""
 
     # The other machine's mail, read here under the SAME deadline for the same
@@ -4092,14 +4378,14 @@ def _run_main() -> int:
     try:
         mail_line = _mail_line(root, pr_deadline, read=mail_read)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _hook_utils.advise_exc("session_start: mail scan failed", e)
+        _late_load_failed("session_start: mail scan failed", e)
         mail_line = ""
     # A worker seat's orders, from the refs the mail line just read: its jobs,
     # and the seat driver's short form of its first message. No read of its own.
     try:
         orders_line = _orders_line(root, mail_read)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _hook_utils.advise_exc("session_start: orders read failed", e)
+        _late_load_failed("session_start: orders read failed", e)
         orders_line = ""
 
     # The base branch's merge rules, one more bounded read under the same
@@ -4110,7 +4396,7 @@ def _run_main() -> int:
     try:
         merge_rules_line = _merge_rules_line(*_read_merge_rules(root, pr_deadline))
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _hook_utils.advise_exc("session_start: merge-rules read failed", e)
+        _late_load_failed("session_start: merge-rules read failed", e)
         merge_rules_line = ""
 
     # A checkout whose tier interpreter imports another engine. Local, about
@@ -4120,11 +4406,12 @@ def _run_main() -> int:
     try:
         engine_line = _engine_line(root)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _hook_utils.advise_exc("session_start: engine probe failed", e)
+        _late_load_failed("session_start: engine probe failed", e)
         engine_line = ""
 
+    checkout_line = _with_move_cost(checkout_line)
     context = _build_context(
-        root, self_host, _should_advance_chain(source), source,
+        root, self_host, _should_advance_chain(source) and not _CHILD_ADVANCED_CHAIN, source,
         integrity=integrity_line, loose=loose_line, sessions=sessions_line,
         permissions=permissions_line,
         open_prs=open_prs_line, merged_prs=merged_prs_line, mail=mail_line,

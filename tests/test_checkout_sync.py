@@ -1265,3 +1265,299 @@ def test_every_worktree_include_entry_is_safe_for_the_reap(cs):
     assert ".claude/settings.json" in entries
     for entry in entries:
         assert cs._disposable(entry) or entry in cs._COPIED_FROM_ROOT, entry
+
+
+# The child a SessionStart is: the hook's two sys.path entries, its module
+# loaded the way the wiring loads it, its payload on a real stdin pipe, its
+# audit log inside the tree, then the catch-up's effect on disk (a shared
+# helper this process already imported gains a name, and each module the hook
+# first loads after the catch-up starts importing it, then marks that it
+# loaded), then, by mode, one late load or the whole start.
+_STALE_HELPER_CHILD = r'''
+import json, os, sys, time
+from pathlib import Path
+repo = Path(sys.argv[1])
+mode = sys.argv[2]
+sites = json.loads(sys.argv[3])
+cc = repo / "tools" / "cc"
+sys.path[:0] = [str(cc / "hooks"), str(cc)]
+for key in [k for k in os.environ if k.startswith("ESPALIER") and k != "ESPALIER_SESSION_START_HANDOFF"]:
+    os.environ.pop(key)
+os.environ["CLAUDE_PROJECT_DIR"] = str(repo)
+os.environ["ESPALIER_AUDIT_DIR"] = str(repo / ".audit")
+os.environ["DEF2003_MARKER"] = str(repo / "loaded.txt")
+import session_start as ss
+
+def _raise(message):
+    raise ImportError(message)
+
+def move():
+    helper = cc / "_json_safe.py"
+    helper.write_bytes(helper.read_bytes() + b"\n\ndef moved_in_by_the_catch_up():\n    return True\n")
+    for site, (rel, _load) in sites.items():
+        late = cc / rel
+        lines = late.read_bytes().split(b"\n")
+        at = next(i for i, ln in enumerate(lines) if ln.startswith(b"from __future__ import"))
+        lines[at + 1:at + 1] = [
+            b"from _json_safe import moved_in_by_the_catch_up  # noqa: E402",
+            ("import os as _o; open(_o.environ['DEF2003_MARKER'], 'a').write(%r + '\\n')" % site).encode(),
+        ]
+        late.write_bytes(b"\n".join(lines))
+
+if mode == "late-load":
+    move()
+    (site, (rel, load)), = sites.items()
+    try:
+        print("LOADED", eval(load) is not None)
+    except Exception as exc:
+        print("RAISED", type(exc).__name__, exc)
+    raise SystemExit(0)
+
+called = []
+def fake_catch_up(*args, **kwargs):
+    called.append(True)
+    move()
+    return "main moved to origin/main (the test's catch-up)", "", []
+ss._sync_checkout = fake_catch_up
+CHILD = {
+    "dies": "import sys; sys.exit(3)",
+    "hangs": "import time; time.sleep(30)",
+    "late-banner": ("import json, sys, time; print(json.dumps({'hookSpecificOutput': {'hookEventName': "
+                    "'SessionStart', 'additionalContext': 'the late banner'}})); sys.stdout.flush(); time.sleep(30)"),
+    "advances-then-dies": ("import os, sys, pathlib; p = pathlib.Path(os.environ['CLAUDE_PROJECT_DIR']) / 'cc' / "
+                           "'blueprints' / 'latest.json'; p.parent.mkdir(parents=True, exist_ok=True); "
+                           "p.write_text('{\"advanced\": \"by the child\"}'); sys.exit(3)"),
+}
+kind = mode.split(":", 1)[1] if ":" in mode else ""
+if kind in CHILD:
+    ss._handoff_argv = lambda: [sys.executable, "-c", CHILD[kind]]
+if kind in ("hangs", "late-banner"):
+    ss._HOOK_BUDGET_SECONDS, ss._HANDOFF_RESERVE_SECONDS = 4.0, 2.0
+advanced = []
+real_build = ss._build_context
+def build(root, self_host, advance_chain, *args, **kwargs):
+    advanced.append(advance_chain)
+    return real_build(root, self_host, advance_chain, *args, **kwargs)
+ss._build_context = build
+retired = []
+ss._hook_utils.retire_same_window_markers = lambda root, sid, window: retired.append(window)
+start = time.monotonic()
+ss.main()
+print("ELAPSED", round(time.monotonic() - start, 2))
+print("CATCH-UP-CALLED", bool(called))
+print("ADVANCED", advanced)
+print("RETIRED", retired)
+'''
+
+# Each module the hook first loads after the catch-up, and how it loads it:
+# the six sites the 2026-10-17 measurement found importing a helper the hook
+# has cached at load (by path: the mail driver, through record_merge, the seat
+# driver, the merge rules, the record-fragment loader; by name: the zone watch
+# and the denial reasons).
+_LATE_SITES = {
+    "mail": ("record_merge.py", "ss._load_mail()"),
+    "seat": ("seat.py", "ss._load_seat()"),
+    "merge-rules": ("_merge_rules.py", "ss._load_merge_rules()"),
+    # the loader keeps its failure rather than raising (the memory index notes it)
+    "record-fragments": ("_record_fragments.py",
+                         "ss._hook_utils.load_record_fragments() or _raise(ss._hook_utils.RECORD_FRAGMENTS_LOAD_ERROR)"),
+    "zone-watch": ("hooks/_zone_watch.py", "__import__('_zone_watch')"),
+    "denial-reasons": ("hooks/_denial_reasons.py", "__import__('_denial_reasons')"),
+}
+
+
+class TestACatchUpThatMovesAnImportedHelper:
+    """DEF-2003: SessionStart imports its sibling helpers at module load and
+    only then catches the checkout up, so a module it first loads after the
+    move runs the new bytes against the helpers' old copies already in
+    ``sys.modules``. Seen once on the Windows seat (2026-10-13, across #206):
+    ``tools/cc/mail.py``'s ``record_merge`` asked ``_json_safe`` for a name
+    the old module lacked, and the banner lost its mail line under an
+    ImportError that read as a broken install. When the catch-up moved a
+    helper the hook imported, the rest of the start now runs in a fresh
+    process on the moved tree; if that cannot give a banner, the parent gives
+    a short one (out of time) or goes on itself (a fast failure), and the
+    Checkout line names the cost. The child process here is a start, driven:
+    a copy of the tree (git's view) holding the session-log fragments, the
+    hook loaded as the wiring loads it, the payload on its stdin, the
+    catch-up's effect written to disk."""
+
+    PAYLOAD = {"source": "startup", "session_id": "t-def2003"}
+
+    def _child(self, tmp_path: Path, mode: str, sites: dict, *, payload: dict | None = None,
+               env: dict | None = None) -> str:
+        from tests._live_tree import copy_checkout
+
+        repo = tmp_path / "repo"
+        copy_checkout(REPO_ROOT / "tools" / "cc", repo / "tools" / "cc")
+        (repo / "memory" / "session-log.d").mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=30)
+        subprocess.run(["git", "-C", str(repo), "config", "espalier.machine", "t-def2003"], check=True, timeout=30)
+        driver = tmp_path / "child.py"
+        driver.write_bytes(_STALE_HELPER_CHILD.encode("utf-8"))
+        r = subprocess.run([HOOK_PYTHON, str(driver), str(repo), mode, json.dumps(sites)], capture_output=True,
+                           input=json.dumps(payload or self.PAYLOAD), text=True, encoding="utf-8",
+                           errors="replace", timeout=45, env={**os.environ, **(env or {})})
+        assert r.returncode == 0, r.stderr[-2000:]
+        return r.stdout
+
+    @staticmethod
+    def _banner(out: str) -> str:
+        line = next(ln for ln in out.splitlines() if ln.startswith('{"hookSpecificOutput"'))
+        return json.loads(line)["hookSpecificOutput"]["additionalContext"]
+
+    @staticmethod
+    def _checkout(banner: str) -> str:
+        return next(ln for ln in banner.splitlines() if ln.startswith("Checkout:"))
+
+    @staticmethod
+    def _field(out: str, name: str) -> str:
+        return next(ln for ln in out.splitlines() if ln.startswith(name + " "))[len(name) + 1:]
+
+    @staticmethod
+    def _loaded(tmp_path: Path) -> set[str]:
+        marks = tmp_path / "repo" / "loaded.txt"
+        return set(marks.read_text(encoding="utf-8").split()) if marks.is_file() else set()
+
+    @pytest.mark.parametrize("site", sorted(_LATE_SITES))
+    def test_a_late_load_after_the_move_meets_the_old_helper(self, tmp_path, site):
+        """The oracle (Task 0), at each site: the mechanism the row names,
+        made to fail in the process that imported the helper before the move."""
+        out = self._child(tmp_path, "late-load", {site: _LATE_SITES[site]}).strip()
+        assert out.startswith("RAISED ImportError"), out
+        assert "moved_in_by_the_catch_up" in out, out
+
+    def test_the_rest_of_the_start_runs_on_the_moved_tree(self, tmp_path):
+        """The banner comes whole from a fresh start: the catch-up's own line,
+        the hand-off named on it, no load failure, the late sites it reaches
+        loaded with the moved bytes, the chain advanced once."""
+        out = self._child(tmp_path, "start", _LATE_SITES)
+        banner = self._banner(out)
+        checkout = self._checkout(banner)
+        assert "main moved to origin/main (the test's catch-up)" in checkout, checkout
+        assert "so the rest of this start ran in a fresh process" in checkout, checkout
+        assert "ImportError" not in banner and "no fresh start took over" not in banner, banner[-3000:]
+        assert {"mail", "merge-rules", "zone-watch", "record-fragments"} <= self._loaded(tmp_path)
+        assert self._field(out, "ADVANCED") == "[]", "the parent built no banner of its own"
+
+    def test_a_fresh_start_that_dies_leaves_the_parent_to_name_the_cost(self, tmp_path):
+        """A fast failure: the hand-off exits 3, the parent goes on itself, and
+        the Checkout line names the move and each line it cost, in place of a
+        WARN that reads as a broken install; the memory index says why its
+        fragments were not read."""
+        out = self._child(tmp_path, "start:dies", _LATE_SITES)
+        banner = self._banner(out)
+        checkout = self._checkout(banner)
+        assert "no fresh start took over (it exited 3)" in checkout, checkout
+        assert "_json_safe.py" in checkout, checkout
+        for line in ("mail scan", "merge-rules read", "zone baseline"):
+            assert line in checkout, (line, checkout)
+        assert "ImportError" not in banner, banner[-3000:]
+        assert "the catch-up moved a helper this start had loaded" in banner, banner[-3000:]
+        assert self._field(out, "ADVANCED") == "[True]"
+
+    def test_a_fresh_start_that_advanced_the_chain_is_not_advanced_again(self, tmp_path):
+        """The failure-mode review's drive: a child that advanced the chain and
+        then failed left the parent advancing it a second time."""
+        out = self._child(tmp_path, "start:advances-then-dies", _LATE_SITES)
+        assert self._field(out, "ADVANCED") == "[False]", out[-2000:]
+
+    def test_a_fresh_start_out_of_time_leaves_a_short_banner_inside_the_budget(self, tmp_path):
+        """A child that hangs: the parent prints a short banner naming the move
+        instead of a second full pass, which crossed the 15 s ceiling (17.2 s
+        driven) and lost the banner whole. Budgets are shrunk here to 4 s."""
+        out = self._child(tmp_path, "start:hangs", _LATE_SITES)
+        banner = self._banner(out)
+        assert "the rest resumes at the next start" in banner, banner
+        assert "no fresh start took over (it ran past the hook's budget)" in self._checkout(banner), banner
+        assert float(self._field(out, "ELAPSED")) < 4.0 + 2.0, out[-500:]
+        assert self._field(out, "ADVANCED") == "[]"
+
+    def test_a_banner_printed_before_the_time_ran_out_is_relayed(self, tmp_path):
+        """A child that printed its banner and was then slow to exit: its banner
+        stands, and the parent builds nothing (no second chain advance)."""
+        out = self._child(tmp_path, "start:late-banner", _LATE_SITES)
+        assert self._banner(out) == "the late banner"
+        assert self._field(out, "ADVANCED") == "[]"
+
+    def test_the_fresh_start_never_catches_up_or_hands_off_again(self, tmp_path):
+        """At most once: a start that carries its own parent's hand-off runs no
+        catch-up of its own and takes the parent's lines and window."""
+        handed = json.dumps({"parent": os.getpid(), "hook_start": None, "window": 424242, "window_found": True,
+                             "checkout": "handed by the parent", "worktrees": "", "kept": [],
+                             "advisories": ["[INFO] the parent's own line"]})
+        out = self._child(tmp_path, "start", _LATE_SITES, payload={"source": "clear", "session_id": "t-def2003"},
+                          env={"ESPALIER_SESSION_START_HANDOFF": handed})
+        assert self._field(out, "CATCH-UP-CALLED") == "False", out[-2000:]
+        assert self._field(out, "RETIRED") == "[424242]", "a /clear retires by the window the parent read"
+        banner = self._banner(out)
+        assert "handed by the parent" in banner and "the parent's own line" in banner, banner[-3000:]
+
+    def test_a_marker_from_another_process_runs_the_start_as_a_parent(self, tmp_path):
+        """A marker inherited from a shell (an operator reproducing the probe)
+        is not this start's parent's: the catch-up and the state jobs run."""
+        stray = json.dumps({"parent": 1, "checkout": "a stray marker"})
+        out = self._child(tmp_path, "start", {}, env={"ESPALIER_SESSION_START_HANDOFF": stray})
+        assert self._field(out, "CATCH-UP-CALLED") == "True", out[-2000:]
+        assert "a stray marker" not in self._banner(out)
+
+    def test_every_block_after_the_catch_up_speaks_through_the_move(self):
+        """Derived, not listed: every handler in ``_run_main`` after the
+        hand-off decision speaks through ``_late_load_failed``, which is
+        ``advise_exc`` unless a move no fresh start took over; one that called
+        ``advise_exc`` itself would WARN an ImportError the move caused."""
+        import ast
+
+        source = (REPO_ROOT / "tools" / "cc" / "hooks" / "session_start.py").read_text(encoding="utf-8")
+        run_main = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == "_run_main")
+        after = next(n.lineno for n in ast.walk(run_main) if isinstance(n, ast.Call)
+                     and getattr(n.func, "id", "") == "_moved_helpers")
+        direct = sorted({n.lineno for n in ast.walk(run_main) if isinstance(n, ast.Call)
+                         and getattr(n.func, "attr", "") == "advise_exc" and n.lineno > after})
+        late = sorted({n.lineno for n in ast.walk(run_main) if isinstance(n, ast.Call)
+                       and getattr(n.func, "id", "") == "_late_load_failed"})
+        assert not direct, f"advise_exc after the catch-up in _run_main at lines {direct}"
+        assert len(late) >= 10, late
+
+
+_SEAT_CLAIMS_CHILD = r'''
+import sys
+from pathlib import Path
+cc = Path(sys.argv[1])
+sys.path.insert(0, str(cc))
+import checkout_sync
+try:
+    print("CLAIMS", checkout_sync.seat_live_claims(cc, "seat-x", 5))
+except Exception as exc:
+    print("RAISED", type(exc).__name__)
+'''
+
+
+class TestTheReaperKeepsAWorktreeWhoseClaimsDidNotRead:
+    """DEF-2003's sister site inside the catch-up: the worktree reaper asks
+    ``seat_live_claims``, which imports ``mail`` after the move. A mail
+    driver that is deployed but does not import (it met an old helper) read
+    as no claims, and a clean, merged worktree whose seat still held live
+    claims was removed (the failure-mode review's drive). Only a mail driver
+    that is not deployed reads as no claims now; the caller keeps a worktree
+    whose claims raised."""
+
+    def _run(self, tmp_path: Path, mail_text: bytes | None) -> str:
+        cc = tmp_path / "cc"
+        cc.mkdir()
+        for name in ("checkout_sync.py", "_json_safe.py", "_stack_table.py"):
+            (cc / name).write_bytes((REPO_ROOT / "tools" / "cc" / name).read_bytes())
+        if mail_text is not None:
+            (cc / "mail.py").write_bytes(mail_text)
+        driver = tmp_path / "child.py"
+        driver.write_bytes(_SEAT_CLAIMS_CHILD.encode("utf-8"))
+        r = subprocess.run([HOOK_PYTHON, str(driver), str(cc)], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=45)
+        assert r.returncode == 0, r.stderr[-2000:]
+        return r.stdout.strip()
+
+    def test_a_deployed_mail_driver_that_does_not_import_raises(self, tmp_path):
+        assert self._run(tmp_path, b"from _json_safe import a_name_this_copy_lacks\n") == "RAISED ImportError"
+
+    def test_a_mail_driver_not_deployed_is_no_claims(self, tmp_path):
+        assert self._run(tmp_path, None) == "CLAIMS []"

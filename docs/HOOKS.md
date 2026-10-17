@@ -347,7 +347,9 @@ So does a seat named for the worktree alone (its own `espalier.machine`,
 which SessionStart sets) that still holds a live claim on the mail channel:
 only that name can release it, so removing the worktree would leave the
 claim warning every other seat's plan with no seat to close it. The kept
-line names the lanes and the release to run in the worktree.
+line names the lanes and the release to run in the worktree. A seat whose
+claims cannot be read (the mail driver is deployed but does not import) is
+kept too; only a deploy without the mail driver reads as no claims.
 On Windows a folder a process holds open (a terminal or an editor in it)
 cannot be renamed, and the reaper keeps any folder that refuses a rename. A
 merged branch a removed worktree held is deleted. A `Worktrees:` line names
@@ -364,7 +366,15 @@ nothing is removed either (it may be working in one of them). The catch-up
 has its own six-second budget, so the pull-request block keeps its eight, and
 the two together stay under twelve of the hook's fifteen; a backlog of
 removals clears over a few sessions. A resume or a compaction never moves the
-tree. On by
+tree. The hook has imported its helper modules before the catch-up runs, so
+when the move changes one of them, the rest of the start runs in a fresh
+process that imports the moved tree whole (about a tenth of a second more,
+on those starts only), and the `Checkout:` line says so. Run otherwise, a
+module the hook first loads after the move would meet the old helper and
+lose its line under a misleading import error. If that fresh process gives
+no banner in time, the hook prints a short one naming the move; if it fails
+at once, the hook finishes the start itself and the `Checkout:` line names
+each line the move cost. On by
 default in the Espalier-Harness source repository; elsewhere off until
 `session_catch_up = true` sits at the top level of `espalier.toml`, because
 moving someone's branch unasked is a surprise. `ESPALIER_SESSION_CATCH_UP=0`

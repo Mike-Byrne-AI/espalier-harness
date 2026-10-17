@@ -141,7 +141,16 @@ PRAGMA_RE = re.compile(r"^#\s*subprocess-contract:\s*ok\s+(.{12,})$")
 # stdio inherited, no capture and no timeout by design (it ends when they end
 # it), so there is no literal to pin; tests/test_seat.py pins the argv through
 # command_line and replaces the function, never subprocess.
-MAX_PRAGMA_COUNT: int = 13
+# Raised 13 -> 14 (2026-10-17) for tools/cc/hooks/session_start.py::_hand_off,
+# SessionStart re-running its own file in a fresh process after a catch-up that
+# moved a helper it had imported (DEF-2003). The argv is fixed (this hook's own
+# file under the base interpreter), but it is built by _handoff_argv, the seam
+# the hand-off rows replace with a failing child, and its interpreter is
+# tests/_interpreter_hosts.py's getattr(sys, "_base_executable", None) or
+# sys.executable form, which _normalize_interpreter does not read, so no call-site
+# list resolves. It is not an espalier CLI call either way; the real spawn is
+# driven end to end by tests/test_checkout_sync.py's hand-off rows.
+MAX_PRAGMA_COUNT: int = 14
 
 # Sister-site protection: fixture files contain intentional positives.
 EXEMPT_PREFIXES: tuple[str, ...] = (
