@@ -1169,6 +1169,17 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NOT_A_MEMBER",
         "census mis-read: the container is not derived from the subject",
     ),
+    "tests/test_rehearsal_baseline.py": (
+        1, "c4dbfd441fab1e54e54552378d40dd11c6efe96645269e9f7fcbcaef5077cf38",
+        "CORRECT_BY_REMEDY",
+        "NEW 2026-10-16 (the rehearsal-baseline lane): the rows-digest test plants one file per "
+        "name in `rehearsal.ORACLE_FILES`, and the same test then holds that tuple set-equal to the "
+        "hand-written pair {powershell_guard_rehearsal.py, guard_row_probe.py} at "
+        "tests/test_rehearsal_baseline.py:144, so a name dropped "
+        "from the tuple reds there (driven: the probe dropped, 1 failed of 55, "
+        "test_the_rows_digest_reads_both_oracles_and_moves_with_either) rather than shrinking the "
+        "planted population in silence.",
+    ),
     "tests/test_reinject_pins.py": (
         1, "490afc38eeb0facb4fa4f27f52005b5064f0178726d92a3e5333e4bc754cc93e",
         "CORRECT_BY_PROPERTY",
@@ -1570,8 +1581,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        32, "fba34637f8ee0bb3142fffb1cbca74c91e634ef310a48f04abd417763e6b8051",
+        33, "a3eb1f923629072e71244f70431245536a9d71be9fa63e6ad0eb03ad8bed558c",
         "CORRECT_BY_REMEDY",
+        "GREW 32 -> 33 on 2026-10-16 (the rm-launch-forms lane, DEF-1162): "
+        "`_recursive_delete_launch_forms` builds one `ps-wrap-<word>` head per word "
+        "of the Bash wrapper roster (`_roster_words(bp._CMD_POS_WRAPPER)`), `xargs` "
+        "left out by name as the PowerShell tool's pipe carrier; a shrink of the "
+        "roster would narrow the launch-form property with it, so "
+        "tests/test_write_guard.py::TestEveryLaunchFormMeetsTheRecursiveDeleteWall::"
+        "test_the_rosters_the_forms_derive_from_are_pinned holds the roster equal to a "
+        "hand list of 22 words and the forms at 73: a lost word reds there. "
         "GREW 31 -> 32 on 2026-10-16 (the adopter-zone one-liner lane, DEF-910): "
         "TestEveryHarnessZoneDenyCarriesTheCollisionRemedy reads every `PROTECTED_ZONE_*` "
         "template out of `vars(dr)` and asserts each carries the relocate clause; a "

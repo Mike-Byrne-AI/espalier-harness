@@ -742,6 +742,7 @@ def hard_tier_target_claims(tmp_path: Path, monkeypatch) -> tuple[Path, dict[str
         "~/proj/thing": False,              # inside your home directory
         "build": False,                     # a relative build/
         "*.egg-info": False,                # a BOUNDED glob
+        "build/*": False,                   # a wildcard after a roster directory reads as it (DEF-1174)
         "$VAR": False,                      # a $VAR path other than $HOME
     }
     return repo, claims
@@ -941,6 +942,9 @@ class TestDangerousBashPlainEnglish:
         ("Remove-Item -Recurse -Force {t}", _FORCED_REMOVE_TIER, {
             "/usr/local/share/x": True, "~/proj/thing": True, "*.egg-info": True,
             "$VAR": True, "<repo>/build": "host",
+            # DEF-1174: a wildcard below any other directory, and one with a
+            # `..` after it, keep the wall the forced form's text names
+            "src/*": True, "build/*/../..": True,
         }),
     ])
     def test_the_claims_hold_against_the_classifier(

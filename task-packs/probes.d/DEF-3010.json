@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3010",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python -c \"import io,os,sys,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');[os.environ.pop(k) for k in list(os.environ) if k.startswith('ESPALIER')];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);(r/'tools'/'cc'/'hooks').mkdir(parents=True);(r/'.claude').mkdir();(r/'.claude'/'settings.json').write_text('{}');os.environ['CLAUDE_PROJECT_DIR']=str(r);os.environ['ESPALIER_AUDIT_DIR']=str(r/'a');import write_guard as g;Z=lambda f,c:(setattr(sys,'stdout',io.StringIO()),f(c,r,r),sys.stdout.getvalue(),setattr(sys,'stdout',sys.__stdout__));B=g.check_bash_for_protected_mutations;P=g.check_powershell_for_protected_mutations;print(sum(not(t[1] or t[2].strip()) for t in [Z(B,'rm -rf tools/*'),Z(B,'rm -rf .claude/*'),Z(P,'Remove-Item -Recurse tools/*'),Z(P,'Remove-Item -Recurse .claude/*')]))\"",
+ "open_value": "4",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_bash_patterns.py"
+ ],
+ "row_sha": "125742d7e9d1",
+ "text_sha": "f3159b43f877",
+ "verified_2026_10_16": "OPEN (filed 2026-10-16; probe driven at filing)"
+}

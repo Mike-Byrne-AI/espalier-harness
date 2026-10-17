@@ -928,6 +928,20 @@ first; the dangerous-command catch is a secondary slip-catcher):
    resolves onto one, a variable, a glob and a `..` step stay the wall,
    pinned by
    `tests/test_write_guard.py::TestPowerShellScratchRootRung::test_everything_else_absolute_is_still_the_wall`.
+   A forced remove of several targets is judged element by element, each
+   by the rule it meets (on the roster, plainly relative, or a literal path
+   below a scratch root), so a build directory and its own scratch in one
+   array pass as each does alone; and a wildcard after a directory on the
+   ephemeral roster (`build/*`, `dist/x/**`) is read as that directory, as
+   the unforced remove reads it, while a wildcard below any other
+   directory, in the first component,
+   after an absolute or home prefix, or with `..` before or after it
+   (`build/*/..`) stays the wall; a double-quoted
+   string holding a comma is one path, not an array; and inside the
+   guarded cleanup idiom (`if (Test-Path x) { ... }`) the block's brace is
+   no target, so a forced remove of scratch there passes as the plain
+   form does, and the nudge reads every element the wall stepped aside
+   for (2026-10-16).
 
    Scratch below a temp root passes without the nudge on both tools,
    forced or not (2026-10-07; until then every scratch cleanup drew it): a
@@ -956,14 +970,24 @@ first; the dangerous-command catch is a secondary slip-catcher):
    only an absolute target of theirs can be scratch, a declared limit
    (`tests/test_speedbump_irreversible.py::TestCpRmrfTempRoots::test_a_sweep_or_a_cmd_delete_reads_only_an_absolute_target`).
 
-   Two more launch forms of the same recursive delete meet the plain
-   form's tiers: on the PowerShell tool the native remove binary by its
-   file name or a path (`rm.exe -r`, a path ending in `rm`, `rmdir` or
-   their `.exe`, bare or quoted behind the call operator), and on both
-   tools cmd.exe's own recursive deletes (`rd /s`, `rmdir /s`, `del /s` or
-   `erase /s` in a program `cmd /c` runs, cmd's `%USERPROFILE%` read as
-   your home directory) -- the wall on a catastrophic target, nothing on a
-   roster build directory, one nudge on any other. On both tools the zone
+   More launch forms of the same recursive delete meet the plain form's
+   tiers: on the Bash tool every binary verb spelled with its `.exe`
+   suffix or in another case (`rm.exe -rf`, `RM -rf`, which Git Bash runs
+   as `rm`; the directory-change, make-then-enter and loop readers stay
+   case-sensitive, as bash runs them, and on a case-sensitive Linux host
+   an upper-case `RM` is judged as `rm`, which is friction); on the
+   PowerShell tool the native remove binary by its file name or a path
+   (`rm.exe -r`, a path ending in `rm`, `rmdir` or their `.exe`, bare or
+   quoted behind the call operator) and behind a wrapper word the Bash
+   tool steps over (`sudo rm -rf`, `env`, `nice`, `timeout` and the rest
+   of that roster but `xargs`, whose input the pipeline reader judges); and
+   on both tools cmd.exe's own recursive deletes
+   (`rd /s`, `rmdir /s`, `del /s` or `erase /s` in a program `cmd /c`
+   runs -- on the PowerShell tool also behind the stop-parsing token,
+   `cmd --% /c`, and in a `Start-Process cmd` argument list -- cmd's
+   `%USERPROFILE%` read as your home directory) -- the wall on a
+   catastrophic target, nothing on a roster build directory, one nudge on
+   any other. On both tools the zone
    check reads every delete cmd runs, so a protected directory removed
    through cmd meets the nudge and then the zone wall on the re-issue, the
    plain form's order. Declared limits: a `cd` inside cmd's own program is

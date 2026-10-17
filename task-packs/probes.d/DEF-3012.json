@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3012",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c \"import io,os,sys,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');[os.environ.pop(k) for k in list(os.environ) if k.startswith('ESPALIER')];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);(r/'tools'/'cc'/'hooks').mkdir(parents=True);os.environ['CLAUDE_PROJECT_DIR']=str(r);os.environ['ESPALIER_AUDIT_DIR']=str(r/'a');import write_guard as g;Z=lambda c:(setattr(sys,'stdout',io.StringIO()),g.check_bash_for_protected_mutations(c,r,r),sys.stdout.getvalue(),setattr(sys,'stdout',sys.__stdout__));print(sum(not(t[1] or t[2].strip()) for t in [Z('ENV cp /tmp/x tools/cc/hooks/x.py'),Z('NOHUP tee -a tools/cc/hooks/x.py'),Z('nohup.exe tee -a tools/cc/hooks/x.py'),Z('Sudo cp /tmp/x tools/cc/hooks/x.py')]))\"",
+ "open_value": "4",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "5b1c016738e8",
+ "text_sha": "e3fead70884c",
+ "verified_2026_10_16": "OPEN (filed 2026-10-16; probe driven at filing)"
+}

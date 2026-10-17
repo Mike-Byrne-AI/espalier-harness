@@ -295,6 +295,23 @@ _CMD_POS_VERB_PREFIX = (
 # arms with the bare control beside each quoted spelling. A single optional
 # character, so no adjacent quantifier can share its input (the ReDoS rule).
 _QUOTED_VERB_TAIL = r"""["']?"""
+# A native binary's verb, as a case-insensitive host spells it (DEF-1161, its
+# class widened under air ff9ddb). Git for Windows' bash runs `rm.exe`, `RM`
+# and `Rm.EXE` as GNU `rm` (each printed its coreutils version, driven
+# 2026-10-16), and the verb arms read only the lowercase bare word, so the
+# zone reader missed every suffixed or uppercase spelling: 20 of 20 suffixed
+# delete and move heads drew no zone deny where each plain spelling denied.
+# Each binary arm spells its verb `(?i:<verb>)` + `_EXE_SUFFIX`: case-blind
+# and suffixed, scoped to the verb so an arm's own flags keep their case, and
+# a literal the ReDoS gate reconstructs statically. Not for a shell builtin or
+# keyword (`cd`, `pushd`, `popd`, `mkdir`'s directory credit, `for`, `while`):
+# bash matches those case-sensitively, so `CD /tmp; rm -rf cc` deletes the
+# real `cc`, and reading `CD` as a move would judge the delete under `/tmp`
+# (a fail-open). On a POSIX host `RM -rf cc` is denied though no `RM` exists:
+# friction, the side the toolbelt fails on, as the rm segment already reads.
+# Never composed after a `[\w.-]*` head (the interpreter arms, which absorb
+# the suffix themselves), so no adjacent quantifier shares its input.
+_EXE_SUFFIX = r"(?i:\.exe)?"
 _CMD_POS_NO_VERB = (
     r"(?:(?:^|" + _CMD_POS_SEP + ")" + _CMD_POS_WS + "(?:"
     + _CMD_POS_WRAP_RUN + "|" + _CMD_POS_ENV_ASSIGN
@@ -462,7 +479,7 @@ def _resolve_bash_discovered_heads(scan: str) -> str:
 # `2>&1`) must reach `_operands`, which drops the redirect and its target; with
 # `<>` excluded the run stopped at `2` and the hook was never read.
 _TEE_RE = re.compile(
-    _CMD_POS + r"\btee\b" + _QUOTED_VERB_TAIL + r"((?:[ \t]+-\S+|[ \t]+[^-\s][^\s|;&]*)*)"
+    _CMD_POS + r"\b" + r"(?i:tee)" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL + r"((?:[ \t]+-\S+|[ \t]+[^-\s][^\s|;&]*)*)"
 )
 # Verb-regex class: the six extraction regexes shaped
 # ``\bVERB...<unbounded span>...<required token>`` (sed -i / dd of= / tar -C /
@@ -480,7 +497,7 @@ _TEE_RE = re.compile(
 # PAST its verb is not extracted -- contrived padding, not a real command shape.
 # See docs/sharp-edges/protected-zone-path-equivalence.md sibling note.
 _SED_INPLACE_RE = re.compile(
-    _CMD_POS + r"""sed""" + _QUOTED_VERB_TAIL
+    _CMD_POS + r"(?i:sed)" + _EXE_SUFFIX + _QUOTED_VERB_TAIL
     # {0,64}: bound the option run. A token of the run may not hold an unquoted
     # statement separator, so the run ends where sed's own statement does:
     # `sed -n 1,5p README.md && grep -n -i toml <hook>` read grep's `-i` as
@@ -547,7 +564,7 @@ _INPLACE_SEGMENT_RE = re.compile(
     # quote-removal collapses back to a plain `sed` -- the one home every verb
     # arm reads. IGNORECASE for a case-insensitive filesystem
     # (`SED` resolves on APFS), matching `_LN_CP_INVOCATION_RE`.
-    _CMD_POS + r"(?P<seg>" + _INPLACE_VERB_ALT + _QUOTED_VERB_TAIL + r"\b(?!=)"
+    _CMD_POS + r"(?P<seg>" + _INPLACE_VERB_ALT + _EXE_SUFFIX + _QUOTED_VERB_TAIL + r"\b(?!=)"
     # A same-line comment is cut from the captured segment by
     # `_strip_span_tail` before tokenising (see the `_INSTALL_CMD_RE` block).
     # `#` is NOT excluded from the bare arm: a `#` inside a filename is literal,
@@ -664,7 +681,7 @@ _CP_MV_RE = re.compile(
     # `verb` is a named group (§C52): a move's SOURCE is a relocated operand
     # the remove/relocate reader classifies, a copy's source is a read. The
     # operand span is group 2 from here on.
-    _CMD_POS + r"\b(?P<verb>cp|mv)" + _QUOTED_VERB_TAIL + r"[ \t]+"
+    _CMD_POS + r"\b(?P<verb>(?i:cp|mv))" + _EXE_SUFFIX + _QUOTED_VERB_TAIL + r"[ \t]+"
     r"((?:\"[^\"]*\"|'[^']*'|[^\s;|&\"']+)"            # the operand span:
     r"(?:[ \t]+(?:\"[^\"]*\"|'[^']*'|[^\s;|&\"']+))*)"     # flags, sources, destination
 )
@@ -676,17 +693,17 @@ _CP_MV_RE = re.compile(
 # root with a space is one operand. `\b(?!=)` skips an assignment (`rm=...`)
 # and never narrows to whitespace: a quoted verb must still fire.
 _DESTROY_RE = re.compile(
-    _CMD_POS + r"\b(?:rm|unlink|rmdir|shred)\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+" + _OPERAND_SPAN
+    _CMD_POS + r"\b" + r"(?i:rm|unlink|rmdir|shred)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+" + _OPERAND_SPAN
 )
 # `rename [opts] <expression-or-from> [<to>] files...` (the perl and the
 # util-linux spellings): every positional after the first is relocated.
 _RENAME_RE = re.compile(
-    _CMD_POS + r"\brename\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+" + _OPERAND_SPAN
+    _CMD_POS + r"\b" + r"(?i:rename)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+" + _OPERAND_SPAN
 )
 # `zip [opts] <archive> inputs...`: the inputs are copied by effect (the
 # secret leg reads them; the zone leg does not -- an archive reads).
 _ZIP_RE = re.compile(
-    _CMD_POS + r"\bzip\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+" + _OPERAND_SPAN
+    _CMD_POS + r"\b" + r"(?i:zip)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+" + _OPERAND_SPAN
 )
 
 # Write verbs not covered by _CP_MV_RE / _TEE_RE / _REDIRECT_RE.
@@ -695,10 +712,10 @@ _ZIP_RE = re.compile(
 # {0,512}: verb-regex class bound (see _SED_INPLACE_RE comment).
 # \b(?!=): exclude a `dd=…` shell assignment (`=` is a word boundary a bare `\bdd\b`
 # false-matched), but NOT a quoted `'dd' …` real command. Same guard across the verbs.
-_DD_OF_RE = re.compile(_CMD_POS + r"\bdd\b(?!=)[^|;&\n]{0,512}?\bof=([^\s|;&]+)")
+_DD_OF_RE = re.compile(_CMD_POS + r"\b" + r"(?i:dd)" + _EXE_SUFFIX + r"\b(?!=)[^|;&\n]{0,512}?\bof=([^\s|;&]+)")
 # The INPUT of `dd` (`if=`): its source is copied by effect (§C52's secret
 # leg). Same shape and bound as the output arm above.
-_DD_IF_RE = re.compile(_CMD_POS + r"\bdd\b(?!=)[^|;&\n]{0,512}?\bif=([^\s|;&]+)")
+_DD_IF_RE = re.compile(_CMD_POS + r"\b" + r"(?i:dd)" + _EXE_SUFFIX + r"\b(?!=)[^|;&\n]{0,512}?\bif=([^\s|;&]+)")
 # \b(?!=) on these two as well: `cp`/`mv`/`install`/`tar` are valid shell var
 # names, so a `cp=…`/`tar=…` assignment whose value contains `-t <path>` /
 # `-C <path>` / `--target-directory=` / `--directory=` text false-matched the
@@ -879,7 +896,7 @@ def _target_directory_walk(
                 return (rest if rest else following), at, frozenset(swallowed)
     return None, -1, frozenset(swallowed)
 _TAR_C_RE = re.compile(
-    _CMD_POS + r"\btar\b(?!=)[^|;&\n]{0,512}?(?:-C[ \t]+|--directory=)([^\s|;&]+)"
+    _CMD_POS + r"\b" + r"(?i:tar)" + _EXE_SUFFIX + r"\b(?!=)[^|;&\n]{0,512}?(?:-C[ \t]+|--directory=)([^\s|;&]+)"
 )
 # A tar CREATE's inputs (§C52's secret leg): the argument span, read by
 # `_tar_create_inputs`, which walks the option clusters (`-cf out.tar`,
@@ -887,7 +904,7 @@ _TAR_C_RE = re.compile(
 # the positionals that are neither the archive nor a flag's value. One
 # bounded quantifier: linear.
 _TAR_CREATE_RE = re.compile(
-    _CMD_POS + r"\btar\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+([^|;&\n]{0,512})"
+    _CMD_POS + r"\b" + r"(?i:tar)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+([^|;&\n]{0,512})"
 )
 # For verbs where the protected target is the final positional and
 # flags may take separate arguments (`-s 0`) or glued ones (`-p1`),
@@ -910,9 +927,9 @@ _TAR_CREATE_RE = re.compile(
 # <hook>` cut the span at `file` and dropped the hook (code-reviewer, driven
 # old-vs-new at all five verbs). The classes stay `#`-blind so a `#` inside a
 # filename survives; the scanner cuts at a word-start `#` outside quotes.
-_INSTALL_CMD_RE = re.compile(_CMD_POS + r"\binstall\b(?!=)([^|;&\n]+)")
-_RSYNC_CMD_RE = re.compile(_CMD_POS + r"\brsync\b(?!=)([^|;&\n]+)")
-_TRUNCATE_CMD_RE = re.compile(_CMD_POS + r"\btruncate\b(?!=)([^|;&\n]+)")
+_INSTALL_CMD_RE = re.compile(_CMD_POS + r"\b" + r"(?i:install)" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n]+)")
+_RSYNC_CMD_RE = re.compile(_CMD_POS + r"\b" + r"(?i:rsync)" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n]+)")
+_TRUNCATE_CMD_RE = re.compile(_CMD_POS + r"\b" + r"(?i:truncate)" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n]+)")
 # `patch [opts] [originalfile [patchfile]]`: the WRITE target is the FIRST
 # positional and the last is the patchfile READ, so the last-token pick the three
 # verbs above share read `patch <hook> p.diff` as a write to `p.diff` and allowed
@@ -920,7 +937,7 @@ _TRUNCATE_CMD_RE = re.compile(_CMD_POS + r"\btruncate\b(?!=)([^|;&\n]+)")
 # candidate for patch, with a glued `--output=`/`--directory=` value
 # (`_patch_targets`): a patchfile named like a protected path is friction, a
 # missed originalfile is an unchecked write.
-_PATCH_CMD_RE = re.compile(_CMD_POS + r"\bpatch\b(?!=)([^|;&\n<]+)")
+_PATCH_CMD_RE = re.compile(_CMD_POS + r"\b" + r"(?i:patch)" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n<]+)")
 # `find <roots...> ... -delete` and `-exec rm {} \;` (§C52): the roots are
 # the leading positionals before the first predicate; `_find_delete_roots`
 # yields them only when a delete action sits in the span. Bounded like the
@@ -930,7 +947,7 @@ _PATCH_CMD_RE = re.compile(_CMD_POS + r"\bpatch\b(?!=)([^|;&\n<]+)")
 # `_RM_SEGMENT_RE` admits; the predicates below stay case-sensitive, since
 # find itself rejects `-DELETE`.
 _FIND_DELETE_RE = re.compile(
-    _CMD_POS + r"\bfind\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+([^|;&\n]{0,512})",
+    _CMD_POS + r"\b" + r"(?i:find)" + _EXE_SUFFIX + r"\b(?!=)" + _QUOTED_VERB_TAIL + r"[ \t]+([^|;&\n]{0,512})",
     re.IGNORECASE,
 )
 #: The remove verb behind `-exec`, spelled as the rm arm's tokenizer admits
@@ -995,7 +1012,7 @@ _FIND_VALUED_NARROWING = ("name", "path", "wholename", "lname", "regex")
 #: `_GIT_HEAD_RE`, the listing head above the carrier, and `_speedbump`'s
 #: `_GIT_CMD` / `_PS_GIT_CMD` (failure-mode review: the extension had been
 #: admitted on one arm of five).
-_GIT_VERB = r"git(?:\.exe)?"
+_GIT_VERB = r"(?i:git)" + _EXE_SUFFIX
 #: git's global options, which may sit BETWEEN `git` and the subcommand
 #: (`git -C <dir> checkout`, `git -c k=v restore`, `git --no-pager rm`,
 #: `git --git-dir=<d> clean`): a spelling Claude emits routinely when it
@@ -1095,7 +1112,7 @@ if (_PIPED_ENUM_HEADS != "|".join(s for k, s in _PIPED_ENUM_HEAD_SPELLINGS if " 
 #: roster words.
 _PIPED_ENUM_VERB = r"(?:" + _PIPED_ENUM_HEADS + r"|" + _PIPED_MULTIWORD_HEADS + r")"
 _PIPED_ENUM_HEAD_GROUP = (
-    r"(?P<head>(?:" + _PIPED_ENUM_HEADS + r")\b(?!=)|" + _PIPED_MULTIWORD_HEADS + r"\b(?!=))"
+    r"(?P<head>(?:" + _PIPED_ENUM_HEADS + r")" + _EXE_SUFFIX + r"\b(?!=)|" + _PIPED_MULTIWORD_HEADS + r"\b(?!=))"
 )
 
 
@@ -1466,7 +1483,7 @@ def _find_is_narrowed(span: str, action_at: int) -> bool:
 # fail-open the `_INSTALL_CMD_RE` block explains (`chmod 000 a#b
 # .claude/settings.json` -> allow); the class is `#`-blind now like its siblings.
 _CHMOD_CHOWN_RE = re.compile(
-    _CMD_POS + r"\b(chmod|chown|chgrp|chflags|chattr|setfacl)\b(?!=)([^|;&\n]{0,512})"
+    _CMD_POS + r"\b((?i:chmod|chown|chgrp|chflags|chattr|setfacl))" + _EXE_SUFFIX + r"\b(?!=)([^|;&\n]{0,512})"
 )
 
 _ACL_VERBS = frozenset({"setfacl"})
@@ -1481,6 +1498,18 @@ name spec FILES, so a spec file kept inside a governed zone denies an
 ordinary ``setfacl`` on a public file -- accepted friction, because the
 alternative is a per-flag value table; the glued ``--restore=`` form is not
 a positional and does not."""
+
+
+def _verb_key(verb: str) -> str:
+    """The roster key of a verb a case-blind arm captured (DEF-1161): its
+    quotes and a path dropped, in lower case, its `.exe` suffix dropped, so
+    `SETFACL`, `'/usr/bin/Mv.EXE'` and `ln.exe` reach the table their plain
+    spelling does. Every reader that dispatches on a captured verb asks it:
+    the arms read every spelling, and a lookup that missed one dropped the
+    target the arm had found (the code review: `SETFACL -b <hook>` passed)."""
+    v = verb.strip("'\"").replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return v[:-4] if v.endswith(".exe") else v
+
 
 _NO_MODE_POSITIONAL_FLAGS = frozenset({"-E", "-N", "-I"})
 """Flags under which a verb that normally names its mode first names NO mode
@@ -1616,7 +1645,7 @@ _GIT_CLEAN_RE = re.compile(
 # docs/sharp-edges/protected-zone-symlink-backstop.md); reader-side symlink
 # refusal is the decisive defense.
 _LN_S_RE = re.compile(
-    _CMD_POS + r"\bln" + _QUOTED_VERB_TAIL + r"[ \t]+"       # the tail tolerates a quoted verb `'ln'`
+    _CMD_POS + r"\b" + r"(?i:ln)" + _EXE_SUFFIX + _QUOTED_VERB_TAIL + r"[ \t]+"       # the tail tolerates a quoted verb `'ln'`
     r"(?:-[a-zA-Z]+[ \t]+|--[a-z-]+[ \t]+)*"        # leading flags (short or long)
     r"(?:-[a-zA-Z]*s[a-zA-Z]*|--symbolic)"     # symlink flag: cluster w/ s, or --symbolic
     # The operand SPAN, quote-aware (a linkname with a space is one operand --
@@ -1632,7 +1661,7 @@ _LN_S_RE = re.compile(
 # the protected-zone check. Same flag-cluster grammar as _LN_S_RE; the captured
 # group is the operand span, tokenised by the same `symlink_linkname`.
 _CP_SYMLINK_RE = re.compile(
-    _CMD_POS + r"\bcp" + _QUOTED_VERB_TAIL + r"[ \t]+"            # the tail tolerates a quoted verb `'cp'`
+    _CMD_POS + r"\b" + r"(?i:cp)" + _EXE_SUFFIX + _QUOTED_VERB_TAIL + r"[ \t]+"            # the tail tolerates a quoted verb `'cp'`
     r"(?:-[a-zA-Z]+[ \t]+|--[a-z-]+[ \t]+)*"             # leading flags
     r"(?:-[a-zA-Z]*s[a-zA-Z]*|--symbolic-link)"    # symlink flag: cluster w/ s, or --symbolic-link
     r"((?:[ \t]+(?:\"[^\"]*\"|'[^']*'|[^\s;|&\"']+))+)"   # the operand span (see _LN_S_RE)
@@ -1687,7 +1716,7 @@ def symlink_linkname(span: str) -> str | None:
 # (driven: `ls -ln <protected>` and `grep -ln foo <protected>` both ALLOW) but the
 # stated mechanism was gone, which is worse than no comment: a reader trusts it
 # and reasons from a guard that is not there.
-_LN_CP_INVOCATION_RE = re.compile(_CMD_POS + r"\b(ln|cp)\b(?!=)([^;\n|&]*)", re.IGNORECASE)
+_LN_CP_INVOCATION_RE = re.compile(_CMD_POS + r"\b(ln|cp)" + _EXE_SUFFIX + r"\b(?!=)([^;\n|&]*)", re.IGNORECASE)
 
 
 def iter_hardlink_operands(command: str) -> Iterator[str]:
@@ -1712,7 +1741,7 @@ def iter_hardlink_operands(command: str) -> Iterator[str]:
     # read from the raw text at the match's offsets.
     raw, scan = _extractor_pair(command)
     for m in _LN_CP_INVOCATION_RE.finditer(scan):
-        verb = raw_span(raw, m, 1).lower()
+        verb = _verb_key(raw_span(raw, m, 1))
         symlink = hardlink_flag = end_opts = False
         operands: list[str] = []
         span = neutralise_redirect_ampersands(raw_span(raw, m, 2, through_quotes=True))
@@ -1838,9 +1867,9 @@ _PYTHON_DASH_C_RE = re.compile(
     _CMD_POS + r"(?i:python|pypy)" + _INLINE_C_TAIL,
     re.DOTALL,
 )
-_NODE_DASH_E_RE = re.compile(_CMD_POS + r"node" + _INLINE_E_TAIL, re.DOTALL)
-_RUBY_DASH_E_RE = re.compile(_CMD_POS + r"ruby" + _INLINE_E_TAIL, re.DOTALL)
-_PERL_DASH_E_RE = re.compile(_CMD_POS + r"perl" + _INLINE_E_TAIL, re.DOTALL)
+_NODE_DASH_E_RE = re.compile(_CMD_POS + r"(?i:node)" + _INLINE_E_TAIL, re.DOTALL)
+_RUBY_DASH_E_RE = re.compile(_CMD_POS + r"(?i:ruby)" + _INLINE_E_TAIL, re.DOTALL)
+_PERL_DASH_E_RE = re.compile(_CMD_POS + r"(?i:perl)" + _INLINE_E_TAIL, re.DOTALL)
 
 # ── Cross-shell routing: a program handed to the OTHER shell (DEF-637, §C49) ──
 #
@@ -1956,7 +1985,7 @@ _SHELL_SWITCH_RUN_BOUNDED = (
     + r")(?=[ \t]|$))[\w.=/][\w.=/-]*)?){0,64}"
 )
 _SHELL_DASH_C_RE = re.compile(
-    _CMD_POS + r"(?:" + _POSIX_SHELL_HEADS + r")\b" + _QUOTED_VERB_TAIL
+    _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
     # `c` anywhere in the cluster (`-cx`, `-xc`, `-lc`): both runs bounded, so
     # the adjacent pair has at most 81 parses (review: `bash -cx` was missed)
     + _SHELL_SWITCH_RUN_BOUNDED + r"[ \t]+-[A-Za-z]{0,8}c[A-Za-z]{0,8}[ \t]+"
@@ -5019,7 +5048,8 @@ def iter_inplace_edit_targets(command: str, raw: str | None = None) -> Iterator[
         # strip a quoted verb (`'sed'`) and fold case (`SED` on APFS) so both
         # reach the table -- the regex admits them, and a lookup miss here would
         # silently drop the whole segment.
-        profile = _INPLACE_PROFILES.get(tokens[0].strip("'\"").lower())
+        verb = _verb_key(tokens[0])
+        profile = _INPLACE_PROFILES.get(verb)
         if profile is None:
             continue
 
@@ -5425,7 +5455,7 @@ _INTERP_PIPE_RE = re.compile(
 #: spelling needs no arm -- behind a shell head the body stays raw and the
 #: whole-command scan reads it -- and the pipe spelling is `_INTERP_PIPE_RE`'s.
 _SHELL_HERESTRING_RE = re.compile(
-    _CMD_POS + r"(?:" + _POSIX_SHELL_HEADS + r")\b" + _QUOTED_VERB_TAIL
+    _CMD_POS + r"(?i:" + _POSIX_SHELL_HEADS + r")" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL
     # the bounded run (§C52): the unbounded one was quadratic on a repeated
     # head, see `_SHELL_SWITCH_RUN_BOUNDED`
     + _SHELL_SWITCH_RUN_BOUNDED + r"[ \t]*<<<[ \t]*"
@@ -5433,8 +5463,8 @@ _SHELL_HERESTRING_RE = re.compile(
 
 #: The three statement readers' heads, on the masked text at a command
 #: position; the words after each are read from the raw command.
-_AWK_HEAD_RE = re.compile(_CMD_POS + r"(?:[gmn]?awk)\b" + _QUOTED_VERB_TAIL)
-_SED_HEAD_RE = re.compile(_CMD_POS + r"(?:g?sed)\b" + _QUOTED_VERB_TAIL)
+_AWK_HEAD_RE = re.compile(_CMD_POS + r"(?i:[gmn]?awk)" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL)
+_SED_HEAD_RE = re.compile(_CMD_POS + r"(?i:g?sed)" + _EXE_SUFFIX + r"\b" + _QUOTED_VERB_TAIL)
 _GIT_HEAD_RE = re.compile(_CMD_POS + _GIT_VERB + r"\b" + _QUOTED_VERB_TAIL)
 
 #: git config keys whose value is a program run through a shell. An `alias.*`
@@ -7361,7 +7391,8 @@ def _candidate_paths_from_bash(command: str, _depth: int = 0) -> list[str]:
     # after the mode/owner/flags (every positional for setfacl). A permission
     # change on a hook silences it as surely as a write.
     for m in _CHMOD_CHOWN_RE.finditer(scan):
-        paths.extend(_permission_targets(raw_span(command, m, 2, through_quotes=True), m.group(1)))
+        paths.extend(_permission_targets(raw_span(command, m, 2, through_quotes=True),
+                                         _verb_key(m.group(1))))
 
     for m in _GIT_CHECKOUT_DASHDASH_RE.finditer(scan):
         paths.append(raw_operand(command, m, word=True))
@@ -7489,7 +7520,7 @@ def _remove_effect(verb: str) -> str:
     relocation verb by any spelling or case, `delete` for the rest -- ONE
     rule for the find arm, the carrier and the loop carrier (the review found
     it spelled three times, the find arm's without the case fold)."""
-    return "move" if verb.lower().endswith("mv") else "delete"
+    return "move" if _verb_key(verb).endswith("mv") else "delete"
 
 
 def _find_delete_roots(span: str, *, powershell: bool = False) -> tuple[list[str], str]:
@@ -8525,6 +8556,35 @@ _PS_REMOVE_VERB = (
     r"(?:" + _PS_NATIVE_PATH_PREFIX + _PS_NATIVE_REMOVE_NAMES + r"(?:\.exe)?(?![\w.-])"
     + r"|" + _PS_REMOVE_VERB_WORDS + r")"
 )
+#: The wrapper words pwsh hands a native command through on a POSIX host
+#: (`sudo find . -delete` runs find as `sudo rm` runs rm): the Bash run
+#: whole, bounded -- a roster spelled for the other shell UNIONs, it never
+#: replaces (memory/hook-authoring.md).
+_PS_NATIVE_WRAP_RUN = r"(?:" + _CMD_POS_WRAP_RUN + r"){0,3}"
+#: The same run before the REMOVE verb, all but `xargs`, this tool's pipe
+#: carrier there (DEF-826, `_PS_PIPE_CARRIER`): the operands it hands the
+#: remove verb come down the pipe, which the enumerator reader reads and
+#: judges, narrowed or not. Read as a wrapper, it handed the records a remove
+#: with no operand of its own, which walled a narrowed pipeline the carrier
+#: passes (`find . | grep x | xargs rm -rf`) and took the sweep's reason from
+#: an unnarrowed one (the carrier rows, 2026-10-16). So a bare `xargs rm` with
+#: no pipe in front is not read on this tool: the false-allow direction,
+#: declared. Its own constant: the find, destroy and truncate readers keep
+#: the whole run, whose `xargs shred` and `xargs find -delete` they read (a
+#: first draft narrowed the shared run and dropped all four, the code review).
+_PS_REMOVE_WRAP_RUN = r"(?:(?!xargs\b)" + _CMD_POS_WRAP_RUN + r"){0,3}"
+#: A remove verb at a PowerShell command position, behind the wrapper run
+#: (DEF-1162): on macOS and Linux pwsh resolves the bare remove word to the
+#: native binary and the wrapper words are native programs that run what they
+#: are handed, so `sudo rm -rf ~` deletes as `rm -rf ~` does. Until 2026-10-16
+#: the remove readers found a verb only at a command position, which a
+#: wrapper word is not: 22 of 22 roster words before a recursive native
+#: remove drew no wall, no nudge and no zone deny where the Bash tool walled
+#: every one. One head for every remove reader on this tool (the hard tier's
+#: records, the soft tier, the zone reader), so a reader cannot miss it. On
+#: Windows a wrapper before a cmdlet is read the same way: friction, since no
+#: such command runs there.
+_PS_REMOVE_AT = _PS_CMD_POS + _PS_REMOVE_WRAP_RUN + _PS_REMOVE_VERB
 
 #: The recurse and force switches BY EVERY SPELLING THAT RUNS (DEF-822): the
 #: hard records and the soft tier spelled both in full until 2026-09-16, so
@@ -8584,7 +8644,7 @@ _PS_RM_CLUSTER_RE = re.compile(r"-[fvdiIPWxrR]+|--(?:recursive|force)")
 #: from?" without importing write_guard (hooks load siblings flat; the
 #: dependency would be circular).
 _PS_RECURSIVE_FORCE_RE = re.compile(
-    _PS_CMD_POS + _PS_REMOVE_VERB + r"\b" + _QUOTED_VERB_TAIL
+    _PS_REMOVE_AT + r"\b" + _QUOTED_VERB_TAIL
     + r"[^\n;|&]{0,200}?" + _PS_RECURSIVE_FORCE_TAIL,
     re.IGNORECASE,
 )
@@ -8604,7 +8664,7 @@ _PS_DRIVE_QUALIFIED_RE = re.compile(r"[A-Za-z]:")
 # the drift this module's single-source-of-truth rule exists to prevent, and the
 # comment claiming they were already shared was measured false.
 _PS_REMOVE_ITEM_RE = re.compile(
-    _PS_CMD_POS + _PS_REMOVE_VERB + r"\b" + _QUOTED_VERB_TAIL
+    _PS_REMOVE_AT + r"\b" + _QUOTED_VERB_TAIL
     + r"(?P<args>[^\n;|&]*)", re.IGNORECASE
 )
 # The remove/relocate operand class on the PowerShell tool (§C52). Each reads
@@ -8694,11 +8754,6 @@ _PS_GIT_RM_MV_RE = re.compile(
     re.IGNORECASE,
 )
 # ── the find family on the PowerShell tool (DEF-824) ──────────────────────
-#: The wrapper words pwsh hands a native command through on a POSIX host
-#: (`sudo find . -delete` runs find as `sudo rm` runs rm): the Bash run
-#: whole, bounded -- a roster spelled for the other shell UNIONs, it never
-#: replaces (memory/hook-authoring.md).
-_PS_NATIVE_WRAP_RUN = r"(?:" + _CMD_POS_WRAP_RUN + r"){0,3}"
 #: `find <roots...> ... -delete` on the PowerShell tool. GNU and BSD find run
 #: verbatim under pwsh on macOS and Linux (no alias stands in front of them;
 #: `find.exe` on Windows has no delete action), and until 2026-09-16 this
@@ -9872,6 +9927,97 @@ def powershell_removal_is_plainly_relative(command: str, raw: str | None = None)
     return _powershell_removal_targets(command, raw=raw) is not None
 
 
+def _ps_array_elements(token: str) -> list[str] | None:
+    """The elements of one PowerShell operand token, split at the commas
+    OUTSIDE its quotes (`build,'C:/t/x'` is two; `"src, C:/t/x"` is one
+    string, so one path), each stripped, empty ones dropped; None for an
+    unterminated quote. Linear: one pass."""
+    out: list[str] = []
+    cur: list[str] = []
+    quote = ""
+    for ch in token:
+        if quote:
+            cur.append(ch)
+            if ch == quote:
+                quote = ""
+        elif ch in "'\"":
+            quote = ch
+            cur.append(ch)
+        elif ch == ",":
+            out.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+    if quote:
+        return None
+    out.append("".join(cur).strip())
+    return [e for e in out if e]
+
+
+def powershell_removal_element_tier(command: str, root: str | None) -> str | None:
+    """The tier a forced ``Remove-Item`` in *command* (the raw text) earns when
+    every target is judged ON ITS OWN (DEF-1174): None when some target
+    qualifies for none of the forced reader's rungs (the wall keeps the
+    command), ``"allow"`` when every target is on the ephemeral roster or is
+    scratch that holds no work, ``"bump"`` otherwise -- the worst element's.
+
+    A target qualifies as the rungs' own rules read one: plainly relative
+    (`_ps_removal_token_targets`, the roster and relative rungs' per-token
+    rule, a wildcard below a roster directory read as that directory), on the
+    roster by `on_the_ephemeral_roster`; or a literal absolute path strictly
+    below a scratch root that is not catastrophic (the scratch rung's per-path
+    rule), holding no work by `below_a_temp_root`, under `TEMP_CARVE_MAX`. The
+    three rungs each ask their question of EVERY target, so an array mixing a
+    roster build directory with its own scratch below the temp directory
+    answered no to all three and met the wall, though each part passes alone.
+    The hard tier steps aside when this is not None and the nudge fires when
+    it is ``"bump"``: one reader for both, as the scratch rung's predicate is.
+    Both ask `powershell_removal_lands_catastrophic` first, as before every
+    rung.
+
+    The targets are the scratch rung's (`_ps_removal_target_tokens`, quote
+    aware, a switch's value left out), a block's brace beside one dropped
+    (`_ps_strip_statement_brace`: the guarded cleanup idiom), and an array
+    splits only at a comma outside quotes: a double-quoted
+    ``"src, <scratch>/x"`` is ONE path, and an earlier draft that split it
+    stepped aside with no nudge, as the tiers-agree property showed (driven
+    2026-10-16). Fails closed as the rungs do: a pipe-fed or rootless remove,
+    no element at all, a backtick, a comma inside quotes, and any element
+    neither rule reads keep the wall."""
+    raw, scan = powershell_scan_pair(command)
+    invocations = list(_PS_REMOVE_ITEM_RE.finditer(scan))
+    if not invocations:
+        return None
+    tier, scratch_asked = "allow", 0
+    for m in invocations:
+        args = raw[m.start("args"):m.end("args")]
+        tokens = _ps_removal_target_tokens(
+            args, tokens=_ps_operand_tokens(args), unknown_takes_value=False)
+        elements: list[str] = []
+        for tok in tokens:
+            got = _ps_array_elements(_ps_strip_statement_brace(tok))
+            if got is None:
+                return None               # an unterminated quote
+            elements.extend(got)
+        if not elements:
+            return None                   # rootless, or fed by a pipe: not this rung's
+        for element in elements:
+            if "`" in element or "," in element:
+                return None               # an escape, or a quoted comma: one odd path
+            parts = _ps_removal_token_targets(element, glob_led=True, prefix_glob=True)
+            if parts is not None:
+                if not all(on_the_ephemeral_roster(p) for p in parts):
+                    tier = "bump"
+                continue
+            path = _ps_unquote(element).replace("\\", "/")
+            if not (path and _is_scratch_literal(path)) or _target_is_catastrophic(path, root):
+                return None
+            scratch_asked += 1
+            if scratch_asked > TEMP_CARVE_MAX or not below_a_temp_root(path, root, bash=False):
+                tier = "bump"
+    return tier
+
+
 #: A `tmp` or `temp` directory at a drive root (`C:\tmp`, `D:/Temp`): the
 #: conventional Windows scratch location beside the user's temp directory,
 #: read by its Windows meaning on every host as a drive-qualified path is
@@ -10573,8 +10719,17 @@ def _cmd_program_at(text: str, at: int) -> int | None:
     (`write_guard._cmd_program`, DEF-1070) and the delete reader below. A
     switch ends at a blank, a quote or the next ``/``: cmd reads a glued
     run (``/d/c``) as two switches, and a walk that skipped to the blank
-    swallowed the ``/c`` and read no program at all (the code review)."""
+    swallowed the ``/c`` and read no program at all (the code review).
+    PowerShell's stop-parsing token before the switch (``cmd --% /c ...``,
+    DEF-1071 (e)) hands cmd the rest of the statement verbatim, so the walk
+    steps over it; from Bash cmd is handed the word, and reading past it is
+    the friction side."""
     i, n = at, len(text)
+    k = i
+    while k < n and text[k] in " \t":
+        k += 1
+    if text.startswith(_PS_STOP_PARSING, k):
+        i = k + len(_PS_STOP_PARSING)
     while True:
         while i < n and text[i] in " \t":
             i += 1
@@ -10588,6 +10743,191 @@ def _cmd_program_at(text: str, at: int) -> int | None:
         i = j + 1
         while i < n and text[i] not in " \t\"'/":
             i += 1
+
+
+#: PowerShell's stop-parsing token (DEF-1071 (e)).
+_PS_STOP_PARSING = "--%"
+#: The process-start cmdlet by name and alias, the opener of a cmd started
+#: with an argument list (DEF-1071 (e)). Its parameters by an alias or any
+#: unambiguous prefix, as PowerShell binds them: the argument list is the one
+#: starting with `a` (`-ArgumentList`, its alias `-Args`), these are its
+#: switches, and every other named parameter takes a value, bound by a colon
+#: or as the next word, so a common parameter's (`-ErrorAction Stop`) is never
+#: read as the argument list. An exact name or alias wins over a prefix
+#: (`-Verb` is Verb's, though it begins `verbose`; `-wa` is WarningAction's,
+#: though it begins `wait`): `_ps_start_process_takes_value`. The sets are
+#: the cmdlet's own, read from its metadata on Windows PowerShell 5.1 on
+#: 2026-10-16, with pwsh 7.4's common parameter ProgressAction (`proga`)
+#: from its documentation, not driven; the reading is held to a live
+#: PowerShell's for every name, alias and unambiguous prefix where one is
+#: installed, which CI's pwsh 7 runs. pwsh 7 binds two switches 5.1 does
+#: not, `-WhatIf` (`wi`) and `-Confirm` (`cf`), held apart
+#: (`_PS_START_PROCESS_SWITCHES_7`, found by CI's pwsh 7 on 2026-10-16): a
+#: prefix a name of both versions also begins reads as that name, since in
+#: 7 it is ambiguous and starts nothing (`-c` is 5.1's Credential), and
+#: `-wi`, in 7 WhatIf's alias, under which nothing starts, reads as 5.1's
+#: WindowStyle prefix.
+_PS_START_PROCESS_RE = re.compile(r"(?i)\b(?:Start-Process|saps)\b")
+_PS_START_PROCESS_SWITCHES = ("loaduserprofile", "nonewwindow", "passthru", "wait",
+                              "usenewenvironment", "verbose", "debug")
+_PS_START_PROCESS_VALUED = (
+    "filepath", "credential", "workingdirectory", "verb", "windowstyle",
+    "redirectstandardinput", "redirectstandardoutput", "redirectstandarderror",
+    "environment", "erroraction", "warningaction", "informationaction", "errorvariable",
+    "warningvariable", "informationvariable", "outvariable", "outbuffer",
+    "pipelinevariable", "progressaction")
+_PS_START_PROCESS_SWITCHES_7 = ("whatif", "confirm")
+_PS_START_PROCESS_SWITCH_ALIASES = frozenset({"lup", "nnw", "vb", "db", "cf"})
+_PS_START_PROCESS_VALUED_ALIASES = frozenset({
+    "pspath", "runas", "rse", "rsi", "rso", "ea", "wa", "infa", "ev", "wv", "iv",
+    "ov", "ob", "pv", "proga"})
+
+
+def _ps_word_at(text: str, i: int) -> tuple[str, int]:
+    """The PowerShell word starting at ``i`` (a single- or double-quoted
+    string, its quotes removed, or a bare run up to a blank or a comma) and
+    the offset after it. An unterminated quote runs to the end."""
+    n = len(text)
+    if i < n and text[i] in "'\"":
+        quote, j, out = text[i], i + 1, []
+        while j < n:
+            c = text[j]
+            if c == quote and j + 1 < n and text[j + 1] == quote:
+                out.append(quote)
+                j += 2
+                continue
+            if quote == '"' and c == "`" and j + 1 < n:
+                out.append(text[j + 1])
+                j += 2
+                continue
+            if c == quote:
+                return "".join(out), j + 1
+            out.append(c)
+            j += 1
+        return "".join(out), n
+    j = i
+    while j < n and text[j] not in " \t,;|&\n\r":
+        j += 1
+    return text[i:j], j
+
+
+def _ps_start_process_takes_value(low: str) -> bool:
+    """Whether the ``Start-Process`` parameter spelled ``low`` (no dash, in
+    lower case) takes a value, as PowerShell binds it: an exact name or alias
+    first, then a prefix of a switch both versions bind, of a valued name,
+    and of a switch pwsh 7 alone binds, in that order; anything else takes
+    one. An ambiguous prefix (``-w``) is a binding error PowerShell runs
+    nothing on, so either reading of it is moot, and a prefix that is
+    ambiguous in one version only reads as the other binds it."""
+    if low in _PS_START_PROCESS_VALUED or low in _PS_START_PROCESS_VALUED_ALIASES:
+        return True
+    if (low in _PS_START_PROCESS_SWITCHES or low in _PS_START_PROCESS_SWITCHES_7
+            or low in _PS_START_PROCESS_SWITCH_ALIASES):
+        return False
+    if any(s.startswith(low) for s in _PS_START_PROCESS_SWITCHES):
+        return False
+    if any(v.startswith(low) for v in _PS_START_PROCESS_VALUED):
+        return True
+    return not any(s.startswith(low) for s in _PS_START_PROCESS_SWITCHES_7)
+
+
+def ps_start_process_arguments(text: str, at: int) -> tuple[int, str] | None:
+    """``(offset, command line)`` of the argument list a ``Start-Process``
+    opener ending at ``at`` hands the program it starts, or None (DEF-1071
+    (e)): ``-ArgumentList`` (or ``-Args``, by any prefix) or the first
+    positional word after the program, as one string or a comma-separated
+    array (bare, or in ``@( )`` or ``( )``) joined by blanks, as the process
+    receives it. A named parameter
+    before it is stepped over with its value -- after a colon
+    (``-WindowStyle:Hidden``, ``-Wait: $true``) or as the next word -- unless
+    it is one of the cmdlet's switches, as PowerShell 5.1 bound each of
+    them (driven 2026-10-16), or one of the two pwsh 7 adds. Linear: one
+    pass."""
+    i, n = at, len(text)
+    while i < n:
+        while i < n and text[i] in " \t":
+            i += 1
+        if i >= n or text[i] in ";|&\n\r":
+            return None
+        if text[i] == "-" and i + 1 < n and text[i + 1].isalpha():
+            j = i + 1
+            while j < n and text[j].isalnum():
+                j += 1
+            low = text[i + 1:j].lower()
+            bound = j < n and text[j] == ":"     # `-Name:value`, or `-Name: value`
+            i = j + 1 if bound else j
+            if "argumentlist".startswith(low) or low == "args":
+                break                            # the list follows, past a colon
+            if bound or _ps_start_process_takes_value(low):
+                while i < n and text[i] in " \t":
+                    i += 1
+                _value, i = _ps_word_at(text, i)  # the parameter's value
+            continue
+        break                                  # the first positional: the argument list
+    else:
+        return None
+    while i < n and text[i] in " \t":
+        i += 1
+    if i >= n:
+        return None
+    # an array in an array subexpression or a group, `@('/c','rd x')`: its
+    # elements as the bare array's (a `$( )` subexpression is not opened)
+    grouped = text.startswith("@(", i) or text.startswith("(", i)
+    if grouped:
+        i += 2 if text[i] == "@" else 1
+        while i < n and text[i] in " \t":
+            i += 1
+    start, parts = i, []
+    while i < n:
+        word, i = _ps_word_at(text, i)
+        if grouped and word.endswith(")"):
+            word, grouped = word[:-1], False   # the group's close, glued to a bare word
+        parts.append(word)
+        k = i
+        while k < n and text[k] in " \t":
+            k += 1
+        if k < n and text[k] == ",":
+            i = k + 1
+            while i < n and text[i] in " \t":
+                i += 1
+            continue
+        break
+    line = " ".join(parts)
+    return (start, line) if line.strip() else None
+
+
+def start_process_cmd_line(text: str, opener: "re.Match[str]") -> tuple[int, str] | None:
+    """``(offset, program)`` of the cmd program a ``Start-Process`` opener
+    hands cmd as its argument list -- the text after cmd's ``/c`` or
+    ``/k`` -- or None (DEF-1071 (e)). Only where the cmdlet word itself
+    starts a statement (the text's start, a separator, a group, an
+    assignment, or the opening quote of a program a reparsing shell runs;
+    behind a module qualifier too): the masker keeps a double-quoted string, so a
+    ``Start-Process cmd ...`` mentioned inside one is found by the opener,
+    and reading its argument list would wall a mention."""
+    word = _PS_START_PROCESS_RE.search(text, opener.start(), opener.end())
+    if word is None:
+        return None
+    k = word.start() - 1
+    # a module-qualified name starts where its module does
+    # (`Microsoft.PowerShell.Management\Start-Process`, the failure-mode review)
+    if k >= 0 and text[k] == "\\":
+        k -= 1
+        while k >= 0 and (text[k].isalnum() or text[k] in "._"):
+            k -= 1
+    while k >= 0 and text[k] in " \t":
+        k -= 1
+    if k >= 0 and text[k] not in ";|&({=\n\r" and not (
+            text[k] in "\"'" and _ps_span_is_reparsed(text, k)):
+        # a mention -- but the opening quote of a program a reparsing shell
+        # runs is a statement start (`powershell -Command "Start-Process
+        # cmd ..."` walled on the Bash tool and passed here, the review)
+        return None
+    got = ps_start_process_arguments(text, opener.end())
+    if got is None:
+        return None
+    start = _cmd_program_at(got[1], 0)
+    return None if start is None else (got[0], got[1][start:])
 
 
 def _cmd_outer_words(text: str, start: int, stop: int, *, bash: bool) -> list[str]:
@@ -10884,6 +11224,15 @@ def iter_cmd_recursive_removes(
     openers = list(opener_re.finditer(scan))
     for k, m in enumerate(openers):
         start = _cmd_program_at(raw, m.end())
+        if start is None and not bash:
+            # Start-Process hands cmd its program as an argument list, not in
+            # the statement's own words (DEF-1071 (e)): read that line
+            got = start_process_cmd_line(raw, m)
+            if got is not None:
+                for stmt in _cmd_statements(got[1]):
+                    for targets in _cmd_statement_targets(stmt, 0, recursive_only):
+                        yield got[0], targets
+            continue
         if start is None:
             continue
         stop = max(start, openers[k + 1].start()) if k + 1 < len(openers) else len(raw)
@@ -11152,7 +11501,9 @@ def _placed_ps_unforced_removes(
         yield parts, bases
 
 
-def _ps_removal_token_targets(raw: str, *, glob_led: bool = False) -> list[str] | None:
+def _ps_removal_token_targets(
+    raw: str, *, glob_led: bool = False, prefix_glob: bool = False,
+) -> list[str] | None:
     """One ``Remove-Item`` operand token as the plainly relative target(s) it
     spells, or ``None`` when it cannot be vouched for -- the rule
     `_powershell_removal_targets` applies to every token, in one home.
@@ -11163,7 +11514,16 @@ def _ps_removal_token_targets(raw: str, *, glob_led: bool = False) -> list[str] 
     as the directory the wildcard expands in. Only a caller that asks
     `powershell_removal_lands_catastrophic` first may set it -- that reader
     walls the wildcard outside a plain command -- so the snapshot reader
-    keeps the default."""
+    keeps the default.
+
+    ``prefix_glob`` (DEF-1174) reads a wildcard AFTER a directory on the
+    ephemeral roster (`build/*`, `build\\*.o`, `dist/x/**`) as that
+    directory: the expansion can only name entries below it, so the roster
+    rung judges the directory, as the unforced remove and the Bash tool
+    already pass `build/*`. Only the rungs' parser sets it; a prefix off the
+    roster (the zone reader reads no wildcard, so `tools/*` keeps the wall),
+    a `..` before or after the wildcard, a qualifier, a variable or a
+    wildcard of its own stays unreadable."""
     # ⚠ NOT `_shell_unquote`. That helper is POSIX: it treats a
     # backslash as an ESCAPE and drops it, so `.\build` collapsed to
     # `.build` and this carve-out silently never fired for the very
@@ -11191,6 +11551,25 @@ def _ps_removal_token_targets(raw: str, *, glob_led: bool = False) -> list[str] 
         if not part or part.startswith("/") or part.startswith("~"):
             return None
         first, _sep, rest = part.partition("/")
+        if prefix_glob:
+            pieces = part.split("/")
+            wild = next((k for k, p in enumerate(pieces) if any(ch in p for ch in "*?[")), None)
+            if wild is not None and wild >= 1:
+                # what follows the wildcard is read too: `build/*/../..`
+                # names the checkout's parent (PowerShell 5.1 resolved it so,
+                # the code review), and a qualifier or variable past it is
+                # as unreadable as one before it
+                if ".." in pieces or any(ch in part for ch in ":$"):
+                    return None
+                part = "/".join(pieces[:wild])
+                # and only below a roster directory: the zone reader reads no
+                # wildcard, so a wildcard below any other directory keeps the
+                # wall it met before (the failure-mode review: a forced
+                # `tools/*` or `.claude/*` fell to one nudge, the harness
+                # below it unjudged on the re-issue)
+                if not on_the_ephemeral_roster(part):
+                    return None
+                first, _sep, rest = part.partition("/")
         # `[` is a PowerShell wildcard metacharacter and belonged with
         # `*` and `?` from the start.
         checked = rest if glob_led and _is_unbounded_glob(first) else part
@@ -11280,8 +11659,9 @@ def _powershell_removal_targets(command: str, raw: str | None = None) -> list[st
         for raw in operands:
             # the per-token rule, one home; a bare leading wildcard is admitted
             # because both callers run after the forced reader, which walls it
-            # outside a plain command (the glob relief, 2026-10-07)
-            parts = _ps_removal_token_targets(raw, glob_led=True)
+            # outside a plain command (the glob relief, 2026-10-07), and a
+            # wildcard after a roster directory reads as that directory (DEF-1174)
+            parts = _ps_removal_token_targets(raw, glob_led=True, prefix_glob=True)
             if parts is None:
                 return None
             out.extend(parts)
@@ -11315,7 +11695,7 @@ def _powershell_removal_targets(command: str, raw: str | None = None) -> list[st
 #: the glued operator as consuming nothing). The alternatives are exclusive
 #: on the character, so the run stays linear.
 _RM_SEGMENT_RE = re.compile(
-    _CMD_POS + r"(?P<seg>rm\b(?!=)(?:[^\n;|&]|(?<=[<>])&|&(?=>))*)", re.IGNORECASE
+    _CMD_POS + r"(?P<seg>(?P<verb>rm" + _EXE_SUFFIX + r")\b(?!=)(?:[^\n;|&]|(?<=[<>])&|&(?=>))*)", re.IGNORECASE
 )
 
 
@@ -11890,7 +12270,7 @@ def rm_recursive_force_operands(
         token = tokens[index]
         index += 1
         text = _shell_unquote(token)
-        if text.lower() == "rm":  # command token; also skips RM on case-insens FS
+        if text.lower() in ("rm", "rm.exe"):  # command token; also skips RM and rm.exe (DEF-1161)
             continue
         # ⚠ A REDIRECTION IS NOT A DELETE TARGET. `rm -rf build 2> /dev/null`
         # tokenizes to ['build', '2>', '/dev/null'], and `/dev/null` is an
@@ -12200,8 +12580,9 @@ def _iter_rm_invocations_placed(
         quote = quote_at(match.start("seg"))
         if quote is None:
             yield (*rm_recursive_force_operands(seg), False)
-        elif seg[2:3] == _QUOTE_CLOSER[quote]:
-            yield (*rm_recursive_force_operands(seg[:2] + seg[3:]), False)
+        elif seg[len(match.group("verb")):len(match.group("verb")) + 1] == _QUOTE_CLOSER[quote]:
+            verb_len = len(match.group("verb"))
+            yield (*rm_recursive_force_operands(seg[:verb_len] + seg[verb_len + 1:]), False)
         else:
             yield (*rm_recursive_force_operands(seg, words=False), True)
 

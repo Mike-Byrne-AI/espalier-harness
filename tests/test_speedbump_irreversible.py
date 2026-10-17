@@ -1686,6 +1686,7 @@ class TestWritingBashVerbsAreAnchored:
         "command grep -rn 'cp ' docs/",
         "echo 'do not mv the file'",
         'git commit -m "docs: describe the touch and mkdir recipe"',
+        "echo 'do not CP.EXE the file'",
     ])
     def test_read_only_mention_is_not_a_write(self, cmd):
         assert not _speedbump._is_writing_bash({"command": cmd})
@@ -1696,6 +1697,8 @@ class TestWritingBashVerbsAreAnchored:
         "cat x | tee out.txt",
         "sed -i '' 's/a/b/' f",
         "nohup cp a b",
+        # every spelling Git Bash runs (DEF-1161, the code review)
+        "CP a b", "Mv.EXE a b", "TEE out.txt", "SED -i '' 's/a/b/' f", "mkdir.exe out",
     ])
     def test_real_write_still_counts(self, cmd):
         assert _speedbump._is_writing_bash({"command": cmd})
@@ -2680,6 +2683,12 @@ class TestCommandPositionClassClose:
             "GATE before `has_catastrophic_ps_sweep` and the speed bump's sweep "
             "arm: a pipe into a remove verb or a .NET directory delete anywhere "
             "opens the walk; the anchored readers select the operands (DEF-822).",
+        "_bash_patterns._PS_START_PROCESS_RE":
+            "GATE inside the span an anchored cmd opener (`_PS_CMD_REMOVE_OPENER_RE`, "
+            "`write_guard._PS_CMD_OPENER_RE`) matched: finds the process-start "
+            "cmdlet's word there, never over a command, and "
+            "`start_process_cmd_line` then requires it at a statement start in code, "
+            "so a mention in a double-quoted string is not read (DEF-1071 (e)).",
         "_bash_patterns._PS_RECURSE_SWITCH_RE":
             "FLAG inside the span `_PS_PIPED_REMOVE_RE` or `_PS_REMOVE_ITEM_RE` "
             "(both anchored) selected: the remove verb's recurse switch by every "
@@ -3924,6 +3933,7 @@ _GIT_CHECKPOINT_TABLE = [
      "gh release create v1.2.3 --draft; gh release create v1.2.4 --notes x", True),
     ("gh-release-short-draft", "release", "gh release create v1.2.3 -d", False),
     ("gh-exe-release", "release", "gh.exe release create v1.2.3", True),
+    ("gh-cased-release", "release", "GH.EXE release create v1.2.3", True),
     ("force-push", "forcepush", "git push --force origin main", True),
     ("force-push-short", "forcepush", "git push -f origin main", True),
     ("force-push-global-option", "forcepush", "git -C repo push -f origin main", True),

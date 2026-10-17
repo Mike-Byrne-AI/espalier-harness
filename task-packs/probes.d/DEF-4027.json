@@ -1,0 +1,14 @@
+{
+ "id": "DEF-4027",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c \"import os, sys, pathlib, tempfile; [os.environ.pop(k) for k in list(os.environ) if k.startswith('CLAUDE')]; base = 'C:/tmp' if os.name == 'nt' else '/tmp'; os.makedirs(base, exist_ok=True); scratch = pathlib.Path(tempfile.mkdtemp(prefix='def4027-', dir=base)).as_posix(); repo = pathlib.Path(tempfile.mkdtemp(prefix='def4027-repo-', dir=base)); [os.environ.__setitem__(v, scratch) for v in ('TEMP', 'TMP', 'TMPDIR')]; sys.path.insert(0, os.path.abspath('tools/cc/hooks')); import write_guard as wg; ps = 'Remove-Item ' + '-Rec' + 'urse -Force ' + scratch; sh = 'rm ' + '-r' + 'f ' + scratch; walls = (wg._ps_dangerous_reason(ps, repo, cwd=repo) is not None, wg._bash_dangerous_reason(sh, repo, cwd=repo) is not None); print(sum(1 for w in walls if not w))\"",
+ "open_value": "2",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py",
+  "tools/cc/hooks/_speedbump.py"
+ ],
+ "row_sha": "0840bdcb85c8",
+ "text_sha": "4be0fa1b23e8",
+ "verified_2026_10_16": "OPEN (filed 2026-10-16; probe driven at filing)"
+}
