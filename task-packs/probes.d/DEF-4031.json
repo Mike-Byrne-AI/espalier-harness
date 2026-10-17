@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4031",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python -c \"import sys,os,io,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');[os.environ.pop(k) for k in list(os.environ) if k.startswith('ESPALIER') or k.startswith('CLAUDE')];T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);r=pathlib.Path(T.name);os.environ['CLAUDE_PROJECT_DIR']=str(r);os.environ['ESPALIER_AUDIT_DIR']=str(r);import write_guard as g;Z=lambda f,c:(setattr(sys,'stdout',io.StringIO()),f(c,r,r),sys.stdout.getvalue(),setattr(sys,'stdout',sys.__stdout__));z=lambda f,c:'deny' in Z(f,c)[2];P=g.check_powershell_for_protected_mutations;B=g.check_bash_for_protected_mutations;refuse=lambda m:(sys.stderr.write(m+chr(10)),sys.exit(70));D=['rm -f tools','rm tools','rm -f cc','rm -f tools/cc','rm -fv tools','rm -f ./tools','rm -f tools/','rm -f cc/'];E=['Remove-Item tools','Remove-Item -Force tools','Remove-Item tools/cc','Remove-Item -LiteralPath tools','Remove-Item cc','Remove-Item tools/','ri tools','Remove-Item -Force -Confirm:$false tools'];K=['rm -r'+'f tools','rm -f .claude/settings.json','rm -f tools/cc/hooks/x.py','rm -f tools/cc/*'];Q=['Remove-Item -Rec'+'urse tools','Remove-Item .claude/settings.json','Remove-Item tools/cc/hooks/x.py','Remove-Item tools/cc/*'];refuse('DEF-4031: a control spelling no longer denies; the lens is broken, UNRESOLVED') if not (all(z(B,k) for k in K) and all(z(P,q) for q in Q)) else print(sum(z(B,d) for d in D)+sum(z(P,e) for e in E))\"",
+ "open_value": "16",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "40979b05d564",
+ "text_sha": "2b837365a6a4",
+ "verified_2026_10_17": "STILL_OPEN (re-pinned '8' -> '16' on 2026-10-17: win-2 drove the PowerShell tool host (1a9f60): Remove-Item of a non-empty directory without its recurse switch fails cleanly under -NonInteractive, plain, -Force and -Confirm:$false, so PowerShell joins the class; the probe gains eight PowerShell spellings and the text records the drive)"
+}
