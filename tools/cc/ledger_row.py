@@ -1609,6 +1609,9 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
             print(f"ledger_row: the probe does not print the new open value {new_value!r} "
                   f"({verdict}: {detail}); nothing re-pinned", file=sys.stderr)
             return 2
+    # What the row held before this repin, for the stamp's list of the fields
+    # it changed (below).
+    old_cells = list(cells)
     if text_file is not None:
         cells[2] = text_file.read_text(encoding="utf-8").strip().replace("\n", " ")
     if anchor:
@@ -1693,6 +1696,7 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
     old_value = entry.get("open_value")
     old_subject = entry.get("subject")
     old_inputs = entry.get("inputs")
+    old_cmd = entry.get("cmd")
     entry["cmd"] = cmd
     entry["open_value"] = new_value
     if inputs is not None:
@@ -1717,8 +1721,31 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
         moved += f"; subject {old_subject!r} -> {subject!r}"
     if inputs is not None and inputs != old_inputs:
         moved += f"; inputs {old_inputs!r} -> {inputs!r}"
-    entry[f"verified_{day.replace('-', '_')}"] = (
-        f"STILL_OPEN (re-pinned {moved} on {day}: {reason})"
+    # Every field this repin changed, by name, after the parenthesis so the
+    # stamp only grows (DEF-3003): `moved` names the value, the grade, the
+    # subject and the inputs, but not the probe, the anchor or the text, so a
+    # severity re-grade and a hand-written probe read the same. A reader that
+    # asks whether a repin wrote the probe reads `probe` in this list; a
+    # stamp from before it carries none. A second repin on one day writes
+    # over that day's stamp, so the first one's list is carried into it: a
+    # re-grade after a new probe the same day still says the probe moved
+    # (the failure-mode re-review, driven).
+    key = f"verified_{day.replace('-', '_')}"
+    earlier = entry.get(key)
+    carried = re.search(r"\) \[changed: ([a-z ,]+)\]$", earlier) if isinstance(earlier, str) else None
+    carried_names = {f.strip() for f in carried.group(1).split(",")} if carried else set()
+    changed = [name for name, moved_field in (
+        ("probe", cmd != old_cmd),
+        ("open value", new_value != old_value),
+        ("anchor", cells[1] != old_cells[1]),
+        ("text", cells[2] != old_cells[2]),
+        ("severity", cells[3] != old_cells[3]),
+        ("classes", cells[4:] != old_cells[4:]),
+        ("subject", bool(subject) and subject != old_subject),
+        ("inputs", inputs is not None and inputs != old_inputs),
+    ) if moved_field or name in carried_names]
+    entry[key] = (
+        f"STILL_OPEN (re-pinned {moved} on {day}: {reason}) [changed: {', '.join(changed) or 'none'}]"
     )
     sibling_note = (f" (shares its row with {', '.join(siblings)}, whose probe(s) this verb did "
                     f"not drive -- repin each if the claim moved)") if siblings else ""

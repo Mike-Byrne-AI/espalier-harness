@@ -3040,6 +3040,247 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
     return outcome
 
 
+def _stored_onboarding_probes(repo_root: Path) -> dict[str, dict]:
+    """``{id: entry}`` for each onboarding row with a stored probe, read the way
+    the deployed verb finds one: the ``LEDGER_PROBES.json`` roster, then the
+    row's own file under ``probes.d/``. A row with neither is absent, and so
+    is a store that cannot be read or parsed: the callers then leave the row
+    as it is, never raise."""
+    ids = {row["id"] for row in _ONBOARDING_ROWS if "code" in row}
+    roster = repo_root / "task-packs" / "LEDGER_PROBES.json"
+    found: dict[str, dict] = {}
+
+    def keep(entry: object) -> None:
+        if (isinstance(entry, dict) and entry.get("id") in ids and entry["id"] not in found
+                and isinstance(entry.get("cmd"), str) and isinstance(entry.get("open_value"), str)):
+            found[entry["id"]] = entry
+
+    try:
+        data = json.loads(roster.read_bytes().decode("utf-8")) if roster.is_file() else None  # ledger-read: the engine imports no tools/cc; the verb's lookup order
+    except (OSError, ValueError):
+        data = None
+    if isinstance(data, dict) and isinstance(data.get("probes"), list):
+        for entry in data["probes"]:
+            keep(entry)
+    for rid in sorted(ids - set(found)):
+        frag = roster.parent / "probes.d" / f"{rid}.json"
+        try:
+            keep(json.loads(frag.read_bytes().decode("utf-8")) if frag.is_file() else None)  # ledger-read: the verb's lookup order
+        except (OSError, ValueError):
+            continue
+    return found
+
+
+def _onboarding_member_line(repo_root: Path, rid: str) -> str | None:
+    """``rid``'s unstruck member row as the ledger keeps it -- its own file
+    under ``ledger.d/``, else a line of the forward ledger -- or None, by the
+    deployed checker's own rule (``tools/cc/check_ledger_probes.py::_row_line``,
+    re-derived because the engine imports nothing from tools/cc, and pinned
+    equal by ``tests/test_cli_deploy.py``): a line naming the id in its id
+    cell, not struck, whose second cell is not a bare ``§CN`` back-reference
+    (an index row names the id too)."""
+    for path in (repo_root / "task-packs" / "ledger.d" / f"{rid}.md", repo_root / _LEDGER_REL):
+        try:
+            text = path.read_bytes().decode("utf-8") if path.is_file() else ""  # ledger-read: one row, by the checker's rule
+        except (OSError, ValueError):
+            continue
+        for m in re.finditer(r"^\|[^\n]*`" + re.escape(rid) + r"`[^\n]*$", text, re.M):
+            line = m.group(0).rstrip()
+            cells = [c.strip() for c in re.split(r"(?<!\\)\|", line)]
+            if (not re.match(r"\|\s*(~~)?`", line) or rid not in re.findall(r"`([^`]+)`", cells[1])
+                    or cells[1].startswith("~~")):
+                continue
+            if len(cells) > 2 and re.fullmatch(r"§C\d+", cells[2]):
+                continue
+            return line
+    return None
+
+
+def _ledger_text_sha(line: str) -> str:
+    """The pin over a member row's text cell, as the deployed checker computes
+    it (``tools/cc/check_ledger_probes.py::text_sha``, re-derived because the
+    engine imports nothing from tools/cc; ``tests/test_cli_deploy.py`` pins
+    the two equal)."""
+    cells = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip()[1:-1])]
+    return hashlib.sha256((cells[2] if len(cells) > 2 else line).encode("utf-8")).hexdigest()[:12]
+
+
+#: The reason this engine gives the verb when it re-pins an onboarding probe.
+_ONBOARDING_REPIN_REASON = "espalier {version} reads this onboarding row with a new probe"
+#: This engine's own re-pin stamp, whatever the release: the whole reason, so
+#: an adopter's reason that merely starts with "espalier" is still theirs.
+_ONBOARDING_REPIN_STAMP_RE = re.compile(r": espalier \S+ reads this onboarding row with a new probe\)")
+#: The verb's list of the fields a repin changed (DEF-3003), after the stamp's
+#: parenthesis; a stamp from a verb older than it carries none.
+_REPIN_CHANGED_RE = re.compile(r"\) \[changed: ([a-z ,]+)\]$")
+
+
+def _onboarding_candidates(repo_root: Path) -> dict:
+    """Read-only, no spawn: each live onboarding row whose stored probe is
+    not this release's, sorted by what the refresh does with it (DEF-3003).
+    ``refresh``: re-pinned through the verb, which decides between written
+    and satisfied. ``own``: the adopter re-pinned the probe itself (the
+    latest re-pin stamp that could have written the probe is theirs and lists
+    ``probe`` among the fields it changed), kept.
+    ``edited``: the row's text no longer matches the pin its probe stores
+    (the checker's stale claim, which a re-pin would erase), kept.
+    ``replaced``: ``{id: (date, command, open value)}`` for a refreshed row
+    whose deciding stamp is a re-pin by hand from a verb older than the
+    changed-fields list, so it cannot say whether it wrote the probe:
+    refreshed, and named with what it held; the refresh's own stamp then
+    decides the next release's run. A row struck or deleted by hand is in none of them, and
+    nothing names it. No deployed verb: nothing at all."""
+    out: dict = {"refresh": [], "own": [], "edited": [], "replaced": {}}
+    if not (repo_root / _LEDGER_VERB_REL).is_file():
+        return out
+    stored = _stored_onboarding_probes(repo_root)
+    for row in _ONBOARDING_ROWS:
+        entry = stored.get(row["id"]) if "code" in row else None
+        if entry is None or (entry["cmd"], entry["open_value"]) == (f'{_PROBE_PY} -c "{row["code"]}"', row["open"]):
+            continue
+        line = _onboarding_member_line(repo_root, row["id"])
+        if line is None:
+            continue
+        if isinstance(entry.get("text_sha"), str) and entry["text_sha"] != _ledger_text_sha(line):
+            out["edited"].append(row["id"])
+            continue
+        # The newest stamp that could have written the probe decides: this
+        # engine's own re-pin (refresh), a hand re-pin listing `probe` (the
+        # adopter's: kept), or a hand re-pin from a verb older than the list
+        # (it cannot say: refreshed, and named). A hand re-pin whose list has
+        # no `probe` (a re-grade) wrote none and is passed over. The
+        # re-reviews, driven: read by the newest hand stamp alone, a re-grade
+        # after an own probe let the refresh overwrite it, and an older hand
+        # stamp outlived the engine's refresh of it, naming the row again on
+        # every later release with the engine's previous probe.
+        stamps = sorted((k, v) for k, v in entry.items() if k.startswith("verified_") and isinstance(v, str)
+                        and "re-pinned" in v)
+        writer = None
+        for key, stamp in reversed(stamps):
+            if _ONBOARDING_REPIN_STAMP_RE.search(stamp):
+                break
+            listed = _REPIN_CHANGED_RE.search(stamp)
+            if listed is None or "probe" in [f.strip() for f in listed.group(1).split(",")]:
+                writer = (key, listed)
+                break
+        if writer is not None and writer[1] is not None:
+            out["own"].append(row["id"])
+            continue
+        if writer is not None:
+            out["replaced"][row["id"]] = (writer[0][len("verified_"):].replace("_", "-"), entry["cmd"],
+                                          entry["open_value"])
+        out["refresh"].append(row["id"])
+    return out
+
+
+def _repin_onboarding(repo_root: Path, rids: list[str], *, dry_run: bool) -> dict[str, list[str]]:
+    """Re-pin each of ``rids`` to this release's probe through the deployed
+    verb (its ``--dry-run`` on a preview: it drives the probe and writes
+    nothing), sorted by the verb's answer: ``written``, ``satisfied`` (the
+    open-now gate refused it: the new probe reads it closed), ``failed`` (a
+    reason each; a held ledger lock stops the run once, whole, as
+    ``_file_onboarding_rows`` stops)."""
+    out: dict[str, list[str]] = {"written": [], "satisfied": [], "failed": []}
+    verb = repo_root / _LEDGER_VERB_REL
+    by_id = {row["id"]: row for row in _ONBOARDING_ROWS}
+    # The verb's sibling imports would cache bytecode in the adopter's
+    # tools/cc/__pycache__, as `_file_onboarding_rows` measured.
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    for rid in rids:
+        row = by_id[rid]
+        argv = [sys.executable, str(verb), "--root", str(repo_root), *(["--dry-run"] if dry_run else []),
+                "repin", rid, "--probe-cmd", f'{_PROBE_PY} -c "{row["code"]}"', "--open-value", row["open"],
+                "--reason", _ONBOARDING_REPIN_REASON.format(version=__version__)]
+        try:
+            proc = run_bounded(
+                argv, capture_output=True, text=True, encoding="utf-8",
+                errors="replace", check=False, timeout=120, env=env,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            out["failed"].append(f"{rid} ({os_error_text(exc)})")
+            continue
+        claimed = [ln for ln in proc.stderr.splitlines() if ln.startswith("ledger_row: dry run -- ")]
+        if proc.returncode == 0 and claimed:
+            # The verb's dry run reads a claim that refuses the write as a
+            # note and goes on; --execute meets it as the refusal.
+            out["failed"].append(f"{rid} (refused on --execute: {claimed[-1][len('ledger_row: dry run -- '):][:160]})")
+        elif proc.returncode == 0:
+            out["written"].append(rid)
+        elif "another ledger verb holds" in proc.stderr:
+            held = proc.stderr.strip().splitlines()[-1]
+            out["failed"].append(f"{rid} and every row after it ({held})")
+            break
+        elif "STRIKE_CANDIDATE" in proc.stderr:
+            out["satisfied"].append(rid)
+        else:
+            why = (proc.stderr.strip().splitlines() or [f"exit {proc.returncode}"])[-1]
+            out["failed"].append(f"{rid} ({why[:160]})")
+    return out
+
+
+def _onboarding_lines(repo_root: Path, *, dry_run: bool) -> list[str]:
+    """The forward-ledger lines of one refresh of the onboarding probes
+    (DEF-3003), run (``dry_run=False``) or previewed (``dry_run=True``: the
+    deployed verb's own dry run, as it stands before any deploy, so a
+    preview names the rows ``--execute`` writes and a claim that refuses
+    one; a ledger lock another verb holds when ``--execute`` runs is the one
+    refusal a preview cannot see). ``_file_onboarding_rows`` files the rows only into an untouched
+    seed, so a probe a later release fixes never reached a tree installed
+    before it: an ONB-1 filed before 2026-10-11 kept the whole-file test
+    through every upgrade. The verb is the store's one writer, under its own
+    lock, and its ``repin`` keeps a row only while the new probe still reads
+    it open: a row this release's probe reads as satisfied is named for the
+    adopter to strike, its stored probe left as it was -- ``init``'s own
+    rule, that a satisfied row is never filed, read forward. Never raises."""
+    cands = _onboarding_candidates(repo_root)
+    done = _repin_onboarding(repo_root, cands["refresh"], dry_run=dry_run) if cands["refresh"] else {
+        "written": [], "satisfied": [], "failed": []}
+    verb_cmd = f"{_remedy_py()} {_LEDGER_VERB_REL}"
+    lines: list[str] = []
+    if done["written"]:
+        verb = "would re-pin" if dry_run else "re-pinned"
+        lines.append(f"forward ledger: {verb} {', '.join(done['written'])} to this release's probe"
+                     + (f" through {_LEDGER_VERB_REL}, rewriting its stored probe" if dry_run else ""))
+    for rid in done["written"]:
+        if rid in cands["replaced"]:
+            date, cmd, held_open = cands["replaced"][rid]
+            lines.append(f"forward ledger: {rid}'s probe was re-pinned by hand on {date} by a verb that "
+                         f"could not say whether it wrote the probe; it held `{cmd}`, open value "
+                         f"`{held_open}` -- if that was yours, put it back with `{verb_cmd} repin {rid} "
+                         "--probe-cmd <that command> --open-value <that value> --reason <why>`")
+    for rid in done["satisfied"]:
+        lines.append(f"forward ledger: {rid} reads satisfied under this release's probe, so its old "
+                     f"probe is left as it was: strike it with `{verb_cmd} strike {rid} --text-file "
+                     "<a file naming what closed it>`")
+    if done["failed"]:
+        lines.append(f"forward ledger: could not {'check' if dry_run else 're-pin'} "
+                     f"{'; '.join(done['failed'])} -- the next `upgrade --execute` or `init .` "
+                     "tries again")
+    if cands["own"]:
+        reason = _ONBOARDING_REPIN_REASON.format(version=__version__)
+        lines.append(f"forward ledger: keeping your own re-pin of {', '.join(cands['own'])}; "
+                     "this release's probe for it is not applied -- to take it, re-pin "
+                     f"with this reason and run the upgrade again: `{verb_cmd} repin <id> "
+                     f'--reason "{reason}"`')
+    if cands["edited"]:
+        lines.append(f"forward ledger: keeping the probe of {', '.join(cands['edited'])}, whose text "
+                     "you rewrote (a re-pin would hide that edit from the stale-claim check)")
+    return lines
+
+
+def _refresh_onboarding_probes(repo_root: Path) -> list[str]:
+    """Re-pin the stale onboarding probes (``_onboarding_lines``, run): called
+    after ``_file_onboarding_rows`` by ``cmd_init`` and by ``cmd_upgrade``'s
+    re-deploy, and in place by its version-current arm (DEF-3003)."""
+    return _onboarding_lines(repo_root, dry_run=False)
+
+
+def _onboarding_repin_preview(repo_root: Path) -> list[str]:
+    """What ``upgrade --execute`` would do to the stored onboarding probes,
+    for the dry run (DEF-774: --execute writes nothing a preview did not name)."""
+    return _onboarding_lines(repo_root, dry_run=True)
+
+
 def _onboarding_would_file(repo_root: Path) -> bool:
     """Whether an install would file the onboarding rows here: the ledger is
     absent (its seed would be created) or still the untouched seed."""
@@ -7502,6 +7743,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     onboarding = _onboarding_sentence(_file_onboarding_rows(repo_root))
     if onboarding:
         print(f"Forward ledger: {onboarding}.")
+    for line in _refresh_onboarding_probes(repo_root):
+        print(f"{line[:1].upper()}{line[1:]}.")
 
     # Step 4b: Seed integrity manifest so fresh installs have a valid baseline.
     try:
@@ -10738,6 +10981,17 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             # not qualify: the surface IS at packaged bytes, and no run of
             # this command could ever change that line.
             qualifiers: list[str] = []
+            # DEF-3003's reach: every tree the row names is version-current
+            # (0.8.0b2 since 2026-09-27). A stale onboarding probe is repaired
+            # here in place, as the repairs above are, never as drift: drift
+            # re-deploys, and a row the new probe reads satisfied would keep
+            # it non-empty until struck (both reviews, driven).
+            onboarding_lines = (_refresh_onboarding_probes(repo_root) if execute
+                                else _onboarding_repin_preview(repo_root))
+            for line in onboarding_lines:
+                print(f"[upgrade] {line}.")
+            if onboarding_lines:
+                qualifiers.append("see the forward ledger lines above")
             if kept:
                 qualifiers.append(
                     f"{plural(len(kept), 'managed file')} kept as yours (listed above)"
@@ -10855,6 +11109,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                   "satisfies is skipped), creating task-packs/LEDGER_PROBES.json; where "
                   "espalier.toml sets ledger_fragments = true, a file each under "
                   "task-packs/ledger.d/ and task-packs/probes.d/ instead.")
+        if preview_stages:
+            for line in _onboarding_repin_preview(repo_root):
+                print(f"[upgrade] {line}.")
     else:
         done = _deploy_seed_docs(repo_root)
         print("[upgrade] re-deployed init-seeded docs: "
@@ -11006,6 +11263,8 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         onboarding = _onboarding_sentence(_file_onboarding_rows(repo_root))
         if onboarding:
             print(f"[upgrade] forward ledger: {onboarding}.")
+        for line in _refresh_onboarding_probes(repo_root):
+            print(f"[upgrade] {line}.")
         # The saved plan is the inventory oracle `doctor` reads. A deploy that
         # left it as it was would leave the two narrators disagreeing after
         # the one command whose job is to reconcile them (DEF-728), the way

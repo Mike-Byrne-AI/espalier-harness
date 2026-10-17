@@ -2596,6 +2596,613 @@ class TestLedgerSeed:
         )
 
 
+class TestUpgradeRepinsAFiledOnboardingProbe:
+    """DEF-3003: ``_file_onboarding_rows`` files the onboarding rows only into
+    an untouched seed ledger, so a probe a later release fixes never reached
+    a tree installed before it (an ONB-1 filed before 2026-10-11 kept the
+    whole-file test through every ``upgrade``). ``upgrade --execute`` now
+    re-pins each live row's stale probe through the deployed verb, the
+    store's one writer (``cli._refresh_onboarding_probes``). The three
+    outcomes air's ack 6b0797 named, driven: a row still open is re-pinned; a
+    row this release's probe reads as satisfied is named for the adopter to
+    strike and its stored probe left byte-equal (the verb's repin gate: a
+    probe reading satisfied is a strike, never a repin); a struck row is left
+    as it is. Earned red: on main every row below failed."""
+
+    @staticmethod
+    def _store(root: Path) -> Path:
+        roster = root / "task-packs" / "LEDGER_PROBES.json"
+        return roster if roster.is_file() else root / "task-packs" / "probes.d" / "ONB-1.json"
+
+    @classmethod
+    def _onb1(cls, root: Path) -> dict:
+        import json
+
+        data = json.loads(cls._store(root).read_bytes())
+        if "probes" in data:
+            return next(p for p in data["probes"] if p["id"] == "ONB-1")
+        return data
+
+    @classmethod
+    def _stale(cls, root: Path) -> tuple[str, str]:
+        """Change one character of the stored ONB-1 command, as the row's
+        probe does: the shape an earlier release's probe leaves. Returns the
+        command init filed -- this release's, compared against, as the row's
+        probe compares -- and the stale one."""
+        import json
+
+        store = cls._store(root)
+        data = json.loads(store.read_bytes())
+        entry = next(p for p in data["probes"] if p["id"] == "ONB-1") if "probes" in data else data
+        filed = entry["cmd"]
+        entry["cmd"] = filed.replace("(not set", "(not set ", 1)
+        store.write_bytes((json.dumps(data, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+        return filed, entry["cmd"]
+
+    def test_a_stale_probe_on_a_row_still_open_is_repinned(self, tmp_path):
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        filed, _stale = self._stale(tmp_path)
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert self._onb1(tmp_path)["cmd"] == filed
+        assert any("re-pinned ONB-1" in line for line in lines), lines
+
+    def test_a_row_the_new_probe_reads_satisfied_is_named_and_left_as_it_was(self, tmp_path):
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        _filed, stale = self._stale(tmp_path)
+        goal = tmp_path / "cc" / "GOAL.md"
+        text = goal.read_text(encoding="utf-8")
+        goal.write_text(text[:text.index("(not set")] + "Ship the parser rewrite.\n", encoding="utf-8")
+        before = self._store(tmp_path).read_bytes()
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert self._store(tmp_path).read_bytes() == before
+        assert self._onb1(tmp_path)["cmd"] == stale
+        assert any("ONB-1 reads satisfied" in line and "strike it with `" in line
+                   and "ledger_row.py strike ONB-1 --text-file" in line for line in lines), lines
+        assert not any("re-pinned" in line for line in lines), lines
+
+    def test_a_struck_row_is_left_as_it_is(self, tmp_path):
+        import os
+
+        from espalier.cli import _refresh_onboarding_probes, _stored_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        self._stale(tmp_path)
+        note = tmp_path / "close.md"
+        note.write_text("the goal is written\n", encoding="utf-8")
+        verb = tmp_path / "tools" / "cc" / "ledger_row.py"
+        struck = subprocess.run(
+            [sys.executable, str(verb), "--root", str(tmp_path), "strike", "ONB-1", "--text-file", str(note)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=50,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        assert struck.returncode == 0, struck.stderr
+        assert "ONB-1" not in _stored_onboarding_probes(tmp_path)
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert not any("ONB-1" in line for line in lines), lines
+
+    def test_a_stale_open_value_alone_is_repinned(self, tmp_path):
+        import json
+
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        store = self._store(tmp_path)
+        data = json.loads(store.read_bytes())
+        entry = next(p for p in data["probes"] if p["id"] == "ONB-1") if "probes" in data else data
+        entry["open_value"] = "False"
+        store.write_bytes((json.dumps(data, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert self._onb1(tmp_path)["open_value"] == "True"
+        assert any("re-pinned ONB-1" in line for line in lines), lines
+
+    def test_a_probe_kept_as_its_own_file_is_repinned_there(self, tmp_path):
+        """A tree whose ledger keeps rows as files (``ledger_fragments``) holds
+        the probe under ``task-packs/probes.d/``, which the reader takes when
+        the roster has none, as the verb does."""
+        import json
+
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        filed, _stale = self._stale(tmp_path)
+        roster = tmp_path / "task-packs" / "LEDGER_PROBES.json"
+        data = json.loads(roster.read_bytes())
+        entry = next(p for p in data["probes"] if p["id"] == "ONB-1")
+        data["probes"] = [p for p in data["probes"] if p["id"] != "ONB-1"]
+        roster.write_bytes((json.dumps(data, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+        frag = tmp_path / "task-packs" / "probes.d" / "ONB-1.json"
+        frag.parent.mkdir(exist_ok=True)
+        frag.write_bytes((json.dumps(entry, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert json.loads(frag.read_bytes())["cmd"] == filed
+        assert any("re-pinned ONB-1" in line for line in lines), lines
+
+    @staticmethod
+    def _cli(root: Path):
+        import os
+
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        return lambda *a: subprocess.run([sys.executable, "-m", "espalier.cli", *a], capture_output=True,
+                                         text=True, encoding="utf-8", errors="replace", timeout=50, env=env)
+
+    def test_a_version_current_tree_reaches_the_repin(self, tmp_path):
+        """The row's named user (failure-mode review, driven): every tree it
+        names is version-current, since the version has been 0.8.0b2 since
+        2026-09-27, and such a tree was told "harness is current; nothing to
+        do" before the re-pin could run. The stale probe is drift there now:
+        the tree falls through, ``--execute`` re-pins it, and the next run
+        reads current again."""
+        run = self._cli(tmp_path)
+        subprocess.run(["git", "init", "-q", str(tmp_path)], capture_output=True, check=True)
+        (tmp_path / "README.md").write_text("# x\n", encoding="utf-8")
+        assert run("init", str(tmp_path)).returncode == 0
+        filed, _stale = self._stale(tmp_path)
+        upgraded = run("upgrade", str(tmp_path), "--execute")
+        assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
+        assert "re-pinned ONB-1" in upgraded.stdout, upgraded.stdout
+        # repaired in place, as the arm's other repairs are: no re-deploy
+        assert "re-deployed" not in upgraded.stdout, upgraded.stdout
+        assert self._onb1(tmp_path)["cmd"] == filed
+        again = run("upgrade", str(tmp_path))
+        assert "onboarding row" not in again.stdout, again.stdout
+
+    def test_the_dry_run_names_the_repin_and_writes_nothing(self, tmp_path):
+        run = self._cli(tmp_path)
+        subprocess.run(["git", "init", "-q", str(tmp_path)], capture_output=True, check=True)
+        (tmp_path / "README.md").write_text("# x\n", encoding="utf-8")
+        assert run("init", str(tmp_path)).returncode == 0
+        _filed, stale = self._stale(tmp_path)
+        before = self._store(tmp_path).read_bytes()
+        previewed = run("upgrade", str(tmp_path))
+        assert previewed.returncode == 0, previewed.stdout + previewed.stderr
+        assert "would re-pin ONB-1" in previewed.stdout, previewed.stdout
+        assert self._store(tmp_path).read_bytes() == before
+        assert self._onb1(tmp_path)["cmd"] == stale
+
+    @staticmethod
+    def _stale_entries(root: Path, *ids: str) -> None:
+        import json
+
+        roster = root / "task-packs" / "LEDGER_PROBES.json"
+        data = json.loads(roster.read_bytes())
+        for entry in data["probes"]:
+            if entry["id"] in ids:
+                entry["cmd"] = entry["cmd"] + " "
+        roster.write_bytes((json.dumps(data, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+
+    def test_a_held_ledger_lock_stops_the_run_once(self, tmp_path, monkeypatch):
+        """``_file_onboarding_rows``' own rule: every later row would meet the
+        same lock, so it is said once, whole, with the verb's remedy."""
+        from espalier import cli
+        TestLedgerSeed._install(tmp_path)
+        self._stale_entries(tmp_path, "ONB-1", "ONB-6")
+        held = ("ledger_row: another ledger verb holds task-packs/FORWARD_LEDGER.md.lock (pid 4242); run the "
+                "verbs one at a time. If none is running, delete that file")
+        calls = []
+
+        def fake(argv, **kwargs):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 2, "", held + "\n")
+
+        monkeypatch.setattr(cli, "run_bounded", fake)
+        lines = cli._refresh_onboarding_probes(tmp_path)
+        assert len(calls) == 1
+        assert [line for line in lines if "could not re-pin" in line] == [
+            f"forward ledger: could not re-pin ONB-1 and every row after it ({held}) -- the next "
+            "`upgrade --execute` or `init .` tries again"]
+
+    def test_a_repin_the_verb_refuses_is_named_with_its_reason(self, tmp_path, monkeypatch):
+        from espalier import cli
+        TestLedgerSeed._install(tmp_path)
+        self._stale_entries(tmp_path, "ONB-1")
+        monkeypatch.setattr(cli, "run_bounded", lambda argv, **k: subprocess.CompletedProcess(
+            argv, 2, "", "ledger_row: the subject is unreadable\n"))
+        lines = cli._refresh_onboarding_probes(tmp_path)
+        assert any("could not re-pin ONB-1 (ledger_row: the subject is unreadable)" in line for line in lines), lines
+
+    def test_a_row_deleted_by_hand_is_left_alone(self, tmp_path, monkeypatch):
+        """The adopter deleted ONB-6's member row and kept its probe: the row
+        is theirs, so nothing spawns for it and nothing names it."""
+        from espalier import cli
+        TestLedgerSeed._install(tmp_path)
+        self._stale_entries(tmp_path, "ONB-6")
+        ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
+        rows = tmp_path / "task-packs" / "ledger.d" / "ONB-6.md"
+        target = rows if rows.is_file() else ledger
+        # the member row only: its index row (a section in the second cell) stays,
+        # as a hand edit of the row would leave it
+        kept = [line for line in target.read_text(encoding="utf-8").splitlines(keepends=True)
+                if not (line.startswith("| `ONB-6` |") and not line.split("|")[2].strip().startswith("§"))]
+        assert any(line.startswith("| `ONB-6` |") for line in kept), "the index row should remain"
+        target.write_text("".join(kept), encoding="utf-8")
+        calls = []
+        monkeypatch.setattr(cli, "run_bounded", lambda *a, **k: calls.append(a))
+        assert cli._refresh_onboarding_probes(tmp_path) == []
+        assert calls == []
+
+    def test_the_adopters_own_repin_is_kept_and_named(self, tmp_path):
+        import os
+
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        verb = tmp_path / "tools" / "cc" / "ledger_row.py"
+        mine = 'python -c "print(True)"'
+        own = subprocess.run(
+            [sys.executable, str(verb), "--root", str(tmp_path), "repin", "ONB-1", "--probe-cmd", mine,
+             "--open-value", "True", "--reason", "our own goal check"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=50,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        assert own.returncode == 0, own.stderr
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert self._onb1(tmp_path)["cmd"] == mine
+        assert any("keeping your own re-pin of ONB-1" in line for line in lines), lines
+
+    def test_a_row_whose_text_was_rewritten_keeps_its_probe(self, tmp_path):
+        """A re-pin restamps the row's pins, which would erase the checker's
+        stale claim on a row the adopter rewrote: kept, and named."""
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        _filed, stale = self._stale(tmp_path)
+        ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
+        rows = tmp_path / "task-packs" / "ledger.d" / "ONB-1.md"
+        target = rows if rows.is_file() else ledger
+        text = target.read_text(encoding="utf-8")
+        line = next(x for x in text.splitlines() if x.startswith("| `ONB-1` |"))
+        cells = line.split(" | ")
+        cells[2] = cells[2] + " Our goal lives in docs/GOAL.md."
+        target.write_text(text.replace(line, " | ".join(cells)), encoding="utf-8")
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert self._onb1(tmp_path)["cmd"] == stale
+        assert any("keeping the probe of ONB-1, whose text you rewrote" in line for line in lines), lines
+
+    def test_the_text_pin_is_the_checkers(self, tmp_path):
+        """The engine re-derives the deployed checker's text pin (it imports
+        nothing from tools/cc): equal on an installed member row and on a row
+        holding an escaped pipe."""
+        from espalier.cli import _ledger_text_sha
+        TestLedgerSeed._install(tmp_path)
+        checker = TestLedgerSeed._cc("check_ledger_probes")
+        ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
+        rows = tmp_path / "task-packs" / "ledger.d" / "ONB-1.md"
+        source = (rows if rows.is_file() else ledger).read_text(encoding="utf-8")
+        member = next(x for x in source.splitlines() if x.startswith("| `ONB-1` |"))
+        piped = "| `X-1` | a.py | a cell with an escaped \\| pipe | minor |"
+        for line in (member, piped):
+            assert _ledger_text_sha(line) == checker.text_sha(line), line
+
+    def test_a_satisfied_row_on_a_current_tree_settles_without_a_redeploy(self, tmp_path):
+        """Both re-reviews, driven: a row this release's probe reads satisfied
+        kept a drift entry non-empty, so every upgrade re-deployed and said
+        "re-pinned on --execute" until the row was struck. Repaired in place,
+        each run names the strike and re-deploys nothing, and once the
+        adopter strikes the row the tree reads current again."""
+        import os
+
+        run = self._cli(tmp_path)
+        subprocess.run(["git", "init", "-q", str(tmp_path)], capture_output=True, check=True)
+        (tmp_path / "README.md").write_text("# x\n", encoding="utf-8")
+        assert run("init", str(tmp_path)).returncode == 0
+        self._stale_entries(tmp_path, "ONB-1")
+        goal = tmp_path / "cc" / "GOAL.md"
+        text = goal.read_text(encoding="utf-8")
+        goal.write_text(text[:text.index("(not set")] + "Ship the parser rewrite.\n", encoding="utf-8")
+        for _ in range(2):
+            upgraded = run("upgrade", str(tmp_path), "--execute")
+            assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
+            assert "ONB-1 reads satisfied" in upgraded.stdout, upgraded.stdout
+            assert "re-deployed" not in upgraded.stdout, upgraded.stdout
+        note = tmp_path / "close.md"
+        note.write_text("the goal is written\n", encoding="utf-8")
+        verb = tmp_path / "tools" / "cc" / "ledger_row.py"
+        struck = subprocess.run(
+            [sys.executable, str(verb), "--root", str(tmp_path), "strike", "ONB-1", "--text-file", str(note)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=50,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+        assert struck.returncode == 0, struck.stderr
+        again = run("upgrade", str(tmp_path))
+        assert "nothing to do" in again.stdout, again.stdout
+
+    def _verb(self, root: Path, *args: str):
+        import os
+
+        return subprocess.run(
+            [sys.executable, str(root / "tools" / "cc" / "ledger_row.py"), "--root", str(root), *args],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=50,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        )
+
+    def test_a_severity_regrade_is_not_an_adopters_own_probe(self, tmp_path):
+        """The first cut read any re-pin stamp with a reason of the adopter's
+        as their own probe, and `repin --severity` writes that stamp: a
+        re-graded row opted out of the refresh for good. The verb's stamp now
+        lists the fields a repin changed, and only `probe` keeps a row."""
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        filed = self._onb1(tmp_path)["cmd"]
+        self._stale_entries(tmp_path, "ONB-1")
+        regrade = self._verb(tmp_path, "repin", "ONB-1", "--severity", "major", "--reason", "re-graded")
+        assert regrade.returncode == 0, regrade.stderr
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert self._onb1(tmp_path)["cmd"] == filed
+        assert any("re-pinned ONB-1" in line for line in lines), lines
+        assert not any("keeping your own" in line for line in lines), lines
+
+    def test_a_hand_repin_from_an_older_verb_is_refreshed_and_named(self, tmp_path):
+        """A stamp from a verb older than the changed-fields list cannot say
+        whether it wrote the probe: the row is refreshed once, and the report
+        names the date and the command it held, so the adopter can re-pin."""
+        import json
+
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        filed = self._onb1(tmp_path)["cmd"]
+        roster = tmp_path / "task-packs" / "LEDGER_PROBES.json"
+        data = json.loads(roster.read_bytes())
+        entry = next(e for e in data["probes"] if e["id"] == "ONB-1")
+        entry["cmd"] = 'python -c "print(True)"'
+        entry["verified_2026_10_01"] = "STILL_OPEN (re-pinned value unchanged on 2026-10-01: our own check)"
+        roster.write_bytes((json.dumps(data, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert self._onb1(tmp_path)["cmd"] == filed
+        assert any("re-pinned by hand on 2026-10-01" in line and '`python -c "print(True)"`' in line
+                   and "open value `" in line
+                   and ("put it back with `" in line and "repin ONB-1 --probe-cmd <that command> "
+                        "--open-value <that value> --reason <why>`" in line)
+                   for line in lines), lines
+
+    def test_an_adopter_reason_that_starts_with_espalier_is_still_theirs(self, tmp_path):
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        mine = 'python -c "print(True)"'
+        own = self._verb(tmp_path, "repin", "ONB-1", "--probe-cmd", mine, "--open-value", "True",
+                         "--reason", "espalier probe misreads our goal file")
+        assert own.returncode == 0, own.stderr
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert self._onb1(tmp_path)["cmd"] == mine
+        assert any("keeping your own re-pin of ONB-1" in line for line in lines), lines
+
+    @pytest.mark.parametrize("layout", [
+        "single file, index row first", "row file", "struck", "anchor reads like a section",
+        "co-id, the other struck", "co-id, this one second", "co-id, the first struck",
+        "a word before the id", "a lone id cell",
+    ])
+    def test_the_member_row_finder_is_the_checkers(self, tmp_path, monkeypatch, layout):
+        """The engine re-derives the deployed checker's member-row rule
+        (``check_ledger_probes._row_line`` over the checker's own view of the
+        ledger, its row files placed in it): pinned equal on both ledger
+        layouts, an index row before the member row, a struck row, an anchor
+        that starts with a section sign, and the id cells the checker reads
+        by the grammar's own reader (a co-id cell, strike state at the cell's
+        lead, an id cell that does not open with an id, a line of one cell).
+        The re-reviews, driven: the first re-derivation read a struck co-id
+        as this row struck, and a word before the id as a member row."""
+        from espalier.cli import _onboarding_member_line
+        checker = TestLedgerSeed._cc("check_ledger_probes")
+        member = "| `ONB-1` | cc/GOAL.md | Write the goal. | minor |"
+        index = "| `ONB-1` | §C1 | cc/GOAL.md |"
+        rows = {
+            "single file, index row first": f"{index}\n\n{member}",
+            "struck": f"| ~~`ONB-1`~~ | cc/GOAL.md | done | minor |\n{index}",
+            "anchor reads like a section": "| `ONB-1` | §3 of our README | Write the goal. | minor |",
+            "co-id, the other struck": "| `ONB-1` ~~`ONB-9`~~ | cc/GOAL.md | Write the goal. | minor |",
+            "co-id, this one second": "| `ONB-9` `ONB-1` | cc/GOAL.md | Write the goal. | minor |",
+            "co-id, the first struck": "| ~~`ONB-9`~~ `ONB-1` | cc/GOAL.md | done | minor |",
+            "a word before the id": "| see `ONB-1` | cc/GOAL.md | Write the goal. | minor |",
+            "a lone id cell": "| `ONB-1`",
+        }
+        ledger = tmp_path / "task-packs" / "FORWARD_LEDGER.md"
+        ledger.parent.mkdir(parents=True)
+        if layout == "row file":
+            # The view places a row file only into its class's member table.
+            ledger.write_bytes((f"# L\n\n### §C1 Onboarding\n\n| ID | Site | Text | Severity |\n|---|---|---|---|\n\n"
+                                f"## Appendix B\n\n| ID | Class | Site |\n|---|---|---|\n{index}\n").encode("utf-8"))
+            (ledger.parent / "ledger.d").mkdir()
+            (ledger.parent / "ledger.d" / "ONB-1.md").write_bytes(
+                f"<!-- class: §C1 -->\n{member}\n".encode("utf-8"))
+        else:
+            ledger.write_bytes(f"# L\n\n{rows[layout]}\n".encode("utf-8"))
+        monkeypatch.setattr(checker, "_LEDGER", ledger)
+        found = _onboarding_member_line(tmp_path, "ONB-1")
+        assert found == checker._row_line("ONB-1", checker._ledger_view())
+        assert (found is None) == (layout in {"struck", "co-id, the first struck", "a word before the id"}), found
+
+    def test_init_on_an_installed_tree_refreshes_too(self, tmp_path):
+        """``init .`` re-deploys onto an installed tree and never refreshed
+        (the failure-mode review, driven): it now runs the same refresh after
+        its own filing step."""
+        run = self._cli(tmp_path)
+        subprocess.run(["git", "init", "-q", str(tmp_path)], capture_output=True, check=True)
+        (tmp_path / "README.md").write_text("# x\n", encoding="utf-8")
+        assert run("init", str(tmp_path)).returncode == 0
+        filed, _stale = self._stale(tmp_path)
+        again = run("init", str(tmp_path))
+        assert again.returncode == 0, again.stdout + again.stderr
+        assert self._onb1(tmp_path)["cmd"] == filed
+        assert "Forward ledger: re-pinned ONB-1" in again.stdout, again.stdout
+
+    def test_no_deployed_verb_means_nothing_is_done(self, tmp_path, monkeypatch):
+        from espalier import cli
+        TestLedgerSeed._install(tmp_path)
+        self._stale_entries(tmp_path, "ONB-1")
+        (tmp_path / "tools" / "cc" / "ledger_row.py").rename(tmp_path / "ledger_row.py.kept")
+        calls = []
+        monkeypatch.setattr(cli, "run_bounded", lambda *a, **k: calls.append(a))
+        assert cli._refresh_onboarding_probes(tmp_path) == []
+        assert cli._onboarding_repin_preview(tmp_path) == []
+        assert calls == []
+
+    @classmethod
+    def _restamp(cls, root: Path, cmd: str, **stamps: str) -> None:
+        """Set the stored ONB-1 command and add re-pin stamps, as a hand
+        re-pin (or the engine's) leaves them."""
+        import json
+
+        store = cls._store(root)
+        data = json.loads(store.read_bytes())
+        entry = next(p for p in data["probes"] if p["id"] == "ONB-1") if "probes" in data else data
+        entry["cmd"] = cmd
+        entry.update(stamps)
+        store.write_bytes((json.dumps(data, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
+
+    def test_an_own_probe_outlives_a_later_regrade(self, tmp_path):
+        """The failure-mode re-review, driven: read by the newest hand stamp
+        alone, a re-grade after an adopter's own probe let the refresh
+        overwrite that probe. A re-grade wrote no probe and is passed over."""
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        mine = 'python -c "print(True)"'
+        self._restamp(
+            tmp_path, mine,
+            verified_2026_10_15="STILL_OPEN (re-pinned value unchanged on 2026-10-15: ours) [changed: probe]",
+            verified_2026_10_16="STILL_OPEN (re-pinned value unchanged on 2026-10-16: re-graded) [changed: severity]",
+        )
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert self._onb1(tmp_path)["cmd"] == mine
+        assert any("keeping your own re-pin of ONB-1" in line for line in lines), lines
+
+    def test_an_own_probe_and_a_regrade_on_one_day_keep_the_probe(self, tmp_path):
+        """Through the deployed verb: a second repin on one day writes over
+        that day's stamp, and the verb carries the first one's list."""
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        mine = 'python -c "print(True)"'
+        own = self._verb(tmp_path, "repin", "ONB-1", "--probe-cmd", mine, "--open-value", "True", "--reason", "ours")
+        assert own.returncode == 0, own.stderr
+        regrade = self._verb(tmp_path, "repin", "ONB-1", "--severity", "major", "--reason", "re-graded")
+        assert regrade.returncode == 0, regrade.stderr
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert self._onb1(tmp_path)["cmd"] == mine
+        assert any("keeping your own re-pin of ONB-1" in line for line in lines), lines
+
+    def test_the_keep_line_names_the_way_back_and_it_works(self, tmp_path):
+        """The failure-mode re-review: "own" was a one-way door, so a later
+        release's probe never reached an adopter who had once re-pinned by
+        hand. The keep line prints the re-pin that hands the row back; run as
+        printed, the next refresh takes this release's probe."""
+        import shlex
+
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        filed = self._onb1(tmp_path)["cmd"]
+        mine = 'python -c "print(True)"'
+        own = self._verb(tmp_path, "repin", "ONB-1", "--probe-cmd", mine, "--open-value", "True", "--reason", "ours")
+        assert own.returncode == 0, own.stderr
+        keep = next(line for line in _refresh_onboarding_probes(tmp_path) if "keeping your own" in line)
+        printed = keep[keep.index("`", keep.index("to take it")) + 1:keep.rindex("`")]
+        argv = shlex.split(printed.replace("<id>", "ONB-1"))
+        back = self._verb(tmp_path, *argv[argv.index("repin"):])
+        assert back.returncode == 0, back.stderr
+        lines = _refresh_onboarding_probes(tmp_path)
+        assert self._onb1(tmp_path)["cmd"] == filed
+        assert any("re-pinned ONB-1" in line for line in lines), lines
+
+    def test_a_hand_repin_the_engine_already_refreshed_is_not_named_again(self, tmp_path):
+        """Both re-reviews, driven: the engine's refresh of a hand re-pin from
+        an older verb left the hand stamp in the entry and did not count its
+        own, so every later release named the row again, holding the engine's
+        previous probe. The engine's own re-pin speaks for every stamp before
+        it."""
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        filed = self._onb1(tmp_path)["cmd"]
+        self._restamp(tmp_path, 'python -c "print(True)"',
+                      verified_2026_10_01="STILL_OPEN (re-pinned value unchanged on 2026-10-01: our own check)")
+        first = _refresh_onboarding_probes(tmp_path)
+        assert any("re-pinned by hand on 2026-10-01" in line for line in first), first
+        self._stale(tmp_path)   # the next release's probe differs again
+        again = _refresh_onboarding_probes(tmp_path)
+        assert self._onb1(tmp_path)["cmd"] == filed
+        assert any("re-pinned ONB-1" in line for line in again), again
+        assert not any("by hand" in line for line in again), again
+
+    @pytest.mark.parametrize("listed", [False, True])
+    def test_a_hand_repin_after_the_engines_own_still_speaks_for_the_row(self, tmp_path, listed):
+        from espalier.cli import _refresh_onboarding_probes
+        TestLedgerSeed._install(tmp_path)
+        mine = 'python -c "print(True)"'
+        self._restamp(
+            tmp_path, mine,
+            verified_2026_10_02=("STILL_OPEN (re-pinned value unchanged on 2026-10-02: espalier 0.8.0b1 reads "
+                                 "this onboarding row with a new probe) [changed: probe]"),
+            verified_2026_10_05=("STILL_OPEN (re-pinned value unchanged on 2026-10-05: our own check)"
+                                 + (" [changed: probe]" if listed else "")),
+        )
+        lines = _refresh_onboarding_probes(tmp_path)
+        if listed:
+            assert self._onb1(tmp_path)["cmd"] == mine
+            assert any("keeping your own re-pin of ONB-1" in line for line in lines), lines
+        else:
+            assert any("re-pinned by hand on 2026-10-05" in line for line in lines), lines
+
+    def test_a_claim_that_refuses_the_write_is_named_in_the_preview(self, tmp_path, monkeypatch):
+        """Both re-reviews: the verb's dry run reads a claim that refuses the
+        write as a note and goes on, so the preview said "would re-pin" for a
+        row --execute then refused. The deployed verb is driven here, in
+        process, with another machine's claim on the row."""
+        import contextlib
+        import io
+        import types
+
+        from espalier import cli
+        TestLedgerSeed._install(tmp_path)
+        self._stale(tmp_path)
+        lr, mail = TestLedgerSeed._cc("ledger_row"), TestLedgerSeed._cc("mail")
+        theirs = mail.new_message("win", "claim", "", lane="lane/onb", ids=["ONB-1"])
+        lr._MAIL = types.SimpleNamespace(
+            machine_setting=lambda root, **kw: ("mac", "named"),
+            read_mail=lambda root, **kw: ({"win": [theirs]}, {}),
+            live_claims=mail.live_claims, overlapping_claims=mail.overlapping_claims,
+        )
+
+        def verb(argv, **_kw):
+            err = io.StringIO()
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+                rc = lr.main(argv[2:])
+            return types.SimpleNamespace(returncode=rc, stdout="", stderr=err.getvalue())
+
+        monkeypatch.setattr(cli, "run_bounded", verb)
+        before = self._store(tmp_path).read_bytes()
+        lines = cli._onboarding_repin_preview(tmp_path)
+        assert self._store(tmp_path).read_bytes() == before
+        assert not any("would re-pin ONB-1" in line for line in lines), lines
+        assert any("could not check ONB-1 (refused on --execute: win claims id ONB-1" in line
+                   for line in lines), lines
+
+    def test_a_current_probe_spawns_nothing(self, tmp_path, monkeypatch):
+        from espalier import cli
+        TestLedgerSeed._install(tmp_path)
+        calls = []
+        monkeypatch.setattr(cli, "run_bounded", lambda *a, **k: calls.append(a))
+        assert cli._refresh_onboarding_probes(tmp_path) == []
+        assert calls == []
+
+    def test_upgrade_execute_repins_it_end_to_end(self, tmp_path):
+        """The row's own sequence, through the real CLI: init, one character
+        of the stored ONB-1 probe changed, the deployed stamp set back so the
+        re-deploy path runs, ``upgrade --execute``."""
+        import os
+
+        import espalier
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], capture_output=True, check=True)
+        (tmp_path / "README.md").write_text("# x\n", encoding="utf-8")
+        env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+        run = lambda *a: subprocess.run([sys.executable, "-m", "espalier.cli", *a], capture_output=True,
+                                        text=True, encoding="utf-8", errors="replace", timeout=50, env=env)
+        assert run("init", str(tmp_path)).returncode == 0
+        filed, _stale = self._stale(tmp_path)
+        manifest = tmp_path / "cc" / "PACK_MANIFEST.txt"
+        manifest.write_bytes(manifest.read_bytes().replace(espalier.__version__.encode(), b"0.0.1"))
+        previewed = run("upgrade", str(tmp_path))
+        assert "would re-pin ONB-1" in previewed.stdout, previewed.stdout
+        assert self._onb1(tmp_path)["cmd"] != filed
+        upgraded = run("upgrade", str(tmp_path), "--execute")
+        assert upgraded.returncode == 0, upgraded.stdout + upgraded.stderr
+        assert self._onb1(tmp_path)["cmd"] == filed
+        assert "re-pinned ONB-1" in upgraded.stdout, upgraded.stdout
+
+
 class TestOnboardingProbesDoNotWalk:
     """The onboarding probes run at ``init``, often before a first commit, and
     a tree-walking probe is UNRESOLVED on a repository with nothing tracked
