@@ -110,6 +110,12 @@ def _denies(fn, command: str) -> bool:
     # one word, and the invocation after it is read (the shared value grammar)
     f"{ENV_VAR}=1 MSG='a b' pytest -q",
     f"{ENV_VAR}='1' pytest -q",
+    # DEF-1044's relief: a quoted word is one word, so a path crossing a
+    # `Claude Code` folder and a `-k` expression opening with `claude` name no
+    # launch (the scan read them one blank-separated fragment at a time).
+    f'{STOP}=full pytest "work/Claude Code/repo/tests"',
+    f'{STOP}=full pytest -k "claude and not slow"',
+    f'{ENV_VAR}=1 pytest "work/Claude Code/repo/tests"',
 ])
 def test_bash_env_prefix_on_a_real_invocation_is_allowed(command):
     assert not _denies(wg.check_bash_dangerous_patterns, command), (
@@ -155,6 +161,10 @@ def test_bash_env_prefix_on_a_real_invocation_is_allowed(command):
     f'{ENV_VAR}=1 script -qc "claude -p x" /dev/null',
     f'{ENV_VAR}=1 watch "claude -p x"',
     f'{ENV_VAR}=1 su -c "claude -p x" me',
+    # and with the quote-aware scan (DEF-1044), read by the carrier reader
+    # (DEF-1131) rather than by accident: unquoted, and behind a POSIX shell
+    f"{ENV_VAR}=1 eval claude -p x",
+    f'{ENV_VAR}=1 bash -c "claude -p x"',
     f"{ENV_VAR}=1 $(which claude) -p x",
     # Case variant: `command -v CLAUDE` resolves on a case-insensitive
     # filesystem (APFS/NTFS), so this is the same binary.
@@ -193,6 +203,8 @@ def test_bash_prose_and_unrelated_vars_are_allowed(command):
 @pytest.mark.parametrize("command", [
     f"$env:{ENV_VAR}='1'; pytest -q",
     "$env:FOO=1; pytest",
+    # DEF-1044's relief, the PowerShell twin of the quoted-path rows
+    f'$env:{STOP}="full"; pytest "work/Claude Code/repo/tests"',
 ])
 def test_powershell_env_prefix_on_a_real_invocation_is_allowed(command):
     assert not _denies(wg.check_powershell, command)
@@ -215,6 +227,8 @@ def test_powershell_env_prefix_on_a_real_invocation_is_allowed(command):
     f"$env:{ENV_VAR}=1; (claude) -p x",
     f'$env:{ENV_VAR}=1; pwsh -Command "claude -p x"',
     f'$env:{ENV_VAR}=1; Invoke-Expression "claude -p x"',
+    f'$env:{ENV_VAR}=1; iex "claude -p x"',
+    f'$env:{ENV_VAR}=1; powershell -Command "claude -p x"',
     # STATED COST, not an oversight: the carve-out is scoped to the anchored
     # `$env:` arm, so the cmdlet spelling of the maintenance loop keeps denying.
     # The alternative was handing the unanchored arms an accidental anchor made

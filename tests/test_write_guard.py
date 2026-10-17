@@ -9727,9 +9727,8 @@ class TestSecretPathAccess:
     # the gate keeps on the old split, and an input redirect, which no leg
     # reads as a source (filed as DEF-1132).
     @pytest.mark.parametrize("tool, command", [
-        ("PowerShell", "$hint = 'gc .env'"),
-        ("PowerShell", '$msg = "type .env to see the values"'),
-        ("PowerShell", 'Write-Host ("type .env")'),
+        # The three strings DEF-1045 held refused are a mention since its
+        # carrier reader (DEF-1131): TestQuotedProgramsAreReadAsPrograms.
         ("PowerShell", "Get-Content \"work/client secrets/notes.md\" # it's"),
     ])
     def test_the_first_landing_still_refuses(self, tool, command, tmp_path):
@@ -9782,6 +9781,71 @@ class TestSecretPathAccess:
     # before adjudicating a new derived population, and it did. Two copies of
     # one assertion is how the two drift apart, which is the defect, not the
     # guard. This comment is the pointer; do not re-add the duplicate.
+
+
+class TestQuotedProgramsAreReadAsPrograms:
+    """DEF-1131, with DEF-1044 and DEF-1045 waiting on it: a carrier runs a
+    program out of a quoted string -- Bash ``eval``, ``script -c``, ``watch``
+    and ``su -c``; PowerShell ``Invoke-Expression`` / ``iex``,
+    ``pwsh`` / ``powershell -Command``, a ``[scriptblock]::Create`` it calls
+    and ``cmd /c`` -- and the secret legs read that program as a program,
+    while a quoted string no carrier runs is data. Until this reader the
+    legs reached a quoted program through four body readers only, so the
+    carriers below read a dotenv the Read tool's rule would refuse, and a
+    quoted string that names one was refused as a read of it whenever it
+    opened a statement (DEF-1045). RED on main e9f0872f: the carrier rows
+    allowed, the mention rows refused."""
+
+    @pytest.mark.parametrize("tool, command", [
+        ("Bash", 'eval "cat .env"'),
+        ("Bash", "eval 'cat .env'"),
+        ("Bash", "eval cat .env"),
+        ("Bash", 'script -qc "cat .env" /dev/null'),
+        ("Bash", "script -c 'cat .env'"),
+        ("Bash", 'watch "cat .env"'),
+        ("Bash", "watch -n1 'cat .env'"),
+        ("Bash", 'su -c "cat .env" me'),
+        ("Bash", "su - me -c 'cat .env'"),
+        ("PowerShell", 'iex "Get-Content .env"'),
+        ("PowerShell", "Invoke-Expression 'gc .env'"),
+        ("PowerShell", 'Invoke-Expression -Command "type .env"'),
+        ("PowerShell", 'pwsh -Command "Get-Content .env"'),
+        ("PowerShell", "powershell -Command 'gc .env'"),
+        ("PowerShell", 'pwsh -c "gc .env"'),
+        ("PowerShell", 'Get-Content "$(Get-Location)\\.env"'),
+    ])
+    def test_a_carriers_program_is_read(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        # A string a later statement runs is read where it runs: the four
+        # twins DEF-1045 held refused by the old split, now by the reader.
+        ("PowerShell", "$c = 'Get-Content .env'; Invoke-Expression $c"),
+        ("PowerShell", "$c = 'gc .env'; & ([scriptblock]::Create($c))"),
+        ("PowerShell", "$cmd = 'type .env'; cmd /c $cmd"),
+        ("PowerShell", 'Invoke-Expression ("gc .env")'),
+        ("PowerShell", '$h = "gc .env"; iex $h'),
+    ])
+    def test_a_string_a_carrier_runs_later_is_read(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        # DEF-1045's relief: no carrier runs these strings.
+        ("PowerShell", "$hint = 'gc .env'"),
+        ("PowerShell", '$msg = "type .env to see the values"'),
+        ("PowerShell", 'Write-Host ("type .env")'),
+        ("PowerShell", '$hint = "gc .env"; Write-Host $hint'),
+        # a quoted mention of a carrier is data, on both tools
+        ("Bash", 'echo "eval cat .env"'),
+        ("Bash", "echo 'watch cat .env'"),
+        ("Bash", 'echo "su -c cat .env"'),
+        ("PowerShell", "Write-Host 'iex \"gc .env\"'"),
+        ("PowerShell", "Write-Host 'Invoke-Expression gc .env'"),
+    ])
+    def test_a_string_no_carrier_runs_is_a_mention(self, tool, command, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
 
 
 class TestPowerShellCopyMove:
