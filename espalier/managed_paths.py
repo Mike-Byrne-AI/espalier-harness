@@ -94,6 +94,12 @@ STANDARD_MANAGED_TOOLS = [
     # this set; read by hooks/session_start.py (the Mail: line, parent-dir
     # sys.path), hooks/post_compact.py and the /inbox command body.
     "tools/cc/mail.py",
+    # The symbols a lane changes, derived from its diff by ast: a
+    # function, a method, a class or a module-level name. Imported by mail.py,
+    # whose claims carry them, so everything that imports mail.py reaches it
+    # and a fresh init without it would raise ModuleNotFoundError there;
+    # imports record_merge.py (in this set).
+    "tools/cc/_symbols.py",
     # The board: one live read before a seat states state (the merge rules,
     # the base branch's post-merge verdict, open pull requests with their seat,
     # the dispatcher's assignments, the claims, the ledger's count at the base).
