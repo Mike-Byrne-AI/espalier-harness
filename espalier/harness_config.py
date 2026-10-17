@@ -655,6 +655,20 @@ def unwired_governance_gates(repo_root: Path) -> list[str]:
     return _unwired_hooks(repo_root, GOVERNANCE_BLOCKING_HOOKS)
 
 
+def governance_gate_runs_as_wired(repo_root: Path, script: str) -> bool:
+    """The positive twin of :func:`unwired_governance_gates` for one gate: its
+    file is deployed under ``tools/cc/hooks/`` and it is not unwired. The
+    unwired read skips a gate whose file is absent, its documented scope, so
+    "not in the unwired list" is no claim that the gate runs; a caller that
+    says it does needs the file too (DEF-2006, the failure-mode review's
+    drive: an absent write_guard read as wired)."""
+    if not (repo_root / "tools" / "cc" / "hooks" / script).is_file():
+        return False
+    if not os.path.lexists(repo_root / ".claude" / "settings.json"):
+        return False
+    return script not in unwired_governance_gates(repo_root)
+
+
 def unwired_reporter_hooks(repo_root: Path) -> list[str]:
     """Reporter-tier hooks on disk that are not executably wired (DEF-619).
 

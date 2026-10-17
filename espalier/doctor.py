@@ -2643,6 +2643,7 @@ def run_doctor_check(
     # in the hint runs only when there is a gap, never on the healthy path.
     if os.path.isfile(settings_path):
         from espalier.cli import (  # lazy: cli imports doctor at top level
+            RETIRED_RULE_KEPT_WHY,
             _retired_rules_to_name,
             installed_settings_profile,
             settings_allow_gaps,
@@ -2700,7 +2701,8 @@ def run_doctor_check(
                 f".claude/settings.json carries the retired deny rule {rule}: {why}. "
                 "Delete that line by hand and check .claude/settings.local.json and "
                 "~/.claude/settings.json for the same line; a deny rule in any of them "
-                "blocks in every permission mode, and merge-settings never removes a rule."
+                f"blocks in every permission mode, and merge-settings never removes a rule. "
+                f"{RETIRED_RULE_KEPT_WHY}"
             )
             _append_step(
                 next_steps,

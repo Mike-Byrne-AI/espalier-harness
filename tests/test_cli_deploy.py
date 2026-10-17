@@ -1046,17 +1046,118 @@ class TestNoDeleteAdviceWhileTheHooksDoNotRun:
 
     @pytest.mark.parametrize("surface,drift,drop_event", _RETIRED_RULE_SURFACES, ids=_SURFACE_IDS)
     def test_an_armed_install_is_told(self, surface, drift, drop_event, tmp_path, capsys, monkeypatch):
-        from espalier.cli import _detect_python_command
+        from espalier.cli import RETIRED_RULE_KEPT_WHY, _detect_python_command
 
         root = self._tree(tmp_path, monkeypatch, drift=drift, command=_detect_python_command(),
                           drop_event=drop_event)
         said = _what_the_surface_says(surface, root, capsys)
         assert "retired deny rule Bash(rm -rf /*)" in said, said[-2500:]
+        # ...and why the advice is said here, so a tree that heard it late, or
+        # not at all, can tell which state it was in (DEF-2006).
+        assert RETIRED_RULE_KEPT_WHY in said, said[-2500:]
 
     def test_doctor_does_not_tell_a_file_with_no_espalier_hooks(self, tmp_path, capsys, monkeypatch):
         root = self._tree(tmp_path, monkeypatch, drift=False, command=None)
         said = _what_the_surface_says("doctor", root, capsys)
         assert "retired deny rule" not in said and "Bash(rm -rf /*)" not in said, said[-2500:]
+
+    @staticmethod
+    def _pause_write_guard(root: Path, form: str) -> None:
+        """write_guard's entry rewritten in the old shell form as a comment, the
+        way an operator pauses it; every other gate stays as it was."""
+        import json
+
+        from espalier.cli import _detect_python_command
+
+        settings = root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        paused = 0
+        for entries in data["hooks"].values():
+            for entry in entries:
+                for i, hook in enumerate(entry["hooks"]):
+                    if any("write_guard.py" in str(a) for a in hook.get("args") or []):
+                        entry["hooks"][i] = {"type": "command", "command": form.format(
+                            python=_detect_python_command(),
+                            script='"$CLAUDE_PROJECT_DIR/tools/cc/hooks/write_guard.py"')}
+                        paused += 1
+        assert paused, "the fixture paused nothing"
+        settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+
+    @staticmethod
+    def _held_back(surface: str, said: str, reason: str) -> None:
+        """The advice is not given, and every surface but doctor says why the
+        rule is kept (doctor names the paused or switched-off hook itself)."""
+        assert "carries the retired deny rule" not in said and "Delete that line" not in said, said[-2500:]
+        if surface != "doctor":
+            assert f"carries a retired deny rule, kept because {reason}" in said, said[-2500:]
+            # The claim reads this tree as armed, so the disarmed-hooks WARN
+            # would contradict it (the upgrade preview printed one, predicted
+            # by the code review); the held line above is the whole account.
+            assert ": WARNING -- " not in said, said[-2500:]
+        # ...and no "nothing to do" over it, where a surface says that.
+        assert "nothing to do" not in said.lower(), said[-2500:]
+        if surface == "upgrade, version-current":
+            assert "keeps a retired deny rule while write_guard does not run" in said, said[-2500:]
+
+    @pytest.mark.parametrize("form", ["# {python} {script}", ": # {python} {script}"])
+    @pytest.mark.parametrize("surface,drift,drop_event", _RETIRED_RULE_SURFACES, ids=_SURFACE_IDS)
+    def test_a_paused_write_guard_keeps_its_rule_unnamed(self, surface, drift, drop_event, form,
+                                                        tmp_path, capsys, monkeypatch):
+        """DEF-2006: the enforcement claim lets a pre-v0.6.5 shell-form entry
+        through on purpose, a commented one included, so the claim reads this
+        tree as armed; the advice also asks the strict wiring read, where a
+        commented write_guard is not wired, so the rule is kept and the run
+        says why and what names it."""
+        from espalier.cli import _detect_python_command
+
+        root = self._tree(tmp_path, monkeypatch, drift=drift, command=_detect_python_command(),
+                          drop_event=drop_event)
+        self._pause_write_guard(root, form)
+        said = _what_the_surface_says(surface, root, capsys)
+        self._held_back(surface, said, "write_guard is not wired to run")
+
+    @pytest.mark.parametrize("where", [".claude/settings.json", ".claude/settings.local.json"])
+    @pytest.mark.parametrize("surface,drift,drop_event", _RETIRED_RULE_SURFACES, ids=_SURFACE_IDS)
+    def test_a_kill_switch_keeps_the_rule_unnamed(self, surface, drift, drop_event, where,
+                                                  tmp_path, capsys, monkeypatch):
+        """The kill switch is the plain way to pause every hook, and the claim
+        does not read it: the failure-mode review drove the advice, and its
+        "write_guard runs here", beside doctor's own kill-switch failure."""
+        import json
+
+        from espalier.cli import _detect_python_command
+
+        root = self._tree(tmp_path, monkeypatch, drift=drift, command=_detect_python_command(),
+                          drop_event=drop_event)
+        path = root / where
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        data["disableAllHooks"] = True
+        path.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        said = _what_the_surface_says(surface, root, capsys)
+        self._held_back(surface, said, "a kill switch (disableAllHooks)")
+
+    @pytest.mark.parametrize("surface", ["merge-settings", "doctor", "upgrade, version-current"])
+    def test_a_write_guard_with_no_file_keeps_the_rule_unnamed(self, surface, tmp_path, capsys,
+                                                               monkeypatch):
+        """The strict wiring read skips a gate whose file is absent, by its own
+        scope, so "not unwired" is no claim that write_guard runs: the advice
+        asks for the file too (the failure-mode review's drive)."""
+        import json
+
+        from espalier.cli import _detect_python_command
+
+        root = self._tree(tmp_path, monkeypatch, drift=False, command=_detect_python_command())
+        hooks = root / "tools" / "cc" / "hooks"
+        (hooks / "write_guard.py").rename(hooks / "write_guard.py.aside")
+        settings = root / ".claude" / "settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        for entries in data["hooks"].values():
+            for entry in entries:
+                entry["hooks"] = [h for h in entry["hooks"]
+                                  if not any("write_guard.py" in str(a) for a in h.get("args") or [])]
+        settings.write_bytes((json.dumps(data, indent=2) + "\n").encode("utf-8"))
+        said = _what_the_surface_says(surface, root, capsys)
+        assert "carries the retired deny rule" not in said and "Delete that line" not in said, said[-2500:]
 
     def test_the_gate_holds_back_a_file_with_no_espalier_hooks_even_when_nothing_blocks(self, tmp_path):
         """The "wires Espalier hooks" arm on its own: with no gate script on disk
@@ -1275,6 +1376,16 @@ class TestEveryRetiredRuleReportGoesThroughTheGate:
                                 kw.value, (ast.List, ast.Tuple, ast.Constant)):
                             bad.append(f"{rel}:{kw.value.lineno}")
         assert not bad, bad
+
+    def test_every_retired_rule_stands_in_for_write_guard(self):
+        """The gate holds the advice back while write_guard does not run
+        (DEF-2006), so every retired row must be one write_guard stands in for:
+        a row retired for another gate's sake would need its own check."""
+        from espalier.settings_profiles import RETIRED_DENY_RULES
+
+        assert RETIRED_DENY_RULES
+        assert all("write_guard" in why for _rule, _version, why in RETIRED_DENY_RULES), [
+            version for _rule, version, why in RETIRED_DENY_RULES if "write_guard" not in why]
 
     def test_the_warn_text_lives_in_two_places_and_doctor_loops_a_gated_list(self):
         import ast
