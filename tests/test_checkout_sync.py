@@ -961,16 +961,19 @@ class TestTheReaperKeepsAWedgeRestoreCopy:
         (wt / ".espalier-state" / "sessions" / "s.json").write_text("{}\n", encoding="utf-8")
         assert cs.reap_worktrees(work, sessions=[]).removed == ["plain"]
 
-    def test_a_copy_its_file_still_holds_does_not_keep_it(self, cs, repos):
+    @pytest.mark.parametrize("rel", ["hooks/_reinject.py", "checkout_sync.py"])
+    def test_a_copy_its_file_still_holds_does_not_keep_it(self, cs, repos, rel):
         """The copy is written before the permission prompt. Declined, the
         restore never runs and the edit stays; committed and merged, the copy
-        holds nothing the branch does not, so it does not hold the worktree."""
+        holds nothing the branch does not, so it does not hold the worktree.
+        A restore can name a file in tools/cc/ or in tools/cc/hooks/: both."""
         work = repos["work"]
         _seeded_with_tools_cc(repos)
         wt = _worktree(repos, "declined")
-        held = (wt / "tools" / "cc" / "hooks" / "_reinject.py").read_bytes()
+        held = (wt / "tools" / "cc" / rel).read_bytes()
+        stem = rel.rsplit("/", 1)[-1][: -len(".py")]
         (wt / ".espalier-state" / "wedge-restore").mkdir(parents=True)
-        (wt / ".espalier-state" / "wedge-restore" / "_reinject-20261017T000000000000Z.py.txt").write_bytes(held)
+        (wt / ".espalier-state" / "wedge-restore" / f"{stem}-20261017T000000000000Z.py.txt").write_bytes(held)
         assert cs.reap_worktrees(work, sessions=[]).removed == ["declined"]
 
     @pytest.mark.parametrize("name, body", [
