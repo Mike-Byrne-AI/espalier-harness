@@ -25,6 +25,8 @@ import sys
 
 import pytest
 
+from tests._stubs import write_stub
+
 _REPO = pathlib.Path(__file__).resolve().parents[1]
 _MODULE = _REPO / "tools" / "cc" / "_symbols.py"
 
@@ -445,9 +447,7 @@ class TestSymbolsOfLane:
         """`diff.external` (a difftool's documented setup) replaced git's own diff text with
         whatever that program prints, and the edit read as nothing changed (code review,
         driven). Dies to: `--no-ext-diff` dropped from `DIFF_ARGS`."""
-        silent = tmp_path / "silent-differ.sh"
-        silent.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        silent.chmod(0o755)
+        silent = write_stub(tmp_path / "silent-differ.sh", "#!/bin/sh\nexit 0\n")
         _git(repo, "config", "diff.external", str(silent))
         (repo / "m.py").write_text(MOD.replace("return 1", "return 10"), encoding="utf-8")
         assert sym.symbols_of_lane(repo, "main")["m.py"]["symbols"] == {"m.py::f"}
