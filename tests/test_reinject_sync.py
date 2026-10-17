@@ -1165,11 +1165,16 @@ def test_vendor_sync_fires_on_hook_edit(tmp_path):
     assert "sync_vendor_cc.py" in out
 
 
-def test_vendor_sync_silent_on_vendor_mirror(tmp_path):
-    # Editing the mirror itself must NOT nudge (no `tools/cc/` segment in the path).
+def test_vendor_sync_on_the_vendor_mirror_warns_the_edit_is_lost(tmp_path):
+    # An edit of the mirror itself must never get the source side's "run the sync"
+    # reminder: running it discards the edit. Since DEF-2012 it is the row's
+    # generated side instead: the edit will be DISCARDED, re-apply it to tools/cc/.
+    (tmp_path / "tools" / "cc" / "hooks").mkdir(parents=True)
+    (tmp_path / "tools" / "cc" / "hooks" / "x.py").touch()
     out = _fire("Edit", {"file_path": "/r/espalier/_vendor/cc/hooks/x.py",
                          "new_string": "x"}, tmp_path)
-    assert "sync_vendor_cc.py" not in out
+    assert "DISCARDED" in out and "tools/cc/hooks/x.py is the only source of truth" in out, out
+    assert "before commit" not in out, out
 
 
 def test_vendor_sync_silent_on_non_python(tmp_path):
@@ -1320,12 +1325,8 @@ class TestSyncAdvisoriesLeaveTheSessionCap:
     #: reason. Named, so a new row with a source-side advisory only reds below
     #: instead of being skipped, and the test below reds on an entry whose
     #: generated side has started to warn, so the entry retires itself.
-    _GENERATED_SIDE_SILENT = {
-        "vendor-cc": "espalier/_vendor/cc/ is write-guarded on the harness's own tree "
-                     "except under maintenance mode, where an Edit of it is neither "
-                     "refused nor warned and the next sync discards it (DEF-2012); "
-                     "its mirror side was silent before DEF-4015 too",
-    }
+    #: Empty since DEF-2012 gave the vendored espalier/_vendor/cc/ copy its warning.
+    _GENERATED_SIDE_SILENT: dict[str, str] = {}
 
     @staticmethod
     def _emitted(monkeypatch) -> list[str]:
@@ -1451,3 +1452,173 @@ class TestSyncAdvisoriesLeaveTheSessionCap:
         stray = [r.id for r in _reinject.REINJECTS
                  if r.id.endswith("-GENERATED") and r.id not in derived]
         assert derived and not stray, stray
+
+
+# -- DEF-2009, DEF-2011, DEF-2012: the sync advisories' three gaps since DEF-4015 --
+
+class TestTheSyncAdvisoriesCloseTheirGaps:
+    """Three gaps the DEF-4015 regime left, each driven 2026-10-14. Earned red:
+    every row here but three fails on main (6581fdf); the source side's row,
+    the region-after-compaction row (main says the region warning on every
+    edit, a compaction or not) and the `..` row (main named the source there;
+    the row guards this lane's own regression) hold there too. DEF-2012: an edit of the vendored espalier/_vendor/cc/
+    copy got no warning that the next sync discards it (the vendor row's
+    generated side read the stack table alone). DEF-2011: the generated-region
+    warning still spent the five-fire session budget, so past it a region edit
+    landed silent. DEF-2009: a sync advisory said once before a compaction was
+    never said again, though the compaction dropped the context it was said
+    into."""
+
+    @staticmethod
+    def _ss():
+        import importlib
+        return importlib.import_module("session_start")
+
+    @staticmethod
+    def _emitted(monkeypatch) -> list[str]:
+        return TestSyncAdvisoriesLeaveTheSessionCap._emitted(monkeypatch)
+
+    # DEF-2012
+    @pytest.mark.parametrize("rel", ["hooks/_reinject.py", "_stack_table.py", "statusline.cmd"])
+    def test_an_edit_of_the_vendored_copy_is_told_it_will_be_discarded(self, tmp_path, monkeypatch, rel):
+        seen = self._emitted(monkeypatch)
+        (tmp_path / "tools" / "cc" / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / "tools" / "cc" / rel).touch()
+        out = _fire("Edit", {"file_path": f"/r/espalier/_vendor/cc/{rel}", "new_string": "x"}, tmp_path)
+        assert "DISCARDED" in out and f"tools/cc/{rel} is the only source of truth" in out, out
+        assert "espalier/_stack_table.py" in out, "the other output of the one sync, sharing this flag"
+        assert seen == ["REINJECT-VENDOR-CC-SYNC-GENERATED"], seen
+
+    def test_the_source_side_still_says_run_the_sync(self, tmp_path, monkeypatch):
+        seen = self._emitted(monkeypatch)
+        out = _fire("Edit", {"file_path": "/r/tools/cc/hooks/_reinject.py", "new_string": "x"}, tmp_path)
+        assert "before commit" in out and "DISCARDED" not in out, out
+        assert seen == ["REINJECT-VENDOR-CC-SYNC"], seen
+
+    # DEF-2011
+    def test_a_generated_region_edit_warns_past_the_session_cap_once_a_session(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(_reinject, "_locked_increment", lambda *a, **k: 99)
+        (tmp_path / "README.md").touch()
+        edit = {"file_path": str(tmp_path / "README.md"), "new_string": "deploy-inventory: x"}
+        first = _fire("Edit", edit, tmp_path)
+        assert "DISCARDED" in first, first
+        # said once a session, whichever region: it names them all
+        assert all(f"{target} `{region}` from {src}" in first
+                   for target, region, src in _reinject._GENERATED_DOC_REGIONS), first
+        assert _fire("Edit", edit, tmp_path) == "", "the once flag is its scarcity"
+        rule = _reinject.GENERATED_DOC_REGION_RULE
+        assert rule.cap_exempt and rule.once_per_session
+
+    # DEF-2009
+    def test_a_sync_advisory_is_said_again_after_a_compaction(self, tmp_path):
+        ss = self._ss()
+        edit = {"file_path": "/r/espalier/assets/claude/commands/x.md", "new_string": "x"}
+        assert _fire("Edit", edit, tmp_path), "the generated .claude/ mirror's warning"
+        assert _fire("Edit", edit, tmp_path) == "", "once a session"
+        ss._clean_state_flags(tmp_path, "resume")
+        assert _fire("Edit", edit, tmp_path) == "", "a resume restores the context it was said into"
+        vendored = {"file_path": "/r/espalier/_vendor/cc/x.py", "new_string": "x"}
+        (tmp_path / "tools" / "cc").mkdir(parents=True)
+        (tmp_path / "tools" / "cc" / "x.py").touch()
+        assert "DISCARDED" in _fire("Edit", vendored, tmp_path)
+        ss._clean_state_flags(tmp_path, "compact")
+        assert _fire("Edit", edit, tmp_path), "a compaction dropped it: said once more"
+        assert "DISCARDED" in _fire("Edit", vendored, tmp_path)
+
+    def test_a_generated_region_warning_is_said_again_after_a_compaction(self, tmp_path):
+        ss = self._ss()
+        (tmp_path / "README.md").touch()
+        edit = {"file_path": str(tmp_path / "README.md"), "new_string": "deploy-inventory: x"}
+        assert "DISCARDED" in _fire("Edit", edit, tmp_path)
+        ss._clean_state_flags(tmp_path, "compact")
+        assert "DISCARDED" in _fire("Edit", edit, tmp_path)
+
+    def test_a_compaction_keeps_the_counters_and_the_catalog_pointers(self, tmp_path):
+        """By design (the stop gate's thresholds, the speed bumps, the session
+        cap): a compaction clears the sync flags and nothing else."""
+        ss = self._ss()
+        state = tmp_path / _reinject.STATE_DIR
+        state.mkdir(parents=True)
+        pointer = next(r for r in _reinject.REINJECTS
+                       if r.once_per_session and r not in _reinject.COMPACT_CLEARED_RULES)
+        kept = ["write_count", "tool_call_count", _reinject.REINJECT_COUNTER, f"reinject_once_{pointer.id}",
+                "speedbump_CP-X"]
+        for name in kept:
+            (state / name).write_text("1", encoding="utf-8")
+        cleared = [f"reinject_once_{r.id}" for r in _reinject.COMPACT_CLEARED_RULES]
+        for name in cleared:
+            (state / name).write_text("1", encoding="utf-8")
+        ss._clean_state_flags(tmp_path, "compact")
+        assert all((state / name).exists() for name in kept), [n for n in kept if not (state / n).exists()]
+        assert not any((state / name).exists() for name in cleared), [n for n in cleared if (state / n).exists()]
+
+    def test_the_cleared_flags_are_every_sync_side_and_the_region_warning(self):
+        """Derived from the table, never a hand list: the 14 sides and the region."""
+        sides = [rule for pair in _reinject.SYNC_RULE_PAIRS for rule in pair]
+        assert list(_reinject.COMPACT_CLEARED_RULES) == [*sides, _reinject.GENERATED_DOC_REGION_RULE]
+        assert all(r.once_per_session for r in _reinject.COMPACT_CLEARED_RULES)
+
+    def test_a_vendored_file_with_no_original_is_told_the_sync_deletes_it(self, tmp_path):
+        """The failure-mode review: a Write of a new file under the vendored copy
+        was told the sync overwrites it from a tools/cc/ file that does not
+        exist; the sync deletes it."""
+        out = _fire("Write", {"file_path": "/r/espalier/_vendor/cc/hooks/new.py", "content": "x"}, tmp_path)
+        assert "will delete it" in out and "write it at tools/cc/hooks/new.py" in out, out
+
+    def test_a_path_through_the_vendored_copy_into_tools_cc_is_the_source(self, tmp_path, monkeypatch):
+        """The failure-mode review, driven: `..` runs the path back into tools/cc/,
+        which got the generated side's warning and the original named wrong."""
+        seen = self._emitted(monkeypatch)
+        out = _fire("Edit", {"file_path": "/r/espalier/_vendor/cc/../../tools/cc/hooks/x.py", "new_string": "x"},
+                    tmp_path)
+        assert "before commit" in out and "DISCARDED" not in out, out
+        assert seen == ["REINJECT-VENDOR-CC-SYNC"], seen
+
+    def test_the_two_outputs_of_the_one_sync_name_each_other(self, tmp_path):
+        """The failure-mode review, driven: both generated outputs share one once
+        flag, so a vendored edit spent the stack-table warning; each message names
+        both, in either order."""
+        (tmp_path / "tools" / "cc").mkdir(parents=True)
+        (tmp_path / "tools" / "cc" / "x.py").touch()
+        first = _fire("Edit", {"file_path": "/r/espalier/_vendor/cc/x.py", "new_string": "x"}, tmp_path)
+        assert "espalier/_stack_table.py" in first, first
+        assert _fire("Edit", {"file_path": "/r/espalier/_stack_table.py", "new_string": "x"}, tmp_path) == ""
+        engine = tmp_path / "engine-first"
+        engine.mkdir()
+        out = _fire("Edit", {"file_path": "/r/espalier/_stack_table.py", "new_string": "x"}, engine)
+        assert "every espalier/_vendor/cc/ copy" in out, out
+
+    #: The once-a-session rules a compaction leaves spent, each with its reason.
+    _COMPACT_KEPT = {
+        rid: ("a catalog pointer names a doc to read, not an edit that is lost; "
+              "tests/test_reinject_pins.py pins that a compaction does not re-arm one")
+        for rid in ("REINJECT-GUARD-PATTERN-CLASSIFY", "REINJECT-OPERATOR-DOC-INTERPRETER",
+                    "REINJECT-NEW-TEST-FILE-CLASSIFY", "REINJECT-NEW-SCRIPT-INVENTORY",
+                    "REINJECT-LEDGER-TABLE-PARSER")
+    }
+
+    def test_every_once_rule_is_cleared_by_a_compaction_or_kept_with_a_reason(self):
+        """The failure-mode review: a once rule added outside the sync table would
+        keep its flag across a compaction with no one deciding it."""
+        cleared = {r.id for r in _reinject.COMPACT_CLEARED_RULES}
+        once = {r.id for r in _reinject.REINJECTS if r.once_per_session}
+        assert not cleared & set(self._COMPACT_KEPT), sorted(cleared & set(self._COMPACT_KEPT))
+        assert once == cleared | set(self._COMPACT_KEPT), (sorted(once - cleared - set(self._COMPACT_KEPT)),
+                                                           sorted(set(self._COMPACT_KEPT) - once))
+
+    def test_a_flag_that_will_not_go_does_not_stop_the_rest(self, tmp_path):
+        """The code review: a directory where a flag file should be."""
+        state = tmp_path / _reinject.STATE_DIR
+        state.mkdir(parents=True)
+        first, *rest = _reinject.COMPACT_CLEARED_RULES
+        (state / f"reinject_once_{first.id}").mkdir()
+        for rule in rest:
+            (state / f"reinject_once_{rule.id}").write_text("1", encoding="utf-8")
+        _reinject.clear_after_compact(tmp_path)
+        assert not any((state / f"reinject_once_{r.id}").exists() for r in rest)
+
+    def test_a_kept_older_reinject_without_the_clear_does_not_break_the_start(self, tmp_path, monkeypatch):
+        ss = self._ss()
+        monkeypatch.delattr(ss._reinject, "clear_after_compact")
+        ss._clean_state_flags(tmp_path, "compact")
+        assert (tmp_path / _reinject.STATE_DIR / "session_started").is_file()

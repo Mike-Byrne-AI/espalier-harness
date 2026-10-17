@@ -2122,7 +2122,8 @@ def _load_blueprint(root: Path, advance_chain: bool) -> str:
 def _clean_state_flags(root: Path, source: str = "") -> None:
     """Write the session-start timestamp; on a NEW logical session
     (startup/clear) also clear the previous session's stop-gate, speedbump, and
-    reinject flags.
+    reinject flags; on a ``compact``, only the sync advisories' once flags
+    (``_reinject.clear_after_compact``, DEF-2009).
 
     On a CONTINUATION source (``compact``/``resume``) the per-session counters
     are PRESERVED. A mid-session context compaction re-fires SessionStart with
@@ -2144,6 +2145,14 @@ def _clean_state_flags(root: Path, source: str = "") -> None:
         datetime.now(timezone.utc).isoformat(),
     )
 
+    # A compaction drops the context a sync advisory was said into (DEF-2009), so
+    # each side's once flag clears and it may be said once more; the counters
+    # below stay. A resume restores the transcript the advisory is in: nothing
+    # clears. A kept, older _reinject has no clear: then nothing does either.
+    if source == "compact":
+        clear = getattr(_reinject, "clear_after_compact", None)
+        if clear is not None:
+            clear(root)
     # A mid-session compact/resume must NOT rewind the stop-gate/speedbump/reinject
     # counters; every other source clears them for a clean fresh session.
     if source in _CONTINUATION_SOURCES:
