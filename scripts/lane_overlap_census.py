@@ -1,6 +1,7 @@
 """Which concurrently open pull requests shared a FILE, and which shared a SYMBOL.
 
-The oracle `TP-702` Task 0 runs, and the measurement its Motivation cites. A
+The oracle the symbol-overlap pack's Task 0 runs, and the measurement its
+Motivation cites. A
 symbol is ``path::qualname``: a function, a method as ``Class.method``, a class,
 or a top-level assignment by each target name. Symbols are derived from the
 diff by the standard library's ``ast``, on BOTH sides of every hunk: added and
@@ -13,7 +14,7 @@ it is counted, it meets another lane's unplaced line as a path hit, and it is
 never read as "different functions". A file that is not Python is a path tier
 of its own, never a symbol. Mirror twins (``espalier/mirror_registry.py``) are
 collapsed onto their source, so a lane that edits a hook and its vendored copy
-meets another lane once. ``TP-702`` Wave 1 moves the pure functions into
+meets another lane once. That pack's Wave 1 moves the pure functions into
 ``tools/cc/_symbols.py`` and this script then imports them.
 
 Reads the merged pull requests of a window through ``gh``, fetches the base and
@@ -267,9 +268,15 @@ def pair_verdict(one: dict[str, dict], two: dict[str, dict]) -> dict:
 
 # ---------------------------------------------------------------- git and gh
 
-def _sh(*args: str) -> str:
+def _git(*args: str) -> str:
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
-    return run_bounded(list(args), capture_output=True, text=True, encoding="utf-8",
+    return run_bounded(["git", *args], capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", timeout=120, env=env).stdout
+
+
+def _gh(*args: str) -> str:
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0")
+    return run_bounded(["gh", *args], capture_output=True, text=True, encoding="utf-8",
                        errors="replace", timeout=120, env=env).stdout
 
 
@@ -294,10 +301,10 @@ def symbols_between(base: str, head: str) -> dict[str, dict]:
     """``{canonical path: placement}`` for every file ``base..head`` changes,
     mirror twins folded onto their source (symbols united, counts summed)."""
     out: dict[str, dict] = {}
-    for path in _sh("git", "diff", "--name-only", *DIFF_ARGS, base, head).split():
-        new = _sh("git", "show", f"{head}:{path}") if path.endswith(".py") else ""
-        old = _sh("git", "show", f"{base}:{path}") if path.endswith(".py") else ""
-        diff = _sh("git", "diff", "-U0", *DIFF_ARGS, base, head, "--", path)
+    for path in _git("diff", "--name-only", *DIFF_ARGS, base, head).split():
+        new = _git("show", f"{head}:{path}") if path.endswith(".py") else ""
+        old = _git("show", f"{base}:{path}") if path.endswith(".py") else ""
+        diff = _git("diff", "-U0", *DIFF_ARGS, base, head, "--", path)
         here = changed_symbols(path, old, new, diff)
         key = canonical(path)
         if key != path:
@@ -318,19 +325,19 @@ def census(*, prs: int | None = None, window: tuple[int, int] | None = None, bas
     ``prs`` takes the last N. The base is fetched first so a merge commit newer
     than the last fetch is read, not skipped; a pull request whose base or head
     cannot be read is counted in ``unread``, never dropped in silence."""
-    _sh("git", "fetch", "-q", "origin", base)
+    _git("fetch", "-q", "origin", base)
     missing: list[int] = []
     if window:
         lo, hi = window
-        newest = json.loads(_sh("gh", "pr", "list", "--state", "all", "--limit", "1", "--json", "number"))
+        newest = json.loads(_gh("pr", "list", "--state", "all", "--limit", "1", "--json", "number"))
         top = newest[0]["number"] if newest else hi
-        listed = json.loads(_sh("gh", "pr", "list", "--state", "merged", "--limit", str(window_limit(top, lo)),
+        listed = json.loads(_gh("pr", "list", "--state", "merged", "--limit", str(window_limit(top, lo)),
                                 "--json", "number,createdAt,mergedAt,headRefOid,mergeCommit"))
         listed = [p for p in listed if lo <= p["number"] <= hi]
         found = {p["number"] for p in listed}
         missing = [n for n in range(lo, hi + 1) if n not in found]
     else:
-        listed = json.loads(_sh("gh", "pr", "list", "--state", "merged", "--limit", str(prs or 30),
+        listed = json.loads(_gh("pr", "list", "--state", "merged", "--limit", str(prs or 30),
                                 "--json", "number,createdAt,mergedAt,headRefOid,mergeCommit"))
     info: dict[int, dict] = {}
     unread: list[int] = []
@@ -338,8 +345,8 @@ def census(*, prs: int | None = None, window: tuple[int, int] | None = None, bas
     for pr in listed:
         head = pr["headRefOid"]
         merge = (pr.get("mergeCommit") or {}).get("oid")
-        _sh("git", "fetch", "-q", "origin", f"refs/pull/{pr['number']}/head")
-        merge_base = _sh("git", "merge-base", head, merge + "^1").strip() if merge else ""
+        _git("fetch", "-q", "origin", f"refs/pull/{pr['number']}/head")
+        merge_base = _git("merge-base", head, merge + "^1").strip() if merge else ""
         if not merge_base:
             unread.append(pr["number"])
             continue

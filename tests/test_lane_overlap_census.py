@@ -5,7 +5,9 @@ a comment block above a definition is the definition's, a line no node holds
 is UNPLACED and never a certificate, a file that is not Python is a path tier,
 mirror twins fold onto their source. In-process and spawn-free: the diffs come
 from `difflib`, which writes the same `@@ -a,b +c,d @@` headers git does under
-`-U0`. Each test names, in its docstring, the mutation it dies to."""
+`-U0`. Each test names, in its docstring, the mutation it dies to. This file
+pins the placement rules because a mapper that certified 'different functions'
+where it knew nothing would silently turn an advisory into a clearance."""
 from __future__ import annotations
 
 import difflib
@@ -17,13 +19,20 @@ import pytest
 _SCRIPT = pathlib.Path(__file__).resolve().parents[1] / "scripts" / "lane_overlap_census.py"
 
 
-@pytest.fixture(scope="module")
-def census():
+def _load():
     spec = importlib.util.spec_from_file_location("lane_overlap_census", _SCRIPT)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+_CENSUS = _load()
+
+
+@pytest.fixture(scope="module")
+def census():
+    return _CENSUS
 
 
 def _diff(old: str, new: str, path: str) -> str:
