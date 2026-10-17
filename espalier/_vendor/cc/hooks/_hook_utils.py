@@ -3573,7 +3573,7 @@ def interpreter_is_python3(name_or_path: str) -> bool:
     # `startswith("Python 3.")`: the floor parser searches anywhere in the
     # output, and a banner with a line before it made identity and the floor
     # disagree about one interpreter (DEF-727 review).
-    return bool(banner) and is_python3_banner(banner)
+    return bool(banner and is_python3_banner(banner))
 
 
 #: The minimum Python this package declares in ``pyproject.toml``
@@ -3719,7 +3719,7 @@ def interpreter_meets_floor(name_or_path: str) -> bool:
     # that never answered is False here, as no confirmed floor:
     # :func:`interpreter_version_unanswered` tells it apart.
     banner = _interpreter_banner(name_or_path)
-    return bool(banner) and meets_python_floor(banner)
+    return bool(banner and meets_python_floor(banner))
 
 
 def interpreter_start_failure(name_or_path: str) -> "str | None":
