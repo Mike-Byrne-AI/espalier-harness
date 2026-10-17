@@ -11,7 +11,10 @@ These pin the hook's decisions -- build once, under its own spawn bound, when a
 collected test asks; never where no test runs or none asks; record a failure
 (naming the worker) rather than raise it; report every process's step times
 at the end of the run and warn, without ever raising, on a spawn near its
-bound -- and the fixture's hand-off, including the refusal of a request the
+bound; name a crashed xdist worker only where its build can be what it died
+in (DEF-2021, driven in real child runs in tests/test_xdist_never_ran.py,
+which spawns them where this module spawns none) -- and the fixture's
+hand-off, including the refusal of a request the
 hook could not see, without spending a real build. One test asks for the real
 tree, so the hook pytest actually ran is held to it too (which is why this
 module is ``integration``, not ``unit``: that test makes the hook build); the
@@ -144,6 +147,14 @@ class TestTheHookBuildsBeforeTheFirstTest:
         assert tree is None and failure.startswith("RuntimeError: init timed out (on xdist worker gw3, after "), failure
         assert session.config.workeroutput["initialized_repo_build"]["failure"] == failure
 
+    def test_the_build_runs_after_xdist_hears_the_worker_finish_collecting(self, conftest):
+        """The went-down line is keyed on xdist's "collection finished", which
+        its worker sends from its own ``pytest_collection_finish``; the build
+        runs after it by the hook's own mark, not by the order the plugins
+        registered in (DEF-2021). The control child run in
+        tests/test_xdist_never_ran.py is the witness."""
+        assert conftest.pytest_collection_finish.pytest_impl.get("trylast") is True
+
     def test_the_worker_is_read_from_xdist_not_the_environment(self, conftest, builds, monkeypatch):
         """A child pytest the suite spawns inherits PYTEST_XDIST_WORKER; it is
         not that worker."""
@@ -214,15 +225,38 @@ class TestTheBuildIsReported:
         assert conftest._build_report_line(report) == (
             "the pytest process 20.0s (copy 2.0s; git add -A 15.0s of 120s; 2 more under 0.5s)")
 
-    def test_a_worker_that_went_down_is_named_not_dropped(self, conftest):
-        """xdist sends no output from a crashed worker; the builds made under the
-        most contention are the ones that die, so their absence is said."""
+    @staticmethod
+    def _went_down(conftest, *, collected: bool, reported: bool) -> list[str]:
+        """The summary after worker gw5 went down with an error, having finished
+        collecting or not and sent a test report or not."""
         controller = SimpleNamespace()
-        conftest.pytest_testnodedown(
-            SimpleNamespace(workeroutput=None, gateway=SimpleNamespace(id="gw5"), config=controller), "crashed")
+        node = SimpleNamespace(workeroutput=None, gateway=SimpleNamespace(id="gw5"), config=controller)
+        if collected:
+            conftest.pytest_xdist_node_collection_finished(node, ["t.py::test_a"])
+        if reported:   # a teardown report: it reaches no phase sum
+            conftest.pytest_runtest_logreport(
+                SimpleNamespace(node=node, when="teardown", keywords={}, nodeid="t.py::test_a", duration=0.0))
+        conftest.pytest_testnodedown(node, "crashed")
         lines: list[str] = []
         conftest.pytest_terminal_summary(SimpleNamespace(write_line=lines.append), 0, _no_raised_ceiling(controller))
-        assert lines[1:] == ["  xdist worker gw5 FAILED: went down before it reported its build"], lines
+        return lines
+
+    def test_a_worker_that_went_down_where_its_build_runs_is_named_not_dropped(self, conftest):
+        """xdist sends no output from a crashed worker; the builds made under the
+        most contention are the ones that die, so their absence is said. A
+        worker that finished collecting and sent no test report went down where
+        its build runs."""
+        lines = self._went_down(conftest, collected=True, reported=False)
+        assert lines[1:] == ["  xdist worker gw5 FAILED: went down after collecting, before its first test "
+                             "report: in its build, or in that test's setup"], lines
+
+    @pytest.mark.parametrize("collected,reported", [(True, True), (False, False)],
+                             ids=["after-its-first-test-report", "before-it-finished-collecting"])
+    def test_a_worker_that_went_down_outside_its_build_is_not_named(self, conftest, collected, reported):
+        """A test report means the build, which runs before the first test, was
+        over; a worker that never finished collecting never reached it (DEF-2021).
+        Either way the line would send a reader to a build that did not fail."""
+        assert self._went_down(conftest, collected=collected, reported=reported) == []
 
     def test_a_run_that_built_nothing_prints_nothing(self, conftest):
         lines: list[str] = []
