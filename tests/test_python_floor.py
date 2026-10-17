@@ -2260,3 +2260,42 @@ class TestAPythonTwoHostIsToldTheTruth:
             f"CONTROL FAILED: a conforming interpreter did not arm the claim:\n{out}"
         )
         assert "NOT yet active" not in out, out
+
+
+class TestTheTwinsAgreeOnAProbeThatNeverAnswers:
+    """DEF-5016: the hook twins read a probe that never answered as below the
+    floor and not a Python 3 where the engine read it as no answer; they agree
+    now, and both read the running interpreter by its invoked path, never its
+    file (a link of a venv's python elsewhere is another interpreter)."""
+
+    def test_a_timeout_is_no_answer_on_both_sides(self, tmp_path, monkeypatch):
+        hu = _hook_utils()
+        monkeypatch.setattr(hu, "_INTERPRETER_IDENTITY_MEMO", {})
+
+        def timeout(argv, **_kw):
+            raise subprocess.TimeoutExpired(argv, 2)
+        monkeypatch.setattr(hu, "run_bounded", timeout)
+        monkeypatch.setattr(_python_floor, "_BANNER_VERDICTS", {})
+        monkeypatch.setattr(_python_floor, "_ask_banner", lambda argv, seconds, tries: None)
+        other = tmp_path / "python3"
+        other.write_bytes(b"")
+        assert hu.interpreter_version_unanswered(str(other)) is True
+        assert _python_floor.interpreter_banner([str(other)]) is None
+        assert hu.interpreter_meets_floor(str(other)) is False and hu.interpreter_is_python3(str(other)) is False
+
+    def test_the_engine_asks_a_link_of_the_running_interpreter(self, tmp_path, monkeypatch):
+        """The failure-mode review, driven on the hook twin and true of the
+        engine's shortcut too."""
+        asked: list = []
+        monkeypatch.setattr(_python_floor, "_BANNER_VERDICTS", {})
+        monkeypatch.setattr(_python_floor, "_ask_banner",
+                            lambda argv, seconds, tries: asked.append(list(argv)) or "No pyvenv.cfg file")
+        link = tmp_path / Path(sys.executable).name
+        try:
+            os.link(sys.executable, link)
+        except OSError as exc:  # a filesystem without hard links, or another volume
+            pytest.skip(f"no hard link here: {exc}")
+        assert _python_floor.interpreter_banner([str(link)]) == "No pyvenv.cfg file"
+        assert asked == [[str(link)]], asked
+        assert _python_floor.interpreter_banner([sys.executable]) == _python_floor._running_interpreter_banner()
+        assert asked == [[str(link)]], "the running interpreter by its own path is read, not asked"

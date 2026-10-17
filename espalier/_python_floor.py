@@ -417,11 +417,13 @@ def _banner_verdict(
 ) -> str | None:
     """The kept ``--version`` answer for ``argv`` (:func:`interpreter_banner`).
 
-    A one-word argv that is the interpreter running this, by file
-    (``samefile``), is answered from ``sys.version_info`` without a spawn: the
-    same binary prints the same version from any path that reaches it, so the
+    A one-word argv that is the interpreter running this, by its path as
+    invoked, is answered from ``sys.version_info`` without a spawn, so the
     answer is read, not assumed, and a 3.9 running interpreter still reads
-    3.9. Asked by spawn, a loaded host could leave the very interpreter
+    3.9. Its path, never its file (``samefile``): a venv's ``python`` answers by
+    the ``pyvenv.cfg`` beside it, so a link of it elsewhere is another
+    interpreter and is asked (a Windows hard link printed "No pyvenv.cfg file";
+    DEF-5016's failure-mode review, driven), as the start-up probe reads it. Asked by spawn, a loaded host could leave the very interpreter
     running doctor unanswered, and doctor called it "older than 3.10" (both
     reviews of DEF-5015, the common pip, pipx and Homebrew install). The
     start-up probe keys its own shortcut on the invoked path instead, since a
@@ -432,7 +434,8 @@ def _banner_verdict(
 
     if len(argv) == 1 and sys.executable:
         try:
-            if os.path.samefile(argv[0], sys.executable):
+            if (os.path.normcase(os.path.abspath(argv[0]))
+                    == os.path.normcase(os.path.abspath(sys.executable))):
                 return _running_interpreter_banner()
         except (OSError, ValueError):
             pass
@@ -530,12 +533,12 @@ def interpreter_meets_floor(name_or_path: str | None) -> bool:
     no-import boundary for the banner and does NOT run the start-up probe: it
     serves hook-side warnings and remedy hints, not wiring, where the wired
     interpreter it is usually asked about is the one running the hook, and a
-    spawn there is paid on every SessionStart. Its other askers (the
-    ``python3``/``python``/``py -3`` a hint spells) are the one gap left. Nor
-    does the twin keep or retry its banner: one 2 s try, with a timeout read
-    as below the floor by a deliberate fail-open, where this copy asks twice
-    and reads a probe that never answered as no answer (``DEF-5015``; the hook
-    side has a row of its own).
+    spawn there is paid on SessionStart. Its other askers (the
+    ``python3``/``python``/``py -3`` a hint spells) are the one gap left. The
+    twin keeps its banner per process, answers the running interpreter from
+    ``sys.version_info`` and reads a probe that never answered as no answer, as
+    this copy does (``DEF-5016``), but asks once, not twice: its spawn is paid
+    on SessionStart's budget.
 
     ⚠ No ``samefile(sys.executable)`` short-circuit in this body, unlike the
     IDENTITY probes. That shortcut is sound for "is this a Python 3" -- the

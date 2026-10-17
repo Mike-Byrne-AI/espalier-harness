@@ -3469,12 +3469,77 @@ def join_directory(start: Path, spelled: str | None, *, bash: bool) -> Path:
 # Mode flags (MAINTENANCE / STOP_GATE) are intentionally NOT here — each caller
 # formats those differently (subagent_start emits them unconditionally; _reinject
 # emits them conditionally), so this returns only the always-present host facts.
-#: Per-process memo for `interpreter_is_python3`. PATH does not change inside a
+#: Per-process memo for the interpreter probes: each name's banner, which the
+#: identity and floor twins both read, and its start verdict. PATH does not change inside a
 #: hook process, and both consumers probe overlapping names -- session_start walks
 #: every wired interpreter while host_orientation_line probes two -- so without
 #: this a single SessionStart would spawn the same subprocess repeatedly on the
 #: start path. Hook processes are short-lived, so process scope is the right scope.
 _INTERPRETER_IDENTITY_MEMO: dict = {}
+
+
+def _running_interpreter_banner() -> str:
+    """The banner the interpreter running this would print, read from
+    ``sys.version_info``: the twin of the engine's
+    ``_python_floor._running_interpreter_banner``, and a seam for a test that
+    fakes an interpreter of another version."""
+    return "Python {}.{}.{}".format(*sys.version_info[:3])
+
+
+def _interpreter_banner(name_or_path: str) -> "str | None":
+    """``name_or_path``'s ``--version`` banner, kept per process in
+    :data:`_INTERPRETER_IDENTITY_MEMO` so the identity and floor twins read one
+    answer (DEF-5016). ``""`` when nothing answers to the name or it cannot run;
+    ``None`` when it never answered in its 2 s, which is no answer either way,
+    never "not a Python 3" and never "older than". The interpreter running
+    this, asked with no flag, is read from ``sys.version_info`` with no spawn,
+    as the engine's ``_banner_verdict`` does, so a 3.9 running interpreter
+    still reads 3.9 and a loaded host cannot leave it unanswered. By its path as
+    invoked, never its file: a venv's ``python`` answers by the ``pyvenv.cfg``
+    beside it, so a link of it elsewhere is another interpreter and is asked (a
+    Windows hard link printed "No pyvenv.cfg file"; the failure-mode review,
+    driven), as :func:`interpreter_start_failure` reads it."""
+    key = ("banner", name_or_path)
+    if key in _INTERPRETER_IDENTITY_MEMO:
+        return _INTERPRETER_IDENTITY_MEMO[key]
+    import shutil
+    import subprocess
+    head, *flags = interpreter_argv(name_or_path)
+    resolved = shutil.which(head) or (
+        head if Path(head).is_file() else None
+    )
+    banner: "str | None" = ""
+    running = False
+    if resolved and not flags and sys.executable:
+        try:
+            running = (os.path.normcase(os.path.abspath(resolved))
+                       == os.path.normcase(os.path.abspath(sys.executable)))
+        except (OSError, ValueError):  # fail-open: ok deliberate -- an unreadable path is asked, never assumed to be this one
+            running = False
+    if running:
+        banner = _running_interpreter_banner()
+    elif resolved:
+        try:
+            result = run_bounded(  # spawn: ok the interpreter probe resolves its own token through shutil.which above; a probe that cannot run is an empty banner the warning names
+                [resolved, *flags, "--version"], capture_output=True, text=True,
+                encoding="utf-8", timeout=2,
+            )
+            banner = (result.stdout or result.stderr).strip()
+        # fail-open: ok deliberate -- a probe that never answered in its time is no answer (DEF-5016), and the banner says not confirmed
+        except subprocess.TimeoutExpired:
+            banner = None
+        # fail-open: ok deliberate -- an interpreter that cannot answer prints no banner, and the banner's warning names it
+        except (subprocess.SubprocessError, OSError, ValueError):  # strict decode: a structured answer (DEF-821)
+            banner = ""
+    _INTERPRETER_IDENTITY_MEMO[key] = banner
+    return banner
+
+
+def interpreter_version_unanswered(name_or_path: str) -> bool:
+    """Whether ``name_or_path``'s ``--version`` never answered in its time
+    (DEF-5016): then neither twin's False is a verdict about it, and a caller
+    that names it says its version was not confirmed."""
+    return bool(name_or_path) and _interpreter_banner(name_or_path) is None
 
 
 def interpreter_is_python3(name_or_path: str) -> bool:
@@ -3495,43 +3560,20 @@ def interpreter_is_python3(name_or_path: str) -> bool:
     note asking a future reader to remember.
 
     A launcher spelling (``py -3``) is probed as the launcher with its flag.
+
+    Read off the one banner the floor twin reads (:func:`_interpreter_banner`),
+    so the two never disagree about one interpreter. A probe that never answered
+    is False here, as no confirmed Python 3 (DEF-5016):
+    :func:`interpreter_version_unanswered` tells it apart.
     """
     if not name_or_path:
         return False
-    if name_or_path in _INTERPRETER_IDENTITY_MEMO:
-        return _INTERPRETER_IDENTITY_MEMO[name_or_path]
-    import shutil
-    import subprocess
-    head, *flags = interpreter_argv(name_or_path)
-    resolved = shutil.which(head) or (
-        head if Path(head).is_file() else None
-    )
-    verdict = False
-    if resolved:
-        # See the engine-side twin: never spawn a probe for the interpreter
-        # already running this code. Removes the spawn AND the false alarm on a
-        # host where spawning is blocked.
-        try:
-            if not flags and os.path.samefile(resolved, sys.executable):
-                _INTERPRETER_IDENTITY_MEMO[name_or_path] = True
-                return True
-        except OSError:
-            pass
-        try:
-            result = run_bounded(  # spawn: ok the interpreter probe resolves its own token through shutil.which above; a probe that cannot run is a False verdict the banner names
-                [resolved, *flags, "--version"], capture_output=True, text=True,
-                encoding="utf-8", timeout=2,
-            )
-            # Through the ONE banner rule (`is_python3_banner`), not
-            # `startswith("Python 3.")`: the floor parser searches anywhere in
-            # the output, and a banner with a line before it made identity and
-            # the floor disagree about one interpreter (DEF-727 review).
-            verdict = is_python3_banner((result.stdout or result.stderr).strip())
-        # fail-open: ok deliberate -- an interpreter that cannot answer is not python3, and the banner's unresolved-interpreter warning names it
-        except (subprocess.SubprocessError, OSError, ValueError):  # strict decode: a structured answer (DEF-821)
-            verdict = False
-    _INTERPRETER_IDENTITY_MEMO[name_or_path] = verdict
-    return verdict
+    banner = _interpreter_banner(name_or_path)
+    # Through the ONE banner rule (`is_python3_banner`), not
+    # `startswith("Python 3.")`: the floor parser searches anywhere in the
+    # output, and a banner with a line before it made identity and the floor
+    # disagree about one interpreter (DEF-727 review).
+    return bool(banner) and is_python3_banner(banner)
 
 
 #: The minimum Python this package declares in ``pyproject.toml``
@@ -3664,40 +3706,20 @@ def interpreter_meets_floor(name_or_path: str) -> bool:
 
     ⚠ The BANNER only: unlike the engine's ``_python_floor.interpreter_meets_floor``,
     this runs no start-up probe (``DEF-915``), because ``--version`` is answered
-    before an interpreter initialises and a spawn here is paid on every
-    SessionStart. So it may WARN, never decide to WIRE: an interpreter that
+    before an interpreter initialises and a spawn here is paid on SessionStart
+    for every interpreter but the one running it. So it may WARN, never decide to WIRE: an interpreter that
     prints a 3.10+ banner and cannot start passes it. Wiring is the engine's.
     """
     if not name_or_path:
         return False
-    key = ("floor", name_or_path)
-    if key in _INTERPRETER_IDENTITY_MEMO:
-        return _INTERPRETER_IDENTITY_MEMO[key]
-    import shutil
-    import subprocess
-    head, *flags = interpreter_argv(name_or_path)
-    resolved = shutil.which(head) or (
-        head if Path(head).is_file() else None
-    )
-    verdict = False
-    if resolved:
-        # No `samefile(sys.executable)` short-circuit here, unlike the identity
-        # probe. That shortcut is safe for "is this a Python 3" because the
-        # process running this code demonstrably is one -- but it CANNOT answer
-        # the floor question: a hook spawned by a 3.9 interpreter would
-        # short-circuit to True and bless exactly the host this check exists to
-        # catch. The version has to be read.
-        try:
-            result = run_bounded(  # spawn: ok the floor probe resolves its own token through shutil.which above; a probe that cannot run is a False verdict the banner names
-                [resolved, *flags, "--version"], capture_output=True, text=True,
-                encoding="utf-8", timeout=2,
-            )
-            verdict = meets_python_floor((result.stdout or result.stderr).strip())
-        # fail-open: ok deliberate -- an interpreter that cannot answer is below the floor, and the banner's warning names it
-        except (subprocess.SubprocessError, OSError, ValueError):  # strict decode: a structured answer (DEF-821)
-            verdict = False
-    _INTERPRETER_IDENTITY_MEMO[key] = verdict
-    return verdict
+    # The running interpreter is never short-circuited to True: a hook spawned
+    # by a 3.9 interpreter would bless exactly the host this check exists to
+    # catch. Its version is READ, from ``sys.version_info``, so a loaded host
+    # cannot leave it unanswered (DEF-5016), and a probe of another interpreter
+    # that never answered is False here, as no confirmed floor:
+    # :func:`interpreter_version_unanswered` tells it apart.
+    banner = _interpreter_banner(name_or_path)
+    return bool(banner) and meets_python_floor(banner)
 
 
 def interpreter_start_failure(name_or_path: str) -> "str | None":
@@ -3808,8 +3830,9 @@ def python_command_hint() -> str:
 
 
 def host_orientation_line() -> str:
-    """``Host: OS=<sys>; python3=<yes|no> python=<yes|no> (<interpreter-hint>)``,
-    with ``py=<yes|no>`` after them when neither bare name answers.
+    """``Host: OS=<sys>; python3=<yes|no|?> python=<yes|no|?> (<interpreter-hint>)``,
+    with ``py=<yes|no|?>`` after them when neither bare name answers; ``?`` is a
+    probe that never answered in its time (DEF-5016).
 
     The trailing parenthetical is DERIVED from the same has_py3/has_py booleans as the
     python3=/python= fields, so it can never contradict them (a fixed literal used to
@@ -3833,6 +3856,14 @@ def host_orientation_line() -> str:
     def _answers(name: str) -> bool:
         return interpreter_is_python3(name) and interpreter_start_failure(name) is None
 
+    # A probe that never answered in its time is "?", no answer either way
+    # (DEF-5016: a loaded host said `py=no (no python interpreter detected)`
+    # beside a SessionStart line saying the same `py -3` was not confirmed).
+    def _field(name: str, answered: bool) -> str:
+        if answered:
+            return "yes"
+        return "?" if interpreter_version_unanswered(name) else "no"
+
     has_py3 = _answers("python3")
     has_py = _answers("python")
     probe_launcher = not (has_py3 or has_py)
@@ -3845,14 +3876,17 @@ def host_orientation_line() -> str:
         hint = "python only"
     elif has_launcher:
         hint = f"{LAUNCHER_SPELLING} only => use {LAUNCHER_SPELLING}"
+    elif any(interpreter_version_unanswered(n) for n in
+             ("python3", "python", *((LAUNCHER_SPELLING,) if probe_launcher else ()))):
+        hint = "no python interpreter confirmed: a probe did not answer"
     else:
         hint = "no python interpreter detected"
     launcher_field = (
-        f" py={'yes' if has_launcher else 'no'}" if probe_launcher else ""
+        f" py={_field(LAUNCHER_SPELLING, has_launcher)}" if probe_launcher else ""
     )
     return (
         f"Host: OS={platform.system() or 'unknown'}; "
-        f"python3={'yes' if has_py3 else 'no'} python={'yes' if has_py else 'no'}"
+        f"python3={_field('python3', has_py3)} python={_field('python', has_py)}"
         f"{launcher_field} ({hint})"
     )
 

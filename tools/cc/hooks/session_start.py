@@ -2614,6 +2614,10 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
         return
     unresolved: set[str] = set()
     unstartable: set[str] = set()
+    unconfirmed: set[str] = set()
+    # A kept, older _hook_utils has no such reader: then every False is read as
+    # before, a verdict.
+    unanswered = getattr(_hook_utils, "interpreter_version_unanswered", lambda _name: False)
     for groups in hooks.values():
         if not isinstance(groups, list):
             continue
@@ -2666,7 +2670,9 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
                 # The launcher WITH its version flag (`py -3`), as doctor and the
                 # rewire read it: a bare `py` asks the launcher's default.
                 interp = launcher_spelling(interp, rest)
-                if interp and not interpreter_meets_floor(interp):
+                if interp and unanswered(interp):
+                    unconfirmed.add(interp)
+                elif interp and not interpreter_meets_floor(interp):
                     unresolved.add(interp)
     for interp in sorted(unstartable):
         _hook_utils.advise(
@@ -2675,6 +2681,20 @@ def _warn_if_hook_interpreter_unresolved(root: Path) -> None:
             "file name, and no file is named that -- every blocking guard fails "
             "OPEN. Put the interpreter alone in `command` and the words after "
             "it at the front of `args`. Run `espalier doctor .` for details.",
+        )
+    for interp in sorted(unconfirmed):
+        # A probe that never answered in its time is no answer (DEF-5016): a
+        # loaded host can leave a working Python 3 unanswered, and "older than"
+        # sent its operator to install a Python they have.
+        # A WARN, not a NOTE: the banner trims its notes first, and an
+        # interpreter that really hangs fails every hook wired to it open (the
+        # failure-mode review, measured).
+        _hook_utils.advise(
+            f"[WARN] wired hook interpreter `{interp}`: its version was not "
+            "confirmed -- it did not answer `--version` within 2 s. A loaded host "
+            "can cause that, so it is no verdict about the interpreter; but if it "
+            "hangs, every hook wired to it fails OPEN. Run `espalier doctor .` "
+            "to check it.",
         )
     for interp in sorted(unresolved):
         # TWO failures share this warning and they need different words.
