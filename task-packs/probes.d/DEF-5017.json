@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5017",
+ "subject": "tools/cc/hooks/_zone_watch.py",
+ "cmd": "python -c \"import sys,os,subprocess,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');import _zone_watch as z;T=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);t=pathlib.Path(T.name);e={k:v for k,v in os.environ.items() if not k.startswith(('GIT_','CLAUDE_','ESPALIER_'))};e.update(GIT_CONFIG_NOSYSTEM='1',GIT_CONFIG_GLOBAL=os.devnull);g=lambda *a:subprocess.run(['git','-c','user.name=t','-c','user.email=t@example.invalid','-c','init.defaultBranch=main',*a],cwd=str(t),env=e,capture_output=True,check=True);h=t/'tools'/'cc'/'hooks';h.mkdir(parents=True);f=h/'big.bin';x=bytes(5*1024*1024);f.write_bytes(x);g('init','-q');g('add','.');g('commit','-q','-m','c1');f.write_bytes(b'1'+x[1:]);assert z.take_baseline(t,'s');f.write_bytes(x);print(z.after_shell_call(t,'s',1000) is not None)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "0b22fd38b24a",
+ "text_sha": "39dfc307f00c",
+ "verified_2026_10_17": "OPEN (filed 2026-10-17; probe driven at filing)"
+}

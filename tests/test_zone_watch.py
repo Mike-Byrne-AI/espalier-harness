@@ -596,9 +596,10 @@ def _gx(cwd: Path, *args: str, check: bool = True) -> "subprocess.CompletedProce
 
 @pytest.fixture
 def upstream(tmp_path_factory) -> Path:
-    """A bare origin a nested checkout is cloned from, at c1: ``weights.json``
-    and ``old.txt``. ``_advance`` pushes c2, which changes the first, adds
-    ``new.txt`` and removes ``old.txt``: a pull is all three kinds at once."""
+    """A bare origin a nested checkout is cloned from, at c1: ``weights.json``,
+    ``old.txt`` and ``src/api.h``. ``_advance`` pushes c2, which changes the
+    first and the third, adds ``new.txt`` and removes ``old.txt``: a pull is
+    all three kinds at once."""
     base = tmp_path_factory.mktemp("upstream")
     origin = base / "up.git"
     _gx(base, "init", "-q", "--bare", str(origin))
@@ -606,6 +607,8 @@ def upstream(tmp_path_factory) -> Path:
     _gx(base, "clone", "-q", str(origin), str(work))
     (work / "weights.json").write_bytes(b'{"v": 1}\n')
     (work / "old.txt").write_bytes(b"old\n")
+    (work / "src").mkdir()
+    (work / "src" / "api.h").write_bytes(b"int v1;\n")
     _gx(work, "add", ".")
     _gx(work, "commit", "-q", "-m", "c1")
     _gx(work, "push", "-q", "origin", "HEAD:main")
@@ -615,6 +618,7 @@ def upstream(tmp_path_factory) -> Path:
 def _advance(origin: Path) -> None:
     work = origin.parent / "work"
     (work / "weights.json").write_bytes(b'{"v": 2}\n')
+    (work / "src" / "api.h").write_bytes(b"int v2;\n")
     (work / "new.txt").write_bytes(b"new\n")
     (work / "old.txt").unlink()
     _gx(work, "add", "-A")
@@ -636,14 +640,24 @@ class TestANestedCheckoutsOwnGitAccountsForItsFiles:
         _gx(repo / where, "clone", "-q", str(origin), name)
         return repo / where / name
 
+    @staticmethod
+    def _only_the_hand_file(text: str, hand: str) -> None:
+        """The pull's three kinds silent, the file made by hand in the same call
+        reported: silence by accounting, never by a hold or a skip."""
+        assert hand in text, text
+        assert not any(n in text for n in ("weights.json", "old.txt", "new.txt", "api.h")), text
+
     def test_a_pull_inside_a_clone_is_silent(self, repo: Path, upstream: Path) -> None:
         """Mutations: path 2 asking the outer HEAD alone (the defect); a removal
-        judged without the nested checkout's HEAD at the previous check."""
+        judged without the nested checkout's HEAD at the previous check; every
+        nested path held or skipped."""
         clone = self._clone(repo, upstream)
         assert zw.take_baseline(repo, "s-1")
         _advance(upstream)
         _gx(clone, "pull", "-q", "--ff-only")
-        assert _context(_post(repo, "Bash", {"command": "git -C models/clone pull"})) == ""
+        (clone / "hand.txt").write_bytes(b"made by hand\n")
+        self._only_the_hand_file(_context(_post(repo, "Bash", {"command": "git -C models/clone pull"})),
+                                 "models/clone/hand.txt")
 
     def test_a_pull_inside_a_submodule_is_silent(self, repo: Path, upstream: Path) -> None:
         """A submodule's `.git` is a file naming its git dir under the outer
@@ -654,7 +668,9 @@ class TestANestedCheckoutsOwnGitAccountsForItsFiles:
         assert zw.take_baseline(repo, "s-1")
         _advance(upstream)
         _gx(repo / "models" / "sub", "pull", "-q", "--ff-only", "origin", "main")
-        assert _context(_post(repo, "Bash", {"command": "git -C models/sub pull"})) == ""
+        (repo / "models" / "sub" / "hand.txt").write_bytes(b"made by hand\n")
+        self._only_the_hand_file(_context(_post(repo, "Bash", {"command": "git -C models/sub pull"})),
+                                 "models/sub/hand.txt")
 
     def test_a_pull_inside_a_protected_top_that_is_itself_a_checkout_is_silent(
             self, repo: Path, upstream: Path) -> None:
@@ -664,7 +680,22 @@ class TestANestedCheckoutsOwnGitAccountsForItsFiles:
         assert zw.take_baseline(repo, "s-1")
         _advance(upstream)
         _gx(lib, "pull", "-q", "--ff-only")
-        assert _context(_post(repo, "Bash", {"command": "git -C vendor/lib pull"})) == ""
+        (lib / "hand.txt").write_bytes(b"made by hand\n")
+        self._only_the_hand_file(_context(_post(repo, "Bash", {"command": "git -C vendor/lib pull"})),
+                                 "vendor/lib/hand.txt")
+
+    def test_a_protected_path_inside_a_checkout_is_judged_by_that_checkout(
+            self, repo: Path, upstream: Path) -> None:
+        """The prefix sits below the checkout's top (`vendor/lib/src/`, the clone
+        at `vendor/lib`): the defect's sibling shape both reviews drove. Mutation:
+        the search for a checkout stopped at the protected prefix."""
+        lib = self._clone(repo, upstream, where="vendor", name="lib", protected="vendor/lib/src/")
+        assert zw.take_baseline(repo, "s-1")
+        _advance(upstream)
+        _gx(lib, "pull", "-q", "--ff-only")
+        (lib / "src" / "hand.h").write_bytes(b"int by_hand;\n")
+        self._only_the_hand_file(_context(_post(repo, "Bash", {"command": "git -C vendor/lib pull"})),
+                                 "vendor/lib/src/hand.h")
 
     def test_new_content_beside_a_nested_pull_still_reports(self, repo: Path, upstream: Path) -> None:
         """Mutation: any blob the nested checkout has accounts for a path,
@@ -690,32 +721,59 @@ class TestANestedCheckoutsOwnGitAccountsForItsFiles:
         _bump(empty / "data.json", '{"edited": true}\n')
         assert "changed models/empty/data.json" in _context(_post(repo, "Bash", _FORMATTER))
 
-    def test_a_checkout_planted_in_a_harness_zone_is_never_asked(self, repo: Path) -> None:
+    @pytest.mark.parametrize("protected", [None, "tools/", "tools/cc/hooks/"],
+                             ids=["no-adopter-prefix", "an-adopter-prefix-enclosing-the-zone", "the-zone-itself"])
+    def test_a_checkout_planted_in_a_harness_zone_is_never_asked(self, repo: Path, protected: str | None) -> None:
         """The harness's own zones never hold a checkout, and one planted there
-        would account for whatever its own commit holds. Mutation: the nested
-        git asked outside an adopter's protected paths."""
-        assert zw.take_baseline(repo, "s-1")
+        would account for whatever its own commit holds -- under an adopter
+        prefix that encloses the zone too (both reviews drove `tools/` and
+        `.github/`). Mutations: the nested git asked outside an adopter's
+        protected paths; the exclusion judged on the prefix, not the path."""
+        if protected:
+            (repo / "espalier.toml").write_bytes(f'protected_paths = ["{protected}"]\n'.encode())
         hooks = repo / "tools" / "cc" / "hooks"
-        _bump(hooks / "write_guard.py", "print('committed in a planted repository')\n")
-        _gx(hooks, "init", "-q")
+        _gx(hooks, "init", "-q")   # planted before the session, so a check has seen it
         _gx(hooks, "add", "write_guard.py")
         _gx(hooks, "commit", "-q", "-m", "planted")
+        assert zw.take_baseline(repo, "s-1")
+        _bump(hooks / "write_guard.py", "print('committed in a planted repository')\n")
+        _gx(hooks, "commit", "-q", "-am", "the slip, committed where only the planted repository holds it")
         assert f"changed {_HOOK}" in _context(_post(repo, "Bash", _FORMATTER))
 
-    def test_a_nested_merge_stopped_on_a_conflict_holds_until_git_is_done(
+    def test_a_nested_merge_stopped_on_a_conflict_holds_that_checkout_alone(
             self, repo: Path, upstream: Path) -> None:
-        """The outer checkout's half-done operation holds the check, and a
-        nested checkout's does the same. Mutation: the hold reads the outer git
-        dir alone."""
+        """While a nested checkout is mid-merge its paths are held, judged once
+        git is done there, and everything else is judged now (both reviews: a
+        hold over the whole check hid a hook slip for as long as a vendored
+        clone stayed mid-operation). Mutations: the hold reads the outer git dir
+        alone; the hold covers every zone; the hold never releases."""
         clone = self._clone(repo, upstream)
         (clone / "weights.json").write_bytes(b'{"v": "local"}\n')
         _gx(clone, "commit", "-q", "-am", "local")
         assert zw.take_baseline(repo, "s-1")
         _advance(upstream)
         assert _gx(clone, "pull", "-q", "--no-rebase", check=False).returncode != 0  # stops on the conflict
-        assert _context(_post(repo, "Bash", {"command": "git -C models/clone pull"})) == ""
-        _gx(clone, "merge", "--abort")
-        assert _context(_post(repo, "Bash", {"command": "git -C models/clone merge --abort"})) == ""
+        (clone / "hand.txt").write_bytes(b"made during the merge\n")
+        _bump(repo / _HOOK, "print('a slip while the clone is mid-merge')\n")
+        text = _context(_post(repo, "Bash", {"command": "git -C models/clone pull"}))
+        assert f"changed {_HOOK}" in text and "models/clone" not in text, text
+        (clone / "weights.json").write_bytes(b'{"v": 2}\n')
+        _gx(clone, "add", "weights.json")
+        _gx(clone, "commit", "-q", "--no-edit")
+        self._only_the_hand_file(_context(_post(repo, "Bash", {"command": "git -C models/clone commit"})),
+                                 "models/clone/hand.txt")
+
+    def test_a_nested_operation_left_standing_holds_no_other_zone(self, repo: Path, upstream: Path) -> None:
+        """A bisect left running in a vendored clone before the session began,
+        which nobody watches: a hook rewritten in a later call is reported
+        during that call, Claude asked to stop. Mutation: the hold covers every
+        zone (the hook slip held, then reported late as the operator's alone)."""
+        clone = self._clone(repo, upstream)
+        _gx(clone, "bisect", "start")
+        assert zw.take_baseline(repo, "s-1")
+        _bump(repo / _HOOK, "print('a slip beside a bisect')\n")
+        text = _context(_post(repo, "Bash", _FORMATTER))
+        assert f"changed {_HOOK}" in text and "Stop and tell the operator" in text, text
 
     def test_a_baseline_without_the_nested_heads_still_reads(self, tree: Path) -> None:
         """The key is optional: a baseline written before it is kept (expand,
@@ -726,9 +784,138 @@ class TestANestedCheckoutsOwnGitAccountsForItsFiles:
         record.pop("nested", None)
         zw.write_baseline(path, record)
         assert zw.read_baseline(path) is not None
-        record["nested"] = ["not", "a", "map"]
-        zw.write_baseline(path, record)
-        assert zw.read_baseline(path) is None
+        for malformed in (["not", "a", "map"], {"models/x": 1}):
+            record["nested"] = malformed
+            zw.write_baseline(path, record)
+            assert zw.read_baseline(path) is None, malformed
+
+    def test_a_checkout_that_appears_reports_its_files_once_then_its_pulls_are_silent(
+            self, repo: Path, upstream: Path) -> None:
+        """A copy carrying its `.git` into a protected path is the copy slip the
+        check exists for: the new checkout vouches for nothing until a check has
+        seen it (option A, the dispatcher's 761e87). Mutation: any checkout
+        found is asked, known or not."""
+        (repo / "espalier.toml").write_bytes(b'protected_paths = ["models/"]\n')
+        elsewhere = upstream.parent / "elsewhere"
+        _gx(upstream.parent, "clone", "-q", str(upstream), str(elsewhere))
+        assert zw.take_baseline(repo, "s-1")
+        shutil.copytree(elsewhere, repo / "models" / "copy")
+        text = _context(_post(repo, "Bash", {"command": "cp -r ../elsewhere models/copy"}))
+        assert "models/copy/weights.json" in text and "models/copy/old.txt" in text, text
+        _advance(upstream)
+        _gx(repo / "models" / "copy", "pull", "-q", "--ff-only")
+        assert _context(_post(repo, "Bash", {"command": "git -C models/copy pull"})) == ""
+
+    def test_a_directory_that_becomes_a_checkout_with_nothing_moving_is_recorded(self, repo: Path) -> None:
+        """`git init` and a commit over files already there move nothing on disk,
+        so only the peek's nested-head read records the checkout; its next
+        removal is then judged against that commit. Measured on the peek: 1.3
+        to 1.8 ms per 1,000 watched files under an adopter prefix and 6.4 to
+        14.6 ms per 10,000 (two runs, two loads), nothing without one.
+        Mutations: the peek blind to the nested heads; the record's heads never
+        refreshed."""
+        (repo / "espalier.toml").write_bytes(b'protected_paths = ["models/"]\n')
+        vend = repo / "models" / "vend"
+        vend.mkdir(parents=True)
+        (vend / "a.txt").write_bytes(b"a\n")
+        (vend / "b.txt").write_bytes(b"b\n")
+        assert zw.take_baseline(repo, "s-1")
+        _gx(vend, "init", "-q")
+        _gx(vend, "add", "-A")
+        _gx(vend, "commit", "-q", "-m", "vend")
+        assert _context(_post(repo, "Bash", {"command": "git init models/vend"})) == ""
+        _gx(vend, "rm", "-q", "b.txt")
+        _gx(vend, "commit", "-q", "-m", "drop b")
+        assert _context(_post(repo, "Bash", {"command": "git -C models/vend rm b.txt"})) == ""
+
+    def test_a_nested_git_that_cannot_answer_reports_and_names_the_checkout(
+            self, repo: Path, upstream: Path, monkeypatch) -> None:
+        """The file made by hand was reported once, so its content is known; its
+        removal is still git's to confirm (absent at HEAD), and git cannot say.
+        Mutations: a nested git's failure read as 'accounted' or as asked; the
+        note dropped."""
+        clone = self._clone(repo, upstream)
+        assert zw.take_baseline(repo, "s-1")
+        (clone / "hand.txt").write_bytes(b"made by hand\n")
+        assert "models/clone/hand.txt" in _context(_post(repo, "Bash", _FORMATTER))
+        _advance(upstream)
+        _gx(clone, "pull", "-q", "--ff-only")
+        (clone / "hand.txt").unlink()
+        from tests._interpreter_hosts import HOOK_PYTHON
+        monkeypatch.setenv("PATH", str(Path(HOOK_PYTHON).parent))
+        text = _context(_post(repo, "Bash", _NO_OP))
+        assert "models/clone/weights.json" in text and "removed models/clone/hand.txt" in text, text
+        assert "the git of models/clone/ could not be asked" in text, text
+
+    def test_a_nested_checkout_moved_away_whole_reports_its_files(self, repo: Path, upstream: Path) -> None:
+        """No git move removed them, so they report, and from the outer git: a
+        checkout gone since the previous check is asked of nothing. Mutation: the
+        gone checkout's git asked, so the note says its git could not be asked."""
+        clone = self._clone(repo, upstream)
+        assert zw.take_baseline(repo, "s-1")
+        os.rename(clone, upstream.parent / "moved-away")
+        text = _context(_post(repo, "Bash", {"command": "mv models/clone ../moved-away"}))
+        assert "models/clone/weights.json" in text and "models/clone/old.txt" in text, text
+        assert "could not be asked" not in text, text
+
+    def test_a_pull_in_the_inner_of_two_clones_is_the_inner_ones(self, repo: Path, upstream: Path) -> None:
+        """Mutation: the outermost known checkout asked, not the nearest."""
+        clone = self._clone(repo, upstream)
+        _gx(clone, "clone", "-q", str(upstream), "inner")
+        assert zw.take_baseline(repo, "s-1")
+        _advance(upstream)
+        _gx(clone / "inner", "pull", "-q", "--ff-only")
+        (clone / "inner" / "hand.txt").write_bytes(b"made by hand\n")
+        self._only_the_hand_file(_context(_post(repo, "Bash", {"command": "git -C models/clone/inner pull"})),
+                                 "models/clone/inner/hand.txt")
+
+    def test_an_inherited_git_dir_does_not_send_the_nested_ask_elsewhere(self, repo: Path, upstream: Path) -> None:
+        """Mutation: the nested spawn keeps GIT_DIR, so the outer git answers
+        for the nested checkout's files (code review, driven)."""
+        clone = self._clone(repo, upstream)
+        assert zw.take_baseline(repo, "s-1")
+        _advance(upstream)
+        _gx(clone, "pull", "-q", "--ff-only")
+        assert _context(_post(repo, "Bash", {"command": "git -C models/clone pull"},
+                              extra_env={"GIT_DIR": str(repo / ".git")})) == ""
+
+    def test_a_nested_pull_landing_beside_the_locked_snapshot_is_judged_next_call(
+            self, repo: Path, upstream: Path, monkeypatch) -> None:
+        """The nested heads are read before the locked snapshot, as the outer
+        HEAD is. Mutation: read after it, so a parallel call's pull landing
+        between the two paired the new head with the old files and the next
+        call reported the pull's removal (code review, driven)."""
+        clone = self._clone(repo, upstream)
+        assert zw.take_baseline(repo, "s-1")
+        _advance(upstream)
+        _bump(repo / _HOOK, "print('a slip that makes the call take the lock')\n")
+        real, calls = zw.snapshot, []
+
+        def snapshot(*args, **kwargs):
+            got = real(*args, **kwargs)
+            calls.append(1)
+            if len(calls) == 2:   # the locked pass's: a parallel call's pull lands now
+                _gx(clone, "pull", "-q", "--ff-only")
+            return got
+
+        monkeypatch.setattr(zw, "snapshot", snapshot)
+        first = zw.after_shell_call(repo, "s-1")
+        assert first is not None and _HOOK in first["during"]["changed"], first
+        monkeypatch.setattr(zw, "snapshot", real)
+        assert zw.after_shell_call(repo, "s-1") is None
+
+    def test_nested_checkouts_past_the_budget_report_and_are_named(
+            self, repo: Path, upstream: Path, monkeypatch) -> None:
+        """A call over many clones must not cost the hook its timeout (about
+        12 ms each). Mutations: no budget; the late checkouts read as asked."""
+        clone = self._clone(repo, upstream)
+        assert zw.take_baseline(repo, "s-1")
+        _advance(upstream)
+        _gx(clone, "pull", "-q", "--ff-only")
+        monkeypatch.setattr(zw, "NESTED_ASK_BUDGET_S", -1.0)
+        got = zw.after_shell_call(repo, "s-1")
+        assert got is not None and "models/clone/weights.json" in got["during"]["changed"], got
+        assert any("not asked within" in n and "models/clone/" in n for n in got["notes"]), got
 
 
 class TestAHarnessWriterStillRunningHoldsTheCheck:
