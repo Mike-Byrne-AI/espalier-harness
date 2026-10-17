@@ -271,10 +271,21 @@ python tools/cc/mail.py refresh
   yet name. It says `no new symbols` when there is nothing, and sends nothing
   once the lane's claims were released.
 - **`refresh`** is that delta with nothing typed. The lane is the branch
-  checked out here and the base is the ship driver's. A lane's first claim is
-  sent by hand; `refresh` only adds to it. Each way there is nothing to do is
-  a line and exit 0: no new symbols, a released lane, a lane never claimed (the
-  default branch between jobs among them), and a detached HEAD.
+  checked out here and the base is the ship driver's, so create the branch
+  before a lane's first claim and claim under its exact name: a claim spelled
+  otherwise is never refreshed, and the line names the lanes this machine's
+  live claims are on. A lane's first claim is sent by hand; `refresh` only
+  adds to it. Each way there is nothing to do is a line and exit 0: no new
+  symbols, a released lane, a lane never claimed (the default branch between
+  jobs among them), a detached HEAD, and a base that cannot be read (`gh`
+  signed out or offline; the next tick reads it again).
+- **A claim only grows.** An edit undone stays claimed, and so do a lower
+  lane's symbols on a lane stacked on it, since `refresh` reads against the
+  default branch: release the lane's claims and claim again to shrink it.
+  After an edit to `tools/cc/_symbols.py` reaches this checkout, the first
+  `refresh` sends a claim that replaces the older one, and each tick after
+  names the older claim to release (`send --type release --ack <id>`) until
+  it is.
 
 The board reads a claim's symbols as its `overlaps:` section says (Step 2c). A
 claim with no symbols meets by path, as before.

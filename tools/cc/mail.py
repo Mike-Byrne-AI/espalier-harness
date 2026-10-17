@@ -1204,25 +1204,46 @@ def current_branch(root: Path, *, run: Runner = run) -> str:
     return _git(root, "branch", "--show-current", run=run)
 
 
+#: ``send --delta``'s line for a lane whose claims were all released, and
+#: ``refresh``'s, which says it before the base is read.
+_RELEASED = "no live claim on this lane: its claims were released"
+
+
 def refresh_argv(root: Path, machine: str, *, run: Runner = run) -> tuple[list[str] | None, str]:
     """What ``refresh`` sends, as ``send``'s arguments, or None and the line
     that says why nothing is: the lane is the branch checked out here (never
     typed, the spelling ``release_lane`` warns of), the base the ship driver's
     default, and the send a ``--delta`` claim, so a tick writes only what the
     lane's diff adds. Each way there is nothing to do is a line and exit 0, for
-    a worker stops on anything not green: a detached HEAD, and a lane this
-    machine never claimed (the default branch between jobs among them; a
-    lane's first claim is sent by hand). A released lane and nothing new are
-    ``send --delta``'s own two lines."""
+    a worker stops on anything not green: a detached HEAD; a lane this machine
+    never claimed (the default branch between jobs among them; a lane's first
+    claim is sent by hand), the line naming the lanes its live claims are on,
+    since a claim spelled unlike the branch is never refreshed; a released
+    lane, said before the base is read; and a base that cannot be read (``gh``
+    signed out or offline), which the next tick reads again. Nothing new is
+    ``send --delta``'s own line."""
     lane = current_branch(root, run=run)
     if not lane:
         return None, "refresh: HEAD is detached here, so no lane is checked out to refresh; nothing sent"
+    shown = lane.encode("unicode_escape").decode("ascii")
     by_machine, _skipped = read_mail(root, run=run)
     if not any(m.get("type") == "claim" and (m.get("re") or {}).get("lane") == lane
                for m in by_machine.get(machine, [])):
-        return None, (f"refresh: {machine} has sent no claim on {lane}, so nothing is added to; a lane's first "
-                      f"claim is sent by hand (send --type claim --lane {lane} --symbols-from); nothing sent")
-    return (["send", "--type", "claim", "--lane", lane, "--delta", "--symbols-from",
+        elsewhere = sorted({str((c.get("re") or {}).get("lane") or "")
+                            for c in live_claims(by_machine) if c.get("from") == machine} - {""})
+        where = ", ".join(e.encode("unicode_escape").decode("ascii") for e in elsewhere)
+        return None, (f"refresh: {machine} has sent no claim on {shown}, so nothing is added to"
+                      + (f"; its live claims are on {where}; the lane is the branch, so rename the branch to the "
+                         "lane it was claimed under, or claim under the branch's name" if elsewhere
+                         else "; a lane's first claim is sent by hand (/inbox Step 3)") + "; nothing sent")
+    if not own_live_claims(by_machine, machine, lane):
+        return None, _RELEASED
+    try:
+        base = _ship_default_base(remedy=f"send the delta by hand (send --type claim --lane={shown} --delta "
+                                         "--symbols-from <base>)")
+    except Unresolvable as exc:
+        return None, f"refresh: the base could not be read, so nothing was sent and the next tick reads it again: {exc}"
+    return (["send", "--type", "claim", f"--lane={lane}", "--delta", f"--symbols-from={base}",
              "--text", f"{machine}, a refresh of {lane}: what its diff adds to this machine's claims on it"], "")
 
 
@@ -1233,36 +1254,35 @@ def own_live_claims(by_machine: dict[str, list[dict]], machine: str, lane: str) 
             if c.get("from") == machine and (c.get("re") or {}).get("lane") == lane]
 
 
-def _ship_default_base() -> str:
+def _ship_default_base(remedy: str = "name the base (--symbols-from <base>)") -> str:
     """The base a lane is read against when none is named: the default branch
     on origin, as the ship driver reads it (``ship.default_branch``, loaded by
-    path at the call, the way ship.py loads this module)."""
+    path at the call, the way ship.py loads this module). ``remedy`` ends each
+    refusal: what the caller can do instead (``refresh`` takes no base)."""
     path = Path(__file__).resolve().parent / "ship.py"
     if not path.is_file():
-        raise Unresolvable("ship.py is not beside this script, so the default branch cannot be read: "
-                           "name the base (--symbols-from <base>)")
+        raise Unresolvable(f"ship.py is not beside this script, so the default branch cannot be read: {remedy}")
     alias = "_mail_ship"
     mod = sys.modules.get(alias)
     if mod is None:
         spec = importlib.util.spec_from_file_location(alias, path)
         if spec is None or spec.loader is None:
-            raise Unresolvable("ship.py could not be loaded: name the base (--symbols-from <base>)")
+            raise Unresolvable(f"ship.py could not be loaded: {remedy}")
         mod = importlib.util.module_from_spec(spec)
         sys.modules[alias] = mod
         try:
             spec.loader.exec_module(mod)
         except OSError as exc:
             sys.modules.pop(alias, None)
-            raise Unresolvable(f"ship.py could not be loaded ({os_error_text(exc)}): "
-                               "name the base (--symbols-from <base>)") from None
+            raise Unresolvable(f"ship.py could not be loaded ({os_error_text(exc)}): {remedy}") from None
         except Exception as exc:  # noqa: BLE001 -- any load failure is the same refusal, the half-loaded module dropped
             sys.modules.pop(alias, None)
             raise Unresolvable(f"ship.py could not be loaded (a {type(exc).__name__} at its import): "
-                               "name the base (--symbols-from <base>)") from None
+                               f"{remedy}") from None
     try:
         return f"{REMOTE}/{mod.default_branch()}"
     except mod.Refused as exc:
-        raise Unresolvable(f"{exc}; or name the base (--symbols-from <base>)") from None
+        raise Unresolvable(f"{exc}; or {remedy}") from None
 
 
 def lane_symbols(root: Path, base: str | None = None, *, run: Runner = run) -> tuple[list[str], list[str]]:
@@ -1556,8 +1576,8 @@ def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callab
     try:
         _git(root, "update-ref", ref, commit, local_tip or _ZERO, run=run)
     except Unresolvable:
-        if _tip(root, ref, run=run) == local_tip:
-            raise
+        if _tip(root, ref, run=run) in (local_tip, commit):
+            raise   # nothing moved it (a lock left behind), or this swap landed and its run failed after
         # The compare-and-swap refused: another write from this checkout moved the ref
         # between this one's read and its swap. That write stands, and this one is refused.
         raise Unresolvable(f"{ref} moved under this {noun} (another write from this checkout, at the same "
@@ -1576,6 +1596,14 @@ def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callab
         detail = next((ln for ln in lines if ln.startswith("remote:")), lines[-1] if lines else "no detail")
         raise Unresolvable(f"{REMOTE} refused the push ({detail.strip()[:160]}); nothing was {past} -- fetch, "
                            f"read, and {noun} again")
+    # What git does where a fetch refspec covers the ref, done where none does
+    # (a single-branch clone): this machine's own mail is read from the
+    # remote-tracking ref, so a refresh before the next fetch reads this write
+    # (code review, driven). The push landed, so a failure here costs only that.
+    try:
+        run(["git", "update-ref", remote_ref, commit], cwd=str(root), env=git_env())
+    except Unresolvable:
+        pass
     return commit
 
 
@@ -1808,7 +1836,7 @@ def main(argv: list[str] | None = None) -> int:
                     if not own:
                         if any(m.get("type") == "claim" and (m.get("re") or {}).get("lane") == args.lane
                                for m in by_machine.get(machine, [])):
-                            print("no live claim on this lane: its claims were released")
+                            print(_RELEASED)
                             return 0
                         elsewhere = sorted({str((c.get("re") or {}).get("lane") or "")
                                             for c in live_claims(by_machine) if c.get("from") == machine} - {""})
