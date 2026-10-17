@@ -57,8 +57,12 @@ limit would mean the friction layer drifted past its stated scope.
   never has to predict which combination breaks.
 - `bench/powershell_guard_rehearsal.py` — the hand-written PowerShell row table
   driven through the hook as a pure evaluator (nothing executes), under each of
-  three project-root shapes; the floor under the differential on a host with
-  no PowerShell.
+  five project-root shapes; the floor under the differential on a host with
+  no PowerShell. Its receipt names the tree and the guard, and a Windows pass
+  reads a baseline from another host with `--baseline`, which refuses one
+  from this host, another commit, or another guard or rows before a row runs
+  (`DEF-860`); regenerate the baseline at the pass's commit first and carry it
+  by hand (it holds machine paths, so it never rides a pushed directory).
 - `bench/guard_row_probe.py` — the Bash-tool, other-shell, home-directory and
   project-root-shape rows the Windows walks recorded, driven on the
   rehearsal's fixture; its `KNOWN_GAPS` name the open ledger rows, and a
@@ -95,7 +99,7 @@ bench/
 ├── reachability_differential.py     generated-population gate (oracle: real bash)
 ├── powershell_reachability_differential.py   its PowerShell twin (oracle: a real pwsh / Windows PowerShell)
 ├── guard_metamorphic.py              metamorphic gate: relations over a derived population
-├── powershell_guard_rehearsal.py     PowerShell row table as a pure evaluator, three project-root shapes
+├── powershell_guard_rehearsal.py     PowerShell row table as a pure evaluator, five project-root shapes
 ├── guard_row_probe.py                the walks' Bash-tool / home / root-shape rows on the same fixture
 ├── corpus/                           bypass classes, one JSON per class
 │   ├── BC-001-path-traversal.json

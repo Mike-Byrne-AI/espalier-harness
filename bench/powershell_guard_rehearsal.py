@@ -64,9 +64,31 @@ zone). A row that needs the ABSOLUTE root spells it ``{ROOT}``. The rows that
 do -- and the leg's declared gaps -- live in ``bench/guard_row_probe.py``, which
 drives them through this file's ``_tier``: one fixture, two populations.
 
-Run it on the Windows box:
+Run it on the Windows box, from the checkout under test (a copy of this script
+in another checkout refuses: its rows were written for that checkout's guard):
 
-    python bench/powershell_guard_rehearsal.py --repo-root C:\\path\\to\\Espalier-Harness
+    python bench/powershell_guard_rehearsal.py --repo-root .
+
+THE DIFF. The receipt (``--out``, by default the gitignored
+``bench/rehearsal-results.json``) names its oracle and host, the tree
+(``tree_sha``), the guard (``guard_digest``: every ``.py`` under ``tools/cc/``)
+and the rows and fixture (``rows_digest``), each digest with CRLF read as LF so
+both platforms agree. On the baseline host, write it at the commit the Windows
+pass is for, immediately before the pass. Carry it across by hand -- it holds
+the throwaway root and the running user's home, so it never rides a pushed
+directory, ``scripts/host_check.py``'s included -- and keep it outside the
+default ``--out``, where this host's own run would overwrite it. On Windows, at
+that same commit:
+
+    python bench/powershell_guard_rehearsal.py --repo-root . --baseline <the baseline host's receipt>
+
+A baseline from another oracle, from this host, from another commit, or from
+this commit with another guard or other rows, or with no shape in common, is
+refused before a row runs (exit 5): every verdict the tree moved would read as
+a Windows regression (DEF-860: a baseline four guard commits stale would have
+put nine), and a diff of a host against itself, or of nothing, reads clean. An
+accepted one is diffed verdict by verdict on the shapes both runs drove, named
+in the report, and a difference fails the run and lands in the receipt.
 
 Stdlib only. Works on 3.10+.
 """
@@ -74,6 +96,7 @@ from __future__ import annotations
 
 import argparse
 import functools
+import hashlib
 import importlib.util
 import json
 import os
@@ -82,6 +105,7 @@ import posixpath
 import sys
 import tempfile
 from pathlib import Path, PurePath
+from typing import NamedTuple
 
 
 def _bounded_spawn():
@@ -1064,54 +1088,271 @@ def report_gaps(result: dict[str, object], *, file: object = None) -> None:
               file=sys.stderr)
 
 
-def tree_facts(root: Path) -> tuple[str, bool]:
-    """(short sha, whether the 2026-08-24 PowerShell guard work is present).
+#: The checkout this script sits in. Its rows, and the probe's beside it, were
+#: written against the guard in THIS tree, which ``refuse_stale_tree`` compares
+#: with the guard under ``--repo-root``.
+ROWS_ROOT = Path(__file__).resolve().parents[1]
+#: The rehearsal's receipt: gitignored, and what another host's run reads as
+#: its baseline (``--baseline``).
+DEFAULT_OUT = Path(__file__).resolve().with_name("rehearsal-results.json")
+#: The oracle scripts a receipt's verdicts come from: the rows, and the fixture
+#: both drive them on (the probe imports this file's ``_tier``).
+ORACLE_FILES = ("powershell_guard_rehearsal.py", "guard_row_probe.py")
+#: The name a receipt carries: a baseline from the other oracle is another table.
+ORACLE = Path(__file__).stem
+#: The exit code of a ``--baseline`` run that refused its baseline.
+BASELINE_REFUSED = 5
 
-    A half-copied hook tree answers ``False`` rather than a traceback.
-    """
-    patterns = root / "tools" / "cc" / "hooks" / "_bash_patterns.py"
+
+class TreeFacts(NamedTuple):
+    """Which tree a run is on: the short HEAD of ``--repo-root`` and of the
+    rows' own checkout (``"unknown"`` where git cannot say; one value when they
+    are one checkout), the digest of the guard under test and of the guard
+    beside the rows (``guard_digest``), and the digest of the rows and fixture
+    that ran (``rows_digest``). A digest is ``None`` where unread."""
+
+    sha: str
+    guard: str | None
+    rows_guard: str | None
+    rows_sha: str
+    rows: str | None
+
+
+def _digest(files: list[tuple[str, Path]]) -> str | None:
+    """sha256 over ``(name, bytes)`` pairs in the order of their names as
+    strings, never a platform's path order (Windows sorts case-blind), with
+    CRLF read as LF so a Windows checkout (``core.autocrlf``) and a macOS one
+    at the same commit agree. ``None`` when there is nothing, or a file cannot
+    be read."""
+    digest = hashlib.sha256()
     try:
-        marker = patterns.read_text(encoding="utf-8", errors="replace")
+        for name, path in sorted(files, key=lambda pair: pair[0]):
+            digest.update(name.encode("utf-8") + b"\0")
+            digest.update(path.read_bytes().replace(b"\r\n", b"\n") + b"\0")
     except OSError:
-        marker = ""
-    has_fixes = "powershell_removal_is_plainly_relative" in marker
+        return None
+    return digest.hexdigest()[:16] if files else None
+
+
+def guard_digest(root: Path) -> str | None:
+    """A digest of the guard in ``root``: every ``.py`` file under
+    ``tools/cc/``, the hooks and the modules they load beside them (a zone
+    constant in ``tools/cc/_paths.py`` moves a verdict), by its path there.
+    Prose and compiled caches are not the guard."""
+    base = root / "tools" / "cc"
+    try:
+        files = [(p.relative_to(base).as_posix(), p) for p in base.rglob("*.py")
+                 if "__pycache__" not in p.relative_to(base).parts]
+    except OSError:
+        return None
+    return _digest(files)
+
+
+def rows_digest(root: Path = ROWS_ROOT) -> str | None:
+    """A digest of the oracle scripts in ``root`` (``ORACLE_FILES``): the rows
+    and the fixture a receipt's verdicts came from, so an uncommitted edit to
+    either reads as another tree."""
+    return _digest([(name, root / "bench" / name) for name in ORACLE_FILES])
+
+
+def _head(root: Path) -> str:
     try:
         # encoding pinned explicitly: text mode without it decodes with the
         # locale codec, which is cp1252 on a default Windows shell -- and this
         # script exists to be run on Windows.
-        sha = run_bounded(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-                          capture_output=True, text=True, encoding="utf-8",
-                          timeout=15).stdout.strip() or "unknown"
+        return run_bounded(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           timeout=15).stdout.strip() or "unknown"
     except Exception:
-        sha = "unknown"
-    return sha, has_fixes
+        return "unknown"
 
 
-def refuse_stale_tree(has_fixes: bool) -> bool:
+def tree_facts(root: Path) -> TreeFacts:
+    """The ``TreeFacts`` of a run on ``root``. A half-copied tree reads as an
+    unread guard rather than a traceback."""
+    rows_guard = guard_digest(ROWS_ROOT)
+    rows_sha = _head(ROWS_ROOT)
+    if root.resolve() == ROWS_ROOT:
+        return TreeFacts(rows_sha, rows_guard, rows_guard, rows_sha, rows_digest())
+    return TreeFacts(_head(root), guard_digest(root), rows_guard, rows_sha, rows_digest())
+
+
+def refuse_stale_tree(facts: TreeFacts) -> bool:
     """Print the stale-checkout banner and say whether the run must stop.
 
-    WHICH TREE IS THIS? A run against a checkout that predates the fixes
-    reports mismatches that read as THE GUARDS FAILING -- a false REFUTED
-    entered into the record as evidence, on the one leg Windows alone can
-    settle. That has happened here before (ESPALIER_MEMORY.md, 2026-08-22: a
+    WHICH TREE IS THIS? A run against a guard other than the one the rows were
+    written for reports mismatches that read as THE GUARDS FAILING -- a false
+    REFUTED entered into the record as evidence, on the one leg Windows alone
+    can settle. That has happened here before (ESPALIER_MEMORY.md, 2026-08-22: a
     machine 56 commits behind). So every oracle names the tree before trusting
-    a single row, and every mode of every oracle refuses a stale one.
+    a single row, and every mode of every oracle refuses one whose guard is not
+    the rows' own, or whose commit is not (a receipt names one commit). Until
+    2026-10-16 the test was one symbol from the 2026-08-24 work, which every
+    later guard carries, so a guard any number of commits away from the rows
+    passed it (DEF-860); it is the guard's digest and the commit now.
     """
-    if has_fixes:
+    if facts.guard is not None and facts.guard == facts.rows_guard and facts.sha == facts.rows_sha:
         return False
     print("=" * 72, file=sys.stderr)
-    print("STOP. This checkout PREDATES the 2026-08-24 PowerShell guard work.",
+    if facts.guard is None or facts.rows_guard is None:
+        print("STOP. The guard under test or the one beside these rows could not be",
+              file=sys.stderr)
+        print(f"read (under test: {facts.guard}; the rows': {facts.rows_guard}), so",
+              file=sys.stderr)
+        print("nothing says the rows were written for the guard they would judge.",
+              file=sys.stderr)
+    elif facts.guard != facts.rows_guard:
+        print(f"STOP. The guard under --repo-root (digest {facts.guard}) is not the",
+              file=sys.stderr)
+        print(f"one these rows were written for ({facts.rows_guard}, in {ROWS_ROOT}).",
+              file=sys.stderr)
+        print("Every mismatch below would be 'a different guard', NOT 'the guards",
+              file=sys.stderr)
+        print("are broken'.", file=sys.stderr)
+    else:
+        print(f"STOP. --repo-root is at {facts.sha} and these rows at {facts.rows_sha}:",
+              file=sys.stderr)
+        print("the receipt could name only one of them.", file=sys.stderr)
+    print("Run the copy of this script inside the checkout under test, at the",
           file=sys.stderr)
-    print("`powershell_removal_is_plainly_relative` is absent, so the three-way",
-          file=sys.stderr)
-    print("tier and the four fail-open fixes are not in this tree. Every mismatch",
-          file=sys.stderr)
-    print("below would be 'the fixes are not here', NOT 'the guards are broken'.",
-          file=sys.stderr)
-    print("Point --repo-root at an up-to-date checkout, or pull first.",
-          file=sys.stderr)
+    print("commit the pass is for.", file=sys.stderr)
     print("=" * 72, file=sys.stderr)
     return True
+
+
+def tree_record(facts: TreeFacts, oracle: str) -> dict[str, object]:
+    """The receipt's identity fields: which oracle on which host, at which
+    commit, with which guard and which rows. ``host`` is the machine's name,
+    in a file that never leaves it but by hand (the receipt carries the
+    throwaway root and the running user's home: keep it out of a directory
+    that gets pushed, ``--out``'s help)."""
+    return {"oracle": oracle, "host": platform.node(), "tree_sha": facts.sha,
+            "guard_digest": facts.guard, "rows_digest": facts.rows}
+
+
+def _same_commit(ours: str, theirs: str) -> bool:
+    """Two short shas name one commit when one is a prefix of the other and
+    the shorter is a full short sha: ``git rev-parse --short`` picks its length
+    per clone. ``"unknown"`` names none, not even itself."""
+    if "unknown" in (ours, theirs) or min(len(ours), len(theirs)) < 7:
+        return False
+    return ours.startswith(theirs) or theirs.startswith(ours)
+
+
+def _rows_of(baseline: dict[str, object]) -> list[dict[str, str]] | None:
+    """The baseline's verdict rows when each is an object naming an ``id``, a
+    ``shape`` and an ``actual`` tier as strings; ``None`` otherwise."""
+    rows = baseline.get("rows")
+    if not isinstance(rows, list) or not all(
+            isinstance(r, dict) and all(isinstance(r.get(k), str) for k in ("id", "shape", "actual"))
+            for r in rows):
+        return None
+    return rows
+
+
+def baseline_refusal(baseline: dict[str, object], facts: TreeFacts, *, oracle: str,
+                     shapes: list[str]) -> str | None:
+    """Why a baseline receipt cannot be diffed against this oracle's run on
+    this tree under ``shapes``, or ``None``. The rule the producer applies to
+    the guard under test, applied to the receipt: the same oracle from another
+    host, at one commit, and at it one guard and one set of rows (a commit sha
+    cannot see an uncommitted edit on either host), with rows to compare."""
+    if baseline.get("oracle") != oracle:
+        return (f"the baseline is a {baseline.get('oracle') or 'nameless'} receipt and this run is "
+                f"{oracle}: their rows are not one table (a receipt names its oracle since DEF-860)")
+    if baseline.get("host") == platform.node():
+        return (f"the baseline was written on this host ({platform.node()}): a diff of a host "
+                f"against itself reads clean. A receipt this host wrote at the default --out "
+                f"overwrites a baseline dropped there; keep the baseline elsewhere")
+    theirs = str(baseline.get("tree_sha") or "unknown")
+    if not _same_commit(facts.sha, theirs):
+        return (f"the baseline was written at {theirs} and this checkout is at {facts.sha}: "
+                f"every verdict the guard moved between them would read as this host's. "
+                f"Regenerate the baseline on its host at {facts.sha} first")
+    if baseline.get("guard_digest") != facts.guard or not facts.guard:
+        return (f"at one commit the two guard digests differ (the baseline's {baseline.get('guard_digest')}, "
+                f"this host's {facts.guard}): one side ran with uncommitted edits under tools/cc/. "
+                f"Regenerate from a clean tree")
+    if baseline.get("rows_digest") != facts.rows or not facts.rows:
+        return (f"at one commit the rows digests differ: the rows or the fixture (the baseline's "
+                f"{baseline.get('rows_digest')}, this host's {facts.rows}): one side ran with "
+                f"uncommitted edits to {' or '.join(ORACLE_FILES)}. Regenerate from a clean tree")
+    rows = _rows_of(baseline)
+    if rows is None:
+        return "the baseline's rows are not a list of verdicts naming an id, a shape and an actual tier"
+    shared = sorted({r["shape"] for r in rows} & set(shapes))
+    if not shared:
+        return (f"no shape in common (the baseline's rows: {sorted({r['shape'] for r in rows}) or 'none'}; "
+                f"this run: {shapes}): a diff of nothing reads clean")
+    return None
+
+
+def read_baseline(path: Path, facts: TreeFacts, *, oracle: str,
+                  shapes: list[str]) -> dict[str, object] | None:
+    """The baseline receipt at ``path``, or ``None`` after printing why it is
+    refused (unreadable, or ``baseline_refusal``). Read before a single row
+    runs, so a refusal costs nothing."""
+    try:
+        baseline = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(baseline, dict):
+            raise ValueError("not a JSON object")
+    except (OSError, ValueError) as exc:
+        reason = f"the baseline {path} cannot be read ({type(exc).__name__}: {exc})"
+    else:
+        reason = baseline_refusal(baseline, facts, oracle=oracle, shapes=shapes)
+        if reason is None:
+            return baseline
+    print("=" * 72, file=sys.stderr)
+    print(f"REFUSED --baseline: {reason}.", file=sys.stderr)
+    print("=" * 72, file=sys.stderr)
+    return None
+
+
+def same_file(baseline: str, out: str) -> bool:
+    """Whether ``--baseline`` and ``--out`` name one file: the run would write
+    its own receipt over the baseline it read, and the next run would diff this
+    host against itself."""
+    return Path(baseline).resolve() == Path(out).resolve()
+
+
+def baseline_differences(theirs: list[dict[str, str]], ours: list[dict[str, object]]) -> list[str]:
+    """One line per (row, shape) whose verdict differs between the baseline's
+    rows and this run's, or that only one side holds, on the shapes both
+    sides ran: a run narrowed to one shape is not told the others vanished."""
+    shared = {r["shape"] for r in theirs} & {r["shape"] for r in ours}
+    base = {(r["id"], r["shape"]): r["actual"] for r in theirs if r["shape"] in shared}
+    here = {(r["id"], r["shape"]): r["actual"] for r in ours if r["shape"] in shared}
+    lines = []
+    for key in sorted(base.keys() | here.keys()):
+        where = f"{key[0]}@{key[1]}"
+        if key not in here:
+            lines.append(f"{where}: in the baseline only ({base[key]})")
+        elif key not in base:
+            lines.append(f"{where}: here only ({here[key]})")
+        elif base[key] != here[key]:
+            lines.append(f"{where}: baseline {base[key]}, here {here[key]}")
+    return lines
+
+
+def report_baseline(baseline: dict[str, object], path: str, rows: list[dict[str, object]],
+                    *, file: object = None) -> dict[str, object]:
+    """Print the diff against an accepted baseline, naming the shapes it
+    compared, and return the receipt's ``baseline`` block. A difference is
+    this host's finding and the first thing to record: it fails the run, as a
+    MISMATCH does."""
+    out = file or sys.stdout
+    theirs = _rows_of(baseline) or []
+    compared = sorted({r["shape"] for r in theirs} & {r["shape"] for r in rows})
+    differences = baseline_differences(theirs, rows)
+    print(file=out)
+    print(f"against the baseline {path} ({baseline.get('host')}, {baseline.get('platform')}, "
+          f"{baseline.get('tree_sha')}), shapes {', '.join(compared)}: "
+          f"{len(differences)} difference(s)", file=out)
+    for line in differences:
+        print(f"  {line}", file=out)
+    return {"path": path, "host": baseline.get("host"), "platform": baseline.get("platform"),
+            "tree_sha": baseline.get("tree_sha"), "shapes_compared": compared,
+            "differences": differences}
 
 
 def add_common_args(ap: argparse.ArgumentParser, *, default_out: str) -> None:
@@ -1124,11 +1365,15 @@ def add_common_args(ap: argparse.ArgumentParser, *, default_out: str) -> None:
     ap.add_argument("--root-shape", default="all", choices=[*ROOT_SHAPES, "all"],
                     help="drive the rows under one project-root shape, or all of them "
                          "(default: all -- a row that differs across shapes is the finding)")
+    ap.add_argument("--baseline", default=None,
+                    help="a receipt from another host to diff this run against, verdict by "
+                         "verdict; refused before a row runs unless it was written at this "
+                         f"commit with this guard (exit {BASELINE_REFUSED})")
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    add_common_args(ap, default_out=str(Path(__file__).with_name("rehearsal-results.json")))
+    add_common_args(ap, default_out=str(DEFAULT_OUT))
     args = ap.parse_args(argv)
 
     root = Path(args.repo_root).resolve()
@@ -1137,18 +1382,27 @@ def main(argv: list[str] | None = None) -> int:
         print(f"write_guard.py not found at {hook}\n"
               f"Pass --repo-root pointing at the Espalier-Harness checkout.", file=sys.stderr)
         return 2
+    if args.baseline and same_file(args.baseline, args.out):
+        print("--baseline and --out name one file: this run's receipt would overwrite "
+              "the baseline it reads", file=sys.stderr)
+        return 2
 
-    sha, has_fixes = tree_facts(root)
+    facts = tree_facts(root)
     shapes = list(ROOT_SHAPES) if args.root_shape == "all" else [args.root_shape]
 
     print(f"hook     : {hook}")
-    print(f"tree     : {sha}")
+    print(f"tree     : {facts.sha} (guard {facts.guard})")
     print(f"python   : {sys.version.split()[0]}  ({sys.executable})")
     print(f"platform : {platform.platform()}")
     print(f"shapes   : {', '.join(shapes)}")
     print()
-    if refuse_stale_tree(has_fixes):
+    if refuse_stale_tree(facts):
         return 4
+    baseline = None
+    if args.baseline:
+        baseline = read_baseline(Path(args.baseline), facts, oracle=ORACLE, shapes=shapes)
+        if baseline is None:
+            return BASELINE_REFUSED
 
     stale = stale_declarations(ROWS, KNOWN_GAPS)
     if stale:
@@ -1166,19 +1420,27 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{result['passed']} passed, {result['mismatched']} MISMATCHED, "
           f"{result['known_gaps']} KNOWN GAP, of {len(ROWS)} rows x {len(shapes)} shape(s)")
 
-    out = Path(args.out)
-    out.write_text(json.dumps({
+    record = {
         "platform": platform.platform(),
         "python": sys.version.split()[0],
         "repo_root": str(root),
-        "tree_sha": sha,
-        "has_fixes": has_fixes,
+        **tree_record(facts, ORACLE),
+        # Always true in a receipt: a run whose guard is not the rows' own is
+        # refused and writes none (until 2026-10-16 it was the 2026-08-24
+        # marker). Kept only for tests/test_write_guard.py's call-site pin;
+        # it goes when that pin can (DEF-860).
+        "has_fixes": True,
         "shapes": shapes,
         **result,
-    }, indent=2), encoding="utf-8")
+    }
+    if baseline is not None:
+        record["baseline"] = report_baseline(baseline, args.baseline, result["rows"])
+    out = Path(args.out)
+    out.write_text(json.dumps(record, indent=2), encoding="utf-8")
     print(f"results written to: {out}")
     print("Send that file back -- it is the oracle the PowerShell leg has never had.")
-    return 1 if (result["mismatched"] or result["gaps_closed"]) else 0
+    differs = bool(baseline is not None and record["baseline"]["differences"])
+    return 1 if (result["mismatched"] or result["gaps_closed"] or differs) else 0
 
 
 if __name__ == "__main__":
