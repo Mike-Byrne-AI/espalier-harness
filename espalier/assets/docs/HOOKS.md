@@ -435,10 +435,7 @@ plan_guard reads this as an open mutation window on source files.
 --- MEMORY (recent sessions -- headlines only; read memory/session-log.d/ for full rows) ---
 - <date> <your last session's headline> ...
 
---- STANDING PRINCIPLES (hold these; bodies in docs/STANDING_PRINCIPLES.md) ---
-- 1. Make it prove it
-- 2. Toolbelt, not security boundary
-...
+--- STANDING PRINCIPLES: <n> (hold these; titles and bodies in docs/STANDING_PRINCIPLES.md; /recall <topic> pulls one) ---
 
 --- FOOTGUNS & FAILURE MODES (pull, don't scan) ---
 docs/SHARP_EDGES.md (concrete footguns) + docs/FAILURE_MODES.md (failure classes)
@@ -478,6 +475,18 @@ renders wherever `docs/STANDING_PRINCIPLES.md` has sections, which `init`
 never seeds, so an adopter sees it from the session after they write the
 file -- the illustrative block above is the self-host banner, whose tree
 has one.)
+
+**The banner fits the host's cap.** Claude Code caps one hook context string
+at 10,000 characters and spills a longer one to a file, handing Claude a
+2,000-character preview it is not asked to read past
+(`docs/external/cc-hook-protocol.md`). The banner is fitted under 9,500,
+counted as the host counts (UTF-16 units). Each per-run line (the sessions,
+the pull requests, the mail, the orders, ...) is cut to 320 characters with a
+` [line cut]` marker; the blueprint takes what the rest of the header and the
+orientation leave, at most 3,000, and yields first; the body is clipped last.
+When anything is cut, a `BANNER HEALTH` block at the top of the body names it,
+with each tenant against its budget and the headroom left, and when the
+ceiling still binds it names the goal's 4,500 cap as the remaining lever.
 
 **Every GOAL clause above is conditional.** `cc/GOAL.md` is a local,
 gitignored snapshot: `init` seeds a skeleton when it is absent, `/handoff` step 7

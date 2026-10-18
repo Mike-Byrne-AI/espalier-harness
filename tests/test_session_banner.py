@@ -953,7 +953,10 @@ class TestSeedHistoryOnlyGrows:
 # ─── _standing_principles_index: compact always-on frame index ──────────────
 
 class TestStandingPrinciplesIndex:
-    def test_renders_titles_only_not_bodies(self, tmp_path):
+    def test_renders_one_summary_line_not_titles_or_bodies(self, tmp_path):
+        """One line under its 400-character budget (DEF-674): the titles joined
+        ran 880 characters on the self-host tree, so the banner carries the count
+        and where the titles and bodies are."""
         mod = _load()
         (tmp_path / "docs").mkdir()
         (tmp_path / "docs" / "STANDING_PRINCIPLES.md").write_text(
@@ -963,11 +966,12 @@ class TestStandingPrinciplesIndex:
             encoding="utf-8",
         )
         out = mod._standing_principles_index(tmp_path)
-        assert "STANDING PRINCIPLES" in out
-        assert "- 1. Make it prove it" in out
-        assert "- 2. Toolbelt, not security boundary" in out
-        assert "body of one" not in out, "bodies must not be dumped -- titles only"
-        assert "docs/STANDING_PRINCIPLES.md" in out  # pointer to the bodies
+        assert "STANDING PRINCIPLES: 2 " in out
+        assert out.strip().count("\n") == 0, "the index is one summary line"
+        assert "Make it prove it" not in out, "the titles stay in the doc"
+        assert "body of one" not in out, "bodies must not be dumped"
+        assert "docs/STANDING_PRINCIPLES.md" in out and "/recall" in out  # where they are
+        assert mod._units(out) <= mod._SOFT_BUDGETS["standing"]
 
     def test_absent_doc_yields_empty(self, tmp_path):
         mod = _load()
@@ -987,9 +991,9 @@ class TestStandingPrinciplesIndex:
             encoding="utf-8",
         )
         banner = mod._build_context(tmp_path, False, False)
-        assert "STANDING PRINCIPLES" in banner and "- 1. One writer per file" in banner
+        assert "STANDING PRINCIPLES: 2 " in banner
         compact = mod._build_compact_context(tmp_path, False)
-        assert "STANDING PRINCIPLES" in compact and "- 2. Measure before you tune" in compact
+        assert "STANDING PRINCIPLES: 2 " in compact
 
     def test_index_is_absent_off_self_host_without_the_file(self, tmp_path):
         """The negative half: no file, no section -- on either banner."""
@@ -997,12 +1001,12 @@ class TestStandingPrinciplesIndex:
         assert "STANDING PRINCIPLES" not in mod._build_context(tmp_path, False, False)
         assert "STANDING PRINCIPLES" not in mod._build_compact_context(tmp_path, False)
 
-    def test_index_surfaces_every_live_principle(self):
-        """Doc-derived, not a hardcoded 9: the index must surface every title the
+    def test_index_counts_every_live_principle(self):
+        """Doc-derived, not a hardcoded 9: the index must count every title the
         live doc defines, counted by the SAME rule the renderer selects them with
         (a line starting ``"## "``). A 10th principle tracks automatically and a
         benign non-numbered ``## `` heading does NOT false-alarm; the assert reds
-        only when the renderer's output diverges from the doc's heading count -- a
+        only when the renderer's count diverges from the doc's heading count -- a
         dropped or mangled title, the real regression.
         """
         mod = _load()
@@ -1011,10 +1015,11 @@ class TestStandingPrinciplesIndex:
         n_titles = sum(1 for ln in doc.splitlines() if ln.startswith("## "))
         assert n_titles > 0, "doc title shape changed -- no '## ' headings found"
         out = mod._standing_principles_index(repo)
-        rendered = out.count("\n- ")
-        assert rendered == n_titles, (
-            f"index must surface every live principle: doc defines {n_titles}, "
-            f"index rendered {rendered}"
+        m = re.search(r"STANDING PRINCIPLES: (\d+) ", out)
+        assert m, out
+        assert int(m.group(1)) == n_titles, (
+            f"index must count every live principle: doc defines {n_titles}, "
+            f"index counted {m.group(1)}"
         )
 
 
@@ -1142,30 +1147,15 @@ class TestBannerContracts:
         assert "Consult ESPALIER_MEMORY.md" in banner
 
     def test_banner_stays_lean(self):
-        """The whole point: the redesigned self-host banner is far under the 16KB
-        outer ceiling (escaping the lost-in-the-middle zone). The bound is the
-        per-section soft-budget COMPOSITION (not a magic number), so it tracks the
-        budgets and a section blowing its budget -- or a new unbounded tenant --
-        still fails. The blueprint continuity is the dominant tenant BY DESIGN
-        (it is CONTENT, not index), so it accumulates toward its 6KB soft cap."""
+        """This checkout's banner fits the ceiling under the host's cap on hook
+        context, counted as the host counts (DEF-674). The per-run lines are the
+        hook's to pass, so this is the core alone; every tenant at its cap with
+        long per-run lines is TestTheBannerFitsTheHostCap's worst case. Whether
+        the body clips here depends on this checkout's goal and blueprint, so
+        only the ceiling is asserted."""
         mod = _load()
         banner = mod._build_context(self._repo(), True, False)
-        nbytes = len(banner.encode("utf-8"))
-        assert nbytes <= mod._MAX_CONTEXT_BYTES
-        # Effective-cap sum (bounded sections) + slack for the header/tail/footgun.
-        # GOAL rides to its hard cap (TP-241: the goal-proper must be visible, not
-        # cut under the perishable Notes head), so the bound uses _GOAL_HARD_CAP,
-        # not the goal soft budget.
-        effective = dict(mod._SOFT_BUDGETS)
-        effective["goal"] = mod._GOAL_HARD_CAP
-        lean_ceiling = sum(effective.values()) + 2_500
-        assert nbytes < lean_ceiling, (
-            f"banner is {nbytes}B vs lean ceiling {lean_ceiling}B -- a section blew "
-            f"its cap or an unbounded tenant crept in"
-        )
-        # Still a clear win vs the old 15.9KB bloat (and the ~87K full reads we
-        # dropped). The goal-visible design raised the floor from the old 0.8*MAX.
-        assert nbytes < 0.9 * mod._MAX_CONTEXT_BYTES
+        assert mod._units(banner) <= mod._MAX_CONTEXT_CHARS
 
     def test_orientation_tail_always_present(self):
         mod = _load()
@@ -4015,3 +4005,135 @@ class TestTheGovernanceWiringLine:
         summary = mod._report_integrity_state(tmp_path)
         assert "UNWIRED" not in summary, summary
         assert not [line for line in mod._hook_utils.take_advisories() if "governance wiring" in line]
+
+
+# ─── DEF-674: the banner fits the host's cap on hook context ────────────────
+
+_PROTOCOL_PIN = Path(__file__).resolve().parent.parent / "docs" / "external" / "cc-hook-protocol.md"
+_LONG = "a long run line " * 150  # 2,400 characters, far past the per-run cap
+_RUN_LINES = ("checkout", "worktrees", "loose", "sessions", "permissions", "open_prs", "merged_prs",
+              "merging", "seat", "engine", "mail", "orders", "integrity")
+
+
+def _pinned_host_cap() -> int:
+    """The host's cap on one hook context string, read from the protocol pin's
+    quoted sentence, so the ceiling follows the doc rather than a copy of it."""
+    text = _PROTOCOL_PIN.read_text(encoding="utf-8")
+    m = re.search(r"are capped at ([\d,]+) characters", text)
+    assert m, "the pin no longer quotes the host's cap on hook context strings"
+    return int(m.group(1).replace(",", ""))
+
+
+def _host_units(text: str) -> int:
+    # Counted here, not through the hook's helper, so a hook without the helper
+    # reds on the size rather than on a missing name.
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _worst_case(mod, monkeypatch) -> None:
+    """Every tenant past its cap: the shape the DEF-674 probe renders."""
+    monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+    monkeypatch.setattr(mod, "_goal_section", lambda r: "--- GOAL ---\n" + "goal words " * 900)
+    monkeypatch.setattr(mod, "_memory_toc", lambda r: "--- MEMORY ---\n" + "memory words " * 300)
+    monkeypatch.setattr(mod, "_standing_principles_index",
+                        lambda r: "\n--- STANDING PRINCIPLES ---\n" + "- a principle\n" * 200)
+    monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: "blueprint words " * 800)
+    monkeypatch.setattr(mod, "_blueprint_recent", lambda r: "[1] " + "recent words " * 600)
+
+
+_HANDOFF = "# Session Context\n\n## Next steps\nGOAL pointer\n\n## Recent reasoning\n"
+_BLUEPRINT = _HANDOFF + "\n".join(f"- decision {i} " + "y" * 80 for i in range(30))
+
+
+class TestTheBannerFitsTheHostCap:
+    """DEF-674: past 10,000 characters the host saves a hook's context to a file
+    and hands Claude a 2,000-character preview it is not asked to read past, so
+    the banner is fitted under a ceiling counted as the host counts."""
+
+    def test_the_ceiling_sits_under_95_percent_of_the_pinned_cap(self):
+        mod = _load()
+        cap = _pinned_host_cap()
+        assert mod._HOST_CONTEXT_CAP_CHARS == cap
+        assert mod._MAX_CONTEXT_CHARS <= 0.95 * cap
+
+    @pytest.mark.parametrize("source", ["", "compact"])
+    def test_the_worst_case_banner_fits_under_the_cap(self, tmp_path, monkeypatch, source):
+        mod = _load()
+        _worst_case(mod, monkeypatch)
+        banner = mod._build_context(tmp_path, True, False, source, **{n: _LONG for n in _RUN_LINES})
+        assert _host_units(banner) <= 0.95 * _pinned_host_cap(), _host_units(banner)
+        assert "confirm or redirect" in banner  # the orientation tail rides whole
+
+    def test_a_long_per_run_line_is_cut_with_its_marker_and_named(self, tmp_path, monkeypatch):
+        mod = _load()
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+        banner = mod._build_context(tmp_path, False, False, sessions=_LONG, mail="one short mail line")
+        line = next(ln for ln in banner.splitlines() if ln.startswith("Sessions:"))
+        value = line[len("Sessions:"):].lstrip()
+        assert value.endswith("[line cut]")
+        assert _host_units(value) <= mod._RUN_LINE_MAX_CHARS
+        assert f"Sessions {_host_units(_LONG)}" in banner  # the health block names it and its size
+        assert any(ln.startswith("Mail:") and ln.endswith(" one short mail line")
+                   for ln in banner.splitlines()), "a short line rides whole"
+
+    def test_the_blueprint_yields_to_long_per_run_lines_and_says_so(self, tmp_path, monkeypatch):
+        mod = _load()
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+        assert 2_000 < _host_units(_BLUEPRINT) <= mod._MAX_BLUEPRINT_CONTEXT_BYTES  # whole under its share
+        monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: _BLUEPRINT)
+        banner = mod._build_context(tmp_path, True, False, **{n: _LONG for n in _RUN_LINES})
+        assert "the blueprint yielded to fit the ceiling" in banner
+        assert "GOAL pointer" in banner  # the curated handoff survives the yield
+        assert "- decision 29 " not in banner  # the oldest decisions go first
+        assert mod._units(banner) <= mod._MAX_CONTEXT_CHARS
+
+    def test_the_blueprint_rides_whole_when_the_header_leaves_room(self, tmp_path, monkeypatch):
+        mod = _load()
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+        monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: _BLUEPRINT)
+        banner = mod._build_context(tmp_path, True, False)
+        assert _BLUEPRINT in banner
+        assert "yielded" not in banner
+
+    def test_the_health_block_names_each_tenant_and_the_headroom(self, tmp_path, monkeypatch):
+        mod = _load()
+        _worst_case(mod, monkeypatch)
+        banner = mod._build_context(tmp_path, True, False, **{n: _LONG for n in _RUN_LINES})
+        lead = f"[banner] {mod._MAX_CONTEXT_CHARS} characters of the host's {mod._HOST_CONTEXT_CAP_CHARS}: "
+        ledger = next(ln for ln in banner.splitlines() if ln.startswith(lead))
+        for tenant in ("header ", "(blueprint ", "body ", "tail ", "goal ", "memory ", "standing ",
+                       "footguns ", "headroom "):
+            assert tenant in ledger, (tenant, ledger)
+
+    def test_the_goal_cap_is_named_when_the_ceiling_still_binds(self, tmp_path, monkeypatch):
+        mod = _load()
+        _worst_case(mod, monkeypatch)
+        banner = mod._build_context(tmp_path, True, False, **{n: _LONG for n in _RUN_LINES})
+        assert "the ceiling still binds" in banner
+        assert f"the lever left is the goal's cap ({mod._GOAL_HARD_CAP}," in banner
+
+    def test_a_banner_that_fits_carries_no_health_block(self, tmp_path, monkeypatch):
+        """The must-not-trip twin: nothing cut, nothing flagged, no block. (A tree
+        with no blueprint system is flagged already, so the twin brings one.)"""
+        mod = _load()
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+        monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: _HANDOFF)
+        banner = mod._build_context(tmp_path, True, False, sessions="1 other session in this tree")
+        assert "--- BANNER HEALTH ---" not in banner
+        assert "the ceiling still binds" not in banner
+
+    def test_units_count_as_the_host_does(self):
+        mod = _load()
+        assert mod._units("a\U0001F600") == 3  # an astral character is two units
+        assert mod._units("é") == 1
+        assert mod._cut_to_units("ab\U0001F600c", 3) == "ab"  # never half a pair
+        assert mod._cut_to_units("ab\U0001F600c", 4) == "ab\U0001F600"
+
+    def test_mains_backstop_cuts_to_the_ceiling_in_the_hosts_units(self):
+        mod = _load()
+        assert mod._fit_to_ceiling("x" * 100) == "x" * 100
+        out = mod._fit_to_ceiling("\U0001F600" * 6_000)  # 6,000 characters, 12,000 units
+        marker = "\n[context truncated]"
+        assert out.endswith(marker)
+        assert set(out[: -len(marker)]) == {"\U0001F600"}  # whole pairs only
+        assert mod._MAX_CONTEXT_CHARS - len(marker) - 2 <= _host_units(out) <= mod._MAX_CONTEXT_CHARS

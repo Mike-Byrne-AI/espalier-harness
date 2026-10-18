@@ -592,7 +592,7 @@ _ACTIVITY_LOG_PREFIX = "[subagent:"
 #: How many agent REPORTS ``auto_continuation_fragments`` carries into the next
 #: session (DEF-586). Two matches the repo's own two-reviewer dispatch; each is
 #: a lead of at most ``subagent_stop._LEAD_CHARS`` (600), so the slot spends
-#: about a fifth of session_start's 6 KB blueprint share. The rest of a fan-out
+#: about two fifths of session_start's 3 KB blueprint share. The rest of a fan-out
 #: is in the archive and in ``show_recent``.
 #:
 #: sister-site: ok forced copy across the no-import boundary -- the standalone

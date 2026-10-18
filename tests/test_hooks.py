@@ -1627,17 +1627,17 @@ class TestSessionStart:
         assert "cc/GOAL.md" in flags[0]
 
     def test_context_within_size_budget(self, tmp_path):
-        """additionalContext must not exceed the 16000-byte outer ceiling. The
-        redesigned banner stays ~5.5KB (digest + standing principles + footgun
-        pointer + orientation), so this ceiling is a backstop, not the governor
-        (per-section soft budgets bound individual tenants)."""
+        """additionalContext must fit the banner's ceiling, counted as the host
+        counts (UTF-16 units): past the host's 10,000-character cap Claude Code
+        spills it to a file and hands Claude a preview (DEF-674)."""
         result = run_hook(
             "session_start.py",
             {"hook_event_name": "SessionStart"},
             {"CLAUDE_PROJECT_DIR": str(tmp_path)},
         )
         ctx = self._context(result)
-        assert len(ctx.encode("utf-8")) <= 16_000, "context exceeds 16000-byte budget"
+        ceiling = self._load_session_start()._MAX_CONTEXT_CHARS
+        assert len(ctx.encode("utf-16-le")) // 2 <= ceiling, "context exceeds the banner's ceiling"
 
     def test_orientation_tail_survives_and_catalog_stays_pointer(self, tmp_path):
         """TP-234 (migrated): the orientation tail must always survive within
@@ -1658,7 +1658,7 @@ class TestSessionStart:
         (docs / "SHARP_EDGES.md").write_text(big_catalog, encoding="utf-8")
         banner = mod._build_context(tmp_path, True, False)
         nbytes = len(banner.encode("utf-8"))
-        assert nbytes <= mod._MAX_CONTEXT_BYTES
+        assert mod._units(banner) <= mod._MAX_CONTEXT_CHARS
         assert nbytes < 9_000, "the 400-heading catalog leaked back into the banner"
         assert "## Footgun number 200" not in banner, "catalog headings dumped into the banner"
         # The orientation tail's load-bearing markers must survive:
@@ -1943,7 +1943,7 @@ class TestSessionStart:
             encoding="utf-8",
         )
         banner = mod._build_context(tmp_path, True, False)
-        assert len(banner.encode("utf-8")) <= mod._MAX_CONTEXT_BYTES
+        assert mod._units(banner) <= mod._MAX_CONTEXT_CHARS
         assert "MEMORY (recent sessions" in banner            # digest renders
         assert "first-thoughts" in banner                        # orientation survives
         assert "confirm or redirect" in banner

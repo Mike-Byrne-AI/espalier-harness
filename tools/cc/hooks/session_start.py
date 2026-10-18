@@ -94,7 +94,7 @@ _MAX_BLUEPRINT_CONTEXT_BYTES = 3_000
 # blueprint, or digest passes through WHOLE -- the budget only bites genuine
 # bloat, and when it does it FLAGS (visibly) and truncates on a fragment
 # boundary rather than swallowing content silently mid-word. The outer
-# _MAX_CONTEXT_BYTES is the hard ceiling of last resort. Sections absent from
+# _MAX_CONTEXT_CHARS is the hard ceiling of last resort. Sections absent from
 # this map are unbounded at the section level (the outer ceiling still backstops).
 _SOFT_BUDGETS = {
     "blueprint": _MAX_BLUEPRINT_CONTEXT_BYTES,
@@ -125,10 +125,10 @@ _SECTION_SOURCE = {
 }
 # GOAL is FLAGGED at its 2_000 soft budget but rides through WHOLE up to this
 # ceiling: the goal-proper (At a glance / North star) sits below the perishable
-# Notes head, so a soft-only cut hides exactly the part you want. 4,500 is
-# written into cc/GOAL.md's own header as load-bearing, so it is the operator's
-# number: when the ceiling still binds, the banner-health advisory names it as
-# the remaining lever rather than this file cutting it (DEF-674).
+# Notes head, so a soft-only cut hides exactly the part you want. Lowering it
+# is the operator's call, not a fit decision (DEF-674): when the ceiling still
+# binds, the banner-health advisory names it as the remaining lever rather
+# than this file cutting it.
 _GOAL_HARD_CAP = 4_500
 
 # _truncate_keeping_tail admits the perishable HEAD section partially when whole
@@ -1800,6 +1800,18 @@ def _cut_to_units(text: str, units: int) -> str:
     """The head of ``text`` within ``units`` UTF-16 code units, never splitting a
     surrogate pair: main()'s backstop of last resort."""
     return text.encode("utf-16-le")[: max(0, units) * 2].decode("utf-16-le", errors="ignore")
+
+
+_CONTEXT_CUT_MARKER = "\n[context truncated]"
+
+
+def _fit_to_ceiling(context: str) -> str:
+    """``context`` within ``_MAX_CONTEXT_CHARS`` host units: main()'s backstop of
+    last resort. The builders already fit the ceiling, so this cuts only what a
+    builder's bug let through (DEF-674)."""
+    if _units(context) <= _MAX_CONTEXT_CHARS:
+        return context
+    return _cut_to_units(context, _MAX_CONTEXT_CHARS - _units(_CONTEXT_CUT_MARKER)) + _CONTEXT_CUT_MARKER
 
 
 _RUN_LINE_CUT_MARKER = " [line cut]"
@@ -4546,11 +4558,7 @@ def _run_main() -> int:
     )
 
     # Enforce size budget — truncate rather than flood context window.
-    # In the host's units (DEF-674): the builders already fit the ceiling, so
-    # this cuts only what a builder's bug let through.
-    if _units(context) > _MAX_CONTEXT_CHARS:
-        marker = "\n[context truncated]"
-        context = _cut_to_units(context, _MAX_CONTEXT_CHARS - _units(marker)) + marker
+    context = _fit_to_ceiling(context)
 
     print(json.dumps({
         "hookSpecificOutput": {
