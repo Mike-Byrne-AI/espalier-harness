@@ -859,8 +859,8 @@ first; the dangerous-command catch is a secondary slip-catcher):
      the harness's: your espalier.toml names it under `protected_paths`") and
      its Don't / Do pair is the zone's own, never the maintenance-mode
      relaunch, which would be the wrong remedy for your own tree. A move or
-     delete of a directory that holds harness ground (`tools/` holding
-     `tools/cc/`, `.github/` holding the harness-guard workflow) has a text of
+     delete of a directory that holds harness ground (`tools` holding
+     `tools/cc/`, `.github` holding the harness-guard workflow) has a text of
      its own, whether or not one of your entries covers it: it names the
      harness path inside (and your entry and key, where one is there) and
      offers neither the relaunch nor the relocate line, since either takes the
