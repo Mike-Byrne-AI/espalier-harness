@@ -2731,13 +2731,28 @@ def report_hook_spawn_retries(terminalreporter) -> None:
         terminalreporter.write_line(f"::warning::{head}: " + "; ".join(rows[:_HOOK_RETRIES_SHOWN]))
 
 
-def pytest_terminal_summary(terminalreporter, exitstatus, config):
-    """One line per process that built the tree, every run that built one: the
-    build runs before the first test, so ``--durations`` cannot show it, and a
-    cell's step times are the reading DEF-1177's bound and DEF-2014's measure
-    are judged by. Under a ceiling raised above the suite's, every unmarked test
-    that took longer than the suite's own is named, and under GitHub Actions as
-    a warning annotation too: the raised ceiling must not hide a slowdown."""
+def report_nested_controller_crashes(terminalreporter) -> None:
+    """The child runs a row drove again because the child's own controller
+    crashed (tests/test_xdist_never_ran.py's ``NestedControllerCrashed``,
+    DEF-2025), read from the warnings the run kept: the race a retry absorbs is
+    counted on every run's last screen and, under GitHub Actions, as an
+    annotation, so DEF-2025's watch reads a number, never a silence."""
+    warned = [report for report in (getattr(terminalreporter, "stats", None) or {}).get("warnings", [])
+              if "NestedControllerCrashed" in str(getattr(report, "message", ""))]
+    if not warned:
+        return
+    rows = sorted({report.nodeid for report in warned})
+    head = f"nested controller crashes: {len(warned)} child run(s) in {len(rows)} row(s) were driven again (DEF-2025)"
+    terminalreporter.write_line(head + ":")
+    for nodeid in rows[:_HOOK_RETRIES_SHOWN]:
+        terminalreporter.write_line(f"  {nodeid}")
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        terminalreporter.write_line(f"::warning::{head}: " + "; ".join(rows[:_HOOK_RETRIES_SHOWN]))
+
+
+def _write_build_report(terminalreporter, config) -> None:
+    """The build report: one line per process that built the tree, the
+    crashed workers' lines among them (:func:`pytest_testnodedown`)."""
     reports = list(getattr(config, "_initialized_repo_build_reports", []))
     own = getattr(config, "_initialized_repo_build_report", None)
     if own:
@@ -2746,7 +2761,27 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         terminalreporter.write_line(f"{_INITIALIZED_REPO_FIXTURE} build, before the first test:")
         for report in sorted(reports, key=lambda r: r["place"]):
             terminalreporter.write_line("  " + _build_report_line(report))
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    """One line per process that built the tree, every run that built one: the
+    build runs before the first test, so ``--durations`` cannot show it, and a
+    cell's step times are the reading DEF-1177's bound and DEF-2014's measure
+    are judged by. Under a ceiling raised above the suite's, every unmarked test
+    that took longer than the suite's own is named, and under GitHub Actions as
+    a warning annotation too: the raised ceiling must not hide a slowdown."""
+    config.__dict__["_initialized_repo_summary_ran"] = True
+    _write_summary_lines(terminalreporter, config)
+
+
+def _write_summary_lines(terminalreporter, config) -> None:
+    """Every line the summary writes: the build report, the counted retries
+    (hook spawns, crashed child controllers) and the slow tests under a raised
+    ceiling. One body for the summary and for the session's finish where no
+    summary ran (:func:`pytest_sessionfinish`)."""
+    _write_build_report(terminalreporter, config)
     report_hook_spawn_retries(terminalreporter)
+    report_nested_controller_crashes(terminalreporter)
     ceiling, suite = _ceilings(config)
     if not suite or ceiling <= suite:
         return
@@ -2761,6 +2796,32 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     if os.environ.get("GITHUB_ACTIONS") == "true":
         terminalreporter.write_line(f"::warning::{head}: " + "; ".join(
             f"{nodeid} {secs:.0f}s" for secs, nodeid in slow[:_SLOW_UNDER_RAISED_SHOWN]))
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_sessionfinish(session, exitstatus):
+    """The summary's lines where pytest printed no summary (DEF-2025): the
+    terminal reporter runs :func:`pytest_terminal_summary` only for the exit
+    codes it summarises, never pytest's internal error, and that is the run a
+    controller whose channel to a dying worker raised inside execnet ends in --
+    the crash run the build report's crashed-worker lines exist for (DEF-2021),
+    and the counts and the slow list are its too. Outermost, so this runs after
+    the terminal reporter's own finish wrapper has or has not called the
+    summary; the summary marks that it ran, so the lines are written once,
+    never twice. ``--no-summary`` asked for none. A summary aid: a failure here
+    is named in one line, never raised, so it cannot change the run's exit
+    code. Old-style ``hookwrapper`` for the ``pytest>=7.0`` floor."""
+    yield
+    config = session.config
+    terminalreporter = config.pluginmanager.get_plugin("terminalreporter")
+    if (terminalreporter is not None and not hasattr(config, "workerinput")
+            and not getattr(terminalreporter, "no_summary", False)
+            and not config.__dict__.get("_initialized_repo_summary_ran")):
+        try:
+            _write_summary_lines(terminalreporter, config)
+        except Exception as exc:  # noqa: BLE001 - a summary aid names its own failure, never raises
+            terminalreporter.write_line(
+                f"the summary lines at the session's finish failed ({type(exc).__name__}: {exc}; tests/conftest.py)")
 
 
 @pytest.hookimpl(trylast=True)
