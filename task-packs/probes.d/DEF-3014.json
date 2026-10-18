@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3014",
+ "subject": "espalier/sandbox_posture.py",
+ "cmd": "python -c \"import json, sys, tempfile; from pathlib import Path; sys.path.insert(0, '.'); import espalier.sandbox_posture as s; t = Path(tempfile.mkdtemp()); (t / '.claude').mkdir(); (t / '.claude' / 'settings.json').write_text(json.dumps({'sandbox': {'enabled': True}}), encoding='utf-8'); h = str(t / 'home'); st = s.read_state(t, posture={}, host_is_windows=False, environ={'HOME': h, 'USERPROFILE': h, 'PATH': ''}); print(len(s.doctor_lines(st, remedy_py='python')[1]))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "421e9824dc81",
+ "text_sha": "499982edd69b",
+ "verified_2026_10_18": "OPEN (filed 2026-10-18; probe driven at filing)"
+}
