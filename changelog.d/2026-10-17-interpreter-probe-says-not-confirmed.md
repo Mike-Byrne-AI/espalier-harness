@@ -7,5 +7,7 @@
   running the hooks is now read directly, with no probe; any other wired
   interpreter whose probe never answers is named with its version "not
   confirmed" (a hang there still fails its hooks open, and the line says so),
-  and the host line shows `?` for it, not `no`. A link of a virtualenv's
-  `python` elsewhere is checked as the separate interpreter it is.
+  and the host line shows `?` for it, not `no`. On Windows a link of a
+  virtualenv's `python.exe` in another folder is checked as the separate
+  interpreter it is, by `doctor` too; elsewhere a symlink of the running
+  Python, such as Homebrew's `python3`, is read as that Python.
