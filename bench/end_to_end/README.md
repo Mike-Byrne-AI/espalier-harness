@@ -49,7 +49,11 @@ whose default model is cheaper will cost less, so treat these as one sample:
 | BCE-003 | 54,926 | $0.09 |
 
 One pass of all four is about **$0.67** at these figures, so a weekly run is
-about $35 a year. The workflow passes `--max-cost-usd 5.00`, which the
+about $35 a year. That is the floor: each wiring scenario that decides nothing
+is run once more, so a pass costs up to about $1.29. A run that sent no events
+(a CLI whose output carries no stream JSON, exit 0) is priced at almost nothing,
+so its retry spends whatever the CLI really spent without the cap seeing it;
+the smoke scenario reads such a CLI as failed first. The workflow passes `--max-cost-usd 5.00`, which the
 orchestrator checks after each run: past it, no further scenario starts, so the
 run in flight can go over it. A run the timeout cuts off sends no `result` event, so the cap prices
 its messages' usage instead, each token class at the rates the CLI's own prices
@@ -111,17 +115,31 @@ report names the CLI version and model of each run. A run that itself failed
 before any model turn (the CLI refused the argv, or found no login or a bad key,
 when it sends only its own error message and an error result) fails with its
 exit code and error printed beside the verdict and no assertion under it, which
-is how it reads apart from a hook verdict; a run that exited 0 with no events is
-inconclusive, which a wiring scenario reports as a warn; a run the timeout ended
-fails.
+is how it reads apart from a hook verdict; a run that exited 0 with no events, or
+whose assertions decided nothing, is inconclusive, which a wiring scenario
+retries once and then reports as a warn; a run the timeout ended fails.
+
+The run's exit code, the first that applies: `2` on a cost abort or an
+unmatched `--scenario`; `1` on any fail; `3` when a scenario decided nothing
+even on its retry, since such a run tested no hook (the report's warn is its
+text, not a pass); `0` only when every scenario passed. So a run exits `3` on a live CLI that answered but whose
+hook scenario decided nothing, and on each ground-truth inconclusive the
+`no_repeat_of` check reports (`SCHEMA.md`) that its retry does not decide. A
+retry is a second live run: about 0.42, 0.11 and 0.09 USD for BCE-001, BCE-002
+and BCE-003 on Claude Code 2.1.299 with claude-opus-5-5.
 
 ## When to ignore failures
 
 **Never silently.** A flake is a real signal that needs triage:
 
-- **Single flake** (one of N=5 reruns failed): warn, don't fail. The
-  scenario's `flakiness_handling.treat_inconclusive_as: warn` produces
-  exactly this behavior.
+- **Single flake** (a scenario decides nothing once): the scenario's
+  `flakiness_handling.retry_on_inconclusive: 1` runs it again, and a retry
+  that decides reports that verdict with a note that the first run decided
+  nothing; the first run's transcript is kept as `<id>.run1.json`. Count those
+  notes when you calibrate a scenario (below): the retry hides the flake from
+  the verdict, not from the report. One still undecided shows as a warn
+  (`treat_inconclusive_as: warn`) and the run exits `3`, which opens the
+  issue below: it tested no hook.
 - **Repeat flake** (N>=2 of N=5 reruns fail): fix the assertion (it's
   too tight) or fix the bug (it's a real regression). Don't loosen the
   scenario by removing assertions — that defeats the purpose.
@@ -139,17 +157,24 @@ auto-close. Investigate every issue before dismissing.
    following the schema in `SCHEMA.md`.
 
 3. **Calibrate the assertions.** Run the scenario locally **at least
-   5 times** in a row before committing. Record the verdicts:
+   5 times** in a row before committing, with the scenario's retry in place,
+   and count its runs that decided nothing from the JSON report (each
+   verdict's `undecided_runs`; `runs` is how many it took). A retry that
+   decided hides the flake from the verdict, not from that count:
 
    ```bash
    for i in {1..5}; do
-     python3 -m bench.end_to_end.run --scenario BCE-NNN-name
+     python3 -m bench.end_to_end.run --scenario BCE-NNN-name --json
    done
    ```
 
-   - 5 passes → assertions are well-calibrated.
+   - 5 passes, no undecided runs → assertions are well-calibrated.
    - 4 pass + 1 inconclusive → keep `retry_on_inconclusive: 1`,
-     `treat_inconclusive_as: warn`. Acceptable.
+     `treat_inconclusive_as: warn`. Acceptable. Know what it buys: a
+     first-run undecided rate `p` makes the scenario exit the run `3` on
+     between `p` squared (its two runs independent) and `p` (the same cause
+     undecides it twice) of runs; at 1 in 5, three such scenarios red
+     between about 11 and 49 percent of bench runs, each opening an issue.
    - 3 pass + 2 inconclusive → assertions are too tight. Loosen
      `must_contain_any` patterns; the agent's phrasing is noisier than
      you anticipated.
@@ -165,7 +190,9 @@ auto-close. Investigate every issue before dismissing.
 
 1. Pull the artifact transcript from the failing CI run:
    `Actions → end-to-end-bench → run → Artifacts → e2e-transcripts-...`
-2. Inspect `bench/end_to_end/runs/<timestamp>/<scenario_id>.json`. The
+2. Inspect `bench/end_to_end/runs/<timestamp>/<scenario_id>.json`, and for a
+   scenario that was retried each run the retry replaced,
+   `<scenario_id>.run1.json` (the verdict's `runs` says how many). The
    `events` list shows every assistant turn, tool_use, and system
    message. The `raw_stream_json` field is the unparsed Claude Code
    output for completeness.

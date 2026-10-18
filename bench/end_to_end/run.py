@@ -4,13 +4,18 @@ Enumerates scenarios under `bench/end_to_end/scenarios/`, runs each
 via `runner.run_scenario`, evaluates with `assertions.evaluate`, and
 produces a markdown or JSON report. Tracks cumulative cost; aborts if
 `--max-cost-usd` is exceeded. Saves raw transcripts to
-`bench/end_to_end/runs/<timestamp>/<scenario_id>.json` for replay.
+`bench/end_to_end/runs/<timestamp>/<scenario_id>.json` for replay, and each
+run a retry replaced beside it as `<scenario_id>.run<N>.json`.
 
 Exit codes:
-    0  every scenario `pass` or `warn`.
+    0  every scenario `pass` (on its first run or a retry).
     1  any scenario `fail` -- including a per-scenario orchestrator error
        (invalid scenario YAML, missing `claude` CLI) caught as a FAIL verdict.
     2  cumulative `--max-cost-usd` exceeded, or no scenarios matched `--scenario`.
+    3  a scenario decided nothing after its retries (`ScenarioVerdict.undecided`:
+       inconclusive before its `treat_inconclusive_as` mapping), so the run
+       tested no hook, whatever the report's text; a `fail` outranks it (1)
+       (DEF-5001).
 
 Cost discipline is the load-bearing constraint here. Scheduled CI
 (weekly + workflow_dispatch) is the only place this should run with
@@ -22,6 +27,7 @@ import argparse
 import json
 import sys
 import traceback
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,6 +46,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCENARIOS_DIR = REPO_ROOT / "bench" / "end_to_end" / "scenarios"
 RUNS_DIR = REPO_ROOT / "bench" / "end_to_end" / "runs"
 
+#: The exit code of a run in which a scenario decided nothing after its retries
+#: (the module docstring's table).
+EXIT_UNDECIDED = 3
+
 
 def _enumerate_scenarios(filter_id: str | None = None) -> list[Path]:
     out: list[Path] = []
@@ -51,9 +61,11 @@ def _enumerate_scenarios(filter_id: str | None = None) -> list[Path]:
     return out
 
 
-def _archive_transcript(run: ScenarioRun, run_dir: Path) -> Path:
+def _archive_transcript(run: ScenarioRun, run_dir: Path, suffix: str = "") -> Path:
+    """Save one run's transcript; ``suffix`` names a run a retry replaced
+    (``.run1``), so the run a flake triager needs is kept beside the last."""
     run_dir.mkdir(parents=True, exist_ok=True)
-    out = run_dir / f"{run.scenario_id}.json"
+    out = run_dir / f"{run.scenario_id}{suffix}.json"
     payload = {
         **run.to_dict(),
         "raw_stream_json": run.raw_stream_json,
@@ -72,8 +84,16 @@ def _run_with_retry(
     max_cost_usd: float | None,
     cumulative_cost: float,
     keep_work_dir: bool,
+    on_superseded: Callable[[ScenarioRun, int], object] | None = None,
 ) -> tuple[ScenarioRun, ScenarioVerdict, float]:
-    """Run a scenario with retry-on-inconclusive per scenario config."""
+    """Run a scenario, retried while it decided nothing, up to its
+    `flakiness_handling.retry_on_inconclusive`. The retry reads
+    `ScenarioVerdict.undecided`, never the overall the scenario's
+    `treat_inconclusive_as` rewrote for the report: read from the rewritten
+    warn, the wiring scenarios' retry never ran (DEF-5001). A retried run
+    leaves its trace: ``on_superseded`` is handed each run a retry replaced
+    with its number (the orchestrator archives it), the verdict's tokens are
+    the sum over the runs, and its notes say how many runs decided nothing."""
     scenario = load_scenario(scenario_path)
     flak = scenario.get("flakiness_handling") or {}
     retries = int(flak.get("retry_on_inconclusive", 0))
@@ -89,34 +109,57 @@ def _run_with_retry(
             # never releases, or an agent looping on a retry, shows up as exactly
             # this, and the cost cap sees only an estimate of it (no result
             # event, so no price: the messages' usage stands in).
-            verdict.overall = VERDICT_FAIL
+            verdict.overall, verdict.undecided = VERDICT_FAIL, False
             verdict.notes = (verdict.notes + "; " if verdict.notes else "") + "the run timed out"
         elif (run.transcript.unreached_model_error() is not None
               or (not run.transcript.events and (run.exit_code not in (0, None) or run.error))):
             # The CLI found no login or a bad key (its own API-error message and
             # an is_error result, no model turn), whatever its exit code, or
             # refused the argv or never started (no events, a failed exit): no
-            # hook was measured, and the wiring scenarios' inconclusive-to-warn
-            # mapping would show that green. It fails with the run's exit code
+            # hook was measured, and left to the evaluation it would read as a
+            # scenario that decided nothing, retried for a fault no retry can
+            # change. It fails with the run's exit code
             # and error beside it and no assertion under it, which is how a
-            # report tells it from a hook verdict.
-            verdict.overall = VERDICT_FAIL
+            # report tells it from a hook verdict. A run that failed is decided:
+            # retrying a refused argv or a missing login measures nothing new.
+            verdict.overall, verdict.undecided = VERDICT_FAIL, False
             verdict.notes = ((verdict.notes + "; " if verdict.notes else "")
                              + f"the run itself failed (exit {run.exit_code}) before any model turn")
         return run, verdict
 
     run, verdict = _do_run()
+    runs = 1
+    tokens = run.cost_tokens
     cumulative_cost += run.cost_usd_estimate
-    if max_cost_usd is not None and cumulative_cost > max_cost_usd:
-        return run, verdict, cumulative_cost
-
-    attempt = 0
-    while verdict.overall == VERDICT_INCONCLUSIVE and attempt < retries:
-        attempt += 1
+    unarchived: list[str] = []
+    while (verdict.undecided and runs <= retries
+           and not (max_cost_usd is not None and cumulative_cost > max_cost_usd)):
+        if on_superseded is not None:
+            try:
+                on_superseded(run, runs)
+            except OSError as exc:
+                # a side effect never blocks the measurement or drops its cost
+                unarchived.append(f"run {runs} not archived: {exc}")
         run, verdict = _do_run()
+        runs += 1
+        tokens += run.cost_tokens
         cumulative_cost += run.cost_usd_estimate
-        if max_cost_usd is not None and cumulative_cost > max_cost_usd:
-            break
+    verdict.cost_tokens = tokens
+    # every run a retry replaced decided nothing; the last did only if it is not undecided
+    verdict.runs, verdict.undecided_runs = runs, runs - 1 + int(verdict.undecided)
+    if unarchived:
+        verdict.notes = (verdict.notes + "; " if verdict.notes else "") + "; ".join(unarchived)
+    plural = "s" if runs != 1 else ""
+    if verdict.undecided:
+        # the scenario's own record; the run's exit code is main's to say (a
+        # fail elsewhere, or this scenario's own fail mapping, outranks it)
+        verdict.notes = ((verdict.notes + "; " if verdict.notes else "")
+                         + f"the scenario decided nothing on {runs} run{plural}, so this run tested no hook there")
+    elif runs > 1:
+        verdict.notes = ((verdict.notes + "; " if verdict.notes else "")
+                         + ("the first run decided nothing and was retried" if runs == 2 else
+                            f"the first {runs - 1} runs decided nothing and were retried")
+                         + f"; run {runs} decided")
 
     return run, verdict, cumulative_cost
 
@@ -129,6 +172,7 @@ def render_markdown(verdicts: list[ScenarioVerdict],
     fail_count = sum(1 for v in verdicts if v.overall == VERDICT_FAIL)
     warn_count = sum(1 for v in verdicts if v.overall == VERDICT_WARN)
     incon_count = sum(1 for v in verdicts if v.overall == VERDICT_INCONCLUSIVE)
+    undecided_count = sum(1 for v in verdicts if v.undecided)
     lines: list[str] = []
     lines.append("# End-to-End Bench Report")
     lines.append("")
@@ -136,6 +180,8 @@ def render_markdown(verdicts: list[ScenarioVerdict],
     lines.append(
         f"**Scenarios:** {len(verdicts)} "
         f"({pass_count} pass / {fail_count} fail / {warn_count} warn / {incon_count} inconclusive)"
+        + (f"; {undecided_count} decided nothing (after any retries), so this run tested no hook there"
+           if undecided_count else "")
     )
     lines.append(
         f"**Cost:** {total_cost_tokens} tokens (\u2248 ${total_cost_usd:.2f})"
@@ -203,8 +249,9 @@ def main(argv: list[str] | None = None) -> int:
                 max_cost_usd=args.max_cost_usd,
                 cumulative_cost=cumulative_cost,
                 keep_work_dir=args.keep_work_dir,
+                on_superseded=lambda superseded, n: _archive_transcript(superseded, run_dir, f".run{n}"),
             )
-            cumulative_tokens += run.cost_tokens
+            cumulative_tokens += verdict.cost_tokens  # every run's, a retried one's included
             _archive_transcript(run, run_dir)
             verdicts.append(verdict)
             if (
@@ -229,8 +276,13 @@ def main(argv: list[str] | None = None) -> int:
             ))
 
     elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+    rc = _exit_code(verdicts, aborted=aborted)
     if args.json:
+        # the exit code and the undecided scenarios lead the report: the issue the
+        # workflow opens on a red run is this JSON, and its verdicts read `warn`
         report = {
+            "exit_code": rc,
+            "undecided_scenarios": [v.scenario_id for v in verdicts if v.undecided],
             "started_at": started_at.isoformat(),
             "elapsed_seconds": round(elapsed, 2),
             "total_cost_usd": round(cumulative_cost, 4),
@@ -246,11 +298,22 @@ def main(argv: list[str] | None = None) -> int:
             total_cost_tokens=cumulative_tokens,
             elapsed_seconds=elapsed,
         ))
+    return rc
 
+
+def _exit_code(verdicts: list[ScenarioVerdict], *, aborted: bool) -> int:
+    """The module docstring's table, first match: 2 on an abort, 1 on any fail,
+    `EXIT_UNDECIDED` when a scenario decided nothing, 0 only when every scenario
+    passed. The last arm reads the verdicts too, not the flag alone: a verdict
+    built without `undecided` (its default is False) still never reads 0 unless
+    it passed."""
     if aborted:
         return 2
     if any(v.overall == VERDICT_FAIL for v in verdicts):
         return 1
+    if any(v.undecided for v in verdicts) or not all(v.overall == VERDICT_PASS for v in verdicts):
+        # one is enough: a run whose hook scenario decided nothing tested no hook
+        return EXIT_UNDECIDED
     return 0
 
 
