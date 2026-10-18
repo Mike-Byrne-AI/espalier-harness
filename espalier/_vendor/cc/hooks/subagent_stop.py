@@ -161,9 +161,10 @@ _RECORD_MAX_CHARS = 900
 # different cap from the relief excerpt above because the consumers differ: the
 # relief record is a 1 KiB flag one gate parses, the blueprint entry is a
 # fragment the next session's banner renders, where two agent leads share a
-# 6 KB blueprint budget with the operator's own pinned decisions
+# 3 KB blueprint budget with the operator's own pinned decisions
 # (session_start._MAX_BLUEPRINT_CONTEXT_BYTES; two leads at this cap take
-# about a fifth of it). The prefix plus a lead at this cap stays under the
+# about two fifths of it, and the budget shrinks further when the banner's
+# header is long). The prefix plus a lead at this cap stays under the
 # record CLI's 1000-char write-time advisory, which would otherwise print on
 # every stop. The full message is in the agent transcript the entry names as
 # evidence, and in the parent's tool-result stream until that is compacted.
