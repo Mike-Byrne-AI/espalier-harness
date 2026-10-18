@@ -14700,8 +14700,10 @@ class TestAdopterZonesOnTheOneLineChannels:
     Until 2026-10-16 all ten read "protected harness zone" or "harness file",
     and seven of them carried the relaunch as the remedy. Only the text moves:
     every case was a deny before and is one after. A harness zone keeps its own
-    text, and its precedence: a target that is, or encloses, a harness zone or
-    file is the harness's, however the adopter's zones overlap it."""
+    text, and its precedence: a target that is or sits in a harness zone or file
+    is the harness's, however the adopter's zones overlap it. A move or delete
+    of a directory that ENCLOSES harness ground is neither's: it has a text of
+    its own (DEF-5012, the class below)."""
 
     _TOML = 'protected_paths = ["data/", "keep/sub/"]\n'
 
@@ -14790,10 +14792,9 @@ class TestAdopterZonesOnTheOneLineChannels:
     @pytest.mark.parametrize(("toml", "command"), [
         ('protected_paths = [".claude/"]\n', "echo x > .claude/settings.json"),
         ('protected_paths = ["cc/"]\n', "echo x > CC/notes.md"),
-        ('protected_paths = ["tools/data/"]\n', "mv tools x"),
-        ('protected_paths = ["tools/"]\n', "mv tools x"),
-    ], ids=["harness-file-in-adopter-dir", "case-folded-harness-zone", "encloses-both", "adopter-zone-holds-harness"])
-    def test_a_target_that_is_or_encloses_harness_ground_keeps_the_harness_text(
+        ('protected_paths = ["tools/"]\n', "mv tools/cc x"),
+    ], ids=["harness-file-in-adopter-dir", "case-folded-harness-zone", "harness-zone-in-adopter-zone"])
+    def test_a_target_that_is_or_lies_in_harness_ground_keeps_the_harness_text(
         self, tmp_path, monkeypatch, toml, command,
     ):
         root = _zone_tree(tmp_path, monkeypatch, toml, ("tools/cc", "tools/data", ".claude", "cc"), ())
@@ -14850,6 +14851,160 @@ class TestAdopterZonesOnTheOneLineChannels:
         assert "Harness self-edits" not in reason, reason
 
 
+def _fed_operands(monkeypatch, wg, reader: str, pairs: list) -> None:
+    """Replace one shell's removed-or-relocated operand reader with ``pairs``, the
+    ``(effect, operand)`` it would have read, so a deny site is driven for an
+    effect without a command spelled for it; the reader's own tests pin what it
+    reads from a spelling."""
+    monkeypatch.setattr(wg._bash_patterns, reader, lambda _command: iter(pairs))
+
+
+class TestADirectoryHoldingHarnessGround:
+    """DEF-5012: a move or delete of a directory that ENCLOSES harness ground
+    (`tools` holding `tools/cc/`, `.github` holding the harness-guard workflow)
+    is refused with a text of its own, whether or not the adopter's
+    espalier.toml lists a zone there: it names the harness ground inside (and
+    the adopter's zone and its key, where one is there) and offers neither the
+    maintenance relaunch nor the relocate line, because following either takes
+    the harness's files with the directory. Until this lane every such shape
+    read the harness text with both remedies (driven 2026-10-17), and an
+    adopter told to open their zone was led back to it. Only the text moves:
+    each shape is a deny before and after. A write, link, destination or
+    permission change on the same directory changes no harness file and keeps
+    its zone's own text; a target that is or lies in harness ground keeps the
+    harness text and its relaunch, in a zone or none."""
+
+    _ZONE = 'protected_paths = ["tools/"]\n'
+
+    #: The shapes that take the directory's tree: (head, operand reader fed, call).
+    _TAKES = {
+        "bash-move": ("Move", "tools.", None, lambda wg, root: _zone_deny_reason(
+            wg.check_bash_for_protected_mutations, "mv tools x", root, root)),
+        "ps-move": ("Move", "tools.", None, lambda wg, root: _zone_deny_reason(
+            wg.check_powershell_for_protected_mutations, "Move-Item tools x", root, root)),
+        "mcp-move-source": ("Move", "tools (via mcp tool mcp__fs__move_file, field source).", None,
+                            lambda wg, root: _zone_deny_reason(
+                                wg.check_mcp, {"source": "tools", "destination": "x"}, "mcp__fs__move_file", root)),
+        "bash-delete": ("Delete", "tools.", "iter_removed_or_relocated_operands",
+                        lambda wg, root: _zone_deny_reason(wg.check_bash_for_protected_mutations, "true", root, root)),
+        "ps-delete": ("Delete", "tools.", "iter_ps_removed_or_relocated_operands",
+                      lambda wg, root: _zone_deny_reason(
+                          wg.check_powershell_for_protected_mutations, "Get-Date", root, root)),
+    }
+
+    #: The shapes that leave the tree where it is, in a zone that holds it.
+    _LEAVES = {
+        "bash-cp-destination": lambda wg, root: _zone_deny_reason(
+            wg.check_bash_for_protected_mutations, "cp a.txt tools", root, root),
+        "ps-copy-destination": lambda wg, root: _zone_deny_reason(
+            wg.check_powershell_for_protected_mutations, "Copy-Item a.txt tools", root, root),
+        "bash-symlink-name": lambda wg, root: _zone_deny_reason(
+            wg.check_bash_for_protected_symlinks, "ln -s ../x tools", root, root),
+        "mcp-move-destination": lambda wg, root: _zone_deny_reason(
+            wg.check_mcp, {"source": "a.txt", "destination": "tools"}, "mcp__fs__move_file", root),
+        "bash-permission": lambda wg, root: _zone_deny_reason(
+            wg.check_bash_for_protected_mutations, "chmod -R 700 tools", root, root),
+        "ps-permission": lambda wg, root: _zone_deny_reason(
+            wg.check_powershell_for_protected_mutations, "attrib +r tools", root, root),
+        "bash-hardlink": lambda wg, root: _zone_deny_reason(
+            wg.check_bash_for_protected_hardlinks, "ln tools b", root, root),
+    }
+
+    @staticmethod
+    def _wg():
+        _bash_patterns_module()
+        import write_guard as wg
+
+        return wg
+
+    def _takes(self, shape: str, root: Path, monkeypatch) -> str:
+        wg = self._wg()
+        _effect, _path, reader, drive = self._TAKES[shape]
+        if reader is not None:
+            _fed_operands(monkeypatch, wg, reader, [("delete", "tools")])
+        return drive(wg, root)
+
+    @staticmethod
+    def _offers_neither_remedy(reason: str) -> None:
+        import _maintenance_mode
+
+        assert "Don't: relaunch in maintenance mode for this, or do it from your own terminal instead" in reason
+        for remedy in ("Harness self-edits", _maintenance_mode.relaunch_hint(), "Relocate it from your own terminal",
+                       "This zone is YOURS", "harness zone blocked"):
+            assert remedy not in reason, (remedy, reason)
+
+    @pytest.mark.parametrize("shape", list(_TAKES))
+    def test_in_a_zone_each_shape_names_the_ground_and_the_zone(self, tmp_path, monkeypatch, shape):
+        root = _zone_tree(tmp_path, monkeypatch, self._ZONE, ("tools/cc/hooks", "tools/mine"), ())
+        reason = self._takes(shape, root, monkeypatch)
+        effect, path, _reader, _drive = self._TAKES[shape]
+        assert reason.startswith(
+            f"{effect} of protected zone blocked: {path} The harness's own `tools/cc/` is inside it, and your "
+            "espalier.toml names `tools/` under `protected_paths` (never touch)"
+        ), reason
+        self._offers_neither_remedy(reason)
+        assert "first narrow the `protected_paths` entry" in reason.split("Do:", 1)[1], reason
+
+    @pytest.mark.parametrize("shape", list(_TAKES))
+    def test_in_no_zone_each_shape_names_the_ground(self, tmp_path, monkeypatch, shape):
+        """The no-zone member: the adopter's own scripts in `tools/` beside
+        `tools/cc/`, no espalier.toml zone at all."""
+        root = _zone_tree(tmp_path, monkeypatch, None, ("tools/cc/hooks", "tools/mine"), ())
+        reason = self._takes(shape, root, monkeypatch)
+        effect, path, _reader, _drive = self._TAKES[shape]
+        assert reason.startswith(
+            f"{effect} of a directory holding a protected zone blocked: {path} The harness's own `tools/cc/` is "
+            "inside it"
+        ), reason
+        self._offers_neither_remedy(reason)
+        assert "move your own files out of `tools` one by one" in reason.split("Do:", 1)[1], reason
+
+    @pytest.mark.parametrize("shape", list(_LEAVES))
+    def test_a_shape_that_leaves_the_tree_reads_the_zones_own_text(self, tmp_path, monkeypatch, shape):
+        """A write, link, destination or permission change on the directory
+        changes no harness file, so it claims none (failure-mode review: a copy
+        into `tools/` read "would change the harness's files")."""
+        root = _zone_tree(tmp_path, monkeypatch, self._ZONE, ("tools/cc/hooks", "tools/mine"), ())
+        reason = self._LEAVES[shape](self._wg(), root)
+        assert "This zone is YOURS" in reason and "`tools/` under `protected_paths`" in reason, reason
+        assert "is inside it" not in reason and "Harness self-edits" not in reason, reason
+
+    @pytest.mark.parametrize("toml", [None, _ZONE], ids=["no-zone", "zone"])
+    @pytest.mark.parametrize("command", ["mv tools/cc x", "chmod -R 700 tools/cc", "echo x > tools/cc/hooks/a.py"])
+    def test_a_target_that_is_or_lies_in_harness_ground_keeps_the_relaunch(self, tmp_path, monkeypatch, toml, command):
+        root = _zone_tree(tmp_path, monkeypatch, toml, ("tools/cc/hooks", "tools/mine"), ())
+        reason = _zone_deny_reason(self._wg().check_bash_for_protected_mutations, command, root, root)
+        assert "protected harness zone" in reason and "Harness self-edits" in reason, reason
+        assert "is inside it" not in reason, reason
+
+    def test_a_zone_holding_no_harness_ground_keeps_its_own_text(self, tmp_path, monkeypatch):
+        root = _zone_tree(tmp_path, monkeypatch, self._ZONE, ("tools/cc/hooks", "tools/mine"), ())
+        reason = _zone_deny_reason(self._wg().check_bash_for_protected_mutations, "mv tools/mine x", root, root)
+        assert reason.startswith("Move of protected zone blocked: tools/mine. This zone is YOURS"), reason
+
+    @pytest.mark.parametrize(("toml", "files", "command", "text"), [
+        ('protected_paths = ["tools/data/"]\n', (), "mv tools x",
+         "Move of protected zone blocked: tools. The harness's own `tools/cc/` is inside it, and your espalier.toml "
+         "names `tools/data/` under `protected_paths`"),
+        ('protected_paths = ["tools/mine/"]\ngenerated_paths = ["tools/"]\n', (), "mv tools x",
+         "names `tools/mine/` under `protected_paths`"),
+        ('generated_paths = ["tools/"]\n', (), "mv tools x",
+         "names `tools/` under `generated_paths` (generated; regenerate, do not hand-edit)"),
+        ('protected_paths = [".github/"]\n', (".github/workflows/harness-guard.yml",), "mv .github x",
+         "Move of protected zone blocked: .github. The harness's own `.github/workflows/harness-guard.yml` is "
+         "inside it, and your espalier.toml names `.github/` under `protected_paths`"),
+        ('protected_paths = ["tools/cc/"]\n', (), "mv tools x",
+         "Move of a directory holding a protected zone blocked: tools. The harness's own `tools/cc/` is inside it"),
+    ], ids=["a-zone-beside-the-ground", "protected-before-generated", "a-generated-zone", "the-workflow-under-github",
+            "a-zone-that-is-the-ground-holds-nothing"])
+    def test_each_arrangement_names_the_zone_it_should(self, tmp_path, monkeypatch, toml, files, command, text):
+        root = _zone_tree(tmp_path, monkeypatch, toml, ("tools/cc/hooks", "tools/mine", "tools/data"), files)
+        reason = _zone_deny_reason(self._wg().check_bash_for_protected_mutations, command, root, root)
+        assert text in reason, reason
+        self._offers_neither_remedy(reason)
+        assert "names `tools/cc/` under" not in reason, reason
+
+
 def _unpaired_zone_denies(source: str) -> list[str]:
     """Each function whose ``_audit_deny`` names a harness one-line template
     with no ``_adopter_zone`` arm ahead of it: such a site gives an adopter's
@@ -14874,17 +15029,52 @@ def _unpaired_zone_denies(source: str) -> list[str]:
     return unpaired
 
 
+def _zone_text_read_outside_its_producer(source: str) -> list[str]:
+    """Each function other than ``_zone_reason`` that calls ``_zone_template``
+    or ``_zone_hint``: such a site renders the zone's own text for an operand
+    that takes harness ground, which ``_zone_reason`` alone turns away from
+    (DEF-5012)."""
+    import ast
+
+    outside = []
+    for fn in ast.walk(ast.parse(source)):
+        if not isinstance(fn, ast.FunctionDef) or fn.name == "_zone_reason":
+            continue
+        for call in ast.walk(fn):
+            if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                    and call.func.id in ("_zone_template", "_zone_hint") and call.func.id != fn.name):
+                outside.append(f"{fn.name}: {call.func.id}")
+    return outside
+
+
 class TestEveryOneLineZoneDenyHasAnAdopterArm:
     """The next harness one-liner is held to the lane's rule by construction:
     a site that denies with a ``PROTECTED_ZONE_*`` template must first ask
     ``_adopter_zone`` (DEF-995; failure-mode review, calibrated 2026-10-16:
-    six one-line sites on the lane, every one unpaired on 5fdb457)."""
+    six one-line sites on the lane, every one unpaired on 5fdb457), and the
+    zone's own text is rendered by ``_zone_reason`` alone (DEF-5012's
+    failure-mode review: a site rendering it directly would give an operand
+    that takes harness ground the text that row closed)."""
 
     def test_every_site_on_the_live_hook_is_paired(self):
         source = (HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8")
         assert _unpaired_zone_denies(source) == []
         # Bash write, Bash move or delete, the hardlink, two symlinks, MCP.
         assert source.count("if _adopter_zone(") >= 6
+
+    def test_the_zone_text_is_rendered_by_its_producer_alone(self):
+        source = (HOOKS_DIR / "write_guard.py").read_text(encoding="utf-8")
+        assert _zone_text_read_outside_its_producer(source) == []
+        assert "_zone_template(rel_path, root, mutation=mutation)" in source, "the producer's own read moved"
+
+    def test_a_planted_read_of_the_zone_text_is_named(self):
+        planted = (
+            "def _zone_reason(rel, root):\n"
+            "    return _zone_template(rel, root).format(hint=_zone_hint(rel, root))\n"
+            "def check_x(rel, root):\n"
+            "    return _audit_deny(root, 'e', _zone_template(rel, root).format(hint=_zone_hint(rel, root)))\n"
+        )
+        assert _zone_text_read_outside_its_producer(planted) == ["check_x: _zone_template", "check_x: _zone_hint"]
 
     def test_a_planted_site_without_its_arm_is_named(self):
         planted = (

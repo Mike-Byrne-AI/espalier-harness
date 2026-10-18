@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2026",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python3 -c \"import os,sys,io,tempfile,pathlib;sys.dont_write_bytecode=True;os.environ['ESPALIER_AUDIT_DIR']=tempfile.mkdtemp();sys.path.insert(0,'tools/cc/hooks');import write_guard as w;r=pathlib.Path(tempfile.mkdtemp()).resolve();(r/'tools'/'cc'/'hooks').mkdir(parents=True);o=io.StringIO();s=sys.stdout;sys.stdout=o;w.check_mcp({'source':'a.txt','destination':'tools'},'mcp__fs__move_file',r);sys.stdout=s;print('denied='+str(bool(o.getvalue().strip())))\"",
+ "open_value": "denied=True",
+ "why_not": null,
+ "row_sha": "0cc9a68128a8",
+ "text_sha": "af0559d4daf1",
+ "verified_2026_10_17": "OPEN (filed 2026-10-17; probe driven at filing)"
+}

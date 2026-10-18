@@ -1165,6 +1165,27 @@ class TestAdopterZoneHint:
             assert "espalier.toml" in do and "relaunch" not in do, name
             assert name in dr._OPERATOR_FACING_TEMPLATES
 
+    def test_a_directory_holding_harness_ground_refuses_both_remedies(self):
+        """DEF-5012's pair names the harness ground a moved or deleted directory
+        holds (and the adopter's zone, where one is there) and offers neither the
+        relaunch nor the relocate line: no ``{hint}`` slot (the relaunch rides
+        it), no relaunch spelled, no collision clause."""
+        import _denial_reasons as dr
+        slots = {
+            "HARNESS_GROUND_ENCLOSED": ("{effect}", "{path}", "{operand}", "{ground}"),
+            "ADOPTER_ZONE_ENCLOSING_HARNESS": ("{effect}", "{path}", "{operand}", "{ground}", "{zone}", "{key}",
+                                               "{kind_text}"),
+        }
+        for name, wanted in slots.items():
+            tmpl = getattr(dr, name)
+            for slot in wanted:
+                assert slot in tmpl, (name, slot)
+            assert "{hint}" not in tmpl and _maintenance_mode.relaunch_hint() not in tmpl, name
+            assert "Relocate it from your own terminal" not in tmpl, name
+            assert "Don't: relaunch in maintenance mode for this" in tmpl, name
+            assert "relaunch" not in tmpl.split("Do:", 1)[1], name
+            assert name in dr._OPERATOR_FACING_TEMPLATES
+
 
 class TestRelaunchSitesTellTheAgentToVerify:
     """Every text that tells the agent to relaunch in maintenance mode also tells
