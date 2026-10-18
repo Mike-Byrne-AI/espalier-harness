@@ -10,6 +10,11 @@ query arm whose rule was never committed -- only its results were. So on the
 day a ranking change is proposed (DEF-679), "evaluate it on the existing
 labelled set" names a harness that half exists.
 
+It measures the corpus the root it reads holds. A family gated off on this
+repository, the seeded reference docs that index only on an adopter's tree
+(`_recall.REFERENCE_FAMILY`), is not in these numbers: its ranking is
+witnessed by its own rows in tests/test_recall.py alone.
+
 This script is that harness. It is a REPORTER, not a gate: it exits 0 whatever
 the numbers say (1 only when there is no corpus to measure), and
 `tests/test_recall_eval.py` is where anything is asserted. Run it before and

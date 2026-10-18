@@ -15,6 +15,8 @@ description: >
 
 Recall accumulated project judgment on a topic: up to four candidates, two rankers, you pick. Each is a section of this repo's root `CLAUDE.md`, a `.claude/rules/` file, a document declared under `recall_sources` in `espalier.toml`, a `memory/` protocol, a `docs/SHARP_EDGES.md` entry, a `docs/STANDING_PRINCIPLES.md` principle (if one exists — that file is indexed wherever it is present, so your own standing principles are recallable too), or a pull-only canonical-shape pointer, presented alternating — each ranker's winner first where the two disagree, then the runners-up. This is the **pull** side of the recall engine (`tools/cc/hooks/_reinject.py` is the push side); `/recall` answers when you *ask*, instead of waiting for the harness to detect a trigger.
 
+A candidate can also be a `docs/sharp-edges/` note and, on an adopter's tree, a section of the seeded hooks or troubleshooting guide (`docs/HOOKS.md`, `docs/TROUBLESHOOTING.md`, while each keeps its seed stamp).
+
 The user will specify a topic. If they did not, ask which one.
 
 Run the IDF-ranked retriever with the topic as the query (per the repo's cross-platform `python`/`python3` convention):
