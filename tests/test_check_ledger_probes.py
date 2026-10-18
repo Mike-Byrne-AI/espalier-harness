@@ -579,17 +579,28 @@ class TestAnIdFilterNamesEveryIdThatMatchedNothing:
     pins in one call read a green covering one id as a check of both."""
 
     _PARTIAL = ["--id", "DEF-2", "--id", "DEF-9"]
+    _TYPO = "in no ledger row; check the spelling"
+    _STRUCK = "struck: its probe was retired at the strike; drop it from the batch"
+    _UNPROBED = "a live row with no roster entry; a run without --id names it and how to restore one"
+    _REFUSAL = ("refusing to report -- a report over the ids that matched would read "
+                "as a check of every id asked for")
 
-    def _point(self, mod, monkeypatch, tmp_path, *, stale: str | None = None) -> list[str]:
-        """The synthetic ledger's two live rows and a roster entry for each;
-        ``stale`` gives that id's entry a row pin its row does not have. Returns
-        the ids ``run_probe`` was handed, appended as the run drives them."""
+    @staticmethod
+    def _miss(rid: str, why: str) -> str:
+        return f"  {ascii(rid):<20} {why}"
+
+    def _point(self, mod, monkeypatch, tmp_path, *, stale: str | None = None,
+               extra: tuple[str, ...] = (), c1_rows: tuple[str, ...] | None = None) -> list[str]:
+        """The synthetic ledger (its two live rows, or ``c1_rows``) and a roster
+        entry for DEF-1, DEF-2 and each of ``extra``; ``stale`` gives that id's
+        entry a row pin its row does not have. Returns the ids ``run_probe`` was
+        handed, appended as the run drives them."""
         from tests.test_generate_ledger_regions import _ledger
 
         led = tmp_path / "FORWARD_LEDGER.md"
-        led.write_text(_ledger(), encoding="utf-8")
+        led.write_text(_ledger(**({"c1_rows": c1_rows} if c1_rows else {})), encoding="utf-8")
         entries = []
-        for i in ("DEF-1", "DEF-2"):
+        for i in ("DEF-1", "DEF-2", *extra):
             entry = {"id": i, "subject": None, "cmd": None, "open_value": None,
                      "why_not": "no local oracle"}
             if i == stale:
@@ -620,21 +631,65 @@ class TestAnIdFilterNamesEveryIdThatMatchedNothing:
 
         driven = self._point(mod, monkeypatch, tmp_path)
         assert mod.main(mode + self._PARTIAL) == 1
-        out = capsys.readouterr().out
-        assert "no probe matches --id DEF-9 (1 of the 2 ids asked for matched: DEF-2)" in out
-        assert "refusing to report" in out
-        assert "ledger probes re-derived" not in out and '"results"' not in out
+        assert capsys.readouterr().out.splitlines() == [
+            "no probe matches 1 of the 2 ids asked for (matched: DEF-2):",
+            self._miss("DEF-9", self._TYPO),
+            self._REFUSAL,
+        ]
         assert driven == []
 
-    def test_every_miss_is_named_in_sorted_order(self, tmp_path, monkeypatch, capsys):
+    def test_every_miss_and_every_match_is_named_in_sorted_order(self, tmp_path, monkeypatch, capsys):
+        """Five of each, so an unsorted set reads sorted by chance about once in
+        120 runs (two of each made the row a coin flip on the hash seed: code
+        review, driven 2026-10-18). Dies to: either list left unsorted, or the
+        count read from the ids asked for."""
+        import check_ledger_probes as mod
+
+        self._point(mod, monkeypatch, tmp_path, extra=("DEF-10", "DEF-200", "DEF-30"))
+        ids = ["DEF-90", "DEF-30", "DEF-4", "DEF-2", "DEF-9", "DEF-200", "DEF-5", "DEF-1",
+               "DEF-40", "DEF-10"]
+        assert mod.main([a for i in ids for a in ("--id", i)]) == 1
+        assert capsys.readouterr().out.splitlines() == [
+            "no probe matches 5 of the 10 ids asked for (matched: DEF-1, DEF-10, DEF-2, DEF-200, DEF-30):",
+            *(self._miss(i, self._TYPO) for i in ("DEF-4", "DEF-40", "DEF-5", "DEF-9", "DEF-90")),
+            self._REFUSAL,
+        ]
+
+    def test_each_miss_says_which_kind_it_is(self, tmp_path, monkeypatch, capsys):
+        """A struck row's probe was retired at its strike, a live row can lack a
+        roster entry, and anything else is not a ledger id: each needs a
+        different next step (failure-mode review, 2026-10-18). Dies to: the
+        struck or the unprobed reading dropped, which reads both as typos."""
+        import check_ledger_probes as mod
+
+        rows = ("| `DEF-1` | site | what | major |", "| `DEF-2` | site | what | minor |",
+                "| ~~`DEF-5`~~ | site | ✅ **CLOSED 2026-09-01 — landed** PRIOR TEXT: what | minor |",
+                "| `DEF-6` | site | what | minor |")
+        driven = self._point(mod, monkeypatch, tmp_path, c1_rows=rows)
+        assert mod.main(["--id", "DEF-6", "--id", "DEF-9", "--id", "DEF-1", "--id", "DEF-5"]) == 1
+        assert capsys.readouterr().out.splitlines() == [
+            "no probe matches 3 of the 4 ids asked for (matched: DEF-1):",
+            self._miss("DEF-5", self._STRUCK),
+            self._miss("DEF-6", self._UNPROBED),
+            self._miss("DEF-9", self._TYPO),
+            self._REFUSAL,
+        ]
+        assert driven == []
+
+    def test_a_miss_is_quoted_so_a_stray_space_or_an_empty_id_shows(self, tmp_path, monkeypatch, capsys):
+        """Printed bare, ``'DEF-2 '`` read as DEF-2 both missed and matched, and
+        an empty id printed as nothing (both reviews, driven 2026-10-18). Dies
+        to: the misses printed without their quotes."""
         import check_ledger_probes as mod
 
         self._point(mod, monkeypatch, tmp_path)
-        assert mod.main(["--id", "DEF-9", "--id", "DEF-1", "--id", "DEF-10"]) == 1
-        assert ("no probe matches --id DEF-10, DEF-9 (1 of the 3 ids asked for matched: DEF-1)"
-                in capsys.readouterr().out)
+        assert mod.main(["--id", "DEF-2", "--id", "DEF-2 ", "--id", ""]) == 1
+        assert capsys.readouterr().out.splitlines()[1:3] == [
+            self._miss("", self._TYPO), self._miss("DEF-2 ", self._TYPO)]
+        assert self._miss("DEF-2 ", self._TYPO).startswith("  'DEF-2 ' ")
 
     def test_a_full_match_reports_as_before(self, tmp_path, monkeypatch, capsys):
+        """Dies to: a refusal on a filter every id of which matched."""
         import check_ledger_probes as mod
 
         driven = self._point(mod, monkeypatch, tmp_path)
@@ -644,6 +699,7 @@ class TestAnIdFilterNamesEveryIdThatMatchedNothing:
         assert driven == ["DEF-1", "DEF-2"]
 
     def test_an_id_asked_for_twice_is_one_id_matched(self, tmp_path, monkeypatch, capsys):
+        """Dies to: the comparison counting the ids as typed rather than distinct."""
         import check_ledger_probes as mod
 
         self._point(mod, monkeypatch, tmp_path)
@@ -651,6 +707,7 @@ class TestAnIdFilterNamesEveryIdThatMatchedNothing:
         assert [r["id"] for r in json.loads(capsys.readouterr().out)["results"]] == ["DEF-2"]
 
     def test_a_filter_that_matches_nothing_keeps_its_refusal(self, tmp_path, monkeypatch, capsys):
+        """Dies to: the empty filter folded into the partial refusal's text."""
         import check_ledger_probes as mod
 
         self._point(mod, monkeypatch, tmp_path)
@@ -662,7 +719,8 @@ class TestAnIdFilterNamesEveryIdThatMatchedNothing:
 
     def test_the_stale_claim_axis_reads_the_ids_the_run_drives(self, tmp_path, monkeypatch, capsys):
         """The filter narrows the staleness axis with it, by design: a full
-        match on the other id does not report DEF-1's stale pin."""
+        match on the other id does not report DEF-1's stale pin. Dies to: the
+        axis read over the whole roster under a filter, or not read at all."""
         import check_ledger_probes as mod
 
         self._point(mod, monkeypatch, tmp_path, stale="DEF-1")
