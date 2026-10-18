@@ -920,13 +920,14 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
     last, and a strike (``probes_first``) retires its probe (the probe file,
     or the roster's entry) before it writes the struck row. A strike that dies
     part-way is finished by running it again. A FILING that dies between its
-    row and its probe is not: the row is there, so ``file`` refuses it as a
-    second member row, and ``repin`` finds no probe to re-pin -- no verb
-    finishes it yet (``DEF-4019``; the same state the file-and-roster pair
-    could always reach). The other orders were driven
-    on 2026-10-13: a filing's probe written first left an orphan probe file no
-    check named, and a strike's row written first left a struck row still
-    carrying a probe, which no verb could clear (failure-mode reviews). A probe
+    row and its probe is finished the same way: ``file`` run again with the
+    same arguments finds its own row with no probe and writes only the probe
+    (``file_row``; a row that differs from the one the arguments write is
+    refused by name, never overwritten), in both tree modes (DEF-4019). The
+    other orders were driven on 2026-10-13: a filing's probe written first
+    left an orphan probe file no check named, and a strike's row written
+    first left a struck row still carrying a probe, which no verb could clear
+    (failure-mode reviews). A probe
     file's removal always goes first: removing one never leaves a probe behind
     a row.
 
@@ -1107,6 +1108,74 @@ def _broken_row_file(ledger: Path, rid: str) -> str | None:
 
 def _row_file_text(section: str, member: str, index: "list[str] | tuple[str, ...]") -> str:
     return "\n".join([f"<!-- class: {section} -->", member, *index]) + "\n"
+
+
+def _cut_before_its_probe(rid: str, line: str, probe_file: Path, data: dict) -> bool:
+    """Whether ``line``, ``rid``'s member row, is what a filing cut off between
+    its row and its probe leaves (DEF-4019): live, of this one id, with no
+    probe file and no roster entry. A struck row has no probe by design (a
+    strike retires it), and a co-id row's probe can sit under its other id, so
+    neither is one."""
+    return (not _GEN._is_struck(line) and _GEN.cell_ids(line) == [rid] and not probe_file.exists()
+            and not any(isinstance(p, dict) and p.get("id") == rid for p in data["probes"]))
+
+
+def _how_it_differs(rid: str, there: str, new_line: str, new_index: str, section: str, *, as_files: bool,
+                    ledger: Path, file_text: str, row_file: Path) -> str:
+    """What sets the row a filing cut off before its probe left apart from the
+    one these arguments write, for the refusal; empty when it is that row."""
+    try:
+        old, new = _cells(there), _cells(new_line)
+    except RowShape as exc:
+        return f"its shape: {exc}"
+    diffs = [name for name, a, b in zip(("anchor", "text", "severity", "population", "audience"),
+                                        old[1:], new[1:]) if a != b]
+    if len(old) != len(new):
+        diffs.append("the population and audience cells")
+    home = _row_home(ledger, rid)
+    if as_files:
+        if home is None or home[0] != row_file:
+            diffs.append(f"where it lives (not {row_file.parent.name}/{row_file.name})")
+        elif not diffs and _FRAG.strict_text(row_file) != _row_file_text(section, new_line, [new_index]):
+            diffs.append("its class section or its index row")
+    else:
+        if home is not None:
+            diffs.append(f"where it lives ({home[0].parent.name}/{home[0].name}, not {ledger.name})")
+        index = _index_line(rid, file_text)
+        if index is None or index[1] != new_index:
+            diffs.append("its index row")
+        if _section_holding(file_text, rid) != section:
+            diffs.append("its class section")
+    return ", ".join(diffs)
+
+
+def _own_cut_filing(*, kind: str, anchor: str, text_file: Path, severity: str,
+                    ledger: Path, probes: Path) -> str | None:
+    """The id a filing with its id left out already filed, when it was cut
+    off between its row and its probe: the one live row of one ``kind`` id,
+    with no probe file and no roster entry, whose anchor, text and severity
+    are this filing's. Run again, such a filing would otherwise mint a second
+    id and file its row twice. None when no row is that, or more than one is
+    (the filing then mints as before); ``file_row`` still checks the whole row."""
+    try:
+        view = _FRAG.ledger_view_at(ledger)
+        body = text_file.read_text(encoding="utf-8").strip().replace("\n", " ")
+        roster = _FRAG.probe_roster_at(probes)
+    except (OSError, ValueError):  # strict decode: the filing reads them again and says what failed
+        return None
+    probed = {str(p.get("id")) for p in roster.data["probes"] if isinstance(p, dict)}
+    hits = []
+    for line in view.text.splitlines():
+        ids = _GEN.cell_ids(line)
+        if len(ids) != 1 or not ids[0].startswith(f"{kind}-") or ids[0] in probed or _GEN._is_struck(line):
+            continue
+        try:
+            cells = _cells(line)
+        except RowShape:
+            continue   # an index row, or a row no verb can round-trip
+        if cells[1:4] == [anchor, body, severity]:
+            hits.append(ids[0])
+    return hits[0] if len(hits) == 1 else None
 
 
 def _retire_probe_files(probes: Path, ids: list[str], pending: _Pending) -> int:
@@ -1369,15 +1438,27 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
         # table) would send every filing into the file without a word.
         print(f"ledger_row: note -- {how}; this row goes into {ledger.name}", file=sys.stderr)
     text = pending.view(file_text).text
-    if _member_line(rid, text, struck_ok=True) is not None:
-        print(f"ledger_row: {rid} already has a member row", file=sys.stderr)
-        return 2
     row_file = _FRAG.ledger_fragment_dir(ledger) / f"{rid}.md"
     probe_file = _FRAG.probe_fragment_dir(probes) / f"{rid}.json"
+    found = _member_line(rid, text, struck_ok=True)
+    # A filing cut off between its row and its probe left a live row of this
+    # one id and no probe anywhere (DEF-4019: ``_commit_both`` writes the row
+    # first). Run again with the same arguments, it is finished below: the
+    # probe is driven and written, and nothing else, once the row these
+    # arguments write is the very row there; any other row is refused.
+    finishing = False
+    if found is not None:
+        held = _load_probes(probes, ledger_text=file_text)
+        if held is None:
+            return 2
+        finishing = _cut_before_its_probe(rid, found[1], probe_file, held)
+    if found is not None and not finishing:
+        print(f"ledger_row: {rid} already has a member row", file=sys.stderr)
+        return 2
     # A probe file for this id is a second home whichever way the row goes
     # (an orphan left by a crash, or a tree whose setting went off): filing
     # over it would replace it, or give the id a second probe, unseen.
-    if probe_file.exists() or (as_files and row_file.exists()):
+    if probe_file.exists() or (as_files and row_file.exists() and not finishing):
         print(f"ledger_row: {rid} already has a file under {row_file.parent.name}/ or "
               f"{probe_file.parent.name}/ (a second home for one id); nothing filed", file=sys.stderr)
         return 2
@@ -1460,6 +1541,12 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
     tags = f" {population} | {audience} |" if mixed else ""
     new_line = f"| `{rid}` | {anchor} | {body} | {severity} |{tags}"
     new_index = f"| `{rid}` | {section} | {index_anchor or anchor} |"
+    if finishing and (differs := _how_it_differs(rid, found[1], new_line, new_index, section, as_files=as_files,
+                                                 ledger=ledger, file_text=file_text, row_file=row_file)):
+        print(f"ledger_row: {rid} has a live row and no probe (a filing cut off before its probe), but the row "
+              f"these arguments write differs from it in {differs}; nothing written: run the filing again with "
+              "the arguments it was filed with", file=sys.stderr)
+        return 2
     # the probe is driven BEFORE anything is written: a filed row's claim must
     # be re-derivable from the day it is filed
     if why_not is None:
@@ -1481,7 +1568,9 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
             print(f"ledger_row: the probe does not print its open value {open_value!r} "
                   f"({verdict}: {detail}); nothing filed", file=sys.stderr)
             return 2
-    if as_files:
+    if finishing:
+        new_text = file_text   # the row is there, as these arguments write it: only its probe is written
+    elif as_files:
         pending.rows[row_file] = _row_file_text(section, new_line, [new_index])
         new_text = file_text
     else:
@@ -1507,6 +1596,8 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
              **_pins(new_line),
              f"verified_{day.replace('-', '_')}": f"OPEN (filed {day}; probe driven at filing)"}
     if dry_run:
+        if finishing:
+            print(f"(finishing {rid}: its row is there, so only its probe would be written)")
         print(new_line); print(new_index); print(json.dumps(entry, indent=1))
         if as_files:
             print(f"(as {row_file.parent.name}/{row_file.name} and {probe_file.parent.name}/{probe_file.name})")
@@ -1520,7 +1611,10 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
         data["probes"].append(entry)
     rc = _commit_both(gen, ledger=ledger, probes=probes, new_text=new_text, data=data, what="filing",
                       pending=pending, write_roster=not as_files)
-    if rc == 0:
+    if rc == 0 and finishing:
+        print(f"finished {rid}: its row was there with no probe (a filing cut off before its probe); "
+              f"probe added (row_sha {entry['row_sha']}); regions converged")
+    elif rc == 0:
         where = (f"as {row_file.parent.name}/{row_file.name}" if as_files
                  else f"after {after}" if after else "as the first row")
         print(f"filed {rid} {where} in {section}; probe added (row_sha {entry['row_sha']}); "
@@ -1973,7 +2067,16 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
     # record lock, so two worktrees of one clone cannot both take it; a filing
     # that refuses gives it back.
     rid, held = args.rid, None
-    if rid is None:
+    # A filing cut off between its row and its probe, run again with its id
+    # left out, finishes the row it already filed rather than minting a
+    # second id for the same row (DEF-4019); that number stays reserved.
+    own = (_own_cut_filing(kind=args.kind, anchor=args.anchor, text_file=Path(args.text_file),
+                           severity=args.severity, ledger=ledger, probes=probes) if rid is None else None)
+    if own is not None:
+        rid = own
+        print(f"ledger_row: {rid} is this filing's own row, with no probe (a filing cut off before its "
+              "probe): finishing it, nothing minted", file=sys.stderr)
+    elif rid is None:
         got = _mint(args.kind, ledger=ledger, probes=probes, root=root, dry_run=args.dry_run)
         if got is None:
             return 2

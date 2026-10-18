@@ -890,10 +890,12 @@ def _run(args: argparse.Namespace) -> int:
                 print(f"    {rid:<18} probe pinned {stored}, row is now {actual}")
         if unprobed:
             print(f"\nNOTE: {len(unprobed)} live row(s) have no roster entry: {', '.join(unprobed)}")
-            print("    every row the ledger verbs file gets one (a probe or a why_not); a row")
-            print("    filed by hand, or an entry removed by a hand edit, leaves it out, and")
-            print("    nothing re-measures such a row. A lost entry comes back from git")
-            print("    (git log -p -- <the probes file>); a row filed by hand needs one written.")
+            print("    every row the ledger verbs file gets one (a probe or a why_not); a filing")
+            print("    cut off between its row and its probe, a row filed by hand, or an entry")
+            print("    removed by a hand edit leaves it out, and nothing re-measures such a row.")
+            print("    The same `ledger_row.py file` command run again finishes a cut-off filing,")
+            print("    writing only its probe (so does one whose arguments write a hand-filed row")
+            print("    exactly); a lost entry comes back from git (git log -p -- <the probes file>).")
 
     if args.strikes and (
         any(r["verdict"] == STRIKE_CANDIDATE and r["id"] not in retired for r in results)

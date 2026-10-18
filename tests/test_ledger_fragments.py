@@ -1002,6 +1002,162 @@ class TestAStrikeRetiresItsProbeFirst:
         assert "~~`DEF-1`~~" in t["ledger"].read_text(encoding="utf-8")
 
 
+def _filing(lr, t, rid: str | None = "DEF-3", *pre: str, **over: str) -> int:
+    """A filing with a probe command, in either tree mode; ``over`` replaces a
+    flag's value (``severity="minor"``), and ``pre`` goes before the verb."""
+    root = t["ledger"].parents[1]
+    (root / "site").write_text("", encoding="utf-8")
+    flags = {"section": "C1", "after": "DEF-2", "anchor": f"a/{rid or 'minted'}", "text_file": str(t["body"]),
+             "severity": "nit", "subject": "site", "probe_cmd": "echo open", "open_value": "open", **over}
+    return lr.main(_args(t, "--root", str(root), *pre, "file", *([rid] if rid else []),
+                         *[a for k, v in flags.items() for a in (f"--{k.replace('_', '-')}", v)]))
+
+
+class TestAFilingCutBeforeItsProbeIsFinishedByFilingAgain:
+    """A filing that dies between its row and its probe leaves a live row with
+    no probe, and no verb could finish it (DEF-4019): ``file`` refused the row
+    as a duplicate, ``repin`` found no probe, and the probe runner's note led
+    to a hand edit. The same filing run again now finds its own row and writes
+    only the probe; a row that differs from the one its arguments write is
+    refused by name, never overwritten. Each cut is a real one: the write
+    raises where a full disk would."""
+
+    _cut = staticmethod(TestAStrikeRetiresItsProbeFirst._dies_writing)
+    _dies = staticmethod(TestAStrikeRetiresItsProbeFirst._dies)
+
+    @staticmethod
+    def _cut_at_the_roster(monkeypatch):
+        """The legacy form's last write: the roster's sidecar moved over it."""
+        real = Path.replace
+
+        def replace(self, target):
+            if self.name.endswith(".pending"):
+                raise OSError(28, "No space left on device")
+            return real(self, target)
+
+        monkeypatch.setattr(Path, "replace", replace)
+        return lambda: monkeypatch.setattr(Path, "replace", real)
+
+    def _cut_row_file(self, lr, t, monkeypatch, *pre: str) -> bytes:
+        packs = t["ledger"].parent
+        heal = self._cut(lr, monkeypatch, lambda p: p.parent.name == "probes.d")
+        assert self._dies(lambda: _filing(lr, t, "DEF-3", *pre))
+        heal()
+        assert not (packs / "probes.d" / "DEF-3.json").exists(), "the cut left a probe"
+        return (packs / "ledger.d" / "DEF-3.md").read_bytes()
+
+    def test_a_row_file_cut_before_its_probe_file_is_finished_by_filing_again(
+            self, lr, tmp_path, monkeypatch, capsys):
+        """The row's shape on a tree that keeps rows as files. Mutation: a live
+        row with no probe refused as a second member row (the defect)."""
+        t = _opted_in_tree(tmp_path)
+        row = self._cut_row_file(lr, t, monkeypatch)
+        capsys.readouterr()
+        assert _filing(lr, t) == 0
+        assert "finished DEF-3" in capsys.readouterr().out
+        probe = json.loads((tmp_path / "task-packs" / "probes.d" / "DEF-3.json").read_text(encoding="utf-8"))
+        assert (probe["cmd"], probe["open_value"]) == ("echo open", "open")
+        assert (tmp_path / "task-packs" / "ledger.d" / "DEF-3.md").read_bytes() == row, "only the probe is written"
+
+    def test_a_ledger_row_cut_before_its_roster_entry_is_finished_by_filing_again(
+            self, lr, tmp_path, monkeypatch, capsys):
+        """The same in the ledger file: its row written, the roster not."""
+        t = _build_tree(tmp_path)
+        heal = self._cut_at_the_roster(monkeypatch)
+        assert self._dies(lambda: _filing(lr, t))
+        heal()
+        ledger = t["ledger"].read_bytes()
+        assert b"| `DEF-3` |" in ledger and "DEF-3" not in t["probes"].read_text(encoding="utf-8")
+        assert _filing(lr, t) == 0
+        assert "DEF-3" in {p["id"] for p in json.loads(t["probes"].read_text(encoding="utf-8"))["probes"]}
+        assert t["ledger"].read_bytes() == ledger, "only the roster entry is written"
+
+    def test_a_minted_filing_cut_before_its_probe_finishes_the_id_it_minted(
+            self, lr, tmp_path, monkeypatch, capsys):
+        """Run again with its id left out, the filing finds its own row.
+        Mutation: a second id minted, so the row is filed twice and the first
+        still has no probe."""
+        from tests.test_ledger_row import _BLOCKS, _mail_module, _seat_channel, _seat_tree
+
+        t = _seat_tree(tmp_path, blocks=f"ledger_fragments = true\n{_BLOCKS}")
+        monkeypatch.setattr(lr, "_MAIL", _seat_channel(_mail_module(), "win"))
+        heal = self._cut(lr, monkeypatch, lambda p: p.parent.name == "probes.d")
+        assert self._dies(lambda: _filing(lr, t, None))
+        heal()
+        packs = tmp_path / "task-packs"
+        assert sorted(p.name for p in (packs / "ledger.d").iterdir()) == ["DEF-2000.md"]
+        capsys.readouterr()
+        assert _filing(lr, t, None) == 0
+        assert "DEF-2000 is this filing's own row" in capsys.readouterr().err
+        assert sorted(p.name for p in (packs / "ledger.d").iterdir()) == ["DEF-2000.md"]
+        assert (packs / "probes.d" / "DEF-2000.json").is_file()
+
+    @pytest.mark.parametrize(("flag", "value", "named"), [
+        ("severity", "minor", "severity"),
+        ("anchor", "b/DEF-3", "anchor"),
+        ("index_anchor", "b/index", "its class section or its index row"),
+    ])
+    def test_a_rerun_that_would_write_another_row_is_refused_by_name(
+            self, lr, tmp_path, monkeypatch, capsys, flag, value, named):
+        """Mutations: the row there overwritten with the new one; the probe
+        written whatever the row holds."""
+        t = _opted_in_tree(tmp_path)
+        row = self._cut_row_file(lr, t, monkeypatch)
+        capsys.readouterr()
+        assert _filing(lr, t, **{flag: value}) == 2
+        err = capsys.readouterr().err
+        assert "a filing cut off before its probe" in err and f"differs from it in {named}" in err, err
+        assert (tmp_path / "task-packs" / "ledger.d" / "DEF-3.md").read_bytes() == row
+        assert not (tmp_path / "task-packs" / "probes.d" / "DEF-3.json").exists()
+
+    def test_a_rerun_with_another_text_is_refused_by_name(self, lr, tmp_path, monkeypatch, capsys):
+        t = _opted_in_tree(tmp_path)
+        row = self._cut_row_file(lr, t, monkeypatch)
+        other = tmp_path / "other.md"
+        other.write_text("**Another defect.** Who: someone else.", encoding="utf-8")
+        capsys.readouterr()
+        assert _filing(lr, t, text_file=str(other)) == 2
+        assert "differs from it in text" in capsys.readouterr().err
+        assert (tmp_path / "task-packs" / "ledger.d" / "DEF-3.md").read_bytes() == row
+
+    def test_the_finishing_filing_drives_its_probe_first(self, lr, tmp_path, monkeypatch, capsys):
+        """A filed row's claim is re-derived the day its probe is written.
+        Mutation: the finishing path writes the probe undriven."""
+        t = _opted_in_tree(tmp_path)
+        self._cut_row_file(lr, t, monkeypatch)
+        capsys.readouterr()
+        assert _filing(lr, t, open_value="shut") == 2
+        assert "does not print its open value" in capsys.readouterr().err
+        assert not (tmp_path / "task-packs" / "probes.d" / "DEF-3.json").exists()
+
+    def test_a_struck_row_is_no_cut_filing(self, lr, tmp_path, capsys):
+        """A strike retires its probe, so a struck row has none by design.
+        Mutation: a struck row read as a filing cut off before its probe."""
+        t = _opted_in_tree(tmp_path)
+        assert _filing(lr, t) == 0 and _strike(lr, t, "DEF-3") == 0
+        capsys.readouterr()
+        assert _filing(lr, t) == 2
+        assert "already has a member row" in capsys.readouterr().err
+
+    def test_a_dry_run_of_the_finishing_filing_writes_nothing(self, lr, tmp_path, monkeypatch, capsys):
+        t = _opted_in_tree(tmp_path)
+        self._cut_row_file(lr, t, monkeypatch)
+        capsys.readouterr()
+        assert _filing(lr, t, "DEF-3", "--dry-run") == 0
+        assert "(finishing DEF-3: its row is there" in capsys.readouterr().out
+        assert not (tmp_path / "task-packs" / "probes.d" / "DEF-3.json").exists()
+
+    def test_the_probe_runner_names_the_command_that_finishes_it(self, lr, chk, tmp_path, monkeypatch, capsys):
+        """Its note led to a hand edit of the roster, which the roster forbids."""
+        t = _opted_in_tree(tmp_path)
+        self._cut_row_file(lr, t, monkeypatch)
+        capsys.readouterr()
+        chk.main(["--root", str(tmp_path)])
+        out = capsys.readouterr().out
+        assert "NOTE: 1 live row(s) have no roster entry: DEF-3" in out
+        assert "The same `ledger_row.py file` command run again finishes a cut-off filing" in out
+
+
 class TestTheProbesVerb:
     """``_record_fragments.py probes``: the roster as its readers see it, the
     one spelling an instruction gives for reading every probe."""
