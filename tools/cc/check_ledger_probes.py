@@ -36,6 +36,7 @@ Usage:
     python3 tools/cc/check_ledger_probes.py            # report
     python3 tools/cc/check_ledger_probes.py --json     # machine-readable
     python3 tools/cc/check_ledger_probes.py --strikes  # exit 1 if any strike candidate
+    python3 tools/cc/check_ledger_probes.py --id ID    # only these (repeatable); refuses if any has no probe
     python3 tools/cc/check_ledger_probes.py --root DIR # another checkout
 """
 from __future__ import annotations
@@ -712,7 +713,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--strikes", action="store_true",
                     help="exit 1 when any row is a strike candidate OR carries a "
                          "stale claim (both need a human; neither is a verdict)")
-    ap.add_argument("--id", action="append", help="probe only these ids")
+    ap.add_argument("--id", action="append",
+                    help="probe only these ids (repeatable); the run refuses when any has no probe")
     ap.add_argument("--root", help="the checkout whose ledger to probe (default: found by "
                                    "walking up from the working directory)")
     args = ap.parse_args(argv)
@@ -833,6 +835,18 @@ def _run(args: argparse.Namespace) -> int:
         if not probes:
             print(f"no probe matches --id {', '.join(sorted(wanted))}")
             print("refusing to report -- an unmatched filter is not zero strikes")
+            return 1
+        # A PARTIAL miss is the same false green one id at a time: one real id
+        # and one typo printed the full match's report and exited 0 in every
+        # mode (driven 2026-10-18), read as a check of both. Refused before any
+        # probe runs, as the empty filter is.
+        matched = {p.get("id") for p in probes}
+        missed = sorted(wanted - matched)
+        if missed:
+            print(f"no probe matches --id {', '.join(missed)} ({len(matched)} of the "
+                  f"{len(wanted)} ids asked for matched: {', '.join(sorted(matched))})")
+            print("refusing to report -- a report over the ids that matched would read "
+                  "as a check of every id asked for")
             return 1
 
     results = []
