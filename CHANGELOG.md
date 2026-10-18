@@ -550,9 +550,9 @@ While pre-1.0, minor version bumps may include breaking changes.
   commands `go test ./...` before `cargo test` (the test-command provider and
   the foreign-manifest suppressor derive from the same rows). The
   package-root markers stay the six project manifests they were, held as a
-  filter on the table (a per-manifest flag the table does not carry; widening
-  them to a vendored `setup.py` would flip `monorepo`, so that is a candidate
-  row). Every
+  filter on the table (a per-manifest flag the table did not carry yet;
+  `setup.py` joined them later in this release, with vendored copies pruned
+  from the package-root walk). Every
   manifest and lockfile in the table at the repository root needs an
   execution plan (`go.mod`, `go.sum`, `Gemfile`, `bun.lockb`, `Pipfile`,
   `pom.xml` and `build.gradle` were exempt). `/scope-check` walks the

@@ -46,6 +46,7 @@ class Stack(NamedTuple):
     name: str
     languages: tuple[tuple[str, str], ...]              # (suffix, language)
     manifests: tuple[str, ...] = ()                     # go.mod, Gemfile, package.json
+    root_manifests: tuple[str, ...] = ()                # of those, the ones whose directory is a package root
     test_dirs: tuple[str, ...] = ()                     # the stack's test roots, each ending "/"
     lockfiles: tuple[str, ...] = ()                     # with no manager choice: go.sum, Cargo.lock
     package_managers: tuple[PackageManager, ...] = ()   # the first is the default
@@ -84,6 +85,7 @@ STACKS: tuple[Stack, ...] = (
         name="python",
         languages=((".py", "python"),),
         manifests=("pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile"),
+        root_manifests=("pyproject.toml", "setup.py"),
         test_dirs=("tests/", "test/"),
         test=("pytest", "-q"),
         lint_fallback=("ruff", "check", "--no-cache", "--extend-exclude", "tools/cc", "."),
@@ -106,6 +108,7 @@ STACKS: tuple[Stack, ...] = (
             (".astro", "astro"), (".vue", "vue"), (".svelte", "svelte"),
         ),
         manifests=("package.json",),
+        root_manifests=("package.json",),
         test_dirs=("test/", "tests/", "__tests__/", "spec/"),
         package_managers=(NPM, PNPM, YARN, BUN),
         dependency_dirs=("node_modules", "bower_components", "jspm_packages", ".yarn", ".pnpm-store"),
@@ -115,6 +118,7 @@ STACKS: tuple[Stack, ...] = (
         name="go",
         languages=((".go", "go"),),
         manifests=("go.mod",),
+        root_manifests=("go.mod",),
         # No test_dirs: a Go package's `_test.go` files sit beside its source,
         # which a root-anchored prefix cannot express.
         lockfiles=("go.sum",),
@@ -125,6 +129,7 @@ STACKS: tuple[Stack, ...] = (
         name="rust",
         languages=((".rs", "rust"),),
         manifests=("Cargo.toml",),
+        root_manifests=("Cargo.toml",),
         test_dirs=("tests/",),
         lockfiles=("Cargo.lock",),
         test=("cargo", "test"),
@@ -135,6 +140,7 @@ STACKS: tuple[Stack, ...] = (
         name="jvm",
         languages=((".java", "java"), (".kt", "kotlin"), (".scala", "scala")),
         manifests=("pom.xml", "build.gradle"),
+        root_manifests=("pom.xml", "build.gradle"),
     ),
     Stack(name="dotnet", languages=((".cs", "csharp"),)),
     Stack(name="c", languages=((".cpp", "cpp"), (".c", "c"), (".h", "c"))),
@@ -171,6 +177,17 @@ def suffix_to_language() -> dict[str, str]:
 def manifest_names() -> tuple[str, ...]:
     """Every row's manifests, in row order, each once."""
     return tuple(dict.fromkeys(name for row in STACKS for name in row.manifests))
+
+
+def package_root_manifests() -> tuple[str, ...]:
+    """Every row's ``root_manifests``, in row order, each once: the manifests
+    whose directory is a package root (``analyze.detect_package_roots``).
+    Python marks ``setup.py`` beside ``pyproject.toml``, since a multi-package
+    tree that predates ``pyproject.toml`` carries one per package (DEF-4016).
+    It never marks ``setup.cfg``, which flake8 and other tools keep on its own.
+    ``requirements.txt``, ``Pipfile`` and Ruby's ``Gemfile`` mark nothing
+    either: each of those is its own stack's call."""
+    return tuple(dict.fromkeys(name for row in STACKS for name in row.root_manifests))
 
 
 def package_managers() -> tuple[PackageManager, ...]:

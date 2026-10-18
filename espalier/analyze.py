@@ -69,6 +69,18 @@ _LOCAL_SKIP_PARTS: frozenset[str] = frozenset({
 DEFAULT_SKIP_PARTS: frozenset[str] = (
     _LOCAL_SKIP_PARTS | DEPENDENCY_TREE_DIRS | frozenset(_stack_table.output_dirs())
 )
+#: The directory names the package-root walk alone prunes (``detect_package_roots``).
+#: It prunes them on top of ``DEFAULT_SKIP_PARTS``, at any depth, by the same
+#: repo-relative parts. A directory by either name is read as vendored
+#: third-party code, even one of the adopter's own, so a manifest under it is
+#: no package root: a single project holding
+#: ``third_party/libA/pyproject.toml`` and ``vendor/libC/package.json`` read
+#: three roots and so a monorepo (DEF-4016). They stay out of
+#: ``DEFAULT_SKIP_PARTS`` because that set has three other readers (the file
+#: walk behind the language census and the large files, the docs walk, the
+#: top-level runtime directories), and joining it would move every adopter's
+#: fingerprint.
+VENDORED_PARTS: frozenset[str] = frozenset({"vendor", "third_party"})
 # Harness output, as POSIX-style repo-relative path prefixes, matched against
 # `_rel(path, repo_root)` by `is_harness_output` -- never by basename, so a
 # user's `tools/` is not excluded because its basename matches: only
@@ -149,19 +161,14 @@ SUSPICIOUS_CONTENT = [
 ENTRYPOINT_CANDIDATES = ["main.py", "app.py", "api.py", "manage.py", "server.py", "wsgi.py", "asgi.py"]
 RUNTIME_DIR_CANDIDATES = ["src", "lib", "frontend", "backend", "service", "services", "apps", "packages"]
 #: The manifests whose directory is a package root (``detect_package_roots``):
-#: the project manifest of the four stacks with a test runner and the JVM
-#: pair, the six names the markers have always been, held as a filter on the
-#: table's manifests rather than a free list. The table carries no
-#: per-manifest "marks a package root" flag, and widening the markers to
-#: ``setup.py``, ``Pipfile`` and ``Gemfile`` makes every vendored copy a root
-#: and flips ``monorepo`` on trees that have none (measured on a scratch tree
-#: with ``third_party/*/setup.py`` and a flake8 ``docs/setup.cfg``, lane B's
-#: review); that widening is a candidate row, not this lane's.
-# stack-table: ok purpose-scoped -- the package-root markers, a per-manifest flag the table does not carry; pinned equal to its intersection with the table
-_PACKAGE_ROOT_MARKERS = frozenset({
-    "pyproject.toml", "package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
-})
-MANIFEST_NAMES = frozenset(_stack_table.manifest_names()) & _PACKAGE_ROOT_MARKERS
+#: the stack table's ``root_manifests``. The project manifest of the four
+#: stacks with a test runner and the JVM pair were the markers until
+#: ``setup.py`` joined them: a multi-package tree built on ``setup.py`` read no
+#: root, and so no monorepo (DEF-4016). ``setup.cfg``, ``requirements.txt``,
+#: ``Pipfile`` and ``Gemfile`` mark none, and the walk prunes the vendored
+#: copies (``VENDORED_PARTS``), since a widening without that prune made every
+#: vendored copy a root.
+MANIFEST_NAMES = frozenset(_stack_table.package_root_manifests())
 
 #: Manifest name to the stack it belongs to, in the table's row order.
 _MANIFEST_OWNERS: dict[str, str] = _stack_table.manifest_owners()
@@ -218,14 +225,16 @@ def _path_allowed(path: Path, repo_root: Path, config: HarnessConfig) -> bool:
     return True
 
 
-def _iter_files(repo_root: Path, config: HarnessConfig | None = None):
+def _iter_files(repo_root: Path, config: HarnessConfig | None = None, prune: frozenset[str] = frozenset()):
     # The adopter's declared dependency directories are read BEFORE the
     # default configuration stands in: with no config passed (`doctor`'s
     # self-host probe, `detect_conventions`), the helper loads espalier.toml
     # itself; a loaded config is read as it is, so `--config` is honoured.
     # (The lane's review found the default standing in first, which left the
     # key unread on every call that passed none.)
-    skip_parts = DEFAULT_SKIP_PARTS | dependency_dirs_for(repo_root, config)
+    # ``prune`` is one caller's own addition (``VENDORED_PARTS``, read by the
+    # package-root walk alone), held to the same rules as the shared set.
+    skip_parts = DEFAULT_SKIP_PARTS | dependency_dirs_for(repo_root, config) | prune
     config = config or HarnessConfig()
     # Prune DURING the walk: safe_rglob never enters a directory named in
     # skip_dirs, never follows a directory symlink (a symlink LOOP cannot trap
@@ -280,7 +289,7 @@ def detect_package_systems(repo_root: Path) -> list[str]:
 
 def detect_package_roots(repo_root: Path, config: HarnessConfig | None = None) -> list[str]:
     roots: list[str] = []
-    for path in _iter_files(repo_root, config):
+    for path in _iter_files(repo_root, config, prune=VENDORED_PARTS):
         if path.name in MANIFEST_NAMES:
             roots.append(_rel(path.parent, repo_root))
     roots = sorted(set(root if root != "." else "/" for root in roots))

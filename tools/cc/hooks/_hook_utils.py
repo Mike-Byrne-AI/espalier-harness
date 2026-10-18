@@ -4004,8 +4004,8 @@ STACK_TEST_DIRS: dict[str, tuple[str, ...]] = (
 # that owns a test command, in the table's row order. Single owner for the
 # name list that reflect_trigger.CONFIG_FILES (as a set, plus settings.json)
 # and repo_name both consume. NOT analyze.MANIFEST_NAMES -- that is the
-# package-root marker set (every manifest, pom.xml and build.gradle among
-# them) and stays separate.
+# package-root marker set (the table's root_manifests, setup.py, pom.xml and
+# build.gradle among them) and stays separate.
 PROJECT_MANIFEST_NAMES = _STACK_TABLE[1] if _STACK_TABLE is not None else _PROJECT_MANIFEST_FALLBACK
 
 # MCP tool-name write-verb substrings. Single owner for the membership test that
