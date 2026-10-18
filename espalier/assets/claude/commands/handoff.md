@@ -477,10 +477,11 @@ reasoning over this note, so write it to prime that first-thoughts read.
 
 **If the file is absent:**
 <!-- espalier:self-host-only -->
-on the Espalier source repo, skip this step and leave it absent. Its GOAL is the
-operator's own: `scripts/check_handoff_landing.py` reads the file's presence as the
-tell that a checkout is the operator's tree, and `scripts/handoff_mechanics.py`
-prints which case applies. On any other repo:
+on the Espalier source repo outside the operator's tree, skip this step and leave
+it absent: its GOAL is the operator's own. The operator's tree is the one carrying
+the gitignored marker `cc/OPERATOR_TREE` (`memory/local-codename-arm.md`), never the
+goal doc, and `scripts/handoff_mechanics.py` prints which case applies. On the
+operator's tree, and on any other repo:
 <!-- /espalier:self-host-only -->
 unless the repo has opted out, the tree predates the seed or the file
 was deleted: tell the operator you are recreating it and that `goal_snapshot = false`

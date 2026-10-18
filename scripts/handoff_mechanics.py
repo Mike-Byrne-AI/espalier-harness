@@ -83,6 +83,27 @@ def linked_worktree_main(root: Path) -> Path | None:
         return None  # git could not answer: not a checkout, so nothing to refuse
 
 
+def goal_snapshot_off(root: Path) -> bool:
+    """``goal_snapshot = false`` at the top of ``espalier.toml``: the opt-out
+    handoff step 7 checks first. Read as the doctor probe in ``espalier/cli.py``
+    reads it (a top-level key, so a line above any ``[table]``)."""
+    try:
+        text = (root / "espalier.toml").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    head = re.split(r"(?m)^[ \t]*\[", text, maxsplit=1)[0]
+    return re.search(r"(?m)^[ \t]*goal_snapshot[ \t]*=[ \t]*false\b", head) is not None
+
+
+def operator_root(root: Path) -> Path | None:
+    """The operator's tree when ``root`` is one (it carries the operator marker,
+    or is a linked worktree of a checkout that does), else None. The rule has one
+    owner, ``scripts/record_snapshot.py::operator_root`` (DEF-1119), loaded from
+    THIS script's own directory, as ``linked_worktree_main`` is."""
+    owner = _load(_HERE.parent / "record_snapshot.py", "_record_snapshot_oracle_for_handoff")
+    return owner.operator_root(root)
+
+
 def memory_cap(root: Path) -> int:
     """The ESPALIER_MEMORY.md line cap, read from the hook that enforces it."""
     hook = _load(root / "tools" / "cc" / "hooks" / "post_write_check.py", "_pwc_for_handoff")
@@ -429,11 +450,13 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
                             capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
     ahead = subprocess.run(["git", "rev-list", "--count", f"origin/{branch}..{branch}"],
                            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    # On this source tree cc/GOAL.md is the operator's own, and its PRESENCE is
-    # the operator-tree tell scripts/check_handoff_landing.py reads: a second
-    # clone that creates one turns two of that script's notes into reds (the
-    # 2026-09-30 failure-mode review drove 0 -> 2). So the next step is
-    # conditional on the file, never an unconditional "write it".
+    # The goal doc carries the goal only. Which tree is the operator's is the
+    # operator marker's to say (DEF-1119; until 2026-10-18 the goal doc's
+    # PRESENCE said it, so a second clone that created one turned the landing
+    # check's notes into reds, 0 -> 2 in the 2026-09-30 failure-mode review). So
+    # the step is "write it" where a goal doc is kept or the tree is the
+    # operator's (unless goal_snapshot = false opts out), and "skip" elsewhere.
+    # The landing check run below prints whose tree this is first.
     goal_present = (root / "cc" / "GOAL.md").is_file()
     main_checkout = linked_worktree_main(root)
     if ahead.returncode == 0:
@@ -464,10 +487,16 @@ def after_memory_row(root: Path, *, message: str, also: list[str], trailers: lis
     elif goal_present:
         print("next: write cc/GOAL.md (notes first -- the banner opens on them), then "
               "cc/_working_summary.md (9 sections), then run after-goal")
+    elif operator_root(root) is not None and not goal_snapshot_off(root):
+        print("next: this is the operator's tree (its marker is here) and it keeps no "
+              "cc/GOAL.md: recreate it with the sections init seeds and ask the operator "
+              "for the goal, then cc/_working_summary.md (9 sections), then run after-goal")
+    elif operator_root(root) is not None:
+        print("next: skip step 7 -- goal_snapshot = false in espalier.toml; write "
+              "cc/_working_summary.md (9 sections), then run after-goal")
     else:
-        print("next: skip step 7 -- this checkout has no cc/GOAL.md, and on this "
-              "source tree its presence marks the operator's tree, so do NOT create "
-              "one; write cc/_working_summary.md (9 sections), then run after-goal")
+        print("next: skip step 7 -- this checkout keeps no cc/GOAL.md and is not the "
+              "operator's tree; write cc/_working_summary.md (9 sections), then run after-goal")
     return 0
 
 

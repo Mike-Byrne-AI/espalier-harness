@@ -89,6 +89,9 @@ cc/_cold/
 cc/finding_ledger.jsonl
 # Local goal/progress snapshot (curated; refreshed at /handoff, read at SessionStart)
 cc/GOAL.md
+# The operator's-tree marker: present only in the clone the operator works from,
+# read by scripts/record_snapshot.py::operator_root (DEF-1119)
+cc/OPERATOR_TREE
 docs/session-archive.md
 docs/blueprint-archive/
 .espalier-state/

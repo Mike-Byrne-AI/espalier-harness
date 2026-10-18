@@ -43,7 +43,7 @@ every term that lives only in the file: a fresh clone, a second worktree, a
 new machine, `git clean -fdx`. No test can tell "not armed" from "nothing to
 enforce". `scripts/check_handoff_landing.py::check_local_codename_arm` is the
 one place that can. On the operator's tree — the tell is the gitignored
-`cc/GOAL.md` the owed-list arm already keys on — an absent or comments-only
+marker `cc/OPERATOR_TREE` (below) — an absent or comments-only
 file is a red at `/commit` and `/handoff`, and the clean path prints
 `local arm: N pattern(s)` so a truncated file is visible. Anywhere else it is
 a printed note, because a contributor cannot recreate a file whose content is
@@ -53,6 +53,35 @@ the operator's tree is the operator's: the tell is read from its main checkout
 the tell), and the red there names the main checkout's file to copy in — the gate
 read the worktree's own, so a copy left in the main checkout arms nothing
 (DEF-1137, 2026-10-06).
+
+## Marking the operator's tree
+
+The tell is `cc/OPERATOR_TREE`: a gitignored, empty file whose one meaning is
+"this is the operator's tree", read through
+`scripts/record_snapshot.py::operator_root`. Two kinds of arm in
+`scripts/check_handoff_landing.py` read it:
+
+- **Operator arms** red only there: the record snapshot, the changelog records
+  on the record ref, and the candidate log's home. A seat's second clone has no
+  record to keep, so a red there is one it cannot clear.
+- **Seat arms** red there and on every seat, a checkout answering
+  `git config espalier.machine` (the mail channel's own read): this codename arm
+  and the hook wiring arm, because every seat pushes to the public repo. Only a
+  contributor's clone, with neither, reads notes.
+
+`scripts/handoff_mechanics.py`'s goal-doc step reads the marker too. Every
+landing run prints which it is first (`operator tree: <root>` or `not the
+operator's tree`), so a marker lost to `git clean -fdx` or a re-clone shows on a
+clean run. Create the marker once, in the MAIN checkout of the clone the
+operator works from (an empty file at that path is enough): `cc/` is a
+write_guard zone, so from the operator's own terminal or a maintenance-mode
+session. A linked worktree inherits its main checkout's, and a marker inside a
+worktree marks nothing. Never in another clone: not a contributor's, not a
+seat's second clone, not a reviewer's. It is never a record root, so a record
+restored onto another clone does not mark that clone. Until 2026-10-18 the tell
+was the goal doc `cc/GOAL.md`, so a second clone keeping a goal of its own read
+as the operator's and the operator arms red there on state that belongs to the
+first (DEF-1119); the goal doc now carries only the goal.
 
 ## Recreating it
 

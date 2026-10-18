@@ -612,10 +612,10 @@ class TestGoalSnapshotSeed:
         assert "cc/GOAL.md" in surface_contract.ADOPTER_RUNTIME_GENERATED
 
     def test_the_source_tree_is_never_seeded(self, tmp_path, monkeypatch):
-        """On the Espalier source tree GOAL is the operator's own, and
-        scripts/check_handoff_landing.py reads its presence as the tell that a
-        checkout is the operator's tree: a seeded skeleton on a second clone
-        turned two of its notes into reds (driven, 2026-09-30 review)."""
+        """On the Espalier source tree GOAL is the operator's own, so a seeded
+        skeleton on a contributor's or a seat's clone would be a goal nobody set
+        (until DEF-1119 its presence was also the landing check's operator-tree
+        tell, and a seeded one turned two notes into reds on a second clone)."""
         from espalier import surface_contract
         from espalier.cli import preview_managed_surface
 

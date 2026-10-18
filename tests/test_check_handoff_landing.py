@@ -25,6 +25,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -553,8 +554,8 @@ class TestTheLocalCodenameArmMustExist:
     """DEF-708: the codename gate's local pattern file is gitignored, so its
     absence is a silent green for every term that lives only there. This arm
     is the one place that can say "not armed" instead of "nothing to enforce".
-    A red only on the operator's tree (the owed arm's own tell: a goal doc at
-    cc/GOAL.md); a printed note elsewhere, because a contributor's clone cannot
+    A red only on the operator's tree (its marker, cc/OPERATOR_TREE: DEF-1119);
+    a printed note elsewhere, because a contributor's clone cannot
     recreate a file whose content is not theirs (the code-review lane drove
     the hard red on a public clone). Earn-the-red: absent and comments-only
     both report on the operator's tree; one pattern is clean and counted; a
@@ -563,7 +564,7 @@ class TestTheLocalCodenameArmMustExist:
     @staticmethod
     def _operator(root: Path) -> None:
         (root / "cc").mkdir(exist_ok=True)
-        (root / "cc" / "GOAL.md").write_text("# G\n", encoding="utf-8")
+        (root / "cc" / "OPERATOR_TREE").write_text("", encoding="utf-8")
 
     def test_an_absent_file_is_a_red_on_the_operator_tree(self, tmp_path):
         self._operator(tmp_path)
@@ -573,7 +574,7 @@ class TestTheLocalCodenameArmMustExist:
     def test_an_absent_file_is_a_note_elsewhere(self, tmp_path):
         notes: list[str] = []
         assert _load(root=tmp_path).check_local_codename_arm(notes) == []
-        assert len(notes) == 1 and "is absent" in notes[0] and "not the operator's" in notes[0]
+        assert len(notes) == 1 and "is absent" in notes[0] and "neither a seat" in notes[0]
 
     def test_a_comments_only_file_is_reported(self, tmp_path):
         self._operator(tmp_path)
@@ -1049,7 +1050,7 @@ class TestTheRecordSnapshotArm:
 
     def test_a_stale_snapshot_is_a_red_on_the_operators_tree(self, tmp_path, monkeypatch):
         (tmp_path / "cc").mkdir()
-        (tmp_path / "cc" / "GOAL.md").write_text("# goal\n", encoding="utf-8")
+        (tmp_path / "cc" / "OPERATOR_TREE").write_text("", encoding="utf-8")
         mod = _load(root=tmp_path)
         self._stub(mod, monkeypatch, 2, out=self._verdict(True))
         notes: list[str] = []
@@ -1071,7 +1072,7 @@ class TestTheRecordSnapshotArm:
         worktree, a clone without the gitignored exclusion file -- and read as
         staleness it was a red that tree could never clear."""
         (tmp_path / "cc").mkdir()
-        (tmp_path / "cc" / "GOAL.md").write_text("# goal\n", encoding="utf-8")  # the operator's tree
+        (tmp_path / "cc" / "OPERATOR_TREE").write_text("", encoding="utf-8")  # the operator's tree
         mod = _load(root=tmp_path)
         self._stub(mod, monkeypatch, 2, out="",
                    err="record_snapshot: exclusion pattern file not found: .espalier/record_exclude_patterns.txt\n")
@@ -1081,7 +1082,7 @@ class TestTheRecordSnapshotArm:
         assert "exclusion pattern file not found" in notes[0] and "stale" not in notes[0].lower(), notes
 
     def test_a_failing_script_is_a_red_everywhere(self, tmp_path, monkeypatch):
-        mod = _load(root=tmp_path)  # no goal doc: not the operator's tree
+        mod = _load(root=tmp_path)  # no marker: not the operator's tree
         self._stub(mod, monkeypatch, 5, err="Traceback: boom\n")
         notes: list[str] = []
         problems = mod.check_record_snapshot(notes)
@@ -1157,7 +1158,7 @@ class TestChangelogRecordsOnTheRecordRef:
     def test_operator_tree_reds_until_the_record_ref_carries_the_file(self, tmp_path):
         repo = self._repo(tmp_path)
         (repo / "cc").mkdir()
-        (repo / "cc" / "GOAL.md").write_text("# goal\n", encoding="utf-8")
+        (repo / "cc" / "OPERATOR_TREE").write_text("", encoding="utf-8")
         mod = _load(root=repo)
 
         notes: list[str] = []
@@ -1187,7 +1188,7 @@ class TestChangelogRecordsOnTheRecordRef:
         repo = tmp_path / "r"
         repo.mkdir()
         (repo / "cc").mkdir()
-        (repo / "cc" / "GOAL.md").write_text("# goal\n", encoding="utf-8")
+        (repo / "cc" / "OPERATOR_TREE").write_text("", encoding="utf-8")
         mod = _load(root=repo)
         notes: list[str] = []
         assert mod.check_changelog_records_on_record_branch(notes) == []
@@ -1352,9 +1353,9 @@ class TestMessageShape:
 
 
 class TestALinkedWorktreeOfTheOperatorsTreeIsTheOperators:
-    """DEF-1137: the operator-tree tell is the gitignored ``cc/GOAL.md``, and a
-    linked worktree (``git worktree add``; a Claude Code worktree) checks out
-    tracked files only -- so from one, the codename arm, the changelog-record
+    """DEF-1137: the operator-tree tell is a gitignored file (the goal doc then,
+    ``cc/OPERATOR_TREE`` since DEF-1119), and a linked worktree (``git worktree
+    add``; a Claude Code worktree) checks out tracked files only -- so from one, the codename arm, the changelog-record
     arm and the candidate-key arm read the operator's own session as a
     reviewer's clone and demote their reds to notes. One oracle,
     ``_operator_root``, lets the main checkout's tell count for its worktrees,
@@ -1381,7 +1382,7 @@ class TestALinkedWorktreeOfTheOperatorsTreeIsTheOperators:
         git("commit", "-qm", "a")
         if operator:
             (main / "cc").mkdir()
-            (main / "cc" / "GOAL.md").write_text("# G\n", encoding="utf-8")  # untracked, as the tell is
+            (main / "cc" / "OPERATOR_TREE").write_text("", encoding="utf-8")  # untracked, as the tell is
         wt = tmp_path / "wt"
         git("worktree", "add", "-q", str(wt))
         return main, wt
@@ -1398,7 +1399,7 @@ class TestALinkedWorktreeOfTheOperatorsTreeIsTheOperators:
         assert mod._operator_root() is None
         notes: list[str] = []
         assert mod.check_local_codename_arm(notes) == []
-        assert len(notes) == 1 and "not the operator's" in notes[0], notes
+        assert len(notes) == 1 and "neither a seat" in notes[0], notes
 
     def test_the_codename_arm_reds_from_the_worktree_and_says_what_to_copy(self, tmp_path):
         main, wt = self._repo(tmp_path, operator=True)
@@ -1418,10 +1419,13 @@ class TestALinkedWorktreeOfTheOperatorsTreeIsTheOperators:
         assert notes == ["local arm: 1 pattern(s) from .local-codenames.txt"]
 
     def test_the_owed_arm_says_where_the_goal_lives_from_the_worktree(self, tmp_path):
-        """The fourth tell-reader cannot grade a list it cannot read (its probes
-        run against this tree), so it says where the list lives instead of
-        falling silent; elsewhere an absent goal stays the quiet skip."""
+        """The owed arm cannot grade a list it cannot read (its probes run against
+        this tree), so where the main checkout keeps the goal doc it says where the
+        list lives instead of falling silent; elsewhere an absent goal stays the
+        quiet skip. Keyed on the goal doc, the list's own home, not the operator
+        marker (DEF-1119)."""
         main, wt = self._repo(tmp_path, operator=True)
+        (main / "cc" / "GOAL.md").write_text("# G\n", encoding="utf-8")  # the list's home, untracked
         notes: list[str] = []
         assert _load(root=wt).check_owed(notes) == []
         assert len(notes) == 1 and str(main.resolve()) in notes[0], notes
@@ -1490,7 +1494,7 @@ class TestTheHookWiringArm:
     @staticmethod
     def _operator(root: Path) -> None:
         (root / "cc").mkdir(exist_ok=True)
-        (root / "cc" / "GOAL.md").write_text("# G\n", encoding="utf-8")
+        (root / "cc" / "OPERATOR_TREE").write_text("", encoding="utf-8")
 
     @staticmethod
     def _gate(root: Path) -> None:
@@ -1514,7 +1518,7 @@ class TestTheHookWiringArm:
     def test_an_absent_settings_file_is_a_note_elsewhere(self, tmp_path):
         notes: list[str] = []
         assert _load(root=tmp_path).check_hook_wiring_arm(notes) == []
-        assert len(notes) == 1 and "is absent" in notes[0] and "not the operator's" in notes[0]
+        assert len(notes) == 1 and "is absent" in notes[0] and "neither a seat" in notes[0]
 
     def test_a_linked_worktree_says_what_to_copy_from_where(self, tmp_path):
         main, wt = TestALinkedWorktreeOfTheOperatorsTreeIsTheOperators._repo(tmp_path, operator=True)
@@ -1671,3 +1675,130 @@ class TestTheLanesOwnTreeKeepsTheSessionLogCap:
         rc = mod.main(["--skip-tests", "--skip-trailer", "--skip-shape", "--skip-owed", "--skip-keys",
                        "--skip-local-arm", "--skip-wiring-arm"])
         assert rc == 2 and "the arm ran" in capsys.readouterr().err
+
+
+class TestTheOperatorsTreeIsItsMarkersToSay:
+    """DEF-1119: the operator-tree tell was the goal doc, a file whose job is the
+    session goal, so a second clone keeping a goal of its own read as the
+    operator's and the arms red there on state that belongs to the first (the
+    2026-09-30 failure-mode review drove 0 to 2; driven again 2026-10-18 on a
+    scratch clone, 0 to 3 arms: codename, wiring, changelog). The tell is now a
+    gitignored marker whose one meaning is "this is the operator's tree", read
+    through ``record_snapshot.operator_root``. Earn-the-red: against the
+    pre-change script the goal-doc rows red, and the marker rows read soft."""
+
+    @staticmethod
+    def _goal(root: Path) -> None:
+        (root / "cc").mkdir(exist_ok=True)
+        (root / "cc" / "GOAL.md").write_text("# Goal\n", encoding="utf-8")
+
+    @staticmethod
+    def _marker(root: Path) -> None:
+        (root / "cc").mkdir(exist_ok=True)
+        (root / "cc" / "OPERATOR_TREE").write_text("", encoding="utf-8")
+
+    def test_a_goal_doc_alone_does_not_make_a_tree_the_operators(self, tmp_path):
+        self._goal(tmp_path)
+        mod = _load(root=tmp_path)
+        assert mod._operator_root() is None
+        notes: list[str] = []
+        assert mod.check_local_codename_arm(notes) == []
+        assert mod.check_hook_wiring_arm(notes) == []
+        assert len(notes) == 2 and all("neither a seat" in n for n in notes), notes
+
+    def test_the_marker_alone_makes_a_tree_the_operators(self, tmp_path):
+        self._marker(tmp_path)
+        mod = _load(root=tmp_path)
+        assert mod._operator_root() == tmp_path
+        problems = mod.check_local_codename_arm()
+        assert len(problems) == 1 and "is absent" in problems[0], problems
+        problems = mod.check_hook_wiring_arm()
+        assert len(problems) == 1 and "settings.json" in problems[0], problems
+
+    @pytest.mark.contract  # reads memory/local-codename-arm.md, a repository doc
+    def test_a_note_names_the_marker_and_where_the_operators_clone_is_marked(self, tmp_path):
+        notes: list[str] = []
+        assert _load(root=tmp_path).check_local_codename_arm(notes) == []
+        assert "cc/OPERATOR_TREE" in notes[0] and "espalier.machine" in notes[0], notes
+        mod = _load(root=tmp_path)
+        (tmp_path / "task-packs" / "Done").mkdir(parents=True)
+        (tmp_path / "task-packs" / "Done" / "CHANGELOG_archive_20990101.md").write_text("# r\n", encoding="utf-8")
+        notes = []
+        assert mod.check_changelog_records_on_record_branch(notes) == []
+        assert "nothing to do unless" in notes[0] and "memory/local-codename-arm.md" in notes[0], notes
+        doc = (REPO_ROOT / "memory" / "local-codename-arm.md").read_text(encoding="utf-8")
+        assert "cc/OPERATOR_TREE" in doc, "the note points at a doc that does not say how"
+
+    @staticmethod
+    def _git_repo(path: Path, *, seat: str | None = None) -> Path:
+        path.mkdir(parents=True, exist_ok=True)
+
+        def git(*argv: str) -> None:
+            subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                            "-c", "core.hooksPath=", "-c", "commit.gpgsign=false", *argv],
+                           cwd=path, capture_output=True, text=True, encoding="utf-8", check=True)
+
+        git("init", "-q")
+        (path / "a.txt").write_text("a\n", encoding="utf-8")
+        git("add", "a.txt")
+        git("commit", "-qm", "a")
+        if seat:
+            git("config", "espalier.machine", seat)
+        return path
+
+    def test_a_named_seat_reds_the_seat_arms_and_notes_the_operator_arms(self, tmp_path):
+        """A seat (a checkout answering git config espalier.machine) pushes to the
+        public repo, so the codename and wiring arms red there with no marker; the
+        changelog-record arm is operator state and stays a note (air's 6f60a8)."""
+        repo = self._git_repo(tmp_path / "seat", seat="t-seat")
+        mod = _load(root=repo)
+        assert mod._operator_root() is None and mod._seat_name() == "t-seat"
+        assert len(mod.check_local_codename_arm()) == 1
+        assert len(mod.check_hook_wiring_arm()) == 1
+        (repo / "task-packs" / "Done").mkdir(parents=True)
+        (repo / "task-packs" / "Done" / "CHANGELOG_archive_20990101.md").write_text("# r\n", encoding="utf-8")
+        notes: list[str] = []
+        assert mod.check_changelog_records_on_record_branch(notes) == []
+        assert any("not the operator's" in n for n in notes), notes
+        unnamed = _load(root=self._git_repo(tmp_path / "contributor"))
+        assert unnamed._seat_name() == "" and unnamed.check_local_codename_arm([]) == []
+
+    def test_a_marker_inside_a_worktree_marks_nothing_and_a_goal_doc_in_main_neither(self, tmp_path):
+        """Only the main checkout's marker counts: the record and after-goal run
+        there, and removing the worktree would take the only marker with it."""
+        main = self._git_repo(tmp_path / "main")
+        self._goal(main)
+        wt = tmp_path / "wt"
+        subprocess.run(["git", "worktree", "add", "-q", str(wt)], cwd=main, capture_output=True,
+                       text=True, encoding="utf-8", check=True)
+        self._marker(wt)
+        assert _load(root=wt)._operator_root() is None
+        assert _load(root=main)._operator_root() is None
+        self._marker(main)
+        assert _load(root=wt)._operator_root() == main.resolve()
+
+    def test_every_run_prints_whose_tree_this_is_first(self, tmp_path, capsys, monkeypatch):
+        mod = _load(root=tmp_path)
+        monkeypatch.setattr(mod, "check_session_log_cap", lambda notes=None: [])
+        mod.main(["--skip-tests", "--skip-trailer", "--skip-shape", "--skip-owed", "--skip-keys",
+                  "--skip-local-arm", "--skip-wiring-arm"])
+        first = capsys.readouterr().out.splitlines()[0]
+        assert "not the operator's tree" in first and "no seat name" in first, first
+        self._marker(tmp_path)
+        mod.main(["--skip-tests", "--skip-trailer", "--skip-shape", "--skip-owed", "--skip-keys",
+                  "--skip-local-arm", "--skip-wiring-arm"])
+        first = capsys.readouterr().out.splitlines()[0]
+        assert f"operator tree: {tmp_path}" in first, first
+
+    def test_the_marker_is_ignored_local_only_and_never_a_record_root(self):
+        rs_path = REPO_ROOT / "scripts" / "record_snapshot.py"
+        spec = importlib.util.spec_from_file_location("_chl_rs_marker", rs_path)
+        rs = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = rs
+        spec.loader.exec_module(rs)
+        marker = rs.OPERATOR_MARKER
+        parent = marker.rsplit("/", 1)[0]  # cc: the one directory a root could carry it under
+        assert not {marker, parent, parent + "/"} & set(rs.RECORD_ROOTS), rs.RECORD_ROOTS
+        assert marker in (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+        from espalier.surface_contract import is_local_only
+        assert is_local_only(marker)
