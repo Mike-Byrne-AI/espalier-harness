@@ -343,6 +343,435 @@ class TestToolsCcNoEspalierImports:
 
 
 # ---------------------------------------------------------------------------
+# 4b. The shipped roots never import tests/
+# ---------------------------------------------------------------------------
+
+#: Where an import of ``tests/`` must never come from, each a root that leaves
+#: this tree: ``tools/cc/`` is copied verbatim into an adopter's tree;
+#: ``espalier/`` is the wheel (built without ``tests/``), and its
+#: ``_vendor/selfcheck_tests/`` is the curated subset of ``tests/`` that
+#: ``espalier selfcheck`` runs on an adopter's machine; ``bench/`` and
+#: ``examples/`` ship in the sdist (``MANIFEST.in``); ``scripts/`` is this tree's
+#: own tooling, the hygiene twin. A root nested in another is walked as its own.
+#: Written by hand: the manifests are the oracle this list is not yet read from.
+_SHIPPED_ROOTS: tuple[str, ...] = (
+    "tools/cc", "espalier", "espalier/_vendor/selfcheck_tests", "scripts", "bench", "examples")
+#: The byte-mirrors under ``espalier/``: copies, read where their source lives.
+_SHIPPED_MIRRORS: tuple[str, ...] = ("espalier/assets/", "espalier/_vendor/cc/")
+#: The roots whose files run with their own folder first on ``sys.path`` (a
+#: script, or a test module pytest collects), so a module beside the importer
+#: answers a bare name before ``tests/`` could. A module of the ``espalier``
+#: package is a package member, and a bare name there is never resolved beside it.
+_SCRIPT_ROOTS: tuple[str, ...] = (
+    "tools/cc", "espalier/_vendor/selfcheck_tests", "scripts", "bench", "examples")
+#: The calls that import a module a literal string names, and the calls that
+#: load a module from a file path, each with the position and keyword of the
+#: argument that names it.
+_IMPORT_CALLS: dict[str, tuple[int, str]] = {
+    "import_module": (0, "name"), "__import__": (0, "name"), "run_module": (0, "mod_name")}
+_PATH_LOADS: dict[str, tuple[int, str]] = {
+    "spec_from_file_location": (1, "location"), "SourceFileLoader": (1, "path"), "run_path": (0, "path_name")}
+
+
+def _call_arg(call: ast.Call, slot: tuple[int, str]) -> "ast.expr | None":
+    index, keyword = slot
+    if len(call.args) > index:
+        return call.args[index]
+    return next((k.value for k in call.keywords if k.arg == keyword), None)
+
+
+def _literal(node: "ast.expr | None") -> "str | None":
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _names_tests_dir(node: "ast.expr | None") -> "str | None":
+    """The literal in ``node`` that puts a path in ``tests/``: a part named
+    ``tests`` in any string the expression holds (``"tests/x.py"``,
+    ``ROOT / "tests" / "x.py"``, ``os.path.join(ROOT, "tests", "x.py")``)."""
+    if node is None:
+        return None
+    found = sorted((n for n in ast.walk(node) if _literal(n) is not None),
+                   key=lambda n: (n.lineno, n.col_offset))  # ast.walk is breadth-first: put them in source order
+    parts = [_literal(n) or "" for n in found]
+    if any("tests" in re.split(r"[\\/]", s) for s in parts):
+        return "/".join(p.strip("/\\") for p in parts if p.strip("/\\"))
+    return None
+
+
+def _imports_in(tree: ast.Module) -> list[tuple[ast.AST, str]]:
+    """``(node, module)`` for each module ``tree`` imports by name, or loads by
+    a path, as written: an import statement; an absolute ``from`` import (a
+    relative one resolves inside its own package); a call of
+    ``import_module``, ``__import__`` or ``run_module`` (under any alias a
+    ``from`` import gave it) naming a literal module, with ``import_module``'s
+    ``package`` joined on for a relative name; and a path load
+    (``spec_from_file_location``, ``SourceFileLoader``, ``run_path``) whose
+    path names ``tests/``, called directly or through a function of the same
+    file that hands one of its own parameters to such a load. The module of a
+    path load is the path as written."""
+    alias: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in ("importlib", "importlib.util",
+                                                                  "importlib.machinery", "runpy"):
+            for a in node.names:
+                if a.name in _IMPORT_CALLS or a.name in _PATH_LOADS:
+                    alias[a.asname or a.name] = a.name
+
+    def called(call: ast.Call) -> str:
+        func = call.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        return alias.get(name, name) if isinstance(func, ast.Name) else name
+
+    wrappers: dict[str, int] = {}
+    for fn in ast.walk(tree):
+        if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            params = [a.arg for a in fn.args.posonlyargs + fn.args.args]
+            for call in (n for n in ast.walk(fn) if isinstance(n, ast.Call)):
+                slot = _PATH_LOADS.get(called(call))
+                arg = _call_arg(call, slot) if slot else None
+                used = {n.id for n in ast.walk(arg) if isinstance(n, ast.Name)} if arg is not None else set()
+                hit = next((i for i, p in enumerate(params) if p in used), None)
+                if hit is not None:
+                    wrappers[fn.name] = hit
+    found: list[tuple[ast.AST, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found += [(node, a.name) for a in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and not node.level:
+                found.append((node, node.module))
+        elif isinstance(node, ast.Call):
+            name = called(node)
+            if name in _IMPORT_CALLS:
+                module = _literal(_call_arg(node, _IMPORT_CALLS[name]))
+                package = _literal(_call_arg(node, (1, "package"))) if name == "import_module" else None
+                if module and module.startswith(".") and package:
+                    module = package + "." + module.lstrip(".")
+                if module:
+                    found.append((node, module))
+            elif name in _PATH_LOADS or name in wrappers:
+                slot = _PATH_LOADS.get(name) or (wrappers[name], "")
+                path = _names_tests_dir(_call_arg(node, slot))
+                if path:
+                    found.append((node, path))
+    return found
+
+
+def _guarded(tree: ast.Module) -> set[int]:
+    """The ids of the nodes inside a ``try`` body whose handlers catch an
+    ``ImportError`` (or anything wider): an import there fails closed."""
+    wide = {"ImportError", "ModuleNotFoundError", "Exception", "BaseException"}
+    inside: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try) and any(
+                h.type is None or {n.id for n in ast.walk(h.type) if isinstance(n, ast.Name)} & wide
+                for h in node.handlers):
+            inside |= {id(n) for stmt in node.body for n in ast.walk(stmt)}
+    return inside
+
+
+def _tests_imports(repo: Path) -> tuple[dict[tuple[str, str], list[tuple[int, bool]]], dict[str, int], list[str],
+                                        set[str]]:
+    """Every import of ``tests/`` from the shipped roots of the tree at
+    ``repo``, keyed by ``(file, imported module)`` with each ``(line, inside a
+    try that catches it)``; how many Python files each root gave the walk; the
+    files that would not parse; and the ``tests/`` names the walk asked about.
+
+    An import of ``tests/`` is the package itself (``import tests``,
+    ``import tests.x``, ``from tests[.x] import y``), a bare name that is one of
+    ``tests/``'s own top-level modules or folders holding Python (the suite
+    puts ``tests/`` on ``sys.path``, so a helper is spelled ``import
+    _live_tree``, and a folder there is a namespace package), or a path load of
+    a file in ``tests/``: each runs green here and dies where ``tests/`` is not
+    installed. A name the standard library owns is not one, nor, in a script
+    root, a name a module beside the importer answers first."""
+    tests_dir = repo / "tests"
+    names = {p.stem for p in checkout_glob(tests_dir, "*.py", root=repo)}
+    names |= {p.relative_to(tests_dir).parts[0] for p in checkout_rglob(tests_dir, "*.py", root=repo)
+              if len(p.relative_to(tests_dir).parts) > 1}
+    names = (names | {"tests"}) - set(sys.stdlib_module_names)
+    hits: dict[tuple[str, str], list[tuple[int, bool]]] = {}
+    read: dict[str, int] = {}
+    unparsed: list[str] = []
+    for top in _SHIPPED_ROOTS:
+        nested = tuple(r + "/" for r in _SHIPPED_ROOTS if r != top and r.startswith(top + "/"))
+        files = [p for p in checkout_rglob(repo / top, "*.py", root=repo)
+                 if not p.relative_to(repo).as_posix().startswith(_SHIPPED_MIRRORS + nested)]
+        read[top] = len(files)
+        beside: dict[Path, set[str]] = {}
+        if top in _SCRIPT_ROOTS:
+            for py_file in files:
+                beside.setdefault(py_file.parent, set()).add(py_file.stem)
+                if py_file.name == "__init__.py":
+                    beside.setdefault(py_file.parent.parent, set()).add(py_file.parent.name)
+        for py_file in files:
+            rel = py_file.relative_to(repo).as_posix()
+            try:
+                tree = ast.parse(py_file.read_bytes(), filename=rel)  # bytes: a BOM or a coding cookie is honoured
+            except SyntaxError as exc:
+                unparsed.append(f"{rel}:{exc.lineno}")
+                continue
+            here = beside.get(py_file.parent, set())
+            guarded = _guarded(tree)
+            for node, module in _imports_in(tree):
+                head = module.split(".")[0]
+                if module.startswith(("tests/", "tests\\")) or "/tests/" in module or (
+                        head in names and head not in here):
+                    hits.setdefault((rel, module), []).append((node.lineno, id(node) in guarded))
+    return hits, read, unparsed, names
+
+
+def _manifest_shipping(repo: Path, rel: str) -> list[str]:
+    """The ``MANIFEST.in`` lines that put ``rel`` in the sdist: an ``include``
+    naming it, or a ``graft`` or ``recursive-include`` of a folder above it."""
+    manifest = repo / "MANIFEST.in"
+    lines = manifest.read_text(encoding="utf-8").splitlines() if manifest.is_file() else []
+    shipping = []
+    for line in lines:
+        words = line.split("#", 1)[0].split()
+        if len(words) < 2:
+            continue
+        verb, target = words[0], words[1].rstrip("/")
+        if (verb == "include" and rel in words[1:]) or (
+                verb in ("graft", "recursive-include") and rel.startswith(target + "/")):
+            shipping.append(line.strip())
+    return shipping
+
+
+def _tests_import_problems(repo: Path, sanctioned: dict[tuple[str, str], tuple[str, "str | None"]]) -> list[str]:
+    """What :class:`TestShippedRootsDoNotImportTests` refuses in the tree at
+    ``repo``: an import of ``tests/`` that ``sanctioned`` does not name; a
+    sanctioned one outside a ``try`` that catches it; a sanctioned entry whose
+    import is gone, or whose shipping claim no longer holds (the quoted
+    ``MANIFEST.in`` line gone, or a file said to ship nowhere now shipped), so
+    the set cannot outlive its reason; a file that does not parse; and a walk
+    that read nothing."""
+    hits, read, unparsed, names = _tests_imports(repo)
+    problems = [f"{rel}:{lines[0][0]} imports {module}, which only tests/ holds"
+                for (rel, module), lines in sorted(hits.items()) if (rel, module) not in sanctioned]
+    for (rel, module), (_reason, shipped_by) in sorted(sanctioned.items()):
+        if (rel, module) not in hits:
+            problems.append(f"{rel} no longer imports {module}: its sanctioned entry is stale, drop it")
+            continue
+        problems += [f"{rel}:{line} imports {module} outside a try that catches its ImportError"
+                     for line, guarded in hits[(rel, module)] if not guarded]
+        target = module if module.startswith("tests/") else rel
+        shipping = _manifest_shipping(repo, target)
+        if shipped_by is not None and shipped_by not in shipping:
+            problems.append(f"{rel}: MANIFEST.in no longer says `{shipped_by}`, which its sanctioned reason quotes")
+        if shipped_by is None and shipping:
+            problems.append(f"{rel} is said to ship nowhere, and MANIFEST.in ships it: {shipping[0]}")
+    problems += [f"{where} does not parse, so the walk read nothing in it" for where in unparsed]
+    problems += [f"{top}/ gave the walk no Python file" for top, count in read.items() if not count]
+    if not names - {"tests"}:
+        problems.append("tests/ gave the walk no module name to ask about")
+    return problems
+
+
+class TestShippedRootsDoNotImportTests:
+    """DEF-4023, the missing twin of :class:`TestToolsCcNoEspalierImports`: no
+    shipped root imports ``tests/``, so a deployed tool, an engine module or a
+    selfcheck test that reaches for a test helper reds here instead of dying on
+    an adopter's tree, where ``tests/`` is not installed. :func:`_tests_imports`
+    says what counts.
+
+    What the walk cannot see: a module name built at run time, or handed to a
+    runner as text (``python -m``, a pytest argument); a path load through more
+    than one wrapper; a helper re-exported by another shipped module; an import
+    made by ``exec`` or by ``sys.path`` alone; Python outside a ``.py`` file (a
+    heredoc body in a shell script); a relative import, or a same-named module
+    beside a script, which resolve where the importer lives, never in
+    ``tests/`` (a ``tests``-named package placed beside a script would answer
+    for it unseen). Nor does it ask the other direction a wheel install breaks:
+    ``espalier`` importing ``scripts`` or ``bench``, which ``pythonpath = ["."]``
+    lets pass here."""
+
+    #: Keyed by ``(file, imported module)``, never by line, so an edit above the
+    #: import does not stale it. Each entry is ``(why it is not an adopter's
+    #: hurt, the MANIFEST.in line that ships what it loads, or None when its
+    #: file ships nowhere)``, and the claim is read back, never trusted.
+    _SANCTIONED: dict[tuple[str, str], tuple[str, "str | None"]] = {
+        ("scripts/final_release_matrix.py", "test_release_archive_filtering"): (
+            "the release matrix's artifact-cleanliness stage reads FORBIDDEN_SHAPES from the one home "
+            "docs/CONVENTIONS.md gives that regex denylist (\"Derive from canonical SoT, not from a "
+            "literal\": independent of the classifier by design), fails closed on ImportError, and this "
+            "script ships in neither the sdist nor the wheel", None),
+        ("bench/run_benchmark.py", "tests/_corpus_ref_resolver.py"): (
+            "the benchmark's BC-034 verifier loads the corpus-ref resolver by path inside a try, and the "
+            "sdist ships that one tests/ file beside the benchmark by name; the wheel ships neither",
+            "include tests/_corpus_ref_resolver.py"),
+    }
+
+    @staticmethod
+    def _plant(repo: Path) -> Path:
+        """A planted tree: a ``tests/`` holding a helper module, a helper
+        package, a namespace folder and the denylist's file, a ``MANIFEST.in``,
+        and one clean module in each shipped root."""
+        for rel in ("tests/_live_tree.py", "tests/test_release_archive_filtering.py",
+                    "tests/helpers/__init__.py", "tests/fixtures/data/make.py", "tools/cc/clean.py",
+                    "tools/cc/hooks/clean.py", "espalier/clean.py", "espalier/_vendor/selfcheck_tests/clean.py",
+                    "scripts/clean.py", "bench/clean.py", "examples/clean.py"):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text("import os\n", encoding="utf-8")
+        (repo / "MANIFEST.in").write_text("include bench/run_benchmark.py\ninclude tests/_corpus_ref_resolver.py\n",
+                                          encoding="utf-8")
+        return repo
+
+    def test_no_shipped_root_imports_tests(self):
+        problems = _tests_import_problems(REPO_ROOT, self._SANCTIONED)
+        assert not problems, (
+            "a shipped root imports tests/, which an adopter's tree and the wheel do not have "
+            "(an import that must stay goes in _SANCTIONED with its reason):\n" + "\n".join(problems)
+        )
+
+    @pytest.mark.parametrize("rel, source, expected", [
+        ("tools/cc/planted.py", "import tests._live_tree\n", "1 imports tests._live_tree"),
+        ("tools/cc/planted.py", "from tests import _live_tree\n", "1 imports tests"),
+        ("espalier/planted.py", "from tests._live_tree import checkout_glob\n", "1 imports tests._live_tree"),
+        ("scripts/planted.py", "import tests\n", "1 imports tests"),
+        ("tools/cc/planted.py", "import _live_tree as tree\n", "1 imports _live_tree"),
+        ("tools/cc/hooks/planted.py", "from _live_tree import checkout_glob\n", "1 imports _live_tree"),
+        ("scripts/planted.py", "from helpers import thing\n", "1 imports helpers"),
+        ("bench/planted.py", "import fixtures.data.make\n", "1 imports fixtures.data.make"),
+        ("espalier/planted.py", "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    import _live_tree\n",
+         "3 imports _live_tree"),
+        ("espalier/_vendor/selfcheck_tests/planted.py", "from _live_tree import checkout_rglob\n",
+         "1 imports _live_tree"),
+        ("examples/planted.py", "def f():\n    from tests import _live_tree\n", "2 imports tests"),
+        ("tools/cc/planted.py", "import importlib\nimportlib.import_module('tests._live_tree')\n",
+         "2 imports tests._live_tree"),
+        ("tools/cc/planted.py", "from importlib import import_module as load\nload(name='_live_tree')\n",
+         "2 imports _live_tree"),
+        ("scripts/planted.py", "import importlib\nimportlib.import_module('.helpers', package='tests')\n",
+         "2 imports tests.helpers"),
+        ("espalier/planted.py", "__import__('_live_tree')\n", "1 imports _live_tree"),
+        ("scripts/planted.py", "import runpy\nrunpy.run_module('tests.helpers')\n", "2 imports tests.helpers"),
+        ("bench/planted.py", "import runpy\nrunpy.run_path('tests/_live_tree.py')\n",
+         "2 imports tests/_live_tree.py"),
+        ("tools/cc/planted.py",
+         "import importlib.util\nfrom pathlib import Path\nROOT = Path(__file__).parent\n"
+         "spec = importlib.util.spec_from_file_location('t', ROOT / 'tests' / '_live_tree.py')\n",
+         "4 imports tests/_live_tree.py"),
+        ("bench/planted.py",
+         "import importlib.util\n\ndef _load(name, rel):\n"
+         "    return importlib.util.spec_from_file_location(name, rel)\n\n"
+         "_load('resolver', 'tests/_corpus_ref_resolver.py')\n",
+         "6 imports tests/_corpus_ref_resolver.py"),
+    ])
+    def test_a_planted_import_of_tests_is_named(self, tmp_path, rel, source, expected):
+        """Each shape, planted in a copy of the shipped roots, is refused by name,
+        at its line, as the module it names."""
+        repo = self._plant(tmp_path)
+        (repo / rel).write_text(source, encoding="utf-8")
+        assert _tests_import_problems(repo, {}) == [f"{rel}:{expected}, which only tests/ holds"]
+
+    def test_a_sanctioned_entry_whose_import_is_gone_is_named(self, tmp_path):
+        """The sanctioned set cannot rot: the release matrix's own file, copied
+        with its import and then without it."""
+        repo = self._plant(tmp_path)
+        rel, module = "scripts/final_release_matrix.py", "test_release_archive_filtering"
+        source = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        (repo / rel).write_text(source, encoding="utf-8")
+        entry = {(rel, module): self._SANCTIONED[(rel, module)]}
+        assert _tests_import_problems(repo, entry) == []
+        # The import repointed, not cut: it is a try body's one line.
+        gone = source.replace(f"from {module} import", "from os import").replace(f"import {module}", "import os")
+        assert gone != source, "the copy still names the import"
+        (repo / rel).write_text(gone, encoding="utf-8")
+        assert _tests_import_problems(repo, entry) == [
+            f"{rel} no longer imports {module}: its sanctioned entry is stale, drop it"]
+
+    @pytest.mark.parametrize("extra, expected", [
+        ("from test_release_archive_filtering import FORBIDDEN_SHAPES\n",
+         "imports test_release_archive_filtering outside a try that catches its ImportError"),
+        ("import _live_tree\n", "imports _live_tree, which only tests/ holds"),
+        ("try:\n    pass\nexcept ImportError:\n    from test_release_archive_filtering import FORBIDDEN_SHAPES\n",
+         "imports test_release_archive_filtering outside a try that catches its ImportError"),
+    ])
+    def test_a_second_import_in_a_sanctioned_file_is_named(self, tmp_path, extra, expected):
+        """An entry sanctions one guarded import, never its file: the same module
+        imported again outside a ``try`` (a handler's own body is a fallback, not
+        a guard), or another ``tests/`` module, still reds."""
+        repo = self._plant(tmp_path)
+        rel, module = "scripts/final_release_matrix.py", "test_release_archive_filtering"
+        source = (REPO_ROOT / rel).read_text(encoding="utf-8")
+        (repo / rel).write_text(source + extra, encoding="utf-8")
+        line = len((source + extra).splitlines())
+        entry = {(rel, module): self._SANCTIONED[(rel, module)]}
+        assert _tests_import_problems(repo, entry) == [f"{rel}:{line} {expected}"]
+
+    def test_a_shipping_claim_that_stops_holding_is_named(self, tmp_path):
+        """Both kinds of claim are read back: the quoted line leaves
+        ``MANIFEST.in``; a file said to ship nowhere is shipped."""
+        repo = self._plant(tmp_path)
+        bench, loaded = "bench/run_benchmark.py", "tests/_corpus_ref_resolver.py"
+        matrix, module = "scripts/final_release_matrix.py", "test_release_archive_filtering"
+        for rel in (bench, matrix):
+            (repo / rel).write_text((REPO_ROOT / rel).read_text(encoding="utf-8"), encoding="utf-8")
+        entries = {k: v for k, v in self._SANCTIONED.items() if k in ((bench, loaded), (matrix, module))}
+        assert _tests_import_problems(repo, entries) == []
+        (repo / "MANIFEST.in").write_text("include bench/run_benchmark.py\nrecursive-include scripts *.py\n",
+                                          encoding="utf-8")
+        assert _tests_import_problems(repo, entries) == [
+            f"{bench}: MANIFEST.in no longer says `include {loaded}`, which its sanctioned reason quotes",
+            f"{matrix} is said to ship nowhere, and MANIFEST.in ships it: recursive-include scripts *.py"]
+
+    @pytest.mark.parametrize("rel, source, beside", [
+        ("espalier/_vendor/cc/planted.py", "import _live_tree\n", None),
+        ("espalier/assets/planted.py", "import tests._live_tree\n", None),
+        ("tools/cc/planted.py", "import _live_tree\n", "tools/cc/_live_tree.py"),
+        ("scripts/planted.py", "import helpers\n", "scripts/helpers/__init__.py"),
+        ("espalier/_vendor/selfcheck_tests/planted.py", "import _live_tree\n",
+         "espalier/_vendor/selfcheck_tests/_live_tree.py"),
+        ("tools/cc/planted.py", "import json\n", "tests/json.py"),
+        ("tools/cc/hooks/planted.py", "from . import _live_tree\n", None),
+        ("espalier/planted.py", "from ._live_tree import checkout_glob\n", None),
+        ("scripts/planted.py", "import subprocess\nsubprocess.run(['pytest', 'tests/test_x.py'])\n", None),
+    ])
+    def test_what_resolves_elsewhere_is_not_an_import_of_tests(self, tmp_path, rel, source, beside):
+        """A mirror's copy (read at its source), a module beside a script, a
+        name the standard library owns, a relative import, and a path handed to
+        a runner as text."""
+        repo = self._plant(tmp_path)
+        if beside:
+            (repo / beside).parent.mkdir(parents=True, exist_ok=True)
+            (repo / beside).write_text("import os\n", encoding="utf-8")
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(source, encoding="utf-8")
+        assert _tests_import_problems(repo, {}) == []
+
+    def test_a_module_beside_an_engine_module_does_not_answer_for_it(self, tmp_path):
+        """A bare name in a package member resolves on ``sys.path``, not beside
+        it, so ``espalier/`` gets no sibling rule."""
+        repo = self._plant(tmp_path)
+        (repo / "espalier/_live_tree.py").write_text("import os\n", encoding="utf-8")
+        (repo / "espalier/planted.py").write_text("import _live_tree\n", encoding="utf-8")
+        assert _tests_import_problems(repo, {}) == [
+            "espalier/planted.py:1 imports _live_tree, which only tests/ holds"]
+
+    def test_a_file_with_a_bom_is_read_and_one_that_does_not_parse_is_named(self, tmp_path):
+        """A UTF-8 BOM (PowerShell 5.1's ``Set-Content -Encoding UTF8``) is read
+        as Python; a file that does not parse is named, never skipped."""
+        repo = self._plant(tmp_path)
+        (repo / "tools/cc/bom.py").write_bytes(b"\xef\xbb\xbfimport _live_tree\n")
+        (repo / "scripts/broken.py").write_text("def (:\n", encoding="utf-8")
+        assert _tests_import_problems(repo, {}) == [
+            "tools/cc/bom.py:1 imports _live_tree, which only tests/ holds",
+            "scripts/broken.py:1 does not parse, so the walk read nothing in it"]
+
+    def test_a_walk_that_reads_nothing_is_named(self, tmp_path):
+        """A root that gives the walk no file, and a ``tests/`` that gives it no
+        name to ask about, each read as a walk that judged nothing."""
+        repo = self._plant(tmp_path)
+        (repo / "scripts/clean.py").unlink()
+        for rel in ("tests/_live_tree.py", "tests/test_release_archive_filtering.py",
+                    "tests/helpers/__init__.py", "tests/fixtures/data/make.py"):
+            (repo / rel).unlink()
+        assert _tests_import_problems(repo, {}) == [
+            "scripts/ gave the walk no Python file", "tests/ gave the walk no module name to ask about"]
+
+
+# ---------------------------------------------------------------------------
 # 5. Path normalization — no bare str(Path(...)) in path comparisons
 # ---------------------------------------------------------------------------
 
