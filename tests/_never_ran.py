@@ -12,8 +12,11 @@ the line says so, and it says so too when the cap stopped the run before any
 worker finished collecting. A run stopped by ``-x`` or ``--maxfail`` gets the
 count with no reason, since pytest names that stop itself.
 
-The line is written after the short test summary, just above the final
-counts, so a reader of the run's last lines sees it: ``scripts/host_check.py``
+Where pytest printed no summary -- its internal error, which a controller
+whose channel to a dying worker raised inside execnet ends in (DEF-2025) --
+the session's finish writes the line instead, after the final counts.
+Otherwise the line is written after the short test summary, just above the
+final counts, so a reader of the run's last lines sees it: ``scripts/host_check.py``
 keeps a step's last 25 lines in its ``SUMMARY.md``, and every crash past the
 first is one more ``FAILED`` line in that summary. That placement needs a
 wrapper around the terminal reporter's own, so this is a plugin object that
@@ -72,12 +75,22 @@ class NeverRan:
     def __init__(self) -> None:
         self.selected = 0
         self.crashes = 0
+        self.summarised = False
 
-    def pytest_sessionfinish(self, session) -> None:
+    @pytest.hookimpl(hookwrapper=True, tryfirst=True)
+    def pytest_sessionfinish(self, session):
         """Selected after deselection; on the xdist controller, what the
         workers collected. The terminal reporter's own finish is a wrapper that
-        writes the summary after this has run."""
+        writes the summary after this has read it. Where that wrapper printed no
+        summary -- pytest's internal error, which a controller whose channel to a
+        dying worker raised inside execnet ends in (DEF-2025) -- the line is
+        written here instead, once: the summary marks that it ran."""
         self.selected = session.testscollected
+        yield
+        terminalreporter = session.config.pluginmanager.get_plugin("terminalreporter")
+        if (terminalreporter is not None and not self.summarised
+                and not getattr(terminalreporter, "no_summary", False)):
+            self._write(terminalreporter, session.config)
 
     @pytest.hookimpl(optionalhook=True)
     def pytest_testnodedown(self, node, error) -> None:
@@ -89,8 +102,14 @@ class NeverRan:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_terminal_summary(self, terminalreporter, config):
         """Outermost, so the line follows the terminal reporter's short test
-        summary. Nothing under an option that runs no test."""
+        summary."""
         yield
+        self.summarised = True
+        self._write(terminalreporter, config)
+
+    def _write(self, terminalreporter, config) -> None:
+        """The line, where one is owed. Nothing under an option that runs no
+        test."""
         if any(getattr(config.option, name, False) for name in NO_TEST_RUNS):
             return
         try:
