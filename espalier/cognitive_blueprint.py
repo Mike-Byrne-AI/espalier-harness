@@ -175,6 +175,7 @@ def _prune_blueprints(bp_dir: Path) -> None:
     self-host tree hit ~350 files). Keep the ``BLUEPRINT_RETENTION``
     most-recent per-session files; DEMOTE older ones into
     ``BLUEPRINT_COLD_DIR_NAME`` — never delete them, never ``latest.json``,
+    never the node ``latest.json`` names nor the node that one chains from,
     and never a file modified within ``BLUEPRINT_MIN_PRUNE_AGE_S`` (a
     concurrent session may still be writing it). Best-effort hygiene: any
     error is swallowed so a prune failure never breaks a blueprint write.
@@ -194,9 +195,29 @@ def _prune_blueprints(bp_dir: Path) -> None:
         if len(files) <= BLUEPRINT_RETENTION:
             return
         now = time.time()
+        # The chain head and the node it chains from are never demoted. A
+        # second SessionStart in this checkout (the VS Code usage panel's
+        # headless claude) starts a node chained from the RUNNING session's,
+        # still an empty stub past the age guard, and the tail took it (driven
+        # 2026-10-18). Both leave the candidates rather than the tail, so the
+        # working set stays at BLUEPRINT_RETENTION: an older node goes instead.
+        # A running session is spared only while its node is the head or the
+        # head's parent: a THIRD start still demotes it, until the session
+        # state is keyed by session.
+        try:
+            head = json.loads((bp_dir / "latest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError, RecursionError):  # as load_json_dict_safe catches
+            head = {}
+        if not isinstance(head, dict):
+            head = {}
+        spared = {f"{sid}.json" for sid in (head.get("session_id"), head.get("parent_session_id"))
+                  if isinstance(sid, str) and sid}
+        keep = max(0, BLUEPRINT_RETENTION - sum(1 for p in files if p.name in spared))
+        files = [p for p in files if p.name not in spared]
         # Substantive nodes (larger than an empty-session stub) sort first, so
-        # files[BLUEPRINT_RETENTION:] — the eviction tail — is stubs first, then
-        # only the oldest substantive nodes. Stubs are reclaimed before reasoning.
+        # files[keep:] — the eviction tail — is stubs first, then only the
+        # oldest substantive nodes. Stubs are reclaimed before reasoning, the
+        # spared head and parent apart: an older substantive node goes first.
         files.sort(
             key=lambda p: (p.stat().st_size > BLUEPRINT_STUB_MAX_BYTES, p.stat().st_mtime),
             reverse=True,
@@ -209,7 +230,7 @@ def _prune_blueprints(bp_dir: Path) -> None:
         # store, it does not destroy one. Revisit only with a reason that
         # survives that.
         cold_dir = bp_dir / BLUEPRINT_COLD_DIR_NAME
-        for p in files[BLUEPRINT_RETENTION:]:
+        for p in files[keep:]:
             try:
                 if now - p.stat().st_mtime < BLUEPRINT_MIN_PRUNE_AGE_S:
                     continue
