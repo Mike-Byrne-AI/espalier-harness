@@ -36,6 +36,7 @@ Usage:
     python3 tools/cc/check_ledger_probes.py            # report
     python3 tools/cc/check_ledger_probes.py --json     # machine-readable
     python3 tools/cc/check_ledger_probes.py --strikes  # exit 1 if any strike candidate
+    python3 tools/cc/check_ledger_probes.py --id ID    # only these (repeatable); refuses if any has no roster entry
     python3 tools/cc/check_ledger_probes.py --root DIR # another checkout
 """
 from __future__ import annotations
@@ -712,7 +713,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--strikes", action="store_true",
                     help="exit 1 when any row is a strike candidate OR carries a "
                          "stale claim (both need a human; neither is a verdict)")
-    ap.add_argument("--id", action="append", help="probe only these ids")
+    ap.add_argument("--id", action="append",
+                    help="probe only these ids (repeatable); the run refuses when any has no "
+                         "roster entry")
     ap.add_argument("--root", help="the checkout whose ledger to probe (default: found by "
                                    "walking up from the working directory)")
     args = ap.parse_args(argv)
@@ -764,6 +767,18 @@ def _empty_roster_verdict(what: str) -> "int | None":
     print("refusing to report -- zero probes is indistinguishable from zero strikes, "
           "which is the false green this runner exists to stop")
     return 1
+
+
+def _why_no_probe(rid: str, struck: set[str], unprobed: list[str]) -> str:
+    """Why ``rid``, asked for by ``--id``, has no roster entry, as the next step
+    for the person correcting the batch: a struck row's probe was retired at
+    its strike, a live row can lack an entry, and anything else is not one of
+    the ledger's ids."""
+    if rid in struck:
+        return "struck: its probe was retired at the strike; drop it from the batch"
+    if rid in unprobed:
+        return "a live row with no roster entry; a run without --id names it and how to restore one"
+    return "in no ledger row; check the spelling"
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -833,6 +848,24 @@ def _run(args: argparse.Namespace) -> int:
         if not probes:
             print(f"no probe matches --id {', '.join(sorted(wanted))}")
             print("refusing to report -- an unmatched filter is not zero strikes")
+            return 1
+        # A PARTIAL miss is the same false green one id at a time: one real id
+        # and one typo printed the full match's report and exited 0 in every
+        # mode (driven 2026-10-18), read as a check of both. Refused before any
+        # probe runs, as the empty filter is.
+        matched = {p.get("id") for p in probes}
+        missed = sorted(wanted - matched)
+        if missed:
+            # Each miss is printed with its quotes (a trailing space or an empty
+            # id shows) and says which kind it is, so the batch is corrected
+            # without a second lookup (failure-mode review, 2026-10-18).
+            struck = retired_ids([{"id": rid} for rid in missed])
+            print(f"no probe matches {len(missed)} of the {len(wanted)} ids asked for "
+                  f"(matched: {', '.join(sorted(matched))}):")
+            for rid in missed:
+                print(f"  {rid!a:<20} {_why_no_probe(rid, struck, unprobed)}")
+            print("refusing to report -- a report over the ids that matched would read "
+                  "as a check of every id asked for")
             return 1
 
     results = []
