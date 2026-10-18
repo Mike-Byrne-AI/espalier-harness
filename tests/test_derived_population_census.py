@@ -295,7 +295,7 @@ _SCRIPT_REL = SCRIPT.relative_to(REPO_ROOT).as_posix()
 def _git_run(*args: str) -> "subprocess.CompletedProcess[str] | None":
     try:
         return subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=60, env=_git_env())
+                              encoding="utf-8", errors="replace", timeout=30, env=_git_env())
     except (OSError, subprocess.TimeoutExpired):
         return None
 
