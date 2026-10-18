@@ -20,6 +20,7 @@ import pytest
 
 from tests._surface_expected import CONTRACT_CEILINGS, PLUGIN_OWNED_MARKERS
 from tests._live_tree import checkout_glob, checkout_rglob
+from tests._pytest_ini import declared_pytest_timeout, pytest_ini_section
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -703,31 +704,21 @@ def test_every_subprocess_test_is_slow_or_exempt():
 # timeout above the global ceiling has told us it is heavy, in its own source,
 # with no measurement required.
 
-_PYTEST_INI_SECTION = "[tool.pytest.ini_options]"
-
-
 def _pytest_ini_section() -> str:
-    """The text of pyproject.toml's ``[tool.pytest.ini_options]`` table."""
-    text = PYPROJECT.read_text(encoding="utf-8")
-    start = text.find(_PYTEST_INI_SECTION)
-    assert start >= 0, f"pyproject.toml has no {_PYTEST_INI_SECTION}"
-    nxt = text.find("\n[tool", start + len(_PYTEST_INI_SECTION))
-    return text[start:] if nxt < 0 else text[start:nxt]
+    """The text of pyproject.toml's ``[tool.pytest.ini_options]`` table, from the
+    one reader the suite's timing tests share (`tests/_pytest_ini.py`)."""
+    return pytest_ini_section()
 
 
 def _global_pytest_timeout() -> int:
     """pyproject.toml's `[tool.pytest.ini_options] timeout`, READ not copied.
 
     Derived rather than hard-coded so raising the global ceiling moves the
-    contract with it instead of leaving a stale literal behind.
+    contract with it instead of leaving a stale literal behind. The read is the
+    shared one (`tests/_pytest_ini.py`), which the ReDoS file's timeout pin and
+    its walker row's time budget read too.
     """
-    section = _pytest_ini_section()
-    match = re.search(r"^\s*timeout\s*=\s*(\d+)\s*$", section, re.MULTILINE)
-    assert match, (
-        f"pyproject.toml {_PYTEST_INI_SECTION} declares no `timeout` -- the "
-        "self-declared-heavy contract below has no ceiling to compare against"
-    )
-    return int(match.group(1))
+    return declared_pytest_timeout()
 
 
 def _mark_name(node: ast.expr) -> str | None:

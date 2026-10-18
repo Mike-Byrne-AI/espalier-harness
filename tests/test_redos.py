@@ -47,6 +47,7 @@ from typing import Literal
 
 import pytest
 from tests._live_tree import checkout_glob
+from tests._pytest_ini import declared_pytest_timeout
 
 sys.path.insert(
     0, str(Path(__file__).resolve().parent.parent / "tools" / "cc" / "hooks")
@@ -232,7 +233,9 @@ _CHAIN_CEILING_MS = 10 * _CHAIN_FLOOR_MS
 # that floor from then, and since 2026-09-24 ten times the tier's slowest row
 # -- still well under the minutes a quadratic walker took before the fix,
 # which is all it has to catch: the scaling arm is the detector for SHAPE
-# (DEF-817), and this ceiling only catches a runaway.
+# (DEF-817), and this ceiling only catches a runaway. Coupled to the scaling
+# row's time budget (DEF-5023, `_walker_row_budget_s`): a raised ceiling leaves
+# that row less time in which a call may start, so re-read its pin with it.
 _WALKER_FLOOR_MS = 880
 _WALKER_CEILING_MS = 10 * _WALKER_FLOOR_MS
 
@@ -1475,10 +1478,10 @@ def test_the_ps_body_scaling_arm_cannot_outlast_the_per_test_timeout(monkeypatch
     review drove a third window behind the under-floor return past every other
     row): exactly two window calls, no loop, and no call of the body outside a
     window, which is how an unalarmed warm call would read. The timeout is
-    derived from pyproject.toml, never copied."""
-    text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
-    match = re.search(r"^\s*timeout\s*=\s*(\d+)\s*$", text, re.MULTILINE)
-    assert match, "pyproject.toml declares no pytest timeout"
+    derived from pyproject.toml, never copied (:func:`_pyproject_timeout_s`, which
+    the walker row's budget reads too)."""
+    timeout_s = _pyproject_timeout_s()
+    assert timeout_s > 0, "pyproject.toml declares no pytest timeout"
     n_big = _WORST_CASE_BODY_LEN
     calls: list[int] = []
     monkeypatch.setattr(sys.modules[__name__], "_ps_body_call_ms", _burst_call_clock(40.0, n_big, 0.0, calls))
@@ -1495,7 +1498,7 @@ def test_the_ps_body_scaling_arm_cannot_outlast_the_per_test_timeout(monkeypatch
     loops = [node for node in ast.walk(verdict_def) if isinstance(node, (ast.For, ast.While, ast.comprehension))]
     assert not loops, [node.lineno for node in loops if hasattr(node, "lineno")]
     worst_ms = len(calls) * _CHAIN_CEILING_MS
-    assert worst_ms < int(match.group(1)) * 1000, (worst_ms, match.group(1))
+    assert worst_ms < timeout_s * 1000, (worst_ms, timeout_s)
 
 
 # ── the Bash inert-syntax WALKER, not a regex (DEF-754) ──────────────────────
@@ -1836,12 +1839,14 @@ def _clear_walker_caches() -> None:
         reader.cache_clear()
 
 
-def _walker_call_ms(
+def _walker_alarmed_ms(
     consumer: Callable[[str, Path], object], payload: str, root: Path,
 ) -> float | None:
-    """One timed call, caches cleared first; None when it overran
+    """One call under the alarm, caches cleared first; None when it overran
     `_WALKER_CEILING_MS` (the alarm fires inside the call, so a runaway costs
-    one ceiling, not minutes). The caller pauses the cyclic collector."""
+    one ceiling, not minutes). The warm call reads this directly (DEF-5023: it
+    had no alarm); a window's samples read it through :func:`_walker_call_ms`,
+    the seam the simulated-clock rows replace."""
     _clear_walker_caches()
     signal.signal(signal.SIGALRM, _alarm)
     signal.setitimer(signal.ITIMER_REAL, _WALKER_CEILING_MS / 1000.0)
@@ -1856,8 +1861,77 @@ def _walker_call_ms(
         signal.setitimer(signal.ITIMER_REAL, 0)
 
 
+def _walker_call_ms(
+    consumer: Callable[[str, Path], object], payload: str, root: Path,
+) -> float | None:
+    """One timed sample of a window (:func:`_walker_alarmed_ms`). The caller
+    pauses the cyclic collector."""
+    return _walker_alarmed_ms(consumer, payload, root)
+
+
+def _pyproject_timeout_s() -> float:
+    """pytest's per-test `timeout` as pyproject.toml's pytest table declares it,
+    read and never copied, through the one reader the suite shares
+    (`tests/_pytest_ini.py`, scoped to `[tool.pytest.ini_options]`)."""
+    return float(declared_pytest_timeout())
+
+
+#: What the walker row does outside its capped calls, inside the per-test timeout:
+#: the fixture's setup and teardown, building each payload, judging, the red's
+#: text. Measured on the Air (2026-10-18): the 8.5 s-a-call drive spent 0.7 s
+#: outside its calls before its red, so this is about seven times that.
+_WALKER_BUDGET_MARGIN_S = 5.0
+
+
+def _walker_row_budget_s(timeout_s: float) -> float | None:
+    """The walker scaling row's time for one label, inside pytest's per-test
+    ``timeout_s`` (DEF-5023): the row judges five consumers in one test, each
+    up to two windows of capped calls, 704 s at the ceiling against 60, and a
+    timeout kill reports no reading at all. One ceiling and
+    `_WALKER_BUDGET_MARGIN_S` under the timeout: the stop check lets a call
+    start only while one ceiling still fits in the budget, so the calls end by
+    it; the ceiling under the timeout is room for one alarm that fires late
+    (Python runs the handler only between bytecodes, so a long C-level call can
+    carry a call past its ceiling), and the margin covers the rest. The healthy labels on the full tier's
+    serial cells read up to 10.3 s (ten cells, 2026-10-18), against the 37.4 s
+    after which no call starts. None with no timeout. It reads the declared
+    timeout: a run that raises the ceiling (`PYTEST_TIMEOUT`, `--timeout`, a
+    mark) does not widen it, and one that lowers it below is not read.
+    Coupled to `_WALKER_CEILING_MS`: raising the ceiling shrinks the time in
+    which a call may start (the timeout less two ceilings and the margin)."""
+    if timeout_s <= 0:
+        return None
+    return timeout_s - _WALKER_CEILING_MS / 1000.0 - _WALKER_BUDGET_MARGIN_S
+
+
+#: The walker row's clock for its time budget; the simulated-clock rows replace it.
+_walker_clock = time.monotonic
+
+
+class _WalkerBudgetSpent(Exception):
+    """The walker row's time budget would run out before the next capped call:
+    ``where`` names the call that was not started, ``floors`` the samples its
+    window took so far (zero, small, big)."""
+
+    def __init__(self, where: str, floors: tuple[list[float], list[float], list[float]] | None = None):
+        super().__init__(where)
+        self.where = where
+        self.floors = floors
+
+
+def _check_walker_budget(
+    deadline: float | None, where: str,
+    floors: tuple[list[float], list[float], list[float]] | None = None,
+) -> None:
+    """The stop check before every capped call of the walker row: a call that,
+    running its full ceiling, could end past ``deadline`` is not started (DEF-5023)."""
+    if deadline is not None and _walker_clock() + _WALKER_CEILING_MS / 1000.0 > deadline:
+        raise _WalkerBudgetSpent(where, floors)
+
+
 def _walker_window_ms(
     consumer: Callable[[str, Path], object], big: str, small: str, zero: str, root: Path,
+    *, deadline: float | None = None, window: int = 1,
 ) -> tuple[float, float, float] | int:
     """One window of the scaling row: ``(t_zero_ms, t_small_ms, t_big_ms)``, the
     floor of each size's timings in :func:`_window_order` (`_WALKER_SAMPLES` at
@@ -1870,12 +1944,16 @@ def _walker_window_ms(
     floor alone, which read a quadratic consumer linear and a linear one flat,
     and does not close it (DEF-2000; :func:`_window_order` says how; the
     measurement is at `tests/test_speedbump_irreversible.py::_search_window_ms`),
-    and the window's pair is judged net of its own zero floor (DEF-2002)."""
+    and the window's pair is judged net of its own zero floor (DEF-2002). Each
+    call is preceded by the row's stop check (:func:`_check_walker_budget`),
+    which raises with the samples so far when ``deadline`` is too near."""
     floors: tuple[list[float], list[float], list[float]] = ([], [], [])
+    order = _window_order(zero, small, big, _WALKER_SAMPLES)
     collector_was_on = gc.isenabled()
     gc.disable()
     try:
-        for floor, payload in _window_order(zero, small, big, _WALKER_SAMPLES):
+        for i, (floor, payload) in enumerate(order):
+            _check_walker_budget(deadline, f"window {window}, after {i} of its {len(order)} calls", floors)
             elapsed_ms = _walker_call_ms(consumer, payload, root)
             if elapsed_ms is None:
                 return len(payload)
@@ -1889,10 +1967,14 @@ def _walker_window_ms(
 def _walker_scaling_judgement(
     name: str, consumer: Callable[[str, Path], object], cap: int,
     make: Callable[[int], str], root: Path,
+    *, deadline: float | None = None, readings: dict[str, str] | None = None,
 ) -> tuple[str | None, str | None]:
     """The scaling row's reading of one consumer: ``(problem, unjudged)``, at
     most one of them set -- a problem reds the row, an unjudged sample is the
-    DEF-926 skip with its cause, and ``(None, None)`` is a linear reading."""
+    DEF-926 skip with its cause, and ``(None, None)`` is a linear reading, whose
+    ratio goes in ``readings[name]``. Every capped call, the warm one included,
+    is preceded by the row's stop check against ``deadline``
+    (:class:`_WalkerBudgetSpent` names where it stopped, DEF-5023)."""
     n_big, n_small = _walker_sizes(cap)
     big, small = make(n_big), make(n_small)
     if len(big) >= cap:  # a problem, not an assert: every consumer is still measured
@@ -1901,10 +1983,12 @@ def _walker_scaling_judgement(
             "consumer is declared under -- above it the walk is flat"
         ), None
     zero = make(64)
-    _clear_walker_caches()
-    consumer(zero, root)  # warm: the first call pays compilation
+    # warm: the first call pays compilation, under the alarm like every timed one
+    _check_walker_budget(deadline, "the warm call")
+    if _walker_alarmed_ms(consumer, zero, root) is None:
+        return f"{name}: exceeded {_WALKER_CEILING_MS}ms on the warm call", None
     # each window reads the per-call cost on THIS host at its two ends (DEF-2002)
-    first = _walker_window_ms(consumer, big, small, zero, root)
+    first = _walker_window_ms(consumer, big, small, zero, root, deadline=deadline, window=1)
     if isinstance(first, int):
         return f"{name}: exceeded {_WALKER_CEILING_MS}ms {_overran(first, zero)}", None
 
@@ -1928,7 +2012,13 @@ def _walker_scaling_judgement(
         # the HIGHER (noise inflates the small one). Mixing the fastest
         # small with the fastest big across windows cannot read below the
         # better window's own ratio -- the discipline above.
-        second = _walker_window_ms(consumer, big, small, zero, root)
+        if readings is not None:
+            # the reason the second window runs, kept for a red the budget gives inside it
+            readings[name] = (
+                f"window 1 read {t_small:.1f} -> {t_big:.1f}ms (ratio {net_big / net_small:.2f} net of its "
+                f"{t_zero:.1f}ms), {'super-linear' if net_big > bound else 'flat'}, so a second window was asked"
+            )
+        second = _walker_window_ms(consumer, big, small, zero, root, deadline=deadline, window=2)
         if isinstance(second, int):
             return f"{name}: exceeded {_WALKER_CEILING_MS}ms {_overran(second, zero)} on the second window", None
         t_zero_2, t_small_2, t_big_2 = second
@@ -1971,7 +2061,59 @@ def _walker_scaling_judgement(
             "flat on two windows, so the walk is bounded by a smaller cap than the one "
             f"declared beside the consumer and this row measured nothing; re-declare it{windows}"
         ), None
+    if readings is not None:
+        readings[name] = f"linear, ratio {ratio:.2f} ({net_small:.1f} -> {net_big:.1f}ms net)"
     return None, None
+
+
+def _walker_budget_text(
+    label: str, name: str, spent: _WalkerBudgetSpent, budget_s: float, readings: dict[str, str],
+    problems: list[str], unjudged: list[str], not_reached: list[str],
+) -> str:
+    """The walker row's red when its time budget runs out (DEF-5023): where it
+    stopped, the samples the window in flight took (and its first window's
+    reading when it stopped in the second), each finished consumer's reading in
+    the row's order, the consumers not reached, and the likely cause. Two causes
+    read alike in the time alone, so the sentence says which the readings point
+    to, never one remedy for both (DEF-926's lesson): every finished consumer
+    linear or swamped, no call in flight near the ceiling and no first window
+    out of bound is a slow host; anything else is a consumer that regressed."""
+    finished: list[str] = []
+    regressed = False
+    for done, _consumer, _cap in _WALKER_CONSUMERS:
+        if done == name:
+            break
+        red = next((p for p in problems if p.startswith(f"{done}:")), None)
+        if red is not None:
+            finished.append(f"{done} red ({red[len(done) + 2:]})")
+            regressed = True
+        elif any(u.startswith(f"{done}:") for u in unjudged):
+            finished.append(f"{done} unjudged (swamped)")
+        elif done in readings:
+            finished.append(f"{done} {readings[done]}")
+    in_flight = f"; {readings[name]}" if name in readings else ""
+    regressed = regressed or bool(in_flight)
+    samples = ""
+    if spent.floors is not None:
+        zero, small, big = (", ".join(f"{ms:.1f}" for ms in f) or "none" for f in spent.floors)
+        samples = f"; its samples so far (ms): zero {zero}, small {small}, big {big}"
+        near = [ms for f in spent.floors for ms in f if ms >= _WALKER_CEILING_MS / 2]
+        regressed = regressed or bool(near)
+    cause = (
+        "A consumer regressed toward its ceiling, or read out of bound, and the ones after it are "
+        "unjudged in this run: fix it, then re-run" if regressed else
+        "Every reading so far is linear or swamped and no call in flight came near the ceiling: most "
+        "likely a slow host, so re-run on a quiet one; neither the budget nor a ceiling is the problem"
+    )
+    return (
+        f"{label}: the row's time budget ({budget_s:.1f}s, inside the {_pyproject_timeout_s():.0f}s "
+        f"per-test timeout pyproject declares) would run out before the next call of {name} "
+        f"({spent.where}{samples}{in_flight}), so it stops here and reds with what it read rather "
+        "than be killed with nothing: finished "
+        + ("; ".join(finished) or "none")
+        + "; not reached " + (", ".join(not_reached) or "none")
+        + ". " + cause
+    )
 
 
 @pytest.mark.parametrize("label,make", _WALKER_FLOOD_MAKERS, ids=[r[0] for r in _WALKER_FLOOD_MAKERS])
@@ -1989,7 +2131,9 @@ def test_bash_walker_scales_linearly_on_opener_flood(label, make, tmp_path):
     (ratio about 4) while the ceiling row passes it at `_WALKER_CEILING_MS`,
     and GREEN again on the same stand-in with the ratio at 5.0, so the bound
     is load-bearing (TP-454 3-C records both runs). Every consumer is
-    measured even after one fails, so a red names all of them.
+    measured even after one fails, so a red names all of them -- unless the
+    time budget below stops the row first, when the red names the ones it did
+    not reach.
 
     Both ratios are judged NET of a measured per-call cost, and both arms get
     a second window. The first CI runs after Actions came back (2026-09-23)
@@ -2002,13 +2146,35 @@ def test_bash_walker_scales_linearly_on_opener_flood(label, make, tmp_path):
     window's two ends, measures that cost on the host the row runs on, inside
     the window it is subtracted from (DEF-2002); a truly flat walk still reads
     about one after the subtraction, and the quadratic stand-in the twin
-    below drives still reads about four."""
+    below drives still reads about four.
+
+    The row runs inside a time budget (DEF-5023): five consumers, each up to
+    two windows of capped calls, read 704 s at the ceiling against pytest's
+    60 s per-test timeout, and a timeout kill reports no reading at all. A call
+    is started only while one ceiling still fits in :func:`_walker_row_budget_s`,
+    so a consumer regressed toward its ceiling reds here with the readings so
+    far, in the fixed order of `_WALKER_CONSUMERS`: the consumer and window in
+    flight, each finished consumer's reading, the ones not reached, and which
+    cause the readings point to (a slowed consumer, or a slow host where every
+    reading is linear or swamped). Its cost: one regressed consumer leaves the
+    ones after it unjudged in that run."""
     if not hasattr(signal, "SIGALRM"):
         pytest.skip("signal.alarm not available on this platform")
     problems: list[str] = []
     unjudged: list[str] = []  # DEF-926: samples a slow host swamped, skipped with the cause
-    for name, consumer, cap in _WALKER_CONSUMERS:
-        problem, skipped = _walker_scaling_judgement(name, consumer, cap, make, tmp_path)
+    budget_s = _walker_row_budget_s(_pyproject_timeout_s())
+    deadline = None if budget_s is None else _walker_clock() + budget_s
+    readings: dict[str, str] = {}
+    for at, (name, consumer, cap) in enumerate(_WALKER_CONSUMERS):
+        stopped: _WalkerBudgetSpent | None = None
+        try:
+            problem, skipped = _walker_scaling_judgement(
+                name, consumer, cap, make, tmp_path, deadline=deadline, readings=readings)
+        except _WalkerBudgetSpent as spent:
+            stopped = spent
+        if stopped is not None:  # failed outside the except, so the red is its own text alone
+            pytest.fail(_walker_budget_text(label, name, stopped, budget_s or 0.0, readings, problems, unjudged,
+                                            [n for n, _c, _cap in _WALKER_CONSUMERS[at + 1:]]))
         if problem is not None:
             problems.append(problem)
         if skipped is not None:
@@ -2377,6 +2543,293 @@ def test_a_scaling_overrun_names_the_call_that_overran(tmp_path, monkeypatch, hu
         "stand_in", lambda _p, _r: None, cap, lambda n: "x" * n, tmp_path)
     expected = "on the zero-payload call" if hung == 64 else f"at {n_big} bytes"
     assert (problem, unjudged) == (f"stand_in: exceeded {_WALKER_CEILING_MS}ms {expected}", None)
+
+
+#: DEF-5023's stand-in cost: a consumer regressed to just under the per-call alarm,
+#: so no call trips it and every judgement runs to its full cost.
+_REGRESSED_CALL_MS = _WALKER_CEILING_MS - 300.0
+
+
+def _walker_row_on_a_simulated_clock(monkeypatch, cost_of):
+    """The walker row's five consumers as instant stand-ins under their real
+    names and caps, each window call costing ``cost_of(name, kind)`` ms of a
+    simulated clock that the row's budget reads (`_walker_clock`), where ``kind``
+    is "zero", "small" or "big" by that consumer's own sizes (its cap's); the
+    warm call goes through the real alarm and costs nothing. Patched with
+    `raising=False` so the row reds on its behaviour, not on a missing name,
+    where the budget is not built. Returns the clock."""
+    now = [0.0]
+    names: dict[int, tuple[str, int]] = {}
+    consumers = []
+    for name, _consumer, cap in _WALKER_CONSUMERS:
+        def stand_in(_payload, _root):
+            return None
+        names[id(stand_in)] = (name, _walker_sizes(cap)[0])
+        consumers.append((name, stand_in, cap))
+
+    def timed(consumer, payload, _root):
+        name, n_big = names[id(consumer)]
+        kind = "zero" if len(payload) <= 64 else "big" if len(payload) == n_big else "small"
+        ms = cost_of(name, kind)
+        now[0] += ms / 1000.0
+        return ms
+
+    monkeypatch.setattr(sys.modules[__name__], "_WALKER_CONSUMERS", consumers)
+    monkeypatch.setattr(sys.modules[__name__], "_walker_call_ms", timed)
+    monkeypatch.setattr(sys.modules[__name__], "_walker_clock", lambda: now[0], raising=False)
+    return now
+
+
+def _linear_ms(_name, kind):
+    """A healthy consumer: 1 ms per call, 10 ms net at the half-cap size and 20
+    at the cap (a ratio of 2.0 on one window)."""
+    return {"zero": 1.0, "small": 11.0, "big": 21.0}[kind]
+
+
+def _window_costs(zero_ms: float, small_ms: float, big_ms: float) -> list[float]:
+    """One window's call costs, in :func:`_window_order`'s order."""
+    by_floor = (zero_ms, small_ms, big_ms)
+    return [by_floor[floor] for floor, _ in _window_order("z", "s", "b", _WALKER_SAMPLES)]
+
+
+def _calls_before_the_stop(costs_ms: list[float], start_s: float = 0.0) -> tuple[int, float]:
+    """How many of the calls costing ``costs_ms`` the walker row's stop check lets
+    start from ``start_s`` on its simulated clock, and the clock after them: the
+    check's rule re-derived from the constants, so a re-pinned ceiling or margin
+    moves each row's expectation with it (the rows below read it rather than a
+    literal count)."""
+    budget = _walker_row_budget_s(_pyproject_timeout_s())
+    assert budget is not None
+    now, started = start_s, 0
+    for ms in costs_ms:
+        if now + _WALKER_CEILING_MS / 1000.0 > budget:
+            break
+        now += ms / 1000.0
+        started += 1
+    return started, now
+
+
+def test_the_walker_row_reds_with_its_readings_before_the_timeout(tmp_path, monkeypatch):
+    """DEF-5023: every consumer regressed to just under the per-call alarm. Until
+    the row ran inside a time budget, pytest's per-test timeout killed it at 60 s
+    and the whole report was "worker 'gw0' crashed while running ..." (Task 0, the
+    real clock on the Air, 2026-10-18). Now the next call is not started once one
+    ceiling no longer fits in the budget, and the row reds naming the consumer and
+    window in flight, the samples it took, the consumers not reached, none
+    finished, and a regressed consumer as the cause (its calls sit near the
+    ceiling). On a simulated clock, so it needs no real wait."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    now = _walker_row_on_a_simulated_clock(monkeypatch, lambda _name, _kind: _REGRESSED_CALL_MS)
+    with pytest.raises(pytest.fail.Exception) as red:
+        test_bash_walker_scales_linearly_on_opener_flood("open_paren_run", lambda n: "x" * n, tmp_path)
+    text = str(red.value)
+    names = [name for name, _c, _cap in _WALKER_CONSUMERS]
+    started, clock = _calls_before_the_stop([_REGRESSED_CALL_MS] * 8)
+    assert 0 < started < 8, started  # the stop falls inside the first window
+    assert f"next call of {names[0]} (window 1, after {started} of its 8 calls" in text, text
+    order = [floor for floor, _ in _window_order("z", "s", "b", _WALKER_SAMPLES)][:started]
+    samples = [", ".join([f"{_REGRESSED_CALL_MS:.1f}"] * order.count(floor)) or "none" for floor in (0, 1, 2)]
+    assert f"its samples so far (ms): zero {samples[0]}, small {samples[1]}, big {samples[2]}" in text, text
+    assert "finished none" in text and f"not reached {', '.join(names[1:])}" in text, text
+    assert "A consumer regressed toward its ceiling" in text and "slow host" not in text, text
+    assert now[0] == pytest.approx(clock) and now[0] <= _walker_row_budget_s(_pyproject_timeout_s()), now[0]
+
+
+def test_a_regressed_consumer_names_the_ones_before_and_after_it(tmp_path, monkeypatch):
+    """A healthy consumer, one that reds flat, one a slow host swamped, then one
+    regressed toward its ceiling: the red gives the three finished outcomes in
+    the row's order (the flat red with its whole text and remedy), the regressed
+    one in flight, and the last as not reached -- the cost of the budget, named in
+    the red. The regressed consumer's zero-payload call is cheap, so without the
+    budget it reads flat and the row reds rather than skips."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    names = [name for name, _c, _cap in _WALKER_CONSUMERS]
+    flat = (1.0, 11.0, 11.0)
+    swamped = (195.0, 196.1, 197.2)
+    regressed = (1.0, _REGRESSED_CALL_MS, _REGRESSED_CALL_MS)
+
+    def cost_of(name, kind):
+        if name == names[0]:
+            return _linear_ms(name, kind)
+        zero, small, large = {names[1]: flat, names[2]: swamped, names[3]: regressed}.get(name, (1.0, 1.0, 1.0))
+        return {"zero": zero, "small": small, "big": large}[kind]
+
+    _walker_row_on_a_simulated_clock(monkeypatch, cost_of)
+    with pytest.raises(pytest.fail.Exception) as red:
+        test_bash_walker_scales_linearly_on_opener_flood("open_paren_run", lambda n: "x" * n, tmp_path)
+    text = str(red.value)
+    before = (sum(_window_costs(1.0, 11.0, 21.0)) + 2 * sum(_window_costs(*flat)) + sum(_window_costs(*swamped)))
+    started, _clock = _calls_before_the_stop(_window_costs(*regressed), before / 1000.0)
+    assert f"finished {names[0]} linear, ratio 2.00" in text, text
+    assert f"; {names[1]} red (" in text and "re-declare it" in text, text  # the whole text, its remedy kept
+    assert f"; {names[2]} unjudged (swamped)" in text, text
+    assert f"next call of {names[3]} (window 1, after {started} of its 8 calls" in text, text
+    assert f"not reached {names[4]}" in text and "A consumer regressed toward its ceiling" in text, text
+
+
+def test_a_stop_in_the_second_window_keeps_the_first_windows_reading(tmp_path, monkeypatch):
+    """A super-linear first window is what sends a consumer to a second, so a
+    quadratic regression meets the budget there: the second window's calls are
+    checked against it too (a refactor that dropped it would run on to the
+    timeout), the red names the second window, and it gives the first window's
+    reading, the reason the second ran, so it does not read as a slow host."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    names = [name for name, _c, _cap in _WALKER_CONSUMERS]
+    # (window 1's zero/small/big, each window-2 call, window 1's reading as the red gives it): the first
+    # window-2 call nears the ceiling; the second stays under half of it, so only window 1's reading says
+    # a consumer regressed rather than a slow host
+    cases = (((1.0, 11.0, 61.0), _REGRESSED_CALL_MS, "window 1 read 11.0 -> 61.0ms (ratio 6.00 net of its 1.0ms)"),
+             ((1000.0, 2000.0, 5000.0), 4000.0,
+              "window 1 read 2000.0 -> 5000.0ms (ratio 4.00 net of its 1000.0ms)"))
+    for costs, window_2_ms, reading in cases:
+        first = _window_costs(*costs)
+        seen = [0]
+
+        def cost_of(name, kind, first=first, window_2_ms=window_2_ms, seen=seen):
+            if name != names[0]:
+                return _linear_ms(name, kind)
+            seen[0] += 1
+            if seen[0] <= len(first):
+                return first[seen[0] - 1]
+            # window 2: a cheap zero-payload call, so without the budget it reads flat and reds, never swamped
+            return 1.0 if kind == "zero" else window_2_ms
+
+        now = _walker_row_on_a_simulated_clock(monkeypatch, cost_of)
+        with pytest.raises(pytest.fail.Exception) as red:
+            test_bash_walker_scales_linearly_on_opener_flood("open_paren_run", lambda n: "x" * n, tmp_path)
+        text = str(red.value)
+        started, clock = _calls_before_the_stop(_window_costs(1.0, window_2_ms, window_2_ms), sum(first) / 1000.0)
+        assert 0 < started < 8, (costs, started)
+        assert f"next call of {names[0]} (window 2, after {started} of its 8 calls" in text, text
+        assert f"{reading}, super-linear, so a second window was asked" in text, text
+        assert "A consumer regressed toward its ceiling" in text and "slow host" not in text, text
+        assert now[0] == pytest.approx(clock) and now[0] <= _walker_row_budget_s(_pyproject_timeout_s()), now[0]
+
+
+def test_a_stop_at_a_warm_call_on_a_slow_host_names_the_host(tmp_path, monkeypatch):
+    """A healthy but slow first consumer (4 s a call, linear) ends past the point
+    where one more ceiling fits: the next consumer's warm call is checked like any
+    capped call and is not started, and with every reading linear and no call in
+    flight near the ceiling the red names a slow host, never a regressed consumer
+    (DEF-926's lesson: one sentence for two causes sends the maintainer to the
+    wrong one)."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    names = [name for name, _c, _cap in _WALKER_CONSUMERS]
+    slow = (4000.0, 4800.0, 5600.0)  # 800 ms net at the half-cap size, 1600 at the cap: linear
+
+    def cost_of(name, kind):
+        if name != names[0]:
+            return _linear_ms(name, kind)
+        return {"zero": slow[0], "small": slow[1], "big": slow[2]}[kind]
+
+    _walker_row_on_a_simulated_clock(monkeypatch, cost_of)
+    started, clock = _calls_before_the_stop(_window_costs(*slow))
+    assert started == 8 and clock + _WALKER_CEILING_MS / 1000.0 > _walker_row_budget_s(_pyproject_timeout_s())
+    with pytest.raises(pytest.fail.Exception) as red:
+        test_bash_walker_scales_linearly_on_opener_flood("open_paren_run", lambda n: "x" * n, tmp_path)
+    text = str(red.value)
+    assert f"next call of {names[1]} (the warm call)" in text, text
+    assert f"finished {names[0]} linear, ratio 2.00" in text, text
+    assert "most likely a slow host" in text and "A consumer regressed" not in text, text
+
+
+def test_the_walker_alarm_interrupts_a_call(tmp_path, monkeypatch):
+    """The budget's arithmetic rests on every capped call costing at most one
+    ceiling, which only holds while :func:`_walker_alarmed_ms` arms its alarm: a
+    call that would spin for a second under a 50 ms ceiling reads None at about
+    50 ms. A real alarm on the real clock, spun and never slept."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    monkeypatch.setattr(sys.modules[__name__], "_WALKER_CEILING_MS", 50)
+
+    def spin(_payload, _root):
+        end = time.perf_counter() + 1.0
+        while time.perf_counter() < end:
+            pass
+
+    t0 = time.perf_counter()
+    assert _walker_alarmed_ms(spin, "x", tmp_path) is None
+    assert (time.perf_counter() - t0) * 1000 < 10 * _WALKER_CEILING_MS  # 500 ms under the 50 ms ceiling
+
+
+def test_the_walker_row_passes_inside_its_budget_and_keeps_the_swamped_guard(tmp_path, monkeypatch):
+    """Polarity for DEF-5023's budget: five healthy consumers finish well inside
+    it and the row passes; and DEF-926's guard still holds under it, a label on
+    which every consumer's sample was swamped by the per-call cost reds rather
+    than skips."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("signal.alarm not available on this platform")
+    now = _walker_row_on_a_simulated_clock(monkeypatch, _linear_ms)
+    test_bash_walker_scales_linearly_on_opener_flood("open_paren_run", lambda n: "x" * n, tmp_path)
+    assert 0 < now[0] < 1.0, now[0]  # five consumers, one window each, about half a second of the budget
+    _walker_row_on_a_simulated_clock(monkeypatch, lambda _name, kind: 195.0 if kind == "zero" else 196.1)
+    with pytest.raises(AssertionError, match="every consumer's sample was swamped"):
+        test_bash_walker_scales_linearly_on_opener_flood("open_paren_run", lambda n: "x" * n, tmp_path)
+
+
+def test_the_walker_warm_call_is_under_the_alarm(tmp_path, monkeypatch):
+    """The warm call paid compilation with no alarm, so a consumer that hung there
+    hung the row until pytest killed it (DEF-5023). It now goes through
+    :func:`_walker_alarmed_ms` once, before the windows, and an overrun there is
+    a problem named as the warm call's."""
+    seen: list[int] = []
+
+    def spy(_consumer, payload, _root):
+        seen.append(len(payload))
+        return None if hung else 1.0
+
+    monkeypatch.setattr(sys.modules[__name__], "_walker_alarmed_ms", spy, raising=False)
+    monkeypatch.setattr(sys.modules[__name__], "_walker_call_ms", lambda _c, payload, _r: (
+        1.0 if len(payload) == 64 else 1.0 + 20.0 * len(payload) / _walker_sizes(_BASH_COMMAND_CAP)[0]))
+    for hung in (False, True):
+        seen.clear()
+        problem, unjudged = _walker_scaling_judgement(
+            "stand_in", lambda _p, _r: None, _BASH_COMMAND_CAP, lambda n: "x" * n, tmp_path)
+        assert seen == [64], seen  # the warm call, once, under the alarm
+        assert (problem, unjudged) == ((f"stand_in: exceeded {_WALKER_CEILING_MS}ms on the warm call", None)
+                                       if hung else (None, None)), (hung, problem, unjudged)
+
+
+#: The slowest healthy walker label on the full tier's serial cells: 10.29 s
+#: (`mixed_openers`, test-serial 3.12, run 39107233561), over ten cells of two
+#: runs read 2026-10-18; the 3.11 cells read 4.8 and 7.0.
+_WALKER_LABEL_CI_MAX_S = 10.29
+
+
+def test_the_walker_row_budget_stays_under_the_per_test_timeout(monkeypatch):
+    """DEF-5023's pin, the PS arm's way: the budget is derived from pyproject's
+    per-test timeout (read, never copied), and a call is started only while one
+    ceiling still fits in it, so the row's calls end by the budget, and the
+    budget plus one more ceiling is under the timeout. From below, the time in
+    which a call may start (the budget less a ceiling) stays at least three times
+    the slowest healthy label measured on CI, so a raised ceiling or margin that
+    would red a healthy slow runner reds here first, naming the budget. The stop
+    check's boundary is driven: a call that would end exactly at the deadline
+    starts, one a millisecond later does not."""
+    timeout_s = _pyproject_timeout_s()
+    assert timeout_s > 0, "pyproject.toml declares no pytest timeout"
+    budget_s = _walker_row_budget_s(timeout_s)
+    assert budget_s is not None and 0 < budget_s, budget_s
+    assert budget_s + _WALKER_CEILING_MS / 1000.0 < timeout_s, (budget_s, timeout_s)
+    start_by_s = budget_s - _WALKER_CEILING_MS / 1000.0
+    assert start_by_s >= 3 * _WALKER_LABEL_CI_MAX_S, (
+        f"the walker row may start a call only until {start_by_s:.1f}s, under three times the "
+        f"{_WALKER_LABEL_CI_MAX_S}s a healthy label took on CI: a raised ceiling or margin leaves a "
+        "slow runner too little budget; re-read _walker_row_budget_s")
+    assert _walker_row_budget_s(0.0) is None  # no timeout, nothing kills the row
+    ceiling_s = _WALKER_CEILING_MS / 1000.0
+    for clock, stops in ((10.0 - ceiling_s, False), (10.0 - ceiling_s + 0.001, True)):
+        monkeypatch.setattr(sys.modules[__name__], "_walker_clock", lambda c=clock: c)
+        try:
+            _check_walker_budget(10.0, "here")
+            stopped = False
+        except _WalkerBudgetSpent:
+            stopped = True
+        assert stopped is stops, (clock, stopped)
 
 
 @pytest.mark.parametrize("t_zero, t_small, swamped", [
