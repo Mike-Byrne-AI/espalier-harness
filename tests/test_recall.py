@@ -4354,3 +4354,89 @@ class TestTextNoReaderSeesIsNoSectionsVocabulary:
             "other.md": "# Other\n\nunrelated prose\n"})
         hits = _recall.recall("<!-- zzskipword -->", root, top=4)
         assert [h.source for h in hits][:1] == ["memory/marker.md"], hits
+
+
+class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
+    """The deny texts cite their docs/HOOKS.md section by heading, and recall could
+    not answer the question they invite: on an init'd Node tree (measured
+    2026-10-07, again 2026-10-18) recall indexed four documents and gave the
+    convergence-review protocol first for every "why did a hook deny or block me"
+    question. The hooks guide and the troubleshooting guide now index per ``##``
+    and ``###`` section on a tree that is not this repository. On this one the
+    family stays off: with every seeded reference doc it moved 14 recall pins,
+    four of them headline claims. The rows read the shipped copies init deploys."""
+
+    @staticmethod
+    def _adopter(tmp_path, monkeypatch, docs: "dict[str, str] | None" = None) -> Path:
+        monkeypatch.setattr(_recall, "EXEMPLAR_MAP", {})
+        (tmp_path / "docs").mkdir()
+        if docs is None:
+            shipped = REPO_ROOT / "espalier" / "assets" / "docs"
+            docs = {name: (shipped / name).read_text(encoding="utf-8")
+                    for name in ("HOOKS.md", "TROUBLESHOOTING.md")}
+        for name, text in docs.items():
+            (tmp_path / "docs" / name).write_text(text, encoding="utf-8")
+        assert not _recall.is_self_host_repo(tmp_path)
+        return tmp_path
+
+    def test_the_write_guard_question_lands_its_section_first(self, tmp_path, monkeypatch):
+        """Dies to: the family missing, or its write_guard section unindexed."""
+        root = self._adopter(tmp_path, monkeypatch)
+        hits = _recall.recall("what does the write guard protect", root, top=4)
+        assert hits and hits[0].source.startswith("docs/HOOKS.md :: 4. `write_guard.py`"), hits
+
+    def test_the_stop_gate_question_lands_its_section_first(self, tmp_path, monkeypatch):
+        """Dies to: the family missing, or TROUBLESHOOTING.md left out of it."""
+        root = self._adopter(tmp_path, monkeypatch)
+        hits = _recall.recall("why did the stop gate block me", root, top=4)
+        assert hits and hits[0].source == 'docs/TROUBLESHOOTING.md :: "Stop event keeps blocking me"', hits
+
+    def test_the_plan_guard_question_reaches_its_section(self, tmp_path, monkeypatch):
+        """The ``###`` split is what reaches it: the per-hook sections sit under one
+        ``##`` of about 2,000 lines. Dies to: a ``##``-only split. ("why did the plan
+        guard deny my edit" still misses it: session_start's 460-line section
+        outranks it, a heading-weight candidate, not tuned here.)"""
+        root = self._adopter(tmp_path, monkeypatch)
+        hits = _recall.recall("plan guard blocked my write, no active execution plan", root, top=4)
+        assert any(h.source.startswith("docs/HOOKS.md :: 3. `plan_guard.py`") for h in hits), hits
+
+    def test_nonsense_stays_suppressed_beside_the_reference_sections(self, tmp_path, monkeypatch):
+        """Ordinary off-topic English now finds a confident neighbour here, the
+        engine's documented leak a four-document corpus hid; nonsense still finds
+        nothing. Dies to: a family whose bags admit every query token."""
+        root = self._adopter(tmp_path, monkeypatch)
+        assert _recall.recall("zzqx florp nonsense", root, top=4) == []
+
+    def test_the_family_stays_off_on_this_repository(self):
+        """Dies to: the self-host gate dropped, which moves 14 pins here."""
+        assert not [d for d in _recall._load_corpus(REPO_ROOT)
+                    if d.source.startswith(("docs/HOOKS.md :: ", "docs/TROUBLESHOOTING.md :: "))]
+
+    def test_a_fenced_heading_is_no_section(self, tmp_path, monkeypatch):
+        """Dies to: a splitter that reads headings inside fenced code."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": (
+            "# Hooks\n\n## Real section\n\nalpha\n\n```\n## zzfenced heading\n```\n\n### Sub section\n\nbeta\n")})
+        sources = {d.source for d in _recall._load_corpus(root)}
+        assert "docs/HOOKS.md :: Real section" in sources and "docs/HOOKS.md :: Sub section" in sources
+        assert not any("zzfenced" in s for s in sources), sources
+
+    def test_a_skip_marked_section_is_not_indexed(self, tmp_path, monkeypatch):
+        """Dies to: the family ignoring the author's skip marker."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": (
+            f"# Hooks\n\n## Kept\n\nalpha\n\n## Pointer\n\n{_recall.RECALL_SKIP_MARKER}\nzzskip\n")})
+        sources = {d.source for d in _recall._load_corpus(root)}
+        assert sources == {"docs/HOOKS.md :: Kept"}, sources
+
+    def test_a_declared_reference_doc_is_indexed_once(self, tmp_path, monkeypatch):
+        """An adopter who declares the hooks guide in recall_sources gets it once,
+        under the declared family. Dies to: the family skipping no file already seen."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": "# Hooks\n\n## Alpha\n\nzzalpha\n"})
+        (root / "espalier.toml").write_text('recall_sources = ["docs/HOOKS.md"]\n', encoding="utf-8")
+        docs = [d for d in _recall._load_corpus(root) if "zzalpha" in d.tokens]
+        assert [(d.source, d.family) for d in docs] == [("docs/HOOKS.md :: Alpha", "declared documents")], docs
+
+    def test_indexed_sources_names_the_family(self, tmp_path, monkeypatch):
+        """The banner and the doctor read what recall indexes from this list.
+        Dies to: the family yielded under no label of its own."""
+        root = self._adopter(tmp_path, monkeypatch)
+        assert "seeded reference docs" in _recall.indexed_sources(root)

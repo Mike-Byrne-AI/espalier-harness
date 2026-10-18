@@ -827,6 +827,46 @@ def corpus_summary(root: Path) -> dict:
             "claude_sections": [d.snippet for d in docs if d.family == ROSTER_CLAUDE_FAMILY],
             "ignored": ignored}
 
+
+#: The seeded reference docs recall indexes on a tree that is not this
+#: repository: the two `init` deploys that answer "why did a hook deny or block
+#: me". The deny texts cite docs/HOOKS.md sections by heading. The rest of the
+#: deployed reference docs stay out: with all of them the deny answers measured
+#: no better, and this repository's corpus moved 14 pins (2026-10-18).
+REFERENCE_DOCS = ("docs/HOOKS.md", "docs/TROUBLESHOOTING.md")
+REFERENCE_FAMILY = "seeded reference docs"
+
+
+def _reference_sections(text: str) -> "list[tuple[str, str, str]]":
+    """``(heading, heading path, body)`` for each ``##`` and ``###`` section of a
+    reference doc, headings inside fenced code read as body. A ``###`` section's
+    path carries its ``##`` parent: the hooks guide keeps every hook under one
+    ``##`` of about 2,000 lines, so the per-hook sections are its ``###`` ones."""
+    out: "list[tuple[str, str, str]]" = []
+    fence: "str | None" = None
+    parent = ""
+    heading: "str | None" = None
+    path = ""
+    body: list[str] = []
+    for line in text.splitlines():
+        fenced = fence is not None
+        fence = next_fence_state(line, fence)
+        title = line.lstrip("#").strip()
+        if not fenced and fence is None and title and line.startswith(("## ", "### ")):
+            if heading is not None:
+                out.append((heading, path, "\n".join(body)))
+            if line.startswith("## "):
+                parent = path = title
+            else:
+                path = f"{parent} {title}" if parent else title
+            heading, body = title, []
+        elif heading is not None:
+            body.append(line)
+    if heading is not None:
+        out.append((heading, path, "\n".join(body)))
+    return out
+
+
 def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
                  records: bool = False) -> "Iterator[_Doc]":
     """Yield the corpus lazily; ``_load_corpus`` materializes it.
@@ -966,6 +1006,33 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
                        title,
                        Counter(_index_tokens(f"{title} {body} {aliases.get(num, '')}")),
                        family="docs/STANDING_PRINCIPLES.md")
+
+    # The seeded reference docs that answer "why did a hook deny or block me"
+    # (REFERENCE_DOCS), one document per ``##`` and ``###`` section with its body.
+    # On an init'd Node tree recall indexed four documents and gave the
+    # convergence-review protocol first for every such question (measured
+    # 2026-10-07 and 2026-10-18), though each deny text cites its docs/HOOKS.md
+    # section by heading. Gated OFF on this repository, measured, not assumed:
+    # its corpus already answers hook questions, and every seeded reference doc
+    # moved 14 of its recall pins, four of them headline claims; the two docs on
+    # an adopter tree add 39 sections and move nothing here. The cost, stated: a
+    # four-document corpus answered off-topic English with nothing by accident,
+    # and with these sections it leaks as any corpus of size does (the
+    # pull-recall suppression entry in docs/SHARP_EDGES.md).
+    if not is_self_host_repo(root):
+        for rel in REFERENCE_DOCS:
+            p = root / rel
+            if not p.is_file() or _resolved(p) in seen:
+                continue  # absent, or declared by the adopter and indexed above
+            text = _read(p)
+            doc_title = _first_heading(text) or p.stem
+            for heading, heading_path, body in _reference_sections(text):
+                if _section_skipped(heading, body):
+                    continue  # a pointer section, by the author's own mark
+                yield _Doc(f"{rel} :: {heading}",
+                           heading,
+                           Counter(_index_tokens(f"{doc_title} {heading_path} {body}")),
+                           family=REFERENCE_FAMILY)
 
     # Two self-host-only sources, deliberately gated by TWO conditions rather
     # than one. They are suppressed for different reasons and a single `if`
