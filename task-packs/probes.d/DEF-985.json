@@ -1,10 +1,11 @@
 {
  "id": "DEF-985",
- "subject": "espalier/cli.py",
- "cmd": "python3 -c \"import ast,pathlib;A=('run','Popen','call','check_output','check_call');S=[p.read_text(encoding='utf-8') for p in pathlib.Path('espalier').rglob('*.py') if '_vendor' not in p.parts];print('undeclared_engine_spawns='+str(any(isinstance(x,ast.Call) and isinstance(x.func,ast.Attribute) and x.func.attr in A and isinstance(x.func.value,ast.Name) and x.func.value.id=='subprocess' and 'spawn: ok' not in s.splitlines()[x.lineno-1] and (x.lineno<2 or 'spawn: ok' not in s.splitlines()[x.lineno-2]) for s in S for x in ast.walk(ast.parse(s)))))\"",
- "open_value": "undeclared_engine_spawns=True",
+ "subject": "espalier/_spawn.py",
+ "cmd": "python3 -c \"import ast,pathlib;A=('run','Popen','call','check_output','check_call');W=('run_no_stdin','run_bounded');S={'print','warn','warning','error','exception','critical','info','debug','write'};C={'OSError','FileNotFoundError','PermissionError','SubprocessError','TimeoutExpired','CalledProcessError','Exception','BaseException','ValueError','UnicodeDecodeError'};nm=lambda f:getattr(f,'id',getattr(f,'attr',''));sp=lambda c:nm(c.func) in W or (isinstance(c.func,ast.Attribute) and isinstance(c.func.value,ast.Name) and c.func.value.id=='subprocess' and c.func.attr in A);ca=lambda h:h.type is None or bool({nm(n) for n in ast.walk(h.type) if isinstance(n,(ast.Name,ast.Attribute))}&C);qu=lambda h:not any(isinstance(n,ast.Raise) or (isinstance(n,ast.Call) and nm(n.func) in S) or (h.name and isinstance(n,ast.Name) and n.id==h.name) for n in ast.walk(h));T=[ast.parse(p.read_text(encoding='utf-8')) for p in sorted(pathlib.Path('espalier').rglob('*.py')) if '_vendor' not in p.parts];n=sum(1 for t in T for o in [{id(x) for f in ast.walk(t) if isinstance(f,ast.FunctionDef) and f.name in ('run_bounded','_end_tree','run_no_stdin') for x in ast.walk(f)}] for tr in ast.walk(t) if isinstance(tr,ast.Try) and id(tr) not in o and any(ca(h) and qu(h) for h in tr.handlers) for s in tr.body for c in ast.walk(s) if isinstance(c,ast.Call) and sp(c));print('quiet_spawn_handlers='+str(n>0))\"",
+ "open_value": "quiet_spawn_handlers=True",
  "why_not": null,
- "row_sha": "77be9a66af9d",
- "text_sha": "2c30e362e031",
- "verified_2026_10_01": "STILL_OPEN (re-pinned value unchanged on 2026-10-01: the citation of the landed pack is re-keyed to its title: a pack under Done/ is dangling to the completeness guard by construction)"
+ "row_sha": "ebe46425ce09",
+ "text_sha": "ad52069f6979",
+ "verified_2026_10_01": "STILL_OPEN (re-pinned value unchanged on 2026-10-01: the citation of the landed pack is re-keyed to its title: a pack under Done/ is dangling to the completeness guard by construction)",
+ "verified_2026_10_18": "STILL_OPEN (re-pinned 'undeclared_engine_spawns=True' -> 'quiet_spawn_handlers=True'; subject 'espalier/cli.py' -> 'espalier/_spawn.py' on 2026-10-18: the engine-stdin lane landed the chokepoint and its census, which the raw-site proxy read as closed while the row's named harm, the quiet handlers, stood (air's 3bbff2); the probe now reads the harm: any engine spawn under an except arm that catches its failure and says nothing, 35 on the lane's head) [changed: probe, open value, anchor, text, subject]"
 }
