@@ -264,25 +264,57 @@ def head_commit(root: Path) -> str | None:
         head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
         if not head.startswith("ref: "):
             return head if _SHA_RE.fullmatch(head) else None
-        ref = head[len("ref: "):].strip()
-        common = git_dir
-        if (git_dir / "commondir").is_file():
-            common = (git_dir / (git_dir / "commondir").read_text(encoding="utf-8").strip()).resolve()
-        for base in (git_dir, common):
-            loose = base / ref
-            if loose.is_file():
-                value = loose.read_text(encoding="utf-8").strip()
-                return value if _SHA_RE.fullmatch(value) else None
-        packed = common / "packed-refs"
-        if packed.is_file():
-            for line in packed.read_text(encoding="utf-8").splitlines():
-                sha, _, name = line.partition(" ")
-                if name == ref and _SHA_RE.fullmatch(sha):
-                    return sha
+        return _ref_commit(git_dir, head[len("ref: "):].strip())
     # fail-open: ok deliberate -- an unreadable ref is no HEAD; a removal is then never git's, so it reports
     except (OSError, ValueError):  # strict decode: a structured answer (DEF-821)
         return None
+
+
+def _common_dir(git_dir: Path) -> Path:
+    """The directory holding the refs a checkout shares (a linked worktree's
+    main git dir); raises OSError or ValueError on one git cannot read."""
+    if (git_dir / "commondir").is_file():
+        return (git_dir / (git_dir / "commondir").read_text(encoding="utf-8").strip()).resolve()
+    return git_dir
+
+
+def _ref_commit(git_dir: Path, ref: str) -> str | None:
+    """The commit ``ref`` names: loose in the git dir, then in the common dir,
+    then packed; raises OSError or ValueError on files git cannot read."""
+    common = _common_dir(git_dir)
+    for base in (git_dir, common):
+        loose = base / ref
+        if loose.is_file():
+            value = loose.read_text(encoding="utf-8").strip()
+            return value if _SHA_RE.fullmatch(value) else None
+    packed = common / "packed-refs"
+    if packed.is_file():
+        for line in packed.read_text(encoding="utf-8").splitlines():
+            sha, _, name = line.partition(" ")
+            if name == ref and _SHA_RE.fullmatch(sha):
+                return sha
     return None
+
+
+def stash_written_since(root: Path, since_ns: int) -> str | None:
+    """The commit this checkout's stash names, when its ref or its reflog
+    (which every push, pop and drop rewrites) was written at or after
+    ``since_ns``; read from git's own files, no spawn. None otherwise, or
+    when they cannot be read: what a stash took away is then not remembered,
+    and its pop reports."""
+    git_dir = _hook_utils._git_dir_of(root)
+    if git_dir is None:
+        return None
+    try:
+        common = _common_dir(git_dir)
+        stamps = [p.stat().st_mtime_ns for p in (common / "refs" / "stash", common / "logs" / "refs" / "stash")
+                  if p.is_file()]
+        if not stamps or max(stamps) < since_ns:
+            return None
+        return _ref_commit(git_dir, "refs/stash")
+    # fail-open: ok deliberate -- an unreadable stash names nothing; its pop then reports
+    except (OSError, ValueError):  # strict decode: a structured answer (DEF-821)
+        return None
 
 
 def mid_operation(root: Path) -> str | None:
@@ -313,6 +345,11 @@ def mid_operation(root: Path) -> str | None:
 #: rest are named in a note and their paths stay unaccounted (the loud side):
 #: a call over many clones must not cost the hook its timeout.
 NESTED_ASK_BUDGET_S = 2.0
+#: How long path 2's git spawns may take in one call, every checkout's
+#: together: each spawn's timeout is what is left of it, and a hash with
+#: nothing left is not started (its files are named and report), so path 2
+#: never costs the hook its own timeout (10 s, beside a walk of up to 3 s).
+GIT_ASK_BUDGET_S = 5.0
 #: The git variables that would point a nested ``cat-file`` at a repository
 #: other than the checkout it runs in.
 _GIT_LOCATION_VARS = frozenset({"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
@@ -385,17 +422,17 @@ def _nested_env(cwd: Path | None) -> dict[str, str] | None:
 
 
 def _git_objects(root: Path, requests: list[str], *, cwd: Path | None = None,
-                 check_only: bool = False) -> list[bytes | None] | None:
+                 check_only: bool = False, timeout: float = 5.0) -> list[bytes | None] | None:
     """One ``git cat-file --batch`` for every request (``<rev>:./<path>``,
     resolved from ``cwd``, by default ``root``): each blob's bytes, or None
     for a request git has no blob for; with ``check_only``, one
     ``--batch-check`` and each blob's object id instead, so no blob reaches
     the hook (a big file's, or a removed file's, whose presence is all that
     is asked). None when git cannot answer at all (not installed, not a
-    repository, a timeout, an answer it cannot parse). Every request names a
-    commit id or HEAD, never a reflog entry, so one missing object is a
-    ``missing`` line and never ends the batch. Bytes throughout: a blob is
-    never decoded, only hashed."""
+    repository, past ``timeout``, an answer it cannot parse). Every request
+    names a commit id (or its first parent) or HEAD, never a reflog entry, so
+    one missing object is a ``missing`` line and never ends the batch. Bytes
+    throughout: a blob is never decoded, only hashed."""
     import subprocess
 
     if any("\n" in r for r in requests):
@@ -404,7 +441,7 @@ def _git_objects(root: Path, requests: list[str], *, cwd: Path | None = None,
         result = _hook_utils.spawn_checked(
             ["git", "cat-file", "--batch-check" if check_only else "--batch"], root=root,
             input=b"".join(os.fsencode(r) + b"\n" for r in requests),
-            capture_output=True, timeout=5, cwd=str(cwd or root), env=_nested_env(cwd),
+            capture_output=True, timeout=timeout, cwd=str(cwd or root), env=_nested_env(cwd),
         )
     except (subprocess.SubprocessError, OSError):  # fail-open: ok deliberate -- None makes the caller report the change and say git could not answer
         return None
@@ -434,29 +471,45 @@ def _git_objects(root: Path, requests: list[str], *, cwd: Path | None = None,
 
 
 #: How many bytes of files of BIG_FILE_BYTES or more one call may have git
-#: hash (about 0.5 ms per MiB, measured): past it the rest are named in a note
-#: and report, so a pull of many model files never costs the hook its timeout.
+#: hash: past it the rest are named in a note and report, so a pull of many
+#: model files never costs the hook its timeout. Measured on an 8 GB laptop:
+#: about 0.5 ms per MiB with a warm cache (100 MB in 58 ms, the whole budget
+#: in 0.47 s), several times that cold (the whole budget in 2.65 to 2.86 s).
 BIG_HASH_BUDGET_BYTES = 1 << 30
+#: Past git's own ``core.bigFileThreshold`` (512 MiB by default, lower where a
+#: repository sets it) hash-object streams the file and compresses what it
+#: never writes: 513 MiB took 9.3 s against 233 ms at 511 MiB (measured). The
+#: hash runs with the threshold past the budget, so no file it may hash
+#: reaches that path.
+_HASH_THRESHOLD = f"core.bigFileThreshold={BIG_HASH_BUDGET_BYTES + 1}"
 
 
-def _hash_objects(root: Path, paths: list[str], *, cwd: Path | None = None) -> list[bytes] | None:
-    """``git hash-object`` of each path (relative to ``cwd``), through the
-    checkout's own filters (an LFS file hashes to its pointer, as committed):
-    the object id each file would have, or None when git cannot answer. Git
-    reads the files; the hook never does."""
+def _hash_objects(root: Path, paths: list[str], *, cwd: Path | None = None,
+                  timeout: float = 5.0) -> tuple[list[bytes] | None, bool]:
+    """``(ids, timed_out)``: ``git hash-object`` of each path (relative to
+    ``cwd``), through the checkout's own filters (a big LFS file hashes to
+    its pointer, as committed), the object id each file would have, or None
+    when git gives none, with whether it ran past ``timeout``. The paths go
+    on stdin, so no count of them meets a command-line limit. Git reads the
+    files; the hook never does."""
     import subprocess
 
+    if any("\n" in p for p in paths):
+        return None, False  # a path stdin cannot carry; such a checkout is never asked this far
     try:
         result = _hook_utils.spawn_checked(
-            ["git", "hash-object", "--", *paths], root=root,
-            capture_output=True, timeout=5, cwd=str(cwd or root), env=_nested_env(cwd),
+            ["git", "-c", _HASH_THRESHOLD, "hash-object", "--stdin-paths"], root=root,
+            input=b"".join(os.fsencode(p) + b"\n" for p in paths),
+            capture_output=True, timeout=timeout, cwd=str(cwd or root), env=_nested_env(cwd),
         )
-    except (subprocess.SubprocessError, OSError):  # fail-open: ok deliberate -- None leaves the big files unaccounted; the caller says they were not checked
-        return None
+    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- None leaves the big files unaccounted; the caller names them and says git did not finish
+        return None, True
+    except (subprocess.SubprocessError, OSError):  # fail-open: ok deliberate -- None leaves the big files unaccounted; the caller names them and says git could not hash them
+        return None, False
     if isinstance(result, _hook_utils.SpawnFailure) or result.returncode != 0:
-        return None
+        return None, False
     oids: list[bytes] = result.stdout.split()
-    return oids if len(oids) == len(paths) else None
+    return (oids if len(oids) == len(paths) else None), False
 
 
 def _identified_by_stat(digest: str | None) -> bool:
@@ -711,12 +764,12 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
             base_nested: dict[str, str] | None = None,
             ) -> tuple[dict[str, list[str]], list[str], dict[str, str | None]]:
     """The moved paths no legitimate path accounts for, by kind; notes on any
-    path that could not be asked; and ``{path: digest}``, what git moved each
-    changed path it accounted for away from, so the caller keeps it as known
-    (a stash pop of an edit there before the session). Checked only for what moved, so a call
-    that changed nothing never reaches here; accounting is an OR, so the
-    cheap paths run first and git, the one spawn (one per checkout asked),
-    runs last:
+    path that could not be asked; and ``{path: digest}``, the content a stash
+    took from each changed path git accounted for, so the caller keeps it as
+    known (the pop of a stash of an edit there before the session). Checked
+    only for what moved, so a call that changed nothing never reaches here;
+    accounting is an OR, so the cheap paths run first and git's spawns, all
+    within GIT_ASK_BUDGET_S, run last:
 
     1. known content: a file tool wrote it (judged by path before it ran), or
        a path accounted for it, or this check reported it -- in this session
@@ -732,10 +785,15 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
        checkout under an adopter's protected path, one the previous check
        knew (``base_nested``, from ``nested_heads``), is asked of that
        checkout's own git, a removal against its HEAD then; the nested asks
-       share NESTED_ASK_BUDGET_S. A file of BIG_FILE_BYTES or more, never read
-       here, is hashed by git through the checkout's filters and matched with
-       its blob id at HEAD, within BIG_HASH_BUDGET_BYTES a call; a removal is
-       judged by presence alone, so no such blob is read into the hook.
+       start within NESTED_ASK_BUDGET_S. A file of BIG_FILE_BYTES or more, now
+       or at the previous check, never read here, is hashed by git through the
+       checkout's filters and matched with its blob id at HEAD, within
+       BIG_HASH_BUDGET_BYTES a call and after every checkout's asks, so a slow
+       hash never costs a nested checkout its turn; a removal is judged by
+       presence alone, so no big blob is read into the hook. A changed file
+       git accounted for has its earlier content kept as known only when the
+       checkout's stash, written since the previous check, holds that content
+       at the path and the stash's parent commit does not: what the stash took.
     """
     remaining = {kind: list(paths) for kind, paths in moved.items()}
     notes: list[str] = []
@@ -775,31 +833,46 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
             by_checkout.setdefault(_checkout_of(r, scope, known_heads), []).append(r)
         gone_set = set(gone)
         asked: set[str] = set()
-        at_head: dict[str, bytes | None] = {}   # a kept file's blob at HEAD
-        clean: set[str] = set()                 # a big kept file git hashes to its blob at HEAD
+        inside: dict[str, str] = {}             # each path as its checkout names it
+        top_of: dict[str, str] = {}             # and that checkout ("" for the outer one)
+        at_head: dict[str, bytes | None] = {}   # a small kept file's blob at HEAD
+        head_oid: dict[str, bytes | None] = {}  # a big kept file's blob id at HEAD
+        clean: set[str] = set()                 # a big kept file git hashes to that id
         head_has: dict[str, bool] = {}          # a removed file's presence at HEAD
         base_has: dict[str, bool] = {}          # and at the HEAD of the previous check
         hash_left = BIG_HASH_BUDGET_BYTES
+        to_hash: list[tuple[str, list[str]]] = []
         unhashed: list[str] = []
-        deadline = time.monotonic() + NESTED_ASK_BUDGET_S
         late: list[str] = []
+        start = time.monotonic()
+
+        def left() -> float:
+            return GIT_ASK_BUDGET_S - (time.monotonic() - start)
+
+        def big(r: str) -> bool:
+            # Never read: big now, or at the previous check (a model cut short
+            # by hand still has a big blob at HEAD, which can never match it).
+            return _identified_by_stat(present(r)) or (r in before and _identified_by_stat(before[r][2]))
+
         for top, rels in sorted(by_checkout.items()):   # the outer checkout ("") first, always asked
-            if top and time.monotonic() > deadline:
+            if top and time.monotonic() - start > NESTED_ASK_BUDGET_S:
                 late.append(top)
                 continue
-            inside = {r: r[len(top) + 1:] if top else r for r in rels}
+            for r in rels:
+                inside[r], top_of[r] = (r[len(top) + 1:] if top else r), top
             base = base_head if not top else known_heads[top]
             cwd = root / top if top else None
             # A big file and a removed one are asked for presence alone: no blob
             # of theirs is read into the hook.
-            small = [r for r in rels if r not in gone_set and not _identified_by_stat(present(r))]
-            big = [r for r in rels if r not in gone_set and _identified_by_stat(present(r))]
+            small = [r for r in rels if r not in gone_set and not big(r)]
+            bigs = [r for r in rels if r not in gone_set and big(r)]
             gone_here = [r for r in rels if r in gone_set]
-            checks = [f"HEAD:./{inside[r]}" for r in big + gone_here]
+            checks = [f"HEAD:./{inside[r]}" for r in bigs + gone_here]
             if base is not None:
                 checks += [f"{base}:./{inside[r]}" for r in gone_here]
-            blobs = _git_objects(root, [f"HEAD:./{inside[r]}" for r in small], cwd=cwd) if small else []
-            oids = _git_objects(root, checks, cwd=cwd, check_only=True) if checks else []
+            blobs = (_git_objects(root, [f"HEAD:./{inside[r]}" for r in small], cwd=cwd, timeout=left())
+                     if small else [])
+            oids = _git_objects(root, checks, cwd=cwd, check_only=True, timeout=left()) if checks else []
             if blobs is None or oids is None:
                 notes.append("git could not be asked, so committed content was not checked" if not top else
                              f"the git of {top.encode('unicode_escape').decode('ascii')}/ could not be asked, "
@@ -807,12 +880,12 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
                 continue
             asked.update(rels)
             at_head.update(zip(small, blobs))
-            head_oid = dict(zip(big, oids[:len(big)]))
-            n = len(big) + len(gone_here)
-            head_has.update((r, o is not None) for r, o in zip(gone_here, oids[len(big):n]))
+            head_oid.update(zip(bigs, oids[:len(bigs)]))
+            n = len(bigs) + len(gone_here)
+            head_has.update((r, o is not None) for r, o in zip(gone_here, oids[len(bigs):n]))
             base_has.update((r, o is not None) for r, o in zip(gone_here, oids[n:]))
             hashable = []
-            for r in big:
+            for r in bigs:
                 if head_oid.get(r) is None:
                     continue   # not at HEAD: there is nothing for its content to match
                 if after[r][0] > hash_left:
@@ -821,27 +894,36 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
                 hash_left -= after[r][0]
                 hashable.append(r)
             if hashable:
-                hashes = _hash_objects(root, [inside[r] for r in hashable], cwd=cwd)
-                if hashes is None:
-                    notes.append(f"git could not hash {len(hashable)} file(s) of {BIG_FILE_BYTES >> 20} MiB or more, "
-                                 "so their committed content was not checked")
-                else:
-                    clean.update(r for r, h in zip(hashable, hashes) if h == head_oid[r])
+                to_hash.append((top, hashable))
+        # Hashed last, after every checkout's asks: a slow hash (a file of
+        # hundreds of MiB, a clean filter) never costs a nested checkout its turn.
+        for top, hashable in to_hash:
+            budget = left()
+            hashes, timed_out = (_hash_objects(root, [inside[r] for r in hashable], cwd=root / top if top else None,
+                                               timeout=budget)
+                                 if budget > 0 else (None, True))
+            if hashes is None:
+                notes.append(f"git {'did not finish hashing' if timed_out else 'could not hash'} {len(hashable)} "
+                             f"file(s) of {BIG_FILE_BYTES >> 20} MiB or more ({_names(hashable)})"
+                             f"{f' within {GIT_ASK_BUDGET_S:g} s' if timed_out else ''}, "
+                             "so their committed content was not checked")
+            else:
+                clean.update(r for r, h in zip(hashable, hashes) if h == head_oid[r])
         if late:
             names = ", ".join(t.encode("unicode_escape").decode("ascii") + "/" for t in late)
             notes.append(f"{len(late)} nested checkout(s) were not asked within {NESTED_ASK_BUDGET_S:g} s ({names}), "
                          "so their committed content was not checked")
         if unhashed:
-            names = ", ".join(r.encode("unicode_escape").decode("ascii") for r in unhashed[:3])
             notes.append(f"{len(unhashed)} file(s) of {BIG_FILE_BYTES >> 20} MiB or more were past the "
-                         f"{BIG_HASH_BUDGET_BYTES >> 20} MiB one call may hash ({names}"
-                         f"{', ...' if len(unhashed) > 3 else ''}), so their committed content was not checked")
+                         f"{BIG_HASH_BUDGET_BYTES >> 20} MiB one call may hash ({_names(unhashed)}), "
+                         "so their committed content was not checked")
+        stashed: dict[str, list[str]] = {}   # per checkout: changed paths git accounted for, small before and now
         for kind in ("changed", "added"):
             still: list[str] = []
             for r in remaining[kind]:
                 if r in asked and (r in clean or _blob_holds(at_head.get(r), present(r))):
-                    if kind == "changed":
-                        moved_from[r] = before[r][2]   # git moved it from this; a return to it is known
+                    if kind == "changed" and not big(r):
+                        stashed.setdefault(top_of[r], []).append(r)
                 else:
                     still.append(r)
             remaining[kind] = still
@@ -849,7 +931,30 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
             r for r in gone
             if not (r in asked and not head_has.get(r, False)
                     and (base_has.get(r, False) or before[r][2] in known.get(r, ())))]
+        # What a stash took: the content before, held by the stash at the path
+        # and not by its parent (HEAD when it was made), so a file the stash
+        # merely carried unchanged beside a pull is not one. A stash written
+        # within the racy window before the previous check counts: a coarse
+        # file system clock can stamp a write just after a check before it.
+        for top, rels in sorted(stashed.items()):
+            stash = stash_written_since(root / top if top else root, since_ns - RACY_WINDOW_NS)
+            budget = left()
+            if stash is None or budget <= 0:
+                continue   # its pop reports, the loud side
+            held = _git_objects(root, [f"{stash}:./{inside[r]}" for r in rels]
+                                + [f"{stash}^1:./{inside[r]}" for r in rels],
+                                cwd=root / top if top else None, timeout=budget)
+            if held is None:
+                continue   # its pop reports, the loud side
+            for r, mine, parent in zip(rels, held[:len(rels)], held[len(rels):]):
+                if _blob_holds(mine, before[r][2]) and not _blob_holds(parent, before[r][2]):
+                    moved_from[r] = before[r][2]
     return remaining, notes, moved_from
+
+
+def _names(rels: list[str]) -> str:
+    """Up to three paths for a note, escaped to ASCII, then ``...``."""
+    return ", ".join(r.encode("unicode_escape").decode("ascii") for r in rels[:3]) + (", ..." if len(rels) > 3 else "")
 
 
 def _change_time(root: Path, rel: str, after: dict[str, Entry]) -> int | None:
