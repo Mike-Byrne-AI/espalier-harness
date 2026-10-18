@@ -1,8 +1,9 @@
 # espalier baseline
 
-**What this represents:** A full espalier install via `python3 -m espalier.cli
-init <target>` followed by `espalier integrity refresh` to activate the
-kill-switch scanner.
+**What this represents:** A full espalier install via `espalier.cli init
+<target>`, run with the interpreter the runner hands `setup.sh`
+(`ESPALIER_BENCH_PYTHON`, else `python3` for a run by hand), followed by
+`espalier integrity refresh` to activate the kill-switch scanner.
 
 **What it claims to handle:** Every documented bypass class in `bench/corpus/`
 that has `in_scope: true`. Pinned by the regression test suite in `tests/`

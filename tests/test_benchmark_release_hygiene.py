@@ -30,11 +30,17 @@ Stem `test_benchmark_release_hygiene` is registered in
 # `not slow` fast slice where the rest of its hygiene checks belong.
 from __future__ import annotations
 
+import ast
+import json
+import os
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+
+from tests._live_tree import checkout_glob
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -457,3 +463,116 @@ def test_bench_readme_layout_tree_names_every_top_level_oracle():
     assert not missing, (
         f"bench/README.md's layout tree omits tracked oracle(s): {missing}"
     )
+
+
+# \u2500\u2500 The release bench reads, and sets up, the same on every host \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# DEF-1073 and DEF-1072, met on the Windows clone regenerating RESULTS.md for
+# DEF-1070 (2026-10-03) and driven there again on 2026-10-18.
+
+
+def test_the_settings_deny_verifier_matches_case_sensitively_on_every_host(tmp_path, monkeypatch):
+    """DEF-1073: `fnmatch.fnmatch` case-folds through `os.path.normcase` on
+    Windows, so BC-025's `.CLAUDE/settings.json` matched the
+    `.claude/settings.json` deny rule there and RESULTS.md read 1/5 where
+    Linux reads 0/5. Windows' folding is put on this host too, so the pin reds
+    on every host while the verifier folds case, not only on Windows."""
+    import bench.run_benchmark as rb
+
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text(
+        json.dumps({"permissions": {"deny": ["Write(.claude/settings.json)"]}}), encoding="utf-8")
+    monkeypatch.setattr(os.path, "normcase", lambda path: path.lower())
+    folded, exact = (rb.invoke_settings_deny_matcher({"tool_name": "Write", "tool_input": {"file_path": p}}, tmp_path)
+                     for p in (".CLAUDE/settings.json", ".claude/settings.json"))
+    assert (folded.blocked, exact.blocked) == (False, True), (folded.reason, exact.reason)
+
+
+@pytest.mark.parametrize("git_exe", [("cmd", "git.exe"), ("mingw64", "bin", "git.exe")],
+                         ids=["git-cmd", "git-mingw64"])
+def test_setup_runs_gits_own_bash_on_windows_and_never_the_wsl_launcher(tmp_path, monkeypatch, git_exe):
+    """DEF-1072: a bare `bash` resolves through CreateProcess, which searches
+    System32 before PATH, to the WSL launcher; on 2026-10-18 every baseline
+    failed there (`execvpe(/bin/bash) failed`). The setup shell is Git for
+    Windows' own bash, found in git's install root, and its `bin/` wrapper
+    ahead of `usr/bin/` (the wrapper puts `usr/bin` on PATH for the script's
+    `mkdir` and `cat`); the launcher is never returned. (Red on main, which
+    resolves no shell at all.)"""
+    import bench.run_benchmark as rb
+
+    git_root = tmp_path / "Git"
+    (git_root.joinpath(*git_exe)).parent.mkdir(parents=True)
+    git_root.joinpath(*git_exe).write_text("", encoding="utf-8")
+    for folder in (("bin",), ("usr", "bin")):
+        git_root.joinpath(*folder).mkdir(parents=True, exist_ok=True)
+        git_root.joinpath(*folder, "bash.exe").write_text("", encoding="utf-8")
+    launcher = r"C:\Windows\System32\bash.exe"
+    lookup = {"git": str(git_root.joinpath(*git_exe)), "bash": launcher}.get
+    found = rb._setup_shell(windows=True, which=lookup, installs=())
+    assert Path(found).resolve() == (git_root / "bin" / "bash.exe").resolve()
+    monkeypatch.setattr(rb.shutil, "which", lookup)   # the default lookup is read at call time
+    assert Path(rb._setup_shell(windows=True, installs=())).resolve() == (git_root / "bin" / "bash.exe").resolve()
+    assert rb._setup_shell(windows=False, which={}.get) == "bash"
+
+
+def test_setup_never_falls_back_to_the_launcher_or_a_bash_above_gits_root(tmp_path):
+    """No Git bash in git's own root: Git's default install folder is asked
+    next (a package manager's shim sits elsewhere), a bash above git's root is
+    never taken, and the launcher as any host spells it refuses by name."""
+    import bench.run_benchmark as rb
+
+    shim = tmp_path / "chocolatey" / "bin" / "git.exe"
+    shim.parent.mkdir(parents=True)
+    shim.write_text("", encoding="utf-8")
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "bash.exe").write_text("", encoding="utf-8")   # above the shim's root
+    installed = tmp_path / "Program Files" / "Git"
+    (installed / "bin").mkdir(parents=True)
+    (installed / "bin" / "bash.exe").write_text("", encoding="utf-8")
+    launcher = r"C:\Windows\System32\bash.exe"
+    found = rb._setup_shell(windows=True, which={"git": str(shim), "bash": launcher}.get, installs=[installed])
+    assert Path(found).resolve() == (installed / "bin" / "bash.exe").resolve()
+    for bash in (launcher, r"C:\Windows\Sysnative\bash.exe", "C:/WINDOWS/system32/bash.exe",
+                 r"C:\Users\x\AppData\Local\Microsoft\WindowsApps\bash.exe"):
+        with pytest.raises(FileNotFoundError, match="Git for Windows"):
+            rb._setup_shell(windows=True, which={"git": str(shim), "bash": bash}.get, installs=())
+
+
+def test_setup_hands_the_script_this_interpreter_not_the_name_python3(tmp_path, monkeypatch):
+    """DEF-1072: the espalier baseline's setup.sh ran `python3`, which a
+    python-only Windows install lacks; the runner hands it the interpreter it
+    runs on, and the script names no bare interpreter. (Red on main, which
+    hands nothing over.)"""
+    import bench.run_benchmark as rb
+
+    seen: dict = {}
+
+    def spawn(argv, **kwargs):
+        seen.update(argv=argv, env=kwargs.get("env") or {})
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(rb, "run_bounded", spawn)
+    monkeypatch.setattr(rb, "_setup_shell", lambda: "/usr/bin/bash")
+    rb.setup_baseline("espalier", tmp_path)
+    assert seen["env"].get("ESPALIER_BENCH_PYTHON") == Path(sys.executable).as_posix(), seen
+    script = (REPO_ROOT / "bench" / "baselines" / "espalier" / "setup.sh").read_text(encoding="utf-8")
+    assert 'PYTHON="${ESPALIER_BENCH_PYTHON:-python3}"' in script
+    # every baseline's run of the engine, wherever it sits on its line (after a
+    # `cd ... &&`, behind `exec`, inside `$(...)`), names the handed interpreter
+    runs = {setup.parent.name: [line.strip() for line in setup.read_text(encoding="utf-8").splitlines()
+                                if "-m espalier.cli" in line and not line.lstrip().startswith("#")]
+            for setup in checkout_glob(REPO_ROOT / "bench" / "baselines", "*/setup.sh")}
+    assert runs["espalier"], "the espalier baseline no longer runs espalier.cli; re-aim this check"
+    stray = {name: [line for line in lines if not re.search(r'"\$PYTHON" -m espalier\.cli', line)]
+             for name, lines in runs.items()}
+    assert not any(stray.values()), stray
+
+
+def test_no_spawn_in_the_runner_names_a_bare_shell():
+    """Derived from the runner's own calls: no argv list there starts with a
+    bare `bash` or `sh`, the name Windows resolves to the WSL launcher."""
+    tree = ast.parse((REPO_ROOT / "bench" / "run_benchmark.py").read_text(encoding="utf-8"))
+    bare = [node.lineno for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.List)
+            and node.args[0].elts and isinstance(node.args[0].elts[0], ast.Constant)
+            and node.args[0].elts[0].value in ("bash", "sh")]
+    assert not bare, f"bench/run_benchmark.py spawns a bare shell at line(s) {bare}"
