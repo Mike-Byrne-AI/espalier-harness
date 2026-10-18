@@ -219,9 +219,6 @@ _MARKED_SITES: frozenset[str] = frozenset({
     "tools/cc/hooks/_hook_utils.py::_PROJECT_MANIFEST_FALLBACK",
     "tools/cc/hooks/_hook_utils.py::_STACK_ROOT_FALLBACK",
     "tools/cc/hooks/_hook_utils.py::_TEST_DIRS_FALLBACK",
-    # The package-root markers: a per-manifest flag the table does not carry,
-    # held equal to its intersection with the table's manifests.
-    "espalier/analyze.py::_PACKAGE_ROOT_MARKERS",
     # The session catch-up's tool caches and virtualenvs a worktree removal may
     # take with it; the stacks' dependency and output directories are unioned
     # in from the table (2026-10-08).
@@ -884,15 +881,27 @@ class TestTheSourceAndManifestListsAreProjections:
         assert list(analyze._STACK_TEST_BY_MANIFEST.items()) == [
             ("go.mod", ("go", "test", "./...")), ("Cargo.toml", ("cargo", "test")),
         ]
-        # The package-root markers are the six they have always been, held as
-        # a filter on the table (a marked list: the table has no per-manifest
-        # flag for "marks a package root"); any subtraction or widening reds
-        # here by name.
-        assert analyze.MANIFEST_NAMES == analyze._PACKAGE_ROOT_MARKERS
-        assert analyze.MANIFEST_NAMES == frozenset(table.manifest_names()) & analyze._PACKAGE_ROOT_MARKERS
+        # The package-root markers are the table's root manifests: the six
+        # project manifests and, since DEF-4016, setup.py. Any subtraction or
+        # widening reds here by name. A root manifest is always one of the
+        # table's manifests, and Python marks setup.py but never setup.cfg.
+        assert analyze.MANIFEST_NAMES == frozenset(table.package_root_manifests())
         assert analyze.MANIFEST_NAMES == {
-            "pyproject.toml", "package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
+            "pyproject.toml", "setup.py", "package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
         }
+        assert set(table.package_root_manifests()) <= set(table.manifest_names())
+        # A manifest added to any row reds one of the next two lines until its
+        # root decision is made here, by name: root_manifests defaults to none,
+        # which is how setup.py read no root until DEF-4016.
+        assert set(table.manifest_names()) - set(table.package_root_manifests()) == {
+            "requirements.txt", "setup.cfg", "Pipfile", "Gemfile",
+        }, "a manifest joined the table: decide whether it marks a package root (root_manifests) and name it here"
+        assert table.stack("python").root_manifests == ("pyproject.toml", "setup.py")
+        assert table.stack("node").root_manifests == ("package.json",)
+        assert table.stack("go").root_manifests == ("go.mod",)
+        assert table.stack("rust").root_manifests == ("Cargo.toml",)
+        assert table.stack("jvm").root_manifests == ("pom.xml", "build.gradle")
+        assert table.stack("ruby").root_manifests == ()
 
     def test_the_fallbacks_equal_the_table_and_are_never_empty(self):
         """Each pinned copy is compared to the TABLE, never to the projection

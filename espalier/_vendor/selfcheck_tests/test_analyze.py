@@ -243,12 +243,12 @@ class TestDetectPackageRoots:
         roots = detect_package_roots(tmp_path)
         assert roots == []
 
-    # The root markers are held at the six project manifests they have always
-    # been (a filter on the stack table's manifests since 2026-10-07): a
-    # docs/requirements.txt, a vendored setup.py or a flake8 docs/setup.cfg
-    # never makes its directory a package root, which would flip `monorepo`
-    # and widen the generated scopes on a tree that has none (measured in
-    # lane B's review). Widening the markers is a candidate row.
+    # The root markers are the stack table's root manifests: the six project
+    # manifests and, since DEF-4016, setup.py. A docs/requirements.txt, a flake8
+    # docs/setup.cfg or a vendored copy of any marker never makes its directory
+    # a package root, which would flip `monorepo` and widen the generated scopes
+    # on a tree that has none (measured in lane B's review, and again on
+    # DEF-4016's trees).
     def test_a_nested_requirements_file_is_not_a_root(self, tmp_path):
         (tmp_path / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
         (tmp_path / "docs").mkdir()
@@ -265,6 +265,98 @@ class TestDetectPackageRoots:
             (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
             (tmp_path / rel).write_text(body, encoding="utf-8")
         assert detect_package_roots(tmp_path) == ["/"]
+
+    @staticmethod
+    def _plant(root: Path, *rels: str) -> Path:
+        bodies = {
+            "setup.py": "from setuptools import setup\nsetup()\n",
+            "pyproject.toml": "[project]\n",
+            "package.json": '{"name": "x"}\n',
+        }
+        for rel in rels:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            (root / rel).write_text(bodies.get(Path(rel).name, "x\n"), encoding="utf-8")
+        return root
+
+    # DEF-4016: a multi-package tree from before pyproject.toml carries one
+    # setup.py per package. It read no root, so `monorepo` stayed False and the
+    # profile score, the guardrail and the package scopes never applied.
+    def test_a_setup_py_per_package_makes_each_package_a_root(self, tmp_path):
+        repo = self._plant(tmp_path, "packages/one/setup.py", "packages/two/setup.py")
+        roots = detect_package_roots(repo)
+        assert roots == ["packages/one", "packages/two"]
+        assert detect_monorepo(roots) is True
+
+    def test_two_vendored_setup_py_copies_are_no_roots(self, tmp_path):
+        """With setup.py marked and no prune, these two copies read as two roots
+        and a monorepo."""
+        repo = self._plant(tmp_path, "pyproject.toml", "third_party/libA/setup.py", "vendor/libB/setup.py")
+        roots = detect_package_roots(repo)
+        assert roots == ["/"]
+        assert detect_monorepo(roots) is False
+
+    def test_a_vendored_copy_of_any_root_manifest_is_dropped(self, tmp_path):
+        """Dropped on purpose (DEF-4016): before the prune, this single project
+        read three roots, ['/', 'third_party/libA', 'vendor/libC'], and a
+        monorepo, through markers that predate setup.py."""
+        repo = self._plant(
+            tmp_path, "pyproject.toml", "third_party/libA/pyproject.toml", "vendor/libC/package.json",
+        )
+        roots = detect_package_roots(repo)
+        assert roots == ["/"]
+        assert detect_monorepo(roots) is False
+
+    def test_the_prune_is_at_any_depth_and_keeps_the_roots_beside_it(self, tmp_path):
+        repo = self._plant(
+            tmp_path,
+            "packages/one/setup.py", "packages/one/third_party/x/package.json",
+            "packages/two/pyproject.toml", "packages/two/vendor/y/setup.py",
+        )
+        assert detect_package_roots(repo) == ["packages/one", "packages/two"]
+
+    def test_a_checkout_under_a_vendor_named_parent_keeps_its_roots(self, tmp_path):
+        """The prune reads the repo-relative parts, as the shared skip set does,
+        so a checkout kept under a folder named vendor/ or third_party/ keeps
+        every root."""
+        for parent in ("vendor", "third_party"):
+            repo = self._plant(tmp_path / parent / "myrepo", "packages/one/setup.py", "packages/two/pyproject.toml")
+            assert detect_package_roots(repo) == ["packages/one", "packages/two"], parent
+
+    def test_the_prune_matches_whole_names_only(self, tmp_path):
+        """A part equal to vendor or third_party, never one containing it. The
+        near spellings (vendors, _vendor, third-party, thirdparty) are not
+        pruned until a real tree shows a manifest under one."""
+        repo = self._plant(tmp_path, "pyproject.toml", "vendors/x/setup.py", "third_party_x/y/setup.py")
+        assert detect_package_roots(repo) == ["/", "third_party_x/y", "vendors/x"]
+
+    def test_the_unmarked_manifests_mark_no_root_outside_a_vendored_copy(self, tmp_path):
+        """setup.cfg, requirements.txt, Pipfile and Gemfile stay unmarked on
+        their own, not only because a vendored copy is pruned."""
+        repo = self._plant(
+            tmp_path, "pyproject.toml",
+            "docs/setup.cfg", "tools/requirements.txt", "services/api/Pipfile", "site/Gemfile",
+        )
+        assert detect_package_roots(repo) == ["/"]
+
+    def test_the_vendored_prune_is_the_package_root_walks_alone(self, tmp_path):
+        """The two names are not in the shared skip set, so the file walk behind
+        the language census still reads vendored source: joining that set would
+        move every adopter's fingerprint."""
+        assert analyze_module.VENDORED_PARTS == {"vendor", "third_party"}, (
+            "the package-root walk's prune is the two names DEF-4016 drove; a new spelling "
+            "joins with a tree that shows a manifest under it"
+        )
+        assert not analyze_module.VENDORED_PARTS & analyze_module.DEFAULT_SKIP_PARTS, (
+            "a stack row that now owns one of these names (composer's or Go's vendor/) prunes it "
+            "everywhere: drop it from VENDORED_PARTS. Never move VENDORED_PARTS into "
+            "DEFAULT_SKIP_PARTS, which moves every adopter's fingerprint"
+        )
+        repo = self._plant(tmp_path, "pyproject.toml", "vendor/libC/a.py", "third_party/libA/b.go")
+        counts, _ = detect_languages(repo)
+        assert counts.get("python") == 1 and counts.get("go") == 1, (
+            "the file walk behind the language census read no vendored source: the prune leaked "
+            "into the shared skip set", counts,
+        )
 
 
 # ─── detect_entrypoints ──────────────────────────────────────────────────────
