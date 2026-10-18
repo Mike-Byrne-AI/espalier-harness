@@ -4356,6 +4356,7 @@ class TestTextNoReaderSeesIsNoSectionsVocabulary:
         assert [h.source for h in hits][:1] == ["memory/marker.md"], hits
 
 
+@pytest.mark.contract
 class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
     """The deny texts cite their docs/HOOKS.md section by heading, and recall could
     not answer the question they invite: on an init'd Node tree (measured
@@ -4381,7 +4382,7 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
         (tmp_path / "memory").mkdir()
         (tmp_path / "memory" / "convergence-review-protocol.md").write_text(
             (assets / "seed" / "convergence-review-protocol.md").read_text(encoding="utf-8"), encoding="utf-8")
-        for note in (assets / "docs" / "sharp-edges").glob("*.md"):
+        for note in checkout_glob(assets / "docs" / "sharp-edges", "*.md"):
             if note.name != "README.md":
                 (tmp_path / "docs" / "sharp-edges" / note.name).write_text(
                     note.read_text(encoding="utf-8"), encoding="utf-8")
