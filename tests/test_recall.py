@@ -2280,6 +2280,12 @@ _PARAPHRASE_UNION_HITS = 10
 #: The EQUAL-BUDGET control. Without this constant the headline is unearned: it is
 #: what separates "the second NORMALISATION helps" from "more SLOTS help". The
 #: distinction has teeth precisely because more slots demonstrably do NOT help here.
+#: ⚠ 2026-10-18, when the index stopped reading HTML comments: the count held at 8,
+#: but its tightest hit narrowed. For "is the harness a security boundary"
+#: principle 2 holds the control's fourth slot at 4.0043, and "Local Hooks Are
+#: Not a Sandbox" rose from 3.9701 to 3.9864 (the lead 0.85% to 0.45%): the
+#: fragment marker that had diluted it by 19 tokens is no longer its text. An
+#: ordinary edit to that SHARP_EDGES entry is the likeliest next cause of 8 -> 7.
 _PARAPHRASE_CONTROL_HITS = 8
 
 #: The control's `top`, named rather than inlined so the budget guard below and the
@@ -4171,3 +4177,180 @@ def test_the_self_host_root_claude_md_keeps_its_two_markers():
             f"moves _HELDOUT_UNCONTESTED_HITS ({_HELDOUT_UNCONTESTED_HITS}) and the paraphrase control "
             "(memory/recall-engine-extension.md item 8). Put the marker back under the heading."
         )
+
+
+class TestTextNoReaderSeesIsNoSectionsVocabulary:
+    """An HTML comment renders as nothing, so its words are no section's
+    vocabulary. A fragment marker sits above its own ``##`` heading, so the
+    section splitter gave it to the section BEFORE it: on 2026-09-30 a path
+    added to a marker's ``bound=`` list made "Local Hooks Are Not a Sandbox"
+    outrank principle 2 for "is the harness a security boundary" and moved the
+    paraphrase table one slot. On main 2026-10-18, 17 of the 336 indexed
+    documents carried a comment outside code, seven of them fragment markers.
+    A comment inside inline code or a fenced block is text a reader sees, and
+    stays."""
+
+    @staticmethod
+    def _edges(tmp_path, monkeypatch, body: str) -> dict:
+        monkeypatch.setattr(_recall, "EXEMPLAR_MAP", {})
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "SHARP_EDGES.md").write_text(f"# Edges\n\n{body}", encoding="utf-8")
+        return {d.snippet: d.tokens for d in _recall._load_corpus(tmp_path)}
+
+    def test_a_fragment_marker_above_a_heading_scores_for_no_section(self, tmp_path, monkeypatch):
+        """The row's own shape. Dies to: the comment indexed with the section
+        before it (main), or the section's own prose lost with it."""
+        docs = self._edges(tmp_path, monkeypatch, (
+            "## First edge\n\nalpha bites here\n\n"
+            "<!-- espalier:fragment id=zzmarker\n"
+            "     bound=tools/cc/zzforeign.py policy=touch -->\n"
+            "## Second edge\n\nbeta bites there\n"))
+        assert set(docs) == {"First edge", "Second edge"}, docs
+        for title, tokens in docs.items():
+            assert not {"zzforeign", "zzmarker", "fragment", "bound", "policy"} & set(tokens), (title, tokens)
+        assert docs["First edge"]["alpha"] and docs["Second edge"]["beta"]
+        assert _recall.recall("zzforeign", tmp_path, top=4) == []
+
+    def test_a_comment_in_a_memory_note_scores_for_nothing(self, tmp_path, monkeypatch):
+        """A whole-file note, the folded-record shape seven notes carried. Dies
+        to: the strip confined to sectioned documents."""
+        root = _synth(tmp_path, monkeypatch, {
+            "a.md": "# A note\n\ngamma prose <!-- folded-record: ok -- history: zzhidden -->\n",
+            "b.md": "# B note\n\ndelta prose\n"})
+        tokens = {d.source: d.tokens for d in _recall._load_corpus(root)}
+        assert "zzhidden" not in tokens["memory/a.md"] and tokens["memory/a.md"]["gamma"]
+
+    def test_a_mid_line_comment_goes_and_the_words_around_it_stay(self, tmp_path, monkeypatch):
+        """Dies to: the comment kept, or the line around it dropped with it."""
+        docs = self._edges(tmp_path, monkeypatch,
+                           "## Edge\n\nbefore <!-- zzmid --> after\n")
+        assert "zzmid" not in docs["Edge"]
+        assert docs["Edge"]["before"] and docs["Edge"]["after"]
+
+    def test_a_comment_inside_code_is_text_and_stays(self, tmp_path, monkeypatch):
+        """Inline code and a fenced block show the reader the comment's text.
+        Dies to: the strip reading code as markup (it would also have eaten
+        the prose after an opener spelled inside a code span)."""
+        docs = self._edges(tmp_path, monkeypatch, (
+            "## Edge\n\nthe marker `<!-- zzinline -->` is spelled so\n\n"
+            "```\n<!-- zzfence -->\n```\n\n"
+            "the scan `^(?:#|<!--|::)` zzkept reads on <!-- zzgone -->\n"))
+        tokens = docs["Edge"]
+        assert tokens["zzinline"] and tokens["zzfence"] and tokens["zzkept"]
+        assert "zzgone" not in tokens
+
+    def test_an_unclosed_comment_keeps_the_rest_of_the_section(self, tmp_path, monkeypatch):
+        """An opener with no close outside code is left as it is, never read as
+        a comment running to the end of the file. Dies to: an unbounded strip."""
+        docs = self._edges(tmp_path, monkeypatch, "## Edge\n\nprose <!-- never closed zzafter\n")
+        assert docs["Edge"]["zzafter"]
+
+    def test_the_skip_marker_still_skips_its_section(self, tmp_path, monkeypatch):
+        """The skip marker is itself a comment, read on the raw body before the
+        strip. Dies to: the strip moved ahead of that read."""
+        docs = self._edges(tmp_path, monkeypatch, (
+            f"## Kept\n\nepsilon\n\n## Skipped\n\n{_recall.RECALL_SKIP_MARKER}\nzzskip\n"))
+        assert set(docs) == {"Kept"}, docs
+
+    # The rows below are the code review's and the failure-mode review's
+    # drives (2026-10-18): the first cut's fence walker could be deleted with
+    # every row above green, since a fence with no blank line inside also
+    # reads as a code span.
+
+    def test_a_tilde_fence_keeps_its_comment(self, tmp_path, monkeypatch):
+        """Dies to: tilde fences ignored."""
+        docs = self._edges(tmp_path, monkeypatch,
+                           "## Edge\n\n~~~\n<!-- zztilde -->\n~~~\n\nafter <!-- zzgone -->\n")
+        assert docs["Edge"]["zztilde"] and "zzgone" not in docs["Edge"]
+
+    def test_a_fence_with_a_blank_line_inside_keeps_its_comment(self, tmp_path, monkeypatch):
+        """No code span can pair across the blank line, so only the fence
+        walker keeps this comment. Dies to: the walker deleted."""
+        docs = self._edges(tmp_path, monkeypatch,
+                           "## Edge\n\n```\nfirst\n\n<!-- zzinfence -->\n```\n\nafter <!-- zzgone -->\n")
+        assert docs["Edge"]["zzinfence"] and "zzgone" not in docs["Edge"]
+
+    def test_a_longer_fence_holds_a_shorter_run_and_its_comment(self, tmp_path, monkeypatch):
+        """Dies to: a shorter run closing the fence."""
+        docs = self._edges(tmp_path, monkeypatch, (
+            "## Edge\n\n````\n```\n\n<!-- zzinside -->\n````\n\nafter <!-- zzgone -->\n"))
+        assert docs["Edge"]["zzinside"] and "zzgone" not in docs["Edge"]
+
+    def test_a_closer_with_text_after_it_leaves_the_fence_open(self, tmp_path, monkeypatch):
+        """The splitter's own fence grammar, ``next_fence_state``: a run with
+        text after it does not close. Dies to: a second fence grammar that
+        closes on it (the visible zzk2 was dropped and the hidden zzgone kept)."""
+        docs = self._edges(tmp_path, monkeypatch, (
+            "## Edge\n\n```\n<!-- zzk1 -->\n``` x\n\n<!-- zzk2 -->\n```\n\nafter <!-- zzgone -->\n"))
+        tokens = docs["Edge"]
+        assert tokens["zzk1"] and tokens["zzk2"] and "zzgone" not in tokens
+
+    def test_two_comments_in_a_paragraph_keep_the_words_between(self, tmp_path, monkeypatch):
+        """Dies to: a greedy comment match."""
+        docs = self._edges(tmp_path, monkeypatch,
+                           "## Edge\n\na <!-- zz1 --> zzbetween <!-- zz2 --> b\n")
+        tokens = docs["Edge"]
+        assert tokens["zzbetween"] and not {"zz1", "zz2"} & set(tokens)
+
+    def test_a_span_does_not_cross_a_blank_line(self, tmp_path, monkeypatch):
+        """Two backticks a paragraph apart are no span, so the comment between
+        them is markup. Dies to: a span allowed across the blank line."""
+        docs = self._edges(tmp_path, monkeypatch,
+                           "## Edge\n\nopen ` tick\n\nthen <!-- zzgone --> close ` tick\n")
+        assert "zzgone" not in docs["Edge"] and docs["Edge"]["close"]
+
+    def test_a_mid_line_opener_does_not_close_past_a_paragraph_break(self, tmp_path, monkeypatch):
+        """CommonMark shows a mid-line opener whose close is past a blank line
+        as text. Dies to: an inline comment allowed to cross the paragraph."""
+        docs = self._edges(tmp_path, monkeypatch,
+                           "## Edge\n\nsay <!-- zzhere\n\nzzvis para --> tail\n")
+        tokens = docs["Edge"]
+        assert tokens["zzhere"] and tokens["zzvis"] and tokens["tail"]
+
+    def test_a_line_start_comment_may_cross_a_blank_line(self, tmp_path, monkeypatch):
+        """At a line's start a comment is an HTML block, which runs to its
+        close. Dies to: every comment confined to one paragraph."""
+        docs = self._edges(tmp_path, monkeypatch,
+                           "## Edge\n\nprose\n\n<!-- zzblock\n\nzzstill -->\nafter\n")
+        tokens = docs["Edge"]
+        assert not {"zzblock", "zzstill"} & set(tokens) and tokens["after"]
+
+    def test_whichever_of_a_span_and_a_comment_starts_first_wins(self, tmp_path, monkeypatch):
+        """A comment that opens first ends at its first close, even one inside
+        backticks; what follows is visible. Dies to: spans held first (the
+        visible zzvis was dropped)."""
+        docs = self._edges(tmp_path, monkeypatch,
+                           "## Edge\n\n<!-- zzc `--> ` zzvis -->\n\nand `x <!-- zzcode -->` y\n")
+        tokens = docs["Edge"]
+        assert tokens["zzvis"] and tokens["zzcode"] and "zzc" not in tokens
+
+    def test_text_that_spells_a_placeholder_is_text(self, tmp_path, monkeypatch):
+        """Dies to: a held-span placeholder scheme, which raised IndexError on
+        this text (code review, driven 2026-10-18)."""
+        docs = self._edges(tmp_path, monkeypatch,
+                           "## Edge\n\n<!-- zzc --> \x009\x00 zztail\n")
+        assert docs["Edge"]["zztail"] and "zzc" not in docs["Edge"]
+
+    def test_a_failure_modes_coinage_reads_as_a_reader_sees_it(self, tmp_path, monkeypatch):
+        """The coinage shards build their bag apart from the other families, so
+        moving the strip out of ``_tokenize`` left them reading comments (found
+        after the review batch, 2026-10-18). Dies to: that site tokenized raw."""
+        monkeypatch.setattr(_recall, "EXEMPLAR_MAP", {})
+        monkeypatch.setattr(_recall, "is_self_host_repo", lambda root: True)
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "FAILURE_MODES.md").write_text(
+            "# Failure modes\n\n## 1. Coinages\n\n### 1.99 The zzcoinage trap\n\n"
+            "prose here <!-- zzhidden -->\n\n## 2. Next\n\nrest\n", encoding="utf-8")
+        docs = {d.source: d.tokens for d in _recall._load_corpus(tmp_path)}
+        tokens = docs["docs/FAILURE_MODES.md :: 1.99 The zzcoinage trap"]
+        assert tokens["zzcoinage"] and "zzhidden" not in tokens
+
+    def test_a_query_that_spells_a_comment_keeps_its_words(self, tmp_path, monkeypatch):
+        """Only a document's text is read as a reader sees it; a question that
+        spells a marker asks about the marker. Dies to: the strip applied to
+        queries (the marker's own note fell out of the top four)."""
+        root = _synth(tmp_path, monkeypatch, {
+            "marker.md": "# The zzskipword marker\n\nhow the zzskipword marker works\n",
+            "other.md": "# Other\n\nunrelated prose\n"})
+        hits = _recall.recall("<!-- zzskipword -->", root, top=4)
+        assert [h.source for h in hits][:1] == ["memory/marker.md"], hits

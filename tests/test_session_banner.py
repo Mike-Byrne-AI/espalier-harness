@@ -807,6 +807,17 @@ class TestSeededPlaceholderSurvivesRealisticEdits:
         assert h.is_seeded_placeholder(title, body + "\nWIP later\n")
         assert not h.is_seeded_placeholder(title, body + "\nstash before switching\n")
 
+    def test_a_comment_under_the_seeded_heading_is_still_the_scaffold(self):
+        """A comment renders as nothing, so its words are no content: a TODO
+        left as an HTML comment under the seeded heading is the scaffold still,
+        and /recall does not serve it (code review, driven 2026-10-18). Dies to:
+        the comment's words counted. The same words as prose still count."""
+        mod = _load()
+        h = mod._hook_utils
+        [(title, body)] = list(_seed_sections(_SEED_PATH.read_text(encoding="utf-8")))
+        assert h.is_seeded_placeholder(title, body + "\n<!-- TODO: fill in after the outage review -->\n")
+        assert not h.is_seeded_placeholder(title, body + "\nTODO: fill in after the outage review\n")
+
     def test_an_unrelated_heading_is_never_a_scaffold(self):
         """The residual rule applies only under a seeded heading; a section the
         operator titled themselves is theirs whatever its body says, even the
