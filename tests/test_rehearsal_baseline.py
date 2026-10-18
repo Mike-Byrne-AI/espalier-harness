@@ -10,8 +10,7 @@ regenerating it moved nine verdicts. These pin the consumer side, a
 ``--baseline`` run that refuses before a single row runs a baseline it cannot
 honestly diff against, and the producer's own stale-tree check, which compares
 the guard under test with the guard the rows were written against instead of
-looking for a 2026-08 symbol. A difference where each side reads the tier its
-own host's table expects is printed apart and does not fail the run (DEF-2024).
+looking for a 2026-08 symbol.
 
 Every test here runs in-process: the drive is stubbed and the tree's facts are
 planted, so no hook and no git process is spawned.
@@ -21,6 +20,7 @@ planted, so no hook and no git process is spawned.
 # stubs git out), so the enforcement slice's spawning contracts are not its kind.
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -300,6 +300,47 @@ class TestTheDifferences:
         assert rehearsal.host_differences(base, here) == []
 
 
+def _module_tree(name: str) -> ast.Module:
+    return ast.parse((_BENCH_DIR / f"{name}.py").read_text(encoding="utf-8"))
+
+
+def _keyed_rows(name: str) -> list[str]:
+    """The ids of ``bench/<name>.py``'s ``ROWS`` whose expected tier is not a
+    string literal, read from the source: every row whose expectation can
+    follow the host it runs on."""
+    table = next(node.value for node in _module_tree(name).body
+                 if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) == "ROWS")
+    assert isinstance(table, ast.List) and table.elts, name
+    return sorted(ast.literal_eval(row.elts[0]) for row in table.elts
+                  if not (isinstance(row.elts[1], ast.Constant) and isinstance(row.elts[1].value, str)))
+
+
+def _names_read(name: str, key: str) -> set[str]:
+    """The bare names the module-level assignment of ``key`` reads."""
+    value = next(node.value for node in _module_tree(name).body
+                 if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", None) == key)
+    return {node.id for node in ast.walk(value) if isinstance(node, ast.Name)}
+
+
+class TestTheHostKeyedRows:
+    """A declared host difference passes the diff (DEF-2024), so a row whose
+    expectation follows the host is quiet on both signals: its MISMATCH and its
+    cross-host difference. The keyed rows are pinned by id, so a new key is an
+    edit here, made on purpose, and each key reads a host fact the guard does
+    not compute, never the guard's own verdict (the failure-mode review)."""
+
+    def test_the_probe_keys_three_rows_and_the_rehearsal_none(self):
+        assert _keyed_rows(_PROBE) == ["4B-3", "4B-6", "4D-3"]
+        assert _keyed_rows(_REHEARSAL) == []
+
+    def test_each_key_reads_the_disk_or_the_home_and_nothing_of_the_guard(self):
+        """``_DRIVE_CD_TIER`` reads ``os.name`` and the drive-root temp on disk;
+        ``_SHALLOW_HOME`` the depth of the home. A key rewritten to ask a
+        guard helper reads a name outside these."""
+        assert _names_read(_PROBE, "_DRIVE_CD_TIER") == {"os", "Path"}
+        assert _names_read(_PROBE, "_SHALLOW_HOME") == {"len", "Path"}
+
+
 def _row(case_id: str, expected: str | None, actual: str) -> dict:
     """A receipt row on the plain shape; ``expected`` None leaves the key out,
     as a receipt that carries no expectation does."""
@@ -407,6 +448,7 @@ class TestTheOraclesReadABaseline:
         assert block["differences"] == [] and block["host_differences"] == [declared]
         said = capsys.readouterr().out
         assert "0 difference(s), 1 declared host difference(s)" in said and declared in said
+        assert said.index(declared) < said.index("0 difference(s) fail the run; the 1 declared above do not")
 
     @pytest.mark.parametrize("name", _ORACLES)
     def test_a_real_difference_beside_a_declared_one_fails_and_each_is_said_apart(
@@ -425,6 +467,7 @@ class TestTheOraclesReadABaseline:
             "a@plain: the baseline expects and reads SOFT, here expects and reads ALLOW"]
         said = capsys.readouterr().out
         assert said.index("b@plain: baseline HARD") < said.index("declared host differences") < said.index("a@plain")
+        assert said.index("a@plain") < said.index("1 difference(s) fail the run; the 1 declared above do not")
 
     @pytest.mark.parametrize("name", _ORACLES)
     def test_a_receipt_carried_to_another_host_is_a_baseline_and_its_own_host_refuses_it(

@@ -455,7 +455,9 @@ def main(argv: list[str] | None = None) -> int:
         print(headline)
         if result["mismatched"]:
             print("A MISMATCH is a regression, or a host verdict the table has not keyed yet "
-                  "(key it, as 4B-6 is), and is the first thing to record -- with the row id, "
+                  "(key it, as 4B-6 is, on a host fact the guard does not compute, and pin "
+                  "the key in tests/test_rehearsal_baseline.py: a keyed row's difference "
+                  "no longer fails a --baseline diff), and is the first thing to record -- with the row id, "
                   "shape, expected and actual tier.")
     if baseline is not None:
         record["baseline"] = report_baseline(baseline, args.baseline, result["rows"], file=said)

@@ -1337,7 +1337,10 @@ def _each_reads_its_own(base: dict[str, object], here: dict[str, object]) -> boo
     two expect different tiers. One commit with one rows digest puts one table
     on both sides, so two expectations differ only where the table keys a row
     on its host (4B-6 on the drive-root temp, 4B-3 and 4D-3 on a shallow home).
-    A row with no expectation, from a receipt that carries none, is never one."""
+    That rests on ``baseline_refusal``, which every caller runs first: two
+    receipts from two commits would read a re-pinned expectation as a host
+    difference. A row with no expectation, from a receipt that carries none, is
+    never one."""
     return base["actual"] == base.get("expected") and here["actual"] == here.get("expected")
 
 
@@ -1407,6 +1410,8 @@ def report_baseline(baseline: dict[str, object], path: str, rows: list[dict[str,
               "expects, so these do not fail the run:", file=out)
         for line in declared:
             print(f"  {line}", file=out)
+        print(f"{len(differences)} difference(s) fail the run; the {len(declared)} declared "
+              f"above do not", file=out)
     return {"path": path, "host": baseline.get("host"), "platform": baseline.get("platform"),
             "tree_sha": baseline.get("tree_sha"), "shapes_compared": compared,
             "differences": differences, "host_differences": declared}
