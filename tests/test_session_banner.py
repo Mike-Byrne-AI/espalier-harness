@@ -1097,6 +1097,7 @@ class TestDegradedAndHealth:
 
 # ─── Whole-banner contracts: allowlist, gating, no-dup, lean, flag ──────────
 
+import inspect  # noqa: E402
 import re  # noqa: E402
 
 # Every "--- X ---" section the banner is allowed to emit. A header outside this
@@ -4011,8 +4012,6 @@ class TestTheGovernanceWiringLine:
 
 _PROTOCOL_PIN = Path(__file__).resolve().parent.parent / "docs" / "external" / "cc-hook-protocol.md"
 _LONG = "a long run line " * 150  # 2,400 characters, far past the per-run cap
-_RUN_LINES = ("checkout", "worktrees", "loose", "sessions", "permissions", "open_prs", "merged_prs",
-              "merging", "seat", "engine", "mail", "orders", "integrity")
 
 
 def _pinned_host_cap() -> int:
@@ -4022,6 +4021,17 @@ def _pinned_host_cap() -> int:
     m = re.search(r"are capped at ([\d,]+) characters", text)
     assert m, "the pin no longer quotes the host's cap on hook context strings"
     return int(m.group(1).replace(",", ""))
+
+
+def _run_line_names(builder) -> "list[str]":
+    """A builder's per-run lines, read from its signature, so a new line joins
+    the worst case without an edit here."""
+    fixed = {"root", "self_host", "advance_chain", "source"}
+    return [p for p in inspect.signature(builder).parameters if p not in fixed]
+
+
+def _all_long(mod) -> "dict[str, str]":
+    return {n: _LONG for n in _run_line_names(mod._build_context)}
 
 
 def _host_units(text: str) -> int:
@@ -4060,9 +4070,11 @@ class TestTheBannerFitsTheHostCap:
     def test_the_worst_case_banner_fits_under_the_cap(self, tmp_path, monkeypatch, source):
         mod = _load()
         _worst_case(mod, monkeypatch)
-        banner = mod._build_context(tmp_path, True, False, source, **{n: _LONG for n in _RUN_LINES})
+        banner = mod._build_context(tmp_path, True, False, source, **_all_long(mod))
         assert _host_units(banner) <= 0.95 * _pinned_host_cap(), _host_units(banner)
         assert "confirm or redirect" in banner  # the orientation tail rides whole
+        builder = mod._build_compact_context if source == "compact" else mod._build_context
+        assert banner.count("[line cut]") == len(_run_line_names(builder)), "each run line is cut on its own"
 
     def test_a_long_per_run_line_is_cut_with_its_marker_and_named(self, tmp_path, monkeypatch):
         mod = _load()
@@ -4075,13 +4087,14 @@ class TestTheBannerFitsTheHostCap:
         assert f"Sessions {_host_units(_LONG)}" in banner  # the health block names it and its size
         assert any(ln.startswith("Mail:") and ln.endswith(" one short mail line")
                    for ln in banner.splitlines()), "a short line rides whole"
+        assert "the ceiling still binds" not in banner, "a cut that fits names no lever"
 
     def test_the_blueprint_yields_to_long_per_run_lines_and_says_so(self, tmp_path, monkeypatch):
         mod = _load()
         monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
         assert 2_000 < _host_units(_BLUEPRINT) <= mod._MAX_BLUEPRINT_CONTEXT_BYTES  # whole under its share
         monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: _BLUEPRINT)
-        banner = mod._build_context(tmp_path, True, False, **{n: _LONG for n in _RUN_LINES})
+        banner = mod._build_context(tmp_path, True, False, **_all_long(mod))
         assert "the blueprint yielded to fit the ceiling" in banner
         assert "GOAL pointer" in banner  # the curated handoff survives the yield
         assert "- decision 29 " not in banner  # the oldest decisions go first
@@ -4098,7 +4111,7 @@ class TestTheBannerFitsTheHostCap:
     def test_the_health_block_names_each_tenant_and_the_headroom(self, tmp_path, monkeypatch):
         mod = _load()
         _worst_case(mod, monkeypatch)
-        banner = mod._build_context(tmp_path, True, False, **{n: _LONG for n in _RUN_LINES})
+        banner = mod._build_context(tmp_path, True, False, **_all_long(mod))
         lead = f"[banner] {mod._MAX_CONTEXT_CHARS} characters of the host's {mod._HOST_CONTEXT_CAP_CHARS}: "
         ledger = next(ln for ln in banner.splitlines() if ln.startswith(lead))
         for tenant in ("header ", "(blueprint ", "body ", "tail ", "goal ", "memory ", "standing ",
@@ -4108,7 +4121,7 @@ class TestTheBannerFitsTheHostCap:
     def test_the_goal_cap_is_named_when_the_ceiling_still_binds(self, tmp_path, monkeypatch):
         mod = _load()
         _worst_case(mod, monkeypatch)
-        banner = mod._build_context(tmp_path, True, False, **{n: _LONG for n in _RUN_LINES})
+        banner = mod._build_context(tmp_path, True, False, **_all_long(mod))
         assert "the ceiling still binds" in banner
         assert f"the lever left is the goal's cap ({mod._GOAL_HARD_CAP}," in banner
 
@@ -4137,3 +4150,5 @@ class TestTheBannerFitsTheHostCap:
         assert out.endswith(marker)
         assert set(out[: -len(marker)]) == {"\U0001F600"}  # whole pairs only
         assert mod._MAX_CONTEXT_CHARS - len(marker) - 2 <= _host_units(out) <= mod._MAX_CONTEXT_CHARS
+        assert "context = _fit_to_ceiling(context)" in inspect.getsource(mod._run_main), (
+            "main() must route the banner through the backstop")
