@@ -54,6 +54,7 @@ with the reason on stderr.
 from __future__ import annotations
 
 import argparse
+import ast
 import importlib.util
 import json
 import os
@@ -1100,6 +1101,71 @@ def _deferrals_into(ledger: Path, ids: list[str]) -> list[str]:
     return hits
 
 
+#: The probe test's hand-kept per-id tables over the live probes: all three
+#: (`_NAMED_NOT_READ`, `_TEXT_OVER_OWN_SUBJECT`, `_SPAWNS_A_LITERAL_INTERPRETER`)
+#: sit in this one file, and the other id-holding constants under tests/ are
+#: fixtures over scratch ledgers (measured 2026-10-18, DEF-1172).
+_PROBE_BASELINES = Path("tests") / "test_check_ledger_probes.py"
+
+
+def _baselined_in_tests(root: Path, ids: list[str]) -> list[str]:
+    """Where the probe test's per-id tables still hold an id of ``ids`` (the ids
+    whose probe this strike retires), as ``path:line: TABLE holds ID``.
+
+    ``DEF-1172``: the strike retired the probe and read nothing under
+    ``tests/``, so the id stayed in a baseline over the live probes, and that
+    table's dead-entry check went red on a later run, in a lane that never
+    touched the file (``DEF-940`` on 2026-09-29, ``DEF-884`` on 2026-10-07).
+    The tables are found by parsing the file, never by name: every upper-case
+    constant assigned directly in the module body or in a class body (any class,
+    nested ones too) whose value is a dict (its keys) or a set of strings
+    (``{...}``, ``set(...)``, ``frozenset(...)``). A bare list or tuple is an
+    argument vector or a word list, not a table, and is not read; nor is a table
+    built under an ``if`` or ``try``, by a comprehension or by a set operation,
+    shapes none of the three uses (pinned against the live file by
+    ``tests/test_check_ledger_probes.py``). Each hit names the line of the id
+    itself, since one line can hold several. No file (an adopter's tree, a
+    release export) reads nothing; a file that does not parse is named and read
+    as nothing, since the suite reds on it louder than this could."""
+    path = root / _PROBE_BASELINES
+    if not ids or not path.is_file():
+        return []
+    rel = _PROBE_BASELINES.as_posix()
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
+    except (SyntaxError, ValueError, UnicodeDecodeError) as exc:
+        print(f"ledger_row: note: {rel} does not parse ({exc}), so its per-id baselines were not read",
+              file=sys.stderr)
+        return []
+    wanted = set(ids)
+    hits: list[str] = []
+    for body in (tree.body, *(n.body for n in ast.walk(tree) if isinstance(n, ast.ClassDef))):
+        for st in body:
+            if isinstance(st, ast.Assign):
+                targets, value = st.targets, st.value
+            elif isinstance(st, ast.AnnAssign) and st.value is not None:
+                targets, value = [st.target], st.value
+            else:
+                continue
+            names = [t.id for t in targets if isinstance(t, ast.Name) and t.id.lstrip("_").isupper()]
+            if not names:
+                continue
+            called = (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
+                      and value.func.id in ("set", "frozenset") and len(value.args) == 1)
+            if called:
+                value = value.args[0]
+            if isinstance(value, ast.Dict):
+                members = value.keys
+            elif isinstance(value, ast.Set) or (called and isinstance(value, (ast.List, ast.Tuple))):
+                members = value.elts
+            else:
+                continue
+            for m in members:
+                if isinstance(m, ast.Constant) and isinstance(m.value, str) and m.value in wanted:
+                    hits.append(f"{rel}:{m.lineno}: {names[0]} holds {m.value}")
+    return hits
+
+
 def _row_home(ledger: Path, rid: str) -> "tuple[Path, object] | None":
     """``(path, parsed row file)`` when ``rid``'s row lives in its own file
     under ``ledger.d/`` (by any id its cell carries), else None: the row is a
@@ -1300,6 +1366,27 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
             print(f"  {h}", file=sys.stderr)
     data = _load_probes(probes, ledger_text=text)
     if data is None:
+        return 2
+    # DEF-1172: an id whose probe retires here leaves the probe test's per-id
+    # baselines in the same change, or their dead-entry checks red a later run
+    # in a lane that never touched that file. Read before the dry run prints,
+    # as the deferrals are, and refused rather than edited: a table line can
+    # hold several ids, and the file's convention leaves a dated note.
+    retiring = [i for i in ids if (_FRAG.probe_fragment_dir(probes) / f"{i}.json").is_file()
+                or any(isinstance(p, dict) and p.get("id") == i for p in data["probes"])]
+    # The tree that holds the ledger being struck, never the root a walk from
+    # the working directory found: `--ledger` aimed at another checkout reads
+    # that checkout's tests (code review, 2026-10-18).
+    baselined = _baselined_in_tests(ledger.resolve().parent.parent, retiring)
+    if baselined:
+        print(f"ledger_row: the probe test's per-id baselines still hold {len(baselined)} id(s) whose "
+              "probe this strike retires, and their dead-entry checks would red the next run that "
+              "collects them:", file=sys.stderr)
+        for h in baselined:
+            print(f"  {h}", file=sys.stderr)
+        print("  Drop each id from its table in the same change (the file's convention leaves a dated "
+              "note naming the row and the lane), then run the strike again. Nothing written.",
+              file=sys.stderr)
         return 2
     before = len(data["probes"])
     data["probes"] = [p for p in data["probes"] if not (isinstance(p, dict) and p.get("id") in ids)]
