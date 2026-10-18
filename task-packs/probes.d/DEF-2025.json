@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2025",
+ "subject": "tests/test_xdist_never_ran.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "an intermittent red has no steady open value: three sightings on 2026-10-18 across two pull requests, against #296's own green cells, so a probe would read the same before and after a fix; the fix lands with a child-run oracle (a nested run made to print each shape the parser must read), and the strike counts the CI sightings since the fix merged",
+ "row_sha": "6c67b2b76cc4",
+ "text_sha": "3473abcbd25a",
+ "verified_2026_10_18": "STILL_OPEN (re-pinned value unchanged on 2026-10-18: the row's text cited its assertion by line number, which the tree's bare-anchor ratchet refuses; it now names the assertion) [changed: text]"
+}

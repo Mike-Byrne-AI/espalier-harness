@@ -122,6 +122,43 @@ ADOPTER_ZONE_MUTATION = (
     "`/status --explain <path>` shows which zone covers a path."
 )
 
+# A move or delete of a directory that ENCLOSES harness ground (DEF-5012):
+# `tools` holding `tools/cc/`, `.github` holding the harness-guard workflow.
+# The harness pair's relaunch switches the zone check off and the change then
+# carries the harness's files with the directory; its relocate line does the
+# same from a terminal. So neither is offered, whether or not the adopter's
+# espalier.toml lists a zone there, and the Do moves the adopter's own files
+# and leaves the harness's. ``write_guard._zone_reason`` picks these for an
+# operand the call itself moves or deletes: ``{ground}`` is the harness entry
+# inside it, ``{operand}`` the directory, and ``{zone}`` / ``{key}`` /
+# ``{kind_text}`` the adopter's zone it sits in or holds. A write, link or
+# destination there changes no harness file and keeps the zone's own text. No
+# ``{hint}`` slot: they name no relaunch. A maintainer restructuring the
+# harness itself has maintenance mode (docs/HOOKS.md).
+HARNESS_GROUND_ENCLOSED = (
+    "{effect} of a directory holding a protected zone blocked: {path}. The "
+    "harness's own `{ground}` is inside it, so this would take the harness's "
+    "files with it."
+    "\n  Don't: relaunch in maintenance mode for this, or do it from your own "
+    "terminal instead -- either way `{ground}` goes with it."
+    "\n  Do: move your own files out of `{operand}` one by one and leave "
+    "`{ground}` where it is; `/status --explain <path>` shows which zone covers "
+    "a path."
+)
+ADOPTER_ZONE_ENCLOSING_HARNESS = (
+    "{effect} of protected zone blocked: {path}. The harness's own `{ground}` "
+    "is inside it, and your espalier.toml names `{zone}` under `{key}` "
+    "({kind_text}), so this would take the harness's files with yours."
+    "\n  Don't: relaunch in maintenance mode for this, or do it from your own "
+    "terminal instead -- either way `{ground}` goes with it, and maintenance "
+    "mode switches this check off for the whole session."
+    "\n  Do: leave `{operand}` in place; to move your own files, first narrow "
+    "the `{key}` entry in espalier.toml from your own terminal so it covers "
+    "neither `{ground}` nor what you move, then move yours one by one and "
+    "leave `{ground}` where it is; `/status --explain <path>` shows which zone "
+    "covers a path."
+)
+
 PROTECTED_ZONE_WRITE_BASH = (
     "Bash write to protected harness zone blocked: {path}.{hint}"
 ) + _NAME_COLLISION_WRITE
@@ -943,6 +980,10 @@ _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
     "ADOPTER_ZONE_WRITE_PROTECTED",
     "ADOPTER_ZONE_WRITE_GENERATED",
     "ADOPTER_ZONE_MUTATION",
+    # A move or delete of a directory enclosing harness ground (DEF-5012),
+    # in an adopter zone or none: both remedies refused.
+    "HARNESS_GROUND_ENCLOSED",
+    "ADOPTER_ZONE_ENCLOSING_HARNESS",
     "KILL_SWITCH_DETECTED",
     "GOVERNANCE_GATES_UNWIRED",
     "SECRET_PATH_ACCESS",

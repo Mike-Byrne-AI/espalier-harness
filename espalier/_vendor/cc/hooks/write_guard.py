@@ -1522,42 +1522,68 @@ _ADOPTER_KEY_OF_KIND = {kind: key for key, kind in _hook_utils.ADOPTER_ZONE_KEYS
 
 
 def _adopter_zone(rel_path: str, root: Path) -> "tuple[str, str] | None":
-    """The adopter zone a deny target sits in -- or, for a removed or relocated
-    directory, the first ``protected_paths`` zone it encloses (a move of `keep`
-    takes `keep/sub/` with it; DEF-995) -- unless the target is, sits in or
-    encloses a harness zone or file: the harness template keeps precedence (it
-    is the one that names the maintenance-mode relaunch, which is right for
-    harness files). Compared in ``_protected_zones._fs_equiv``'s folded form,
-    the form the deny's own verdict was reached in, so `CC/x` is the harness's
-    as `_is_protected` reads it, and the adopter's zones in the same form, so
-    `data./x` is the adopter's `data/`. A protected zone the target sits in
-    wins, then one it encloses, then a generated one it sits in: a clean of a
-    build directory is refused for the protected zone it holds, never for the
-    generated one around it. The whole tree (`.`) is the harness's. Never
-    raises: a lookup never decides the verdict; a failed one is said once a
-    session and the harness text stands in."""
+    """The adopter zone a deny target is the adopter's for, as ``(prefix,
+    kind)``: ``_zone_reading``'s first half. Every site that denies with a
+    harness template asks this first."""
+    return _zone_reading(rel_path, root)[0]
+
+
+def _takes_harness_ground(rel_path: str, root: Path) -> bool:
+    """A removed or relocated operand that ENCLOSES harness ground and is not
+    itself harness ground (DEF-5012): its deny names that ground, never the
+    relaunch, in an adopter zone or none."""
+    return bool(_zone_reading(rel_path, root)[1])
+
+
+def _zone_reading(rel_path: str, root: Path) -> "tuple[tuple[str, str] | None, str]":
+    """``(zone, ground)`` for a deny target. ``zone`` is the adopter zone it
+    sits in -- or, for a removed or relocated directory, the first
+    ``protected_paths`` zone it encloses (a move of `keep` takes `keep/sub/`
+    with it; DEF-995) -- as ``(prefix, kind)``, or None. ``ground`` is the
+    harness entry it ENCLOSES (`tools` holds `tools/cc/`), or "". A target that
+    is or sits in a harness zone or file reads ``(None, "")``: the harness
+    template keeps precedence there (it is the one that names the
+    maintenance-mode relaunch, which is right for harness files). One that
+    encloses harness ground is not the harness's: a move or delete of it takes
+    the harness's files with it, which neither the relaunch nor the relocate
+    line may offer (DEF-5012), and a write, link or destination there changes
+    no harness file, so it reads its zone's own text. An adopter zone that is,
+    or sits in, harness ground holds nothing. Compared in
+    ``_protected_zones._fs_equiv``'s folded form, the form the deny's own
+    verdict was reached in, so `CC/x` is the harness's as `_is_protected` reads
+    it, and the adopter's zones in the same form, so `data./x` is the adopter's
+    `data/`. A protected zone the target sits in wins, then one it encloses,
+    then a generated one it sits in: a clean of a build directory is refused
+    for the protected zone it holds, never for the generated one around it.
+    The whole tree (`.`) is the harness's. Never raises: a lookup never decides
+    the verdict; a failed one is said once a session and the harness text
+    stands in."""
     try:
         fold = _protected_zones._fs_equiv
         rel = fold(rel_path, all_components=True).strip("/")
         while rel.startswith("./"):
             rel = rel[2:]
         if rel in ("", "."):
-            return None
-        for entry in (*_hook_utils.harness_protected_prefixes(root), *PROTECTED_FILES):
-            ground = fold(entry, all_components=True).rstrip("/")
-            if rel == ground or rel.startswith(ground + "/") or ground.startswith(rel + "/"):
-                return None
-        zones = [(prefix, kind, fold(prefix, all_components=True).rstrip("/"))
-                 for prefix, kind in _hook_utils.adopter_protected_prefixes(root)]
-        inside = [(prefix, kind) for prefix, kind, ground in zones
-                  if rel == ground or rel.startswith(ground + "/")]
+            return None, ""
+        harness = [(entry, fold(entry, all_components=True).rstrip("/"))
+                   for entry in (*_hook_utils.harness_protected_prefixes(root), *PROTECTED_FILES)]
+        if any(rel == ground or rel.startswith(ground + "/") for _entry, ground in harness):
+            return None, ""
+        held = next((entry for entry, ground in harness if ground.startswith(rel + "/")), "")
+        zones = []
+        for prefix, kind in _hook_utils.adopter_protected_prefixes(root):
+            zone = fold(prefix, all_components=True).rstrip("/")
+            if not any(zone == ground or zone.startswith(ground + "/") for _entry, ground in harness):
+                zones.append((prefix, kind, zone))
+        inside = [(prefix, kind) for prefix, kind, zone in zones
+                  if rel == zone or rel.startswith(zone + "/")]
         for prefix, kind in inside:
             if kind == "protected":
-                return prefix, kind
-        for prefix, kind, ground in zones:
-            if kind == "protected" and ground.startswith(rel + "/"):
-                return prefix, kind
-        return inside[0] if inside else None
+                return (prefix, kind), held
+        for prefix, kind, zone in zones:
+            if kind == "protected" and zone.startswith(rel + "/"):
+                return (prefix, kind), held
+        return (inside[0] if inside else None), held
     except Exception as exc:  # noqa: BLE001 -- a lookup never decides; the fallback is said, once a session
         _hook_utils.say_once(
             root, "adopter-zone-lookup", "write_guard", "pretooluse_failed_open_zone_text",
@@ -1565,7 +1591,7 @@ def _adopter_zone(rel_path: str, root: Path) -> "tuple[str, str] | None":
             "remedy this session",
             fault=type(exc).__name__,
         )
-        return None
+        return None, ""
 
 
 def _zone_hint(rel_path: str, root: Path) -> str:
@@ -1590,7 +1616,9 @@ def _zone_template(rel_path: str, root: Path, *, mutation: bool = False) -> str:
     adopter's own (whose Do names the setting and whose Don't is that
     relaunch). The harness one-liners (Bash, MCP, the symlink and hardlink
     checks) are picked at their sites, and each of those sites routes an
-    adopter zone here instead (DEF-995)."""
+    adopter zone through ``_zone_reason`` instead (DEF-995), the one caller of
+    this and of ``_zone_hint`` (pinned: an operand that takes harness ground
+    must not reach them)."""
     zone = _adopter_zone(rel_path, root)
     if zone is None:
         return _denial_reasons.PROTECTED_ZONE_MUTATION if mutation else _denial_reasons.PROTECTED_ZONE_WRITE
@@ -1604,13 +1632,32 @@ def _zone_template(rel_path: str, root: Path, *, mutation: bool = False) -> str:
 
 def _zone_reason(
     rel_path: str, root: Path, *, where: str, mutation: bool = False, effect: str = "",
+    takes: bool = False,
 ) -> str:
     """The rendered reason for a zone deny on a full-template channel (Write /
     Edit / NotebookEdit, PowerShell) and for an adopter zone on every channel:
-    the zone's template with the zone's hint.
+    the zone's template with the zone's hint. ``takes`` marks an operand the
+    call itself moves or deletes, tree and all: when it encloses harness
+    ground, the template names that ground (and the adopter's zone, where one
+    is there) and offers neither the relaunch nor the relocate line (DEF-5012).
+    The only caller of ``_zone_template`` and ``_zone_hint``, so no site can
+    render their text for such an operand.
     A named producer, so the deny-marker contract can read the site
     (``x = <call>; deny(x)``); it is registered in
     ``tests/test_deny_markers.py::_RUNTIME_PRODUCERS``."""
+    if takes:
+        zone, ground = _zone_reading(rel_path, root)
+        if ground and zone is None:
+            return _denial_reasons.HARNESS_GROUND_ENCLOSED.format(
+                effect=effect, path=rel_path + where, operand=rel_path, ground=ground,
+            )
+        if ground and zone is not None:
+            prefix, kind = zone
+            return _denial_reasons.ADOPTER_ZONE_ENCLOSING_HARNESS.format(
+                effect=effect, path=rel_path + where, operand=rel_path, ground=ground, zone=prefix,
+                key=_ADOPTER_KEY_OF_KIND.get(kind, kind),
+                kind_text=_denial_reasons.ADOPTER_ZONE_KIND_TEXT.get(kind, kind),
+            )
     template = _zone_template(rel_path, root, mutation=mutation)
     return template.format(
         path=rel_path + where, hint=_zone_hint(rel_path, root), effect=effect,
@@ -1758,10 +1805,11 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
             base, rel = _resolve_bash_in_checkout(raw, root, base=at)
             where, note = _checkout_note(base, root)
             if _mutated_zone(effect, rel, root):
-                if _adopter_zone(rel, root) is not None:
+                takes = effect in _TAKES_ITS_TREE
+                if _adopter_zone(rel, root) is not None or (takes and _takes_harness_ground(rel, root)):
                     reason = _zone_reason(
                         rel, root, where=where, mutation=True,
-                        effect=_EFFECT_WORD.get(effect, effect).capitalize(),
+                        effect=_EFFECT_WORD.get(effect, effect).capitalize(), takes=takes,
                     )
                     return _audit_deny(
                         root, "pretooluse_blocked_protected_zone", reason,
@@ -1780,6 +1828,11 @@ def check_bash_for_protected_mutations(command: str, root: Path, cwd: Path | Non
 
 #: The operator-facing word for an effect the reader tags more finely.
 _EFFECT_WORD = {"sweep": "delete", "clean": "delete"}
+
+#: The effects that take a directory's whole tree with it, the ones
+#: ``_mutated_zone`` refuses an enclosing directory for: a narrowed ``find``
+#: sweep judges its root alone and takes no tree (DEF-5012).
+_TAKES_ITS_TREE = frozenset({"delete", "move", "clean"})
 
 #: What an adopter zone's deny adds after the path on a link channel
 #: (DEF-995), so the deny still says a link was refused where the adopter's
@@ -2302,6 +2355,7 @@ def check_powershell_for_protected_mutations(
                 reason = _zone_reason(
                     rel, root, where=where, mutation=True,
                     effect=_EFFECT_WORD.get(effect, effect).capitalize(),
+                    takes=effect in _TAKES_ITS_TREE,
                 )
                 return _audit_deny(
                     root, "pretooluse_blocked_protected_zone", reason,
@@ -2486,7 +2540,7 @@ def check_mcp(tool_input: dict, tool_name: str, root: Path) -> int:
                 continue  # data payload, not a write target
             rel_path = _normalize_path_str(leaf, root)
             if _mcp_leaf_denied(rel_path, root, symlink_verb=symlink_verb, removes=removes):
-                return _deny_mcp(rel_path, tool_name, location, symlink_verb, root)
+                return _deny_mcp(rel_path, tool_name, location, symlink_verb, root, key=key)
     except _hook_utils.MCPPayloadUnverifiable:
         # The harness hint directly, not the zone pickers: an unverifiable
         # payload names no path, so there is no zone to attribute the deny to.
@@ -2496,21 +2550,32 @@ def check_mcp(tool_input: dict, tool_name: str, root: Path) -> int:
     return 0
 
 
+#: The keys an MCP move names its destination by: the path a move lands at is
+#: not taken by it, so a directory named there reads its zone's own text even
+#: when it encloses harness ground (DEF-5012).
+_MCP_DESTINATION_KEYS = frozenset({"destination", "dest", "dst", "new_path", "target", "target_uri", "to"})
+
+
 def _deny_mcp(
     rel_path: str, tool_name: str, field_name: str, symlink_verb: bool, root: Path,
-    *, base: Path | None = None,
+    *, base: Path | None = None, key: str = "",
 ) -> int:
     """Emit the protected-zone MCP deny (symlink vs ordinary write reason; an
-    adopter zone's own template on either, DEF-995).
+    adopter zone's own template on either, DEF-995; for a directory a remove
+    tool takes, or a move tool takes from anywhere but its destination, that
+    encloses harness ground, the template naming that ground, DEF-5012).
     ``base`` is the checkout a canonical-field path resolved in (Layer 1); the
-    FS-free leaf-walk (Layer 2) has none and names the path alone."""
+    FS-free leaf-walk (Layer 2) has none and names the path alone. ``key`` is
+    the leaf's governing key (the field name on Layer 1)."""
     where, note = _checkout_note(base, root) if base is not None else ("", {})
-    if _adopter_zone(rel_path, root) is not None:
-        effect = "" if symlink_verb else _mcp_mutation_effect(tool_name)
+    effect = "" if symlink_verb else _mcp_mutation_effect(tool_name)
+    takes = effect == "Delete" or (
+        effect == "Move" and (key or field_name).casefold() not in _MCP_DESTINATION_KEYS)
+    if _adopter_zone(rel_path, root) is not None or (takes and _takes_harness_ground(rel_path, root)):
         detail = f"; {_SYMLINK_NOTE}" if symlink_verb else f", field {field_name}"
         reason = _zone_reason(
             rel_path, root, where=f"{where} (via mcp tool {tool_name}{detail})",
-            mutation=bool(effect), effect=effect,
+            mutation=bool(effect), effect=effect, takes=takes,
         )
         return _audit_deny(
             root, "pretooluse_blocked_protected_zone", reason,

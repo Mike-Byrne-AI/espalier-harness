@@ -854,15 +854,28 @@ first; the dangerous-command catch is a secondary slip-catcher):
      is read literally, and the remedy is the setting. A `generated_paths`
      prefix ("regenerate; do not hand-edit") is refused on Write / Edit /
      NotebookEdit only, so a build's own recursive delete or regeneration step
-     through Bash is never blocked. The deny names the key and the zone ("This
-     zone is YOURS, not the harness's: your espalier.toml names it under
-     `protected_paths`") and its Don't / Do pair is the zone's own, never the
-     maintenance-mode relaunch, which would be the wrong remedy for your own
-     tree. An entry that is not a list of strings, is absolute, or would cover
-     the whole tree protects nothing and SAYS so, once a session (a stderr
-     line and a `config_zone_ignored` audit record); so does a key name one
-     letter off, and a zone read by the no-parser fallback on an old
-     interpreter. `/status --explain <path>` reports both zones.
+     through Bash is not blocked for that zone (only for harness ground inside
+     it, below). The deny names the key and the zone ("This zone is YOURS, not
+     the harness's: your espalier.toml names it under `protected_paths`") and
+     its Don't / Do pair is the zone's own, never the maintenance-mode
+     relaunch, which would be the wrong remedy for your own tree. A move or
+     delete of a directory that holds harness ground (`tools/` holding
+     `tools/cc/`, `.github/` holding the harness-guard workflow) has a text of
+     its own, whether or not one of your entries covers it: it names the
+     harness path inside (and your entry and key, where one is there) and
+     offers neither the relaunch nor the relocate line, since either takes the
+     harness's files with the directory; the remedy is to move your own files
+     out and leave the harness's in place. A write, copy, link or permission
+     change on that directory touches no harness file and reads its zone's
+     own text; a path that is or lies inside harness ground keeps the harness
+     text. A maintainer restructuring the harness itself does it under
+     maintenance mode ("Maintenance mode" above), which switches the zone check
+     off for the session. An entry that is not a list of strings, is absolute,
+     or would cover the whole tree protects nothing and SAYS so, once a
+     session (a stderr line and a `config_zone_ignored` audit record); so
+     does a key name one letter off, and a zone read by the no-parser
+     fallback on an old interpreter. `/status --explain <path>` reports both
+     zones.
 
    The prefixes are read relative to the checkout that contains the path.
    Inside a registered git worktree of the repository — the checkout a
