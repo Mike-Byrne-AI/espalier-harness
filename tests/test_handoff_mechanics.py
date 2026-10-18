@@ -353,12 +353,12 @@ class TestDryRunOnThisTree:
         assert "Co-Authored-By: Claude, Scion <claude@espalier.dev>" in out
         assert "Claude-Session: https://example" in out
         assert mem.read_text(encoding="utf-8") == before
-        # The copy carries no cc/GOAL.md (top-level cc/ is skipped): on this
-        # source tree the file's presence is check_handoff_landing's
-        # operator-tree tell, so the next step must say skip, never "write it"
-        # -- an unconditional "write cc/GOAL.md" led a second clone to create
-        # one and turned two landing notes red (driven, 2026-09-30 review).
-        assert "next: skip step 7" in out and "do NOT create" in out, out
+        # The copy carries no cc/GOAL.md and no operator marker (top-level cc/
+        # is skipped), so the step is skipped. Until DEF-1119 the goal doc's
+        # presence was the landing check's operator-tree tell, and this line
+        # warned a second clone off creating one; the marker owns that now.
+        assert "next: skip step 7" in out and "not the operator's tree" in out, out
+        assert "do NOT create" not in out, out
         assert f"ahead of origin/{branch}:" in out, "the line the next assert reads never printed"
         assert "write this into cc/GOAL.md" not in out, out
         (r / "cc").mkdir(exist_ok=True)
@@ -367,6 +367,23 @@ class TestDryRunOnThisTree:
         assert hm.main(["--root", str(r), "after-memory-row", "--dry-run", "--message", "docs(memory): t"]) == 0
         assert "next: write cc/GOAL.md" in capsys.readouterr().out
         (r / "cc" / "GOAL.md").unlink()
+        # DEF-1119: the operator's tree with no goal doc is told to recreate one
+        # (the operator's marker says whose tree it is), never to skip the step
+        (r / "cc" / "OPERATOR_TREE").write_text("", encoding="utf-8")
+        capsys.readouterr()
+        assert hm.main(["--root", str(r), "after-memory-row", "--dry-run", "--message", "docs(memory): t"]) == 0
+        out = capsys.readouterr().out
+        assert "this is the operator's tree" in out and "recreate it" in out, out
+        assert "next: skip step 7" not in out, out
+        assert "operator tree:" in out, "the landing check's first line names whose tree this is"
+        # ... unless goal_snapshot = false opts out, which step 7 reads first
+        toml = r / "espalier.toml"
+        kept = toml.read_bytes()
+        toml.write_bytes(b"goal_snapshot = false\n" + kept)
+        assert hm.main(["--root", str(r), "after-memory-row", "--dry-run", "--message", "docs(memory): t"]) == 0
+        out = capsys.readouterr().out
+        assert "next: skip step 7 -- goal_snapshot = false" in out and "recreate it" not in out, out
+        toml.write_bytes(kept)
         # a promotion into a skill body stages both twins AND runs that row's
         # sync (the claude mirrors), not the docs sync
         capsys.readouterr()
@@ -427,6 +444,7 @@ class TestTheMemoryCommitTakesOnlyItsOwnPaths:
         monkeypatch.setattr(hm, "_load", lambda _p, _n: types.SimpleNamespace(
             canonical_trailer=lambda: _CANON, _MEMORY_MD_CAP=120,
             linked_worktree_main=lambda _root: None,  # a plain scratch root is no worktree
+            operator_root=lambda _root: None,  # and carries no operator marker (DEF-1119)
         ))
         return harness_children
 

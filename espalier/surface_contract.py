@@ -189,6 +189,10 @@ _LOCAL_ONLY_PATHS: tuple[str, ...] = (
     # espalier's OWN goal doc into an adopter release. EXACT entry, never a
     # `cc/` prefix (cc/ carries committed PUBLIC surfaces).
     "cc/GOAL.md",
+    # The operator's-tree marker (DEF-1119): gitignored, present in the clone the
+    # operator works from only, the one tree a release is built on, so a no-index
+    # walk there must not carry it out. EXACT entry, as above.
+    "cc/OPERATOR_TREE",
     "reports/analysis.json",
     "reports/cc_surface_gate.json",
     # Internal release planning doc that lived in repo root. Gitignored; this

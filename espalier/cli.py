@@ -2816,10 +2816,10 @@ def _goal_seed_applies(repo_root: Path, *, enabled: bool) -> bool:
     """Whether a deploy seeds cc/GOAL.md here when it is absent.
 
     Never on the Espalier source tree: its GOAL is the operator's own curated
-    doc, and ``scripts/check_handoff_landing.py`` reads the file's presence as
-    the tell that a checkout is the operator's tree -- a seeded skeleton on a
-    second clone turned two of that script's notes into reds (driven, the
-    failure-mode review of 2026-09-30).
+    doc, so a seeded skeleton on a contributor's or a seat's clone would be a goal
+    nobody set. (Until DEF-1119 the landing check also read the file's presence as
+    the operator-tree tell, and a seeded skeleton on a second clone turned two of
+    its notes into reds; the tell is ``cc/OPERATOR_TREE`` now.)
     """
     return enabled and not surface_contract.is_self_host_repo(repo_root)
 

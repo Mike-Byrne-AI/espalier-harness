@@ -640,6 +640,31 @@ def linked_worktree_main(repo_root: Path) -> Path | None:
     return common.parent
 
 
+#: The gitignored file whose one meaning is "this is the operator's tree"
+#: (DEF-1119). Until 2026-10-18 the tell was the goal doc, whose job is the
+#: session goal, so a second clone keeping a goal of its own read as the
+#: operator's and the landing check's arms red there on state that belongs to
+#: the first. Its creation is in memory/local-codename-arm.md. Never a record
+#: root: a record restored onto another clone must not make that clone the
+#: operator's.
+OPERATOR_MARKER = "cc/OPERATOR_TREE"
+
+
+def operator_root(repo_root: Path) -> Path | None:
+    """The operator's tree when ``repo_root`` is one, else None: the main
+    checkout's marker decides, so a linked worktree of a marked checkout is the
+    operator's (DEF-1137) and a marker created inside a worktree marks nothing
+    -- the record and after-goal run in the main checkout, and removing the
+    worktree would take the only marker with it. A root git cannot answer for
+    (a scratch tree that is no checkout) is read by its own marker."""
+    try:
+        main = linked_worktree_main(repo_root)
+    except RecordError:
+        main = None
+    home = main if main is not None else repo_root
+    return home if (home / OPERATOR_MARKER).is_file() else None
+
+
 def _resolve_patterns(
     repo_root: Path, args: argparse.Namespace
 ) -> list[str]:
