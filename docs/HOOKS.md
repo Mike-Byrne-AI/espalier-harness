@@ -1729,15 +1729,22 @@ new state as the next one to compare with.
      a copy into a protected path, a submodule's first update) reports its
      files once, since nothing had vouched for them, and is judged by its own
      git from then on. The harness's own zones are never asked of a nested
-     git. A file git calls clean under the checkout's own filters counts the
-     same: a git-lfs file, whose committed form is its pointer, or a text
-     file committed with CRLF line endings in a checkout that sets
-     `core.autocrlf`. And a checkout's stash is git's too: what the newest
-     stash at the previous check changed at a path comes back quietly (a pop
-     or an apply, of a stash made before the session or during it, of a file
-     of any size, of a new file stashed with `-u` or only staged), as does a
-     deletion that stash recorded and a file a stash made since took. A stash
-     that merely carries a file unchanged vouches for nothing;
+     git. Two committed forms count the same: a git-lfs file, whose committed
+     form is its pointer (hashed through the checkout's filters), and a text
+     file of 4 MiB or more committed with CRLF line endings in a checkout that
+     sets `core.autocrlf` (hashed with none). And a checkout's own stash is
+     git's too, where its reflog line says it was made on the branch the
+     checkout has now (`refs/stash` belongs to the whole repository, so
+     another worktree's stash vouches for nothing here): what the newest one
+     changed at a path comes back quietly (a pop or an apply, of a stash made
+     before the session or during it, of a small file or a big one, a git-lfs
+     file included, of a new file stashed with `-u` or only staged), as do a
+     deletion it recorded and a new file a stash made since took. A stash that
+     merely carries a file unchanged vouches for nothing. In the call that
+     first sees a new stash, what it took at a protected path that no check
+     saw -- a change written and stashed in one call, a new file made and
+     stashed, a deletion stashed -- reports then, and its pop later is
+     quiet;
   3. on the harness's own source tree only, a byte mirror that now equals its
      source (the vendored hook copies, the packaged docs and `.claude` assets);
   4. an `espalier` command that rewrites protected files (`init`, `upgrade`,
@@ -1791,11 +1798,26 @@ new state as the next one to compare with.
     lock: a shell call can write one that names its own change.
   - A commit made through git plumbing without touching the working tree,
     then checked out, reads as committed history.
-  - Only the newest stash is asked: the pop of an older one (`git stash pop
-    stash@{1}`) reports, and so does the pop of a file of 4 MiB or more that
-    `HEAD` does not hold (a big new file stashed with `-u`), which git is
-    never asked to hash. What a stash changed at a path is git's wherever it
-    comes from, so a hand write of exactly that content is silent too.
+  - A stash vouches only where it is this checkout's own newest one, so its
+    pop reports when it was made on another branch (stash, switch, pop) or in
+    another worktree, while detached, below the top (`git stash pop
+    stash@{1}`), or as the older of two stashes made in one call; and so does
+    a pop git merges onto a `HEAD` that moved under the same file (stash,
+    pull, pop), a conflicted pop, and the stash and the pop of a file of 4 MiB
+    or more that `HEAD` does not hold (a big new file stashed with `-u`, which
+    git is never asked to hash).
+  - What the newest stash changed at a path is git's wherever it comes from:
+    a hand write of exactly that content, a `git checkout stash@{0} -- <path>`,
+    and the deletion of a file it recorded as deleted are silent too; and a
+    stash there when the session began is trusted unchecked, since no check
+    saw what it took, as is one whose reflog time is set back before it (git
+    takes it from `GIT_COMMITTER_DATE`). What a new stash took from a file of
+    4 MiB or more is compared by size alone, its identity being its stat, so
+    a change of the same size written and stashed in one call is not seen.
+  - A file of 4 MiB or more is hashed through the checkout's filters, so a
+    change inside what a lossy clean filter strips (an `ident` keyword, a
+    redaction filter) reads as committed; under 4 MiB, only a git-lfs file
+    is hashed that way.
 
 **What Claude receives** (beside the tool result, as the `additionalContext`
 of the ONE JSON object the hook prints at the end of its run -- every finding
