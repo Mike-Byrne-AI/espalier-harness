@@ -892,11 +892,12 @@ def probe_roster_from_texts(roster_text: str | None,
             skipped.append(name)
             if not never_a_record(name):
                 # A filing writes its probe file last: a .tmp here is a filing
-                # that died after its row, which no verb finishes yet (the
-                # probe runner names the row as having no probe).
+                # that died after its row, which the same filing run again
+                # finishes once the .tmp is gone (it writes only the probe).
                 problems.append(f"{name}: not a probe-file name (<id>.json) -- a mis-cased id: rename it to "
-                                "<id>.json; a crashed write's .tmp: delete it (a filing that died here left "
-                                "its row with no probe, which the probe runner names); a backup: delete it "
+                                "<id>.json; a crashed write's .tmp: delete it and run the filing again (a "
+                                "filing that died here left its row with no probe, and the same `ledger_row.py "
+                                "file` command writes only the probe); a backup: delete it "
                                 f"or move it out of {PROBES_DIR}/")
             continue
         if m.group(1) in homes:

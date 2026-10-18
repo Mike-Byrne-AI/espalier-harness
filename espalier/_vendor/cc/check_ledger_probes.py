@@ -476,8 +476,10 @@ def unprobed_live_ids(probes: list[dict]) -> list[str]:
     """Live ledger rows with no roster entry, sorted; ``[]`` with no ledger.
 
     Every row the ledger verbs file gets an entry (a probe or a ``why_not``),
-    so a live row without one was filed by hand or lost its entry to a hand
-    edit. The roster's stored ``_count`` was that edit's trace until
+    so a live row without one was filed by hand, lost its entry to a hand
+    edit, or is a verb cut off part-way: a filing between its row and its
+    probe (the same filing run again finishes it, DEF-4019), or a strike
+    after retiring its probe (the same strike run again). The roster's stored ``_count`` was that edit's trace until
     2026-10-12, when it stopped being stored: two lanes rewriting it conflicted
     at every catch-up. This comparison is derived from the two files instead,
     and the report names it as a note, never a refusal: an adopter who files
@@ -890,12 +892,12 @@ def _run(args: argparse.Namespace) -> int:
                 print(f"    {rid:<18} probe pinned {stored}, row is now {actual}")
         if unprobed:
             print(f"\nNOTE: {len(unprobed)} live row(s) have no roster entry: {', '.join(unprobed)}")
-            print("    every row the ledger verbs file gets one (a probe or a why_not); a filing")
-            print("    cut off between its row and its probe, a row filed by hand, or an entry")
-            print("    removed by a hand edit leaves it out, and nothing re-measures such a row.")
-            print("    The same `ledger_row.py file` command run again finishes a cut-off filing,")
-            print("    writing only its probe (so does one whose arguments write a hand-filed row")
-            print("    exactly); a lost entry comes back from git (git log -p -- <the probes file>).")
+            print("    every row the ledger verbs file gets one (a probe or a why_not), and nothing")
+            print("    re-measures a row with none. A filing cut off between its row and its probe")
+            print("    is finished by the same `ledger_row.py file` command run again (it writes only")
+            print("    the probe); a strike cut off after retiring its probe, by the same strike run")
+            print("    again. A row filed by hand, or an entry a hand edit removed, gets it back from")
+            print("    git (git log -p -- <the probes file>).")
 
     if args.strikes and (
         any(r["verdict"] == STRIKE_CANDIDATE and r["id"] not in retired for r in results)

@@ -551,16 +551,20 @@ def _record_lock(root: Path):
     return _GEN.ledger_lock(path)
 
 
-def _reserve(root: Path, kind: str, number: int, seat: str) -> None:
+def _reserve(root: Path, kind: str, number: int, seat: str) -> bool:
     """Record ``number`` as ``seat``'s, under the record's lock; refused when
-    another seat of this clone already holds it."""
+    another seat of this clone already holds it. Whether this call recorded
+    it: False when the seat held it already, and nothing is written."""
     with _record_lock(root):
         data = _read_minted(root)
         owner = data.get(kind, {}).get(number)
         if owner not in (None, seat):
             raise MintRefused(f"{kind}-{number} is reserved by {owner} in this clone (`{record_path(root)}`)")
+        if owner == seat:
+            return False
         data.setdefault(kind, {})[number] = seat
         _write_minted(record_path(root), data)
+        return True
 
 
 def _unreserve(root: Path, kind: str, number: int, seat: str) -> None:
@@ -1110,72 +1114,83 @@ def _row_file_text(section: str, member: str, index: "list[str] | tuple[str, ...
     return "\n".join([f"<!-- class: {section} -->", member, *index]) + "\n"
 
 
-def _cut_before_its_probe(rid: str, line: str, probe_file: Path, data: dict) -> bool:
+def _cut_before_its_probe(rid: str, line: str, roster: dict) -> bool:
     """Whether ``line``, ``rid``'s member row, is what a filing cut off between
     its row and its probe leaves (DEF-4019): live, of this one id, with no
-    probe file and no roster entry. A struck row has no probe by design (a
-    strike retires it), and a co-id row's probe can sit under its other id, so
-    neither is one."""
-    return (not _GEN._is_struck(line) and _GEN.cell_ids(line) == [rid] and not probe_file.exists()
-            and not any(isinstance(p, dict) and p.get("id") == rid for p in data["probes"]))
+    probe in ``roster`` (the roster's view, so its probe files too). A struck
+    row has no probe by design (a strike retires it), and a co-id row's probe
+    can sit under its other id, so neither is one."""
+    return (not _GEN._is_struck(line) and _GEN.cell_ids(line) == [rid]
+            and not any(isinstance(p, dict) and p.get("id") == rid for p in roster["probes"]))
 
 
-def _how_it_differs(rid: str, there: str, new_line: str, new_index: str, section: str, *, as_files: bool,
-                    ledger: Path, file_text: str, row_file: Path) -> str:
-    """What sets the row a filing cut off before its probe left apart from the
-    one these arguments write, for the refusal; empty when it is that row."""
+def _how_it_differs(rid: str, there: str, new_line: str, new_index: str | None, section: str, *,
+                    as_files: bool, ledger: Path, file_text: str, row_file: Path) -> tuple[str, str | None]:
+    """``(what differs, where the row lives instead)``: what sets the row a
+    filing cut off before its probe left apart from the one these arguments
+    write, for the refusal, both empty when it is that row. ``new_index`` is
+    None where the filing writes no index row (its ``--after`` row has none).
+    Where a row lives is the tree's ``ledger_fragments`` setting, which no
+    argument changes, so a row in the other home is named alone: its class
+    and its index row are read from where it is."""
+    home = _row_home(ledger, rid)
+    if as_files and (home is None or home[0] != row_file):
+        return "", ledger.name if home is None else f"{home[0].parent.name}/{home[0].name}"
+    if not as_files and home is not None:
+        return "", f"{home[0].parent.name}/{home[0].name}"
     try:
         old, new = _cells(there), _cells(new_line)
     except RowShape as exc:
-        return f"its shape: {exc}"
+        return f"its shape: {exc}", None
     diffs = [name for name, a, b in zip(("anchor", "text", "severity", "population", "audience"),
                                         old[1:], new[1:]) if a != b]
     if len(old) != len(new):
         diffs.append("the population and audience cells")
-    home = _row_home(ledger, rid)
     if as_files:
-        if home is None or home[0] != row_file:
-            diffs.append(f"where it lives (not {row_file.parent.name}/{row_file.name})")
-        elif not diffs and _FRAG.strict_text(row_file) != _row_file_text(section, new_line, [new_index]):
+        if not diffs and _FRAG.strict_text(row_file) != _row_file_text(section, new_line, [new_index or ""]):
             diffs.append("its class section or its index row")
     else:
-        if home is not None:
-            diffs.append(f"where it lives ({home[0].parent.name}/{home[0].name}, not {ledger.name})")
         index = _index_line(rid, file_text)
-        if index is None or index[1] != new_index:
+        if (index[1] if index else None) != new_index:
             diffs.append("its index row")
         if _section_holding(file_text, rid) != section:
             diffs.append("its class section")
-    return ", ".join(diffs)
+        if not diffs and there != new_line:
+            # A real cut leaves exactly the line the filing wrote; any other
+            # bytes would be pinned by a row_sha that matches no line.
+            diffs.append("its spacing (the row there is not, byte for byte, the one these arguments write)")
+    return ", ".join(diffs), None
 
 
-def _own_cut_filing(*, kind: str, anchor: str, text_file: Path, severity: str,
-                    ledger: Path, probes: Path) -> str | None:
-    """The id a filing with its id left out already filed, when it was cut
-    off between its row and its probe: the one live row of one ``kind`` id,
-    with no probe file and no roster entry, whose anchor, text and severity
-    are this filing's. Run again, such a filing would otherwise mint a second
-    id and file its row twice. None when no row is that, or more than one is
-    (the filing then mints as before); ``file_row`` still checks the whole row."""
+def _own_cut_filings(root: Path, kind: str, *, ledger: Path, probes: Path) -> list[str]:
+    """This seat's filings cut off between their row and their probe: the
+    ``kind`` ids its minted record holds whose row is live, of that one id,
+    with no probe file and no roster entry. A filing with its id left out
+    finishes the one there is rather than minting past it and filing its row
+    twice (DEF-4019), and is refused with more than one, naming them. Keyed on
+    the record, not on the row's content: a re-run whose arguments were fixed
+    meets its own row (and is refused by name where it differs), and a row
+    another seat or a hand filed is never taken for this seat's. Empty where
+    no id can be minted (no blocks table, a seat name that cannot be read, a
+    record that cannot be read): the mint that follows says why."""
     try:
-        view = _FRAG.ledger_view_at(ledger)
-        body = text_file.read_text(encoding="utf-8").strip().replace("\n", " ")
-        roster = _FRAG.probe_roster_at(probes)
-    except (OSError, ValueError):  # strict decode: the filing reads them again and says what failed
-        return None
-    probed = {str(p.get("id")) for p in roster.data["probes"] if isinstance(p, dict)}
-    hits = []
-    for line in view.text.splitlines():
-        ids = _GEN.cell_ids(line)
-        if len(ids) != 1 or not ids[0].startswith(f"{kind}-") or ids[0] in probed or _GEN._is_struck(line):
-            continue
-        try:
-            cells = _cells(line)
-        except RowShape:
-            continue   # an index row, or a row no verb can round-trip
-        if cells[1:4] == [anchor, body, severity]:
-            hits.append(ids[0])
-    return hits[0] if len(hits) == 1 else None
+        if read_id_blocks(root) is None:
+            return []
+        seat, _note = minting_seat(root)
+        mine = sorted(n for n, owner in _read_minted(root).get(kind, {}).items() if owner == seat)
+        if not mine:
+            return []
+        view = _FRAG.ledger_view_at(ledger).text
+        roster = _FRAG.probe_roster_at(probes).data
+    except (MintRefused, OSError, ValueError):  # strict decode: the mint that follows refuses by name
+        return []
+    cut = []
+    for n in mine:
+        rid = f"{kind}-{n}"
+        found = _member_line(rid, view, struck_ok=True) if f"`{rid}`" in view else None
+        if found is not None and _cut_before_its_probe(rid, found[1], roster):
+            cut.append(rid)
+    return cut
 
 
 def _retire_probe_files(probes: Path, ids: list[str], pending: _Pending) -> int:
@@ -1448,10 +1463,11 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
     # arguments write is the very row there; any other row is refused.
     finishing = False
     if found is not None:
-        held = _load_probes(probes, ledger_text=file_text)
-        if held is None:
-            return 2
-        finishing = _cut_before_its_probe(rid, found[1], probe_file, held)
+        try:
+            roster = _FRAG.probe_roster_at(probes).data
+        except (OSError, ValueError):  # strict decode: unreadable, it vouches for no cut filing; the refusal stands
+            roster = None
+        finishing = roster is not None and _cut_before_its_probe(rid, found[1], roster)
     if found is not None and not finishing:
         print(f"ledger_row: {rid} already has a member row", file=sys.stderr)
         return 2
@@ -1477,7 +1493,9 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
     # A row written into the ledger file is placed by the FILE's own lines: the
     # view's positions count row-file lines the write never puts there.
     slots = text if as_files else file_text
-    if as_files and after is None:
+    if (as_files or finishing) and after is None:
+        # A finishing filing writes no row, so it takes no slot: the first row
+        # of a class, cut off, would otherwise count itself and be refused.
         member_at = index_at = 0
     elif after is None:
         # The FIRST row of a section with none -- a class just created, where
@@ -1541,12 +1559,23 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
     tags = f" {population} | {audience} |" if mixed else ""
     new_line = f"| `{rid}` | {anchor} | {body} | {severity} |{tags}"
     new_index = f"| `{rid}` | {section} | {index_anchor or anchor} |"
-    if finishing and (differs := _how_it_differs(rid, found[1], new_line, new_index, section, as_files=as_files,
-                                                 ledger=ledger, file_text=file_text, row_file=row_file)):
-        print(f"ledger_row: {rid} has a live row and no probe (a filing cut off before its probe), but the row "
-              f"these arguments write differs from it in {differs}; nothing written: run the filing again with "
-              "the arguments it was filed with", file=sys.stderr)
-        return 2
+    if finishing:
+        # The index row this filing writes: in the ledger file, none where the
+        # --after row has none (the insertion below skips it).
+        writes_index = as_files or after is None or _index_line(after, file_text) is not None
+        differs, lives = _how_it_differs(rid, found[1], new_line, new_index if writes_index else None, section,
+                                         as_files=as_files, ledger=ledger, file_text=file_text, row_file=row_file)
+        if lives:
+            print(f"ledger_row: {rid} has a live row and no probe, in {lives}, but this tree files a row "
+                  + (f"as {row_file.parent.name}/{row_file.name}" if as_files else f"into {ledger.name}")
+                  + f" (the ledger_fragments setting), which no argument changes; nothing written: set the "
+                  f"setting back to finish it, or strike {rid}", file=sys.stderr)
+            return 2
+        if differs:
+            print(f"ledger_row: {rid} has a live row and no probe (a filing cut off before its probe), but the row "
+                  f"these arguments write differs from it in {differs}; nothing written: run `file {rid}` again "
+                  f"with the arguments it was filed with, or strike {rid} to give it up", file=sys.stderr)
+            return 2
     # the probe is driven BEFORE anything is written: a filed row's claim must
     # be re-derivable from the day it is filed
     if why_not is None:
@@ -1612,8 +1641,10 @@ def file_row(rid: str, *, ledger: Path, probes: Path, section: str, after: str |
     rc = _commit_both(gen, ledger=ledger, probes=probes, new_text=new_text, data=data, what="filing",
                       pending=pending, write_roster=not as_files)
     if rc == 0 and finishing:
-        print(f"finished {rid}: its row was there with no probe (a filing cut off before its probe); "
-              f"probe added (row_sha {entry['row_sha']}); regions converged")
+        # Not "cut off before its probe": a strike cut off after retiring its
+        # probe leaves the same row, and the tool cannot tell the two apart.
+        print(f"finished {rid}: its row was there with no probe, so only the probe was written (row_sha "
+              f"{entry['row_sha']}); regions converged. If a strike of {rid} was what was cut off, strike it again")
     elif rc == 0:
         where = (f"as {row_file.parent.name}/{row_file.name}" if as_files
                  else f"after {after}" if after else "as the first row")
@@ -1706,6 +1737,18 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
     # What the row held before this repin, for the stamp's list of the fields
     # it changed (below).
     old_cells = list(cells)
+    # A row that no longer carries the row_sha its probe pinned was rewritten
+    # since -- by a re-pin cut off before its probe (its re-run would else
+    # stamp "[changed: none]"), or by hand -- so what moved then is not in
+    # old_cells: the stamp says the row moved before this re-pin. A pin not in
+    # the shape the verbs write is no evidence of what the row held.
+    now_sha = _CHK.row_sha(line)
+    pinned = entry.get("row_sha")
+    row_moved = (isinstance(pinned, str) and re.fullmatch(f"[0-9a-f]{{{len(now_sha)}}}", pinned) is not None
+                 and pinned != now_sha)
+    if row_moved:
+        print(f"ledger_row: note -- {rid}'s row no longer matches the row_sha its probe pinned (a re-pin cut off "
+              "before its probe, or a hand edit); the stamp says it moved before this re-pin", file=sys.stderr)
     if text_file is not None:
         cells[2] = text_file.read_text(encoding="utf-8").strip().replace("\n", " ")
     if anchor:
@@ -1829,6 +1872,7 @@ def repin(rid: str, *, ledger: Path, probes: Path, open_value: str | None, reaso
     carried = re.search(r"\) \[changed: ([a-z ,]+)\]$", earlier) if isinstance(earlier, str) else None
     carried_names = {f.strip() for f in carried.group(1).split(",")} if carried else set()
     changed = [name for name, moved_field in (
+        ("row moved before", row_moved),
         ("probe", cmd != old_cmd),
         ("open value", new_value != old_value),
         ("anchor", cells[1] != old_cells[1]),
@@ -1980,10 +2024,26 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "class":
             ids, section = [], args.section            # the verb mints the section itself
         elif args.verb == "file":
+            # A filing with its id left out first looks for this seat's own
+            # filing cut off before its probe (DEF-4019), so a re-run finishes
+            # that row instead of minting past it, and the claims below are
+            # read for its id. Its number is the seat's by its own record, so
+            # the block check is not asked of it.
+            own = _own_cut_filings(root, args.kind, ledger=ledger, probes=probes) if not args.rid else []
+            if len(own) > 1:
+                print(f"ledger_row: refused -- {', '.join(own)} are this seat's filings cut off before their "
+                      "probes; finish each with `file <id>` and the arguments it was filed with, or strike it, "
+                      "before filing with the id left out", file=sys.stderr)
+                return 2
+            if own:
+                args.rid = own[0]
+                print(f"ledger_row: {args.rid} is this seat's own filing, its row there with no probe: finishing "
+                      "it, nothing minted", file=sys.stderr)
             # A minted id is free of every claim by construction (the claims
             # are part of what it skips); the section's claims still note.
             ids, section = ([args.rid] if args.rid else []), args.section
-            why, args.explicit_seat = explicit_id_refusal(root, args.rid) if args.rid else (None, None)
+            why, args.explicit_seat = (explicit_id_refusal(root, args.rid) if args.rid and not own
+                                       else (None, None))
             if why and not (args.override or args.dry_run):
                 print(f"ledger_row: refused -- {why}", file=sys.stderr)
                 return 2
@@ -2067,16 +2127,10 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
     # record lock, so two worktrees of one clone cannot both take it; a filing
     # that refuses gives it back.
     rid, held = args.rid, None
-    # A filing cut off between its row and its probe, run again with its id
-    # left out, finishes the row it already filed rather than minting a
-    # second id for the same row (DEF-4019); that number stays reserved.
-    own = (_own_cut_filing(kind=args.kind, anchor=args.anchor, text_file=Path(args.text_file),
-                           severity=args.severity, ledger=ledger, probes=probes) if rid is None else None)
-    if own is not None:
-        rid = own
-        print(f"ledger_row: {rid} is this filing's own row, with no probe (a filing cut off before its "
-              "probe): finishing it, nothing minted", file=sys.stderr)
-    elif rid is None:
+    # A filing with its id left out whose own earlier filing was cut off
+    # before its probe was given that id before the claims were read (main),
+    # and finishes it: no mint, and its number stays this seat's.
+    if rid is None:
         got = _mint(args.kind, ledger=ledger, probes=probes, root=root, dry_run=args.dry_run)
         if got is None:
             return 2
@@ -2087,8 +2141,12 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
         m = _ROW_ID_RE.fullmatch(rid)
         held = (m.group(1), int(m.group(2)), args.explicit_seat) if m else None
         try:
-            if held:
-                _reserve(root, *held)
+            # Only a number this run reserved is given back on a refusal: one
+            # the seat already held (a re-run of a filing cut off before its
+            # probe) has its row on disk, and freeing it would let a sibling
+            # worktree mint it again.
+            if held and not _reserve(root, *held):
+                held = None
         except MintRefused as exc:
             print(f"ledger_row: refused -- {exc}", file=sys.stderr)
             return 2
