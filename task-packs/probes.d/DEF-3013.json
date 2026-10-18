@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3013",
+ "subject": "tests/test_contracts.py",
+ "cmd": "python3 -c \"import ast,pathlib; t=ast.parse(pathlib.Path('tests/test_contracts.py').read_text(encoding='utf-8')); print(any(isinstance(n, ast.AnnAssign) and getattr(n.target, 'id', '') == '_SHIPPED_ROOTS' and isinstance(n.value, ast.Tuple) for n in t.body))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "f5976edfc83f",
+ "text_sha": "ca465796a818",
+ "verified_2026_10_17": "OPEN (filed 2026-10-17; probe driven at filing)"
+}
