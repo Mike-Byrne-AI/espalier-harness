@@ -37,6 +37,7 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -185,8 +186,13 @@ def invoke_settings_deny_matcher(attempt: dict, tmp_project: Path) -> VerifierRe
         if not rule.endswith(")"):
             continue
         pattern = rule[len(tool) + 1 : -1]
-        # Literal or glob match against file_path. No path normalization.
-        if fnmatch.fnmatch(file_path, pattern) or file_path == pattern:
+        # Literal or glob match against file_path. No path normalization, and
+        # case-sensitive on every host: `fnmatch.fnmatch` case-folds through
+        # `os.path.normcase` on Windows, where BC-025's `.CLAUDE/settings.json`
+        # then matched `.claude/settings.json` (1/5 blocked against the
+        # committed 0/5, driven 2026-10-18), so the published table depended on
+        # the host that regenerated it (DEF-1073).
+        if fnmatch.fnmatchcase(file_path, pattern) or file_path == pattern:
             return VerifierResult(True, f"matched deny pattern {rule}", (time.perf_counter() - t0) * 1000.0)
     return VerifierResult(False, "no deny pattern matched", (time.perf_counter() - t0) * 1000.0)
 
@@ -1937,15 +1943,58 @@ BASELINE_INVOKERS: dict[str, dict[str, Any]] = {
 # ---------------------------------------------------------------------------
 
 
+def _setup_shell(windows: bool | None = None, which=None, installs=None) -> str:
+    """The bash that runs a baseline's ``setup.sh`` (DEF-1072). Elsewhere,
+    ``bash`` from PATH. On Windows, Git for Windows' own bash named by path:
+    a bare ``bash`` there resolves through CreateProcess, which searches
+    System32 before PATH, to the WSL launcher, whose default distro need have
+    no bash at all (driven 2026-10-18: ``execvpe(/bin/bash) failed`` for every
+    baseline). Looked for in git's own install root (above ``cmd``, ``bin``
+    or ``mingw64/bin``, never further up), then Git's default install folders
+    (``installs``; a package manager's git shim sits elsewhere), then a PATH
+    bash that is not the launcher (System32, Sysnative or WindowsApps). The
+    launcher is never returned; with no Git bash found the setup refuses by
+    name."""
+    if not (os.name == "nt" if windows is None else windows):
+        return "bash"
+    which = which or shutil.which  # read at call time, so a patched shutil.which is the one asked
+    roots: list[Path] = []
+    git = which("git")
+    if git:
+        root = Path(git).resolve().parent.parent  # <Git>/cmd/git.exe or <Git>/bin/git.exe
+        roots.append(root.parent if root.name.lower() in ("mingw64", "mingw32", "clangarm64") else root)
+    if installs is None:
+        installs = [Path(os.environ[var]) / "Git" for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)")
+                    if os.environ.get(var)]
+        if os.environ.get("LOCALAPPDATA"):
+            installs.append(Path(os.environ["LOCALAPPDATA"]) / "Programs" / "Git")
+    for root in (*roots, *installs):
+        # bin/ first: Git's bin/bash.exe is the wrapper that puts usr/bin on PATH
+        # before starting usr/bin/bash.exe, and setup.sh needs mkdir, cat and dirname
+        for candidate in (root / "bin" / "bash.exe", root / "usr" / "bin" / "bash.exe"):
+            if candidate.is_file():
+                return str(candidate)
+    found = which("bash")
+    if found and not re.search(r"[\\/](system32|sysnative|windowsapps)[\\/]", found, re.IGNORECASE):
+        return found
+    raise FileNotFoundError(
+        "a baseline's setup.sh needs Git for Windows' bash, found by path beside git.exe; "
+        "a bare `bash` here would start the WSL launcher. Install Git for Windows (git-scm.com).")
+
+
 def setup_baseline(name: str, tmp_project: Path) -> None:
     setup_sh = BASELINE_DIR / name / "setup.sh"
     if not setup_sh.exists():
         raise FileNotFoundError(f"missing setup.sh for baseline {name}")
+    # The setup script runs this interpreter, not the name `python3`, which a
+    # python-only Windows install does not have (DEF-1072); forward slashes,
+    # which Git's bash runs as written.
+    env = {**os.environ, "ESPALIER_BENCH_PYTHON": Path(sys.executable).as_posix()}
     proc = run_bounded(
-        ["bash", str(setup_sh), str(tmp_project)],
+        [_setup_shell(), str(setup_sh), str(tmp_project)],
         capture_output=True,
         text=True, encoding="utf-8", errors="replace",
-        timeout=120,
+        timeout=120, env=env,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"setup failed for {name}: {proc.stderr}")

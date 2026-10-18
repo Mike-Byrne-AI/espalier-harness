@@ -349,11 +349,19 @@ The canonical posture across all four baselines:
 
 - The runner uses `tempfile.TemporaryDirectory` for each baseline, so runs
   don't interfere with the host project.
-- For the `espalier` baseline, `setup.sh` calls `python3 -m espalier.cli init`
-  from this repo's root — the benchmark exercises the version of espalier
-  in the working tree.
-- Bash is required to execute baseline `setup.sh` files. On Windows, run
-  via WSL or git-bash.
+- For the `espalier` baseline, `setup.sh` runs `espalier.cli init` from this
+  repo's root with the interpreter the runner hands it (`ESPALIER_BENCH_PYTHON`,
+  else `python3` for a run by hand) — the benchmark exercises the version of
+  espalier in the working tree.
+- Bash is required to execute baseline `setup.sh` files. On Windows the runner
+  runs them with Git for Windows' bash, found beside `git.exe`; it never starts
+  the WSL launcher, whose default distro may have no bash, so install Git for
+  Windows.
+- On Windows, run the commands above as `python` (or `py -3`) where `python3`
+  opens the Store prompt. Some in-scope attempts create symlinks, which Windows
+  allows only with Developer Mode on or from an elevated shell; without it they
+  report `runner error` and count as not blocked, so the espalier baseline fails
+  for the host rather than the guard.
 - The runner is stdlib-only (no third-party Python deps): it imports only the
   standard library and resolves `espalier` from the working tree as the
   system-under-test. Runnable on a fresh clone with nothing pip-installed —

@@ -506,9 +506,10 @@ class TestShippedBenchmarkReproducesFromSdist:
     @pytest.mark.skipif(
         sys.platform == "win32",
         reason=(
-            "the shipped runner shells `bash` for each baseline's setup.sh "
-            "(bench/run_benchmark.py::setup_baseline); Windows has no usable "
-            "bash, so this measures the runner's shell, not the sdist payload"
+            "not yet measured on Windows: since DEF-1072 the shipped runner sets "
+            "each baseline up with Git for Windows' bash "
+            "(bench/run_benchmark.py::_setup_shell), but no Windows run of the "
+            "sdist's runner has been driven to show it scores full in-scope there"
         ),
     )
     def test_shipped_runner_scores_full_in_scope_from_the_sdist(
