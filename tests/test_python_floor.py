@@ -2296,8 +2296,11 @@ class TestTheTwinsAgreeOnAProbeThatNeverAnswers:
         ``skip=False`` gets None."""
         link = tmp_path / ("sym" if symbolic else "hard") / Path(sys.executable).name
         link.parent.mkdir()
+        # The binary itself: os.link does not follow a symlink on Linux, and a CI interpreter is
+        # one (bin/python -> python3.11, relative), whose link in another folder would dangle.
+        target = sys.executable if symbolic else os.path.realpath(sys.executable)
         try:
-            (os.symlink if symbolic else os.link)(sys.executable, link)
+            (os.symlink if symbolic else os.link)(target, link)
         except OSError as exc:  # no hard links across volumes; no symlinks without the privilege
             if skip:
                 pytest.skip(f"no {'symbolic' if symbolic else 'hard'} link here: {exc}")
