@@ -201,9 +201,12 @@ def _prune_blueprints(bp_dir: Path) -> None:
         # still an empty stub past the age guard, and the tail took it (driven
         # 2026-10-18). Both leave the candidates rather than the tail, so the
         # working set stays at BLUEPRINT_RETENTION: an older node goes instead.
+        # A running session is spared only while its node is the head or the
+        # head's parent: a THIRD start still demotes it, and which node is a
+        # session's is TP-467 wave C's to key.
         try:
             head = json.loads((bp_dir / "latest.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):  # as load_json_dict_safe catches
             head = {}
         if not isinstance(head, dict):
             head = {}
@@ -213,7 +216,8 @@ def _prune_blueprints(bp_dir: Path) -> None:
         files = [p for p in files if p.name not in spared]
         # Substantive nodes (larger than an empty-session stub) sort first, so
         # files[keep:] — the eviction tail — is stubs first, then only the
-        # oldest substantive nodes. Stubs are reclaimed before reasoning.
+        # oldest substantive nodes. Stubs are reclaimed before reasoning, the
+        # spared head and parent apart: an older substantive node goes first.
         files.sort(
             key=lambda p: (p.stat().st_size > BLUEPRINT_STUB_MAX_BYTES, p.stat().st_mtime),
             reverse=True,

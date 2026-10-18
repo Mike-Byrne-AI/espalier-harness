@@ -336,8 +336,8 @@ class TestThePruneSparesTheChainHeadAndItsParent:
     tail, so the working set stays at ``BLUEPRINT_RETENTION``."""
 
     @staticmethod
-    def _seed(bp_dir, n, *, substantive=True):
-        """``n`` nodes three hours old, oldest first."""
+    def _seed(bp_dir, n):
+        """``n`` substantive nodes three hours old, oldest first."""
         from espalier._blueprint_limits import BLUEPRINT_STUB_MAX_BYTES
 
         bp_dir.mkdir(parents=True, exist_ok=True)
@@ -345,8 +345,7 @@ class TestThePruneSparesTheChainHeadAndItsParent:
         out = []
         for i in range(n):
             p = bp_dir / f"20260101-{i:06d}-aaaaaa.json"
-            p.write_text("x" * (BLUEPRINT_STUB_MAX_BYTES + 100) if substantive else "{}",
-                         encoding="utf-8")
+            p.write_text("x" * (BLUEPRINT_STUB_MAX_BYTES + 100), encoding="utf-8")
             t = now - 3 * 3600 + i
             os.utime(p, (t, t))
             out.append(p)
@@ -365,7 +364,9 @@ class TestThePruneSparesTheChainHeadAndItsParent:
 
     @staticmethod
     def _hot(bp_dir):
-        return sorted(p.name for p in bp_dir.glob("*.json") if p.name != "latest.json")
+        """The node files in the working set, counted as the prune counts them."""
+        return sorted(p.name for p in bp_dir.glob("*.json")
+                      if p.name != "latest.json" and p.is_file() and not p.is_symlink())
 
     @_BOTH_PRUNES
     def test_the_running_sessions_stub_stays_hot_when_a_new_node_chains_from_it(
@@ -398,7 +399,9 @@ class TestThePruneSparesTheChainHeadAndItsParent:
     @_BOTH_PRUNES
     def test_an_old_chain_head_stays_hot_too(self, tmp_path, prune):
         """``latest.json``'s own node, old and empty (a session resumed with no
-        new start). Dies to: the parent spared and the head not."""
+        new start), its parent long gone. Dies to: the parent spared and the
+        head not, or ``keep`` reduced by the names spared rather than the
+        files present (one node too many goes cold)."""
         from espalier._blueprint_limits import BLUEPRINT_MIN_PRUNE_AGE_S, BLUEPRINT_RETENTION
 
         bp_dir = tmp_path / "cc" / "blueprints"
@@ -435,14 +438,43 @@ class TestThePruneSparesTheChainHeadAndItsParent:
         assert len(self._hot(bp_dir)) == BLUEPRINT_RETENTION
 
     @_BOTH_PRUNES
+    @pytest.mark.parametrize("shape", ["directory", "symlink"])
+    def test_a_spared_name_that_is_not_a_node_file_spares_nothing(self, tmp_path, prune, shape):
+        """The parent's name is a directory or a symlink, which the prune never
+        counts as a node. Dies to: the spared counted by name on disk rather
+        than among the node files (one node too many goes cold: code review,
+        driven 2026-10-18)."""
+        from espalier._blueprint_limits import BLUEPRINT_RETENTION
+
+        bp_dir = tmp_path / "cc" / "blueprints"
+        self._seed(bp_dir, BLUEPRINT_RETENTION + 1)
+        odd = bp_dir / "20261018-100000-notnod.json"
+        if shape == "directory":
+            odd.mkdir()
+        else:
+            try:
+                odd.symlink_to(tmp_path / "elsewhere.json")
+            except OSError:
+                pytest.skip("this host cannot create a symlink")
+        new = self._stub(bp_dir, "20261018-111000-second", parent=odd.stem)
+        (bp_dir / "latest.json").write_text(new.read_text(encoding="utf-8"), encoding="utf-8")
+
+        prune()(bp_dir)
+
+        assert new.exists()
+        assert len(self._hot(bp_dir)) == BLUEPRINT_RETENTION
+
+    @_BOTH_PRUNES
     @pytest.mark.parametrize(
         "latest",
-        [None, "", "not json", "[]", '{"session_id": 5, "parent_session_id": null}', "{}"],
-        ids=["absent", "empty", "unparseable", "a-list", "non-string-ids", "no-ids"],
+        [None, "", "not json", "[]", '{"session_id": 5, "parent_session_id": null}', "{}",
+         "[" * 1_000_000],
+        ids=["absent", "empty", "unparseable", "a-list", "non-string-ids", "no-ids", "deeply-nested"],
     )
     def test_a_latest_that_names_no_node_prunes_as_before(self, tmp_path, prune, latest):
-        """Dies to: the read raising past the prune's own guard, or a bad
-        ``latest.json`` stopping the prune."""
+        """Dies to: the read raising past the prune's own guard (a deeply nested
+        one raised RecursionError out of the engine copy alone: code review,
+        driven 2026-10-18), or a bad ``latest.json`` stopping the prune."""
         from espalier._blueprint_limits import BLUEPRINT_COLD_DIR_NAME, BLUEPRINT_RETENTION
 
         bp_dir = tmp_path / "cc" / "blueprints"
@@ -485,3 +517,65 @@ class TestThePruneSparesTheChainHeadAndItsParent:
         assert node.exists(), "the running session's node went cold at the second start"
         assert not (bp_dir / BLUEPRINT_COLD_DIR_NAME / node.name).exists()
         assert len(self._hot(bp_dir)) == BLUEPRINT_RETENTION
+
+    def test_the_engines_second_start_keeps_the_running_sessions_node_hot(self, tmp_path):
+        """The same drive through the engine's ``start_session`` and
+        ``save_blueprint``, so a change to what the engine writes that leaves
+        its spare empty reds here, where the unit rows, which write
+        ``latest.json`` themselves, would stay green (failure-mode review,
+        2026-10-18). Dies to: the engine copy's spare removed or emptied."""
+        from espalier._blueprint_limits import (
+            BLUEPRINT_COLD_DIR_NAME,
+            BLUEPRINT_MIN_PRUNE_AGE_S,
+            BLUEPRINT_RETENTION,
+        )
+        from espalier.cognitive_blueprint import save_blueprint, start_session
+
+        bp_dir = tmp_path / "cc" / "blueprints"
+        self._seed(bp_dir, BLUEPRINT_RETENTION)
+        running = start_session(tmp_path)
+        save_blueprint(tmp_path, running)
+        node = bp_dir / f"{running.session_id}.json"
+        aged = _time.time() - (BLUEPRINT_MIN_PRUNE_AGE_S + 600)
+        os.utime(node, (aged, aged))
+
+        second = start_session(tmp_path)
+        save_blueprint(tmp_path, second)
+
+        assert second.parent_session_id == running.session_id
+        assert node.exists(), "the running session's node went cold at the engine's second start"
+        assert not (bp_dir / BLUEPRINT_COLD_DIR_NAME / node.name).exists()
+        assert len(self._hot(bp_dir)) == BLUEPRINT_RETENTION
+
+    @pytest.mark.xfail(
+        strict=True, raises=AssertionError,
+        reason="TP-467 wave C: a third start chains from the second, so the first running "
+               "session's node is no longer the head nor its parent and goes cold; wave C keys "
+               "which node is a session's",
+    )
+    def test_a_third_start_still_keeps_the_first_running_sessions_node_hot(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        """The residual this lane leaves, pinned so the wave that closes it has
+        to flip it (failure-mode review, 2026-10-18): a session running past
+        the age guard while the usage panel opens twice."""
+        import json
+
+        from espalier._blueprint_limits import BLUEPRINT_MIN_PRUNE_AGE_S, BLUEPRINT_RETENTION
+
+        mod = _standalone_blueprint()
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        bp_dir = tmp_path / "cc" / "blueprints"
+        self._seed(bp_dir, BLUEPRINT_RETENTION)
+        mod.cmd_start()
+        running = json.loads((bp_dir / "latest.json").read_text(encoding="utf-8"))["session_id"]
+        node = bp_dir / f"{running}.json"
+        aged = _time.time() - (BLUEPRINT_MIN_PRUNE_AGE_S + 600)
+        os.utime(node, (aged, aged))
+        mod.cmd_start()
+        second = json.loads((bp_dir / "latest.json").read_text(encoding="utf-8"))["session_id"]
+        os.utime(bp_dir / f"{second}.json", (aged, aged))
+
+        mod.cmd_start()
+
+        assert node.exists(), "the first running session's node went cold at the third start"
