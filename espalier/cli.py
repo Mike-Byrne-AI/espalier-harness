@@ -46,7 +46,8 @@ from espalier._python_floor import (
     start_unconfirmed_of,
 )
 from espalier._safe_walk import safe_rglob, visible, is_own_git_repo as _is_own_git_repo
-from espalier._spawn import run_bounded
+from espalier._rmtree import remove_file
+from espalier._spawn import run_no_stdin
 from espalier._text import os_error_text, pin_utf8_streams, plural, quoted_if_spaced
 from espalier._venv import (
     after_head_index,
@@ -576,7 +577,10 @@ def _stream_isatty(stream: object | None) -> bool:
     OR whose ``isatty()`` raises — a *closed* (non-None) file object raises
     ``ValueError`` — so an interactive gate degrades to the non-interactive
     default instead of propagating (``AttributeError`` on ``None.isatty()`` or
-    ``ValueError`` on a closed stream)."""
+    ``ValueError`` on a closed stream). That is the interpreter's own stream
+    object: a child that inherits stdin gets the OS handle instead, which a
+    closed descriptor leaves invalid on Windows, so every engine spawn hands its
+    child a closed stdin (``espalier/_spawn.py::run_no_stdin``, DEF-928)."""
     isatty = getattr(stream, "isatty", None)
     if not callable(isatty):
         return False
@@ -722,7 +726,7 @@ def _ask_resolves_only_inside_a_virtualenv(name: str, resolved: str) -> bool:
     """The spawn half of :func:`_resolves_only_inside_a_virtualenv`, unkept."""
     import subprocess
     try:
-        probe = run_bounded(
+        probe = run_no_stdin(
             [resolved, "-c", "import sys,json;"
              "print('ESPALIER_PROBE'+json.dumps([sys.prefix,sys.base_prefix]))"],
             capture_output=True, text=True, encoding="utf-8", timeout=5,
@@ -3079,7 +3083,7 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
                      else ["--probe-cmd", f'{_PROBE_PY} -c "{row["code"]}"',
                            "--open-value", row["open"]])
             try:
-                proc = run_bounded(
+                proc = run_no_stdin(
                     argv, capture_output=True, text=True, encoding="utf-8",
                     errors="replace", check=False, timeout=120, env=env,
                 )
@@ -3261,7 +3265,7 @@ def _repin_onboarding(repo_root: Path, rids: list[str], *, dry_run: bool) -> dic
                 "repin", rid, "--probe-cmd", f'{_PROBE_PY} -c "{row["code"]}"', "--open-value", row["open"],
                 "--reason", _ONBOARDING_REPIN_REASON.format(version=__version__)]
         try:
-            proc = run_bounded(
+            proc = run_no_stdin(
                 argv, capture_output=True, text=True, encoding="utf-8",
                 errors="replace", check=False, timeout=120, env=env,
             )
@@ -5285,7 +5289,7 @@ def _git_covered_entries(
             prefix="espalier-check-ignore-", ignore_cleanup_errors=True,
         ) as scratch:
             scratch_root = Path(scratch)
-            init = run_bounded(
+            init = run_no_stdin(
                 ["git", "init", "-q", "--template=", str(scratch_root)],
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", check=False, timeout=30, env=env,
@@ -5296,7 +5300,7 @@ def _git_covered_entries(
             stdin = "".join(
                 path + "\0" for paths in probes.values() for path in paths
             ) + _GITIGNORE_CONTROL_PROBE + "\0"
-            proc = run_bounded(
+            proc = run_no_stdin(
                 ["git", "-C", str(scratch_root),
                  "-c", f"core.excludesFile={scratch_root / 'no-global-excludes'}",
                  "-c", f"core.ignorecase={'true' if fold else 'false'}",
@@ -5401,7 +5405,7 @@ def _git_ignorecase(repo_root: Path) -> bool:
     direction for a diagnostic that must never abort a completed deploy.
     """
     try:
-        proc = run_bounded(
+        proc = run_no_stdin(
             ["git", "-C", str(repo_root), "config", "--type=bool",
              "core.ignorecase"],
             capture_output=True, text=True, encoding="utf-8",
@@ -5490,7 +5494,7 @@ def _untracked_conflicts(
     # platform most operators are sitting on.
     fold = _git_ignorecase(repo_root)
     try:
-        result = run_bounded(
+        result = run_no_stdin(
             ["git", "ls-files", "--others", "--exclude-standard", "-z"],
             cwd=repo_root, capture_output=True, text=True,
             # errors= AND ValueError, together: a filename that is not valid
@@ -5591,7 +5595,7 @@ def _git_tracked(repo_root: Path) -> tuple[list[str], bool] | None:
     (``cleanup._retire_gitignore_block``): an ignore rule guards no tracked
     file, so a tracked one is never the reason to keep it."""
     try:
-        proc = run_bounded(
+        proc = run_no_stdin(
             ["git", "-C", str(repo_root), "ls-files", "-z"],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", check=False, timeout=120,
@@ -5599,7 +5603,7 @@ def _git_tracked(repo_root: Path) -> tuple[list[str], bool] | None:
         # git itself is case-insensitive on macOS/Windows checkouts; match it,
         # or the check misses `Reports/q4.md` against `/reports/` and silently
         # creates the state it exists to prevent.
-        case_proc = run_bounded(
+        case_proc = run_no_stdin(
             ["git", "-C", str(repo_root), "config", "--type=bool",
              "core.ignorecase"],
             capture_output=True, text=True, encoding="utf-8",
@@ -6034,7 +6038,7 @@ def _ignored_files_under(repo_root: Path, folder: str) -> list[str] | None:
     cannot answer. Nothing is fed to the child, so its stdin is closed (the
     DEF-928 shape)."""
     try:
-        proc = run_bounded(
+        proc = run_no_stdin(
             ["git", "-C", str(repo_root), "ls-files", "-z", "--others", "--ignored",
              "--exclude-standard", "--", f"{folder}/"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -6307,7 +6311,7 @@ def _git_hides(repo_root: Path, rel: str) -> bool:
     catch-all such as ``.*`` would hide the include from every commit);
     False when it does not, or when git cannot be asked."""
     try:
-        done = run_bounded(
+        done = run_no_stdin(
             ["git", "-C", str(repo_root), "check-ignore", "-q", "--", rel],
             capture_output=True, timeout=10, check=False,
         )
@@ -6328,7 +6332,7 @@ def _git_ignored(repo_root: Path, rels: Sequence[str]) -> set[str] | None:
         return set()
     try:
         # NUL-separated both ways (-z needs --stdin), so no path is quoted.
-        done = run_bounded(
+        done = run_no_stdin(
             ["git", "-C", str(repo_root), "check-ignore", "--stdin", "-z"],
             input=b"\0".join(rel.encode("utf-8") for rel in rels) + b"\0",
             capture_output=True, timeout=10, check=False,
@@ -7383,6 +7387,43 @@ def _deploy_seed_docs(repo_root: Path, *, dry_run: bool = False) -> dict[str, li
     return outcome
 
 
+def _seed_dirs_present(repo_root: Path) -> set[str]:
+    """The directories above each seed doc that exist now: what
+    :func:`_roll_back_seed` must leave standing."""
+    from espalier.managed_inventory import get_seed_docs
+    return {parent.as_posix() for rel in get_seed_docs() for parent in Path(rel).parents
+            if parent != Path(".") and (repo_root / parent).is_dir()}
+
+
+def _roll_back_seed(repo_root: Path, outcome: dict[str, list[str]], dirs_before: set[str]) -> None:
+    """Remove the seed docs ``_deploy_seed_docs`` created (absent before it ran),
+    and each directory it made that is empty again, deepest first. A refreshed
+    seed is an untouched copy brought current and stays; a directory that was
+    there before stays. Each removal is best effort (``remove_file``), so a doc
+    another process holds open stays and is named, and the error that stopped
+    ``init`` is the one that reaches the operator, never one of these. Says on
+    stderr what it removed and what stayed, since that error follows it."""
+    created = outcome.get("created", [])
+    stayed = []
+    for rel in created:
+        remove_file(repo_root / rel, best_effort=True)
+        if (repo_root / rel).exists():
+            stayed.append(rel)
+    made = {parent.as_posix() for rel in created for parent in Path(rel).parents if parent != Path(".")}
+    for rel in sorted(made - dirs_before, key=lambda d: d.count("/"), reverse=True):
+        try:
+            (repo_root / rel).rmdir()
+        except OSError:  # fail-open: ok deliberate -- not empty (something else wrote there): it stays
+            pass
+    removed = len(created) - len(stayed)
+    if removed:
+        print(f"init stopped at its fingerprint: the {plural(removed, 'seed doc')} it had "
+              f"created {'was' if removed == 1 else 'were'} removed", file=sys.stderr)
+    if stayed:
+        print("init could not remove these seed docs it had created: " + _name_paths(stayed),
+              file=sys.stderr)
+
+
 def _seed_outcome_sentence(outcome: dict[str, list[str]], *, done: bool) -> str:
     """One sentence naming what a seed deploy did (``done``) or, on a dry
     run, would do: the refreshed and the created seeds by root-relative
@@ -7751,10 +7792,17 @@ def cmd_init(args: argparse.Namespace) -> int:
     # stamp: an operator-untouched-but-stale copy refreshes, an edited or
     # legacy-unstamped copy is preserved on re-init. Extracted to
     # _deploy_seed_docs so cmd_upgrade shares the same refresh path.
+    seed_dirs_before = _seed_dirs_present(repo_root)
     seed_outcome = _deploy_seed_docs(repo_root)
 
-    # Step 1: Fingerprint
-    fp = fingerprint_repo(repo_root, config)
+    # Step 1: Fingerprint. Its git reads are init's first spawns; one that
+    # raises takes the seed docs just created with it, so a failed init does
+    # not leave a half-written tree whose author is unclear (DEF-928).
+    try:
+        fp = fingerprint_repo(repo_root, config)
+    except BaseException:  # noqa: BLE001 -- any stop here, Ctrl-C included, takes the seed back and goes on as it came
+        _roll_back_seed(repo_root, seed_outcome, seed_dirs_before)
+        raise
 
     # Step 2: Build harness config
     harness = build_harness_config(fp, config)

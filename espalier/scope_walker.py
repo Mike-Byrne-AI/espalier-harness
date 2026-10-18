@@ -41,7 +41,7 @@ from pathlib import Path
 
 from espalier import _stack_table
 from espalier._safe_walk import DEPENDENCY_TREE_DIRS, dependency_dirs_for, safe_rglob
-from espalier._spawn import run_bounded
+from espalier._spawn import run_no_stdin
 from typing import Iterable, TypedDict
 
 
@@ -184,7 +184,7 @@ def _walk_with_ripgrep(
         rg_args.append("--word-regexp")
     rg_args += ["--", symbol, str(repo_root)]
     try:
-        proc = run_bounded(
+        proc = run_no_stdin(
             rg_args,
             capture_output=True,
             # errors="replace" (not strict) — rg streams matched FILE
@@ -313,7 +313,7 @@ def _rg_multi(
         rg_args += ["-e", symbol]
     rg_args += ["--", str(repo_root)]
     try:
-        proc = run_bounded(
+        proc = run_no_stdin(
             rg_args,
             capture_output=True,
             text=True, encoding="utf-8", errors="replace",

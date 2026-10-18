@@ -48,7 +48,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from espalier._spawn import run_bounded
+from espalier._spawn import run_no_stdin
 from espalier._text import os_error_text, plural
 
 REPRO_EXPECT: tuple[str, ...] = ("fail", "pass")
@@ -212,7 +212,7 @@ def verify_repro(
 
     try:
         # subprocess-contract: ok dynamic-repro-runner; verify_repro runs a caller-supplied red-team repro argv (a list, never a shell string) — re-running that dynamic command is the guard's entire purpose
-        proc = run_bounded(
+        proc = run_no_stdin(
             argv,
             cwd=str(root),
             capture_output=True,

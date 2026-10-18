@@ -102,7 +102,11 @@ def _enclosing_functions(tree: ast.AST) -> dict[int, tuple[str, bool]]:
 
 def spawn_sites(root: Path = HOOKS_DIR, pattern: str = "*.py") -> list[dict]:
     """Every raw ``subprocess.*`` call (and a timed ``.communicate``), and
-    every ``spawn_checked(`` and ``run_bounded(`` call, under ``root``."""
+    every ``spawn_checked(``, ``run_bounded(`` and ``run_no_stdin(`` call, under
+    ``root``. ``run_no_stdin`` is the engine's ``run_bounded`` with the child's
+    stdin closed (DEF-928), so it reads as bounded; ``keywords`` names what the
+    call passes and ``values`` the source of its ``stdin=`` and ``input=``, for
+    the engine's stdin census."""
     out: list[dict] = []
     for f in sorted(checkout_glob(root, pattern)):
         src = f.read_text(encoding="utf-8")
@@ -139,14 +143,17 @@ def spawn_sites(root: Path = HOOKS_DIR, pattern: str = "*.py") -> list[dict]:
                 and isinstance(fn.value, ast.Name) and fn.value.id == "os"
             ) or (isinstance(fn, ast.Name) and fn.id in bare_spawns) or communicates
             routed = _named(fn, "spawn_checked")
-            bounded = _named(fn, "run_bounded")
+            no_stdin = _named(fn, "run_no_stdin")
+            bounded = _named(fn, "run_bounded") or no_stdin
             if not (raw or routed or bounded):
                 continue
             declared = any(PRAGMA in lines[i] for i in (node.lineno - 1, node.lineno - 2) if 0 <= i < len(lines))
             function, fallback = owner.get(id(node), ("<module>", False))
             out.append({
                 "file": f.relative_to(root).as_posix(), "lineno": node.lineno, "raw": raw,
-                "routed": routed, "bounded": bounded, "declared": declared,
+                "routed": routed, "bounded": bounded, "no_stdin": no_stdin, "declared": declared,
+                "keywords": sorted(k for k in keywords if k),
+                "values": {k.arg: ast.unparse(k.value) for k in node.keywords if k.arg in ("stdin", "input")},
                 "timed": "timeout" in keywords or None in keywords or communicates,
                 "function": function, "fallback": fallback,
             })

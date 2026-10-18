@@ -24,7 +24,7 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
-from espalier._spawn import run_bounded
+from espalier._spawn import run_no_stdin
 from espalier.pack_manifest import _live_text, _looks_like_path, _section_body
 
 LANDED = "LANDED"
@@ -185,7 +185,7 @@ def _git_lines(repo: Path, *args: str) -> list[str]:
     """Run ``git <args>`` in ``repo`` and return non-empty stdout lines, or
     ``[]`` on any git failure (advisory tool — never raise)."""
     try:
-        out = run_bounded(
+        out = run_no_stdin(
             ["git", *args],
             cwd=str(repo),
             capture_output=True,

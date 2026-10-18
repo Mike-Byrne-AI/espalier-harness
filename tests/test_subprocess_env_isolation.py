@@ -535,7 +535,7 @@ def _has_env_kwarg(call: ast.Call) -> bool:
 #: chokepoint ``_hook_utils.spawn_checked`` (2026-09-30) and the bounded spawn
 #: ``_json_safe.run_bounded`` (2026-10-13), which every timed spawn routes
 #: through, the SessionStart blueprint spawns among them.
-_SPAWN_WRAPPERS = frozenset({"spawn_checked", "run_bounded"})
+_SPAWN_WRAPPERS = frozenset({"spawn_checked", "run_bounded", "run_no_stdin"})
 
 
 def _is_spawn_wrapper(node: ast.Call) -> bool:

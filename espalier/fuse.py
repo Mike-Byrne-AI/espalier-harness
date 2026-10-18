@@ -26,7 +26,7 @@ from pathlib import Path
 from espalier import fusion_manifest, surface_contract
 from espalier._atomic_io import atomic_write_text
 from espalier._rmtree import remove_file, remove_tree
-from espalier._spawn import run_bounded
+from espalier._spawn import run_no_stdin
 from espalier._text import os_error_text, plural
 
 # Noise never copied even from a non-git host (mirrors the gitignored set).
@@ -141,7 +141,7 @@ def _overlay_categories(rels) -> list[str]:
 def _tracked_files(repo: Path) -> list[str] | None:
     """git-tracked repo-relative paths, or None if ``repo`` is not a git repo."""
     try:
-        r = run_bounded(
+        r = run_no_stdin(
             ["git", "ls-files", "-z"],
             cwd=str(repo), capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=120, check=False,
@@ -415,16 +415,16 @@ def _fresh_baseline_commit(out: Path, host: Path) -> bool:
     one so the baseline always lands. Best-effort — a failure (e.g. an empty
     host with nothing to commit) is non-fatal. Returns True if a commit was made.
     """
-    subprocess.run(["git", "-C", str(out), "add", "-A"],
-                   check=False, capture_output=True)
+    run_no_stdin(["git", "-C", str(out), "add", "-A"],
+                 check=False, capture_output=True)
     msg = f"Baseline: {host.name} (pre-Espalier-fusion snapshot)"
-    r = subprocess.run(["git", "-C", str(out), "commit", "-q", "-m", msg],
-                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    r = run_no_stdin(["git", "-C", str(out), "commit", "-q", "-m", msg],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
     if r.returncode == 0:
         return True
     # No git identity configured in this environment -> supply a neutral one
     # inline (does not persist to the repo config) so the baseline still exists.
-    r2 = subprocess.run(
+    r2 = run_no_stdin(
         ["git", "-C", str(out), "-c", "user.name=Espalier Fusion",
          "-c", "user.email=fusion@localhost", "commit", "-q", "-m", msg],
         check=False, capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -471,7 +471,7 @@ def _workflow_tracked(out: Path) -> bool | None:
     try:
         if not (out / _WORKFLOW_REL).is_file():
             return None
-        r = run_bounded(
+        r = run_no_stdin(
             ["git", "-C", str(out), "ls-files", "--error-unmatch", "--", _WORKFLOW_REL],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30, check=False,
@@ -683,7 +683,7 @@ def fuse_repos(host: Path, out: Path, *, preserve_history: bool = True,
 
         # 2. the fusion must be a git repo for init's hooks (git diff/log per fire)
         if not (out / ".git").exists():
-            subprocess.run(["git", "init", "-q", str(out)], check=False)
+            run_no_stdin(["git", "init", "-q", str(out)], check=False)
             # A fresh init (--fresh, or the worktree-declined case) has
             # no preserved history. Commit the host files as a baseline now so the
             # fusion is never left with zero commits; the harness (init + overlay
@@ -826,9 +826,9 @@ def _run_in_fusion(out: Path, argv: list[str], *, timeout: int = 180) -> int | N
     env = {**os.environ, "PYTHONPATH": str(out)}
     try:
         # subprocess-contract: ok dynamic-argv-runner; the only caller passes espalier's own in-tree `-m espalier fingerprint <out>` CLI, pinned end-to-end by tests/test_fuse.py::TestFuseEndToEnd::test_analyze_fingerprint_refreshed_post_overlay
-        r = run_bounded(argv, cwd=str(out), env=env, capture_output=True,
-                        text=True, encoding="utf-8", errors="replace",
-                        timeout=timeout, check=False)
+        r = run_no_stdin(argv, cwd=str(out), env=env, capture_output=True,
+                         text=True, encoding="utf-8", errors="replace",
+                         timeout=timeout, check=False)
     except (OSError, ValueError, subprocess.SubprocessError):
         return None
     return r.returncode

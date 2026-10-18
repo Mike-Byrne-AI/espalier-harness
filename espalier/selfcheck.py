@@ -47,7 +47,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -55,7 +54,7 @@ from importlib.resources import as_file, files
 from pathlib import Path
 
 from espalier._safe_walk import safe_rglob
-from espalier._spawn import run_bounded
+from espalier._spawn import run_no_stdin
 from espalier.managed_markers import has_managed_marker
 
 
@@ -100,7 +99,7 @@ def run_selfcheck(repo_root: Path) -> int:
                 f"espalier selfcheck: running bundled engine-integrity tests "
                 f"from {mirror} (adopter repo tree not read)"
             )
-            proc = subprocess.run(  # decode-errors-ok: no pipe is captured; stdout and stderr are inherited, nothing is decoded
+            proc = run_no_stdin(  # decode-errors-ok: no pipe is captured; stdout and stderr are inherited, nothing is decoded
                 [sys.executable, "-m", "pytest", str(mirror), "-q"],
                 cwd=work, text=True, encoding="utf-8", env=env,
             )
@@ -150,7 +149,7 @@ def _run_deployed_write_guard(
     env.pop("ESPALIER_MAINTENANCE_MODE", None)
     if extra_env:
         env.update(extra_env)
-    proc = run_bounded(
+    proc = run_no_stdin(
         [sys.executable, str(script)],
         input=json.dumps(payload),
         capture_output=True,
