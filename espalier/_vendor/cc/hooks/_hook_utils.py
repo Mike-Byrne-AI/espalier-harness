@@ -1434,9 +1434,11 @@ def iter_doc_sections(text: str) -> "list[tuple[str, str]]":
     Fence-aware: a ``## `` line inside a fenced code block is part of the body it
     sits in, not a heading -- a documented example of a heading must not become
     a section of the recall corpus or a "real section" the banner counts. Single
-    owner of this split: ``_recall`` reads the corpus through it and
+    owner of this ``## `` split: ``_recall`` reads the corpus through it and
     ``has_real_sections`` reads the catalogs through it, so the two cannot
-    disagree about where a section starts.
+    disagree about where a section starts. The one other splitter is
+    ``_recall._reference_sections``, which also splits at ``### `` for the
+    seeded reference docs and reads fences by the same ``next_fence_state``.
     """
     sections: list[tuple[str, str]] = []
     title: str | None = None

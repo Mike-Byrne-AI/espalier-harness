@@ -229,6 +229,13 @@ _RECALL_CORPUS_FILES: tuple[str, ...] = (
     "docs/STANDING_PRINCIPLES.md",
     "docs/STANDING_PRINCIPLES.aliases.md",
     "docs/FAILURE_MODES.md",
+    # The seeded reference docs (`_recall.REFERENCE_DOCS`) index only on an
+    # adopter's tree, so the forward pin below cannot see them here; their rows in
+    # tests/test_recall.py read the shipped copies, which an edit to either moves.
+    "docs/HOOKS.md",
+    "docs/TROUBLESHOOTING.md",
+    "espalier/assets/docs/HOOKS.md",
+    "espalier/assets/docs/TROUBLESHOOTING.md",
 )
 
 #: argv per command, per tier -- tuples of tokens, not strings. ``--run``

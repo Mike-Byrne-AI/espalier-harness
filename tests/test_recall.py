@@ -4364,20 +4364,38 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
     question. The hooks guide and the troubleshooting guide now index per ``##``
     and ``###`` section on a tree that is not this repository. On this one the
     family stays off: with every seeded reference doc it moved 14 recall pins,
-    four of them headline claims. The rows read the shipped copies init deploys."""
+    four of them headline claims. The rows read the shipped copies init deploys,
+    beside the seeded memory note and sharp-edges notes that won before."""
 
-    @staticmethod
-    def _adopter(tmp_path, monkeypatch, docs: "dict[str, str] | None" = None) -> Path:
+    _STAMP = "<!-- espalier:seed-version v0 sha256:0 -->\n"
+
+    @classmethod
+    def _adopter(cls, tmp_path, monkeypatch, docs: "dict[str, str] | None" = None,
+                 *, stamp: bool = True) -> Path:
+        """An init'd adopter's recall corpus: the two docs (the shipped copies, or
+        ``docs``) under the seed stamp init writes, the seeded convergence-review
+        note and the seeded sharp-edges notes."""
         monkeypatch.setattr(_recall, "EXEMPLAR_MAP", {})
-        (tmp_path / "docs").mkdir()
+        assets = REPO_ROOT / "espalier" / "assets"
+        (tmp_path / "docs" / "sharp-edges").mkdir(parents=True)
+        (tmp_path / "memory").mkdir()
+        (tmp_path / "memory" / "convergence-review-protocol.md").write_text(
+            (assets / "seed" / "convergence-review-protocol.md").read_text(encoding="utf-8"), encoding="utf-8")
+        for note in (assets / "docs" / "sharp-edges").glob("*.md"):
+            if note.name != "README.md":
+                (tmp_path / "docs" / "sharp-edges" / note.name).write_text(
+                    note.read_text(encoding="utf-8"), encoding="utf-8")
         if docs is None:
-            shipped = REPO_ROOT / "espalier" / "assets" / "docs"
-            docs = {name: (shipped / name).read_text(encoding="utf-8")
+            docs = {name: (assets / "docs" / name).read_text(encoding="utf-8")
                     for name in ("HOOKS.md", "TROUBLESHOOTING.md")}
         for name, text in docs.items():
-            (tmp_path / "docs" / name).write_text(text, encoding="utf-8")
+            (tmp_path / "docs" / name).write_text((cls._STAMP if stamp else "") + text, encoding="utf-8")
         assert not _recall.is_self_host_repo(tmp_path)
         return tmp_path
+
+    @staticmethod
+    def _reference(root: Path) -> dict:
+        return {d.source: d.tokens for d in _recall._load_corpus(root) if d.family == _recall.REFERENCE_FAMILY}
 
     def test_the_write_guard_question_lands_its_section_first(self, tmp_path, monkeypatch):
         """Dies to: the family missing, or its write_guard section unindexed."""
@@ -4399,6 +4417,7 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
         root = self._adopter(tmp_path, monkeypatch)
         hits = _recall.recall("plan guard blocked my write, no active execution plan", root, top=4)
         assert any(h.source.startswith("docs/HOOKS.md :: 3. `plan_guard.py`") for h in hits), hits
+        assert hits[0].source != "memory/convergence-review-protocol.md", hits
 
     def test_nonsense_stays_suppressed_beside_the_reference_sections(self, tmp_path, monkeypatch):
         """Ordinary off-topic English now finds a confident neighbour here, the
@@ -4416,16 +4435,103 @@ class TestTheSeededReferenceDocsAnswerAnAdoptersDenyQuestion:
         """Dies to: a splitter that reads headings inside fenced code."""
         root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": (
             "# Hooks\n\n## Real section\n\nalpha\n\n```\n## zzfenced heading\n```\n\n### Sub section\n\nbeta\n")})
-        sources = {d.source for d in _recall._load_corpus(root)}
-        assert "docs/HOOKS.md :: Real section" in sources and "docs/HOOKS.md :: Sub section" in sources
-        assert not any("zzfenced" in s for s in sources), sources
+        sources = set(self._reference(root))
+        assert sources == {"docs/HOOKS.md :: Real section", "docs/HOOKS.md :: Sub section"}, sources
 
     def test_a_skip_marked_section_is_not_indexed(self, tmp_path, monkeypatch):
         """Dies to: the family ignoring the author's skip marker."""
         root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": (
             f"# Hooks\n\n## Kept\n\nalpha\n\n## Pointer\n\n{_recall.RECALL_SKIP_MARKER}\nzzskip\n")})
-        sources = {d.source for d in _recall._load_corpus(root)}
-        assert sources == {"docs/HOOKS.md :: Kept"}, sources
+        assert set(self._reference(root)) == {"docs/HOOKS.md :: Kept"}
+
+    def test_a_skipped_section_takes_its_subsections_with_it(self, tmp_path, monkeypatch):
+        """In every other family a ``###`` is the body of its ``##``, so the
+        marker covers it. Dies to: each ``###`` judged alone (code review,
+        driven 2026-10-18)."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": (
+            f"# Hooks\n\n## Kept\n\nalpha\n\n## Internal\n\n{_recall.RECALL_SKIP_MARKER}\n\n"
+            "### Child one\n\nzzchild\n\n## Next\n\n### Child two\n\nbeta\n")})
+        assert set(self._reference(root)) == {
+            "docs/HOOKS.md :: Kept", "docs/HOOKS.md :: Next", "docs/HOOKS.md :: Child two"}
+
+    def test_a_subsection_carries_its_parent_heading(self, tmp_path, monkeypatch):
+        """Dies to: the parent left out of the path (two of four ``###`` queries
+        lost first place to session_start without it: code review)."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": (
+            "# Hooks\n\n## Zzparent topic\n\nintro\n\n### Child\n\nbody text\n")})
+        assert self._reference(root)["docs/HOOKS.md :: Child"]["zzparent"]
+
+    def test_the_doc_title_is_in_every_section(self, tmp_path, monkeypatch):
+        """Dies to: the doc title dropped from the bag."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": "# Zzguide\n\n## A\n\nalpha\n\n### B\n\nbeta\n"})
+        bags = self._reference(root)
+        assert bags["docs/HOOKS.md :: A"]["zzguide"] and bags["docs/HOOKS.md :: B"]["zzguide"]
+
+    def test_a_fourth_level_heading_stays_body(self, tmp_path, monkeypatch):
+        """Dies to: ``####`` split as a section."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": (
+            "# Hooks\n\n## Top\n\n### Sub\n\nx\n\n#### Deeper\n\nzzdeep\n")})
+        bags = self._reference(root)
+        assert set(bags) == {"docs/HOOKS.md :: Top", "docs/HOOKS.md :: Sub"}
+        assert bags["docs/HOOKS.md :: Sub"]["zzdeep"]
+
+    def test_a_comment_in_a_reference_section_is_no_vocabulary(self, tmp_path, monkeypatch):
+        """Dies to: the bags built raw rather than through ``_index_tokens``."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": "# Hooks\n\n## A\n\nalpha <!-- zzhidden -->\n"})
+        assert "zzhidden" not in self._reference(root)["docs/HOOKS.md :: A"]
+
+    def test_one_heading_under_two_parents_is_two_sources(self, tmp_path, monkeypatch):
+        """The front door dedupes by source and would drop the second. Dies to:
+        the source keyed on the heading alone (code review, driven)."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": (
+            "# Hooks\n\n## First\n\n### Same\n\nzzone\n\n## Second\n\n### Same\n\nzztwo\n")})
+        bags = self._reference(root)
+        assert bags["docs/HOOKS.md :: Same"]["zzone"] and bags["docs/HOOKS.md :: Second / Same"]["zztwo"]
+
+    def test_the_self_host_gate_holds_even_over_stamped_docs(self, tmp_path, monkeypatch):
+        """This repository's own docs carry no stamp, so the stamp check alone would
+        keep the family off here; the gate is what holds when one does. Dies to:
+        the gate dropped (a mutant this repository's tree cannot see)."""
+        root = self._adopter(tmp_path, monkeypatch)
+        monkeypatch.setattr(_recall, "is_self_host_repo", lambda r: True)
+        assert self._reference(root) == {}
+
+    def test_a_stamp_after_a_byte_order_mark_still_counts(self, tmp_path, monkeypatch):
+        """Dies to: the stamp read without the mark stripped."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": "# Hooks\n\n## A\n\nalpha\n"}, stamp=False)
+        (root / "docs" / "HOOKS.md").write_text(chr(0xFEFF) + self._STAMP + "# Hooks\n\n## A\n\nalpha\n",
+                                                encoding="utf-8")
+        assert set(self._reference(root)) == {"docs/HOOKS.md :: A"}
+
+    def test_an_unstamped_file_of_that_name_is_the_adopters(self, tmp_path, monkeypatch):
+        """Deleting the stamp is how a seed becomes the adopter's (and init leaves a
+        file it finds alone), so an unstamped docs/HOOKS.md is not indexed as
+        ours. Dies to: the stamp check dropped (an Acme troubleshooting doc read
+        as a seed: code review and failure-mode review, driven)."""
+        root = self._adopter(tmp_path, monkeypatch, {"TROUBLESHOOTING.md": "# Acme\n\n## Billing retries\n\nx\n"},
+                             stamp=False)
+        assert self._reference(root) == {}
+
+    def test_a_records_declared_reference_doc_stays_a_record(self, tmp_path, monkeypatch):
+        """A record is a scope of its own; no seeded loop brings it back into the
+        default ranking. Dies to: the walker not counting a record as seen when
+        records are off (code review, driven)."""
+        root = self._adopter(tmp_path, monkeypatch, {"HOOKS.md": "# Hooks\n\n## Alpha\n\nzzalpha\n"})
+        (root / "espalier.toml").write_text('recall_records = ["docs/HOOKS.md"]\n', encoding="utf-8")
+        assert not [d for d in _recall._load_corpus(root) if "zzalpha" in d.tokens]
+        assert [d.family for d in _recall._load_corpus(root, records=True) if "zzalpha" in d.tokens] == [
+            "declared records"]
+
+    def test_the_fold_hint_never_points_at_a_reference_section(self, tmp_path, monkeypatch):
+        """An insight folded into a stamped seed leaves it edited, and init stops
+        refreshing it. Dies to: the family left in the fold-here corpus (two
+        adopter insights went from no hint to a hooks-guide section:
+        failure-mode review, driven 2026-10-18)."""
+        root = self._adopter(tmp_path, monkeypatch)
+        for text in ("The write guard blocks edits to protected zones; the plan guard wants a plan.",
+                     "The stop gate keeps blocking the session at the end of a run."):
+            hits = _recall.nearest_by_title(text, root, top=5)
+            assert not [h for h in hits if h.source.startswith(("docs/HOOKS.md", "docs/TROUBLESHOOTING.md"))], hits
 
     def test_a_declared_reference_doc_is_indexed_once(self, tmp_path, monkeypatch):
         """An adopter who declares the hooks guide in recall_sources gets it once,

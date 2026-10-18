@@ -775,8 +775,12 @@ def _load_full_corpus(root: Path) -> list[_Doc]:
     memory/task-packs.md at 2.8 to a SHARP_EDGES section, and a convergence
     paragraph lost memory/CONVERGENCE_LEDGER.md from its top three. The
     ``recall_records`` files stay out here too: an append-only log is never
-    the home an insight should be folded into."""
-    return list(_iter_corpus(root, exclude=()))
+    the home an insight should be folded into. So do the seeded reference docs
+    (``REFERENCE_FAMILY``): an insight folded into a stamped seed would leave it
+    edited, and ``init`` and ``upgrade`` would stop refreshing it (failure-mode
+    review, driven 2026-10-18: two adopter insights went from no hint to a
+    hooks-guide section)."""
+    return [d for d in _iter_corpus(root, exclude=()) if d.family != REFERENCE_FAMILY]
 
 
 def indexed_sources(root: Path) -> list[str]:
@@ -835,35 +839,42 @@ def corpus_summary(root: Path) -> dict:
 #: no better, and this repository's corpus moved 14 pins (2026-10-18).
 REFERENCE_DOCS = ("docs/HOOKS.md", "docs/TROUBLESHOOTING.md")
 REFERENCE_FAMILY = "seeded reference docs"
+#: The first line `init` writes on every seed it deploys. A file of one of those
+#: names without it is the adopter's own (deleting the stamp is how a seed
+#: becomes theirs), so it is not indexed as ours; declaring it under
+#: ``recall_sources`` indexes it as theirs.
+REFERENCE_SEED_STAMP = "<!-- espalier:seed-version "
 
 
-def _reference_sections(text: str) -> "list[tuple[str, str, str]]":
-    """``(heading, heading path, body)`` for each ``##`` and ``###`` section of a
-    reference doc, headings inside fenced code read as body. A ``###`` section's
-    path carries its ``##`` parent: the hooks guide keeps every hook under one
-    ``##`` of about 2,000 lines, so the per-hook sections are its ``###`` ones."""
-    out: "list[tuple[str, str, str]]" = []
+def _reference_sections(text: str) -> "list[tuple[int, str, str, str]]":
+    """``(level, heading, heading path, body)`` for each ``##`` and ``###``
+    section of a reference doc, a heading inside fenced code read as body. A
+    second section splitter beside ``iter_doc_sections``, for one reason: the
+    hooks guide keeps every hook under one ``##`` of about 2,000 lines, so its
+    per-hook sections are ``###`` ones. A ``###`` section's path carries its
+    ``##`` parent."""
+    out: "list[tuple[int, str, str, str]]" = []
     fence: "str | None" = None
     parent = ""
+    level = 0
     heading: "str | None" = None
     path = ""
     body: list[str] = []
     for line in text.splitlines():
-        fenced = fence is not None
         fence = next_fence_state(line, fence)
         title = line.lstrip("#").strip()
-        if not fenced and fence is None and title and line.startswith(("## ", "### ")):
+        if fence is None and title and line.startswith(("## ", "### ")):
             if heading is not None:
-                out.append((heading, path, "\n".join(body)))
+                out.append((level, heading, path, "\n".join(body)))
             if line.startswith("## "):
-                parent = path = title
+                level, parent, path = 2, title, title
             else:
-                path = f"{parent} {title}" if parent else title
+                level, path = 3, (f"{parent} / {title}" if parent else title)
             heading, body = title, []
         elif heading is not None:
             body.append(line)
     if heading is not None:
-        out.append((heading, path, "\n".join(body)))
+        out.append((level, heading, path, "\n".join(body)))
     return out
 
 
@@ -901,9 +912,14 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
     # memory note filling two of /recall's four slots with the same document.
     seen: set[Path] = set()
     for path, family in (*_default_roster(root), *_declared_sources(root)):
-        if family == "declared records" and not records:
-            continue
         resolved = _resolved(path)
+        if family == "declared records" and not records:
+            # Seen all the same: a record is a scope of its own, and a seeded
+            # loop below (memory/, the catalogs, the reference docs) must not
+            # bring it back into the default ranking (code review, driven
+            # 2026-10-18 on a recall_records-declared docs/HOOKS.md).
+            seen.add(resolved)
+            continue
         if resolved in seen:
             continue
         seen.add(resolved)
@@ -1015,21 +1031,36 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
     # section by heading. Gated OFF on this repository, measured, not assumed:
     # its corpus already answers hook questions, and every seeded reference doc
     # moved 14 of its recall pins, four of them headline claims; the two docs on
-    # an adopter tree add 39 sections and move nothing here. The cost, stated: a
-    # four-document corpus answered off-topic English with nothing by accident,
-    # and with these sections it leaks as any corpus of size does (the
-    # pull-recall suppression entry in docs/SHARP_EDGES.md).
+    # an adopter tree add 39 sections and move nothing here. The cost, stated:
+    # the four-document corpus already answered 26 of the suppression arm's 29
+    # off-topic English queries with a wrong neighbour, and answers 28 now; what
+    # changes is WHICH neighbour, and on a Node tree the word "hook" reaches the
+    # harness's hook sections ("why does my useEffect hook run twice" finds
+    # post_write_check), a wrong match that looks relevant (the pull-recall
+    # suppression entry in docs/SHARP_EDGES.md is the engine's limit). A stamp is
+    # required (REFERENCE_SEED_STAMP), a skipped ## takes its ### with it, and the
+    # fold-here corpus leaves the family out (_load_full_corpus).
     if not is_self_host_repo(root):
         for rel in REFERENCE_DOCS:
             p = root / rel
             if not p.is_file() or _resolved(p) in seen:
                 continue  # absent, or declared by the adopter and indexed above
             text = _read(p)
+            if not text.lstrip(chr(0xFEFF)).startswith(REFERENCE_SEED_STAMP):
+                continue  # the adopter's own file of that name, not the seed
             doc_title = _first_heading(text) or p.stem
-            for heading, heading_path, body in _reference_sections(text):
-                if _section_skipped(heading, body):
+            sources: set[str] = set()
+            skipped_parent = False
+            for level, heading, heading_path, body in _reference_sections(text):
+                if level == 2:
+                    skipped_parent = _section_skipped(heading, body)
+                if skipped_parent or _section_skipped(heading, body):
                     continue  # a pointer section, by the author's own mark
-                yield _Doc(f"{rel} :: {heading}",
+                source = f"{rel} :: {heading}"
+                if source in sources:  # one heading under two parents
+                    source = f"{rel} :: {heading_path}"
+                sources.add(source)
+                yield _Doc(source,
                            heading,
                            Counter(_index_tokens(f"{doc_title} {heading_path} {body}")),
                            family=REFERENCE_FAMILY)

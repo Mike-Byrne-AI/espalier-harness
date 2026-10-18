@@ -614,6 +614,11 @@ class TestTheRecallSlice:
                         if d.family != "pull-only shape pointers"})
         missed = [f for f in files if not pt.is_recall_corpus(f)]
         assert not missed, f"corpus files the tier predicate does not cover: {missed[:5]}"
+        # The seeded reference docs index only on an adopter's tree, so the live
+        # corpus above cannot name them; an edit to either (or to the shipped copy
+        # their rows read) must still earn the recall slice.
+        reference = [p for rel in rc.REFERENCE_DOCS for p in (rel, f"espalier/assets/{rel}")]
+        assert not [r for r in reference if not pt.is_recall_corpus(r)], reference
 
     def test_every_listed_source_is_read_by_the_loader(self, pt):
         """Reverse direction: a listed file or prefix that the loader no longer
