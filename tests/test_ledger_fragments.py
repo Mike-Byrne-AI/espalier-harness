@@ -19,6 +19,7 @@ import ast
 import functools
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -1029,16 +1030,18 @@ class TestAFilingCutBeforeItsProbeIsFinishedByFilingAgain:
 
     @staticmethod
     def _cut_at_the_roster(monkeypatch):
-        """The legacy form's last write: the roster's sidecar moved over it."""
-        real = Path.replace
+        """The legacy form's last write: the roster's sidecar moved over it, by
+        ``os.replace`` under ``_paths.replace_retrying`` (DEF-5021). Not a
+        ``PermissionError``, so the move's retry raises it at once."""
+        real = os.replace
 
-        def replace(self, target):
-            if self.name.endswith(".pending"):
+        def replace(src, dst, *args, **kwargs):
+            if str(src).endswith(".pending"):
                 raise OSError(28, "No space left on device")
-            return real(self, target)
+            return real(src, dst, *args, **kwargs)
 
-        monkeypatch.setattr(Path, "replace", replace)
-        return lambda: monkeypatch.setattr(Path, "replace", real)
+        monkeypatch.setattr(os, "replace", replace)
+        return lambda: monkeypatch.setattr(os, "replace", real)
 
     def _cut_row_file(self, lr, t, monkeypatch, *pre: str) -> bytes:
         packs = t["ledger"].parent

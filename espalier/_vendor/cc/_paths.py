@@ -16,6 +16,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -64,6 +65,36 @@ def _repo_root() -> Path:
         if (candidate / "pyproject.toml").exists() and (candidate / "tools" / "cc").is_dir():
             return candidate
     return cur
+
+
+#: The Windows wait for a refused replace, the count and backoff of
+#: ``generate_ledger_regions._atomic_write``, which keeps its own loop: that
+#: verb is stdlib-only and a fixture copies it alone, so it loads no sibling.
+#: ``tests/test_atomic_io.py`` holds the two loops equal.
+_REPLACE_ATTEMPTS = 20 if sys.platform == "win32" else 1
+_REPLACE_BACKOFF_S = 0.005
+
+
+def replace_retrying(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+    """``os.replace(src, dst)``, waiting out the one refusal that clears. On
+    Windows a reader holding ``dst`` open fails a replace at once with
+    ``PermissionError`` (WinError 5), and so does one holding ``src`` for a move
+    (WinError 32); the move lands once the handle closes, so it is tried again,
+    about a second in all (DEF-5021, driven 2026-10-18: a 300 ms holder cleared
+    on the twelfth try, at about 340 ms). A refusal that cannot clear -- a
+    directory at the target, a read-only file -- raises at once, and POSIX
+    tries once. For a move whose failure would leave its caller half-done; a
+    housekeeping move that already fails open and retries on its next run
+    stays a single try (``tests/test_atomic_io.py`` rosters those)."""
+    for attempt in range(_REPLACE_ATTEMPTS):
+        try:
+            os.replace(src, dst)
+            break
+        except PermissionError:
+            if (attempt + 1 >= _REPLACE_ATTEMPTS or os.path.isdir(dst)
+                    or (os.path.exists(dst) and not os.access(dst, os.W_OK))):
+                raise
+            time.sleep(_REPLACE_BACKOFF_S * (attempt + 1))
 
 
 def hooks_module(name: str) -> ModuleType | None:
