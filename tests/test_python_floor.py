@@ -1857,7 +1857,11 @@ class TestABannerThatNeverAnswers:
         from espalier import cli, doctor
 
         bin_dir = self._host(tmp_path, monkeypatch, mute, working=(), stubbed=("python",))
-        link = bin_dir / ("python3" + Path(sys.executable).suffix)
+        # The name the wired python3 resolves to: python3.exe on Windows, else
+        # python3 alone. A Homebrew sys.executable ends python3.14, whose suffix
+        # is ".14", and Apple's /usr/bin/python3 beside git answered (air's
+        # fc0256, read on its host).
+        link = bin_dir / ("python3.exe" if os.name == "nt" else "python3")
         target = sys.executable
         if os.name == "nt":
             # On Windows no link to the running interpreter in another folder
@@ -2265,8 +2269,10 @@ class TestAPythonTwoHostIsToldTheTruth:
 class TestTheTwinsAgreeOnAProbeThatNeverAnswers:
     """DEF-5016: the hook twins read a probe that never answered as below the
     floor and not a Python 3 where the engine read it as no answer; they agree
-    now, and both read the running interpreter by its invoked path, never its
-    file (a link of a venv's python elsewhere is another interpreter)."""
+    now, and both match the running interpreter by one rule per platform: by its
+    invoked path on Windows (a link of a venv's python.exe elsewhere cannot
+    start), elsewhere by the file a symlink resolves to (a symlink of the binary
+    prints the same version; a hard link in another folder is asked)."""
 
     def test_a_timeout_is_no_answer_on_both_sides(self, tmp_path, monkeypatch):
         hu = _hook_utils()
@@ -2283,19 +2289,111 @@ class TestTheTwinsAgreeOnAProbeThatNeverAnswers:
         assert _python_floor.interpreter_banner([str(other)]) is None
         assert hu.interpreter_meets_floor(str(other)) is False and hu.interpreter_is_python3(str(other)) is False
 
-    def test_the_engine_asks_a_link_of_the_running_interpreter(self, tmp_path, monkeypatch):
+    @staticmethod
+    def _link_of_the_running_interpreter(tmp_path, *, symbolic=False, skip=True) -> "Path | None":
+        """A hard (or symbolic) link of the running interpreter's file in
+        another folder; where the host cannot make one the row skips, or with
+        ``skip=False`` gets None."""
+        link = tmp_path / ("sym" if symbolic else "hard") / Path(sys.executable).name
+        link.parent.mkdir()
+        try:
+            (os.symlink if symbolic else os.link)(sys.executable, link)
+        except OSError as exc:  # no hard links across volumes; no symlinks without the privilege
+            if skip:
+                pytest.skip(f"no {'symbolic' if symbolic else 'hard'} link here: {exc}")
+            return None
+        return link
+
+    def test_on_windows_the_engine_asks_a_link_of_the_running_interpreter(self, tmp_path, monkeypatch):
         """The failure-mode review, driven on the hook twin and true of the
-        engine's shortcut too."""
+        engine's shortcut too: the Windows rule, driven on every host."""
         asked: list = []
         monkeypatch.setattr(_python_floor, "_BANNER_VERDICTS", {})
+        monkeypatch.setattr(_python_floor, "_running_by_invoked_path", lambda: True, raising=False)
         monkeypatch.setattr(_python_floor, "_ask_banner",
                             lambda argv, seconds, tries: asked.append(list(argv)) or "No pyvenv.cfg file")
-        link = tmp_path / Path(sys.executable).name
-        try:
-            os.link(sys.executable, link)
-        except OSError as exc:  # a filesystem without hard links, or another volume
-            pytest.skip(f"no hard link here: {exc}")
+        link = self._link_of_the_running_interpreter(tmp_path)
         assert _python_floor.interpreter_banner([str(link)]) == "No pyvenv.cfg file"
         assert asked == [[str(link)]], asked
         assert _python_floor.interpreter_banner([sys.executable]) == _python_floor._running_interpreter_banner()
         assert asked == [[str(link)]], "the running interpreter by its own path is read, not asked"
+
+    def test_elsewhere_the_engine_reads_a_symlink_of_the_running_binary(self, tmp_path, monkeypatch):
+        """Off Windows a symlink of the binary prints the same version, so the
+        engine reads it without a spawn, as
+        ``TestABannerThatNeverAnswers::test_the_running_interpreter_answers_its_own_banner``
+        drives on a POSIX host (DEF-5015). The POSIX rule, driven on every host."""
+        asked: list = []
+        monkeypatch.setattr(_python_floor, "_BANNER_VERDICTS", {})
+        monkeypatch.setattr(_python_floor, "_running_by_invoked_path", lambda: False, raising=False)
+        monkeypatch.setattr(_python_floor, "_ask_banner",
+                            lambda argv, seconds, tries: asked.append(list(argv)) or None)
+        link = self._link_of_the_running_interpreter(tmp_path, symbolic=True)
+        assert _python_floor.interpreter_banner([str(link)]) == _python_floor._running_interpreter_banner()
+        assert asked == [], asked
+
+    def test_the_twins_keep_one_rule_per_platform(self, tmp_path, monkeypatch):
+        """One rule in two copies with no import between them: the bodies are
+        pinned equal (docstring and local imports aside), the default is by
+        path on Windows only, and both copies agree on every spelling under
+        either rule. The links come last, so a host that cannot make one still
+        checks everything before them (the failure-mode pass on the split)."""
+        import ast
+        import inspect
+        import textwrap
+
+        hu = _hook_utils()
+
+        def body(fn):
+            node = ast.parse(textwrap.dedent(inspect.getsource(fn))).body[0]
+            return [ast.dump(s) for s in node.body[1:] if not isinstance(s, (ast.Import, ast.ImportFrom))]
+
+        for name in ("_is_running_interpreter", "_running_by_invoked_path"):
+            assert body(getattr(_python_floor, name)) == body(getattr(hu, name)), name
+        assert _python_floor._running_by_invoked_path() is hu._running_by_invoked_path() is (os.name == "nt")
+        gone = str(tmp_path / "gone" / Path(sys.executable).name)
+        spellings = [sys.executable, sys.executable.upper(), sys.executable.lower(),
+                     sys.executable.replace("\\", "/"), gone]
+
+        def rule(by_path):
+            monkeypatch.setattr(_python_floor, "_running_by_invoked_path", lambda: by_path)
+            monkeypatch.setattr(hu, "_running_by_invoked_path", lambda: by_path)
+
+        for by_path in (True, False):
+            rule(by_path)
+            for path in spellings:
+                assert _python_floor._is_running_interpreter(path) is hu._is_running_interpreter(path), (by_path, path)
+            assert _python_floor._is_running_interpreter(sys.executable) is True, by_path
+            assert _python_floor._is_running_interpreter(gone) is False, by_path
+            if os.name == "nt":
+                assert _python_floor._is_running_interpreter(sys.executable.upper()) is True, by_path
+        hard = self._link_of_the_running_interpreter(tmp_path, skip=False)
+        sym = self._link_of_the_running_interpreter(tmp_path, symbolic=True, skip=False)
+        for by_path in (True, False):
+            rule(by_path)
+            for link, running in ((hard, False), (sym, not by_path)):
+                if link is not None:
+                    assert _python_floor._is_running_interpreter(str(link)) is hu._is_running_interpreter(
+                        str(link)) is running, (by_path, link)
+        if hard is None and sym is None:
+            pytest.skip("no link of either kind here; every link-free agreement above held")
+
+    def test_doctor_has_no_identity_shortcut_of_its_own(self, tmp_path, monkeypatch):
+        """The failure-mode pass on the split: doctor's ``_interpreter_is_python3``
+        kept a ``samefile`` shortcut, a third rule, so on Windows a hard link of
+        a venv's python.exe elsewhere, which cannot start, read as a Python 3 to
+        doctor and not to the hook. It reads the banner now, which answers the
+        running interpreter by the platform's rule. The Windows rule, driven on
+        every host."""
+        from espalier import doctor
+
+        asked: list = []
+        monkeypatch.setattr(_python_floor, "_BANNER_VERDICTS", {})
+        monkeypatch.setattr(_python_floor, "_running_by_invoked_path", lambda: True, raising=False)
+        monkeypatch.setattr(_python_floor, "_ask_banner",
+                            lambda argv, seconds, tries: asked.append(list(argv)) or "No pyvenv.cfg file")
+        link = self._link_of_the_running_interpreter(tmp_path)
+        assert doctor._interpreter_is_python3(str(link)) is False
+        assert asked == [[str(link)]], asked
+        assert doctor._interpreter_is_python3(sys.executable) is True
+        assert asked == [[str(link)]], "the running interpreter is read, never asked"

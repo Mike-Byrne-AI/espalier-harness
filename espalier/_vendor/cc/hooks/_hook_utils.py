@@ -3486,6 +3486,34 @@ def _running_interpreter_banner() -> str:
     return "Python {}.{}.{}".format(*sys.version_info[:3])
 
 
+def _is_running_interpreter(path: str) -> bool:
+    """Whether ``path`` is the interpreter running this, for its ``--version``
+    banner only, never its start: the twin of the engine's
+    ``_python_floor._is_running_interpreter``, its body pinned equal
+    (DEF-5016). By the rule its platform launches an interpreter by. On Windows
+    by its path as invoked: a venv's ``python.exe`` is a redirector that reads
+    the ``pyvenv.cfg`` beside it, so a link of it elsewhere cannot start ("No
+    pyvenv.cfg file"; the failure-mode review, driven) and is asked, as is an
+    8.3 short spelling of this path, which at worst reads "not confirmed".
+    Elsewhere by the file a symbolic link resolves to (``realpath``): the
+    Homebrew and pipx ``python3`` is a symlink of the running binary and prints
+    the same version, so a loaded host cannot leave it unanswered (DEF-5015),
+    while a hard link in another folder is asked, since a build that loads its
+    library from beside itself cannot print even its version there. The
+    start-up probe keys on the invoked path on every platform
+    (:func:`interpreter_start_failure`)."""
+    if _running_by_invoked_path():
+        return (os.path.normcase(os.path.abspath(path))
+                == os.path.normcase(os.path.abspath(sys.executable)))
+    return os.path.realpath(path) == os.path.realpath(sys.executable)
+
+
+def _running_by_invoked_path() -> bool:
+    """True on Windows, where :func:`_is_running_interpreter` matches by the
+    path as invoked; a seam, so one host's tests drive both platforms' rules."""
+    return os.name == "nt"
+
+
 def _interpreter_banner(name_or_path: str) -> "str | None":
     """``name_or_path``'s ``--version`` banner, kept per process in
     :data:`_INTERPRETER_IDENTITY_MEMO` so the identity and floor twins read one
@@ -3494,11 +3522,9 @@ def _interpreter_banner(name_or_path: str) -> "str | None":
     never "not a Python 3" and never "older than". The interpreter running
     this, asked with no flag, is read from ``sys.version_info`` with no spawn,
     as the engine's ``_banner_verdict`` does, so a 3.9 running interpreter
-    still reads 3.9 and a loaded host cannot leave it unanswered. By its path as
-    invoked, never its file: a venv's ``python`` answers by the ``pyvenv.cfg``
-    beside it, so a link of it elsewhere is another interpreter and is asked (a
-    Windows hard link printed "No pyvenv.cfg file"; the failure-mode review,
-    driven), as :func:`interpreter_start_failure` reads it."""
+    still reads 3.9 and a loaded host cannot leave it unanswered. Which path is
+    the running interpreter is :func:`_is_running_interpreter`'s rule, by
+    platform."""
     key = ("banner", name_or_path)
     if key in _INTERPRETER_IDENTITY_MEMO:
         return _INTERPRETER_IDENTITY_MEMO[key]
@@ -3512,8 +3538,7 @@ def _interpreter_banner(name_or_path: str) -> "str | None":
     running = False
     if resolved and not flags and sys.executable:
         try:
-            running = (os.path.normcase(os.path.abspath(resolved))
-                       == os.path.normcase(os.path.abspath(sys.executable)))
+            running = _is_running_interpreter(resolved)
         except (OSError, ValueError):  # fail-open: ok deliberate -- an unreadable path is asked, never assumed to be this one
             running = False
     if running:

@@ -1421,23 +1421,68 @@ class TestTheInterpreterTwinsReadOneBanner:
         assert [hu.interpreter_version_unanswered(other) for _ in range(3)] == [True, True, True]
         assert len(calls) == 1, calls
 
-    def test_a_link_of_the_running_interpreter_elsewhere_is_asked(self, tmp_path, monkeypatch):
-        """The failure-mode review, driven: a Windows venv's python.exe linked
-        elsewhere prints "No pyvenv.cfg file", and `samefile` read it as this
-        interpreter. Its invoked path is not this one's, so it is asked."""
+    @staticmethod
+    def _link_of_the_running_interpreter(tmp_path, *, symbolic=False) -> Path:
+        """A hard (or symbolic) link of the running interpreter's file in
+        another folder; the row skips where the host cannot make one."""
         import os
 
         import pytest
-        hu = self._fresh(monkeypatch)
-        calls = self._spawns(hu, monkeypatch, "No pyvenv.cfg file")
-        link = tmp_path / Path(sys.executable).name
+        link = tmp_path / ("sym" if symbolic else "hard") / Path(sys.executable).name
+        link.parent.mkdir()
         try:
-            os.link(sys.executable, link)
-        except OSError as exc:  # a filesystem without hard links, or another volume
-            pytest.skip(f"no hard link here: {exc}")
+            (os.symlink if symbolic else os.link)(sys.executable, link)
+        except OSError as exc:  # no hard links across volumes; no symlinks without the privilege
+            pytest.skip(f"no {'symbolic' if symbolic else 'hard'} link here: {exc}")
+        return link
+
+    def test_on_windows_a_link_of_the_running_interpreter_elsewhere_is_asked(self, tmp_path, monkeypatch):
+        """The failure-mode review, driven: a Windows venv's python.exe linked
+        elsewhere prints "No pyvenv.cfg file", and `samefile` read it as this
+        interpreter. On Windows its invoked path is not this one's, so it is
+        asked. The Windows rule, driven on every host through the seam."""
+        hu = self._fresh(monkeypatch)
+        monkeypatch.setattr(hu, "_running_by_invoked_path", lambda: True, raising=False)
+        calls = self._spawns(hu, monkeypatch, "No pyvenv.cfg file")
+        link = self._link_of_the_running_interpreter(tmp_path)
         assert hu.interpreter_is_python3(str(link)) is False
         assert hu.interpreter_meets_floor(str(link)) is False
         assert len(calls) == 1, calls
+
+    def test_elsewhere_a_symlink_of_the_running_binary_is_read_without_a_spawn(self, tmp_path, monkeypatch):
+        """Off Windows a symlink of the binary prints the same version (the
+        Homebrew and pipx ``python3``), so it is read from ``sys.version_info``
+        and a loaded host cannot leave it unanswered (DEF-5015; one rule for
+        both platforms was DEF-5016's batch error). The POSIX rule, driven on
+        every host through the seam."""
+        import subprocess
+        hu = self._fresh(monkeypatch)
+        monkeypatch.setattr(hu, "_running_by_invoked_path", lambda: False, raising=False)
+        calls = self._spawns(hu, monkeypatch, subprocess.TimeoutExpired(["python3", "--version"], 2))
+        link = self._link_of_the_running_interpreter(tmp_path, symbolic=True)
+        assert hu.interpreter_is_python3(str(link)) is True
+        assert hu.interpreter_meets_floor(str(link)) is (tuple(sys.version_info[:2]) >= hu.MIN_PYTHON)
+        assert hu.interpreter_version_unanswered(str(link)) is False
+        assert calls == [], calls
+
+    def test_elsewhere_a_hard_link_in_another_folder_is_asked(self, tmp_path, monkeypatch):
+        """The failure-mode pass on the split: a build that loads its library
+        from beside itself (python-build-standalone, which uv installs) cannot
+        print even its version from a hard link in another folder, so off
+        Windows only a symlink is read as the running binary."""
+        import subprocess
+        hu = self._fresh(monkeypatch)
+        monkeypatch.setattr(hu, "_running_by_invoked_path", lambda: False, raising=False)
+        calls = self._spawns(hu, monkeypatch, subprocess.TimeoutExpired(["python3", "--version"], 2))
+        link = self._link_of_the_running_interpreter(tmp_path)
+        assert hu.interpreter_version_unanswered(str(link)) is True
+        assert len(calls) == 1, calls
+
+    def test_the_rule_is_by_path_on_windows_and_by_file_elsewhere(self):
+        import os
+
+        import _hook_utils as hu
+        assert hu._running_by_invoked_path() is (os.name == "nt")
 
     def test_the_orientation_line_says_a_probe_that_never_answered(self, tmp_path, monkeypatch):
         """Both reviews: a timeout read as `python3=no`, and on a launcher-only
