@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5023",
+ "subject": "tests/test_redos.py",
+ "cmd": "python3 -c \"import ast;t=ast.parse(open('tests/test_redos.py',encoding='utf-8').read());f=[x for x in ast.walk(t) if isinstance(x,ast.FunctionDef) and x.name=='test_bash_walker_scales_linearly_on_opener_flood'][0];L=any(isinstance(n,ast.For) and 'WALKER_CONSUMERS' in ast.dump(n.iter) for n in ast.walk(f));C=any(isinstance(n,ast.Attribute) and n.attr in ('perf_counter','monotonic','time') for n in ast.walk(f));print(L and not C)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "ada6dc12ea9c",
+ "text_sha": "c9111342bf53",
+ "verified_2026_10_18": "OPEN (filed 2026-10-18; probe driven at filing)"
+}
