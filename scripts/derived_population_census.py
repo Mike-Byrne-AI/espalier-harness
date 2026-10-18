@@ -527,13 +527,17 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "tests/test_contract_consumers.py:419 — `assert integ_hooks == self._INTEGRITY_HOOK_GOLDEN`, a...",
     ),
     "tests/test_contracts.py": (
-        2, "a0f411eae04eba91b4c2169d50842a7a823ac25c3a44d3c3349be3ed55cc58c1",
+        3, "87913837fda550629735b8480a4a295ec2e538c7847e38721c5a2b411f9fc0b2",
         "MIXED",
         "tests/test_managed_inventory.py:252 — `assert get_seed_docs() == (...)`, a hand-written exact..."
         " The second row (2026-10-08) is the other shape: `test_documented_stack_test_roots_are_the_tables` "
         "derives the ACTUAL (the table rows' test_dirs) and holds it set-equal to the hand-written "
         "list in docs/SHARP_EDGES.md, so a root deleted from the table reds by name while the doc "
-        "still names it -- CORRECT_BY_SHAPE for that row; the first row keeps its verdict.",
+        "still names it -- CORRECT_BY_SHAPE for that row; the first row keeps its verdict. The third "
+        "row (2026-10-18, DEF-3013) is `_mirror_source`'s loop over `registry.MIRROR_ROWS`: it derives "
+        "which byte-mirrors the shipped-roots pin credits to their sources from the registry itself, so "
+        "the population it polices is the registry's rows and a row added there is read with no edit "
+        "here; its planted mirror rows red when the credit goes -- CORRECT_BY_SHAPE for that row.",
     ),
     "tests/test_count_claims.py": (
         1, "94d051dbcf27ab1a7eb85989c25fd786fe98a8917b048161ef8c4ed2b048720b",
