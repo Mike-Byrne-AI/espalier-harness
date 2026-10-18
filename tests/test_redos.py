@@ -1890,7 +1890,9 @@ def _walker_row_budget_s(timeout_s: float) -> float | None:
     timeout kill reports no reading at all. One ceiling and
     `_WALKER_BUDGET_MARGIN_S` under the timeout: the stop check lets a call
     start only while one ceiling still fits in the budget, so the calls end by
-    it, and the margin covers the rest. The healthy labels on the full tier's
+    it; the ceiling under the timeout is room for one alarm that fires late
+    (Python runs the handler only between bytecodes, so a long C-level call can
+    carry a call past its ceiling), and the margin covers the rest. The healthy labels on the full tier's
     serial cells read up to 10.3 s (ten cells, 2026-10-18), against the 37.4 s
     after which no call starts. None with no timeout. It reads the declared
     timeout: a run that raises the ceiling (`PYTEST_TIMEOUT`, `--timeout`, a
@@ -1921,8 +1923,8 @@ def _check_walker_budget(
     deadline: float | None, where: str,
     floors: tuple[list[float], list[float], list[float]] | None = None,
 ) -> None:
-    """The stop check before every capped call of the walker row: a call that
-    could run one full ceiling past ``deadline`` is not started (DEF-5023)."""
+    """The stop check before every capped call of the walker row: a call that,
+    running its full ceiling, could end past ``deadline`` is not started (DEF-5023)."""
     if deadline is not None and _walker_clock() + _WALKER_CEILING_MS / 1000.0 > deadline:
         raise _WalkerBudgetSpent(where, floors)
 
@@ -2690,13 +2692,16 @@ def test_a_stop_in_the_second_window_keeps_the_first_windows_reading(tmp_path, m
             if name != names[0]:
                 return _linear_ms(name, kind)
             seen[0] += 1
-            return first[seen[0] - 1] if seen[0] <= len(first) else window_2_ms
+            if seen[0] <= len(first):
+                return first[seen[0] - 1]
+            # window 2: a cheap zero-payload call, so without the budget it reads flat and reds, never swamped
+            return 1.0 if kind == "zero" else window_2_ms
 
         now = _walker_row_on_a_simulated_clock(monkeypatch, cost_of)
         with pytest.raises(pytest.fail.Exception) as red:
             test_bash_walker_scales_linearly_on_opener_flood("open_paren_run", lambda n: "x" * n, tmp_path)
         text = str(red.value)
-        started, clock = _calls_before_the_stop([window_2_ms] * 8, sum(first) / 1000.0)
+        started, clock = _calls_before_the_stop(_window_costs(1.0, window_2_ms, window_2_ms), sum(first) / 1000.0)
         assert 0 < started < 8, (costs, started)
         assert f"next call of {names[0]} (window 2, after {started} of its 8 calls" in text, text
         assert f"{reading}, super-linear, so a second window was asked" in text, text
@@ -2748,7 +2753,7 @@ def test_the_walker_alarm_interrupts_a_call(tmp_path, monkeypatch):
 
     t0 = time.perf_counter()
     assert _walker_alarmed_ms(spin, "x", tmp_path) is None
-    assert time.perf_counter() - t0 < 0.5
+    assert (time.perf_counter() - t0) * 1000 < 10 * _WALKER_CEILING_MS  # 500 ms under the 50 ms ceiling
 
 
 def test_the_walker_row_passes_inside_its_budget_and_keeps_the_swamped_guard(tmp_path, monkeypatch):
@@ -2760,7 +2765,7 @@ def test_the_walker_row_passes_inside_its_budget_and_keeps_the_swamped_guard(tmp
         pytest.skip("signal.alarm not available on this platform")
     now = _walker_row_on_a_simulated_clock(monkeypatch, _linear_ms)
     test_bash_walker_scales_linearly_on_opener_flood("open_paren_run", lambda n: "x" * n, tmp_path)
-    assert 0 < now[0] < 1.0, now[0]  # five consumers, one window each, about 0.2 s of the budget
+    assert 0 < now[0] < 1.0, now[0]  # five consumers, one window each, about half a second of the budget
     _walker_row_on_a_simulated_clock(monkeypatch, lambda _name, kind: 195.0 if kind == "zero" else 196.1)
     with pytest.raises(AssertionError, match="every consumer's sample was swamped"):
         test_bash_walker_scales_linearly_on_opener_flood("open_paren_run", lambda n: "x" * n, tmp_path)

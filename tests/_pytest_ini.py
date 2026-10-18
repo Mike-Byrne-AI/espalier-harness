@@ -3,9 +3,12 @@
 The suite contract (`tests/test_test_suite_contract.py`) and the ReDoS file's
 two timing arms (`tests/test_redos.py`: the PowerShell body arm's timeout pin
 and the walker row's time budget) each read the per-test `timeout` pyproject
-declares. One reader, scoped to `[tool.pytest.ini_options]`, so a `timeout`
-key in another table can never stand in for it (DEF-5023's review: a reader of
-the whole file took the first `timeout =` it met).
+declares. One reader, scoped to the `[tool.pytest.ini_options]` table (its
+header at a line's start, up to the next table header), so a `timeout` key in
+another table does not stand in for it (DEF-5023's review: a reader of the
+whole file took the first `timeout =` it met). A value it cannot read, such as
+one with a trailing comment or a float, fails the assertion loudly rather than
+reading as none.
 """
 from __future__ import annotations
 
@@ -17,12 +20,14 @@ PYTEST_INI_SECTION = "[tool.pytest.ini_options]"
 
 
 def pytest_ini_section() -> str:
-    """The text of pyproject.toml's ``[tool.pytest.ini_options]`` table."""
+    """The text of pyproject.toml's ``[tool.pytest.ini_options]`` table: from its
+    header, at a line's start, to the next table header at a line's start."""
     text = PYPROJECT.read_text(encoding="utf-8")
-    start = text.find(PYTEST_INI_SECTION)
-    assert start >= 0, f"pyproject.toml has no {PYTEST_INI_SECTION}"
-    nxt = text.find("\n[tool", start + len(PYTEST_INI_SECTION))
-    return text[start:] if nxt < 0 else text[start:nxt]
+    header = re.search(rf"^{re.escape(PYTEST_INI_SECTION)}[ \t]*$", text, re.MULTILINE)
+    assert header is not None, f"pyproject.toml has no {PYTEST_INI_SECTION}"
+    nxt = re.compile(r"^\[", re.MULTILINE).search(text, header.end())
+    # up to, not including, the newline that ends the table's last line
+    return text[header.start():] if nxt is None else text[header.start():nxt.start() - 1]
 
 
 def declared_pytest_timeout() -> int:

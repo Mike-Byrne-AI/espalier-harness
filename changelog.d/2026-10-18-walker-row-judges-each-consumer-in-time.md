@@ -22,7 +22,8 @@
     - each finished consumer's whole reading, and the consumers not reached,
       in the row's order;
     - the cause the readings point to. It reads as a slow host when every
-      reading is linear or swamped and no call came near the ceiling, and
+      reading is linear or swamped and no call of the window in flight came
+      within half the ceiling, and
       as a regressed consumer otherwise.
 
     The same drive now reds at 43 s with those readings.
