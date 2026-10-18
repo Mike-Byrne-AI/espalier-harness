@@ -1681,9 +1681,10 @@ _SLOW_FILES: set[str] = {
     # working branch, a plain clone carrying an orphan ref) are git's own
     # behaviour, observable no other way.
     "test_record_snapshot",
-    # One pytest child at one xdist worker whose thread-method ceiling ends
-    # five workers in a row, each replaced (about seven seconds on the Windows
-    # box, DEF-2020).
+    # Pytest children at one xdist worker whose thread-method ceiling, or a
+    # stub build, ends five workers in a row, each replaced (about seven
+    # seconds a child on the Windows box, DEF-2020; the build report's
+    # went-down rows, DEF-2021).
     "test_xdist_never_ran",
 }
 # NOTE: test_archive_transcripts is deliberately NOT here. It spawns subprocesses
@@ -2634,16 +2635,39 @@ def _build_report_line(report: dict) -> str:
     return f"{report['place']} {outcome}" + (f" ({'; '.join(shown)})" if shown else "")
 
 
+def _worker_id(node) -> str | None:
+    return getattr(getattr(node, "gateway", None), "id", None)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_node_collection_finished(node, ids):
+    """xdist, on the controller: the worker finished collecting. Its build runs
+    after xdist's worker sent this (:func:`pytest_collection_finish` is
+    ``trylast``) and before its first test."""
+    node.config.__dict__.setdefault("_initialized_repo_workers_collected", set()).add(_worker_id(node))
+
+
+#: What the build report says of a worker that went down where its build runs.
+#: A first test whose setup crossed the ceiling ends a worker at the same point,
+#: and the controller cannot tell the two apart, so the line names both.
+_WENT_DOWN = "went down after collecting, before its first test report: in its build, or in that test's setup"
+
+
 @pytest.hookimpl(optionalhook=True)
 def pytest_testnodedown(node, error):
     """xdist, on the controller: a worker's build report arrives with its output.
     A worker that went down sends no output, and its line says so rather than
-    vanish: the builds made under the most contention are the ones that die."""
+    vanish: the builds made under the most contention are the ones that die.
+    Only where its build can be what it died in (DEF-2021): it finished
+    collecting and no test report came from it. One that reported a test was
+    past its build, and one that never finished collecting never reached it;
+    xdist's own lines name what ended either."""
     report = (getattr(node, "workeroutput", None) or {}).get(_BUILD_REPORT_KEY)
-    if not report and error:
-        worker = getattr(getattr(node, "gateway", None), "id", "?")
-        report = {"place": f"xdist worker {worker}", "seconds": 0.0, "steps": [],
-                  "failure": "went down before it reported its build"}
+    worker = _worker_id(node)
+    seen = node.config.__dict__
+    if (not report and error and worker in seen.get("_initialized_repo_workers_collected", ())
+            and worker not in seen.get("_initialized_repo_workers_reported", ())):
+        report = {"place": f"xdist worker {worker}", "seconds": 0.0, "steps": [], "failure": _WENT_DOWN}
     if report:
         node.config.__dict__.setdefault("_initialized_repo_build_reports", []).append(report)
 
@@ -2659,9 +2683,13 @@ _SLOW_UNDER_RAISED_SHOWN = 20
 def pytest_runtest_logreport(report):
     """Sum each test's setup and call, unless the test carries its own timeout
     mark (its ceiling is its own, and its time is not news). On the controller
-    under xdist, the workers' reports arrive here too."""
+    under xdist, the workers' reports arrive here too, each carrying the worker
+    it came from, which is then past its build (:func:`pytest_testnodedown`)."""
     if report.when in ("setup", "call") and "timeout" not in report.keywords:
         _PHASE_SECONDS[report.nodeid] = _PHASE_SECONDS.get(report.nodeid, 0.0) + report.duration
+    node = getattr(report, "node", None)
+    if getattr(node, "config", None) is not None:
+        node.config.__dict__.setdefault("_initialized_repo_workers_reported", set()).add(_worker_id(node))
 
 
 def _ceilings(config) -> tuple[float, float]:
@@ -2735,8 +2763,15 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             f"{nodeid} {secs:.0f}s" for secs, nodeid in slow[:_SLOW_UNDER_RAISED_SHOWN]))
 
 
+@pytest.hookimpl(trylast=True)
 def pytest_collection_finish(session):
     """Build :func:`initialized_repo_root`'s tree before the first test runs.
+
+    ``trylast``: on an xdist worker, xdist's own hook sends the controller
+    "collection finished" first, so a worker that dies here is one the
+    controller heard finish collecting, and the build report names it
+    (:func:`pytest_testnodedown`, DEF-2021). The order is stated here, not left
+    to the order the plugins registered in.
 
     DEF-1177: a session fixture is built inside its first requester's setup,
     and pytest-timeout counts setup against that test's 60 s ceiling, so on

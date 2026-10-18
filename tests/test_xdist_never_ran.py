@@ -5,7 +5,9 @@ by default. Past the cap the controller stops scheduling, and under ``-q``
 xdist's line saying so never prints. ``tests/_never_ran.py`` counts what never
 ran in a line ``-q`` keeps, just above the final counts. The first class drives
 the plugin in a real pytest child at one xdist worker whose thread-method
-ceiling ends each worker. The rest pin the line, the plugin object, the way
+ceiling ends each worker. The second drives the build report's went-down
+line the same way (DEF-2021), under the suite conftest's own hooks with the
+tree build stubbed. The rest pin the line, the plugin object, the way
 ``tests/conftest.py`` (the conftest this suite runs under) registers it, and
 the live-tree guard's xdist note, which blames a sibling worker only where one
 runs.
@@ -36,17 +38,20 @@ _CAP_REASON = " (xdist stopped replacing crashed workers: its --max-worker-resta
 _AT_THE_CAP = "1 of 6 selected tests never ran" + _CAP_REASON
 
 
-def _drive(tmp_path: Path, body: str, *args: str, workers: tuple[str, ...] = ("-n", "1")) -> tuple[int, list[str]]:
+def _drive(tmp_path: Path, body: str, *args: str, workers: tuple[str, ...] = ("-n", "1"),
+           conftest_text: str = _PROBE_CONFTEST, extra_env: dict[str, str] | None = None) -> tuple[int, list[str]]:
     """One quiet pytest child in ``tmp_path``, at one xdist worker unless
-    ``workers`` says otherwise, with only the plugin loaded. The environment's
-    own pytest and xdist settings and the Actions flag are left out, so the
-    command line is the whole of the run."""
+    ``workers`` says otherwise, with only ``conftest_text`` loaded (the plugin,
+    unless a row passes the build report's hooks). The environment's own pytest
+    and xdist settings, the Actions flag and the build stub's switch are left
+    out, so the command line and ``extra_env`` are the whole of the run."""
     pytest.importorskip("xdist")
-    (tmp_path / "conftest.py").write_text(_PROBE_CONFTEST, encoding="utf-8")
+    (tmp_path / "conftest.py").write_text(conftest_text, encoding="utf-8")
     (tmp_path / "test_probe.py").write_text(body, encoding="utf-8")
     env = {k: v for k, v in os.environ.items()
-           if k not in ("PYTEST_ADDOPTS", "PYTEST_TIMEOUT", "GITHUB_ACTIONS")
+           if k not in ("PYTEST_ADDOPTS", "PYTEST_TIMEOUT", "GITHUB_ACTIONS", "PROBE_BUILD_DIES")
            and not k.startswith("PYTEST_XDIST_")}
+    env.update(extra_env or {})
     proc = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *workers, *args,
          "test_probe.py"],
@@ -105,6 +110,112 @@ class TestARealQuietRunSaysWhatNeverRan:
         rc, lines = _drive(tmp_path, "def test_a():\n    pass\n", "--fixtures-per-test")
         assert rc == 0, lines
         assert not [line for line in lines if "never ran" in line], lines
+
+
+#: The suite conftest's hooks the build report's child runs load: the build, and
+#: every read the controller makes for the report. The child runs them, never a
+#: copy.
+_SUITE_HOOKS = ("pytest_collection_finish", "pytest_runtest_logreport", "pytest_testnodedown",
+                "pytest_terminal_summary", "pytest_xdist_node_collection_finished")
+#: Their conftest: the suite's hooks, with the build stubbed where the hook reads
+#: it, so the real tree is never built here. The stub returns at once, or ends
+#: the xdist worker inside the build where ``PROBE_BUILD_DIES`` is set.
+_BUILD_CONFTEST = (
+    "import os\n"
+    "import sys\n"
+    "\n"
+    "import pytest\n"
+    "\n"
+    f"sys.path[:0] = [{str(REPO_ROOT)!r}, {str(REPO_ROOT / 'tests')!r}]\n"
+    "import tests.conftest as suite  # noqa: E402\n"
+    "\n"
+    f"for _name in {_SUITE_HOOKS!r}:\n"
+    "    if hasattr(suite, _name):  # one the conftest lacks is left out, and a row reds\n"
+    "        globals()[_name] = getattr(suite, _name)\n"
+    "\n"
+    "\n"
+    "def _build(factory, timeout=None):\n"
+    "    if os.environ.get('PROBE_BUILD_DIES') and os.environ.get('PYTEST_XDIST_WORKER'):\n"
+    "        os._exit(3)\n"
+    "    return factory.mktemp('tree')\n"
+    "\n"
+    "\n"
+    "_reads = suite.pytest_collection_finish.__globals__\n"
+    "assert '_build_initialized_repo' in _reads, 'the build moved: stub it where the hook reads it'\n"
+    "_reads['_build_initialized_repo'] = _build\n"
+    "\n"
+    "\n"
+    "@pytest.fixture(name='initialized_repo_root')\n"
+    "def _tree():\n"
+    "    return None\n"
+)
+_HEADER = "initialized_repo_root build, before the first test:"
+_WENT_DOWN = "went down after collecting, before its first test report: in its build, or in that test's setup"
+
+
+def _build_lines(lines: list[str]) -> list[str]:
+    return [line for line in lines if line == _HEADER or _WENT_DOWN in line]
+
+
+class TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe:
+    """DEF-2021: a worker's build report rides xdist's ``workeroutput``, which a
+    crash loses, so the controller printed a went-down line for every crashed
+    worker, whether its build failed, finished or never began. In real child
+    runs under the suite conftest's own hooks, the line is printed only for a
+    worker that finished collecting and sent no test report: where its build
+    runs, or its first test's setup, which the controller cannot tell apart."""
+
+    def test_a_ceiling_crossing_after_a_passing_test_names_no_build(self, tmp_path):
+        """The row's pin: the worker reported a test, so its build was over."""
+        pytest.importorskip("pytest_timeout")
+        body = ("import time\n\n\ndef test_a_passes():\n    pass\n\n\n"
+                "def test_b_crosses():\n    time.sleep(10)\n")
+        rc, lines = _drive(tmp_path, body, "--timeout=1", "--timeout-method=thread", conftest_text=_BUILD_CONFTEST)
+        assert rc == 1, lines
+        assert any("test_b_crosses" in line for line in lines), lines
+        assert _build_lines(lines) == [], lines
+
+    def test_every_test_crossing_to_the_restart_cap_names_no_build(self, tmp_path):
+        """The row's drive: no test asks for the tree, and each worker sends its
+        crossing test's setup report before the ceiling ends it."""
+        pytest.importorskip("pytest_timeout")
+        body = "import time\n" + "".join(f"\n\ndef test_slow_{i}():\n    time.sleep(10)\n" for i in range(6))
+        rc, lines = _drive(tmp_path, body, "--timeout=1", "--timeout-method=thread", conftest_text=_BUILD_CONFTEST)
+        assert rc == 1, lines
+        assert any(line.startswith("5 failed") for line in lines), lines
+        assert _build_lines(lines) == [], lines
+
+    def test_a_worker_that_dies_collecting_names_no_build(self, tmp_path):
+        """Each worker dies importing the test module: none reached a build."""
+        body = ("import os\n\nif os.environ.get('PYTEST_XDIST_WORKER'):\n    os._exit(3)\n\n\n"
+                "def test_a():\n    pass\n")
+        rc, lines = _drive(tmp_path, body, conftest_text=_BUILD_CONFTEST)
+        assert rc != 0, lines
+        assert _build_lines(lines) == [], lines
+
+    def test_a_worker_that_dies_in_its_build_is_named_each_time(self, tmp_path):
+        """The control: every worker, the first and its four replacements, dies
+        inside the build, after xdist heard it finish collecting."""
+        body = "".join(f"def test_{i}(initialized_repo_root):\n    pass\n\n\n" for i in range(6))
+        rc, lines = _drive(tmp_path, body, conftest_text=_BUILD_CONFTEST, extra_env={"PROBE_BUILD_DIES": "1"})
+        assert rc != 0, lines
+        assert _build_lines(lines) == [_HEADER] + [f"  xdist worker gw{i} FAILED: {_WENT_DOWN}" for i in range(5)], lines
+
+    def test_a_first_test_whose_setup_crosses_the_ceiling_is_named_as_either(self, tmp_path):
+        """No test asks for the tree; the first test's fixture crosses the
+        ceiling before any report is sent. From the controller that is the
+        build's place, so the line names both and claims neither."""
+        pytest.importorskip("pytest_timeout")
+        body = ("import time\n\nimport pytest\n\n\n@pytest.fixture\ndef slow():\n    time.sleep(10)\n\n\n"
+                "def test_a(slow):\n    pass\n")
+        rc, lines = _drive(tmp_path, body, "--timeout=1", "--timeout-method=thread", conftest_text=_BUILD_CONFTEST)
+        assert rc == 1, lines
+        assert _build_lines(lines) == [_HEADER, f"  xdist worker gw0 FAILED: {_WENT_DOWN}"], lines
+
+    def test_the_child_loads_every_hook_it_names(self, conftest):
+        """The child leaves out a hook the conftest lacks, so that a run on the
+        unfixed conftest reds on what it prints; here the list is held whole."""
+        assert [name for name in _SUITE_HOOKS if not hasattr(conftest, name)] == []
 
 
 class TestTheLine:
