@@ -1300,8 +1300,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension, for-assert
     "tests/test_session_banner.py": (
-        8, "4d0e355d55b7fe82af1be92d96e94fef61a562515ca4015c15efba5c0b79210d",
+        9, "4e26e0301abb93f0ce8cfb0a206e03c5886da9a483845423f55e762aa0374b38",
         "MIXED_WITH_PRIOR_PASS",
+        "NEW 2026-10-18 (+1, the banner-fit lane): one comprehension over "
+        "_run_line_names(mod._build_context) in _all_long -- each builder's per-run "
+        "lines read from its own signature, every one handed a long value for the "
+        "worst case; a line dropped from the signature cannot render, so the shrink "
+        "misses nothing, and a line added joins the worst case, where "
+        "TestTheBannerFitsTheHostCap's count assert reds if the builder's cap list "
+        "misses it (mutants M19 and M20): CORRECT. "
         "NEW 2026-10-08 (+1, the unwired-gate lane): one for-plain over "
         "self._GATES.items() in TestTheGovernanceWiringLine._tree -- the fixture "
         "builder that lays down the four gate files and wires all but the dropped "
