@@ -72,7 +72,9 @@ the tree and the guard, and ``--baseline`` diffs this run against another
 host's on the rehearsal's rule (see its THE DIFF): refused before a row runs
 unless it is this oracle's, from another host, at this commit, with this guard
 and these rows, and shares a shape with this run (exit 5); a verdict that
-differs fails the run.
+differs fails the run, unless each side reads the tier its own host's table
+expects (the host-keyed rows 4B-6, 4B-3 and 4D-3), which prints apart as a
+declared host difference.
 
 Stdlib only. Works on 3.10+.
 """

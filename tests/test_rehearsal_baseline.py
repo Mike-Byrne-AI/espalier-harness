@@ -10,7 +10,8 @@ regenerating it moved nine verdicts. These pin the consumer side, a
 ``--baseline`` run that refuses before a single row runs a baseline it cannot
 honestly diff against, and the producer's own stale-tree check, which compares
 the guard under test with the guard the rows were written against instead of
-looking for a 2026-08 symbol.
+looking for a 2026-08 symbol. A difference where each side reads the tier its
+own host's table expects is printed apart and does not fail the run (DEF-2024).
 
 Every test here runs in-process: the drive is stubbed and the tree's facts are
 planted, so no hook and no git process is spawned.
@@ -266,6 +267,47 @@ class TestTheDifferences:
         ours = [{"id": "a", "shape": "plain", "actual": "HARD"}]
         assert rehearsal.baseline_differences(theirs, ours) == []
 
+    def test_a_difference_each_side_expects_is_declared_and_does_not_fail(self, bench):
+        """DEF-2024's probe rows: on each side the host-keyed rows read the
+        tier their own host's table expects (4B-6 on the drive-root temp, 4B-3
+        and 4D-3 on a shallow home), which is the table working. The control
+        row's second side is off its own expectation, so it still fails."""
+        rehearsal = bench(_REHEARSAL)
+        theirs = [_row("4B-6", "ALLOW", "ALLOW"), _row("4B-3", "SOFT", "SOFT"),
+                  _row("4D-3", "SOFT", "SOFT"), _row("control", "SOFT", "SOFT")]
+        ours = [_row("4B-6", "SOFT", "SOFT"), _row("4B-3", "HARD", "HARD"),
+                _row("4D-3", "HARD", "HARD"), _row("control", "SOFT", "ALLOW")]
+        assert rehearsal.baseline_differences(theirs, ours) == ["control@plain: baseline SOFT, here ALLOW"]
+        assert rehearsal.host_differences(theirs, ours) == [
+            "4B-3@plain: the baseline expects and reads SOFT, here expects and reads HARD",
+            "4B-6@plain: the baseline expects and reads ALLOW, here expects and reads SOFT",
+            "4D-3@plain: the baseline expects and reads SOFT, here expects and reads HARD",
+        ]
+
+    @pytest.mark.parametrize(("theirs", "ours"), [
+        pytest.param(("ALLOW", "ALLOW"), ("SOFT", "HARD"), id="this-run-off-its-own-expectation"),
+        pytest.param(("ALLOW", "HARD"), ("SOFT", "SOFT"), id="the-baseline-off-its-own-expectation"),
+        pytest.param(("SOFT", "SOFT"), ("SOFT", "ALLOW"), id="one-expectation-on-both-sides"),
+        pytest.param((None, "ALLOW"), ("SOFT", "SOFT"), id="a-baseline-row-with-no-expectation"),
+        pytest.param(("ALLOW", "ALLOW"), (None, "SOFT"), id="a-row-here-with-no-expectation"),
+    ])
+    def test_a_side_off_its_own_expectation_still_fails(self, bench, theirs, ours):
+        """A real difference on a host-keyed row is a failing line, never a
+        declared one: the declaration needs both sides on their own tier."""
+        rehearsal = bench(_REHEARSAL)
+        base, here = [_row("4B-6", *theirs)], [_row("4B-6", *ours)]
+        assert rehearsal.baseline_differences(base, here) == [f"4B-6@plain: baseline {theirs[1]}, here {ours[1]}"]
+        assert rehearsal.host_differences(base, here) == []
+
+
+def _row(case_id: str, expected: str | None, actual: str) -> dict:
+    """A receipt row on the plain shape; ``expected`` None leaves the key out,
+    as a receipt that carries no expectation does."""
+    row = {"id": case_id, "shape": "plain", "actual": actual}
+    if expected is not None:
+        row["expected"] = expected
+    return row
+
 
 def _stub_run(mod, monkeypatch, rows: list[dict], sha="93df04f1"):
     rehearsal = sys.modules[_REHEARSAL]
@@ -345,6 +387,44 @@ class TestTheOraclesReadABaseline:
         assert block["shapes_compared"] == ["plain", "spaced"]
         said = capsys.readouterr().out
         assert "b@spaced: baseline HARD, here ALLOW" in said and "shapes plain, spaced" in said
+
+    @pytest.mark.parametrize("name", _ORACLES)
+    def test_a_run_whose_only_differences_are_declared_passes_and_says_them(
+            self, bench, name, monkeypatch, tmp_path, capsys):
+        """DEF-2024: a Windows pass diffed against a macOS receipt differs on
+        the host-keyed rows by design. The run exits 0, prints them under their
+        own heading and keeps them in the receipt apart from the failing ones."""
+        mod = bench(name)
+        _stub_run(mod, monkeypatch, [_row("a", "ALLOW", "ALLOW"), _row("b", "HARD", "HARD")])
+        baseline = tmp_path / "rehearsal-results.json"
+        rows = [_row("a", "SOFT", "SOFT"), _row("b", "HARD", "HARD")]
+        baseline.write_text(json.dumps(_receipt(oracle=name, rows=rows)), encoding="utf-8")
+        out = tmp_path / "here.json"
+        rc = mod.main(["--repo-root", str(_REPO_ROOT), "--baseline", str(baseline), "--out", str(out)])
+        assert rc == 0
+        block = json.loads(out.read_text(encoding="utf-8"))["baseline"]
+        declared = "a@plain: the baseline expects and reads SOFT, here expects and reads ALLOW"
+        assert block["differences"] == [] and block["host_differences"] == [declared]
+        said = capsys.readouterr().out
+        assert "0 difference(s), 1 declared host difference(s)" in said and declared in said
+
+    @pytest.mark.parametrize("name", _ORACLES)
+    def test_a_real_difference_beside_a_declared_one_fails_and_each_is_said_apart(
+            self, bench, name, monkeypatch, tmp_path, capsys):
+        mod = bench(name)
+        _stub_run(mod, monkeypatch, [_row("a", "ALLOW", "ALLOW"), _row("b", "HARD", "ALLOW")])
+        baseline = tmp_path / "rehearsal-results.json"
+        rows = [_row("a", "SOFT", "SOFT"), _row("b", "HARD", "HARD")]
+        baseline.write_text(json.dumps(_receipt(oracle=name, rows=rows)), encoding="utf-8")
+        out = tmp_path / "here.json"
+        rc = mod.main(["--repo-root", str(_REPO_ROOT), "--baseline", str(baseline), "--out", str(out)])
+        assert rc == 1
+        block = json.loads(out.read_text(encoding="utf-8"))["baseline"]
+        assert block["differences"] == ["b@plain: baseline HARD, here ALLOW"]
+        assert block["host_differences"] == [
+            "a@plain: the baseline expects and reads SOFT, here expects and reads ALLOW"]
+        said = capsys.readouterr().out
+        assert said.index("b@plain: baseline HARD") < said.index("declared host differences") < said.index("a@plain")
 
     @pytest.mark.parametrize("name", _ORACLES)
     def test_a_receipt_carried_to_another_host_is_a_baseline_and_its_own_host_refuses_it(

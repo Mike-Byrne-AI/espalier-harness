@@ -88,7 +88,12 @@ refused before a row runs (exit 5): every verdict the tree moved would read as
 a Windows regression (DEF-860: a baseline four guard commits stale would have
 put nine), and a diff of a host against itself, or of nothing, reads clean. An
 accepted one is diffed verdict by verdict on the shapes both runs drove, named
-in the report, and a difference fails the run and lands in the receipt.
+in the report, and a difference fails the run and lands in the receipt. A
+difference where each side reads the tier its own host's table expects -- a row
+keyed on the host, as ``bench/guard_row_probe.py`` keys 4B-6, 4B-3 and 4D-3 --
+is the table working: it prints apart, as a declared host difference naming
+both expectations, lands in the receipt's ``host_differences`` and does not fail
+the run (DEF-2024).
 
 Stdlib only. Works on 3.10+.
 """
@@ -1326,23 +1331,57 @@ def same_file(baseline: str, out: str) -> bool:
     return Path(baseline).resolve() == Path(out).resolve()
 
 
-def baseline_differences(theirs: list[dict[str, str]], ours: list[dict[str, object]]) -> list[str]:
-    """One line per (row, shape) whose verdict differs between the baseline's
-    rows and this run's, or that only one side holds, on the shapes both
-    sides ran: a run narrowed to one shape is not told the others vanished."""
+def _each_reads_its_own(base: dict[str, object], here: dict[str, object]) -> bool:
+    """Whether two verdicts that differ are each its own host's expectation:
+    each side's actual is the ``expected`` tier its own row carries, so the
+    two expect different tiers. One commit with one rows digest puts one table
+    on both sides, so two expectations differ only where the table keys a row
+    on its host (4B-6 on the drive-root temp, 4B-3 and 4D-3 on a shallow home).
+    A row with no expectation, from a receipt that carries none, is never one."""
+    return base["actual"] == base.get("expected") and here["actual"] == here.get("expected")
+
+
+def _compare(theirs: list[dict[str, str]],
+             ours: list[dict[str, object]]) -> tuple[list[str], list[str]]:
+    """The failing differences and the declared host differences, one line per
+    (row, shape) each, on the shapes both sides ran: a run narrowed to one
+    shape is not told the others vanished."""
     shared = {r["shape"] for r in theirs} & {r["shape"] for r in ours}
-    base = {(r["id"], r["shape"]): r["actual"] for r in theirs if r["shape"] in shared}
-    here = {(r["id"], r["shape"]): r["actual"] for r in ours if r["shape"] in shared}
-    lines = []
+    base = {(r["id"], r["shape"]): r for r in theirs if r["shape"] in shared}
+    here = {(r["id"], r["shape"]): r for r in ours if r["shape"] in shared}
+    failing: list[str] = []
+    declared: list[str] = []
     for key in sorted(base.keys() | here.keys()):
         where = f"{key[0]}@{key[1]}"
         if key not in here:
-            lines.append(f"{where}: in the baseline only ({base[key]})")
+            failing.append(f"{where}: in the baseline only ({base[key]['actual']})")
         elif key not in base:
-            lines.append(f"{where}: here only ({here[key]})")
-        elif base[key] != here[key]:
-            lines.append(f"{where}: baseline {base[key]}, here {here[key]}")
-    return lines
+            failing.append(f"{where}: here only ({here[key]['actual']})")
+        elif base[key]["actual"] == here[key]["actual"]:
+            continue
+        elif _each_reads_its_own(base[key], here[key]):
+            declared.append(f"{where}: the baseline expects and reads {base[key]['actual']}, "
+                            f"here expects and reads {here[key]['actual']}")
+        else:
+            failing.append(f"{where}: baseline {base[key]['actual']}, here {here[key]['actual']}")
+    return failing, declared
+
+
+def baseline_differences(theirs: list[dict[str, str]], ours: list[dict[str, object]]) -> list[str]:
+    """One line per (row, shape) whose verdict differs between the baseline's
+    rows and this run's, or that only one side holds, on the shapes both
+    sides ran: the differences that fail the run. A difference each side's
+    own table expects is not one (``host_differences``)."""
+    return _compare(theirs, ours)[0]
+
+
+def host_differences(theirs: list[dict[str, str]], ours: list[dict[str, object]]) -> list[str]:
+    """One line per (row, shape) whose verdicts differ because each side reads
+    the tier its own host's table expects (DEF-2024). That is the table
+    working, so it does not fail the run; it is printed apart from the failing
+    differences, both expectations named, so a real difference on a host-keyed
+    row stays a failing line and never folds into the standing ones."""
+    return _compare(theirs, ours)[1]
 
 
 def report_baseline(baseline: dict[str, object], path: str, rows: list[dict[str, object]],
@@ -1350,20 +1389,27 @@ def report_baseline(baseline: dict[str, object], path: str, rows: list[dict[str,
     """Print the diff against an accepted baseline, naming the shapes it
     compared, and return the receipt's ``baseline`` block. A difference is
     this host's finding and the first thing to record: it fails the run, as a
-    MISMATCH does."""
+    MISMATCH does. A declared host difference does not, and is printed after
+    the differences under a heading of its own (``host_differences``)."""
     out = file or sys.stdout
     theirs = _rows_of(baseline) or []
     compared = sorted({r["shape"] for r in theirs} & {r["shape"] for r in rows})
-    differences = baseline_differences(theirs, rows)
+    differences, declared = _compare(theirs, rows)
     print(file=out)
     print(f"against the baseline {path} ({baseline.get('host')}, {baseline.get('platform')}, "
           f"{baseline.get('tree_sha')}), shapes {', '.join(compared)}: "
-          f"{len(differences)} difference(s)", file=out)
+          f"{len(differences)} difference(s)"
+          + (f", {len(declared)} declared host difference(s)" if declared else ""), file=out)
     for line in differences:
         print(f"  {line}", file=out)
+    if declared:
+        print("declared host differences -- each side reads the tier its own host's table "
+              "expects, so these do not fail the run:", file=out)
+        for line in declared:
+            print(f"  {line}", file=out)
     return {"path": path, "host": baseline.get("host"), "platform": baseline.get("platform"),
             "tree_sha": baseline.get("tree_sha"), "shapes_compared": compared,
-            "differences": differences}
+            "differences": differences, "host_differences": declared}
 
 
 def add_common_args(ap: argparse.ArgumentParser, *, default_out: str) -> None:
