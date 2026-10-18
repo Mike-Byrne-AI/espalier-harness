@@ -21,12 +21,15 @@ from __future__ import annotations
 import ast
 import functools
 import importlib.util
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from tests import _source_segment
-from tests._git_oracle import require_tracked_paths
+from espalier.surface_contract import is_release_export
+from tests._git_oracle import _git_env, owns_its_worktree, require_tracked_paths
 from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -196,9 +199,11 @@ class TestTheAdjudicatedMapIsALiteral:
         one line every adjudicating lane rewrote (all 15 commits before their
         removal), a shared record storing what two lanes both recompute (Core
         Rule 15). **The guarantee given up, stated:** a regeneration that
-        carries every verdict forward and keeps the map a literal is caught by
-        nothing here now; this class's literal row still catches one that
-        derives the map in code. Mutation seen red: a total put back."""
+        carries every verdict forward and keeps the map a literal was caught by
+        nothing here from then until DEF-4010 (2026-10-18), which reads it
+        storing nothing: :class:`TestARegenerationOfTheMapReds`; this class's
+        literal row still catches one that derives the map in code. Mutation
+        seen red: a total put back."""
         stored = sorted(name for name, value in self._script_assignments().items()
                         if name.startswith("ADJUDICATED_") and isinstance(value, ast.Constant))
         assert not stored, (
@@ -262,6 +267,314 @@ class TestTheAdjudicatedMapIsALiteral:
         )
 
 
+#: The regeneration tripwire's counts (DEF-4010), read against a reference and
+#: storing nothing, each pre-registered on the map's own history: every step
+#: that changed the map on origin/main, 64 non-merge commits and 60 merged pull
+#: requests (first-parent steps; of the 70 and 62 that touched the script)
+#: from 2026-09-24 to 2026-10-18, the two agreeing
+#: on every maximum. An entry carried forward -- its row count or digest moved
+#: while its verdict AND reason did not -- 0 in every step: an adjudication that
+#: re-pins rewrites its text. Verdict strings changed: at most 3 (ff5aa77d).
+#: Entries re-pinned or added: at most 8 (6 re-pins and 4 additions at most).
+#: An entry dropped while its file is still in the tree: 0 (a vanished
+#: population goes through `check_health`'s vanished arm). A regeneration
+#: carrying the text forward moves no verdict string, so the first count reads
+#: it; one that nudges every reason to slip the first is read by the third; one
+#: rewriting every verdict (134 entries on 2026-10-18) by the second; one that
+#: rebuilds the map from the census and so drops a population by the fourth.
+#: Each cap is twice the legitimate most, or 0 where that is 0.
+_MAX_CARRIED_FORWARD = 0
+_MAX_VERDICTS_CHANGED = 6
+_MAX_REPINNED_OR_ADDED = 16
+_MAX_DROPPED_WHILE_PRESENT = 0
+#: The script as git names it, derived from :data:`SCRIPT` so a move of the
+#: map's home is read where it went, never as a map that is not there.
+_SCRIPT_REL = SCRIPT.relative_to(REPO_ROOT).as_posix()
+
+
+def _git_run(*args: str) -> "subprocess.CompletedProcess[str] | None":
+    try:
+        return subprocess.run(["git", "-C", str(REPO_ROOT), *args], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=60, env=_git_env())
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _git(*args: str) -> "str | None":
+    """One git answer about this checkout, or None where git gave none."""
+    proc = _git_run(*args)
+    return proc.stdout.strip() if proc is not None and proc.returncode == 0 else None
+
+
+def _git_code(*args: str) -> "int | None":
+    """git's exit code, for a verb that answers with it (``diff --quiet``: 0
+    the same, 1 differs, anything else an error); None where git did not run."""
+    proc = _git_run(*args)
+    return None if proc is None else proc.returncode
+
+
+def _no_history_by_design() -> bool:
+    """True where no history can answer and none is owed: a release export
+    (``surface_contract.is_release_export``, even where a probe gave the
+    extracted tree a git history of its own), a checkout that is not this one's
+    own, a shallow clone."""
+    return (not owns_its_worktree(REPO_ROOT) or is_release_export(REPO_ROOT)
+            or _git("rev-parse", "--is-shallow-repository") == "true")
+
+
+def _map_reference() -> "tuple[str, str] | None":
+    """The commit the map is read against, and why that one: the merge-base
+    with ``BASE_SHA`` in CI's pull-request test jobs (their checkout is the
+    merge, with full history), else with ``origin/main`` (a lane; in a clone
+    of a clone that is the source checkout's own ``main``, which can be older
+    than the lane's base, so a red names the reference it read). Where that
+    merge-base is ``HEAD`` itself: ``HEAD`` while the script is edited and
+    not committed (a fresh lane, or ``main`` mid-edit), else ``HEAD``'s
+    first parent (a post-merge run of ``main``). None only where no history
+    answers by design (:func:`_no_history_by_design`) or ``HEAD`` has no
+    parent. A full clone that resolves no reference, or a ``git diff`` that
+    errors, raises, naming what it tried: a skip there would retire the
+    tripwire."""
+    if _no_history_by_design():
+        return None
+    head = _git("rev-parse", "HEAD")
+    tried: list[str] = []
+    for ref in (os.environ.get("BASE_SHA", ""), "origin/main"):
+        if not ref:
+            continue
+        tried.append(ref)
+        base = _git("merge-base", "HEAD", ref)
+        if base and base != head:
+            return base, f"the merge-base with {ref}"
+        if base and base == head:
+            edited = _git_code("diff", "--quiet", "HEAD", "--", _SCRIPT_REL)
+            if edited == 1:
+                return head, "HEAD (the map is edited and not committed)"
+            if edited != 0:
+                raise LookupError(f"git diff could not say whether {_SCRIPT_REL} is edited "
+                                  f"(exit {edited}); run again once git answers")
+            parent = _git("rev-parse", "--verify", "--quiet", "HEAD^1")
+            return (parent, "HEAD's first parent") if parent else None
+    raise LookupError(f"no reference for the census map: tried {tried or ['nothing']} on a full "
+                      f"clone of this checkout; fetch the base (origin/main) and run again")
+
+
+def _map_at(rev: str) -> "dict | None":
+    """``ADJUDICATED`` as the script held it at ``rev``; None where ``rev``
+    has no such script. A script there with no literal map raises: the map
+    moved, and it is read where it lives now, never skipped."""
+    source = _git("show", f"{rev}:{_SCRIPT_REL}")
+    if source is None:
+        return None
+    for node in ast.parse(source).body:
+        target = node.target if isinstance(node, ast.AnnAssign) else (
+            node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1 else None)
+        if isinstance(target, ast.Name) and target.id == "ADJUDICATED" and node.value is not None:
+            try:
+                return ast.literal_eval(node.value)
+            except ValueError:
+                break  # split or computed (`{**a}`, `dict(...)`): no literal map to read
+    raise LookupError(f"{_SCRIPT_REL} at {rev[:12]} holds no literal ADJUDICATED map: it moved; "
+                      f"read it where it lives now")
+
+
+def _regeneration_reading(before: dict, after: dict, present=None) -> dict[str, list[str]]:
+    """How the map moved between two readings, entry by entry, each list in
+    file order: ``carried`` (a row count or digest moved, the verdict AND the
+    reason did not), ``verdicts`` (the verdict string changed),
+    ``repinned_or_added`` (a count or digest moved, whatever the text did, or
+    an entry new to the map) and ``dropped_while_present`` (an entry gone
+    while ``present(file)`` says its file is still in the tree)."""
+    present = present or (lambda rel: (REPO_ROOT / rel).is_file())
+    common = sorted(set(before) & set(after))
+    return {
+        "carried": [f for f in common if before[f][:2] != after[f][:2] and before[f][2:] == after[f][2:]],
+        "verdicts": [f for f in common if before[f][2] != after[f][2]],
+        "repinned_or_added": [f for f in common if before[f][:2] != after[f][:2]] + sorted(set(after) - set(before)),
+        "dropped_while_present": sorted(f for f in set(before) - set(after) if present(f)),
+    }
+
+
+#: Each count, its cap and what an entry over it did.
+_REGENERATION_LIMITS: tuple[tuple[str, int, str], ...] = (
+    ("carried", _MAX_CARRIED_FORWARD,
+     "moved its row count or digest and kept the verdict and reason word for word, the shape a "
+     "regeneration leaves; re-adjudicate each by hand, and where a verdict and reason still hold, "
+     "say why in the reason, dated (a nudged reason on every entry still reds as re-pinned)"),
+    ("verdicts", _MAX_VERDICTS_CHANGED,
+     "changed its verdict string; a regeneration rewrites them wholesale, so adjudicate file by file"),
+    ("repinned_or_added", _MAX_REPINNED_OR_ADDED,
+     "was re-pinned or added; past the most two legitimate lanes ever did at once, this is a "
+     "wholesale pass, so adjudicate file by file or put the batch to the dispatcher"),
+    ("dropped_while_present", _MAX_DROPPED_WHILE_PRESENT,
+     "left the map while its file is still in the tree; a population that vanished goes through "
+     "check_health's vanished arm, and a map rebuilt from the census hides it"),
+)
+
+
+def _regeneration_failures(before: dict, after: dict, present=None) -> list[str]:
+    """Each count over its cap, said with its entries; empty when the map
+    moved the way adjudication moves it."""
+    reading = _regeneration_reading(before, after, present)
+    return [f"{len(reading[name])} entr(ies) {said} (at most {cap}): {reading[name][:8]}"
+            for name, cap, said in _REGENERATION_LIMITS if len(reading[name]) > cap]
+
+
+class TestARegenerationOfTheMapReds:
+    """DEF-4010: the tripwire for a wholesale regeneration, which the stored
+    totals were until 2026-10-10 (:meth:`TestTheAdjudicatedMapIsALiteral.test_no_stored_total_sits_beside_the_map`),
+    now derived and storing nothing (Core Rule 15): the map is read against
+    the branch's reference (:func:`_map_reference`) and four counts red it
+    (:data:`_REGENERATION_LIMITS`, with their pre-registered history). Per-row
+    counts and digests agree with the tree by construction after a
+    regeneration, so no check of values sees one; how the map moved does.
+    Where no history answers by design the read is not applicable and says
+    so; a full clone with no reference, or a map that moved, fails by name."""
+
+    def test_the_map_moves_by_adjudication_never_by_regeneration(self):
+        try:
+            reference = _map_reference()
+            before = _map_at(reference[0]) if reference else None
+        except LookupError as exc:
+            pytest.fail(str(exc))
+        if reference is None:
+            pytest.skip("not applicable: no history here to read the map against "
+                        "(an export, a shallow clone or a root commit); never a pass")
+        rev, why = reference
+        if before is None:
+            pytest.fail(f"{why} ({rev[:12]}) holds no {_SCRIPT_REL}; read the map where it lives now")
+        failures = _regeneration_failures(before, census.ADJUDICATED)
+        assert not failures, f"against {why} ({rev[:12]}):\n" + "\n".join(failures)
+
+    @staticmethod
+    def _fired(failures: list[str]) -> set[str]:
+        return {name for name, _cap, said in _REGENERATION_LIMITS for line in failures if said in line}
+
+    def test_a_regeneration_carrying_the_text_forward_reds(self):
+        before = dict(census.ADJUDICATED)
+        after = {f: (count + 1, "0" * 64, verdict, reason) for f, (count, _d, verdict, reason) in before.items()}
+        assert self._fired(_regeneration_failures(before, after)) == {"carried", "repinned_or_added"}
+
+    def test_a_regeneration_that_nudges_every_reason_still_reds(self):
+        """The bypass the carried count alone leaves: each reason touched by
+        one character, or the same dated note appended to every entry."""
+        before = dict(census.ADJUDICATED)
+        for touch in (" ", " Kept 2026-10-18: still holds."):
+            after = {f: (count + 1, "0" * 64, verdict, reason + touch)
+                     for f, (count, _d, verdict, reason) in before.items()}
+            assert self._fired(_regeneration_failures(before, after)) == {"repinned_or_added"}, touch
+
+    def test_a_regeneration_rewriting_every_verdict_reds(self):
+        """The entry ``--print-adjudicated-entry`` prints, pasted for every file."""
+        before = dict(census.ADJUDICATED)
+        after = {f: (count, digest, "<VERDICT>", "<reason>") for f, (count, digest, _v, _r) in before.items()}
+        assert self._fired(_regeneration_failures(before, after)) == {"verdicts"}
+
+    def test_a_map_rebuilt_from_the_census_reds_on_the_population_it_drops(self):
+        before = dict(census.ADJUDICATED)
+        dropped = sorted(before)[0]
+        after = {f: entry for f, entry in before.items() if f != dropped}
+        assert self._fired(_regeneration_failures(before, after, present=lambda _rel: True)) == {
+            "dropped_while_present"}
+        assert _regeneration_failures(before, after, present=lambda _rel: False) == [], "a moved or deleted file"
+
+    def test_templated_entries_added_wholesale_red(self):
+        before = dict(census.ADJUDICATED)
+        after = {**before, **{f"tests/test_new_{i}.py": (1, "a" * 64, "PRIOR_PASS_UNRECORDED", "templated")
+                              for i in range(_MAX_REPINNED_OR_ADDED + 1)}}
+        assert self._fired(_regeneration_failures(before, after)) == {"repinned_or_added"}
+
+    def test_an_adjudication_that_rewrites_its_reason_passes(self):
+        """#309's one-row adjudication (702f2e8d): count and digest moved, the
+        reason rewritten, the verdict kept. Read from history: skipped only
+        where none is owed, failed where a full clone lacks it."""
+        try:
+            before, after = _map_at("702f2e8d^"), _map_at("702f2e8d")
+        except LookupError as exc:
+            pytest.fail(str(exc))
+        if before is None or after is None:
+            if _no_history_by_design():
+                pytest.skip("not applicable: no history here (an export or a shallow clone)")
+            pytest.fail("702f2e8d is missing from this full clone's history; fetch main and run again")
+        assert _regeneration_failures(before, after) == []
+
+    def test_a_deliberate_keep_says_so_and_passes(self):
+        before = {"tests/test_x.py": (1, "a" * 64, "CORRECT_BY_SHAPE", "derives the expectation.")}
+        kept = {"tests/test_x.py": (2, "b" * 64, "CORRECT_BY_SHAPE",
+                                    "derives the expectation. Kept 2026-10-18: a renamed loop variable.")}
+        carried = {"tests/test_x.py": (2, "b" * 64, "CORRECT_BY_SHAPE", "derives the expectation.")}
+        assert _regeneration_failures(before, kept) == []
+        assert self._fired(_regeneration_failures(before, carried)) == {"carried"}
+
+    _HEAD, _PARENT, _BASE = "h" * 40, "p" * 40, "c" * 40
+    _DIFF = ("diff", "--quiet", "HEAD", "--", _SCRIPT_REL)
+
+    @staticmethod
+    def _fake_git(monkeypatch, answers: dict, codes: dict, *, export: bool = False) -> None:
+        monkeypatch.setitem(globals(), "owns_its_worktree", lambda _root: True)
+        monkeypatch.setitem(globals(), "is_release_export", lambda _root: export)
+        monkeypatch.setitem(globals(), "_git", lambda *args: answers.get(args))
+        monkeypatch.setitem(globals(), "_git_code", lambda *args: codes.get(args))
+
+    @pytest.mark.parametrize("base_sha, answers, diff_code, expected", [
+        ("b" * 40, {("merge-base", "HEAD", "b" * 40): _BASE}, None, (_BASE, "the merge-base with " + "b" * 40)),
+        ("b" * 40, {("merge-base", "HEAD", "origin/main"): _BASE}, None, (_BASE, "the merge-base with origin/main")),
+        ("", {("merge-base", "HEAD", "origin/main"): _BASE}, None, (_BASE, "the merge-base with origin/main")),
+        ("", {("merge-base", "HEAD", "origin/main"): _HEAD,
+              ("rev-parse", "--verify", "--quiet", "HEAD^1"): _PARENT}, 0, (_PARENT, "HEAD's first parent")),
+        ("", {("merge-base", "HEAD", "origin/main"): _HEAD}, 1, (_HEAD, "HEAD (the map is edited and not committed)")),
+        ("", {("merge-base", "HEAD", "origin/main"): _HEAD}, 0, None),
+        ("", {("rev-parse", "--is-shallow-repository"): "true"}, None, None),
+    ], ids=["ci-pull-request", "base-sha-unanswerable-falls-back", "a-lane", "main-after-a-merge",
+            "a-fresh-lane-with-uncommitted-edits", "no-first-parent", "a-shallow-clone"])
+    def test_the_reference_is_the_one_the_branch_answers_to(self, monkeypatch, base_sha, answers, diff_code,
+                                                            expected):
+        monkeypatch.setenv("BASE_SHA", base_sha)
+        self._fake_git(monkeypatch, {("rev-parse", "HEAD"): self._HEAD,
+                                     ("rev-parse", "--is-shallow-repository"): "false", **answers},
+                       {self._DIFF: diff_code})
+        assert _map_reference() == expected
+
+    @pytest.mark.parametrize("diff_code", [128, None], ids=["git-errors", "git-does-not-run"])
+    def test_a_diff_that_cannot_answer_fails_by_name(self, monkeypatch, diff_code):
+        """A failing ``git diff`` is not an edited map: read as one, the map
+        would be compared with itself and pass."""
+        monkeypatch.setenv("BASE_SHA", "")
+        self._fake_git(monkeypatch, {("rev-parse", "HEAD"): self._HEAD,
+                                     ("rev-parse", "--is-shallow-repository"): "false",
+                                     ("merge-base", "HEAD", "origin/main"): self._HEAD}, {self._DIFF: diff_code})
+        with pytest.raises(LookupError, match="could not say whether"):
+            _map_reference()
+
+    def test_a_full_clone_with_no_reference_fails_by_name(self, monkeypatch):
+        monkeypatch.setenv("BASE_SHA", "")
+        self._fake_git(monkeypatch, {("rev-parse", "HEAD"): self._HEAD,
+                                     ("rev-parse", "--is-shallow-repository"): "false"}, {})
+        with pytest.raises(LookupError, match=r"tried \['origin/main'\]"):
+            _map_reference()
+
+    def test_a_checkout_that_is_not_this_ones_own_is_not_applicable(self, monkeypatch):
+        monkeypatch.setitem(globals(), "owns_its_worktree", lambda _root: False)
+        assert _map_reference() is None
+
+    def test_a_release_export_with_a_seeded_history_is_not_applicable(self, monkeypatch):
+        """The archive probe gives the extracted tree a git history of its own
+        (one commit, no ``origin/main``): an export, never a broken clone."""
+        self._fake_git(monkeypatch, {("rev-parse", "HEAD"): self._HEAD,
+                                     ("rev-parse", "--is-shallow-repository"): "false"}, {}, export=True)
+        assert _map_reference() is None
+
+    @pytest.mark.parametrize("source", [
+        "from census_map import ADJUDICATED\n",
+        "ADJUDICATED = {**A, **B}\n",
+        "ADJUDICATED: dict = dict(A)\n",
+    ], ids=["re-exported", "split", "computed"])
+    def test_a_map_that_is_not_a_literal_fails_by_name(self, monkeypatch, source):
+        monkeypatch.setitem(globals(), "_git", lambda *args: source)
+        with pytest.raises(LookupError, match="holds no literal ADJUDICATED map"):
+            _map_at("r" * 40)
+
+
 class TestTheAdjudicatedMapIsBacked:
     """Anti-rot, in the shape `tests/_contracts.py::NumericPopulation.exclusions`
     uses: an entry must still be backed by something live, or it is a permanent
@@ -275,8 +588,7 @@ class TestTheAdjudicatedMapIsBacked:
         )
         assert not missing, (
             f"ADJUDICATED names file(s) that no longer exist: {missing}. Drop the "
-            f"entry and lower both counts in the same edit -- a stale entry "
-            f"overstates what has been adjudicated."
+            f"entry -- a stale entry overstates what has been adjudicated."
         )
 
     def test_the_verdict_vocabulary_is_closed(self):

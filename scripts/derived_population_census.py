@@ -134,7 +134,13 @@ SHAPES = ("parametrize", "for-assert", "for-plain", "comprehension", "all-any")
 #: regeneration keeps every count and runtime value identical, so no assertion
 #: over VALUES can see it, and only the AST-literalness row in
 #: `tests/test_derived_population_census.py` can. That row is why this comment
-#: can be trusted.
+#: can be trusted. A re-pinned count or digest changes its entry's verdict or
+#: reason too (a deliberate keep says why in the reason, dated): an entry whose
+#: count or digest moved with its verdict and reason untouched is a
+#: regeneration's mark. `TestARegenerationOfTheMapReds` reads how the map moved
+#: against the branch's reference, storing nothing (DEF-4010), and reds that
+#: mark, a wholesale re-pin, a wholesale verdict rewrite and an entry dropped
+#: while its file is still in the tree.
 ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     "tests/_stack_census.py": (
         1, "c35721065f750437df2f5d31bc55b87e707d5f40f79ad907450de714e48d1eaf",
@@ -2494,9 +2500,12 @@ def check_health(rows: list[dict[str, object]]) -> int:
             f"population narrowed and every check derived from it narrowed with "
             f"it. A GROWTH is a new candidate to adjudicate. ⚠ DO NOT REGENERATE "
             f"THE WHOLE MAP -- a wholesale regeneration that carries the old "
-            f"verdicts forward is caught by nothing here. Run "
-            f"`--print-adjudicated-entry {path}`, paste the ONE line, and keep or "
-            f"revise that file's verdict and reason by hand. Live rows now:\n"
+            f"verdicts forward agrees with every row here, and only "
+            f"tests/test_derived_population_census.py::TestARegenerationOfTheMapReds "
+            f"reads it, against the branch's merge-base. Run "
+            f"`--print-adjudicated-entry {path}`, paste the ONE line, and revise "
+            f"that file's verdict and reason by hand, or keep them and say why in "
+            f"the reason, dated. Live rows now:\n"
             f"{detail}"
         )
 
