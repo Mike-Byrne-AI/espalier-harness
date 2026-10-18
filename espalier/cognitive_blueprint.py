@@ -202,8 +202,8 @@ def _prune_blueprints(bp_dir: Path) -> None:
         # 2026-10-18). Both leave the candidates rather than the tail, so the
         # working set stays at BLUEPRINT_RETENTION: an older node goes instead.
         # A running session is spared only while its node is the head or the
-        # head's parent: a THIRD start still demotes it, and which node is a
-        # session's is TP-467 wave C's to key.
+        # head's parent: a THIRD start still demotes it, until the session
+        # state is keyed by session.
         try:
             head = json.loads((bp_dir / "latest.json").read_text(encoding="utf-8"))
         except (OSError, ValueError, RecursionError):  # as load_json_dict_safe catches

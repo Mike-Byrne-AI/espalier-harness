@@ -414,8 +414,8 @@ def _prune_blueprints(bp_dir):
         # 2026-10-18). Both leave the candidates rather than the tail, so the
         # working set stays at BLUEPRINT_RETENTION: an older node goes instead.
         # A running session is spared only while its node is the head or the
-        # head's parent: a THIRD start still demotes it, and which node is a
-        # session's is TP-467 wave C's to key.
+        # head's parent: a THIRD start still demotes it, until the session
+        # state is keyed by session.
         head = _load_json(bp_dir / "latest.json")
         spared = {f"{sid}.json" for sid in (head.get("session_id"), head.get("parent_session_id"))
                   if isinstance(sid, str) and sid}
