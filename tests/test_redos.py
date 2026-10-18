@@ -43,6 +43,7 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 import pytest
 from tests._live_tree import checkout_glob
@@ -1085,27 +1086,30 @@ def test_ps_program_body_linear_on_unclosed_runs(label, make):
 # `_PS_BODY_LINEAR_RATIO` times the same flood at half the cap plus a noise
 # floor, both judged net of the per-call cost measured on THIS host (the
 # walker row's lesson: a memoised reader's rebuild scales with the host, not
-# the payload -- about 1 ms here, over a hundred on a shared runner), read
-# inside each window (DEF-2002, :func:`_window_order`). A pair
-# whose half-cap reading is under the sample floor is not judged: single-digit
-# milliseconds are clock noise on this box. A misread under load is no reason
-# to lower the ratio: 2.83 was measured and did no better (DEF-2000, at
+# the payload -- about 1 ms here, over a hundred on a shared runner), read inside
+# each window (DEF-2002, :func:`_window_order`). A pair whose half-cap reading
+# is under the sample floor is not judged: single-digit milliseconds are clock
+# noise on this box. A misread under load is no reason to lower the ratio: 2.83
+# was measured and did no better (DEF-2000, at
 # `tests/test_speedbump_irreversible.py::_search_window_ms`).
 _PS_BODY_LINEAR_RATIO = 3.0
 _PS_BODY_NOISE_FLOOR_MS = 1.0
 _PS_BODY_MIN_SAMPLE_MS = 5.0
 _PS_BODY_SAMPLES = 3
-#: A window's zero-payload samples, one at each end (:func:`_window_order`); the
-#: timeout pin reads it.
-_PS_BODY_ZERO_SAMPLES = 2
+#: A scaling window's zero-payload samples, one at each end, on both arms
+#: (:func:`_window_order`, whose shape test reads it); the timeout pin counts with it.
+_WINDOW_ZERO_SAMPLES = 2
 
 
 def _window_order(zero: str, small: str, big: str, samples: int) -> list[tuple[int, str]]:
     """One window's calls of a scaling arm, in order, as ``(floor, payload)``: the
     zero payload (floor 0) at each END, and between them ``samples`` interleaved
     pairs, small (floor 1) then big (floor 2). Both arms read it, so they take one
-    shape. The pairs interleave so one slowdown cannot lift the small floor alone
-    and read a quadratic linear (DEF-2000). The per-call cost is read inside the
+    shape. The pairs interleave so one slowdown as long as three small samples
+    took back to back cannot lift the small floor alone and read a quadratic
+    linear (DEF-2000); interleaving narrows that misread and does not close it: a
+    slowdown spanning a window's three small samples and every big one but the
+    last still reads a quadratic linear. The per-call cost is read inside the
     window it is subtracted from, at its two ends (DEF-2002): until then three
     zero-payload calls read back to back before the first window set the cost both
     windows subtracted, and one slowdown over them read a linear consumer
@@ -1137,15 +1141,22 @@ def _ps_body_call_ms(fn: Callable[[str], object], payload: str) -> float | None:
         signal.setitimer(signal.ITIMER_REAL, 0)
 
 
+def _overran(length: int, zero: str) -> str:
+    """Where a window's call overran its ceiling: the zero-payload call, which
+    points at the host, or a payload by its bytes, which points at the shape
+    (the speedbump arm's form, DEF-4001: a bare None could not say)."""
+    return "on the zero-payload call" if length == len(zero) else f"at {length} bytes"
+
+
 def _ps_body_window_ms(
     fn: Callable[[str], object], big: str, small: str, zero: str,
-) -> tuple[float, float, float] | None:
+) -> tuple[float, float, float] | int:
     """One window of the pair rule: ``(t_zero_ms, t_small_ms, t_big_ms)``, the
     floor of each size's timings in :func:`_window_order` (`_PS_BODY_SAMPLES` at
     each size, the zero payload at the window's two ends), the cyclic collector
-    paused throughout and restored after (the walker discipline); None when a
-    call overran `_CHAIN_CEILING_MS`. The window's pair is judged net of its own
-    zero floor (DEF-2002)."""
+    paused throughout and restored after (the walker discipline); when a call
+    overran `_CHAIN_CEILING_MS`, its payload's length (:func:`_overran`). The
+    window's pair is judged net of its own zero floor (DEF-2002)."""
     floors: tuple[list[float], list[float], list[float]] = ([], [], [])
     collector_was_on = gc.isenabled()
     gc.disable()
@@ -1153,7 +1164,7 @@ def _ps_body_window_ms(
         for floor, payload in _window_order(zero, small, big, _PS_BODY_SAMPLES):
             elapsed_ms = _ps_body_call_ms(fn, payload)
             if elapsed_ms is None:
-                return None
+                return len(payload)
             floors[floor].append(elapsed_ms)
     finally:
         if collector_was_on:
@@ -1174,11 +1185,24 @@ def _ps_body_scaling_verdict(
     its own, and the window with the lower ratio is the estimate (noise
     inflates the big sample). ``zero`` is the warm, near-empty call whose cost
     is the per-call rebuild on this host, timed at each window's two ends and
-    subtracted from that window's samples (DEF-2002)."""
+    subtracted from that window's samples (DEF-2002). An under-floor sample is a
+    red either way, and its sentence names the cause by the walker arm's rule
+    (DEF-926, :func:`_is_swamped`): a per-call cost above what is left of the
+    sample is a slow or loaded host (or a spike on the window's zero samples),
+    never a fast box."""
 
     def under_floor(t_s: float, t_z: float, which: str) -> str:
+        net = t_s - t_z
+        if _is_swamped(t_z, net, floor_ms=_PS_BODY_MIN_SAMPLE_MS):
+            return (
+                f"{t_s:.1f}ms at {len(small)} bytes is mostly the {t_z:.1f}ms per-call cost "
+                f"({net:.1f}ms net{which}), under the {_PS_BODY_MIN_SAMPLE_MS}ms sample floor, so "
+                "its ratio cannot be judged here: a slow or loaded host, or a slowdown on the "
+                "window's zero-payload samples, not a fast box -- re-run on a quiet host; the "
+                "floors are not the problem, and never widen the bound"
+            )
         return (
-            f"{t_s:.1f}ms at {len(small)} bytes ({t_s - t_z:.1f}ms net of the {t_z:.1f}ms "
+            f"{t_s:.1f}ms at {len(small)} bytes ({net:.1f}ms net of the {t_z:.1f}ms "
             f"per-call cost) is under the {_PS_BODY_MIN_SAMPLE_MS}ms sample floor{which}, so its "
             "ratio cannot be judged: this host is much faster than the one the floors were "
             "measured on (re-measure), the body got cheaper (re-measure), or the payload is "
@@ -1186,8 +1210,8 @@ def _ps_body_scaling_verdict(
         )
 
     first = _ps_body_window_ms(fn, big, small, zero)
-    if first is None:
-        return f"exceeded {_CHAIN_CEILING_MS}ms"
+    if isinstance(first, int):
+        return f"exceeded {_CHAIN_CEILING_MS}ms {_overran(first, zero)}"
     t_zero, t_small, t_big = first
     net_small, net_big = t_small - t_zero, t_big - t_zero
     if net_small < _PS_BODY_MIN_SAMPLE_MS:
@@ -1196,13 +1220,19 @@ def _ps_body_scaling_verdict(
     if net_big <= bound:
         return None
     second = _ps_body_window_ms(fn, big, small, zero)
-    if second is None:
-        return f"exceeded {_CHAIN_CEILING_MS}ms on the second window"
+    if isinstance(second, int):
+        return f"exceeded {_CHAIN_CEILING_MS}ms {_overran(second, zero)} on the second window"
     t_zero_2, t_small_2, t_big_2 = second
     net_small_2, net_big_2 = t_small_2 - t_zero_2, t_big_2 - t_zero_2
     if net_small_2 < _PS_BODY_MIN_SAMPLE_MS:
         return under_floor(t_small_2, t_zero_2, " on the second window")
-    if net_big_2 / net_small_2 < net_big / net_small:
+    windows = ""
+    r1 = net_big / net_small
+    if net_big_2 / net_small_2 < r1:
+        windows = (
+            f"; the first window read {net_small:.1f} -> {net_big:.1f}ms net of its "
+            f"{t_zero:.1f}ms (ratio {r1:.2f}) and the second was chosen for its lower ratio"
+        )
         t_zero, net_small, net_big = t_zero_2, net_small_2, net_big_2
         bound = _PS_BODY_LINEAR_RATIO * net_small + _PS_BODY_NOISE_FLOOR_MS
         if net_big <= bound:
@@ -1210,7 +1240,7 @@ def _ps_body_scaling_verdict(
     return (
         f"{net_small:.1f}ms at {len(small)} bytes -> {net_big:.1f}ms at {len(big)} bytes, "
         f"net of the {t_zero:.1f}ms per-call cost (ratio {net_big / net_small:.2f}, "
-        f"bound {bound:.1f}ms): super-linear on two windows"
+        f"bound {bound:.1f}ms): super-linear on two windows{windows}"
     )
 
 
@@ -1256,12 +1286,15 @@ def test_ps_body_scaling_rule_still_reds_a_quadratic_stand_in():
 def test_ps_body_scaling_rule_reds_a_pair_under_the_sample_floor():
     """A body too cheap to judge is a red with its remedy, not a silent pass:
     a stand-in that costs nothing reads under the sample floor at half the
-    cap, and the rule says so rather than acquitting it."""
+    cap, and the rule says so rather than acquitting it. Its per-call cost is
+    near nothing too, so the sentence keeps the fast-box remedies (DEF-926's
+    routing, which DEF-2002 brought to this arm)."""
     if not hasattr(signal, "SIGALRM"):
         pytest.skip("signal.alarm not available on this platform")
     n_big = _WORST_CASE_BODY_LEN
     verdict = _ps_body_scaling_verdict(lambda _p: None, "x" * n_big, "x" * (n_big // 2), "x" * 64)
     assert verdict is not None and "sample floor" in verdict and "never widen" in verdict, verdict
+    assert "much faster" in verdict and "slow or loaded host" not in verdict, verdict
 
 
 #: DEF-2000's slowdown: the measured small-sample floor read 1.53 times its median
@@ -1305,7 +1338,8 @@ _FLOOR_PER_CALL_MS = 30.0
 
 
 def _floor_slowdown_clock(
-    net_small_ms: float, n_big: int, samples: int, calls: list[tuple[int, bool]], *, at: str,
+    net_small_ms: float, n_big: int, samples: int, calls: list[tuple[int, bool]], *,
+    at: Literal["head", "tail", "spikes"],
 ) -> Callable[..., float]:
     """A stand-in for a one-call timer on a simulated clock, for DEF-2002: a LINEAR
     cost, `_FLOOR_PER_CALL_MS` per call plus ``2 * net_small_ms`` in proportion at
@@ -1319,6 +1353,7 @@ def _floor_slowdown_clock(
     two ends -- two spikes, not one slowdown, the one shape that lifts a window's
     floor alone. Records each call's length and whether it ran slowed, so a row
     asserts the slowdown reached a zero-payload call."""
+    assert at in ("head", "tail", "spikes"), at  # a typo would run another schedule
     now: list[float | None] = [None]
     bigs = [0]
     zeros = [0]
@@ -1346,6 +1381,39 @@ def _floor_slowdown_clock(
     return reading
 
 
+def _window_costs_clock(
+    per_window: list[tuple[float, float, float]], samples: int, n_small: int, n_big: int,
+    calls: list[int],
+) -> Callable[..., float]:
+    """A stand-in for a one-call timer reading fixed costs by window, for the rows
+    that read a sentence: ``per_window[k]`` is window ``k``'s ``(zero, small, big)``
+    cost, the window counted from the calls seen (each is :func:`_window_order`'s
+    length; the walker's warm call goes to the consumer, not the timer). Records
+    each length."""
+    size = len(_window_order("", "", "", samples))
+
+    def reading(*args: object) -> float:
+        payload = args[1]
+        assert isinstance(payload, str)
+        zero, small, big = per_window[len(calls) // size]
+        calls.append(len(payload))
+        return {n_small: small, n_big: big}.get(len(payload), zero)
+    return reading
+
+
+def test_a_scaling_window_reads_its_zero_floor_at_both_ends():
+    """DEF-2002's shape, pinned by position: both arms' windows open and close on the
+    zero payload, with the pairs interleaved between. The rows on a simulated clock
+    hold the shape's readings, and five other placements of the two zero samples --
+    the opening one moved inward -- passed every one of them (failure-mode review),
+    one of them reading a linear walker flat under one slowdown."""
+    for samples in (_PS_BODY_SAMPLES, _WALKER_SAMPLES):
+        order = _window_order("z", "s", "b", samples)
+        assert [floor for floor, _ in order] == [0, *[1, 2] * samples, 0], order
+        assert [payload for _, payload in order] == ["z", *["s", "b"] * samples, "z"], order
+        assert sum(1 for floor, _ in order if floor == 0) == _WINDOW_ZERO_SAMPLES, order
+
+
 @pytest.mark.parametrize("at", ["head", "tail"])
 @pytest.mark.parametrize("net_small_ms", [20.0, 24.0], ids=["net-20ms", "net-24ms"])
 def test_ps_body_scaling_rule_reads_a_linear_body_linear_through_a_slowdown_on_its_floor(
@@ -1354,12 +1422,13 @@ def test_ps_body_scaling_rule_reads_a_linear_body_linear_through_a_slowdown_on_i
     zero-payload calls read back to back before the first window, and both windows
     were judged net of it. One slowdown as long as those three calls (30 ms each,
     1.5 times) lifted the floor to 45 ms and left the windows clean, so a linear body
-    at 24 ms net read 8.9 -> 32.9 ms (ratio 3.7: super-linear on two windows), and at
+    at 24 ms net read 8.8 -> 32.8 ms (ratio 3.7: super-linear on two windows), and at
     20 ms its half-cap sample read 4.9 ms net, under the sample floor, which reds
     with the faster-host remedy -- both false reds, and only a linear body could get
     them. A window now times the zero payload at its two ends and is judged net of its
     own floor, so a slowdown over its opening sample (``head``) or its closing one
-    (``tail``) leaves the other end to set the floor. On a simulated clock
+    (``tail``) leaves the other end to set the floor, and the first window reads it
+    linear with no second asked. On a simulated clock
     (:func:`_floor_slowdown_clock`), so it needs no alarm and runs on every host."""
     n_big = _WORST_CASE_BODY_LEN
     calls: list[tuple[int, bool]] = []
@@ -1368,6 +1437,7 @@ def test_ps_body_scaling_rule_reads_a_linear_body_linear_through_a_slowdown_on_i
     verdict = _ps_body_scaling_verdict(lambda _p: None, "x" * n_big, "x" * (n_big // 2), "x" * 64)
     assert (64, True) in calls, calls  # the slowdown reached a zero-payload call
     assert verdict is None, f"a linear body read: {verdict}"
+    assert sum(1 for n, _ in calls if n == n_big) == _PS_BODY_SAMPLES, calls  # one window was enough
 
 
 def test_ps_body_scaling_rule_reads_a_quadratic_through_a_slowdown_on_its_small_samples(monkeypatch):
@@ -1393,15 +1463,19 @@ def test_ps_body_scaling_rule_reads_a_quadratic_through_a_slowdown_on_its_small_
 def test_the_ps_body_scaling_arm_cannot_outlast_the_per_test_timeout(monkeypatch):
     """A re-pin that lifts `_CHAIN_CEILING_MS`, or a window that takes more
     samples, could let one label's worst case -- two windows, each of
-    `_PS_BODY_ZERO_SAMPLES` zero-payload calls and `_PS_BODY_SAMPLES` at each of
+    `_WINDOW_ZERO_SAMPLES` zero-payload calls and `_PS_BODY_SAMPLES` at each of
     two sizes, every call capped by the alarm at the ceiling -- outlast pytest's
     per-test `timeout`, and a timeout kill reports no reading at all
     (failure-mode review). 2 x (2 + 2 x 3) x 3400 ms is 54.4 s against 60 s; three
     zero samples a window, the shape DEF-2002 was filed with, read 61.2 s. The
     count is driven as well as named: the arm's longest path (a stand-in
     super-linear on both windows) is counted on a stubbed timer and must equal
-    the constants' product. The timeout is derived from pyproject.toml, never
-    copied."""
+    the constants' product. And the verdict's structure is read, so a path the
+    stand-in does not reach cannot add calls unseen (DEF-2002's failure-mode
+    review drove a third window behind the under-floor return past every other
+    row): exactly two window calls, no loop, and no call of the body outside a
+    window, which is how an unalarmed warm call would read. The timeout is
+    derived from pyproject.toml, never copied."""
     text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(encoding="utf-8")
     match = re.search(r"^\s*timeout\s*=\s*(\d+)\s*$", text, re.MULTILINE)
     assert match, "pyproject.toml declares no pytest timeout"
@@ -1410,7 +1484,16 @@ def test_the_ps_body_scaling_arm_cannot_outlast_the_per_test_timeout(monkeypatch
     monkeypatch.setattr(sys.modules[__name__], "_ps_body_call_ms", _burst_call_clock(40.0, n_big, 0.0, calls))
     verdict = _ps_body_scaling_verdict(lambda _p: None, "x" * n_big, "x" * (n_big // 2), "x" * 64)
     assert verdict is not None and "super-linear on two windows" in verdict, verdict  # the longest path ran
-    assert len(calls) == 2 * (_PS_BODY_ZERO_SAMPLES + 2 * _PS_BODY_SAMPLES), calls
+    assert len(calls) == 2 * (_WINDOW_ZERO_SAMPLES + 2 * _PS_BODY_SAMPLES), calls
+    module = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    verdict_def = next(node for node in ast.walk(module)
+                       if isinstance(node, ast.FunctionDef) and node.name == "_ps_body_scaling_verdict")
+    called = [node.func.id for node in ast.walk(verdict_def)
+              if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)]
+    assert called.count("_ps_body_window_ms") == 2, called
+    assert "fn" not in called and "_ps_body_call_ms" not in called, called
+    loops = [node for node in ast.walk(verdict_def) if isinstance(node, (ast.For, ast.While, ast.comprehension))]
+    assert not loops, [node.lineno for node in loops if hasattr(node, "lineno")]
     worst_ms = len(calls) * _CHAIN_CEILING_MS
     assert worst_ms < int(match.group(1)) * 1000, (worst_ms, match.group(1))
 
@@ -1599,8 +1682,8 @@ def test_bash_walker_linear_on_opener_flood(label, payload, tmp_path):
 #     cleared before EVERY timed call, so a repeated payload cannot read back
 #     from a cache (0.0 ms on a second call at authoring);
 #   * each size is timed `_WALKER_SAMPLES` times a window (the zero payload
-#     twice, below) and the MINIMUM kept: the
-#     cost of a deterministic walk is its floor, and a scheduler spike on one
+#     twice, below) and the MINIMUM kept: the cost of a deterministic walk is
+#     its floor, and a scheduler spike on one
 #     call is additive noise (a single 16 KB masker call read 25.8 ms against
 #     4.5, 18.9 and 35.7 at the neighbouring sizes on the execution day);
 #   * a window INTERLEAVES its samples (small, large, `_WALKER_SAMPLES` times;
@@ -1687,8 +1770,9 @@ def _walker_sizes(cap: int) -> tuple[int, int]:
     return big, big // 2
 
 
-def _is_swamped(t_zero: float, net_small: float) -> bool:
-    """The sample-floor arm's host question (DEF-926): True when the measured
+def _is_swamped(t_zero: float, net_small: float, *, floor_ms: float = _WALKER_MIN_SAMPLE_MS) -> bool:
+    """The sample-floor arm's host question (DEF-926; ``floor_ms`` is the arm's
+    sample floor, so the PowerShell arm asks it at its own): True when the measured
     per-call cost both exceeds what is left of the small sample once it is
     subtracted AND would itself clear the sample floor -- a host paying more to
     rebuild the memoised readers than the floors' host paid for a whole sample
@@ -1697,7 +1781,7 @@ def _is_swamped(t_zero: float, net_small: float) -> bool:
     per-call cost over a 0.3 ms net sample would read as swamped when it is a
     box faster than the floors' host (the failure-mode review's case) -- that
     one keeps the fast-box red and its re-measure remedies."""
-    return t_zero > net_small and t_zero >= _WALKER_MIN_SAMPLE_MS
+    return t_zero > net_small and t_zero >= floor_ms
 
 
 def _sample_floor_text(
@@ -1774,18 +1858,19 @@ def _walker_call_ms(
 
 def _walker_window_ms(
     consumer: Callable[[str, Path], object], big: str, small: str, zero: str, root: Path,
-) -> tuple[float, float, float] | None:
+) -> tuple[float, float, float] | int:
     """One window of the scaling row: ``(t_zero_ms, t_small_ms, t_big_ms)``, the
     floor of each size's timings in :func:`_window_order` (`_WALKER_SAMPLES` at
     each size, interleaved, the zero payload at the window's two ends), caches
     cleared before each call and the cyclic collector paused throughout,
     restored after (the discipline above: a long pytest process's full
     collections are the host's cost, and only the larger payload triggers
-    them); None when a call overran `_WALKER_CEILING_MS`. The interleave keeps
-    one slowdown from lifting the small floor alone, which read a quadratic
-    consumer linear and a linear one flat (DEF-2000; the measurement is at
-    `tests/test_speedbump_irreversible.py::_search_window_ms`), and the window's
-    pair is judged net of its own zero floor (DEF-2002)."""
+    them); when a call overran `_WALKER_CEILING_MS`, its payload's length
+    (:func:`_overran`). The interleave narrows a slowdown's lift of the small
+    floor alone, which read a quadratic consumer linear and a linear one flat,
+    and does not close it (DEF-2000; :func:`_window_order` says how; the
+    measurement is at `tests/test_speedbump_irreversible.py::_search_window_ms`),
+    and the window's pair is judged net of its own zero floor (DEF-2002)."""
     floors: tuple[list[float], list[float], list[float]] = ([], [], [])
     collector_was_on = gc.isenabled()
     gc.disable()
@@ -1793,7 +1878,7 @@ def _walker_window_ms(
         for floor, payload in _window_order(zero, small, big, _WALKER_SAMPLES):
             elapsed_ms = _walker_call_ms(consumer, payload, root)
             if elapsed_ms is None:
-                return None
+                return len(payload)
             floors[floor].append(elapsed_ms)
     finally:
         if collector_was_on:
@@ -1820,8 +1905,8 @@ def _walker_scaling_judgement(
     consumer(zero, root)  # warm: the first call pays compilation
     # each window reads the per-call cost on THIS host at its two ends (DEF-2002)
     first = _walker_window_ms(consumer, big, small, zero, root)
-    if first is None:
-        return f"{name}: exceeded {_WALKER_CEILING_MS}ms", None
+    if isinstance(first, int):
+        return f"{name}: exceeded {_WALKER_CEILING_MS}ms {_overran(first, zero)}", None
 
     def floor_reading(text: str, swamped: bool) -> tuple[str | None, str | None]:
         return (None, text) if swamped else (text, None)
@@ -1844,8 +1929,8 @@ def _walker_scaling_judgement(
         # small with the fastest big across windows cannot read below the
         # better window's own ratio -- the discipline above.
         second = _walker_window_ms(consumer, big, small, zero, root)
-        if second is None:
-            return f"{name}: exceeded {_WALKER_CEILING_MS}ms on the second window", None
+        if isinstance(second, int):
+            return f"{name}: exceeded {_WALKER_CEILING_MS}ms {_overran(second, zero)} on the second window", None
         t_zero_2, t_small_2, t_big_2 = second
         net_small_2, net_big_2 = t_small_2 - t_zero_2, t_big_2 - t_zero_2
         r1 = net_big / net_small
@@ -1856,7 +1941,7 @@ def _walker_scaling_judgement(
                 name, len(small), t_small_2, t_zero_2, swamped=swamped,
                 window=(
                     f" on the second window; the first read {t_small:.1f} -> {t_big:.1f}ms "
-                    f"net of {t_zero:.1f}ms"
+                    f"(ratio {r1:.2f} net of its {t_zero:.1f}ms)"
                 ),
             ), swamped)
         chosen_lower = net_big > bound and r2 < r1
@@ -1953,6 +2038,9 @@ def test_is_swamped_needs_an_absolute_per_call_cost():
     assert not _is_swamped(1.5, 1.0)        # under the floor: still the fast-box diagnosis
     assert not _is_swamped(3.0, 5.0)        # the sample clears the floor; the arm is not reached
     assert _WALKER_MIN_SAMPLE_MS == 2.0     # the arm reads the floor; a floor change re-measures this
+    # the PowerShell arm asks at its own 5 ms floor (DEF-2002): 3 ms of per-call cost over 1 ms
+    # net is swamped on the walker and a fast box there
+    assert _is_swamped(3.0, 1.0) and not _is_swamped(3.0, 1.0, floor_ms=_PS_BODY_MIN_SAMPLE_MS)
 
 
 def test_sample_floor_text_names_the_host_by_cause():
@@ -2007,7 +2095,7 @@ def test_walker_scaling_row_clears_the_memoised_readers():
     assert (info.currsize, info.hits, info.misses) == (0, 0, 0), info
 
 
-def test_walker_scaling_row_samples_with_the_collector_paused():
+def test_scaling_windows_sample_with_the_collector_paused():
     """A scaling window pauses the cyclic collector around its samples and
     restores it after. The collector's full collections cost in proportion
     to the live heap and only the larger payload's allocations trigger one,
@@ -2027,12 +2115,12 @@ def test_walker_scaling_row_samples_with_the_collector_paused():
         seen.append(gc.isenabled())
 
     was_on = gc.isenabled()
-    assert _walker_window_ms(consumer, "xx", "x", "", Path(".")) is not None
-    assert len(seen) == 2 + 2 * _WALKER_SAMPLES and not any(seen), seen
+    assert isinstance(_walker_window_ms(consumer, "xx", "x", "", Path(".")), tuple)
+    assert len(seen) == _WINDOW_ZERO_SAMPLES + 2 * _WALKER_SAMPLES and not any(seen), seen
     assert gc.isenabled() == was_on
     seen.clear()
-    assert _ps_body_window_ms(consumer, "xx", "x", "") is not None
-    assert len(seen) == _PS_BODY_ZERO_SAMPLES + 2 * _PS_BODY_SAMPLES and not any(seen), seen
+    assert isinstance(_ps_body_window_ms(consumer, "xx", "x", ""), tuple)
+    assert len(seen) == _WINDOW_ZERO_SAMPLES + 2 * _PS_BODY_SAMPLES and not any(seen), seen
     assert gc.isenabled() == was_on
 
 
@@ -2139,9 +2227,11 @@ def test_walker_scaling_row_reads_a_linear_consumer_linear_through_a_slowdown_on
     super-linear on two windows, a false red only a linear consumer could get. A
     window now times the zero payload at its two ends and is judged net of its own
     floor, so a slowdown over its opening sample (``head``) or its closing one
-    (``tail``) leaves the other end to set the floor: no problem and nothing
-    unjudged. On a simulated clock (:func:`_floor_slowdown_clock`), so it needs no
-    alarm and runs on every host."""
+    (``tail``) leaves the other end to set the floor: no problem, nothing unjudged,
+    and no second window asked (a window that took the larger of its two zero
+    samples would read the first window super-linear and be rescued by the second).
+    On a simulated clock (:func:`_floor_slowdown_clock`), so it needs no alarm and
+    runs on every host."""
     cap = _BASH_COMMAND_CAP
     n_big, _n_small = _walker_sizes(cap)
     calls: list[tuple[int, bool]] = []
@@ -2151,18 +2241,21 @@ def test_walker_scaling_row_reads_a_linear_consumer_linear_through_a_slowdown_on
         "linear", lambda _p, _r: None, cap, lambda n: "x" * n, tmp_path)
     assert (64, True) in calls, calls  # the slowdown reached a zero-payload call
     assert (problem, unjudged) == (None, None), (problem, unjudged)
+    assert sum(1 for n, _ in calls if n == n_big) == _WALKER_SAMPLES, calls  # one window was enough
 
 
 def test_each_scaling_window_is_judged_net_of_its_own_floor(tmp_path, monkeypatch):
     """DEF-2002: two spikes on exactly the first window's two zero-payload samples
     lift that window's floor alone -- the one shape a zero at each end cannot see --
-    and read a linear consumer super-linear there (8.9 -> 32.9 ms net at 24 ms); the
-    second window is judged net of its OWN floor and reads it linear, on both arms.
-    Judged net of the first window's floor, the second reads super-linear too and
-    the row reds. The same spikes at 20 ms net, the row's own example, read the
+    and read a linear consumer super-linear there (about 9 -> 33 ms net at 24 ms);
+    the second window is judged net of its OWN floor and reads it linear, on both
+    arms. Judged net of the first window's floor, the second reads super-linear too
+    and the row reds. The same spikes at 20 ms net, the row's own example, read the
     PowerShell arm's half-cap sample under its 5 ms floor on the first window, which
-    is not asked again (named in DEF-2002's strike). On a simulated clock
-    (:func:`_floor_slowdown_clock`), so it needs no alarm and runs on every host."""
+    is not asked again: that red names the per-call cost as its cause
+    (:func:`test_the_ps_body_under_floor_red_names_a_swamped_sample_by_cause`). On a
+    simulated clock (:func:`_floor_slowdown_clock`), so it needs no alarm and runs
+    on every host."""
     n_big = _WORST_CASE_BODY_LEN
     calls: list[tuple[int, bool]] = []
     monkeypatch.setattr(sys.modules[__name__], "_ps_body_call_ms", _floor_slowdown_clock(
@@ -2181,6 +2274,109 @@ def test_each_scaling_window_is_judged_net_of_its_own_floor(tmp_path, monkeypatc
     assert [n for n, slowed in calls if slowed] == [64, 64], calls
     assert sum(1 for n, _ in calls if n == n_big) == 2 * _WALKER_SAMPLES, calls  # a second window was asked
     assert (problem, unjudged) == (None, None), (problem, unjudged)
+
+
+def test_the_ps_body_under_floor_red_names_a_swamped_sample_by_cause(monkeypatch):
+    """DEF-2002, by DEF-926's rule: the PowerShell arm's under-floor sample stays a
+    red, and its sentence names the cause. Two spikes on the first window's zero
+    samples, at 20 ms net and a 30 ms per-call cost, read the half-cap sample 4.9 ms
+    net of a 45.1 ms floor -- a per-call cost above what is left of the sample --
+    which the arm used to diagnose as a box much faster than the floors' host, the
+    remedy DEF-926 took off the walker arm. The fast-box sentence is kept where the
+    per-call cost is small (:func:`test_ps_body_scaling_rule_reds_a_pair_under_the_sample_floor`),
+    and where it is under this arm's own 5 ms floor: 3 ms of per-call cost over 1 ms
+    net is a whole sample under the floor, a fast box."""
+    n_big = _WORST_CASE_BODY_LEN
+    calls: list[tuple[int, bool]] = []
+    monkeypatch.setattr(sys.modules[__name__], "_ps_body_call_ms", _floor_slowdown_clock(
+        20.0, n_big, _PS_BODY_SAMPLES, calls, at="spikes"))
+    verdict = _ps_body_scaling_verdict(lambda _p: None, "x" * n_big, "x" * (n_big // 2), "x" * 64)
+    assert verdict is not None and "mostly the 45.1ms per-call cost" in verdict, verdict
+    assert "slow or loaded host" in verdict and "re-run" in verdict and "never widen" in verdict, verdict
+    assert "much faster" not in verdict, verdict
+    monkeypatch.setattr(sys.modules[__name__], "_ps_body_call_ms", _window_costs_clock(
+        [(3.0, 4.0, 10.0)], _PS_BODY_SAMPLES, n_big // 2, n_big, []))
+    verdict = _ps_body_scaling_verdict(lambda _p: None, "x" * n_big, "x" * (n_big // 2), "x" * 64)
+    assert verdict is not None and "much faster" in verdict and "slow or loaded" not in verdict, verdict
+
+
+def test_a_scaling_red_names_the_floor_of_the_window_it_reports(tmp_path, monkeypatch):
+    """With a floor per window the two windows can subtract different per-call costs
+    (DEF-2002), so a red names the floor of the window its reading rests on, and the
+    first window's beside it when the second was chosen. A quadratic reads 25 ->
+    145 ms net of a 45 ms floor on the first window and 40 -> 160 net of 30 on the
+    second, chosen for its lower ratio, on both arms. A sentence naming the wrong
+    floor sends the maintainer after a per-call cost the reading never subtracted."""
+    n_big = _WORST_CASE_BODY_LEN
+    calls: list[int] = []
+    monkeypatch.setattr(sys.modules[__name__], "_ps_body_call_ms", _window_costs_clock(
+        [(45.0, 70.0, 190.0), (30.0, 70.0, 190.0)], _PS_BODY_SAMPLES, n_big // 2, n_big, calls))
+    verdict = _ps_body_scaling_verdict(lambda _p: None, "x" * n_big, "x" * (n_big // 2), "x" * 64)
+    assert verdict is not None and "40.0ms at 15000 bytes -> 160.0ms" in verdict, verdict
+    assert "net of the 30.0ms per-call cost" in verdict, verdict
+    assert "the first window read 25.0 -> 145.0ms net of its 45.0ms" in verdict, verdict
+    cap = _BASH_COMMAND_CAP
+    n_big, n_small = _walker_sizes(cap)
+    calls = []
+    monkeypatch.setattr(sys.modules[__name__], "_walker_call_ms", _window_costs_clock(
+        [(45.0, 70.0, 190.0), (30.0, 70.0, 190.0)], _WALKER_SAMPLES, n_small, n_big, calls))
+    problem, unjudged = _walker_scaling_judgement(
+        "quadratic", lambda _p, _r: None, cap, lambda n: "x" * n, tmp_path)
+    assert unjudged is None and problem is not None, (problem, unjudged)
+    assert "(40.0 -> 160.0ms net of the 30.0ms per-call cost" in problem, problem
+    assert "the first window read 70.0 -> 190.0ms (ratio 5.80 net of its 45.0ms)" in problem, problem
+
+
+def test_a_second_window_under_the_floor_is_read_by_its_own_floor(tmp_path, monkeypatch):
+    """A second window whose half-cap sample falls under the floor is diagnosed by
+    ITS OWN per-call cost (DEF-2002 with DEF-926's routing), not the first window's.
+    PowerShell: 10 -> 40 ms net of a 1 ms floor asks again, and the second window
+    reads 3 ms net of 9: a red naming the 9 ms cost and a slow or loaded host.
+    Walker: 2.5 -> 11 ms net of 1 asks again, and 1 ms net of 5 is a swamped sample,
+    skipped with that cause and window one's reading beside it; judged by the first
+    window's 1 ms, it would red with the fast-box remedies."""
+    n_big = _WORST_CASE_BODY_LEN
+    calls: list[int] = []
+    monkeypatch.setattr(sys.modules[__name__], "_ps_body_call_ms", _window_costs_clock(
+        [(1.0, 11.0, 41.0), (9.0, 12.0, 41.0)], _PS_BODY_SAMPLES, n_big // 2, n_big, calls))
+    verdict = _ps_body_scaling_verdict(lambda _p: None, "x" * n_big, "x" * (n_big // 2), "x" * 64)
+    assert verdict is not None and "mostly the 9.0ms per-call cost (3.0ms net on the second window)" in verdict, verdict
+    assert "much faster" not in verdict, verdict
+    cap = _BASH_COMMAND_CAP
+    n_big, n_small = _walker_sizes(cap)
+    calls = []
+    monkeypatch.setattr(sys.modules[__name__], "_walker_call_ms", _window_costs_clock(
+        [(1.0, 3.5, 12.0), (5.0, 6.0, 12.0)], _WALKER_SAMPLES, n_small, n_big, calls))
+    problem, unjudged = _walker_scaling_judgement(
+        "stand_in", lambda _p, _r: None, cap, lambda n: "x" * n, tmp_path)
+    assert problem is None and unjudged is not None, (problem, unjudged)
+    assert "mostly the 5.0ms per-call cost" in unjudged, unjudged
+    assert "the first read 3.5 -> 12.0ms (ratio 4.40 net of its 1.0ms)" in unjudged, unjudged
+
+
+@pytest.mark.parametrize("hung", [64, "big"], ids=["zero-payload", "big"])
+def test_a_scaling_overrun_names_the_call_that_overran(tmp_path, monkeypatch, hung):
+    """A window's overrun names the call that hit the alarm: the zero-payload call
+    points at the host (a reader rebuild or a setup that hangs), a payload by its
+    bytes at the shape. Both arms; DEF-2002 moved the zero-payload call inside the
+    windows, and the speedbump arm's form is the precedent (DEF-4001: a bare None
+    could not say). On a stubbed one-call timer that reads an overrun as None."""
+    n_big = _WORST_CASE_BODY_LEN
+    length = 64 if hung == 64 else n_big
+    monkeypatch.setattr(sys.modules[__name__], "_ps_body_call_ms",
+                        lambda _fn, payload: None if len(payload) == length else 1.0)
+    verdict = _ps_body_scaling_verdict(lambda _p: None, "x" * n_big, "x" * (n_big // 2), "x" * 64)
+    expected = "on the zero-payload call" if hung == 64 else f"at {n_big} bytes"
+    assert verdict == f"exceeded {_CHAIN_CEILING_MS}ms {expected}", verdict
+    cap = _BASH_COMMAND_CAP
+    n_big, _n_small = _walker_sizes(cap)
+    length = 64 if hung == 64 else n_big
+    monkeypatch.setattr(sys.modules[__name__], "_walker_call_ms",
+                        lambda _c, payload, _r: None if len(payload) == length else 1.0)
+    problem, unjudged = _walker_scaling_judgement(
+        "stand_in", lambda _p, _r: None, cap, lambda n: "x" * n, tmp_path)
+    expected = "on the zero-payload call" if hung == 64 else f"at {n_big} bytes"
+    assert (problem, unjudged) == (f"stand_in: exceeded {_WALKER_CEILING_MS}ms {expected}", None)
 
 
 @pytest.mark.parametrize("t_zero, t_small, swamped", [
