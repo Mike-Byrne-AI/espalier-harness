@@ -1595,8 +1595,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "than passing.",
     ),
     "tests/test_write_guard.py": (
-        33, "a3eb1f923629072e71244f70431245536a9d71be9fa63e6ad0eb03ad8bed558c",
+        34, "02d5bf3166bc34777498fa76665cbb62900bb4978656c9227a3454dfbc753676",
         "CORRECT_BY_REMEDY",
+        "GREW 33 -> 34 on 2026-10-17 (the drive-row lane, DEF-2022): "
+        "TestBenchGuardFixture::test_the_drive_cd_row_reads_the_tier_its_host_expects "
+        "picks one row by its id out of the probe's `ROWS` and drives it through the "
+        "rehearsal's `_tier`: a selection, not a property over the table, and its "
+        "one-element unpacking raises when the row leaves the table or is doubled, so "
+        "a shrink reds there instead of narrowing it. "
         "GREW 32 -> 33 on 2026-10-16 (the rm-launch-forms lane, DEF-1162): "
         "`_recursive_delete_launch_forms` builds one `ps-wrap-<word>` head per word "
         "of the Bash wrapper roster (`_roster_words(bp._CMD_POS_WRAPPER)`), `xargs` "

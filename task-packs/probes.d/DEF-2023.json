@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2023",
+ "subject": "tests/conftest.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the defect is a line printed only when an xdist worker crashes between collecting and its first test report: a probe reading conftest's text closes on the fix's own paperwork (FAILURE_MODES 5.23), and a run crashing a worker under the suite's conftest builds the suite's tree (minutes) from a test inside the live tests/ tree, so the fix lands with its child-run pin, which is the oracle, as DEF-2021's did",
+ "row_sha": "b9287cb63f93",
+ "text_sha": "e28831f02694",
+ "verified_2026_10_17": "OPEN (filed 2026-10-17; probe driven at filing)"
+}
