@@ -2260,8 +2260,11 @@ def test_every_live_row_is_probed_or_declared():
         "Every row states a claim about this "
         "tree, and nothing re-measures a row that has no probe -- that is the "
         "DEF-546 stale-shape class, and it has a live instance every time this "
-        "list is non-empty. Add a probe with `cmd` + `open_value`, or declare "
-        "`why_not` if the claim has no local oracle. There is no third option."
+        "list is non-empty. A `ledger_row.py file` cut off between its row and "
+        "its probe is finished by the same command run again (it writes only "
+        "the probe), and a strike cut off after retiring its probe by the same "
+        "strike run again. Otherwise add a probe with `cmd` + `open_value`, or "
+        "declare `why_not` if the claim has no local oracle. There is no third option."
     )
     silent = sorted(
         i for i in live
