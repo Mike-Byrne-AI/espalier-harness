@@ -199,7 +199,7 @@ def interpreter_start_failure(argv: "list[str] | tuple[str, ...]") -> str | None
     ``argv`` that is the very PATH ``sys.executable`` was started as is
     answered without a spawn. The PATH, not the file: whether an interpreter
     starts depends on where it is invoked from (its ``pyvenv.cfg`` and
-    ``home``), so the identity probe's ``samefile`` would pass a broken venv
+    ``home``), so a match by file would pass a broken venv
     whose ``python`` is a symlink or a hardlink to the running binary -- the
     trap this probe exists for, made by symlink instead of ``--copies``. Not
     when this shell sets ``PYTHONHOME`` or ``PYTHONPATH`` either: those are
@@ -417,22 +417,21 @@ def _banner_verdict(
 ) -> str | None:
     """The kept ``--version`` answer for ``argv`` (:func:`interpreter_banner`).
 
-    A one-word argv that is the interpreter running this, by file
-    (``samefile``), is answered from ``sys.version_info`` without a spawn: the
-    same binary prints the same version from any path that reaches it, so the
-    answer is read, not assumed, and a 3.9 running interpreter still reads
-    3.9. Asked by spawn, a loaded host could leave the very interpreter
-    running doctor unanswered, and doctor called it "older than 3.10" (both
-    reviews of DEF-5015, the common pip, pipx and Homebrew install). The
-    start-up probe keys its own shortcut on the invoked path instead, since a
-    start depends on where the interpreter is invoked from.
+    A one-word argv that is the interpreter running this, by the rule its
+    platform launches by (:func:`_is_running_interpreter`), is answered from
+    ``sys.version_info`` without a spawn, so the answer is read, not assumed,
+    and a 3.9 running interpreter still reads 3.9. Asked by spawn, a loaded host
+    could leave the very interpreter running doctor unanswered, and doctor
+    called it "older than 3.10" (both reviews of DEF-5015, the common pip, pipx
+    and Homebrew install). The start-up probe keys its own shortcut on the
+    invoked path on every platform, since a start depends on where the
+    interpreter is invoked from.
     """
-    import os
     import sys
 
     if len(argv) == 1 and sys.executable:
         try:
-            if os.path.samefile(argv[0], sys.executable):
+            if _is_running_interpreter(argv[0]):
                 return _running_interpreter_banner()
         except (OSError, ValueError):
             pass
@@ -452,6 +451,39 @@ def _running_interpreter_banner() -> str:
     import sys
 
     return "Python {}.{}.{}".format(*sys.version_info[:3])
+
+
+def _is_running_interpreter(path: str) -> bool:
+    """Whether ``path`` is the interpreter running this, for its ``--version``
+    banner only, never its start (DEF-5016; the hook twin
+    ``tools/cc/hooks/_hook_utils.py::_is_running_interpreter`` keeps the same
+    rule, its body pinned equal). By the rule its platform launches an interpreter by. On Windows
+    by its path as invoked: a venv's ``python.exe`` is a redirector that reads
+    the ``pyvenv.cfg`` beside it, so a link of it elsewhere cannot start ("No
+    pyvenv.cfg file"; the failure-mode review, driven) and is asked, as is an
+    8.3 short spelling of this path, which at worst reads "not confirmed".
+    Elsewhere by the file a symbolic link resolves to (``realpath``): the
+    Homebrew and pipx ``python3`` is a symlink of the running binary and prints
+    the same version, so a loaded host cannot leave it unanswered (DEF-5015),
+    while a hard link in another folder is asked, since a build that loads its
+    library from beside itself cannot print even its version there. The
+    start-up probe keys on the invoked path on every platform
+    (:func:`interpreter_start_failure`)."""
+    import os
+    import sys
+
+    if _running_by_invoked_path():
+        return (os.path.normcase(os.path.abspath(path))
+                == os.path.normcase(os.path.abspath(sys.executable)))
+    return os.path.realpath(path) == os.path.realpath(sys.executable)
+
+
+def _running_by_invoked_path() -> bool:
+    """True on Windows, where :func:`_is_running_interpreter` matches by the
+    path as invoked; a seam, so one host's tests drive both platforms' rules."""
+    import os
+
+    return os.name == "nt"
 
 
 def _ask_banner(argv: "list[str] | tuple[str, ...]", seconds: int, tries: int) -> str | None:
@@ -530,22 +562,22 @@ def interpreter_meets_floor(name_or_path: str | None) -> bool:
     no-import boundary for the banner and does NOT run the start-up probe: it
     serves hook-side warnings and remedy hints, not wiring, where the wired
     interpreter it is usually asked about is the one running the hook, and a
-    spawn there is paid on every SessionStart. Its other askers (the
-    ``python3``/``python``/``py -3`` a hint spells) are the one gap left. Nor
-    does the twin keep or retry its banner: one 2 s try, with a timeout read
-    as below the floor by a deliberate fail-open, where this copy asks twice
-    and reads a probe that never answered as no answer (``DEF-5015``; the hook
-    side has a row of its own).
+    spawn there is paid on SessionStart. Its other askers (the
+    ``python3``/``python``/``py -3`` a hint spells) are the one gap left. The
+    twin keeps its banner per process, answers the running interpreter from
+    ``sys.version_info`` and reads a probe that never answered as no answer, as
+    this copy does (``DEF-5016``), but asks once, not twice: its spawn is paid
+    on SessionStart's budget.
 
-    ⚠ No ``samefile(sys.executable)`` short-circuit in this body, unlike the
-    IDENTITY probes. That shortcut is sound for "is this a Python 3" -- the
-    process asking demonstrably is one -- but it cannot answer the floor
-    question without assuming its own answer, and a 3.9 host is exactly where
-    it would be asked. (The start-up probe skips a spawn for the running
-    interpreter's own path, for the start question only. The banner this
-    reads answers the running interpreter's own file from
-    ``sys.version_info``, which reads the version rather than assuming it, so
-    a 3.9 host still reads 3.9: see :func:`_banner_verdict`.)
+    ⚠ No short-circuit of its own in this body, and since DEF-5016 none in the
+    identity probes either (doctor's ``samefile`` one was a third rule): a
+    shortcut that assumed the answer could not answer the floor question, and
+    a 3.9 host is exactly where it would be asked. The banner this reads
+    answers the running interpreter from ``sys.version_info`` by the rule its
+    platform launches by (:func:`_is_running_interpreter`), which reads the
+    version rather than assuming it, so a 3.9 host still reads 3.9. (The
+    start-up probe skips a spawn for the running interpreter's own path, for
+    the start question only.)
 
     False for an unresolvable name, a non-interpreter, a probe that cannot
     run, or an interpreter that cannot start: an unreadable answer is not a

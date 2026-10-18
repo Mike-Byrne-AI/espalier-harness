@@ -1322,3 +1322,192 @@ class TestRootedPathJudge:
                      lambda: hu.directory_exists(tmp_path)):  # type: ignore[call-arg]
             with _pytest.raises(TypeError, match="bash"):
                 call()
+
+
+class TestTheInterpreterTwinsReadOneBanner:
+    """DEF-5016: on a host loaded enough that `--version` misses its 2 s, the hook
+    twins read the interpreter running the hooks as below the floor (and a
+    Python 3 by the identity shortcut), so SessionStart told an operator a
+    working Python 3 was older than the floor and to install one they have. The
+    twins now read one banner, kept per process: the running interpreter's from
+    ``sys.version_info`` with no spawn, another's by one spawn, and a probe that
+    never answered is no answer (``interpreter_version_unanswered``). Earned
+    red on main: every row but the cannot-run one."""
+
+    def _fresh(self, monkeypatch):
+        import _hook_utils
+        monkeypatch.setattr(_hook_utils, "_INTERPRETER_IDENTITY_MEMO", {})
+        return _hook_utils
+
+    @staticmethod
+    def _spawns(hu, monkeypatch, answer) -> list:
+        """Stub the probe's spawn: ``answer`` is the banner it prints, or an
+        exception it raises. Returns the argvs it was asked."""
+        import subprocess
+        calls: list = []
+
+        def run(argv, **_kw):
+            calls.append(argv)
+            if isinstance(answer, BaseException):
+                raise answer
+            return subprocess.CompletedProcess(argv, 0, stdout=answer, stderr="")
+        monkeypatch.setattr(hu, "run_bounded", run)
+        return calls
+
+    @staticmethod
+    def _other(tmp_path: Path) -> str:
+        other = tmp_path / "python3"
+        other.write_bytes(b"")
+        return str(other)
+
+    def test_the_running_interpreter_is_read_without_a_spawn(self, monkeypatch):
+        import subprocess
+        hu = self._fresh(monkeypatch)
+        calls = self._spawns(hu, monkeypatch, subprocess.TimeoutExpired("python", 2))
+        assert hu.interpreter_meets_floor(sys.executable) is (tuple(sys.version_info[:2]) >= hu.MIN_PYTHON)
+        assert hu.interpreter_is_python3(sys.executable) is True
+        assert hu.interpreter_version_unanswered(sys.executable) is False
+        assert hu._interpreter_banner(sys.executable) == "Python {}.{}.{}".format(*sys.version_info[:3])
+        assert calls == [], "a loaded host cannot leave the running interpreter unanswered"
+
+    def test_a_running_interpreter_below_the_floor_still_reads_below_it(self, monkeypatch):
+        """Read, not assumed: the shortcut cannot bless a 3.9 running the hooks."""
+        import subprocess
+        hu = self._fresh(monkeypatch)
+        self._spawns(hu, monkeypatch, subprocess.TimeoutExpired("python", 2))
+        monkeypatch.setattr(hu, "_running_interpreter_banner", lambda: "Python 3.9.6")
+        assert hu.interpreter_meets_floor(sys.executable) is False
+        assert hu.interpreter_is_python3(sys.executable) is True
+
+    def test_another_interpreter_that_never_answers_is_no_answer(self, tmp_path, monkeypatch):
+        import subprocess
+        hu = self._fresh(monkeypatch)
+        calls = self._spawns(hu, monkeypatch, subprocess.TimeoutExpired("python3", 2))
+        other = self._other(tmp_path)
+        assert hu.interpreter_version_unanswered(other) is True
+        assert hu.interpreter_meets_floor(other) is False
+        assert hu.interpreter_is_python3(other) is False
+        assert len(calls) == 1, "one banner, kept per process, read by both twins"
+
+    def test_an_answer_is_read_once_by_both_twins(self, tmp_path, monkeypatch):
+        cases = [("Python 3.12.1", True, True), ("Python 3.9.6", False, True), ("", False, False)]
+        for i, (banner, floor, py3) in enumerate(cases):
+            hu = self._fresh(monkeypatch)
+            calls = self._spawns(hu, monkeypatch, banner)
+            (tmp_path / str(i)).mkdir()
+            other = self._other(tmp_path / str(i))
+            assert hu.interpreter_meets_floor(other) is floor, banner
+            assert hu.interpreter_is_python3(other) is py3, banner
+            assert hu.interpreter_version_unanswered(other) is False, banner
+            assert len(calls) == 1, (banner, calls)
+
+    def test_a_launcher_spelling_never_takes_the_running_shortcut(self, monkeypatch):
+        """The code review: `py -3` asks the launcher's choice, which a `py` that
+        resolves to this interpreter's own path does not answer."""
+        import shutil
+        hu = self._fresh(monkeypatch)
+        calls = self._spawns(hu, monkeypatch, "Python 3.12.1")
+        monkeypatch.setattr(shutil, "which", lambda name, *a, **k: sys.executable if name == "py" else None)
+        assert hu.interpreter_meets_floor("py -3") is True
+        assert len(calls) == 1 and calls[0][1:] == ["-3", "--version"], calls
+
+    def test_a_probe_that_never_answered_is_kept_too(self, tmp_path, monkeypatch):
+        """The code review: no answer is kept as an answer is, so a second
+        reader of the same name spawns nothing."""
+        import subprocess
+        hu = self._fresh(monkeypatch)
+        calls = self._spawns(hu, monkeypatch, subprocess.TimeoutExpired("python3", 2))
+        other = self._other(tmp_path)
+        assert [hu.interpreter_version_unanswered(other) for _ in range(3)] == [True, True, True]
+        assert len(calls) == 1, calls
+
+    @staticmethod
+    def _link_of_the_running_interpreter(tmp_path, *, symbolic=False) -> Path:
+        """A hard (or symbolic) link of the running interpreter's file in
+        another folder; the row skips where the host cannot make one."""
+        import os
+
+        import pytest
+        link = tmp_path / ("sym" if symbolic else "hard") / Path(sys.executable).name
+        link.parent.mkdir()
+        # The binary itself: os.link does not follow a symlink on Linux, and a CI interpreter is
+        # one (bin/python -> python3.11, relative), whose link in another folder would dangle.
+        target = sys.executable if symbolic else os.path.realpath(sys.executable)
+        try:
+            (os.symlink if symbolic else os.link)(target, link)
+        except OSError as exc:  # no hard links across volumes; no symlinks without the privilege
+            pytest.skip(f"no {'symbolic' if symbolic else 'hard'} link here: {exc}")
+        return link
+
+    def test_on_windows_a_link_of_the_running_interpreter_elsewhere_is_asked(self, tmp_path, monkeypatch):
+        """The failure-mode review, driven: a Windows venv's python.exe linked
+        elsewhere prints "No pyvenv.cfg file", and `samefile` read it as this
+        interpreter. On Windows its invoked path is not this one's, so it is
+        asked. The Windows rule, driven on every host through the seam."""
+        hu = self._fresh(monkeypatch)
+        monkeypatch.setattr(hu, "_running_by_invoked_path", lambda: True, raising=False)
+        calls = self._spawns(hu, monkeypatch, "No pyvenv.cfg file")
+        link = self._link_of_the_running_interpreter(tmp_path)
+        assert hu.interpreter_is_python3(str(link)) is False
+        assert hu.interpreter_meets_floor(str(link)) is False
+        assert len(calls) == 1, calls
+
+    def test_elsewhere_a_symlink_of_the_running_binary_is_read_without_a_spawn(self, tmp_path, monkeypatch):
+        """Off Windows a symlink of the binary prints the same version (the
+        Homebrew and pipx ``python3``), so it is read from ``sys.version_info``
+        and a loaded host cannot leave it unanswered (DEF-5015; one rule for
+        both platforms was DEF-5016's batch error). The POSIX rule, driven on
+        every host through the seam."""
+        import subprocess
+        hu = self._fresh(monkeypatch)
+        monkeypatch.setattr(hu, "_running_by_invoked_path", lambda: False, raising=False)
+        calls = self._spawns(hu, monkeypatch, subprocess.TimeoutExpired(["python3", "--version"], 2))
+        link = self._link_of_the_running_interpreter(tmp_path, symbolic=True)
+        assert hu.interpreter_is_python3(str(link)) is True
+        assert hu.interpreter_meets_floor(str(link)) is (tuple(sys.version_info[:2]) >= hu.MIN_PYTHON)
+        assert hu.interpreter_version_unanswered(str(link)) is False
+        assert calls == [], calls
+
+    def test_elsewhere_a_hard_link_in_another_folder_is_asked(self, tmp_path, monkeypatch):
+        """The failure-mode pass on the split: a build that loads its library
+        from beside itself (python-build-standalone, which uv installs) cannot
+        print even its version from a hard link in another folder, so off
+        Windows only a symlink is read as the running binary."""
+        import subprocess
+        hu = self._fresh(monkeypatch)
+        monkeypatch.setattr(hu, "_running_by_invoked_path", lambda: False, raising=False)
+        calls = self._spawns(hu, monkeypatch, subprocess.TimeoutExpired(["python3", "--version"], 2))
+        link = self._link_of_the_running_interpreter(tmp_path)
+        assert hu.interpreter_version_unanswered(str(link)) is True
+        assert len(calls) == 1, calls
+
+    def test_the_rule_is_by_path_on_windows_and_by_file_elsewhere(self):
+        import os
+
+        import _hook_utils as hu
+        assert hu._running_by_invoked_path() is (os.name == "nt")
+
+    def test_the_orientation_line_says_a_probe_that_never_answered(self, tmp_path, monkeypatch):
+        """Both reviews: a timeout read as `python3=no`, and on a launcher-only
+        host as `py=no (no python interpreter detected)` beside a SessionStart
+        line saying the same `py -3` was not confirmed. It reads `?`."""
+        import shutil
+        import subprocess
+        hu = self._fresh(monkeypatch)
+        self._spawns(hu, monkeypatch, subprocess.TimeoutExpired("python", 2))
+        paths = {}
+        for name in ("python3", "python", "py"):
+            (tmp_path / name).mkdir()
+            paths[name] = self._other(tmp_path / name)
+        monkeypatch.setattr(shutil, "which", lambda name, *a, **k: paths.get(name))
+        line = hu.host_orientation_line()
+        assert "python3=? python=? py=? (no python interpreter confirmed: a probe did not answer)" in line, line
+
+    def test_an_interpreter_that_cannot_run_is_an_answer(self, tmp_path, monkeypatch):
+        """Holds on main too: a probe that cannot run is a False verdict the
+        banner names, not an unanswered one."""
+        hu = self._fresh(monkeypatch)
+        self._spawns(hu, monkeypatch, OSError("exec format error"))
+        other = self._other(tmp_path)
+        assert getattr(hu, "interpreter_version_unanswered", lambda _n: False)(other) is False
+        assert hu.interpreter_meets_floor(other) is False

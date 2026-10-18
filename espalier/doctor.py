@@ -489,21 +489,16 @@ def _interpreter_is_python3(path: "str | None", *flags: str) -> bool:
     """
     if not path:
         return False
-    import sys
-    # The process running this code IS a working Python 3. Short-circuiting it
-    # removes a subprocess spawn from the common case and, more importantly,
-    # removes a FALSE ALARM: on a host where spawning is slow or blocked
-    # outright (EDR forbidding child processes), the probe times out, returns
-    # False, and reports a healthy host as failing open. Closing a fail-open
-    # must not open a fail-closed on the same message.
-    try:
-        if not flags and os.path.samefile(path, sys.executable):
-            return True
-    except OSError:
-        pass
     # The kept banner, asked twice (DEF-5015), the one the resolver and the
     # floor check read too. One that never answered is not accepted here; a
-    # claim asks `_interpreter_banner_unanswered` to say so.
+    # claim asks `_interpreter_banner_unanswered` to say so. The process
+    # running this code is answered by the banner itself, from
+    # `sys.version_info` with no spawn (`_python_floor._is_running_interpreter`,
+    # by the rule its platform launches by), so a host where spawning is slow
+    # or blocked outright (EDR forbidding child processes) still reads a
+    # healthy host as healthy. No shortcut here: a `samefile` one was a third
+    # rule, and on Windows it read a hard link of a venv's python.exe elsewhere,
+    # which cannot start, as a Python 3 (DEF-5016's review of the split).
     banner = interpreter_banner([path, *flags])
     # Through the ONE banner rule, not `startswith("Python 3.")`: the floor
     # parser searches anywhere in the output, and a banner with a line before
@@ -533,11 +528,11 @@ def _interpreter_banner_unanswered(path: "str | None", *flags: str) -> "str | No
 # ``_interpreter_is_python3``, split out for DEF-636: stock /usr/bin/python3 on
 # macOS is 3.9.6, which IS a Python 3 and is NOT a Python this package runs on;
 # conflating the two questions is what let `doctor` bless a host where the
-# blueprint chain was dead in every session. No ``samefile(sys.executable)``
-# short-circuit, unlike the identity probe: that shortcut is sound for "is this
-# a Python 3" but cannot answer the floor question without assuming its own
-# answer -- the version has to be read (pinned on the implementation by
-# tests/test_python_floor.py). A module-level ALIAS of the single engine-side
+# blueprint chain was dead in every session. No short-circuit of its own, and
+# since DEF-5016 neither has the identity probe: the banner answers the running
+# interpreter from ``sys.version_info``, so the version is read, never assumed
+# (pinned on the implementation by tests/test_python_floor.py). A module-level
+# ALIAS of the single engine-side
 # implementation, kept as a seam so tests monkeypatch this name rather than
 # fabricating filesystem state; an alias rather than a one-line wrapper because
 # the sister-site probe's alias-call arm reads a wrapper as a re-implementation
