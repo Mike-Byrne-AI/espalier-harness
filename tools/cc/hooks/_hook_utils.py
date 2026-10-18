@@ -1376,6 +1376,58 @@ def next_fence_state(line: str, fence: "str | None") -> "str | None":
     return None if closes else fence
 
 
+#: One leftmost pass over a stretch of prose, as CommonMark reads it: whichever
+#: of an inline code span and an HTML comment starts first wins. A comment
+#: opened at a line's start (up to three spaces in) is an HTML block and may run
+#: across blank lines; one opened mid-line cannot leave its paragraph, nor can a
+#: code span. Every run is bounded, so an opener whose close is out of reach is
+#: left as it is and no input makes the pass slow (the longest comment in this
+#: repository's docs is 201 characters, the longest span 1009).
+_CODE_SPAN_OR_COMMENT_RE = re.compile(
+    r"(`+)(?!`)(?:(?!\n[ \t]*\n).){1,1200}?(?<!`)\1(?!`)"
+    r"|(?P<comment>(?m:^)[ ]{0,3}<!--.{0,2000}?-->"
+    r"|<!--(?:(?!\n[ \t]*\n).){0,2000}?-->)",
+    re.S,
+)
+
+
+def _drop_prose_comments(prose: str) -> str:
+    if "-->" not in prose:
+        return prose
+    return _CODE_SPAN_OR_COMMENT_RE.sub(
+        lambda m: " " if m.group("comment") is not None else m.group(0), prose)
+
+
+def without_html_comments(text: str) -> str:
+    """``text`` as a reader sees it: every HTML comment outside a fenced block
+    and an inline code span replaced by a space. A comment renders as nothing,
+    so its words are no document's content: the recall engine's token bags and
+    ``is_seeded_placeholder`` read text through this. A fragment marker sits
+    above its own heading, and the section splitter gave the section BEFORE it
+    the paths in its ``bound=`` list as vocabulary (driven 2026-09-30: one path
+    added to a marker moved the recall paraphrase table). Fences are read by
+    ``next_fence_state``, the grammar the splitter uses; text with no opener or
+    no closer comes back as it is."""
+    if "<!--" not in text or "-->" not in text:
+        return text
+    out: list[str] = []
+    prose: list[str] = []
+    fence: "str | None" = None
+    for line in text.splitlines(keepends=True):
+        fenced = fence is not None
+        fence = next_fence_state(line.rstrip("\r\n"), fence)
+        if fenced or fence is not None:
+            if prose:
+                out.append(_drop_prose_comments("".join(prose)))
+                prose = []
+            out.append(line)
+        else:
+            prose.append(line)
+    if prose:
+        out.append(_drop_prose_comments("".join(prose)))
+    return "".join(out)
+
+
 def iter_doc_sections(text: str) -> "list[tuple[str, str]]":
     """``[(title, body), ...]`` for every ``## `` section in ``text``.
 
@@ -1438,7 +1490,9 @@ def is_seeded_placeholder(title: str, body: str) -> bool:
         return False
     if _CODE_BLOCK_RE.search(body):
         return False
-    words = _content_words(body)
+    # A comment's words are no reader's content: a TODO left as an HTML comment
+    # under the seeded heading is still the scaffold.
+    words = _content_words(without_html_comments(body))
     return any(len(words - seed_words) < SEEDED_NEW_CONTENT_FLOOR
                for seed_words in seed_word_sets)
 

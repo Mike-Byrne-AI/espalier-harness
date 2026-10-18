@@ -92,8 +92,10 @@ every `.claude/rules/**/*.md` with no configuration, plus the documents
 `recall_sources` names in `espalier.toml`; an append-only log under
 `recall_records` answers only `/recall --records <topic>`, so its dated
 sections never crowd the pitfalls. A section that only points elsewhere stays
-out of the index when its body carries `<!-- recall: skip -->`. The rule for
-new facts above is unchanged.
+out of the index when its body carries `<!-- recall: skip -->`. Text inside an
+HTML comment outside code is not indexed: it renders as nothing, so a word that
+lives only in a comment does not make a section findable. The rule for new
+facts above is unchanged.
 
 ### When the lesson is about the harness but already canonized
 

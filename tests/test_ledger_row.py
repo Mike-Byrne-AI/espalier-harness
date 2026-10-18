@@ -286,6 +286,125 @@ class TestADeferralIntoTheStruckRow:
         assert "| ~~`DEF-1`~~ | §C1 | new::home |" in text
 
 
+class TestABaselinedIdRefusesTheStrike:
+    """DEF-1172: a strike reads the probe test's per-id baselines first.
+
+    `tests/test_check_ledger_probes.py` keeps hand-written tables over the live
+    probes, each with a dead-entry check. The strike retired the probe and read
+    nothing under tests/, so the struck id stayed and the next run collecting
+    that check went red in a lane that never touched the file (DEF-940 on
+    2026-09-29, DEF-884 on 2026-10-07). The tables are found by parsing, so
+    each shape is driven on the fixture tree's own tests/ folder; the live tree
+    is never read. Earn-the-red: against the pre-change module every refusal
+    row below strikes."""
+
+    @staticmethod
+    def _tests_file(tree, body: str) -> Path:
+        path = tree["ledger"].parents[1] / "tests" / "test_check_ledger_probes.py"
+        path.parent.mkdir(exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _strike(lr, tree, rid: str = "DEF-1", *pre: str) -> int:
+        return lr.main(_args(tree, *pre, "strike", rid, "--text-file", str(tree["closing"])))
+
+    def test_a_baselined_id_refuses_by_line_and_writes_nothing(self, lr, tree, capsys):
+        self._tests_file(tree, 'class TestTheLiveProbeFile:\n    _NAMED_NOT_READ = {\n'
+                               '        "DEF-1": {"x"},\n    }\n')
+        before = tree["ledger"].read_text(encoding="utf-8"), tree["probes"].read_text(encoding="utf-8")
+        assert self._strike(lr, tree) == 2
+        err = capsys.readouterr().err
+        assert "tests/test_check_ledger_probes.py:3: _NAMED_NOT_READ holds DEF-1" in err
+        assert "Nothing written" in err
+        assert (tree["ledger"].read_text(encoding="utf-8"), tree["probes"].read_text(encoding="utf-8")) == before
+        # the dry run shows the same refusal rather than a row it would never write
+        assert self._strike(lr, tree, "DEF-1", "--dry-run") == 2
+
+    def test_every_table_shape_is_read_and_each_id_named_on_its_own_line(self, lr, tree, capsys):
+        self._tests_file(tree, (
+            '_MODULE = frozenset({"DEF-1"})\n'
+            '_LISTED = set(["DEF-0", "DEF-1"])\n'
+            'class TestProbeShapesAreRatcheted:\n'
+            '    _PACKED = {\n'
+            '        "DEF-0", "DEF-7",\n'
+            '        "DEF-8", "DEF-1",\n'
+            '    }\n'
+            '    _TYPED: dict = {"DEF-1": 1}\n'
+        ))
+        assert self._strike(lr, tree, "DEF-1", "--dry-run") == 2
+        err = capsys.readouterr().err
+        for want in (":1: _MODULE holds DEF-1", ":2: _LISTED holds DEF-1", ":6: _PACKED holds DEF-1",
+                     ":8: _TYPED holds DEF-1"):
+            assert want in err, err
+        assert "4 id(s)" in err
+
+    def test_an_argument_list_a_word_tuple_a_lowercase_name_or_a_local_is_not_a_table(self, lr, tree):
+        self._tests_file(tree, (
+            '_PARTIAL = ["--id", "DEF-1"]\n'
+            '_WORDS = ("nearest", "DEF-1")\n'
+            'fixture_ids = {"DEF-1"}\n'
+            'def test_x():\n'
+            '    LOCAL = {"DEF-1"}\n'
+        ))
+        assert self._strike(lr, tree) == 0
+        assert "| ~~`DEF-1`~~ |" in tree["ledger"].read_text(encoding="utf-8")
+
+    def test_an_unbaselined_strike_and_a_tree_with_no_tests_file_are_unchanged(self, lr, tree, capsys):
+        assert self._strike(lr, tree, "DEF-2") == 0           # no tests/ at all: an adopter's tree
+        self._tests_file(tree, '_NAMED_NOT_READ = {"DEF-9": {"x"}}\n')
+        assert self._strike(lr, tree) == 0
+        text = tree["ledger"].read_text(encoding="utf-8")
+        assert "| ~~`DEF-1`~~ |" in text and "| ~~`DEF-2`~~ |" in text
+        assert "baselines" not in capsys.readouterr().err
+
+    def test_a_probe_kept_as_its_own_file_is_read_as_retiring(self, lr, tree, capsys):
+        data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+        own = next(p for p in data["probes"] if p["id"] == "DEF-1")
+        data["probes"] = [p for p in data["probes"] if p["id"] != "DEF-1"]
+        tree["probes"].write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+        (tree["probes"].parent / "probes.d").mkdir()
+        (tree["probes"].parent / "probes.d" / "DEF-1.json").write_text(json.dumps(own) + "\n", encoding="utf-8")
+        self._tests_file(tree, '_NAMED_NOT_READ = {"DEF-1": {"x"}}\n')
+        assert self._strike(lr, tree, "DEF-1", "--dry-run") == 2
+        assert "_NAMED_NOT_READ holds DEF-1" in capsys.readouterr().err
+
+    def test_a_row_whose_probe_is_not_retired_here_is_not_held(self, lr, tree):
+        """Keyed on the probes this strike retires: a table over the live probes
+        cannot gain a dead entry from a row that has none."""
+        data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+        data["probes"] = [p for p in data["probes"] if p["id"] != "DEF-2"]
+        tree["probes"].write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+        self._tests_file(tree, '_NAMED_NOT_READ = {"DEF-2": {"x"}}\n')
+        assert self._strike(lr, tree, "DEF-2") == 0
+
+    def test_a_co_id_retiring_with_the_row_is_read_too(self, lr, tree, capsys):
+        TestATwoIdRow()._two_id_tree(tree)
+        self._tests_file(tree, '_SPAWNS_A_LITERAL_INTERPRETER = frozenset({"LG-9"})\n')
+        assert self._strike(lr, tree, "DEF-1", "--dry-run") == 2
+        assert ":1: _SPAWNS_A_LITERAL_INTERPRETER holds LG-9" in capsys.readouterr().err
+
+    def test_a_file_that_does_not_parse_is_named_and_the_strike_proceeds(self, lr, tree, capsys):
+        self._tests_file(tree, '_NAMED_NOT_READ = {"DEF-1": \n')
+        assert self._strike(lr, tree) == 0
+        assert "does not parse" in capsys.readouterr().err
+
+    def test_the_struck_ledgers_own_tree_is_read_not_the_working_directorys(self, lr, tree, monkeypatch):
+        """`--ledger` aimed at another checkout reads that checkout's tests, never
+        the root a walk from the working directory finds (code review)."""
+        here = tree["ledger"].parents[1] / "elsewhere"
+        (here / "task-packs").mkdir(parents=True)
+        (here / "task-packs" / "FORWARD_LEDGER.md").write_text(tree["ledger"].read_text(encoding="utf-8"),
+                                                              encoding="utf-8")
+        (here / "tests").mkdir()
+        (here / "tests" / "test_check_ledger_probes.py").write_text('_NAMED_NOT_READ = {"DEF-1": {"x"}}\n',
+                                                                   encoding="utf-8")
+        monkeypatch.chdir(here)
+        assert self._strike(lr, tree, "DEF-1", "--dry-run") == 0   # the working directory's table is not read
+        self._tests_file(tree, '_NAMED_NOT_READ = {"DEF-1": {"x"}}\n')
+        assert self._strike(lr, tree, "DEF-1", "--dry-run") == 2   # the struck ledger's own table is
+
+
 class TestFile:
     def _file(self, lr, tree, *extra, pre=(), probe_cmd="echo open=True", open_value="open=True"):
         return lr.main(_args(

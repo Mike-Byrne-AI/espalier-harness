@@ -90,6 +90,7 @@ from _hook_utils import (
     read_toml_string_list,
     resolve_project_root,
     say_once,
+    without_html_comments,
 )
 
 try:  # _reinject is a tools/cc sibling (zero espalier imports); guard for robustness.
@@ -111,6 +112,15 @@ _TOKEN_RE = re.compile(r"[a-z0-9]+")
 def _tokenize(text: str) -> list[str]:
     return [t for t in _TOKEN_RE.findall(text.lower())
             if len(t) > 1 and t not in _STOPWORDS]
+
+
+def _index_tokens(text: str) -> list[str]:
+    """A document's tokens: its text as a reader sees it. An HTML comment
+    renders as nothing (``without_html_comments``), so a fragment marker's
+    ``bound=`` paths are not the vocabulary of the section above it. A query
+    and a title are tokenized raw: a question that spells a marker asks about
+    the marker."""
+    return _tokenize(without_html_comments(text))
 
 
 #: Exponent on a document's vocabulary size, dividing its presence-summed IDF.
@@ -733,13 +743,13 @@ def _yield_sections(rel: str, text: str, family: str) -> "Iterator[_Doc]":
         if has_recall_skip_marker(text):
             return
         yield _Doc(rel, _first_heading(text) or Path(rel).stem,
-                   Counter(_tokenize(text)), family=family)
+                   Counter(_index_tokens(text)), family=family)
         return
     for title, body in sections:
         if _section_skipped(title, body):
             continue
         yield _Doc(f"{rel} :: {title}", title,
-                   Counter(_tokenize(f"{title} {body}")), family=family)
+                   Counter(_index_tokens(f"{title} {body}")), family=family)
 
 
 def _load_corpus(root: Path, *, records: bool = False) -> list[_Doc]:
@@ -876,7 +886,7 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
             text = _read(p)
             yield _Doc(source,
                        _first_heading(text) or p.stem,
-                       Counter(_tokenize(text)),
+                       Counter(_index_tokens(text)),
                        family="memory/")
 
     se = root / "docs" / "SHARP_EDGES.md"
@@ -897,7 +907,7 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
                 continue  # a pointer section, by the author's own mark
             yield _Doc(f"docs/SHARP_EDGES.md :: {title}",
                        title,
-                       Counter(_tokenize(f"{title} {body}")),
+                       Counter(_index_tokens(f"{title} {body}")),
                        family="docs/SHARP_EDGES.md sections")
 
     sed = root / "docs" / "sharp-edges"
@@ -910,7 +920,7 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
             text = _read(p)
             yield _Doc(f"docs/sharp-edges/{p.name}",
                        _first_heading(text) or p.stem,
-                       Counter(_tokenize(text)),
+                       Counter(_index_tokens(text)),
                        family="docs/sharp-edges/")
 
     # docs/STANDING_PRINCIPLES.md -- the document whose entire PURPOSE is to be
@@ -954,7 +964,7 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
                 continue  # a pointer section, by the author's own mark
             yield _Doc(f"docs/STANDING_PRINCIPLES.md :: {title}",
                        title,
-                       Counter(_tokenize(f"{title} {body} {aliases.get(num, '')}")),
+                       Counter(_index_tokens(f"{title} {body} {aliases.get(num, '')}")),
                        family="docs/STANDING_PRINCIPLES.md")
 
     # Two self-host-only sources, deliberately gated by TWO conditions rather
@@ -977,7 +987,7 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
                 num = parts[0] if parts else ""  # "1.7"
                 if num in _FM_COINAGE_TWINS:
                     continue  # already retrievable via its SHARP_EDGES twin
-                tokens = _tokenize(f"{title} {_strip_metaphor_sections(body)}")
+                tokens = _index_tokens(f"{title} {_strip_metaphor_sections(body)}")
                 yield _Doc(f"docs/FAILURE_MODES.md :: {title}",
                            title,
                            Counter(tokens),
@@ -996,7 +1006,7 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
             id_words = ex.id.replace("-", " ")
             yield _Doc(ex.source,
                        f"{ex.id}: {ex.source}",
-                       Counter(_tokenize(f"{id_words} {ex.source}")),
+                       Counter(_index_tokens(f"{id_words} {ex.source}")),
                        trigger=ex.trigger,
                        family="pull-only shape pointers")
 
