@@ -38,7 +38,7 @@ from pathlib import Path
 import pytest
 
 from tests._symlink_support import requires_symlink
-from tests._live_tree import checkout_rglob
+from tests._live_tree import checkout_glob, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -953,6 +953,10 @@ _REPLACE_WRITERS: dict[tuple[str, str], str] = {
         "the release archive: a ZipFile stream, no text or bytes payload; the "
         "same create (mode 0o666 under the umask), pinned by TestReplaceWriters"
     ),
+    ("tools/cc/_paths.py", "replace_retrying"): (
+        "the tools/cc move that waits out a held handle (DEF-5021): a rename, "
+        "no payload, so no _COPIES member; TestReplaceRetry's 'paths' case"
+    ),
 }
 
 
@@ -1020,6 +1024,14 @@ def _replace_retry_writers() -> dict[str, tuple[object, object]]:
     blueprint = _load_tools_cc_module("cognitive_blueprint")
     plan = _load_tools_cc_module("execution_plan")
     ledger = _load_tools_cc_module("generate_ledger_regions")
+    paths = _load_tools_cc_module("_paths")
+
+    def move(target: Path, text: str) -> None:
+        # The roster's sidecar shape: a file beside the target, moved over it.
+        pending = target.with_name(target.name + ".pending")
+        pending.write_text(text, encoding="utf-8")
+        paths.replace_retrying(pending, target)
+
     return {
         "engine": (_atomic_io, _atomic_io.atomic_write_text),
         "engine_bytes": (_atomic_io, lambda p, t: _atomic_io.atomic_write_bytes(p, t.encode("utf-8"))),
@@ -1027,6 +1039,7 @@ def _replace_retry_writers() -> dict[str, tuple[object, object]]:
         "blueprint": (blueprint, blueprint._atomic_write_text),
         "plan": (plan, plan._atomic_write_text),
         "ledger": (ledger, ledger._atomic_write),
+        "paths": (paths, move),
     }
 
 
@@ -1041,6 +1054,7 @@ _RETRY_CASES: dict[str, tuple[str, str]] = {
     "blueprint": ("tools/cc/cognitive_blueprint.py", "_atomic_write_text"),
     "plan": ("tools/cc/execution_plan.py", "_atomic_write_text"),
     "ledger": ("tools/cc/generate_ledger_regions.py", "_atomic_write"),
+    "paths": ("tools/cc/_paths.py", "replace_retrying"),
 }
 _NO_RETRY_WRITERS = {("espalier/release_pack.py", "_atomic_write_zip")}
 
@@ -1061,7 +1075,8 @@ class TestReplaceRetry:
     ``PermissionError [WinError 5]``. Ten parallel blueprint records crashed 1
     to 4 children per trial on it (driven 2026-10-02), so every writer retries
     that one refusal, there only, about a second in all. The retry is inlined
-    at each replace, so ``TestReplaceWriters``'s roster is unchanged."""
+    at each writer's replace; a move that is not a write goes through
+    ``tools/cc/_paths.py::replace_retrying``, the ``paths`` case."""
 
     @staticmethod
     def _refusing_replace(monkeypatch, times: int):
@@ -1098,7 +1113,9 @@ class TestReplaceRetry:
         with pytest.raises(PermissionError):
             write(target, "never lands")
         assert len(calls) == 4, (name, calls)
-        if name != "ledger":  # the ledger verb keeps its fixed .tmp for the next run to overwrite
+        if name == "paths":  # a move keeps its source for its caller to clear
+            assert (tmp_path / "state.json.pending").exists(), name
+        elif name != "ledger":  # the ledger verb keeps its fixed .tmp for the next run to overwrite
             assert list(tmp_path.glob("*.tmp")) == [], name
 
     @pytest.mark.parametrize("blocker", ["directory", "read_only"])
@@ -1144,3 +1161,215 @@ class TestReplaceRetry:
         assert attempts == (20 if sys.platform == "win32" else 1), name
         total = sum(backoff * (i + 1) for i in range(attempts - 1))
         assert total <= 1.0, (name, total)
+
+
+#: The one-argument ``Path.replace`` moves left a single try on purpose (a
+#: one-argument ``replace`` is never ``str``'s or ``bytes``'): each is a
+#: housekeeping move that already fails open inside ``except OSError`` and is
+#: tried again on its next run, where waiting out a held handle would buy up
+#: to a second for a skip that costs nothing, on a hook's path inside its time
+#: budget (STANDING_PRINCIPLES section 10). Every other one-argument replace
+#: goes through ``tools/cc/_paths.py::replace_retrying`` (DEF-5021), so a new
+#: one reds here until it is routed, or rostered with why one try is right; a
+#: rostered function holds exactly one. Not read: ``.rename``, ``os.rename``,
+#: ``shutil.move`` and a ``replace(target=...)`` keyword spelling.
+_SINGLE_SHOT_MOVES: dict[tuple[str, str], str] = {
+    ("tools/cc/cognitive_blueprint.py", "_prune_blueprints"): (
+        "an old blueprint into _cold/, inside except OSError; the next prune tries again"),
+    ("espalier/cognitive_blueprint.py", "_prune_blueprints"): (
+        "the engine's twin of the blueprint prune, the same single try for the same reason"),
+    ("tools/cc/hooks/_integrity.py", "_prune_old_audit_logs"): (
+        "an old audit log into cold/, inside except OSError on a hook's path; the next prune tries again"),
+}
+
+
+def one_argument_moves(root: Path) -> Counter:
+    """How many one-argument ``.replace(target)`` calls each ``(module,
+    innermost function)`` under ``espalier/`` (minus the ``_vendor/`` mirror)
+    and ``tools/cc/`` makes: a ``Path`` move, which on Windows a held handle
+    refuses at once."""
+    found: Counter = Counter()
+    for sub in ("espalier", "tools/cc"):
+        for py in checkout_rglob(root / sub, "*.py", root=root):
+            rel = py.relative_to(root).as_posix()
+            if rel.startswith("espalier/_vendor/"):
+                continue
+            tree = ast.parse(py.read_bytes())
+
+            def visit(node: ast.AST, owner: str) -> None:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    owner = node.name
+                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                        and node.func.attr == "replace" and len(node.args) == 1 and not node.keywords):
+                    found[(rel, owner)] += 1
+                for child in ast.iter_child_nodes(node):
+                    visit(child, owner)
+
+            visit(tree, "<module>")
+    return found
+
+
+class TestOneArgumentMoves:
+    """DEF-5021: ``TestReplaceWriters`` matched ``os.replace`` only, so five
+    ``Path.replace`` moves under ``tools/cc/`` carried no retry unseen. The
+    three that leave a caller half-done when refused (the ledger verb's roster,
+    twice; the plan's demotion) now wait it out; the housekeeping ones stay a
+    single try, rostered with why."""
+
+    def test_every_one_argument_move_is_a_rostered_single_try(self):
+        actual = one_argument_moves(REPO_ROOT)
+        expected = set(_SINGLE_SHOT_MOVES)
+        assert set(actual) == expected, (
+            "a one-argument move outside the roster: route it through "
+            f"tools/cc/_paths.py::replace_retrying, or roster it with why one try is right: "
+            f"{sorted(set(actual) - expected)}; stale roster entries: {sorted(expected - set(actual))}"
+        )
+        assert {k: n for k, n in actual.items() if n != 1} == {}, "a rostered function holds one move, no more"
+
+    def test_a_planted_move_is_seen_and_nothing_else_is(self, tmp_path):
+        """A sixth move planted in a copy is seen; a two-argument
+        ``str.replace``, ``os.replace`` and the vendored mirror are not."""
+        for rel, source in (
+                ("tools/cc/planted.py", "from pathlib import Path\n\ndef move(p, q):\n    Path(p).replace(q)\n"),
+                ("espalier/clean.py", "import os\n\ndef f(s, a, b):\n    os.replace(a, b)\n    return s.replace('x', 'y')\n"),
+                ("tools/cc/twice.py", "def both(a, b, c):\n    a.replace(b)\n    b.replace(c)\n"),
+                ("espalier/_vendor/cc/mirror.py", "def m(p, q):\n    p.replace(q)\n")):
+            (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / rel).write_text(source, encoding="utf-8")
+        assert one_argument_moves(tmp_path) == Counter({("tools/cc/planted.py", "move"): 1,
+                                                       ("tools/cc/twice.py", "both"): 2})
+
+    def test_the_ledger_verbs_two_roster_moves_go_through_the_retrying_helper(self):
+        """``_commit_both`` moves the roster twice, both times through
+        ``_replace``, which is ``_paths.replace_retrying`` loaded under the
+        verb's own private name (the ``_paths`` the process holds is left be)."""
+        tree = ast.parse((REPO_ROOT / "tools/cc/ledger_row.py").read_bytes())
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_commit_both")
+        assert sum(1 for n in ast.walk(fn) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                   and n.func.id == "_replace") == 2
+        lr = _load_tools_cc_module("ledger_row")
+        assert lr._replace is lr._PATHS.replace_retrying and lr._PATHS.__name__ == "_ledger_row_paths"
+        assert Path(lr._PATHS.__file__).resolve() == (REPO_ROOT / "tools/cc/_paths.py").resolve()
+
+    def test_the_ledger_verb_moves_once_beside_an_older_or_absent_paths_module(self, tmp_path):
+        """Both reviews: a kept, older ``_paths.py`` (an adopter's unmarked
+        copy the upgrade keeps) or none beside the verb must leave it loading,
+        moving once as before, never an AttributeError half-way through a
+        filing. The copy is loaded in this process and ``sys.modules`` put back
+        after, since its sibling loads register under this session's names."""
+        import importlib.util
+        import shutil
+
+        # Every top-level tools/cc module but _paths.py: the verb's sibling loads
+        # reach further than a hand list would follow (_record_fragments.py).
+        for src in checkout_glob(REPO_ROOT / "tools" / "cc", "*.py"):
+            if src.name != "_paths.py":
+                shutil.copy2(src, tmp_path / src.name)
+        answers = []
+        for paths_source in (None, "X = 1\n"):
+            if paths_source is not None:
+                (tmp_path / "_paths.py").write_text(paths_source, encoding="utf-8")
+            saved = dict(sys.modules)
+            try:
+                spec = importlib.util.spec_from_file_location("_def_5021_ledger_row", tmp_path / "ledger_row.py")
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                answers.append((module._PATHS is None, module._replace is os.replace))
+            finally:
+                for name in [n for n in sys.modules if n not in saved]:
+                    del sys.modules[name]
+                sys.modules.update(saved)
+        assert answers == [(True, True), (False, True)], answers
+
+    def test_a_sibling_that_fails_to_load_leaves_no_half_built_module(self):
+        """The verb's sibling loader registers a module before running it, so a
+        load that raises must take the entry back out (the review: a subset
+        copy left an empty module for the rest of the process)."""
+        lr = _load_tools_cc_module("ledger_row")
+        name = "_no_such_sibling_for_def_5021"
+        with pytest.raises(FileNotFoundError):
+            lr._load(name)
+        assert name not in sys.modules
+
+    def test_a_kept_older_paths_module_moves_the_plan_once(self, tmp_path, monkeypatch):
+        """The plan's demotion beside a ``_paths`` without the name: one plain
+        move, no AttributeError from ``reset`` or the plan-mode bridge."""
+        plan = _load_tools_cc_module("execution_plan")
+        monkeypatch.delattr(plan._paths, "replace_retrying")
+        held = tmp_path / "cc" / "execution_plan.json"
+        held.parent.mkdir()
+        held.write_text("{}", encoding="utf-8")
+        moved = plan.demote_plan(held)
+        assert moved is not None and moved.read_text(encoding="utf-8") == "{}" and not held.exists()
+
+    def test_a_plan_demotion_waits_out_a_refused_move(self, tmp_path, monkeypatch):
+        """Driven through the plan's own demotion, patched on the ``_paths`` the
+        plan module reads."""
+        plan = _load_tools_cc_module("execution_plan")
+        monkeypatch.setattr(plan._paths, "_REPLACE_ATTEMPTS", 5)
+        monkeypatch.setattr(time, "sleep", lambda _s: None)
+        real = os.replace
+        calls = []
+
+        def replace(src, dst):
+            calls.append(dst)
+            if len(calls) <= 2:
+                raise PermissionError(13, "Access is denied", str(dst))
+            return real(src, dst)
+
+        monkeypatch.setattr(os, "replace", replace)
+        held = tmp_path / "cc" / "execution_plan.json"
+        held.parent.mkdir()
+        held.write_text("{}", encoding="utf-8")
+        moved = plan.demote_plan(held)
+        assert moved is not None and moved.read_text(encoding="utf-8") == "{}" and not held.exists()
+        assert len(calls) == 3, calls
+
+    def test_the_move_helper_and_the_ledger_writer_retry_alike(self):
+        """``generate_ledger_regions`` loads no sibling (a fixture copies it
+        alone), so it keeps its own loop; the two loops are held equal, its
+        ``tmp`` and ``path`` read as the helper's ``src`` and ``dst``."""
+        def loop(rel: str, fn_name: str, names: dict[str, str]) -> str:
+            tree = ast.parse((REPO_ROOT / rel).read_bytes())
+            fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == fn_name)
+            node = next(n for n in fn.body if isinstance(n, ast.For))
+
+            class Rename(ast.NodeTransformer):
+                def visit_Name(self, name: ast.Name) -> ast.Name:
+                    name.id = names.get(name.id, name.id)
+                    return name
+
+            return ast.dump(Rename().visit(node))
+
+        helper = loop("tools/cc/_paths.py", "replace_retrying", {})
+        writer = loop("tools/cc/generate_ledger_regions.py", "_atomic_write", {"tmp": "src", "path": "dst"})
+        assert helper == writer
+
+        def constants(rel: str) -> list[str]:
+            # By value, on every platform: the Windows-only row sees one attempt on POSIX.
+            tree = ast.parse((REPO_ROOT / rel).read_bytes())
+            return [ast.dump(n) for n in tree.body if isinstance(n, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id in ("_REPLACE_ATTEMPTS", "_REPLACE_BACKOFF_S") for t in n.targets)]
+
+        assert constants("tools/cc/_paths.py") == constants("tools/cc/generate_ledger_regions.py")
+        assert len(constants("tools/cc/_paths.py")) == 2
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="only Windows refuses a replace onto a file a reader holds")
+    def test_a_move_onto_a_file_a_reader_holds_lands_once_it_closes(self, tmp_path):
+        """The held handle itself, the roster's shape: a reader holds the probes
+        file open, the sidecar's move is refused (WinError 5), and it lands once
+        the reader closes, a tenth of the helper's second later."""
+        paths = _load_tools_cc_module("_paths")
+        target = tmp_path / "LEDGER_PROBES.json"
+        target.write_text("old", encoding="utf-8")
+        pending = tmp_path / "LEDGER_PROBES.json.pending"
+        pending.write_text("new", encoding="utf-8")
+        held = open(target, "rb")  # noqa: SIM115 -- held on purpose, closed by the timer
+        timer = threading.Timer(0.1, held.close)
+        timer.start()
+        try:
+            paths.replace_retrying(pending, target)
+        finally:
+            timer.cancel()
+            held.close()
+        assert target.read_text(encoding="utf-8") == "new" and not pending.exists()

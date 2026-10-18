@@ -56,6 +56,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import re
 import sys
 from collections import Counter
@@ -66,11 +67,18 @@ _HERE = Path(__file__).resolve()
 _SIBLINGS = _HERE.parent
 
 
-def _load(name: str):
-    spec = importlib.util.spec_from_file_location(name, _SIBLINGS / f"{name}.py")
+def _load(name: str, alias: str | None = None):
+    """The sibling ``name``, loaded by path, under ``alias`` when given so a
+    module of that name the process already holds is not replaced; a load that
+    raises leaves no half-built module behind."""
+    spec = importlib.util.spec_from_file_location(alias or name, _SIBLINGS / f"{name}.py")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
+    try:
+        spec.loader.exec_module(mod)
+    except BaseException:  # noqa: BLE001 -- re-raised at once: only the half-built module is taken back out
+        sys.modules.pop(spec.name, None)
+        raise
     return mod
 
 
@@ -121,6 +129,13 @@ def _index_line(rid: str, text: str) -> tuple[int, str] | None:
 
 _SEVERITIES = frozenset({"blocker", "major", "minor", "nit"})
 _GEN = _load("generate_ledger_regions")  # the grammar's one home: vocabularies too
+#: The retrying move (``_paths.replace_retrying``): on Windows a held roster
+#: refuses a replace at once. Loaded under a private name, so the ``_paths`` a
+#: process already imported stays the one its other readers hold; a kept, older
+#: ``_paths.py`` without the name, or none beside this verb, moves once, as
+#: before, never an AttributeError half-way through a filing (DEF-5021's review).
+_PATHS = _load("_paths", alias="_ledger_row_paths") if (_SIBLINGS / "_paths.py").is_file() else None
+_replace = getattr(_PATHS, "replace_retrying", None) or os.replace
 _CHK = _load("check_ledger_probes")  # the hashes' one home: the reader defines the pin
 _PS = _load("_pack_scope")  # the packs' one home: the Scope (out) reader and the active population
 _FRAG = _GEN.record_fragments()  # the loader: row and probe files, and the view every read takes
@@ -959,7 +974,7 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
         _print_noted(pending, what)
         _write_pending_probes(gen, pending, removals=True)
         if write_roster and probes_first:
-            sidecar.replace(probes)
+            _replace(sidecar, probes)
         _write_pending_rows(gen, pending)
         # Bytes, never a decode: the verb read the file strictly already. Line
         # ends are set aside the way the verb's own read set them aside: an
@@ -972,7 +987,7 @@ def _commit_both(gen, *, ledger: Path, probes: Path, new_text: str, data: dict,
         if new_text.encode("utf-8") != _universal_newlines(ledger.read_bytes()):  # ledger-read: the file's own bytes, to skip an unchanged write
             gen._atomic_write(ledger, new_text)
         if write_roster and not probes_first:
-            sidecar.replace(probes)
+            _replace(sidecar, probes)
         _write_pending_probes(gen, pending, removals=False)
         return 0
     finally:

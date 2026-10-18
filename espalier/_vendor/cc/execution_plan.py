@@ -497,7 +497,11 @@ def demote_plan(path: Path | None = None) -> Path | None:
     while target.exists():  # two demotions in one second keep both records
         n += 1
         target = cold / f"{stamp}-{n}-{p.name}"
-    p.replace(target)
+    # A reader holding the plan (plan_guard reads it on every write) refuses a
+    # move on Windows at once; the replace waits that out, as a write does. A
+    # kept, older _paths.py without the name moves once, as before, as
+    # _checkout_wiring_notice reads hooks_module.
+    (getattr(_paths, "replace_retrying", None) or os.replace)(p, target)
     return target
 
 
