@@ -1233,11 +1233,12 @@ class TestAFileTooBigToReadIsGitsToo:
         monkeypatch.setenv("GIT_DIR", str(repo / ".git"))
         assert zw.after_shell_call(repo, "s-1") is None
 
-    def test_a_big_files_stash_reads_no_blob_and_its_pop_still_reports(self, repo: Path, monkeypatch) -> None:
-        """The limit docs/HOOKS.md names: a big file's content before is its
-        stat, which a pop's new modification time never matches, so the pop
-        reports until the stash itself is asked. Mutation: a big file's stash
-        asked for its content."""
+    def test_a_big_files_stash_and_pop_are_silent_and_read_no_blob(self, repo: Path, monkeypatch) -> None:
+        """A big file's content before is its stat, which a pop's new
+        modification time never matches, so its pop reported (DEF-5019): the
+        stash is asked for its blob id, matched with git's hash of the file.
+        Mutations: the stash never asked; a big file's stash asked for its
+        content."""
         big = self._commit_big(repo, bytes(range(100)))
         _bump(big, "edited before the session" * 4)
         assert zw.take_baseline(repo, "s-1")
@@ -1252,8 +1253,7 @@ class TestAFileTooBigToReadIsGitsToo:
         _git_ok(repo, "stash", "-q")
         assert zw.after_shell_call(repo, "s-1") is None
         _git_ok(repo, "stash", "pop", "-q")
-        got = zw.after_shell_call(repo, "s-1")
-        assert got is not None and _BIG in got["during"]["changed"], got
+        assert zw.after_shell_call(repo, "s-1") is None
         assert not [r for r in contents if r.endswith(_BIG)], contents
 
 
@@ -1377,6 +1377,246 @@ class TestAStashPopOfAnEditMadeBeforeTheSessionIsKnown:
         assert zw.after_shell_call(repo, "s-1") is None
         _git_ok(repo, "stash", "pop", "-q")
         assert zw.after_shell_call(repo, "s-1") is None
+
+
+def _state_ignored(repo: Path) -> None:
+    """The session state ignored, as `init` leaves it: a `git stash -u` would
+    otherwise take the baseline with the untracked files."""
+    (repo / ".gitignore").write_bytes(b".espalier-state/\n")
+    _git_ok(repo, "add", ".gitignore")
+    _git_ok(repo, "commit", "-q", "-m", "ignore the state")
+
+
+class TestWhatAStashHoldsIsGits:
+    """Path 2 asks the stash the previous check saw for what a pop or an apply
+    brings back, and the stash made since for what it took (DEF-5019): each
+    shape was driven against #297's check first, which reported it and told
+    Claude to stop. Only what a stash changed at a path vouches for it."""
+
+    def test_the_pop_of_a_stash_made_before_the_session_is_silent(self, repo: Path) -> None:
+        """Mutation: the stash the previous check saw never asked."""
+        _bump(repo / _HOOK, "print('an edit stashed yesterday')\n")
+        _git_ok(repo, "stash", "-q")
+        assert zw.take_baseline(repo, "s-1")
+        _git_ok(repo, "stash", "pop", "-q")
+        assert zw.after_shell_call(repo, "s-1") is None
+
+    def test_the_same_inside_a_known_nested_checkout(self, repo: Path, upstream: Path) -> None:
+        """Mutation: the outer checkout's stash asked for a nested one's file."""
+        (repo / "espalier.toml").write_bytes(b'protected_paths = ["models/"]\n')
+        (repo / "models").mkdir()
+        _gx(repo / "models", "clone", "-q", str(upstream), "clone")
+        clone = repo / "models" / "clone"
+        _bump(clone / "weights.json", '{"v": "stashed yesterday"}\n')
+        _gx(clone, "stash", "-q")
+        assert zw.take_baseline(repo, "s-1")
+        _gx(clone, "stash", "pop", "-q")
+        assert zw.after_shell_call(repo, "s-1") is None
+
+    @pytest.mark.parametrize("staged", [False, True])
+    def test_a_new_file_stashed_and_popped_is_silent(self, repo: Path, staged: bool) -> None:
+        """`stash -u` keeps a new file in its untracked-files parent, a stash
+        of a staged one in its worktree commit; either way its stash read as
+        a removal and its pop as an addition. Mutations: the untracked parent
+        never asked; the stash made since never asked for what it took."""
+        _state_ignored(repo)
+        new = "tools/cc/hooks/new_hook.py"
+        (repo / new).write_bytes(b"print('a hook made before the session')\n")
+        if staged:
+            _git_ok(repo, "add", new)
+        assert zw.take_baseline(repo, "s-1")
+        _git_ok(repo, "stash", "-q", *([] if staged else ["-u"]))
+        assert zw.after_shell_call(repo, "s-1") is None
+        _git_ok(repo, "stash", "pop", "-q")
+        assert zw.after_shell_call(repo, "s-1") is None
+
+    def test_the_pop_of_a_stashed_deletion_is_silent(self, repo: Path) -> None:
+        """The stash recorded the file as deleted (absent from its worktree
+        commit, present in its parent). Mutation: a deletion the stash
+        recorded not asked."""
+        (repo / _OTHER).unlink()
+        assert zw.take_baseline(repo, "s-1")
+        _git_ok(repo, "stash", "-q")
+        assert zw.after_shell_call(repo, "s-1") is None
+        _git_ok(repo, "stash", "pop", "-q")
+        assert zw.after_shell_call(repo, "s-1") is None
+
+    def test_a_write_back_of_what_a_stash_carried_unchanged_still_reports(self, repo: Path) -> None:
+        """A stash holds every tracked file, so what a pull replaced is in it,
+        unchanged: a script writing that back is no pop. Mutation: the stash's
+        first parent not compared, so whatever it holds vouches."""
+        _git_ok(repo, "switch", "-q", "-c", "fix")
+        _bump(repo / _HOOK, "print('the fix')\n")
+        _git_ok(repo, "commit", "-q", "-am", "fix")
+        _git_ok(repo, "switch", "-q", "main")
+        _bump(repo / _OTHER, "print('an edit stashed for the pull')\n")
+        _git_ok(repo, "stash", "-q")
+        assert zw.take_baseline(repo, "s-1")
+        _git_ok(repo, "merge", "-q", "--ff-only", "fix")
+        assert zw.after_shell_call(repo, "s-1") is None
+        _bump(repo / _HOOK, "print('guard')\n")   # what the merge replaced
+        got = zw.after_shell_call(repo, "s-1")
+        assert got is not None and _HOOK in got["during"]["changed"], got
+
+    def test_a_hand_edit_beside_a_stash_still_reports(self, repo: Path) -> None:
+        _bump(repo / _OTHER, "print('stashed')\n")
+        _git_ok(repo, "stash", "-q")
+        assert zw.take_baseline(repo, "s-1")
+        _bump(repo / _HOOK, "print('a slip')\n")
+        got = zw.after_shell_call(repo, "s-1")
+        assert got is not None and _HOOK in got["during"]["changed"], got
+
+    def test_a_stash_dropped_with_nothing_moving_is_recorded(self, repo: Path) -> None:
+        """The check that changed nothing reads each stash too, so a dropped
+        stash is not the one the next call asks. Mutation: the peek blind to
+        the stash, which then vouches for its content written by hand."""
+        _bump(repo / _HOOK, "print('an edit stashed yesterday')\n")
+        _git_ok(repo, "stash", "-q")
+        assert zw.take_baseline(repo, "s-1")
+        _git_ok(repo, "stash", "drop", "-q")
+        assert zw.after_shell_call(repo, "s-1") is None
+        _bump(repo / _HOOK, "print('an edit stashed yesterday')\n")
+        got = zw.after_shell_call(repo, "s-1")
+        assert got is not None and _HOOK in got["during"]["changed"], got
+
+    def test_the_stash_is_asked_inside_the_shared_budget(self, repo: Path, monkeypatch) -> None:
+        """A stash ask is a spawn of path 2, inside GIT_ASK_BUDGET_S. The HEAD
+        asks are made to take it all on a clock run ahead, no sleep. Mutation:
+        the stash asked with a timeout of its own."""
+        _bump(repo / _HOOK, "print('an edit stashed yesterday')\n")
+        _git_ok(repo, "stash", "-q")
+        assert zw.take_baseline(repo, "s-1")
+        _git_ok(repo, "stash", "pop", "-q")
+        skew = _clock_run_ahead(monkeypatch)
+        real = zw._git_objects
+
+        def slow(*args, **kw):
+            got = real(*args, **kw)
+            skew[0] += zw.GIT_ASK_BUDGET_S
+            return got
+
+        monkeypatch.setattr(zw, "_git_objects", slow)
+        got = zw.after_shell_call(repo, "s-1")
+        assert got is not None and _HOOK in got["during"]["changed"], got
+
+    def test_with_no_stash_nothing_more_is_asked(self, repo: Path, monkeypatch) -> None:
+        """The cost: a report with no stash in the checkout spends no stash
+        ask. Mutation: the stash asked for whatever reports."""
+        assert zw.take_baseline(repo, "s-1")
+        _bump(repo / _HOOK, "print('a slip')\n")
+        real, asked = zw._git_objects, []
+
+        def spy(root, requests, **kw):
+            asked.extend(requests)
+            return real(root, requests, **kw)
+
+        monkeypatch.setattr(zw, "_git_objects", spy)
+        assert zw.after_shell_call(repo, "s-1") is not None
+        assert asked and all(r.startswith("HEAD:") for r in asked), asked
+
+    def test_a_baseline_without_the_stash_still_reads(self, repo: Path) -> None:
+        """Expand only: a baseline written before the key reads as no stash."""
+        assert zw.take_baseline(repo, "s-1")
+        path = zw.baseline_path(repo, "s-1")
+        record = json.loads(path.read_text(encoding="utf-8"))
+        del record["stash"]
+        path.write_text(json.dumps(record), encoding="utf-8")
+        assert zw.read_baseline(path) is not None
+        _bump(repo / _HOOK, "print('a slip')\n")
+        got = zw.after_shell_call(repo, "s-1")
+        assert got is not None and _HOOK in got["during"]["changed"], got
+
+
+_FAKE_LFS = b'''import hashlib, os, sys
+mode, store = sys.argv[1], sys.argv[2]
+data = sys.stdin.buffer.read()
+if mode == "clean" and not data.startswith(b"pointer "):
+    oid = hashlib.sha256(data).hexdigest()
+    os.makedirs(store, exist_ok=True)
+    with open(os.path.join(store, oid), "wb") as fh:
+        fh.write(data)
+    data = b"pointer " + oid.encode() + b"\\n"
+elif mode == "smudge" and data.startswith(b"pointer "):
+    with open(os.path.join(store, data.split()[1].decode()), "rb") as fh:
+        data = fh.read()
+sys.stdout.buffer.write(data)
+'''
+
+
+class TestAFileGitCallsCleanUnderItsFiltersIsGits:
+    """A file whose working copy is not its committed form under the
+    checkout's own filters was matched one way only, so git bringing it back
+    reported (DEF-5020): a small one is hashed through the filters when its
+    bytes miss, a big one with none when its filtered hash misses. Only on
+    the report path. BIG_FILE_BYTES lowered, so no test writes 4 MiB."""
+
+    @pytest.fixture(autouse=True)
+    def _small_threshold(self, monkeypatch) -> None:
+        monkeypatch.setattr(zw, "BIG_FILE_BYTES", 64)
+
+    @staticmethod
+    def _lfs(repo: Path, tmp_path: Path) -> Path:
+        """A clean/smudge filter in the git-lfs shape (content in, pointer
+        out), git-lfs itself not being on every runner."""
+        script = tmp_path / "fake_lfs.py"
+        script.write_bytes(_FAKE_LFS)
+        run = f'"{Path(sys.executable).as_posix()}" "{script.as_posix()}"'
+        store = (tmp_path / "lfs-store").as_posix()
+        _git_ok(repo, "config", "filter.fake.clean", f'{run} clean "{store}"')
+        _git_ok(repo, "config", "filter.fake.smudge", f'{run} smudge "{store}"')
+        _git_ok(repo, "config", "filter.fake.required", "true")
+        (repo / ".gitattributes").write_bytes(b"*.bin filter=fake\n")
+        weights = repo / "tools/cc/hooks/w.bin"
+        weights.write_bytes(b"small weights\n")
+        _git_ok(repo, "add", ".gitattributes", "tools/cc/hooks/w.bin")
+        _git_ok(repo, "commit", "-q", "-m", "a filtered file")
+        return weights
+
+    def test_a_clean_filtered_small_file_brought_back_is_silent(self, repo: Path, tmp_path: Path) -> None:
+        """Its blob is the pointer, its working copy the content. Mutations:
+        a small file never hashed the other way; hashed with no filters."""
+        weights = self._lfs(repo, tmp_path)
+        assert _git(repo, "cat-file", "-p", "HEAD:tools/cc/hooks/w.bin").stdout.startswith(b"pointer ")
+        _bump(weights, "edited before the session\n")
+        assert zw.take_baseline(repo, "s-1")
+        _git_ok(repo, "checkout", "--", "tools/cc/hooks/w.bin")
+        assert weights.read_bytes() == b"small weights\n"
+        assert zw.after_shell_call(repo, "s-1") is None
+
+    def test_a_hand_edit_of_a_filtered_file_still_reports(self, repo: Path, tmp_path: Path) -> None:
+        """Neither way matches content git never held. Mutation: any file
+        hashed the other way read as committed."""
+        weights = self._lfs(repo, tmp_path)
+        assert zw.take_baseline(repo, "s-1")
+        _bump(weights, "not what was committed, by hand\n")
+        got = zw.after_shell_call(repo, "s-1")
+        assert got is not None and "tools/cc/hooks/w.bin" in got["during"]["changed"], got
+
+    def test_a_big_crlf_text_under_autocrlf_brought_back_is_silent(self, repo: Path) -> None:
+        """Committed with CRLF line ends, then core.autocrlf: git calls it
+        clean, while its filtered hash is the LF form's. Mutation: a big file
+        never hashed with no filters."""
+        text = repo / "tools/cc/hooks/table.csv"
+        text.write_bytes(b"a,b,c\r\n" * 20)
+        _git_ok(repo, "add", "tools/cc/hooks/table.csv")
+        _git_ok(repo, "commit", "-q", "-m", "a CRLF table")
+        _git_ok(repo, "config", "core.autocrlf", "true")
+        _bump(text, "edited before the session" * 4)
+        assert zw.take_baseline(repo, "s-1")
+        _git_ok(repo, "checkout", "--", "tools/cc/hooks/table.csv")
+        assert text.read_bytes() == b"a,b,c\r\n" * 20
+        assert zw.after_shell_call(repo, "s-1") is None
+
+    def test_the_other_way_counts_in_the_byte_budget(self, repo: Path, tmp_path: Path, monkeypatch) -> None:
+        """Mutation: the second hash taken whatever is left of the budget."""
+        weights = self._lfs(repo, tmp_path)
+        _bump(weights, "edited before the session\n")
+        assert zw.take_baseline(repo, "s-1")
+        _git_ok(repo, "checkout", "--", "tools/cc/hooks/w.bin")
+        monkeypatch.setattr(zw, "BIG_HASH_BUDGET_BYTES", 1)
+        got = zw.after_shell_call(repo, "s-1")
+        assert got is not None and "tools/cc/hooks/w.bin" in got["during"]["changed"], got
+        assert any("one call may hash" in n and "w.bin" in n for n in got["notes"]), got
 
 
 class TestAHarnessWriterStillRunningHoldsTheCheck:

@@ -296,6 +296,27 @@ def _ref_commit(git_dir: Path, ref: str) -> str | None:
     return None
 
 
+def stash_tops(root: Path, tops: Iterable[str]) -> dict[str, str]:
+    """``{checkout: the commit its stash names}`` for the outer checkout
+    (``""``) and each nested one in ``tops``, read from git's own files, no
+    spawn; a checkout with no stash, or one whose refs cannot be read, is left
+    out. The baseline keeps it, so path 2 can ask the stash the previous check
+    saw for what a pop brings back, after the pop has removed it (DEF-5019)."""
+    out: dict[str, str] = {}
+    for top in ("", *tops):
+        git_dir = _hook_utils._git_dir_of(root / top if top else root)
+        if git_dir is None:
+            continue
+        try:
+            sha = _ref_commit(git_dir, "refs/stash")
+        # fail-open: ok deliberate -- an unreadable stash is no stash: what a pop brings back then reports
+        except (OSError, ValueError):  # strict decode: a structured answer (DEF-821)
+            continue
+        if sha:
+            out[top] = sha
+    return out
+
+
 def stash_written_since(root: Path, since_ns: int) -> str | None:
     """The commit this checkout's stash names, when its ref or its reflog
     (which every push, pop and drop rewrites) was written at or after
@@ -485,20 +506,22 @@ _HASH_THRESHOLD = f"core.bigFileThreshold={BIG_HASH_BUDGET_BYTES + 1}"
 
 
 def _hash_objects(root: Path, paths: list[str], *, cwd: Path | None = None,
-                  timeout: float = 5.0) -> tuple[list[bytes] | None, bool]:
+                  timeout: float = 5.0, raw: bool = False) -> tuple[list[bytes] | None, bool]:
     """``(ids, timed_out)``: ``git hash-object`` of each path (relative to
     ``cwd``), through the checkout's own filters (a big LFS file hashes to
-    its pointer, as committed), the object id each file would have, or None
-    when git gives none, with whether it ran past ``timeout``. The paths go
-    on stdin, so no count of them meets a command-line limit. Git reads the
-    files; the hook never does."""
+    its pointer, as committed), or with ``raw`` with none (the bytes as they
+    are), the object id each file would have, or None when git gives none,
+    with whether it ran past ``timeout``. The paths go on stdin, so no count
+    of them meets a command-line limit. Git reads the files; the hook never
+    does."""
     import subprocess
 
     if any("\n" in p for p in paths):
         return None, False  # a path stdin cannot carry; such a checkout is never asked this far
     try:
         result = _hook_utils.spawn_checked(
-            ["git", "-c", _HASH_THRESHOLD, "hash-object", "--stdin-paths"], root=root,
+            ["git", "-c", _HASH_THRESHOLD, "hash-object", *(["--no-filters"] if raw else []), "--stdin-paths"],
+            root=root,
             input=b"".join(os.fsencode(p) + b"\n" for p in paths),
             capture_output=True, timeout=timeout, cwd=str(cwd or root), env=_nested_env(cwd),
         )
@@ -515,6 +538,13 @@ def _hash_objects(root: Path, paths: list[str], *, cwd: Path | None = None,
 def _identified_by_stat(digest: str | None) -> bool:
     """A file of BIG_FILE_BYTES or more, never read: its identity is its stat."""
     return digest is not None and digest.startswith("stat:")
+
+
+def _blob_id(blob: bytes, like: bytes) -> bytes:
+    """The object id git gives ``blob``'s bytes, in the hash ``like`` (an id
+    git printed: 40 hex digits for SHA-1, 64 for SHA-256) is in."""
+    return hashlib.new("sha1" if len(like) == 40 else "sha256",
+                       b"blob %d\0" % len(blob) + blob).hexdigest().encode("ascii")
 
 
 # -- The per-session baseline ------------------------------------------------
@@ -537,10 +567,11 @@ def baseline_path(root: Path, sid: object) -> Path | None:
 
 def new_baseline(root: Path, files: dict[str, Entry], taken_ns: int, *,
                  disabled: str | None = None) -> dict[str, Any]:
+    nested = nested_heads(root, files)
     record: dict[str, Any] = {
         "v": BASELINE_VERSION, "taken_ns": taken_ns, "files": files, "known": {},
         "told": [], "head": head_commit(root), "watched": watched_prefixes(root),
-        "nested": nested_heads(root, files),
+        "nested": nested, "stash": stash_tops(root, nested),
     }
     if disabled:
         record["disabled"] = disabled
@@ -556,8 +587,9 @@ def _valid_entry(entry: object) -> bool:
 def read_baseline(path: Path) -> dict[str, Any] | None:
     """The baseline at ``path``, or None when there is no usable one (absent,
     unreadable, another schema, a malformed entry): the caller takes a new one.
-    ``nested`` (each nested checkout's HEAD) is optional, so a baseline written
-    before it reads as one with none known."""
+    ``nested`` (each nested checkout's HEAD) and ``stash`` (each checkout's
+    stash commit) are optional, so a baseline written before them reads as one
+    with none known."""
     try:
         raw = path.read_bytes()
     except OSError:  # fail-open: ok deliberate -- no readable baseline: the caller takes one and says the call was unchecked
@@ -568,6 +600,7 @@ def read_baseline(path: Path) -> dict[str, Any] | None:
     files, known, told = record.get("files"), record.get("known"), record.get("told")
     taken, head, watched = record.get("taken_ns"), record.get("head"), record.get("watched")
     nested = record.setdefault("nested", {})
+    stash = record.setdefault("stash", {})
     if not (isinstance(files, dict) and all(_valid_entry(e) for e in files.values())
             and isinstance(known, dict)
             and all(isinstance(v, list) and all(isinstance(d, str) for d in v) for v in known.values())
@@ -576,6 +609,7 @@ def read_baseline(path: Path) -> dict[str, Any] | None:
             and (head is None or isinstance(head, str))
             and isinstance(watched, list) and all(isinstance(p, str) for p in watched)
             and isinstance(nested, dict) and all(isinstance(v, str) for v in nested.values())
+            and isinstance(stash, dict) and all(isinstance(v, str) for v in stash.values())
             and isinstance(record.get("disabled", ""), str)):
         return None
     return record
@@ -762,6 +796,8 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
             own_known: dict[str, list[str]], since_ns: int,
             base_head: str | None,
             base_nested: dict[str, str] | None = None,
+            base_stash: dict[str, str] | None = None,
+            stash_now: dict[str, str] | None = None,
             ) -> tuple[dict[str, list[str]], list[str], dict[str, str | None]]:
     """The moved paths no legitimate path accounts for, by kind; notes on any
     path that could not be asked; and ``{path: digest}``, the content a stash
@@ -790,10 +826,15 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
        checkout's filters and matched with its blob id at HEAD, within
        BIG_HASH_BUDGET_BYTES a call and after every checkout's asks, so a slow
        hash never costs a nested checkout its turn; a removal is judged by
-       presence alone, so no big blob is read into the hook. A changed file
-       git accounted for has its earlier content kept as known only when the
-       checkout's stash, written since the previous check, holds that content
-       at the path and the stash's parent commit does not: what the stash took.
+       presence alone, so no big blob is read into the hook. What would still
+       report is asked twice more: hashed the other way under the checkout's
+       filters (DEF-5020), and of the stash the previous check saw and the one
+       there now (``base_stash``, ``stash_now``, from ``stash_tops``) for what
+       a pop brought back, a deletion it recorded, or what a new stash took
+       (DEF-5019). A changed file git accounted for has its earlier content
+       kept as known only when the checkout's stash, written since the
+       previous check, holds that content at the path and the stash's parent
+       commit does not: what the stash took.
     """
     remaining = {kind: list(paths) for kind, paths in moved.items()}
     notes: list[str] = []
@@ -838,6 +879,7 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
         at_head: dict[str, bytes | None] = {}   # a small kept file's blob at HEAD
         head_oid: dict[str, bytes | None] = {}  # a big kept file's blob id at HEAD
         clean: set[str] = set()                 # a big kept file git hashes to that id
+        hashed: dict[str, bytes] = {}           # and the id git hashed each big kept file to
         head_has: dict[str, bool] = {}          # a removed file's presence at HEAD
         base_has: dict[str, bool] = {}          # and at the HEAD of the previous check
         hash_left = BIG_HASH_BUDGET_BYTES
@@ -908,14 +950,11 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
                              f"{f' within {GIT_ASK_BUDGET_S:g} s' if timed_out else ''}, "
                              "so their committed content was not checked")
             else:
+                hashed.update(zip(hashable, hashes))
                 clean.update(r for r, h in zip(hashable, hashes) if h == head_oid[r])
         if late:
             names = ", ".join(t.encode("unicode_escape").decode("ascii") + "/" for t in late)
             notes.append(f"{len(late)} nested checkout(s) were not asked within {NESTED_ASK_BUDGET_S:g} s ({names}), "
-                         "so their committed content was not checked")
-        if unhashed:
-            notes.append(f"{len(unhashed)} file(s) of {BIG_FILE_BYTES >> 20} MiB or more were past the "
-                         f"{BIG_HASH_BUDGET_BYTES >> 20} MiB one call may hash ({_names(unhashed)}), "
                          "so their committed content was not checked")
         stashed: dict[str, list[str]] = {}   # per checkout: changed paths git accounted for, small before and now
         for kind in ("changed", "added"):
@@ -931,6 +970,112 @@ def account(root: Path, sid: object, moved: dict[str, list[str]],
             r for r in gone
             if not (r in asked and not head_has.get(r, False)
                     and (base_has.get(r, False) or before[r][2] in known.get(r, ())))]
+        # The report path: what still reports is asked twice more, and only it.
+        # DEF-5020: a file git calls clean whose working copy is not its
+        # committed form under the checkout's own filters -- a small one stored
+        # through a clean filter (a git-lfs file, committed as its pointer), a
+        # big CRLF text committed as such under core.autocrlf -- is hashed the
+        # other way: a small one through the filters, a big one with none. A
+        # match either way is committed content.
+        other_way: dict[tuple[str, bool], list[str]] = {}   # (checkout, with no filters): paths
+        for kind in ("changed", "added"):
+            for r in remaining[kind]:
+                if r in asked and big(r) and r in hashed:
+                    other_way.setdefault((top_of[r], True), []).append(r)
+                elif r in asked and not big(r) and at_head.get(r) is not None:
+                    other_way.setdefault((top_of[r], False), []).append(r)
+        committed: set[str] = set()
+        for (top, raw), rels in sorted(other_way.items()):
+            fits = []
+            for r in rels:
+                if after[r][0] > hash_left:
+                    unhashed.append(r)
+                    continue
+                hash_left -= after[r][0]
+                fits.append(r)
+            budget = left()
+            if not fits or budget <= 0:
+                continue   # they report, the loud side
+            ids, timed_out = _hash_objects(root, [inside[r] for r in fits], cwd=root / top if top else None,
+                                           timeout=budget, raw=raw)
+            if ids is None:
+                notes.append(f"git {'did not finish hashing' if timed_out else 'could not hash'} {len(fits)} file(s) "
+                             f"the other way ({_names(fits)}), so their form under the checkout's filters was not "
+                             "checked")
+                continue
+            for r, h in zip(fits, ids):
+                if h == (head_oid.get(r) if raw else _blob_id(at_head[r] or b"", h)):
+                    committed.add(r)
+        for kind in ("changed", "added"):
+            remaining[kind] = [r for r in remaining[kind] if r not in committed]
+        if unhashed:
+            notes.append(f"{len(unhashed)} file(s) were past the {BIG_HASH_BUDGET_BYTES >> 20} MiB one call may "
+                         f"hash ({_names(unhashed)}), so their committed content was not checked")
+        # DEF-5019: what a stash holds, asked of the stash the previous check
+        # saw (``base_stash``) and the one there now (``stash_now``). A kept
+        # file holding what that stash changed at its path -- its worktree
+        # commit against its first parent (HEAD when it was made), or its
+        # untracked-files parent -- is what a pop or an apply brought back, a
+        # stash made before the session included; a removed file that stash
+        # recorded as deleted is its pop too; and a removed file whose content a
+        # stash made since took is a stash of a new file. A stash that merely
+        # carries a file unchanged vouches for nothing, so a script writing back
+        # what a pull replaced still reports.
+        base_stash, stash_now = base_stash or {}, stash_now or {}
+        ask: dict[str, list[str]] = {}
+        for kind in ("changed", "added", "removed"):
+            for r in remaining[kind]:
+                if r in asked and (top_of[r] in base_stash or top_of[r] in stash_now):
+                    ask.setdefault(top_of[r], []).append(r)
+        by_stash: set[str] = set()
+        for top, rels in sorted(ask.items()):
+            prev, now = base_stash.get(top), stash_now.get(top)
+            made = now if now != prev else None   # a stash made since the previous check
+            reqs: list[str] = []
+            plans: list[tuple[str, str, int]] = []   # (path, what is asked, where its requests start)
+            for r in rels:
+                inner = inside[r]
+                if r not in gone_set and prev:
+                    plans.append((r, "back", len(reqs)))
+                    reqs += [f"{prev}:./{inner}", f"{prev}^1:./{inner}", f"{prev}^3:./{inner}"]
+                if r in gone_set and prev:
+                    plans.append((r, "deleted", len(reqs)))
+                    reqs += [f"{prev}:./{inner}", f"{prev}^1:./{inner}"]
+                if r in gone_set and made and not _identified_by_stat(before[r][2]):
+                    plans.append((r, "took", len(reqs)))
+                    reqs += [f"{made}:./{inner}", f"{made}^1:./{inner}", f"{made}^3:./{inner}"]
+            budget = left()
+            if not reqs or budget <= 0:
+                continue   # they report, the loud side
+            cwd = root / top if top else None
+            stash_ids = _git_objects(root, reqs, cwd=cwd, check_only=True, timeout=budget)
+            if stash_ids is None:
+                notes.append("git could not be asked about the stash, so what a pop brings back was not checked")
+                continue
+            read: list[tuple[str, str, int]] = []   # a small file's stash blob, read for its content
+            for r, what, i in plans:
+                if what == "deleted":
+                    if stash_ids[i] is None and stash_ids[i + 1] is not None:
+                        by_stash.add(r)
+                    continue
+                # Changed by the stash at the path, else held by its untracked parent.
+                held_at = (i if stash_ids[i] is not None and stash_ids[i] != stash_ids[i + 1]
+                           else (i + 2 if stash_ids[i + 2] else None))
+                if held_at is None:
+                    continue
+                if what == "back" and big(r):
+                    if hashed.get(r) is not None and hashed[r] == stash_ids[held_at]:
+                        by_stash.add(r)
+                elif what == "took" or not big(r):
+                    read.append((r, what, held_at))
+            budget = left()
+            if read and budget > 0:
+                blobs = _git_objects(root, [reqs[i] for _r, _what, i in read], cwd=cwd, timeout=budget) or []
+                for (r, what, _i), blob in zip(read, blobs):
+                    if _blob_holds(blob, present(r) if what == "back" else before[r][2]):
+                        by_stash.add(r)
+        for kind in remaining:
+            remaining[kind] = [r for r in remaining[kind] if r not in by_stash]
         # What a stash took: the content before, held by the stash at the path
         # and not by its parent (HEAD when it was made), so a file the stash
         # merely carried unchanged beside a pull is not one. A stash written
@@ -1037,10 +1182,13 @@ def after_shell_call(root: Path, sid: object, duration_ms: object = None) -> dic
             # The nested heads too, so a checkout that moved, or a directory
             # that became one, with no file moving is recorded for the next
             # call's removals (one directory read per watched one under an
-            # adopter prefix; nothing without one).
+            # adopter prefix; nothing without one). And each checkout's stash,
+            # so a stash made, dropped or popped with no file moving is the one
+            # the next call asks (a few file reads).
             snap = snapshot(root, peek["files"], peek["taken_ns"])
             unmoved = (snap == peek["files"] and head == peek["head"] and watched_prefixes(root) == peek["watched"]
-                       and nested_heads(root, snap) == peek["nested"])
+                       and nested_heads(root, snap) == peek["nested"]
+                       and stash_tops(root, peek["nested"]) == peek["stash"])
         except WatchSetTooLarge:  # fail-open: ok deliberate -- too large to peek: the locked pass below turns the check off and says so
             unmoved = False
         if unmoved:
@@ -1067,6 +1215,7 @@ def after_shell_call(root: Path, sid: object, duration_ms: object = None) -> dic
         # files newer than it would judge the next call's removals against
         # the wrong commit. A checkout found only in the snapshot is read after.
         nested_now = nested_heads(root, before)
+        stash_now = stash_tops(root, nested_now)
         # A git operation half done in a known nested checkout holds that
         # checkout's paths alone: their entries and its head stay as they were,
         # judged once git is done there, and everything else is judged now.
@@ -1077,14 +1226,20 @@ def after_shell_call(root: Path, sid: object, duration_ms: object = None) -> dic
             with contextlib.suppress(OSError):
                 write_baseline(path, new_baseline(root, {}, taken, disabled=str(exc)))
             return {"status": "off", "reason": str(exc)}
-        for top, sha in nested_heads(root, [r for r in after if r not in before]).items():
+        found = nested_heads(root, [r for r in after if r not in before])
+        for top, sha in found.items():
             nested_now.setdefault(top, sha)
+        for top, sha in stash_tops(root, [t for t in found if t not in stash_now]).items():
+            stash_now.setdefault(top, sha)
         if held:
             kept_files = {r: e for r, e in before.items() if r.startswith(held)}
             before = {r: e for r, e in before.items() if not r.startswith(held)}
             after = {r: e for r, e in after.items() if not r.startswith(held)}
             for top in (t[:-1] for t in held):
                 nested_now[top] = record["nested"][top]
+                stash_now.pop(top, None)
+                if top in record["stash"]:
+                    stash_now[top] = record["stash"][top]
         else:
             kept_files = {}
         if watched_changed:
@@ -1097,7 +1252,8 @@ def after_shell_call(root: Path, sid: object, duration_ms: object = None) -> dic
             compare_after = after
         moved = diff(before, compare_after)
         unaccounted, notes, moved_from = (account(root, sid, moved, before, compare_after, record["known"],
-                                                  record["taken_ns"], record["head"], record["nested"])
+                                                  record["taken_ns"], record["head"], record["nested"],
+                                                  base_stash=record["stash"], stash_now=stash_now)
                                           if any(moved.values()) else ({k: [] for k in moved}, [], {}))
         for rel, digest in moved_from.items():
             _remember(record["known"], rel, digest)
@@ -1109,7 +1265,7 @@ def after_shell_call(root: Path, sid: object, duration_ms: object = None) -> dic
                 for r in unaccounted[kind]]
         operator = [k.rsplit("@", 1)[0] for k in keys if k not in told]
         record.update(files={**after, **kept_files}, taken_ns=taken, head=head, watched=watched_now,
-                      nested=nested_now, told=sorted(told | set(keys)))
+                      nested=nested_now, stash=stash_now, told=sorted(told | set(keys)))
         try:
             write_baseline(path, record)
         except OSError:  # fail-open: ok deliberate -- the finding still reports; the note says the next call may repeat it

@@ -1715,9 +1715,8 @@ new state as the next one to compare with.
   1. content a file tool wrote (Write, Edit, NotebookEdit, an MCP write) --
      in this session or in another live session in the same checkout -- or
      content this check already accounted for or reported, or that a stash
-     took from a protected file during the session, so a stash of an edit to
-     a file under 4 MiB and its pop, or a return to an earlier state, stay
-     quiet;
+     took from a protected file during the session, so a return to an earlier
+     state stays quiet;
   2. committed history: a file that now holds its content at `HEAD` (a pull,
      a merge, a checkout, the session catch-up), or a removed file that is
      absent at `HEAD` and was present at the `HEAD` of the previous check (a
@@ -1730,7 +1729,15 @@ new state as the next one to compare with.
      a copy into a protected path, a submodule's first update) reports its
      files once, since nothing had vouched for them, and is judged by its own
      git from then on. The harness's own zones are never asked of a nested
-     git;
+     git. A file git calls clean under the checkout's own filters counts the
+     same: a git-lfs file, whose committed form is its pointer, or a text
+     file committed with CRLF line endings in a checkout that sets
+     `core.autocrlf`. And a checkout's stash is git's too: what the newest
+     stash at the previous check changed at a path comes back quietly (a pop
+     or an apply, of a stash made before the session or during it, of a file
+     of any size, of a new file stashed with `-u` or only staged), as does a
+     deletion that stash recorded and a file a stash made since took. A stash
+     that merely carries a file unchanged vouches for nothing;
   3. on the harness's own source tree only, a byte mirror that now equals its
      source (the vendored hook copies, the packaged docs and `.claude` assets);
   4. an `espalier` command that rewrites protected files (`init`, `upgrade`,
@@ -1784,15 +1791,11 @@ new state as the next one to compare with.
     lock: a shell call can write one that names its own change.
   - A commit made through git plumbing without touching the working tree,
     then checked out, reads as committed history.
-  - A stash or its pop reports where the check cannot match what the stash
-    holds: the pop of a file of 4 MiB or more, the stash and the pop of a new
-    file made before the session (`git stash -u`, or a file only staged), the
-    pop of a stashed deletion, and the pop of a stash made before the session.
-  - A file git calls clean whose working copy differs from its committed
-    form under the checkout's own filters reports when git brings it back: a
-    file under 4 MiB stored through a clean filter (a git-lfs file, whose
-    committed form is its pointer), or a text file of 4 MiB or more committed
-    with CRLF line endings in a checkout that sets `core.autocrlf`.
+  - Only the newest stash is asked: the pop of an older one (`git stash pop
+    stash@{1}`) reports, and so does the pop of a file of 4 MiB or more that
+    `HEAD` does not hold (a big new file stashed with `-u`), which git is
+    never asked to hash. What a stash changed at a path is git's wherever it
+    comes from, so a hand write of exactly that content is silent too.
 
 **What Claude receives** (beside the tool result, as the `additionalContext`
 of the ONE JSON object the hook prints at the end of its run -- every finding
