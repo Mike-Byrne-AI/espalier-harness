@@ -107,9 +107,62 @@ _STOPWORDS = frozenset({
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
+#: An HTML comment renders as nothing, so its words are no document's
+#: vocabulary. A fragment marker sits above its own ``##`` heading, and the
+#: section splitter gave it to the section BEFORE it: the paths in its
+#: ``bound=`` list scored as that section's prose (driven 2026-09-30: one path
+#: added to a marker moved the paraphrase table). A comment inside a fenced
+#: block or an inline code span is text a reader sees and stays; an opener
+#: with no close is left as it is. The skip marker is read on the raw body
+#: before any text reaches the tokenizer, so stripping here never hides it.
+_FENCE_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
+#: A code span does not cross a blank line: it cannot leave its paragraph.
+_CODE_SPAN_RE = re.compile(r"(`+)(?!`)((?:(?!\n[ \t]*\n).)+?)(?<!`)\1(?!`)", re.S)
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+_HELD_SPAN_RE = re.compile(r"\x00(\d+)\x00")
+
+
+def _drop_comments(prose: str) -> str:
+    """``prose`` (no fenced block in it) with its comments outside code spans
+    replaced by a space; each span is held aside while the comments go."""
+    spans: list[str] = []
+
+    def hold(m: "re.Match[str]") -> str:
+        spans.append(m.group(0))
+        return f"\x00{len(spans) - 1}\x00"
+
+    masked = _HTML_COMMENT_RE.sub(" ", _CODE_SPAN_RE.sub(hold, prose))
+    return _HELD_SPAN_RE.sub(lambda m: spans[int(m.group(1))], masked)
+
+
+def _without_comments(text: str) -> str:
+    """``text`` with every HTML comment outside fenced blocks and code spans
+    dropped; text with no opener comes back as it is."""
+    if "<!--" not in text:
+        return text
+    out: list[str] = []
+    prose: list[str] = []
+    fence = ""
+    for line in text.splitlines(keepends=True):
+        m = _FENCE_RE.match(line)
+        if fence:
+            out.append(line)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence):
+                fence = ""
+            continue
+        if m:
+            out.append(_drop_comments("".join(prose)))
+            prose = []
+            fence = m.group(1)
+            out.append(line)
+            continue
+        prose.append(line)
+    out.append(_drop_comments("".join(prose)))
+    return "".join(out)
+
 
 def _tokenize(text: str) -> list[str]:
-    return [t for t in _TOKEN_RE.findall(text.lower())
+    return [t for t in _TOKEN_RE.findall(_without_comments(text).lower())
             if len(t) > 1 and t not in _STOPWORDS]
 
 
