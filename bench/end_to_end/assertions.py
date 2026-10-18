@@ -81,6 +81,11 @@ class ScenarioVerdict:
     #: retries, since such a run tested no hook (DEF-5001); a run that itself
     #: failed is decided (fail) and clears it.
     undecided: bool = False
+    #: How many runs the orchestrator took for this verdict, and how many of
+    #: them decided nothing, so a calibration or a flake count reads numbers,
+    #: never the notes' prose.
+    runs: int = 1
+    undecided_runs: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -95,6 +100,8 @@ class ScenarioVerdict:
             "model": self.model,
             "permission_mode": self.permission_mode,
             "undecided": self.undecided,
+            "runs": self.runs,
+            "undecided_runs": self.undecided_runs,
         }
 
 

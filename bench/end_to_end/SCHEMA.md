@@ -22,7 +22,7 @@ This file documents the schema. The canonical example skeleton is
 | `trigger` | yes | object | See [Trigger](#trigger). |
 | `expected_receiver_behavior` | yes | object | See [Expected Receiver Behavior](#expected-receiver-behavior). |
 | `flakiness_handling` | no | object | See [Flakiness Handling](#flakiness-handling). Defaults: `retry_on_inconclusive: 0`, and no `treat_inconclusive_as` (a final inconclusive stays `inconclusive`). |
-| `cost_budget_tokens` | no | int | Advisory only — **not currently enforced** by the runner; the live cost cap is the cumulative `--max-cost-usd` in `run.py`. Scenarios set it as documentation. |
+| `cost_budget_tokens` | no | int | Advisory only — **not currently enforced** by the runner; the live cost cap is the cumulative `--max-cost-usd` in `run.py`. Scenarios set it as documentation, per run: a verdict's `cost_tokens` sums every run it took (`runs`), so set it from a verdict with `runs: 1`. |
 
 ## Setup
 
@@ -80,7 +80,9 @@ The orchestrator (`run.py`) exits, in this order: `2` on a cost abort or an
 unmatched `--scenario`; `1` on any `fail`; `3` when a scenario is still
 undecided after its retries, since one such scenario is a run that tested no
 hook, whatever the report's text says (`DEF-5001`); and `0` only when every
-scenario passed. A retry that decides leaves a note on the verdict, and each
+scenario passed. The JSON report leads with that `exit_code` and the
+`undecided_scenarios`, and each verdict carries `runs` and `undecided_runs`.
+A retry that decides leaves a note on the verdict, and each
 run it replaced is archived beside the last (`<id>.run1.json`). Each retry is
 a second live run and costs one: the
 wiring scenarios measured 0.42 (BCE-001), 0.11 (BCE-002) and 0.09 (BCE-003)

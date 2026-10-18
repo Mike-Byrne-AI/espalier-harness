@@ -49,7 +49,11 @@ whose default model is cheaper will cost less, so treat these as one sample:
 | BCE-003 | 54,926 | $0.09 |
 
 One pass of all four is about **$0.67** at these figures, so a weekly run is
-about $35 a year. The workflow passes `--max-cost-usd 5.00`, which the
+about $35 a year. That is the floor: each wiring scenario that decides nothing
+is run once more, so a pass costs up to about $1.29. A run that sent no events
+(a CLI whose output carries no stream JSON, exit 0) is priced at almost nothing,
+so its retry spends whatever the CLI really spent without the cap seeing it;
+the smoke scenario reads such a CLI as failed first. The workflow passes `--max-cost-usd 5.00`, which the
 orchestrator checks after each run: past it, no further scenario starts, so the
 run in flight can go over it. A run the timeout cuts off sends no `result` event, so the cap prices
 its messages' usage instead, each token class at the rates the CLI's own prices
@@ -153,20 +157,24 @@ auto-close. Investigate every issue before dismissing.
    following the schema in `SCHEMA.md`.
 
 3. **Calibrate the assertions.** Run the scenario locally **at least
-   5 times** in a row before committing. Record the verdicts, and count a
-   run whose verdict carries the note that its first run decided nothing as
-   an inconclusive: the retry decided it, the scenario did not (calibrate
-   with the retry in the scenario, or set it to 0 while you count):
+   5 times** in a row before committing, with the scenario's retry in place,
+   and count its runs that decided nothing from the JSON report (each
+   verdict's `undecided_runs`; `runs` is how many it took). A retry that
+   decided hides the flake from the verdict, not from that count:
 
    ```bash
    for i in {1..5}; do
-     python3 -m bench.end_to_end.run --scenario BCE-NNN-name
+     python3 -m bench.end_to_end.run --scenario BCE-NNN-name --json
    done
    ```
 
-   - 5 passes → assertions are well-calibrated.
+   - 5 passes, no undecided runs → assertions are well-calibrated.
    - 4 pass + 1 inconclusive → keep `retry_on_inconclusive: 1`,
-     `treat_inconclusive_as: warn`. Acceptable.
+     `treat_inconclusive_as: warn`. Acceptable. Know what it buys: a
+     first-run undecided rate `p` makes the scenario exit the run `3` on
+     between `p` squared (its two runs independent) and `p` (the same cause
+     undecides it twice) of runs; at 1 in 5, three such scenarios red
+     between about 11 and 49 percent of bench runs, each opening an issue.
    - 3 pass + 2 inconclusive → assertions are too tight. Loosen
      `must_contain_any` patterns; the agent's phrasing is noisier than
      you anticipated.
@@ -182,7 +190,9 @@ auto-close. Investigate every issue before dismissing.
 
 1. Pull the artifact transcript from the failing CI run:
    `Actions → end-to-end-bench → run → Artifacts → e2e-transcripts-...`
-2. Inspect `bench/end_to_end/runs/<timestamp>/<scenario_id>.json`. The
+2. Inspect `bench/end_to_end/runs/<timestamp>/<scenario_id>.json`, and for a
+   scenario that was retried each run the retry replaced,
+   `<scenario_id>.run1.json` (the verdict's `runs` says how many). The
    `events` list shows every assistant turn, tool_use, and system
    message. The `raw_stream_json` field is the unparsed Claude Code
    output for completeness.

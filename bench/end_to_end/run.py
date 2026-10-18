@@ -4,7 +4,8 @@ Enumerates scenarios under `bench/end_to_end/scenarios/`, runs each
 via `runner.run_scenario`, evaluates with `assertions.evaluate`, and
 produces a markdown or JSON report. Tracks cumulative cost; aborts if
 `--max-cost-usd` is exceeded. Saves raw transcripts to
-`bench/end_to_end/runs/<timestamp>/<scenario_id>.json` for replay.
+`bench/end_to_end/runs/<timestamp>/<scenario_id>.json` for replay, and each
+run a retry replaced beside it as `<scenario_id>.run<N>.json`.
 
 Exit codes:
     0  every scenario `pass` (on its first run or a retry).
@@ -130,15 +131,24 @@ def _run_with_retry(
     runs = 1
     tokens = run.cost_tokens
     cumulative_cost += run.cost_usd_estimate
+    unarchived: list[str] = []
     while (verdict.undecided and runs <= retries
            and not (max_cost_usd is not None and cumulative_cost > max_cost_usd)):
         if on_superseded is not None:
-            on_superseded(run, runs)
+            try:
+                on_superseded(run, runs)
+            except OSError as exc:
+                # a side effect never blocks the measurement or drops its cost
+                unarchived.append(f"run {runs} not archived: {exc}")
         run, verdict = _do_run()
         runs += 1
         tokens += run.cost_tokens
         cumulative_cost += run.cost_usd_estimate
     verdict.cost_tokens = tokens
+    # every run a retry replaced decided nothing; the last did only if it is not undecided
+    verdict.runs, verdict.undecided_runs = runs, runs - 1 + int(verdict.undecided)
+    if unarchived:
+        verdict.notes = (verdict.notes + "; " if verdict.notes else "") + "; ".join(unarchived)
     plural = "s" if runs != 1 else ""
     if verdict.undecided:
         # the scenario's own record; the run's exit code is main's to say (a
@@ -266,8 +276,13 @@ def main(argv: list[str] | None = None) -> int:
             ))
 
     elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+    rc = _exit_code(verdicts, aborted=aborted)
     if args.json:
+        # the exit code and the undecided scenarios lead the report: the issue the
+        # workflow opens on a red run is this JSON, and its verdicts read `warn`
         report = {
+            "exit_code": rc,
+            "undecided_scenarios": [v.scenario_id for v in verdicts if v.undecided],
             "started_at": started_at.isoformat(),
             "elapsed_seconds": round(elapsed, 2),
             "total_cost_usd": round(cumulative_cost, 4),
@@ -283,12 +298,20 @@ def main(argv: list[str] | None = None) -> int:
             total_cost_tokens=cumulative_tokens,
             elapsed_seconds=elapsed,
         ))
+    return rc
 
+
+def _exit_code(verdicts: list[ScenarioVerdict], *, aborted: bool) -> int:
+    """The module docstring's table, first match: 2 on an abort, 1 on any fail,
+    `EXIT_UNDECIDED` when a scenario decided nothing, 0 only when every scenario
+    passed. The last arm reads the verdicts too, not the flag alone: a verdict
+    built without `undecided` (its default is False) still never reads 0 unless
+    it passed."""
     if aborted:
         return 2
     if any(v.overall == VERDICT_FAIL for v in verdicts):
         return 1
-    if any(v.undecided for v in verdicts):
+    if any(v.undecided for v in verdicts) or not all(v.overall == VERDICT_PASS for v in verdicts):
         # one is enough: a run whose hook scenario decided nothing tested no hook
         return EXIT_UNDECIDED
     return 0

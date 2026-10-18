@@ -1762,6 +1762,10 @@ class TestAScenarioThatDecidedNothingFailsTheRun:
         assert rc == _UNDECIDED_EXIT, (rc, verdict)
         assert verdict["overall"] == VERDICT_WARN and verdict["undecided"] is True, verdict
         assert "decided nothing" in verdict["notes"] and "tested no hook" in verdict["notes"], verdict["notes"]
+        assert (verdict["runs"], verdict["undecided_runs"]) == (2, 2), verdict
+        # the report the workflow's issue carries leads with what the run was
+        assert (self.report["exit_code"], self.report["undecided_scenarios"]) == (_UNDECIDED_EXIT, [scenario])
+        assert list(self.report)[:2] == ["exit_code", "undecided_scenarios"], list(self.report)
 
     def test_an_undecided_reply_with_events_retries_and_fails_the_run(self, tmp_path, monkeypatch):
         """BCE-002 fed the captured Stop-hook feedback and a reply that leaves
@@ -1814,6 +1818,7 @@ class TestAScenarioThatDecidedNothingFailsTheRun:
         rc, runs, (verdict,) = self._main(monkeypatch, tmp_path, [Transcript([])], scenario=self._WIRING[0],
                                           costs=(6.0,), argv=("--max-cost-usd", "5"))
         assert (len(runs), rc) == (1, 2), (runs, rc, verdict)
+        assert self.report["exit_code"] == 2 and self.report["aborted"] is True, self.report
 
     def test_a_retry_that_decides_leaves_the_first_run_on_record(self, tmp_path, monkeypatch):
         """A first run that decided nothing and a retry that passed: the verdict
@@ -1828,10 +1833,51 @@ class TestAScenarioThatDecidedNothingFailsTheRun:
                                           scenarios_dir=scenarios, tokens=(1000, 2000), costs=(0.25, 0.25))
         assert (len(runs), rc, verdict["overall"]) == (2, 0, VERDICT_PASS), verdict
         assert "the first run decided nothing and was retried; run 2 decided" in verdict["notes"], verdict["notes"]
+        assert (verdict["runs"], verdict["undecided_runs"]) == (2, 1), verdict
         assert (verdict["cost_tokens"], self.report["total_cost_tokens"]) == (3000, 3000), self.report
         assert self.report["total_cost_usd"] == pytest.approx(0.5), self.report
-        archived = sorted(p.name for p in (tmp_path / "runs").rglob("*.json"))
-        assert archived == ["BCE-tmp.json", "BCE-tmp.run1.json"], archived
+        archived = {p.name: p for p in (tmp_path / "runs").rglob("*.json")}
+        assert sorted(archived) == ["BCE-tmp.json", "BCE-tmp.run1.json"], sorted(archived)
+        # what each holds, not only its name: the replaced first run had no events, the last one has
+        first = json.loads(archived["BCE-tmp.run1.json"].read_text(encoding="utf-8"))
+        last = json.loads(archived["BCE-tmp.json"].read_text(encoding="utf-8"))
+        assert first["events"] == [] and last["events"], (first["events"], last["events"])
+
+    def test_a_retry_survives_a_run_it_could_not_archive(self, tmp_path, monkeypatch):
+        """Archiving the run a retry replaces is a side effect: an OSError there
+        (a full disk, a file in the way) is noted on the verdict and never stops
+        the retry or drops the first run's cost from the total and the cap."""
+        from bench.end_to_end import run as orchestrator
+
+        real = orchestrator._archive_transcript
+
+        def broken(run, run_dir, suffix=""):
+            if suffix:
+                raise OSError("disk full")
+            return real(run, run_dir, suffix)
+
+        monkeypatch.setattr(orchestrator, "_archive_transcript", broken)
+        scenarios = tmp_path / "scenarios"
+        self._write(scenarios, "BCE-tmp", "{retry_on_inconclusive: 1, treat_inconclusive_as: warn}")
+        protected = Transcript(parse_stream_json(_stream_lines(_assistant("the path is protected"))))
+        rc, runs, (verdict,) = self._main(monkeypatch, tmp_path, [Transcript([]), protected],
+                                          scenarios_dir=scenarios, costs=(0.42, 0.1))
+        assert (len(runs), rc, verdict["overall"]) == (2, 0, VERDICT_PASS), verdict
+        assert "run 1 not archived: disk full" in verdict["notes"], verdict["notes"]
+        assert self.report["total_cost_usd"] == pytest.approx(0.52), self.report
+
+    def test_a_verdict_built_without_the_flag_never_exits_0(self, tmp_path, monkeypatch):
+        """Exit 0 is every scenario passing, held by the code and not only by the
+        flag: a verdict a future edit builds as a warn or an inconclusive without
+        `undecided` (its default is False) still exits the run 3, never 0."""
+        from bench.end_to_end import run as orchestrator
+        from bench.end_to_end.assertions import ScenarioVerdict
+
+        for overall in (VERDICT_WARN, VERDICT_INCONCLUSIVE):
+            monkeypatch.setattr(orchestrator, "evaluate", lambda scenario, transcript, _o=overall, **_k: ScenarioVerdict(
+                scenario_id=str(scenario.get("id")), overall=_o))
+            rc, runs, (verdict,) = self._main(monkeypatch, tmp_path, [Transcript([])], scenario=self._WIRING[0])
+            assert verdict["undecided"] is False and rc == _UNDECIDED_EXIT, (overall, rc, verdict)
 
     def test_an_undecided_scenario_fails_the_run_whatever_its_mapping(self, tmp_path, monkeypatch):
         """The exit reads whether the scenario decided anything, not its mapped
@@ -1863,6 +1909,7 @@ class TestAScenarioThatDecidedNothingFailsTheRun:
         assert [(v["overall"], v["undecided"]) for v in verdicts] == [(VERDICT_FAIL, False), (VERDICT_WARN, True)]
         # the undecided scenario's note names it and claims no exit code: the run's is 1
         assert "decided nothing" in verdicts[1]["notes"] and "exits" not in verdicts[1]["notes"], verdicts[1]
+        assert (self.report["exit_code"], self.report["undecided_scenarios"]) == (1, ["BCE-b"]), self.report
 
     def test_the_report_counts_the_undecided_in_its_header(self):
         """The markdown report says, in its header, how many scenarios decided

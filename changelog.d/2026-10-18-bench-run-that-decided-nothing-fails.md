@@ -21,11 +21,18 @@
     still `2`. The report keeps the warn as its text, names why beside it, and
     counts the undecided scenarios in its header.
   - **A retry that decides leaves its trace:** a note that the first run
-    decided nothing, that run's transcript archived as `<id>.run1.json`, and
-    the tokens of every run in the totals.
+    decided nothing, that run's transcript archived as `<id>.run1.json`, the
+    tokens of every run in the totals, and `runs` and `undecided_runs` on the
+    verdict. An archive that fails is noted, and never stops the retry or
+    drops its cost.
+  - **The JSON report leads with the outcome:** `exit_code` and
+    `undecided_scenarios` come first, so the issue the workflow opens says
+    what the run was. Exit 0 also needs every verdict to have passed, so a
+    verdict built without the flag can never read 0.
   - **Cost:** every undecided wiring run now pays for its retry, about 0.42,
     0.11 and 0.09 USD for BCE-001, BCE-002 and BCE-003 on Claude Code 2.1.299
-    with claude-opus-5-5.
+    with claude-opus-5-5. A pass costs up to about 1.29 USD, against a floor
+    of 0.67. The retry of a run that sent no events is unpriced by the cap.
   - **What also counts now:** the retry check's ground-truth inconclusives,
     which are warns as well.
   - **Docs:** the orchestrator's docstring, `bench/end_to_end/SCHEMA.md` and
