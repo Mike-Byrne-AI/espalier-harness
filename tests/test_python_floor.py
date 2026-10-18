@@ -1507,7 +1507,7 @@ class TestAStartProbeThatNeverAnswers:
 
         self._host(tmp_path, monkeypatch, working=("python3",))
         python3 = shutil.which("python3")
-        real = cli.run_bounded
+        real = cli.run_no_stdin
         asked: list[list[str]] = []
 
         def run_bounded(argv, *args, **kwargs):
@@ -1515,7 +1515,7 @@ class TestAStartProbeThatNeverAnswers:
                 asked.append(list(argv))
             return real(argv, *args, **kwargs)
 
-        monkeypatch.setattr(cli, "run_bounded", run_bounded)
+        monkeypatch.setattr(cli, "run_no_stdin", run_bounded)
         for _ in range(3):
             assert cli._resolves_only_inside_a_virtualenv("python3", python3) is False
         assert len(asked) == 1, asked
@@ -1589,7 +1589,7 @@ class TestABannerThatNeverAnswers:
         """
         import types
 
-        from espalier import _spawn, cli, doctor
+        from espalier import _spawn
 
         real = _spawn.run_bounded
         state = types.SimpleNamespace(asked=[], modes={}, bin_dir=None, seen=set(),
@@ -1616,8 +1616,8 @@ class TestABannerThatNeverAnswers:
                     return subprocess.CompletedProcess(argv, 0, stdout=said + "\n", stderr="")
             return real(argv, *args, **kwargs)
 
-        for module in (_spawn, cli, doctor):
-            monkeypatch.setattr(module, "run_bounded", run_bounded)
+        # cli and doctor reach it through run_no_stdin, which looks it up per call (DEF-928)
+        monkeypatch.setattr(_spawn, "run_bounded", run_bounded)
         monkeypatch.delenv("PYTHONHOME", raising=False)
         monkeypatch.delenv("PYTHONPATH", raising=False)
         return state

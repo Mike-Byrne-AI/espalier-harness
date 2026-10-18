@@ -115,7 +115,7 @@ SUBPROCESS_TEXT_FUNCS: frozenset[str] = frozenset({
 #: and ``run_bounded`` (tools/cc/_json_safe.py, the route every timed spawn
 #: there takes). Read by bare name or attribute, so the reroute onto them
 #: cannot hide a locale decode. Held equal to tests/test_contracts.py's copy.
-SPAWN_WRAPPERS: frozenset[str] = frozenset({"spawn_checked", "run_bounded"})
+SPAWN_WRAPPERS: frozenset[str] = frozenset({"spawn_checked", "run_bounded", "run_no_stdin"})
 TEMPFILE_FUNCS: frozenset[str] = frozenset({
     "NamedTemporaryFile", "TemporaryFile", "SpooledTemporaryFile",
 })

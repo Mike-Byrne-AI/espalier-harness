@@ -68,7 +68,7 @@ from espalier.scanners.freshness import (
     unplaced_bound_entries,
 )
 from espalier._atomic_io import atomic_write_text, lock_file, unlock_file
-from espalier._spawn import run_bounded
+from espalier._spawn import run_no_stdin
 
 __all__ = [
     "Fragment",
@@ -202,7 +202,7 @@ def carried_literal(repo_root: Path, frag: Fragment, existing: Any) -> object:
 
 def _resolve_head_sha(repo_root: Path) -> str:
     try:
-        result = run_bounded(
+        result = run_no_stdin(
             ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
             capture_output=True, text=True, encoding="utf-8", check=False, timeout=10,
         )
@@ -614,7 +614,7 @@ def is_state_cache_stale(
 
 def _git_head_sha_quiet(cwd: Path) -> str | None:
     try:
-        result = run_bounded(
+        result = run_no_stdin(
             ["git", "-C", str(cwd), "rev-parse", "HEAD"],
             capture_output=True, text=True, encoding="utf-8", timeout=5,
         )
@@ -635,7 +635,7 @@ def _git_is_ancestor_within_n(
     candidate_sha: str, ref: str, *, n: int, cwd: Path,
 ) -> bool:
     try:
-        result = run_bounded(
+        result = run_no_stdin(
             ["git", "-C", str(cwd), "rev-list", f"-n{n}", ref],
             capture_output=True, text=True, encoding="utf-8", timeout=5,
         )
@@ -727,7 +727,7 @@ def _pinned_bound_changed_since(repo_root: Path, cache_sha: str) -> bool:
     if not paths:
         return False
     try:
-        result = run_bounded(
+        result = run_no_stdin(
             ["git", "-C", str(repo_root), "diff", "--quiet",
              cache_sha, "HEAD", "--", *paths],
             capture_output=True, timeout=5,

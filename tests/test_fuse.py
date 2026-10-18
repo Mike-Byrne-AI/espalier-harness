@@ -676,8 +676,8 @@ class TestFuseInitFailure:
             return real_run(argv, *a, **k)
 
         # fuse's own view of the spawn, not the shared stdlib attribute: its
-        # timed spawns go through its `run_bounded` name (DEF-3004)
-        monkeypatch.setattr(fuse, "run_bounded", _no_git)
+        # spawns go through its `run_no_stdin` name (DEF-3004, DEF-928)
+        monkeypatch.setattr(fuse, "run_no_stdin", _no_git)
         assert fuse._workflow_tracked(out) is None
         assert self._unwired_active_gate(tmp_path, monkeypatch, out) == 0
         captured = capsys.readouterr().out

@@ -333,3 +333,74 @@ class TestEveryCopysWindowsBranch:
         monkeypatch.setattr(subprocess, "run", fake)
         mod.run_bounded(["git"], timeout=3)
         assert seen == [["git"]] and calls == [], (seen, calls)
+
+
+class TestTheEngineWrapperClosesTheChildsStdin:
+    """``espalier/_spawn.py::run_no_stdin`` (DEF-928): ``run_bounded`` with the
+    child's stdin closed unless the caller feeds it."""
+
+    @pytest.fixture
+    def handed(self, monkeypatch):
+        from espalier import _spawn
+        calls = []
+        monkeypatch.setattr(_spawn, "run_bounded", lambda args, **kw: calls.append(kw) or "ran")
+        return _spawn.run_no_stdin, calls
+
+    def test_a_child_handed_nothing_gets_a_closed_stdin(self, handed):
+        run_no_stdin, calls = handed
+        assert run_no_stdin(["git", "log"], timeout=5) == "ran"
+        assert calls == [{"input": None, "stdin": subprocess.DEVNULL, "timeout": 5}]
+
+    def test_a_stdin_of_none_counts_as_none_given(self, handed):
+        run_no_stdin, calls = handed
+        run_no_stdin(["git", "log"], stdin=None)
+        assert calls == [{"input": None, "stdin": subprocess.DEVNULL}]
+
+    def test_a_stdin_the_caller_gives_is_left_as_given(self, handed):
+        run_no_stdin, calls = handed
+        run_no_stdin(["git", "log"], stdin=subprocess.PIPE)
+        assert calls == [{"input": None, "stdin": subprocess.PIPE}]
+
+    def test_a_child_fed_input_gets_no_stdin_of_the_wrappers(self, handed):
+        """The two engine spawns that feed their child keep feeding it."""
+        run_no_stdin, calls = handed
+        run_no_stdin(["git", "hash-object", "--stdin"], input="body")
+        assert calls == [{"input": "body"}]
+
+    def test_the_child_reads_end_of_file_at_once(self):
+        """A real child: the stdin it is handed is empty and closed, so a read
+        returns at once instead of waiting on a pipe the suite holds open."""
+        from espalier._spawn import run_no_stdin
+        proc = run_no_stdin([sys.executable, "-c", "import sys; print(repr(sys.stdin.read()))"],
+                            capture_output=True, text=True, encoding="utf-8", timeout=30)
+        assert proc.returncode == 0 and proc.stdout.strip() == "''", (proc.stdout, proc.stderr)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the handle duplication is Windows's (Popen._get_handles)")
+class TestTheWrappersHandleTradeOnWindows:
+    """What ``run_no_stdin`` costs (DEF-928, the dispatcher's 3bbff2): a child
+    handed a stdin has its stdout and stderr duplicated from the parent, so a
+    child that streams to a dead output handle no longer starts, where with all
+    three handles left alone it did. Measured, not guarded: a dead stdout with a
+    live stdin is not the row's user. A guard that changes this reds here."""
+
+    def test_a_streaming_child_on_a_dead_stdout_starts_bare_and_not_through_the_wrapper(self, tmp_path):
+        import json
+
+        out = tmp_path / "trade.json"
+        driver = (
+            "import ctypes, json, subprocess, sys, _winapi\n"
+            "from espalier._spawn import run_no_stdin\n"
+            "ctypes.windll.kernel32.SetStdHandle(_winapi.STD_OUTPUT_HANDLE, ctypes.c_void_p(0x0BAD0))\n"
+            "seen = {}\n"
+            "for name, start in (('bare', lambda: subprocess.run([sys.executable, '-c', 'pass'])),\n"
+            "                    ('wrapper', lambda: run_no_stdin([sys.executable, '-c', 'pass']))):\n"
+            "    try:\n"
+            "        seen[name] = start().returncode\n"
+            "    except OSError as exc:\n"
+            "        seen[name] = getattr(exc, 'winerror', None)\n"
+            "open(sys.argv[1], 'w', encoding='utf-8').write(json.dumps(seen))\n"
+        )
+        subprocess.run([sys.executable, "-c", driver, str(out)], check=True, stdin=subprocess.DEVNULL,
+                       capture_output=True, timeout=30)  # two bare starts, about 1 s; under the 60 s ceiling
+        assert json.loads(out.read_text(encoding="utf-8")) == {"bare": 0, "wrapper": 6}

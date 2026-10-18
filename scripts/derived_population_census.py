@@ -239,8 +239,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        29, "06cba0df6e83c1a64c08ec746a38929655c17a403d2f39de7aec193cef0d8c48",
+        33, "f89550597aa1ec80d5b90b19c0c18b5b41f49591268144946f8fbb3ef92790a9",
         "MIXED",
+        "GREW 29 -> 33 on 2026-10-18 (the engine-stdin lane, DEF-928): "
+        "TestAFailedFingerprintTakesTheSeedDocsWithIt reads `get_seed_docs()` to find the "
+        "seed docs a failed init left behind and the directories it made; the roster "
+        "itself is held literal-equal at tests/test_managed_inventory.py:286, so a member "
+        "dropped from it reds by name there while the rows here keep reading the rest. "
         "Lane 6 (DEF-806). Seven rows walk `PLAN_READERS`, the engine's hand-kept "
         "pair of plan-reading cc/ docs, asserting per member that a plan writer "
         "re-rendered it, named it, or failed on it by its own path: the 18.4 "

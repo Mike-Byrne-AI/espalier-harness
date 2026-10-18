@@ -4619,7 +4619,7 @@ class TestDoctorNamesAHookThatCannotStart:
                 lines.append(json.dumps({"start_probe": script, "ok": True, "error": ""}))
             return subprocess.CompletedProcess(argv, 0, "\n".join(lines) + "\n", "")
 
-        monkeypatch.setattr(doctor_module, "run_bounded", child)
+        monkeypatch.setattr(doctor_module, "run_no_stdin", child)
         return spawns
 
     @pytest.mark.parametrize("as_text", [False, True], ids=["bytes", "text"])
@@ -4721,14 +4721,14 @@ class TestDoctorNamesAHookThatCannotStart:
         import subprocess
         from espalier import doctor as doctor_module
         tree = self._init_tree(tmp_path)
-        real = doctor_module.run_bounded
+        real = doctor_module.run_no_stdin
 
         def child(argv, *args, **kwargs):
             if len(argv) > 2 and argv[2] == doctor_module._HOOK_START_PROBE:
                 raise subprocess.TimeoutExpired(argv, kwargs.get("timeout") or 0)
             return real(argv, *args, **kwargs)
 
-        monkeypatch.setattr(doctor_module, "run_bounded", child)
+        monkeypatch.setattr(doctor_module, "run_no_stdin", child)
         result = run_doctor_check(tree, skip_self_host=True)
         assert self._start_lines(result) == [], result["failures"]
         assert any(w.startswith("hook start probe:") for w in result["warnings"]), result["warnings"]

@@ -490,10 +490,10 @@ def _ask_banner(argv: "list[str] | tuple[str, ...]", seconds: int, tries: int) -
     """The spawn half of :func:`_banner_verdict`, unkept."""
     import subprocess
 
-    from espalier._spawn import run_bounded
+    from espalier._spawn import run_no_stdin
     for _attempt in range(tries):
         try:
-            result = run_bounded(
+            result = run_no_stdin(
                 [*argv, "--version"], capture_output=True, text=True,
                 encoding="utf-8", timeout=seconds,
             )
@@ -509,14 +509,14 @@ def _ask_start(argv: "list[str] | tuple[str, ...]", seconds: int, tries: int) ->
     """The spawn half of :func:`_start_verdict`, unkept."""
     import subprocess
 
-    from espalier._spawn import run_bounded
+    from espalier._spawn import run_no_stdin
     result = None
     for _attempt in range(tries):
         try:
             # The tail is a literal, the one spelling of the probe, so the
             # subprocess-contract scanner resolves this argv as it does the
             # banner probe's below, rather than reading it as all-dynamic.
-            result = run_bounded(
+            result = run_no_stdin(
                 [*argv, "-I", "-c", "import sys"], capture_output=True, text=True,
                 encoding="utf-8", errors="replace", timeout=seconds,
             )

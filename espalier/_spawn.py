@@ -11,13 +11,21 @@ the others in the same commit, and never dedup them.
 
 Every timed spawn in the production code outside ``tools/cc`` -- the engine,
 ``scripts/``, ``bench/``, the top-level ``tools/`` -- calls one of the copies
-(``scripts/``, ``bench/`` and ``tools/`` load the ``tools/cc`` one by path from
-their own checkout), or is a call that holds no pipe, marked
-``# spawn: ok <reason>``. ``tests/test_contracts.py::
+(the engine through :func:`run_no_stdin`; ``scripts/``, ``bench/`` and
+``tools/`` load the ``tools/cc`` one by path from their own checkout), or is a
+call that holds no pipe, marked ``# spawn: ok <reason>``. ``tests/test_contracts.py::
 TestEveryTimedSpawnOutsideToolsCcIsBounded`` refuses any other raw
 ``subprocess.*`` call with a ``timeout``;
 ``tests/test_spawn_chokepoint.py::TestEveryTimedSpawnIsBounded`` holds
 ``tools/cc`` the same way. Test code is out of scope.
+
+Every spawn in the engine's own source, timed or not, goes through
+:func:`run_no_stdin`, which hands the child a closed standard input unless the
+caller feeds it (DEF-928); ``tests/test_contracts.py::
+TestEveryEngineSpawnClosesItsChildsStdin`` refuses one that goes around it. The
+``tools/cc`` modules the engine loads into its own process (``session_resume``
+for ``doctor`` and ``recover``, ``_record_fragments`` for the changelog) spawn
+through the ``tools/cc`` copy and still hand on stdin.
 """
 from __future__ import annotations
 
@@ -100,6 +108,44 @@ def run_bounded(
     if check and retcode:
         raise subprocess.CalledProcessError(retcode, proc.args, output=stdout, stderr=stderr)
     return subprocess.CompletedProcess(proc.args, retcode, stdout, stderr)
+
+
+def run_no_stdin(args: Any, *, input: Any = None, **kwargs: Any) -> "subprocess.CompletedProcess[Any]":
+    """:func:`run_bounded` with the child's standard input closed unless the
+    caller feeds it: ``stdin=subprocess.DEVNULL`` when neither ``input`` nor a
+    ``stdin`` is given (a ``stdin`` of ``None`` counts as none). Every spawn in
+    the engine's own source goes through here (DEF-928): the chokepoint DEF-985's
+    contract (argv[0] resolved, a failure handed back instead of raised) has
+    still to land on.
+
+    A child handed no stdin inherits the parent's, and on Windows a parent whose
+    standard-input handle was closed -- by an installer, a CI step or a wrapper
+    -- hands on a handle that is no longer valid, so the child never starts:
+    ``[WinError 6] The handle is invalid``. ``init`` died that way at its first
+    ``git`` read, after writing its seed docs. No engine child reads the
+    operator's terminal, so closing it loses nothing. It costs one thing, on
+    Windows: a child handed any one of its three handles has the other two
+    duplicated from the parent (CPython's ``Popen._get_handles``; with all three
+    left alone it duplicates none), so a child that streams to the parent's
+    stdout or stderr now fails to start on a dead output handle, where it used to
+    start (``tests/test_bounded_spawn.py`` holds the measured case). A caller
+    that pipes data passes ``input`` (or a ``stdin`` of its own), which is left
+    as given.
+
+    The bounded spawn's own bodies are not touched: ``run_bounded`` is held
+    equal to the ``tools/cc`` copy and the freshness scanner's
+    (``tests/test_contracts.py::TestTheBoundedSpawnTwins``), and the callers of
+    the ``tools/cc`` copy, the hooks among them, keep inheriting stdin. The
+    scanner, which cannot import this module, hands each of its spawns a
+    ``stdin`` itself. ``run_bounded`` is looked up when this is called, so a
+    test that patches ``espalier._spawn.run_bounded`` still reaches every engine
+    spawn.
+    """
+    import subprocess
+
+    if input is None and kwargs.get("stdin") is None:
+        kwargs["stdin"] = subprocess.DEVNULL
+    return run_bounded(args, input=input, **kwargs)
 
 
 def _is_stdlib_run(run: Any, subprocess_module: Any) -> bool:

@@ -1857,3 +1857,50 @@ class TestEveryRepoTakingCommandAsksTheClaudeQuestion:
         )
         stale = sorted(set(self.GATE_EXEMPT) - set(commands))
         assert not stale, f"GATE_EXEMPT names commands the parser no longer has: {stale}"
+
+
+class TestInitRunsWithItsStdinHandleClosed:
+    """DEF-928's oracle. A launcher that closed this process's standard input
+    leaves a handle that is no longer valid; a child that inherits it never
+    starts on Windows (``[WinError 6] The handle is invalid``), and ``init``
+    died at its fingerprint's first ``git`` read. The child here sets its own
+    stdin handle to a value no handle has -- what a launcher's closed handle is
+    in the child it starts; Git Bash's ``0<&-`` leaves a live one, and a closed
+    handle's value can be taken by the next file opened -- and runs ``init``,
+    recording every spawn that fails to start, so one swallowed by a quiet
+    handler on init's path reds here too. On POSIX a closed descriptor 0 starts
+    a child either way, so the red is Windows's and the run elsewhere is the
+    polarity."""
+
+    def test_init_deploys_with_a_closed_stdin_handle(self, tmp_path):
+        import subprocess
+        import sys
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True, stdin=subprocess.DEVNULL)
+        driver = (
+            "import os, runpy, subprocess, sys\n"
+            "if os.name == 'nt':\n"
+            "    import ctypes, _winapi\n"
+            "    ctypes.windll.kernel32.SetStdHandle(_winapi.STD_INPUT_HANDLE, ctypes.c_void_p(0x0BAD0))\n"
+            "else:\n"
+            "    os.close(0)\n"
+            "_start = subprocess.Popen.__init__\n"
+            "def _recorded(self, *args, **kwargs):\n"
+            "    try:\n"
+            "        _start(self, *args, **kwargs)\n"
+            "    except OSError as exc:\n"
+            "        sys.stderr.write(f'START-FAILED {args[0] if args else kwargs.get(\"args\")}: {exc}\\n')\n"
+            "        raise\n"
+            "subprocess.Popen.__init__ = _recorded\n"
+            "sys.argv = ['espalier', 'init', sys.argv[1]]\n"
+            "runpy.run_module('espalier', run_name='__main__', alter_sys=True)\n"
+        )
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE", "ESPALIER"))}
+        proc = subprocess.run([sys.executable, "-c", driver, str(repo)], cwd=str(repo), env=env,
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=45)  # about 4 s measured on Windows; under the 60 s ceiling
+        assert proc.returncode == 0, proc.stderr[-2000:]
+        assert "START-FAILED" not in proc.stderr, proc.stderr[-2000:]
+        assert (repo / ".claude" / "settings.json").is_file()

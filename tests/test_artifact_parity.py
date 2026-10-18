@@ -417,9 +417,10 @@ class TestBuildsStageACopyAndNeverWriteTheRoot:
     def _recording_builder(seen: dict, artifact: str):
         """Stand in for ``python -m build``: record the cwd and what it holds,
         then drop one artifact where ``--outdir`` points."""
-        def build(cmd, cwd=None):
+        def build(cmd, cwd=None, check=False):
             cwd_path = Path(cwd)
             seen["cmd"] = list(cmd)
+            seen["check"] = check
             seen["cwd"] = cwd_path
             seen["entries"] = sorted(
                 p.relative_to(cwd_path).as_posix() for p in cwd_path.rglob("*")
@@ -439,10 +440,11 @@ class TestBuildsStageACopyAndNeverWriteTheRoot:
         before = self._tree(root)
         seen: dict = {}
         monkeypatch.setattr(
-            artifact_parity.subprocess, "check_call",
+            artifact_parity, "run_no_stdin",
             self._recording_builder(seen, "espalier_harness-0.0.0-py3-none-any.whl"),
         )
         wheel = build_wheel(root, tmp_path / "out")
+        assert seen["check"] is True, "the build must fail loudly, as check_call did (DEF-928)"
         cwd = seen["cwd"]
         assert cwd.resolve() != root.resolve() and root.resolve() not in cwd.resolve().parents, cwd
         assert "pyproject.toml" in seen["entries"] and "pkg/__init__.py" in seen["entries"]
@@ -486,7 +488,7 @@ class TestBuildsStageACopyAndNeverWriteTheRoot:
         before = self._tree(root)
         seen: dict = {}
         monkeypatch.setattr(
-            artifact_parity.subprocess, "check_call",
+            artifact_parity, "run_no_stdin",
             self._recording_builder(seen, "espalier_harness-0.0.0.tar.gz"),
         )
         sdist = build_sdist(root, tmp_path / "out")
@@ -506,7 +508,7 @@ class TestBuildsStageACopyAndNeverWriteTheRoot:
         self._tree(root)
         seen: dict = {}
         monkeypatch.setattr(
-            artifact_parity.subprocess, "check_call",
+            artifact_parity, "run_no_stdin",
             self._recording_builder(seen, "espalier_harness-0.0.0-py3-none-any.whl"),
         )
         monkeypatch.chdir(tmp_path)
@@ -524,11 +526,11 @@ class TestBuildsStageACopyAndNeverWriteTheRoot:
         before = self._tree(root)
         seen: dict = {}
 
-        def failing_build(cmd, cwd=None):
+        def failing_build(cmd, cwd=None, check=False):
             seen["cwd"] = Path(cwd)
             raise subprocess.CalledProcessError(1, cmd)
 
-        monkeypatch.setattr(artifact_parity.subprocess, "check_call", failing_build)
+        monkeypatch.setattr(artifact_parity, "run_no_stdin", failing_build)
         with pytest.raises(subprocess.CalledProcessError):
             build_wheel(root, tmp_path / "out")
         assert not seen["cwd"].exists(), "the staged copy outlived the failed build"

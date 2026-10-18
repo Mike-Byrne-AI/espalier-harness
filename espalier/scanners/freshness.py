@@ -624,7 +624,7 @@ def _git_log_name_only(
     ] + paths
     try:
         result = run_bounded(
-            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
+            cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
         return {}
@@ -737,7 +737,7 @@ def _place_symbol(repo_root: Path, path: str, symbol: str) -> tuple[tuple[int, i
         # fail a latin-1 source before it was read.
         shown = run_bounded(
             ["git", "-C", str(repo_root), "show", f"HEAD:{path}"],
-            capture_output=True, check=False, timeout=30,
+            stdin=subprocess.DEVNULL, capture_output=True, check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
         return None, "git did not answer"
@@ -798,7 +798,7 @@ def _git_log_symbol_commits(
     ]
     try:
         result = run_bounded(
-            cmd, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
+            cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
         return None
@@ -897,7 +897,7 @@ def _git_status_dirty(repo_root: Path, paths: list[str]) -> dict[str, str]:
     ] + paths
     try:
         result = run_bounded(
-            cmd, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
+            cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
         return {}
@@ -933,7 +933,7 @@ def _git_diff_old_ranges(repo_root: Path, path: str) -> list[tuple[int, int]] | 
     cmd = ["git", "-C", str(repo_root), "diff", "-U0", "--no-color", "HEAD", "--", path]
     try:
         result = run_bounded(
-            cmd, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
+            cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
         return None
@@ -1052,7 +1052,7 @@ def _manifest_fragments_at_head(repo_root: Path) -> dict[str, Any] | None:
     cmd = ["git", "-C", str(repo_root), "show", f"HEAD:{MANIFEST_REL_PATH}"]
     try:
         result = run_bounded(
-            cmd, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
+            cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", check=False, timeout=30,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
         return None
@@ -1389,7 +1389,7 @@ def _head_sha(repo_root: Path) -> str:
     try:
         result = run_bounded(
             ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
-            capture_output=True, text=True, encoding="utf-8", check=False, timeout=10,
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", check=False, timeout=10,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):  # strict decode: a structured answer (DEF-821)
         return ""
