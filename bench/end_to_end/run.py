@@ -7,10 +7,14 @@ produces a markdown or JSON report. Tracks cumulative cost; aborts if
 `bench/end_to_end/runs/<timestamp>/<scenario_id>.json` for replay.
 
 Exit codes:
-    0  every scenario `pass` or `warn`.
+    0  every scenario `pass` (on its first run or a retry).
     1  any scenario `fail` -- including a per-scenario orchestrator error
        (invalid scenario YAML, missing `claude` CLI) caught as a FAIL verdict.
     2  cumulative `--max-cost-usd` exceeded, or no scenarios matched `--scenario`.
+    3  a scenario decided nothing after its retries (`ScenarioVerdict.undecided`:
+       inconclusive before its `treat_inconclusive_as` mapping), so the run
+       tested no hook, whatever the report's text; a `fail` outranks it (1)
+       (DEF-5001).
 
 Cost discipline is the load-bearing constraint here. Scheduled CI
 (weekly + workflow_dispatch) is the only place this should run with
@@ -39,6 +43,10 @@ from bench.end_to_end.runner import TIMEOUT_EXIT_CODE, ScenarioRun, load_scenari
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SCENARIOS_DIR = REPO_ROOT / "bench" / "end_to_end" / "scenarios"
 RUNS_DIR = REPO_ROOT / "bench" / "end_to_end" / "runs"
+
+#: The exit code of a run in which a scenario decided nothing after its retries
+#: (the module docstring's table).
+EXIT_UNDECIDED = 3
 
 
 def _enumerate_scenarios(filter_id: str | None = None) -> list[Path]:
@@ -73,7 +81,11 @@ def _run_with_retry(
     cumulative_cost: float,
     keep_work_dir: bool,
 ) -> tuple[ScenarioRun, ScenarioVerdict, float]:
-    """Run a scenario with retry-on-inconclusive per scenario config."""
+    """Run a scenario, retried while it decided nothing, up to its
+    `flakiness_handling.retry_on_inconclusive`. The retry reads
+    `ScenarioVerdict.undecided`, never the overall the scenario's
+    `treat_inconclusive_as` rewrote for the report: read from the rewritten
+    warn, the wiring scenarios' retry never ran (DEF-5001)."""
     scenario = load_scenario(scenario_path)
     flak = scenario.get("flakiness_handling") or {}
     retries = int(flak.get("retry_on_inconclusive", 0))
@@ -89,7 +101,7 @@ def _run_with_retry(
             # never releases, or an agent looping on a retry, shows up as exactly
             # this, and the cost cap sees only an estimate of it (no result
             # event, so no price: the messages' usage stands in).
-            verdict.overall = VERDICT_FAIL
+            verdict.overall, verdict.undecided = VERDICT_FAIL, False
             verdict.notes = (verdict.notes + "; " if verdict.notes else "") + "the run timed out"
         elif (run.transcript.unreached_model_error() is not None
               or (not run.transcript.events and (run.exit_code not in (0, None) or run.error))):
@@ -99,24 +111,25 @@ def _run_with_retry(
             # hook was measured, and the wiring scenarios' inconclusive-to-warn
             # mapping would show that green. It fails with the run's exit code
             # and error beside it and no assertion under it, which is how a
-            # report tells it from a hook verdict.
-            verdict.overall = VERDICT_FAIL
+            # report tells it from a hook verdict. A run that failed is decided:
+            # retrying a refused argv or a missing login measures nothing new.
+            verdict.overall, verdict.undecided = VERDICT_FAIL, False
             verdict.notes = ((verdict.notes + "; " if verdict.notes else "")
                              + f"the run itself failed (exit {run.exit_code}) before any model turn")
         return run, verdict
 
     run, verdict = _do_run()
+    runs = 1
     cumulative_cost += run.cost_usd_estimate
-    if max_cost_usd is not None and cumulative_cost > max_cost_usd:
-        return run, verdict, cumulative_cost
-
-    attempt = 0
-    while verdict.overall == VERDICT_INCONCLUSIVE and attempt < retries:
-        attempt += 1
+    while (verdict.undecided and runs <= retries
+           and not (max_cost_usd is not None and cumulative_cost > max_cost_usd)):
         run, verdict = _do_run()
+        runs += 1
         cumulative_cost += run.cost_usd_estimate
-        if max_cost_usd is not None and cumulative_cost > max_cost_usd:
-            break
+    if verdict.undecided:
+        verdict.notes = ((verdict.notes + "; " if verdict.notes else "")
+                         + f"the scenario decided nothing on {runs} run{'s' if runs != 1 else ''}, so this "
+                         f"run tested no hook and exits {EXIT_UNDECIDED}")
 
     return run, verdict, cumulative_cost
 
@@ -129,6 +142,7 @@ def render_markdown(verdicts: list[ScenarioVerdict],
     fail_count = sum(1 for v in verdicts if v.overall == VERDICT_FAIL)
     warn_count = sum(1 for v in verdicts if v.overall == VERDICT_WARN)
     incon_count = sum(1 for v in verdicts if v.overall == VERDICT_INCONCLUSIVE)
+    undecided_count = sum(1 for v in verdicts if v.undecided)
     lines: list[str] = []
     lines.append("# End-to-End Bench Report")
     lines.append("")
@@ -136,6 +150,8 @@ def render_markdown(verdicts: list[ScenarioVerdict],
     lines.append(
         f"**Scenarios:** {len(verdicts)} "
         f"({pass_count} pass / {fail_count} fail / {warn_count} warn / {incon_count} inconclusive)"
+        + (f"; {undecided_count} decided nothing after the retries, so this run tested no hook there"
+           if undecided_count else "")
     )
     lines.append(
         f"**Cost:** {total_cost_tokens} tokens (\u2248 ${total_cost_usd:.2f})"
@@ -251,6 +267,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if any(v.overall == VERDICT_FAIL for v in verdicts):
         return 1
+    if any(v.undecided for v in verdicts):
+        # one is enough: a run whose hook scenario decided nothing tested no hook
+        return EXIT_UNDECIDED
     return 0
 
 

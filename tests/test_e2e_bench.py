@@ -1690,6 +1690,144 @@ class TestADeadRunIsNotAHookVerdict:
         assert "- ran on: Claude Code 2.1.299, model claude-opus-5-5, permission mode default" in md
 
 
+#: The exit code of a bench run in which a scenario decided nothing after its
+#: retries (`bench/end_to_end/run.py`'s docstring is the contract).
+_UNDECIDED_EXIT = 3
+
+
+class TestAScenarioThatDecidedNothingFailsTheRun:
+    """DEF-5001: a wiring scenario (BCE-001, BCE-002, BCE-003 set
+    `retry_on_inconclusive: 1` and `treat_inconclusive_as: warn`) whose live run
+    decided nothing was promoted to warn before the retry read it, so the retry
+    never ran, and `run.py::main` exited 0 on a run that tested no hook. Driven
+    in process with `run_scenario` stubbed: no CLI, no cost."""
+
+    _WIRING = ("BCE-001-write-guard-deny-reaches-agent", "BCE-002-stop-gate-block-reaches-agent",
+               "BCE-003-plan-guard-redirects-to-plan")
+
+    def _main(self, monkeypatch, tmp_path, transcripts, *, scenario=None, exit_codes=(0,), scenarios_dir=None):
+        """``run.py::main`` over one scenario (or every one under ``scenarios_dir``),
+        each call of ``run_scenario`` answered by the next of ``transcripts`` and
+        ``exit_codes`` (the last of each repeats): ``(rc, runs, verdicts)``."""
+        import contextlib
+        import io
+
+        from bench.end_to_end import run as orchestrator
+        from bench.end_to_end.runner import ScenarioRun
+
+        now = datetime.now(timezone.utc)
+        runs: list[str] = []
+
+        def fake_run(path, **_k):
+            i = len(runs)
+            runs.append(path.stem)
+            code = exit_codes[min(i, len(exit_codes) - 1)]
+            return ScenarioRun(scenario_id=path.stem, started_at=now, ended_at=now, exit_code=code,
+                               transcript=transcripts[min(i, len(transcripts) - 1)], cost_tokens=0,
+                               cost_usd_estimate=0.0, raw_stream_json="",
+                               error="Error: rejected" if code else None)
+
+        monkeypatch.setattr(orchestrator, "run_scenario", fake_run)
+        monkeypatch.setattr(orchestrator, "RUNS_DIR", tmp_path / "runs")
+        if scenarios_dir is not None:
+            monkeypatch.setattr(orchestrator, "SCENARIOS_DIR", scenarios_dir)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = orchestrator.main(["--json"] + (["--scenario", scenario] if scenario else []))
+        return rc, runs, json.loads(out.getvalue())["verdicts"]
+
+    def _write(self, directory, name, flakiness):
+        directory.mkdir(exist_ok=True)
+        (directory / f"{name}.yaml").write_text(
+            f"id: {name}\ndescription: d\nin_scope: true\nverifies: v\nsetup: {{}}\n"
+            "trigger: {type: prompt, content: hi}\nexpected_receiver_behavior: {must_contain_any: ['protected']}\n"
+            f"flakiness_handling: {flakiness}\n", encoding="utf-8")
+
+    @pytest.mark.parametrize("scenario", _WIRING)
+    def test_a_wiring_run_that_decided_nothing_retries_and_fails_the_run(self, tmp_path, monkeypatch, scenario):
+        """The row's drive, on each real wiring scenario: a live CLI that answered
+        with nothing (exit 0, no events) is retried once and then exits the run
+        non-zero. The verdict still reads warn in the report, with the reason
+        beside it."""
+        rc, runs, (verdict,) = self._main(monkeypatch, tmp_path, [Transcript([])], scenario=scenario)
+        assert runs == [scenario, scenario], runs
+        assert rc == _UNDECIDED_EXIT, (rc, verdict)
+        assert verdict["overall"] == VERDICT_WARN and verdict["undecided"] is True, verdict
+        assert "decided nothing" in verdict["notes"] and "tested no hook" in verdict["notes"], verdict["notes"]
+
+    def test_an_undecided_reply_with_events_retries_and_fails_the_run(self, tmp_path, monkeypatch):
+        """BCE-002 fed the captured Stop-hook feedback and a reply that leaves
+        `block_acknowledgment` undecided (stubbed undecided, so the reading does not
+        turn on the reply's wording): a run with events that decided nothing is the
+        same run that tested no hook."""
+        from bench.end_to_end import assertions
+
+        monkeypatch.setattr(assertions, "_check_block_acknowledgment", lambda b, t: assertions.AssertionResult(
+            "block_acknowledgment", VERDICT_INCONCLUSIVE, "stub")
+            if (b.get("block_acknowledgment") or {}).get("required") else None)
+        feedback = (Path(__file__).parent / "fixtures" / "e2e_bench" / "bce002_stop_feedback.jsonl").read_text(
+            encoding="utf-8")
+        reply = _assistant("I will dispatch the docs-maintainer now.")
+        transcript = Transcript(parse_stream_json(feedback + "\n" + json.dumps(reply)))
+        rc, runs, (verdict,) = self._main(monkeypatch, tmp_path, [transcript], scenario=self._WIRING[1])
+        assert any(a["evidence"] == "stub" for a in verdict["assertions"]), verdict  # the stub decided it
+        assert len(runs) == 2 and rc == _UNDECIDED_EXIT, (runs, rc, verdict)
+
+    def test_a_scenario_that_decided_runs_once_and_keeps_its_exit(self, tmp_path, monkeypatch):
+        """Polarity: a fail still fails and a clean pass still exits 0, each on one
+        run; a run that itself failed (a refused argv) is not retried; and an
+        undecided first run whose retry passes exits 0 on two runs."""
+        scenarios = tmp_path / "scenarios"
+        self._write(scenarios, "BCE-tmp", "{retry_on_inconclusive: 1, treat_inconclusive_as: warn}")
+        protected = Transcript(parse_stream_json(_stream_lines(_assistant("the path is protected"))))
+        other = Transcript(parse_stream_json(_stream_lines(_assistant("done"))))
+        cases = (
+            ("fail", [other], (0,), 1, 1, VERDICT_FAIL),
+            ("pass", [protected], (0,), 1, 0, VERDICT_PASS),
+            ("the run itself failed", [Transcript([])], (1,), 1, 1, VERDICT_FAIL),
+            ("undecided, then a pass", [Transcript([]), protected], (0,), 2, 0, VERDICT_PASS),
+        )
+        for label, transcripts, codes, want_runs, want_rc, want_overall in cases:
+            rc, runs, (verdict,) = self._main(monkeypatch, tmp_path, transcripts, exit_codes=codes,
+                                              scenarios_dir=scenarios)
+            assert (len(runs), rc, verdict["overall"]) == (want_runs, want_rc, want_overall), (label, verdict)
+            assert verdict["undecided"] is False, (label, verdict)
+
+    def test_an_undecided_scenario_fails_the_run_whatever_its_mapping(self, tmp_path, monkeypatch):
+        """The exit reads whether the scenario decided anything, not its mapped
+        text: one with no `treat_inconclusive_as` (it stays inconclusive) fails the
+        run the same way, and one mapped to fail (the smoke scenario's) keeps exit
+        1. With no retry budget it runs once."""
+        for flakiness, want_rc, want_overall in (("{retry_on_inconclusive: 0}", _UNDECIDED_EXIT, VERDICT_INCONCLUSIVE),
+                                                 ("{treat_inconclusive_as: fail}", 1, VERDICT_FAIL)):
+            scenarios = tmp_path / f"s{want_rc}"
+            self._write(scenarios, "BCE-tmp", flakiness)
+            rc, runs, (verdict,) = self._main(monkeypatch, tmp_path, [Transcript([])], scenarios_dir=scenarios)
+            assert (len(runs), rc, verdict["overall"]) == (1, want_rc, want_overall), (flakiness, verdict)
+
+    def test_a_failed_scenario_outranks_an_undecided_one(self, tmp_path, monkeypatch):
+        """A run with a hook verdict that failed and a scenario that decided nothing
+        exits 1, the stronger news; the undecided one is still named."""
+        scenarios = tmp_path / "scenarios"
+        self._write(scenarios, "BCE-a", "{treat_inconclusive_as: warn}")
+        self._write(scenarios, "BCE-b", "{treat_inconclusive_as: warn}")
+        other = Transcript(parse_stream_json(_stream_lines(_assistant("done"))))
+        rc, runs, verdicts = self._main(monkeypatch, tmp_path, [other, Transcript([])], scenarios_dir=scenarios)
+        assert runs == ["BCE-a", "BCE-b"] and rc == 1, (runs, rc)
+        assert [(v["overall"], v["undecided"]) for v in verdicts] == [(VERDICT_FAIL, False), (VERDICT_WARN, True)]
+
+    def test_the_exit_code_is_the_documented_one(self):
+        """`run.py`'s docstring names the exit codes, `SCHEMA.md` and the README say
+        when a run exits non-zero; the constant and the text agree."""
+        from bench.end_to_end import run as orchestrator
+
+        assert orchestrator.EXIT_UNDECIDED == _UNDECIDED_EXIT
+        assert f"{_UNDECIDED_EXIT}  a scenario decided nothing" in (orchestrator.__doc__ or "")
+        for doc in ("SCHEMA.md", "README.md"):
+            text = (REPO_ROOT / "bench" / "end_to_end" / doc).read_text(encoding="utf-8")
+            assert f"exits `{_UNDECIDED_EXIT}`" in text, doc
+
+
 # ── Scenario YAML validity ─────────────────────────────────────────
 
 

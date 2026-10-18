@@ -13,7 +13,9 @@ Verdict aggregation (per scenario):
 - All assertions `pass` → overall `pass`.
 - Mix of `pass` and `inconclusive` (no `fail`) → overall `inconclusive`.
 - `inconclusive` with `treat_inconclusive_as: warn` is rewritten to
-  `warn` after the orchestrator's retry budget is exhausted.
+  `warn` for the report, and the verdict records that the scenario decided
+  nothing (`ScenarioVerdict.undecided`): the orchestrator's retry and its exit
+  code read that, never the rewritten text (DEF-5001).
 """
 from __future__ import annotations
 
@@ -73,6 +75,12 @@ class ScenarioVerdict:
     cli_version: str | None = None
     model: str | None = None
     permission_mode: str | None = None
+    #: The scenario decided nothing: its assertions aggregated to inconclusive
+    #: before `flakiness_handling.treat_inconclusive_as` rewrote the text. The
+    #: orchestrator retries on it and exits non-zero when it survives the
+    #: retries, since such a run tested no hook (DEF-5001); a run that itself
+    #: failed is decided (fail) and clears it.
+    undecided: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +94,7 @@ class ScenarioVerdict:
             "cli_version": self.cli_version,
             "model": self.model,
             "permission_mode": self.permission_mode,
+            "undecided": self.undecided,
         }
 
 
@@ -1163,7 +1172,10 @@ def evaluate(scenario: dict[str, Any], transcript: Transcript,
                 results.append(r)
         overall = _aggregate(results)
 
-    # Promote inconclusive to warn per flakiness_handling, if configured.
+    # Promote inconclusive to warn per flakiness_handling, if configured: the
+    # report's text only. Whether the scenario decided anything is kept apart,
+    # for the orchestrator's retry and exit code (DEF-5001).
+    undecided = overall == VERDICT_INCONCLUSIVE
     flak = scenario.get("flakiness_handling") or {}
     if overall == VERDICT_INCONCLUSIVE and flak.get("treat_inconclusive_as") == "warn":
         overall = VERDICT_WARN
@@ -1176,4 +1188,5 @@ def evaluate(scenario: dict[str, Any], transcript: Transcript,
         assertions=results,
         cost_tokens=cost_tokens,
         notes=notes,
+        undecided=undecided,
     )

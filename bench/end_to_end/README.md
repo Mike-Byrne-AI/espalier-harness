@@ -111,17 +111,28 @@ report names the CLI version and model of each run. A run that itself failed
 before any model turn (the CLI refused the argv, or found no login or a bad key,
 when it sends only its own error message and an error result) fails with its
 exit code and error printed beside the verdict and no assertion under it, which
-is how it reads apart from a hook verdict; a run that exited 0 with no events is
-inconclusive, which a wiring scenario reports as a warn; a run the timeout ended
-fails.
+is how it reads apart from a hook verdict; a run that exited 0 with no events, or
+whose assertions decided nothing, is inconclusive, which a wiring scenario
+retries once and then reports as a warn; a run the timeout ended fails.
+
+The run's exit code: `1` on any fail; `3` when a scenario decided nothing even
+on its retry, since such a run tested no hook (the report's warn is its text,
+not a pass); `2` on a cost abort or an unmatched `--scenario`; `0` only when
+every scenario passed. So a run exits `3` on a live CLI that answered but whose
+hook scenario decided nothing, and on each ground-truth inconclusive the
+`no_repeat_of` check reports (`SCHEMA.md`) that its retry does not decide. A
+retry is a second live run: about 0.42, 0.11 and 0.09 USD for BCE-001, BCE-002
+and BCE-003 on Claude Code 2.1.299 with claude-opus-5-5.
 
 ## When to ignore failures
 
 **Never silently.** A flake is a real signal that needs triage:
 
-- **Single flake** (one of N=5 reruns failed): warn, don't fail. The
-  scenario's `flakiness_handling.treat_inconclusive_as: warn` produces
-  exactly this behavior.
+- **Single flake** (a scenario decides nothing once): the scenario's
+  `flakiness_handling.retry_on_inconclusive: 1` runs it again, and a retry
+  that decides reports that verdict. One still undecided shows as a warn
+  (`treat_inconclusive_as: warn`) and the run exits `3`, which opens the
+  issue below: it tested no hook.
 - **Repeat flake** (N>=2 of N=5 reruns fail): fix the assertion (it's
   too tight) or fix the bug (it's a real regression). Don't loosen the
   scenario by removing assertions — that defeats the purpose.
