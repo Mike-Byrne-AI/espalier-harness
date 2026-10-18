@@ -4331,6 +4331,20 @@ class TestTextNoReaderSeesIsNoSectionsVocabulary:
                            "## Edge\n\n<!-- zzc --> \x009\x00 zztail\n")
         assert docs["Edge"]["zztail"] and "zzc" not in docs["Edge"]
 
+    def test_a_failure_modes_coinage_reads_as_a_reader_sees_it(self, tmp_path, monkeypatch):
+        """The coinage shards build their bag apart from the other families, so
+        moving the strip out of ``_tokenize`` left them reading comments (found
+        after the review batch, 2026-10-18). Dies to: that site tokenized raw."""
+        monkeypatch.setattr(_recall, "EXEMPLAR_MAP", {})
+        monkeypatch.setattr(_recall, "is_self_host_repo", lambda root: True)
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "FAILURE_MODES.md").write_text(
+            "# Failure modes\n\n## 1. Coinages\n\n### 1.99 The zzcoinage trap\n\n"
+            "prose here <!-- zzhidden -->\n\n## 2. Next\n\nrest\n", encoding="utf-8")
+        docs = {d.source: d.tokens for d in _recall._load_corpus(tmp_path)}
+        tokens = docs["docs/FAILURE_MODES.md :: 1.99 The zzcoinage trap"]
+        assert tokens["zzcoinage"] and "zzhidden" not in tokens
+
     def test_a_query_that_spells_a_comment_keeps_its_words(self, tmp_path, monkeypatch):
         """Only a document's text is read as a reader sees it; a question that
         spells a marker asks about the marker. Dies to: the strip applied to

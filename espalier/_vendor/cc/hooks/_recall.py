@@ -987,7 +987,7 @@ def _iter_corpus(root: Path, *, exclude: "Iterable[str] | None" = None,
                 num = parts[0] if parts else ""  # "1.7"
                 if num in _FM_COINAGE_TWINS:
                     continue  # already retrievable via its SHARP_EDGES twin
-                tokens = _tokenize(f"{title} {_strip_metaphor_sections(body)}")
+                tokens = _index_tokens(f"{title} {_strip_metaphor_sections(body)}")
                 yield _Doc(f"docs/FAILURE_MODES.md :: {title}",
                            title,
                            Counter(tokens),
