@@ -115,10 +115,10 @@ is how it reads apart from a hook verdict; a run that exited 0 with no events, o
 whose assertions decided nothing, is inconclusive, which a wiring scenario
 retries once and then reports as a warn; a run the timeout ended fails.
 
-The run's exit code: `1` on any fail; `3` when a scenario decided nothing even
-on its retry, since such a run tested no hook (the report's warn is its text,
-not a pass); `2` on a cost abort or an unmatched `--scenario`; `0` only when
-every scenario passed. So a run exits `3` on a live CLI that answered but whose
+The run's exit code, the first that applies: `2` on a cost abort or an
+unmatched `--scenario`; `1` on any fail; `3` when a scenario decided nothing
+even on its retry, since such a run tested no hook (the report's warn is its
+text, not a pass); `0` only when every scenario passed. So a run exits `3` on a live CLI that answered but whose
 hook scenario decided nothing, and on each ground-truth inconclusive the
 `no_repeat_of` check reports (`SCHEMA.md`) that its retry does not decide. A
 retry is a second live run: about 0.42, 0.11 and 0.09 USD for BCE-001, BCE-002
@@ -130,7 +130,10 @@ and BCE-003 on Claude Code 2.1.299 with claude-opus-5-5.
 
 - **Single flake** (a scenario decides nothing once): the scenario's
   `flakiness_handling.retry_on_inconclusive: 1` runs it again, and a retry
-  that decides reports that verdict. One still undecided shows as a warn
+  that decides reports that verdict with a note that the first run decided
+  nothing; the first run's transcript is kept as `<id>.run1.json`. Count those
+  notes when you calibrate a scenario (below): the retry hides the flake from
+  the verdict, not from the report. One still undecided shows as a warn
   (`treat_inconclusive_as: warn`) and the run exits `3`, which opens the
   issue below: it tested no hook.
 - **Repeat flake** (N>=2 of N=5 reruns fail): fix the assertion (it's
@@ -150,7 +153,10 @@ auto-close. Investigate every issue before dismissing.
    following the schema in `SCHEMA.md`.
 
 3. **Calibrate the assertions.** Run the scenario locally **at least
-   5 times** in a row before committing. Record the verdicts:
+   5 times** in a row before committing. Record the verdicts, and count a
+   run whose verdict carries the note that its first run decided nothing as
+   an inconclusive: the retry decided it, the scenario did not (calibrate
+   with the retry in the scenario, or set it to 0 while you count):
 
    ```bash
    for i in {1..5}; do

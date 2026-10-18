@@ -21,7 +21,7 @@ This file documents the schema. The canonical example skeleton is
 | `setup` | yes | object | See [Setup](#setup). |
 | `trigger` | yes | object | See [Trigger](#trigger). |
 | `expected_receiver_behavior` | yes | object | See [Expected Receiver Behavior](#expected-receiver-behavior). |
-| `flakiness_handling` | no | object | See [Flakiness Handling](#flakiness-handling). Defaults: `retry_on_inconclusive: 0`, `treat_inconclusive_as: warn`. |
+| `flakiness_handling` | no | object | See [Flakiness Handling](#flakiness-handling). Defaults: `retry_on_inconclusive: 0`, and no `treat_inconclusive_as` (a final inconclusive stays `inconclusive`). |
 | `cost_budget_tokens` | no | int | Advisory only — **not currently enforced** by the runner; the live cost cap is the cumulative `--max-cost-usd` in `run.py`. Scenarios set it as documentation. |
 
 ## Setup
@@ -63,7 +63,7 @@ discipline lives in `bench/end_to_end/README.md` § "Adding a scenario".
 | Field | Type | Notes |
 |---|---|---|
 | `retry_on_inconclusive` | int | If the scenario decided nothing (its assertions aggregate to `inconclusive`, read before `treat_inconclusive_as` rewrites the text), rerun N times. A run that itself failed is not retried. Default: 0. |
-| `treat_inconclusive_as` | `fail` \| `warn` | How the report shows a final inconclusive. The run's exit code does not read it (below). Default: `warn`. |
+| `treat_inconclusive_as` | `fail` \| `warn` | How a final inconclusive is reported: `fail` makes it a fail (the run exits `1`); `warn` shows it as a warn, and the run exits `3` as it does with no mapping (below). Default: none, so it stays `inconclusive`. |
 
 ## Verdict semantics
 
@@ -76,11 +76,13 @@ A scenario yields one of: `pass`, `fail`, `inconclusive`, `warn`.
   `warn`, and its verdict records that it decided nothing (`undecided` in the
   JSON report).
 
-The orchestrator (`run.py`) exits `1` on any `fail`. A scenario still
-undecided after its retries exits `3`: one such scenario is a run that tested
-no hook, whatever the report's text (`DEF-5001`). A `fail` outranks it, a
-cost abort or an unmatched `--scenario` exits `2`, and a run in which every
-scenario passed exits `0`. Each retry is a second live run and costs one: the
+The orchestrator (`run.py`) exits, in this order: `2` on a cost abort or an
+unmatched `--scenario`; `1` on any `fail`; `3` when a scenario is still
+undecided after its retries, since one such scenario is a run that tested no
+hook, whatever the report's text says (`DEF-5001`); and `0` only when every
+scenario passed. A retry that decides leaves a note on the verdict, and each
+run it replaced is archived beside the last (`<id>.run1.json`). Each retry is
+a second live run and costs one: the
 wiring scenarios measured 0.42 (BCE-001), 0.11 (BCE-002) and 0.09 (BCE-003)
 USD a run on Claude Code 2.1.299 with claude-opus-5-5, under the workflow's
 `--max-cost-usd`.

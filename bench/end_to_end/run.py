@@ -26,6 +26,7 @@ import argparse
 import json
 import sys
 import traceback
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -59,9 +60,11 @@ def _enumerate_scenarios(filter_id: str | None = None) -> list[Path]:
     return out
 
 
-def _archive_transcript(run: ScenarioRun, run_dir: Path) -> Path:
+def _archive_transcript(run: ScenarioRun, run_dir: Path, suffix: str = "") -> Path:
+    """Save one run's transcript; ``suffix`` names a run a retry replaced
+    (``.run1``), so the run a flake triager needs is kept beside the last."""
     run_dir.mkdir(parents=True, exist_ok=True)
-    out = run_dir / f"{run.scenario_id}.json"
+    out = run_dir / f"{run.scenario_id}{suffix}.json"
     payload = {
         **run.to_dict(),
         "raw_stream_json": run.raw_stream_json,
@@ -80,12 +83,16 @@ def _run_with_retry(
     max_cost_usd: float | None,
     cumulative_cost: float,
     keep_work_dir: bool,
+    on_superseded: Callable[[ScenarioRun, int], object] | None = None,
 ) -> tuple[ScenarioRun, ScenarioVerdict, float]:
     """Run a scenario, retried while it decided nothing, up to its
     `flakiness_handling.retry_on_inconclusive`. The retry reads
     `ScenarioVerdict.undecided`, never the overall the scenario's
     `treat_inconclusive_as` rewrote for the report: read from the rewritten
-    warn, the wiring scenarios' retry never ran (DEF-5001)."""
+    warn, the wiring scenarios' retry never ran (DEF-5001). A retried run
+    leaves its trace: ``on_superseded`` is handed each run a retry replaced
+    with its number (the orchestrator archives it), the verdict's tokens are
+    the sum over the runs, and its notes say how many runs decided nothing."""
     scenario = load_scenario(scenario_path)
     flak = scenario.get("flakiness_handling") or {}
     retries = int(flak.get("retry_on_inconclusive", 0))
@@ -108,8 +115,9 @@ def _run_with_retry(
             # The CLI found no login or a bad key (its own API-error message and
             # an is_error result, no model turn), whatever its exit code, or
             # refused the argv or never started (no events, a failed exit): no
-            # hook was measured, and the wiring scenarios' inconclusive-to-warn
-            # mapping would show that green. It fails with the run's exit code
+            # hook was measured, and left to the evaluation it would read as a
+            # scenario that decided nothing, retried for a fault no retry can
+            # change. It fails with the run's exit code
             # and error beside it and no assertion under it, which is how a
             # report tells it from a hook verdict. A run that failed is decided:
             # retrying a refused argv or a missing login measures nothing new.
@@ -120,16 +128,28 @@ def _run_with_retry(
 
     run, verdict = _do_run()
     runs = 1
+    tokens = run.cost_tokens
     cumulative_cost += run.cost_usd_estimate
     while (verdict.undecided and runs <= retries
            and not (max_cost_usd is not None and cumulative_cost > max_cost_usd)):
+        if on_superseded is not None:
+            on_superseded(run, runs)
         run, verdict = _do_run()
         runs += 1
+        tokens += run.cost_tokens
         cumulative_cost += run.cost_usd_estimate
+    verdict.cost_tokens = tokens
+    plural = "s" if runs != 1 else ""
     if verdict.undecided:
+        # the scenario's own record; the run's exit code is main's to say (a
+        # fail elsewhere, or this scenario's own fail mapping, outranks it)
         verdict.notes = ((verdict.notes + "; " if verdict.notes else "")
-                         + f"the scenario decided nothing on {runs} run{'s' if runs != 1 else ''}, so this "
-                         f"run tested no hook and exits {EXIT_UNDECIDED}")
+                         + f"the scenario decided nothing on {runs} run{plural}, so this run tested no hook there")
+    elif runs > 1:
+        verdict.notes = ((verdict.notes + "; " if verdict.notes else "")
+                         + ("the first run decided nothing and was retried" if runs == 2 else
+                            f"the first {runs - 1} runs decided nothing and were retried")
+                         + f"; run {runs} decided")
 
     return run, verdict, cumulative_cost
 
@@ -150,7 +170,7 @@ def render_markdown(verdicts: list[ScenarioVerdict],
     lines.append(
         f"**Scenarios:** {len(verdicts)} "
         f"({pass_count} pass / {fail_count} fail / {warn_count} warn / {incon_count} inconclusive)"
-        + (f"; {undecided_count} decided nothing after the retries, so this run tested no hook there"
+        + (f"; {undecided_count} decided nothing (after any retries), so this run tested no hook there"
            if undecided_count else "")
     )
     lines.append(
@@ -219,8 +239,9 @@ def main(argv: list[str] | None = None) -> int:
                 max_cost_usd=args.max_cost_usd,
                 cumulative_cost=cumulative_cost,
                 keep_work_dir=args.keep_work_dir,
+                on_superseded=lambda superseded, n: _archive_transcript(superseded, run_dir, f".run{n}"),
             )
-            cumulative_tokens += run.cost_tokens
+            cumulative_tokens += verdict.cost_tokens  # every run's, a retried one's included
             _archive_transcript(run, run_dir)
             verdicts.append(verdict)
             if (

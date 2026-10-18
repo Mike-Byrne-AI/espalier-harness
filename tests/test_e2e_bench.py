@@ -826,7 +826,7 @@ class TestNoRepeatOf:
         """A later deny the stream gives no message id to place is inconclusive
         only when nothing harder decides: a refused retry or the bytes changing
         after the deny still fail the run. Dies to: the inconclusive returned
-        first, which turned a real retry into a warn that exits 0."""
+        first, which turned a real retry into a warn, never a fail."""
         def call(tid, message):
             return {"type": "assistant", "timestamp": "2026-10-14T12:00:08.000Z", "message": {
                 **({"id": message} if message else {}), "content": [
@@ -1391,7 +1391,7 @@ class TestTheSmokeScenarioCatchesCliDrift:
     def test_an_unstamped_turn_fails_the_canary(self):
         """The retry check orders a change against a deny by the time the CLI
         stamps on its events; a CLI that stops stamping them would turn every
-        such FAIL into a warn that exits 0. Dies to: the canary not reading
+        such FAIL into a warn, never a fail. Dies to: the canary not reading
         the stamps."""
         for name, answer in (("no timestamp", _assistant("4")),
                              ("unreadable", {**_assistant("4"), "timestamp": "yesterday"})):
@@ -1570,7 +1570,8 @@ class TestADeadRunIsNotAHookVerdict:
 
     def test_a_timed_out_run_fails_and_never_warns(self, tmp_path, monkeypatch):
         """A Stop gate that never releases ends as a timeout, which the scenario's
-        inconclusive-to-warn mapping would have shown green. Dies to: the
+        inconclusive-to-warn mapping would have shown as a warn (and, since
+        DEF-5001, retried at the cost of another timeout). Dies to: the
         timeout left to the flakiness mapping."""
         from bench.end_to_end import run as orchestrator
         from bench.end_to_end.runner import TIMEOUT_EXIT_CODE, ScenarioRun
@@ -1705,10 +1706,13 @@ class TestAScenarioThatDecidedNothingFailsTheRun:
     _WIRING = ("BCE-001-write-guard-deny-reaches-agent", "BCE-002-stop-gate-block-reaches-agent",
                "BCE-003-plan-guard-redirects-to-plan")
 
-    def _main(self, monkeypatch, tmp_path, transcripts, *, scenario=None, exit_codes=(0,), scenarios_dir=None):
+    def _main(self, monkeypatch, tmp_path, transcripts, *, scenario=None, exit_codes=(0,), scenarios_dir=None,
+              costs=(0.0,), tokens=(0,), argv=()):
         """``run.py::main`` over one scenario (or every one under ``scenarios_dir``),
-        each call of ``run_scenario`` answered by the next of ``transcripts`` and
-        ``exit_codes`` (the last of each repeats): ``(rc, runs, verdicts)``."""
+        each call of ``run_scenario`` answered by the next of ``transcripts``,
+        ``exit_codes``, ``costs`` (USD) and ``tokens`` (the last of each repeats),
+        with ``argv`` added: ``(rc, runs, verdicts)``; the whole JSON report is
+        left on ``self.report``."""
         import contextlib
         import io
 
@@ -1718,13 +1722,16 @@ class TestAScenarioThatDecidedNothingFailsTheRun:
         now = datetime.now(timezone.utc)
         runs: list[str] = []
 
+        def nth(values, i):
+            return values[min(i, len(values) - 1)]
+
         def fake_run(path, **_k):
             i = len(runs)
             runs.append(path.stem)
-            code = exit_codes[min(i, len(exit_codes) - 1)]
+            code = nth(exit_codes, i)
             return ScenarioRun(scenario_id=path.stem, started_at=now, ended_at=now, exit_code=code,
-                               transcript=transcripts[min(i, len(transcripts) - 1)], cost_tokens=0,
-                               cost_usd_estimate=0.0, raw_stream_json="",
+                               transcript=nth(transcripts, i), cost_tokens=nth(tokens, i),
+                               cost_usd_estimate=nth(costs, i), raw_stream_json="",
                                error="Error: rejected" if code else None)
 
         monkeypatch.setattr(orchestrator, "run_scenario", fake_run)
@@ -1733,8 +1740,9 @@ class TestAScenarioThatDecidedNothingFailsTheRun:
             monkeypatch.setattr(orchestrator, "SCENARIOS_DIR", scenarios_dir)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            rc = orchestrator.main(["--json"] + (["--scenario", scenario] if scenario else []))
-        return rc, runs, json.loads(out.getvalue())["verdicts"]
+            rc = orchestrator.main(["--json", *argv] + (["--scenario", scenario] if scenario else []))
+        self.report = json.loads(out.getvalue())
+        return rc, runs, self.report["verdicts"]
 
     def _write(self, directory, name, flakiness):
         directory.mkdir(exist_ok=True)
@@ -1775,8 +1783,12 @@ class TestAScenarioThatDecidedNothingFailsTheRun:
 
     def test_a_scenario_that_decided_runs_once_and_keeps_its_exit(self, tmp_path, monkeypatch):
         """Polarity: a fail still fails and a clean pass still exits 0, each on one
-        run; a run that itself failed (a refused argv) is not retried; and an
+        run; a run that itself failed (a refused argv) and a run the timeout ended
+        are decided and never retried, whatever the scenario's retry budget (a
+        retried timeout is another paid run of up to the timeout); and an
         undecided first run whose retry passes exits 0 on two runs."""
+        from bench.end_to_end.runner import TIMEOUT_EXIT_CODE
+
         scenarios = tmp_path / "scenarios"
         self._write(scenarios, "BCE-tmp", "{retry_on_inconclusive: 1, treat_inconclusive_as: warn}")
         protected = Transcript(parse_stream_json(_stream_lines(_assistant("the path is protected"))))
@@ -1785,6 +1797,7 @@ class TestAScenarioThatDecidedNothingFailsTheRun:
             ("fail", [other], (0,), 1, 1, VERDICT_FAIL),
             ("pass", [protected], (0,), 1, 0, VERDICT_PASS),
             ("the run itself failed", [Transcript([])], (1,), 1, 1, VERDICT_FAIL),
+            ("the run timed out", [Transcript([])], (TIMEOUT_EXIT_CODE,), 1, 1, VERDICT_FAIL),
             ("undecided, then a pass", [Transcript([]), protected], (0,), 2, 0, VERDICT_PASS),
         )
         for label, transcripts, codes, want_runs, want_rc, want_overall in cases:
@@ -1793,17 +1806,50 @@ class TestAScenarioThatDecidedNothingFailsTheRun:
             assert (len(runs), rc, verdict["overall"]) == (want_runs, want_rc, want_overall), (label, verdict)
             assert verdict["undecided"] is False, (label, verdict)
 
+    def test_the_retry_stops_at_the_cost_cap(self, tmp_path, monkeypatch):
+        """A first run that crosses `--max-cost-usd` is not retried, however
+        undecided: the run aborts with 2. Before DEF-5001 the retry never fired on
+        a wiring scenario, so this guard carried no spend; now it holds BCE-001,
+        BCE-002 and BCE-003's second runs."""
+        rc, runs, (verdict,) = self._main(monkeypatch, tmp_path, [Transcript([])], scenario=self._WIRING[0],
+                                          costs=(6.0,), argv=("--max-cost-usd", "5"))
+        assert (len(runs), rc) == (1, 2), (runs, rc, verdict)
+
+    def test_a_retry_that_decides_leaves_the_first_run_on_record(self, tmp_path, monkeypatch):
+        """A first run that decided nothing and a retry that passed: the verdict
+        passes, its notes say the first run decided nothing, the first run's
+        transcript is archived beside the last (`<id>.run1.json`), and the tokens
+        are both runs' (the USD already were). Without it the flake a retry
+        absorbs leaves no trace, and calibrating a scenario counts it as a pass."""
+        scenarios = tmp_path / "scenarios"
+        self._write(scenarios, "BCE-tmp", "{retry_on_inconclusive: 1, treat_inconclusive_as: warn}")
+        protected = Transcript(parse_stream_json(_stream_lines(_assistant("the path is protected"))))
+        rc, runs, (verdict,) = self._main(monkeypatch, tmp_path, [Transcript([]), protected],
+                                          scenarios_dir=scenarios, tokens=(1000, 2000), costs=(0.25, 0.25))
+        assert (len(runs), rc, verdict["overall"]) == (2, 0, VERDICT_PASS), verdict
+        assert "the first run decided nothing and was retried; run 2 decided" in verdict["notes"], verdict["notes"]
+        assert (verdict["cost_tokens"], self.report["total_cost_tokens"]) == (3000, 3000), self.report
+        assert self.report["total_cost_usd"] == pytest.approx(0.5), self.report
+        archived = sorted(p.name for p in (tmp_path / "runs").rglob("*.json"))
+        assert archived == ["BCE-tmp.json", "BCE-tmp.run1.json"], archived
+
     def test_an_undecided_scenario_fails_the_run_whatever_its_mapping(self, tmp_path, monkeypatch):
         """The exit reads whether the scenario decided anything, not its mapped
         text: one with no `treat_inconclusive_as` (it stays inconclusive) fails the
         run the same way, and one mapped to fail (the smoke scenario's) keeps exit
-        1. With no retry budget it runs once."""
-        for flakiness, want_rc, want_overall in (("{retry_on_inconclusive: 0}", _UNDECIDED_EXIT, VERDICT_INCONCLUSIVE),
-                                                 ("{treat_inconclusive_as: fail}", 1, VERDICT_FAIL)):
-            scenarios = tmp_path / f"s{want_rc}"
+        1. With no retry budget it runs once; a fail mapping with a budget is
+        retried too, since the retry asks whether it decided, not how it reads.
+        No note claims an exit code: a fail mapping, or a fail elsewhere, makes
+        the run's exit 1, and only `main` knows it."""
+        cases = (("{retry_on_inconclusive: 0}", 1, _UNDECIDED_EXIT, VERDICT_INCONCLUSIVE),
+                 ("{treat_inconclusive_as: fail}", 1, 1, VERDICT_FAIL),
+                 ("{retry_on_inconclusive: 1, treat_inconclusive_as: fail}", 2, 1, VERDICT_FAIL))
+        for n, (flakiness, want_runs, want_rc, want_overall) in enumerate(cases):
+            scenarios = tmp_path / f"s{n}"
             self._write(scenarios, "BCE-tmp", flakiness)
             rc, runs, (verdict,) = self._main(monkeypatch, tmp_path, [Transcript([])], scenarios_dir=scenarios)
-            assert (len(runs), rc, verdict["overall"]) == (1, want_rc, want_overall), (flakiness, verdict)
+            assert (len(runs), rc, verdict["overall"]) == (want_runs, want_rc, want_overall), (flakiness, verdict)
+            assert verdict["undecided"] is True and "exits" not in verdict["notes"], (flakiness, verdict["notes"])
 
     def test_a_failed_scenario_outranks_an_undecided_one(self, tmp_path, monkeypatch):
         """A run with a hook verdict that failed and a scenario that decided nothing
@@ -1815,6 +1861,22 @@ class TestAScenarioThatDecidedNothingFailsTheRun:
         rc, runs, verdicts = self._main(monkeypatch, tmp_path, [other, Transcript([])], scenarios_dir=scenarios)
         assert runs == ["BCE-a", "BCE-b"] and rc == 1, (runs, rc)
         assert [(v["overall"], v["undecided"]) for v in verdicts] == [(VERDICT_FAIL, False), (VERDICT_WARN, True)]
+        # the undecided scenario's note names it and claims no exit code: the run's is 1
+        assert "decided nothing" in verdicts[1]["notes"] and "exits" not in verdicts[1]["notes"], verdicts[1]
+
+    def test_the_report_counts_the_undecided_in_its_header(self):
+        """The markdown report says, in its header, how many scenarios decided
+        nothing, beside the verdict counts (where they read as warns); a report
+        with none says nothing of it."""
+        from bench.end_to_end.assertions import ScenarioVerdict
+        from bench.end_to_end.run import render_markdown
+
+        undecided = ScenarioVerdict(scenario_id="BCE-x", overall=VERDICT_WARN, undecided=True)
+        passed = ScenarioVerdict(scenario_id="BCE-y", overall=VERDICT_PASS)
+        md = render_markdown([undecided, passed], total_cost_usd=0.0, total_cost_tokens=0, elapsed_seconds=1.0)
+        assert "(1 pass / 0 fail / 1 warn / 0 inconclusive); 1 decided nothing" in md, md
+        clean = render_markdown([passed], total_cost_usd=0.0, total_cost_tokens=0, elapsed_seconds=1.0)
+        assert "decided nothing" not in clean, clean
 
     def test_the_exit_code_is_the_documented_one(self):
         """`run.py`'s docstring names the exit codes, `SCHEMA.md` and the README say
@@ -1860,7 +1922,8 @@ class TestScenarioYAML:
     def test_the_skeleton_carries_no_turn_cap(self):
         """A scenario starts as a copy of the skeleton, and the skeleton's cap of
         3 turns a correct wiring run inconclusive (the runs of 2026-10-14 took 4
-        to 11 assistant events), which warns and exits 0. Dies to: `max_turns`
+        to 11 assistant events), which warns and, since DEF-5001, fails the run
+        with exit 3 after a paid retry. Dies to: `max_turns`
         kept there after the three wiring scenarios dropped it."""
         data = yaml.safe_load((SCENARIOS_DIR / "_schema.yaml").read_text(encoding="utf-8"))
         assert "max_turns" not in data["expected_receiver_behavior"]
