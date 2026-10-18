@@ -875,8 +875,43 @@ class TestTheLiveProbeFile:
             "lacks it -- without declaring it in `inputs` (ledger_row file|repin --inputs) "
             f"or baselining it in _NAMED_NOT_READ with the reason: {sorted(offenders)}"
         )
-        dead = sorted(rid for rid in self._NAMED_NOT_READ if rid not in {p["id"] for p in probes})
-        assert not dead, f"_NAMED_NOT_READ names probe(s) that no longer exist: {dead}"
+
+    @pytest.mark.skipif(
+        not _HAS_LIVE_ROSTER,
+        reason="self-host tooling: no probes file and no task-packs/probes.d/ (an adopter tree)",
+    )
+    def test_the_named_not_read_baseline_has_no_dead_entries(self):
+        """A baselined id whose probe retired is bookkeeping rot (DEF-1172). Its
+        own test, beside the other two tables' dead-entry checks, so it waits on
+        neither the tracked-path read nor the first assertion of the test above;
+        `ledger_row.py strike` refuses a strike that would leave one."""
+        live = {p["id"] for p in _live_roster_probes()}
+        dead = sorted(rid for rid in self._NAMED_NOT_READ if rid not in live)
+        assert not dead, (
+            f"_NAMED_NOT_READ names probe(s) that no longer exist: {dead}. Drop each, "
+            f"leaving a dated note naming its row and the lane"
+        )
+
+    def test_the_strike_verb_reads_every_per_id_table_in_this_file(self):
+        """DEF-1172: `ledger_row.py strike` refuses while a table here holds an id
+        whose probe it retires, and it finds the tables by PARSING this file. The
+        expected pairs are derived from this module's runtime values instead: every
+        upper-case dict or set of id-shaped strings, at module level or on a class.
+        A table reshaped past what the verb parses (built by a comprehension, under
+        an `if`) is still here at runtime, so it reds this test, not a later strike."""
+        lr = _load_tools_cc("ledger_row")
+        here = sys.modules[type(self).__module__]
+        id_shaped = re.compile(r"^[A-Z]{2,5}-\d+[a-z]?$")
+        owners = [here, *(v for v in vars(here).values()
+                          if isinstance(v, type) and v.__module__ == here.__name__)]
+        expected = {(name, k) for owner in owners for name, value in vars(owner).items()
+                    if name.lstrip("_").isupper() and isinstance(value, (dict, set, frozenset))
+                    for k in value if isinstance(k, str) and id_shaped.match(k)}
+        assert {name for name, _ in expected} >= {"_NAMED_NOT_READ", "_TEXT_OVER_OWN_SUBJECT",
+                                                  "_SPAWNS_A_LITERAL_INTERPRETER"}, expected
+        hits = lr._baselined_in_tests(REPO_ROOT, sorted({k for _, k in expected}))
+        got = {m.groups() for h in hits if (m := re.search(r": (\w+) holds (\S+)$", h))}
+        assert got == expected, {"missed": sorted(expected - got), "over-read": sorted(got - expected)}
 
     @pytest.mark.skipif(
         not (REPO_ROOT / "task-packs" / "Done").is_dir(),
