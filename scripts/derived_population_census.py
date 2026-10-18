@@ -1193,7 +1193,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-10-16 (the rehearsal-baseline lane): the rows-digest test plants one file per "
         "name in `rehearsal.ORACLE_FILES`, and the same test then holds that tuple set-equal to the "
         "hand-written pair {powershell_guard_rehearsal.py, guard_row_probe.py} at "
-        "tests/test_rehearsal_baseline.py:144, so a name dropped "
+        "tests/test_rehearsal_baseline.py:145, so a name dropped "
         "from the tuple reds there (driven: the probe dropped, 1 failed of 55, "
         "test_the_rows_digest_reads_both_oracles_and_moves_with_either) rather than shrinking the "
         "planted population in silence.",

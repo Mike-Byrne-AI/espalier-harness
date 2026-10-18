@@ -72,7 +72,9 @@ the tree and the guard, and ``--baseline`` diffs this run against another
 host's on the rehearsal's rule (see its THE DIFF): refused before a row runs
 unless it is this oracle's, from another host, at this commit, with this guard
 and these rows, and shares a shape with this run (exit 5); a verdict that
-differs fails the run.
+differs fails the run, unless each side reads the tier its own host's table
+expects (the host-keyed rows 4B-6, 4B-3 and 4D-3), which prints apart as a
+declared host difference.
 
 Stdlib only. Works on 3.10+.
 """
@@ -453,7 +455,9 @@ def main(argv: list[str] | None = None) -> int:
         print(headline)
         if result["mismatched"]:
             print("A MISMATCH is a regression, or a host verdict the table has not keyed yet "
-                  "(key it, as 4B-6 is), and is the first thing to record -- with the row id, "
+                  "(key it, as 4B-6 is, on a host fact the guard does not compute, and pin "
+                  "the key in tests/test_rehearsal_baseline.py: a keyed row's difference "
+                  "no longer fails a --baseline diff), and is the first thing to record -- with the row id, "
                   "shape, expected and actual tier.")
     if baseline is not None:
         record["baseline"] = report_baseline(baseline, args.baseline, result["rows"], file=said)
