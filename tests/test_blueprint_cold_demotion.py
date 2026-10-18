@@ -291,3 +291,197 @@ class TestColdDirNameTwinParity:
             f"cold-dir name drift against "
             f"BLUEPRINT_COLD_DIR_NAME={BLUEPRINT_COLD_DIR_NAME!r}: {drift}"
         )
+
+
+def _standalone_blueprint():
+    """``tools/cc/cognitive_blueprint.py`` loaded by path, its siblings importable."""
+    import importlib.util
+
+    name = "_def861_standalone_blueprint"
+    if name in sys.modules:
+        return sys.modules[name]
+    tools_cc = REPO_ROOT / "tools" / "cc"
+    if str(tools_cc) not in sys.path:
+        sys.path.insert(0, str(tools_cc))
+    spec = importlib.util.spec_from_file_location(name, tools_cc / "cognitive_blueprint.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _engine_prune():
+    from espalier.cognitive_blueprint import _prune_blueprints
+
+    return _prune_blueprints
+
+
+def _standalone_prune():
+    return _standalone_blueprint()._prune_blueprints
+
+
+_BOTH_PRUNES = pytest.mark.parametrize(
+    "prune", [_engine_prune, _standalone_prune], ids=["engine", "tools-cc"]
+)
+
+
+class TestThePruneSparesTheChainHeadAndItsParent:
+    """A second SessionStart in one checkout (the VS Code usage panel's headless
+    ``claude``, measured 2026-09-19) starts a node chained from the RUNNING
+    session's, which is still an empty stub past ``BLUEPRINT_MIN_PRUNE_AGE_S``,
+    and the eviction tail took it: driven on main 2026-10-18, a 469-byte stub
+    aged 4200 s went cold while ``latest.json`` named it as the new node's
+    parent. The prune reads ``latest.json`` first and never demotes its node
+    nor the node it chains from; they leave the candidates rather than the
+    tail, so the working set stays at ``BLUEPRINT_RETENTION``."""
+
+    @staticmethod
+    def _seed(bp_dir, n, *, substantive=True):
+        """``n`` nodes three hours old, oldest first."""
+        from espalier._blueprint_limits import BLUEPRINT_STUB_MAX_BYTES
+
+        bp_dir.mkdir(parents=True, exist_ok=True)
+        now = _time.time()
+        out = []
+        for i in range(n):
+            p = bp_dir / f"20260101-{i:06d}-aaaaaa.json"
+            p.write_text("x" * (BLUEPRINT_STUB_MAX_BYTES + 100) if substantive else "{}",
+                         encoding="utf-8")
+            t = now - 3 * 3600 + i
+            os.utime(p, (t, t))
+            out.append(p)
+        return out
+
+    @staticmethod
+    def _stub(bp_dir, sid, *, parent="", age_s=0.0):
+        """An empty session's node (a stub), ``age_s`` old."""
+        import json
+
+        p = bp_dir / f"{sid}.json"
+        p.write_text(json.dumps({"session_id": sid, "parent_session_id": parent}), encoding="utf-8")
+        t = _time.time() - age_s
+        os.utime(p, (t, t))
+        return p
+
+    @staticmethod
+    def _hot(bp_dir):
+        return sorted(p.name for p in bp_dir.glob("*.json") if p.name != "latest.json")
+
+    @_BOTH_PRUNES
+    def test_the_running_sessions_stub_stays_hot_when_a_new_node_chains_from_it(
+        self, tmp_path, prune
+    ):
+        """Dies to: the prune reading no ``latest.json`` (the running stub is the
+        tail's first victim), or the spared nodes kept on top of the bound."""
+        import json
+
+        from espalier._blueprint_limits import (
+            BLUEPRINT_COLD_DIR_NAME,
+            BLUEPRINT_MIN_PRUNE_AGE_S,
+            BLUEPRINT_RETENTION,
+        )
+
+        bp_dir = tmp_path / "cc" / "blueprints"
+        seeded = self._seed(bp_dir, BLUEPRINT_RETENTION)
+        running = self._stub(bp_dir, "20261018-100000-runnin", age_s=BLUEPRINT_MIN_PRUNE_AGE_S + 600)
+        new = self._stub(bp_dir, "20261018-111000-second", parent="20261018-100000-runnin")
+        (bp_dir / "latest.json").write_text(new.read_text(encoding="utf-8"), encoding="utf-8")
+
+        prune()(bp_dir)
+
+        assert running.exists() and new.exists()
+        assert len(self._hot(bp_dir)) == BLUEPRINT_RETENTION
+        cold = sorted(p.name for p in (bp_dir / BLUEPRINT_COLD_DIR_NAME).glob("*.json"))
+        assert cold == [seeded[0].name, seeded[1].name]
+        assert json.loads((bp_dir / "latest.json").read_text(encoding="utf-8"))["session_id"] == new.stem
+
+    @_BOTH_PRUNES
+    def test_an_old_chain_head_stays_hot_too(self, tmp_path, prune):
+        """``latest.json``'s own node, old and empty (a session resumed with no
+        new start). Dies to: the parent spared and the head not."""
+        from espalier._blueprint_limits import BLUEPRINT_MIN_PRUNE_AGE_S, BLUEPRINT_RETENTION
+
+        bp_dir = tmp_path / "cc" / "blueprints"
+        self._seed(bp_dir, BLUEPRINT_RETENTION)
+        head = self._stub(bp_dir, "20261018-100000-oldhed", parent="20250101-000000-gone00",
+                          age_s=BLUEPRINT_MIN_PRUNE_AGE_S + 600)
+        (bp_dir / "latest.json").write_text(head.read_text(encoding="utf-8"), encoding="utf-8")
+
+        prune()(bp_dir)
+
+        assert head.exists()
+        assert len(self._hot(bp_dir)) == BLUEPRINT_RETENTION
+
+    @_BOTH_PRUNES
+    def test_an_old_stub_no_chain_head_names_still_goes_cold(self, tmp_path, prune):
+        """Dies to: every stub spared, or the parent read from the wrong node."""
+        from espalier._blueprint_limits import (
+            BLUEPRINT_COLD_DIR_NAME,
+            BLUEPRINT_MIN_PRUNE_AGE_S,
+            BLUEPRINT_RETENTION,
+        )
+
+        bp_dir = tmp_path / "cc" / "blueprints"
+        self._seed(bp_dir, BLUEPRINT_RETENTION - 1)
+        ownerless = self._stub(bp_dir, "20261018-090000-nobody", age_s=BLUEPRINT_MIN_PRUNE_AGE_S + 600)
+        parent = self._stub(bp_dir, "20261018-100000-parent", age_s=BLUEPRINT_MIN_PRUNE_AGE_S + 600)
+        new = self._stub(bp_dir, "20261018-111000-second", parent=parent.stem)
+        (bp_dir / "latest.json").write_text(new.read_text(encoding="utf-8"), encoding="utf-8")
+
+        prune()(bp_dir)
+
+        assert (bp_dir / BLUEPRINT_COLD_DIR_NAME / ownerless.name).exists()
+        assert parent.exists() and new.exists()
+        assert len(self._hot(bp_dir)) == BLUEPRINT_RETENTION
+
+    @_BOTH_PRUNES
+    @pytest.mark.parametrize(
+        "latest",
+        [None, "", "not json", "[]", '{"session_id": 5, "parent_session_id": null}', "{}"],
+        ids=["absent", "empty", "unparseable", "a-list", "non-string-ids", "no-ids"],
+    )
+    def test_a_latest_that_names_no_node_prunes_as_before(self, tmp_path, prune, latest):
+        """Dies to: the read raising past the prune's own guard, or a bad
+        ``latest.json`` stopping the prune."""
+        from espalier._blueprint_limits import BLUEPRINT_COLD_DIR_NAME, BLUEPRINT_RETENTION
+
+        bp_dir = tmp_path / "cc" / "blueprints"
+        seeded = self._seed(bp_dir, BLUEPRINT_RETENTION + 2)
+        if latest is not None:
+            (bp_dir / "latest.json").write_text(latest, encoding="utf-8")
+
+        prune()(bp_dir)
+
+        assert len(self._hot(bp_dir)) == BLUEPRINT_RETENTION
+        cold = sorted(p.name for p in (bp_dir / BLUEPRINT_COLD_DIR_NAME).glob("*.json"))
+        assert cold == [seeded[0].name, seeded[1].name]
+
+    def test_a_second_start_keeps_the_running_sessions_node_hot(self, tmp_path, monkeypatch, capsys):
+        """The row's own drive, through the standalone copy's ``start`` twice:
+        the second is the second SessionStart. Dies to: the drive's red, the
+        running session's stub demoted while the new node names it its parent."""
+        import json
+
+        from espalier._blueprint_limits import (
+            BLUEPRINT_COLD_DIR_NAME,
+            BLUEPRINT_MIN_PRUNE_AGE_S,
+            BLUEPRINT_RETENTION,
+        )
+
+        mod = _standalone_blueprint()
+        monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
+        bp_dir = tmp_path / "cc" / "blueprints"
+        self._seed(bp_dir, BLUEPRINT_RETENTION)
+        mod.cmd_start()
+        running = json.loads((bp_dir / "latest.json").read_text(encoding="utf-8"))["session_id"]
+        node = bp_dir / f"{running}.json"
+        aged = _time.time() - (BLUEPRINT_MIN_PRUNE_AGE_S + 600)
+        os.utime(node, (aged, aged))
+
+        mod.cmd_start()
+
+        head = json.loads((bp_dir / "latest.json").read_text(encoding="utf-8"))
+        assert head["parent_session_id"] == running
+        assert node.exists(), "the running session's node went cold at the second start"
+        assert not (bp_dir / BLUEPRINT_COLD_DIR_NAME / node.name).exists()
+        assert len(self._hot(bp_dir)) == BLUEPRINT_RETENTION
