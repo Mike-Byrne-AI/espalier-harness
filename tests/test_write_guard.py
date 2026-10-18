@@ -10267,6 +10267,19 @@ class TestBenchGuardFixture:
         got = rehearsal._tier(hook, "Bash", f"cd {cd_into} && echo x > {target}", shape)
         assert got == "HARD", f"{cd_into}/{target} @{shape}: {got}"
 
+    def test_the_drive_cd_row_reads_the_tier_its_host_expects(self):
+        """Row 4B-6's expectation is the host's (DEF-2022): the carve-out where
+        its ``cd`` reaches the drive-root temp, the nudge where it is not
+        followed. One expectation for every host read five standing
+        mismatches on each Windows pass, one per root shape. Driven through
+        the rehearsal's own evaluator under one shape, so every CI cell checks
+        the key against the guard it runs, not only the scarce Windows bench."""
+        rehearsal = _load_bench("powershell_guard_rehearsal")
+        probe = _load_bench("guard_row_probe")
+        (row,) = (r for r in probe.ROWS if r[0] == "4B-6")
+        got = rehearsal._tier(HOOKS_DIR / "write_guard.py", row[4], row[2], "plain")
+        assert got == row[1], f"4B-6 on {os.name}: expected {row[1]}, the guard read {got}"
+
     def test_the_fixture_directories_are_read_from_the_hook_tree(self):
         """Derived from `_protected_zones` beside the hook the run measures:
         every protected prefix and the parent of every protected file."""

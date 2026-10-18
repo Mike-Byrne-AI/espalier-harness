@@ -80,6 +80,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import sys
 from pathlib import Path
@@ -113,6 +114,20 @@ PS_HOME = str(Path.home())
 #: three-part home SOFT). The row's expectation says so rather than reading
 #: as a regression in a container.
 _SHALLOW_HOME = len(Path.home().parts) < 3
+#: Row 4B-6's expected tier is the host's (DEF-2022). The guard follows a
+#: ``cd`` only into a directory that is there (``_hook_utils.directory_exists``),
+#: and the drive path this one names is absolute only where ``Path`` reads it
+#: so, on Windows, the shell's own reading there (Git Bash's ``cd C:/`` lands
+#: at the drive). So on Windows with a drive-root temp the relative operand is
+#: placed below it and takes the scratch carve-out 4B-4 pins: ALLOW. Anywhere
+#: else the ``cd`` is not followed -- on macOS and Linux the spelling names a
+#: directory inside the project that the fixture does not make, and a Windows
+#: host may have no drive-root temp -- so the operand is judged at the project
+#: and the nudge fires: SOFT. One expectation read five standing mismatches on
+#: every Windows pass, one per root shape, and a real regression there would
+#: have hidden in the count. The disk is read here, not through the guard's
+#: own oracle, so a break there cannot carry the expectation with it.
+_DRIVE_CD_TIER = "ALLOW" if os.name == "nt" and Path("C:/Temp").is_dir() else "SOFT"
 
 #: (id, expected tier, command, why the row is here, tool namespace).
 #: Expectations are the CORRECTED ones: four rows of the original run sheet
@@ -151,8 +166,10 @@ ROWS: list[tuple[str, str, str, str, str]] = [
     ("4B-4h", "HARD", "rm -rf C:/Temp",
      "two components under a drive: the drive-root temp itself, the wall's on every OS "
      "(never drive this live)", "Bash"),
-    ("4B-6", "SOFT", "cd C:/Temp && rm -rf scratch",
-     "a relative delete judged from the command's directory", "Bash"),
+    ("4B-6", _DRIVE_CD_TIER, "cd C:/Temp && rm -rf scratch",
+     "a relative delete judged from the command's directory, its tier the host's "
+     "(_DRIVE_CD_TIER: the carve-out where the cd reaches the drive-root temp, "
+     "the nudge where it does not)", "Bash"),
 
     # Writes the fixture had to carry the protected tree to see.
     ("4B-5", "HARD", "cd tools/cc && echo x > hooks/walk-probe.py",
@@ -435,8 +452,9 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print(headline)
         if result["mismatched"]:
-            print("A MISMATCH is a platform-specific verdict or a regression and is the "
-                  "first thing to record -- with the row id, shape, expected and actual tier.")
+            print("A MISMATCH is a regression, or a host verdict the table has not keyed yet "
+                  "(key it, as 4B-6 is), and is the first thing to record -- with the row id, "
+                  "shape, expected and actual tier.")
     if baseline is not None:
         record["baseline"] = report_baseline(baseline, args.baseline, result["rows"], file=said)
     if args.json:
