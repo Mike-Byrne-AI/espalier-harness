@@ -13,6 +13,8 @@ harness no longer enforces.
 from __future__ import annotations
 
 import ast
+import fnmatch
+import os
 import re
 import sys
 from pathlib import Path
@@ -25,7 +27,7 @@ from espalier.scanners.encoding_contracts import NON_FILE_OPENERS
 from _locked import locked
 from espalier.cli import _build_settings_json
 from tests._source_segment import segment, source_lines
-from tests._live_tree import checkout_glob, checkout_rglob
+from tests._live_tree import checkout_files, checkout_glob, checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOKS_DIR = REPO_ROOT / "tools" / "cc" / "hooks"
@@ -352,10 +354,13 @@ class TestToolsCcNoEspalierImports:
 #: ``_vendor/selfcheck_tests/`` is the curated subset of ``tests/`` that
 #: ``espalier selfcheck`` runs on an adopter's machine; ``bench/`` and
 #: ``examples/`` ship in the sdist (``MANIFEST.in``); ``scripts/`` is this tree's
-#: own tooling, the hygiene twin. A root nested in another is walked as its own.
-#: Written by hand: the manifests are the oracle this list is not yet read from.
+#: own tooling, the hygiene twin; and ``tools/`` beyond ``tools/cc/``
+#: (``tools/review_agent_audit.py``) ships in the sdist by ``recursive-include
+#: tools``, which the list missed until DEF-3013. A root nested in another is
+#: walked as its own. Written by hand, so it stays readable, and held to what
+#: setuptools ships by :class:`TestShippedRootsAreWhatShips`.
 _SHIPPED_ROOTS: tuple[str, ...] = (
-    "tools/cc", "espalier", "espalier/_vendor/selfcheck_tests", "scripts", "bench", "examples")
+    "tools/cc", "tools", "espalier", "espalier/_vendor/selfcheck_tests", "scripts", "bench", "examples")
 #: The byte-mirrors under ``espalier/``: copies, read where their source lives.
 _SHIPPED_MIRRORS: tuple[str, ...] = ("espalier/assets/", "espalier/_vendor/cc/")
 #: The roots whose files run with their own folder first on ``sys.path`` (a
@@ -363,7 +368,7 @@ _SHIPPED_MIRRORS: tuple[str, ...] = ("espalier/assets/", "espalier/_vendor/cc/")
 #: answers a bare name before ``tests/`` could. A module of the ``espalier``
 #: package is a package member, and a bare name there is never resolved beside it.
 _SCRIPT_ROOTS: tuple[str, ...] = (
-    "tools/cc", "espalier/_vendor/selfcheck_tests", "scripts", "bench", "examples")
+    "tools/cc", "tools", "espalier/_vendor/selfcheck_tests", "scripts", "bench", "examples")
 #: The calls that import a module a literal string names, and the calls that
 #: load a module from a file path, each with the position and keyword of the
 #: argument that names it.
@@ -470,6 +475,20 @@ def _guarded(tree: ast.Module) -> set[int]:
     return inside
 
 
+def _walked_files(repo: Path, roots: "tuple[str, ...] | None" = None) -> dict[str, list[Path]]:
+    """The Python files the walk reads in each shipped root of the tree at
+    ``repo``: a root nested in another is walked as its own, and a byte-mirror
+    is read where its source lives (``_SHIPPED_MIRRORS``). ``roots`` stands in
+    for :data:`_SHIPPED_ROOTS` in a planted test."""
+    roots = _SHIPPED_ROOTS if roots is None else roots
+    walked: dict[str, list[Path]] = {}
+    for top in roots:
+        nested = tuple(r + "/" for r in roots if r != top and r.startswith(top + "/"))
+        walked[top] = [p for p in checkout_rglob(repo / top, "*.py", root=repo)
+                       if not p.relative_to(repo).as_posix().startswith(_SHIPPED_MIRRORS + nested)]
+    return walked
+
+
 def _tests_imports(repo: Path) -> tuple[dict[tuple[str, str], list[tuple[int, bool]]], dict[str, int], list[str],
                                         set[str]]:
     """Every import of ``tests/`` from the shipped roots of the tree at
@@ -493,10 +512,7 @@ def _tests_imports(repo: Path) -> tuple[dict[tuple[str, str], list[tuple[int, bo
     hits: dict[tuple[str, str], list[tuple[int, bool]]] = {}
     read: dict[str, int] = {}
     unparsed: list[str] = []
-    for top in _SHIPPED_ROOTS:
-        nested = tuple(r + "/" for r in _SHIPPED_ROOTS if r != top and r.startswith(top + "/"))
-        files = [p for p in checkout_rglob(repo / top, "*.py", root=repo)
-                 if not p.relative_to(repo).as_posix().startswith(_SHIPPED_MIRRORS + nested)]
+    for top, files in _walked_files(repo).items():
         read[top] = len(files)
         beside: dict[Path, set[str]] = {}
         if top in _SCRIPT_ROOTS:
@@ -609,7 +625,8 @@ class TestShippedRootsDoNotImportTests:
         and one clean module in each shipped root."""
         for rel in ("tests/_live_tree.py", "tests/test_release_archive_filtering.py",
                     "tests/helpers/__init__.py", "tests/fixtures/data/make.py", "tools/cc/clean.py",
-                    "tools/cc/hooks/clean.py", "espalier/clean.py", "espalier/_vendor/selfcheck_tests/clean.py",
+                    "tools/cc/hooks/clean.py", "tools/clean.py", "espalier/clean.py",
+                    "espalier/_vendor/selfcheck_tests/clean.py",
                     "scripts/clean.py", "bench/clean.py", "examples/clean.py"):
             (repo / rel).parent.mkdir(parents=True, exist_ok=True)
             (repo / rel).write_text("import os\n", encoding="utf-8")
@@ -769,6 +786,255 @@ class TestShippedRootsDoNotImportTests:
             (repo / rel).unlink()
         assert _tests_import_problems(repo, {}) == [
             "scripts/ gave the walk no Python file", "tests/ gave the walk no module name to ask about"]
+
+
+def _mirror_source(rel: str) -> "str | None":
+    """The file the mirror registry says ``rel`` is a byte-copy of, or None
+    where no row mirrors it (``espalier.mirror_registry``)."""
+    from espalier import mirror_registry as registry
+
+    for row in registry.MIRROR_ROWS:
+        glob = registry.glob_row_parts(row.sot)
+        base = glob[0] if glob is not None else row.sot
+        for mirror in row.mirrors:
+            if mirror.endswith("/") and base.endswith("/") and rel.startswith(mirror):
+                return base + rel[len(mirror):]
+            if rel == mirror:
+                return base
+    return None
+
+
+#: The ``[tool.setuptools]`` keys that can ship Python which
+#: :func:`_shipped_python` does not read: a pyproject that sets one is named,
+#: never read as shipping nothing.
+_UNREAD_SETUPTOOLS_KEYS: tuple[str, ...] = ("package-dir", "script-files", "data-files")
+
+
+def _shipped_python(repo: Path) -> tuple[set[str], list[str]]:
+    """The ``.py`` files outside ``tests/`` that leave the tree at ``repo``, read
+    with setuptools' own readers over git's view of it (DEF-3013), and what
+    could ship more that this does not read. The wheel: the packages
+    pyproject names or finds (``packages.find`` with its ``where``,
+    ``include``, ``exclude`` and ``namespaces``, true by default as setuptools
+    reads it), their modules, ``py-modules`` and the package-data globs. The
+    sdist: setuptools' defaults that are Python (those package modules and
+    ``py-modules``, and a root ``setup.py``), then ``MANIFEST.in`` read as
+    setuptools reads its template (``TextFile``, inline comments and line
+    continuations included) and applied in order through the ``FileList`` it
+    builds with, so a later line beats an earlier one. Not read: a
+    version-control file-finder plugin (none is installed for this build);
+    with no TOML reader (3.10 without tomli) the pyproject half reads
+    nothing. A file git ignores never ships from a clean checkout."""
+    try:
+        from setuptools import find_namespace_packages, find_packages
+        from setuptools._distutils.text_file import TextFile
+        from setuptools.command.egg_info import FileList
+    except ImportError as exc:
+        pytest.fail(f"setuptools' readers do not import ({exc}): the dev extra installs them, "
+                    "and without them what ships goes unread")
+    from espalier._compat import tomllib
+
+    files = [p.relative_to(repo).as_posix() for p in checkout_files(repo, root=repo)]
+    tracked = set(files)
+    wheel: set[str] = set()
+    unread: list[str] = []
+    pyproject = repo / "pyproject.toml"
+    if tomllib is not None and pyproject.is_file():
+        config = tomllib.loads(pyproject.read_text(encoding="utf-8")).get("tool", {}).get("setuptools", {})
+        unread = [f"[tool.setuptools] {key}" for key in _UNREAD_SETUPTOOLS_KEYS if key in config]
+        packages = config.get("packages")
+        dirs: dict[str, str] = {}
+        if isinstance(packages, list):
+            dirs = {name: name.replace(".", "/") for name in packages}
+        elif isinstance(packages, dict) and isinstance(packages.get("find"), dict):
+            find = packages["find"]
+            finder = find_namespace_packages if find.get("namespaces", True) else find_packages
+            for where in find.get("where", ["."]):
+                prefix = "" if where in (".", "") else where.strip("/") + "/"
+                for name in finder(where=str(repo / where), include=find.get("include", ["*"]),
+                                   exclude=find.get("exclude", [])):
+                    dirs[name] = prefix + name.replace(".", "/")
+        else:
+            unread.append("[tool.setuptools] packages (left to setuptools' automatic discovery)")
+        for base in dirs.values():
+            wheel |= {p for p in files if p.startswith(base + "/") and "/" not in p[len(base) + 1:]}
+        wheel |= {module.replace(".", "/") + ".py" for module in config.get("py-modules", [])}
+        for package, globs in config.get("package-data", {}).items():
+            base = dirs.get(package, package.replace(".", "/")) + "/"
+            wheel |= {p for p in files for g in globs
+                      if fnmatch.fnmatchcase(p, base + g) and p.count("/") == (base + g).count("/")}
+    listing = FileList()
+    listing.allfiles = [os.path.normpath(p) for p in files]
+    listing.extend(os.path.normpath(p) for p in sorted(wheel))  # the sdist's defaults carry the packages too
+    if "setup.py" in tracked:
+        listing.append("setup.py")
+    manifest = repo / "MANIFEST.in"
+    if manifest.is_file():
+        template = TextFile(str(manifest), strip_comments=True, skip_blanks=True, join_lines=True,
+                            lstrip_ws=True, rstrip_ws=True, collapse_join=True)
+        try:
+            lines = template.readlines()
+        finally:
+            template.close()
+        here = os.getcwd()
+        os.chdir(repo)  # setuptools' include, recursive-include and graft lines glob the working directory
+        try:
+            for line in lines:
+                listing.process_template_line(line)
+        finally:
+            os.chdir(here)
+    shipped = ({p.replace("\\", "/") for p in listing.files} | wheel) & tracked
+    return {p for p in shipped if p.endswith(".py") and not p.startswith("tests/")}, unread
+
+
+def _shipped_roots_problems(repo: Path, roots: "tuple[str, ...] | None" = None) -> list[str]:
+    """What :class:`TestShippedRootsAreWhatShips` refuses in the tree at
+    ``repo``: a shipped ``.py`` the walk never reads (in its root, or, for a
+    byte-mirror, where its source lives); a top folder that ships Python and
+    holds no listed root; a listed root nothing it walks ships from (crediting
+    a mirror's source); and a pyproject key that could ship Python unread."""
+    roots = _SHIPPED_ROOTS if roots is None else roots
+    shipped, unread = _shipped_python(repo)
+    by_root = {root: {p.relative_to(repo).as_posix() for p in files}
+               for root, files in _walked_files(repo, roots).items()}
+    walked = set().union(*by_root.values())
+    problems = [f"{rel} ships, and the walk never reads it" for rel in sorted(shipped)
+                if rel not in walked and _mirror_source(rel) not in walked]
+    listed = {root.split("/")[0] for root in roots}
+    shipping = {rel.split("/")[0] if "/" in rel else "." for rel in shipped}
+    problems += [f"{top}/ ships Python, and no listed root is in it" for top in sorted(shipping - listed)]
+    credited = shipped | {_mirror_source(rel) for rel in shipped}
+    problems += [f"{root}/ is listed, and nothing in it ships" for root in roots if not by_root[root] & credited]
+    problems += [f"{key} can ship Python this pin does not read" for key in unread]
+    return problems
+
+
+class TestShippedRootsAreWhatShips:
+    """DEF-3013: :data:`_SHIPPED_ROOTS` is written by hand, so it stays
+    readable and the two sanctioned imports stay keyed against it, and it is
+    held here to what setuptools ships (:func:`_shipped_python`): a shipped
+    ``.py`` the walk never reads, a top folder that ships and holds no listed
+    root, and a listed root nothing ships from each red by name. Read this way
+    on 162c55fb, ``recursive-include tools`` shipped
+    ``tools/review_agent_audit.py`` and ``tools/__init__.py`` under no listed
+    root (the list named ``tools/cc``).
+
+    The pin reads which files are walked, not how a root resolves a bare
+    name: a nested root folded back into its parent (the selfcheck tests into
+    ``espalier/``) is still walked, as a package member rather than a script."""
+
+    _MANIFEST = "recursive-include pkg *.py\nrecursive-include tools *.py\ninclude scripts/run.py\nprune tests\n"
+    _ROOTS = ("pkg", "tools/cc", "scripts")
+
+    @staticmethod
+    def _plant(repo: Path, manifest: str, *extra: str) -> Path:
+        """A planted tree: a package, a deploy folder, a script that ships and
+        one that does not, a test, the given ``MANIFEST.in``, and ``extra``."""
+        for rel in ("pkg/__init__.py", "pkg/mod.py", "tools/cc/run.py", "scripts/run.py", "scripts/local.py",
+                    "tests/test_x.py", *extra):
+            (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (repo / rel).write_text("import os\n", encoding="utf-8")
+        (repo / "MANIFEST.in").write_text(manifest, encoding="utf-8")
+        return repo
+
+    def test_every_shipped_python_file_is_walked(self):
+        problems = _shipped_roots_problems(REPO_ROOT)
+        assert not problems, (
+            "_SHIPPED_ROOTS and what setuptools ships disagree (add the root that ships, or drop "
+            "the one that no longer does):\n" + "\n".join(problems))
+
+    def test_a_planted_list_that_holds_what_ships_reads_clean(self, tmp_path):
+        repo = self._plant(tmp_path, self._MANIFEST)
+        assert _shipped_roots_problems(repo, self._ROOTS) == []
+
+    def test_a_manifest_line_that_ships_a_new_root_reds_by_name(self, tmp_path):
+        repo = self._plant(tmp_path, self._MANIFEST + "recursive-include extra *.py\n", "extra/run.py")
+        assert _shipped_roots_problems(repo, self._ROOTS) == [
+            "extra/run.py ships, and the walk never reads it", "extra/ ships Python, and no listed root is in it"]
+
+    def test_a_root_dropped_from_the_list_reds_by_name(self, tmp_path):
+        repo = self._plant(tmp_path, self._MANIFEST)
+        assert _shipped_roots_problems(repo, ("pkg", "tools/cc")) == [
+            "scripts/run.py ships, and the walk never reads it", "scripts/ ships Python, and no listed root is in it"]
+
+    def test_a_file_shipped_beside_a_listed_subfolder_reds(self, tmp_path):
+        """The gap this pin found: the top folder is listed through a subfolder
+        of it, and a file beside that subfolder ships unread."""
+        repo = self._plant(tmp_path, self._MANIFEST, "tools/audit.py")
+        assert _shipped_roots_problems(repo, self._ROOTS) == ["tools/audit.py ships, and the walk never reads it"]
+
+    def test_a_listed_root_nothing_ships_from_reds(self, tmp_path):
+        repo = self._plant(tmp_path, self._MANIFEST, "bench/local.py")
+        assert _shipped_roots_problems(repo, (*self._ROOTS, "bench")) == ["bench/ is listed, and nothing in it ships"]
+
+    def test_a_byte_mirror_is_read_where_its_source_lives(self, tmp_path):
+        """``espalier/_vendor/cc/`` is skipped by the walk and read at its
+        source in ``tools/cc/`` (the registry's vendor-cc row): covered while
+        that source is walked, unread once it is not."""
+        repo = self._plant(tmp_path, self._MANIFEST + "recursive-include espalier *.py\n",
+                           "espalier/core.py", "espalier/_vendor/cc/run.py")
+        assert _shipped_roots_problems(repo, (*self._ROOTS, "espalier")) == []
+        assert _shipped_roots_problems(repo, ("pkg", "scripts", "espalier")) == [
+            "espalier/_vendor/cc/run.py ships, and the walk never reads it",
+            "tools/cc/run.py ships, and the walk never reads it",
+            "tools/ ships Python, and no listed root is in it"]
+        (repo / "MANIFEST.in").write_text("recursive-include pkg *.py\ninclude scripts/run.py\n"
+                                          "recursive-include espalier *.py\n", encoding="utf-8")
+        assert _shipped_roots_problems(repo, (*self._ROOTS, "espalier")) == [], "a source shipped by its mirror"
+
+    def test_a_nested_root_nothing_ships_from_reds(self, tmp_path):
+        """Each listed root is held, not only its top folder: ``tools/`` ships
+        through a file beside ``tools/cc/``, and ``tools/cc/`` ships nothing."""
+        repo = self._plant(tmp_path, "recursive-include pkg *.py\ninclude tools/audit.py\ninclude scripts/run.py\n",
+                           "tools/audit.py")
+        assert _shipped_roots_problems(repo, ("pkg", "tools/cc", "tools", "scripts")) == [
+            "tools/cc/ is listed, and nothing in it ships"]
+
+    def test_a_continued_manifest_line_is_read_as_setuptools_reads_it(self, tmp_path):
+        """A backslash continues a template line and a ``#`` starts a comment
+        anywhere on it, as setuptools' ``TextFile`` reads the template."""
+        repo = self._plant(tmp_path, self._MANIFEST + "recursive-include extra \\\n    *.py  # the extras\n",
+                           "extra/run.py")
+        assert "extra/run.py" in _shipped_python(repo)[0]
+
+    @staticmethod
+    def _toml_or_skip() -> None:
+        from espalier._compat import tomllib
+
+        if tomllib is None:
+            pytest.skip("no TOML reader on this interpreter: the pyproject half reads nothing here")
+
+    def test_the_wheel_half_reads_the_packages_and_their_data(self, tmp_path):
+        """A package the sdist leaves out still ships in the wheel."""
+        self._toml_or_skip()
+        repo = self._plant(tmp_path, "recursive-include tools *.py\ninclude scripts/run.py\n", "pkg/data/gen.py")
+        (repo / "pyproject.toml").write_text(
+            '[tool.setuptools.packages.find]\ninclude = ["pkg*"]\n\n'
+            '[tool.setuptools.package-data]\npkg = ["data/*.py"]\n', encoding="utf-8")
+        assert _shipped_python(repo) == ({"pkg/__init__.py", "pkg/mod.py", "pkg/data/gen.py",
+                                          "tools/cc/run.py", "scripts/run.py"}, [])
+
+    def test_a_namespace_package_ships_unless_the_find_turns_namespaces_off(self, tmp_path):
+        """``packages.find`` finds a folder with no ``__init__.py`` by default,
+        as setuptools reads pyproject; ``namespaces = false`` leaves it out."""
+        self._toml_or_skip()
+        repo = self._plant(tmp_path, "include scripts/run.py\n", "ns/mod.py")
+        find = '[tool.setuptools.packages.find]\ninclude = ["pkg*", "ns*"]\n'
+        (repo / "pyproject.toml").write_text(find, encoding="utf-8")
+        assert "ns/mod.py" in _shipped_python(repo)[0]
+        (repo / "pyproject.toml").write_text(find + "namespaces = false\n", encoding="utf-8")
+        assert "ns/mod.py" not in _shipped_python(repo)[0]
+
+    def test_a_pyproject_form_the_pin_does_not_read_is_named(self, tmp_path):
+        """A key that could ship Python is named, never read as shipping
+        nothing; so is a pyproject that leaves packages to discovery."""
+        self._toml_or_skip()
+        repo = self._plant(tmp_path, self._MANIFEST)
+        (repo / "pyproject.toml").write_text('[tool.setuptools]\nscript-files = ["bin/run.py"]\n', encoding="utf-8")
+        assert _shipped_roots_problems(repo, self._ROOTS) == [
+            "[tool.setuptools] script-files can ship Python this pin does not read",
+            "[tool.setuptools] packages (left to setuptools' automatic discovery) can ship Python this pin "
+            "does not read"]
 
 
 # ---------------------------------------------------------------------------
