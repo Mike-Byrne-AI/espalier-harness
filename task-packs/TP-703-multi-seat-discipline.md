@@ -294,7 +294,7 @@ names, never this roadmap's state.
    notes, a different instrument, so the first ten days re-baseline on the refs before the line
    is judged.
 8. **The scaling line** (after `TP-703c` and `TP-703e`): a fifth seat on a third machine adds 6
-   or more merged lanes a day while the dispatcher's messages stay under 120 a day and request
+   or more merged lanes a day while the dispatcher's messages stay below 120 a day and request
    latency under 15 minutes median. Latency past that names the dispatcher as the bottleneck and
    a second dispatcher seat as the next question, not a sixth worker.
 
