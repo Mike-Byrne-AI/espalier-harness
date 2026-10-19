@@ -135,6 +135,14 @@ release at a push closes a job assigned by that lane:
 python tools/cc/mail.py send --type release --ack <assign id>
 ```
 
+An assign carries the job, why now, what it waits for (the other seat's lane and the
+file both touch), the operator's constraints and any edge the dispatcher read with its
+citation, under 900 characters, and never the proof the seat's own tier run prints (the
+tier and the reviewers, where this repository's tier script computes them from the
+diff). The send prints a note, never a refusal, past 900 characters, and on Espalier's
+own source repository (where a tier script computes the tier and the reviewers from the
+diff) on such a phrase too, on `--dry-run` alike (`docs/WORKFLOW.md`, *Parallel seats*).
+
 ## Step 2c: Board
 
 ```bash

@@ -70,7 +70,8 @@ process); a relaunch is a new process and gets its loop from the brief, so
 it needs no second paste either. `claude --worktree` locks the worktree, in an
 interactive session as under `-p`; a killed session leaves the lock behind.
 
-1. **Work the jobs assigned to you**, and keep two or three queued, so the
+1. **Work the jobs assigned to you**, in order, and keep two queued (the
+   dispatcher's duty to keep them there, the table below), so the
    dispatcher's absence does not stall you. For a new job or a decision that
    crosses jobs, send the dispatcher one request. Never negotiate with another
    worker seat.
@@ -240,7 +241,7 @@ interactive session as under `-p`; a killed session leaves the lock behind.
 |---|---|
 | Turns the operator's priorities into assignments (`mail.py send --type assign --seat <seat> ...`): which seat works which job, and since 2026-10-15 sends them without a per-assign yes when the job is inside an approved pack or a live ledger row (the paragraph below) | Set the priorities: the operator does, by approving packs and naming the classes to drain; a new pack, a scope change, a release, or a call `cc/GOAL.md` lists as the operator's still goes to the operator |
 | Sequences jobs that would collide: two jobs on one hot file, a record-format change while lanes are open | Gate changes: seats ship their own lanes |
-| Keeps at least one job with clear gates on every seat's queue, and re-reads the gates when a lane merges; a gate names another seat's open lane and the file both touch | Gate a seat on its own open pull request (item 4: the cap is on pull requests, not work) |
+| Keeps two jobs with clear gates on every seat's queue, each assign in its shape (*What an assign says*, under *How assignments behave*), and re-reads the gates when a lane merges; a gate names another seat's open lane and the file both touch | Gate a seat on its own open pull request (item 4: the cap is on pull requests, not work) |
 | Answers worker requests at its next prompt (the operator prompts "dispatch", or a `/loop` does) | Review all code, or act as the merge queue |
 | Backs up a red `main` that nobody else has reverted | Hold knowledge only in its own context: what it decides is written where every seat can read it |
 | Carries a lighter lane of its own | Run the heaviest lanes, which compete with dispatching |
@@ -263,6 +264,33 @@ worker ask was answered within ten minutes; the dispatcher's recommendations
 had been taken 13 of 13 times since 2026-10-14. The data point that falsifies
 this: an assign the operator vetoes after the fact; two in a week re-opens the
 rule.
+
+**The seat's side of it** (the operator's yes, 2026-10-19; `TP-703e`). On a fork
+the assign does not settle, the seat sends one request carrying its Task 0
+recommendation and the citation behind it, and proceeds on that recommendation
+after the dispatcher's tick interval with no answer: 15 minutes, the `/loop` in
+`tools/cc/seat.py::DISPATCHER_TICK`, which a test holds this paragraph to
+(`tests/test_seat.py::TestBrief`); the ack can still redirect it. The seat
+stops, and only re-reads mail, for what the assign authority above reserves
+for the operator (a new pack, a change to an approved pack's scope, a release
+or tag, a revert that is not the red-`main` revert, an open call the goal file
+lists), for a platform safety stop, for a refusal it cannot resolve, and for a
+conflict outside its own files; a finding's row is the seat's own to file
+(item 8), never a stop. A red the seat cannot fix in two attempts shelves the
+lane (its claims stay; one note beginning `shelved:` says what was tried) and
+the seat takes its next queued job; the dispatcher re-sequences the shelved
+lane at its next tick. A redirect after the fact is an ack beginning
+`redirect:`, and the Session Log row counts it as rework; `TP-703f`'s census
+counts both words from the refs, so the falsifier below is read, never
+recalled. Until the operator pastes the tick's new sentence (`TP-703e` 1-C-2),
+a running loop's `STOP` governs that loop, and this paragraph is the rule the
+paste carries. Measured before this clause: 19 of 20 rulings matched the
+recommendation the request carried (10-17 to 10-18, hand-classified by the
+dispatcher from its tick notes, not second-read), and the stop cost the seat
+the ack latency (111 of 111 requests since 10-14 answered, median 8
+minutes, p75 12, max 23, `scripts/mail_latency_census.py --since 2026-10-14`
+read 2026-10-19) plus a read each time. What falsifies it: an
+override after the fact that forces rework, twice in twenty.
 
 A Claude session acts only when prompted. The design tolerates a dispatcher
 that is away: a seat with a queue does not need it in real time.
@@ -302,6 +330,18 @@ cross-seat gate.
 - Only the dispatcher may send an `assign`. The send refuses any other seat,
   a setting it cannot use, and a linked worktree whose name it inherited from
   its clone (that worktree would assign as the seat owning the name).
+- **What an assign says.** The job (a row id, a class, or a lane for a pack's
+  wave); why now; what it waits for, by the other seat's lane name and the file
+  both touch; the operator's constraints on it; and any edge the dispatcher
+  read, with the citation it read. Nothing the row or the tier script already
+  says: `scripts/proof_tier.py --base origin/main` prints the tier and the
+  reviewers from the diff, and an assign that restated them was wrong 3 times
+  in 25 on 2026-10-18. A fix shape only with the citation behind it. Under 900
+  characters: every assign of 2026-10-18 ran past that (median 1,957, 17 of 25
+  at the 2,000 cap), and what filled the rest was the tool's output retyped.
+  The send prints a note, never a refusal, past 900 characters or on a tier or
+  reviewer phrase (`mail.py::assign_shape_notes`): an operator's tier override
+  is a reason to name one, and the dispatcher decides.
 - A job is its lane, classes and ids together, and the latest assign of a job
   wins. An assign that names the same lane with a different id set is a NEW
   job, not a replacement: the earlier one stays live until it is released by
