@@ -283,8 +283,10 @@ def _struck_at_head(root: Path, base: str) -> list[str]:
 Its body: `git diff --name-only origin/<base>...HEAD -- task-packs/ledger.d/` for the files,
 each read at both sides (`git show origin/<base>:<file>`, the working tree at HEAD), the two
 texts folded through `_fragments_module().ledger_view_from_texts` into the ledger view and the
-live ids taken by `generate_ledger_regions.live_member_ids` (loaded by path as
-`_fragments_module` loads its sibling); base minus head is the struck set. `_release_claims`
+live ids taken by `generate_ledger_regions.live_member_ids`
+(`tools/cc/generate_ledger_regions.py:571`, through a second path loader written beside
+`_fragments_module`, which today loads only `_record_fragments.py`, `tools/cc/ship.py:730`);
+base minus head is the struck set. `_release_claims`
 gains `struck` and `assigns` parameters and passes them to `release_lane`, which gains the same
 and hands them to `new_message`; `open_pr` and `handoff` call `_struck_at_head` once each, after
 the push lands, and read the assign ids off this seat's live claims on the lane

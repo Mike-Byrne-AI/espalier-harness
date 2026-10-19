@@ -238,7 +238,9 @@ write against the tests named here.
 
 **1-A `tools/cc/_post_merge.py`.** The sets `CHECK_GREEN`, `CHECK_RUNNING`, `NO_VERDICT`,
 `RED_BUCKETS` (the four `tests/test_hook_constant_parity.py` holds equal today, moved, not
-copied). `check_outcome(row)`: `session_start.py::_check_outcome`'s body, unchanged in meaning
+copied; in the hook they are underscore-prefixed, `_CHECK_GREEN` and its three siblings at
+`tools/cc/hooks/session_start.py:618-625`, so grep for them with the underscore and name
+them bare only in the new module). `check_outcome(row)`: `session_start.py::_check_outcome`'s body, unchanged in meaning
 (an unknown shape reads as running, never as a pass). `latest_run_per_check(rows)`:
 `session_start.py::_latest_run_per_check`'s body. `verdicts(merged)`:
 `session_start.py::_post_merge_verdicts`'s body, keyed by pull request number, newest merge
@@ -381,8 +383,9 @@ changes).
   append is a note on the `checks:` line and the section still renders.
 - A check whose latest run is cancelled or stale on every row read is named `no verdict` on
   every surface, never green and never red (the two banner pins and the two ship pins stand).
-- `grep -c 'frozenset' tools/cc/hooks/session_start.py` reads the four check-state sets gone
-  from the hook, and the replacement test reds when one returns.
+- `grep -c 'frozenset' tools/cc/hooks/session_start.py` reads 5, four fewer than the 9 at
+  `c8ad6d37` (the four check-state sets gone from the hook; the five other frozensets stay),
+  and the replacement test reds when one returns.
 - `python3 scripts/sync_vendor_cc.py` and `python3 scripts/sync_claude_mirrors.py` report clean;
   `python3 -m espalier scope-check task-packs/TP-703a-the-red-after-the-merge-has-a-reader.md`
   reports no gap but the named collisions.

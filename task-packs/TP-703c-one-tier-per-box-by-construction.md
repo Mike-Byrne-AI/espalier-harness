@@ -27,9 +27,13 @@
 ## Motivation
 
 On the shared Windows box two seats, `win` and `win-2`, worktrees of one clone, ran one tier at a
-time because two full tiers at once reached Claude Code's low-memory reaper. `cc/GOAL.md`'s notes
-record the operator's remedy for a reap (a seat restarts with fewer workers, win box 1 and Air 2,
-without asking; CI's full tier is the proof) and no serialisation rule: the one-tier-at-a-time
+time because two full tiers at once reached Claude Code's low-memory reaper. The operator's
+standing word for a reap (a seat restarts with fewer workers, without asking; CI's full tier is
+the proof) is recorded in `memory/session-log.d/2026-10-15-231832-air.md`; the caps themselves
+live in each box's shell profile (`PYTEST_XDIST_AUTO_NUM_WORKERS`, root `CLAUDE.md`), read from
+the box, never from a record (the `cc/GOAL.md` note this pack cited at authoring is gitignored
+and was rewritten at the 10-18 handoff; corrected 2026-10-19). There was no serialisation rule:
+the one-tier-at-a-time
 protocol was the seats' own, improvised on 10-18 (`START` notes: 0 on 10-16, 2 on 10-17, 87 on
 10-18). It was carried by mail: a seat sent a `START` note before its tier and an `END` note
 after, and the other seat read the mail before starting. Measured on the mail record
@@ -139,8 +143,8 @@ box bookkeeping on the channel built for claims and asks.
   accounts would not share the lock file; both `win` seats run under one. A declared limit, printed
   by the launcher when the path is under a per-user directory.
 
-- **The operator's settled remedies as the fix.** Weighed, not taken: the worker caps (win box 1,
-  Air 2, `cc/GOAL.md`) bound one run's memory, not two runs' sum, so two capped tiers still meet
+- **The operator's settled remedies as the fix.** Weighed, not taken: the worker caps (each
+  box's `PYTEST_XDIST_AUTO_NUM_WORKERS`) bound one run's memory, not two runs' sum, so two capped tiers still meet
   the reaper; and "the contract slice locally, CI's full tier is the proof" makes the merge the
   first place a full-tier red is seen, the shape `TP-703a` exists to report. Both stay beside the lock.
 - **Probe children of a seat's own run.** A tool that runs pytest inside a run that already holds

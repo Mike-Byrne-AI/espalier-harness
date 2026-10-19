@@ -86,8 +86,26 @@ would read.
 Each child is one lane a seat ships on its own, with its own Task 0; the roadmap's Task 0 below
 can end one before it is assigned. The suited seat is a proposal to the dispatcher, not a rule.
 
-**Wave 1** (now, in parallel; none shares a file with another in this wave by design, which
-each child's claim re-reads at its start):
+**Wave 1** (now; sequenced, not file-disjoint. The authoring sentence "none shares a file with
+another in this wave by design" was false: on 2026-10-19, before any assign, the dispatcher ran
+`comm -12` over the backticked paths under each child's `## Files touched` and every pair
+shares files -- `TP-703e`/`TP-703f` seven (`tools/cc/mail.py`, `tools/cc/seat.py`,
+`tools/cc/board.py`, `tests/test_mail.py`, `tests/test_seat.py`, the protocol,
+`.claude/commands/inbox.md`); `TP-703a`/`TP-703f` seven (`tools/cc/board.py`,
+`tools/cc/ship.py`, `tests/test_board.py`, `tests/test_ship_driver.py`,
+`tests/_surface_expected.py`, `docs/HOOKS.md`, `inbox.md`); `TP-703c`/`TP-703e` four
+(`tools/cc/seat.py`, `tests/test_seat.py`, the protocol, `docs/WORKFLOW.md`);
+`TP-703a`/`TP-703c` two (`tools/cc/hooks/session_start.py`, `tests/test_session_banner.py`).
+A shared file is not a shared symbol (the board reads live claims at the function level,
+`TP-702`), and the second to merge runs `catch-up`; the order here keeps those few. `TP-703e`
+goes first, the smallest lane and the only one on `tools/cc/mail.py` and `tools/cc/seat.py`
+until it merges; `TP-703a` and `TP-703c` start beside it, meeting only in the banner hook,
+where `TP-703a` moves the check-state sets out and `TP-703c` adds one off-note line;
+`TP-703f`'s census lane (`scripts/` and `tests/` only) starts anywhere now, and its driver
+lane after `TP-703e` merges. Cross-seat: the win seats' parked lanes claim the banner hook
+and its test (`DEF-674`) and `docs/HOOKS.md` (`DEF-4029`, `DEF-674`), which `TP-703a` and
+`TP-703c` catch up on when those lanes ship. Each child's claim re-reads the live overlaps at
+its start, and the board's `overlaps:` section is the oracle, not this paragraph):
 
 1. **`TP-703a` — The red after the merge has a reader** (`lane/red-after-merge-has-a-reader`;
    a Mac seat). One shared reader of post-merge verdicts under `tools/cc/`, read by the board,
