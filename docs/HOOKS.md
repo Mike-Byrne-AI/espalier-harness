@@ -168,7 +168,14 @@ git pull --ff-only origin main`), answered by a read-only `git merge-base`
 per merged row, the five most recent -- and each whose latest run of a check
 is red (`; red after merge: portability (windows-latest)`), because a check
 that is not required finishes after the merge and otherwise reports to
-nobody. Each check name is owned by the newest merge whose run of it reached
+nobody. The rule and its sets live in `tools/cc/_post_merge.py`, loaded by
+path: the one home the board's `checks:` line and the ship preflight read
+too (those two add the start gate this five-row line does not carry: a
+newer merge's green run clears an older red only when it started after that
+merge landed, else it is printed beside the red), and a tree without the module beside the
+hooks gets one line in the block's place, `pull requests unread
+(tools/cc/_post_merge.py is not beside the hooks)`, never a silent green.
+Each check name is owned by the newest merge whose run of it reached
 a verdict, so a later green run clears an older red, while a run still
 pending, cancelled or stale supersedes nothing (the last two read
 `no verdict:`). A lane shipped with auto-merge armed lands while nobody is watching,

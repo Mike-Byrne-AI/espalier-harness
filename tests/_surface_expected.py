@@ -207,6 +207,10 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     # from the diff by ast); the mapper moved into tools/cc/_symbols.py at Wave 1,
     # which this script loads by path. Guarded by tests/test_lane_overlap_census.py.
     "lane_overlap_census.py",
+    # 2026-10-19: which checks went red after a merge, on which merge, and when the
+    # record could have said so; replays tools/cc/_post_merge.py (loaded by path) at
+    # an instant and buckets red legs by the ledger rows naming their files.
+    "red_after_merge_census.py",
     "proof_tier.py",
     "handoff_mechanics.py",
     "ledger_trend.py",

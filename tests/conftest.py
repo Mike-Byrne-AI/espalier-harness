@@ -1242,6 +1242,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # other machine's fetch and read, the same-name refusal): the ref
             # mechanics are the thing under test, so no mock stands in.
             "test_mail",
+            # The post-merge verdict module and the census that replays it: the
+            # drivers' shared reader, driven on the frozen #312/#313 rollups.
+            "test_post_merge",
+            "test_red_after_merge_census",
             # Drives tools/cc/_symbols.py's lane reader through real git in a
             # scratch repository (a merge-base, a moved base, the working tree
             # and untracked files, a move with renames off): what git reports

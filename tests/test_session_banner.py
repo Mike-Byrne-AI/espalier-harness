@@ -2012,6 +2012,72 @@ class TestMergedRedReceiver:
         listing = json.dumps([_merged_row(47, green), _merged_row(46, _MERGED_ROLLUP_RED)])
         assert mod._merged_prs_line(listing, local_has_commit=_pulled) == ""
 
+    def test_without_the_post_merge_module_nothing_reads_as_a_pass_and_the_block_says_so(self, monkeypatch):
+        """The rule lives in tools/cc/_post_merge.py, loaded by path; a deploy
+        set without it must not crash the banner and must not read a red as
+        green. Dies to: a copy of a set or a rule kept in the hook, a missing
+        module read as all green, or the block's unread line renamed."""
+        mod = _load()
+        monkeypatch.setattr(mod, "_load_post_merge", lambda: None)
+        red = {"name": "portability", "status": "COMPLETED", "conclusion": "FAILURE"}
+        assert mod._check_outcome(red) == "running"
+        assert mod._latest_run_per_check([red, red]) == [red, red]
+        assert mod._post_merge_verdicts([_merged_row(46, [red])]) == {}
+        assert mod._merged_prs_line(json.dumps([_merged_row(46, [red])]), local_has_commit=_pulled) == ""
+        assert mod._POST_MERGE_UNREAD == "pull requests unread (tools/cc/_post_merge.py is not beside the hooks)"
+        assert mod._load_post_merge.__name__ == "<lambda>"   # the patch held for the reads above
+
+    def test_a_module_that_will_not_load_is_none_and_the_alias_is_not_left_half_made(self, monkeypatch):
+        """Dies to: a broken sibling raising past the loader into the hook's
+        crash guard (the whole banner lost), or a half-initialised module left
+        under the alias for the next call."""
+        import sys
+        mod = _load()
+        sys.modules.pop("_session_start_post_merge", None)
+        real = mod.importlib.util.spec_from_file_location
+
+        class _Broken:
+            def create_module(self, spec):
+                return None
+
+            def exec_module(self, module):
+                raise SyntaxError("a partial write")
+
+        def broken(alias, path):
+            spec = real(alias, path)
+            spec.loader = _Broken()
+            return spec
+        monkeypatch.setattr(mod.importlib.util, "spec_from_file_location", broken)
+        assert mod._load_post_merge() is None
+        assert "_session_start_post_merge" not in sys.modules
+
+    def test_the_banner_names_the_newest_merges_verdict_where_the_board_keeps_the_older_red(self):
+        """The two rules of one module, pinned apart: the board and the preflight
+        clear an older red only with a green run that started after that merge
+        landed; this five-row line names the newest merge that reached a verdict,
+        as its rows carry no run start times. Dies to: either rule silently
+        taking the other's place."""
+        mod = _load()
+        pm = mod._load_post_merge()
+        swapped = [
+            _merged_row(47, [{"name": "portability (windows-latest)", "status": "COMPLETED", "conclusion": "SUCCESS",
+                              "startedAt": "2026-09-29T20:00:00Z"}], when="2026-09-29T22:00:00Z"),
+            _merged_row(46, [{"name": "portability (windows-latest)", "status": "COMPLETED", "conclusion": "FAILURE",
+                              "startedAt": "2026-09-29T20:30:00Z"}], when="2026-09-29T21:00:00Z"),
+        ]
+        assert mod._merged_prs_line(json.dumps(swapped), local_has_commit=_pulled) == ""
+        board = pm.transitions(swapped)["portability (windows-latest)"]
+        assert board["verdict"] == "red" and board["owner"]["pr"] == 46 and [g["pr"] for g in board["green_beside"]] == [47]
+
+    def test_the_module_is_loaded_by_path_under_a_private_alias(self):
+        """Dies to: the loader importing by name (an installed engine's copy
+        would win over the hook's sibling) or registering under a public name."""
+        import sys
+        mod = _load()
+        loaded = mod._load_post_merge()
+        assert loaded is not None and loaded is sys.modules.get("_session_start_post_merge")
+        assert Path(loaded.__file__).resolve() == (HOOKS_DIR.parent / "_post_merge.py").resolve()
+
     def test_a_cancelled_latest_run_is_no_verdict_not_red(self):
         """`_check_outcome` reads CANCELLED as red -- right for an open pull
         request, where a cancelled cell holds the merge. On a merged one the leg

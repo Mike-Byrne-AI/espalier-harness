@@ -288,6 +288,14 @@ _ALLOWED_FLAGS = {
     # Each entry carries its own time and only counts after the reading
     # session's previous check, so no _clean_state_flags glob needs it.
     "zone_writes",
+    # The board's first-mention log (tools/cc/board.py::_log_first_mentions):
+    # one JSON line per red check transition the checks: line printed for the
+    # first time from this checkout (the check, the merge it went red on, the
+    # red run's finish, the read time); read by hand for the multi-seat
+    # roadmap's red-to-first-mention figure, never by a hook, and never
+    # cleaned: it is a record, and a red older than the window is never
+    # written to it.
+    "board-checks.jsonl",
 }
 
 

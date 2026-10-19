@@ -219,7 +219,7 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
             "reports/repo_fingerprint.json",
         )
 
-    def test_init_tool_scripts_is_the_eighteen_standalone_tools(self):
+    def test_init_tool_scripts_is_the_standalone_tools_roster_in_declaration_order(self):
         """The deploy-inventory region's other unpinned limb: the seventeen
         scripts plus the Windows statusline shim, the one non-.py deploy
         (DEF-729). The ship driver joined on 2026-09-30: the deployed /ship
@@ -236,7 +236,11 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
         /inbox body runs the board, and session_start.py imports the read, so
         a fresh init without it would raise ModuleNotFoundError at SessionStart.
         The symbol mapper joined on 2026-10-17 (TP-702 Wave 1): mail.py imports
-        it as a sibling, so every reader of the mail channel reaches it."""
+        it as a sibling, so every reader of the mail channel reaches it. The
+        post-merge verdict module joined on 2026-10-19: ship.py and board.py
+        import it as a sibling and session_start.py loads it by path. (The
+        test was named for a count of eighteen until then; the roster is the
+        count, so the name no longer carries one.)"""
         from espalier.cli import INIT_TOOL_SCRIPTS
 
         # Declaration order, not sorted. The first draft of this pin was typed
@@ -260,6 +264,7 @@ class TestLocalRuntimeInventoryIsPinnedExactly:
             "tools/cc/_symbols.py",
             "tools/cc/board.py",
             "tools/cc/_merge_rules.py",
+            "tools/cc/_post_merge.py",
             "tools/cc/_record_fragments.py",
             "tools/cc/checkout_sync.py",
             "tools/cc/seat.py",

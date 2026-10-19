@@ -171,6 +171,28 @@ is read on its own, and one that cannot be read says so on its own line:
   suspects otherwise, and lists the pull requests whose armed auto-merge would
   land on the red base.
   Revert first, diagnose second.
+- **checks:** each check whose owned verdict over the last 20 merged pull
+  requests is red, with the merge it went red on, the leg's finish and what
+  stands beside it (`portability (windows-latest): red since #313 (merged
+  2026-10-18 13:26Z, the leg finished 13:57Z), green on #312`), or `none red
+  among the last N merges`. A check name is owned by the newest merge whose
+  run of it reached a verdict; a newer green run clears an older red only
+  when it started after that merge landed, else it is printed beside the
+  red, never over it; a cancelled or stale latest run is `no verdict`, never
+  green; a red older than the window says `or earlier (the oldest merge
+  read)`. Pull-request runs only, so a red the merge combination itself makes
+  is the base line's above. These legs are not required checks: the board
+  prints, and never reverts over this line (the revert above is the base
+  line's alone). The same rule prints the ship preflight's `red after
+  merge:` lines; the banner's `Merged:` red clause reads the same module
+  with the per-pull-request rule its five rows carry (`tools/cc/_post_merge.py`,
+  the one home). The first time a red transition is printed from this
+  checkout, its entry carries `new:` and one line goes to the transitions log
+  in the harness's transient state folder (`board-checks.jsonl`: the check,
+  the merge, the red run's finish, the read time), so red-to-first-mention
+  is derived from a record; a red that has held since before the window is
+  never a first mention; a failed append is a note under the line, and the
+  section still renders.
 - **open PRs:** each with the seat whose latest claim or release names its
   branch, and what GitHub's merge state means: ready, blocked by a required
   check or review, in conflict with the base (its seat runs

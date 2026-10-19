@@ -612,17 +612,12 @@ _PR_FIELDS = (
     "number,state,headRefName,baseRefName,isDraft,mergeStateStatus,autoMergeRequest,"
     "statusCheckRollup,mergeCommit,mergedAt"
 )
-# One `statusCheckRollup` row is a CheckRun (`status` + `conclusion`) or a
-# legacy StatusContext (`state`). Not green and not still running reads as red:
-# a cancelled or timed-out cell holds a merge exactly as a failure does.
-_CHECK_GREEN = frozenset({"SUCCESS", "SKIPPED", "NEUTRAL"})
-_CHECK_RUNNING = frozenset({"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"})
-# A completed CheckRun that reached no verdict. Open, `_check_outcome` reads it as
-# red (a cancelled cell holds a merge); merged, the leg simply never reported.
-_NO_VERDICT = frozenset({"CANCELLED", "STALE"})
-# The `gh pr checks` buckets that hold a merge: a cancelled required cell holds
-# it as surely as a failed one (a job no runner picked up reads `cancel`).
-_RED_BUCKETS = frozenset({"fail", "cancel"})
+# The check-state sets (green, running, no verdict, the `gh pr checks` buckets
+# that hold a merge) and the rules over them live in tools/cc/_post_merge.py,
+# the one home the ship driver and the board read too; this hook loads it by
+# path (`_load_post_merge`) and keeps no copy, so the three readers cannot
+# drift. Without the module the pull-request block is one voiced line.
+_POST_MERGE_UNREAD = "pull requests unread (tools/cc/_post_merge.py is not beside the hooks)"
 _PR_INDENT = " " * len("Open PRs:  ")   # `Merged:    ` is the same width
 
 
@@ -698,10 +693,13 @@ def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> lis
         return None
     if not isinstance(rows, list):
         return None
+    post_merge = _load_post_merge()
+    if post_merge is None:  # fail-open: ok deliberate -- the buckets live in the module; without it the tail says the required reds could not be read, and the block's gate has voiced the absence
+        return None
     return sorted(
         _ascii(str(row.get("name") or "?"))
         for row in rows
-        if isinstance(row, dict) and str(row.get("bucket") or "").lower() in _RED_BUCKETS
+        if isinstance(row, dict) and str(row.get("bucket") or "").lower() in post_merge.RED_BUCKETS
     )
 
 
@@ -727,6 +725,35 @@ def _load_merge_rules() -> Any:
     return mod
 
 
+# The post-merge check verdicts: the sets, the outcome of one rollup row, the
+# latest run per check and the ownership rule live in tools/cc/_post_merge.py,
+# shared with the ship driver's preflight and the board's checks: line, so the
+# three readers cannot drift. Loaded BY PATH, like _load_merge_rules above, so
+# a deploy set without the module costs the pull-request block (one voiced
+# line, `_POST_MERGE_UNREAD`) and never the banner.
+def _load_post_merge() -> Any:
+    """``tools/cc/_post_merge.py`` under a private alias; None where it is not
+    deployed beside the hooks."""
+    path = Path(__file__).resolve().parent.parent / "_post_merge.py"
+    if not path.is_file():
+        return None
+    alias = "_session_start_post_merge"
+    mod = sys.modules.get(alias)
+    if mod is None:
+        spec = importlib.util.spec_from_file_location(alias, path)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except Exception as e:  # noqa: BLE001 -- a module beside the hooks that will not load (a partial write, syntax the floor rejects)
+            sys.modules.pop(alias, None)   # never a half-initialised module on the next call
+            _hook_utils.advise_exc("session_start: tools/cc/_post_merge.py would not load", e)
+            return None
+    return mod
+
+
 def _read_merge_rules(root: Path, deadline: float | None = None) -> tuple[str, int, str]:
     """``(base, returncode, stdout)``; returncode -1 where the module is not
     deployed, which the line reads as no answer."""
@@ -748,17 +775,14 @@ def _pr_has_red(pr: dict) -> bool:
 
 
 def _check_outcome(row: object) -> str:
-    """'green', 'running' or 'red' for one statusCheckRollup row. A row of a
-    shape this reader does not know reads as running: unknown is not a pass."""
-    if not isinstance(row, dict):
+    """'green', 'running' or 'red' for one statusCheckRollup row: the one rule
+    in tools/cc/_post_merge.py (a row of a shape it does not know reads as
+    running: unknown is not a pass). Without the module every row reads as
+    running, the same not-a-pass answer, and the block's gate has said why."""
+    post_merge = _load_post_merge()
+    if post_merge is None:  # fail-open: ok deliberate -- no rule to read with; running is the not-a-pass reading, and the block's gate voices the absence
         return "running"
-    state = row.get("state")
-    if isinstance(state, str) and state:  # StatusContext
-        s = state.upper()
-        return "green" if s in _CHECK_GREEN else "running" if s in _CHECK_RUNNING else "red"
-    if str(row.get("status") or "").upper() != "COMPLETED":
-        return "running"
-    return "green" if str(row.get("conclusion") or "").upper() in _CHECK_GREEN else "red"
+    return post_merge.check_outcome(row)
 
 
 def _prs(listing: str) -> list[dict]:
@@ -1117,26 +1141,16 @@ def _orders_line(root: Path, read: dict, mail: Any = None, seat: Any = None, pyt
 
 
 def _latest_run_per_check(rows: list) -> list:
-    """One row per check name, its latest run. A push or a title edit re-runs
-    a workflow, and the rollup lists the superseded run (CANCELLED) beside the
-    new one, while GitHub's merge rule reads only the latest run per name --
-    so the tally reads the same (the reporter's own first live read showed six
-    false reds on its lane, 2026-09-28). A later `startedAt` wins; with none,
-    the later row in the rollup wins. Rows with no name pass through."""
-    keep: dict[str, tuple[str, int, object]] = {}
-    order: list[tuple[str | None, object]] = []
-    for i, r in enumerate(rows):
-        name = str(r.get("name") or r.get("context") or "") if isinstance(r, dict) else ""
-        if not name:
-            order.append((None, r))
-            continue
-        started = str(r.get("startedAt") or "")
-        prev = keep.get(name)
-        if prev is None:
-            order.append((name, None))
-        if prev is None or (started, i) >= (prev[0], prev[1]):
-            keep[name] = (started, i, r)
-    return [keep[n][2] if n is not None else r for n, r in order]
+    """One row per check name, its latest run: the one rule in
+    tools/cc/_post_merge.py (a push or a title edit re-runs a workflow, and the
+    rollup lists the superseded run beside the new one, while GitHub's merge
+    rule reads only the latest run per name; the reporter's own first live
+    read showed six false reds on its lane, 2026-09-28). Without the module
+    the rows pass through as given."""
+    post_merge = _load_post_merge()
+    if post_merge is None:  # fail-open: ok deliberate -- no rule to fold with; the rows as given, and the block's gate voices the absence
+        return list(rows)
+    return post_merge.latest_run_per_check(rows)
 
 
 def _pr_summary(pr: dict, required_red: list[str] | None = None) -> str:
@@ -1373,34 +1387,10 @@ def _post_merge_verdicts(merged: list[dict]) -> dict[int, tuple[list[str], list[
     `_latest_run_per_check` keeps one row per name, so a cancelled latest run
     has already displaced that pull request's own older red -- the helper's
     contract, and `no verdict` is the loud substitute."""
-    owned: set[str] = set()
-    out: dict[int, tuple[list[str], list[str]]] = {}
-    for pr in merged:
-        rollup = pr.get("statusCheckRollup")
-        reds: list[str] = []
-        no_verdict: list[str] = []
-        for row in _latest_run_per_check(rollup if isinstance(rollup, list) else []):
-            if not isinstance(row, dict):
-                continue
-            name = str(row.get("name") or row.get("context") or "")
-            if not name or name in owned:
-                continue
-            outcome = _check_outcome(row)
-            if outcome == "running":
-                continue  # not a verdict yet: it supersedes nothing
-            conclusion = str(row.get("conclusion") or "").upper()
-            if conclusion in _NO_VERDICT:
-                # Named for this row, and the older verdict of the same name
-                # stays in force. (A StatusContext row carries `state`, never
-                # one of these, so the split is a no-op for that shape.)
-                no_verdict.append(f"{_ascii(name)} ({conclusion.lower()})")
-                continue
-            owned.add(name)
-            if outcome == "red":
-                reds.append(_ascii(name))
-        if reds or no_verdict:
-            out[pr["number"]] = (reds, no_verdict)
-    return out
+    post_merge = _load_post_merge()
+    if post_merge is None:  # fail-open: ok deliberate -- no rule to own with; nothing is named red, and the block's gate voices the absence
+        return {}
+    return post_merge.verdicts(merged)
 
 
 def _merged_prs_line(
@@ -4380,15 +4370,28 @@ def _run_main() -> int:
     # the hook's budget, which only a slow catch-up above ever reaches.
     pr_deadline = min(_pr_deadline(), hook_start + _handoff_budget(handoff))
     try:
-        open_prs_line = _open_prs_line(_read_open_prs(root, pr_deadline), root, deadline=pr_deadline)
-    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _late_load_failed("session_start: open pull-request scan failed", e)
-        open_prs_line = ""
-    try:
-        merged_prs_line = _merged_prs_line(_read_merged_prs(root, pr_deadline), root, deadline=pr_deadline)
-    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
-        _late_load_failed("session_start: merged pull-request scan failed", e)
+        post_merge_present = _load_post_merge() is not None
+    except Exception as e:  # noqa: BLE001 -- bounded warn, never block session
+        _late_load_failed("session_start: post-merge verdict module probe failed", e)
+        post_merge_present = False
+    if not post_merge_present:
+        # The verdict rule is the module's; without it neither line can read a
+        # check, so the block is one line that says so (the Merging: line's
+        # shape without _merge_rules.py), never two silent lines.
+        _hook_utils.advise_warn(_POST_MERGE_UNREAD)
+        open_prs_line = _POST_MERGE_UNREAD
         merged_prs_line = ""
+    else:
+        try:
+            open_prs_line = _open_prs_line(_read_open_prs(root, pr_deadline), root, deadline=pr_deadline)
+        except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+            _late_load_failed("session_start: open pull-request scan failed", e)
+            open_prs_line = ""
+        try:
+            merged_prs_line = _merged_prs_line(_read_merged_prs(root, pr_deadline), root, deadline=pr_deadline)
+        except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+            _late_load_failed("session_start: merged pull-request scan failed", e)
+            merged_prs_line = ""
 
     # A linked worktree still answering its clone's machine name gets its own
     # before the mail is read, so the mail line, the claims and the ids are

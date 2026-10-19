@@ -80,15 +80,20 @@ it onto a base no reader had called red on Windows.
    the root `CLAUDE.md` says its line names your pull requests; the board and the preflight pass
    none); and the words each surface prints. The three surfaces share the rule and the words,
    not the author scope, and the pack says so here once.
-2. **`tools/cc/ship.py`**: `post_merge_reds` becomes a call into the module (the lines gain the
-   ownership rule and the since/green-on clause); its four restated sets go; `preflight` prints
-   the module's lines. `base_red_after_merge` and `red_base_refusal`, which read the base's runs,
-   are untouched.
+2. **`tools/cc/ship.py`**: `post_merge_reds` becomes a call into the module (the lines keep the
+   `red after merge: #N <check>` prefix the ship pins read, and gain the since and green-on
+   clauses); its four restated sets become aliases of the module's (the open pull-request
+   path reads `_RED_BUCKETS` and `_check_outcome` too, so they cannot go: corrected 2026-10-19
+   from the 0-A review) and `_check_outcome` delegates; `preflight` prints the module's lines.
+   `base_red_after_merge` and `red_base_refusal`, which read the base's runs, are untouched.
 3. **`tools/cc/hooks/session_start.py`**: `_post_merge_verdicts`, `_latest_run_per_check` and
-   `_check_outcome` become thin calls through a by-path loader shaped as `_load_merge_rules`;
-   where the module is not beside the hooks, the `Merged:` line's red clause reads
-   `post-merge verdicts unread (tools/cc/_post_merge.py is not beside the hooks)`, the shape the
-   `Merging:` line already takes without `_merge_rules.py`. The hook keeps no copy of the rule.
+   `_check_outcome` become thin calls through a by-path loader shaped as `_load_merge_rules`, and
+   so does the open pull-request path's use of the sets (`_pr_has_red`, `_gh_pr_required_reds`):
+   where the module is not beside the hooks, the whole pull-request block (`Open PRs:` and
+   `Merged:`) is one voiced line, `pull requests unread (tools/cc/_post_merge.py is not beside
+   the hooks)`, the shape the `Merging:` line already takes without `_merge_rules.py` (corrected
+   2026-10-19 from the 0-A review: the open path reads the same sets, so a clause-only
+   degradation would have crashed the block). The hook keeps no copy of the rule.
 4. **`tools/cc/board.py`**: `collect` gains a `post_merge_checks` key and `render` a `checks:`
    line: one entry per check name whose owned verdict is red among the merged rows read, with
    change detection, e.g. `checks:   portability (windows-latest): red since #313 (merged
@@ -118,8 +123,8 @@ it onto a base no reader had called red on Windows.
 6. **The roster homes** a new `tools/cc/` module and a new script have on this tree (the import
    closure gate reds without them): `espalier/managed_paths.py`; `cc/PACK_MANIFEST.txt` by its
    generator, never by hand; the standalone-tools count pinned by
-   `tests/test_managed_inventory.py::test_init_tool_scripts_is_the_eighteen_standalone_tools`
-   (the name carries a count; re-read it, since `TP-702` added one module after it was named);
+   `tests/test_managed_inventory.py::test_init_tool_scripts_is_the_standalone_tools_roster_in_declaration_order`
+   (renamed in this lane from a name that carried the count eighteen while the roster held 27);
    the generated-files region of `README.md` and `docs/QUICKSTART.md` by
    `scripts/generate_doc_regions.py`; and, for the script,
    `tests/_surface_expected.py::EXPECTED_SCRIPT_NAMES` with its dated comment.
@@ -137,11 +142,20 @@ it onto a base no reader had called red on Windows.
    its place pinning that `session_start.py` defines none of the four sets (the reason the parity
    test existed is gone, and a test holding two copies equal would hide a third copy returning);
    `tests/test_red_after_merge_census.py` (new) over a frozen rollup fixture of #312 and #313.
+   The pins the readers' change actually meets (corrected 2026-10-19): `tests/test_ship_driver.py`
+   near lines 450-473 (`"red after merge: #41 portability"` present, and absent on a green
+   listing; its fixture carries no `mergedAt`, so a row without one sorts oldest in listing order
+   and gets no since clause) and `tests/test_session_banner.py`'s `Merged:` wording pins near
+   lines 1981-2086; the six node ids above pin the base-run readers this lane leaves alone.
+   `tests/fixtures/post_merge/` classifies public like every `tests/fixtures/` folder (measured
+   with `classify_release_path`), shipped with the tests that read it; no rule is owed.
 8. **Words**: `.github/workflows/portability.yml`'s header; `tools/cc/ship.py::post_merge_reds`'s
    docstring (`TP-703g` carries the same two sentences as its items (c) and (d) for the case where
    this lane has not landed; whichever lane lands first corrects them and the other strikes its
-   item in Landing); `docs/HOOKS.md`'s `Merged:` paragraph (the `; red after merge: ...` example gains
-   the since clause); `.claude/commands/inbox.md`'s board section gains the `checks:` bullet, and
+   item in Landing); `docs/HOOKS.md`'s `Merged:` paragraph names the one home and the block's unread
+   line (landed 2026-10-19 so: the banner's own words are unchanged, since its per-pull-request
+   rows would repeat a since clause the board and the preflight carry); `.claude/commands/inbox.md`'s
+   board section gains the `checks:` bullet, and
    `python3 scripts/sync_claude_mirrors.py` regenerates its two mirrors; the root `CLAUDE.md`
    SessionStart row only if the `Merged:` line's wording changes; `python3 scripts/sync_vendor_cc.py`
    after every `tools/cc/` edit.
@@ -169,6 +183,17 @@ it onto a base no reader had called red on Windows.
 - **`DEF-2025`'s skip and `DEF-5024`'s contract**, which make the legs' reds mean something
   (`TP-703b`); this pack reads what the legs say, noise included, and the roadmap's Task 0 item
   1 decides the order.
+
+## Cross-pack coordination
+
+Added at execution (2026-10-19) from the 0-A review's WARN. `TP-703f` edits `tools/cc/board.py`,
+`tools/cc/ship.py` and `.claude/commands/inbox.md` (section counts, the release's struck ids,
+the board bullet) in functions other than this lane's (`collect`'s `post_merge_checks` key and
+`render`'s `checks:` line here; `post_merge_reds` and `preflight` here); `TP-703c` adds one
+off-note line to `tools/cc/hooks/session_start.py`; `TP-703g` carries the two sentences this
+lane corrects (Scope (in) item 8) and strikes its items (c) and (d) when this lands first;
+`TP-703b` W2 builds its base-run reader on this module and waits for this merge. Built
+single-seat after `TP-703e`, no sibling lane open, so no catch-up was owed.
 
 ## Task 0 — Verify (try to kill this pack)
 
@@ -377,7 +402,11 @@ changes).
   line each name `portability (windows-latest)` red since #313 and green on #312, and
   `portability (macos-latest)` red with no green-on inside the window; replayed `--at
   2026-10-18T14:15:00Z` the census names the same, and `--at 2026-10-18T14:00:00Z` names #313
-  red with #312's leg running; on the swapped fixture no surface clears #312's red.
+  red with #312's leg running; on the swapped fixture neither the board line nor the preflight
+  clears #312's red (the start gate), while the banner's five-row line names the newest merge's
+  verdict by its own documented rule, which its pins carry no run start times to tighten; the
+  difference is pinned in `tests/test_session_banner.py` (corrected 2026-10-19 from the
+  failure-mode review).
 - A board read that prints a transition for the first time appends one line to
   `.espalier-state/board-checks.jsonl`; a second read of the same state appends none; a failed
   append is a note on the `checks:` line and the section still renders.
@@ -456,18 +485,63 @@ read these as the author's guess, not a schedule.
 | Total | 5.5 h | 2 h | expect the measured overrun |
 
 ## Landing
-- State: DRAFT
-- Commits:
-- Suite:
-- Earn-the-red: per fix, against the mutation its Implementation names
-- Red-team: reasoning review at authoring (the reflect skill's checklist v1, failure-mode-reviewer,
-  2026-10-18): REQUEST CHANGES on the set; this file's findings: Part 2 items 1, 2, 3, 11, 13, 14
-  addressed (the ownership rule keyed on the green run's start against the red's merge; the
-  oracle at 14:15Z with 14:00Z pinned as running; the base-run read named as TP-703b W2's; the
-  author filter from the caller; the since-before clause and the no-verdict merges; the
-  transitions log for re-measure line 1); checklist item 14 acknowledged. The executor still runs
-  both reviewers on a snapshot clone
-- Reach: see Reach; no row closed at authoring
-- Task 0: not yet run; items 2 and 4 carry authoring-time measurements (2026-10-18) that the
-  executor re-runs
-- Date: 2026-10-18 (authored, local)
+- State: LANDED
+- Commits: one commit on `lane/red-after-merge-has-a-reader` (its pull request's number is in the
+  Session Log row of the handoff that follows), built single-seat on the dispatcher's checkout
+  `air` on 2026-10-19 after `TP-703e`, the roadmap's order
+- Suite: the full tier on the lane (`scripts/proof_tier.py --run`, the line names `full` and
+  `both`): serial leg 2134 passed; parallel leg 24710 passed, 5 failed: the known box-local
+  record-merge red on this box's Apple Git 2.39.5 (CI's slice is the proof), and four contract
+  reds this lane tripped and fixed (the census naming a fragment directory by literal, now the
+  record loader's constant; two JSON parses in the module without the list-of-rows pragma; the
+  board's log file not in the state-file roster; the two new test files without a rationale
+  anchor); after those fixes, comment and roster and docstring changes plus the one constant
+  read, the contract slice (5374 passed plus the known red) and every touched test file (888
+  passed), with CI's full tier the proof of the final head; `espalier pre-release --skip-tests
+  --skip-parity` pass; `espalier audit` 0; provenance clean; mypy and ruff clean; the three
+  syncs clean; the integrity manifest refreshed
+- Earn-the-red: the module's tests red before the module (15 errors) and green after; five
+  mutants killed by `tests/test_post_merge.py` (ownership walked newest-first, the startedAt gate
+  dropped, a finish after `--at` read as a verdict, a start after `--at` kept, a no-verdict run
+  read as a verdict); the parity class's replacement red while the hook still held a set; the
+  board's and the banner's new tests red before their fixes; Task 0 item 1's census replay as
+  the oracle
+- Red-team: 0-A pack-artifact review (checklist v2, code-reviewer): REQUEST CHANGES, 0 BLOCK,
+  5 WARN, 3 NIT, folded into this file (the cross-pack section, the ship aliases, the hook's
+  block-wide voice, the real pins, the fixture classification). On the diff, both reviewers on a
+  snapshot clone, one fix batch: code-reviewer APPROVE (0 BLOCK, 2 WARN, 4 NIT);
+  failure-mode-reviewer REQUEST CHANGES (0 REGRESSION, 5 GAP, 4 ROUGH-EDGE). Folded: the
+  oldest-read clause keyed on the earliest merge, never the lowest number; the first-mention log
+  skipping a red whose origin is unknown (a sliding window never logs a false first mention); a
+  check judged on no merge named, never green; SKIPPED supersedes nothing; a new owner starts its
+  own beside lists; `new:` on a first mention; the loader catching a module that will not load
+  and popping its alias, the main gate under try with a tagged voice; the census warning when
+  `--limit` stops short of `--since` and printing the ledger's file base rate; the inbox bullet
+  saying the board prints and never reverts; the preflight's no-author-filter reason. Declined
+  with its reason: unifying the banner on the start-gated rule (its pins carry no run start
+  times and identical merge stamps); the two rules are pinned apart in
+  `tests/test_session_banner.py` and `docs/HOOKS.md` says which surface carries the gate. Ten
+  tests added for the batch. A second round was not needed.
+- Reach: see Reach; no row closed; `DEF-977`, `DEF-2025` and `DEF-5024` not reached, as stated
+- Task 0: item 1 (the census built first): at 14:15Z the Windows leg red since #313 (the leg
+  finished 13:57Z), green on #312; at 14:00Z #313 red with #312's leg still running: not refuted;
+  item 2: 0 StatusContext rows on #312 and #313 (42 and 30 CheckRun rows); item 3: five
+  listings 1.9 to 3.9 s, median 2.2 s, under the 8 s budget, so the board reads 20; item 4: with
+  and without `--author @me` both 20 rows here, the filter the caller's; item 5: the roadmap's
+  18 percent at authoring; item 6: three loaders (`_load_merge_rules`, `_load_mail`,
+  `_load_seat`), no open lane unifying them. The second seat's re-read of the #312/#313 stamps
+  (Sub-task ordering item 1) was this seat's own, single-seat: all eight stamps matched the
+  Motivation
+- Live reading at landing: the board on this checkout prints `checks:   portability
+  (macos-latest): red since #320 (merged 2026-10-18 21:11Z, the leg finished 21:36Z), green on
+  #319`; the first-mention log holds that transition
+- Pre-flight: 0-B scope gap accepted (bare-name collisions in `.claude/` bodies, as predicted);
+  0-C compression debt accepted, pre-existing and outside this lane
+  (`espalier/doctor.py::_host_is_windows` body-matching
+  `tools/cc/hooks/_hook_utils.py::_running_by_invoked_path`); 0-D: the three rosters bundled,
+  `tests/fixtures/post_merge/` public like every fixture folder
+- Deviations from the Implementation: the ship driver's four sets are aliases, not deletions
+  (its open pull-request path reads them); the hook's degradation is the whole block, one
+  voiced line; `docs/HOOKS.md`'s example keeps the banner's words (unchanged); `TP-703g`'s items
+  (c) and (d) are done here; the tools-count test was renamed without its count
+- Date: 2026-10-19 (landed, local)

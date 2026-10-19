@@ -51,6 +51,12 @@ def _gh(answers: dict[str, object]):
     def run(argv, **kw):
         calls.append(list(argv))
         key = " ".join(argv[1:3]) if argv[1] != "api" else ("api compare" if "/compare/" in argv[2] else argv[2])
+        if key == "pr list" and "merged" in argv:
+            # The checks: line's read; a fixture that gives none reads no merges,
+            # so the open-PR answer is never mistaken for the merged listing.
+            key = "pr list merged"
+            if key not in answers:
+                return 0, "[]", ""
         if key not in answers:
             raise AssertionError(f"unexpected call {argv}")
         answer = answers[key]
@@ -336,6 +342,123 @@ class TestPostMergeVerdict:
             "default branch (https://api.github.com/repos/o/r/actions/workflows/post-merge.yml)")
         text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": missing})))
         assert "main:     no post-merge proof here (post-merge.yml is not in this repository)" in text
+
+
+_POST_MERGE_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "post_merge"
+
+
+def _merged_rollups() -> list[dict]:
+    """The frozen #312/#313 rollups: the Windows leg red on #313 and green on
+    #312 from a run that finished after #313 merged; the macOS leg red on both."""
+    return [json.loads((_POST_MERGE_FIXTURES / f"pr{n}.json").read_text(encoding="utf-8")) for n in (313, 312)]
+
+
+def _with_leg(pr: dict, name: str, **fields) -> dict:
+    out = json.loads(json.dumps(pr))
+    for row in out["statusCheckRollup"]:
+        if row.get("name") == name:
+            row.update(fields)
+    return out
+
+
+class TestChecksLine:
+    """The board's `checks:` line: each check whose owned verdict over the last
+    RUN_WINDOW merged pull requests is red, with the merge it went red on, the
+    leg's finish and what stands beside it, read through tools/cc/_post_merge.py
+    (the rule the banner and the ship preflight read too). The Windows red of
+    2026-10-18 sat unread for six hours because no board line carried it."""
+
+    def test_the_line_names_the_red_with_its_merge_and_the_green_on(self, board, monkeypatch, tmp_path):
+        """Dies to: the merged listing not read, the since clause or the green-on
+        clause dropped, or the macOS red given a false origin."""
+        _stub_channel(monkeypatch, board)
+        run = _gh({"pr list": [], "pr list merged": _merged_rollups(), "run list": _GREEN_RUNS})
+        collected = board.collect(tmp_path, run_=run)
+        text = board.render(collected)
+        assert ("checks:   new: portability (windows-latest): red since #313 (merged 2026-10-18 13:26Z, "
+                "the leg finished 13:57Z), green on #312") in text   # new: on this checkout's first read
+        assert "          portability (macos-latest): red since #312 or earlier (the oldest merge read)" in text
+        assert collected["post_merge_checks"]["window"] == 2 and collected["post_merge_checks"]["logged"] == 1
+        assert [c[1:3] for c in run.calls].count(["pr", "list"]) == 2, "one merged read beside the open one"
+
+    def test_a_cancelled_latest_run_is_no_verdict_beside_the_red_never_green(self, board, monkeypatch, tmp_path):
+        """Dies to: a cancelled run read as a verdict, or not named."""
+        _stub_channel(monkeypatch, board)
+        rows = _merged_rollups()
+        newer = _with_leg(rows[0], "portability (windows-latest)", conclusion="CANCELLED",
+                          startedAt="2026-10-18T14:30:00Z", completedAt="2026-10-18T14:31:00Z")
+        newer.update(number=320, mergedAt="2026-10-18T15:00:00Z")
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": [newer, *rows],
+                                                              "run list": _GREEN_RUNS})))
+        assert "portability (windows-latest): red since #313" in text and "#320 no verdict (cancelled)" in text
+
+    def test_all_green_says_none_red(self, board, monkeypatch, tmp_path):
+        _stub_channel(monkeypatch, board)
+        rows = [_with_leg(_with_leg(pr, "portability (windows-latest)", conclusion="SUCCESS"),
+                          "portability (macos-latest)", conclusion="SUCCESS") for pr in _merged_rollups()]
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": rows,
+                                                              "run list": _GREEN_RUNS})))
+        assert "checks:   none red among the last 2 merges" in text
+
+    def test_a_first_mention_is_logged_once_and_a_failed_append_is_a_note(self, board, monkeypatch, tmp_path):
+        """The roadmap's red-to-first-mention figure is derived from this log.
+        Dies to: a transition logged on every read, or a failed append taking
+        the line down."""
+        _stub_channel(monkeypatch, board)
+        answers = {"pr list": [], "pr list merged": _merged_rollups(), "run list": _GREEN_RUNS}
+        board.collect(tmp_path, run_=_gh(answers))
+        log = tmp_path / board.CHECKS_LOG
+        first = log.read_text(encoding="utf-8").splitlines()
+        assert len(first) == 1 and json.loads(first[0])["since_pr"] == 313   # the macOS red predates the window
+        second = board.collect(tmp_path, run_=_gh(answers))
+        assert log.read_text(encoding="utf-8").splitlines() == first and second["post_merge_checks"]["logged"] == 0
+        log.unlink()
+        log.mkdir()   # a path that cannot be appended to
+        text = board.render(board.collect(tmp_path, run_=_gh(answers)))
+        assert "checks:   portability (windows-latest): red since #313" in text
+        assert "the transitions log could not be written" in text
+
+    def test_a_red_older_than_the_window_is_never_a_first_mention(self, board, monkeypatch, tmp_path):
+        """The window slides with every merge: a persistent red would otherwise
+        log a false first mention per merge. Dies to: the origin-unknown red
+        logged, or logged again when the window moves."""
+        _stub_channel(monkeypatch, board)
+        rows = _merged_rollups()
+        board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": rows, "run list": _GREEN_RUNS}))
+        log = tmp_path / board.CHECKS_LOG
+        first = log.read_text(encoding="utf-8").splitlines()
+        assert len(first) == 1 and json.loads(first[0])["check"] == "portability (windows-latest)"
+        newer = _with_leg(rows[0], "portability (windows-latest)", conclusion="FAILURE",
+                          startedAt="2026-10-18T14:30:00Z", completedAt="2026-10-18T15:00:00Z")
+        newer.update(number=320, mergedAt="2026-10-18T15:00:00Z")
+        slid = board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": [newer, rows[0]], "run list": _GREEN_RUNS}))
+        assert log.read_text(encoding="utf-8").splitlines() == first and slid["post_merge_checks"]["logged"] == 0
+
+    def test_a_first_mention_is_marked_new_on_that_read_only(self, board, monkeypatch, tmp_path):
+        _stub_channel(monkeypatch, board)
+        answers = {"pr list": [], "pr list merged": _merged_rollups(), "run list": _GREEN_RUNS}
+        first = board.render(board.collect(tmp_path, run_=_gh(answers)))
+        assert "checks:   new: portability (windows-latest): red since #313" in first
+        second = board.render(board.collect(tmp_path, run_=_gh(answers)))
+        assert "checks:   portability (windows-latest): red since #313" in second and "new:" not in second
+
+    def test_a_check_with_no_verdict_on_any_merge_is_named_never_green(self, board, monkeypatch, tmp_path):
+        _stub_channel(monkeypatch, board)
+        rows = [_with_leg(_with_leg(pr, "portability (windows-latest)", conclusion="CANCELLED"),
+                          "portability (macos-latest)", conclusion="SUCCESS") for pr in _merged_rollups()]
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": rows,
+                                                              "run list": _GREEN_RUNS})))
+        assert "checks:   portability (windows-latest): no verdict on every merge read (cancelled)" in text
+        assert "none red" not in text
+
+    def test_an_unread_listing_costs_only_the_checks_line(self, board, monkeypatch, tmp_path):
+        """Dies to: the merged read's failure taking another section down."""
+        _stub_channel(monkeypatch, board)
+        run = _gh({"pr list": [], "pr list merged": board.Unresolvable("gh pr list answered rc=1 with no JSON: x"),
+                   "run list": _GREEN_RUNS})
+        text = board.render(board.collect(tmp_path, run_=run))
+        assert "checks:   unread (gh pr list answered rc=1 with no JSON: x)" in text
+        assert "open PRs: none" in text and "main:     post-merge proof green on aaaaaaa" in text
 
 
 class TestMailSections:
@@ -947,7 +1070,7 @@ class TestSeats:
         key an older reader keys on is gone."""
         _stub_channel(monkeypatch, board)
         collected = board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW)
-        assert {"asks", "seats", "open_prs", "post_merge", "assignments", "claims"} <= set(collected)
+        assert {"asks", "seats", "open_prs", "post_merge", "post_merge_checks", "assignments", "claims"} <= set(collected)
         json.dumps(collected)
 
 
