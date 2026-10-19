@@ -46,7 +46,17 @@ meant nothing, for two different reasons that need two different fixes:
   same for 313 (read 2026-10-18) show `portability (macos-latest)` `FAILURE` on both post-fix
   merges. The same child completed 12 of 12 times on the Windows box. A leg that is red on every
   run for a known race certifies nothing about the merge it ran on, and a reader built by
-  `TP-703a` would print it on every tick.
+  `TP-703a` would print it on every tick. **The class is wider than the one test the row is
+  anchored on** (read 2026-10-19 by the dispatcher, before any assign, over the six red macOS
+  legs of runs 39143193815, 39147472099, 39155912533, 39165290167, 39165778649 and
+  39169603099, `gh run view <id> --log-failed`): every leg failed the anchor test, and three of
+  the six also failed five more node ids in the same file -- the four consumers of the
+  module-scoped `crashed` fixture (`tests/test_xdist_never_ran.py:344`, four setup ERRORs) and
+  `test_no_summary_asked_for_none_and_gets_none` -- with the same execnet `cannot send (already
+  closed?)` after a worker's `Not properly terminated`, the mechanism the row names; the
+  three-attempt driver (`_ATTEMPTS`, line 86) lost all three attempts in those runs. One
+  mechanism, six node ids: W3's roster takes the class, keyed on the row, or the leg stays red
+  on half its runs with the anchor alone skipped.
 - **No check runs on Windows after a merge** (`DEF-977`'s text): the only Windows leg is the
   pull-request one, path-filtered, 66 to 81 minutes on 10-18 (`gh run view <id> --json jobs` on
   #313's and #316's runs), finishing after the 47-minute median merge; a red the merge
@@ -55,7 +65,9 @@ meant nothing, for two different reasons that need two different fixes:
 Over 10-10 to 10-18 the workflow ran 65 failures, 67 successes and 45 cancellations
 (`gh run list --workflow portability.yml --limit 200 --json conclusion`, counted by conclusion).
 A leg red half the time is read by nobody; the roadmap's re-measure line 2 asks for 90% green
-after this pack and `TP-703h`.
+after this pack and `TP-703h`. With the anchor test alone skipped, three of the last six red
+macOS legs would still be red on the five sibling node ids above, so that line is reachable
+only by the class-sized roster.
 
 **The named user (`STANDING_PRINCIPLES` §16).** A developer or adopter running the suite on
 Windows, who gets twelve reds on a green tree; the Windows leg itself, which catches no new
@@ -109,8 +121,15 @@ missed.
    whose reason carries the row id; and a contract test in `tests/test_test_suite_contract.py`
    that derives the count from the roster and holds each entry to three facts: its node id
    collects, its row id resolves to a file under `task-packs/ledger.d/`, and its reason names the
-   id. The first and only entry is `DEF-2025`'s successor row over
-   `tests/test_xdist_never_ran.py::TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe::test_a_worker_that_dies_in_its_build_is_named_each_time`.
+   id. The first entry is `DEF-2025`'s successor row over the class the execnet crash reaches in
+   `tests/test_xdist_never_ran.py`: the anchor test
+   (`TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe::test_a_worker_that_dies_in_its_build_is_named_each_time`),
+   the four consumers of the module-scoped `crashed` fixture (line 344) and
+   `TestACrashedControllerStillPrintsWhatItSaw::test_no_summary_asked_for_none_and_gets_none`,
+   six node ids measured red on the runners (Motivation). One row, one selector the W3 design
+   names (the fixture's consumers plus the two tests that drive their own child, or the test
+   classes by name), and the contract test derives the node-id count from the selector at
+   collection, never from a hand-written six (`memory/fix-the-class-not-the-instance.md`).
    This is the expand half; `TP-703h`'s registry is the contract half, which takes the roster
    and retires the local one.
 
@@ -181,11 +200,14 @@ and re-raise to the dispatcher, never adjust and continue.
 1. *Oracle:* the operator's word on re-opening `DEF-2025` (a successor row). *Refuting result:*
    no. *Exit:* W3 is not built; the leg stays red on the runners and `TP-703a`'s line names it
    every tick, which is the honest state.
-2. *Oracle:* the test's node id over the last ten `portability (macos-latest)` runs
-   (`gh run list --workflow portability.yml --limit 60 --json databaseId,conclusion`, then `gh
-   run view <id> --log-failed` per red run). *Refuting result:* fewer than 3 of 10 red on that
-   test. *Exit:* the flake has moved or faded; re-raise with the count rather than skip a test
-   that passes.
+2. *Oracle:* each of the class's six node ids over the last ten `portability (macos-latest)`
+   runs (`gh run list --workflow portability.yml --limit 60 --json databaseId,conclusion`, then
+   `gh run view <id> --log-failed` per red run). *Refuting result:* fewer than 3 of 10 red on
+   the anchor test. *Exit:* the flake has moved or faded; re-raise with the count rather than
+   skip a test that passes. A sibling node id red on none of the ten leaves the selector's
+   reach and the Landing says so; the count is the measurement's, never the pack's. (Read
+   2026-10-19 by the dispatcher: of the last ten runs, 8 completed macOS legs, 6 red, all 6 on
+   the anchor, 3 of the 6 on the five siblings too: build, with the class.)
 3. *Oracle:* `grep -n 'skipif\|mark.skip' tests/conftest.py tests/test_xdist_never_ran.py`.
    *Refuting result:* a per-platform skip convention already exists in the suite (read
    2026-10-18: one `skipif(sys.platform != "darwin")` in `tests/test_archive_transcripts.py`, no
@@ -466,4 +488,8 @@ read these as the author's guess, not a schedule.
   on the operator's word
 - W2-0 measured duration of the serial files on `windows-latest`: not yet run (the analysis's
   "about ten minutes" is unmeasured)
+- Corrected 2026-10-19 before any assign (the dispatcher's lane
+  `lane/packs-the-tp-703-children-corrected-before-wave`): the macOS red is one mechanism over
+  six node ids, not one test; Motivation, W3 and W3-0 item 2 carry the measurement and the
+  class-sized roster
 - Date: 2026-10-18 (authored, local)
