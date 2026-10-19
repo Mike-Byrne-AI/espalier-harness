@@ -8,6 +8,7 @@ import sys
 import time
 import warnings
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -28,6 +29,9 @@ from tests import _never_ran, _timeout_backstop
 from tests._engine_check import pytest_sessionstart  # noqa: F401
 # DEF-1168's keys: no fixture repository runs a background git.
 from tests._quiet_git import NO_BACKGROUND_GIT
+# The runners' race a nested child can lose: the failure type the platform
+# roster's expected failure is bounded to (PLATFORM_EXPECTED_FAILURES).
+from tests._nested_race import NestedControllerRaceLost
 
 # The stack fixtures below write rows of the one stack table. Imported bare,
 # the way the selfcheck mirror's conftest imports its byte copy.
@@ -2100,6 +2104,94 @@ _FULL_TREE_NODEIDS: set[str] = {
 }
 
 
+class PlatformExpectedFailure(NamedTuple):
+    """One entry of :data:`PLATFORM_EXPECTED_FAILURES`."""
+
+    test: str      # a node id, or a test class's node-id prefix
+    platform: str  # a key :func:`_platform_holds` knows
+    row: str       # the live ledger row that owns the red
+    reason: str
+    date: str      # the day the entry was made, YYYY-MM-DD
+
+
+#: What the race behind DEF-4032 does to a row, in the words its mark carries.
+_EXECNET_RACE = ("GitHub's macOS runners: the nested child's own controller dies inside "
+                 "execnet once its xdist workers die in the build; the row still runs, and the "
+                 "nested controller crash count keeps counting the race")
+
+# Tests a host is expected to red on, for a cause a live ledger row tracks, so the
+# leg that runs them still reads something: each entry names a test by its node
+# id, or a test class by its node-id prefix, the platform key it holds on, the row,
+# the reason and the date. ``pytest_collection_modifyitems`` marks every covered
+# test, on a host where the platform holds, as a NON-STRICT expected failure
+# bounded to the cause's own failure type (:func:`_expected_failure_mark`): the
+# declared exception to ``xfail_strict = true`` in pyproject.toml, on the
+# operator's word of 2026-10-19, because each of these rows completes on the
+# runners on some runs (the anchor on 2 of the ten completed macOS legs read that
+# day, the others on 5 to 8), so a strict mark would have redded 9 of those 10.
+# The rows still run, so :func:`report_nested_controller_crashes` keeps counting
+# the race and :func:`report_platform_expected_failures` prints what each row did
+# on the runners, zeros included; every other host runs them unmarked. The tuple is
+# a declared population; tests/test_test_suite_contract.py keeps it honest (each
+# entry names a real test and a live row, the class the row claims is derived from
+# the source, and no other non-strict mark exists under tests/).
+PLATFORM_EXPECTED_FAILURES: tuple[PlatformExpectedFailure, ...] = (
+    # DEF-4032, DEF-2025's successor: a nested child whose xdist workers die inside
+    # the build, on the runners, ends in its own controller's crash before the row
+    # can read what it asserts. The anchor row, and the class whose four tests read
+    # the module-scoped ``crashed`` child and whose fifth drives its own.
+    PlatformExpectedFailure(
+        "tests/test_xdist_never_ran.py::TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe"
+        "::test_a_worker_that_dies_in_its_build_is_named_each_time",
+        "macos-ci", "DEF-4032", _EXECNET_RACE, "2026-10-19"),
+    PlatformExpectedFailure(
+        "tests/test_xdist_never_ran.py::TestACrashedControllerStillPrintsWhatItSaw",
+        "macos-ci", "DEF-4032", _EXECNET_RACE, "2026-10-19"),
+)
+
+#: The one error a marked row may end in: the race's own failure, raised by the
+#: three-attempt driver only where every attempt ended in execnet's refusal to
+#: send (tests/_nested_race.py), and met by each consumer of the module fixture at
+#: its setup. A timeout, another internal error, or an assertion over a child that
+#: completed still reds the leg.
+_EXPECTED_FAILURE_RAISES = (NestedControllerRaceLost,)
+
+
+def _platform_holds(platform: str, sys_platform: str, environ) -> bool:
+    """Whether ``platform`` names the host ``sys_platform`` and ``environ``
+    describe. ``macos-ci`` is GitHub's macOS runners, in the spelling of this
+    file's runner checks: ``GITHUB_ACTIONS`` equal to ``"true"``, never a truthy
+    ``CI``, which fires on ``CI=false`` and on local tooling that sets it. An
+    unknown key never holds. A pure function, so its table is testable off the
+    host it names."""
+    if platform == "macos-ci":
+        return sys_platform == "darwin" and environ.get("GITHUB_ACTIONS") == "true"
+    return False
+
+
+def _expected_failure_mark(entry: PlatformExpectedFailure):
+    """The one place an entry's mark is built: non-strict, bounded to the race's
+    own failure, run (never ``run=False``, which would read the race as absent),
+    the row id leading the reason (the strict bridge's form in
+    tests/test_adopter_lifecycle_diagnostics.py)."""
+    return pytest.mark.xfail(strict=False, raises=_EXPECTED_FAILURE_RAISES,
+                             reason=f"{entry.row}: {entry.reason}")
+
+
+def _covers(test: str, nodeid: str) -> bool:
+    """An entry covers its own node id, its parametrized instances and, for a
+    class prefix, every test under it; never a name that only starts with it."""
+    return nodeid == test or nodeid.startswith((test + "::", test + "["))
+
+
+def _expected_failures_for(nodeid: str, sys_platform: str, environ) -> list:
+    """The roster's marks for one test on one host: every entry that covers the
+    node id and whose platform holds there. The collection hook asks it with the
+    live values; a contract asks it for a host this one is not."""
+    return [_expected_failure_mark(entry) for entry in PLATFORM_EXPECTED_FAILURES
+            if _covers(entry.test, nodeid) and _platform_holds(entry.platform, sys_platform, environ)]
+
+
 def pytest_make_parametrize_id(config, val, argname):
     """A parametrize value longer than 64 characters is named by its argname
     and length, never by its text. Pytest exports each node id as the
@@ -2192,6 +2284,10 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker("full_tree")
             if repo_is_export:
                 item.add_marker(_export_skip)
+        # A test the roster covers, on a host where its platform holds, gets its
+        # non-strict expected failure (PLATFORM_EXPECTED_FAILURES says why).
+        for mark in _expected_failures_for(item.nodeid, sys.platform, os.environ):
+            item.add_marker(mark)
 
 
 @pytest.fixture
@@ -2737,21 +2833,68 @@ def report_hook_spawn_retries(terminalreporter) -> None:
 
 def report_nested_controller_crashes(terminalreporter) -> None:
     """The child runs a row drove again because the child's own controller
-    crashed (tests/test_xdist_never_ran.py's ``NestedControllerCrashed``,
-    DEF-2025), read from the warnings the run kept: the race a retry absorbs is
-    counted on every run's last screen and, under GitHub Actions, as an
-    annotation, so DEF-2025's watch reads a number, never a silence."""
+    crashed (tests/test_xdist_never_ran.py's ``NestedControllerCrashed``; the
+    retry is DEF-2025's fix), read from the warnings the run kept: the race a
+    retry absorbs is counted on every run's last screen and, under GitHub
+    Actions, as an annotation, so the watch of DEF-4032, DEF-2025's successor,
+    reads a number. Where no child crashed it prints nothing; on the runners
+    :func:`report_platform_expected_failures` says whether the rows ran."""
     warned = [report for report in (getattr(terminalreporter, "stats", None) or {}).get("warnings", [])
               if "NestedControllerCrashed" in str(getattr(report, "message", ""))]
     if not warned:
         return
     rows = sorted({report.nodeid for report in warned})
-    head = f"nested controller crashes: {len(warned)} child run(s) in {len(rows)} row(s) were driven again (DEF-2025)"
+    head = f"nested controller crashes: {len(warned)} child run(s) in {len(rows)} row(s) were driven again (DEF-4032)"
     terminalreporter.write_line(head + ":")
     for nodeid in rows[:_HOOK_RETRIES_SHOWN]:
         terminalreporter.write_line(f"  {nodeid}")
     if os.environ.get("GITHUB_ACTIONS") == "true":
         terminalreporter.write_line(f"::warning::{head}: " + "; ".join(rows[:_HOOK_RETRIES_SHOWN]))
+
+
+def _platform_roster_lines(stats, sys_platform: str, environ, today=None) -> list[str]:
+    """One line per roster row whose platform holds on this host and whose tests
+    ran in this session: how many ran, how many lost to the cause (``xfailed``),
+    how many completed (``xpassed``) and how many failed otherwise, zeros
+    included, and the entry's age. So a leg the marks turned green says so, a
+    roster that outlived its cause reads as every row completed, and a session
+    that ran none of a row's tests (another leg, a selection) prints nothing for
+    it rather than a zero that reads like a result. Counted by the reports' node
+    ids, so the count holds under xdist's controller, which never collects."""
+    import datetime
+
+    def covered(category: str, entries: list[PlatformExpectedFailure]) -> set[str]:
+        return {str(report.nodeid) for report in stats.get(category, [])
+                if any(_covers(entry.test, str(getattr(report, "nodeid", ""))) for entry in entries)}
+
+    rows: dict[str, list[PlatformExpectedFailure]] = {}
+    for entry in PLATFORM_EXPECTED_FAILURES:
+        if _platform_holds(entry.platform, sys_platform, environ):
+            rows.setdefault(entry.row, []).append(entry)
+    lines = []
+    for row, entries in rows.items():
+        lost, completed = covered("xfailed", entries), covered("xpassed", entries)
+        otherwise = (covered("failed", entries) | covered("error", entries)) - lost - completed
+        ran = lost | completed | otherwise | covered("passed", entries)
+        if not ran:
+            continue
+        since = min(entry.date for entry in entries)
+        age = ((today or datetime.date.today()) - datetime.date.fromisoformat(since)).days
+        lines.append(f"platform roster {row} ({entries[0].platform}): {len(ran)} ran, {len(lost)} lost to the "
+                     f"cause (xfailed), {len(completed)} completed (xpassed), {len(otherwise)} failed otherwise; "
+                     f"entered {since}, {age} day(s) ago")
+    return lines
+
+
+def report_platform_expected_failures(terminalreporter) -> None:
+    """The roster's lines (:func:`_platform_roster_lines`) on a host where an
+    entry's platform holds, and under GitHub Actions a notice annotation too:
+    the count a re-measure of the leg's green rate prints beside the rate."""
+    stats = getattr(terminalreporter, "stats", None) or {}
+    for line in _platform_roster_lines(stats, sys.platform, os.environ):
+        terminalreporter.write_line(line)
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            terminalreporter.write_line(f"::notice::{line}")
 
 
 def _write_build_report(terminalreporter, config) -> None:
@@ -2780,12 +2923,14 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
 
 def _write_summary_lines(terminalreporter, config) -> None:
     """Every line the summary writes: the build report, the counted retries
-    (hook spawns, crashed child controllers) and the slow tests under a raised
-    ceiling. One body for the summary and for the session's finish where no
-    summary ran (:func:`pytest_sessionfinish`)."""
+    (hook spawns, crashed child controllers), the platform roster's counts where
+    an entry's platform holds, and the slow tests under a raised ceiling. One
+    body for the summary and for the session's finish where no summary ran
+    (:func:`pytest_sessionfinish`)."""
     _write_build_report(terminalreporter, config)
     report_hook_spawn_retries(terminalreporter)
     report_nested_controller_crashes(terminalreporter)
+    report_platform_expected_failures(terminalreporter)
     ceiling, suite = _ceilings(config)
     if not suite or ceiling <= suite:
         return

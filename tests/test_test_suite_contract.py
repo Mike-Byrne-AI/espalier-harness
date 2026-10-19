@@ -3309,6 +3309,571 @@ def test_no_non_test_function_carries_a_skip_or_xfail_mark():
     )
 
 
+# ── The platform roster: a known red, counted, on the host that makes it ────
+# tests/conftest.py::PLATFORM_EXPECTED_FAILURES marks the tests a host is expected
+# to red on, for a cause a live ledger row tracks, as non-strict expected
+# failures: the declared exception to `xfail_strict` (pinned above by
+# test_pyproject_declares_xfail_strict), on the operator's word of 2026-10-19.
+# The rows still run, so the leg that runs them still counts what it saw. These
+# hold the roster to its facts, through one checker the must-trip rows share.
+
+#: The row whose entries cover the runners' execnet race, the module its rows
+#: live in, and the switch each of them sets in its child's environment: an
+#: xdist worker that dies inside the build.
+_RACE_ROW = "DEF-4032"
+_RACE_MODULE = "tests/test_xdist_never_ran.py"
+_RACE_SWITCH = "PROBE_BUILD_DIES"
+#: The hosts a platform key can name; a key that holds on none of them is unknown.
+_HOSTS = (("darwin", {"GITHUB_ACTIONS": "true"}), ("darwin", {}), ("linux", {"GITHUB_ACTIONS": "true"}),
+          ("linux", {}), ("win32", {"GITHUB_ACTIONS": "true"}), ("win32", {}))
+
+
+def _ledger_grammar():
+    """``tools/cc/generate_ledger_regions.py``, the ledger's one grammar, loaded by
+    path as tests/test_forward_ledger_completeness.py loads it."""
+    import importlib.util
+    import sys
+    if "generate_ledger_regions" not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            "generate_ledger_regions", REPO_ROOT / "tools" / "cc" / "generate_ledger_regions.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["generate_ledger_regions"] = module
+        spec.loader.exec_module(module)
+    return sys.modules["generate_ledger_regions"]
+
+
+@functools.lru_cache(maxsize=1)
+def _ledger_view() -> str:
+    """The ledger as its readers see it: the file with its row files placed in it.
+    Over one row file alone the grammar reads nothing, live or struck, since a row
+    file carries no section heading; and a struck row keeps its file, so a file
+    that exists proves nothing about a row."""
+    return _ledger_grammar().record_fragments().ledger_text(REPO_ROOT)
+
+
+def _live_ledger_rows() -> set[str]:
+    """Every id an unstruck row carries, a co-id included (the membership set,
+    not ``live_member_ids``'s first ids)."""
+    return _ledger_grammar().live_cell_ids(_ledger_view())
+
+
+def _tests_by_owner(text: str) -> dict[str, set[str]]:
+    """A module's test functions, read by AST: its module-level ``test*``
+    functions under ``""`` and each ``Test*`` class's ``test*`` methods under the
+    class's name."""
+    found: dict[str, set[str]] = {"": set()}
+    for node in ast.parse(text).body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+            found[""].add(node.name)
+        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            found[node.name] = {fn.name for fn in node.body
+                                if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+                                and fn.name.startswith("test")}
+    return found
+
+
+def _covered_node_ids(test: str) -> set[str]:
+    """The node ids a roster entry covers, read from its file: the test it names,
+    or every test of the class a prefix names; empty where it names nothing."""
+    rel, _, rest = test.partition("::")
+    path = REPO_ROOT / rel
+    if not rest or not path.is_file():
+        return set()
+    found = _tests_by_owner(path.read_text(encoding="utf-8"))
+    parts = [part.split("[", 1)[0] for part in rest.split("::")]
+    if len(parts) == 1:
+        if parts[0] in found:
+            return {f"{rel}::{parts[0]}::{name}" for name in found[parts[0]]}
+        return {test} if parts[0] in found[""] else set()
+    if len(parts) == 2:
+        return {test} if parts[1] in found.get(parts[0], set()) else set()
+    return set()
+
+
+def _platform_roster_problems(roster, live_rows, mark_of) -> list[str]:
+    """What is wrong with each entry of a platform roster: a test its file does
+    not hold, a row that is not live, a platform that holds on no host, a date
+    that is not one, and a built mark that is not the roster's (non-strict,
+    bounded to the race's own failure, run, the row leading its reason). A mark
+    with ``run=False`` would read every row as lost without running it, so the
+    crash watch would count nothing and the row's close condition would be met
+    by silence: the mark's keywords are exactly the three it is built with."""
+    import datetime
+
+    from tests.conftest import _EXPECTED_FAILURE_RAISES, _platform_holds
+    problems = []
+    for entry in roster:
+        if not _covered_node_ids(entry.test):
+            problems.append(f"{entry.test}: names no test its file holds")
+        if entry.row not in live_rows:
+            problems.append(f"{entry.test}: {entry.row} is not a live row in the ledger")
+        if not any(_platform_holds(entry.platform, sys_platform, environ) for sys_platform, environ in _HOSTS):
+            problems.append(f"{entry.test}: platform {entry.platform!r} holds on no host")
+        try:
+            dated = bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", entry.date)) and bool(
+                datetime.date.fromisoformat(entry.date))
+        except ValueError:
+            dated = False
+        if not dated:
+            problems.append(f"{entry.test}: {entry.date!r} is not a YYYY-MM-DD date")
+        mark = mark_of(entry)
+        if (mark.name, mark.args, set(mark.kwargs), mark.kwargs.get("strict"), mark.kwargs.get("raises")) != (
+                "xfail", (), {"strict", "raises", "reason"}, False, _EXPECTED_FAILURE_RAISES):
+            problems.append(f"{entry.test}: the mark is not the roster's bounded, non-strict, run "
+                            f"expected failure: {mark.name} {mark.args} {mark.kwargs}")
+        if not str(mark.kwargs.get("reason", "")).startswith(f"{entry.row}: "):
+            problems.append(f"{entry.test}: the mark's reason does not lead with {entry.row}")
+    return problems
+
+
+def test_every_platform_expected_failure_is_a_live_row_over_a_real_test():
+    """Each entry of tests/conftest.py::PLATFORM_EXPECTED_FAILURES names a test
+    its file holds, a row that is live in the ledger, a platform that holds on
+    some host and a date, and its built mark is the roster's. A row struck while
+    its entry stands reds here: the mark would outlive the reason it was allowed
+    for."""
+    from tests.conftest import PLATFORM_EXPECTED_FAILURES, _expected_failure_mark
+    problems = _platform_roster_problems(PLATFORM_EXPECTED_FAILURES, _live_ledger_rows(), _expected_failure_mark)
+    assert not problems, "tests/conftest.py::PLATFORM_EXPECTED_FAILURES:\n  " + "\n  ".join(problems)
+
+
+def test_the_roster_absorbs_the_race_and_nothing_else():
+    """The roster's mark takes one failure: the race's own, which the
+    three-attempt driver raises only where every attempt ended in execnet's
+    refusal to send (tests/_nested_race.py). pytest's plain failure (a
+    pytest-timeout ceiling, an internal error that is not the race), an
+    assertion over a child that completed, a hung child's TimeoutExpired and
+    every ordinary error still red the leg."""
+    import subprocess
+
+    from tests._nested_race import NestedControllerRaceLost
+    from tests.conftest import _EXPECTED_FAILURE_RAISES
+    assert issubclass(NestedControllerRaceLost, _EXPECTED_FAILURE_RAISES)
+    absorbed = [error.__name__ for error in (pytest.fail.Exception, AssertionError, subprocess.TimeoutExpired,
+                                             TypeError, ValueError, KeyError, AttributeError, OSError,
+                                             RuntimeError, ImportError)
+                if issubclass(error, _EXPECTED_FAILURE_RAISES)]
+    assert absorbed == [], absorbed
+
+
+def test_on_the_runners_the_hook_marks_exactly_the_tests_the_roster_covers():
+    """The collection hook marks a test through
+    tests/conftest.py::_expected_failures_for: on GitHub's macOS runners exactly
+    the tests the roster's entries cover, read from the source by this file and
+    not by the conftest's own match, and on every other host none. A class whose
+    name only starts with a covered class's is not covered."""
+    from tests.conftest import PLATFORM_EXPECTED_FAILURES, _expected_failures_for
+    keys = {entry.platform for entry in PLATFORM_EXPECTED_FAILURES}
+    assert keys <= {"macos-ci"}, (
+        f"a second platform key {sorted(keys - {'macos-ci'})}: these contracts read one host; generalize "
+        "them (the host-expectations registry of task-packs/TP-703h-host-expectations-have-one-registry.md) "
+        "rather than loosening them")
+    runners = ("darwin", {"GITHUB_ACTIONS": "true"})
+    covered: set[str] = set()
+    every: set[str] = set()
+    for entry in PLATFORM_EXPECTED_FAILURES:
+        covered |= _covered_node_ids(entry.test)
+        rel = entry.test.partition("::")[0]
+        for owner, names in _tests_by_owner((REPO_ROOT / rel).read_text(encoding="utf-8")).items():
+            every |= {f"{rel}::{owner}::{name}" if owner else f"{rel}::{name}" for name in names}
+    marked = {nodeid for nodeid in every if _expected_failures_for(nodeid, *runners)}
+    assert marked == covered, {"covered, unmarked": sorted(covered - marked), "marked, not covered": sorted(marked - covered)}
+    elsewhere = sorted(nodeid for nodeid in every for host in _HOSTS
+                       if host != runners and _expected_failures_for(nodeid, *host))
+    assert elsewhere == [], elsewhere
+    near_miss = f"{_RACE_MODULE}::TestACrashedControllerStillPrintsWhatItSawTwice::test_a"
+    assert _expected_failures_for(near_miss, *runners) == []
+
+
+def test_an_entry_covers_its_parametrized_instances_and_no_longer_name():
+    """A function-level entry covers the function's parametrized instances, as
+    the contract's own reading strips their ``[...]``; a name that only starts
+    with the entry's is not covered."""
+    from tests.conftest import _covers
+    assert _covers("m.py::T::test_x", "m.py::T::test_x[a-1]")
+    assert _covers("m.py::T", "m.py::T::test_x[a-1]")
+    assert not _covers("m.py::T::test_x", "m.py::T::test_xy")
+    assert not _covers("m.py::T", "m.py::TT::test_x")
+
+
+_RUNNERS = ("darwin", "true")
+
+
+@pytest.mark.parametrize(("sys_platform", "actions"), [
+    _RUNNERS, ("linux", "true"), ("win32", "true"), ("darwin", None), ("darwin", "false"),
+])
+def test_the_collection_hook_itself_marks_only_on_the_runners(monkeypatch, sys_platform, actions):
+    """The hook, not only its helper: where the runners' predicate holds, a
+    covered item gets the roster's mark and an uncovered one none; on every other
+    host neither does, so a hook that stopped asking the roster, or asked it with
+    the runners' values on every host, reds here and not first on a CI leg."""
+    import sys
+    from types import SimpleNamespace
+
+    import tests.conftest as conftest
+    monkeypatch.setattr(sys, "platform", sys_platform)
+    if actions is None:
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_ACTIONS", actions)
+    monkeypatch.delenv("ESPALIER_FULL_TREE_AUDIT", raising=False)
+
+    def item(nodeid: str) -> SimpleNamespace:
+        marks: list = []
+        return SimpleNamespace(nodeid=nodeid, name=nodeid.rsplit("::", 1)[-1], marks=marks,
+                               path=REPO_ROOT / nodeid.partition("::")[0], add_marker=marks.append)
+
+    covered = item(f"{_RACE_MODULE}::TestACrashedControllerStillPrintsWhatItSaw::test_the_child_ends_in_the_internal_error")
+    uncovered = item(f"{_RACE_MODULE}::TestTheLine::test_the_count_and_the_reason")
+    conftest.pytest_collection_modifyitems(SimpleNamespace(), [covered, uncovered])
+    reasons = {key: [mark.kwargs["reason"] for mark in it.marks if getattr(mark, "name", None) == "xfail"]
+               for key, it in (("covered", covered), ("uncovered", uncovered))}
+    expected = [_RACE_ROW] if (sys_platform, actions) == _RUNNERS else []
+    assert [reason.split(":", 1)[0] for reason in reasons["covered"]] == expected, reasons
+    assert reasons["uncovered"] == [], reasons
+
+
+@pytest.mark.parametrize(("sys_platform", "environ", "holds"), [
+    ("darwin", {"GITHUB_ACTIONS": "true"}, True),
+    ("darwin", {}, False),
+    ("darwin", {"GITHUB_ACTIONS": "1"}, False),
+    ("darwin", {"GITHUB_ACTIONS": "false"}, False),
+    ("darwin", {"CI": "true"}, False),
+    ("linux", {"GITHUB_ACTIONS": "true"}, False),
+    ("win32", {"GITHUB_ACTIONS": "true"}, False),
+])
+def test_the_macos_ci_key_holds_only_on_github_s_macos_runners(sys_platform, environ, holds):
+    """The key's predicate, read off the host it names: ``darwin`` with
+    ``GITHUB_ACTIONS`` equal to ``"true"``, never a truthy ``CI`` or another
+    spelling of the flag. A mark that fired off the runners would hide a red
+    there."""
+    from tests.conftest import _platform_holds
+    assert _platform_holds("macos-ci", sys_platform, environ) is holds
+
+
+def _rows_whose_child_kills_its_workers_in_the_build(text: str, rel: str) -> set[str]:
+    """Node ids of the tests in a module that drive a child with the race's switch
+    in its environment, as a dict key in their own body or through a module
+    fixture whose body sets it: the class the runners' execnet race reaches."""
+    tree = ast.parse(text)
+
+    def sets_switch(fn: ast.AST) -> bool:
+        return any(isinstance(node, ast.Dict) and any(
+            isinstance(key, ast.Constant) and key.value == _RACE_SWITCH for key in node.keys)
+            for node in ast.walk(fn))
+
+    fixtures = {node.name for node in tree.body if isinstance(node, ast.FunctionDef) and sets_switch(node)
+                and any("fixture" in ast.unparse(deco) for deco in node.decorator_list)}
+
+    def reached(fn: ast.FunctionDef) -> bool:
+        return sets_switch(fn) or bool({arg.arg for arg in fn.args.args} & fixtures)
+
+    rows = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test") and reached(node):
+            rows.add(f"{rel}::{node.name}")
+        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            rows |= {f"{rel}::{node.name}::{fn.name}" for fn in node.body
+                     if isinstance(fn, ast.FunctionDef) and fn.name.startswith("test") and reached(fn)}
+    return rows
+
+
+def test_the_race_roster_covers_every_row_whose_child_kills_its_workers_in_the_build():
+    """While DEF-4032 is live its entries cover exactly the tests whose child
+    kills its xdist workers inside the build, read from the source: the class the
+    runners' execnet race reaches. A new such row reds here until the roster takes
+    it, and a test under a covered class that is not one reds too, since the mark
+    would hide a red the race does not explain. Once the row is struck the roster
+    may not name it."""
+    from tests.conftest import PLATFORM_EXPECTED_FAILURES
+    covered: set[str] = set()
+    for entry in PLATFORM_EXPECTED_FAILURES:
+        if entry.row == _RACE_ROW:
+            covered |= _covered_node_ids(entry.test)
+    if _RACE_ROW not in _live_ledger_rows():
+        assert not covered, f"{_RACE_ROW} is struck, and the roster still marks {sorted(covered)}"
+        return
+    derived = _rows_whose_child_kills_its_workers_in_the_build(
+        (REPO_ROOT / _RACE_MODULE).read_text(encoding="utf-8"), _RACE_MODULE)
+    assert derived, f"no test in {_RACE_MODULE} sets {_RACE_SWITCH}: the race's class is gone, strike {_RACE_ROW}"
+    assert covered == derived, {"the race reaches, unmarked": sorted(derived - covered),
+                                "marked, not the race's": sorted(covered - derived)}
+
+
+class _NonStrictXfails(ast.NodeVisitor):
+    """Every ``xfail(...)`` call whose ``strict=`` is anything but the constant
+    ``True``, or that takes ``**`` keywords (a ``strict`` it cannot read), with
+    the function it sits in."""
+
+    def __init__(self) -> None:
+        self.owners: list[str] = []
+        self.found: list[tuple[int, str]] = []
+
+    def visit_FunctionDef(self, node) -> None:
+        self.owners.append(node.name)
+        self.generic_visit(node)
+        self.owners.pop()
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_Call(self, node: ast.Call) -> None:
+        if ast.unparse(node.func).rsplit(".", 1)[-1] == "xfail" and any(
+                kw.arg is None or (kw.arg == "strict" and not (
+                    isinstance(kw.value, ast.Constant) and kw.value.value is True))
+                for kw in node.keywords):
+            self.found.append((node.lineno, self.owners[-1] if self.owners else ""))
+        self.generic_visit(node)
+
+
+#: The two places a non-strict expected failure may be built: the roster's
+#: builder, the declared exception; and the checker's must-trip builder below,
+#: whose marks are data handed to the checker and never applied to a test.
+_NON_STRICT_BUILDERS = frozenset({("tests/conftest.py", "_expected_failure_mark"),
+                                  ("tests/test_test_suite_contract.py", "_wrong_mark")})
+
+
+def _non_strict_offenders(files) -> tuple[list[str], bool]:
+    """Over ``(rel, text)`` pairs: every non-strict expected failure outside the
+    two allowed builders, and whether the roster's own builder was seen. A
+    builder is allowed by its file and its name together, never by either alone."""
+    offenders, builder_seen = [], False
+    for rel, text in files:
+        finder = _NonStrictXfails()
+        finder.visit(ast.parse(text))
+        for lineno, owner in finder.found:
+            if (rel, owner) in _NON_STRICT_BUILDERS:
+                builder_seen = builder_seen or rel == "tests/conftest.py"
+            else:
+                offenders.append(f"{rel}:{lineno} in {owner or 'the module body'}")
+    return offenders, builder_seen
+
+
+def test_no_other_expected_failure_is_non_strict():
+    """``xfail_strict = true`` holds for every expected failure under tests/ but
+    the roster's, whose one builder is tests/conftest.py::_expected_failure_mark,
+    the declared exception: a ``strict=False`` anywhere else, or a ``**`` splat
+    whose ``strict`` the scan cannot read, is a mark that can pass silently, the
+    neutering the strict pin above exists to stop."""
+    offenders, builder_seen = _non_strict_offenders(
+        (path.relative_to(REPO_ROOT).as_posix(), path.read_text(encoding="utf-8"))
+        for path in sorted(checkout_glob(TESTS_DIR, "**/*.py")))
+    assert builder_seen, "the roster's builder was not found: this scan reads nothing it can vouch for"
+    assert not offenders, "a non-strict expected failure outside the roster's builder:\n  " + "\n  ".join(offenders)
+
+
+def test_the_allow_list_exempts_a_builder_by_its_file_and_its_name_together():
+    """Another function in an allowed file, or a function of an allowed name in
+    another file, is still an offender."""
+    body = "import pytest\n\n\ndef {name}(entry):\n    return pytest.mark.xfail(strict=False)\n"
+    offenders, builder_seen = _non_strict_offenders([
+        ("tests/conftest.py", body.format(name="_expected_failure_mark")),
+        ("tests/test_test_suite_contract.py", body.format(name="another")),
+        ("tests/test_elsewhere.py", body.format(name="_expected_failure_mark")),
+    ])
+    assert builder_seen
+    assert offenders == ["tests/test_test_suite_contract.py:5 in another",
+                         "tests/test_elsewhere.py:5 in _expected_failure_mark"], offenders
+
+
+class TestPlatformRosterChecker:
+    """The checker the live roster test runs, red on each wrong entry. Every case
+    but the struck one reads a live-row set of its own, so the cases do not move
+    with the ledger; the struck case reads the live ledger, where DEF-2025 keeps
+    its row file and is struck."""
+
+    _LIVE = frozenset({_RACE_ROW})
+
+    @staticmethod
+    def _entry(**changes):
+        from tests.conftest import PlatformExpectedFailure
+        fields = {"test": f"{_RACE_MODULE}::TestACrashedControllerStillPrintsWhatItSaw",
+                  "platform": "macos-ci", "row": _RACE_ROW, "reason": "a reason", "date": "2026-10-19"}
+        fields.update(changes)
+        return PlatformExpectedFailure(**fields)
+
+    def _problems(self, entry, *, live=None, mark_of=None) -> list[str]:
+        from tests.conftest import _expected_failure_mark
+        return _platform_roster_problems((entry,), self._LIVE if live is None else live,
+                                         mark_of or _expected_failure_mark)
+
+    def test_a_sound_entry_reads_clean(self):
+        assert self._problems(self._entry()) == []
+
+    @pytest.mark.parametrize("test", [
+        f"{_RACE_MODULE}::TestNoSuchClass",
+        f"{_RACE_MODULE}::TestACrashedControllerStillPrintsWhatItSaw::test_no_such_test",
+        "tests/test_no_such_module.py::test_a",
+        _RACE_MODULE,
+    ])
+    def test_an_entry_naming_a_test_its_file_does_not_hold_is_named(self, test):
+        assert any("names no test" in problem for problem in self._problems(self._entry(test=test)))
+
+    def test_an_entry_naming_a_struck_row_is_named(self):
+        assert "DEF-2025" in _ledger_grammar().struck_member_ids(_ledger_view())
+        problems = self._problems(self._entry(row="DEF-2025"), live=_live_ledger_rows())
+        assert any("DEF-2025 is not a live row" in problem for problem in problems), problems
+
+    def test_an_entry_naming_a_row_that_does_not_exist_is_named(self):
+        assert any("DEF-0 is not a live row" in problem for problem in self._problems(self._entry(row="DEF-0")))
+
+    def test_an_entry_whose_platform_holds_on_no_host_is_named(self):
+        problems = self._problems(self._entry(platform="macos"))
+        assert any("holds on no host" in problem for problem in problems), problems
+
+    def test_an_entry_with_no_date_is_named(self):
+        problems = self._problems(self._entry(date="soon"))
+        assert any("not a YYYY-MM-DD date" in problem for problem in problems), problems
+
+    @staticmethod
+    def _changed(**change):
+        """The roster's own mark for an entry with one keyword changed, or dropped
+        where its value is None: the wrong mark the checker must name."""
+        from tests.conftest import _expected_failure_mark
+
+        def _wrong_mark(entry):
+            kwargs = dict(_expected_failure_mark(entry).kwargs)
+            for key, value in change.items():
+                if value is None:
+                    kwargs.pop(key, None)
+                else:
+                    kwargs[key] = value
+            return pytest.mark.xfail(**kwargs)
+        return _wrong_mark
+
+    def test_a_strict_mark_is_named(self):
+        problems = self._problems(self._entry(), mark_of=self._changed(strict=True))
+        assert any("not the roster's" in problem for problem in problems), problems
+
+    def test_a_mark_bounded_to_no_error_is_named(self):
+        problems = self._problems(self._entry(), mark_of=self._changed(raises=None))
+        assert any("not the roster's" in problem for problem in problems), problems
+
+    def test_a_mark_whose_reason_does_not_lead_with_the_row_is_named(self):
+        problems = self._problems(self._entry(), mark_of=self._changed(reason="a reason"))
+        assert any("does not lead with" in problem for problem in problems), problems
+
+    def test_a_mark_that_does_not_run_the_row_is_named(self):
+        """``run=False`` reads the row as lost without running it: the crash watch
+        counts nothing and the row's close condition is met by silence."""
+        problems = self._problems(self._entry(), mark_of=self._changed(run=False))
+        assert any("not the roster's" in problem for problem in problems), problems
+
+    def test_a_date_in_another_shape_is_named(self):
+        """``20261019`` parses on Python 3.11 and later, never on 3.10: the shape
+        is held, so the floor and the newest interpreters agree."""
+        problems = self._problems(self._entry(date="20261019"))
+        assert any("not a YYYY-MM-DD date" in problem for problem in problems), problems
+
+
+class TestThePlatformRosterLine:
+    """The summary's line for each roster row on the host its platform names, in
+    a session that ran the row's tests: how many ran, lost, completed and failed
+    otherwise, zeros included, and the entry's age; nothing for a session that
+    ran none of them, where a zero would read like a result."""
+
+    _ANCHOR = (f"{_RACE_MODULE}::TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe"
+               "::test_a_worker_that_dies_in_its_build_is_named_each_time")
+    _CLASS = f"{_RACE_MODULE}::TestACrashedControllerStillPrintsWhatItSaw"
+
+    @staticmethod
+    def _stats(**by_category: tuple) -> dict:
+        from types import SimpleNamespace
+        return {category: [SimpleNamespace(nodeid=nodeid) for nodeid in nodeids]
+                for category, nodeids in by_category.items()}
+
+    @staticmethod
+    def _since() -> str:
+        from tests.conftest import PLATFORM_EXPECTED_FAILURES
+        return min(entry.date for entry in PLATFORM_EXPECTED_FAILURES if entry.row == _RACE_ROW)
+
+    def _lines(self, stats, sys_platform: str = "darwin", environ=None) -> list[str]:
+        import datetime
+
+        from tests.conftest import _platform_roster_lines
+        today = datetime.date.fromisoformat(self._since()) + datetime.timedelta(days=3)
+        return _platform_roster_lines(stats, sys_platform, {"GITHUB_ACTIONS": "true"} if environ is None else environ,
+                                      today=today)
+
+    def test_on_the_runners_it_counts_what_the_rows_did(self):
+        stats = self._stats(xfailed=(self._ANCHOR, f"{self._CLASS}::test_a", f"{self._CLASS}::test_b"),
+                            xpassed=(f"{self._CLASS}::test_c",), failed=(f"{self._CLASS}::test_d",),
+                            passed=(f"{_RACE_MODULE}::TestTheLine::test_x",))
+        assert self._lines(stats) == [
+            f"platform roster {_RACE_ROW} (macos-ci): 5 ran, 3 lost to the cause (xfailed), 1 completed "
+            f"(xpassed), 1 failed otherwise; entered {self._since()}, 3 day(s) ago"]
+
+    def test_once_the_rows_ran_their_zeros_are_printed(self):
+        assert self._lines(self._stats(xpassed=(self._ANCHOR,))) == [
+            f"platform roster {_RACE_ROW} (macos-ci): 1 ran, 0 lost to the cause (xfailed), 1 completed "
+            f"(xpassed), 0 failed otherwise; entered {self._since()}, 3 day(s) ago"]
+
+    def test_a_session_that_ran_none_of_the_rows_prints_nothing(self):
+        stats = self._stats(passed=(f"{_RACE_MODULE}::TestTheLine::test_x",), xfailed=("tests/test_other.py::test_y",))
+        assert self._lines(stats) == []
+        assert self._lines({}) == []
+
+    @pytest.mark.parametrize(("sys_platform", "environ"), [
+        ("linux", {"GITHUB_ACTIONS": "true"}), ("win32", {"GITHUB_ACTIONS": "true"}), ("darwin", {}),
+    ])
+    def test_off_the_runners_it_prints_nothing(self, sys_platform, environ):
+        assert self._lines(self._stats(xfailed=(self._ANCHOR,)), sys_platform, environ) == []
+
+    def test_under_github_actions_on_the_runners_the_line_is_a_notice_too(self, monkeypatch):
+        import sys
+        from types import SimpleNamespace
+
+        from tests.conftest import report_platform_expected_failures
+        monkeypatch.setattr(sys, "platform", "darwin")
+        monkeypatch.setenv("GITHUB_ACTIONS", "true")
+        written: list[str] = []
+        report_platform_expected_failures(SimpleNamespace(write_line=written.append,
+                                                          stats=self._stats(xfailed=(self._ANCHOR,))))
+        assert len(written) == 2 and written[1] == f"::notice::{written[0]}", written
+        assert written[0].startswith(f"platform roster {_RACE_ROW} (macos-ci): 1 ran, 1 lost to the cause"), written
+
+
+def test_the_non_strict_scan_finds_a_false_or_unread_strict_and_passes_a_true_one():
+    """The scan the roster's fence runs: ``strict=False``, a ``strict=`` it cannot
+    read and a ``**`` splat are found, with the function each sits in;
+    ``strict=True`` is not."""
+    finder = _NonStrictXfails()
+    finder.visit(ast.parse(
+        "import pytest\n\n\n"
+        "@pytest.mark.xfail(strict=False, reason='r')\n"
+        "def test_a():\n    pass\n\n\n"
+        "def helper(flag):\n    return pytest.mark.xfail(strict=flag, reason='r')\n\n\n"
+        "def splat(kwargs):\n    return pytest.mark.xfail(**kwargs)\n\n\n"
+        "@pytest.mark.xfail(strict=True, reason='r')\n"
+        "def test_b():\n    pass\n"))
+    assert finder.found == [(4, "test_a"), (10, "helper"), (14, "splat")]
+
+
+class TestTheRaceClassIsReadFromTheSource:
+    """The source read the race roster is held to: a test that sets the switch in
+    its child, in its own body or through a module fixture, is in the class; one
+    that sets another key, or reads no such fixture, is not."""
+
+    _MODULE = (
+        "import pytest\n\n\n"
+        "@pytest.fixture(scope='module')\n"
+        "def crashed(tmp_path_factory):\n"
+        "    return drive(extra_env={'PROBE_BUILD_DIES': '1'})\n\n\n"
+        "def test_direct(tmp_path):\n"
+        "    drive(extra_env={'PROBE_BUILD_DIES': '1'})\n\n\n"
+        "def test_another_key(tmp_path):\n"
+        "    drive(extra_env={'OTHER': '1'})\n\n\n"
+        "class TestReads:\n"
+        "    def test_through_the_fixture(self, crashed):\n"
+        "        pass\n\n"
+        "    def test_on_its_own(self, tmp_path):\n"
+        "        pass\n"
+    )
+
+    def test_the_rows_that_set_the_switch_are_the_class(self):
+        assert _rows_whose_child_kills_its_workers_in_the_build(self._MODULE, "m.py") == {
+            "m.py::test_direct", "m.py::TestReads::test_through_the_fixture"}
+
+
 # ── Parent-pid assertions spawn through HOOK_PYTHON ─────────────────────────
 # A hook's session marker records ``os.getppid()``; a test that compares it with
 # ``os.getpid()`` assumes the hook's parent is this process. A Windows venv's

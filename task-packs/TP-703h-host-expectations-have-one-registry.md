@@ -21,7 +21,16 @@
   entry the recall query returned).
 - Boundary with `TP-703b` Wave 3: that lane lands `DEF-2025`'s counted macOS skip as a small
   roster in `tests/conftest.py` first (expand); this pack moves it into the registry and removes
-  the roster (contract). Boundary with `TP-703a`: the reader reports a red after the merge; this
+  the roster (contract). **Superseded in part, 2026-10-19 (`TP-703b` W3 landed it differently;
+  read that pack's W3 and Cross-pack coordination before this one's Task 0):** the roster is
+  `tests/conftest.py::PLATFORM_EXPECTED_FAILURES`, a NON-STRICT expected failure bounded to
+  `tests/_nested_race.py::NestedControllerRaceLost`, not a skip; it covers six node ids (the
+  anchor and the class `TestACrashedControllerStillPrintsWhatItSaw`), not the anchor alone; the
+  row is `DEF-4032`, `DEF-2025`'s successor, and the completed-child count is `DEF-4033`; and
+  contract tests in `tests/test_test_suite_contract.py` read the roster's names. Item 4's skip
+  row for the macOS red, H-4's row and the Reach row below predate that, and this pack's
+  registry needs a third kind (non-strict, run, counted) to take the roster whole. Boundary with
+  `TP-703a`: the reader reports a red after the merge; this
   registry says which reds were expected, so the reader's "0 unexpected" is a sentence with a
   table behind it.
 - Ledger: no row filed at authoring. The registry's rows must each name a ledger row, and at
