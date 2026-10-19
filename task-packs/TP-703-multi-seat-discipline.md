@@ -501,6 +501,9 @@ read these as the author's guess, not a schedule.
   that a pre-send read would have reached it, and three assigns delegated exactly that check to
   Task 0 by choice; the refuting result (fewer than half findable) is not met, so `TP-703e`
   builds, and the dispatcher's own 10 of 18 and 7 of 10 were undercounts in both directions
-- Children: `TP-703a` LANDED (2026-10-19, single-seat, after `TP-703e`); `TP-703b` DRAFT; `TP-703c` DRAFT; `TP-703d` DRAFT; `TP-703e` DRAFT;
+- Children: `TP-703a` LANDED (2026-10-19, single-seat, after `TP-703e`); `TP-703b` DRAFT; `TP-703c` DRAFT;
+  `TP-703d` DRAFT; `TP-703e` LANDED (2026-10-19, single-seat on the dispatcher's checkout; the
+  children stay in `task-packs/` with their state stamped until this roadmap lands, as `TP-702`
+  did: the ledger gate reads a LANDED pack in `Done/` whose row is live as unstruck);
   `TP-703f` DRAFT; `TP-703g` DRAFT; `TP-703h` DRAFT; `TP-703i` DRAFT; `TP-703j` DRAFT
 - Date: 2026-10-18 (authored, local)

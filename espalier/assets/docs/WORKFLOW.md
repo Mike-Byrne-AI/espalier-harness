@@ -482,9 +482,12 @@ worktree renames the clone and its main checkout instead. Seats coordinate
 through the mail channel (`/inbox`): a seat claims the files it works so
 another does not duplicate them, a dispatcher seat (the `dispatcher` key in
 `espalier.toml`) assigns the jobs, and a seat with a question sends a request,
-which the dispatcher answers (or you, where no dispatcher is named). Two
-sessions in one checkout are one seat, which must not happen: they share its
-plan, its git index and its mail cursor.
+which the dispatcher answers (or you, where no dispatcher is named). An assign
+names the job and the reasons (why now, what it waits for, the operator's
+constraints, an edge with its citation; under 900 characters), never the proof
+the seat's own tier run prints; the send prints a note past that shape and
+refuses nothing. Two sessions in one checkout are one seat, which must not
+happen: they share its plan, its git index and its mail cursor.
 
 Before stating what is open, merging or blocked, read the board (`/inbox
 board`): it reads GitHub and the mail now, where the banner and a handoff note

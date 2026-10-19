@@ -664,6 +664,21 @@ class TestBrief:
         own = seat.compose_brief(clone, "box", clone).text
         assert "within approved packs and live ledger rows on your own" in own
         assert "Assign authority paragraph" in own and "send them on a yes" not in own
+        # TP-703e 1-D: the assign's shape rides the self-host brief and never the adopter's.
+        assert "each assign in its shape" in own and "under 900 characters" in own
+        assert "in its shape" not in adopter
+
+    def test_the_seats_wait_in_the_protocol_is_the_dispatchers_tick_interval(self, seat):
+        """The seat proceeds on its Task 0 recommendation after the dispatcher's
+        tick interval with no answer (the protocol's "The seat's side of it", the
+        operator's yes of 2026-10-19). Dies to: the loop's interval moved and the
+        paragraph left saying the old number."""
+        import re
+        minutes = re.search(r"/loop (\d+)m", seat.DISPATCHER_TICK).group(1)
+        text = (Path(__file__).resolve().parents[1] / "memory" / "parallel-work-protocol.md").read_text(encoding="utf-8")
+        start = text.index("**The seat's side of it**")
+        paragraph = text[start:text.index("\n\n", start)]
+        assert f"{minutes} minutes" in paragraph and "DISPATCHER_TICK" in paragraph
 
     def test_this_repositorys_worker_runs_the_reviewers_its_diff_earns(self, seat, clone):
         """The self-host tick names the review line the tier script prints, at

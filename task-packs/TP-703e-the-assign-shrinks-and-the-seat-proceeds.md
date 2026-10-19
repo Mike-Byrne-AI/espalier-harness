@@ -106,6 +106,17 @@ other lane this one must wait for, and why now).
   says the duty is missed.
 - **`--text-file`** and the assign's transport: unchanged.
 
+## Cross-pack coordination
+
+Wave 1 first (the roadmap's Wave 1 paragraph, corrected 2026-10-19). `TP-703g` item (a)
+prescribes the same queue-depth reconciliation in `memory/parallel-work-protocol.md` (item 1
+and the dispatcher table): this lane lands it, and `TP-703g`'s Task 0 finds it done and drops
+the item. `TP-703f` edits `tools/cc/seat.py` (`DISPATCHER_BRIEF`), `tests/test_seat.py` and
+`.claude/commands/inbox.md` in constants and paragraphs other than this lane's
+(`SELF_HOST_ASSIGN`, `TestBrief`'s assign test, Step 2b); `TP-703c` edits `tools/cc/seat.py`
+and `tests/test_seat.py` likewise. Executed single-seat on 2026-10-19 with no sibling lane
+open, so no catch-up was needed. (Added at execution from the 0-A review's WARN.)
+
 ## Task 0 — Verify (try to kill this pack)
 
 Each item names the oracle, the result that ends or narrows the pack, and the exit. The default
@@ -171,7 +182,8 @@ Every fix below is a **fix shape (untested)** unless marked measured; its refuta
 ### 1-A The assign's shape *(prose; the protocol)*
 
 In `memory/parallel-work-protocol.md`, the *How assignments behave* list gains one entry and
-the dispatcher table's first row gains a clause. The entry, as prose to land:
+the dispatcher table's queue row (*Keeps two jobs ...*, the row the shape governs) gains a
+clause. The entry, as prose to land:
 
 > **What an assign says.** The job (a row id, a class, or a lane for a pack's wave); why now;
 > what it waits for, by the other seat's lane name and the file both touch; the operator's
@@ -219,10 +231,25 @@ branch: `for line in (assign_shape_notes(text) if args.type == "assign" else [])
 file=sys.stderr)`, so the notes print on a dry run and on a send alike. The word list is a
 literal here, not read from `scripts/proof_tier.py::TIERS` and `::REVIEWS`: the mail driver
 deploys to adopter trees and the tier script is self-host, and `tools/cc/` imports nothing
-outside itself. A test pins the list against those two tuples on this tree so a renamed tier
-reds here.
+outside itself. A test (`tests/test_mail.py::TestAssignShape::
+test_the_word_list_carries_every_tier_and_reviewer_the_tier_script_names`) pins the list
+against those two tuples by derivation, never equality: every `<tier> tier` for a tier in
+`TIERS`, and every name in `REVIEWS` but `none`, as itself or as `<name> reviewers`, must be in
+the list; the extras (`contract slice`, `failure-mode-reviewer`) are allowed, so a renamed tier
+reds here and an added phrase does not. The other three tests of that class: the boundary
+(899, 900 and 901 characters), each phrase named in its own note, and the notes never
+refusing and printing beside the dry-run count (its fixture names a dispatcher in
+`espalier.toml` and patches the machine name, as `TestAssignments` does).
 
 *Refutation:* Task 0 item 3 (deliberate overrides common): the tier words leave the list.
+*Landed 2026-10-19 as amended by the failure-mode review:* the list also carries the
+dispatcher's own `tier:` and `review:` forms and reads a hyphen as a space (the list above
+matched 17 of the 25 assigns of 10-18 as written; the amended count is in Landing); the
+phrases are noted only where `scripts/proof_tier.py` is on the tree, the length everywhere
+(the driver deploys to adopter trees, where the tier script and its words do not); the note
+counts the stripped text the message carries, so a trailing newline never reads as a
+character past the cap. Known rough edge: an assign citing `.claude/agents/code-reviewer.md`
+trips a note, which is a note.
 *Mutations the tests die to:* a text of 901 characters with no phrase yields one note and a text
 of 899 yields none; a text naming `full tier` yields a note that names `full tier`; the check
 raising instead of returning reds the never-refuses test; a `--dry-run` send prints the notes
@@ -252,15 +279,24 @@ to work them in order (item 1).
 **1-C-2 The tick's sentence, proposed.** The sentence replacing the worker tick's STOP clause,
 for the operator's paste after the lane merges, carrying its own guard as `TP-702` 3-A's did:
 `On a choice the assign does not settle, send air one request with your Task 0 recommendation
-and its citation, then proceed on it after one tick with no answer; a request with no
-recommendation keeps the stop. STOP and only re-read mail for an operator-class item (a new
-row, a scope change, a platform stop, a revert that is not the red-main revert). A red you
-cannot fix in two attempts: shelve the lane (claims kept, one note), take your next assigned
-job.` A seat on the older tick keeps stopping, which costs time and nothing else, so the
+and its citation, then proceed on it after 15 minutes (the dispatcher's tick) with no answer; a
+request with no recommendation keeps the stop. STOP and only re-read mail for what the assign
+authority reserves for the operator (a new pack, a scope change, a release or tag, a revert
+that is not the red-main revert, an open goal call), a platform stop, a refusal you cannot
+resolve, or a conflict outside your own files. A red you cannot fix in two attempts: shelve
+the lane (claims kept, one note beginning shelved:), take your next assigned job.` A seat on the older tick keeps stopping, which costs time and nothing else, so the
 sentence needs no checkout to hold anything new before it is pasted.
 
 *Refutation:* Task 0 item 5 (the operator declines the proceed clause): the shelve arm and the
 queue depth land alone.
+
+*Landed 2026-10-19 as amended by the failure-mode review:* the wait is the dispatcher's tick
+interval (15 minutes, `tools/cc/seat.py::DISPATCHER_TICK`, pinned by a `TestBrief` test; the
+ack latency census over the four refs reads 111 of 111 answered since 10-14, median 8 minutes,
+p75 12, max 23, so a 10-minute wait would have proceeded before about one ruling in three); the stop set is the assign authority's plus
+the platform stop, an unresolved refusal and a conflict outside the seat's files (a row is
+never a stop, item 8); the redirect and shelve words are fixed (`redirect:`, `shelved:`) for
+`TP-703f`'s census to count; and a running loop's `STOP` governs until the paste.
 
 ### 1-D The dispatcher's brief *(fix shape, untested)*
 
@@ -295,7 +331,9 @@ scripts/sync_vendor_cc.py` after the two `tools/cc/` edits.
 **Checkpoint:** `python3 scripts/proof_tier.py --base origin/main` (any `tools/cc/` edit earns the
 full tier, `scripts/proof_tier.py::is_runtime`'s full prefixes, and `mail.py` is loaded by the
 SessionStart hook through `session_start.py::_load_mail`, so the line names both reviewers; the
-receipt decides), the three syncs clean, the mirror parity tests green.
+receipt decides), the three syncs clean, the mirror parity tests green, and `python3 -m
+espalier integrity refresh .` after the two `tools/cc/` edits (the manifest is per-install and
+gitignored on this tree).
 
 ### Pre-registered (TP-703's re-measure, line 5)
 
@@ -340,7 +378,7 @@ members.
   phrase, and exits 0 with the line it would send; the same with 899 characters and no phrase
   prints none. No existing `tests/test_mail.py` assertion is weakened and no fixture removed.
 - A test pins `ASSIGN_SHAPE_WORDS` against `scripts/proof_tier.py::TIERS` and `::REVIEWS` on
-  this tree, so a renamed tier or reviewer reds the list.
+  this tree by derivation (1-B), so a renamed tier or reviewer reds the list.
 - `python3 tools/cc/seat.py brief <dispatcher seat>` on this repository carries the shape clause;
   on an adopter tree (the `docs/WORKFLOW.md`-only fixture in `tests/test_seat.py::TestBrief`) it
   does not; `tests/test_seat.py::_OPERATOR_TICK` is byte-identical to before this lane.
@@ -400,12 +438,56 @@ read these as the author's guess, not a schedule.
 | Total | 3 to 3.5 h | 1 h plus the tier | expect the measured overrun |
 
 ## Landing
-- State: DRAFT
-- Commits:
-- Suite: `python3 scripts/proof_tier.py --run --base origin/main` on the lane
-- Earn-the-red: per fix, against the mutations named in 1-B and 1-D
-- Red-team: per the tier's `review:` line; authoring review not yet run
+- State: LANDED
+- Commits: one commit on `lane/the-assign-shrinks` (the pull request's number is in the Session
+  Log row of the handoff that follows), built single-seat on the dispatcher's checkout `air`
+  on 2026-10-19 after the operator switched the roadmap from assigns to this session's own hands
+- Suite: the full tier on the lane (`scripts/proof_tier.py --run`, the line names `full` and
+  `both`): serial leg 2134 passed; parallel leg 24677 passed, 2 failed, one the known box-local
+  record-merge red on this box's Apple Git 2.39.5 (`update-index --unresolve` exits 1 mid-merge;
+  CI's slice is the proof) and one this lane's, the derived-population census reading the pin
+  test's per-member loops as a blind derivation, fixed by rewriting the test to hand-written
+  rosters with set-equality on the script's tuples (`docs/FAILURE_MODES.md` 18.4); the test-only
+  fix earned the contract slice (5370 passed plus the known red) and the two touched files (298
+  passed); `espalier pre-release --skip-tests --skip-parity` pass; `espalier audit` 0 findings;
+  the three syncs and the provenance gate clean; the integrity manifest refreshed
+- Earn-the-red: the five shape tests and the brief assertion red before their fixes (the helper
+  absent, the clause absent); six mutants killed by `tests/test_mail.py::TestAssignShape`: the
+  900 boundary read as `>=`, the phrase loop dead, the send arm silent, the `phrases` flag
+  ignored, a hyphen kept, the unstripped text counted
+- Red-team: both reviewers on a snapshot clone of HEAD plus the diff, one fix batch.
+  code-reviewer: APPROVE (0 BLOCK, 0 WARN, 3 NIT: two paragraph re-flows, the dry-run test
+  pinning one path; all three folded). failure-mode-reviewer: REQUEST CHANGES (0 REGRESSION,
+  7 GAP, 3 ROUGH-EDGE; all ten folded): the inbox body cited the memory protocol adopters never
+  get (now `docs/WORKFLOW.md`); the note named the tier script on adopter trees (the phrases are
+  noted only where `scripts/proof_tier.py` is on the tree); the list missed the dispatcher's own
+  `tier:` and `review:` forms (17 of 25 matched, 24 of 25 after); the seat's wait was shorter
+  than the dispatcher's tick (now 15 minutes, pinned by a test; the live census reads median 8,
+  p75 12, max 23 over 111 answered requests); the stop list contradicted the assign authority
+  set and item 8 (now that set plus the platform stop, an unresolved refusal and a conflict
+  outside the seat's files; a row never a stop); nothing said which text governs while the old
+  tick runs (the loop's STOP, until the paste); the falsifier had no record (`redirect:` and
+  `shelved:` fixed for `TP-703f`'s census); the cap lived in five places (one test pins all);
+  the note counted the unstripped text; the 19-of-20 figure is tagged hand-classified, not
+  second-read. A second round was not needed.
 - Reach: not a class pack; no row closed
-- Task 0: item 1 run at authoring by a second reader (14 of 18 re-aimed, 12 findable; not refuted); items 2 to 5 not yet run (item 5 is the operator's yes on the proceed clause)
-- 1-C-2: the tick sentence not yet proposed
-- Date: 2026-10-18 (authored, local)
+- Task 0: item 1 at authoring by a second reader (14 of 18 re-aimed, 12 findable; not
+  refuted); item 2 re-read 2026-10-19 on the live refs (46 of the last 50 assigns name a tier
+  or reviewer word; not refuted); item 3 (11 assigns carry override language near a tier
+  word, none a deliberate tier override on reading; not refuted; a keyword read, not a per-lane
+  recompute); item 4 (substring pins only, `tests/test_seat.py:662-666`; not refuted); item 5
+  the operator's yes, 2026-10-19, with the figures
+- Pre-flight: 0-A pack-artifact review (checklist v2, code-reviewer) REQUEST CHANGES with 0
+  BLOCK, 3 WARN, 2 NIT, folded into this file at execution (Cross-pack coordination, the pin by
+  derivation, the test names, the queue row, the integrity refresh); 0-B scope gap accepted (the
+  pack cites its own symbols); 0-C compression debt accepted, pre-existing and outside this lane
+  (`espalier/doctor.py::_host_is_windows` body-matching
+  `tools/cc/hooks/_hook_utils.py::_running_by_invoked_path`, left for the operator); 0-D no
+  surface change
+- 1-C-2: the tick sentence, as amended by the review (15 minutes; the assign authority's stop
+  set), proposed to the operator after the merge; `WORKER_TICK` unchanged
+- Deviations: the table clause landed on the queue row (*Keeps two jobs ...*), the row the shape
+  governs, not the first row; the second seat's re-read of the authoring figures did not run,
+  since one seat built the lane (the figures were re-derived on the live refs by this seat
+  instead); the queue-depth reconciliation `TP-703g` item (a) also prescribes landed here
+- Date: 2026-10-19 (landed, local)
