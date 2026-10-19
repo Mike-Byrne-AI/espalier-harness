@@ -322,6 +322,105 @@ class TestAssignments:
         assert mail.assign_refusal(tmp_path, "win-2") is None   # no dispatcher named: a lone operator assigns
 
 
+class TestAssignShape:
+    """TP-703e 1-B: an assign's shape (memory/parallel-work-protocol.md, "What an
+    assign says") is a note on stderr, never a refusal: the text's length past
+    ``ASSIGN_SHAPE_CHARS``, and each phrase of ``ASSIGN_SHAPE_WORDS`` it names
+    (a hyphen read as a space, so ``full-tier`` is ``full tier``; the dispatcher's
+    own ``Tier:`` and ``Review:`` forms among them), which the tier script prints
+    from the diff, so the phrases are noted only where ``scripts/proof_tier.py``
+    is on the tree (the driver deploys where it is not). Measured on the
+    dispatcher's assigns of 2026-10-18: every one past 900 characters; the
+    pack's Landing carries the phrase count."""
+
+    def test_a_text_past_the_cap_gets_one_note_and_one_at_the_cap_gets_none(self, mail):
+        """Dies to: the boundary off by one, or the count left out of the note."""
+        assert mail.ASSIGN_SHAPE_CHARS == 900
+        assert mail.assign_shape_notes("x" * 899) == []
+        assert mail.assign_shape_notes("x" * 900) == []
+        notes = mail.assign_shape_notes("x" * 901)
+        assert len(notes) == 1 and "901 characters" in notes[0] and "900" in notes[0]
+
+    def test_each_phrase_the_tier_script_prints_is_named_in_its_own_note(self, mail):
+        """Dies to: the phrase not named, a case-sensitive match, a hyphen read as a
+        letter, the dispatcher's own Tier: and Review: forms missed, two phrases in
+        one note, or the phrases noted where the tier script is not."""
+        notes = mail.assign_shape_notes("the job; Full Tier; why now")
+        assert len(notes) == 1 and "'full tier'" in notes[0] and "scripts/proof_tier.py" in notes[0]
+        notes = mail.assign_shape_notes("code-reviewer and failure-mode-reviewer, both reviewers")
+        assert len(notes) == 3
+        assert [n for n in notes if "'code-reviewer'" in n] and [n for n in notes if "'both reviewers'" in n]
+        named = {p for n in mail.assign_shape_notes("Tier: hooks, so full-tier. Review: both")
+                 for p in ("'tier:'", "'full tier'", "'review:'") if p in n}
+        assert named == {"'tier:'", "'full tier'", "'review:'"}
+        assert mail.assign_shape_notes("the job, why now, what it waits for") == []
+        assert mail.assign_shape_notes("why now: full tier", phrases=False) == []
+
+    def test_the_word_list_carries_every_tier_and_reviewer_the_tier_script_names(self, mail):
+        """The list is a literal (the driver deploys where the tier script does
+        not), pinned here against the script's own tuples so a renamed tier or
+        reviewer reds. Dies to: a name added to the script and not to the list."""
+        tier = _load(REPO_ROOT / "scripts" / "proof_tier.py", "proof_tier_for_the_shape_pin")
+        # The rosters are hand-written and the script's tuples are the actual (FAILURE_MODES
+        # 18.4): a renamed, added or dropped tier or reviewer is loud here, never a silent
+        # narrowing of a loop derived from the subject.
+        assert set(tier.TIERS) == {"full", "recall", "contract"}, tier.TIERS
+        assert set(tier.REVIEWS) == {"none", "code-reviewer", "both"}, tier.REVIEWS
+        words = set(mail.ASSIGN_SHAPE_WORDS)
+        assert {"full tier", "recall tier", "contract tier", "code-reviewer", "both reviewers"} <= words
+        assert all(w == w.lower() and w.isascii() for w in words)
+
+    def test_the_cap_the_brief_and_the_prose_state_is_the_constant(self, mail):
+        """The number lives in the constant, the self-host dispatcher brief, the
+        protocol and two bodies; only the constant is code. Dies to: one copy
+        moved without the others."""
+        import re
+        cap = mail.ASSIGN_SHAPE_CHARS
+        seat = _load(REPO_ROOT / "tools" / "cc" / "seat.py", "seat_for_the_shape_pin")
+        assert f"under {cap} characters" in seat.SELF_HOST_ASSIGN
+        for rel in ("memory/parallel-work-protocol.md", ".claude/commands/inbox.md", "docs/WORKFLOW.md"):
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            stated = re.findall(r"(?i)under (\d+)\s+characters", text)   # a wrap may fall between them
+            assert stated and set(stated) == {str(cap)}, (rel, stated)
+
+    def test_the_notes_never_refuse_and_print_beside_the_dry_run_count(self, mail, monkeypatch, tmp_path, capsys):
+        """Dies to: a note raised as a refusal, the notes skipped on --dry-run or
+        on a real send, the unstripped text counted, or the phrases noted on a
+        tree without the tier script."""
+        for odd in ("", "x" * 5000, "caf\u00e9 \u2014 full tier"):
+            notes = mail.assign_shape_notes(odd)
+            assert isinstance(notes, list) and all(isinstance(n, str) and n.isascii() for n in notes)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(mail, "worktree_name_inherited", lambda root, run=None: False)
+        monkeypatch.setattr(mail, "machine_setting", lambda root, **kw: ("air", "git config espalier.machine = air"))
+        (tmp_path / "espalier.toml").write_text('dispatcher = "air"\n', encoding="utf-8")
+        tier_script = tmp_path / "scripts" / "proof_tier.py"   # the self-host tell, an empty stand-in
+        tier_script.parent.mkdir()
+        tier_script.write_text("", encoding="utf-8")
+        body = tmp_path / "assign.txt"
+        body.write_text("full tier " + "x" * 895 + "\n", encoding="utf-8")   # 905 characters once stripped
+        argv = ["--root", str(tmp_path), "send", "--type", "assign", "--seat", "win", "--lane", "lane/x",
+                "--text-file", str(body)]
+        assert mail.main([*argv, "--dry-run"]) == 0
+        out, err = capsys.readouterr()
+        assert json.loads(out)["type"] == "assign"
+        assert "note: the assign is 905 characters" in err and "'full tier'" in err
+        assert f"body: 905 of {mail.MAX_TEXT} characters" in err
+        sent: list[dict] = []
+        monkeypatch.setattr(mail, "send", lambda root, message: sent.append(message))
+        assert mail.main(argv) == 0 and sent and sent[0]["type"] == "assign"
+        assert "note: the assign is 905 characters" in capsys.readouterr()[1]
+        body.write_text("x" * 900 + "\n", encoding="utf-8")   # at the cap once stripped
+        assert mail.main([*argv, "--dry-run"]) == 0
+        err = capsys.readouterr()[1]
+        assert "note: the assign" not in err and f"body: 900 of {mail.MAX_TEXT}" in err
+        tier_script.unlink()   # an adopter tree: the length is noted, the phrases are not
+        body.write_text("full tier " + "x" * 895, encoding="utf-8")
+        assert mail.main([*argv, "--dry-run"]) == 0
+        err = capsys.readouterr()[1]
+        assert "note: the assign is 905 characters" in err and "'full tier'" not in err
+
+
 class TestMachineSettingReads:
     def test_a_git_error_reads_as_unread_never_as_not_set(self, mail, tmp_path):
         """`git config --get` exits 1 for a key that is not set and 128 for a

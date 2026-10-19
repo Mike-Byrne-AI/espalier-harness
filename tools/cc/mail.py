@@ -144,6 +144,18 @@ MAX_TEXT = 2000
 MAX_PATHS = 64
 MAX_CLASSES = 16
 MAX_IDS = 64
+#: The assign's shape (memory/parallel-work-protocol.md, "What an assign says"): a
+#: note, never a refusal, past this many characters or on a phrase the tier script
+#: prints from the diff, the dispatcher's own "tier:" and "review:" forms among them,
+#: a hyphen read as a space. A literal: the driver deploys where the tier script does
+#: not, and there the phrases are not noted (tests/test_mail.py pins the list against
+#: scripts/proof_tier.py's TIERS and REVIEWS).
+ASSIGN_SHAPE_CHARS = 900
+ASSIGN_SHAPE_WORDS: tuple[str, ...] = (
+    "contract slice", "contract tier", "recall tier", "full tier",
+    "code-reviewer", "failure-mode-reviewer", "both reviewers",
+    "tier:", "review:",
+)
 #: The symbols one claim carries; the rest are a count (``SYMBOLS_MORE_KEY``),
 #: and their paths are kept whole in ``paths``.
 MAX_SYMBOLS = 128
@@ -1703,6 +1715,29 @@ def _repo_root(explicit: str | None) -> Path:
     return Path(out.strip()).resolve()
 
 
+def assign_shape_notes(text: str, *, phrases: bool = True) -> list[str]:
+    """What an assign's text carries that its shape says it should not: the
+    length past ``ASSIGN_SHAPE_CHARS``, and, with ``phrases``, each phrase of
+    ``ASSIGN_SHAPE_WORDS`` it names (case-insensitive, a hyphen read as a
+    space), since the tier script prints those from the diff; the send passes
+    ``phrases`` only where that script is on the tree. Notes, never a refusal:
+    an operator's tier override is a reason to name one, and the dispatcher
+    decides. ASCII, one line each."""
+    notes: list[str] = []
+    if len(text) > ASSIGN_SHAPE_CHARS:
+        notes.append(f"note: the assign is {len(text)} characters; the shape is under "
+                     f"{ASSIGN_SHAPE_CHARS} (the job, why now, what it waits for, the "
+                     "operator's constraints, an edge with its citation)")
+    if not phrases:
+        return notes
+    low = text.lower().replace("-", " ")
+    for phrase in ASSIGN_SHAPE_WORDS:
+        if phrase.replace("-", " ") in low:
+            notes.append(f"note: the assign names '{phrase}', which scripts/proof_tier.py "
+                         "--base prints from the diff")
+    return notes
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mail.py", description=__doc__.split("\n\n", 1)[0])
     parser.add_argument("--root", default=None, help="the checkout (default: the one around the cwd)")
@@ -1915,6 +1950,9 @@ def main(argv: list[str] | None = None) -> int:
                 refusal = assign_refusal(root, machine)
                 if refusal:
                     raise Unresolvable(refusal)
+                tier_script = (root / "scripts" / "proof_tier.py").is_file()   # the self-host tell
+                for line in assign_shape_notes(message["text"], phrases=tier_script):
+                    print(line, file=sys.stderr)
             if args.dry_run:
                 hits = secret_hits(message)
                 if hits:
