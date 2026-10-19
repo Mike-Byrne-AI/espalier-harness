@@ -71,6 +71,7 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _json_safe import decode_text_or_problem, fold_newlines, os_error_text, run_bounded  # noqa: E402
 import _merge_rules  # noqa: E402  the up-to-date rule and the stale-base read, shared with the board
+import _post_merge  # noqa: E402  the post-merge check verdicts, shared with the board and the banner
 import _paths  # noqa: E402  the hooks-module loader behind the checkout's wiring note
 import record_merge  # noqa: E402  the shape-aware merge of the record files (a deployed sibling)
 
@@ -96,12 +97,13 @@ HEAD_MOVE_WAIT_SECONDS = 30.0
 POLL_SECONDS = 3.0
 TITLE_MAX = 72
 POST_MERGE_ROWS = 20
-#: The banner's check-state sets (session_start.py), restated for a tool that
-#: cannot import a hook: green and running states, and states that reach no
-#: verdict; a red is any other state. sister-site: ok a two-site restatement, the hook cannot be imported from tools/cc/
-_CHECK_GREEN = frozenset({"SUCCESS", "SKIPPED", "NEUTRAL"})
-_CHECK_RUNNING = frozenset({"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"})
-_NO_VERDICT = frozenset({"CANCELLED", "STALE"})
+#: The check-state sets, read from their one home (tools/cc/_post_merge.py,
+#: which the banner loads by path and the board imports): green and running
+#: states, and states that reach no verdict; a red is any other state. Aliases,
+#: never copies: tests/test_hook_constant_parity.py pins that no literal returns.
+_CHECK_GREEN = _post_merge.CHECK_GREEN
+_CHECK_RUNNING = _post_merge.CHECK_RUNNING
+_NO_VERDICT = _post_merge.NO_VERDICT
 #: The conclusions that make a post-merge run on the base RED. Every other
 #: completed conclusion (cancelled, stale, skipped by a job-level `if`, neutral,
 #: action required) is no verdict, so a skipped run never reads as a red base
@@ -123,18 +125,11 @@ LIVE_READ_STEP = "Read the pull request title as it is now"
 
 
 def _check_outcome(row: object) -> str:
-    """'green', 'running' or 'red' for one statusCheckRollup row, the banner's
-    rule verbatim (tests/test_hook_constant_parity.py pins the sets equal): a
-    row of a shape this reader does not know reads as running, not as a pass."""
-    if not isinstance(row, dict):
-        return "running"
-    state = row.get("state")
-    if isinstance(state, str) and state:  # StatusContext
-        s = state.upper()
-        return "green" if s in _CHECK_GREEN else "running" if s in _CHECK_RUNNING else "red"
-    if str(row.get("status") or "").upper() != "COMPLETED":
-        return "running"
-    return "green" if str(row.get("conclusion") or "").upper() in _CHECK_GREEN else "red"
+    """'green', 'running' or 'red' for one statusCheckRollup row: the one rule
+    in tools/cc/_post_merge.py (a row of a shape it does not know reads as
+    running, not as a pass), kept under this name for the open pull-request
+    path's callers."""
+    return _post_merge.check_outcome(row)
 
 
 class Refused(Exception):
@@ -462,36 +457,18 @@ def _second_push_message(how: str) -> str:
 
 
 def post_merge_reds(cwd: str | None = None) -> list[str]:
-    """One line per recently merged pull request whose latest run of a check
-    is red -- a check that is not required finishes after auto-merge has
-    landed the lane and reports to nobody unless something reads it (the
-    banner's `Merged:` rule, restated for a tool that cannot import the hook)."""
-    rows = _gh_json("pr", "list", "--author", "@me", "--state", "merged", "--limit", str(POST_MERGE_ROWS),
-                    "--json", "number,statusCheckRollup", cwd=cwd)
-    lines: list[str] = []
-    if not isinstance(rows, list):
-        return lines
-    for pr in rows:
-        if not isinstance(pr, dict):
-            continue
-        latest: dict[str, tuple[str, dict]] = {}
-        for row in pr.get("statusCheckRollup") or []:
-            if not isinstance(row, dict):
-                continue
-            name = str(row.get("name") or row.get("context") or "?")
-            started = str(row.get("startedAt") or "")
-            if name not in latest or started >= latest[name][0]:
-                latest[name] = (started, row)
-        reds = []
-        for name, (_, row) in sorted(latest.items()):
-            if _check_outcome(row) != "red":
-                continue
-            if str(row.get("conclusion") or "").upper() in _NO_VERDICT:
-                continue  # cancelled or stale: no verdict, the banner's Merged: rule
-            reds.append(name)
-        if reds:
-            lines.append(f"red after merge: #{pr.get('number')} {', '.join(reds)}")
-    return lines
+    """One line per check whose owned verdict over the last POST_MERGE_ROWS
+    merged pull requests is red -- a check that is not required finishes after
+    auto-merge has landed the lane and reports to nobody unless something
+    reads it. The rule and the words are tools/cc/_post_merge.py's, the one
+    home the banner's `Merged:` line and the board's `checks:` line read too:
+    the merge the red has held since, the leg's finish, the merge it was green
+    on, and a newer green that started before the red merge, printed beside
+    it, never over it. No author filter, on purpose: the lines describe the
+    base's state, which every merged pull request shapes whoever pushed it,
+    so on a team repository a colleague's red is named too."""
+    merged = _post_merge.read_merged(cwd, POST_MERGE_ROWS, gh=lambda args: _gh_json(*args, cwd=cwd))
+    return _post_merge.lines(_post_merge.transitions(merged), oldest=_post_merge.oldest_merge(merged))
 
 
 def base_red_after_merge(base: str, cwd: str | None = None) -> str | None:
@@ -1623,8 +1600,9 @@ _DECIDED_NOTES = (
 #: An Actions job's link as `gh pr checks --json link` gives it: run, then job.
 _JOB_LINK_RE = re.compile(r"/actions/runs/(\d+)/job/(\d+)(?![0-9])")
 #: The buckets of `gh pr checks` that hold a merge: a cancelled required cell
-#: holds it as surely as a failed one. sister-site: ok the banner's twin, pinned equal by tests/test_hook_constant_parity.py
-_RED_BUCKETS = frozenset({"fail", "cancel"})
+#: holds it as surely as a failed one. An alias of the one home's set
+#: (tools/cc/_post_merge.py), never a copy.
+_RED_BUCKETS = _post_merge.RED_BUCKETS
 #: A finished job's conclusions that hold nothing, in the REST spelling.
 _JOB_GREEN = frozenset(s.lower() for s in _CHECK_GREEN)
 

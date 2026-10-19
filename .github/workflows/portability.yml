@@ -9,8 +9,11 @@ name: Portability
 # workflow is the empirical belt-and-suspenders for the residual no static rule
 # encodes. The `os` and `select` inputs narrow a dispatched run to one runner
 # and a selection -- the loop that closed the Windows reds on 2026-09-23.
-# Pull requests and dispatch only: the signal is read before the merge, on the
-# PR's merge result, and main never re-runs it (not a required check).
+# Pull requests and dispatch only: main never re-runs it and it is not a
+# required check, so its legs finish after auto-merge has landed the lane and
+# the verdict is read AFTER the merge -- by the board's checks: line, the
+# SessionStart banner's Merged: line and the ship preflight, through
+# tools/cc/_post_merge.py, which names the merge each red has held since.
 on:
   pull_request:
     branches: [main]

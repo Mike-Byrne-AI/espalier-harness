@@ -372,7 +372,7 @@ def _preflight_answers(root, *, dirty="", untracked="", commits="abc1234 feat: a
         ("git", "log", "--oneline"): (0, commits, ""),
         ("git", "merge-tree"): (0, "abc123\n", ""),   # the merge verdict: clean unless a test says otherwise
         ("git", "diff", "--name-only"): (0, "", ""),   # the attribute walk: nothing changed on both sides
-        ("gh", "pr", "list", "--author"): (0, merged, ""),
+        ("gh", "pr", "list", "--state"): (0, merged, ""),   # no author filter: every seat pushes as one account
         ("gh", "run", "list", "--workflow", "post-merge.yml"): (0, base_runs, ""),
         _ROW_FILES: _row_log(),   # no row added by the lane's own commits
     })

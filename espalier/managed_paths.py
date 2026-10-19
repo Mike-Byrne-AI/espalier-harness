@@ -111,6 +111,14 @@ STANDARD_MANAGED_TOOLS = [
     # by hooks/session_start.py (the Merging: line, parent-dir sys.path) and
     # board.py; SessionStart raises ModuleNotFoundError on a fresh init without it.
     "tools/cc/_merge_rules.py",
+    # The post-merge check verdicts: one home for the rule the ship preflight,
+    # the SessionStart banner's Merged: line and the board's checks: line read
+    # (ownership newest-merge-first, a green run clearing an older red only
+    # when it started after that merge). Imported by ship.py and board.py as a
+    # sibling, loaded BY PATH by hooks/session_start.py (a load the
+    # import-closure test cannot see); without it the banner's pull-request
+    # block says it is unread and the driver's preflight prints no reds.
+    "tools/cc/_post_merge.py",
     # The one loader for the Session Log and changelog fragments (one row or
     # one lane's entries per file). Loaded BY PATH by hooks/session_start.py
     # and hooks/post_write_check.py through _hook_utils, imported by
