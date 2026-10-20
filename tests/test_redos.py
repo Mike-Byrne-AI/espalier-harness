@@ -2776,8 +2776,9 @@ def test_the_walker_and_ps_body_timers_skip_on_a_host_without_sigalrm(tmp_path, 
     the walker row's warm call went under the alarm (DEF-5023), twelve
     simulated-clock rows reached the walker timer through it and each redded the
     Windows leg. Driven on every host by taking the alarm away, so a dropped guard
-    reds on any cell that runs this file. These two timers only: a third arming
-    function is not covered here (DEF-5024 files that class's gate)."""
+    reds on any cell that runs this file. These two timers only: every other read
+    of an alarm name is held to its guard by
+    tests/test_test_suite_contract.py::test_every_sigalrm_arming_function_guards_itself."""
     # Safe only because this module runs pytest-timeout's thread method (the
     # pytestmark above): under the signal method its cancel reads signal.SIGALRM
     # while it is deleted, an INTERNALERROR that ends the session.

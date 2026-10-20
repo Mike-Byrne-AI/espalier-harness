@@ -6,7 +6,8 @@
   (`tests/`, `.github/workflows/`, `scripts/`); nothing deploys through `espalier init`.
 - Type: test-suite contract plus CI workflow. Three waves, each its own lane and pull request,
   because two of them wait on a decision the third does not.
-- **Kind: PACK.** `lane/alarm-guard-contract` (W1), `lane/windows-main-leg` (W2),
+- **Kind: PACK.** `lane/tests-each-sigalrm-arming-function-guards-itself` (W1, the name the ship
+  driver derives from its subject; authored as `lane/alarm-guard-contract`), `lane/windows-main-leg` (W2),
   `lane/tests-macos-race-rows-run-as-expected-failures` (W3, the name the ship driver derives
   from its subject). Each wave has its own Task 0, and each Task 0 can end its wave.
 - Parent: `TP-703` (`task-packs/TP-703-multi-seat-discipline.md`), Wave 2, item 5. W2 and W3
@@ -81,20 +82,21 @@ missed.
 
 ## Scope (in)
 
-1. **W1 (`lane/alarm-guard-contract`)**: the contract `DEF-5024` prescribes,
+1. **W1 (`lane/tests-each-sigalrm-arming-function-guards-itself`)**: the contract `DEF-5024` prescribes,
    `test_every_sigalrm_arming_function_guards_itself`, in `tests/test_test_suite_contract.py`
    beside `_sigalrm_offenders`, reusing its `_memo_parser`, `_terminal_name` and
    `_all_test_dir_modules` and the `spellings` rule (today a closure inside `_sigalrm_offenders`;
    it is hoisted to module level so two detectors read one rule, and the existing test keeps
-   every assertion). The rule: every function under `tests/` that arms `SIGALRM` (calls
-   `setitimer` or `alarm`, or installs a `SIGALRM` handler, under any spelling `from signal
-   import ...` gives it) calls `hasattr(signal, "SIGALRM")` in its own body. No caller-path
-   analysis: the tree meets the per-function rule today (0 unguarded of 33 after #320, the row's
-   census). The row's second clause lands in the same lane: a module that deletes `signal.SIGALRM`
+   every assertion). The rule, as built at W1's review round (1-B): every read of an alarm name
+   Windows lacks under `tests/` (`SIGALRM`, `setitimer`, `alarm`, `ITIMER_REAL` and their kin, as
+   a `signal` attribute or a `from signal import`) sits under a guard that covers it, a branch
+   that runs only with the alarm or an earlier quiet exit without it. No caller-path analysis: the
+   tree meets the rule today (33 reading scopes, 0 uncovered). The row's second clause lands in
+   the same lane (1-D): a module that deletes a `signal` name the timeout plugin reads
    (`monkeypatch.delattr(signal, ...)`, as
-   `tests/test_redos.py::test_the_walker_and_ps_body_timers_skip_on_a_host_without_sigalrm` does)
-   must declare the thread method, since under the signal method pytest-timeout's cancel reads the
-   name while it is gone. The file is in the contract slice (`tests/conftest.py::_MARKER_RULES`
+   `tests/test_redos.py::test_the_walker_and_ps_body_timers_skip_on_a_host_without_sigalrm` does),
+   or imports a function that does, must declare the thread method, since under the signal method
+   pytest-timeout's cancel reads the name while it is gone. The file is in the contract slice (`tests/conftest.py::_MARKER_RULES`
    names `test_test_suite_contract` under `contract`), so a tests-only diff runs it. `DEF-5024`
    struck in-lane with its own probe.
 2. **W2 (`lane/windows-main-leg`)**: after Task 0 measures it, a Windows job over the serial
@@ -174,8 +176,27 @@ Added at W3's 0-A (2026-10-19), from the pack-artifact review.
   and the class (at authoring it names only the anchor). Shared file: `tests/conftest.py`.
 - **`TP-703i`** edits `tests/conftest.py` (a stand-in roster line, if its census needs one), and
   meets W1: W1's 1-D delete clause would flag `TP-703i`'s planned stand-in helper, which deletes
-  the signal names under no thread mark. W1's 0-A carves helpers out, or `TP-703i` marks its
-  module.
+  the signal names under no thread mark. *Resolved at W1's 0-A, corrected at its review round:*
+  neither authoring option held (with the clause counting the module, a marked helper beside an
+  unmarked importer read clean, on a scratch run). The clause counts the unit and the importer arm
+  follows a function from module to module, so every test module that imports such a helper,
+  directly or through another helper's function imported by name, is asked for the thread method
+  (a whole-module import of a wrapping helper is not followed yet: `DEF-4035`), and the helper itself is
+  asked for nothing, since a `pytestmark` in a module pytest never collects applies to no test.
+  `tests/test_bounded_spawn.py` carries no `pytestmark` today, so `TP-703i` adds one where it
+  imports `as_os`. Keep `as_os`'s deletes in a module-level function: a helper that deletes under
+  a module-level or class-level statement is reported. A `tests/conftest.py` that imports such a
+  helper is read and reds (no mark in `conftest.py` reaches a test), so wire `as_os` into the test
+  modules, not through `conftest.py`. Not read: a `pytest_plugins` module, a relative or
+  `importlib` import, and the value a module passes (one that imports `as_os` only for linux or
+  macOS is still asked for the thread method).
+- **`TP-703a`** (LANDED, kept in `task-packs/` until the roadmap lands) cites `DEF-5024`'s
+  contract in its Scope (out) as this pack's. The strike verb reads every pack in the root as
+  active and refuses on that line, so W1 strikes with `--despite-deferrals` and a closing text
+  that says the work landed here; the landed record is not edited. Added at W1's 0-A.
+- **W2's own 0-A**: `tools/cc/board.py` and `tools/cc/_post_merge.py` are deployed
+  (`espalier/managed_paths.py`), so the Status line's "nothing deploys through `espalier init`"
+  does not hold for W2-B. Pre-flagged at W1's 0-A, not corrected there.
 - **`TP-703c`** edits `tests/conftest.py`'s `pytest_configure`, a hunk disjoint from the
   collection hook W3 changes.
 - Sequential single-seat lanes make each of these a catch-up, never a conflict; the board's
@@ -199,6 +220,14 @@ and re-raise to the dispatcher, never adjust and continue.
 3. *Oracle:* `grep -n 'def spellings' tests/test_test_suite_contract.py` and the two tests that
    call `_sigalrm_offenders`. *Refuting result:* another open lane edits the function (the
    board's `overlaps:` line names the file). *Exit:* wait for that merge, then hoist.
+
+*Read 2026-10-19 at W1's start (`main` at 3dd2850e):* item 1, a scratch prototype of the detector,
+under both unit rules the 0-A weighed, read 31 arming functions in the pre-fix text and exactly
+`_ps_body_call_ms` and `_walker_alarmed_ms` unguarded (the real detector re-reads it at 1-C);
+item 2, at the head 33 arming (31 in `tests/test_redos.py`, 2 in
+`tests/test_speedbump_irreversible.py`), 0 unguarded, no nested def arming, and every guard in its
+function's own body before the first arm; item 3, the only open pull request is #327
+(`docs/external/` only) and no live claim names the file. Build.
 
 **W2-0 (the slim leg; the operator reads the figure before anything is written).**
 1. *Oracle:* one dispatched run, the serial files only on Windows:
@@ -285,7 +314,7 @@ The pack prescribes prose shapes: no fence here is copy-ready, because W1's edit
 whose exact lines the lane reads at its head, W2's file does not exist until its Task 0 says so,
 and W3's roster is a tuple whose one entry waits on the operator.
 
-### W1 — the alarm-guard contract (`lane/alarm-guard-contract`)
+### W1 — the alarm-guard contract (`lane/tests-each-sigalrm-arming-function-guards-itself`)
 
 **1-A Hoist the spelling reader.** `tests/test_test_suite_contract.py`'s `spellings(tree)` and
 `arms(node, names)` move from inside `_sigalrm_offenders` to module level as `_sigalrm_spellings`
@@ -294,36 +323,94 @@ assertion (`test_every_module_that_arms_sigalrm_declares_the_thread_method`'s fl
 modules included). *Refuted if:* the closures read a variable of the enclosing function other
 than their arguments (read them first).
 
-**1-B The detector.** `_sigalrm_unguarded(modules)` returns, per module, the qualified names of
-every function or method whose body arms (by `_arms_sigalrm`) and whose body holds no call
-`hasattr(<name>, "SIGALRM")` where `<name>` is a spelling of the `signal` module (`import signal
-as s` counts). A nested function is its own unit, as `_sigalrm_offenders` treats units. *Refuted
-if:* W1-0 item 1 does not read the two pre-fix helpers.
+**1-B The detector.** `_sigalrm_unguarded(modules)` returns (every scope under `tests/` that
+reads an alarm name, the ones with a read no guard covers), each as `tests/<stem>.py::<qualified
+name>`. `_ALARM_NAMES` are the names an alarm reads from `signal` that Windows lacks (`SIGALRM`,
+`setitimer`, `getitimer`, `alarm` and the three `ITIMER_*`); a read is a `signal` attribute of one,
+under any spelling of the module (`import signal as s` counts), or a `from signal import` of one.
+A scope is each def at any depth (`_every_def`) and a module's own statements with its defs'
+decorators and defaults (`<module>`). A read is covered when it sits in a branch of an `if` or a
+conditional expression that runs only with the alarm (`hasattr(<signal module>, <an alarm
+name>)`, a name assigned from one such as `has_alarm`, or an `and` holding one), or follows a
+statement of a block around it that leaves quietly without the alarm (`if not ...:` ending in
+`return` or a call named `skip`). A mark, an `assert`, a `raise`, a guard in a caller and a guard
+after the read do not count, so a helper answers for itself. *Corrected twice.* At W1's 0-A the
+authoring text's unit rule was wrong (`_collect_units` folds a nested def into its parent), so the
+detector walks every def itself. At W1's review round both reviewers showed the first build's rule,
+any `hasattr` call before the first arm, accepting a guard that covers nothing: an `assert`, an
+unused flag, and `tests/test_speedbump_irreversible.py::_search_ms` with one `if has_alarm:`
+branch dropped; a module-level `from signal import` went unread. The rule became read coverage,
+which the tree meets for free and which names exactly the two pre-fix helpers. *Refuted if:* W1-0
+item 1 does not read the two pre-fix helpers.
 
 **1-C The test.** `test_every_sigalrm_arming_function_guards_itself` over
-`_all_test_dir_modules()`: asserts the detector read at least one arming function (the floor
-that says the detector is not policing an empty set) and that the unguarded list is empty, each
-offender printed as `path::qualname`. Earned red twice: a synthetic module string with an
-unguarded `def` is flagged (the must-trip case, in a sibling test), and the detector over
-`9c4ca09d^1`'s `tests/test_redos.py` reads the two helpers (W1-0 item 1, recorded in Landing).
+`_all_test_dir_modules()`: asserts the detector read alarm names in at least two modules (the
+floor that says it is not policing an empty set; `tests/test_redos.py` and
+`tests/test_speedbump_irreversible.py` read them today) and that no scope holds an uncovered read,
+each offender printed as `path::qualname` beside the guard shapes that count and those that do
+not. Its calibration is `TestTheAlarmGuardDetectorReportsBothVerdicts`, beside
+`TestTheSigalrmDetectorReportsBothVerdicts`: an unguarded timer and handler reported; an early
+quiet exit covers what follows it; the `_search_ms` branch shape reads clean and reds with its
+`finally` disarm unbranched; the wrong polarity reds, and the other branch of a negated test does
+not; a guarded caller leaves its unguarded helper reported, and an unguarded caller of a guarded
+helper is not read; a late guard, an `assert`, a `raise` and a skipif mark each red; a guard on
+`SIGTERM` or on another module does not count, while a guard name and another alarm name do; the
+aliased spellings; import-time reads (a module-level `from signal import`, a default argument)
+red, and a module-level skip covers them; a nested def, a method, an async def and a def under a
+module-level `if` are read; a `finally` after a skip inside the `try` is not covered; a call named
+`alarm` on another object is not a read. Earned red three ways: those cases; the detector run by
+hand over `9c4ca09d^1`'s `tests/test_redos.py` reads the two helpers (recorded in Landing; old
+history is absent from a shallow clone, so this is not a test); and the test itself, in situ, reds
+naming the helper when `_walker_alarmed_ms`'s guard is removed from the live file, which is then
+restored.
 
-**1-D The delete clause.** `_sigalrm_offenders` also counts a module as arming when any unit
-calls `monkeypatch.delattr(signal, <name>, ...)` or `del signal.SIGALRM` under any spelling, where
-`<name>` is the constant `"SIGALRM"` or any non-constant expression: the one real instance,
+**1-D The delete clause.** `_sigalrm_offenders` also counts a unit as arming when its body
+deletes a name the timeout plugin's signal method reads: `<x>.delattr(<signal spelling>, <name>,
+...)` (a fixture's `monkeypatch.delattr`, or the builtin), `<x>.delattr("signal.<name>")`, or
+`del <signal spelling>.<name>`, where `<name>` is any non-constant expression or a constant among
+the names `pytest_timeout`'s own source reads from `signal`, derived from the installed plugin (at
+2.4.0: `SIGALRM`, `setitimer`, `ITIMER_REAL`, `SIG_DFL` and `signal`; a floor of `SIGALRM` and
+`setitimer` says the derivation read the plugin). The module that holds the unit, and through the
+existing importer arm every module that imports it, must then carry the thread method. The word
+filter that decides which modules are parsed gains `delattr`, the derived names, and the one
+spelling with none of them (`del <alias>.signal`). The real instance today,
 `tests/test_redos.py::test_the_walker_and_ps_body_timers_skip_on_a_host_without_sigalrm`, loops
 `for name in ("SIGALRM", "setitimer", "ITIMER_REAL")` into `monkeypatch.delattr(signal, name,
-raising=False)`, so a literal-only match is blind to the likeliest copy source. The thread-method
-test then flags a module that deletes the name without the mark. Earned red against a must-trip
-fixture copied from that loop (under no `pytestmark`), the literal form a second case. *Refuted
-if:* the row's
-reasoning is wrong about the signal method's cancel reading the name (the row says the
-failure-mode review measured it; the lane re-reads `pytest_timeout`'s source at the pinned
-version before relying on it, and if the cancel is guarded there, 1-D is dropped and the row's
-text corrected at the strike).
+raising=False)`, so a literal-only match is blind to the likeliest copy source. A module pytest
+never collects (its name matches neither `test_*.py` nor `*_test.py`: the `_*.py` helpers) is no
+longer asked for a `pytestmark` of its own, since a mark there applies to no test (a scratch run
+read none from `conftest.py`), and `tests/conftest.py`'s line says so and asks for the arm to move
+into the test module that needs it. Earned red: a must-trip fixture copied from that loop under
+no `pytestmark`, the literal form, the string form, an aliased module, and a helper that deletes
+beside an unmarked importer (the importer flagged, the helper not). *Corrected at W1's 0-A:* as
+first written the clause counted the module, so a marked helper beside an unmarked importer read
+clean (a scratch run), and only `"SIGALRM"` was a constant, while the cancel reads four more
+names. *Premise, re-read at W1's 0-A* (installed pytest-timeout 2.4.0; `pyproject.toml` pins only
+a floor, `>=2.1.0`): `pytest_timeout_set_timer`'s `cancel()` reads `signal.setitimer`,
+`signal.ITIMER_REAL`, `signal.signal`, `signal.SIGALRM` and `signal.SIG_DFL` unguarded, and
+`pytest_exception_interact` runs it after a failing call phase, before teardown restores a deleted
+name. On a scratch run under the signal method, a failing test with `SIGALRM` deleted ended the
+session in an INTERNALERROR (one test reported of three); under the thread method it was a plain
+failure. *Refuted if:* a later plugin guards its cancel (1-D is then dropped and the row's text
+corrected at the strike). *Changed at W1's review round:* the importer arm follows a function from
+module to module until nothing new arms (a helper that wraps another helper's function asks the
+wrapper's importers); a helper that arms or deletes outside a module-level function (under a
+module-level or class-level statement), where no importer can be followed, is reported instead of
+skipped; each offender's line names the hazard of its kind (a delete: the session ends in
+INTERNALERROR); and pyproject's `python_files` is read as a string or a multi-line array, an
+unreadable value failing loudly. The calibration adds the keyword `target=`, the tuple `del`, a
+module-level delete, a non-signal string target, the `*_test.py` default, `conftest.py` importing
+a helper, the two-hop wrapper and the def under a module-level `if`; the cases that need a plugin
+name skip without pytest-timeout. The imports followed are `_imports_from_tests`' (not a relative
+import, `importlib` or `pytest_plugins`).
 
-**1-E Strike `DEF-5024`** with the row's own probe (it reads the contract file for the test's
-name, an assert and the detector's `"hasattr"` string), `python3 tools/cc/ledger_row.py strike
-DEF-5024 --text-file <outside the checkout>`.
+**1-E Strike `DEF-5024`.** Drive the row's own probe first (`task-packs/probes.d/DEF-5024.json`'s
+`cmd`: it reads the contract file for the test's name, an `assert` inside it and the double-quoted
+`"hasattr"` string) and record True in Landing: the strike verb never runs it, and deletes the
+probe file. Then `python3 tools/cc/ledger_row.py strike DEF-5024 --despite-deferrals --text-file
+<outside the checkout>`: `TP-703a`'s Scope (out) cites this row as this pack's (Cross-pack
+coordination), and the closing text says the deferred work landed here, without naming the loop in
+`tests/test_redos.py` as the one permanent instance (`TP-703i` moves it into a helper).
 
 ### W2 — the slim Windows leg on `main` (`lane/windows-main-leg`; after W2-0 and the operator)
 
@@ -493,6 +580,8 @@ over live and struck rows (re-run it; the rows below are the ones a wave's mecha
 
 | Item | Status | Evidence |
 |---|---|---|
+| `DEF-4034` (the alarm-guard contract judges a guard by its spelling) | **FILED by W1** (its review round) | four shapes, none in the tree; the row's probe is the fix's calibration test |
+| `DEF-4035` (the thread-method contract follows an arming import only by name) | **FILED by W1** (its review round) | a whole-module import of a wrapping helper, and a subclass; none in the tree |
 | `DEF-5024` (no check that each `SIGALRM`-arming test function guards itself) | **CLOSED by W1** | the detector reads 2 unguarded on `9c4ca09d^1` and 0 at the head; the must-trip module is flagged; the row's probe prints True; struck in-lane |
 | `DEF-977` (no Windows check gates a merge) | **NOT CLOSED**; W2 is its first step and gates nothing | the row's probe (Windows jobs in `test.yml`) still prints 0; the tail sentence names the advisory leg and its measured minutes |
 | `DEF-2025` (struck 2026-10-18; the runners' race in the nested child) | **RE-OPENED as a successor row, and its red marked a non-strict expected failure on the runners by W3, counted and still run**, on the operator's word (given 2026-10-19); the successor stays live while the race stands | the roster's entries; the contract tests; the crash watch; the leg's green rate (the roadmap's line 2) |
@@ -501,11 +590,13 @@ over live and struck rows (re-run it; the rows below are the ones a wave's mecha
 
 ## Pass criteria
 
-- W1: `pytest tests/test_test_suite_contract.py -q` green at the head; the new test reds on the
-  text of `9c4ca09d^1:tests/test_redos.py` and on the synthetic unguarded module; no assertion in
+- W1: `pytest tests/test_test_suite_contract.py -q` green at the head; the detector, run by hand
+  over the text of `9c4ca09d^1:tests/test_redos.py`, reads exactly the two helpers (recorded in
+  Landing); the new test reds in situ with a helper's guard removed, and each must-trip case of
+  1-C and 1-D reds against its mutation; no assertion in
   `test_every_module_that_arms_sigalrm_declares_the_thread_method` or
   `test_no_engine_or_hook_module_arms_sigalrm` is weakened and no floor lowered; `DEF-5024`'s
-  probe prints True and the row is struck.
+  probe prints True before the strike (recorded in Landing) and the row is struck.
 - W2: the measured duration of the dispatched serial run on `windows-latest` is in this file's
   Landing before the workflow exists; the workflow's `timeout-minutes` is at least twice it; a
   push to `main` runs it and `tools/cc/board.py` names its red on the `checks:` line through
@@ -536,7 +627,7 @@ over live and struck rows (re-run it; the rows below are the ones a wave's mecha
 ## Files touched
 
 **New:** `.github/workflows/post-merge-windows.yml` (W2, after its Task 0 and the operator);
-`tests/_nested_race.py` (W3, the race's own failure type); a changelog fragment (W3).
+`tests/_nested_race.py` (W3, the race's own failure type); a changelog fragment each (W1, W3).
 
 **Modified:** `tests/test_test_suite_contract.py` (W1, W3); `tests/conftest.py` (W3);
 `tests/test_xdist_never_ran.py` (W3: the driver raises the race's failure, the watch's label);
@@ -545,17 +636,20 @@ over live and struck rows (re-run it; the rows below are the ones a wave's mecha
 (W3: the decision recorded, and a pointer where the registry's text predates it);
 `tools/cc/_post_merge.py` and its vendored twin by `scripts/sync_vendor_cc.py` (W2-B);
 `tests/test_post_merge.py` (W2-B); `tools/cc/board.py` and `tests/test_board.py` (W2-B, the
-rendered line); `task-packs/ledger.d/DEF-5024.md` (struck by the verb, W1);
+rendered line); `task-packs/ledger.d/DEF-5024.md` (struck by the verb, W1); `docs/CONVENTIONS.md` (W1: the
+wait-budget bullet names the read-coverage rule and the delete clause); `tests/README.md` and one
+docstring of `tests/test_redos.py` (W1: the thread-method sentence, and the pointer to the gate);
+`task-packs/TP-703-multi-seat-discipline.md`'s Children line (W1);
 `task-packs/ledger.d/DEF-977.md` (repinned by the verb, W2); two new row files under
 `task-packs/ledger.d/` and their probe files under `task-packs/probes.d/` (W3, by the verb:
 `DEF-4032`, `DEF-2025`'s successor, on the operator's word; `DEF-4033`, the completed-child
 count the review round split out).
 
-**Deleted:** none.
+**Deleted:** `task-packs/probes.d/DEF-5024.json` (W1, by the strike verb).
 
 **Unmodified on purpose:** `.github/workflows/post-merge.yml` (the proof's verdict is the
 revert trigger and stays one job); `.github/workflows/portability.yml` (`TP-703a` corrects its
-header; its legs stay as they are); `tests/test_redos.py` (already guarded by #320);
+header; its legs stay as they are); `tests/test_redos.py`'s code (already guarded by #320; W1 changes one docstring);
 `scripts/proof_tier.py::SERIAL_FILES` (the one home W2 reads). The six rows of
 `tests/test_xdist_never_ran.py` carry no mark in the file: the mark is applied at collection.
 
@@ -570,6 +664,10 @@ header; its legs stay as they are); `tests/test_redos.py` (already guarded by #3
 3. **W3-0 items 1 and 2**, then **W3** only on the operator's re-open and after `TP-703a` merges.
    Checkpoint: the successor row, the roster, the contract tests' reds, the dispatched macOS run.
 4. **Red-team each wave** before its tier, the reviewers its diff earns on a snapshot clone.
+   W1's diff is tests and records, so the tier's `review:` line reads `none`; it ships a gate, so a
+   code-reviewer and a failure-mode-reviewer read it anyway (added at W1's 0-A), and the contract
+   file runs once through `scripts/archive_probe.py` (`tests/CLAUDE.md` rule 5: the new test
+   asserts a population of the tree).
    What this pack most likely got wrong, for the passes to bite on: 1-B reading a guard in a
    caller as the callee's (the row says no caller-path analysis is needed because the tree meets
    the per-function rule; a reviewer should try the shape where a guarded wrapper calls an
@@ -589,10 +687,10 @@ read these as the author's guess, not a schedule.
 
 | Wave | Build | Red-team and tier | Notes |
 |---|---|---|---|
-| W1 | 2 to 3 h | 0.5 h plus the contract slice | a hoist, a detector, two tests, a strike |
+| W1 | 3 to 4 h (re-estimated at its 0-A) | 1 h plus the contract slice, two reviewers and the archive probe | a hoist, a detector, the delete clause at unit level, two calibration classes, a strike |
 | W2 | 1 h after a 1 to 2 h dispatched run | 1 h plus the full tier | a workflow and one reader line; the operator's call first |
 | W3 | 1.5 to 2 h | 0.5 h plus the full tier and a dispatched macOS run | a roster, a hook change, contract tests, a row by the verb |
-| Total | 4.5 to 6 h | 2 h | expect the measured overrun |
+| Total | 5.5 to 7 h | 2.5 h | expect the measured overrun |
 
 ## Landing
 - State: DRAFT
@@ -650,4 +748,44 @@ read these as the author's guess, not a schedule.
   - Reach: `DEF-2025` re-opened as `DEF-4032` (live; it closes when the watch reads zero crashed
     children and the roster line every row completed over 30 macOS legs, in the lane that removes
     the entries); `DEF-4033` filed (a completed child's never-ran count, read once).
+- W1 landed 2026-10-20, single-seat, on `lane/tests-each-sigalrm-arming-function-guards-itself`;
+  the pack stays DRAFT while W2 is open:
+  - Commits: the lane's commit (its pull request names it).
+  - Suite (`scripts/proof_tier.py --run`, the contract tier, after the last edit): ruff clean;
+    the contract slice 5,448 passed, 1 failed (the known box-local record-merge test, Apple git
+    2.39.5's `update-index --unresolve`); the contract file 206 passed; `tests/test_redos.py` at
+    one worker 955 passed; the contract file in an extracted release archive 206 passed.
+  - 0-A (2026-10-19, `main` at 3dd2850e): code-reviewer, Pack-artifact review checklist v2,
+    REQUEST CHANGES (0 BLOCK, 4 WARN, 13 NIT), folded before any code: the strike's deferral
+    refusal (1-E), the delete clause at unit level with the helper carve-out and the plugin's
+    five names (1-D), 1-B's unit rule, the pass criteria's hand run, the files and the effort;
+    fence check 0 fences (prose shapes). Out of W1: W2-B edits deployed files (Cross-pack).
+  - Task 0: item 1, the detector run by hand over `9c4ca09d^1:tests/test_redos.py` named exactly
+    `_ps_body_call_ms` and `_walker_alarmed_ms`; item 2, at the head 33 scopes read, 0 flagged;
+    item 3, no other lane in the file. Build.
+  - Earn-the-red, first build: in situ the contract named `_walker_alarmed_ms` with its guard
+    removed (the file restored identical); the delete clause's 11 cases red against the code
+    before it; 20 of 20 named mutants killed; the contract file 194 passed here and in an
+    extracted release archive.
+  - Red-team: code-reviewer REQUEST CHANGES (0 BLOCK, 2 WARN, 13 NIT) and failure-mode-reviewer
+    REQUEST CHANGES (0 REGRESSION, 3 GAP, 4 ROUGH-EDGE), both on a snapshot clone. One fix
+    batch: read coverage in place of a guard's position (1-B), import-time reads, the importer
+    arm followed module to module and an unfollowed helper reported (1-D), the hazard per kind,
+    the plugin-dependent cases skipped without the plugin, `python_files` read loudly, the docs
+    and this record. Declined: pinning pytest-timeout or a fallback name set (a respelled plugin
+    reds the floor test, the signal wanted); the `pyproject.toml` comment (incomplete, not wrong,
+    and an edit there earns both reviewers).
+  - Earn-the-red, the review round's code: 37 of 37 named mutants killed by their named tests;
+    in situ the contract named `_walker_alarmed_ms` with its guard removed and
+    `tests/test_speedbump_irreversible.py::_search_ms` with its `finally` disarm unbranched (both
+    restored identical); the detector over the pre-fix text named exactly the two helpers;
+    `DEF-5024`'s probe printed True through the checker's own runner before the strike.
+  - Second red-team round: failure-mode-reviewer on the refreshed clone, APPROVE with notes
+    (1 REGRESSION, against the first build's draft and not `main`; 4 GAP; 1 ROUGH-EDGE; each a
+    shape not in the tree, and each false green falls back to the Windows leg). Filed as
+    `DEF-4034` (the guard judged by its spelling) and `DEF-4035` (import following past a
+    whole-module import); the failure message and `docs/CONVENTIONS.md` name the safe spellings
+    meanwhile.
+  - Reach: `DEF-5024` struck (`--despite-deferrals`, for `TP-703a`'s Scope (out) line);
+    `DEF-4034` and `DEF-4035` filed, both probes driven open at filing.
 - Date: 2026-10-18 (authored, local)
