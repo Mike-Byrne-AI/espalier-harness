@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4033",
+ "subject": "tests/test_xdist_never_ran.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the count depends on GitHub's macOS runners' timing and has not shown on this repository's Mac or Windows box; the oracle is the macOS portability leg's FAILED line",
+ "row_sha": "73b1c1a5ed18",
+ "text_sha": "c47549cd051b",
+ "verified_2026_10_19": "OPEN (filed 2026-10-19; probe driven at filing)"
+}

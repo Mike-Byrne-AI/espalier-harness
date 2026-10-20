@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4032",
+ "subject": "tests/test_xdist_never_ran.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the race lives on GitHub's macOS runners and never showed on this repository's Mac or Windows box, so a local probe would read the roster, not the race; the oracle is the nested controller crash annotation on the macOS portability leg",
+ "row_sha": "0530be5c2cc3",
+ "text_sha": "ba67edf291fb",
+ "verified_2026_10_19": "STILL_OPEN (re-pinned value unchanged on 2026-10-19: W3's review round: the mitigation is bounded to the race's own failure type, the runs are named, the write's ValueError variant is named, and the completed-child shape is split out to DEF-4033) [changed: text]"
+}

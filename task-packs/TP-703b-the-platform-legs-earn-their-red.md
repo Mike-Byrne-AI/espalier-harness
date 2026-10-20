@@ -1,4 +1,4 @@
-# TP-703b — The platform legs earn their red: the alarm-guard contract, a slim Windows leg on main, and the macOS skip counted
+# TP-703b — The platform legs earn their red: the alarm-guard contract, a slim Windows leg on main, and the macOS race counted
 
 ## Status
 
@@ -7,7 +7,8 @@
 - Type: test-suite contract plus CI workflow. Three waves, each its own lane and pull request,
   because two of them wait on a decision the third does not.
 - **Kind: PACK.** `lane/alarm-guard-contract` (W1), `lane/windows-main-leg` (W2),
-  `lane/macos-skip-counted` (W3). Each wave has its own Task 0, and each Task 0 can end its wave.
+  `lane/tests-macos-race-rows-run-as-expected-failures` (W3, the name the ship driver derives
+  from its subject). Each wave has its own Task 0, and each Task 0 can end its wave.
 - Parent: `TP-703` (`task-packs/TP-703-multi-seat-discipline.md`), Wave 2, item 5. W2 and W3
   wait on `TP-703a`'s merge, so that the verdicts they change are read by a board line and not
   only by a person; W1 waits on nothing.
@@ -21,7 +22,9 @@
 - **Two operator calls sit inside this pack**, and the pack says where each wave stops for one:
   W2 is built only after its Task 0 measures the slim leg and the operator reads the figure
   (`DEF-977`'s question returns as written if the leg is not slim); W3 is built only after the
-  operator re-opens `DEF-2025`.
+  operator re-opens `DEF-2025`. **Given 2026-10-19**, with the kind changed by the operator: the
+  six rows are marked non-strict expected failures on the runners instead of skipped, so they
+  still run and `DEF-2025`'s crash watch keeps counting (W3 below).
 
 ## Motivation
 
@@ -49,14 +52,15 @@ meant nothing, for two different reasons that need two different fixes:
   `TP-703a` would print it on every tick. **The class is wider than the one test the row is
   anchored on** (read 2026-10-19 by the dispatcher, before any assign, over the six red macOS
   legs of runs 39143193815, 39147472099, 39155912533, 39165290167, 39165778649 and
-  39169603099, `gh run view <id> --log-failed`): every leg failed the anchor test, and three of
-  the six also failed five more node ids in the same file -- the four consumers of the
-  module-scoped `crashed` fixture (`tests/test_xdist_never_ran.py:344`, four setup ERRORs) and
-  `test_no_summary_asked_for_none_and_gets_none` -- with the same execnet `cannot send (already
-  closed?)` after a worker's `Not properly terminated`, the mechanism the row names; the
-  three-attempt driver (`_ATTEMPTS`, line 86) lost all three attempts in those runs. One
-  mechanism, six node ids: W3's roster takes the class, keyed on the row, or the leg stays red
-  on half its runs with the anchor alone skipped.
+  39169603099, `gh run view <id> --log-failed`): every leg failed the anchor test, three of
+  the six also failed the four consumers of the module-scoped `crashed` fixture
+  (`tests/test_xdist_never_ran.py:344`, four setup ERRORs), and one of those three also failed
+  `test_no_summary_asked_for_none_and_gets_none` (corrected at W3's 0-A: the first text had all
+  three failing five more ids) -- with the same execnet `cannot send (already closed?)` after a
+  worker's `Not properly terminated`, the mechanism the row names; the three-attempt driver
+  (`_ATTEMPTS`, line 86) lost all three attempts in those runs. One mechanism, six node ids: W3's
+  roster takes the class, keyed on the row, or the leg stays red on half its runs with the anchor
+  alone marked.
 - **No check runs on Windows after a merge** (`DEF-977`'s text): the only Windows leg is the
   pull-request one, path-filtered, 66 to 81 minutes on 10-18 (`gh run view <id> --json jobs` on
   #313's and #316's runs), finishing after the 47-minute median merge; a red the merge
@@ -65,8 +69,8 @@ meant nothing, for two different reasons that need two different fixes:
 Over 10-10 to 10-18 the workflow ran 65 failures, 67 successes and 45 cancellations
 (`gh run list --workflow portability.yml --limit 200 --json conclusion`, counted by conclusion).
 A leg red half the time is read by nobody; the roadmap's re-measure line 2 asks for 90% green
-after this pack and `TP-703h`. With the anchor test alone skipped, three of the last six red
-macOS legs would still be red on the five sibling node ids above, so that line is reachable
+after this pack and `TP-703h`. With the anchor test alone marked, three of the last six red
+macOS legs would still be red on the sibling node ids above, so that line is reachable
 only by the class-sized roster.
 
 **The named user (`STANDING_PRINCIPLES` §16).** A developer or adopter running the suite on
@@ -112,26 +116,34 @@ missed.
    measured duration. Its
    pytest line is the serial leg `scripts/proof_tier.py` prints (`python3 scripts/proof_tier.py
    --tier full --leg serial`), never a copied file list.
-3. **W3 (`lane/macos-skip-counted`)**: a roster in `tests/conftest.py`, `PLATFORM_EXPECTED_SKIPS`,
-   each entry a node id, a platform predicate (`sys.platform == "darwin"` and
-   `os.environ.get("GITHUB_ACTIONS") == "true"`, `tests/conftest.py`'s spelling at its three runner
-   checks, never a truthy `CI`: the runners, where the race lives; the Windows box ran the child
-   12 of 12), the row id, the
-   reason and the date; applied in `tests/conftest.py::pytest_collection_modifyitems` as a skip
-   whose reason carries the row id; and a contract test in `tests/test_test_suite_contract.py`
-   that derives the count from the roster and holds each entry to three facts: its node id
-   collects, its row id resolves to a file under `task-packs/ledger.d/`, and its reason names the
-   id. The first entry is `DEF-2025`'s successor row over the class the execnet crash reaches in
-   `tests/test_xdist_never_ran.py`: the anchor test
-   (`TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe::test_a_worker_that_dies_in_its_build_is_named_each_time`),
-   the four consumers of the module-scoped `crashed` fixture (line 344) and
-   `TestACrashedControllerStillPrintsWhatItSaw::test_no_summary_asked_for_none_and_gets_none`,
-   six node ids measured red on the runners (Motivation). One row, one selector the W3 design
-   names (the fixture's consumers plus the two tests that drive their own child, or the test
-   classes by name), and the contract test derives the node-id count from the selector at
-   collection, never from a hand-written six (`memory/fix-the-class-not-the-instance.md`).
-   This is the expand half; `TP-703h`'s registry is the contract half, which takes the roster
-   and retires the local one.
+3. **W3 (`lane/tests-macos-race-rows-run-as-expected-failures`)**: a roster in
+   `tests/conftest.py`, `PLATFORM_EXPECTED_FAILURES`, each entry a node id or a class's node-id
+   prefix, a platform key, the row id, the reason and the date. The platform key maps to a pure
+   predicate of `sys.platform` and the environment (`"macos-ci"`: `darwin` and
+   `GITHUB_ACTIONS == "true"`, `tests/conftest.py`'s spelling at its three runner checks, never a
+   truthy `CI`: the runners, where the race lives; the Windows box ran the child 12 of 12 and this
+   Mac never showed it). Applied in `tests/conftest.py::pytest_collection_modifyitems` as
+   `pytest.mark.xfail(strict=False, raises=..., reason=f"{row id}: {reason}")`, the reason form of
+   the strict bridge in `tests/test_adopter_lifecycle_diagnostics.py`, on the operator's word of
+   2026-10-19: non-strict, the declared exception to `test_pyproject_declares_xfail_strict`,
+   because the rows complete on the runners about one run in five and a strict mark would red
+   those; the rows still run, so `tests/conftest.py::report_nested_controller_crashes` keeps
+   counting the race; `raises` names only the race's two shapes (pytest's own failure from the
+   three-attempt driver, and an assertion over a child the race cut short), so any other error
+   still reds the leg. Contract tests in `tests/test_test_suite_contract.py` hold each entry to
+   its facts (its id names a test class or function in its file, its row is live in the assembled
+   ledger view, its mark is non-strict with the row id leading the reason, its predicate fires
+   only on the runners), derive the class from the source and hold the roster to it (the rows
+   whose child kills its xdist workers inside the build, `PROBE_BUILD_DIES`, directly or through
+   the module-scoped `crashed` fixture, are exactly the tests the row's entries cover), and find
+   no other non-strict expected failure under `tests/`. The first entries are `DEF-2025`'s
+   successor row over that class in `tests/test_xdist_never_ran.py`: the anchor test
+   (`TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe::test_a_worker_that_dies_in_its_build_is_named_each_time`)
+   and the class `TestACrashedControllerStillPrintsWhatItSaw` (the four consumers of the `crashed`
+   fixture and `test_no_summary_asked_for_none_and_gets_none`), six node ids measured red on the
+   runners (Motivation), a count derived from the source and never written by hand
+   (`memory/fix-the-class-not-the-instance.md`). This is the expand half; `TP-703h`'s registry is
+   the contract half (Cross-pack coordination says what it must add to take the roster).
 
 ## Scope (out)
 
@@ -141,8 +153,8 @@ missed.
   two Windows fix-forwards of the week landed (`tests/test_redos.py` both times); a full leg on
   every merge is the required-check question in another form.
 - **Fixing `DEF-2025`'s race.** It is the runners' (execnet's channel to a dying worker raising
-  inside the controller); the row's closing text names the parser as never the fault. A skip
-  counted and dated is honest; a fix is not in this pack's reach.
+  inside the controller); the row's closing text names the parser as never the fault. An
+  expected failure, counted, dated and still run, is honest; a fix is not in this pack's reach.
 - **The `TP-703h` registry.** W3's roster is one tuple in one file by design, so the registry
   can take it whole.
 - **A reader of the new leg outside `TP-703a`'s module.** The base-run read lands in that module
@@ -150,6 +162,24 @@ missed.
   module's lines as `TP-703a` wires them, unchanged here.
 - **The `DEF-5023` walker budget** and `DEF-2025`'s per-worker report file (`DEF-2023`): their
   own rows.
+
+## Cross-pack coordination
+
+Added at W3's 0-A (2026-10-19), from the pack-artifact review.
+
+- **`TP-703h`** takes W3's roster into its registry (expand here, contract there). Its kinds at
+  authoring are a strict expected failure and a skip; the operator's 2026-10-19 decision makes
+  W3's entries a third kind, non-strict and still run, counted by the crash watch. `TP-703h`'s
+  0-A adds that kind or keeps this roster, and its row for `DEF-2025` names the successor row
+  and the class (at authoring it names only the anchor). Shared file: `tests/conftest.py`.
+- **`TP-703i`** edits `tests/conftest.py` (a stand-in roster line, if its census needs one), and
+  meets W1: W1's 1-D delete clause would flag `TP-703i`'s planned stand-in helper, which deletes
+  the signal names under no thread mark. W1's 0-A carves helpers out, or `TP-703i` marks its
+  module.
+- **`TP-703c`** edits `tests/conftest.py`'s `pytest_configure`, a hunk disjoint from the
+  collection hook W3 changes.
+- Sequential single-seat lanes make each of these a catch-up, never a conflict; the board's
+  `overlaps:` section is the oracle when seats run again.
 
 ## Task 0 — Verify (per wave; each can end its wave)
 
@@ -186,7 +216,7 @@ and re-raise to the dispatcher, never adjust and continue.
    `post-merge.yml` as a non-blocking job, and says so.
 3. *Oracle:* the dispatched run's summary line. *Refuting result:* a red among the serial files
    on a green tree (a Windows-only red the week's two fix-forwards did not cover). *Exit:* the leg
-   would be born red; file the row in-lane, fix or skip under W3's roster first, then build.
+   would be born red; file the row in-lane, fix it or enter it in W3's roster first, then build.
 4. *Oracle:* the required cells' queue time over one day: per `test.yml` run (`gh run list
    --workflow test.yml --limit 50 --json databaseId,createdAt`), the `startedAt` of its `test (3.x)`
    jobs from `gh run view <id> --json jobs` minus the run's `createdAt`; the median and the worst. *Refuting result for a concurrency group:* the advisory leg's self-overlap
@@ -196,22 +226,30 @@ and re-raise to the dispatcher, never adjust and continue.
    blocking proof and does not apply here): a group with `cancel-in-progress` only if the overlap
    is measured to delay the required cells, else none; the header says which and why.
 
-**W3-0 (the counted skip).**
+**W3-0 (the counted expected failure).**
 1. *Oracle:* the operator's word on re-opening `DEF-2025` (a successor row). *Refuting result:*
    no. *Exit:* W3 is not built; the leg stays red on the runners and `TP-703a`'s line names it
-   every tick, which is the honest state.
+   every tick, which is the honest state. (Given 2026-10-19: yes, with the kind changed to a
+   non-strict expected failure; recorded in the blueprint.)
 2. *Oracle:* each of the class's six node ids over the last ten `portability (macos-latest)`
    runs (`gh run list --workflow portability.yml --limit 60 --json databaseId,conclusion`, then
    `gh run view <id> --log-failed` per red run). *Refuting result:* fewer than 3 of 10 red on
    the anchor test. *Exit:* the flake has moved or faded; re-raise with the count rather than
-   skip a test that passes. A sibling node id red on none of the ten leaves the selector's
+   mark a test that passes. A sibling node id red on none of the ten leaves the selector's
    reach and the Landing says so; the count is the measurement's, never the pack's. (Read
    2026-10-19 by the dispatcher: of the last ten runs, 8 completed macOS legs, 6 red, all 6 on
-   the anchor, 3 of the 6 on the five siblings too: build, with the class.)
-3. *Oracle:* `grep -n 'skipif\|mark.skip' tests/conftest.py tests/test_xdist_never_ran.py`.
-   *Refuting result:* a per-platform skip convention already exists in the suite (read
-   2026-10-18: one `skipif(sys.platform != "darwin")` in `tests/test_archive_transcripts.py`, no
-   roster). *Exit:* if one exists, register there rather than add a second.
+   the anchor, 3 of the 6 on the five siblings too: build, with the class. Re-read at W3's
+   start, 2026-10-19, over the last ten COMPLETED macOS legs: the anchor red on 8, the four
+   `crashed` consumers on 4 or 5 each, `test_no_summary_asked_for_none_and_gets_none` on 2, no
+   other test red on any: build, with the class.)
+3. *Oracle:* `grep -n 'skipif\|mark.skip\|xfail' tests/conftest.py tests/test_xdist_never_ran.py`
+   and `git grep -n xfail -- tests/`. *Refuting result:* a per-platform skip or expected-failure
+   convention already exists in the suite (read 2026-10-18: one `skipif(sys.platform != "darwin")`
+   in `tests/test_archive_transcripts.py`, no roster; read 2026-10-19: the adopter axes registry
+   forbids marks on its proving nodes, and the strict bridge in
+   `tests/test_adopter_lifecycle_diagnostics.py` is a per-file decorator, so no roster; W3 reuses
+   the bridge's `<row>: <claim>` reason form). *Exit:* if one exists, register there rather than
+   add a second.
 
 ## Relevant memory
 
@@ -226,7 +264,7 @@ has been "known" in bodies and notes for five sightings and counted nowhere a to
 | On Windows, `subprocess.run(timeout=...)` waits for a grandchild that holds the pipe | `docs/SHARP_EDGES.md` (section of that title) |
 | POSIX-only `os.O_*` flags need `getattr` guards for Windows | `docs/SHARP_EDGES.md` (section of that title) |
 | Convergence theater is a class, not a bug | `docs/SHARP_EDGES.md` (section of that title) |
-| Converting a self-detecting skipif to a marker drops every filter-less consumer (W3 applies its skip at collection, so every consumer self-skips) | `docs/sharp-edges/skipif-to-marker-drops-filterless-consumers.md` |
+| Converting a self-detecting skipif to a marker drops every filter-less consumer (W3 applies its mark at collection, so every consumer carries it) | `docs/sharp-edges/skipif-to-marker-drops-filterless-consumers.md` |
 | The marker taxonomy and `_MARKER_RULES` (the collection hook W3 extends assigns markers today) | `docs/SHARP_EDGES.md` (the `_MARKER_RULES` section); `docs/CONVENTIONS.md` (Marker taxonomy) |
 | Classify the surface before measuring it | `memory/classify-the-surface-before-measuring-it.md` |
 | 14. Derive the list, don't test a hand-written copy of it | `docs/STANDING_PRINCIPLES.md` |
@@ -235,7 +273,10 @@ Resolved at authoring time by `python3 tools/cc/hooks/_recall.py "SIGALRM thread
 method Windows portability leg"` and `... "a known red skipped per platform and counted"`; the
 second returned lexical neighbours (hook authoring, the hardlinked clone) rather than an answer,
 and no entry on counted platform skips exists, which is part of why W3 writes one down. Re-run
-them rather than trusting this list if the pack has been sitting.
+them rather than trusting this list if the pack has been sitting. Re-run at W3's start
+(2026-10-19) with hazard words ("a marker added to collected items in the conftest collection
+hook, and an expected failure that is non-strict"): the skipif-to-marker note above is the one
+that bears; the rest were lexical neighbours.
 
 ## Implementation
 
@@ -317,36 +358,90 @@ reader is a sibling function in the same module, added here).
 duration, by `python3 tools/cc/ledger_row.py repin DEF-977 --reason ...`; the row stays open,
 since its probe counts Windows jobs that gate a merge and this one gates nothing.
 
-### W3 — the macOS skip, counted (`lane/macos-skip-counted`; after the operator re-opens)
+### W3 — the macOS race, counted (`lane/tests-macos-race-rows-run-as-expected-failures`; after the operator re-opens)
 
-**3-A The roster.** In `tests/conftest.py`, beside `_FULL_TREE_NODEIDS`, a tuple
-`PLATFORM_EXPECTED_SKIPS` of entries `(node id, platform, row id, reason, date)`, the platform
-one of a small enumerated set the predicate function maps (`"macos-ci"`: `sys.platform ==
-"darwin"` and `os.environ.get("GITHUB_ACTIONS") == "true"`, the spelling `tests/conftest.py` uses
-at its three existing runner checks; a truthy `CI` would fire on `CI=false` and on local tooling
-that sets it), with a docstring that says the tuple is a declared
-population and the contract test is what keeps it honest. *Refuted if:* W3-0 item 3 finds a
-convention already there.
+Corrected at W3's 0-A (2026-10-19) for the operator's change of kind and the pack-artifact
+review's findings: the skip became a non-strict expected failure; the live-row read moved to the
+assembled ledger view; the tier is full; the runner proof comes before the merge. Corrected again
+by the lane's review round (both reviewers, REQUEST CHANGES, one fix batch): the mark is bounded
+to the race's own failure type, not to the error types the race happens to raise; the roster's
+counts print on the runners; the hook is held on every host; the runner proof runs before the
+pull request opens.
 
-**3-B The skip.** `pytest_collection_modifyitems` adds `pytest.mark.skip(reason=f"{row id}:
-{reason}")` to a collected item whose node id is in the roster and whose platform predicate
-holds; nothing else changes in that hook. The summary's `skipped` count then carries the entry on
-the runners and nowhere else.
+**3-A The row first.** The successor row for `DEF-2025` is filed on the operator's word from the
+building seat's block (`tools/cc/ledger_row.py file` with the id left out) before the roster names
+it, with the sighting count W3-0 item 2 measured. It declares `--why-not`: the race has never
+shown on either box, so a local probe would read the roster, the mitigation, not the race; the
+oracle is the crash watch on the runners. The struck row's closing text is not edited.
 
-**3-C The contract.** `test_every_platform_skip_is_a_live_row_over_a_real_test` in
-`tests/test_test_suite_contract.py`: for each entry, the node id is among the collected items of
-its file (a `pytest --collect-only -q <file>` subprocess, or the suite's own collection list where
-a fixture already carries it), the row is LIVE (its member line is not struck: the id is among
-`tools/cc/generate_ledger_regions.py::live_member_ids` over the row file's text, since a struck
-row keeps its file under `task-packs/ledger.d/` and a file-exists check would let the skip outlive
-its row), and the reason starts with the id. Earned red against an entry naming a test that does
-not exist, against one naming a row file that does not, and against one naming a struck row
-(`DEF-2025`'s own struck file is that fixture). The roster's length is never written anywhere but
-derived from it.
+**3-B The roster.** In `tests/conftest.py`, beside `_FULL_TREE_NODEIDS`, a tuple
+`PLATFORM_EXPECTED_FAILURES` of entries (node id or class prefix, platform key, row id, reason,
+date), with a comment that says the tuple is a declared population and the contract tests keep
+it honest; `_platform_holds(platform, sys_platform, environ)`, a pure function the hook calls
+with the live values (`"macos-ci"`: `darwin` and `GITHUB_ACTIONS == "true"`; a truthy `CI` would
+fire on `CI=false` and on local tooling that sets it; an unknown key is never true); and
+`_expected_failure_mark(entry)`, the one place the mark is built. *Refuted if:* W3-0 item 3 finds
+a convention already there.
 
-**3-D The row.** The successor row for `DEF-2025` is filed by the operator's word only, from the
-building seat's block, with the sighting count W3-0 item 2 measured, and the roster's one entry
-names it. The struck row's closing text is not edited.
+**3-B' The race's own failure.** `tests/_nested_race.py` holds `NestedControllerRaceLost` (a
+subclass of pytest's failure, so the row still fails wherever it is not expected to),
+`RACE_RAISE` (`OSError: cannot send (already closed?)`, the last raise every red macOS leg read)
+and `lost_to_the_race`. `tests/test_xdist_never_ran.py::_drive_to_a_reading` raises it only where
+every attempt's last raise was the race's, and pytest's plain failure otherwise; the conftest's
+mark is bounded to it alone. One home, so the mark's `raises` and the driver's `raise` are one
+class. A pytest-timeout ceiling, another internal error and an assertion over a child that
+completed (`DEF-4033`'s never-ran count, read once) still red the leg.
+
+**3-C The mark.** `pytest_collection_modifyitems` adds the marks
+`_expected_failures_for(nodeid, sys.platform, os.environ)` returns: each entry that covers the
+node id (its own id, its parametrized instances, or every test under a class prefix) and whose
+platform holds; nothing else changes in that hook. The summary then reads `xfailed` for a row
+that lost every attempt to the race and `xpassed` for one whose child completed, on the runners
+and nowhere else, and `report_platform_expected_failures` prints one line per roster row there,
+zeros included (the rows that lost, the rows that completed, the entry's age), with a notice
+annotation under GitHub Actions. The crash watch's line names `DEF-4032`.
+
+**3-D The contracts.** In `tests/test_test_suite_contract.py`, through one checker that the live
+test and its must-trip siblings share: each entry names a test class or function in its file (an
+AST read of the file), its row is live (the id is among
+`tools/cc/generate_ledger_regions.py::live_cell_ids` over `tools/cc/_record_fragments.py`'s
+assembled ledger view: over a row file alone that reader returns nothing, live or struck, and a
+direct read of the row directory is what the record loader's census polices), its date has the
+`YYYY-MM-DD` shape, and its mark is exactly the roster's (non-strict, bounded to the race's
+failure, run: no `run=False`, which would read every row as lost and the watch as silent), its
+reason leading with the row id. Beside it: the predicate's table (`darwin` with `"true"` holds;
+`darwin` unset, `darwin` with `"1"`, `linux` with `"true"` and `win32` with `"true"` do not); the
+hook itself on the runners and on four other hosts; the bound absorbing the race's failure and
+none of pytest's plain failure, an assertion, a hung child's timeout or an ordinary error; the
+class derived from the source equals the tests the successor row's entries cover, while the
+roster names that row; one platform key until the registry generalizes these contracts; the
+summary line; and no other `strict=False` or `**`-splatted expected-failure mark under `tests/`,
+the allow-list keyed on a builder's file and name together. Earned red against an entry naming a
+test that does not exist, one naming a struck row (`DEF-2025` itself), one naming a row that does
+not exist, and mutants of every conftest function; the roster's length is never written anywhere
+but derived from it.
+
+**3-E The runner proof, before the pull request.** The pull request's own portability legs
+finish after auto-merge, which the ship driver always arms, so the lane is pushed first and the
+workflow dispatched on it before the pull request opens: `gh workflow run portability.yml --ref
+<lane> -f os=macos-latest -f select="tests/test_xdist_never_ran.py -rfEsxX"` (pytest keeps the
+last `-r`, so the flags are combined, never appended). The six must read as `xfailed` plus
+`xpassed`, each reason naming the successor row, the roster line printed, and no other test in
+the file failed or errored. Measured 2026-10-19: an isolated run does not load the runner enough
+for the race (two runs, at one worker and at four, 12 of 12 rows completed; a third was cancelled
+by the workflow's concurrency group, so dispatch one at a time), so it shows the mark takes on the
+runner and cannot show a loss absorbed. The absorption is shown instead by driving the real
+conftest, retry driver and mark under xdist with a child that prints the runners' recorded race
+lines (6 `xfailed`, the watch and the roster line counting them; with a crash that is not the
+race, 2 failed and 4 errors), and by replaying the driver's race check over the eight red macOS
+legs on record (every row that lost three attempts lost each to the race's signature). The first
+live reading of a loss absorbed is the pull request's own full macOS leg, read after it
+finishes. Then `/ship`. Locally, `GITHUB_ACTIONS=true` meets the predicate on this Mac: the six
+read `xpassed` with the reason, and unset they carry no mark.
+
+**3-F Beside the lane.** The lane's own changelog fragment was the first to cite a test file with
+no negation word beside it, and the citation sweep's completeness contract redded: both
+doc-citation gates now read `changelog.d/` beside `CHANGELOG.md` (all 71 fragments resolve).
 
 ## Affected symbols
 
@@ -359,6 +454,11 @@ it at each wave's start and accept the collision gap by name.
 - `tests/test_test_suite_contract.py::test_every_module_that_arms_sigalrm_declares_the_thread_method`
   (the delete clause widens what it flags; its assertions are kept)
 - `tests/conftest.py::pytest_collection_modifyitems` (W3: applies the roster)
+- `tests/conftest.py::report_nested_controller_crashes` (W3: its line names `DEF-4032`)
+- `tests/test_xdist_never_ran.py::_drive_to_a_reading` (W3: a row that lost every attempt to the
+  race fails as `NestedControllerRaceLost`)
+- `tests/test_doc_test_citations.py::_SCAN_GLOBS` and
+  `tests/test_doc_source_citations.py::_swept_docs` (W3, 3-F: the changelog's fragments swept)
 - `tools/cc/_post_merge.py` (W2-B: a second base-workflow reader beside its pull-request rollup
   read; the module is `TP-703a`'s)
 - `tools/cc/board.py::collect` (W2-B: the base-run read joins the `checks:` section's read)
@@ -371,8 +471,15 @@ it at each wave's start and accept the collision gap by name.
 - `tests/test_test_suite_contract.py::_arms_sigalrm`
 - `tests/test_test_suite_contract.py::_sigalrm_unguarded`
 - `tests/test_test_suite_contract.py::test_every_sigalrm_arming_function_guards_itself`
-- `tests/test_test_suite_contract.py::test_every_platform_skip_is_a_live_row_over_a_real_test`
-- `tests/conftest.py::PLATFORM_EXPECTED_SKIPS`
+- `tests/test_test_suite_contract.py::test_every_platform_expected_failure_is_a_live_row_over_a_real_test`
+- `tests/test_test_suite_contract.py::test_the_race_roster_covers_every_row_whose_child_kills_its_workers_in_the_build`
+- `tests/test_test_suite_contract.py::test_no_other_expected_failure_is_non_strict`
+- `tests/conftest.py::PLATFORM_EXPECTED_FAILURES`
+- `tests/conftest.py::_platform_holds`
+- `tests/conftest.py::_expected_failure_mark`
+- `tests/conftest.py::_expected_failures_for`
+- `tests/conftest.py::report_platform_expected_failures`
+- `tests/_nested_race.py`
 - `.github/workflows/post-merge-windows.yml`
 
 ### Removed-paths
@@ -388,7 +495,7 @@ over live and struck rows (re-run it; the rows below are the ones a wave's mecha
 |---|---|---|
 | `DEF-5024` (no check that each `SIGALRM`-arming test function guards itself) | **CLOSED by W1** | the detector reads 2 unguarded on `9c4ca09d^1` and 0 at the head; the must-trip module is flagged; the row's probe prints True; struck in-lane |
 | `DEF-977` (no Windows check gates a merge) | **NOT CLOSED**; W2 is its first step and gates nothing | the row's probe (Windows jobs in `test.yml`) still prints 0; the tail sentence names the advisory leg and its measured minutes |
-| `DEF-2025` (struck 2026-10-18; the runners' race in the nested child) | **RE-OPENED as a successor row and its red SKIPPED, counted, by W3**, on the operator's word only | the roster's one entry; the contract test; the leg's green rate (the roadmap's line 2) |
+| `DEF-2025` (struck 2026-10-18; the runners' race in the nested child) | **RE-OPENED as a successor row, and its red marked a non-strict expected failure on the runners by W3, counted and still run**, on the operator's word (given 2026-10-19); the successor stays live while the race stands | the roster's entries; the contract tests; the crash watch; the leg's green rate (the roadmap's line 2) |
 | `DEF-5023` (the walker row's warm call under its alarm) | **NOT REACHED** | its own row; W1 guards the function, not the budget |
 | `DEF-2023` (a per-worker build report file) | **NOT REACHED** | named in `DEF-2025`'s fix shape; not this pack's |
 
@@ -406,38 +513,51 @@ over live and struck rows (re-run it; the rows below are the ones a wave's mecha
   pull request's rollup) and never on the `main:` line; `tools/cc/board.py::read_post_merge`'s
   verdict is unchanged by any run of it; the concurrency choice in the header names the queue-time
   figure that decided it.
-- W3: on a runner where the predicate holds the skip reason carries the successor row's id; on
-  this Mac, where `GITHUB_ACTIONS` is unset, the test runs; the contract test reds on a roster
-  entry naming a missing test, on one naming a missing row file, and on one naming a struck row;
-  the roster's count appears in no prose.
+- W3: before the pull request opens, the dispatched macOS run (3-E) reads the six marked, each
+  reason carrying the successor row's id, the roster line printed, and nothing else in the file
+  failed; a loss is shown absorbed by 3-E's end-to-end drive and replay, and live on the pull
+  request's own macOS leg; on this Mac with `GITHUB_ACTIONS=true` the six
+  read `xpassed` with that reason, and unset they carry no mark; the predicate's table and the
+  hook hold on every host; the bound absorbs the race's failure and nothing else; the contract reds
+  on a roster entry naming a missing test, on one naming a row that does not exist, and on one
+  naming a struck row; the derived class equals the roster's coverage; no other non-strict mark
+  exists under `tests/`; the roster's count appears in no prose.
 - Earn-the-red recorded per fix against the mutation named in Implementation; a test that only
   ever passed does not count.
 - The tier each lane earns is run with `--base origin/main` and its receipt is in the pull
-  request body: W1 and W3 are tests-only (the contract slice, by the rule `scripts/proof_tier.py`
-  prints); W2 is a CI definition and earns both reviewers.
+  request body: W1 is tests-only (the contract slice, by the rule `scripts/proof_tier.py`
+  prints); W3 edits `tests/conftest.py`, which the tier script reads as suite config, so it earns
+  the full tier and the code reviewer; W2 is a CI definition and earns both reviewers.
 - No criterion here licenses shipping a defect in a gate the pack delivers: a detector that reads
-  a guard in a sibling function as the arming function's own, or a skip that fires off the
-  runners, is a defect of this pack, not a scope-out.
+  a guard in a sibling function as the arming function's own, or an expected-failure mark that
+  fires off the runners or absorbs an error that is not the race's, is a defect of this pack, not
+  a scope-out.
 
 ## Files touched
 
-**New:** `.github/workflows/post-merge-windows.yml` (W2, after its Task 0 and the operator).
+**New:** `.github/workflows/post-merge-windows.yml` (W2, after its Task 0 and the operator);
+`tests/_nested_race.py` (W3, the race's own failure type); a changelog fragment (W3).
 
 **Modified:** `tests/test_test_suite_contract.py` (W1, W3); `tests/conftest.py` (W3);
+`tests/test_xdist_never_ran.py` (W3: the driver raises the race's failure, the watch's label);
+`tests/test_doc_test_citations.py` and `tests/test_doc_source_citations.py` (W3, 3-F);
+`task-packs/TP-703-multi-seat-discipline.md` and `task-packs/TP-703h-host-expectations-have-one-registry.md`
+(W3: the decision recorded, and a pointer where the registry's text predates it);
 `tools/cc/_post_merge.py` and its vendored twin by `scripts/sync_vendor_cc.py` (W2-B);
 `tests/test_post_merge.py` (W2-B); `tools/cc/board.py` and `tests/test_board.py` (W2-B, the
 rendered line); `task-packs/ledger.d/DEF-5024.md` (struck by the verb, W1);
-`task-packs/ledger.d/DEF-977.md` (repinned by the verb, W2); one new row file under
-`task-packs/ledger.d/` and its probe under `task-packs/probes.d/` (W3, by the verb, on the
-operator's word).
+`task-packs/ledger.d/DEF-977.md` (repinned by the verb, W2); two new row files under
+`task-packs/ledger.d/` and their probe files under `task-packs/probes.d/` (W3, by the verb:
+`DEF-4032`, `DEF-2025`'s successor, on the operator's word; `DEF-4033`, the completed-child
+count the review round split out).
 
 **Deleted:** none.
 
 **Unmodified on purpose:** `.github/workflows/post-merge.yml` (the proof's verdict is the
 revert trigger and stays one job); `.github/workflows/portability.yml` (`TP-703a` corrects its
 header; its legs stay as they are); `tests/test_redos.py` (already guarded by #320);
-`tests/test_xdist_never_ran.py` (the skip is applied at collection, never written into the file);
-`scripts/proof_tier.py::SERIAL_FILES` (the one home W2 reads).
+`scripts/proof_tier.py::SERIAL_FILES` (the one home W2 reads). The six rows of
+`tests/test_xdist_never_ran.py` carry no mark in the file: the mark is applied at collection.
 
 ## Sub-task ordering
 
@@ -448,7 +568,7 @@ header; its legs stay as they are); `tests/test_redos.py` (already guarded by #3
    word and after `TP-703a` merges. Checkpoint: a `main` push runs the workflow; the board names
    it on `checks:`.
 3. **W3-0 items 1 and 2**, then **W3** only on the operator's re-open and after `TP-703a` merges.
-   Checkpoint: the roster, the contract test's two reds, the successor row.
+   Checkpoint: the successor row, the roster, the contract tests' reds, the dispatched macOS run.
 4. **Red-team each wave** before its tier, the reviewers its diff earns on a snapshot clone.
    What this pack most likely got wrong, for the passes to bite on: 1-B reading a guard in a
    caller as the callee's (the row says no caller-path analysis is needed because the tree meets
@@ -471,7 +591,7 @@ read these as the author's guess, not a schedule.
 |---|---|---|---|
 | W1 | 2 to 3 h | 0.5 h plus the contract slice | a hoist, a detector, two tests, a strike |
 | W2 | 1 h after a 1 to 2 h dispatched run | 1 h plus the full tier | a workflow and one reader line; the operator's call first |
-| W3 | 1.5 to 2 h | 0.5 h plus the contract slice | a roster, a hook change, a contract test, a row by the verb |
+| W3 | 1.5 to 2 h | 0.5 h plus the full tier and a dispatched macOS run | a roster, a hook change, contract tests, a row by the verb |
 | Total | 4.5 to 6 h | 2 h | expect the measured overrun |
 
 ## Landing
@@ -492,4 +612,42 @@ read these as the author's guess, not a schedule.
   `lane/packs-the-tp-703-children-corrected-before-wave`): the macOS red is one mechanism over
   six node ids, not one test; Motivation, W3 and W3-0 item 2 carry the measurement and the
   class-sized roster
+- W3 landed 2026-10-19, single-seat, on `lane/tests-macos-race-rows-run-as-expected-failures`;
+  the pack stays DRAFT while W1 and W2 are open:
+  - Commits: the lane's commit (its pull request names it).
+  - Task 0: item 1 the operator's word, yes, with the kind changed to a non-strict expected
+    failure; item 2 the anchor red on 8 of the last ten completed macOS legs, the four `crashed`
+    consumers on 4 or 5, `no_summary` on 2, nothing else red: build, with the class; item 3 no
+    roster convention to register in.
+  - 0-A: code-reviewer, Pack-artifact review checklist v2, REQUEST CHANGES (1 BLOCK, the
+    live-row reader read a row file alone; WARNs), folded before any code; fence check 0 fences
+    (prose shapes); 0-B, 0-C and 0-D exit 2, each accepted with a written reason.
+  - Earn-the-red: 19 mutants of the conftest, the driver and the race module, each killed by the
+    named tests; the checker's must-trip rows; a scratch pytest 9.1.1 run of the mark over a
+    module fixture's failure at setup, a body failure, an assertion, a `TypeError` and a pass,
+    with and without `-n 1`.
+  - Red-team: code-reviewer REQUEST CHANGES (1 BLOCK, 2 WARN, 7 NIT) and failure-mode-reviewer
+    REQUEST CHANGES (4 GAP, 3 ROUGH-EDGE, 0 REGRESSION), both on a snapshot clone; one fix batch:
+    the race's own failure type, the hook held on every host, the mark pinned to run, the roster
+    line, the watch's label, the parametrized boundary, the co-id-aware reader, the date shape,
+    the figures, `DEF-4033` split out, the changelog sweep, the TP-703h pointer, the proof before
+    the pull request. Declined: a contract that reds once the roster's date passes a grace (a
+    dated red in every tier is friction; the roster line prints the entry's age).
+  - Suite: the contract slice after the batch, 5413 passed with one known box-local red
+    (`tests/test_record_merge.py`, Apple git 2.39.5's `update-index --unresolve`); the first full
+    tier after the batch red on that and on one summary test this lane's roster line moved on a
+    darwin host, fixed by printing the line only where the rows ran; the second full tier
+    (`scripts/proof_tier.py --run`, the uncommitted lane): mypy and ruff clean, the parallel leg
+    24,763 passed with the same one known box-local red, the serial leg 2,134 passed.
+  - Runner proof, before the pull request: portability runs 39344647007 (one worker) and
+    39344849177 (four workers), dispatched on the pushed lane with `-rfEsxX`: the six marked on
+    the runner with the successor row's reason, 12 of 12 completed (an isolated run does not load
+    the runner enough for the race), the roster line printed, nothing else in the file failed.
+    Absorption: the end-to-end drive under xdist read 6 `xfailed` on the recorded race lines and
+    2 failed and 4 errors on a crash that is not the race; the replay over the eight recorded red
+    legs read every three-attempt loss as the race. The first live reading of a loss absorbed is
+    the pull request's own macOS leg.
+  - Reach: `DEF-2025` re-opened as `DEF-4032` (live; it closes when the watch reads zero crashed
+    children and the roster line every row completed over 30 macOS legs, in the lane that removes
+    the entries); `DEF-4033` filed (a completed child's never-ran count, read once).
 - Date: 2026-10-18 (authored, local)

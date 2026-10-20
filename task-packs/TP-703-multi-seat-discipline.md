@@ -37,7 +37,9 @@
   one was given): the multi-seat run is "a goal", so the fixes are built, not the system retired;
   "bring espaliers disipline forward to the multi session aspects"; packs for the issues, now.
 - **Operator decisions this roadmap asks for**, each a line under Scope (out) or in a child:
-  `DEF-2025`'s counted per-platform skip and its row's re-open (`TP-703b`); `DEF-977`'s slim
+  `DEF-2025`'s counted per-platform skip and its row's re-open (`TP-703b`; decided 2026-10-19:
+  re-opened as a successor row, the six rows marked non-strict expected failures on the runners
+  rather than skipped, so they still run and the crash watch keeps counting); `DEF-977`'s slim
   Windows leg on `main` (`TP-703b`); the worker tick's new sentence (`TP-703e`, the operator's
   paste); one seat per box or a third machine (Scope out); a fifth seat (the scaling line).
 
@@ -133,13 +135,14 @@ its start, and the board's `overlaps:` section is the oracle, not this paragraph
 **Wave 2** (after the Wave 1 merge each one names):
 
 5. **`TP-703b` — The platform legs earn their red** (`lane/alarm-guard-contract`,
-   `lane/windows-main-leg`, `lane/macos-skip-counted`; a Mac seat for the first, the operator's
+   `lane/windows-main-leg`, `lane/tests-macos-race-rows-run-as-expected-failures`; a Mac seat for the first, the operator's
    call before the second and third). `DEF-5024`'s contract test on the required cells; a slim
    Windows leg on `main` after each merge, in a workflow of its own (the base-run readers read a
    run's conclusion, so a flaky job inside the proof would red `main`), sized by a dispatched
    portability run first; and
-   `DEF-2025`'s counted per-platform skip with the row re-opened. Needs `TP-703a`'s reader so its
-   own verdicts are read.
+   `DEF-2025`'s rows counted per platform with the row re-opened (as non-strict expected failures
+   on the runners, the operator's 2026-10-19 kind). Needs `TP-703a`'s reader so its own verdicts
+   are read.
 6. **`TP-703d` — The records say what happened** (`lane/the-records-say-what-happened`; any
    seat). A Session Log row per active seat per day, the early-ship debt named on the board per
    seat, the dispatcher's day row derived from the mail and GitHub by `TP-703f`'s census, a
@@ -156,7 +159,7 @@ its start, and the board's `overlaps:` section is the oracle, not this paragraph
    One pinned table of what each host is expected to red on, applied by the suite and counted, so
    "one known red" becomes "0 unexpected"; replaces the known-red explanations that live today in
    pull-request bodies (49 of the last 100, by `TP-703h`'s census; the docs, memory and bench
-   carry none) and in gitignored local files; `TP-703b`'s skip moves into it (expand there,
+   carry none) and in gitignored local files; `TP-703b`'s roster moves into it (expand there,
    contract here). `tests/_axis_registry.py` (`TP-468`) is the sibling store it sits beside.
 9. **`TP-703i` — The suite has a platform axis** (`lane/platform-stand-ins`). The stand-ins the
    seats improvised after the merges they would have prevented (a host without `SIGALRM`, among
@@ -273,7 +276,7 @@ Copy-ready changes are in the children. This section carries what the children s
 | Make it prove it | `TP-703e` | the assign carries what only the dispatcher knows; the seat proceeds on its Task 0 after a veto window | a longer cap (more prescription, not less); a per-fork yes (19 of 20 rulings went the seat's way) |
 | Derive the list; read live state | `TP-703f` | jobs close from the claim and the strike; counts on every header; one census script owns the day's figures | a dispatcher rule to "release carefully" (a sentence) |
 | The record is mechanical | `TP-703d` | a row per seat per day with the debt named by the board; the dispatcher's row derived | a row per lane push (25 rows a day against a 30-row hot set leaves a one-day window); deriving every seat's row (loses what a seat would have said off the mail) |
-| Expand, then contract | `TP-703g`, `TP-703h` | the marker window written into the rule; the registry taking the skip the earlier child lands | a flag day (the one that happened) |
+| Expand, then contract | `TP-703g`, `TP-703h` | the marker window written into the rule; the registry taking the roster the earlier child lands | a flag day (the one that happened) |
 | Earn the red; the measuring instrument is a claim | `TP-703j`, `TP-703i` | the strike drives the probe on both sides and runs the guard; stand-ins run as an axis | trusting a green probe at the head (`DEF-985`'s proxy probe did) |
 
 ### The re-measure *(pre-registered 2026-10-18, before any child lands)*
@@ -287,11 +290,12 @@ names, never this roadmap's state.
    (the red's `completedAt` and the read time per first-printed transition); without that log the
    line is not derivable, which is why the child writes it.
 2. **The legs' green rate** (`TP-703b`): the portability workflow's `success` share over the 50
-   runs after the counted skip and the alarm contract land, over COMPLETED runs (cancelled runs
+   runs after the counted roster and the alarm contract land, over COMPLETED runs (cancelled runs
    leave the denominator: 67 of 132 completed, 51%, over 10-10 to 10-18; 37% with the 45 cancelled
-   counted). Pass: 90% or more, with the skip count the roster applies printed beside the rate so a
-   green bought by skips is visible. Read: `gh run list --workflow portability.yml --json
-   conclusion,status`.
+   counted). Pass: 90% or more, with the roster's marked rows (`xfailed` and `xpassed`) and the
+   crash watch's count printed beside the rate, so a green bought by the marks is visible. Read:
+   `gh run list --workflow portability.yml --json conclusion,status`, and each macOS leg's
+   summary line and `nested controller crashes` annotation.
 3. **Box messages and waits** (`TP-703c`): worker messages mentioning `START` per day, 87 on
    10-18 to 0 (a secondary figure: it falls as soon as the sentence changes, lock or no lock);
    seat-on-seat wait minutes per day, the primary figure, read from the wait log `TP-703c`'s
@@ -373,7 +377,7 @@ over live rows (re-run it; the five below are the ones a child's mechanism reach
 | Item | Status | Evidence |
 |---|---|---|
 | `DEF-5024` (no contract that each `SIGALRM`-arming function guards itself) | **CLOSED by `TP-703b` W1** when the contract test lands and the row is struck in-lane | the census over `tests/*.py` reads 0 unguarded and the test reds on a seeded unguarded function |
-| `DEF-2025` (struck 2026-10-18; red on every post-fix macOS run) | **RE-OPENED and CLOSED by `TP-703b` W3** only on the operator's word | the counted skip's roster names it; the leg's green rate |
+| `DEF-2025` (struck 2026-10-18; its macOS leg red on 14 of the 18 legs after the fix merged, its crash watch non-zero on every one, re-read 2026-10-19) | **RE-OPENED by `TP-703b` W3** as successor `DEF-4032`, on the operator's word (given 2026-10-19); the successor stays live while the race stands | the roster's non-strict marks, bounded to the race's own failure; the crash watch; the roster line; the leg's green rate |
 | `DEF-977` (no Windows check gates a merge) | **NOT CLOSED**; `TP-703b` W2 is its first step | the slim leg's measured duration and green rate decide the required question |
 | `DEF-674` (the banner's budget wrong at both ends) | **NOT REACHED**; `TP-703d` dissolves the goal-cap question it carries | win-2's parked lane |
 | `DEF-5007` (closed 2026-10-16; the Session Log's transport) | **EXTENDED, not re-opened**, by `TP-703d` | the fold stays the one writer of the count |
@@ -420,7 +424,7 @@ over live rows (re-run it; the five below are the ones a child's mechanism reach
 3. **Wave 2** as each named Wave 1 merge lands: `TP-703b` after `TP-703a`; `TP-703d` after
    `TP-703f`; `TP-703g` at any time, the dispatcher's own lighter lane.
 4. **Wave 3** after each child's Task 0 enumerates its members: `TP-703h` first (`TP-703b`'s
-   skip contracts into it), then `TP-703i`, `TP-703j` at any time.
+   roster contracts into it), then `TP-703i`, `TP-703j` at any time.
 5. **The re-measure**, read by the dispatcher at each line's window close, written into the
    Landing of the child it names; line 8 is the operator's experiment to run or not.
 6. **Red-team per child**, both reviewers on a snapshot clone as the tier's `review:` line names,
@@ -501,7 +505,9 @@ read these as the author's guess, not a schedule.
   that a pre-send read would have reached it, and three assigns delegated exactly that check to
   Task 0 by choice; the refuting result (fewer than half findable) is not met, so `TP-703e`
   builds, and the dispatcher's own 10 of 18 and 7 of 10 were undercounts in both directions
-- Children: `TP-703a` LANDED (2026-10-19, single-seat, after `TP-703e`); `TP-703b` DRAFT; `TP-703c` DRAFT;
+- Children: `TP-703a` LANDED (2026-10-19, single-seat, after `TP-703e`); `TP-703b` W3 LANDED
+  (2026-10-19, single-seat: `DEF-2025` re-opened as `DEF-4032`, `DEF-4033` filed), W1 and W2
+  DRAFT; `TP-703c` DRAFT;
   `TP-703d` DRAFT; `TP-703e` LANDED (2026-10-19, single-seat on the dispatcher's checkout; the
   children stay in `task-packs/` with their state stamped until this roadmap lands, as `TP-702`
   did: the ledger gate reads a LANDED pack in `Done/` whose row is live as unstruck);
