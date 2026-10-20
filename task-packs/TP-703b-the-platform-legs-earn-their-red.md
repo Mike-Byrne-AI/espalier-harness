@@ -426,10 +426,18 @@ finish after auto-merge, which the ship driver always arms, so the lane is pushe
 workflow dispatched on it before the pull request opens: `gh workflow run portability.yml --ref
 <lane> -f os=macos-latest -f select="tests/test_xdist_never_ran.py -rfEsxX"` (pytest keeps the
 last `-r`, so the flags are combined, never appended). The six must read as `xfailed` plus
-`xpassed`, at least one `xfailed` (a run where all six completed shows nothing about the mark on
-the runner; dispatch again), each reason naming the successor row, the roster line printed, and no
-other test in the file failed or errored. Then `/ship`. Locally, `GITHUB_ACTIONS=true` meets the
-predicate on this Mac: the six read `xpassed` with the reason, and unset they carry no mark.
+`xpassed`, each reason naming the successor row, the roster line printed, and no other test in
+the file failed or errored. Measured 2026-10-19: an isolated run does not load the runner enough
+for the race (two runs, at one worker and at four, 12 of 12 rows completed; a third was cancelled
+by the workflow's concurrency group, so dispatch one at a time), so it shows the mark takes on the
+runner and cannot show a loss absorbed. The absorption is shown instead by driving the real
+conftest, retry driver and mark under xdist with a child that prints the runners' recorded race
+lines (6 `xfailed`, the watch and the roster line counting them; with a crash that is not the
+race, 2 failed and 4 errors), and by replaying the driver's race check over the eight red macOS
+legs on record (every row that lost three attempts lost each to the race's signature). The first
+live reading of a loss absorbed is the pull request's own full macOS leg, read after it
+finishes. Then `/ship`. Locally, `GITHUB_ACTIONS=true` meets the predicate on this Mac: the six
+read `xpassed` with the reason, and unset they carry no mark.
 
 **3-F Beside the lane.** The lane's own changelog fragment was the first to cite a test file with
 no negation word beside it, and the citation sweep's completeness contract redded: both
@@ -505,9 +513,10 @@ over live and struck rows (re-run it; the rows below are the ones a wave's mecha
   pull request's rollup) and never on the `main:` line; `tools/cc/board.py::read_post_merge`'s
   verdict is unchanged by any run of it; the concurrency choice in the header names the queue-time
   figure that decided it.
-- W3: before the pull request opens, the dispatched macOS run (3-E) reads the six as `xfailed`
-  plus `xpassed`, at least one `xfailed`, each reason carrying the successor row's id, the roster
-  line printed, and nothing else in the file failed; on this Mac with `GITHUB_ACTIONS=true` the six
+- W3: before the pull request opens, the dispatched macOS run (3-E) reads the six marked, each
+  reason carrying the successor row's id, the roster line printed, and nothing else in the file
+  failed; a loss is shown absorbed by 3-E's end-to-end drive and replay, and live on the pull
+  request's own macOS leg; on this Mac with `GITHUB_ACTIONS=true` the six
   read `xpassed` with that reason, and unset they carry no mark; the predicate's table and the
   hook hold on every host; the bound absorbs the race's failure and nothing else; the contract reds
   on a roster entry naming a missing test, on one naming a row that does not exist, and on one
@@ -630,8 +639,14 @@ read these as the author's guess, not a schedule.
     darwin host, fixed by printing the line only where the rows ran; the second full tier
     (`scripts/proof_tier.py --run`, the uncommitted lane): mypy and ruff clean, the parallel leg
     24,763 passed with the same one known box-local red, the serial leg 2,134 passed.
-  - Runner proof, before the pull request: the macOS portability run dispatched on the pushed
-    lane (`-rfEsxX`); its receipt is in the pull request body.
+  - Runner proof, before the pull request: portability runs 39344647007 (one worker) and
+    39344849177 (four workers), dispatched on the pushed lane with `-rfEsxX`: the six marked on
+    the runner with the successor row's reason, 12 of 12 completed (an isolated run does not load
+    the runner enough for the race), the roster line printed, nothing else in the file failed.
+    Absorption: the end-to-end drive under xdist read 6 `xfailed` on the recorded race lines and
+    2 failed and 4 errors on a crash that is not the race; the replay over the eight recorded red
+    legs read every three-attempt loss as the race. The first live reading of a loss absorbed is
+    the pull request's own macOS leg.
   - Reach: `DEF-2025` re-opened as `DEF-4032` (live; it closes when the watch reads zero crashed
     children and the roster line every row completed over 30 macOS legs, in the lane that removes
     the entries); `DEF-4033` filed (a completed child's never-ran count, read once).
