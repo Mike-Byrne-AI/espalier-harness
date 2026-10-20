@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4034",
+ "subject": "tests/test_test_suite_contract.py",
+ "cmd": "python3 -c \"import ast;s=open('tests/test_test_suite_contract.py',encoding='utf-8').read();f=[n for n in ast.walk(ast.parse(s)) if isinstance(n,ast.FunctionDef) and n.name=='test_a_name_imported_from_signal_is_read_where_it_is_used'];print(bool(f) and any(isinstance(n,ast.Assert) for n in ast.walk(f[0])))\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "a811cfb0223c",
+ "text_sha": "1fb4fab64498",
+ "verified_2026_10_20": "OPEN (filed 2026-10-20; probe driven at filing)"
+}

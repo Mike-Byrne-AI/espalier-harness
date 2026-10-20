@@ -10,8 +10,10 @@ See `tests/README.md` for operator-facing guidance.
 from __future__ import annotations
 
 import ast
+import fnmatch
 import functools
 import re
+import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -1284,7 +1286,9 @@ class TestSubprocessDetector:
 #     reports the rest) and `thread` elsewhere (Windows keeps the dump). A
 #     module that arms SIGALRM itself declares `thread`: its own `setitimer`
 #     would cancel a signal-method ceiling and its handler would catch the
-#     plugin's alarm.
+#     plugin's alarm. So does one that deletes a `signal` name the plugin
+#     reads, whose `cancel()` would end the session in INTERNALERROR; and a
+#     read of an alarm name sits under a guard, since Windows has none.
 #   * every literal wait budget sits below the ceiling of each test that runs
 #     it. The walker below is the enforcer; it replaced the ledger probe that
 #     counted literal `timeout=` values above 60 (48 when it was retired).
@@ -1857,54 +1861,190 @@ def _ceiling_offenders(sites: list[_BudgetSite]) -> list[str]:
     return out
 
 
+def _sigalrm_spellings(tree: ast.Module) -> tuple[set[str], set[str], set[str]]:
+    """The names a module calls the timer, the handler setter and SIGALRM by,
+    ``from signal import setitimer as t`` included."""
+    timers, setters, alarm = set(_SIGALRM_TIMER_CALLS), {"signal"}, {"SIGALRM"}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and n.module == "signal":
+            for a in n.names:
+                local = a.asname or a.name
+                if a.name in _SIGALRM_TIMER_CALLS:
+                    timers.add(local)
+                elif a.name == "signal":
+                    setters.add(local)
+                elif a.name == "SIGALRM":
+                    alarm.add(local)
+    return timers, setters, alarm
+
+
+def _is_sigalrm_arm(node: ast.AST, names: tuple[set[str], set[str], set[str]]) -> bool:
+    """Whether ``node`` is a call that arms SIGALRM under a module's spellings
+    (``_sigalrm_spellings``): a timer (``setitimer``, ``alarm``), or a handler
+    installed for ``SIGALRM``."""
+    if not isinstance(node, ast.Call):
+        return False
+    timers, setters, alarm = names
+    name = _terminal_name(node.func)
+    return name in timers or (
+        name in setters and bool(node.args) and _terminal_name(node.args[0]) in alarm)
+
+
+def _arms_sigalrm(node: ast.AST, names: tuple[set[str], set[str], set[str]]) -> bool:
+    """Whether anything in ``node``'s subtree arms SIGALRM (``_is_sigalrm_arm``)."""
+    return any(_is_sigalrm_arm(n, names) for n in ast.walk(node))
+
+
+def _signal_module_names(tree: ast.Module) -> set[str]:
+    """The names a module calls the ``signal`` module by: ``signal``, and the
+    alias of each ``import signal as s``."""
+    names = {"signal"}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Import):
+            names.update(a.asname for a in n.names if a.name == "signal" and a.asname)
+    return names
+
+
+@functools.lru_cache(maxsize=None)
+def _timeout_plugin_signal_names() -> frozenset[str]:
+    """Every name pytest-timeout's own source reads from the ``signal`` module,
+    derived from the installed plugin. Under the signal method its ``cancel()``
+    reads them after a failing call phase, before teardown restores a name a
+    test deleted, so a deleted one ends the session in INTERNALERROR. No plugin,
+    no signal method: nothing to read."""
+    try:
+        import pytest_timeout
+    except ImportError:
+        return frozenset()
+    tree = ast.parse(Path(pytest_timeout.__file__).read_text(encoding="utf-8"))
+    return frozenset(n.attr for n in ast.walk(tree)
+                     if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+                     and n.value.id == "signal")
+
+
+# `del <signal module>.signal` deletes the handler setter while naming none of
+# the words the delete clause's filter reads; this is its one spelling.
+_DEL_SIGNAL_SETTER = re.compile(r"\bdel\s+\w+\.signal\b")
+
+
+def _deletes_a_plugin_signal_name(node: ast.AST, modules: set[str]) -> bool:
+    """Whether ``node``'s subtree deletes a name the timeout plugin reads from
+    ``signal`` (``_timeout_plugin_signal_names``): ``<x>.delattr(<signal module>,
+    <name>)`` (a fixture's ``monkeypatch.delattr``, or the builtin),
+    ``<x>.delattr("signal.<name>")``, or ``del <signal module>.<name>``, where
+    ``<name>`` is any expression that is not a constant, or one of those names."""
+    plugin = _timeout_plugin_signal_names()
+
+    def named(expr: ast.expr | None) -> bool:
+        return expr is not None and (not isinstance(expr, ast.Constant) or expr.value in plugin)
+
+    for n in ast.walk(node):
+        if isinstance(n, ast.Delete):
+            targets = [e for t in n.targets
+                       for e in (t.elts if isinstance(t, (ast.Tuple, ast.List)) else [t])]
+            if any(isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name)
+                   and t.value.id in modules and t.attr in plugin for t in targets):
+                return True
+        elif isinstance(n, ast.Call) and _terminal_name(n.func) == "delattr":
+            keywords = {k.arg: k.value for k in n.keywords if k.arg}
+            target = n.args[0] if n.args else keywords.get("target")
+            name = n.args[1] if len(n.args) > 1 else keywords.get("name")
+            if isinstance(target, ast.Name) and target.id in modules and named(name):
+                return True
+            if (name is None and isinstance(target, ast.Constant) and isinstance(target.value, str)
+                    and target.value.rpartition(".")[0] == "signal"
+                    and target.value.rpartition(".")[2] in plugin):
+                return True
+    return False
+
+
+@functools.lru_cache(maxsize=None)
+def _pytest_collected_patterns() -> tuple[str, ...]:
+    """The file names pytest collects tests from: pyproject's ``python_files``
+    (a string, or an array on one line or several), or pytest's own default
+    when the table sets none. A value this cannot read fails loudly: an empty
+    read would leave no module collected and every offender dropped."""
+    m = re.search(r"^python_files\s*=\s*(\[[^\]]*\]|[^\n]+)", _pytest_ini_section(), re.MULTILINE)
+    if m is None:
+        return ("test_*.py", "*_test.py")
+    patterns = tuple(re.findall(r"[\w*?.\[\]-]+\.py", m.group(1)))
+    assert patterns, f"pyproject's python_files reads {m.group(1)!r}, and no file pattern was found in it"
+    return patterns
+
+
+def _pytest_collects(stem: str) -> bool:
+    """Whether pytest collects ``tests/<stem>.py`` as a test module."""
+    return any(fnmatch.fnmatchcase(f"{stem}.py", pat) for pat in _pytest_collected_patterns())
+
+
+def _outside_units(tree: ast.Module) -> list[ast.stmt]:
+    """The statements no unit of ``_collect_units`` holds: a module's and its
+    classes' statements that are not defs, a def under an ``if`` among them."""
+    out: list[ast.stmt] = []
+
+    def visit(body: list[ast.stmt]) -> None:
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                visit(node.body)
+            elif not isinstance(node, _FuncDef):
+                out.append(node)
+
+    visit(tree.body)
+    return out
+
+
+# What a module does that asks for the thread method, and what that does to
+# pytest-timeout's signal method: (the offender's verb, the hazard).
+_SIGALRM_KINDS = {
+    "arms": ("arms SIGALRM", "its own timer cancels the per-test ceiling"),
+    "deletes": ("deletes a name the timeout plugin's signal method reads",
+                "a failing test ends the session in INTERNALERROR, since the plugin's cancel() "
+                "reads the deleted name before teardown restores it"),
+}
+
+
 def _sigalrm_offenders(modules: list[tuple[str, str]]) -> tuple[list[str], list[str]]:
     """(modules that arm SIGALRM or import an arming function, the offenders).
 
-    A unit arms when its body calls ``setitimer``/``alarm`` or installs a
-    ``SIGALRM`` handler, or runs a unit of its module that does; a class arms
-    when one of its methods does. A module that arms, or imports an arming
-    function or class from a sibling test module, must carry
-    ``pytestmark = pytest.mark.timeout(method="thread")``, and every other
-    timeout mark in it must name ``method="thread"`` too: the closest mark
-    wins, and one that names no method takes the ini's (``signal`` on POSIX).
+    A unit arms when its body calls ``setitimer``/``alarm``, installs a
+    ``SIGALRM`` handler or deletes a name the timeout plugin's signal method
+    reads (``_deletes_a_plugin_signal_name``), or uses a function that arms:
+    one of its own module, or one it imports by name from a sibling module,
+    followed from module to module until nothing new arms (a whole-module
+    import of a helper that only wraps another, and a subclass of a helper's
+    class, are not followed yet: DEF-4035). A class arms when one of its
+    methods does. A test module that arms, or imports an arming function or
+    class, must carry ``pytestmark = pytest.mark.timeout(method="thread")``,
+    and every other timeout mark in it must name ``method="thread"`` too: the
+    closest mark wins, and one that names no method takes the ini's
+    (``signal`` on POSIX). A module pytest never collects (a ``tests/_*.py``
+    helper) is asked for no mark, since one there applies to no test: the test
+    modules that import its arming functions are asked instead. A helper that
+    arms outside a module-level function, where no importer can be followed,
+    is reported, and so is ``conftest.py``'s arm, which no mark can cover. The
+    imports followed are ``_imports_from_tests``' (not a relative import,
+    ``importlib`` or ``pytest_plugins``).
     """
     parse = _memo_parser(modules)
-
-    def spellings(tree: ast.Module) -> tuple[set[str], set[str], set[str]]:
-        """The names this module calls the timer, the handler setter and SIGALRM
-        by, ``from signal import setitimer as t`` included."""
-        timers, setters, alarm = set(_SIGALRM_TIMER_CALLS), {"signal"}, {"SIGALRM"}
-        for n in ast.walk(tree):
-            if isinstance(n, ast.ImportFrom) and n.module == "signal":
-                for a in n.names:
-                    local = a.asname or a.name
-                    if a.name in _SIGALRM_TIMER_CALLS:
-                        timers.add(local)
-                    elif a.name == "signal":
-                        setters.add(local)
-                    elif a.name == "SIGALRM":
-                        alarm.add(local)
-        return timers, setters, alarm
-
-    def arms(node: ast.AST, names: tuple[set[str], set[str], set[str]]) -> bool:
-        timers, setters, alarm = names
-        for n in ast.walk(node):
-            if isinstance(n, ast.Call):
-                name = _terminal_name(n.func)
-                if name in timers or (
-                        name in setters and n.args and _terminal_name(n.args[0]) in alarm):
-                    return True
-        return False
-
     arming_names: dict[str, set[str]] = {}
     module_arms: dict[str, bool] = {}
-    for stem, text in modules:
-        # An arm is spelled with one of these words; a module without any of
-        # them is never parsed here.
-        tree = parse(stem) if any(w in text for w in ("setitimer", "alarm", "SIGALRM")) else None
+    module_kind: dict[str, str] = {}
+    unfollowed: dict[str, bool] = {}
+    words = (*_SIGALRM_TIMER_CALLS, "SIGALRM", "delattr", *sorted(_timeout_plugin_signal_names() - {"signal"}))
+
+    def imported_arming(tree: ast.Module, stem: str) -> list[tuple[str, str, str]]:
+        return [(local, src, name) for local, src, name in _imports_from_tests(tree)
+                if src != stem and (name in arming_names.get(src, set())
+                                    or (name == "" and module_arms.get(src)))]
+
+    def read(stem: str) -> bool:
+        """Read ``stem``'s arming, from its own text and the arming names it
+        imports as now known; True when it newly arms something an importer of
+        it must be read again for."""
+        tree = parse(stem)
         if tree is None:
-            continue
-        names_here = spellings(tree)
+            return False
+        names_here, signal_modules = _sigalrm_spellings(tree), _signal_module_names(tree)
         units = _collect_units(tree, {})
         by_qual = {u.qual: u for u in units}
         class_bases: dict[str, list[str]] = {}
@@ -1912,16 +2052,36 @@ def _sigalrm_offenders(modules: list[tuple[str, str]]) -> tuple[list[str], list[
             if isinstance(node, ast.ClassDef):
                 class_bases.setdefault(node.name, [b.id for b in node.bases if isinstance(b, ast.Name)])
         edges = {u.qual: _unit_refs(u, by_qual, class_bases) for u in units}
-        arming = {u.qual for u in units if arms(u.node, names_here)}
+        outside = _outside_units(tree)
+        arms_direct = {u.qual for u in units if _arms_sigalrm(u.node, names_here)}
+        deletes_direct = {u.qual for u in units if _deletes_a_plugin_signal_name(u.node, signal_modules)}
+        arms_outside = any(_arms_sigalrm(n, names_here) for n in outside)
+        deletes_outside = any(_deletes_a_plugin_signal_name(n, signal_modules) for n in outside)
+        locals_in = {local for local, _src, _name in imported_arming(tree, stem)}
+        arming = arms_direct | deletes_direct | {
+            u.qual for u in units if any(isinstance(n, ast.Name) and n.id in locals_in for n in u.walked())}
         grew = True
         while grew:
             more = {q for q, refs in edges.items() if q not in arming and refs & arming}
             grew = bool(more)
             arming |= more
         names = {q for q in arming if "::" not in q} | {q.split("::", 1)[0] for q in arming if "::" in q}
-        arming_names[stem] = names
-        module_arms[stem] = bool(arming) or any(
-            arms(n, names_here) for n in tree.body if not isinstance(n, (*_FuncDef, ast.ClassDef)))
+        arms = bool(arms_direct or deletes_direct or arms_outside or deletes_outside)
+        before = (arming_names.get(stem), module_arms.get(stem))
+        arming_names[stem], module_arms[stem] = names, arms
+        module_kind[stem] = "arms" if arms_direct or arms_outside else "deletes"
+        unfollowed[stem] = arms_outside or deletes_outside or any(
+            isinstance(n, ast.Name) and n.id in locals_in for s in outside for n in ast.walk(s))
+        return bool(names or arms) and before != (names, arms)
+
+    # An arm or a delete is spelled with one of these words, or as
+    # `_DEL_SIGNAL_SETTER`. A module with none of them is read once it names a
+    # module that newly arms, since it may import that module's functions.
+    todo = [stem for stem, text in modules
+            if any(w in text for w in words) or _DEL_SIGNAL_SETTER.search(text)]
+    while todo:
+        newly = {stem for stem in todo if read(stem)}
+        todo = [stem for stem, text in modules if any(src in text for src in newly - {stem})]
 
     sources = [src for src, names in arming_names.items() if names]
     armed: list[str] = []
@@ -1933,19 +2093,35 @@ def _sigalrm_offenders(modules: list[tuple[str, str]]) -> tuple[list[str], list[
         tree = parse(stem)
         if tree is None:
             continue
-        imported = sorted(f"{name or 'the module'} from {src}"
-                          for _local, src, name in _imports_from_tests(tree)
-                          if src != stem and (name in arming_names.get(src, set())
-                                              or (name == "" and module_arms.get(src))))
+        imported = sorted(f"{name or 'the module'} from {src}" for _local, src, name in imported_arming(tree, stem))
         if not (module_arms.get(stem) or imported):
             continue
         armed.append(stem)
-        why = "arms SIGALRM" if module_arms.get(stem) else f"imports an arming function ({', '.join(imported)})"
+        if module_arms.get(stem):
+            why, hazard = _SIGALRM_KINDS[module_kind[stem]]
+        else:
+            why = f"imports an arming function ({', '.join(imported)})"
+            hazard = "the imported function's arm or delete breaks the plugin's own alarm"
+        if stem == "conftest":
+            offenders.append(f"tests/conftest.py {why}, and a pytestmark in conftest.py applies to "
+                             "no test, so no mark can give the tests it serves the thread method -- "
+                             "move it into the test module that needs it, under that module's mark")
+            continue
+        if not _pytest_collects(stem):
+            if unfollowed.get(stem):
+                offenders.append(f"tests/{stem}.py {why} outside a module-level function, where this "
+                                 "contract cannot follow it to the test modules that run it, and a "
+                                 "pytestmark in a module pytest never collects applies to no test -- "
+                                 "move it into a module-level function, whose importers are then "
+                                 "asked for the thread method")
+            # Else a helper: a mark in it applies to no test, so each test module
+            # that imports its arming functions is asked instead.
+            continue
         module_mark = _first_timeout_mark(_pytestmark_exprs(tree.body), {})
         if module_mark is None or module_mark.method != "thread":
             offenders.append(f"tests/{stem}.py {why} but its module pytestmark does not carry "
                              "pytest.mark.timeout(method=\"thread\") -- under the signal method "
-                             "its own timer cancels the per-test ceiling")
+                             f"{hazard}")
         for unit in _collect_units(tree, {}):
             exprs = list(unit.node.decorator_list)
             for c in unit.classes:
@@ -1955,8 +2131,183 @@ def _sigalrm_offenders(modules: list[tuple[str, str]]) -> tuple[list[str], list[
                 if mark is not None and mark.method != "thread":
                     offenders.append(f"tests/{stem}.py::{unit.qual} carries a timeout mark with no "
                                      "method=\"thread\"; the closest mark wins, so this test runs "
-                                     "under the signal method beside the module's own SIGALRM timer")
+                                     f"under the signal method, where {hazard}")
     return sorted(armed), sorted(set(offenders))
+
+
+def _every_def(tree: ast.Module) -> list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]]:
+    """``(qualified name, node)`` for every def at any depth: a module-level
+    function, a method (``TestX::test_y``), a def nested in a function
+    (``test_y.<locals>.inner``) or one under a module-level ``if``. It reads
+    more than ``_collect_units``, which folds a nested def into its parent and
+    reads only module-level and class-body defs (the scope a wait budget is
+    charged to)."""
+    out: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef]] = []
+
+    def visit(node: ast.AST, qual: str, in_function: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (*_FuncDef, ast.ClassDef)):
+                name = (child.name if not qual else
+                        f"{qual}.<locals>.{child.name}" if in_function else f"{qual}::{child.name}")
+                if isinstance(child, ast.ClassDef):
+                    visit(child, name, False)
+                else:
+                    out.append((name, child))
+                    visit(child, name, True)
+            else:
+                visit(child, qual, in_function)
+
+    visit(tree, "", False)
+    return out
+
+
+# What an alarm reads from `signal` and Windows lacks: a read of any of them
+# that Windows runs raises AttributeError (a `from signal import` of one,
+# ImportError).
+_ALARM_NAMES = frozenset({"SIGALRM", "setitimer", "getitimer", "alarm",
+                          "ITIMER_REAL", "ITIMER_VIRTUAL", "ITIMER_PROF"})
+
+
+def _is_alarm_guard_call(node: ast.AST, modules: set[str]) -> bool:
+    """Whether ``node`` is ``hasattr(<signal module>, <an alarm name>)``."""
+    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "hasattr" and len(node.args) == 2
+            and isinstance(node.args[0], ast.Name) and node.args[0].id in modules
+            and isinstance(node.args[1], ast.Constant) and node.args[1].value in _ALARM_NAMES)
+
+
+def _alarm_guard_names(tree: ast.Module, modules: set[str]) -> set[str]:
+    """The names a module assigns a guard to (``has_alarm = hasattr(signal,
+    "SIGALRM")``), which its code then tests in place of the call."""
+    out: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Assign, ast.AnnAssign, ast.NamedExpr)) and n.value is not None:
+            if any(_is_alarm_guard_call(m, modules) for m in ast.walk(n.value)):
+                targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                out.update(t.id for t in targets if isinstance(t, ast.Name))
+    return out
+
+
+def _alarm_present(test: ast.expr, modules: set[str], guards: set[str]) -> bool:
+    """Whether ``test`` holds only where the alarm exists: a guard, a name
+    assigned one, or ``a and b`` with one of them."""
+    if _is_alarm_guard_call(test, modules) or (isinstance(test, ast.Name) and test.id in guards):
+        return True
+    return (isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And)
+            and any(_alarm_present(v, modules, guards) for v in test.values))
+
+
+def _alarm_absent(test: ast.expr, modules: set[str], guards: set[str]) -> bool:
+    """Whether ``test`` holds wherever the alarm is missing: ``not`` a guard,
+    or ``a or b`` with one of them."""
+    if isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not):
+        return _alarm_present(test.operand, modules, guards)
+    return (isinstance(test, ast.BoolOp) and isinstance(test.op, ast.Or)
+            and any(_alarm_absent(v, modules, guards) for v in test.values))
+
+
+def _leaves_quietly(block: list[ast.stmt]) -> bool:
+    """Whether a block ends its scope without a red: ``return``, or a call named
+    ``skip`` (``pytest.skip``). A ``raise`` or an ``assert`` reds the host it
+    fires on, so it guards nothing here."""
+    last = block[-1]
+    return isinstance(last, ast.Return) or (
+        isinstance(last, ast.Expr) and isinstance(last.value, ast.Call)
+        and _terminal_name(last.value.func) == "skip")
+
+
+def _alarm_reads(scope: list[ast.stmt], modules: set[str]) -> list[list[ast.AST]]:
+    """Each read of an alarm name that ``scope`` runs, as its path from the
+    scope's statement down to the read: an attribute of the signal module, or a
+    ``from signal import`` of one. A def's decorators and defaults run in the
+    scope that defines it; its body is a scope of its own."""
+    out: list[list[ast.AST]] = []
+
+    def visit(node: ast.AST, path: list[ast.AST]) -> None:
+        path = [*path, node]
+        if isinstance(node, _FuncDef):
+            for expr in [*node.decorator_list, *node.args.defaults,
+                         *(d for d in node.args.kw_defaults if d is not None)]:
+                visit(expr, path)
+            return
+        if ((isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and node.value.id in modules and node.attr in _ALARM_NAMES)
+                or (isinstance(node, ast.ImportFrom) and node.module == "signal"
+                    and any(a.name in _ALARM_NAMES for a in node.names))):
+            out.append(path)
+        for child in ast.iter_child_nodes(node):
+            visit(child, path)
+
+    for stmt in scope:
+        visit(stmt, [])
+    return out
+
+
+def _alarm_read_covered(path: list[ast.AST], scope: list[ast.stmt],
+                        modules: set[str], guards: set[str]) -> bool:
+    """Whether a guard covers the read at the end of ``path``: it sits in a
+    branch (of an ``if``, or of ``x if test else y``) that runs only with the
+    alarm, or an earlier statement of a block around it leaves quietly without
+    it (``if not hasattr(signal, "SIGALRM"): pytest.skip(...)``)."""
+    def exits_before(block: list[ast.stmt], node: ast.AST) -> bool:
+        if node not in block:
+            return False
+        return any(isinstance(s, ast.If) and _alarm_absent(s.test, modules, guards)
+                   and _leaves_quietly(s.body) for s in block[:block.index(node)])
+
+    if exits_before(scope, path[0]):
+        return True
+    for parent, child in zip(path, path[1:]):
+        if isinstance(parent, (ast.If, ast.IfExp)):
+            body = parent.body if isinstance(parent.body, list) else [parent.body]
+            orelse = parent.orelse if isinstance(parent.orelse, list) else [parent.orelse]
+            if (child in body and _alarm_present(parent.test, modules, guards)) or (
+                    child in orelse and _alarm_absent(parent.test, modules, guards)):
+                return True
+        for field in ("body", "orelse", "finalbody"):
+            block = getattr(parent, field, None)
+            if isinstance(block, list) and exits_before(block, child):
+                return True
+    return False
+
+
+def _sigalrm_unguarded(modules: list[tuple[str, str]]) -> tuple[list[str], list[str]]:
+    """(every scope under ``tests/`` that reads an alarm name, the ones with a
+    read no guard covers), each as ``tests/<stem>.py::<qualified name>``, a
+    module's own statements as ``<module>``.
+
+    ``_ALARM_NAMES`` are the names an alarm reads from ``signal`` that Windows
+    lacks. A read is covered when a guard holds wherever it runs
+    (``_alarm_read_covered``): it sits in a branch that runs only with the
+    alarm (``_alarm_present``), or an earlier statement of a block around it
+    leaves quietly without it (``_leaves_quietly``). A guard in a caller, in a
+    mark or after the read does not cover it, so a helper answers for itself.
+    Each def is a scope of its own (``_every_def``); its decorators and defaults
+    belong to the scope that defines it (``_alarm_reads``). Not yet read
+    (DEF-4034): a bare use of a name a ``from signal import`` bound (only the
+    import is a read), a quiet exit's scope (a module-level skip without
+    ``allow_module_level``, a generator's ``return`` before its ``yield``), and
+    what a guard name's value means.
+    """
+    parse = _memo_parser(modules)
+    reading: list[str] = []
+    uncovered: list[str] = []
+    for stem, text in modules:
+        # A read spells one of these names; a module without any is never parsed here.
+        tree = parse(stem) if any(w in text for w in _ALARM_NAMES) else None
+        if tree is None:
+            continue
+        signal_modules = _signal_module_names(tree)
+        guards = _alarm_guard_names(tree, signal_modules)
+        for qual, scope in [("<module>", tree.body), *((q, fn.body) for q, fn in _every_def(tree))]:
+            paths = _alarm_reads(scope, signal_modules)
+            if not paths:
+                continue
+            where = f"tests/{stem}.py::{qual}"
+            reading.append(where)
+            if not all(_alarm_read_covered(p, scope, signal_modules, guards) for p in paths):
+                uncovered.append(where)
+    return sorted(reading), sorted(uncovered)
 
 
 def _all_test_dir_modules() -> list[tuple[str, str]]:
@@ -2002,7 +2353,10 @@ def test_every_module_that_arms_sigalrm_declares_the_thread_method():
     Under the signal method pytest-timeout arms the same ``ITIMER_REAL`` and
     installs its own SIGALRM handler; a test that replaces the handler and then
     disarms the timer (``setitimer(ITIMER_REAL, 0)``) removes the ceiling for
-    the rest of that test, without a word. The thread method uses neither.
+    the rest of that test, without a word. The thread method uses neither. A
+    module that deletes a ``signal`` name the plugin reads runs under it too:
+    the plugin's ``cancel()`` reads the name after a failing call phase, before
+    teardown restores it, and the session ends in INTERNALERROR.
     """
     armed, offenders = _sigalrm_offenders(_all_test_dir_modules())
     # tests/test_redos.py and tests/test_speedbump_irreversible.py arm today.
@@ -2011,6 +2365,51 @@ def test_every_module_that_arms_sigalrm_declares_the_thread_method():
         "policing an empty set"
     )
     assert not offenders, "\n".join(offenders)
+
+
+def test_the_delete_clause_reads_the_names_the_timeout_plugin_reads():
+    """``_timeout_plugin_signal_names`` read the installed plugin's source: at
+    least the alarm and the timer, which its signal method's ``cancel()``
+    reads. An empty read would leave the delete clause blind to every literal."""
+    pytest.importorskip("pytest_timeout")
+    names = _timeout_plugin_signal_names()
+    assert {"SIGALRM", "setitimer"} <= names, (
+        f"read only {sorted(names)} from pytest-timeout's source; the plugin changed how it "
+        "spells the signal module, so re-read it and _deletes_a_plugin_signal_name"
+    )
+
+
+def test_every_sigalrm_arming_function_guards_itself():
+    """Every read of an alarm name Windows lacks under ``tests/`` sits under a
+    guard that covers it (the rule is ``_sigalrm_unguarded``'s docstring).
+
+    Windows has no SIGALRM. The required cells and the macOS leg do, so an
+    unguarded read passes every cheap gate and reds only the Windows
+    portability leg, about 80 minutes after the merge: two helpers in
+    tests/test_redos.py armed it with no guard of their own, and one of them,
+    ``_walker_alarmed_ms``, was reached by twelve simulated-clock rows
+    (DEF-5024, measured 2026-10-18). No caller-path analysis: a guard in a
+    caller does not count, so a helper answers for itself.
+    """
+    reading, uncovered = _sigalrm_unguarded(_all_test_dir_modules())
+    # tests/test_redos.py and tests/test_speedbump_irreversible.py read them today.
+    reading_modules = sorted({where.split("::", 1)[0] for where in reading})
+    assert len(reading_modules) >= 2, (
+        f"only {reading_modules} read an alarm name -- the detector regressed and this "
+        "contract is policing an empty set"
+    )
+    assert not uncovered, (
+        "these read an alarm name Windows lacks (SIGALRM, setitimer, alarm, ITIMER_REAL...) "
+        "where no guard covers the read, so on Windows it raises AttributeError (ImportError "
+        "for a `from signal import`). Put each read under `if hasattr(signal, \"SIGALRM\"):`, "
+        "or after `if not hasattr(signal, \"SIGALRM\"): pytest.skip(...)` (or `return`) in "
+        "the same scope: at module level the skip needs `allow_module_level=True`, in a "
+        "generator (a context manager, a yield fixture) branch rather than return before the "
+        "first `yield`, and a `from signal import` belongs inside the function that uses it, "
+        "after its guard. A mark (skipif on the def, its class or the module), an assert, a "
+        "raise, a guard in a caller or a guard after the read does not count; a mark on a "
+        "helper does nothing:\n" + "\n".join(uncovered)
+    )
 
 
 def test_no_engine_or_hook_module_arms_sigalrm():
@@ -2395,6 +2794,236 @@ class TestTheSigalrmDetectorReportsBothVerdicts:
 
     def test_a_module_that_never_arms_is_not_reported(self):
         assert _sigalrm_offenders([("test_synth", "import signal\ndef test_x():\n    pass\n")]) == ([], [])
+
+    # The delete clause: a test that deletes a name pytest-timeout's signal method
+    # reads ends the session in INTERNALERROR when it fails under that method.
+    _DELETES = ("import signal\n\ndef test_no_alarm(monkeypatch):\n"
+                "    for name in ('SIGALRM', 'setitimer', 'ITIMER_REAL'):\n"
+                "        monkeypatch.delattr(signal, name, raising=False)\n")
+    _STANDIN = ("import signal\n\ndef as_windows(monkeypatch):\n"
+                "    for name in ('SIGALRM', 'setitimer'):\n"
+                "        monkeypatch.delattr(signal, name, raising=False)\n")
+
+    def test_a_module_that_deletes_a_name_the_plugin_reads_is_reported(self):
+        armed, offenders = _sigalrm_offenders([("test_synth", self._DELETES)])
+        assert armed == ["test_synth"] and len(offenders) == 1, offenders
+        assert "deletes a name" in offenders[0] and "INTERNALERROR" in offenders[0], offenders
+        marked = "import pytest\npytestmark = pytest.mark.timeout(method='thread')\n" + self._DELETES
+        assert _sigalrm_offenders([("test_synth", marked)]) == (["test_synth"], [])
+
+    @pytest.mark.parametrize("body", [
+        "monkeypatch.delattr(signal, 'SIG_DFL')",
+        "monkeypatch.delattr(signal, name='ITIMER_REAL')",
+        "monkeypatch.delattr(target=signal, name='SIGALRM')",
+        "monkeypatch.delattr('signal.setitimer')",
+        "delattr(signal, 'SIGALRM')",
+        "del signal.signal",
+        "del (signal.SIG_DFL, signal.ITIMER_REAL)",
+    ], ids=["literal", "keyword", "target_keyword", "string_target", "builtin", "statement", "tuple"])
+    def test_each_spelling_of_the_delete_counts(self, body):
+        pytest.importorskip("pytest_timeout")
+        src = f"import signal\n\ndef test_x(monkeypatch):\n    {body}\n"
+        assert _sigalrm_offenders([("test_synth", src)])[0] == ["test_synth"]
+
+    def test_a_delete_at_module_level_counts(self):
+        pytest.importorskip("pytest_timeout")
+        src = "import signal\n\ndel signal.SIGALRM\n\ndef test_x():\n    pass\n"
+        assert _sigalrm_offenders([("test_synth", src)])[0] == ["test_synth"]
+
+    def test_an_aliased_module_counts_and_another_name_or_module_does_not(self):
+        pytest.importorskip("pytest_timeout")
+        assert "getitimer" not in _timeout_plugin_signal_names(), (
+            "the timeout plugin now reads signal.getitimer: pick a name it never reads for this case")
+        aliased = "import signal as s\n\ndef test_x(monkeypatch):\n    monkeypatch.delattr(s, 'SIGALRM')\n"
+        other_name = "import signal\n\ndef test_x(monkeypatch):\n    monkeypatch.delattr(signal, 'getitimer')\n"
+        other_module = "import os\n\ndef test_x(monkeypatch):\n    monkeypatch.delattr('os.SIGALRM')\n"
+        assert _sigalrm_offenders([("test_synth", aliased)])[0] == ["test_synth"]
+        assert _sigalrm_offenders([("test_synth", other_name)]) == ([], [])
+        assert _sigalrm_offenders([("test_synth", other_module)]) == ([], [])
+
+    def test_a_delete_spelled_with_none_of_the_alarm_words_is_still_read(self):
+        src = ("import signal\nfrom tests._names import LACKS\n\ndef test_x(monkeypatch):\n"
+               "    for name in LACKS:\n        monkeypatch.delattr(signal, name)\n")
+        assert _sigalrm_offenders([("test_synth", src)])[0] == ["test_synth"]
+
+    def test_a_helper_that_deletes_asks_its_importer_and_not_itself(self):
+        user = ("from tests._standin import as_windows\n\n"
+                "def test_y(monkeypatch):\n    as_windows(monkeypatch)\n")
+        armed, offenders = _sigalrm_offenders([("_standin", self._STANDIN), ("test_user", user)])
+        assert armed == ["_standin", "test_user"], armed
+        assert len(offenders) == 1 and offenders[0].startswith("tests/test_user.py "), offenders
+
+    def test_a_helper_that_wraps_another_asks_the_importers_of_the_wrapper(self):
+        cases = ("from tests._standin import as_windows\n\n"
+                 "def run_case(monkeypatch):\n    as_windows(monkeypatch)\n")
+        user = "from tests._cases import run_case\n\ndef test_y(monkeypatch):\n    run_case(monkeypatch)\n"
+        armed, offenders = _sigalrm_offenders(
+            [("_standin", self._STANDIN), ("_cases", cases), ("test_user", user)])
+        assert armed == ["_cases", "_standin", "test_user"], armed
+        assert len(offenders) == 1 and offenders[0].startswith("tests/test_user.py "), offenders
+
+    def test_a_helper_that_arms_outside_a_module_level_function_is_reported(self):
+        helper = ("import signal\n\nif hasattr(signal, 'SIGALRM'):\n"
+                  "    def arm():\n        signal.setitimer(signal.ITIMER_REAL, 0.1)\n")
+        _, offenders = _sigalrm_offenders([("_alarm_helper", helper)])
+        assert len(offenders) == 1 and offenders[0].startswith("tests/_alarm_helper.py "), offenders
+        assert "cannot follow" in offenders[0], offenders
+
+    def test_python_files_is_read_as_a_string_or_an_array(self, monkeypatch):
+        module = sys.modules[__name__]
+        read = _pytest_collected_patterns.__wrapped__
+        for section, want in [
+            ("[tool.pytest.ini_options]\ntimeout = 60\n", ("test_*.py", "*_test.py")),
+            ('[tool.pytest.ini_options]\npython_files = "check_*.py"\n', ("check_*.py",)),
+            ('[tool.pytest.ini_options]\npython_files = [\n    "test_*.py",\n    "check_*.py",\n]\n',
+             ("test_*.py", "check_*.py")),
+        ]:
+            monkeypatch.setattr(module, "_pytest_ini_section", lambda section=section: section)
+            assert read() == want, section
+        monkeypatch.setattr(module, "_pytest_ini_section", lambda: "[tool.pytest.ini_options]\npython_files = 42\n")
+        with pytest.raises(AssertionError, match="python_files"):
+            read()
+
+    def test_a_module_named_by_the_other_default_pattern_is_asked(self):
+        armed, offenders = _sigalrm_offenders([("standin_test", self._DELETES)])
+        assert armed == ["standin_test"] and len(offenders) == 1, offenders
+
+    def test_conftest_is_told_that_no_mark_there_reaches_a_test(self):
+        arms = ("import pytest, signal\npytestmark = pytest.mark.timeout(method='thread')\n\n"
+                "def _arm():\n    signal.setitimer(signal.ITIMER_REAL, 0.1)\n")
+        _, offenders = _sigalrm_offenders([("conftest", arms)])
+        assert len(offenders) == 1 and "applies to no test" in offenders[0], offenders
+        imports = "from tests._standin import as_windows\n"
+        _, offenders = _sigalrm_offenders([("_standin", self._STANDIN), ("conftest", imports)])
+        assert len(offenders) == 1 and offenders[0].startswith("tests/conftest.py "), offenders
+        assert "applies to no test" in offenders[0], offenders
+
+
+class TestTheAlarmGuardDetectorReportsBothVerdicts:
+    """Calibration for ``_sigalrm_unguarded``: each case is a shape the rule
+    must report, or one it must leave alone."""
+
+    _S = "tests/test_synth.py::"
+    # The shape tests/test_speedbump_irreversible.py::_search_ms guards with.
+    _BRANCHED = ("import signal\n\ndef _search_ms(compiled, probe):\n"
+                 "    has_alarm = hasattr(signal, 'SIGALRM')\n"
+                 "    if has_alarm:\n"
+                 "        signal.signal(signal.SIGALRM, print)\n"
+                 "        signal.setitimer(signal.ITIMER_REAL, 0.5)\n"
+                 "    try:\n"
+                 "        compiled.search(probe)\n"
+                 "        if has_alarm:\n"
+                 "            signal.setitimer(signal.ITIMER_REAL, 0)\n"
+                 "        return 1.0\n"
+                 "    finally:\n"
+                 "        if has_alarm:\n"
+                 "            signal.setitimer(signal.ITIMER_REAL, 0)\n")
+
+    @staticmethod
+    def _read(src: str) -> tuple[list[str], list[str]]:
+        return _sigalrm_unguarded([("test_synth", src)])
+
+    def test_an_unguarded_timer_and_an_unguarded_handler_are_reported(self):
+        timer = "import signal\ndef _arm():\n    signal.setitimer(signal.ITIMER_REAL, 0.1)\n"
+        handler = "import signal\ndef test_x():\n    signal.signal(signal.SIGALRM, print)\n"
+        assert self._read(timer) == ([self._S + "_arm"], [self._S + "_arm"])
+        assert self._read(handler)[1] == [self._S + "test_x"]
+
+    def test_an_early_quiet_exit_covers_the_reads_after_it(self):
+        skip = ("import signal, pytest\ndef _arm():\n    if not hasattr(signal, \"SIGALRM\"):\n"
+                "        pytest.skip(\"no SIGALRM\")\n    signal.setitimer(signal.ITIMER_REAL, 0.1)\n")
+        ret = "import signal\ndef _arm():\n    if not hasattr(signal, 'SIGALRM'):\n        return None\n    signal.alarm(1)\n"
+        in_block = ("import signal, pytest\ndef test_x(ctx):\n    with ctx:\n        if not hasattr(signal, 'SIGALRM'):\n"
+                    "            pytest.skip('no SIGALRM')\n        signal.alarm(1)\n")
+        assert self._read(skip) == ([self._S + "_arm"], [])
+        assert self._read(ret)[1] == []
+        assert self._read(in_block)[1] == []
+
+    def test_a_branch_guard_covers_only_the_reads_inside_it(self):
+        assert self._read(self._BRANCHED) == ([self._S + "_search_ms"], [])
+        bare_disarm = self._BRANCHED.replace(
+            "    finally:\n        if has_alarm:\n            signal.setitimer(signal.ITIMER_REAL, 0)\n",
+            "    finally:\n        signal.setitimer(signal.ITIMER_REAL, 0)\n")
+        assert bare_disarm != self._BRANCHED
+        assert self._read(bare_disarm)[1] == [self._S + "_search_ms"]
+        wrong_way = "import signal\ndef _arm():\n    if not hasattr(signal, 'SIGALRM'):\n        signal.alarm(1)\n"
+        other_branch = ("import signal\ndef _arm():\n    if not hasattr(signal, 'SIGALRM'):\n        pass\n"
+                        "    else:\n        signal.alarm(1)\n")
+        ternary = "import signal\ndef _arm():\n    return signal.alarm(1) if hasattr(signal, 'SIGALRM') else None\n"
+        assert self._read(wrong_way)[1] == [self._S + "_arm"]
+        assert self._read(other_branch)[1] == []
+        assert self._read(ternary)[1] == []
+
+    def test_a_guarded_caller_leaves_its_unguarded_helper_reported(self):
+        src = ("import signal\ndef _arm():\n    signal.alarm(1)\n"
+               "def test_x():\n    if not hasattr(signal, 'SIGALRM'):\n        return\n    _arm()\n")
+        assert self._read(src) == ([self._S + "_arm"], [self._S + "_arm"])
+
+    def test_an_unguarded_caller_of_a_guarded_helper_is_not_read(self):
+        src = ("import signal\ndef _arm():\n    if not hasattr(signal, 'SIGALRM'):\n        return\n"
+               "    signal.alarm(1)\ndef test_x():\n    _arm()\n")
+        assert self._read(src) == ([self._S + "_arm"], [])
+
+    def test_a_late_guard_an_assert_a_raise_a_pass_or_a_mark_does_not_cover_a_read(self):
+        late = "import signal\ndef _arm():\n    signal.alarm(1)\n    if not hasattr(signal, 'SIGALRM'):\n        return\n"
+        passing = "import signal\ndef _arm():\n    if not hasattr(signal, 'SIGALRM'):\n        pass\n    signal.alarm(1)\n"
+        asserted = "import signal\ndef _arm():\n    assert hasattr(signal, 'SIGALRM')\n    signal.alarm(1)\n"
+        raised = ("import signal\ndef _arm():\n    if not hasattr(signal, 'SIGALRM'):\n"
+                  "        raise RuntimeError('no alarm')\n    signal.alarm(1)\n")
+        marked = ("import signal, pytest\n"
+                  "@pytest.mark.skipif(not hasattr(signal, 'SIGALRM'), reason='no SIGALRM')\n"
+                  "def test_x():\n    signal.alarm(1)\n")
+        for src in (late, passing, asserted, raised):
+            assert self._read(src)[1] == [self._S + "_arm"], src
+        assert self._read(marked)[1] == [self._S + "test_x"]
+
+    def test_a_guard_on_a_name_windows_has_or_on_another_module_does_not_count(self):
+        sigterm = "import signal\ndef _arm():\n    if not hasattr(signal, 'SIGTERM'):\n        return\n    signal.alarm(1)\n"
+        other = "import os, signal\ndef _arm():\n    if not hasattr(os, 'SIGALRM'):\n        return\n    signal.alarm(1)\n"
+        assert self._read(sigterm)[1] == [self._S + "_arm"]
+        assert self._read(other)[1] == [self._S + "_arm"]
+
+    def test_a_guard_name_and_another_alarm_name_count(self):
+        src = ("import signal\nHAVE_ALARM = hasattr(signal, 'setitimer')\n"
+               "def _arm():\n    if not HAVE_ALARM:\n        return\n    signal.alarm(1)\n")
+        assert self._read(src) == ([self._S + "_arm"], [])
+
+    def test_the_aliased_spellings_are_read(self):
+        src = ("import signal as s\n"
+               "def _guarded():\n    if not hasattr(s, 'SIGALRM'):\n        return\n"
+               "    from signal import ITIMER_REAL, setitimer as t\n    t(ITIMER_REAL, 0.1)\n"
+               "def _bare():\n    from signal import setitimer as t\n    t(0, 0.1)\n")
+        assert self._read(src) == ([self._S + "_bare", self._S + "_guarded"], [self._S + "_bare"])
+
+    def test_a_read_at_import_time_is_reported_and_a_module_skip_covers_it(self):
+        imported = "from signal import setitimer\ndef test_x():\n    pass\n"
+        default = ("import signal\ndef _arm(which=signal.ITIMER_REAL):\n"
+                   "    if not hasattr(signal, 'SIGALRM'):\n        return\n    signal.setitimer(which, 0.1)\n")
+        skipped = ("import signal, pytest\nif not hasattr(signal, 'SIGALRM'):\n"
+                   "    pytest.skip('no SIGALRM', allow_module_level=True)\n"
+                   "from signal import setitimer\ndef _arm(which=signal.ITIMER_REAL):\n    setitimer(which, 0.1)\n")
+        assert self._read(imported) == ([self._S + "<module>"], [self._S + "<module>"])
+        assert self._read(default)[1] == [self._S + "<module>"]
+        assert self._read(skipped)[1] == []
+
+    def test_a_nested_def_answers_for_itself(self):
+        src = ("import signal\ndef test_x():\n    if not hasattr(signal, 'SIGALRM'):\n        return\n"
+               "    def arm():\n        signal.alarm(1)\n    arm()\n")
+        assert self._read(src) == ([self._S + "test_x.<locals>.arm"], [self._S + "test_x.<locals>.arm"])
+
+    def test_a_method_an_async_def_and_a_def_under_a_module_level_if_are_read(self):
+        src = ("import signal, sys\nclass TestX:\n    def test_y(self):\n        signal.alarm(1)\n"
+               "async def _wait():\n    signal.alarm(1)\n"
+               "if sys.platform != 'win32':\n    def _arm():\n        signal.alarm(1)\n")
+        assert self._read(src)[1] == [self._S + "TestX::test_y", self._S + "_arm", self._S + "_wait"]
+
+    def test_a_finally_after_a_skip_inside_the_try_is_not_covered(self):
+        src = ("import signal, pytest\ndef test_x():\n    try:\n        if not hasattr(signal, 'SIGALRM'):\n"
+               "            pytest.skip('no SIGALRM')\n        signal.alarm(1)\n    finally:\n        signal.alarm(0)\n")
+        assert self._read(src)[1] == [self._S + "test_x"]
+
+    def test_a_call_named_alarm_on_another_object_is_not_a_read(self):
+        assert self._read("def test_x(clock):\n    clock.alarm(1)\n") == ([], [])
 
 
 # ---------------------------------------------------------------------------

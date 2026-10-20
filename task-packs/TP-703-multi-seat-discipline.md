@@ -134,7 +134,7 @@ its start, and the board's `overlaps:` section is the oracle, not this paragraph
 
 **Wave 2** (after the Wave 1 merge each one names):
 
-5. **`TP-703b` — The platform legs earn their red** (`lane/alarm-guard-contract`,
+5. **`TP-703b` — The platform legs earn their red** (`lane/tests-each-sigalrm-arming-function-guards-itself`,
    `lane/windows-main-leg`, `lane/tests-macos-race-rows-run-as-expected-failures`; a Mac seat for the first, the operator's
    call before the second and third). `DEF-5024`'s contract test on the required cells; a slim
    Windows leg on `main` after each merge, in a workflow of its own (the base-run readers read a
@@ -506,8 +506,8 @@ read these as the author's guess, not a schedule.
   Task 0 by choice; the refuting result (fewer than half findable) is not met, so `TP-703e`
   builds, and the dispatcher's own 10 of 18 and 7 of 10 were undercounts in both directions
 - Children: `TP-703a` LANDED (2026-10-19, single-seat, after `TP-703e`); `TP-703b` W3 LANDED
-  (2026-10-19, single-seat: `DEF-2025` re-opened as `DEF-4032`, `DEF-4033` filed), W1 and W2
-  DRAFT; `TP-703c` DRAFT;
+  (2026-10-19, single-seat: `DEF-2025` re-opened as `DEF-4032`, `DEF-4033` filed), W1 LANDED
+  (2026-10-20, single-seat: `DEF-5024` struck), W2 DRAFT; `TP-703c` DRAFT;
   `TP-703d` DRAFT; `TP-703e` LANDED (2026-10-19, single-seat on the dispatcher's checkout; the
   children stay in `task-packs/` with their state stamped until this roadmap lands, as `TP-702`
   did: the ledger gate reads a LANDED pack in `Done/` whose row is live as unstruck);
