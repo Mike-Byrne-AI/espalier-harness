@@ -865,10 +865,16 @@ def overlapping_claims(claims: list[dict], *, paths: list[str] | tuple[str, ...]
 
 
 def _job_key(re_: dict) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
-    """A job is its lane (or pack wave), its classes and its ids together."""
+    """A job is its lane (or pack wave), its classes and its ids together;
+    a list field of any other shape reads as empty (``_str_list``)."""
     return (str(re_.get("lane") or ""),
-            tuple(sorted(str(c) for c in re_.get("classes") or [])),
-            tuple(sorted(str(i) for i in re_.get("ids") or [])))
+            tuple(sorted(_str_list(re_.get("classes")))),
+            tuple(sorted(_str_list(re_.get("ids")))))
+
+
+def _lane_of(message: dict) -> str:
+    """The lane a message names, or the empty string."""
+    return str((message.get("re") or {}).get("lane") or "")
 
 
 #: What :func:`dispatcher_setting` answers when ``espalier.toml`` names a
@@ -879,44 +885,85 @@ def _job_key(re_: dict) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
 DISPATCHER_UNUSABLE = "-"
 
 
-def live_assignments(by_machine: dict[str, list[dict]], dispatcher: str | None = None) -> list[dict]:
+def live_assignments(by_machine: dict[str, list[dict]], dispatcher: str | None = None, *,
+                     closed: list[tuple[dict, dict, str]] | None = None) -> list[dict]:
     """The jobs given out and not taken back, oldest first. For each job the
     LATEST assign wins, so a re-sent assign of the same lane, classes and ids
     replaces the first; one naming a different id set is a new job beside the
-    old, which stays live until released by its id. A job closes when
-    the machine that assigned it, or the seat it was given to, sends a release
-    whose ``ack`` names the assign, or that names the assign's lane -- the lane
-    release the ship driver sends at a push closes a job assigned by that lane,
-    so a finished job does not warn forever. With ``dispatcher`` named, only its
-    assigns count, so a worker cannot assign itself work; unnamed, every
-    machine's do (a lone operator's default); :data:`DISPATCHER_UNUSABLE` counts
-    none. Ordered as the claims fold is: the stamp, the machine, the position in
-    its file, never an id's random tail (two assigns of one job in the same
-    second, with no dispatcher named, resolve by machine name)."""
+    old, which stays live until a release closes it. A job closes on one of
+    three releases from the machine that assigned it or the seat it was given
+    to: one whose ``ack`` names the assign; one that names the assign's lane --
+    the lane release the ship driver sends at a push closes a job assigned by
+    that lane, so a finished job does not warn forever; or, for a job that
+    names no lane, from the seat alone, one that names a lane the seat began
+    after the job's latest assign and on which its live claims, together,
+    named every id the job names -- the same push closes a job assigned by
+    its ids (a job naming a lane is that lane's to close, so a claim on
+    another lane never does). A claim counts while it is live (a release of
+    it, by its id or by its lane, takes it out first, as the claims fold
+    does), and a lane is begun by a claim the seat sends while it holds no
+    live claim on that lane (a push releases them all, so a follow-up claim
+    after it begins the lane again). A claim's ids name the rows its lane
+    touches, not the rows it fixed, so a lane begun before the job never
+    closes it: a seat whose current lane touches a row the dispatcher has just
+    queued as its next job does not close that job at the current lane's push. A
+    re-sent assign starts the job's clock again, so a lane begun before the
+    re-send leaves the job to a later lane or to a release by its id. A
+    malformed ``ids`` or ``classes`` field costs its own message and never
+    the fold (``_str_list``). With ``dispatcher``
+    named, only its assigns count, so a worker cannot assign itself work;
+    unnamed, every machine's do (a lone operator's default);
+    :data:`DISPATCHER_UNUSABLE` counts none. ``closed``, when a list is given,
+    gets one ``(assign, release, rule)`` per job the fold closes, ``rule`` one
+    of ``ack``, ``lane`` and ``claim``, so a reader counts closures by the
+    rules' one home. Ordered as the claims fold is: the stamp, the machine, the
+    position in its file, never an id's random tail (two assigns of one job in
+    the same second, with no dispatcher named, resolve by machine name)."""
     events: list[tuple[str, str, int, dict]] = []
     for machine, messages in by_machine.items():
         for i, m in enumerate(messages):
             kind = m.get("type")
-            if kind == "assign" and (not dispatcher or machine == dispatcher):
-                events.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
-            elif kind == "release":
+            if (kind == "assign" and (not dispatcher or machine == dispatcher)) or kind in ("release", "claim"):
                 events.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
     events.sort(key=lambda t: t[:3])
     by_job: dict[tuple[str, tuple[str, ...], tuple[str, ...]], dict] = {}
     order: dict[str, int] = {}
+    claims: dict[str, dict[str, dict]] = {}  # each sender's live claims, by id
+    begun: dict[tuple[str, str], int] = {}  # (sender, lane): where its live claims there began
     for n, (_at, who, _i, m) in enumerate(events):
-        if m.get("type") == "assign":
+        kind = m.get("type")
+        if kind == "assign":
             by_job[_job_key(m.get("re") or {})] = m
             order[str(m.get("id"))] = n
             continue
+        mine = claims.setdefault(who, {})
+        if kind == "claim":
+            if not any(_lane_of(c) == _lane_of(m) for c in mine.values()):
+                begun[(who, _lane_of(m))] = n
+            mine[str(m.get("id"))] = m
+            continue
         ack = m.get("ack") or ""
-        lane = str((m.get("re") or {}).get("lane") or "")
+        lane = _lane_of(m)
+        start = begun.get((who, lane), -1)
+        cover = set() if ack or not lane else {
+            i for c in mine.values() if _lane_of(c) == lane for i in _str_list((c.get("re") or {}).get("ids"))}
         for key, a in list(by_job.items()):
             a_re = a.get("re") or {}
             if who not in (a.get("from"), a_re.get(ASSIGN_SEAT_KEY)):
                 continue
-            if (ack and a.get("id") == ack) or (not ack and lane and a_re.get("lane") == lane):
+            ids = set(_str_list(a_re.get("ids")))
+            rule = ("ack" if ack and a.get("id") == ack
+                    else "lane" if not ack and lane and a_re.get("lane") == lane
+                    else "claim" if (not a_re.get("lane") and who == a_re.get(ASSIGN_SEAT_KEY) and ids
+                                     and start > order.get(str(a.get("id")), -1) and ids <= cover)
+                    else "")
+            if rule:
                 del by_job[key]
+                if closed is not None:
+                    closed.append((a, m, rule))
+        for cid in list(mine):
+            if (ack and cid == ack) or (not ack and lane and _lane_of(mine[cid]) == lane):
+                del mine[cid]   # a lane left with no live claim begins again at its next claim
     return sorted(by_job.values(), key=lambda m: order[str(m.get("id"))])
 
 

@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4039",
+ "subject": "tests/test_board.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "it fires only when a new list section lands; the derived test is the oracle",
+ "row_sha": "8eae65ac34d7",
+ "text_sha": "eb44a103e2bb",
+ "verified_2026_10_20": "OPEN (filed 2026-10-20; probe driven at filing)"
+}

@@ -668,6 +668,24 @@ class TestBrief:
         assert "each assign in its shape" in own and "under 900 characters" in own
         assert "in its shape" not in adopter
 
+    def test_this_repositorys_dispatcher_keeps_the_report_rules_and_an_adopters_brief_is_unchanged(self, seat, clone):
+        """The operator's rules for a dispatcher's report (2026-10-20): counts
+        name their population, a tool's setting is quoted from the tool, the
+        day's figures come from the census. They name a script only this
+        repository holds, so they ride the self-host slot and an adopter's
+        brief is what it was, byte for byte. Dies to: the sentence rendered
+        for every tree, or left out of this repository's."""
+        _dispatcher(clone, '"box"')
+        _holds(clone, "docs/WORKFLOW.md")
+        adopter = seat.compose_brief(clone, "box", clone).text
+        assert "seat_day_census" not in adopter and "names its population" not in adopter
+        # Up to the operator's sentence only: TP-703g inserts its clause after it.
+        assert "merged PR bodies. Decisions stay the operator's." in adopter
+        _holds(clone, "memory/parallel-work-protocol.md")
+        own = seat.compose_brief(clone, "box", clone).text
+        assert ("merged PR bodies. " + seat.SELF_HOST_FIGURES + "Decisions stay the operator's.") in own
+        assert "the day's figures come from scripts/seat_day_census.py, never carried by hand." in own
+
     def test_the_seats_wait_in_the_protocol_is_the_dispatchers_tick_interval(self, seat):
         """The seat proceeds on its Task 0 recommendation after the dispatcher's
         tick interval with no answer (the protocol's "The seat's side of it", the
@@ -870,7 +888,7 @@ class TestRetire:
 
     def test_a_seat_whose_worktree_is_gone_gets_the_recipe(self, seat, clone, registry):
         gone = _worktree(clone, "gone", name="box-gone")
-        _send(seat, gone, "box-gone", "claim", "lost", lane="lane/gone")
+        lost = _send(seat, gone, "box-gone", "claim", "lost", lane="lane/gone")
         _git(clone, "worktree", "remove", "--force", str(gone))
         with pytest.raises(seat.Refused) as refused:
             seat.cmd_retire(clone, "box-gone", dry_run=False, fetch=True)
@@ -878,7 +896,43 @@ class TestRetire:
         assert said.startswith("seat box-gone holds 1 live claim(s) and its worktree is gone")
         assert "git worktree add --detach .claude/worktrees/gone origin/main" in said
         assert "git -C .claude/worktrees/gone config --worktree espalier.machine box-gone" in said
-        assert "python tools/cc/mail.py send --type release --lane lane/gone" in said
+        assert f"python tools/cc/mail.py send --type release --ack {lost['id']}" in said
+
+    def test_the_gone_worktree_recipe_names_only_that_seats_claims(self, seat, clone, registry):
+        """Dies to: the recipe built from every live claim on the channel."""
+        gone = _worktree(clone, "gone", name="box-gone")
+        other = _worktree(clone, "other", name="box-other")
+        lost = _send(seat, gone, "box-gone", "claim", "lost", lane="lane/gone")
+        theirs = _send(seat, other, "box-other", "claim", "theirs", lane="lane/other")
+        _git(clone, "worktree", "remove", "--force", str(gone))
+        with pytest.raises(seat.Refused) as refused:
+            seat.cmd_retire(clone, "box-gone", dry_run=False, fetch=True)
+        said = str(refused.value)
+        assert f"--ack {lost['id']}" in said and theirs["id"] not in said, said
+
+    def test_the_gone_worktree_recipe_hands_the_seats_job_back_never_closes_it(self, seat, clone, registry):
+        """The recipe releases the seat's claims by their ids. A lane release
+        from the seat would read as its lane shipped and close the job it was
+        given by its ids (the third closing rule), so the second retire would
+        remove the seat with its job closed and never handed back. Dies to:
+        the recipe's release by lane."""
+        gone = _worktree(clone, "gone", name="box-gone")
+        job = _send(seat, clone, "box", "assign", "fix DEF-7", ids=["DEF-7"], seat="box-gone")
+        claim = _send(seat, gone, "box-gone", "claim", "DEF-7, started", lane="lane/gone", ids=["DEF-7"])
+        _git(clone, "worktree", "remove", "--force", str(gone))
+        with pytest.raises(seat.Refused) as refused:
+            seat.cmd_retire(clone, "box-gone", dry_run=False, fetch=True)
+        recipe = str(refused.value)
+        assert f"python tools/cc/mail.py send --type release --ack {claim['id']}" in recipe, recipe
+        assert "--lane" not in recipe, recipe
+        _git(clone, "worktree", "add", "--detach", str(gone), "origin/main")
+        _git(gone, "config", "--worktree", "espalier.machine", "box-gone")
+        _send(seat, gone, "box-gone", "release", "", ack=claim["id"])
+        seat.mail.fetch_mail(clone)
+        by_machine, _ = seat.mail.read_mail(clone)
+        assert [j["id"] for j in seat.mail.live_assignments(by_machine, "box")] == [job["id"]]
+        with pytest.raises(seat.Refused, match=r"holds 1 job\(s\) from the dispatcher"):
+            seat.cmd_retire(clone, "box-gone", dry_run=False, fetch=True)
 
     def test_the_clone_itself_is_never_retired_and_a_dry_run_changes_nothing(self, seat, clone, registry, capsys):
         with pytest.raises(seat.Refused, match="box is the clone itself"):

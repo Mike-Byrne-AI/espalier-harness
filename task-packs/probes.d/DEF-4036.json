@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4036",
+ "subject": "tools/cc/seat.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the fix is a refusal on a failed fetch, which only the retire verb run against a dead remote shows; its test is the oracle",
+ "row_sha": "8fe49c01e0c7",
+ "text_sha": "33cdbe0da295",
+ "verified_2026_10_20": "STILL_OPEN (re-pinned value unchanged on 2026-10-20: the same lane's failure-mode review named retire's second read: after its releases it fetches again unchecked and confirms against stale refs; the row now names both reads and the fix drives both) [changed: text]"
+}

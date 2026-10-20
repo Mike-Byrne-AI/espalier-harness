@@ -78,6 +78,8 @@ RUN_WINDOW = 20
 _PR_MERGE_RE = re.compile(r"^Merge pull request #(\d+)\b|\(#(\d+)\)\s*$")
 GH_TIMEOUT = 15.0
 OPEN_PR_LIMIT = 30
+#: Said beside the overlaps, board and ship notice alike, of a list read to the limit.
+OPEN_PR_CUT_NOTE = f"the open pull requests were read to the first {OPEN_PR_LIMIT}, so more may meet"
 LEDGER = LEDGER_FILE
 #: What the ledger count reads from the base tree: ``tools/cc`` (the generator
 #: and every sibling it loads by path, the fragment loader among them), the
@@ -755,7 +757,10 @@ def overlap_lines(section: object) -> list[str]:
               else f"{label}: claims {', '.join(stale[label])} were placed by another copy of tools/cc/_symbols.py "
               "and read whole (their files as unplaced lines) until both checkouts hold the same copy (the older "
               "lane merges main, or ships) and their seat claims again" for label in said]
-    return [_ascii(("overlaps: " if i == 0 else "          ") + t) for i, t in enumerate(texts)]
+    # A partial read counts what it read, as its empty form says.
+    among = " among what was read" if section.get("partial") else ""
+    head = f"overlaps: {len(pairs)} pair{'s' if len(pairs) != 1 else ''}{among}: " if pairs else "overlaps: "
+    return [_ascii((head if i == 0 else "          ") + t) for i, t in enumerate(texts)]
 
 
 def _overlaps_or_unread(root: Path, base: str, claims: list[dict], prs: list[dict], notes: list[str], *,
@@ -803,7 +808,10 @@ def lane_overlap_lines(root: Path, base: str, lane: str, number: object, head: s
     except Unresolvable as exc:
         notes.append(f"the claims are unread ({exc})")
     try:
-        prs = [pr for pr in read_open_prs(root, run_=run_) if pr.get("headRefName") != lane]
+        listed = read_open_prs(root, run_=run_)
+        if len(listed) >= OPEN_PR_LIMIT:
+            notes.append(OPEN_PR_CUT_NOTE)
+        prs = [pr for pr in listed if pr.get("headRefName") != lane]
     except Unresolvable as exc:
         prs = []
         notes.append(f"the open pull requests are unread ({exc})")
@@ -1050,8 +1058,10 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
         # The heads first, so the stale clause and the overlaps read the same ones;
         # --no-fetch reads them as they are here.
         head_notes = fetch_heads(root, prs, run_=run_) if fetch else []
+        # At the read's limit the list may be cut, so the overlaps are among what was read.
+        cut = [OPEN_PR_CUT_NOTE] if len(prs) >= OPEN_PR_LIMIT else []
         read_stale_section(root, base, prs, _merge_rules.strict(rules[1], rules[2]), fetch=False, run_=run_)
-        board["overlaps"] = _overlaps_or_unread(root, base, overlap_claims, prs, [*overlap_notes, *head_notes],
+        board["overlaps"] = _overlaps_or_unread(root, base, overlap_claims, prs, [*overlap_notes, *head_notes, *cut],
                                                 run_=run_, fetch=False, seat=board["seat"])
         for pr in prs:
             pr.pop("files", None)   # read for the stale and overlap checks; the JSON carries verdicts, not the list
@@ -1243,8 +1253,10 @@ def render(board: dict) -> str:
     elif not prs:
         lines.append("open PRs: none")
     else:
+        # At the read's limit the list may be cut, so the count says so.
+        count = f"{len(prs)}+ open (the first {len(prs)})" if len(prs) >= OPEN_PR_LIMIT else f"{len(prs)} open"
         for i, pr in enumerate(prs):
-            lines.append(("open PRs: " if i == 0 else "          ") + _pr_line(pr))
+            lines.append((f"open PRs: {count}: " if i == 0 else "          ") + _pr_line(pr))
             if pr.get("stale"):
                 lines.append(f"            stale: {pr['stale']}")
     disp = board.get("dispatcher") or {}
@@ -1280,8 +1292,11 @@ def render(board: dict) -> str:
     elif seats.get("checked") is False:
         seat_lines.append(f"live sessions per {seats.get('registry') or 'the default registry'}: run outside a "
                           "session, so not checked against one")
+    # The count is every seat row, the folded quiet ones included, so a reader
+    # that keeps only this line still sees how many there are.
+    seats_head = f"seats:    {len(rows)} seat{'s' if len(rows) != 1 else ''}: " if rows else "seats:    "
     for i, text in enumerate(seat_lines or ["none: no machine has mail and no checkout here holds a live session"]):
-        lines.append(("seats:    " if i == 0 else "          ") + text)
+        lines.append((seats_head if i == 0 else "          ") + text)
     if board.get("mail_unread"):
         lines.append(head + f"unread (the mail could not be read: {board['mail_unread']})")
     elif not jobs:
@@ -1289,7 +1304,8 @@ def render(board: dict) -> str:
     else:
         for i, a in enumerate(jobs):
             re_ = a.get("re") or {}
-            lines.append((head if i == 0 else "          ") + f"{re_.get('seat')}: {_job(re_)} (since {a.get('at')}; assign {a.get('id')})")
+            lines.append((head + f"{len(jobs)} live: " if i == 0 else "          ")
+                         + f"{re_.get('seat')}: {_job(re_)} (since {a.get('at')}; assign {a.get('id')})")
     asks = board.get("asks") or []
     if board.get("mail_unread"):
         lines.append(f"asks:     unread (the mail could not be read: {board['mail_unread']})")
@@ -1315,7 +1331,7 @@ def render(board: dict) -> str:
         for i, c in enumerate(claims):
             re_ = c.get("re") or {}
             n = len(re_.get("paths") or [])
-            lines.append(("claims:   " if i == 0 else "          ")
+            lines.append((f"claims:   {len(claims)} live: " if i == 0 else "          ")
                          + f"{c.get('from')}: {re_.get('lane') or '(no lane)'} ({n} path{'s' if n != 1 else ''}"
                          + (f", ids {', '.join(re_.get('ids'))}" if re_.get("ids") else "") + f") since {c.get('at')}")
     if "overlaps" in board:

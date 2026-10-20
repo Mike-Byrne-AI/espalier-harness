@@ -246,6 +246,7 @@ interactive session as under `-p`; a killed session leaves the lock behind.
 | Backs up a red `main` that nobody else has reverted | Hold knowledge only in its own context: what it decides is written where every seat can read it |
 | Carries a lighter lane of its own | Run the heaviest lanes, which compete with dispatching |
 | Files the rows nobody is assigned to fix, and the ones its own measurements find | File rows for a job it has assigned: the finding, its probe and its fix are the assignee's one job (rule 8) |
+| Reports counts that name their population, settings quoted from the tool that computes them, and the day's figures from `scripts/seat_day_census.py` | Carry a figure by hand, past a compaction or from memory |
 
 **Assign authority (decided by the operator 2026-10-15, after two days'
 measurement).** The dispatcher assigns, re-sequences and releases jobs on its
@@ -277,9 +278,12 @@ or tag, a revert that is not the red-`main` revert, an open call the goal file
 lists), for a platform safety stop, for a refusal it cannot resolve, and for a
 conflict outside its own files; a finding's row is the seat's own to file
 (item 8), never a stop. A red the seat cannot fix in two attempts shelves the
-lane (its claims stay; one note beginning `shelved:` says what was tried) and
-the seat takes its next queued job; the dispatcher re-sequences the shelved
-lane at its next tick. A redirect after the fact is an ack beginning
+lane (its claims stay, unless its push already released them; one note
+beginning `shelved:` says what was tried and names any job that lane's push
+closed) and the seat takes its next queued job; the dispatcher re-sequences
+the shelved lane at its next tick and re-sends the assign of each job the note
+names (the third closing rule closes a job at the push its claims cover,
+before CI has run, and no read lists such jobs yet: `DEF-4037`). A redirect after the fact is an ack beginning
 `redirect:`, and the Session Log row counts it as rework; `TP-703f`'s census
 counts both words from the refs, so the falsifier below is read, never
 recalled. Until the operator pastes the tick's new sentence (`TP-703e` 1-C-2),
@@ -353,7 +357,23 @@ cross-seat gate.
   each seat's plan warn about the other.
 - A job closes when the assigner or the assigned seat releases it, by the
   assign's id or by its lane. The ship driver's lane release closes a job
-  assigned by that lane, so a finished job stops warning.
+  assigned by that lane, and a job naming no lane when the seat's own live
+  claims on the released lane named every id it names and the seat began that
+  lane (its first claim there) after the job was given, so a finished job stops
+  warning without a release by hand (of the 25 jobs given on 2026-10-18, UTC,
+  22 were closed by a hand release, and for 21 of them the seat's claims had
+  named every id before that release). A claim's ids name what a lane touches,
+  not what it fixed, so a lane whose claims were live when the job came does
+  not close it: a row the current lane touches, queued as the seat's next job,
+  stays live until a lane begun for it ships. A push releases its lane's
+  claims, so a follow-up claim on that lane after the job came begins it again
+  (no such case is on the refs yet: `DEF-4042`). A re-send of a live job starts
+  its clock again. A seat releases its own claims by hand by their ids, never
+  by lane: a lane release reads as the lane shipped (`DEF-4041`). A job assigned by its ids closes at the first push of a lane whose
+  claims name them all, so a pack of several waves, or a row fixed across
+  several lanes, is assigned wave by wave by lane, or its id is re-sent after
+  each lane ships (the seat-day census names each such re-send, rows apart from
+  packs).
 - An unusable `dispatcher` setting (not a machine name, under a table, an
   unreadable file) counts no assign at all. It fails closed, and the board
   says why.

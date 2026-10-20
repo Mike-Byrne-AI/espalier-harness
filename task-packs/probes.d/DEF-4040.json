@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4040",
+ "subject": "tools/cc/mail.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "a later claim of the same ids is a follow-up and not proof the first lane left the row unfixed; a hand release of such a row is the measurement that would make it a defect",
+ "row_sha": "dfe38a3bbc48",
+ "text_sha": "30e8249cce53",
+ "verified_2026_10_20": "OPEN (filed 2026-10-20; probe driven at filing)"
+}

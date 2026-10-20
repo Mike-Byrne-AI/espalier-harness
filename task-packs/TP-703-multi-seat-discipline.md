@@ -230,7 +230,7 @@ which is stop and re-raise to the operator, never adjust and continue.
 5. **`TP-703f`.** *Oracle:* the dispatcher's releases on 10-18 (`git show
    refs/heads/mail/air:mail.jsonl`, `type == "release"` with `ack` naming an assign) against the
    lane releases the ship driver sent that closed a job. *Refuting result:* the driver already
-   closed most. *Exit:* drop the closure wave; keep the instruments. (Read 10-18: 25 of 25 by
+   closed most. *Exit:* drop the closure wave; keep the instruments. (Read 10-18: 22 of 25 by
    hand, 1 worker lane release matched an assign's lane.)
 6. **Waves 2 and 3.** Each child's Task 0 is its own; the roadmap asks only that none be
    assigned before the Wave 1 merge it names has landed (`TP-703b` after `TP-703a`; `TP-703d`
@@ -308,8 +308,17 @@ names, never this roadmap's state.
    re-aimed whose correction was findable by reading first, 7 of 10 to at most 1 of 10; minutes a
    seat sat stopped per request, from the request's stamp to its first edit after the ack;
    overrides that later forced rework, at most 1 in 20.
-6. **Hand releases** (`TP-703f`): over the next 25 jobs, releases sent by the dispatcher's hand
-   against jobs closed by the driver, 25 of 25 on 10-18 to at most 2.
+6. **Hand releases** (`TP-703f`): from the stamp of `TP-703f`'s merge until the dispatcher has
+   given 25 new jobs, the releases naming a job already closed that any seat sends, 26 on 10-18
+   (all the dispatcher's, against 25 new jobs given that UTC day) to at most 2. The releases
+   that closed a live job, the dispatcher's own decisions (a re-assign, a void, a hand-back),
+   are printed beside it and never judged: over every ref on 2026-10-20 they ran a median of 3
+   per 25 new jobs, 1 to 6. Read: `scripts/seat_day_census.py --since <the merge's stamp>
+   --jobs 25`, its totals line. Amended twice on 2026-10-20 at `TP-703f`'s reviews, before any
+   re-measure: this line first read the jobs a hand release was the first to close (22 of 25 on
+   10-18), which cannot see a hand release of a job a seat's claim had already closed and under
+   the third closing rule reads 1 of those 25 before anything changes; then every release naming
+   an assign (28), whose floor of the dispatcher's decisions sits at the target.
 7. **Dispatcher statements corrected** (`TP-703f`'s rules): the three later kinds (a narrower
    measurement, a restated setting, a hand-carried figure) at most 2 a day, read from the
    workers' corrections on the mail refs. The baseline (11 over two days) came from the tick
@@ -511,5 +520,6 @@ read these as the author's guess, not a schedule.
   `TP-703d` DRAFT; `TP-703e` LANDED (2026-10-19, single-seat on the dispatcher's checkout; the
   children stay in `task-packs/` with their state stamped until this roadmap lands, as `TP-702`
   did: the ledger gate reads a LANDED pack in `Done/` whose row is live as unstruck);
-  `TP-703f` DRAFT; `TP-703g` DRAFT; `TP-703h` DRAFT; `TP-703i` DRAFT; `TP-703j` DRAFT
+  `TP-703f` LANDED (2026-10-20, single-seat, one lane: the lane-begun rule on the operator's
+  word after the second review; `DEF-4036` to `DEF-4042` filed); `TP-703g` DRAFT; `TP-703h` DRAFT; `TP-703i` DRAFT; `TP-703j` DRAFT
 - Date: 2026-10-18 (authored, local)

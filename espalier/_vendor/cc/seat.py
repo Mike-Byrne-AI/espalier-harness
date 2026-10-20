@@ -637,8 +637,8 @@ DISPATCHER_BRIEF = (
     "You are the dispatcher seat {seat} ({protocol}). Orient from the banner{goal}, then run /inbox (mark "
     "read) and /inbox board. Your duties: read the board every 15 minutes (the loop on the next line), answer "
     "every worker request within the hour with facts, {assign}, {red}, write the Landing lines of the packs "
-    "in flight from the seats' merged PR bodies. Decisions stay the operator's. Start the loop on the next "
-    "line with no further message from the operator."
+    "in flight from the seats' merged PR bodies. {figures}Decisions stay the operator's. Start the loop on the "
+    "next line with no further message from the operator."
 )
 DISPATCHER_TICK = "/loop 15m /inbox board"
 #: Where the seat procedure lives, the first a checkout holds: this
@@ -677,6 +677,14 @@ SELF_HOST_ASSIGN = (
     "cc/GOAL.md; the protocol's Assign authority paragraph)"
 )
 ADOPTER_ASSIGN = "propose assigns and releases to the operator and send them on a yes"
+#: The rules a dispatcher's report keeps, this repository's own (the operator,
+#: 2026-10-20): its workers corrected figures carried by hand, settings restated
+#: from memory and counts with no population. The census it names is this
+#: repository's script, so an adopter's brief carries nothing in the slot.
+SELF_HOST_FIGURES = (
+    "Every count you state names its population, every setting a tool computes is quoted from the tool, and "
+    "the day's figures come from scripts/seat_day_census.py, never carried by hand. "
+)
 #: Flags after which claude is not starting a fresh session from a first
 #: message (a one-shot, a resumed or a continued conversation, a session
 #: brought over): the brief is refused beside them, never passed.
@@ -711,7 +719,9 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
         goal = f" and {GOAL_NOTES}'s notes" if (where / GOAL_NOTES).is_file() else ""
         red = (SELF_HOST_RED if self_host else ADOPTER_RED).format(base=base)
         assign = SELF_HOST_ASSIGN if self_host else ADOPTER_ASSIGN
-        text = DISPATCHER_BRIEF.format(seat=seat, protocol=protocol, goal=goal, assign=assign, red=red)
+        figures = SELF_HOST_FIGURES if self_host else ""
+        text = DISPATCHER_BRIEF.format(seat=seat, protocol=protocol, goal=goal, assign=assign, red=red,
+                                       figures=figures)
         return Brief("dispatcher", text + "\n" + DISPATCHER_TICK, DISPATCHER_TICK)
     has_tier_script = (where / TIER_SCRIPT).is_file()
     tier = (f"the tier the diff earns with --base origin/{base}" if has_tier_script
@@ -847,13 +857,18 @@ def run_session(argv: list[str], *, cwd: Path, env: dict[str, str]) -> int:
 
 # -- retire --------------------------------------------------------------------------
 
-def by_hand_release(root: Path, clone: str, seat: str, lanes: list[str]) -> str:
+def by_hand_release(root: Path, clone: str, seat: str, claim_ids: list[str]) -> str:
+    """The recipe for a seat whose worktree is gone: name a fresh worktree
+    after it and release its claims by their ids, never by lane, since a lane
+    release from the seat reads as its lane shipped and closes a job it was
+    given (``mail.live_assignments``); its jobs stay for the retire to hand
+    back."""
     folder = seat[len(clone) + 1:] if seat.startswith(clone + "-") else "<folder>"
     base = sync.default_branch(sync._Git(root, None)) or "main"
     return (f"its worktree is gone, and only the name {seat} can release them: "
             f"git worktree add --detach .claude/worktrees/{folder} {sync.REMOTE}/{base}, then "
             f"git -C .claude/worktrees/{folder} config --worktree {mail.MACHINE_KEY} {seat}, then in it "
-            + ", ".join(f"python tools/cc/mail.py send --type release --lane {lane}" for lane in lanes or ["<lane>"])
+            + ", ".join(f"python tools/cc/mail.py send --type release --ack {cid}" for cid in claim_ids or ["<claim id>"])
             + f", then python tools/cc/seat.py retire {seat}")
 
 
@@ -896,17 +911,18 @@ def cmd_retire(root: Path, seat: str, *, dry_run: bool, fetch: bool, return_jobs
         say(f"({note})")
     mine = [c for c in claims if c.get("from") == seat]
     held = [j for j in jobs if (j.get("re") or {}).get(mail.ASSIGN_SEAT_KEY) == seat]
-    lanes = sorted({str((c.get("re") or {}).get("lane") or "") for c in mine} - {""})
+    claim_ids = [str(c.get("id")) for c in mine]
     try:
         target = resolve(root, seat)
     except Refused:
         if mine:
             raise Refused(f"seat {seat} holds {len(mine)} live claim(s) and "
-                          f"{by_hand_release(root, clone, seat, lanes)}") from None
+                          f"{by_hand_release(root, clone, seat, claim_ids)}") from None
         raise
     if not target.exists:
         if mine:
-            raise Refused(f"seat {seat} holds {len(mine)} live claim(s) and {by_hand_release(root, clone, seat, lanes)}")
+            raise Refused(f"seat {seat} holds {len(mine)} live claim(s) and "
+                          f"{by_hand_release(root, clone, seat, claim_ids)}")
         raise Refused(f"seat {seat} has no worktree and nothing on the channel: nothing to retire")
     _refuse_occupied(seat, target.path, unchecked=unchecked, verb="retire")
     if held and not return_jobs:
