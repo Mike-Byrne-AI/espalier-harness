@@ -42,10 +42,6 @@ _CAP_REASON = " (xdist stopped replacing crashed workers: its --max-worker-resta
 #: What the six-test run prints: five crashes (the first worker and its four
 #: replacements, xdist's default cap at one worker), then one test never runs.
 _AT_THE_CAP = "1 of 6 selected tests never ran" + _CAP_REASON
-#: What the same run prints when its controller raised once its five workers
-#: went down (:data:`_BUILD_AND_COUNT_CONFTEST` with its raise), driven: the raise comes in
-#: the fifth worker's node-down, before xdist reports the test it crashed in.
-_AT_THE_CAP_CRASHED = "2 of 6 selected tests never ran" + _CAP_REASON
 
 
 def _drive(tmp_path: Path, body: str, *args: str, workers: tuple[str, ...] = ("-n", "1"),
@@ -279,6 +275,20 @@ def _build_lines(lines: list[str]) -> list[str]:
     return [line for line in lines if line == _HEADER or _WENT_DOWN in line]
 
 
+#: A run of pytest's progress marks where one can sit in a child's quiet output:
+#: before an xdist node-down line, glued to an internal error's first line, or
+#: alone on a line.
+_MARKS = re.compile(r"^([.FEsxX]+)(?=\[gw\d+\] node down|INTERNALERROR> |\s*$)")
+
+
+def _reported(lines: list[str]) -> int:
+    """How many test reports the child's terminal reporter wrote a progress
+    mark for, as each arrived: the witness the crashed-controller row reads its
+    never-ran count from, since the order of xdist's node-downs and its crash
+    reports is the runner's (DEF-4033)."""
+    return sum(len(m.group(1)) for line in lines if (m := _MARKS.match(line)))
+
+
 class TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe:
     """DEF-2021: a worker's build report rides xdist's ``workeroutput``, which a
     crash loses, so the controller printed a went-down line for every crashed
@@ -398,8 +408,19 @@ class TestACrashedControllerStillPrintsWhatItSaw:
 
     @pytest.mark.timeout(_CHILDREN_CEILING_S)
     def test_the_never_ran_line_is_written_where_no_summary_ran(self, crashed):
+        """Written once, and its count is the six less the tests the child
+        reported, read from the child's own progress marks: how many crashed
+        tests xdist reports before the probe's raise depends on the runner's
+        timing (2 never ran on this repository's Mac, 4 on a macOS runner, 3 on
+        a Linux one: DEF-4033), so no one count is pinned. At most four are
+        reported: the raise comes in the fifth worker's node-down, before xdist
+        reports the test it crashed in. Dies to: a count other than the selected
+        tests less the reported ones, or the line written twice."""
         rc, lines = crashed
-        assert [line for line in lines if "never ran" in line] == [_AT_THE_CAP_CRASHED], lines
+        reported = _reported(lines)
+        assert reported <= 4, lines
+        assert [line for line in lines if "never ran" in line] == [
+            f"{6 - reported} of 6 selected tests never ran" + _CAP_REASON], lines
 
     @pytest.mark.timeout(_CHILDREN_CEILING_S)
     def test_no_summary_asked_for_none_and_gets_none(self, tmp_path):
@@ -409,6 +430,29 @@ class TestACrashedControllerStillPrintsWhatItSaw:
                                         extra_env={"PROBE_BUILD_DIES": "1"})
         assert rc == 1, lines
         assert _build_lines(lines) == [] and not [line for line in lines if "never ran" in line], lines
+
+
+class TestTheProgressMarksCountTheReports:
+    """The witness the crashed-controller row reads its count from: pytest's
+    terminal reporter writes a progress mark as each report arrives, and the
+    never-ran plugin counts the same reporter's stats at the session's finish."""
+
+    def test_marks_before_a_node_down_glued_to_the_error_or_alone_are_counted(self):
+        """Three shapes: this repository's Mac (each crash reported before the
+        next worker went down), a Linux runner's (its first lines as read on run
+        39375526510, a report lagging past the next node-down, the rest built to
+        the count it printed) and a mark glued to the internal error's first
+        line. Dies to: a mark read at only one of its places, or a line's own
+        text read as marks."""
+        down = "node down: Not properly terminated"
+        here = ["bringing up nodes...", f"[gw0] {down}", f"F[gw1] {down}", f"F[gw2] {down}", f"F[gw3] {down}",
+                f"F[gw4] {down}", "INTERNALERROR> Traceback (most recent call last):"]
+        lagging = [f"[gw0] {down}", f"F[gw1] {down}", f"F[gw2] {down}", f"[gw3] {down}", f"F[gw4] {down}",
+                   "INTERNALERROR> Traceback (most recent call last):"]
+        glued = [f"[gw0] {down}", f"F[gw1] {down}", "FINTERNALERROR> Traceback (most recent call last):", "F"]
+        assert [_reported(here), _reported(lagging), _reported(glued)] == [4, 3, 3]
+        assert _reported(["Exception in thread", "xdist: worker gw0 crashed", "FAILED test_probe.py::test_0",
+                          "sxs and more"]) == 0
 
 
 def _suite_finish(conftest, warned, *, summary_ran: bool) -> list[str]:
