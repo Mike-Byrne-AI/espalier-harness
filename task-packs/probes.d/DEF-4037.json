@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4037",
+ "subject": "tools/cc/board.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the loss shows only when a lane is shelved after its push; the board's listing of jobs closed with an open pull request is the oracle",
+ "row_sha": "6eb6c5084755",
+ "text_sha": "f41dad80becd",
+ "verified_2026_10_20": "STILL_OPEN (re-pinned value unchanged on 2026-10-20: TP-703f's second review re-measured under the fold the lane ships (the 236 was the premature close the first review's fix removed; the two later pushes were later claims) and the lane added the shelve note) [changed: text]"
+}

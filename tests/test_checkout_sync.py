@@ -385,7 +385,8 @@ class TestReapWorktrees:
 
         def claims(root, seat, timeout):
             asked.append(seat)
-            return [{"from": seat, "re": {"lane": "lane/feat"}}, {"from": seat, "re": {"lane": "lane/next"}}]
+            return [{"id": "c-feat", "from": seat, "re": {"lane": "lane/feat"}},
+                    {"id": "c-next", "from": seat, "re": {"lane": "lane/next"}}]
 
         monkeypatch.setattr(cs, "seat_live_claims", claims)
         report = cs.reap_worktrees(work, sessions=[])
@@ -393,7 +394,9 @@ class TestReapWorktrees:
         (name, reason), = report.kept
         assert name == "feat"
         assert reason.startswith("its seat work-feat holds 2 live claims (lane/feat, lane/next) that only it can")
-        assert "mail.py send --type release --lane <lane>" in reason
+        # By id: a lane release from the seat reads as its lane shipped and closes a job it was given.
+        assert "mail.py send --type release --ack <claim id>` for each (c-feat, c-next)" in reason, reason
+        assert "--lane" not in reason
 
     def test_a_seat_with_no_live_claim_and_an_inherited_name_are_removed(self, cs, repos, monkeypatch):
         """No claim left: the worktree goes. A worktree that answers its

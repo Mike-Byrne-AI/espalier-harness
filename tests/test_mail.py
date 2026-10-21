@@ -309,6 +309,279 @@ class TestAssignments:
         by_dispatcher = _msg(mail, "air", "release", "", lane="lane/b", now=self._T1)
         assert mail.live_assignments({"air": [other_job, by_dispatcher]}, dispatcher="air") == []
 
+    def test_a_job_closes_when_its_seats_own_claim_on_the_shipped_lane_named_its_ids(self, mail):
+        """An assign names row ids, the seat claims them on the lane it works,
+        and the ship driver's lane release at the push closes the job: on
+        2026-10-18, of the 22 jobs a hand closed, the seats' own claims had named
+        every id of 21 before that hand release. Dies to: the claims never read,
+        or the closure recorded under another rule."""
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1", "DEF-2"], now=self._T0)
+        claim = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1", "DEF-2", "DEF-3"], now=self._T0)
+        shipped = _msg(mail, "win", "release", "", lane="lane/y", now=self._T1)
+        closed: list = []
+        assert mail.live_assignments({"air": [job], "win": [claim, shipped]}, dispatcher="air", closed=closed) == []
+        assert [(a["id"], r["id"], rule) for a, r, rule in closed] == [(job["id"], shipped["id"], "claim")]
+
+    def test_only_the_seats_live_claims_on_the_released_lane_close_its_job(self, mail):
+        """Each case is a mutation of the third rule, and each leaves the job
+        live but one. Dies to: the seat test dropped, any shared id taken for
+        every id, one claim read alone, a claim released by its id still
+        counted, the assigner admitted, or any lane of the seat read."""
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1", "DEF-2"], now=self._T0)
+
+        def live(*by: tuple[str, list[dict]]) -> bool:
+            machines: dict[str, list[dict]] = {"air": [job]}
+            for who, msgs in by:
+                machines.setdefault(who, []).extend(msgs)
+            return [m["id"] for m in mail.live_assignments(machines, dispatcher="air")] == [job["id"]]
+
+        claim = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1", "DEF-2"], now=self._T0)
+        short = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T0)
+        other_half = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-2"], now=self._T0)
+        elsewhere = _msg(mail, "win", "claim", "", lane="lane/z", ids=["DEF-1", "DEF-2"], now=self._T0)
+        dropped = _msg(mail, "win", "release", "", ack=claim["id"], now=self._T0)
+        ship_y = _msg(mail, "win", "release", "", lane="lane/y", now=self._T1)
+        not_the_seat = _msg(mail, "win-2", "release", "", lane="lane/y", now=self._T1)
+        the_assigner = _msg(mail, "air", "release", "", lane="lane/y", now=self._T1)
+        assert live(("win", [claim]), ("win-2", [not_the_seat]))
+        assert live(("win", [short, ship_y]))
+        assert not live(("win", [short, other_half, ship_y]))
+        assert live(("win", [claim, dropped, ship_y]))
+        assert live(("win", [claim]), ("air", [the_assigner]))
+        # The assigner's own claim on the lane, then its lane release: only the seat's claim closes the job.
+        assigners_claim = _msg(mail, "air", "claim", "", lane="lane/y", ids=["DEF-1", "DEF-2"], now=self._T0)
+        assert live(("air", [assigners_claim, the_assigner]))
+        assert live(("win", [elsewhere, ship_y]))
+        # The seat began the released lane too, with a claim that covers nothing of the job.
+        unrelated_y = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-9"], now=self._T0)
+        assert live(("win", [elsewhere, unrelated_y, ship_y]))
+
+    def test_a_re_sent_assign_of_the_job_closes_with_its_seats_claim(self, mail):
+        """The latest assign of a job wins, and the third rule closes the job.
+        Dies to: the rule keyed on one assign's id."""
+        first = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0)
+        again = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0)
+        claim = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T0)
+        ship = _msg(mail, "win", "release", "", lane="lane/y", now=self._T1)
+        assert mail.live_assignments({"air": [first, again], "win": [claim, ship]}, dispatcher="air") == []
+
+    def test_the_closed_record_names_the_rule_that_closed_each_job(self, mail):
+        """The seat-day census counts closures through this record, so the
+        rules keep one home. Dies to: a closure recorded under another rule, or
+        a record of a job that stayed live."""
+        by_ack = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-9"], now=self._T0)
+        by_lane = _msg(mail, "air", "assign", "", seat="win", lane="lane/a", now=self._T0)
+        by_claim = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0)
+        stays = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-7"], now=self._T0)
+        claim = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T0)
+        ack = _msg(mail, "air", "release", "", ack=by_ack["id"], now=self._T1)
+        lanes = [_msg(mail, "win", "release", "", lane="lane/a", now=self._T1),
+                 _msg(mail, "win", "release", "", lane="lane/y", now=self._T1)]
+        closed: list = []
+        live = mail.live_assignments({"air": [by_ack, by_lane, by_claim, stays, ack], "win": [claim, *lanes]},
+                                     dispatcher="air", closed=closed)
+        assert [m["id"] for m in live] == [stays["id"]]
+        assert sorted((a["id"], rule) for a, _r, rule in closed) == sorted(
+            [(by_ack["id"], "ack"), (by_lane["id"], "lane"), (by_claim["id"], "claim")])
+
+    _T2 = datetime(2026, 10, 9, 22, 0, 0, tzinfo=timezone.utc)
+
+    def test_a_claim_placed_before_the_job_was_given_does_not_close_it(self, mail):
+        """A seat files a row on its current lane and claims its id there; the
+        dispatcher then queues that row's fix as the seat's next job; the
+        current lane's push must not close the queued job (DEF-2025's job on
+        2026-10-18 closed three hours before the lane that fixed it shipped).
+        Dies to: a claim counted whenever the fold read it."""
+        early = _msg(mail, "win", "claim", "", lane="lane/now", ids=["DEF-1"], now=self._T0)
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T1)
+        ship_now = _msg(mail, "win", "release", "", lane="lane/now", now=self._T2)
+        live = mail.live_assignments({"air": [job], "win": [early, ship_now]}, dispatcher="air")
+        assert [m["id"] for m in live] == [job["id"]]
+        later = _msg(mail, "win", "claim", "", lane="lane/fix", ids=["DEF-1"], now=self._T1)
+        ship_fix = _msg(mail, "win", "release", "", lane="lane/fix", now=self._T2)
+        assert mail.live_assignments({"air": [job], "win": [later, ship_fix]}, dispatcher="air") == []
+
+    def test_a_job_naming_no_ids_never_closes_by_a_claim(self, mail):
+        """A lane-only or class-only job closes by its lane or its id, never by
+        whatever lane its seat ships next. Dies to: the empty-ids guard dropped
+        (every claim covers no ids at all)."""
+        by_lane = _msg(mail, "air", "assign", "", seat="win", lane="lane/a", now=self._T0)
+        by_class = _msg(mail, "air", "assign", "", seat="win", classes=["C13"], now=self._T0)
+        claim = _msg(mail, "win", "claim", "", lane="lane/unrelated", ids=["DEF-9"], now=self._T1)
+        ship = _msg(mail, "win", "release", "", lane="lane/unrelated", now=self._T2)
+        live = mail.live_assignments({"air": [by_lane, by_class], "win": [claim, ship]}, dispatcher="air")
+        assert sorted(m["id"] for m in live) == sorted([by_lane["id"], by_class["id"]])
+
+    def test_only_the_releasing_seats_own_claims_count_and_only_its_own_are_released(self, mail):
+        """Dies to: every sender's claims pooled into the cover, a lane release
+        that releases another seat's claims of the same lane name, or the rule
+        read on a release that names an id."""
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0)
+        theirs = _msg(mail, "win-2", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T1)
+        ship = _msg(mail, "win", "release", "", lane="lane/y", now=self._T2)
+        assert len(mail.live_assignments({"air": [job], "win-2": [theirs], "win": [ship]}, dispatcher="air")) == 1
+        # The seat began the lane itself, after the job, with a claim that covers nothing of it.
+        unrelated = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-9"], now=self._T1)
+        assert len(mail.live_assignments({"air": [job], "win-2": [theirs], "win": [unrelated, ship]},
+                                         dispatcher="air")) == 1
+        mine = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T1)
+        other_ship = _msg(mail, "win-2", "release", "", lane="lane/y", now=self._T1)
+        assert mail.live_assignments({"air": [job], "win": [mine, ship], "win-2": [other_ship]},
+                                     dispatcher="air") == []
+        with_ack = _msg(mail, "win", "release", "", lane="lane/y", ack=mine["id"], now=self._T2)
+        assert len(mail.live_assignments({"air": [job], "win": [mine, with_ack]}, dispatcher="air")) == 1
+
+    def test_a_malformed_ids_field_costs_its_own_message_never_the_fold(self, mail):
+        """Another seat's ref is text this reader did not write. Dies to: a
+        claim's ids read without their shape checked (a TypeError in the board,
+        the seat listing and the assignments verb), or a dict's keys read as ids."""
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0)
+        for bad in (5, True, 1.5, "DEF-1", {"DEF-1": 1}):
+            claim = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-2"], now=self._T1)
+            claim["re"]["ids"] = bad
+            ship = _msg(mail, "win", "release", "", lane="lane/y", now=self._T2)
+            live = mail.live_assignments({"air": [job], "win": [claim, ship]}, dispatcher="air")
+            assert [m["id"] for m in live] == [job["id"]], bad
+
+    def test_a_malformed_assign_field_costs_its_own_message_never_the_fold(self, mail):
+        """The job key reads an assign's ``classes`` and ``ids``, text another
+        seat wrote. Dies to: either read without its shape checked (a
+        TypeError in the board, the banner's orders and the census)."""
+        good = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0)
+        claim = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T1)
+        ship = _msg(mail, "win", "release", "", lane="lane/y", now=self._T2)
+        for field in ("classes", "ids"):
+            for bad in (5, True, 1.5):
+                odd = _msg(mail, "air", "assign", "", seat="win-2", ids=["DEF-2"], now=self._T0)
+                odd["re"][field] = bad
+                live = mail.live_assignments({"air": [good, odd], "win": [claim, ship]}, dispatcher="air")
+                assert [m["id"] for m in live] == [odd["id"]], (field, bad)
+
+    def test_a_job_that_names_a_lane_closes_by_that_lane_never_by_a_claim_on_another(self, mail):
+        """A job naming a lane is the lane rule's: the seat's claims on some
+        other lane, shipped first, do not close it even when they name every
+        id. Dies to: the claim rule read for a job that names a lane."""
+        job = _msg(mail, "air", "assign", "", seat="win", lane="lane/a", ids=["DEF-1"], now=self._T0)
+        claim = _msg(mail, "win", "claim", "", lane="lane/b", ids=["DEF-1"], now=self._T1)
+        ship_b = _msg(mail, "win", "release", "", lane="lane/b", now=self._T2)
+        live = mail.live_assignments({"air": [job], "win": [claim, ship_b]}, dispatcher="air")
+        assert [m["id"] for m in live] == [job["id"]]
+        ship_a = _msg(mail, "win", "release", "", lane="lane/a", now=self._T2)
+        closed: list = []
+        assert mail.live_assignments({"air": [job], "win": [claim, ship_b, ship_a]}, dispatcher="air",
+                                     closed=closed) == []
+        assert [rule for _a, _r, rule in closed] == ["lane"]
+
+    _T3 = datetime(2026, 10, 9, 23, 0, 0, tzinfo=timezone.utc)
+
+    def test_a_lane_begun_before_the_job_was_given_does_not_close_it(self, mail):
+        """The seat's current lane touches a row the dispatcher has just queued
+        as its next job, and the seat names the row on that lane's next claim:
+        the lane was begun before the job, so its push leaves the job live
+        (DEF-5003/5004's job on 2026-10-15 would have closed on the wrong push
+        but for a re-send). Dies to: a claim counted by when it was sent rather
+        than when its lane was begun."""
+        begun = _msg(mail, "win", "claim", "", lane="lane/now", ids=["DEF-9"], now=self._T0)
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T1)
+        touch = _msg(mail, "win", "claim", "", lane="lane/now", ids=["DEF-1"], now=self._T2)
+        ship_now = _msg(mail, "win", "release", "", lane="lane/now", now=self._T3)
+        live = mail.live_assignments({"air": [job], "win": [begun, touch, ship_now]}, dispatcher="air")
+        assert [m["id"] for m in live] == [job["id"]]
+        fix = _msg(mail, "win", "claim", "", lane="lane/fix", ids=["DEF-1"], now=self._T2)
+        ship_fix = _msg(mail, "win", "release", "", lane="lane/fix", now=self._T3)
+        assert mail.live_assignments({"air": [job], "win": [begun, touch, ship_now, fix, ship_fix]},
+                                     dispatcher="air") == []
+
+    def test_another_seats_start_of_the_same_lane_name_is_not_this_seats(self, mail):
+        """The seat began the lane before the job; another seat began a lane of
+        the same name after it. The seat's push reads its own start. Dies to: a
+        lane's start kept by the lane alone."""
+        early = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-9"], now=self._T0)
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T1)
+        theirs = _msg(mail, "win-2", "claim", "", lane="lane/y", ids=["DEF-8"], now=self._T2)
+        touch = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T2)
+        ship = _msg(mail, "win", "release", "", lane="lane/y", now=self._T3)
+        live = mail.live_assignments({"air": [job], "win": [early, touch, ship], "win-2": [theirs]},
+                                     dispatcher="air")
+        assert [m["id"] for m in live] == [job["id"]]
+
+    def test_a_claim_released_by_its_id_does_not_move_the_lanes_start(self, mail):
+        """A lane begins again only when no live claim is left on it, so a claim
+        sent while another was live does not begin it, whichever is released
+        first. Dies to: the start taken from the earliest claim still live."""
+        first = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-9"], now=self._T0)
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T1)
+        touch = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T2)
+        drop = _msg(mail, "win", "release", "", ack=first["id"], now=self._T2)
+        ship = _msg(mail, "win", "release", "", lane="lane/y", now=self._T3)
+        live = mail.live_assignments({"air": [job], "win": [first, touch, drop, ship]}, dispatcher="air")
+        assert [m["id"] for m in live] == [job["id"]]
+
+    def test_a_follow_up_claim_on_a_lane_its_push_emptied_begins_the_lane_again(self, mail):
+        """The edge the words name: a push releases the lane's claims, so a
+        follow-up claim after the job came begins the lane again, and its push
+        closes the job when its claims name the job's ids (inbox Step 2b and the
+        protocol say so). Pins the fold as built: a lane is begun at its first
+        claim since its claims last emptied."""
+        first = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-9"], now=self._T0)
+        push1 = _msg(mail, "win", "release", "", lane="lane/y", now=self._T1)
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T2)
+        follow = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T2)
+        push2 = _msg(mail, "win", "release", "", lane="lane/y", now=self._T3)
+        closed: list = []
+        live = mail.live_assignments({"air": [job], "win": [first, push1, follow, push2]}, dispatcher="air",
+                                     closed=closed)
+        assert live == [] and [rule for _a, _r, rule in closed] == ["claim"]
+
+    def test_a_lane_emptied_and_begun_again_after_the_job_counts_from_its_new_start(self, mail):
+        """A lane's start is its first live claim since its claims there last
+        emptied, by a lane release or by a release of each claim's id. Dies to:
+        a lane's start kept across a release that emptied it."""
+        for emptied_by in ("lane", "id"):
+            first = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-9"], now=self._T0)
+            out = (_msg(mail, "win", "release", "", lane="lane/y", now=self._T0) if emptied_by == "lane"
+                   else _msg(mail, "win", "release", "", ack=first["id"], now=self._T0))
+            job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T1)
+            again = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T2)
+            ship = _msg(mail, "win", "release", "", lane="lane/y", now=self._T3)
+            live = mail.live_assignments({"air": [job], "win": [first, out, again, ship]}, dispatcher="air")
+            assert live == [], emptied_by
+
+    def test_a_re_send_of_a_live_job_restarts_its_clock(self, mail):
+        """A re-sent assign replaces the job and starts its clock again: a lane
+        begun before the re-send no longer closes it, one begun after does.
+        Dies to: the job's first assign read in place of its latest."""
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0)
+        early = _msg(mail, "win", "claim", "", lane="lane/x", ids=["DEF-1"], now=self._T1)
+        resent = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T2)
+        ship = _msg(mail, "win", "release", "", lane="lane/x", now=self._T3)
+        live = mail.live_assignments({"air": [job, resent], "win": [early, ship]}, dispatcher="air")
+        assert [m["id"] for m in live] == [resent["id"]]
+        again = _msg(mail, "win", "claim", "", lane="lane/y", ids=["DEF-1"], now=self._T2)
+        ship_y = _msg(mail, "win", "release", "", lane="lane/y", now=self._T3)
+        assert mail.live_assignments({"air": [job, resent], "win": [early, again, ship_y]},
+                                     dispatcher="air") == []
+
+    def test_a_malformed_assign_field_is_read_safely_where_its_own_seat_releases(self, mail):
+        """The release loop reads the job's ids after the seat check, so only a
+        release from the odd assign's own seat reaches that read. Dies to: the
+        job's ids read raw in the release loop."""
+        odd = _msg(mail, "air", "assign", "", seat="win-2", ids=["DEF-2"], now=self._T0)
+        odd["re"]["ids"] = 5
+        ship = _msg(mail, "win-2", "release", "", lane="lane/z", now=self._T1)
+        live = mail.live_assignments({"air": [odd], "win-2": [ship]}, dispatcher="air")
+        assert [m["id"] for m in live] == [odd["id"]]
+
+    def test_a_release_naming_no_lane_closes_nothing_by_a_claim(self, mail):
+        """Foreign data only (the writer refuses a release naming neither an id
+        nor a lane): a claim with no lane is not on a release with no lane.
+        Dies to: the claim rule read on a release that names no lane."""
+        job = _msg(mail, "air", "assign", "", seat="win", ids=["DEF-1"], now=self._T0)
+        claim = _msg(mail, "win", "claim", "", ids=["DEF-1"], paths=["a.py"], now=self._T1)
+        bare = _msg(mail, "win", "release", "", lane="lane/x", now=self._T2)
+        bare["re"]["lane"] = ""
+        assert len(mail.live_assignments({"air": [job], "win": [claim, bare]}, dispatcher="air")) == 1
+
     def test_only_the_dispatcher_may_send_an_assign(self, mail, tmp_path, monkeypatch):
         """Dies to: a worker's assign accepted and then silently ignored."""
         monkeypatch.setattr(mail, "worktree_name_inherited", lambda root, run=None: False)
@@ -382,6 +655,18 @@ class TestAssignShape:
             text = (REPO_ROOT / rel).read_text(encoding="utf-8")
             stated = re.findall(r"(?i)under (\d+)\s+characters", text)   # a wrap may fall between them
             assert stated and set(stated) == {str(cap)}, (rel, stated)
+
+    def test_the_prose_has_a_seat_release_its_own_claims_by_id_never_by_lane(self, mail):
+        """A lane release from a seat reads as its lane shipped and closes a job
+        it was given (the third closing rule), so every recipe that has a seat
+        release its own claims by hand (shrinking a claim, abandoning a lane)
+        spells the release by id. Dies to: a recipe spelled with ``--lane``."""
+        for rel in (".claude/commands/inbox.md", "memory/parallel-work-protocol.md"):
+            text = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            assert "--type release --lane" not in text, rel
+        inbox = (REPO_ROOT / ".claude" / "commands" / "inbox.md").read_text(encoding="utf-8")
+        shrink = inbox[inbox.index("**A claim only grows.**"):][:700]
+        assert "--ack <claim id>" in shrink, shrink
 
     def test_the_notes_never_refuse_and_print_beside_the_dry_run_count(self, mail, monkeypatch, tmp_path, capsys):
         """Dies to: a note raised as a refusal, the notes skipped on --dry-run or

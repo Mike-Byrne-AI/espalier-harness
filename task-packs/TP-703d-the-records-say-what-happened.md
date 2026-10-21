@@ -150,6 +150,17 @@ re-raise to the dispatcher, never adjust and continue.
    sends is not listed under `asks:`. *Exit:* sub-task 4 needs its own reader; re-scope.
    (Measured 2026-10-18: `tools/cc/mail.py::live_requests`'s docstring says the dispatcher's own
    requests are included, and the board printed one on 10-17.)
+6. *Oracle (added at `TP-703f`'s second review, 2026-10-20):* `python3 scripts/seat_day_census.py
+   --fixture tests/fixtures/seat_day/refs-2026-10-18.json --seat air --date 2026-10-18 --as-row`
+   against sub-task 2's field list. Read then: the dispatcher's row prints its assigns sent and the
+   new jobs among them, the releases naming an assign (how many closed a live job and how many
+   named a job already closed), the day's worker requests it answered, lanes merged, Session Log
+   rows and the counted words; the jobs closed that day and the jobs live at the day's end (the
+   releases owed) are in the census's report and `--json`, not in that row; the minutes to an
+   answer are per requesting seat (answers from any seat), and the dispatcher's own answer
+   latency is printed nowhere. *Refuting result:* a field
+   sub-task 2 needs that the census prints nowhere. *Exit:* add the field to the census's
+   dispatcher row in this lane, or derive it from `--json`; re-raise if the census cannot say it.
 
 ## Relevant memory
 

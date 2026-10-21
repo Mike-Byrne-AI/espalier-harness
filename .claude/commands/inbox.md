@@ -125,11 +125,21 @@ python tools/cc/mail.py send --type assign --seat <seat> --id <pack id> --text "
 python tools/cc/mail.py send --type assign --seat <seat> --lane lane/<name> --text "<one wave of a pack>"
 ```
 
-Assign a whole pack by its id. To split a pack's waves across seats, name each
-wave by its lane alone: a pack id on two wave assigns would make each seat's
-plan warn about the other. A job closes when the dispatcher or the assigned
-seat releases it, by the assign's id or by its lane, and the ship driver's lane
-release at a push closes a job assigned by that lane:
+A job assigned by its ids closes at the first push of a lane whose claims name
+them all, so assign by id only work one lane finishes: a row, or a pack of one
+wave. A pack of several waves, or a row fixed across several lanes, is assigned
+wave by wave, each by its lane (or its id is re-sent after each lane ships). To
+split a pack's waves across seats, name each wave by its lane alone: a pack id
+on two wave assigns would make each seat's plan warn about the other. A job
+closes when the dispatcher or the assigned seat releases it, by the assign's id
+or by its lane, and the ship driver's lane release at a push closes a job
+assigned by that lane, or a job naming no lane whose every id the seat's own
+claims on that lane named, on a lane the seat began after the job was given
+(a lane begins at the seat's claim on it while it holds none there). A claim's
+ids name what a lane touches, so a lane whose claims were live when the job
+came does not close it; a push releases its lane's claims, so a claim on that
+lane after the push begins it again; and a re-send of a live job starts the
+job's clock again. Any other job is released by its id:
 
 ```bash
 python tools/cc/mail.py send --type release --ack <assign id>
@@ -152,7 +162,13 @@ python tools/cc/board.py
 Read live state in the same turn before you state it: the SessionStart
 banner, a handoff note, the mail and a session's own context are snapshots,
 and with several seats (sessions, each in its own named worktree) pushing,
-they go stale within the hour. The board writes nothing into the tree; what it
+they go stale within the hour. The `open PRs:`, `seats:`, `jobs:`, `claims:`
+and `overlaps:` sections name their count on their first line
+(`jobs:     (dispatcher air) 2 live: ...`), so a filter that keeps one line of
+them still shows how many rows each has. `checks:` carries no count (a line
+for each red check), so a filter that keeps its first line can cut it: read it
+whole. A count on a partial or capped
+read says so (`N pairs among what was read`, `30+ open (the first 30)`). The board writes nothing into the tree; what it
 moves is the mail fetch and the base branch's remote-tracking ref, and it
 fetches the open pull requests' heads by object id (objects only, no ref), all
 three skipped with `--no-fetch` (`--json` gives the same as data). Each section
@@ -311,7 +327,9 @@ python tools/cc/mail.py refresh
   signed out or offline; the next tick reads it again).
 - **A claim only grows.** An edit undone stays claimed, and so do a lower
   lane's symbols on a lane stacked on it, since `refresh` reads against the
-  default branch: release the lane's claims and claim again to shrink it.
+  default branch: release each of the lane's claims by its id (`send --type
+  release --ack <claim id>`: a lane release reads as the lane shipped and
+  closes a job you were given) and claim again to shrink it.
   After an edit to `tools/cc/_symbols.py` reaches this checkout, the first
   `refresh` sends a claim that replaces the older one, and each tick after
   names the older claim to release (`send --type release --ack <id>`) until
@@ -347,7 +365,8 @@ A claim's lifetime is the lane's time on this machine: the ship driver's
 lands, and the `handoff` verb does the same after pushing onto an open pull
 request (one release for the lane, sent only when a claim is live). A claim
 on a lane that never ships -- work abandoned, or a claim made on the wrong
-lane name -- is yours to close:
+lane name -- is yours to close, by its id (a lane release reads as the lane
+shipped and closes a job you were given):
 
 ```bash
 python tools/cc/mail.py claims

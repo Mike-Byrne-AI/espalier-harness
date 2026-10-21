@@ -4,7 +4,8 @@
  "cmd": null,
  "open_value": null,
  "why_not": "the count depends on GitHub's macOS runners' timing and has not shown on this repository's Mac or Windows box; the oracle is the macOS portability leg's FAILED line",
- "row_sha": "73b1c1a5ed18",
- "text_sha": "c47549cd051b",
- "verified_2026_10_19": "OPEN (filed 2026-10-19; probe driven at filing)"
+ "row_sha": "cbac8bfd9a87",
+ "text_sha": "665c2ac6ba8d",
+ "verified_2026_10_19": "OPEN (filed 2026-10-19; probe driven at filing)",
+ "verified_2026_10_20": "STILL_OPEN (re-pinned value unchanged; severity minor -> major on 2026-10-20: a second sighting, the first on Linux: on main's post-merge proof of #329 (run 39375526510, attempt 1) the count read 3 of 6 against the pinned 2, a merge that touched neither the file nor its fixture; the re-run passed. Re-graded major: on Linux the timing-dependent pin reds main's post-merge proof, and the ship driver then holds every lane's landing (main read red about fifteen hours on 2026-10-20)) [changed: text, severity]"
 }
