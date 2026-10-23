@@ -174,4 +174,4 @@ jobs:
       #    refs endpoint returns the tag object's sha, which Actions cannot use)
       # No `password:` field — OIDC handles auth via the
       # trusted-publisher relationship configured at pypi.org.
-      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # v1.14.2
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086  # v1.14.3
