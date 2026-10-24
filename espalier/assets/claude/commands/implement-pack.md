@@ -542,7 +542,21 @@ reachability analysis. Both gates run before any sub-task executes.
       recorded rather than lost. Do not read the step-12 preamble as gating it.
 
 13. **Move to the next pack** (folder mode) — go to step 1 with the next
-    file. Or: report final summary (single-pack mode).
+    file. Or, single-pack mode: report the final summary, then **run
+    `/handoff` in this same turn**. Where `espalier.toml` sets
+    `handoff_push = true`, the lane's one push is `/handoff`'s last step (its
+    `ship.py handoff` opens the pull request with auto-merge armed), so the
+    pack is not done until the handoff has run. Do not stop and wait for the
+    operator to type it: a lane finished at 05:13 and left that way sat
+    unpushed, with no Session Log row and its claims live, for eleven hours
+    (2026-10-24), and the next session had to hand it off from a cold
+    context. The Stop hook's handoff gate (`stop_gate` Gate 5) holds the Stop
+    once per commit while nothing is in flight and the lane holds commits
+    origin does not, so a session that forgets is told once; it is the floor,
+    not the plan. Three carve-outs, each said in one line before stopping: the
+    operator asked to hold the push; this pack's lane ships together with
+    another lane this session is still building; or more of this lane's work
+    is still to come this session (the next pack of a chain).
 
 ## Stop conditions — when to ask before continuing
 
@@ -595,14 +609,16 @@ When a stop condition fires, present:
 If no stop condition fired after a pack's commit:
 
 - **Single-pack mode:** report the commit SHA + diff stat + verification
-  numbers, and stop.
+  numbers, then run `/handoff` (step 13): the report is not the end of the
+  pack, the handoff is.
 - **Folder mode:** record blueprint entry "<TP-NN> done; advancing to
   <TP-NN+1>" and start step 1 of the next pack immediately. Do NOT ask
   "should I continue?" — that's exactly the friction the user wanted to
   remove.
 
 Final report after the chain (folder mode): one-line per-pack table
-(commit SHA / diff stat / verification numbers / time).
+(commit SHA / diff stat / verification numbers / time), then `/handoff` the
+same way: the chain's lane is not done until it is pushed.
 
 ## Resume after interruption
 

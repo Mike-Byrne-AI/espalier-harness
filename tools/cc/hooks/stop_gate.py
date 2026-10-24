@@ -20,12 +20,20 @@ tier this default is trading against on your repo.)
 Gate 1: Core pytest           — Opt-in via ESPALIER_STOP_GATE=full. Fail → BLOCK.
 Gate 2: Docs refresh          — write_count >= 10, no docs_refreshed flag → BLOCK.
 Gate 3: Code review           — write_count >= 10, no code_reviewed record → BLOCK.
+Gate 5: Handoff owed          — nothing in flight (no plan in progress, no tracked
+                                edit), the branch holds commits its upstream does
+                                not, made this session, handoff_push = true → BLOCK,
+                                once per commit (runs under MAINTENANCE_MODE too, and
+                                alone on the continuation Stop).
 Gate 4: Auto-finalize         — Run cognitive_blueprint.py finalize (silent, always passes).
 
-(There is no "session state saved" gate: it would be unreachable-by-design
-because cc/blueprints/ is gitignored, so Gate 4's auto-finalize output never
-appears in `git status` to satisfy such a check. That coverage falls back to
-/handoff, git status, IDE gutters, and Gate 4 itself.)
+Gate 5 runs before Gate 4 (a block returns before the finalize, which a later
+Stop runs) and keeps the number a gate retired in 2026-05 freed: it is not that
+"session state saved" gate, which was unreachable by design -- cc/blueprints/
+is gitignored, so Gate 4's auto-finalize output never appears in `git status`
+to satisfy such a check. This one reads the plan, the index and git, which the
+blueprint never enters: a finished lane left unpushed for the operator's
+/handoff sat unrowed and claimed for eleven hours (2026-10-24).
 
 Exit 0 with no JSON = allow stop.
 Exit 0 + decision="block" = block stop, CC continues working.
@@ -50,6 +58,7 @@ import re
 import statistics
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,7 +70,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # tools/cc for 
 # The start refusal first and alone, then the guard over every other sibling,
 # the floor included: write_guard.py's import block is the sister site and says
 # why (DEF-1176, DEF-3008). A Stop hook that dies at import is exit 1, which the
-# protocol reads as non-blocking, so the four gates run nothing and the stop
+# protocol reads as non-blocking, so the gates run nothing and the stop
 # goes through unjudged; under `__main__` it is the Stop-style block naming the
 # repair instead, which the protocol's loop signal lets through on the next
 # Stop (a pause, never a lockout).
@@ -97,10 +106,11 @@ try:
     from _json_safe import decode_text_or_problem, load_json_dict_safe  # noqa: E402
     # Every helper name this hook's import graph takes (write_guard.py says why).
     _STOP_GATE_HELPER_NAMES = (
-        "CODE_REVIEWED", "DOCS_REFRESHED", "OPERATOR_RELIEF_AGENT", "OPERATOR_RELIEF_NOTE_MIN_CHARS",
-        "RELIEF_FLAGS", "STATE_DIR", "SpawnFailure", "_toml_parser", "atomic_write_text", "floor_text",
-        "lock_file", "python_command_hint", "read_stdin_safely", "read_toml_table", "relief_agents_line",
-        "relief_flags", "resolve_project_root", "say_bad_stdin", "say_once", "spawn_checked",
+        "CODE_REVIEWED", "DOCS_REFRESHED", "HANDOFF_GATE_FLAG", "OPERATOR_RELIEF_AGENT",
+        "OPERATOR_RELIEF_NOTE_MIN_CHARS", "RELIEF_FLAGS", "STATE_DIR", "SpawnFailure", "_toml_parser",
+        "atomic_write_text", "floor_text", "has_active_plan", "lock_file", "plan_completion",
+        "python_command_hint", "read_stdin_safely", "read_toml_table",
+        "relief_agents_line", "relief_flags", "resolve_project_root", "say_bad_stdin", "say_once", "spawn_checked",
         "split_command", "stop_gate_test_cmd", "unlock_file", "warn", "warn_exc",
     )
     for _name in _STOP_GATE_HELPER_NAMES:
@@ -1305,6 +1315,231 @@ def _gate_code_review(root: Path, write_count: int) -> int:
     )
 
 
+# ── Gate 5: the handoff gate ─────────────────────────────────────────────────
+
+#: The flag under STATE_DIR (``_hook_utils.HANDOFF_GATE_FLAG``): its text is the
+#: HEAD this gate last judged. SessionStart seeds it with HEAD on a new session,
+#: so the gate speaks about commits made in THIS session and a lane an earlier
+#: session left unpushed is the banner's to name; a compaction keeps it. Every
+#: judgment rewrites it (a block, or a pass with nothing owed at this HEAD), so a
+#: new commit speaks again and the same HEAD does not
+#: (tests/test_state_file_flag_parity.py lists the file).
+HANDOFF_GATE_FLAG = _hook_utils.HANDOFF_GATE_FLAG
+#: One deadline for every git question the gate asks (at most seven reads of
+#: local refs and the index, no network), inside STOP_SAFETY_MARGIN.
+HANDOFF_GATE_DEADLINE_S = 5.0
+#: The reason quotes the plan's title up to this many characters.
+HANDOFF_GATE_TASK_CHARS = 80
+
+
+class _GitFault(Exception):
+    """git could not be asked: it did not start, or the deadline was spent."""
+
+
+def _git_answer(root: Path, deadline: float, *args: str) -> str | None:
+    """``git <args>`` at ``root``: stdout stripped on exit 0; ``None`` on any
+    other exit, which is git answering in the negative (no upstream, a
+    detached HEAD, not a repository); ``_GitFault`` when it could not be asked
+    at all, the deadline spent included. Through the gate chokepoint, so the
+    bound holds on Windows too."""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise _GitFault(f"deadline of {HANDOFF_GATE_DEADLINE_S:g}s spent")
+    try:
+        result = _hook_utils.spawn_checked(
+            ["git", *args], root=root, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=remaining, cwd=str(root),
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise _GitFault(f"deadline of {HANDOFF_GATE_DEADLINE_S:g}s spent") from exc
+    if isinstance(result, _hook_utils.SpawnFailure):
+        raise _GitFault(result.error)
+    if result.returncode != 0:
+        return None
+    return (result.stdout or "").strip()
+
+
+def _tracked_edits(root: Path, deadline: float) -> bool | None:
+    """Whether a tracked file is modified, added or deleted in the working tree
+    or the index (``git status --porcelain -uno``): work in flight, which a
+    handoff must not be asked for. Untracked files are not counted -- a scratch
+    note beside a finished lane is common. ``None`` when git answered in the
+    negative (not a repository)."""
+    out = _git_answer(root, deadline, "status", "--porcelain", "-uno")
+    if out is None:
+        return None
+    return bool(out)
+
+
+def _unpushed_commits(root: Path, deadline: float) -> tuple[int, str, str, bool] | None:
+    """``(ahead, branch, upstream, own)``: the commits HEAD holds that its
+    upstream does not, and whether that upstream is the branch's own (a lane
+    already pushed) or the remote's default branch, which a lane never pushed
+    is measured against as the ship driver's push will measure it:
+    ``origin/HEAD``, else ``origin/main``, else ``origin/master``. ``None``
+    when there is nothing to compare: a detached HEAD, no upstream and no
+    remote default branch, no commits, not a git tree. Raises ``_GitFault``
+    when git could not be asked."""
+    branch = _git_answer(root, deadline, "rev-parse", "--abbrev-ref", "HEAD")
+    if not branch or branch == "HEAD":
+        return None
+    upstream = _git_answer(root, deadline, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    own = bool(upstream)
+    if not upstream:
+        upstream = _git_answer(root, deadline, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD")
+    for name in ("origin/main", "origin/master"):
+        if upstream:
+            break
+        if _git_answer(root, deadline, "rev-parse", "--verify", "-q", f"refs/remotes/{name}") is not None:
+            upstream = name
+    if not upstream:
+        return None
+    count = _git_answer(root, deadline, "rev-list", "--count", f"{upstream}..HEAD")
+    if count is None or not count.isdigit():
+        return None
+    return int(count), branch, upstream, own
+
+
+def _driver_stands_down(root: Path, why: str, fault: str) -> bool:
+    """The handoff gate stands down over the ship driver, said once a session
+    (``stop_failed_open_handoff_driver``); ``fault`` is a class name or a
+    fixed word, never a path or a message."""
+    _hook_utils.say_once(
+        root, "handoff-gate-driver", "stop_gate", "stop_failed_open_handoff_driver",
+        f"the handoff gate stands down: {why}", fault=fault,
+    )
+    return False
+
+
+def _handoff_push_on(root: Path) -> bool:
+    """Whether this repository's /handoff pushes (``handoff_push = true`` in
+    espalier.toml), read by the ship driver's own reader so the gate owes
+    exactly what the push verb will do. A tree without ``tools/cc/ship.py``
+    has no handoff push to owe, so it has no gate and nothing is said; a
+    driver that cannot import (a sibling missing after a partial upgrade), a
+    module elsewhere answering to its name, a driver that predates the reader,
+    or a read that fails stands the gate down and says so once."""
+    try:
+        import ship  # lazy: tools/cc is on sys.path above; only a Stop with nothing in flight pays for it
+    except ModuleNotFoundError as exc:  # fail-open: ok deliberate -- the one silent arm is a tree without tools/cc/ship.py, which has no handoff push to owe; a missing sibling is said once
+        if exc.name == "ship":
+            return False
+        return _driver_stands_down(
+            root, f"tools/cc/ship.py imports {exc.name}, which this tree lacks "
+                  "(`espalier upgrade --execute .` refreshes the deployed drivers)",
+            exc.name or "ModuleNotFoundError",
+        )
+    except Exception as exc:  # noqa: BLE001 -- a driver that cannot import is said once, never a crash-block of every Stop
+        return _driver_stands_down(
+            root, f"tools/cc/ship.py could not be imported ({type(exc).__name__})", type(exc).__name__,
+        )
+    expected = Path(__file__).resolve().parents[1] / "ship.py"
+    found = getattr(ship, "__file__", None)
+    try:
+        same = bool(found) and Path(str(found)).resolve() == expected
+    except OSError:  # fail-open: ok deliberate -- a module path that cannot resolve reads as another module answering, said once below
+        same = False
+    if not same:
+        return _driver_stands_down(
+            root, f"another module answers to `ship` ({found or 'no file'}), not {expected}", "ShadowedDriver",
+        )
+    setting = getattr(ship, "handoff_push_setting", None)
+    if setting is None:
+        return _driver_stands_down(
+            root, "tools/cc/ship.py predates handoff_push_setting "
+                  "(`espalier upgrade --execute .` refreshes the deployed driver)",
+            "NoHandoffPushSetting",
+        )
+    try:
+        on, _how = setting(root)
+    except Exception as exc:  # noqa: BLE001 -- the reader is the driver's; a fault there is said once, never a crash-block of every Stop
+        return _driver_stands_down(
+            root, f"the driver's handoff_push read failed ({type(exc).__name__})", type(exc).__name__,
+        )
+    return bool(on)
+
+
+def _flag_text(flag: Path) -> str:
+    """The HEAD the flag holds (a SHA: a structured answer, read strictly), or
+    "" when there is none or it cannot be read."""
+    try:
+        return flag.read_text(encoding="utf-8").strip() if flag.is_file() else ""
+    # fail-open: ok deliberate -- an unreadable or corrupt flag reads as not yet judged; the cost is one more judgment, never a lockout
+    except (OSError, ValueError):  # strict decode: a structured answer (DEF-829)
+        return ""
+
+
+def _remember_head(flag: Path, head: str) -> None:
+    try:
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        _hook_utils.atomic_write_text(flag, head)
+    except OSError:  # fail-open: ok deliberate -- a flag that cannot be written costs one more judgment next Stop, never a lockout (the loop signal lets each continuation through)
+        pass
+
+
+def _gate_handoff(root: Path) -> int:
+    """Gate 5: BLOCK once per commit when nothing is in flight -- no plan in
+    progress, no tracked edit -- and the branch holds commits its upstream
+    does not, made in this session, on a repository whose espalier.toml sets
+    ``handoff_push = true``: the handoff is owed, and it is cheapest in the
+    turn that finished the work, while the context is warm. The measured
+    case: a lane finished at 05:13 and left for the operator's /handoff sat
+    unpushed, unrowed and claimed for eleven hours, under MAINTENANCE_MODE
+    (2026-10-24), so this gate runs under the flag too (continuity, not
+    friction), and alone on the continuation Stop. "This session" is the flag:
+    SessionStart seeds it with HEAD and every judgment rewrites it, so a HEAD
+    already judged, or already there when the session began, is passed over; a
+    new commit speaks once; a handoff whose push failed (its row moved HEAD)
+    speaks again. A plan in progress or an edit in flight passes and writes
+    nothing, so the judgment waits for the commit; nothing unpushed, nothing
+    to compare against, or a repository whose handoff does not push passes
+    and remembers the HEAD. A git that cannot be asked allows and speaks once
+    (``stop_failed_open_handoff_git``)."""
+    if _hook_utils.has_active_plan(root):
+        return 0
+    deadline = time.monotonic() + HANDOFF_GATE_DEADLINE_S
+    flag = root / STATE_DIR / HANDOFF_GATE_FLAG
+    try:
+        head = _git_answer(root, deadline, "rev-parse", "HEAD")
+        if not head or _flag_text(flag) == head:
+            return 0
+        if _tracked_edits(root, deadline) is not False:
+            return 0
+        if not _handoff_push_on(root):
+            _remember_head(flag, head)
+            return 0
+        found = _unpushed_commits(root, deadline)
+    except _GitFault as fault:
+        _hook_utils.say_once(
+            root, "handoff-gate-git", "stop_gate", "stop_failed_open_handoff_git",
+            f"the handoff gate could not ask git ({fault}) and let the Stop through; "
+            "the lane's push state is unread this session",
+            fault=str(fault),
+        )
+        return 0
+    if found is None:
+        return 0
+    ahead, branch, upstream, own = found
+    _remember_head(flag, head)
+    if ahead <= 0:
+        return 0
+    complete, task = _hook_utils.plan_completion(root)
+    if complete:
+        title = task if len(task) <= HANDOFF_GATE_TASK_CHARS else task[:HANDOFF_GATE_TASK_CHARS - 3] + "..."
+        plan = f"the plan `{title}` is complete"
+    else:
+        plan = "no plan is in progress"
+    commits = f"{ahead} commit" + ("" if ahead == 1 else "s")
+    push = ("onto its open pull request, re-binding the marker" if own
+            else "opening the pull request with auto-merge armed")
+    return _audit_block(
+        root, "stop_blocked_handoff",
+        _denial_reasons.GATE_HANDOFF_OWED.format(
+            plan=plan, target=branch, ahead=commits, upstream=upstream, push=push),
+        gate=5, rule="GATE_HANDOFF_OWED", ahead=ahead,
+    )
+
+
 # ── Gate 4: auto-finalize blueprint ────────────────────────────────────────────
 
 def _gate_finalize_blueprint(root: Path) -> None:
@@ -1394,17 +1629,21 @@ def main() -> int:
 
 def _run_main() -> int:
     data = _hook_utils.read_stdin_safely()
+    root = _resolve_project_root()
 
     # Loop guard: Claude Code re-fires Stop with stop_hook_active=True
     # after a prior block. A persistently-failing gate (docs-refresh /
     # code-review on a long session) would otherwise re-block forever. Honor
-    # the protocol's loop signal: ALLOW the stop. This only ADDS an exit-0
-    # short-circuit ahead of every gate — it changes no deny predicate.
+    # the protocol's loop signal: ALLOW the stop past Gates 1 to 4. Gate 5
+    # alone still runs here: its own flag (the HEAD it judged) keeps it to
+    # once per commit, so it cannot hold a session either, and a lane whose
+    # first Stop was held by the docs or review gate is still told in the
+    # same turn (the failure-mode review of 2026-10-24 drove the case).
     # read_stdin_safely() always returns a dict, so .get is safe.
     if data.get("stop_hook_active"):
+        _gate_handoff(root)
         return 0
 
-    root = _resolve_project_root()
     _hook_utils.say_bad_stdin(root, "stop_gate", "stop_failed_open_bad_stdin", data)
     write_count = _read_write_count(root)
     mode = _stop_gate_mode(root)
@@ -1440,6 +1679,13 @@ def _run_main() -> int:
             return 0
     else:
         _record_maintenance_bypass(root, write_count)
+
+    # Gate 5: the handoff gate. Runs under MAINTENANCE_MODE too: a finished
+    # lane left unpushed is lost continuity, not friction, and the measured
+    # case ran under the flag. Its flag, not the loop guard, keeps it to once
+    # per commit.
+    if _gate_handoff(root):
+        return 0
 
     # Gate 4: auto-finalize blueprint (silent, always passes — preserves
     # session continuity even under MAINTENANCE_MODE).

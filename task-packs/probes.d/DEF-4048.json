@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4048",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": "python3 -c 'import importlib.util as u, sys; s = u.spec_from_file_location(\"ss_probe\", \"tools/cc/hooks/session_start.py\"); m = u.module_from_spec(s); sys.modules[\"ss_probe\"] = m; s.loader.exec_module(m); print(hasattr(m, \"_packs_line\"))'",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "311d44282fb6",
+ "text_sha": "aadfa008e9a6",
+ "verified_2026_10_24": "OPEN (filed 2026-10-24; probe driven at filing)"
+}

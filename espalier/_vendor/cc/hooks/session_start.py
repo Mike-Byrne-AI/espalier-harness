@@ -2109,6 +2109,34 @@ def _load_blueprint(root: Path, advance_chain: bool) -> str:
         return "Blueprint load failed"
 
 
+def _seed_handoff_gate_flag(root: Path, state_dir: Path) -> None:
+    """A new session begins with the Stop hook's handoff gate holding HEAD
+    (``_hook_utils.HANDOFF_GATE_FLAG``, the HEAD the gate last judged): the gate
+    then speaks about commits made in this session, so a lane an earlier
+    session left unpushed is this banner's to name (the Checkout: line), never a
+    block at the first Stop into a cold context that may also have forgotten an
+    operator's hold. Not called on a compaction or a resume, which keep the
+    flag with the counters. A git that cannot answer leaves no flag, and the
+    gate then speaks once about whatever HEAD holds."""
+    flag = state_dir / _hook_utils.HANDOFF_GATE_FLAG
+    try:
+        result = _hook_utils.run_bounded(  # spawn: ok a reporter: a git that cannot answer leaves no flag, and the gate speaks once
+            ["git", "rev-parse", "HEAD"], cwd=str(root), capture_output=True, text=True,
+            encoding="utf-8", timeout=5,
+        )
+        head = result.stdout.strip() if result.returncode == 0 else ""
+    # fail-open: ok deliberate -- no git answer, or a corrupt one, no seed: the gate speaks once about HEAD instead of never
+    except (OSError, subprocess.TimeoutExpired, ValueError):  # strict decode: a structured answer (DEF-821)
+        head = ""
+    try:
+        if head:
+            atomic_write_text(flag, head)
+        else:
+            flag.unlink(missing_ok=True)
+    except OSError:  # fail-open: ok deliberate -- an unwritable state dir costs one block at the first Stop, never the banner
+        pass
+
+
 def _clean_state_flags(root: Path, source: str = "") -> None:
     """Write the session-start timestamp; on a NEW logical session
     (startup/clear) also clear the previous session's stop-gate, speedbump, and
@@ -2228,7 +2256,7 @@ def _clean_state_flags(root: Path, source: str = "") -> None:
             flag_path.unlink()
         except OSError:
             pass
-
+    _seed_handoff_gate_flag(root, state_dir)
 
 def _report_freshness(root: Path) -> None:
     """A Warnings-block line when the per-install state cache shows

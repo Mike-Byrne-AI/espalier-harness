@@ -1,10 +1,16 @@
-"""Class-of-bug guard: post-TP-70 Gate-5 / state-gates stragglers.
+"""Class-of-bug guard: post-TP-70 state-gates stragglers.
 
 TP-70 removed stop_gate Gate 5 ("session state saved") on 2026-05-18.
 TP-77 swept the docs. TP-84 swept the code. This contract pins the
-sweep going forward: any code or test that names a removed gate must
-explicitly tag the reference as historical (mention 'TP-70' in the
-same line or the line immediately before) or fail CI.
+sweep going forward: any code or test that names the removed gate by
+its own words must explicitly tag the reference as historical (mention
+'TP-70' in the same line or the line immediately before) or fail CI.
+
+Since 2026-10-24 a fifth gate is live again -- the handoff gate
+(``stop_gate._gate_handoff``: a complete plan on an unpushed lane), a
+different gate under the old number -- so the bare words ``Gate 5`` are
+no longer a straggler and are not matched here. The retired gate's own
+vocabulary (``state gate(s)``, ``gates 2/3/5``, ``5-gate``) still is.
 """
 
 from __future__ import annotations
@@ -22,7 +28,6 @@ SCAN_ROOTS = [
 ]
 
 _TRIGGER_PATTERNS = [
-    re.compile(r"\bGate\s*5\b", re.IGNORECASE),
     re.compile(r"\bgates?\s*2/3/5\b"),
     re.compile(r"\b5-gate\b"),
     re.compile(r"\bstate\s+gates?\b"),
@@ -57,8 +62,9 @@ def test_no_stale_gate_five_references() -> None:
                                 f"{line.strip()}"
                             )
     assert not failures, (
-        "Stale Gate-5 / state-gates references found (TP-70 removed "
-        "stop_gate Gate 5 on 2026-05-18). Either fix the reference or "
-        "tag the line with 'TP-70' to mark it historical:\n"
+        "Stale state-gates references found (TP-70 removed the "
+        "'session state saved' gate on 2026-05-18; the live Gate 5 is the "
+        "handoff gate). Either fix the reference or tag the line with "
+        "'TP-70' to mark it historical:\n"
         + "\n".join(failures)
     )
