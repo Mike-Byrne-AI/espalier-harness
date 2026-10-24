@@ -83,6 +83,18 @@ was the goal doc `cc/GOAL.md`, so a second clone keeping a goal of its own read
 as the operator's and the operator arms red there on state that belongs to the
 first (DEF-1119); the goal doc now carries only the goal.
 
+A tell is a record of one bit, and a record's format changes by expand, then
+contract (`memory/parallel-work-protocol.md`, item 6): both tells are read for a
+dated window, the window's end is a date in the reader, and the old tell's
+reader prints the new tell's path, so a checkout not yet marked still reads as
+the operator's and is told what to create. The 2026-10-18 move went by flag
+day: the dispatcher's main checkout read as not the operator's until the marker
+was created by hand at 21:59Z, twelve minutes after the merge (measured with
+`scripts/check_handoff_landing.py`). No window was built after the fact: the one
+operator checkout was marked before a window could protect anything, and
+reading the goal doc as a tell again would re-open DEF-1119 on every seat clone
+that keeps a goal doc. The next tell that moves is the case.
+
 ## Recreating it
 
 The terms are not written anywhere tracked — that is the point. Their

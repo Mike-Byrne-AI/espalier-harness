@@ -230,7 +230,7 @@ class BuildPlan:
 @dataclass(frozen=True, slots=True)
 class ReflectFinding:
     """A single finding from a structured reflect pass."""
-    kind: str          # gap, orphan, cross_reference, quality_signal, terminology_drift
+    kind: str          # gap, orphan, cross_reference, quality_signal, terminology_drift, aging
     severity: str      # high, medium, low
     description: str
     files: list[str] = field(default_factory=list)

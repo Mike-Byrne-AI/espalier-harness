@@ -707,8 +707,11 @@ class TestMemoryPruneRebasesRowLinks:
 
     @staticmethod
     def _broken_archive_links(repo: Path) -> list[str]:
+        # The archive is a record surface, so the reflect pass reports its dead
+        # pointers as aging (Core Rule 13), never as gaps: a probe that read
+        # "Broken link in docs/session-archive.md" would read nothing and pass.
         return [f.description for f in run_reflect_pass(repo, 1).findings
-                if f.description.startswith("Broken link in docs/session-archive.md")]
+                if f.description.startswith("Aging pointer on a record surface docs/session-archive.md")]
 
     def test_root_relative_links_resolve_from_the_archive(self, tmp_path: Path) -> None:
         # Three different top-level trees, so re-basing one prefix is not enough.
@@ -724,8 +727,8 @@ class TestMemoryPruneRebasesRowLinks:
         assert rc == 0
         broken = self._broken_archive_links(tmp_path)
         # Positive control: the one link whose target really is missing must still
-        # be reported, re-based -- otherwise "nothing broken" could mean the checker
-        # never read the archive at all.
+        # be reported (as an aging pointer, the archive being a record), re-based --
+        # otherwise "nothing dead" could mean the checker never read the archive.
         assert len(broken) == 1 and "(../memory/missing.md)" in broken[0], (
             f"a moved row's links do not resolve from the archive: {broken!r}"
         )

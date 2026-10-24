@@ -316,9 +316,10 @@ python tools/cc/mail.py send --type request --lane lane/<name> --text-file <file
 `--text-file` takes the body from a file, the whole of it as UTF-8 (CRLF read
 as LF), in place of `--text`, so a long or quote-heavy body never rides a
 shell string. Keep the file outside the checkout, where no `git add` picks it
-up. The cap is the same 2,000 characters; `--dry-run` prints the line it would
-send and, beside it, the body's count against the cap. An ack names the full
-id of what it answers; a lane is closed by a release, never an ack.
+up. The cap is `MAX_TEXT`'s in `tools/cc/mail.py`, and why is the comment above
+it; `--dry-run` prints the line it would send and, beside it, the body's count
+against the cap. An ack names the full id of what it answers; a lane is closed
+by a release, never an ack.
 
 A claim can name the functions its lane changes, not only its files:
 

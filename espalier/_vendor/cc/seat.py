@@ -619,8 +619,9 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
 WORKER_BRIEF = (
     "You are seat {seat}, a worker under {dispatcher_phrase} ({protocol}). Orient from the banner, then run "
     "/inbox (mark read) and /inbox board, and read live state before you state it. Your jobs are the live "
-    "assigns for this seat that /inbox board lists; take no other work. Then start the worker loop on the "
-    "next line with no further message from the operator."
+    "assigns for this seat that /inbox board lists; take no other work. When the operator ends your session, "
+    "run /handoff: it writes your Session Log row{handoff_ship}. Then start the worker loop on the next line "
+    "with no further message from the operator."
 )
 WORKER_TICK = (
     "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
@@ -637,8 +638,9 @@ DISPATCHER_BRIEF = (
     "You are the dispatcher seat {seat} ({protocol}). Orient from the banner{goal}, then run /inbox (mark "
     "read) and /inbox board. Your duties: read the board every 15 minutes (the loop on the next line), answer "
     "every worker request within the hour with facts, {assign}, {red}, write the Landing lines of the packs "
-    "in flight from the seats' merged PR bodies. {figures}Decisions stay the operator's. Start the loop on the "
-    "next line with no further message from the operator."
+    "in flight from the seats' merged PR bodies. {figures}Decisions stay the operator's. At the operator's word, "
+    "run /handoff; it writes your row{row_source}. Start the loop on the next line with no further message "
+    "from the operator."
 )
 DISPATCHER_TICK = "/loop 15m /inbox board"
 #: Where the seat procedure lives, the first a checkout holds: this
@@ -686,6 +688,13 @@ SELF_HOST_FIGURES = (
     "Every count you state names its population, every setting a tool computes is quoted from the tool, and "
     "the day's figures come from scripts/seat_day_census.py, never carried by hand. "
 )
+#: What a seat's /handoff does beyond writing its Session Log row, this
+#: repository's own: the push onto the open lane or the park on the seat's
+#: records ref (`handoff_push` in espalier.toml), and the dispatcher's row
+#: derived from the mail and the merges (scripts/seat_day_census.py). An
+#: adopter's /handoff writes the row, so its briefs say that alone.
+SELF_HOST_HANDOFF_SHIP = " and ships it on your open lane or parks it"
+SELF_HOST_ROW_SOURCE = ", derived from the mail and the merges"
 #: Flags after which claude is not starting a fresh session from a first
 #: message (a one-shot, a resumed or a continued conversation, a session
 #: brought over): the brief is refused beside them, never passed.
@@ -722,7 +731,7 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
         assign = SELF_HOST_ASSIGN if self_host else ADOPTER_ASSIGN
         figures = SELF_HOST_FIGURES if self_host else ""
         text = DISPATCHER_BRIEF.format(seat=seat, protocol=protocol, goal=goal, assign=assign, red=red,
-                                       figures=figures)
+                                       figures=figures, row_source=SELF_HOST_ROW_SOURCE if self_host else "")
         return Brief("dispatcher", text + "\n" + DISPATCHER_TICK, DISPATCHER_TICK)
     has_tier_script = (where / TIER_SCRIPT).is_file()
     tier = (f"the tier the diff earns with --base origin/{base}" if has_tier_script
@@ -731,8 +740,9 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
     loop = WORKER_TICK.format(dispatcher=dispatcher or "the operator", tier=tier,
                               review=(SELF_HOST_REVIEW.format(base=base) if self_host and has_tier_script
                                       else ADOPTER_REVIEW))
-    return Brief("worker", WORKER_BRIEF.format(seat=seat, dispatcher_phrase=phrase, protocol=protocol) + "\n" + loop,
-                 loop)
+    first = WORKER_BRIEF.format(seat=seat, dispatcher_phrase=phrase, protocol=protocol,
+                                handoff_ship=SELF_HOST_HANDOFF_SHIP if self_host else "")
+    return Brief("worker", first + "\n" + loop, loop)
 
 
 def brief_line(role: str, seat: str, python: str = "") -> str:

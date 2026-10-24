@@ -68,6 +68,7 @@ Files reviewed: {N}
 
 STRUCTURAL GAPS: {N found}
 {For each: what's missing, where, severity}
+AGING POINTERS: {N on record surfaces -- the tool's aging_count; reported apart, never edited (Core Rule 13)}
 
 EMERGENT PATTERNS: {N observed}
 {For each: what's trying to emerge, how to actualize it}

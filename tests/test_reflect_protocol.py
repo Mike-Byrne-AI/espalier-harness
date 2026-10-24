@@ -905,6 +905,19 @@ class TestReflectTwinParity:
         assert set(hook.RESIDUE_EXEMPT_SURFACES) == expected
         assert set(_erp.RESIDUE_EXEMPT_SURFACES) == expected
 
+    def test_the_aging_record_set_is_the_exempt_set_minus_the_hot_index_on_both_twins(self):
+        """The link check's reader of the same set (Core Rule 13): a dead pointer
+        on these is aging, and the hot index is left out because it is kept
+        current at every handoff, so its dead link is a gap. Pinned on both twins
+        so an exclusion added to one alone reds here, not in the field."""
+        from espalier.claim_extractor import RECORD_SURFACES as canon
+
+        hook = _hook_side()
+        expected = set(canon) - {"docs/FAILURE_MODES.md", "ESPALIER_MEMORY.md"}
+        assert set(hook.AGING_RECORD_SURFACES) == expected
+        assert set(_erp.AGING_RECORD_SURFACES) == expected
+        assert "ESPALIER_MEMORY.md" in hook.RESIDUE_EXEMPT_SURFACES   # carved from the exempt set, not the canon
+
     def test_the_fence_grammar_matches_the_hook_stacks(self):
         """The engine's sparse-section parser walks fences with a forced twin of
         _hook_utils.next_fence_state, the hook stack's one fence grammar; pinned
@@ -1186,3 +1199,64 @@ class TestExemptFilesAreStillLinkAndResidueChecked:
         assert hook.main() == 0
         report = json.loads(capsys.readouterr().out)
         self._assert_checked([(f["kind"], f["description"]) for f in report["findings"]])
+
+
+class TestARecordSurfacesBrokenLinkIsAgingNotAGap:
+    """Core Rule 13 on the link loop of both twins: a dead pointer on an
+    append-only record (the session archive here) is kind ``aging``, severity
+    ``low``, counted in the standalone report's ``aging_count`` and never in
+    ``gap_count``, because editing the pointer would falsify the record. The
+    same dead pointer on a plain doc stays a high gap, and so does one on the
+    hot index, which is kept current at every handoff: the one exempt surface
+    the rule leaves out. Dies to: the membership test dropped (the archive's
+    link a gap again), the kind spelled ``gap`` under the new description (the
+    count moves, the kind does not), or the hot-index exclusion dropped (the
+    index's link read as aging)."""
+
+    def _tree(self, root: Path) -> None:
+        files = {
+            "CLAUDE.md": "# Project\n\nThe index is ESPALIER_MEMORY.md; the footguns are docs/SHARP_EDGES.md.\n",
+            "ESPALIER_MEMORY.md": "# Memory\n\nSee [a renamed note](memory/zqrenamed-note.md).\n",
+            "docs/session-archive.md": (
+                "# Archive\n\n| 2026-09-29 | Shipped; see [the old note](../memory/zqold-note.md) and "
+                "[its heading](CONVENTIONS.md#zqno-such-heading). |\n"),
+            "docs/CONVENTIONS.md": "# Conventions\n\nSee [the guide](zqgone.md).\n",
+        }
+        for rel, text in files.items():
+            path = root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(text.encode("utf-8"))
+
+    def _assert_split(self, findings: list[tuple[str, str, str]]) -> None:
+        aging = [(s, d) for k, s, d in findings if k == "aging"]
+        assert len(aging) == 2, findings
+        assert all(s == "low" and d.startswith("Aging pointer on a record surface docs/session-archive.md: ")
+                   for s, d in aging), findings
+        assert any("zqold-note.md" in d for _s, d in aging), findings
+        assert any("zqno-such-heading" in d for _s, d in aging), findings
+        link_gaps = sorted(d.partition(":")[0] for k, _s, d in findings if k == "gap" and d.startswith("Broken "))
+        assert link_gaps == ["Broken link in ESPALIER_MEMORY.md", "Broken link in docs/CONVENTIONS.md"], findings
+        assert not [d for k, _s, d in findings if k == "gap" and "session-archive" in d], findings
+
+    def test_the_engine_reads_the_archive_as_aging_and_renders_it_apart(self, tmp_path):
+        self._tree(tmp_path)
+        rp = run_reflect_pass(tmp_path)
+        self._assert_split([(f.kind, f.severity, f.description) for f in rp.findings])
+        assert rp.gap_count == sum(1 for f in rp.findings if f.kind == "gap")
+        text = render_reflect_pass(rp)
+        assert "Aging:               2" in text and "[AGING]" in text and "zqold-note.md" in text, text
+
+    def test_the_hook_twin_counts_aging_apart_from_gaps(self, tmp_path, monkeypatch, capsys):
+        import json
+        import sys
+
+        self._tree(tmp_path)
+        hook = _hook_side()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(sys, "argv", ["reflect_protocol.py", "--pass", "1", "--json"])
+        capsys.readouterr()
+        assert hook.main() == 0
+        report = json.loads(capsys.readouterr().out)
+        self._assert_split([(f["kind"], f["severity"], f["description"]) for f in report["findings"]])
+        assert report["aging_count"] == 2, report
+        assert report["gap_count"] == sum(1 for f in report["findings"] if f["kind"] == "gap"), report
