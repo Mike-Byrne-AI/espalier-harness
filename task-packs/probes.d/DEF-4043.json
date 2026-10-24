@@ -1,0 +1,11 @@
+{
+ "id": "DEF-4043",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": "python3 -c 'import sys, types; sys.path[:0] = [\"tools/cc/hooks\", \"tools/cc\"]; import session_start as s; m = types.SimpleNamespace(dispatcher_setting=lambda r: (\"air\", \"\"), live_requests=lambda b: [{\"type\": \"request\", \"from\": \"air\", \"text\": \"OPERATOR CALL: x\", \"age_s\": 60}]); print(\"operator call\" in s._asks_count(\".\", m, \"air\", {}))'",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "fc879f7b50f1",
+ "text_sha": "5e3b2336fbad",
+ "verified_2026_10_23": "OPEN (filed 2026-10-23; probe driven at filing)",
+ "verified_2026_10_24": "STILL_OPEN (re-pinned '0' -> 'False' on 2026-10-24: the filed probe counted vocabulary in its own subject file, the shape tests/test_check_ledger_probes.py ratchets; re-keyed to drive the banner's asks counter on a fold holding one operator call and read whether its line names it) [changed: probe, open value]"
+}

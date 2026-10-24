@@ -75,6 +75,9 @@ def _stub_channel(monkeypatch, board, by_machine=None, dispatcher="air", fetch=(
     monkeypatch.setattr(board, "read_sessions", lambda root, **kw: sessions or {"checkouts": [], "unread": ""})
     monkeypatch.setattr(board.mail, "machine_setting", lambda root, run=None: ("win", "stubbed"))
     monkeypatch.setattr(board.mail, "fetch_mail", lambda root, run=None: fetch)
+    # The records refs' fetch beside the mail's: the parked rows the records
+    # section reads; TestRecordsLine drives a failed one.
+    monkeypatch.setattr(board.mail, "fetch_records", lambda root, run=None: (True, ""))
 
     def read_mail(root, run=None):
         if read_error:
@@ -94,6 +97,11 @@ def _stub_channel(monkeypatch, board, by_machine=None, dispatcher="air", fetch=(
     # interpreter, which tests/test_board_ledger_base.py drives for real.
     monkeypatch.setattr(board, "fetch_base", lambda *a, **k: (True, ""))
     monkeypatch.setattr(board, "read_ledger_at_base", lambda *a, **k: None)
+    # The records section's reads of the Session Log names: the base's (git
+    # ls-tree) and the rows parked on the records refs (mail.pending), which
+    # TestRecordsLine drives with names of its own and the first for real.
+    monkeypatch.setattr(board, "read_row_names", lambda *a, **k: [])
+    monkeypatch.setattr(board.mail, "pending", lambda root, directory, against, **k: [])
 
 
 def _run(status: str, conclusion: str, sha: str) -> dict:
@@ -122,6 +130,23 @@ class TestLaneSeats:
         assert mail.lane_seats({"win-2": [claim, release]}) == {"lane/x": "win-2"}
         later = mail.new_message("win", "claim", "", lane="lane/x", now=t.replace(minute=9))
         assert mail.lane_seats({"win-2": [claim, release], "win": [later]}) == {"lane/x": "win"}
+
+    def test_a_release_names_a_lane_only_from_a_seat_that_claimed_it(self, board):
+        """The dispatcher closes a job by lane after the seat's push released
+        the claim; its release is the lane's latest message and moved the
+        lane, its debt and its open pull request onto the dispatcher (TP-703d's
+        predicted defect, reproduced at its review). A release counts only
+        from a machine with an earlier claim on that lane; a lane only ever
+        released is nobody's. Dies to: the latest message taken whoever sent it."""
+        mail = board.mail
+        t = datetime(2026, 10, 9, 20, 0, 0, tzinfo=timezone.utc)
+        claim = mail.new_message("win", "claim", "", lane="lane/x", now=t)
+        shipped = mail.new_message("win", "release", "", lane="lane/x", now=t.replace(minute=5))
+        closed = mail.new_message("air", "release", "", lane="lane/x", now=t.replace(minute=9))
+        stray = mail.new_message("air", "release", "", lane="lane/y", now=t.replace(minute=9))
+        assert mail.lane_seats({"win": [claim, shipped], "air": [closed, stray]}) == {"lane/x": "win"}
+        taken = mail.new_message("air", "claim", "", lane="lane/x", now=t.replace(minute=20))
+        assert mail.lane_seats({"win": [claim, shipped], "air": [closed, taken]}) == {"lane/x": "air"}
 
 
 class TestOpenPullRequests:
@@ -379,7 +404,9 @@ class TestChecksLine:
                 "the leg finished 13:57Z), green on #312") in text   # new: on this checkout's first read
         assert "          portability (macos-latest): red since #312 or earlier (the oldest merge read)" in text
         assert collected["post_merge_checks"]["window"] == 2 and collected["post_merge_checks"]["logged"] == 1
-        assert [c[1:3] for c in run.calls].count(["pr", "list"]) == 2, "one merged read beside the open one"
+        reads = [c for c in run.calls if c[1:3] == ["pr", "list"]]
+        rollups = [c for c in reads if "merged" in c and "statusCheckRollup" in c[c.index("--json") + 1]]
+        assert len(reads) == 3 and len(rollups) == 1, "one rollup read for this line beside the records line's lane read and the open one"
 
     def test_a_cancelled_latest_run_is_no_verdict_beside_the_red_never_green(self, board, monkeypatch, tmp_path):
         """Dies to: a cancelled run read as a verdict, or not named."""
@@ -559,6 +586,30 @@ class TestAsks:
         assert lines[at].startswith(f"asks:     {board.ASKS_SHOWN + 3} open")
         assert lines[at + board.ASKS_SHOWN] == "          and 3 more"
 
+    def test_the_header_counts_the_operator_calls_apart(self, board, monkeypatch, tmp_path):
+        """TP-703d: the dispatcher's question to the operator rides the channel
+        as a request opening with the prefix, so every seat's board lists it
+        with an age; the header counts those apart. Dies to: the prefix read
+        on a note, or the count printed when no request carries it."""
+        mail = board.mail
+        calls = [mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} 703c on the Mac or the win box?",
+                                  now=_T0),
+                 mail.new_message("air", "request", f"  {mail.OPERATOR_CALL_PREFIX} a fifth seat?", now=_T0.replace(minute=1))]
+        plain = mail.new_message("win", "request", "which base?", lane="lane/a", now=_T0.replace(minute=2))
+        note = mail.new_message("win-2", "note", f"{mail.OPERATOR_CALL_PREFIX} not a request", now=_T0)
+        text = board.render(self._board(board, monkeypatch, tmp_path, {"air": calls, "win": [plain], "win-2": [note]}))
+        assert "asks:     3 open, 2 operator calls (requests no ack names, oldest first): " in text, text
+        rows = [ln for ln in text.splitlines() if calls[0]["id"] in ln or calls[1]["id"] in ln or plain["id"] in ln]
+        assert [ln.endswith(" (operator call)") for ln in rows] == [True, True, False], rows
+        text = board.render(self._board(board, monkeypatch, tmp_path, {"win": [plain]}))
+        assert "asks:     1 open (requests no ack names, oldest first): " in text, text
+        assert "operator call" not in text
+        # The count is over every open ask, not the rows shown: the call last.
+        many = [mail.new_message("win", "request", f"r{i}", now=_T0.replace(minute=i)) for i in range(board.ASKS_SHOWN)]
+        last = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} last", now=_T0.replace(minute=30))
+        text = board.render(self._board(board, monkeypatch, tmp_path, {"win": many, "air": [last]}))
+        assert f"asks:     {board.ASKS_SHOWN + 1} open, 1 operator call (requests" in text, text
+
     def test_none_open_and_unread_mail_read_differently(self, board, monkeypatch, tmp_path):
         """Dies to: an unread mail printed as "none open", which reads as an answer."""
         text = board.render(self._board(board, monkeypatch, tmp_path, {}))
@@ -566,6 +617,204 @@ class TestAsks:
         text = board.render(self._board(board, monkeypatch, tmp_path, {}, read_error="git for-each-ref failed"))
         assert "asks:     unread (the mail could not be read: git for-each-ref failed)" in text
         assert "none open" not in text
+
+
+class TestRecordsLine:
+    """TP-703d: each seat with a checkout here, a live claim, a job or a lane
+    merged in the window shows its lanes merged since its newest Session Log
+    row on the BASE or parked on its records ref (three seats merged 2 to 11
+    lanes a day with no row, 2026-10-16 to 10-17, and nothing said so). The
+    count is the loader's own (``lanes_since_row``), the one the ship driver's
+    row-debt read shares, over the one merged read's lane fields."""
+
+    # Noon UTC: the same local day in every zone a seat runs in.
+    _LANES = [{"number": 1, "headRefName": "lane/a", "mergedAt": "2026-10-19T12:00:00Z"},
+              {"number": 2, "headRefName": "lane/b", "mergedAt": "2026-10-18T12:00:00Z"},
+              {"number": 3, "headRefName": "lane/c", "mergedAt": "2026-10-20T12:00:00Z"},
+              {"number": 4, "headRefName": "lane/d", "mergedAt": "2026-10-20T12:00:00Z"}]
+    _NAMES = ["memory/session-log.d/2026-10-15-073941-win.md", "memory/session-log.d/2026-10-18-163553-win.md",
+              "memory/session-log.d/2026-10-19-053029-air.md"]
+
+    def _channel(self, board):
+        mail = board.mail
+        return {"win": [mail.new_message("win", "claim", "", lane="lane/a", paths=["a.py"], now=_T0),
+                        mail.new_message("win", "claim", "", lane="lane/b", paths=["b.py"], now=_T0),
+                        mail.new_message("win", "release", "", lane="lane/b", now=_T0.replace(minute=1))],
+                "win-2": [mail.new_message("win-2", "claim", "", lane="lane/c", paths=["c.py"], now=_T0)],
+                # air-work shipped lane/d (claimed, then released by its push) and
+                # holds nothing live; air only ever released lane/x and is quiet.
+                "air-work": [mail.new_message("air-work", "claim", "", lane="lane/d", paths=["d.py"], now=_T0),
+                             mail.new_message("air-work", "release", "", lane="lane/d", now=_T0.replace(minute=2))],
+                "air": [mail.new_message("air", "release", "", lane="lane/x", now=_T0),
+                        mail.new_message("air", "note", "quiet", now=_T0)]}
+
+    def _collect(self, board, monkeypatch, tmp_path, names=None, merged=None, **kw):
+        _stub_channel(monkeypatch, board, self._channel(board), **kw)
+        monkeypatch.setattr(board, "read_row_names", lambda root, base, **k: list(self._NAMES if names is None else names))
+        run = _gh({"pr list": [], "pr list merged": self._LANES if merged is None else merged, "run list": _GREEN_RUNS})
+        return board.collect(tmp_path, run_=run, now=_NOW), run
+
+    def test_each_present_busy_or_shipping_seat_shows_its_lanes_since_its_newest_row(self, board, monkeypatch, tmp_path):
+        """win and win-2 hold live claims; air-work holds nothing live but
+        shipped a lane in the window, the end-of-day seat that owes its row;
+        air is quiet with no checkout here and nothing merged, so it is not
+        listed; lane/u no claim names is counted apart, never as some seat's
+        zero. Dies to: a merge on the row's own day counted, a lane another
+        seat released counted as this seat's, the shipping seat dropped, or the
+        quiet seat listed."""
+        lanes = self._LANES + [{"number": 5, "headRefName": "lane/u", "mergedAt": "2026-10-20T12:00:00Z"}]
+        collected, _ = self._collect(board, monkeypatch, tmp_path, merged=lanes)
+        assert collected["records"]["entries"] == [
+            {"seat": "air-work", "merges": 1, "since": "", "parked": False, "cut": False},
+            {"seat": "win", "merges": 1, "since": "2026-10-18", "parked": False, "cut": False},
+            {"seat": "win-2", "merges": 1, "since": "", "parked": False, "cut": False}]
+        assert collected["records"]["unclaimed"] == 1 and collected["records"]["read"] == 5
+        text = board.render(collected)
+        assert "records:  3 seats: air-work: 1 merge, no row on origin/main" in text, text
+        assert "          win: 1 merge since its last row (2026-10-18)" in text, text
+        assert "          win-2: 1 merge, no row on origin/main" in text, text
+        assert "          and 1 of the last 5 merges no claim names" in text, text
+        lines = text.splitlines()
+        at = next(i for i, ln in enumerate(lines) if ln.startswith("records:"))
+        assert lines[at - 1].startswith("          ") or lines[at - 1].startswith("seats:")
+        assert lines[at + 4].startswith("jobs:"), "records: sits after seats: and before jobs:"
+
+    def test_the_mail_line_says_when_the_records_refs_fetch_failed(self, board, monkeypatch, tmp_path):
+        """The board fetched the mail and the base but never the records refs,
+        so a dispatcher's days-long session read parked rows as of its start
+        (failure-mode review). Dies to: the fetch dropped, or its failure read
+        as fresh refs."""
+        calls: list = []
+        _stub_channel(monkeypatch, board, self._channel(board))
+        monkeypatch.setattr(board, "read_row_names", lambda root, base, **k: list(self._NAMES))
+        monkeypatch.setattr(board.mail, "fetch_records",
+                            lambda root, run=None: calls.append(root) or (False, "could not reach origin"))
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": self._LANES,
+                                                     "run list": _GREEN_RUNS}), now=_NOW)
+        assert calls == [tmp_path]
+        text = board.render(collected)
+        assert ("mail:     the records refs' fetch failed (could not reach origin), so the parked rows are as last "
+                "fetched") in text, text
+        assert "records:  3 seats:" in text
+
+    def test_an_unnamed_clone_says_so_and_a_json_answer_that_is_no_list_reads_as_unread(self, board, monkeypatch,
+                                                                                        tmp_path):
+        """An adopter's unnamed clone printed "no seat has a checkout here",
+        which is false (failure-mode review); and a gh answer that is JSON but
+        not a list went through prs() as no merges and printed 0, where the
+        open-PR read refuses the same shape. Dies to: either read as a count."""
+        _stub_channel(monkeypatch, board, self._channel(board))
+        monkeypatch.setattr(board.mail, "machine_setting", lambda root, run=None: (None, "git config espalier.machine is not set"))
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
+        assert "records:  none (this clone names no machine, so no seat's rows are read)" in text, text
+        collected, _ = self._collect(board, monkeypatch, tmp_path, merged={"message": "rate limited"})
+        text = board.render(collected)
+        assert "records:  unread (gh pr list answered no list" in text, text
+        counted = [ln for ln in text.splitlines() if ln.startswith("records:") and any(f"{n} merge" in ln for n in range(10))]
+        assert not counted, text
+
+    def test_a_row_parked_on_the_seats_records_ref_is_its_newest_and_the_line_says_so(self, board, monkeypatch, tmp_path):
+        """The dispatcher's own 10-20 row sat parked on 10-23 while the base's
+        newest was 10-19: the seat wrote its row and is not in debt, and the
+        fold is owed. Dies to: the parked rows ignored, or the parked read's
+        failure printed as a count."""
+        seen: list = []
+
+        def pending(root, directory, against, **kw):
+            seen.append((directory, list(against)))
+            return [("win", "memory/session-log.d/2026-10-19-210000-win.md", "refs/remotes/origin/records/win")]
+
+        _stub_channel(monkeypatch, board, self._channel(board))
+        monkeypatch.setattr(board, "read_row_names", lambda root, base, **k: list(self._NAMES))
+        monkeypatch.setattr(board.mail, "pending", pending)
+        run = _gh({"pr list": [], "pr list merged": self._LANES, "run list": _GREEN_RUNS})
+        collected = board.collect(tmp_path, run_=run, now=_NOW)
+        assert seen == [("memory/session-log.d", ["origin/main"])]
+        win = next(e for e in collected["records"]["entries"] if e["seat"] == "win")
+        assert win == {"seat": "win", "merges": 0, "since": "2026-10-19", "parked": True, "cut": False}
+        assert "win: 0 merges since its last row (2026-10-19, parked until the next fold)" in board.render(collected)
+        monkeypatch.setattr(board.mail, "pending",
+                            lambda *a, **k: (_ for _ in ()).throw(board.Unresolvable("git for-each-ref failed")))
+        text = board.render(board.collect(tmp_path, run_=run, now=_NOW))
+        assert "records:  unread (git for-each-ref failed)" in text, text
+
+    def test_the_read_is_the_base_tree_through_the_lane_fields_in_the_shared_window(self, board, monkeypatch, tmp_path):
+        """Dies to: the names read from the working tree, the rollup fields
+        asked for a hundred rows, or a window of the board's own."""
+        seen: list[tuple] = []
+        _stub_channel(monkeypatch, board, self._channel(board))
+        monkeypatch.setattr(board, "read_row_names", lambda root, base, **k: seen.append((root, base)) or list(self._NAMES))
+        run = _gh({"pr list": [], "pr list merged": self._LANES, "run list": _GREEN_RUNS})
+        collected = board.collect(tmp_path, run_=run, now=_NOW)
+        assert seen == [(tmp_path, "main")]
+        reads = [c for c in run.calls if c[:3] == ["gh", "pr", "list"] and "merged" in c
+                 and "headRefName" in c[c.index("--json") + 1]]
+        assert len(reads) == 1 and reads[0][reads[0].index("--limit") + 1] == str(board.ROW_DEBT_WINDOW)
+        assert collected["records"]["window"] == board.ROW_DEBT_WINDOW >= 75
+
+    def test_no_present_or_busy_seat_reads_as_none_and_reads_nothing(self, board, monkeypatch, tmp_path):
+        mail = board.mail
+        quiet = {"air": [mail.new_message("air", "note", "quiet", now=_T0)]}
+        _stub_channel(monkeypatch, board, quiet)
+        monkeypatch.setattr(board, "read_row_names", lambda *a, **k: (_ for _ in ()).throw(AssertionError("read")))
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
+        assert "records:  none (no seat has a checkout here, a live claim, a job or a lane merged in the window)" in text, text
+
+    def test_an_unreadable_tree_or_merged_list_reads_as_unread_never_as_zero(self, board, monkeypatch, tmp_path):
+        """Dies to: a failed read printed as 0 merges, which reads as a clean seat."""
+        collected, _ = self._collect(board, monkeypatch, tmp_path,
+                                     merged=board.Unresolvable("gh pr list answered rc=4 with no JSON: not logged in"))
+        text = board.render(collected)
+        assert "records:  unread (gh pr list answered rc=4 with no JSON: not logged in)" in text, text
+        assert "0 merges" not in text
+        _stub_channel(monkeypatch, board, self._channel(board))
+        monkeypatch.setattr(board, "read_row_names",
+                            lambda *a, **k: (_ for _ in ()).throw(board.Unresolvable("git ls-tree origin/main failed")))
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": self._LANES,
+                                                              "run list": _GREEN_RUNS}), now=_NOW))
+        assert "records:  unread (git ls-tree origin/main failed)" in text, text
+        assert "post-merge proof green" in text, "one unreadable section costs only itself"
+
+    def test_unread_mail_reads_as_unread(self, board, monkeypatch, tmp_path):
+        collected, _ = self._collect(board, monkeypatch, tmp_path, read_error="git for-each-ref failed")
+        assert "records:  unread (the mail could not be read: git for-each-ref failed)" in board.render(collected)
+
+    def test_a_count_is_a_floor_when_the_read_stops_short_of_the_seats_newest_row(self, board, monkeypatch, tmp_path):
+        """The window is the last 100 merges across EVERY seat, so one seat
+        can reach 100 only if every merge read is its own; the first cut rule
+        compared a seat's count with the window and never fired (code review).
+        A count is a floor when the read is full and its oldest merge is still
+        newer than the seat's row (or the seat has none). Dies to: the flag
+        read from the count, or a seat with a row newer than the oldest merge
+        read marked as cut."""
+        w = board.ROW_DEBT_WINDOW
+        many = ([{"number": n, "headRefName": "lane/a", "mergedAt": "2026-10-20T12:00:00Z"} for n in range(60)]
+                + [{"number": 100 + n, "headRefName": "lane/d", "mergedAt": "2026-10-19T12:00:00Z"} for n in range(w - 60)])
+        names = ["memory/session-log.d/2026-10-10-073941-win.md", "memory/session-log.d/2026-10-20-053029-win-2.md"]
+        collected, _ = self._collect(board, monkeypatch, tmp_path, names=names, merged=many)
+        text = board.render(collected)
+        assert f"air-work: {w - 60}+ merges, no row on origin/main (the last {w} read)" in text, text
+        assert f"win: 60+ merges since its last row (2026-10-10; the last {w} read)" in text, text
+        assert "win-2: 0 merges since its last row (2026-10-20)" in text, text
+        assert [e["cut"] for e in collected["records"]["entries"]] == [True, True, False]
+        # Short of the window, nothing is a floor however many lanes a seat has.
+        collected, _ = self._collect(board, monkeypatch, tmp_path, names=names, merged=many[:w - 1])
+        assert not any(e["cut"] for e in collected["records"]["entries"])
+        assert "+ merges" not in board.render(collected)
+
+    def test_the_row_names_are_git_ls_tree_of_the_base_and_a_failure_is_named(self, board, tmp_path):
+        """Dies to: a working-tree listing, or a failed git read as no rows."""
+        calls: list[list[str]] = []
+
+        def run(argv, **kw):
+            calls.append(list(argv))
+            return (0, "memory/session-log.d/2026-10-18-163553-win.md\nmemory/session-log.d/x.md\n", "")
+
+        assert board.read_row_names(tmp_path, "main", run_=run) == ["memory/session-log.d/2026-10-18-163553-win.md",
+                                                                     "memory/session-log.d/x.md"]
+        assert calls == [["git", "ls-tree", "--name-only", "origin/main", "--", "memory/session-log.d/"]]
+        with pytest.raises(board.Unresolvable, match="ls-tree"):
+            board.read_row_names(tmp_path, "main", run_=lambda argv, **kw: (128, "", "fatal: not a tree"))
 
 
 def _registry(tmp_path: Path, *cwds: Path) -> Path:
@@ -1687,6 +1936,9 @@ class TestSectionCounts:
                             {"id": "a2", "at": "t0", "re": {"seat": "win-2", "ids": ["DEF-1"]}}],
             "claims": [{"from": "win", "at": "t0", "re": {"lane": "lane/a", "paths": ["a.py"]}},
                        {"from": "win-2", "at": "t0", "re": {"lane": "lane/b", "paths": ["b.py"]}}],
+            "records": {"window": 100, "unread": "", "read": 40, "unclaimed": 0,
+                        "entries": [{"seat": "win", "merges": 3, "since": "2026-10-18", "parked": False, "cut": False},
+                                    {"seat": "win-2", "merges": 0, "since": "2026-10-20", "parked": True, "cut": False}]},
             "overlaps": {"pairs": [
                 {"a": "win (lane/a)", "b": "win-2 (lane/b)", "files": ["a.py"], "verdict": "path only"},
                 {"a": "win (lane/a)", "b": "air (lane/c)", "files": ["c.py"], "verdict": "path only"}]},
@@ -1705,14 +1957,15 @@ class TestSectionCounts:
         assert "and 1 seat with no mail in" in text, text
         assert "jobs:     (dispatcher air) 2 live: win: " in text, text
         assert "claims:   2 live: win: lane/a" in text, text
+        assert "records:  2 seats: win: 3 merges since its last row (2026-10-18)" in text, text
         assert "overlaps: 2 pairs: win (lane/a) and win-2 (lane/b) both changed a.py" in text, text
 
     def test_an_empty_section_keeps_its_none_form(self, board):
         """Dies to: a count printed on a section with nothing in it."""
         text = board.render(self._board(open_prs=[], assignments=[], claims=[], overlaps={"pairs": []},
-                                        seats={"rows": []}))
+                                        seats={"rows": []}, records={"window": 100, "unread": "", "entries": []}))
         for line in ("open PRs: none", "jobs:     (dispatcher air) no live assignments", "claims:   none live",
-                     "overlaps: none", "seats:    none: no machine has mail"):
+                     "overlaps: none", "seats:    none: no machine has mail", "records:  none (no seat has"):
             assert line in text, (line, text)
 
     def test_the_jobs_count_is_the_length_of_the_assignments_list(self, board, monkeypatch, tmp_path, capsys):

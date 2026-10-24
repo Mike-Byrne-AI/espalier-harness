@@ -201,7 +201,23 @@ interactive session as under `-p`; a killed session leaves the lock behind.
      moved, and the hook and the handoff stopped pruning in the same lane.
      **Another seat sees a parked row only after the next fold:** the
      banner's recent rows read the tree, so until some lane's push lands the
-     row reaches no banner, the parking seat's next session included.
+     row reaches no banner, the parking seat's next session included; the
+     landing check's session-log-cap note prints how many rows sit parked.
+     **A row per active seat per day is a debt the board reads (2026-10-23,
+     `TP-703d`).** Over 2026-10-16 and 10-17 three seats merged 2 to 11 lanes
+     a day with no row from any of them, and 29 of 48 early ships since 10-16
+     were followed by the seat's row within a day. The board's `records:` line
+     prints, for each seat with a checkout there, a live claim or a job, its
+     lanes merged since its newest row on the base, or parked on its records ref, in the
+     reading box's local day (a seat in another zone can differ by a lane at the day's
+     edge; a count the read stopped short of is a floor and says so; lanes no claim
+     names are counted apart, never as a seat's zero)
+     (`tools/cc/_record_fragments.py::lanes_since_row`, over the one merged
+     read's lane fields, the last 100 merges); the ship driver's
+     `seat_row_debt` counts the same way, and its second lane makes `open
+     --early` refuse at a cap of 3 lanes, naming the count, the last row's
+     date and the way out (the row committed on the lane). A read that fails
+     is unread, never zero: no verdict is never a refusal on a guess.
 7. **A red `main` is reverted first and diagnosed second.** The post-merge
    proof (`.github/workflows/post-merge.yml`) runs after merges, and the ship
    preflight and the board name a red one. Each push's run goes to the end,
@@ -239,7 +255,8 @@ interactive session as under `-p`; a killed session leaves the lock behind.
 
 | Does | Does not |
 |---|---|
-| Turns the operator's priorities into assignments (`mail.py send --type assign --seat <seat> ...`): which seat works which job, and since 2026-10-15 sends them without a per-assign yes when the job is inside an approved pack or a live ledger row (the paragraph below) | Set the priorities: the operator does, by approving packs and naming the classes to drain; a new pack, a scope change, a release, or a call `cc/GOAL.md` lists as the operator's still goes to the operator |
+| Turns the operator's priorities into assignments (`mail.py send --type assign --seat <seat> ...`): which seat works which job, and since 2026-10-15 sends them without a per-assign yes when the job is inside an approved pack or a live ledger row (the paragraph below) | Set the priorities: the operator does, by approving packs and naming the classes to drain; a new pack, a scope change, a release, or an open operator call (a `request` whose text opens with `OPERATOR CALL:`, on the board's `asks:` line for every seat until the dispatcher's `ack` naming its full id carries the ruling) still goes to the operator |
+| Writes its own day row, derived from the mail and the merges (`scripts/seat_day_census.py --seat "$(git config espalier.machine)" --date "$(date +%F)" --as-row`, the row's own local date, which the census reads as the UTC day 00:00Z to 24:00Z, prints the figures: assigns sent and the new jobs among them, the releases naming an assign, the worker requests answered, the jobs live at the day's end, lanes merged, rows, the counted words), then the rulings and the operator's words by hand, filed where `_record_fragments.py new session-log` says, the seat read from the clone and never typed (since 2026-10-23) | Leave its day to the workers' rows: the dispatcher's decisions are on its mail ref, and the row is where the next session on any seat reads them |
 | Sequences jobs that would collide: two jobs on one hot file, a record-format change while lanes are open | Gate changes: seats ship their own lanes |
 | Keeps two jobs with clear gates on every seat's queue, each assign in its shape (*What an assign says*, under *How assignments behave*), and re-reads the gates when a lane merges; a gate names another seat's open lane and the file both touch | Gate a seat on its own open pull request (item 4: the cap is on pull requests, not work) |
 | Answers worker requests at its next prompt (the operator prompts "dispatch", or a `/loop` does) | Review all code, or act as the merge queue |
@@ -254,8 +271,15 @@ own when the job is a wave of a pack the operator has approved (its `Status`
 not waiting on an operator decision) or a live ledger row or class; it does not
 wait for a yes per assign. Outside that set the operator decides: a new pack,
 a change to an approved pack's scope, a release or tag, a revert that is not
-the Core Rule 15 red-`main` revert, and every item `cc/GOAL.md` lists under the
-operator's open calls. Each assign is reported at the dispatcher's next tick
+the Core Rule 15 red-`main` revert, and every open operator call. Since
+2026-10-23 an operator call is a `request` the dispatcher sends with a text
+opening with `OPERATOR CALL:` (the question, the options, the recommendation),
+so the board's `asks:` line lists it for every seat, with its age, and counts
+it apart until the dispatcher's `ack` naming the request's full id carries the
+ruling (an ack from any other seat leaves the call open); `cc/GOAL.md` no longer
+carries the calls (it holds the goal, the priorities and what is owed), and the
+ruling lands on origin where every seat reads it instead of in one checkout's
+gitignored file. Each assign is reported at the dispatcher's next tick
 with the job and the reason, so the operator can veto it, and the day's
 assigns go in the Session Log row. Why: the per-assign yes was the queue's
 single point of failure. Measured on 2026-10-14 and 10-15, assign-to-first-claim
@@ -274,8 +298,8 @@ after the dispatcher's tick interval with no answer: 15 minutes, the `/loop` in
 (`tests/test_seat.py::TestBrief`); the ack can still redirect it. The seat
 stops, and only re-reads mail, for what the assign authority above reserves
 for the operator (a new pack, a change to an approved pack's scope, a release
-or tag, a revert that is not the red-`main` revert, an open call the goal file
-lists), for a platform safety stop, for a refusal it cannot resolve, and for a
+or tag, a revert that is not the red-`main` revert, an open operator call, an
+`OPERATOR CALL:` request on the board's `asks:` line), for a platform safety stop, for a refusal it cannot resolve, and for a
 conflict outside its own files; a finding's row is the seat's own to file
 (item 8), never a stop. A red the seat cannot fix in two attempts shelves the
 lane (its claims stay, unless its push already released them; one note

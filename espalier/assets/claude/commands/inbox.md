@@ -162,8 +162,8 @@ python tools/cc/board.py
 Read live state in the same turn before you state it: the SessionStart
 banner, a handoff note, the mail and a session's own context are snapshots,
 and with several seats (sessions, each in its own named worktree) pushing,
-they go stale within the hour. The `open PRs:`, `seats:`, `jobs:`, `claims:`
-and `overlaps:` sections name their count on their first line
+they go stale within the hour. The `open PRs:`, `seats:`, `records:`, `jobs:`,
+`asks:`, `claims:` and `overlaps:` sections name their count on their first line
 (`jobs:     (dispatcher air) 2 live: ...`), so a filter that keeps one line of
 them still shows how many rows each has. `checks:` carries no count (a line
 for each red check), so a filter that keeps its first line can cut it: read it
@@ -247,12 +247,32 @@ is read on its own, and one that cannot be read says so on its own line:
   local sessions are unread, never that there are none, and nothing folds
   while any local reading is unread; run outside a session, it names every
   registry it read.
+- **records:** for each seat with a checkout here, a live claim or a job, its
+  lanes merged since its newest Session Log row on the base (`win: 9 merges
+  since its last row (2026-10-15)`; `no row on origin/main` where it has
+  none): the row a seat owes for the day's lanes, counted over the last 100
+  merges in the reading box's local day (a seat in another zone can differ by
+  a lane at the day's edge; a count the read stopped short of is a floor
+  and says `the last 100 read`), the same way the ship driver's row-debt
+  read counts it. A seat with a lane merged in the window is listed even
+  with nothing live (the end-of-day seat that owes its row), and lanes no
+  claim names are counted apart on a last line, never as a seat's zero.
+  An unnamed clone says so instead. The row goes through
+  `python tools/cc/_record_fragments.py new session-log`; where the handoff's
+  lane already merged, the row parks on the seat's records ref and the
+  landing check's cap note says how many are parked until a push folds them
+  in. A read that fails is `unread`, never `0 merges`.
 - **asks:** the requests no `ack` names, from every seat, oldest first, each
   as its full id, its sender, its lane and its age. Only an `ack` naming the
   full id answers a request (a note, a release or an assign that names one
-  does not), so a moot request is closed with an ack that says so. The
-  dispatcher seat also gets the count and the oldest age on the banner's
-  `Mail:` line.
+  does not), so a moot request is closed with an ack that says so. A request
+  whose text opens with `OPERATOR CALL:` is the dispatcher's question to the
+  operator (the question, the options, the recommendation); the header counts
+  those apart (`asks:     3 open, 2 operator calls ...`), and the ruling is
+  the dispatcher's `ack` naming the request's full id, with the ruling in its
+  text, so it lands on origin where every seat reads it; an ack from any
+  other seat leaves the call open, and the row says `(operator call)`. The dispatcher seat also gets the count and the oldest age on the
+  banner's `Mail:` line.
 - **jobs**, **claims** and the ledger's live row count, counted at the base
   branch's remote-tracking ref with the base's own ledger tools and naming the
   commit it read, so a checkout that stops moving still reads what the base
@@ -357,6 +377,13 @@ that reaches this seat about the files it claims is answered either way: an
 `ack` with what was done, or an `ack` with why not. Two weeks with no
 cross-platform request fulfilled retires the channel (the ledger row with the
 date-keyed probe says when).
+
+The dispatcher's own question to the operator goes out the same way, as a
+request whose text opens with `OPERATOR CALL:` (the question, the options, the
+recommendation), so the board's `asks:` line lists it for every seat with its
+age and counts it apart; the ruling comes back as the dispatcher's `ack`
+naming the request's full id, with the ruling in its text. A worker's ack does
+not close one.
 
 ## Step 5: A shipped lane releases its own claims
 

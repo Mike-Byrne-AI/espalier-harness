@@ -47,6 +47,10 @@ NO_VERDICT = frozenset({"CANCELLED", "STALE"})
 RED_BUCKETS = frozenset({"fail", "cancel"})
 #: The fields one merged listing carries for these readers.
 MERGED_FIELDS = "number,mergedAt,statusCheckRollup"
+#: The fields the Session Log debt readers ask for (the board's ``records:``
+#: line, the ship driver's row-debt read): a lane's branch and merge stamp,
+#: never a hundred rollups.
+LANE_FIELDS = "number,mergedAt,headRefName"
 
 Gh = Callable[[list[str]], object]
 
@@ -108,13 +112,16 @@ def prs(data: object) -> list[dict]:
     return [row for row in data if isinstance(row, dict) and isinstance(row.get("number"), int)]
 
 
-def read_merged(cwd: object, limit: int, gh: Gh | None = None, author: str | None = None) -> list[dict]:
+def read_merged(cwd: object, limit: int, gh: Gh | None = None, author: str | None = None,
+                fields: str = MERGED_FIELDS) -> list[dict]:
     """The one ``gh pr list --state merged`` read, ``limit`` rows, with
     ``--author`` only when the caller gives one (the banner names your pull
-    requests and passes ``@me``; the board and the preflight pass none). ``gh``
-    takes the arguments after ``gh`` and returns the parsed JSON or None; the
-    default runs the command in ``cwd``."""
-    args = ["pr", "list", "--state", "merged", "--limit", str(limit), "--json", MERGED_FIELDS]
+    requests and passes ``@me``; the board and the preflight pass none) and
+    ``fields`` the ``--json`` list (the rollup fields by default; the Session
+    Log debt readers pass ``LANE_FIELDS``). ``gh`` takes the arguments after
+    ``gh`` and returns the parsed JSON or None; the default runs the command
+    in ``cwd``."""
+    args = ["pr", "list", "--state", "merged", "--limit", str(limit), "--json", fields]
     if author:
         args[2:2] = ["--author", author]
     runner = gh if gh is not None else _default_gh(cwd)

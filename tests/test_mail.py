@@ -1085,6 +1085,42 @@ class TestNamingProse:
         assert _naming_prose_offenders(tmp_path) == (1, [])
 
 
+class TestOperatorCalls:
+    """The dispatcher's question to the operator is a request whose text opens
+    with one prefix, so the board counts it apart and a worker never acks it.
+    One constant, read by the board; the message shape is unchanged."""
+
+    def test_the_prefix_marks_a_request_and_nothing_else(self, mail):
+        t = datetime(2026, 10, 23, 20, 0, 0, tzinfo=timezone.utc)
+        assert mail.OPERATOR_CALL_PREFIX == "OPERATOR CALL:"
+        call = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} 703c on the Mac or the win box?", now=t)
+        padded = mail.new_message("air", "request", f"  {mail.OPERATOR_CALL_PREFIX} a fifth seat?", now=t)
+        plain = mail.new_message("win", "request", "which base?", lane="lane/a", now=t)
+        note = mail.new_message("win-2", "note", f"{mail.OPERATOR_CALL_PREFIX} not a request", now=t)
+        lower = mail.new_message("win-2", "request", "operator call: not the prefix", now=t)
+        quoted = mail.new_message("win-2", "request", f"re your {mail.OPERATOR_CALL_PREFIX} the fifth seat", now=t)
+        assert [mail.is_operator_call(m) for m in (call, padded, plain, note, lower, quoted)] == [
+            True, True, False, False, False, False]
+        assert mail.is_operator_call({"type": "request"}) is False and mail.is_operator_call("junk") is False
+
+    def test_only_the_askers_own_ack_closes_an_operator_call(self, mail):
+        """Any seat's ack closed any request, and inbox.md tells a worker to
+        close a moot ask, so a worker could clear the operator's question from
+        every board with no trace (failure-mode review). An operator call
+        closes on an ack from its sender alone; a plain request closes on
+        anyone's. Dies to: the sender rule dropped, or applied to plain asks."""
+        t = datetime(2026, 10, 23, 20, 0, 0, tzinfo=timezone.utc)
+        call = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} 703c on the Mac or the win box?", now=t)
+        plain = mail.new_message("win", "request", "which base?", now=t)
+        worker_acks = [mail.new_message("win", "ack", "moot", ack=call["id"], now=t.replace(minute=5)),
+                       mail.new_message("win-2", "ack", "done", ack=plain["id"], now=t.replace(minute=6))]
+        live = mail.live_requests({"air": [call], "win": [plain, worker_acks[0]], "win-2": [worker_acks[1]]}, now=t)
+        assert [m["id"] for m in live] == [call["id"]]
+        ruled = mail.new_message("air", "ack", "the win box", ack=call["id"], now=t.replace(minute=9))
+        assert mail.live_requests({"air": [call, ruled], "win": [plain, worker_acks[0]], "win-2": [worker_acks[1]]},
+                                  now=t) == []
+
+
 class TestLiveRequests:
     """TP-701 Wave A-1: the requests no ``ack`` answers, the dispatcher's
     unanswered asks. Pairing on the request's id, never on acks alone: on

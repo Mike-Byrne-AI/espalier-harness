@@ -559,6 +559,59 @@ def seat_open_prs(root: Path, branch: str, prs: list[dict]) -> tuple[str, list[s
     return machine, mine
 
 
+def seat_row_debt(root: Path, base: str) -> tuple[int, str, bool] | None:
+    """``(merged lanes since this seat's newest Session Log row, that row's
+    date or '', whether that row is parked on the seat's records ref and not
+    yet folded)``, or None where git, gh or the mail channel cannot answer: no
+    verdict is never a refusal on a guess (the rule ``lane_carries_memory_row``
+    keeps). Lanes are the merged pull requests whose branch the seat's latest
+    claim or release names (``mail.lane_seats``), their merge day read in this
+    clock's zone as the fragment names are; the rows are the fragments on
+    ``origin/<base>`` plus those parked on the records refs (``mail.pending``:
+    a seat that wrote its row and parked it is not in debt, and the early arm
+    runs before the fold that brings it in), read by name alone, never the
+    working tree a seat can edit. The count is
+    ``_record_fragments.lanes_since_row``, the board's ``records:`` line's own,
+    through the one merged read (``_post_merge.read_merged``, the lane
+    fields)."""
+    # The local reads first, every one under the guard: a sibling that cannot
+    # load, a git that raised (the runner's Refused on a timeout or a missing
+    # git), the channel's named stop. Unread, never a count, never a refusal.
+    try:
+        mail, fragments = _mail_module(), _fragments_module()
+        if mail is None or fragments is None:
+            return None
+        machine, _how = mail.machine_setting(root)  # unread-name: ok both an unread name and no name read as None, no verdict
+        if not machine:
+            return None
+        rc, names, _ = _git("ls-tree", "--name-only", f"origin/{base}", "--", SESSION_LOG_DIR, cwd=str(root))
+        if rc != 0:
+            return None
+        parked = [path for _machine, path, _ref in mail.pending(root, fragments.SESSION_LOG_DIR, [f"origin/{base}"])]
+        by_machine, _skipped = mail.read_mail(root)
+        newest, is_parked = fragments.newest_row_by_seat(names.split(), parked).get(machine, ("", False))
+    except Exception:  # noqa: BLE001 -- see above: every local read's failure is one answer, None
+        return None
+    failed: list[str] = []
+
+    def gh(args: list[str]) -> object:
+        try:
+            data = _gh_json(*args, cwd=str(root))
+        except Refused as exc:
+            failed.append(str(exc))
+            return None
+        if not isinstance(data, list):
+            failed.append("gh pr list answered no list")   # prs() would read it as no merges
+            return None
+        return data
+
+    merged = _post_merge.read_merged(str(root), fragments.ROW_DEBT_WINDOW, gh=gh, fields=_post_merge.LANE_FIELDS)
+    if failed:
+        return None
+    seat_of = mail.lane_seats(by_machine)
+    return fragments.lanes_since_row(merged, seat_of, machine, newest), newest, is_parked
+
+
 def stale_base_line(root: Path, base: str, pr: dict) -> str:
     """The stale-base advisory for an open pull request, or "" when its green
     stands: the up-to-date rule is on (GitHub holds a stale lane itself), the

@@ -152,6 +152,21 @@ Update only durable repo operating knowledge:
 
 Keep the row compact: it is one line, and the digest shows its bold headline.
 
+<!-- espalier:self-host-only -->
+**On the dispatcher seat, derive the body first.** `python scripts/seat_day_census.py
+--seat "$(git config espalier.machine)" --date "$(date +%F)" --as-row` prints that date's
+figures from the mail refs and the merges. Pass the row's own local date (`date +%F`, never
+`date -u`): the census reads it as the UTC day 00:00Z to 24:00Z, so an evening handoff west
+of UTC names that window in the row. The figures are (assigns sent and the new jobs among them, the releases naming an assign, the
+worker requests answered, the jobs live at the day's end, lanes merged, rows, the counted
+words); add what the mail does not carry (the operator's words, each ruling as a
+sentence, a Lesson) and file it where `python tools/cc/_record_fragments.py new
+session-log` says (the seat is read from the clone, never typed: a typed name files the row
+under another seat and leaves the debt standing). The board's `records:` line shows every present or busy
+seat's lanes merged since its newest row; a seat whose count climbs owes this step, and
+the ship driver's `open --early` refuses past a cap once its second lane lands.
+<!-- /espalier:self-host-only -->
+
 ## 3. Finalize the cognitive blueprint
 
 <!-- espalier:self-host-only -->
@@ -399,6 +414,17 @@ distinct from ESPALIER_MEMORY.md's durable knowledge and the session log's rows
 (under `memory/session-log.d/` where the loader is deployed). Refresh the
 `_Updated: <date>_` line so staleness stays visible; keep it tight (it is
 byte-bounded in the banner) and honest — no "release-ready" without the evidence.
+
+<!-- espalier:self-host-only -->
+**What the file keeps on this repository, where several seats run (2026-10-23):** its
+four seeded sections, `## Notes to next session`, `## Still owed`, `## Goal` and
+`## Where we are / next gate`, the last in prose. It no longer carries lane names,
+pull-request numbers, queues or a state block that restates the board (`/inbox board`
+reads those live, and the records the seats write hold the history), nor the operator's
+open calls: those go out as `OPERATOR CALL:` requests on the mail channel, where every
+seat's board lists them with an age until the dispatcher's `ack`, naming the request's full
+id, carries the ruling.
+<!-- /espalier:self-host-only -->
 
 **Section ORDER is load-bearing — the perishable block first, the goal-proper last.**
 The banner bounds this file and cuts from the TOP, keeping whole trailing `## `

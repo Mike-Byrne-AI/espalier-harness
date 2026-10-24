@@ -283,3 +283,20 @@ class TestReadMerged:
         pm.read_merged(".", 3, gh=gh, author="@me")
         assert calls[-1][:2] == ["pr", "list"] and "--author" in calls[-1] and "@me" in calls[-1]
         assert pm.read_merged(".", 3, gh=lambda args: None) == []
+
+    def test_the_field_list_is_the_callers_and_defaults_to_the_rollup_fields(self, pm):
+        """The Session Log debt readers (the board's records: line, the ship
+        driver's row-debt read) ask for the lane's branch and merge stamp, not
+        a hundred rollups, through the one merged read. Dies to: a second
+        ``gh pr list --state merged`` spelled outside this module, or the lane
+        fields missing the branch name."""
+        calls: list[list[str]] = []
+        def gh(args):
+            calls.append(list(args))
+            return [{"number": 9, "mergedAt": "2026-10-18T12:00:00Z", "headRefName": "lane/a"}]
+        rows = pm.read_merged(".", 100, gh=gh, fields=pm.LANE_FIELDS)
+        assert [r["headRefName"] for r in rows] == ["lane/a"]
+        assert calls == [["pr", "list", "--state", "merged", "--limit", "100", "--json", pm.LANE_FIELDS]]
+        assert set(pm.LANE_FIELDS.split(",")) == {"number", "mergedAt", "headRefName"}
+        pm.read_merged(".", 2, gh=gh)
+        assert calls[-1][-1] == pm.MERGED_FIELDS and "statusCheckRollup" in pm.MERGED_FIELDS

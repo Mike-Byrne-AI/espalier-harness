@@ -22,6 +22,7 @@ import datetime as dt
 import importlib.util
 import re
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -680,3 +681,98 @@ class TestDecode:
         """A Windows checkout writes a merged-in fragment CRLF beside its own
         LF one; two readers of one record must not differ by that."""
         assert rf.decode(b"- a\r\n- b\n") == "- a\n- b\n"
+
+
+class TestNewestRowDateBySeat:
+    """The Session Log debt is counted from each seat's newest row, read by
+    name alone, so the board can ask the base's tree (``git ls-tree``) and
+    never a checkout a seat can edit."""
+
+    def test_the_newest_date_per_seat_from_names_or_paths(self, rf):
+        names = ["memory/session-log.d/2026-10-15-073941-win-2.md", "2026-10-18-163553-win-2.md",
+                 "2026-10-18-224242-air.md", "2026-10-19-053029-air.md", "README.md", "2026-10-17-notes.md"]
+        assert rf.newest_row_date_by_seat(names) == {"win-2": "2026-10-18", "air": "2026-10-19"}
+
+    def test_order_does_not_matter_and_an_empty_listing_is_empty(self, rf):
+        names = ["2026-10-19-053029-air.md", "2026-10-15-073941-air.md"]
+        assert rf.newest_row_date_by_seat(names) == rf.newest_row_date_by_seat(names[::-1]) == {"air": "2026-10-19"}
+        assert rf.newest_row_date_by_seat([]) == {}
+
+    def test_a_row_parked_on_the_records_ref_counts_and_is_said_to_be_parked(self, rf):
+        """A handoff whose lane already merged parks its row on the seat's
+        records ref until some push folds it; the seat wrote its row, so it is
+        not in debt, and the reader says the fold is owed. Dies to: the parked
+        row ignored (the dispatcher's own 10-20 row read as debt on 10-23), or
+        an older parked row read over a newer one on the base."""
+        base = ["memory/session-log.d/2026-10-18-163553-win.md", "memory/session-log.d/2026-10-19-053029-air.md"]
+        parked = ["memory/session-log.d/2026-10-20-210952-air.md", "memory/session-log.d/2026-10-17-120000-win.md",
+                  "memory/session-log.d/2026-10-18-163553-win-2.md"]
+        assert rf.newest_row_by_seat(base, parked) == {"air": ("2026-10-20", True), "win": ("2026-10-18", False),
+                                                       "win-2": ("2026-10-18", True)}
+        assert rf.newest_row_by_seat(base) == {"air": ("2026-10-19", False), "win": ("2026-10-18", False)}
+        assert rf.newest_row_by_seat([], []) == {}
+        # A parked row of the same day as the base's newest is not newer.
+        same = ["memory/session-log.d/2026-10-18-200000-win.md"]
+        assert rf.newest_row_by_seat(base, same) == {"air": ("2026-10-19", False), "win": ("2026-10-18", False)}
+
+
+class TestLanesSinceRow:
+    """The count the board's ``records:`` line and the ship driver's row-debt
+    read share: a seat's merged lanes dated, in the writer's zone, after its
+    newest row. Mutation named in the pack: the merge day read in UTC, which
+    counts a 21:00 EDT merge after the day's row as next-day debt."""
+
+    _EDT = dt.timezone(dt.timedelta(hours=-4))
+
+    def _merged(self):
+        return [{"number": 1, "headRefName": "lane/a", "mergedAt": "2026-10-18T15:00:00Z"},
+                {"number": 2, "headRefName": "lane/b", "mergedAt": "2026-10-19T01:00:00Z"},  # 21:00 EDT on the 18th
+                {"number": 3, "headRefName": "lane/c", "mergedAt": "2026-10-19T15:00:00Z"},
+                {"number": 4, "headRefName": "lane/other", "mergedAt": "2026-10-19T16:00:00Z"},
+                {"number": 5, "headRefName": "lane/d", "mergedAt": ""},
+                "junk"]
+
+    def test_counts_the_seats_lanes_merged_on_a_local_day_after_its_newest_row(self, rf):
+        seat_of = {"lane/a": "win", "lane/b": "win", "lane/c": "win", "lane/d": "win", "lane/other": "air"}
+        assert rf.lanes_since_row(self._merged(), seat_of, "win", "2026-10-18", tz=self._EDT) == 1
+        assert rf.lanes_since_row(self._merged(), seat_of, "win", "2026-10-18", tz=dt.timezone.utc) == 2
+        assert rf.lanes_since_row(self._merged(), seat_of, "win", "", tz=self._EDT) == 3
+        assert rf.lanes_since_row(self._merged(), seat_of, "air", "2026-10-19", tz=self._EDT) == 0
+
+    def test_local_day_reads_the_stamp_in_the_given_zone_and_says_nothing_for_none(self, rf):
+        assert rf.local_day("2026-10-19T01:00:00Z", tz=self._EDT) == "2026-10-18"
+        assert rf.local_day("2026-10-19T01:00:00Z", tz=dt.timezone.utc) == "2026-10-19"
+        assert rf.local_day("", tz=self._EDT) == "" and rf.local_day(None, tz=self._EDT) == ""
+        assert rf.local_day("yesterday") == ""
+
+    @pytest.mark.skipif(not hasattr(time, "tzset"), reason="the process zone cannot be set on this host")
+    def test_the_default_zone_is_the_process_zone_not_utc(self, rf, monkeypatch):
+        """Every other row passes a zone, and the board and ship rows use noon
+        stamps, so a reader that fell back to UTC passed them all (failure-mode
+        review, survivor S1). Dies to: ``astimezone(tz or utc)``."""
+        monkeypatch.setenv("TZ", "America/New_York")
+        time.tzset()
+        try:
+            assert rf.local_day("2026-10-19T01:00:00Z") == "2026-10-18"
+            assert rf.lanes_since_row([{"headRefName": "lane/a", "mergedAt": "2026-10-19T01:00:00Z"}],
+                                      {"lane/a": "win"}, "win", "2026-10-18") == 0
+        finally:
+            monkeypatch.undo()
+            time.tzset()
+
+    def test_a_full_read_whose_oldest_merge_is_newer_than_the_row_is_a_floor(self, rf):
+        """The window spans every seat's merges, so a seat's count never says
+        whether the read reached its row (code review of the first cut rule).
+        Dies to: the flag read from the count, or a full read with the row
+        inside it called a floor."""
+        full = [{"headRefName": "lane/a", "mergedAt": f"2026-10-{19 + (i % 2):02d}T12:00:00Z"} for i in range(4)]
+        assert rf.window_stops_short(full, "2026-10-10", 4, tz=self._EDT) is True
+        assert rf.window_stops_short(full, "", 4, tz=self._EDT) is True
+        assert rf.window_stops_short(full, "2026-10-19", 4, tz=self._EDT) is False
+        assert rf.window_stops_short(full[:3], "2026-10-10", 4, tz=self._EDT) is False
+        assert rf.window_stops_short(full + ["junk"], "2026-10-10", 0, tz=self._EDT) is False
+
+    def test_the_window_covers_three_days_of_the_measured_rate(self, rf):
+        """25 lanes a day across four seats (2026-10-16 to 10-18); the ship
+        driver's POST_MERGE_ROWS (20) covers under one."""
+        assert rf.ROW_DEBT_WINDOW >= 75

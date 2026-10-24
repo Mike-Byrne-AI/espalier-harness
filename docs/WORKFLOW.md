@@ -499,13 +499,21 @@ are snapshots. Two of its lines are about the seats themselves:
   A seat with no checkout here is its last mail and nothing more: the channel
   cannot say whether a session elsewhere is running, so ask a quiet seat
   rather than presume it gone.
+- `records:` gives each seat with a checkout here, a live claim or a job its
+  lanes merged since its newest Session Log row on the base: the row a seat
+  owes for the day's lanes, counted the same way the ship driver's row-debt
+  read counts it. A read that fails is unread, never zero.
 - `asks:` gives every request no ack answers yet, oldest first, with its full
   id and age. The dispatcher answers them, and another seat answers only a
   request about the files it claims; any seat's ack closes a request, so a
   worker never acks one meant for the dispatcher. Answer with an ack naming
   that id (`python tools/cc/mail.py send --type ack --ack <id> --text "<what
   was done>"`); the dispatcher seat also sees the count on its banner's
-  `Mail:` line.
+  `Mail:` line. A request whose text opens with `OPERATOR CALL:` is the
+  dispatcher's question to the operator, counted apart on the header and
+  tagged on its row; the ruling is the dispatcher's ack naming the request's
+  full id, with the ruling in its text, and an ack from any other seat leaves
+  the call open.
 
 `/inbox` has the rest: the channel's verbs, claims and releases, and what each
 board line means.
