@@ -422,8 +422,12 @@ def as_row(data: dict, seat: str, day: str, extra: dict | None = None) -> str:
     hand = _hand(r)
     if seat == data["dispatcher"]:
         s = data["dispatcher_sends"].get(day) or dict.fromkeys(SENDS, 0)
+        # The releases it owes: the jobs live at the day's end, per seat.
+        live_by_seat = {k: len(v) for k, v in sorted(data["live"].items()) if v}
+        owed = (f"jobs live at {data['live_at']} {sum(live_by_seat.values())}"
+                + (f" ({', '.join(f'{k} {n}' for k, n in live_by_seat.items())})" if live_by_seat else ""))
         body = (f"assigns sent {s['assigns_sent']} ({s['jobs_given']} new jobs); {hand}; the day's worker "
-                f"requests it answered {s['requests_answered']}; {merged}; {logs}; {words}.")
+                f"requests it answered {s['requests_answered']}; {owed}; {merged}; {logs}; {words}.")
     else:
         c = r["closed"]
         median = f", median {r['median_minutes']} min to an answer" if r["median_minutes"] is not None else ""

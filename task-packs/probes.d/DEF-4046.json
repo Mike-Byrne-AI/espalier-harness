@@ -1,0 +1,11 @@
+{
+ "id": "DEF-4046",
+ "subject": "scripts/seat_day_census.py",
+ "cmd": "python3 -c 'import importlib.util as u, sys; s = u.spec_from_file_location(\"census_probe\", \"scripts/seat_day_census.py\"); m = u.module_from_spec(s); sys.modules[\"census_probe\"] = m; s.loader.exec_module(m); print(hasattr(m, \"rows_by_seat\"))'",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "ba9b8b41080f",
+ "text_sha": "86b5b482b3c1",
+ "verified_2026_10_23": "OPEN (filed 2026-10-23; probe driven at filing)",
+ "verified_2026_10_24": "STILL_OPEN (re-pinned '0' -> 'False' on 2026-10-24: the filed probe counted vocabulary in its own subject file, the shape tests/test_check_ledger_probes.py ratchets; re-keyed to read whether the census has the one rows reader its fix adds, named in the row) [changed: probe, open value, text]"
+}

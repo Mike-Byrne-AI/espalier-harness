@@ -141,6 +141,13 @@ SYMBOLS_RULE_KEY = "symbols_rule"
 DISPATCHER_KEY = "dispatcher"
 _REQUIRED_KEYS: tuple[str, ...] = ("id", "type", "from", "at")
 MAX_TEXT = 2000
+#: What a dispatcher's question to the operator opens with: a ``request`` the
+#: board's ``asks:`` line counts apart, for every seat to read, until the
+#: dispatcher's own ``ack`` naming its id carries the ruling
+#: (memory/parallel-work-protocol.md, *Assign authority*). One constant, read
+#: by the board and the fold; the message shape is unchanged, and an ack from
+#: any other seat leaves the call open (``live_requests``).
+OPERATOR_CALL_PREFIX = "OPERATOR CALL:"
 MAX_PATHS = 64
 MAX_CLASSES = 16
 MAX_IDS = 64
@@ -662,19 +669,31 @@ def lane_seats(by_machine: dict[str, list[dict]]) -> dict[str, str]:
     """``{lane: machine}``: the machine whose LATEST claim or release names the
     lane. A release counts because the ship driver releases a lane's claims
     once its push lands, so the open pull request a seat just shipped has no
-    live claim left; the release still says whose lane it was. The board names
-    each open pull request's seat from this, and ``ship.py open`` a seat's
-    other open pull requests."""
-    latest: dict[str, tuple[str, str, int, str]] = {}
+    live claim left; the release still says whose lane it was. It counts only
+    from a machine with an earlier claim on that lane: the dispatcher closing
+    a job by lane after the seat's push was the lane's latest message and
+    moved the lane, its open pull request and its Session Log debt onto the
+    dispatcher (the records line's predicted defect, reproduced at its
+    review), and a lane only ever released is nobody's. The board names each open pull
+    request's seat from this, ``ship.py open`` a seat's other open pull
+    requests, and the records line and the census a seat's merged lanes."""
+    events: list[tuple[str, str, int, str, str]] = []
     for machine, messages in by_machine.items():
         for i, m in enumerate(messages):
             lane = str((m.get("re") or {}).get("lane") or "")
-            if not lane or m.get("type") not in ("claim", "release"):
-                continue
-            key = (str(m.get("at") or ""), str(m.get("from") or machine), i, str(m.get("from") or machine))
-            if lane not in latest or key[:3] > latest[lane][:3]:
-                latest[lane] = key
-    return {lane: key[3] for lane, key in latest.items()}
+            kind = str(m.get("type") or "")
+            if lane and kind in ("claim", "release"):
+                events.append((str(m.get("at") or ""), str(m.get("from") or machine), i, lane, kind))
+    events.sort(key=lambda t: t[:3])
+    claimed: dict[str, set[str]] = {}
+    latest: dict[str, str] = {}
+    for _at, who, _i, lane, kind in events:
+        if kind == "claim":
+            claimed.setdefault(lane, set()).add(who)
+        elif who not in claimed.get(lane, ()):
+            continue   # a release from a seat that never claimed the lane names nobody's lane
+        latest[lane] = who
+    return latest
 
 
 def age_seconds(message: dict, now: datetime | None = None) -> int | None:
@@ -698,15 +717,37 @@ def live_requests(by_machine: dict[str, list[dict]], *, now: datetime | None = N
     machine's ref is read, the asker's own included: an asker may close its
     own request, and the dispatcher's acks live on its own ref. Ordered as
     the claims fold is: the stamp, the machine, the position in its file."""
-    answered = {str(m.get("ack") or "") for messages in by_machine.values() for m in messages
-                if m.get("type") == "ack"}
+    answered: dict[str, set[str]] = {}   # the request id -> the machines whose acks name it
+    for machine, messages in by_machine.items():
+        for m in messages:
+            if m.get("type") == "ack":
+                answered.setdefault(str(m.get("ack") or ""), set()).add(str(m.get("from") or machine))
     asks: list[tuple[str, str, int, dict]] = []
     for machine, messages in by_machine.items():
         for i, m in enumerate(messages):
-            if m.get("type") == "request" and m.get("id") not in answered:
-                asks.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
+            if m.get("type") != "request":
+                continue
+            who = str(m.get("from") or machine)
+            acked_by = answered.get(str(m.get("id") or ""), set())
+            # An operator call (the dispatcher's question to the operator) closes
+            # on its sender's own ack alone: any seat's ack closed any request,
+            # and a worker clearing a "moot" ask would have taken the operator's
+            # question off every board with no trace (found at the records line's review).
+            closed = who in acked_by if is_operator_call(m) else bool(acked_by)
+            if not closed:
+                asks.append((str(m.get("at") or ""), who, i, m))
     asks.sort(key=lambda t: t[:3])
     return [{**m, "age_s": age_seconds(m, now)} for _at, _who, _i, m in asks]
+
+
+def is_operator_call(message: object) -> bool:
+    """Whether ``message`` is a request whose text opens with
+    :data:`OPERATOR_CALL_PREFIX`, the text as the driver stores it (stripped
+    on send): the dispatcher's question to the operator. A note or an ack
+    carrying the words is not one, a request quoting the prefix mid-text is
+    not one, and the prefix is read as spelled."""
+    return (isinstance(message, dict) and message.get("type") == "request"
+            and str(message.get("text") or "").startswith(OPERATOR_CALL_PREFIX))
 
 
 def _count(value: object) -> int:

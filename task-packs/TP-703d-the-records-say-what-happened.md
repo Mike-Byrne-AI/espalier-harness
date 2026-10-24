@@ -8,17 +8,22 @@
   command's self-host paragraphs.
 - Type: workflow infrastructure (the record layer's writer and its readers) plus process (the
   protocol's item 6 and the dispatcher's duties).
-- **Kind: PACK.** One lane, `lane/the-records-say-what-happened`, in four sub-tasks; sub-task 1
-  lands in two pushes by expand-then-contract (the board's reader first, the driver's refusal
-  after a dated window). Sub-task 2 consumes `TP-703f`'s census script, so this pack is assigned
-  after `TP-703f` merges; sub-tasks 1, 3 and 4 depend on nothing.
+- **Kind: PACK.** Two lanes, by expand-then-contract: the first (the name the ship driver derives
+  from its commit subject; authored as `lane/the-records-say-what-happened`) carries sub-task 1's
+  readers (1-A to 1-C), sub-task 2 and sub-task 4; the second, no sooner than three days of board
+  lines after the first is on `main`, carries the driver's refusal (1-D). Sub-task 2 consumes
+  `TP-703f`'s census script, landed 2026-10-20 (#330). Sub-task 3 was struck on 2026-10-23 at this
+  pack's 0-A, on the operator's ruling after Task 0 item 4 refuted it (Landing).
 - Parent: `TP-703` (`task-packs/TP-703-multi-seat-discipline.md`), Wave 2, item 6. Authored
   2026-10-18 (local) by the dispatcher seat `air` on the operator's word ("good, lets make task
   packs for fixing these issues").
 - Ledger: no row minted at authoring (protocol item 8: the assigned seat files or strikes
   in-lane). Rows reached are under Reach.
-- The operator's call inside this pack: none. The debt cap below is pre-registered by the author
-  and the executor may move it on Task 0's measurement, saying so in Landing.
+- The operator's calls inside this pack, both ruled 2026-10-23 at its 0-A: sub-task 3 dropped
+  (the assign's text on origin is the justification; Task 0 item 4); sub-task 4 built whole, the
+  seat brief and the protocol's two sentences re-pointed with it. The debt cap below is
+  pre-registered by the author and the executor may move it on Task 0's measurement, saying so in
+  Landing.
 
 ## Motivation
 
@@ -48,13 +53,20 @@ Measured 2026-10-18 (local), each by the command named:
 - **The goal file.** `cc/GOAL.md` (gitignored, this checkout only) read 4,186 bytes on this
   session's banner-health line against `tools/cc/hooks/session_start.py::_GOAL_HARD_CAP`
   (4,500) and the `goal` soft budget (2,000); its `_Updated:` line reads 2026-10-15 23:30; its
-  "Queues:" and "STATE" paragraphs name lanes and pull requests merged days before. Every seat's
+  "Queues:" and "STATE" paragraphs name lanes and pull requests merged days before (re-read
+  2026-10-23: 3,529 bytes, updated 2026-10-20, its header already says queues and pull-request
+  numbers are the board's, and its state section still names two pull requests, a commit and
+  "the operator's open calls"). Every seat's
   banner carries it only on this checkout: a worktree seat has no gitignored files
   (`memory/local-codename-arm.md`, the marker paragraph, says the same of the marker).
-- **Parked rows are unseen.** `DEF-5007`'s closure text and the protocol's item 6: a handoff
-  whose lane already merged parks its row on `refs/heads/records/<seat>`, and the banner's recent
-  rows read the tree, so the row reaches no seat until some lane's push folds it. Nothing prints
-  how many rows are parked.
+- **Parked rows are unseen until a handoff.** `DEF-5007`'s closure text and the protocol's item 6:
+  a handoff whose lane already merged parks its row on `refs/heads/records/<seat>`, and the
+  banner's recent rows read the tree, so the row reaches no seat until some lane's push folds it.
+  One reader prints the count: the landing check's session-log-cap note
+  (`scripts/check_handoff_landing.py::check_session_log_cap`, "N pending on the records refs"),
+  at a handoff, on the seat running it; the board prints nothing. (Authored as "nothing prints
+  it"; corrected 2026-10-23, when Task 0 item 2 read the landing check as the reader its
+  refuting result names and dropped the count from the board line.)
 
 Who is hurt (`STANDING_PRINCIPLES` §16): the operator, who on 2026-10-18 reconstructed what three
 seats did over three days from pull-request bodies and 1,066 mail messages because the record
@@ -65,33 +77,43 @@ file that names a state three days gone.
 
 ## Scope (in)
 
-1. **A row per active seat per day, as a debt the driver reads (sub-task 1, two pushes).** A
+1. **A row per active seat per day, as a debt the driver reads (sub-task 1, two lanes).** A
    counting helper in `tools/cc/_record_fragments.py` (the newest row's date per seat, from the
    fragment names `SESSION_LOG_NAME_RE` already parses); a reader in `tools/cc/ship.py` of the
-   seat's merged lanes since that date (`tools/cc/mail.py::lane_seats` names whose lane each
-   merged pull request was); the board's new `records:` line, one entry per seat with a checkout
-   or a live claim, "`<seat>`: N merges since its last row (`<date>`)", plus the rows parked on
-   the seat's records ref and not yet folded ("2 rows parked, unseen until the next fold", from
-   `tools/cc/mail.py::fetch_records` and `::pending`); then, in the second push after the window,
-   `open_pr`'s `--early` arm refuses once the debt reaches the cap, naming the count, the last
-   row's date and the way out (a row committed on this lane, which `lane_carries_memory_row`
-   then reads as carried).
+   seat's merged lanes since that date, through the one merged-pull-request read
+   (`tools/cc/_post_merge.py::read_merged`, which as built takes a field list, the lane fields
+   `number,mergedAt,headRefName` beside the rollup ones; `tools/cc/mail.py::lane_seats` names whose
+   lane each merged pull request was); the board's new
+   `records:` line, one entry per seat with a checkout here or a live claim or job, "`<seat>`: N
+   merges since its last row (`<date>`)"; then, in the second lane after the window, `open_pr`'s
+   `--early` arm refuses once the debt reaches the cap, naming the count, the last row's date and
+   the way out (a row committed on this lane, which `lane_carries_memory_row` then reads as
+   carried). The parked rows' count stays off the line: Task 0 item 2 found the landing check
+   already prints it.
 2. **The dispatcher's day row, derived (sub-task 2).** `scripts/seat_day_census.py` (built by
    `TP-703f`) prints a seat's day as a Session Log row body; the dispatcher's handoff files it
    through `python3 tools/cc/_record_fragments.py new session-log --seat <seat>` and edits the
    rulings in. One paragraph in `.claude/commands/handoff.md` "## 2. Write the session row"
    names the path; the protocol's dispatcher table gains the row as a duty.
-3. **A justification on every assign (sub-task 3).** The `send` verb's assign arm in
-   `tools/cc/mail.py` (beside `assign_refusal`) records a `cognitive_blueprint.py justify`
-   entry after the send lands, with the assign's id as the content hash's input; where no
-   blueprint node is open the verb says so in one line and the send stands.
+3. **Struck 2026-10-23 (the operator's ruling at 0-A).** A justification on every assign was to
+   be a `cognitive_blueprint.py justify` entry recorded by the `send` verb's assign arm. Task 0
+   item 4 refuted the home: the verb's tool token set is the hook matcher's (a dual witness three
+   tests pin), so `--tool mail-assign` exits 2 at validation, and with an accepted token the
+   dispatcher's loop has no open node (exit 3). `TP-703e` (#325) had already made "why now" part
+   of every assign's text, which is the justification, on origin where every seat reads it; a
+   second home would store what the message carries (the protocol's L1).
 4. **The goal file holds priorities; operator calls ride the channel (sub-task 4).** The
    dispatcher sends an operator call as a `request` whose text opens with `OPERATOR CALL:`, so
    `tools/cc/board.py`'s `asks:` section lists it for every seat until the dispatcher's `ack`
-   quotes the ruling; the asks header counts them apart ("asks: 3 open, 2 operator calls"); the
-   handoff command's "## 7. Refresh cc/GOAL.md" step says what the file keeps (the goal proper,
-   the priorities, the `## Still owed` section `scripts/check_handoff_landing.py::check_owed`
-   reads) and what it no longer carries (lane and pull-request numbers, queues, a state block).
+   naming the request's full id carries the ruling; the asks header counts them apart ("asks: 3 open, 2 operator calls"); the
+   two texts that send the dispatcher to the calls in `cc/GOAL.md` are re-pointed to the channel
+   (`tools/cc/seat.py::SELF_HOST_ASSIGN` and the protocol's *Assign authority* paragraph with its
+   dispatcher-table row; the operator's 2026-10-15 ruling keeps its substance, what the operator
+   decides is unchanged, only where the list lives); the handoff command's "## 7. Refresh
+   cc/GOAL.md" step says what the file keeps (its four seeded sections: the notes, the `## Still
+   owed` section `scripts/check_handoff_landing.py::check_owed` reads, the goal proper, and the
+   next-gate section in prose) and what it no longer carries (lane and pull-request numbers,
+   queues, a state block that restates the board, the operator's open calls).
 
 ## Scope (out)
 
@@ -208,29 +230,60 @@ def newest_row_date_by_seat(names: list[str]) -> dict[str, str]:
     return newest
 ```
 
+As built (2026-10-23) the loader also holds the count's other half, so the board and the ship
+driver never disagree: `local_day(stamp, tz=None)` (an ISO stamp's YYYY-MM-DD in this clock's
+zone, `tz` for a test; '' for none or an unreadable one), `lanes_since_row(merged, seat_of, seat,
+newest, tz=None)` (the rows of a merged listing that are the seat's lanes merged on a local day
+after `newest`), `ROW_DEBT_WINDOW` (100, three days at the measured 25 lanes a day), and
+`newest_row_by_seat(names, parked)` (`{seat: (date, parked)}`, the newest across the base's tree
+and the rows parked on the records refs, which `tools/cc/mail.py::pending` lists for both
+readers). The parked read is not the parked count Task 0 item 2 dropped: a seat that wrote its
+row and parked it is not in debt (this checkout's own 10-20 row sat parked on 10-23 while the
+base's newest was 10-19), and `open_pr`'s early arm runs before `_fold_session_log`, so the
+second lane's refusal would refuse a seat that did write its row unless the parked rows count;
+the line says `parked until the next fold` beside such a date. Tests:
+`tests/test_record_fragments.py::TestNewestRowDateBySeat` and `::TestLanesSinceRow`, the UTC-day
+mutation among them.
+
 **1-B The seat's merged lanes since that date** *(fix shape, untested; refuted if
 `lane_seats` cannot name a merged lane's seat because the lane's claims were sent under another
 spelling than the branch, which protocol item 2 already forbids and `refresh` reads)*. In
-`tools/cc/ship.py`, a reader beside `seat_open_prs`: the merged pull requests from one bounded
-`_gh_json("pr", "list", "--state", "merged", "--limit", ...)` with `headRefName` and `mergedAt`,
-kept where `mail.lane_seats(by_machine)` names this seat and `mergedAt` falls after the seat's
-newest row date (1-A over `git ls-tree --name-only origin/<base> memory/session-log.d`). Returns
-the count and the date, or `None` with a reason where git or `gh` cannot answer: no verdict is
-never a refusal on a guess, the same rule `lane_carries_memory_row` keeps.
+`tools/cc/ship.py`, a reader beside `seat_open_prs` over the one merged-pull-request read,
+`_post_merge.read_merged(cwd, ROW_DEBT_WINDOW, gh=..., fields=LANE_FIELDS)` (the module's
+docstring names it "the one `gh pr list --state merged` read"; as built it takes a `fields` list,
+and the debt reads pass `LANE_FIELDS`, `number,mergedAt,headRefName`, so a hundred rows cost no
+rollups and `MERGED_FIELDS` is unchanged), with a `gh` runner that turns the driver's `Refused` (a
+`gh` answering without JSON) into `None` and remembers that it did; the rows kept are those
+`mail.lane_seats(by_machine)` names this seat's and whose merge day, read in this clock's zone
+(the fragment names carry the writer's local day, `_record_fragments.py::session_log_name`, while
+`mergedAt` is UTC), falls after the seat's newest row date (1-A over `git ls-tree --name-only
+origin/<base> memory/session-log.d`). Returns the count and the date, or `None` where git or `gh`
+cannot answer: no verdict is never a refusal on a guess, the same rule `lane_carries_memory_row`
+keeps. The window is the loader's `ROW_DEBT_WINDOW` (100 merges), three days at the measured 25
+lanes a day across the seats; `POST_MERGE_ROWS` (20) would cover under one. Tests:
+`tests/test_ship_driver.py::TestSeatRowDebt`, `tests/test_post_merge.py::TestReadMerged`.
 
 **1-C The board's `records:` line** *(fix shape, untested)*. `tools/cc/board.py::collect` gains
 a `records` key, one entry per seat named in `seats` with a checkout here or a live claim or job,
 each read on its own (an unreadable one says so on its line, as every section does); `::render`
-prints them after `seats:` and before `jobs:`. The parked count comes from
-`mail.fetch_records` (already called by the fold) then `mail.pending(root, SESSION_LOG_DIR,
-[f"origin/{base}"])` grouped by machine. Rendering: `records:  win: 9 merges since its last row
-(2026-10-15); 0 rows parked`. `--json` carries the same as data.
+prints them after `seats:` and before `jobs:` (the render order is `seats:`, `jobs:`, `asks:`,
+`claims:`, read from `render` 2026-10-23; the 0-A review had it the other way round).
+Rendering: `records:  3 seats: win: 9 merges since its last row (2026-10-15)`, one seat a line;
+a seat with no row on the base: `win: 9 merges, no row on origin/main`; a seat whose newest row
+is parked: `(2026-10-20, parked until the next fold)`; a count the read stopped short of (the
+window full and its oldest merge newer than the row): `60+ merges ... (the last 100 read)`; the
+lanes no claim names counted apart on a last line; a seat with a lane merged in the window
+listed even with nothing live (the end-of-day seat that owes its row); an unnamed clone says so. `--json` carries the same as data, and
+the module docstring's section list names it. (Authored with a parked-rows count beside it;
+dropped 2026-10-23 at Task 0 item 2.)
 
 **1-D The refusal, after the window** *(fix shape, untested; the window is the expand)*. The
-second push, no sooner than three days of board lines after 1-C lands on `main` (the date goes in
+second lane, no sooner than three days of board lines after 1-C lands on `main` (the date goes in
 Landing), adds the cap, the reader and the refusal beside `seat_open_prs`; `open_pr`'s `--early`
 arm then calls `_refuse_on_row_debt(root, base)` right after its `early_reason` is read and before
-its "shipping before the handoff" note:
+its "shipping before the handoff" note. The reader is 1-B's, built in the first lane so the board
+line and the refusal count the same way (`seat_row_debt` below is quoted as landed, for the
+fence check; the second lane adds the two definitions after it, never a second copy):
 
 ```python target=tools/cc/ship.py
 #: How many lanes a seat may ship past its newest Session Log row before
@@ -239,41 +292,50 @@ its "shipping before the handoff" note:
 ROW_DEBT_CAP = 3
 
 
-def seat_row_debt(root: Path, base: str) -> tuple[int, str] | None:
-    """``(merged lanes since this seat's newest Session Log row, that row's
-    date or '')``, or None where git, gh or the mail channel cannot answer: no
-    verdict is never a refusal on a guess (the rule ``lane_carries_memory_row``
-    keeps). Lanes are the merged pull requests whose branch the seat's latest
-    claim or release names (``mail.lane_seats``); the rows are the fragments
-    on ``origin/<base>``, read by name alone."""
+def seat_row_debt(root: Path, base: str) -> tuple[int, str, bool] | None:
+    """Landed in the first lane (2026-10-23), beside seat_open_prs: ``(merged
+    lanes since this seat's newest Session Log row, that row's date or '',
+    whether that row is parked on the records ref and not yet folded)``, or
+    None where git, gh or the mail channel cannot answer. The count is the
+    loader's ``lanes_since_row`` over the one merged read's lane fields, the
+    board's ``records:`` line's own; the parked rows count because the early
+    arm below runs before the fold that brings them in."""
     mail, fragments = _mail_module(), _fragments_module()
     if mail is None or fragments is None:
         return None
     machine, _how = mail.machine_setting(root)
     if not machine:
         return None
-    rc, names, _ = _git("ls-tree", "--name-only", f"origin/{base}", "--", fragments.SESSION_LOG_DIR + "/",
-                        cwd=str(root))
+    rc, names, _ = _git("ls-tree", "--name-only", f"origin/{base}", "--", SESSION_LOG_DIR, cwd=str(root))
     if rc != 0:
         return None
-    newest = fragments.newest_row_date_by_seat(names.split()).get(machine, "")
-    merged = _gh_json("pr", "list", "--state", "merged", "--limit", str(POST_MERGE_ROWS),
-                      "--json", "headRefName,mergedAt", cwd=str(root))
-    if not isinstance(merged, list):
+    try:
+        parked = [path for _machine, path, _ref in mail.pending(root, fragments.SESSION_LOG_DIR, [f"origin/{base}"])]
+    except Exception:  # noqa: BLE001 -- the channel's named stop, or a read that raised: unread, never a count
+        return None
+    newest, is_parked = fragments.newest_row_by_seat(names.split(), parked).get(machine, ("", False))
+    failed: list[str] = []
+
+    def gh(args: list[str]) -> object:
+        try:
+            return _gh_json(*args, cwd=str(root))
+        except Refused as exc:
+            failed.append(str(exc))
+            return None
+
+    merged = _post_merge.read_merged(str(root), fragments.ROW_DEBT_WINDOW, gh=gh, fields=_post_merge.LANE_FIELDS)
+    if failed:
         return None
     try:
         by_machine, _skipped = mail.read_mail(root)
-    except mail.Unresolvable:
+    except Exception:  # noqa: BLE001 -- the channel's named stop, or a read that raised: unread, never a count
         return None
     seat_of = mail.lane_seats(by_machine)
-    count = sum(1 for pr in merged if isinstance(pr, dict)
-                and seat_of.get(str(pr.get("headRefName") or "")) == machine
-                and str(pr.get("mergedAt") or "")[:10] > newest)
-    return count, newest
+    return fragments.lanes_since_row(merged, seat_of, machine, newest), newest, is_parked
 
 
 def _refuse_on_row_debt(root: Path, base: str) -> None:
-    """The second-push arm's one refusal that --early does not pass."""
+    """The early arm's one refusal that --early does not pass."""
     debt = seat_row_debt(root, base)
     if debt is None:
         _note("this seat's Session Log debt is unread (git, gh or the mail channel did not answer), so "
@@ -287,50 +349,85 @@ def _refuse_on_row_debt(root: Path, base: str) -> None:
 ```
 
 A `None` from 1-B (git or `gh` unreadable) never refuses; the note says the debt was unread.
+The way out works because the early arm is skipped when the lane carries a row
+(`lane_carries_memory_row`), not because the count drops: the reader never reads HEAD's own
+rows. **What the second lane must handle** (the failure-mode review of the first lane,
+2026-10-23): fetch the base and the records refs before `_refuse_on_row_debt` (the early arm
+runs before `open_pr`'s base fetch and the fold's records fetch, so a row merged forty minutes
+ago is not in the local base); a row riding the seat's own open pull request (neither on the
+base nor parked: read `origin/<branch>` for the pull requests `seat_open_prs` found); a
+renamed or relaunched worktree seat whose rows sit under the old name (print the name read and
+the nearest seat's newest row); lanes no claim names, which escape the cap (the seat stamped on
+the pull request, `DEF-4044`); records lanes counted as lanes (Task 0 item 3); sibling
+attributes read outside a guard against an older kept loader (an `AttributeError` must read as
+unread); a row lost to a revert of the lane that folded it, which `ever_added` still sees as
+added, so it is never pending again (`DEF-4045`). Filed beside them from the same review:
+`DEF-4043` (the banner's `Mail:` line counts the asks without the operator calls apart, a hook
+file) and `DEF-4046` (the census reads rows from the working-tree glob, so parked rows are
+missed).
 Refuted if a seat's lanes are mostly records lanes carrying other seats' folded rows: the fold's
 commits carry `FOLD_TRAILER` and `lane_carries_memory_row` already excludes them, and 1-B counts
 merged pull requests, not rows, so a records lane counts as a lane; Task 0 item 3 decides whether
 that over-counts. Mutation the test dies to: the comparison flipped (`>` for `>=`), the debt read
-from the working tree instead of the base, and a `None` debt refusing.
+from the working tree instead of the base, a `None` debt refusing, a `gh` refusal reaching the
+caller, and the merge day read in UTC (a 21:00 EDT merge after the day's row counted as debt).
 
 ### Sub-task 2: the dispatcher's day row, derived *(fix shape, untested; after `TP-703f`)*
 
-`scripts/seat_day_census.py --seat air --date <day> --as-row` (the flag is `TP-703f`'s to land;
-this pack's Task 0 at its start reads the script's `--help` and stops if the flag is not there)
-prints one Session Log row line: the day's merges by this seat, assigns sent and closed, releases
-owed, requests answered with the latency figures, and the rulings quoted from the dispatcher's
-own `ack` texts, each a sentence. The handoff command's "## 2. Write the session row" gains one
-paragraph: on the dispatcher seat, derive the body first, then add what the mail does not carry
-(the operator's words, a Lesson), and file it where `python3 tools/cc/_record_fragments.py new
-session-log` says. The protocol's dispatcher table gains "Writes its own day row, derived from
-the mail and the merges" in the Does column. Refuted if the census cannot pair the day's rulings
-to their requests: then the row carries the counts and the dispatcher writes the rulings by hand,
-which is still a row.
+`scripts/seat_day_census.py --seat air --date <day> --as-row` (landed in #330 with those
+flags; Task 0 item 6 read its dispatcher row on 2026-10-23) prints one Session Log row line: the
+day's merges by this seat, assigns sent and the new jobs among them, the releases naming an assign
+(closed a live job, named a closed one), the worker requests it answered, the Session Log rows and
+the counted words. The one field sub-task 2's list named that the row lacked is the releases owed:
+the dispatcher's row gains "jobs live at <the day's end> N" from the `live` map the census's JSON
+already carries (`scripts/seat_day_census.py::as_row`, the dispatcher branch). The per-seat
+answer latency stays in the report (it is per requesting seat, not the dispatcher's figure), and
+the rulings are written by hand. The handoff command's "## 2. Write the session row" gains one
+self-host paragraph: on the dispatcher seat, derive the body first, then add what the mail does
+not carry (the operator's words, the rulings, a Lesson), and file it where `python3
+tools/cc/_record_fragments.py new session-log --seat <seat>` says. The protocol's dispatcher
+table gains "Writes its own day row, derived from the mail and the merges" in the Does column.
+Refuted if the census cannot pair the day's rulings to their requests: it cannot (its row prints
+counts), so the row carries the counts and the dispatcher writes the rulings by hand, which is
+still a row.
 
-### Sub-task 3: a justification on every assign *(fix shape, untested; Task 0 item 4 decides
-the home)*
+### Sub-task 3: struck 2026-10-23 (Task 0 item 4 refuted it; the operator's ruling at 0-A)
 
-In the `send` verb's assign arm (after `assign_refusal` and the send), a helper
-`record_assign_justification(root, message)` runs `cognitive_blueprint.py` from the same
-directory through `sys.executable` with `justify --tool mail-assign --goal <the text's first
-sentence> --step-rationale <the text> --expected-outcome <the seat takes the job> --not-doing
-<the rest of the board's jobs> --content-hash <sha256 of the encoded message>`. Exit 0 is
-silent; any other exit is one note naming the verb's own line, and the send is never undone (the
-ref moved). `memory/action-justification-protocol.md` names `mail-assign` as a tool. Mutation the
-test dies to: the hash computed before `send` stamped the id, so two assigns share one hash.
+As authored: a helper `record_assign_justification(root, message)` in the `send` verb's assign
+arm running `cognitive_blueprint.py justify --tool mail-assign ...` after the send. Measured
+2026-10-23 on this checkout (a node open) and in a bare scratch tree (no `cc/blueprints/`):
+`--tool mail-assign` exits 2 at validation both times (`_validate_action_justification` accepts
+`Write`, `Edit`, `NotebookEdit`, `Bash`, `PowerShell` or an `mcp__` prefix, the set
+`tests/test_hook_matcher_precision.py::test_mutation_tools_dual_witness` pins against the hook
+matcher's), and `--tool Bash` with no node exits 3 (`_EXIT_NO_ACTIVE_SESSION`), the dispatcher's
+loop's case. The pack's own exit was taken: the reasoning lives on the message, and since `TP-703e`
+(#325) every assign's text carries "why now" by shape, so no new field is added either. Nothing
+in `memory/action-justification-protocol.md` changes (its tool set stays closed), and
+`tools/cc/cognitive_blueprint.py` is untouched.
 
 ### Sub-task 4: the goal file holds priorities; operator calls ride the channel *(fix shape,
 untested)*
 
 - The dispatcher sends an operator call as `python tools/cc/mail.py send --type request --text
   "OPERATOR CALL: <the question, the options, the recommendation>"`; the operator's ruling is the
-  dispatcher's `ack` quoting it. `tools/cc/board.py::render`'s asks header counts the requests
+  dispatcher's `ack` naming the request's full id (an ack from any other seat leaves the call open,
+  found at the first lane's review). `tools/cc/board.py::render`'s asks header counts the requests
   whose text opens with the prefix apart: `asks:     3 open, 2 operator calls`. The prefix is
   one constant in `tools/cc/mail.py` beside `MAX_TEXT`, read by the board.
 - `.claude/commands/inbox.md` "## Step 4: What to do with a request" gains two sentences: the
   prefix, and that a worker never acks one. `.claude/commands/handoff.md` "## 7. Refresh
-  cc/GOAL.md" says what the file keeps and that queues, lane numbers and a state block are the
-  board's and the mail's, not the goal's.
+  cc/GOAL.md" gains a self-host paragraph: the file keeps its four seeded sections (the notes,
+  `## Still owed`, `## Goal`, `## Where we are / next gate` in prose) and no longer carries lane
+  or pull-request numbers, queues, a state block that restates the board, or the operator's open
+  calls, which are `OPERATOR CALL:` requests on the channel; the adopter-facing words and the
+  seeded template (`init`; pinned by `tests/test_cli_deploy.py`) stay.
+- The two texts that still send the dispatcher to the calls in `cc/GOAL.md` are re-pointed to
+  the channel in this lane (found at 0-A, 2026-10-23; the pack had listed `seat.py` as unmodified):
+  `tools/cc/seat.py::SELF_HOST_ASSIGN`'s "the open calls in cc/GOAL.md" becomes "the open
+  operator calls on the board's asks line (`OPERATOR CALL:` requests)", and
+  `memory/parallel-work-protocol.md`'s *Assign authority* paragraph and its dispatcher-table row
+  say the same. The operator's 2026-10-15 ruling keeps its substance: what the operator decides is
+  unchanged, only where the list lives.
 - Refuted if the operator reads rulings only from the dispatcher's tick report and never from the
   board: then the prefix buys the seats a live view and the operator nothing, which is still the
   seats' gain; Task 0 item 5 reads whether the line exists.
@@ -342,21 +439,34 @@ tree, so its gap list at authoring is collisions, not files this pack misses. Re
 lane's start.
 
 ### Changed-semantics
-- `tools/cc/ship.py::open_pr` (the `--early` arm reads the seat's row debt; 1-D)
-- `tools/cc/ship.py::_second_push_message` (names the debt cap)
+- `tools/cc/ship.py::open_pr` (the `--early` arm reads the seat's row debt; 1-D, the second lane)
+- `tools/cc/ship.py::_second_push_message` (names the debt cap; 1-D, the second lane)
+- `tools/cc/_post_merge.py::read_merged` (a `fields` parameter; `MERGED_FIELDS` unchanged; the one merged read)
 - `tools/cc/board.py::collect` (a `records` key)
 - `tools/cc/board.py::render` (the `records:` line; the asks header's operator-call count)
-- `tools/cc/mail.py::live_requests` (unchanged body; the board reads the prefix over its result)
+- `tools/cc/mail.py::live_requests` (an operator call closes on an ack from its sender alone,
+  found at the first lane's review; a plain request closes on anyone's, as before)
+- `tools/cc/mail.py::lane_seats` (a release names a lane only from a machine that claimed it:
+  the pack's predicted defect, reproduced at the first lane's review)
+- `tools/cc/seat.py::SELF_HOST_ASSIGN` (the open calls' home is the channel)
+- `scripts/seat_day_census.py::as_row` (the dispatcher's row names the day's live jobs)
 
 ### Renamed
 - None.
 
 ### Added-paths
 - `tools/cc/_record_fragments.py::newest_row_date_by_seat`
+- `tools/cc/_record_fragments.py::local_day`
+- `tools/cc/_record_fragments.py::lanes_since_row`
+- `tools/cc/_record_fragments.py::ROW_DEBT_WINDOW`
+- `tools/cc/_post_merge.py::LANE_FIELDS`
 - `tools/cc/ship.py::seat_row_debt`
-- `tools/cc/ship.py::ROW_DEBT_CAP`
-- `tools/cc/mail.py::record_assign_justification`
+- `tools/cc/ship.py::ROW_DEBT_CAP` (the second lane)
+- `tools/cc/board.py::read_row_names`
+- `tools/cc/board.py::read_records_section`
+- `tools/cc/board.py::records_lines`
 - `tools/cc/mail.py::OPERATOR_CALL_PREFIX`
+- `tools/cc/mail.py::is_operator_call`
 
 ### Removed-paths
 - None.
@@ -377,18 +487,24 @@ over live rows (re-run it; the two below are the ones this pack's mechanism reac
 ## Pass criteria
 
 - `python3 tools/cc/board.py --json` carries `records` with one entry per seat the `seats`
-  section names with a checkout or a live claim or job; the printed line names the count, the
-  date and the parked rows; no existing board test's assertion is weakened and no fixture
-  removed.
+  section names with a checkout or a live claim or job; the printed line names the count and the
+  date; no existing board test's assertion is weakened and no fixture removed
+  (`tests/test_board.py::TestRecordsLine`).
 - Earn-the-red recorded per fix against the mutation named in its sub-task; a test that only
-  ever passed does not count. 1-D's test drives `open_pr` through the existing `ship` fixture
-  (`tests/test_ship_driver.py::TestTheLaneCarriesItsMemoryRowWhenHandoffPushes` is the
-  neighbour) with a stubbed debt at the cap, one under it, and `None`.
+  ever passed does not count. The tests, by name: `tests/test_record_fragments.py::
+  TestNewestRowDateBySeat` (1-A); `tests/test_post_merge.py` gains the field assertion beside the
+  argument-list test (`LANE_FIELDS` names `headRefName`; `MERGED_FIELDS` is unchanged); `tests/test_ship_driver.py::
+  TestSeatRowDebt` (1-B: the count against a stubbed `gh` and mail, a `gh` refusal reads `None`,
+  the local day, the base's tree not the working tree); in the second lane `tests/test_ship_driver.py::
+  TestOpenRefusesOnRowDebt` drives `open_pr` through the existing `ship` fixture
+  (`TestTheLaneCarriesItsMemoryRowWhenHandoffPushes` is the neighbour) with a stubbed debt at the
+  cap, one under it, and `None`; `tests/test_board.py::TestAsks` gains the operator-call count;
+  `tests/test_seat_day_census.py` gains the dispatcher row's live-jobs assertion;
+  `tests/test_seat.py` reads the brief's new words where it pins the old.
 - A `None` debt never refuses, and the note says the debt was unread; a seat whose newest row is
   today reads a debt of 0.
-- `python3 tools/cc/mail.py send --type assign --dry-run ...` runs no `justify`; a real send on
-  a scratch channel with a scratch blueprint node records one entry, read back by
-  `cognitive_blueprint.py show-recent --n 1`.
+- `python3 scripts/seat_day_census.py --fixture tests/fixtures/seat_day/refs-2026-10-18.json
+  --seat air --date 2026-10-18 --as-row` names the jobs live at the day's end (2 on that fixture).
 - The asks header on a board with two prefixed requests and one plain one reads `3 open, 2
   operator calls`; with none prefixed it reads as today.
 - `python3 scripts/sync_vendor_cc.py`, `python3 scripts/sync_claude_mirrors.py` and `python3
@@ -403,44 +519,69 @@ over live rows (re-run it; the two below are the ones this pack's mechanism reac
 
 **New:** none.
 
-**Modified:** `tools/cc/ship.py`; `tools/cc/board.py`; `tools/cc/mail.py`;
-`tools/cc/_record_fragments.py`; `espalier/_vendor/cc/` (by `sync_vendor_cc.py` only);
-`.claude/commands/handoff.md` and `.claude/commands/inbox.md` with their mirrors under
-`espalier/assets/claude/commands/` and `examples/dogfooding/.claude/commands/` (by
-`sync_claude_mirrors.py` only); `memory/parallel-work-protocol.md` (item 6 gains the debt and
-the parked count; the dispatcher table gains the day row); `memory/action-justification-protocol.md`
-(one tool name); `docs/WORKFLOW.md` "Parallel seats" (one sentence on the `records:` line) and
-`espalier/assets/docs/WORKFLOW.md` (by `sync_asset_docs.py` only); `tests/test_ship_driver.py`;
-`tests/test_board.py`; `tests/test_mail.py`; `tests/test_record_fragments.py`.
+**Modified:** `tools/cc/ship.py`; `tools/cc/_post_merge.py`; `tools/cc/board.py`;
+`tools/cc/mail.py`; `tools/cc/_record_fragments.py`; `tools/cc/seat.py` (the brief's open-calls
+clause); `espalier/_vendor/cc/` (by `sync_vendor_cc.py` only); `scripts/seat_day_census.py` (the
+dispatcher row's live jobs); `.claude/commands/handoff.md` and `.claude/commands/inbox.md` with
+their mirrors under `espalier/assets/claude/commands/` and `examples/dogfooding/.claude/commands/`
+(by `sync_claude_mirrors.py` only); `memory/parallel-work-protocol.md` (item 6 gains the debt;
+the dispatcher table gains the day row and the calls' home; the *Assign authority* paragraph
+names the channel); `docs/WORKFLOW.md` "Parallel seats" (one sentence on the `records:` line and
+one on `OPERATOR CALL:`) and `espalier/assets/docs/WORKFLOW.md` (by `sync_asset_docs.py` only);
+`tests/test_ship_driver.py`; `tests/test_post_merge.py`; `tests/test_board.py`;
+`tests/test_record_fragments.py`; `tests/test_seat_day_census.py`; `tests/test_seat.py` where it
+pins the brief's words; `tests/test_mail.py` only if the prefix constant earns a contract there.
 
 **Deleted:** none.
 
-**Unmodified on purpose:** `tools/cc/seat.py` (the tick is the operator's; the brief needs no
-change for a refusal the driver prints); `tools/cc/_record_fragments.py::SESSION_LOG_CAP` and
-`::SESSION_LOG_SLACK` (Scope out); `tools/cc/hooks/session_start.py` (the digest reads the same
-rows; the goal cap is `DEF-674`'s); `scripts/check_handoff_landing.py` (the owed arm stays the
-goal file's one reader).
+**Unmodified on purpose:** `tools/cc/seat.py::WORKER_TICK` (the tick is the operator's paste;
+the brief's one clause changes, the tick does not); `tools/cc/cognitive_blueprint.py` and
+`memory/action-justification-protocol.md` (sub-task 3 struck; the token set stays the hook
+matcher's dual witness, and win-2's live `DEF-674` claim holds the module);
+`tools/cc/_record_fragments.py::SESSION_LOG_CAP` and `::SESSION_LOG_SLACK` (Scope out);
+`tools/cc/hooks/session_start.py` (the digest reads the same rows; the goal cap is `DEF-674`'s);
+`scripts/check_handoff_landing.py` (the owed arm stays the goal file's one reader; its pending
+count is the parked rows' reader).
+
+## Cross-pack coordination
+
+Added 2026-10-23 at 0-A (the review's item 3). Every sibling below is `DRAFT` and unassigned;
+each re-reads these files at its own 0-A, as this pack did.
+
+- `TP-703b` W2-B: `tools/cc/board.py` (`render`, `collect`), `tests/test_board.py`,
+  `tools/cc/_post_merge.py`. This lane adds a `records` section and one field to
+  `MERGED_FIELDS`; W2-B's rendered line is a different section.
+- `TP-703g`: `tools/cc/ship.py` (a docstring), `tools/cc/mail.py` (a comment), `tools/cc/seat.py`
+  (two clauses), `.claude/commands/inbox.md`, `docs/WORKFLOW.md`, the protocol. This lane's
+  `seat.py` edit is the `SELF_HOST_ASSIGN` open-calls clause; 703g's two clauses are elsewhere in
+  the brief and re-read it.
+- `TP-703c`: `docs/WORKFLOW.md`, the protocol, `tools/cc/seat.py`.
+- `TP-703h`, `TP-703j`: the protocol (703j's authored `board.py` overlap is gone from its file).
+- Live claims: win's `DEF-4029` (`_bash_patterns.py`, `write_guard.py`, `docs/HOOKS.md`) shares
+  nothing; win-2's `DEF-674` (`session_start.py`, `cognitive_blueprint.py`, `docs/HOOKS.md`)
+  shares nothing now that sub-task 3 is struck.
 
 ## Sub-task ordering
 
-1. **Task 0**, items 1 to 3 and 5 at the lane's start; item 4 before sub-task 3. Checkpoint: the
-   five results in Landing.
-2. **Sub-task 1-A, 1-B, 1-C** (the readers), one push. Checkpoint: the `records:` line on this
-   repository's board, the tests, the syncs, the tier.
-3. **Sub-task 4** (the prefix and the words), the same push or the next. Checkpoint: the asks
-   header with a prefixed request on a scratch channel.
-4. **Sub-task 3** after Task 0 item 4. Checkpoint: one entry read back.
-5. **Sub-task 2** after `TP-703f` merges. Checkpoint: the dispatcher's own row for the day
-   filed through the verb.
-6. **Red-team** before each push's tier: the reviewers `scripts/proof_tier.py --base origin/main`
+1. **Task 0**, all six items at the lane's start (run 2026-10-23; Landing has the results).
+2. **Sub-task 1-A, 1-B, 1-C** (the readers, `MERGED_FIELDS`), the first lane. Checkpoint: the
+   `records:` line on this repository's board, the tests, the syncs, the tier.
+3. **Sub-task 4** (the prefix, the count, the brief, the protocol, the two command bodies), the
+   same lane. Checkpoint: the asks header with a prefixed request on a scratch channel.
+4. **Sub-task 2** (the census's live-jobs field, the handoff paragraph, the dispatcher table), the
+   same lane. Checkpoint: the row body printed from the fixture names the live jobs.
+5. **Red-team** before the lane's tier: the reviewers `scripts/proof_tier.py --base origin/main`
    names, on a snapshot clone with edits frozen. What this pack most likely got wrong, for the
    pass to bite on: 1-B naming the wrong seat for a lane whose claims were released by the
    dispatcher (`lane_seats` takes the latest claim or release, and a release from another seat
-   closes nothing but is still a message naming the lane); and 1-D refusing a records lane that
-   exists only to fold other seats' rows.
-7. **Sub-task 1-D** (the refusal), a second push no sooner than three days after 1-C is on
-   `main`; its own red-team and tier. Checkpoint: the dated switch in Landing.
-8. **Landing** in this file's stanza.
+   closes nothing but is still a message naming the lane: confirmed by the failure-mode review on
+   copies and fixed in `lane_seats`, a release counting only after a claim); 1-B's local-day conversion on a
+   runner whose zone is UTC (CI), where it must still equal the authoring read; and 1-D refusing
+   a records lane that exists only to fold other seats' rows.
+6. **Sub-task 1-D** (the refusal), the second lane, no sooner than three days after 1-C is on
+   `main`; its own red-team and tier. Checkpoint: the dated switch in Landing, and the pack's
+   move to `Done/`.
+7. **Landing** in this file's stanza, per lane.
 
 ## Estimated effort
 
@@ -449,20 +590,88 @@ read these as the author's guess, not a schedule.
 
 | Sub-task | Build | Red-team and tier | Notes |
 |---|---|---|---|
-| 1-A to 1-C | 2 to 3 h | 1 h plus the full tier | one helper, one reader, one board section |
-| 1-D | 1 h | 0.5 h plus the full tier | a second push after the window |
-| 2 | 1 h | 0.5 h plus the contract slice | words and one filing; after `TP-703f` |
-| 3 | 1 to 2 h | 0.5 h plus the full tier | a subprocess and its exit codes |
-| 4 | 1 h | 0.5 h plus the contract slice | a prefix, a count, two command bodies |
-| Total | 6 to 8 h | 3 h | expect the measured overrun |
+| 1-A to 1-C | 2 to 3 h | 1 h plus the full tier | one helper, one reader, one field, one board section |
+| 1-D | 1 h | 0.5 h plus the full tier | the second lane, after the window |
+| 2 | 1 h | 0.5 h (the lane's tier covers it) | one census field, words, one filing |
+| 3 | struck | struck | Task 0 item 4 refuted it (2026-10-23) |
+| 4 | 1 to 2 h | 0.5 h (the lane's tier covers it) | a prefix, a count, the brief, the protocol, two command bodies |
+| Total | 5 to 7 h | 2.5 h | expect the measured overrun |
 
 ## Landing
-- State: DRAFT
-- Commits:
-- Suite:
-- Earn-the-red: per sub-task, against the mutation its Implementation names
-- Red-team: per push; authoring review not yet run
+- State: DRAFT (the first lane landed; the pack stays open for the second lane, 1-D)
+- The first lane landed 2026-10-24 (local), single-seat, on `lane/the-records-say-what-happened`:
+  sub-task 1's readers (1-A to 1-C), sub-task 2 and sub-task 4, with the review batch above.
+- Commits: the first lane's one commit (its pull request names it; the handoff's Session Log
+  row names the pull request).
+- Suite: the full tier, `python3 scripts/proof_tier.py --run`, after the last edit: mypy clean
+  (28 files), ruff clean, the parallel leg 24898 passed and 1 failed (the known box-local
+  `tests/test_record_merge.py` red, Apple git 2.39.5's `update-index --unresolve`; CI's cells
+  are the proof), the serial leg 2134 passed. An earlier full tier on the batch's first cut
+  read four reds, three of them this lane's and fixed (the name-reader contract wanted its
+  silence marker on `seat_row_debt`'s read; the probe-shape ratchet refused three probes that
+  counted vocabulary in their own subject, re-keyed to structural reads; the recall eval's two
+  pasted tables regenerated from one tree after the protocol's edit moved the corpus to 337
+  documents). `espalier pre-release --skip-tests --skip-parity` pass; `espalier audit` 0
+  findings; integrity refreshed and verified; the provenance census clean; the vendor, Claude
+  and asset-doc syncs clean.
+- Earn-the-red (the first lane, 2026-10-23): every behavior change's test was run red against the
+  unfixed code before the fix (seven new or changed tests at the first build, eight more at the
+  review's batch; the three that passed outright pin behavior the code already had and were
+  earned through mutants); 36 of 36 named mutants killed on the final code in a scratch clone
+  with its own venv (`.venv`, since the suite refuses an interpreter whose engine is another
+  checkout), each by the test it names, a fresh bytecode prefix per mutant: the comparison
+  flipped, the merge day read in UTC, no zone read as UTC, the oldest row for the newest, the
+  parked flag never set or ignored (both readers), the debt read from HEAD (both readers), a
+  failed or non-list `gh` as zero, the refusal or a raising git escaping, the window as
+  `POST_MERGE_ROWS`, the rollup fields, the floor from the count or ignoring the oldest merge,
+  the quiet seat listed, the shipping seat dropped, unclaimed lanes uncounted, the header
+  without its count, every ask a call, the prefix on a note or mid-text, any seat's ack closing
+  a call, a release from any seat naming the lane, the brief sent back to the goal file, the
+  census's live jobs without seats, the field list ignored, unread as none, the records refs
+  never fetched, the ask rows untagged, the unnamed clone as a clone with no seats. The archive
+  probe over the seven touched test files: 773 passed.
+- Red-team (the first lane, 2026-10-23, both reviewers at once on a snapshot clone with edits
+  frozen, read in the order code then failure-mode): the code-reviewer APPROVE WITH WARNINGS
+  (the window-cut flag compared one seat's count with the cross-seat window and never fired; a
+  git timeout escaped `seat_row_debt`'s None contract; "6 to 11" overstated the measured 2 to
+  11; "the ack quotes the ruling" against the full-id rule; the refusal's way out explained);
+  the failure-mode-reviewer REQUEST CHANGES, 0 regressions, 7 gaps, 9 rough edges (the board
+  never fetched the records refs, so a days-long dispatcher loop read parked rows as of its
+  start; the pack's predicted `lane_seats` defect reproduced on copies: a dispatcher's lane
+  release moved the lane, its debt and its open pull request; any seat's ack closed an operator
+  call; the protocol's worker stop list still named the goal file; the census's `--date` is a UTC
+  day where the row's date is local; the banner's `Mail:` line, the census's row read, and an
+  unclaimed lane's zero as sister sites). One fix batch landed every must-land item from both
+  and most rough edges (the seats with lanes in the window listed, the unnamed and the
+  unread-name clones told apart, a non-list answer unread, the ask rows tagged, the brief's
+  wording); the rest became the rows `DEF-4043` to `DEF-4046` and the second lane's list under
+  1-D. A second round was not needed: the batch re-ran every touched test file (773 passed) and
+  the mutants (36 of 36).
+- 0-A (2026-10-23, `main` c0a44d1d): the fence check 2 of 2 python fences
+  resolved; the code-reviewer on the Pack-artifact review checklist v2 returned REQUEST CHANGES
+  (4 BLOCK: the `justify` tool token, the hash's missing `sha256:` prefix, `_gh_json` raising
+  `Refused` through "None never refuses", the justify pass criterion; WARNs: no Cross-pack
+  section, `seat.py` and the protocol still naming `cc/GOAL.md` as the calls' home, a second
+  merged read against `read_merged`'s one-read docstring, local day against UTC `mergedAt`, the
+  `records:` placement, `POST_MERGE_ROWS`'s window, stale figures), folded the same day on the
+  operator's two rulings (sub-task 3 dropped; sub-task 4 built whole). 0-B: scope gap accepted
+  (bare-name collisions, as the pack's note predicts). 0-C: compression debt accepted (one
+  pre-existing canon-miss, `espalier/doctor.py::_host_is_windows`, the GOAL's unowned "doctor
+  canon-miss", outside this pack's files). 0-D: no surface additions.
 - Reach: see Reach; no row closed at authoring
-- Task 0: not yet run
-- The 1-D window: 1-C on `main` at (date); the refusal switched on at (date)
-- Date: 2026-10-18 (authored, local)
+- Task 0 (run 2026-10-23, `main` c0a44d1d, 200 merged pull requests, the mail refs as fetched):
+  item 1 NOT refuted, 6 seat-days with merges and no row on `main` or parked (10-16: air 4,
+  air-work 11, win 9; 10-17: air 2, air-work 6, win 9; local days); item 2 REFUTED, the landing
+  check prints the pending count, so the parked count left the board line; item 3 NOT refuted,
+  29 of 48 mapped early ships since 10-16 were followed by the seat's row within a day, 60%
+  against the 80% line (air 8/4, air-work 13/8, win 8/7; 49 early ships, 1 unmapped), so 1-D
+  stays; item 4 REFUTED, `--tool mail-assign` exits 2 here and in a bare tree, `--tool Bash` with
+  no node exits 3, so sub-task 3 was struck on the operator's ruling; item 5 holds, the docstring
+  and the fold include the dispatcher's own requests; item 6: the dispatcher's row prints every
+  field but the day's live jobs, which its JSON carries, so the field is added here. The cap stays
+  at 3.
+- The 1-D window: 1-C on `main` at the first lane's merge (2026-10-24, its pull request's
+  merge stamp is the date); the refusal switched on at (date), no sooner than three days of
+  board lines after it, in the second lane, which also handles the list under 1-D.
+- Date: 2026-10-18 (authored, local); corrected 2026-10-23 at 0-A; the first lane landed
+  2026-10-24

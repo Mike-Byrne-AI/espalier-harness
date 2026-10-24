@@ -673,8 +673,9 @@ SELF_HOST_ASSIGN = (
     "report each at your next tick, each assign in its shape (the job, why now, what it waits for, "
     "the operator's constraints, an edge with its citation; never the tier or the reviewers, which "
     "the tier script prints; under 900 characters), propose the rest to the operator (a new pack, a "
-    "scope change, a release or tag, a revert that is not the red-main revert, the open calls in "
-    "cc/GOAL.md; the protocol's Assign authority paragraph)"
+    "scope change, a release or tag, a revert that is not the red-main revert, and every open operator "
+    "call, which you send as a request opening with OPERATOR CALL: so the board's asks line lists it "
+    "for every seat until your ack naming its id carries the ruling; the protocol's Assign authority paragraph)"
 )
 ADOPTER_ASSIGN = "propose assigns and releases to the operator and send them on a yes"
 #: The rules a dispatcher's report keeps, this repository's own (the operator,

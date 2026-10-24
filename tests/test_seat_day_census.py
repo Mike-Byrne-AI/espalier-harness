@@ -176,6 +176,9 @@ class TestTheFixtureReadsTheDaysFigures:
         assert ("assigns sent 25 (25 new jobs); releases naming an assign 28 (2 closed a live job, 26 named a "
                 "job already closed); the day's worker requests it answered 23;") in out
         assert "assigns received" not in out
+        # The releases it owes: the jobs live at the day's end, per seat (TP-703d
+        # Task 0 item 6 found the row lacked it while the JSON carried it).
+        assert "jobs live at 2026-10-19T00:00:00Z 2 (win 1, win-2 1)" in out, out
 
     def test_a_pack_re_sent_after_a_wave_closed_it_is_counted_under_its_id(self):
         """TP-702 was assigned by its id; a wave's push closed it by the claim

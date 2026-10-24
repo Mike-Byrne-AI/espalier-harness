@@ -592,6 +592,17 @@ class TestBrief:
         _holds(clone, "cc/GOAL.md")
         assert "Orient from the banner and cc/GOAL.md's notes, then" in seat.compose_brief(clone, "box", clone).text
 
+    def test_the_self_host_dispatcher_is_sent_to_the_channel_for_the_operators_open_calls(self, seat, clone):
+        """TP-703d sub-task 4: the open calls ride the mail channel as
+        `OPERATOR CALL:` requests the board lists for every seat, not a
+        gitignored goal file one checkout reads. Dies to: the brief still
+        naming cc/GOAL.md as their home."""
+        _dispatcher(clone, '"box"')
+        _holds(clone, "memory/parallel-work-protocol.md")
+        first = seat.compose_brief(clone, "box", clone).text.split("\n")[0]
+        assert "OPERATOR CALL:" in first and "asks" in first, first
+        assert "open calls in cc/GOAL.md" not in first and "cc/GOAL.md" not in seat.SELF_HOST_ASSIGN
+
     def test_an_unusable_dispatcher_setting_refuses_the_brief_and_launch_names_the_way_past(self, seat, clone,
                                                                                             registry, no_claude):
         _dispatcher(clone, '"Not A Name"')   # not lowercase letters, digits and hyphens
