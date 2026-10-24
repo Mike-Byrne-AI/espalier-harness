@@ -170,9 +170,9 @@ go on, since the items are independent. Two items carry a decision.
    2026-10-18) and `grep -rn -E '2,000|MAX_TEXT' memory/*.md docs/*.md task-packs/TP-4*.md
    task-packs/TP-7*.md`. *Decision:* a reason found in the record is quoted; none found, the
    comment declares the cap's purpose as the author's (a message points at a row, a pack or a
-   lane and never carries one; the dispatcher's assigns at the cap on 2026-10-18, 19 of 96 at or
-   over 1,950 characters, were the symptom `TP-703e` treats) and says it was undocumented at
-   c461b705.
+   lane and never carries one; the dispatcher's messages at the cap on 2026-10-18, 19 of 96 at or
+   over 1,950 characters (its assigns alone: 17 of 25, `TP-703e`'s table), were the symptom
+   `TP-703e` treats) and says it was undocumented at c461b705.
 7. *(g)* `grep -n -E 'handoff' tools/cc/seat.py`: no hit inside the two brief templates (read
    2026-10-18: the word appears in the module's comments only, if at all). *Refuting:* a brief
    names `/handoff`. *Exit:* strike.
@@ -435,12 +435,85 @@ read these as the author's guess, not a schedule.
 | Total | 3 to 4.5 h | 1.5 h plus the tier | expect the measured overrun |
 
 ## Landing
-- State: DRAFT
-- Commits:
-- Suite:
-- Earn-the-red: (e) and 8 against the mutations their Implementation names; the words by their greps
-- Red-team: authoring review not yet run
+- State: LANDED
+- Commits: one, on `lane/the-rules-say-what-the-tools-do`: a9d56688 at the pack's commit step, amended
+  once with this stanza (the pull request's head is the amended commit); 27 files, +567/-90.
+- Suite: the full tier after the last engine and hook edit: mypy clean (28 files), ruff clean, the
+  parallel leg 24905 passed, 3 failed (the known box-local `tests/test_record_merge.py` red on Apple
+  git 2.39.5; two the lane's own tests caused and fixed after the run, the census entry for
+  `tests/test_reflect_protocol.py` grown 9 to 11 and the memory-prune test's archive probe reading
+  the aging description, re-run green with their files, 252 passed), the serial leg 2134 passed; the
+  contract slice after those two edits 5449 passed with the same known red alone; the archive probe
+  197 passed over the four touched test files, then 36 over the memory-prune file; pre-release pass;
+  audit 0 findings; integrity refreshed and verified; provenance clean; both mirror syncs clean.
+- Earn-the-red: (e) red on both twins (the archive's two links came back as gaps;
+  `tests/test_reflect_protocol.py::TestARecordSurfacesBrokenLinkIsAgingNotAGap`, 2 failed) then green;
+  the hook's clean test red (a pass whose only findings were aging injected `flagged surface drift ...
+  First: [AGING]`, and one gap beside three aging findings counted `4 findings`;
+  `tests/test_reflect_trigger_additionalcontext.py`, 2 failed) then green; (g) red on the worker clause
+  (`TestBrief::test_both_briefs_name_the_handoff_that_writes_the_seats_row`) then green; the words by
+  their greps. Fence 8 not landed, so no red against it.
+- Red-team: 0-A Pack-artifact review checklist v2 (code-reviewer, on 776a5c85): APPROVE WITH WARNINGS,
+  0 BLOCK; the warnings (the strikes, fence 8 reversing DEF-1119, the engine twin's loop needing its
+  own `rel`, three unlisted sister sites of (e), the five-versus-two set, the dispatcher clause's pack
+  id, the missing cross-pack section and integrity refresh, pass criterion 2 being local-only) are
+  each answered below; the integrity manifest was refreshed and verified after the engine and hook
+  edits. Lane review on a snapshot clone with its own venv, both reviewers at once, edits frozen:
+  code-reviewer APPROVE WITH WARNINGS (the cap figure's population mislabeled; a non-dict row beside
+  aging rows untested; the HOOKS debug block lacking the `Aging:` line); failure-mode-reviewer
+  REQUEST CHANGES, 0 regressions, 2 gaps, 5 rough edges (the lighter scan in `espalier/reflection.py`
+  and `espalier reflect` still read a record's dead link as broken while the hook said leave it, and
+  the fragment named the wrong verb; the exclusion written inline in each twin with only the fixture
+  class holding them equal; the set's comments saying links were checked "exactly as before"; the
+  Session Log rows under `memory/session-log.d/` outside the set; the cap comment's population and
+  its commit hash; the worker clause keyed on the protocol's presence rather than `handoff_push`;
+  the kind lists and the bench docstring omitting `aging`). One fix batch: the reference scan reads
+  the same set and lists a record's dead pointers under `aging_pointers` (red first on
+  `tests/test_reflect_link_guards.py::TestARecordSurfacesDeadPointerAgesOnEveryEntrypoint`, the
+  three entrypoints disagreeing); `AGING_RECORD_SURFACES` named once per twin and pinned equal by
+  `TestReflectTwinParity` (red first, the attribute missing); the comments corrected; the figure
+  re-labelled (17 of 25 assigns; 19 of 96 messages) and the hash dropped; the kind list and the
+  bench docstring; the non-dict row pinned; the fragment's verb. Deferred, advisory: the
+  `memory/session-log.d/` rows (0 of 34 carry a link today, measured by the reviewer; the set is
+  exact paths in a canon with other readers, so a prefix rule is a canon change for its own lane);
+  the worker clause's condition (an adopter with `handoff_push = true` gets a brief naming the row
+  alone, incomplete and not false; the seat driver imports one sibling and a second is a loader
+  contract); the HOOKS debug block (both win claims hold the file). Task 0 item 5 re-answered: the
+  lighter scan walks `CHANGELOG.md` and `memory/CONVERGENCE_LEDGER.md` (both classify public), so
+  it reaches record surfaces and the rule landed there; the first answer read the doctor's count
+  of broken links, the adjacent question.
 - Reach: none claimed
-- Task 0: not yet run; items 5, 6 and 8 carry the decisions
-- Items struck as already corrected: (none yet)
-- Date: 2026-10-18 (authored, local)
+- Task 0 (run 2026-10-24 on 776a5c85, `main` c0a44d1 plus the 703d lane): 1 (a) STRIKE, neither old
+  spelling remains (protocol:73 "keep two queued", :261 "Keeps two jobs ..."; landed by `TP-703e`,
+  #325); (b) STRIKE, the protocol carries the clause and the tick is the operator's paste; 2 (c)
+  STRIKE, `portability.yml:12-16` reads AFTER the merge (`TP-703a`, #326); 3 (d) STRIKE, the ship
+  docstring names `tools/cc/_post_merge.py` as the one home (`TP-703a`); 4 (e) BUILD, `gap_count` 2,
+  both the archive's link; 5 (e) sister sites: the engine twin carries the loop and the set (built
+  here); `espalier/reflection.py` left alone (the doctor drive reads 0 broken links on this tree);
+  three unlisted sister sites found by the 0-A review: the hook's clean test (built here, in lane:
+  Core Rule 12, a sibling site of the class), `ReflectPass`'s fields (unchanged: the count is the
+  standalone report's alone, since win-2's live `DEF-674` claim names both cognitive_blueprint copies
+  and the schema-parity test), the CLI's exit code (unchanged on purpose: gaps alone); 6 (f) BUILD,
+  the record gives no reason (c461b705's message, rc 1), so the comment declares one; 7 (g) BUILD,
+  both clauses, the dispatcher's without the pack id (the pack is DRAFT; a pack id in a brief goes
+  stale); 8 refuting result met: this checkout marked 2026-10-18 21:59Z, the second Air clone
+  unmarked by the rule's own text, the win box a seat's; the fence is not landed, the rule went into
+  the memory note, and pass criterion 5 is struck with it.
+- Items struck as already corrected: (a), (b), (c), (d); fence 8 dropped by its own Task 0 exit.
+- Deviations from the Implementation (the operator's rulings, 2026-10-24): the aging rule keys on
+  `RESIDUE_EXEMPT_SURFACES` minus the hot index (`ESPALIER_MEMORY.md` is kept current at every
+  handoff, so its dead link is a gap; its 33 local links are all navigational), a derived exclusion
+  in both twins and no third set; the hook's clean test and its advisory's count and names read past
+  aging findings; `aging_count` is the standalone report's, and the engine's render derives its
+  `Aging:` line from the findings; the reflect skill's Phase 3 template gains an `AGING POINTERS`
+  line; pass criterion 2 holds on the operator's tree (the archive is gitignored) and the fixture tree
+  is the proof CI runs. 0-B scope gap accepted (records, blueprints, vendor mirrors, docstrings naming
+  struck symbols, tests reading `MAX_TEXT`'s unchanged value); 0-C the pre-existing doctor canon-miss
+  accepted as at `TP-703d`; 0-D clean.
+- Cross-pack: `DISPATCHER_BRIEF` carries `TP-703f`'s `{figures}` sentence (landed 10-20) and this
+  pack's clause after it; `TP-703d` lane 1 (#334, in CI at this lane's cut) edits `inbox.md`,
+  `mail.py`, `seat.py` and `test_seat.py` elsewhere, so this lane is cut from its tip and opens after
+  it merges; 703d's second lane lists `seat.py` unmodified. `docs/HOOKS.md`'s illustrative debug
+  block lacks the new `Aging:` line: both parked win claims hold that file, so the one-line doc
+  update waits for their release (owed, not a defect: the block's claims stay true).
+- Date: 2026-10-24 (landed, local); the pack stays in `task-packs/` until the `TP-703` family retires.

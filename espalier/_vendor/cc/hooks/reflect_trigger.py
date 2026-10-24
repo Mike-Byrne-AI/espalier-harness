@@ -538,14 +538,21 @@ def _render_reflect_report(report: dict) -> None:
     gap_count = report.get("gap_count", 0)
     orphan_count = report.get("orphan_count", 0)
     files_analyzed = report.get("files_analyzed", 0)
-    # On a clean reflect (no findings, no gaps, no orphans), emit a single line
+    # Core Rule 13: reflect_protocol reports a record surface's dead pointer
+    # apart (kind "aging", its own aging_count), and the edit an advisory would
+    # invite falsifies the record. So the drift this hook speaks of is every
+    # finding but those; the debug block below still lists them, as [AGING].
+    aging = [f for f in findings if isinstance(f, dict) and f.get("kind") == "aging"]
+    drift = [f for f in findings if not (isinstance(f, dict) and f.get("kind") == "aging")]
+    # On a clean reflect (no drift, no gaps, no orphans), emit a single line
     # instead of a 7-line block. Heavy sessions trigger reflect every 10 writes,
     # so the full block would be 7 lines of noise per fire even when the surface
     # is coherent.
-    if not findings and gap_count == 0 and orphan_count == 0:
+    if not drift and gap_count == 0 and orphan_count == 0:
+        aged = f" ({_hook_utils.plural(len(aging), 'aging pointer')} on the records)" if aging else ""
         # voice: debug-log a clean pass injects nothing mid-flow, by the decision its test pins
         print(
-            f"[reflect] clean -- {files_analyzed} files, surface coherent",
+            f"[reflect] clean -- {files_analyzed} files, surface coherent{aged}",
             file=sys.stderr,
         )
         return
@@ -555,6 +562,7 @@ def _render_reflect_report(report: dict) -> None:
     print(f"  Files analyzed:    {files_analyzed}", file=sys.stderr)
     print(f"  Cross-ref density: {report.get('cross_ref_density', 0)} refs/file", file=sys.stderr)
     print(f"  Gaps:              {gap_count}", file=sys.stderr)
+    print(f"  Aging:             {len(aging)}", file=sys.stderr)
     print(f"  Orphans:           {orphan_count}", file=sys.stderr)
     for f in findings:
         # Observable sentinels -- a finding missing OR null-valued
@@ -584,9 +592,9 @@ def _render_reflect_report(report: dict) -> None:
         f"Reflect pass flagged surface drift: "
         f"{_hook_utils.plural(gap_count, 'gap')}, "
         f"{_hook_utils.plural(orphan_count, 'orphan')}, "
-        f"{_hook_utils.plural(len(findings), 'finding')} across "
+        f"{_hook_utils.plural(len(drift), 'finding')} across "
         f"{files_analyzed} files. Review before continuing."
-        + _named_findings(findings),
+        + _named_findings(drift),
         echo=False,
     )
 

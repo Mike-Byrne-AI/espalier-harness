@@ -603,6 +603,38 @@ class TestBrief:
         assert "OPERATOR CALL:" in first and "asks" in first, first
         assert "open calls in cc/GOAL.md" not in first and "cc/GOAL.md" not in seat.SELF_HOST_ASSIGN
 
+    def test_both_briefs_name_the_handoff_that_writes_the_seats_row(self, seat, clone):
+        """A seat's first message named the reads, the jobs and the loop and
+        never the handoff that writes its Session Log row. Dies to: either
+        clause dropped, or moved past the last sentence the endswith pin reads."""
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "memory/parallel-work-protocol.md")
+        worker = seat.compose_brief(clone, "box-feat", feat).text.split("\n")[0]
+        assert ("When the operator ends your session, run /handoff: it writes your Session Log row and ships it "
+                "on your open lane or parks it. Then start the worker loop") in worker, worker
+        _dispatcher(clone, '"box"')
+        _holds(clone, "memory/parallel-work-protocol.md")
+        dispatcher = seat.compose_brief(clone, "box", clone).text.split("\n")[0]
+        assert ("Decisions stay the operator's. At the operator's word, run /handoff; it writes your row, derived "
+                "from the mail and the merges. Start the loop") in dispatcher, dispatcher
+
+    def test_on_an_adopter_checkout_the_handoff_clauses_name_the_row_alone(self, seat, clone):
+        """The push onto the lane and the row derived by the seat census are this
+        repository's (`handoff_push`, scripts/seat_day_census.py), so an adopter's
+        briefs say only what its /handoff does: write the row. Dies to: either
+        self-host phrase pasted into the template instead of its slot."""
+        _dispatcher(clone, '"hub"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "docs/WORKFLOW.md")
+        worker = seat.compose_brief(clone, "box-feat", feat).text.split("\n")[0]
+        assert "run /handoff: it writes your Session Log row. Then start the worker loop" in worker, worker
+        assert "parks it" not in worker, worker
+        _dispatcher(clone, '"box"')
+        dispatcher = seat.compose_brief(clone, "box", clone).text.split("\n")[0]
+        assert "run /handoff; it writes your row. Start the loop" in dispatcher, dispatcher
+        assert "derived from" not in dispatcher, dispatcher
+
     def test_an_unusable_dispatcher_setting_refuses_the_brief_and_launch_names_the_way_past(self, seat, clone,
                                                                                             registry, no_claude):
         _dispatcher(clone, '"Not A Name"')   # not lowercase letters, digits and hyphens

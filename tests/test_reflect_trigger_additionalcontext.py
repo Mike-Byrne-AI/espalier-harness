@@ -83,6 +83,50 @@ def test_run_reflect_silent_on_clean_surface(monkeypatch, capsys, tmp_path) -> N
     assert out.strip() == "", "a clean reflect must not inject into the agent's context"
 
 
+def test_a_pass_whose_only_findings_are_aging_pointers_injects_nothing(monkeypatch, capsys, tmp_path) -> None:
+    """Core Rule 13: reflect_protocol reports a record surface's dead pointer
+    apart (kind ``aging``), and the edit an advisory would invite falsifies the
+    record. So the clean test reads past aging findings: a pass whose only
+    findings are aging injects nothing, and the debug line says how many it
+    read past. Dies to: the clean test reading ``not findings`` again."""
+    rt = _import_reflect_trigger()
+    root = _repo_with_reflect_script(tmp_path)
+    _patch_reflect_report(rt, monkeypatch, {
+        "findings": [{"kind": "aging", "severity": "low",
+                      "description": "Aging pointer on a record surface docs/session-archive.md: ../memory/gone.md"}],
+        "gap_count": 0, "aging_count": 1, "orphan_count": 0, "files_analyzed": 5,
+    })
+    capsys.readouterr()
+    rt._run_reflect(root)
+    err = capsys.readouterr().err
+    out = _emitted(rt, capsys)
+    assert out.strip() == "", out
+    assert "[reflect] clean -- 5 files, surface coherent (1 aging pointer on the records)" in err, err
+
+
+def test_aging_pointers_are_neither_counted_nor_named_beside_real_drift(capsys) -> None:
+    """With a gap beside them, the aging findings stay out of the advisory's
+    count and its names: the model is told about the drift it can fix, and the
+    record's pointers stay where the operator reads them, the debug log and
+    ``reflect_protocol.py --json``."""
+    rt = _import_reflect_trigger()
+    findings = [
+        {"kind": "aging", "severity": "low",
+         "description": f"Aging pointer on a record surface docs/session-archive.md: ../memory/gone{i}.md"}
+        for i in range(3)
+    ] + [{"kind": "gap", "severity": "high", "description": "CLAUDE.md links docs/gone.md which does not exist"}]
+    rt._render_reflect_report({"findings": findings, "gap_count": 1, "aging_count": 3, "orphan_count": 0,
+                               "files_analyzed": 7})
+    context = json.loads(_emitted(rt, capsys))["hookSpecificOutput"]["additionalContext"]
+    assert "1 gap, 0 orphans, 1 finding across 7 files" in context, context
+    assert "[AGING]" not in context and "more" not in context, context
+    # A row that is not a mapping is producer drift, counted as drift, never as aging.
+    rt._render_reflect_report({"findings": findings + ["drifted producer row"], "gap_count": 1, "aging_count": 3,
+                               "orphan_count": 0, "files_analyzed": 7})
+    context = json.loads(_emitted(rt, capsys))["hookSpecificOutput"]["additionalContext"]
+    assert "1 gap, 0 orphans, 2 findings across 7 files" in context and "[AGING]" not in context, context
+
+
 def test_the_advisory_names_the_first_findings_and_counts_the_rest(capsys) -> None:
     """C62: the model sees only the additionalContext of an exit-0 hook, so the
     advisory names the files it asks the model to review: the first three

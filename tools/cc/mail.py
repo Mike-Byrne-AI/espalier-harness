@@ -140,6 +140,15 @@ SYMBOLS_RULE_KEY = "symbols_rule"
 #: never is. Declared in espalier/config.py::FOREIGN_KEYS.
 DISPATCHER_KEY = "dispatcher"
 _REQUIRED_KEYS: tuple[str, ...] = ("id", "type", "from", "at")
+#: The cap on a message's text. Declared on 2026-10-24: the channel's first
+#: commit and the packs since state the number with no reason. A message points
+#: at a lane, a row, a pack or a decision and carries the one thing only its
+#: sender knows; the proof, the diff and the file live in the tree, where every
+#: seat reads them at HEAD. A body over the cap is split into a message and
+#: notes (``--text-file`` for a quote-heavy one), never raised: the dispatcher's
+#: assigns written up to it (17 of its 25 on 2026-10-18 at or over 1,950
+#: characters; 19 of its 96 messages that day) carried retyped tool output, the
+#: symptom the assign's shrinking treated.
 MAX_TEXT = 2000
 #: What a dispatcher's question to the operator opens with: a ``request`` the
 #: board's ``asks:`` line counts apart, for every seat to read, until the

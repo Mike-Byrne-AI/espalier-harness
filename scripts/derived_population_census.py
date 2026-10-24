@@ -1164,7 +1164,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "excluded as a record that the canon does not call one reds too.",
     ),
     "tests/test_reflect_protocol.py": (
-        9, "8ebd372a763aa31ba5779edc71d23bb70ccf37824934346773fe2f524b3bbcbe",
+        11, "e10078278cfc6628b5bf138a056236f01ba14ecd914b66362c38e258bf906a2c",
         "CORRECT_BY_REMEDY",
         "GREW 1 -> 7 on 2026-09-08 (ledger §C12, the two /reflect halves aligned): "
         "the six new rows all walk the placeholder pattern twins, "
@@ -1191,7 +1191,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "(asserted EQUAL to a one-orphan literal) and the hook-twin leg of the "
         "still-checks-them pair (fed to `_assert_checked`, whose any() asserts need a "
         "broken link and a placeholder hit), so an emptied or narrowed population reds "
-        "instead of passing vacuously.",
+        "instead of passing vacuously. "
+        "GREW 9 -> 11 on 2026-10-24 (the record-surface aging lane): both new rows are "
+        "comprehensions over the hook twin's report `findings` in "
+        "TestARecordSurfacesBrokenLinkIsAgingNotAGap::test_the_hook_twin_counts_aging_apart_from_gaps, "
+        "one fed to `_assert_split` (whose asserts need exactly two aging rows and two "
+        "named link gaps) and one the `gap_count` consistency sum, so an emptied or "
+        "narrowed population reds; the same fixture drives the engine twin in the "
+        "sibling test, and tests/test_reflect_link_guards.py pins the three entrypoints "
+        "on a tree of its own.",
     ),
     "tests/test_reflect_reasoning.py": (
         1, "0c86c38855f10d0c1fa8fe84d4ac52af3f0332e0ffb13854c5165e04c61f8ad2",
