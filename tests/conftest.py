@@ -1353,6 +1353,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # run then prints, is a fact about a real xdist child whose workers
             # the thread-method ceiling ends (DEF-2020).
             "test_xdist_never_ran",
+            # Drives the asset-doc sync against a `git init`ed tmp checkout:
+            # the committed form each mirror is judged against is git's
+            # answer, so no mock stands in for it (the 2026-10-25 ceiling red).
+            "test_sync_asset_docs",
         ),
         "integration",
     ),
