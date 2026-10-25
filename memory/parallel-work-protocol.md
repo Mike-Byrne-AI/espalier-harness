@@ -57,7 +57,8 @@ absent), refuses one a live session is in, and starts `claude` there with the
 seat's first message as its prompt, so nothing is pasted. `seat.py brief
 <seat>` prints that message: the worker form names the dispatcher, the two
 reads to start with and the jobs, and ends with the worker loop (`/loop 10m`,
-the tick this repository's workers have run since 2026-10-15); the dispatcher
+the tick this repository's workers have run since 2026-10-15, carrying the
+proceed clause and the refresh sentence since 2026-10-24); the dispatcher
 form names its duties and ends with `/loop 15m /inbox board`. `espalier.toml`'s
 `dispatcher` line picks the form, and `--no-brief` launches without one. The
 banner check: a worker seat holding live assigns opens on an `Orders:` line
@@ -73,8 +74,10 @@ interactive session as under `-p`; a killed session leaves the lock behind.
 1. **Work the jobs assigned to you**, in order, and keep two queued (the
    dispatcher's duty to keep them there, the table below), so the
    dispatcher's absence does not stall you. For a new job or a decision that
-   crosses jobs, send the dispatcher one request. Never negotiate with another
-   worker seat.
+   crosses jobs, send the dispatcher one request. On a fork inside your own
+   job, the seat's side of the *Assign authority* paragraph below: one request
+   carrying your recommendation, then proceed on it after the dispatcher's
+   tick with no answer. Never negotiate with another worker seat.
 2. **Claim the files a lane edits** on the mail channel, as before. Assignments
    are for jobs; claims are for files. A claim can name the functions too:
    `send --type claim --symbols-from` derives them from the lane's diff, and
@@ -310,9 +313,15 @@ names (the third closing rule closes a job at the push its claims cover,
 before CI has run, and no read lists such jobs yet: `DEF-4037`). A redirect after the fact is an ack beginning
 `redirect:`, and the Session Log row counts it as rework; `TP-703f`'s census
 counts both words from the refs, so the falsifier below is read, never
-recalled. Until the operator pastes the tick's new sentence (`TP-703e` 1-C-2),
-a running loop's `STOP` governs that loop, and this paragraph is the rule the
-paste carries. Measured before this clause: 19 of 20 rulings matched the
+recalled. The tick has carried the sentence since 2026-10-24
+(`tools/cc/seat.py::SELF_HOST_PROCEED`, on the operator's yes to the call
+`20261024T065923Z-air-b366a4`, amended to this paragraph as it stood that
+day; its wait is rendered from `DISPATCHER_TICK`, never copied; a request
+with no recommendation keeps the stop); a loop started before that keeps its
+`STOP` until its seat is relaunched from a checkout that holds the change
+(`seat.py launch` composes the brief from the launcher checkout's own copy,
+so a launcher that has not pulled hands out the old tick). Measured before
+this clause: 19 of 20 rulings matched the
 recommendation the request carried (10-17 to 10-18, hand-classified by the
 dispatcher from its tick notes, not second-read), and the stop cost the seat
 the ack latency (111 of 111 requests since 10-14 answered, median 8

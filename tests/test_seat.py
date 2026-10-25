@@ -511,19 +511,38 @@ class TestLaunch:
 
 #: The worker tick as the operator pasted it on 2026-10-15 18:56Z (mail note
 #: 215fbb, verbatim), with its review step read from the diff since 2026-10-16
-#: (air's assign 0b750e, on the operator's yes): the self-host render must
-#: reproduce it byte for byte.
+#: (air's assign 0b750e, on the operator's yes), and since 2026-10-24 the two
+#: sentences the operator approved on the channel (the ack on the call
+#: 20261024T065923Z-air-b366a4): TP-702 3-A's refresh sentence after the lane
+#: step, and TP-703e 1-C-2's proceed clause in place of the STOP clause, as
+#: amended by that lane's failure-mode review to the protocol paragraph as it
+#: stood on 2026-10-24 ("an open goal call" read as "an open operator call" on
+#: the seat's own fork, since TP-703d moved the calls to the board; the
+#: request's age read from the board's asks line; a redirect: ack re-aims; a
+#: row is never a stop; the shelved: note names the job the push closed, the
+#: push having released the claims; a shelved lane is not re-fixed each tick;
+#: the refresh command spelled like the tick's other commands, with no bare
+#: interpreter). The self-host render must reproduce it byte for byte; its 15
+#: minutes is DISPATCHER_TICK's interval, rendered, never copied.
 _OPERATOR_TICK = (
     "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
     "yours, in this order: your own open PR red, in conflict or stale (fix it, or ship.py catch-up); a new "
     "assign or note from air; continue your current lane through its full procedure (plan, red-team the "
     "reviewers scripts/proof_tier.py --base origin/main names, on a snapshot clone, one fix batch, the tier the "
     "diff earns with --base origin/main, one open PR "
-    "per seat, every step listed with its evidence in the PR body; a skipped step is a stop); then your next "
-    "assigned job. STOP and send air one request, then only re-read mail until it is answered, on anything not "
-    "green: a red you cannot fix in two attempts, a choice the assign does not settle, a refusal you cannot "
-    "resolve, a conflict outside your own files, anything that is the operator's decision. Never unassigned "
-    "work, never another seat's branch. A quiet tick is one line."
+    "per seat, every step listed with its evidence in the PR body; a skipped step is a stop), then run mail.py "
+    "refresh once; it writes nothing when nothing is new; where mail.py answers invalid choice, this checkout "
+    "predates the verb: skip it until the lane merges main, not a stop; then your next assigned job. On a "
+    "choice the assign does not settle, send air one request with your Task 0 recommendation and its citation, "
+    "then proceed on it after 15 minutes (the dispatcher's tick; the board's asks line shows your request's "
+    "age) with no answer; a request with no recommendation keeps the stop, and an ack from air beginning "
+    "redirect: re-aims you at once. STOP and only re-read mail for what the assign authority reserves for the "
+    "operator (a new pack, a scope change, a release or tag, a revert that is not the red-main revert, an open "
+    "operator call on your fork), a platform stop, a refusal you cannot resolve, or a conflict outside your own "
+    "files; a row to file is never a stop. A red you cannot fix in two attempts: shelve the lane (one note "
+    "beginning shelved: says what was tried and names any job your push closed; a shelved lane waits for the "
+    "dispatcher, not your next tick), take your next assigned job. Never unassigned work, never another seat's "
+    "branch. A quiet tick is one line."
 )
 
 
@@ -740,6 +759,47 @@ class TestBrief:
         start = text.index("**The seat's side of it**")
         paragraph = text[start:text.index("\n\n", start)]
         assert f"{minutes} minutes" in paragraph and "DISPATCHER_TICK" in paragraph
+        # the worker-seat section quotes the dispatcher's loop line whole
+        assert f"`{seat.DISPATCHER_TICK}`" in text
+
+    def test_the_ticks_wait_is_the_dispatchers_tick_interval_rendered_never_copied(self, seat, clone):
+        """The proceed clause waits the dispatcher's tick interval (TP-703e 1-C-2,
+        in the tick on the operator's yes of 2026-10-24), and the dispatcher
+        brief quotes the same interval, so both numbers come from
+        DISPATCHER_TICK at render. Dies to: a literal number typed into either
+        template, which the next change to DISPATCHER_TICK would leave behind,
+        or the clause dropped from the self-host tick."""
+        import re
+        minutes = re.search(r"/loop (\d+)m", seat.DISPATCHER_TICK).group(1)
+        assert seat.TICK_MINUTES == minutes
+        assert "proceed on it after {wait} minutes (the dispatcher's tick" in seat.SELF_HOST_PROCEED
+        assert "read the board every {every} minutes" in seat.DISPATCHER_BRIEF
+        for template in (seat.WORKER_TICK, seat.SELF_HOST_PROCEED, seat.ADOPTER_PROCEED, seat.DISPATCHER_BRIEF):
+            assert re.search(r"\d+ minutes", template) is None, template
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "memory/parallel-work-protocol.md", "scripts/proof_tier.py")
+        loop = seat.compose_brief(clone, "box-feat", feat).loop
+        assert f"proceed on it after {minutes} minutes (the dispatcher's tick" in loop
+        assert "run mail.py refresh once" in loop and "{" not in loop
+        dispatcher = seat.compose_brief(clone, "air", clone).text
+        assert f"read the board every {minutes} minutes" in dispatcher and "{" not in dispatcher
+
+    def test_an_adopters_worker_keeps_the_stop_and_ask_form(self, seat, clone):
+        """The proceed authority is this repository's operator's decision (the
+        protocol's "The seat's side of it"); an adopter's dispatcher proposes
+        every assign, so its seat stops and asks, as the tick did before
+        2026-10-24, and still refreshes its claim. Dies to: the proceed clause
+        rendered on a tree whose protocol home is the seeded workflow guide,
+        where no Task 0, assign authority or dispatcher tick is defined."""
+        _dispatcher(clone, '"ops"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "docs/WORKFLOW.md")
+        loop = seat.compose_brief(clone, "box-feat", feat).loop
+        assert "STOP and send ops one request, then only re-read mail until it is answered, on anything not green" in loop
+        assert "proceed on it" not in loop and "Task 0" not in loop and "shelve" not in loop
+        assert "run mail.py refresh once" in loop and "{" not in loop
+        assert loop.isascii() and '"' not in loop and "%" not in loop
 
     def test_this_repositorys_worker_runs_the_reviewers_its_diff_earns(self, seat, clone):
         """The self-host tick names the review line the tier script prints, at
