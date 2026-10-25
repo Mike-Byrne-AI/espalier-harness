@@ -263,32 +263,59 @@ def read_text_nofollow(path: Path, *, max_bytes: int = NOFOLLOW_READ_MAX_BYTES,
     return raw.decode("utf-8")
 
 
-def has_active_plan(root: Path) -> bool:
-    """True iff cc/execution_plan.json shows an OPEN mutation window:
-    ``status == "in_progress"`` AND at least one step. Every other state
-    (missing, malformed, non-dict, empty status/steps, non-UTF-8, a forged
-    symlink) returns False so the caller fails CLOSED.
-
-    Single owner unioning both prior copies' hardening:
+def _read_plan_dict(root: Path) -> dict | None:
+    """``cc/execution_plan.json`` as a dict, or ``None`` for everything that is
+    not one: missing, malformed, non-dict, non-UTF-8, a forged symlink. The
+    one read behind ``has_active_plan`` and ``plan_completion``, so both fail
+    closed on the same domain (unioning both prior copies' hardening):
     - symlink-REFUSING read (``read_text_nofollow(within=root)``) so a forged
       cc/execution_plan.json symlink — or a symlinked cc/ ancestor — cannot
-      open the gate (from plan_guard._plan_state_label).
+      open a gate (from plan_guard._plan_state_label).
     - the full error domain (FileNotFoundError / OSError / UnicodeDecodeError /
       JSONDecodeError) plus a non-dict guard (unioning task_router's
-      UnicodeDecodeError widening with plan_guard's), all failing closed.
+      UnicodeDecodeError widening with plan_guard's).
     """
     plan_path = root / "cc" / "execution_plan.json"
     try:
         raw = read_text_nofollow(plan_path, within=root)
     except (FileNotFoundError, OSError, UnicodeDecodeError):  # fail-open: ok deliberate -- an unreadable plan is no plan: plan_guard then denies (the fail-closed direction) and the deny names the state
-        return False
+        return None
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, ValueError):  # fail-open: ok deliberate -- an unparseable plan is no plan: plan_guard then denies and the deny names the state
-        return False
-    if not isinstance(data, dict):
-        return False
-    return data.get("status") == "in_progress" and bool(data.get("steps"))
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def has_active_plan(root: Path) -> bool:
+    """True iff cc/execution_plan.json shows an OPEN mutation window:
+    ``status == "in_progress"`` AND at least one step. Every other state
+    (missing, malformed, non-dict, empty status/steps, non-UTF-8, a forged
+    symlink) returns False so the caller fails CLOSED; ``_read_plan_dict``
+    holds the read and says how."""
+    data = _read_plan_dict(root)
+    return data is not None and data.get("status") == "in_progress" and bool(data.get("steps"))
+
+
+def plan_completion(root: Path) -> tuple[bool, str]:
+    """``(complete, task)`` for cc/execution_plan.json: complete iff its
+    ``status`` is ``"complete"`` and it holds at least one step; ``task`` is
+    the plan's title, for the Stop hook's handoff gate to name in its reason.
+    Everything unreadable is ``(False, "")`` -- the same domain as
+    ``has_active_plan``, read once in ``_read_plan_dict``."""
+    data = _read_plan_dict(root)
+    if data is None or data.get("status") != "complete" or not data.get("steps"):
+        return False, ""
+    return True, str(data.get("task") or "")
+
+
+#: The Stop hook's handoff gate flag under STATE_DIR: its text is the HEAD the
+#: gate last judged. session_start seeds it with HEAD on a new session (so the
+#: gate speaks about commits made in that session, and a lane an earlier
+#: session left unpushed is the banner's to name), keeps it across a
+#: compaction, and stop_gate rewrites it at every judgment. One owner, two
+#: readers (tests/test_state_file_flag_parity.py lists the file).
+HANDOFF_GATE_FLAG = "handoff_gate_said"
 
 
 # Canonical noqa annotation for governance-hook

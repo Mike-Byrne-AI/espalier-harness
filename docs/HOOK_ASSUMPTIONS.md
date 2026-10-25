@@ -24,7 +24,7 @@ Espalier governs a **subset** of Claude Code's hook surface. The 10 events Espal
 | ConfigChange | guarantee | `config_guard` settings.json safety |
 | PostToolUse | visibility | `post_write_check` + `reflect_trigger` -- which, on an approved `ExitPlanMode`, also writes `cc/execution_plan.json` (the plan-mode bridge), a state the friction tier's `plan_guard` reads |
 | PostToolUseFailure | reporting | re-inject untrusted-oracle re-derivation on a failed edit (Rule A, `context_reinject_failure`) |
-| Stop | guarantee | `stop_gate` four-gate sequence |
+| Stop | guarantee | `stop_gate` five-gate sequence |
 | SubagentStart | reporting | inject cold-subagent orientation + finding-schema pointer (`subagent_start`) |
 | SubagentStop | reporting | append subagent reasoning to active blueprint |
 | PostCompact | reporting | capture the compaction summary and arm the post-compaction checkpoint; re-injects nothing (the event has no channel to Claude -- SessionStart's `compact` source re-orients) |
@@ -101,7 +101,7 @@ The same blindness holds for an exit-0 hook's **stderr**, on every event: it rea
 
 ## Assumption 3 — Stop hook fires on graceful session exit
 
-The `Stop` hook event fires when a session ends through the normal exit path, giving `stop_gate` its window to run the four-gate sequence (pytest → docs refresh → code review → blueprint finalize). Behavior on **abnormal** termination (crash, kill -9, OOM, network drop) is environment-dependent and not guaranteed by the hook protocol.
+The `Stop` hook event fires when a session ends through the normal exit path, giving `stop_gate` its window to run the five-gate sequence (pytest → docs refresh → code review → handoff → blueprint finalize). Behavior on **abnormal** termination (crash, kill -9, OOM, network drop) is environment-dependent and not guaranteed by the hook protocol.
 
 This is the basis of the "transcript-gated compulsion" primitive: a session cannot exit cleanly without satisfying the gates. The boundary is graceful exit only. A non-graceful termination skips the gate.
 

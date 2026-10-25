@@ -812,6 +812,34 @@ GATE_COMMAND_DONT_FINGERPRINT = (
     "declared key in espalier.toml is read on every Stop."
 )
 
+# Gate 5, the handoff gate: nothing in flight (no plan in progress, no tracked
+# edit) and the branch holds commits its upstream does not, made in this
+# session, on a repository whose espalier.toml sets handoff_push = true.
+# Instructional (the right move is one command), so it carries the Don't/Do
+# pair. The gate's own flag (the HEAD it last judged), not the loop signal, is
+# what keeps it from returning on every turn; the text says so. {target} is
+# the branch (the actionability contract's subject field); {plan} is "the
+# plan `...` is complete" or "no plan is in progress"; {ahead} arrives already
+# pluralised ("1 commit", "3 commits"); {push} says what the push does for
+# this branch (open the pull request, or push onto the one already open).
+GATE_HANDOFF_OWED = (
+    "Handoff owed before Claude Code stops: nothing is in flight ({plan}; no "
+    "tracked edit) and {target} holds {ahead} that {upstream} does not, so the "
+    "lane must be handed off now. A finished lane is handed off in the turn "
+    "that finishes it, while the context is warm. Run /handoff: it writes the "
+    "Session Log row, and its last step, the ship driver's `handoff` verb "
+    "(tools/cc/ship.py), pushes the lane once, {push}. This gate speaks once "
+    "per commit."
+    "\n  Don't: report the lane as done and stop for the operator to type "
+    "/handoff -- the lane sits unpushed, with no row and its claims live, until "
+    "someone returns, and the next session hands it off from a cold context."
+    "\n  Do: run /handoff in this turn. Three carve-outs, each said in one line "
+    "before stopping again: the operator asked to hold the push; this lane ships "
+    "together with another; or more of this lane's work is still to come this "
+    "session (a lane group, the next pack of a chain). The continuation is let "
+    "through, and the gate does not return for this commit."
+)
+
 # The Do line of GATE_COMMAND_SPAWN_FAILED, per source of the command (the
 # runner picks one and fills {remedy} with the platform's): the override is
 # changed where it was set and read at the next launch; a declared or detected
@@ -998,6 +1026,9 @@ _OPERATOR_FACING_TEMPLATES: tuple[str, ...] = (
     # in the session clears it, so the wrong move is named beside the right
     # one. Its siblings (a failing command, a timeout) stay diagnostic.
     "GATE_COMMAND_SPAWN_FAILED",
+    # Gate 5: the one move (run /handoff in this turn) beside the one that
+    # left a lane unpushed for eleven hours (2026-10-24).
+    "GATE_HANDOFF_OWED",
     # The PowerShell dangerous-command fallback now carries a Don't/Do
     # way-forward (was a raw-regex-leaking diagnostic) -- under the
     # both-markers + actionability contracts going forward.

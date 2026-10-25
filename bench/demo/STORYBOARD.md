@@ -611,7 +611,7 @@ derivation commands below, never from a hand-typed number.
 | Route | UserPromptSubmit | Classifies the prompt, injects the routing advisory | none |
 | Guard | PreToolUse, ConfigChange | Protected-zone floor, dangerous-command catch, secret-path reads, plan gate | `plan_exempt_prefixes`, maintenance mode |
 | Check | PostToolUse, PostToolUseFailure | Written-file validation, reflect trigger every tenth source write, re-derivation on a failed edit | none |
-| Gate | Stop, SubagentStop | Four-gate stop sequence; subagent reasoning appended | `ESPALIER_STOP_GATE` |
+| Gate | Stop, SubagentStop | Five-gate stop sequence; subagent reasoning appended | `ESPALIER_STOP_GATE` |
 | Work | commands, skills, agents, workflows | The daily loop, the review roster, the task-pack loop, the review workflows | edit or delete any body |
 | Remember | `/recall`, `/handoff`, `memory/`, the cognitive docs | Pull-only footgun catalog, cross-session blueprints, committed memory | none |
 

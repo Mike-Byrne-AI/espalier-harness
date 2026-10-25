@@ -419,9 +419,10 @@ footguns — and does not change this line. `Integrity:` is the hash manifest
 From here, the hooks are active. If you try to use Write or Edit on
 a source file without a plan, `plan_guard` blocks it. If you try to
 write a protected harness file, `write_guard` blocks it. At session
-Stop, `stop_gate` runs a four-gate sequence — pytest (opt-in via
-`ESPALIER_STOP_GATE=full`), docs refresh, code review, and blueprint
-finalize.
+Stop, `stop_gate` runs a five-gate sequence — pytest (opt-in via
+`ESPALIER_STOP_GATE=full`), docs refresh, code review, the handoff gate
+(a committed, unpushed lane with nothing in flight, where the handoff
+pushes), and blueprint finalize.
 
 These are all explained in [`HOOKS.md`](HOOKS.md).
 

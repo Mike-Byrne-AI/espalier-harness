@@ -227,6 +227,10 @@ _ALLOWED_FLAGS = {
     "gate1_spawn_failure_reported",  # stop_gate: the test-gate override that
                                      # cannot be started is reported once a
                                      # session; session_start clears it
+    "handoff_gate_said",  # stop_gate Gate 5 (the handoff gate): the HEAD it last
+                          # judged, so it speaks once per commit; session_start
+                          # seeds it with HEAD on a new session and keeps it
+                          # across a compaction (_hook_utils.HANDOFF_GATE_FLAG)
     # TP-164: the recall-engine reinjection session counter. _reinject's
     # SessionStart orientation row (non-exempt) writes reinject_count via
     # _hook_utils._locked_increment each session; session_start._clean_state_flags

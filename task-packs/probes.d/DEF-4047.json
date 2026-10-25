@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4047",
+ "subject": "tools/cc/checkout_sync.py",
+ "cmd": "python3 -c 'import importlib.util as u, sys, inspect; s = u.spec_from_file_location(\"cs_probe\", \"tools/cc/checkout_sync.py\"); m = u.module_from_spec(s); sys.modules[\"cs_probe\"] = m; s.loader.exec_module(m); print(list(inspect.signature(m.plan_in_progress).parameters))'",
+ "open_value": "['tree']",
+ "why_not": null,
+ "row_sha": "806e3b1a33e3",
+ "text_sha": "2ee658ad9892",
+ "verified_2026_10_24": "OPEN (filed 2026-10-24; probe driven at filing)"
+}

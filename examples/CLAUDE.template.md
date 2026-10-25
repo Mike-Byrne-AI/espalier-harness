@@ -38,7 +38,7 @@ Espalier wires 12 hook scripts that run automatically on Claude Code events:
 | `config_guard.py` | ConfigChange | Blocks unsafe project/local/user settings changes; audits managed policy_settings (non-blockable) |
 | `post_write_check.py` | PostToolUse | Validates each written file for JSON validity and path consistency |
 | `reflect_trigger.py` | PostToolUse | Runs reflect protocol every 10th source write; opens the execution plan from an approved plan-mode plan (the ExitPlanMode bridge) |
-| `stop_gate.py` | Stop | Lightweight session hygiene by default (docs, review, blueprint, state); full core pytest gate opt-in via `ESPALIER_STOP_GATE=full`; `ESPALIER_STOP_GATE_TEST_CMD=<command>` runs your suite under it |
+| `stop_gate.py` | Stop | Lightweight session hygiene by default (docs, review, the handoff gate where `handoff_push` is on, blueprint); full core pytest gate opt-in via `ESPALIER_STOP_GATE=full`; `ESPALIER_STOP_GATE_TEST_CMD=<command>` runs your suite under it |
 | `subagent_stop.py` | SubagentStop | Appends subagent reasoning to the active blueprint (Gate 4 only); never blocks the subagent |
 | `post_compact.py` | PostCompact | Captures the compaction summary (`cc/_working_summary.md`) and arms the post-compaction checkpoint; re-injects nothing, since PostCompact has no channel to Claude (SessionStart's `compact` banner re-orients) |
 | `subagent_start.py` | SubagentStart | Injects cold-subagent orientation (host facts + fan-out finding-schema pointer); never blocks (reporter) |

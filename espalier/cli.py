@@ -2598,7 +2598,7 @@ Espalier wires {n_hook_scripts} hook scripts that run automatically on Claude Co
 | `config_guard.py` | ConfigChange | Blocks unsafe project/local/user settings changes; audits managed policy_settings (non-blockable) |
 | `post_write_check.py` | PostToolUse | Validates each written file for JSON validity and path consistency |
 | `reflect_trigger.py` | PostToolUse | Runs reflect protocol every 10th source write; opens the execution plan from an approved plan-mode plan (the ExitPlanMode bridge) |
-| `stop_gate.py` | Stop | Lightweight session hygiene by default (docs, review, blueprint, state); full core pytest gate opt-in via `ESPALIER_STOP_GATE=full`; `ESPALIER_STOP_GATE_TEST_CMD=<command>` runs your suite under it |
+| `stop_gate.py` | Stop | Lightweight session hygiene by default (docs, review, the handoff gate where `handoff_push` is on, blueprint); full core pytest gate opt-in via `ESPALIER_STOP_GATE=full`; `ESPALIER_STOP_GATE_TEST_CMD=<command>` runs your suite under it |
 | `subagent_stop.py` | SubagentStop | Appends subagent reasoning to the active blueprint (Gate 4 only); never blocks the subagent |
 | `post_compact.py` | PostCompact | Captures the compaction summary (`cc/_working_summary.md`) and arms the post-compaction checkpoint; re-injects nothing, since PostCompact has no channel to Claude (SessionStart's `compact` banner re-orients) |
 | `subagent_start.py` | SubagentStart | Injects cold-subagent orientation (host facts + fan-out finding-schema pointer); never blocks (reporter) |
@@ -4710,7 +4710,9 @@ _FOREIGN_KEY_SENTENCES: dict[str, tuple[str, str]] = {
     "handoff_push": (
         "Let /handoff push the lane after it commits the memory row (through\n"
         "# tools/cc/ship.py: a pull request with auto-merge armed). Off when absent:\n"
-        "# push a lane yourself with /ship.",
+        "# push a lane yourself with /ship. On, the Stop hook's handoff gate also\n"
+        "# holds the Stop once per commit while a finished lane sits unpushed\n"
+        "# (docs/HOOKS.md, stop_gate).",
         "handoff_push = true",
     ),
     "id_blocks": (
@@ -11619,7 +11621,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     if not config_sets_key(repo_root, "handoff_push"):
         print("[upgrade] /handoff pushes the lane only when espalier.toml sets "
               "handoff_push = true (off when the key is absent): set it to keep "
-              "handoffs pushing, or push a lane yourself with /ship.")
+              "handoffs pushing, or push a lane yourself with /ship. On, the Stop "
+              "hook's handoff gate also holds the Stop once per commit while a "
+              "finished lane sits unpushed (docs/HOOKS.md).")
 
     if not execute and plan_missing:
         print(f"[upgrade] dry-run complete. --execute refuses here until the saved "

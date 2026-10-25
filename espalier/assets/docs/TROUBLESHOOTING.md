@@ -260,13 +260,14 @@ drift but the harness is still functional. Common causes:
 ## "Stop event keeps blocking me"
 
 `stop_gate` runs at every Stop event (Claude Code finishing a turn).
-Four gates fire in sequence:
+Five gates fire in sequence:
 
 | Gate | Default | What it checks |
 |---|---|---|
 | 1 | Off (opt in via `ESPALIER_STOP_GATE=full`) | `pytest -m "not slow"` passes |
 | 2 | On | After 10+ writes, the `docs-maintainer` subagent has run and changed docs (`.espalier-state/docs_refreshed`) |
 | 3 | On | After 10+ writes, the `code-reviewer` subagent has run (`.espalier-state/code_reviewed`) |
+| 5 | On where `espalier.toml` sets `handoff_push = true` | Nothing is in flight (no plan in progress, no tracked edit) and the branch holds commits its upstream does not, made this session: run `/handoff` now (once per commit; `.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart) |
 | 4 | On (always silent) | Cognitive blueprint finalized |
 
 Most common block: **gate 3** after a long session, asking Claude to

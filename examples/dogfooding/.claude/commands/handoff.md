@@ -17,7 +17,9 @@ End the session cleanly and leave the next Claude Code session with usable conti
 > record, the goal and the archive it writes are the main checkout's. Carry this
 > worktree's `cc/_working_summary.md` notes and the goal changes into the main
 > checkout's own handoff, which files them under its session; a worktree session's
-> archive leg, blueprint and record snapshot are not filed from here.
+> archive leg, blueprint and record snapshot are not filed from here. Step 8's
+> push (`ship.py handoff`) does run from the worktree: it pushes this worktree's
+> branch, so a lane built here is not left unpushed because 6.2 onward refused.
 >
 > That is about **your code**. `/handoff` then writes tracked files of its own
 > (the session row always, under `memory/session-log.d/` or in ESPALIER_MEMORY.md; the target step 1b prints, on a step-1b
