@@ -58,7 +58,8 @@ seat's first message as its prompt, so nothing is pasted. `seat.py brief
 <seat>` prints that message: the worker form names the dispatcher, the two
 reads to start with and the jobs, and ends with the worker loop (`/loop 10m`,
 the tick this repository's workers have run since 2026-10-15, carrying the
-proceed clause and the refresh sentence since 2026-10-24); the dispatcher
+proceed clause and the refresh sentence since 2026-10-24 and the dispatch-model
+sentence since 2026-10-25); the dispatcher
 form names its duties and ends with `/loop 15m /inbox board`. `espalier.toml`'s
 `dispatcher` line picks the form, and `--no-brief` launches without one. The
 banner check: a worker seat holding live assigns opens on an `Orders:` line
@@ -337,6 +338,51 @@ minutes, p75 12, max 23, `scripts/mail_latency_census.py --since 2026-10-14`
 read 2026-10-19) plus a read each time. What falsifies it: an
 override after the fact that forces rework, twice in twenty.
 
+**The model on a dispatch (the operator's rule, 2026-10-25).** A seat passes a
+model below its own on a subagent dispatch only for a kind named on a line
+opening with `allowance:` in the assign for the job in hand, a marker in the
+family of `OPERATOR CALL:`, `redirect:` and `shelved:`. The kinds, rendered
+into the tick and the dispatcher brief from `tools/cc/seat.py::DISPATCH_KINDS`
+and held to this paragraph by a test: `anchors` (the 0-A re-derivation of a
+pack's anchors and figures against HEAD, each tagged verified, probable or
+unverified), `drive` (a probe's shapes driven against their oracle, each answer
+recorded), `census` (a count, with the command that reproduces it), `mutants`
+(a kill table for mutations the seat itself named, run on a snapshot clone,
+dispatched before the lane's tier and never beside it: an agent's run that
+waits on the box lock behind a tier outlives a Bash call's cap, and a timed-out
+mutant would read as a survivor). A kind word anywhere else in an assign is the
+job's text: the four words are ordinary assign vocabulary (54 of the
+dispatcher's first 129 assigns carried one as plain instruction, "drive the
+probe" above all, read from the mail ref 2026-10-25), which is why the marker
+exists. The dispatcher writes the line, since the job's oracle shape is what it
+reads at assign time and the seat should have nothing to weigh; an assign with
+no `allowance:` line allows nothing. A dispatch no such line names runs at the
+seat's own model; a named agent under `.claude/agents/` runs at its own
+frontmatter pin and needs no allowance (dispatching `code-reviewer`, pinned to
+Sonnet, passes no model); and a seat that chose its own model where a lower one
+was allowed has done nothing wrong: the one outcome the rule exists to prevent
+is a lower model where the seat's own was needed, so the rule fails upward
+only. Why the seat does not judge it: by the operator's account no seat has
+ever chosen a lower model on its own (the operator's user-level Claude Code
+setting pins general-purpose dispatches to Opus; the Sonnet agents are the
+operator's pins; the 609-entry register verification was a designed pipeline
+with an Opus critic over every still-open verdict,
+`memory/convergence-review-protocol.md`), so the choice has no track record,
+and the completion audit of 2026-10-15 (a local report on the Air; `reports/`
+is gitignored) showed seats do what a template names and skip what it does not.
+What records a dispatch's model: each box's transcript holds the per-call
+parameter where one was passed, and no tool reads it yet. The cheapest real
+check, not built: a count of model-carrying dispatches written into the Session
+Log row from the session's transcript
+(`scripts/handoff_mechanics.py::newest_transcript_stem` already finds it), which
+would reach the dispatcher through git. The tick has carried the sentence since
+2026-10-25 (`tools/cc/seat.py::SELF_HOST_PROCEED`, the operator's wording,
+pinned byte for byte in `tests/test_seat.py`); a loop started before that keeps
+the old tick until its seat is relaunched, and dispatches nothing downward
+meanwhile. Deliberately not built: a hook that refuses a lower model with no
+allowance. It waits until that count shows a seat dispatching downward unasked
+(expand, then contract).
+
 A Claude session acts only when prompted. The design tolerates a dispatcher
 that is away: a seat with a queue does not need it in real time.
 
@@ -377,8 +423,10 @@ cross-seat gate.
   its clone (that worktree would assign as the seat owning the name).
 - **What an assign says.** The job (a row id, a class, or a lane for a pack's
   wave); why now; what it waits for, by the other seat's lane name and the file
-  both touch; the operator's constraints on it; and any edge the dispatcher
-  read, with the citation it read. Nothing the row or the tier script already
+  both touch; the operator's constraints on it; any edge the dispatcher
+  read, with the citation it read; and, where a subagent may run below the
+  seat's model, one line opening with `allowance:` naming the kinds (*The model
+  on a dispatch*, above), else no such line. Nothing the row or the tier script already
   says: `scripts/proof_tier.py --base origin/main` prints the tier and the
   reviewers from the diff, and an assign that restated them was wrong 3 times
   in 25 on 2026-10-18. A fix shape only with the citation behind it. Under 900

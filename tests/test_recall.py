@@ -1965,6 +1965,12 @@ _TASK_ARM = (
     ("DEF-1175: one rooted-path judge shared by join_directory, the two temp-root carve-out "
      "sites and plan_guard's exemption: a Git Bash /tmp base read where Git for Windows mounts it",
      "docs/SHARP_EDGES.md :: Catastrophic `rm` hard-deny parses flags + target, it does not regex a fixed order"),  # 2026-10-16 lane/rooted-path-judge (hazard query: temp root carve-out checkout clone scratch nudge; applied: the hard tier's rules unchanged, the carve-out only adds places to look for work, a typed /tmp delete of a checkout at the mount walls)
+    ("lane/seat-the-assign-names-a-dispatch-below-the-model: the self-host worker tick gains the "
+     "dispatch-model sentence (a model below the seat's own on a subagent dispatch only for a "
+     "sub-task the assign names, by kind), its byte-for-byte pin in tests/test_seat.py, the vendor "
+     "mirror, a protocol paragraph defining the four kinds and the asymmetric rule, and one "
+     "sentence in TP-703c",
+     "memory/recall-engine-extension.md"),  # 2026-10-25 lane/seat-the-assign-names-a-dispatch-below-the-model (hazard query: recall-indexed memory edit moves the corpus; applied by the lane before review: a memory/ edit moves the calibrated corpus, so the recall engine's own tests ran before the tier)
 )
 
 #: The ratchet: every (query, source) pair filed on 2026-09-11, and every row a
@@ -2200,6 +2206,14 @@ _TASK_ARM_FILED = frozenset({
     ("DEF-1175: one rooted-path judge shared by join_directory, the two temp-root carve-out "
      "sites and plan_guard's exemption: a Git Bash /tmp base read where Git for Windows mounts it",
      "docs/SHARP_EDGES.md :: Catastrophic `rm` hard-deny parses flags + target, it does not regex a fixed order"),
+    # 2026-10-25, the dispatch-model lane (the recall-corpus edit under a protocol
+    # paragraph): one row
+    ("lane/seat-the-assign-names-a-dispatch-below-the-model: the self-host worker tick gains the "
+     "dispatch-model sentence (a model below the seat's own on a subagent dispatch only for a "
+     "sub-task the assign names, by kind), its byte-for-byte pin in tests/test_seat.py, the vendor "
+     "mirror, a protocol paragraph defining the four kinds and the asymmetric rule, and one "
+     "sentence in TP-703c",
+     "memory/recall-engine-extension.md"),
 })
 
 #: Characterisation counts, all pinned with `==`. Re-measured 2026-08-19 at a budget

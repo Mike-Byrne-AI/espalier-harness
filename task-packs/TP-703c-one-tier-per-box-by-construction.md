@@ -150,7 +150,15 @@ box bookkeeping on the channel built for claims and asks.
 - **Probe children of a seat's own run.** A tool that runs pytest inside a run that already holds
   the box (`TP-703j`'s guard drive, a mutation runner) must not take the lock again or it waits on
   its own parent past its timeout; Scope (in) item 7's sentence is the rule and that pack's J-3 is
-  named to follow it. No code here: the child's environment is the caller's.
+  named to follow it. No code here: the child's environment is the caller's. A pytest run a
+  subagent launches on the seat's behalf (a `drive` or `mutants` allowance under the protocol's
+  dispatch-model paragraph, 2026-10-25) is not such a child: its shell inherits Claude Code's
+  environment, not the tier's, so it carries no holder and takes the lock like any run, and then
+  waits behind any tier on the box, its own seat's or a sibling's, past a Bash call's cap (ten
+  minutes, against a tier of 25 to 50), so the agent returns a timeout and a timed-out mutant
+  would read as a survivor. The rule the protocol's kinds carry: `drive` and `mutants` dispatch
+  before the tier, never beside it, and an agent whose run reports a lock wait reports no result
+  (expected from the environment model, not yet driven).
 
 ## Task 0 — Verify (try to kill this pack)
 
