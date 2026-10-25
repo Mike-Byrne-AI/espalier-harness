@@ -1324,7 +1324,8 @@ def refresh_argv(root: Path, machine: str, *, run: Runner = run) -> tuple[list[s
     typed, the spelling ``release_lane`` warns of), the base the ship driver's
     default, and the send a ``--delta`` claim, so a tick writes only what the
     lane's diff adds. Each way there is nothing to do is a line and exit 0, for
-    a worker stops on anything not green: a detached HEAD; a lane this machine
+    a worker's tick reads a non-zero exit as a refusal, and an unresolved
+    refusal is a stop: a detached HEAD; a lane this machine
     never claimed (the default branch between jobs among them; a lane's first
     claim is sent by hand), the line naming the lanes its live claims are on,
     since a claim spelled unlike the branch is never refreshed; a released

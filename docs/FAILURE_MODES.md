@@ -2501,6 +2501,38 @@ Two corollaries worth carrying:
 **Related.** §2.14 an early-return guard hollows out the tests below it. §4.10
 the cross-artifact assertion nothing checks. §1.13 born-weak guard.
 
+### 4.12 A landed pack kept for its roadmap reads as queued -- the state lives inside each file, and the directory listing is the queue nobody derived
+
+A task-pack directory is read as a queue: what is there is what is still to
+do. Each pack carries its own state in a stanza at its end (`State: DRAFT |
+ROADMAP | LANDED | SCRAPPED`), and a roadmap's landed children stay in the
+directory until the whole family retires, so that the roadmap's cross-links
+and the dangling-id gate keep resolving. The convention is sound and the state
+is readable per file. Nothing aggregates it. So the listing says twenty-seven
+packs and a reader counts twenty-seven jobs.
+
+**Measured in this repo.** The operator listed the pack directory on
+2026-10-24, read every pack as still queued, and asked whether the wrong
+command had been in use all along. Four of the packs were landed children kept
+for their roadmap, four were roadmaps, six were drafts, and the convention
+that keeps a landed child in place was written in two places only: a held
+memory candidate and a note inside a sibling pack. The fix, filed as its own
+row, is a derived line that counts the root packs by their `State:` with the
+drafts named first, and the convention written where the pack docs live.
+
+**Why it stays hidden.** The per-file state was always correct, so no gate
+fired; the aggregate was never a thing any tool printed, so nobody noticed it
+was missing until a person read the directory as a queue. A convention held
+only in a parked candidate is a sentence nobody can find at the moment they
+need it (§4.4, §12.9).
+
+**Defense.** When files carry their own state, derive the queue by state and
+print it where the question is asked (the session banner, a status verb); a
+listing is never a queue. A convention that keeps finished work in a working
+directory is written beside the directory, not in a candidate awaiting a
+ruling. The general shape is the standing principle: derive the list, and
+never read a hand-countable surface as if it were derived.
+
 ---
 
 ## 5. Epistemic and measurement failure modes
@@ -3515,6 +3547,41 @@ tree, declare the caveat where the sentence is made and pin the convergence.
 **Related.** §5.7 producer/consumer parity drift (the sibling where two
 modules diverge rather than two modes of one command). §7.4 idempotency
 missing.
+
+### 5.26 A narrow CI dispatch cannot reproduce a load-dependent race -- the select run proves the mark applies, not the failure it absorbs
+
+A test that fails only under the full suite's load on a hosted runner is
+marked as an expected failure there. To prove the mark, the natural move is a
+workflow dispatch that selects the one module on the one runner. It runs in
+seconds, every row completes, and the mark reads as applied. What that run
+proved is that a collection-time mark takes effect on the runner. It cannot
+reproduce the race, because the race needs the load the full leg supplies.
+
+**Measured in this repo.** The nested-controller race module, dispatched
+alone on the macOS runner on 2026-10-19, ran in about twenty seconds at one
+worker and at four, twelve of twelve marked rows completed, no race. Under the
+full leg the anchor had failed on eight of ten legs. Three neighbours were
+measured in the same sitting: a workflow with a concurrency group per ref
+cancels the earlier dispatches (three in a row left one running and two
+cancelled); a job's log is withheld while another job in its run still runs,
+but its annotations are served at once through the check-runs API; and a
+scratch plugin that patches a test module's global must reach the module
+pytest collected (`item.module`), since an `import tests.<name>` returns a
+different module object and the patch silently does nothing.
+
+**Why it stays hidden.** The select run is green and fast, and green-and-fast
+reads as proof. The absent variable (load) is not in the run's output, so
+nothing in the receipt says what was not exercised. It is the §5.25 shape one
+stage earlier: the instrument answers an adjacent question and the answer
+looks like the one asked (§18.13: an absence proof with no positive control).
+
+**Defense.** Split the claim. Prove "the mark applies" with the select
+dispatch. Prove "the absorbed failure is the one the mark names" by driving
+the real code locally against the runner's recorded output, through a plugin
+that patches the collected item's module. Read the pull request's own full leg
+for the live count, and dispatch one run at a time on a ref whose workflow
+groups by ref. A receipt should name the load it ran under, so a reader can
+tell a select run from a leg.
 
 ## 6. Security failure modes
 
@@ -5437,6 +5504,38 @@ that resolution, all attested in one sitting:
 
 **Related:** §10.11 (the detector's own resolver manufactures the pass) is the
 sibling where resolution creates a false negative rather than a mis-tier.
+
+### 10.15 A citation gate sweeps the roots its author listed, and the project writes citations into one it did not
+
+A gate that resolves every path and symbol a document cites walks a list of
+document roots. The list is right on the day it is written. The project then
+grows a new place where prose cites code, and every lane writes there, and no
+line of the gate reads it: the new surface is a citation surface in every
+sense but the gate's.
+
+**Measured in this repo.** The changelog fragments directory, one file per
+lane, carried path and symbol citations that neither doc-citation gate (the
+one that resolves cited source paths, the one that resolves cited tests)
+swept; read from the lane's own record on 2026-10-20, the fragments that did
+pass a resolver passed on a nearby negation word that exempted the line, not
+because the citation resolved. A lane's own fragment surfaced it; both gates
+now sweep the directory.
+
+**Why it stays hidden.** The gate is green, and its population is a constant
+in its own source, so the only reader who can notice the omission is one who
+already knows the new directory exists and asks whether the gate reads it.
+This is the hand-maintained-enumeration edge with the enumeration inside a
+test: the standing principle says derive the list, and a roster of roots is a
+list. The skip word is the second half: an exemption keyed on nearby
+vocabulary passes lines its author never read (§18.15, a classifier keyed on
+a token found nearby).
+
+**Defense.** Derive the swept roots from the tree (every tracked markdown
+file outside a named exclusion set), or pin the hand list with a census that
+reds when a tracked directory holds markdown the list omits. Make every
+exemption name the line it exempts and why, never a word found near it. When
+a lane adds a place where prose cites code, the lane that adds it extends the
+gate in the same commit.
 
 ## 11. AI-collaboration failure modes
 
@@ -8249,6 +8348,41 @@ mitigations, in order of strength:
 
 **Generalisation.** "The write landed" and "the next reader will find it" are
 different claims, and atomicity only ever establishes the first.
+
+### 16.4 A box-level stall freezes every seat on that box at once, and the coordinator reads the silence as idleness
+
+Several seats (sessions in their own worktrees) share one machine and one
+account. A resource event at that level is a correlated failure of every seat
+on it: all of them stop in the same minute, for the same cause, and none of
+them is red. The coordination layer sees per-seat silence, which is also what
+an idle seat looks like.
+
+**Measured in this repo.** A usage limit on the one account every seat ran
+under froze four seats at once for eighty minutes on 2026-10-15; two pull
+requests went red in the gap and five board ticks queued behind the freeze.
+Later that day the account's weekly limit froze one machine for what would
+have been two and a half days until the operator switched it to a second
+account; the other machine, moved to the fresh account while a few percent
+remained, ran on. On 2026-10-16 the host's low-memory reaper killed both
+seats' test runs on one machine within a minute of each other (4.6 of 32 GB
+free, the holders a VM and three media processes, not the seats), and its
+notice told each session not to restart until the operator asked. The seats'
+notes read "stopped", not "red", and the coordinator, reading mail silence,
+inferred a limit that was not there.
+
+**Why it stays hidden.** Every mechanism the layer has is per seat: a seat's
+claim, its request, its red check. Nothing in the record names the box or the
+account as a unit, so a stall of the unit has no row, and the coordinator's
+first guess is drawn from the last cause it saw.
+
+**Defense.** Read the cause before answering: the seat's own note, the
+machine's memory, the account's state. Give the box-level stop a state of its
+own in the record, distinct from a red and from idle. Spread seats across
+accounts so one limit freezes one machine, and move the other machine to a
+fresh account before the limit lands. Leave each seat two queued jobs it can
+work without the coordinator, so a coordinator freeze is not a second outage.
+A kin of §16.2 (shared state with no identity for the sharer) one level up:
+the shared thing is the machine.
 
 ---
 

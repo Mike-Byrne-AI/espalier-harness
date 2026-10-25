@@ -613,9 +613,17 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
 #: On this repository the worker loop renders to the operator's tick byte for
 #: byte (``tests/test_seat.py::_OPERATOR_TICK``): the tick the operator ran by
 #: hand on 2026-10-15, its review step read from the diff since 2026-10-16 on
-#: the operator's yes. A change to it changes what every worker seat does,
-#: which is the operator's decision; a seat already looping keeps its old tick
-#: until its loop is started again from the brief.
+#: the operator's yes, and since 2026-10-24 (the operator's yes on the mail
+#: channel) the mail driver's refresh sentence after the lane step and the
+#: proceed clause in place of the STOP clause. The proceed clause is this
+#: repository's rule (the protocol's *Assign authority*, "The seat's side of
+#: it"), so it renders on this repository alone (``SELF_HOST_PROCEED``); an
+#: adopter's seat keeps the stop-and-ask form (``ADOPTER_PROCEED``), as its
+#: dispatcher proposes every assign. Every figure in a template is rendered
+#: from ``DISPATCHER_TICK``, never typed. A change to the tick changes what
+#: every worker seat does, which is the operator's decision; a seat already
+#: looping keeps its old tick until its loop is started again from a brief
+#: composed from a checkout that holds the change.
 WORKER_BRIEF = (
     "You are seat {seat}, a worker under {dispatcher_phrase} ({protocol}). Orient from the banner, then run "
     "/inbox (mark read) and /inbox board, and read live state before you state it. Your jobs are the live "
@@ -628,21 +636,45 @@ WORKER_TICK = (
     "yours, in this order: your own open PR red, in conflict or stale (fix it, or ship.py catch-up); a new "
     "assign or note from {dispatcher}; continue your current lane through its full procedure (plan, {review}, "
     "one fix batch, {tier}, one open PR per seat, every step listed with "
-    "its evidence in the PR body; a skipped step is a stop); then your next assigned job. STOP and send "
-    "{dispatcher} one request, then only re-read mail until it is answered, on anything not green: a red you "
-    "cannot fix in two attempts, a choice the assign does not settle, a refusal you cannot resolve, a "
-    "conflict outside your own files, anything that is the operator's decision. Never unassigned work, never "
+    "its evidence in the PR body; a skipped step is a stop), then run mail.py refresh once; it writes nothing "
+    "when nothing is new; where mail.py answers invalid choice, this checkout predates the verb: skip it until "
+    "the lane merges main, not a stop; then your next assigned job. {proceed} Never unassigned work, never "
     "another seat's branch. A quiet tick is one line."
+)
+#: The fork rule, by tree. This repository's seat proceeds on its own
+#: recommendation after the dispatcher's tick (the protocol's seat's-side
+#: paragraph as it reads: the request's age is on the board's asks line, a
+#: redirect: ack re-aims, a row is never a stop, the shelved: note names the
+#: job the push closed since the push released the claims, and a shelved lane
+#: is not re-fixed every tick); an adopter's seat stops and asks.
+SELF_HOST_PROCEED = (
+    "On a choice the assign does not settle, send {dispatcher} one request with your Task 0 recommendation and "
+    "its citation, then proceed on it after {wait} minutes (the dispatcher's tick; the board's asks line shows "
+    "your request's age) with no answer; a request with no recommendation keeps the stop, and an ack from "
+    "{dispatcher} beginning redirect: re-aims you at once. STOP and only re-read mail for what the assign "
+    "authority reserves for the operator (a new pack, a scope change, a release or tag, a revert that is not "
+    "the red-main revert, an open operator call on your fork), a platform stop, a refusal you cannot resolve, "
+    "or a conflict outside your own files; a row to file is never a stop. A red you cannot fix in two "
+    "attempts: shelve the lane (one note beginning shelved: says what was tried and names any job your push "
+    "closed; a shelved lane waits for the dispatcher, not your next tick), take your next assigned job."
+)
+ADOPTER_PROCEED = (
+    "STOP and send {dispatcher} one request, then only re-read mail until it is answered, on anything not "
+    "green: a red you cannot fix in two attempts, a choice the assign does not settle, a refusal you cannot "
+    "resolve, a conflict outside your own files, anything that is the operator's decision."
 )
 DISPATCHER_BRIEF = (
     "You are the dispatcher seat {seat} ({protocol}). Orient from the banner{goal}, then run /inbox (mark "
-    "read) and /inbox board. Your duties: read the board every 15 minutes (the loop on the next line), answer "
-    "every worker request within the hour with facts, {assign}, {red}, write the Landing lines of the packs "
-    "in flight from the seats' merged PR bodies. {figures}Decisions stay the operator's. At the operator's word, "
-    "run /handoff; it writes your row{row_source}. Start the loop on the next line with no further message "
-    "from the operator."
+    "read) and /inbox board. Your duties: read the board every {every} minutes (the loop on the next line), "
+    "answer every worker request within the hour with facts, {assign}, {red}, write the Landing lines of the "
+    "packs in flight from the seats' merged PR bodies. {figures}Decisions stay the operator's. At the "
+    "operator's word, run /handoff; it writes your row{row_source}. Start the loop on the next line with no "
+    "further message from the operator."
 )
 DISPATCHER_TICK = "/loop 15m /inbox board"
+#: The dispatcher's interval in minutes, read from its loop line: the one
+#: figure both briefs quote, so a changed loop re-renders every mention.
+TICK_MINUTES = DISPATCHER_TICK.split()[1].rstrip("m")
 #: Where the seat procedure lives, the first a checkout holds: this
 #: repository's protocol, else the seeded workflow guide's section.
 PROTOCOL_HOMES = (
@@ -731,13 +763,18 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
         assign = SELF_HOST_ASSIGN if self_host else ADOPTER_ASSIGN
         figures = SELF_HOST_FIGURES if self_host else ""
         text = DISPATCHER_BRIEF.format(seat=seat, protocol=protocol, goal=goal, assign=assign, red=red,
-                                       figures=figures, row_source=SELF_HOST_ROW_SOURCE if self_host else "")
+                                       figures=figures, every=TICK_MINUTES,
+                                       row_source=SELF_HOST_ROW_SOURCE if self_host else "")
         return Brief("dispatcher", text + "\n" + DISPATCHER_TICK, DISPATCHER_TICK)
     has_tier_script = (where / TIER_SCRIPT).is_file()
     tier = (f"the tier the diff earns with --base origin/{base}" if has_tier_script
             else "the proof the change earns per /implement-task step 7")
     phrase = f"the dispatcher {dispatcher}" if dispatcher else "the operator (espalier.toml names no dispatcher)"
-    loop = WORKER_TICK.format(dispatcher=dispatcher or "the operator", tier=tier,
+    # The fork rule by tree (SELF_HOST_PROCEED / ADOPTER_PROCEED), rendered first
+    # so its own fields are filled before the tick takes it whole.
+    proceed = (SELF_HOST_PROCEED if self_host else ADOPTER_PROCEED).format(
+        dispatcher=dispatcher or "the operator", wait=TICK_MINUTES)
+    loop = WORKER_TICK.format(dispatcher=dispatcher or "the operator", tier=tier, proceed=proceed,
                               review=(SELF_HOST_REVIEW.format(base=base) if self_host and has_tier_script
                                       else ADOPTER_REVIEW))
     first = WORKER_BRIEF.format(seat=seat, dispatcher_phrase=phrase, protocol=protocol,

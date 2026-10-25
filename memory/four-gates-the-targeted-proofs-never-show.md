@@ -358,6 +358,31 @@ shipping surface such as the changelog (the §C10 lane's one blocker).
     where `TestSubprocessEncodingPinned` does not.
 
 
+30. **Four more a new `tools/cc` module trips only in the full tier
+    (2026-10-19, a seat's census lane).** A literal fragment-directory path
+    (`ledger.d`, `session-log.d`) spelled outside the fragments loader: the
+    loader is the one reader, and `tests/test_ledger_fragments.py`,
+    `tests/test_record_fragments.py` and the tree-wide `tests/test_contracts.py`
+    hold every other module to it. A `json.loads` whose result is dereferenced
+    with no type check: `tests/test_json_dict_safe.py`'s census (item 18.15's
+    class). A new flag file under `.espalier-state/` not in
+    `tests/test_state_file_flag_parity.py`'s documented set: register it with
+    its writer and its consumer in that test. A test docstring with no
+    rationale anchor, which the suite's docstring contract reads. Beside the
+    four, the derived-population census of `docs/FAILURE_MODES.md` §18.4
+    counts the new module's rows.
+31. **A comment is a shipping surface, and a sibling's merge changes the
+    live state a flag test reads (2026-10-24).** A comment in `tools/cc` that
+    names a pack id (`TP-nnn`) reds the provenance census and two tests only
+    in the full tier (`tests/test_no_provenance_in_shipped_code.py`,
+    `tests/test_adopter_verb_stand_down.py`); `python3 -m espalier provenance .`
+    is the one-second twin, and `/commit` runs it before staging: say what the
+    sentence is, not which pack proposed it. And a lane branched before a
+    sibling merged reads that sibling's new flag under `.espalier-state/`
+    (written by the hook the sibling shipped, which this checkout ran while on
+    the sibling's branch) as undocumented: a lane with no commits of its own
+    fast-forwards onto `origin/main` before its tier.
+
 Related: [[recall-keys-on-the-hazard-not-the-task]] (why the task text never
 recalls these) · [[calibrate-an-enforcement-contract-against-the-live-population]]
 (the census and the ratchet are both contracts calibrated against the live tree).

@@ -57,7 +57,8 @@ absent), refuses one a live session is in, and starts `claude` there with the
 seat's first message as its prompt, so nothing is pasted. `seat.py brief
 <seat>` prints that message: the worker form names the dispatcher, the two
 reads to start with and the jobs, and ends with the worker loop (`/loop 10m`,
-the tick this repository's workers have run since 2026-10-15); the dispatcher
+the tick this repository's workers have run since 2026-10-15, carrying the
+proceed clause and the refresh sentence since 2026-10-24); the dispatcher
 form names its duties and ends with `/loop 15m /inbox board`. `espalier.toml`'s
 `dispatcher` line picks the form, and `--no-brief` launches without one. The
 banner check: a worker seat holding live assigns opens on an `Orders:` line
@@ -73,8 +74,10 @@ interactive session as under `-p`; a killed session leaves the lock behind.
 1. **Work the jobs assigned to you**, in order, and keep two queued (the
    dispatcher's duty to keep them there, the table below), so the
    dispatcher's absence does not stall you. For a new job or a decision that
-   crosses jobs, send the dispatcher one request. Never negotiate with another
-   worker seat.
+   crosses jobs, send the dispatcher one request. On a fork inside your own
+   job, the seat's side of the *Assign authority* paragraph below: one request
+   carrying your recommendation, then proceed on it after the dispatcher's
+   tick with no answer. Never negotiate with another worker seat.
 2. **Claim the files a lane edits** on the mail channel, as before. Assignments
    are for jobs; claims are for files. A claim can name the functions too:
    `send --type claim --symbols-from` derives them from the lane's diff, and
@@ -218,6 +221,14 @@ interactive session as under `-p`; a killed session leaves the lock behind.
      --early` refuse at a cap of 3 lanes, naming the count, the last row's
      date and the way out (the row committed on the lane). A read that fails
      is unread, never zero: no verdict is never a refusal on a guess.
+   - **A row another lane's unmerged edit carries is struck after that lane
+     merges (2026-10-20).** A re-pin of a row rode an open pull request while
+     the code that closed the row was built on `main`; a strike from the
+     second lane would have struck the row's old text and met the first lane
+     at the merge on the row file and its probe (a modify against a delete,
+     which the record merge cannot take). Build the code on `main`, and
+     strike after the first lane merges and `main` is pulled, so the strike
+     reads the row as the first lane left it.
 7. **A red `main` is reverted first and diagnosed second.** The post-merge
    proof (`.github/workflows/post-merge.yml`) runs after merges, and the ship
    preflight and the board name a red one. Each push's run goes to the end,
@@ -260,7 +271,7 @@ interactive session as under `-p`; a killed session leaves the lock behind.
 | Sequences jobs that would collide: two jobs on one hot file, a record-format change while lanes are open | Gate changes: seats ship their own lanes |
 | Keeps two jobs with clear gates on every seat's queue, each assign in its shape (*What an assign says*, under *How assignments behave*), and re-reads the gates when a lane merges; a gate names another seat's open lane and the file both touch | Gate a seat on its own open pull request (item 4: the cap is on pull requests, not work) |
 | Answers worker requests at its next prompt (the operator prompts "dispatch", or a `/loop` does) | Review all code, or act as the merge queue |
-| Backs up a red `main` that nobody else has reverted | Hold knowledge only in its own context: what it decides is written where every seat can read it |
+| Backs up a red `main` that nobody else has reverted, and reads the board after every ship it makes: the `main:` line names a red base and its suspects (`main` read red for about fifteen hours after a merge on 2026-10-20, a timing-dependent pin on Linux, and only the ship driver's refusal on the next lane surfaced it) | Hold knowledge only in its own context: what it decides is written where every seat can read it |
 | Carries a lighter lane of its own | Run the heaviest lanes, which compete with dispatching |
 | Files the rows nobody is assigned to fix, and the ones its own measurements find | File rows for a job it has assigned: the finding, its probe and its fix are the assignee's one job (rule 8) |
 | Reports counts that name their population, settings quoted from the tool that computes them, and the day's figures from `scripts/seat_day_census.py` | Carry a figure by hand, past a compaction or from memory |
@@ -310,9 +321,15 @@ names (the third closing rule closes a job at the push its claims cover,
 before CI has run, and no read lists such jobs yet: `DEF-4037`). A redirect after the fact is an ack beginning
 `redirect:`, and the Session Log row counts it as rework; `TP-703f`'s census
 counts both words from the refs, so the falsifier below is read, never
-recalled. Until the operator pastes the tick's new sentence (`TP-703e` 1-C-2),
-a running loop's `STOP` governs that loop, and this paragraph is the rule the
-paste carries. Measured before this clause: 19 of 20 rulings matched the
+recalled. The tick has carried the sentence since 2026-10-24
+(`tools/cc/seat.py::SELF_HOST_PROCEED`, on the operator's yes to the call
+`20261024T065923Z-air-b366a4`, amended to this paragraph as it stood that
+day; its wait is rendered from `DISPATCHER_TICK`, never copied; a request
+with no recommendation keeps the stop); a loop started before that keeps its
+`STOP` until its seat is relaunched from a checkout that holds the change
+(`seat.py launch` composes the brief from the launcher checkout's own copy,
+so a launcher that has not pulled hands out the old tick). Measured before
+this clause: 19 of 20 rulings matched the
 recommendation the request carried (10-17 to 10-18, hand-classified by the
 dispatcher from its tick notes, not second-read), and the stop cost the seat
 the ack latency (111 of 111 requests since 10-14 answered, median 8
