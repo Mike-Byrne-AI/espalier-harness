@@ -646,7 +646,28 @@ WORKER_TICK = (
 #: paragraph as it reads: the request's age is on the board's asks line, a
 #: redirect: ack re-aims, a row is never a stop, the shelved: note names the
 #: job the push closed since the push released the claims, and a shelved lane
-#: is not re-fixed every tick); an adopter's seat stops and asks.
+#: is not re-fixed every tick); an adopter's seat stops and asks. Since
+#: 2026-10-25 (the operator's words, in the dispatcher session) it ends with the
+#: dispatch-model sentence (the protocol's "The model on a dispatch"
+#: paragraph): a model below the seat's own on a subagent dispatch only for a
+#: kind named on an allowance: line of the job's assign; a kind word anywhere
+#: else is the job's text; a dispatch no such line names runs at the seat's
+#: own model; a named agent runs at its own pin; the higher choice is never a
+#: finding. The marker follows OPERATOR CALL:, redirect: and shelved:, because
+#: the four kind words are ordinary assign vocabulary (54 of the dispatcher's
+#: first 129 assigns carried one as plain instruction, read 2026-10-25). The
+#: kinds render from DISPATCH_KINDS, one source for the tick and the
+#: dispatcher brief, which a test holds the protocol paragraph to.
+#: The kinds of sub-task a dispatcher may hand to a subagent below the seat's
+#: own model, in the order the tick says them.
+DISPATCH_KINDS = ("anchors", "drive", "census", "mutants")
+
+
+def dispatch_kinds_phrase() -> str:
+    """The kinds as the tick says them: ``anchors, drive, census and mutants``."""
+    return ", ".join(DISPATCH_KINDS[:-1]) + " and " + DISPATCH_KINDS[-1]
+
+
 SELF_HOST_PROCEED = (
     "On a choice the assign does not settle, send {dispatcher} one request with your Task 0 recommendation and "
     "its citation, then proceed on it after {wait} minutes (the dispatcher's tick; the board's asks line shows "
@@ -656,7 +677,11 @@ SELF_HOST_PROCEED = (
     "the red-main revert, an open operator call on your fork), a platform stop, a refusal you cannot resolve, "
     "or a conflict outside your own files; a row to file is never a stop. A red you cannot fix in two "
     "attempts: shelve the lane (one note beginning shelved: says what was tried and names any job your push "
-    "closed; a shelved lane waits for the dispatcher, not your next tick), take your next assigned job."
+    "closed; a shelved lane waits for the dispatcher, not your next tick), take your next assigned job. Pass a "
+    "model below your own on a subagent dispatch only for a kind named on an allowance: line of the assign for "
+    "the job in hand (the kinds are {kinds}); a kind word anywhere else is the job's text, a dispatch no "
+    "allowance: line names runs at your own model, a named agent runs at its own pin and needs no allowance, "
+    "and choosing your own model where a lower one was allowed is never a finding."
 )
 ADOPTER_PROCEED = (
     "STOP and send {dispatcher} one request, then only re-read mail until it is answered, on anything not "
@@ -705,7 +730,8 @@ ADOPTER_RED = "propose the revert to the operator on a red {base}"
 SELF_HOST_ASSIGN = (
     "assign, re-sequence and release jobs within approved packs and live ledger rows on your own and "
     "report each at your next tick, each assign in its shape (the job, why now, what it waits for, "
-    "the operator's constraints, an edge with its citation; never the tier or the reviewers, which "
+    "the operator's constraints, an edge with its citation, an allowance: line naming the kinds a subagent may "
+    "run below your model (the kinds are {kinds}) or no such line; never the tier or the reviewers, which "
     "the tier script prints; under 900 characters), propose the rest to the operator (a new pack, a "
     "scope change, a release or tag, a revert that is not the red-main revert, and every open operator "
     "call, which you send as a request opening with OPERATOR CALL: so the board's asks line lists it "
@@ -760,7 +786,7 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
     if dispatcher is not None and dispatcher == seat:
         goal = f" and {GOAL_NOTES}'s notes" if (where / GOAL_NOTES).is_file() else ""
         red = (SELF_HOST_RED if self_host else ADOPTER_RED).format(base=base)
-        assign = SELF_HOST_ASSIGN if self_host else ADOPTER_ASSIGN
+        assign = SELF_HOST_ASSIGN.format(kinds=dispatch_kinds_phrase()) if self_host else ADOPTER_ASSIGN
         figures = SELF_HOST_FIGURES if self_host else ""
         text = DISPATCHER_BRIEF.format(seat=seat, protocol=protocol, goal=goal, assign=assign, red=red,
                                        figures=figures, every=TICK_MINUTES,
@@ -771,9 +797,11 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
             else "the proof the change earns per /implement-task step 7")
     phrase = f"the dispatcher {dispatcher}" if dispatcher else "the operator (espalier.toml names no dispatcher)"
     # The fork rule by tree (SELF_HOST_PROCEED / ADOPTER_PROCEED), rendered first
-    # so its own fields are filled before the tick takes it whole.
+    # so its own fields are filled before the tick takes it whole; the kinds
+    # render from DISPATCH_KINDS (the adopter form has no such field and
+    # ignores the keyword).
     proceed = (SELF_HOST_PROCEED if self_host else ADOPTER_PROCEED).format(
-        dispatcher=dispatcher or "the operator", wait=TICK_MINUTES)
+        dispatcher=dispatcher or "the operator", wait=TICK_MINUTES, kinds=dispatch_kinds_phrase())
     loop = WORKER_TICK.format(dispatcher=dispatcher or "the operator", tier=tier, proceed=proceed,
                               review=(SELF_HOST_REVIEW.format(base=base) if self_host and has_tier_script
                                       else ADOPTER_REVIEW))

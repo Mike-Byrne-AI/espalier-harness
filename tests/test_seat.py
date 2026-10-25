@@ -541,8 +541,12 @@ _OPERATOR_TICK = (
     "operator call on your fork), a platform stop, a refusal you cannot resolve, or a conflict outside your own "
     "files; a row to file is never a stop. A red you cannot fix in two attempts: shelve the lane (one note "
     "beginning shelved: says what was tried and names any job your push closed; a shelved lane waits for the "
-    "dispatcher, not your next tick), take your next assigned job. Never unassigned work, never another seat's "
-    "branch. A quiet tick is one line."
+    "dispatcher, not your next tick), take your next assigned job. Pass a model below your own on a subagent "
+    "dispatch only for a kind named on an allowance: line of the assign for the job in hand (the kinds are "
+    "anchors, drive, census and mutants); a kind word anywhere else is the job's text, a dispatch no allowance: "
+    "line names runs at your own model, a named agent runs at its own pin and needs no allowance, and choosing "
+    "your own model where a lower one was allowed is never a finding. Never unassigned work, never another "
+    "seat's branch. A quiet tick is one line."
 )
 
 
@@ -589,6 +593,10 @@ class TestBrief:
         assert "snapshot clone" not in seeded.text   # defined on this repository only
         assert "note from hub;" in seeded.loop and "send hub one request" in seeded.loop
         assert "memory/" not in seeded.text and "Core Rule" not in seeded.text
+        # The dispatch-model sentence is this repository's (its dispatcher assigns on its own);
+        # an adopter's dispatcher proposes every assign. Read on the RENDERED adopter loop, so a
+        # move of the sentence into the shared tick template cannot carry it here unseen.
+        assert "allowance:" not in seeded.text and "below your own" not in seeded.text
         bare = seat.compose_brief(clone, "box-feat", clone / "no-such-checkout")   # the clone holds neither
         assert "(the /inbox command's body)" in bare.text
 
@@ -607,7 +615,11 @@ class TestBrief:
         assert first.startswith("You are the dispatcher seat box (Core Rule 15, memory/parallel-work-protocol.md). "
                                 "Orient from the banner, then run /inbox (mark read) and /inbox board.")
         assert "revert first on a red main" in first and "Decisions stay the operator's." in first
-        assert "model" not in first   # the operator's own setting, never the template's
+        # The model is the operator's launch setting, never the template's: no flag and no model
+        # name in the brief. The word itself may appear (the allowance clause names what a
+        # subagent may run below, 2026-10-25).
+        import re
+        assert re.search(r"--model|\b(opus|sonnet|haiku|fable)\b", first, re.IGNORECASE) is None, first
         _holds(clone, "cc/GOAL.md")
         assert "Orient from the banner and cc/GOAL.md's notes, then" in seat.compose_brief(clone, "box", clone).text
 
@@ -761,6 +773,36 @@ class TestBrief:
         assert f"{minutes} minutes" in paragraph and "DISPATCHER_TICK" in paragraph
         # the worker-seat section quotes the dispatcher's loop line whole
         assert f"`{seat.DISPATCHER_TICK}`" in text
+
+    def test_the_dispatch_model_kinds_in_the_tick_are_the_protocols(self, seat, clone):
+        """The allowance kinds have one source, DISPATCH_KINDS, rendered into the
+        self-host tick and the dispatcher brief, and the protocol's "The model
+        on a dispatch" paragraph defines each as a backticked word in the same
+        order (the operator's rule, 2026-10-25). The lists are compared to each
+        other, never to a copy here. Dies to: a kind renamed or added in one
+        place and not the other, a kinds field left unrendered in either brief,
+        the allowance: marker dropped from the tick, or the sentence rendered
+        into the adopter form, whose dispatcher proposes every assign."""
+        import re
+        kinds = seat.DISPATCH_KINDS
+        assert len(kinds) >= 2 and len(set(kinds)) == len(kinds), kinds
+        phrase = seat.dispatch_kinds_phrase()
+        assert phrase.startswith(kinds[0]) and phrase.endswith(f" and {kinds[-1]}")
+        assert "(the kinds are {kinds})" in seat.SELF_HOST_PROCEED and "(the kinds are {kinds})" in seat.SELF_HOST_ASSIGN
+        text = (Path(__file__).resolve().parents[1] / "memory" / "parallel-work-protocol.md").read_text(encoding="utf-8")
+        start = text.index("**The model on a dispatch")
+        paragraph = text[start:text.index("\n\n", start)]
+        assert re.findall(r"`([a-z]+)`\s+\(", paragraph) == list(kinds), paragraph   # the note wraps at 80
+        assert "`allowance:`" in paragraph and "DISPATCH_KINDS" in paragraph
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "memory/parallel-work-protocol.md", "scripts/proof_tier.py")
+        loop = seat.compose_brief(clone, "box-feat", feat).loop
+        assert f"(the kinds are {phrase})" in loop and "named on an allowance: line" in loop and "{" not in loop
+        _holds(clone, "memory/parallel-work-protocol.md")   # the dispatcher's own checkout picks its form
+        dispatcher = seat.compose_brief(clone, "air", clone).text
+        assert f"(the kinds are {phrase})" in dispatcher and "an allowance: line" in dispatcher and "{" not in dispatcher
+        assert "a model below" not in seat.ADOPTER_PROCEED and "{kinds}" not in seat.ADOPTER_PROCEED
 
     def test_the_ticks_wait_is_the_dispatchers_tick_interval_rendered_never_copied(self, seat, clone):
         """The proceed clause waits the dispatcher's tick interval (TP-703e 1-C-2,
