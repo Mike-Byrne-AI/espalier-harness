@@ -61,14 +61,11 @@ from tests._live_tree import checkout_rglob
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VENDOR_CC = "espalier/_vendor/cc"
 WORKFLOW_ASSETS = "espalier/assets/github"
-#: The seeded roots: held to :data:`SEED_BASELINE`, not to zero (``DEC-30`` decides
-#: which seeds ship at all; until then the floor keeps the rest honest).
-SEED_ROOTS: tuple[str, ...] = (
-    "espalier/assets/docs",
-    "espalier/assets/memory",
-    "espalier/assets/seed",
-    "espalier/assets/task-packs",
-)
+#: The seeded roots are ``surface_hygiene.SEED_ROOTS``: held to :data:`SEED_BASELINE`,
+#: not to zero (``DEC-30`` decides which seeds ship at all; until then the floor keeps
+#: the rest honest). One home: ``scripts/sync_asset_docs.py`` reads the same roots and
+#: ceiling after every copy, so a fold is judged where it is written, and the landing
+#: check selects this module's gate class before the push.
 #: Each root exists and holds a floor of text files of its own (a missing root
 #: makes a walk silent; a global floor would let one root carry a dead one).
 FLOORS: dict[str, int] = {
@@ -76,14 +73,15 @@ FLOORS: dict[str, int] = {
     VENDOR_CC: 40,
     WORKFLOW_ASSETS: 0,  # one file today: the floor is "not empty"
     "espalier/assets/docs": 10,
+    "espalier/assets/memory": 0,  # one file today: the floor is "not empty"
     "espalier/assets/seed": 4,
+    "espalier/assets/task-packs": 0,  # one file today: the floor is "not empty"
 }
-TEXT_SUFFIXES = {".md", ".js", ".yml", ".yaml", ".json", ".toml", ".txt"}
+TEXT_SUFFIXES = surface_hygiene.SEED_TEXT_SUFFIXES
 #: The seeded docs' hit count on the date it was taken: a ceiling, not an exact
-#: pin. Two lanes that each remove a hit would both write the same lowered pair
-#: and red main on the merge, so a cleanup leaves headroom rather than a chore;
-#: lower the pair by hand when a cleanup lane wants the floor to follow it.
-SEED_BASELINE: tuple[str, int] = ("2026-10-12", 266)
+#: pin (why it is a ceiling, and how it is lowered, beside the value in
+#: ``espalier.surface_hygiene``).
+SEED_BASELINE: tuple[str, int] = surface_hygiene.SEED_BASELINE
 #: A deployed file allowed to keep maintainer-addressed text: the number of hits
 #: it holds today and a one-sentence judgment of why the text stays. The count
 #: is exact, so a new hit in the file reds and a removed one asks for the count
@@ -220,13 +218,12 @@ def _workflow_hits() -> dict[str, list[str]]:
 
 
 def _seed_hits_by_file() -> dict[str, int]:
-    out: dict[str, int] = {}
-    for root in SEED_ROOTS:
-        for path in _text_files(root):
-            n = len(_hits(path.read_text(encoding="utf-8", errors="replace")))
-            if n:
-                out[_rel(path)] = n
-    return out
+    """The sync script's read, over git's view of the checkout."""
+    by_file = surface_hygiene.seeded_marker_hits(
+        REPO_ROOT, deployed_prefixes=_deployed_prefixes(),
+        walk=lambda base: checkout_rglob(base, "*"),
+    )
+    return {rel: len(hits) for rel, hits in by_file.items()}
 
 
 def _report(found: dict[str, list[str]]) -> str:
@@ -508,6 +505,12 @@ class TestThePopulation:
             assert directory.is_dir(), root
             files = list(checkout_rglob(directory, "*.py")) if root == VENDOR_CC else _text_files(root)
             assert len(files) > floor, (root, len(files), floor)
+
+    def test_every_seeded_root_holds_a_floor(self):
+        """A root added to ``surface_hygiene.SEED_ROOTS`` is walked by the ceiling
+        and by the sync; this names the floor it must hold here too."""
+        missing = set(surface_hygiene.SEED_ROOTS) - set(FLOORS)
+        assert not missing, missing
 
     def test_the_claude_population_is_the_deploy_set(self):
         rels = [rel for rel, _ in _packaged_md_assets(REPO_ROOT)]

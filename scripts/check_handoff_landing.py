@@ -98,9 +98,17 @@ SELECTION: dict[str, str] = {
         "docs/ vs its shipped mirror",
     "tests/test_check_memory_md_tag_parity.py":
         "every released tag is narrated somewhere tracked",
+    # A node id: the class is the audience gate for every deployed text -- the
+    # seeded docs' ceiling and the .claude bodies' zero. Step 1b's fold writes
+    # both (docs/FAILURE_MODES.md, a promoted skill body) after the lane's tier
+    # has run, and the asset sync's own read is a step a hand-run handoff can
+    # skip; about one second.
+    "tests/test_deployed_text_audience.py::TestDeployedTextIsAddressedToTheAdopter":
+        "maintainer-addressed text in a deployed body -- the 2026-10-25 red, "
+        "six hits past the seeded ceiling, through the sync and this check",
 
     # ---- REGISTRATION obligations -------------------------------------------
-    # The ten members above are CONTENT-DRIFT gates, and that is not a
+    # The eleven members above are CONTENT-DRIFT gates, and that is not a
     # coincidence: this selection was originally derived from the artifacts
     # /handoff writes last, so it could see only the class it was derived from.
     # Measured 2026-09-01: of the nine gates that caught something real in the
