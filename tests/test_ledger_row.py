@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -83,6 +84,18 @@ def _build_tree(tmp_path: Path) -> dict:
 def _args(tree, *rest):
     return ["--ledger", str(tree["ledger"]), "--probes", str(tree["probes"]),
             "--date", "2026-09-06", *rest]
+
+
+def _closed(tree, *ids: str) -> None:
+    """The lane fixed what ``ids`` name: each row's probe no longer prints its
+    open value, which the strike's head drive requires since 2026-10-25 (a
+    probe still printing it is the refusal ``TestAStrikeReadsTheBaseAndTheHead``
+    pins). A fixture probe is an ``echo``, so its command is the one lever."""
+    data = json.loads(tree["probes"].read_text(encoding="utf-8"))
+    for probe in data["probes"]:
+        if probe.get("id") in ids:
+            probe["cmd"] = "echo closed"
+    tree["probes"].write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
 
 
 def _derived(lr, text: str) -> tuple[int, int, list]:
@@ -566,6 +579,8 @@ class TestProbesCountDerived:
     def _verb(tree, verb: str) -> list[str]:
         root = tree["ledger"].parents[1]
         (root / "site").write_text("", encoding="utf-8")  # the fixture probes' subject
+        if verb == "strike":
+            _closed(tree, "DEF-1")
         return {
             "strike": ["strike", "DEF-1", "--text-file", str(tree["closing"])],
             "file": ["file", "DEF-3", "--section", "C1", "--after", "DEF-2", "--anchor", "a",
@@ -826,6 +841,7 @@ class TestFileIntoAnEmptySection:
         ledger.write_text(_SKELETON, encoding="utf-8")
         (tmp_path / "body.md").write_text("**First.** Who: the maintainer.", encoding="utf-8")
         (tmp_path / "close.md").write_text("fixed", encoding="utf-8")
+        (tmp_path / "state.txt").write_text("open", encoding="utf-8")
         base = ["--root", str(tmp_path), "--ledger", str(ledger), "--probes", str(probes),
                 "--date", "2026-09-30"]
         gen = lr._load("generate_ledger_regions")
@@ -837,11 +853,13 @@ class TestFileIntoAnEmptySection:
         assert gen.main(["--check"]) == 0
         assert lr.main([*base, "file", "ONB-1", "--section", "C1", "--anchor", "cc/GOAL.md",
                         "--text-file", str(tmp_path / "body.md"), "--severity", "minor",
-                        "--subject", "body.md", "--probe-cmd", "python -c \"print('open')\"",
+                        "--subject", "body.md", "--probe-cmd", "python -c \"print(open('state.txt').read().strip())\"",
                         "--open-value", "open"]) == 0
         assert gen.main(["--check"]) == 0
         assert _derived(lr, ledger.read_text(encoding="utf-8")) == (1, 1, [])
         assert [p["id"] for p in json.loads(probes.read_text(encoding="utf-8"))["probes"]] == ["ONB-1"]
+        # the lane fixed it: the probe stops printing its open value, which the strike's head drive reads
+        (tmp_path / "state.txt").write_text("closed", encoding="utf-8")
         assert lr.main([*base, "strike", "ONB-1", "--text-file", str(tmp_path / "close.md")]) == 0
         assert gen.main(["--check"]) == 0
         text = ledger.read_text(encoding="utf-8")
@@ -1004,6 +1022,7 @@ class TestATwoIdRow:
         self, lr, tree, capsys, rid
     ):
         self._two_id_tree(tree)
+        _closed(tree, "DEF-1", "LG-9")
         assert lr.main(_args(tree, "strike", rid, "--text-file", str(tree["closing"]))) == 0
         text = tree["ledger"].read_text(encoding="utf-8")
         assert ("| ~~`DEF-1`~~ ~~`LG-9`~~ | site | ✅ **CLOSED 2026-09-06 — landed in abc123 after "
@@ -1089,6 +1108,7 @@ class TestATwoIdRow:
         already-struck index row); a repin's sibling note used to be glued to
         the closing brace of a 700-character JSON dump."""
         root = self._two_id_tree(tree)
+        _closed(tree, "DEF-1", "LG-9")
         # one index row already struck by hand: the note says so, per id
         text = tree["ledger"].read_text(encoding="utf-8")
         tree["ledger"].write_text(text.replace("| `LG-9` | §C1 | site |", "| ~~`LG-9`~~ | §C1 | site |"),
@@ -1670,6 +1690,7 @@ class TestTheVerbsReadTheClaims:
         assert self._file(lr, tree) == 0
         assert "claims" not in capsys.readouterr().err
         monkeypatch.setattr(lr, "_mail_module", lambda: None)
+        _closed(tree, "DEF-3")
         rc = lr.main(_args(tree, "strike", "DEF-3", "--text-file", str(tree["closing"])))
         assert rc == 0 and "claims" not in capsys.readouterr().err
 
@@ -2129,3 +2150,364 @@ class TestTheSelfHostBlockTable:
             pytest.skip("this tree's espalier.toml carries no [id_blocks] table")
         for seat in ("win", "win-2", "air", lr.UNNAMED_SEAT):
             assert set(blocks.get(seat, {})) == set(lr.ID_KINDS), seat
+
+
+# --- a strike reads the base and the head -------------------------------------
+
+#: The fixture's engine check, the shape of ``tests/_engine_check.py``: a child
+#: asked from a neutral directory must resolve ``espalier`` to this tree's own
+#: package, else the session exits 4 before any test runs. Both trees carry an
+#: ``espalier/__init__.py``, so a guard run that does not put the tree first on
+#: the child's path resolves the installed engine instead and exits 4 -- on
+#: every host of this suite, where ``espalier`` is importable.
+_FIXTURE_CONFTEST = '''\
+import pathlib
+import subprocess
+import sys
+import tempfile
+
+import pytest
+
+
+def pytest_sessionstart(session):
+    own = pathlib.Path(__file__).resolve().parent.parent / "espalier" / "__init__.py"
+    probe = "import importlib.util as u; s = u.find_spec('espalier'); print(s.origin if s and s.origin else '')"
+    with tempfile.TemporaryDirectory() as neutral:
+        out = subprocess.run([sys.executable, "-c", probe], cwd=neutral, capture_output=True, text=True).stdout.strip()
+    if out and pathlib.Path(out).resolve() != own:
+        pytest.exit("foreign engine: " + out, returncode=4)
+'''
+
+#: The lane's guards, in the head commit only: one earns its red at the base
+#: (an assertion), one is green on both trees, one fails at the base by an
+#: ImportError (the symbol is new), one by a KeyError (it never reaches its
+#: assertion there).
+_FIXTURE_GUARDS = '''\
+import pkg.mod as m
+
+
+def test_answer():
+    assert m.answer() == 2
+
+
+def test_green_everywhere():
+    assert m.answer() in (1, 2)
+
+
+def test_new_symbol():
+    from pkg.mod import answer2
+    assert answer2() == 2
+
+
+def test_table_key():
+    assert m.TABLE["new"] == 2
+'''
+
+_PROBE_CMD = "python -c \"import pkg.mod as m; print(m.answer())\""
+_WALKING_PROBE_CMD = "python -c \"import pathlib; print(len(list(pathlib.Path('.').rglob('mod.py'))))\""
+
+
+def _mod_source(fixed: bool) -> str:
+    if fixed:
+        return "TABLE = {'new': 2}\n\n\ndef answer():\n    return 2\n\n\ndef answer2():\n    return 2\n"
+    return "TABLE = {}\n\n\ndef answer():\n    return 1\n"
+
+
+def _two_commit_repo(tmp_path: Path, *, base_fixed: bool = False, head_fixed: bool = True,
+                     tip_fixed_after_branch: bool = False, probe_cmd: str = _PROBE_CMD,
+                     open_value: str = "1", planted_duplicate: bool = False,
+                     ledger_text: str | None = None, def2: dict | None = None) -> dict:
+    """A scratch repository with two commits -- the base (``pkg/mod.py``
+    unfixed, ``answer()`` printing 1) and the head (fixed, printing 2, with the
+    guards) -- and ``origin/main`` plus ``origin/HEAD`` pointing at the base.
+    ``tip_fixed_after_branch`` adds a third commit, the base branch gaining the
+    fix after the lane branched, and points ``origin/main`` at it; the lane's
+    merge-base is still the base. ``planted_duplicate`` leaves an ignored
+    ``build/`` holding a copy of ``pkg/mod.py`` in the head checkout."""
+    from tests._git_oracle import _git_env
+    from tests._quiet_git import NO_BACKGROUND_GIT
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True)
+    env = _git_env()
+
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=repo, env=env, check=True, capture_output=True,
+                              text=True, encoding="utf-8").stdout.strip()
+
+    def write(rel: str, text: str) -> None:
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    git("init", "-q")
+    git("symbolic-ref", "HEAD", "refs/heads/main")
+    for key, value in (*NO_BACKGROUND_GIT, ("user.email", "t@example.com"), ("user.name", "t"),
+                       ("commit.gpgsign", "false")):
+        git("config", key, value)
+    write("pkg/__init__.py", "")
+    write("pkg/mod.py", _mod_source(base_fixed))
+    write("espalier/__init__.py", "")
+    write("tests/conftest.py", _FIXTURE_CONFTEST)
+    write("pyproject.toml", "[tool.pytest.ini_options]\n")
+    write(".gitignore", "build/\n__pycache__/\n")
+    write("task-packs/FORWARD_LEDGER.md", ledger_text or _ledger())
+    write("task-packs/LEDGER_PROBES.json", json.dumps({"probes": [
+        {"id": "DEF-1", "subject": "pkg/mod.py", "cmd": probe_cmd, "open_value": open_value,
+         "why_not": None, "row_sha": "x"},
+        def2 or {"id": "DEF-2", "subject": "site", "cmd": "echo b", "open_value": "b", "why_not": None,
+                 "row_sha": "y"},
+    ]}, indent=1) + "\n")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    base = git("rev-parse", "HEAD")
+    write("pkg/mod.py", _mod_source(head_fixed))
+    write("tests/test_guard.py", _FIXTURE_GUARDS)
+    git("add", "-A")
+    git("commit", "-q", "-m", "head")
+    head = git("rev-parse", "HEAD")
+    tip = base
+    if tip_fixed_after_branch:
+        git("checkout", "-q", "--detach", base)
+        write("pkg/mod.py", _mod_source(True))
+        git("add", "-A")
+        git("commit", "-q", "-m", "the base gains the fix after the lane branched")
+        tip = git("rev-parse", "HEAD")
+        git("checkout", "-q", "main")
+    git("update-ref", "refs/remotes/origin/main", tip)
+    git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    if planted_duplicate:
+        write("build/pkg/mod.py", _mod_source(head_fixed))
+    closing = tmp_path / "closing.md"
+    closing.write_text("landed with the probe read on both sides", encoding="utf-8")
+    return {"repo": repo, "base": base, "head": head, "tip": tip, "closing": closing,
+            "ledger": repo / "task-packs" / "FORWARD_LEDGER.md",
+            "probes": repo / "task-packs" / "LEDGER_PROBES.json"}
+
+
+def _repo_args(r: dict, *rest: str) -> list[str]:
+    return ["--root", str(r["repo"]), "--date", "2026-10-25", *rest]
+
+
+def _files(r: dict) -> tuple[str, str]:
+    return r["ledger"].read_text(encoding="utf-8"), r["probes"].read_text(encoding="utf-8")
+
+
+class TestAStrikeReadsTheBaseAndTheHead:
+    """The strike drives the row's probe at the merge-base and at the head
+    before it writes, and runs each ``--guard`` on both sides: red at the base
+    with the head's ``tests/`` laid over it, green at the head. Each test names
+    the mutation it dies to (tests/CLAUDE.md rule 1); a refusal writes neither
+    file. The replays behind the shape (2026-10-25, five struck rows): every
+    pre-strike probe read open at the base, and two of the five still read
+    open at the lane head, which only the head drive refuses."""
+
+    def test_a_true_strike_reads_open_at_the_base_and_closed_at_the_head(self, lr, tmp_path, capsys):
+        """Mutation: a strike that drives nothing prints no reading."""
+        r = _two_commit_repo(tmp_path)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 0
+        err = capsys.readouterr().err
+        assert f"STILL_OPEN at the base {r['base'][:12]}" in err and "STRIKE_CANDIDATE at the head" in err
+        assert "| ~~`DEF-1`~~ |" in r["ledger"].read_text(encoding="utf-8")
+
+    def test_a_probe_already_closed_at_the_base_refuses_naming_the_base(self, lr, tmp_path, capsys):
+        """Mutation: the base drive removed, so a row whose probe never read
+        open where the row said the defect was is struck on the head alone."""
+        r = _two_commit_repo(tmp_path, base_fixed=True)
+        before = _files(r)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        err = capsys.readouterr().err
+        assert f"did not read its open value at the base {r['base'][:12]}" in err and "--no-base" in err
+        assert _files(r) == before and not list(r["probes"].parent.glob("*.pending"))
+
+    def test_a_probe_still_open_at_the_head_refuses(self, lr, tmp_path, capsys):
+        """Mutation: the head drive removed, so a row whose probe still prints
+        its open value on the lane is struck (two of five replayed strikes)."""
+        r = _two_commit_repo(tmp_path, head_fixed=False)
+        before = _files(r)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        assert "reads its open value '1' at the head too" in capsys.readouterr().err
+        assert _files(r) == before
+
+    def test_the_base_is_the_merge_base_not_the_tip(self, lr, tmp_path, capsys):
+        """Mutation: the base taken as origin/main's tip, so a fix another lane
+        merged after this one branched refuses a true strike."""
+        r = _two_commit_repo(tmp_path, tip_fixed_after_branch=True)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 0
+        err = capsys.readouterr().err
+        assert f"STILL_OPEN at the base {r['base'][:12]}" in err and r["tip"][:12] not in err
+
+    def test_an_explicit_base_is_resolved_as_given(self, lr, tmp_path, capsys):
+        """Mutation: ``--base`` ignored in favour of the default."""
+        r = _two_commit_repo(tmp_path, tip_fixed_after_branch=True)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--base", r["tip"])) == 2
+        assert f"did not read its open value at the base {r['tip'][:12]}" in capsys.readouterr().err
+
+    def test_an_undrivable_probe_is_one_line_by_default_and_a_refusal_under_an_explicit_base(
+            self, lr, tmp_path, capsys):
+        """The verdict decides, never a word match: DEF-2's subject is on
+        neither tree, so the runner reads UNRESOLVED on both. Mutation: the
+        undrivable read dropped (a refusal with no flag, or a strike with one)."""
+        r = _two_commit_repo(tmp_path)
+        assert lr.main(_repo_args(r, "strike", "DEF-2", "--text-file", str(r["closing"]))) == 0
+        err = capsys.readouterr().err
+        assert f"could not be driven at the base {r['base'][:12]}" in err and "subject missing: site" in err
+        assert "could not be driven at the head" in err
+        r = _two_commit_repo(tmp_path / "second")
+        assert lr.main(_repo_args(r, "strike", "DEF-2", "--text-file", str(r["closing"]),
+                                  "--base", "origin/main")) == 2
+        assert "and --base asks for the drive" in capsys.readouterr().err
+
+    def test_a_row_with_no_probe_command_is_said_and_refused_only_under_an_explicit_base(
+            self, lr, tmp_path, capsys):
+        """A ``why_not`` row goes through the runner like any other and reads
+        NO_ORACLE on both sides. Mutation: a row with no command skipped
+        silently, or refused with no flag."""
+        def2 = {"id": "DEF-2", "subject": "site", "cmd": None, "open_value": None,
+                "why_not": "an intermittent red has no steady open value", "row_sha": "y"}
+        r = _two_commit_repo(tmp_path, def2=def2)
+        assert lr.main(_repo_args(r, "strike", "DEF-2", "--text-file", str(r["closing"]))) == 0
+        assert "no probe command (an intermittent red" in capsys.readouterr().err
+        r = _two_commit_repo(tmp_path / "second", def2=def2)
+        assert lr.main(_repo_args(r, "strike", "DEF-2", "--text-file", str(r["closing"]),
+                                  "--base", "origin/main")) == 2
+        assert "and --base asks for the drive" in capsys.readouterr().err
+
+    def test_no_base_skips_the_base_drive_and_says_so(self, lr, tmp_path, capsys):
+        """Mutation: ``--no-base`` skipping the drive silently."""
+        r = _two_commit_repo(tmp_path, base_fixed=True)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]), "--no-base")) == 0
+        err = capsys.readouterr().err
+        assert "the base was not read (--no-base)" in err and "STILL_OPEN at the base" not in err
+
+    def test_a_tree_with_no_remote_proceeds_with_one_printed_line(self, lr, tree, capsys):
+        """The default on a plain directory, an adopter's clone with no remote
+        among them: the base is said to be unread, the head is still driven,
+        and the strike proceeds. Mutation: the default-on base drive refusing
+        where no base resolves."""
+        assert lr.main(_args(tree, "strike", "DEF-1", "--text-file", str(tree["closing"]))) == 0
+        err = capsys.readouterr().err
+        assert "the base was not read (no origin/HEAD, origin/main or origin/master" in err
+        assert "could not be driven at the head" in err
+
+    def test_the_head_verdict_is_the_heads_not_the_base_memo(self, lr, tmp_path, capsys):
+        """The base tree is pristine (checked out from a ref: no generated
+        duplicate), the head is this checkout, where an ignored ``build/``
+        holds a copy of the probe's subject, so a tree-walking probe reads
+        UNRESOLVED there. Mutation: the runner rooted by a bare ``_ROOT``
+        assignment, so the base's empty memo leaks into the head drive and
+        the walk answers over the duplicate."""
+        r = _two_commit_repo(tmp_path, probe_cmd=_WALKING_PROBE_CMD, planted_duplicate=True)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 0
+        err = capsys.readouterr().err
+        assert f"STILL_OPEN at the base {r['base'][:12]}" not in err  # no pair line: the head was unread
+        assert "could not be driven at the head" in err and "cannot be trusted while build/" in err
+
+    def test_every_id_of_a_multi_id_cell_is_driven(self, lr, tmp_path, capsys):
+        """Mutation: the drive covers the id typed, not the co-ids the cell
+        closes with it (``DEF-863``'s both-or-neither rule)."""
+        ledger = _ledger(c1_rows=("| `DEF-1` `DEF-2` | site | what | major |",),
+                         appendix=("| `DEF-1` | §C1 | site |", "| `DEF-2` | §C1 | site |"))
+        def2 = {"id": "DEF-2", "subject": "pkg/mod.py", "cmd": "python -c \"print('x')\"", "open_value": "x",
+                "why_not": None, "row_sha": "y"}
+        r = _two_commit_repo(tmp_path, ledger_text=ledger, def2=def2)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        assert "the probe of DEF-2 reads its open value 'x' at the head too" in capsys.readouterr().err
+
+    def test_a_guard_red_at_the_base_and_green_at_the_head_strikes(self, lr, tmp_path, capsys):
+        """Mutations: the guard run at the head only; the head's ``tests/``
+        not laid over the base (the guard is absent there, exit 4 or 5);
+        PYTHONPATH not set on either run (the fixture's engine check exits 4
+        wherever ``espalier`` is importable from elsewhere, as on every host of
+        this suite)."""
+        r = _two_commit_repo(tmp_path)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--guard", "tests/test_guard.py::test_answer")) == 0
+        err = capsys.readouterr().err
+        assert (f"the guard tests/test_guard.py::test_answer is red at the base {r['base'][:12]} "
+                "(AssertionError) and green at the head") in err
+
+    def test_a_guard_green_on_both_sides_refuses_as_indistinguishable(self, lr, tmp_path, capsys):
+        """A fix that lives under ``tests/`` rides the overlay to the base, and
+        so does a guard that does not read the defect; neither earns a red.
+        Mutation: the base run dropped, so green at the head is enough."""
+        r = _two_commit_repo(tmp_path)
+        before = _files(r)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--guard", "tests/test_guard.py::test_green_everywhere")) == 2
+        err = capsys.readouterr().err
+        assert f"is green at the base {r['base'][:12]} too" in err and "cannot tell the two trees apart" in err
+        assert _files(r) == before
+
+    def test_a_guard_red_at_the_head_refuses(self, lr, tmp_path, capsys):
+        """Mutation: the head run's verdict unread."""
+        r = _two_commit_repo(tmp_path, head_fixed=False)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]), "--no-base",
+                                  "--guard", "tests/test_guard.py::test_answer")) == 2
+        err = capsys.readouterr().err
+        assert "--guard needs the base tree" in err or "is red at the head" in err
+
+    def test_a_guard_whose_base_failure_is_an_import_error_refuses(self, lr, tmp_path, capsys):
+        """Mutation: the exception read dropped, so a guard that fails at the
+        base because the lane's symbol does not exist there counts as red."""
+        r = _two_commit_repo(tmp_path)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--guard", "tests/test_guard.py::test_new_symbol")) == 2
+        err = capsys.readouterr().err
+        assert "ImportError" in err and "proves only that the lane's symbol is new" in err
+
+    def test_a_guard_that_does_not_reach_its_assertion_at_the_base_refuses(self, lr, tmp_path, capsys):
+        """pytest's report carries no exception type (measured: a ``<failure
+        message="assert 1 == 2">`` with no ``type``), so the strike's own plugin
+        records it; an earned red fails by AssertionError or pytest.fail, and a
+        KeyError at the base is a test that never reached its assertion. Mutation:
+        any exit 1 at the base read as the red."""
+        r = _two_commit_repo(tmp_path)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--guard", "tests/test_guard.py::test_table_key")) == 2
+        err = capsys.readouterr().err
+        assert "KeyError" in err and "did not reach its assertion at the base" in err
+
+    def test_a_guard_that_does_not_collect_refuses_naming_the_exit(self, lr, tmp_path, capsys):
+        """Mutation: a usage error (exit 4) or nothing collected (exit 5) read
+        as a verdict."""
+        r = _two_commit_repo(tmp_path)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--guard", "tests/test_guard.py::test_nope")) == 2
+        assert "does not run at the head (pytest exit 4" in capsys.readouterr().err
+
+    def test_a_guard_with_no_readable_base_refuses(self, lr, tmp_path, capsys):
+        """Mutation: a guard run at the head alone when the base is unread."""
+        r = _two_commit_repo(tmp_path)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]), "--no-base",
+                                  "--guard", "tests/test_guard.py::test_answer")) == 2
+        assert "--guard needs the base tree" in capsys.readouterr().err
+
+    def test_a_guard_that_outruns_its_bound_refuses(self, lr, tmp_path, monkeypatch, capsys):
+        """Mutation: a timeout read as green or as red."""
+        r = _two_commit_repo(tmp_path)
+        monkeypatch.setattr(lr, "_GUARD_TIMEOUT", 0.01)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--guard", "tests/test_guard.py::test_answer")) == 2
+        assert "did not finish within 0.01 s" in capsys.readouterr().err
+
+    def test_the_guard_child_runs_with_the_tree_first_and_the_box_lock_stripped(self, lr, tmp_path, monkeypatch):
+        """The child's environment: the tree first on PYTHONPATH (the engine
+        check resolves ``espalier`` there), the plugin's directory next, the
+        parent's path after; no bytecode written into either tree; the box
+        lock's two variables and the session marker gone. Mutation: a
+        variable left in, or the tree not first."""
+        for key, value in (("ESPALIER_BOX_LOCK", "/l"), ("ESPALIER_BOX_LOCK_HOLDER", "p"), ("CLAUDECODE", "1"),
+                           ("PYTHONPATH", "/elsewhere")):
+            monkeypatch.setenv(key, value)
+        env = lr._guard_env(tmp_path / "tree", tmp_path / "plugin", tmp_path / "report.json")
+        assert env["PYTHONPATH"] == os.pathsep.join([str(tmp_path / "tree"), str(tmp_path / "plugin"), "/elsewhere"])
+        assert not any(k.startswith("ESPALIER_BOX_LOCK") for k in env) and "CLAUDECODE" not in env
+        assert env["PYTHONDONTWRITEBYTECODE"] == "1" and env["ESPALIER_GUARD_REPORT"] == str(tmp_path / "report.json")
+
+    def test_a_dry_run_drives_both_sides_and_shows_the_refusal(self, lr, tmp_path, capsys):
+        """The dry run must show the refusal rather than a row it would never
+        write (the deferrals' rule). Mutation: the drive skipped under --dry-run."""
+        r = _two_commit_repo(tmp_path, head_fixed=False)
+        assert lr.main(_repo_args(r, "--dry-run", "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        assert "reads its open value '1' at the head too" in capsys.readouterr().err

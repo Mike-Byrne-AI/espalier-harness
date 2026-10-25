@@ -18,9 +18,18 @@ own, and refuses to write anything unless the finished ledger converges.
 Usage::
 
     # close a row: the closing text (between "CLOSED <date> — " and
-    # "PRIOR TEXT:") comes from a file, so it can be long
+    # "PRIOR TEXT:") comes from a file, so it can be long. The row's probe is
+    # driven first, at the base (the merge-base with origin/<default branch>,
+    # checked out through a temp index: it must still print its open value
+    # there) and at the head (it must not); --guard runs a pytest node on both
+    # trees, red at the base with this checkout's tests/ laid over it and green
+    # here. A side the runner cannot drive is one printed line, and a refusal
+    # under an explicit --base; --no-base skips the base and says so. Necessary,
+    # not sufficient: a probe reading an adjacent question passes both sides.
     python3 tools/cc/ledger_row.py strike DEF-695 --text-file /tmp/695.md
     python3 tools/cc/ledger_row.py strike DEF-695 --text-file /tmp/695.md --anchor "new::anchor"
+    python3 tools/cc/ledger_row.py strike DEF-695 --text-file /tmp/695.md --base origin/main \\
+        --guard tests/test_hooks.py::TestX::test_y
 
     # file a row after an existing one in the same section, its id left out so
     # it is minted from this seat's block; the probe is run first and must
@@ -59,7 +68,10 @@ import importlib.util
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from collections import Counter
 from datetime import date
 from pathlib import Path
@@ -1285,8 +1297,359 @@ def _retire_probe_files(probes: Path, ids: list[str], pending: _Pending) -> int:
     return n
 
 
+#: The bound on one guard run under ``strike --guard``: a pytest session with
+#: its start-up, where the probe runner's 30 s is for one-line commands. One
+#: node with this suite's conftest took 0.3 s wall clock on an 8 GB laptop
+#: (2026-10-25); the bound is for a test that hangs on the base tree, never a
+#: budget, and a run that crosses it is a refusal, not a verdict.
+_GUARD_TIMEOUT = 300.0
+
+#: What an earned red fails by at the base: the guard's own assertion, or
+#: ``pytest.fail``. Any other exception there says the test never reached its
+#: assertion on the unfixed code -- an ``ImportError`` or ``AttributeError``
+#: proves only that the lane's symbol is new, and a helper raising because the
+#: scratch tree is not a repository proves nothing about the defect.
+_EARNED_RED = frozenset({"AssertionError", "Failed"})
+_SYMBOL_IS_NEW = frozenset({"ImportError", "ModuleNotFoundError", "AttributeError", "NameError"})
+
+#: pytest's junit report carries no exception type (measured on pytest 9: a
+#: ``<failure message="assert 1 == 2">`` with no ``type`` attribute, and an
+#: assertion's message is the rewritten expression, not the class), so the
+#: guard child loads this one-file plugin from the scratch directory, and it
+#: records each test's outcome and ``call.excinfo.type`` where the strike reads
+#: them (``ESPALIER_GUARD_REPORT``). The standard library and pytest's hook
+#: names only; it never imports pytest itself.
+_GUARD_PLUGIN_NAME = "espalier_guard_report"
+_GUARD_PLUGIN = '''\
+"""Each test's outcome and the exception it failed by, for the ledger strike's
+guard read (pytest's junit report carries no exception type)."""
+import json
+import os
+
+_EXC = {}
+_TESTS = {}
+_COLLECTION = []
+
+
+def pytest_runtest_makereport(item, call):
+    if call.excinfo is not None:
+        _EXC[(item.nodeid, call.when)] = (call.excinfo.type.__name__, str(call.excinfo.value)[:200])
+
+
+def pytest_runtest_logreport(report):
+    rec = _TESTS.setdefault(report.nodeid, {"outcome": "passed", "when": "call", "exc": None, "message": ""})
+    if report.failed or (report.skipped and rec["outcome"] == "passed"):
+        exc, message = _EXC.get((report.nodeid, report.when), (None, ""))
+        rec.update(outcome=report.outcome, when=report.when, exc=exc, message=message)
+
+
+def pytest_collectreport(report):
+    if report.failed:
+        _COLLECTION.append({"nodeid": report.nodeid, "message": str(report.longrepr)[-200:]})
+
+
+def pytest_sessionfinish(session, exitstatus):
+    path = os.environ.get("ESPALIER_GUARD_REPORT")
+    if path:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"exitstatus": int(exitstatus), "tests": _TESTS, "collection_errors": _COLLECTION}, handle)
+'''
+
+#: git's repo-selecting overrides, stripped from every git the strike runs: an
+#: exported ``GIT_DIR`` (a hook, ``rebase --exec``) outranks the working
+#: directory, and the temp index below is set per call, never inherited.
+_GIT_OVERRIDES = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR")
+
+#: pytest's exits that are no verdict, each with what it means for the guard.
+_PYTEST_EXITS = {2: "interrupted: a collection error", 3: "an internal error",
+                 4: "a usage error, or the engine check: the interpreter imports another tree's espalier",
+                 5: "no test collected"}
+
+
+class BaseUnavailable(Exception):
+    """The base tree could not be built: the reason, for the refusal."""
+
+
+def _git_read(root: Path, *args: str) -> str | None:
+    """stdout of a read-only git command run in ``root``, stripped; None when
+    git is absent, ``root`` is not a repository, or the command failed."""
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_OVERRIDES}
+    try:
+        proc = _CHK.run_bounded(["git", *args], cwd=root, env=env, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=_CHK._TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def _default_base(root: Path) -> str | None:
+    """The clone's default base branch, read offline: ``origin/HEAD`` when it
+    names a remote-tracking ref that exists, else ``main``, else ``master``,
+    None where none is there (``checkout_sync.default_branch``'s rule; never
+    ``gh``, which the ship driver asks: a strike runs on an adopter's clone,
+    offline)."""
+    head = _git_read(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if head and head.startswith("origin/") and _git_read(
+            root, "show-ref", "--verify", "--quiet", f"refs/remotes/{head}") is not None:
+        return head[len("origin/"):]
+    for name in ("main", "master"):
+        if _git_read(root, "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{name}") is not None:
+            return name
+    return None
+
+
+def _base_commit(root: Path, base: str | None) -> tuple[str | None, str]:
+    """``(sha, said)``: the commit the base drive reads and how it was chosen,
+    or None and why not. An explicit ``base`` resolves as given (a sha, a
+    branch, ``origin/main``); the default is the merge-base of HEAD and
+    ``origin/<default branch>``, the commit the lane branched from, so a fix
+    another lane merged after that does not make a true strike refuse."""
+    if base is not None:
+        sha = _git_read(root, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}")
+        return (sha, f"--base {base}") if sha else (None, f"this clone does not hold {base}")
+    name = _default_base(root)
+    if name is None:
+        return None, "no origin/HEAD, origin/main or origin/master in this clone (not a repository, or no remote)"
+    sha = _git_read(root, "merge-base", "HEAD", f"origin/{name}")
+    if not sha:
+        return None, f"git merge-base HEAD origin/{name} named no commit"
+    return sha, f"the merge-base of HEAD and origin/{name}"
+
+
+def _base_tree(root: Path, sha: str, scratch: Path) -> Path:
+    """The whole tree at ``sha`` checked out under ``scratch/tree`` through a
+    temp index: ``GIT_INDEX_FILE`` pointed at a file in ``scratch``, ``git
+    read-tree``, then ``git checkout-index -a --prefix=``. The clone's own index
+    and worktrees are untouched, no shared worktree state is written (a ``git
+    worktree add`` would write ``.git/worktrees``, which two seats' worktrees of
+    one clone both read), and no ``export-ignore`` applies (``git archive``
+    would drop the files ``.gitattributes`` marks, which differ at the base for
+    a reason other than the fix). 2200 files took 0.4 s on an 8 GB laptop
+    (2026-10-25). Raises ``BaseUnavailable`` naming the step that failed."""
+    tree = scratch / "tree"
+    tree.mkdir()
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_OVERRIDES}
+    env["GIT_INDEX_FILE"] = str(scratch / "index")
+    for argv in (["read-tree", sha], ["checkout-index", "-a", f"--prefix={tree.as_posix()}/"]):
+        try:
+            # The probe runner's bound, not the guard's: a checkout that outruns
+            # it would outrun every probe driven on it (the pack's own exit).
+            proc = _CHK.run_bounded(["git", *argv], cwd=root, env=env, capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", timeout=_CHK._TIMEOUT)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise BaseUnavailable(f"git {argv[0]} of {sha[:12]} could not run ({exc})") from exc
+        if proc.returncode != 0:
+            raise BaseUnavailable(f"git {argv[0]} of {sha[:12]} exited {proc.returncode}: "
+                                  f"{proc.stderr.strip()[:160]}")
+    return tree
+
+
+def _probe_entry(rid: str, *, probes: Path, data: dict) -> dict | None:
+    """The row's probe entry: its file under ``task-packs/probes.d/`` by id,
+    else the roster's entry; None where the row has neither."""
+    path = _FRAG.probe_fragment_dir(probes) / f"{rid}.json"
+    if path.is_file():
+        loaded = json.loads(_FRAG.strict_text(path))
+        if isinstance(loaded, dict) and loaded.get("id") == rid:
+            return loaded
+    return next((p for p in data["probes"] if isinstance(p, dict) and p.get("id") == rid), None)
+
+
+def _guard_env(tree: Path, plugin_dir: Path, report: Path) -> dict[str, str]:
+    """The guard child's environment: the tree it runs on first on PYTHONPATH,
+    so ``espalier`` resolves to that tree's own package (``tests/_engine_check.py``
+    exits 4 otherwise, and on a seat with an editable install every base run
+    would), the plugin's directory next, the parent's path after; no bytecode
+    written into either tree; the box lock's variables gone (the parent holds
+    the box, and a child waiting on it would run out the bound); the session
+    marker gone, as the probe runner strips it."""
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith("ESPALIER_BOX_LOCK") and k != "CLAUDECODE"}
+    parts = [str(tree), str(plugin_dir)] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])
+    env["PYTHONPATH"] = os.pathsep.join(parts)
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["ESPALIER_GUARD_REPORT"] = str(report)
+    return env
+
+
+def _run_guard(node: str, *, cwd: Path, plugin_dir: Path, report: Path) -> tuple[int | None, dict]:
+    """One pytest run of ``node`` with ``cwd`` as the tree: ``(exit code, the
+    plugin's record)``, the code None when the run outran ``_GUARD_TIMEOUT``.
+    ``-p no:cacheprovider`` keeps ``.pytest_cache`` out of both trees."""
+    if report.exists():
+        report.unlink()
+    argv = [sys.executable, "-m", "pytest", node, "-q", "-p", "no:cacheprovider", "-p", _GUARD_PLUGIN_NAME]
+    try:
+        proc = _CHK.run_bounded(argv, cwd=cwd, env=_guard_env(cwd, plugin_dir, report), capture_output=True,
+                                text=True, encoding="utf-8", errors="replace", timeout=_GUARD_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, {}
+    except OSError as exc:
+        return 3, {"tail": f"pytest could not start: {exc}"}
+    record: dict = {}
+    if report.is_file():
+        try:
+            record = json.loads(report.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            record = {}
+    lines = [ln for ln in ((proc.stdout or "") + "\n" + (proc.stderr or "")).splitlines() if ln.strip()]
+    record["tail"] = lines[-1][:160] if lines else ""
+    return proc.returncode, record
+
+
+def _guard_reading(node: str, side: str, rc: int | None, record: dict) -> tuple[str, str]:
+    """``(reading, said)`` for one guard run: ``green``, ``red`` (an earned one:
+    the guard failed by its own assertion in its call), or ``refused`` with the
+    sentence. Every exit but 0 and 1 is a refusal, as is an exit 1 the plugin
+    saw no test fail for, a failure outside the test's call, a failure by an
+    exception that is not the assertion, and a run of skips."""
+    if rc is None:
+        return "refused", f"the guard {node} did not finish within {_GUARD_TIMEOUT:g} s at the {side}"
+    tests = record.get("tests") or {}
+    if rc in _PYTEST_EXITS:
+        return "refused", f"the guard {node} does not run at the {side} (pytest exit {rc}: {_PYTEST_EXITS[rc]})"
+    if rc == 0:
+        if not any(t.get("outcome") == "passed" for t in tests.values()):
+            skipped = next((t for t in tests.values() if t.get("outcome") == "skipped"), None)
+            why = f"skipped: {skipped.get('message', '')}" if skipped else "no test ran"
+            return "refused", f"the guard {node} did not run at the {side} ({why}): nothing read"
+        return "green", ""
+    failed = [t for t in tests.values() if t.get("outcome") == "failed"]
+    if rc != 1 or not failed:
+        return "refused", (f"the guard {node} exited {rc} at the {side} with no test failure on record "
+                           f"({record.get('tail') or 'no output'})")
+    for t in failed:
+        exc, msg, when = t.get("exc") or "?", (t.get("message") or "")[:80], t.get("when") or "call"
+        if when != "call":
+            return "refused", f"the guard {node} errored in its {when} at the {side} ({exc}: {msg})"
+        if exc in _SYMBOL_IS_NEW:
+            return "refused", (f"the guard {node} fails at the {side} with {exc} ({msg}): that proves only "
+                               "that the lane's symbol is new")
+        if exc not in _EARNED_RED:
+            return "refused", (f"the guard {node} did not reach its assertion at the {side} ({exc}: {msg}); "
+                               "an earned red fails by AssertionError or pytest.fail")
+    return "red", failed[0].get("exc") or "AssertionError"
+
+
+def _drive_both_sides(ids: list[str], *, root: Path, probes: Path, data: dict, base: str | None,
+                      no_base: bool, guards: tuple[str, ...]) -> list[str]:
+    """The refusal sentences from driving each id's probe at the base and at
+    the head and running each guard on both, else ``[]``; what was read is
+    printed as it goes. The required pair for a probe is STILL_OPEN at the
+    base (the defect was there) and STRIKE_CANDIDATE at the head (it is gone);
+    for a guard, red at the base with the head's ``tests/`` laid over it and
+    green at the head. A probe the runner reports undrivable on a side
+    (UNRESOLVED, NO_ORACLE) is one printed line and a refusal only under an
+    explicit ``--base``: the verdict decides, never a word match on the
+    command. The drive is necessary, not sufficient: a probe that reads an
+    adjacent question passes both sides, and whether a probe reads the harm
+    the row names stays the author's judgment. Driven on five replayed strikes
+    (2026-10-25): every pre-strike probe read open at the base, and two still
+    read open at the lane head."""
+    def say(line: str) -> None:
+        print(f"ledger_row: {line}", file=sys.stderr)
+
+    refusals: list[str] = []
+    explicit = base is not None
+    entries = {rid: _probe_entry(rid, probes=probes, data=data) for rid in ids}
+    sha, said = (None, "--no-base") if no_base else _base_commit(root, base)
+    if sha is None:
+        if explicit:
+            return [f"the base could not be read ({said})"]
+        if guards:
+            return [f"--guard needs the base tree, and the base was not read ({said})"]
+        say(f"note -- the base was not read ({said}); the probe's reading there is the closing text's to say")
+    drivable = any(e and e.get("cmd") for e in entries.values())
+    with tempfile.TemporaryDirectory(prefix="strike-base-", ignore_cleanup_errors=True) as scratch_dir:
+        scratch = Path(scratch_dir)
+        tree: Path | None = None
+        if sha is not None and (drivable or guards):
+            try:
+                tree = _base_tree(root, sha, scratch)
+            except BaseUnavailable as exc:
+                return [f"the base {sha[:12]} could not be checked out ({exc})"]
+        where = f"the base {sha[:12]}" if sha else "the base"
+        for rid, entry in entries.items():
+            if entry is None:
+                say(f"note -- {rid} carries no probe entry, so neither side was read")
+                continue
+            if not entry.get("cmd"):
+                why = entry.get("why_not") or "no local oracle"
+                if explicit:
+                    refusals.append(f"{rid} has no probe command ({why}), and --base asks for the drive")
+                else:
+                    say(f"note -- {rid} has no probe command ({why}), so neither side was read")
+                continue
+            probe = {"cmd": entry["cmd"], "open_value": entry.get("open_value"), "subject": entry.get("subject"),
+                     "why_not": None, "inputs": entry.get("inputs")}
+            at_base = None
+            if tree is not None:
+                with _CHK.rooted(tree, pristine=True):
+                    at_base = _CHK.run_probe(probe)
+            with _CHK.rooted(root):
+                at_head = _CHK.run_probe(probe)
+            if at_base is not None and at_base[0] == _CHK.STRIKE_CANDIDATE:
+                refusals.append(f"the probe of {rid} did not read its open value at {where} ({at_base[0]}: "
+                                f"{at_base[1]}): the defect was not where the row says, or the probe never read "
+                                "it there (the base is a plain checkout with no .git, so a probe that asks git "
+                                "reads nothing); strike with --no-base to record that in the closing text")
+            elif at_base is not None and at_base[0] != _CHK.STILL_OPEN:
+                line = f"{rid}'s probe could not be driven at {where} ({at_base[0]}: {at_base[1]})"
+                if explicit:
+                    refusals.append(f"{line}, and --base asks for the drive")
+                else:
+                    say(f"note -- {line}; the closing text says what the base showed")
+            if at_head[0] == _CHK.STILL_OPEN:
+                refusals.append(f"the probe of {rid} reads its open value {probe['open_value']!r} at the head "
+                                "too (the defect is still there)")
+            elif at_head[0] != _CHK.STRIKE_CANDIDATE:
+                line = f"{rid}'s probe could not be driven at the head ({at_head[0]}: {at_head[1]})"
+                if explicit:
+                    refusals.append(f"{line}, and --base asks for the drive")
+                else:
+                    say(f"note -- {line}; the closing text says what the head showed")
+            elif at_base is not None and at_base[0] == _CHK.STILL_OPEN:
+                say(f"{rid}'s probe read STILL_OPEN at {where} and STRIKE_CANDIDATE at the head ({at_head[1]})")
+        if guards and tree is not None:
+            plugin_dir = scratch / "plugin"
+            plugin_dir.mkdir()
+            (plugin_dir / f"{_GUARD_PLUGIN_NAME}.py").write_text(_GUARD_PLUGIN, encoding="utf-8")
+            report = scratch / "guard-report.json"
+            overlaid = False
+            for node in guards:
+                rc, record = _run_guard(node, cwd=root, plugin_dir=plugin_dir, report=report)
+                reading, head_said = _guard_reading(node, "head", rc, record)
+                if reading == "refused":
+                    refusals.append(head_said)
+                    continue
+                if reading == "red":
+                    refusals.append(f"the guard {node} is red at the head ({head_said}): the lane has not fixed "
+                                    "what it reads")
+                    continue
+                if not overlaid and (root / "tests").is_dir():
+                    # The lane's tests over the base's: the new test against the
+                    # unfixed code is what earn-the-red means.
+                    shutil.copytree(root / "tests", tree / "tests", dirs_exist_ok=True,
+                                    ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+                overlaid = True
+                rc, record = _run_guard(node, cwd=tree, plugin_dir=plugin_dir, report=report)
+                reading, base_said = _guard_reading(node, "base", rc, record)
+                if reading == "refused":
+                    refusals.append(base_said)
+                elif reading == "green":
+                    refusals.append(f"the guard {node} is green at {where} too: either the fix lives under tests/ "
+                                    "(the overlay carries it to the base) or the guard does not read the defect; "
+                                    "a guard that cannot tell the two trees apart earns nothing (drop --guard, "
+                                    "or name one that reads the code)")
+                else:
+                    say(f"the guard {node} is red at {where} ({base_said}) and green at the head")
+    return refusals
+
+
 def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
-           anchor: str | None, dry_run: bool, despite_deferrals: bool = False) -> int:
+           anchor: str | None, dry_run: bool, despite_deferrals: bool = False,
+           root: Path | None = None, base: str | None = None, no_base: bool = False,
+           guards: tuple[str, ...] = ()) -> int:
     gen = _load("generate_ledger_regions")
     text = ledger.read_text(encoding="utf-8")  # ledger-read: the file's own text, edited for a legacy row; a row file is found and edited by path
     pending = _Pending(ledger, probes, (rid,))
@@ -1387,6 +1750,20 @@ def strike(rid: str, *, ledger: Path, probes: Path, text_file: Path, day: str,
         print("  Drop each id from its table in the same change (the file's convention leaves a dated "
               "note naming the row and the lane), then run the strike again. Nothing written.",
               file=sys.stderr)
+        return 2
+    # The drive, after the cheap refusals and before anything is queued or the
+    # dry run prints: each id's probe at the base (the merge-base, checked out
+    # pristine) and at the head, and each --guard on both trees. Until
+    # 2026-10-25 the strike drove nothing and the closing sentence was the
+    # author's alone; replayed on five struck rows, two still read open at the
+    # lane head. The dry run drives too, so it shows the refusal rather than a
+    # row it would never write.
+    sides = _drive_both_sides(ids, root=root or ledger.resolve().parent.parent, probes=probes, data=data,
+                              base=base, no_base=no_base, guards=guards)
+    if sides:
+        for line in sides:
+            print(f"ledger_row: {line}", file=sys.stderr)
+        print("  Nothing struck.", file=sys.stderr)
         return 2
     before = len(data["probes"])
     data["probes"] = [p for p in data["probes"] if not (isinstance(p, dict) and p.get("id") in ids)]
@@ -2045,6 +2422,24 @@ def main(argv: list[str] | None = None) -> int:
                     help="strike although an active pack's Scope (out) still defers into the row "
                          "or the section it empties; the deferrals print as an advisory "
                          "and the closing text should say where the work went")
+    st.add_argument("--base", metavar="REF",
+                    help="the commit the row's probe is driven at before the strike, where it must "
+                         "read STILL_OPEN (the defect was there); it is then driven at the head, "
+                         "this checkout, where it must read STRIKE_CANDIDATE. Default: the merge-base "
+                         "of HEAD and origin/<default branch>, read offline (origin/HEAD, else main, "
+                         "else master); with no base to read, the default prints one line and "
+                         "proceeds, and a probe the runner cannot drive on a side is one printed line. "
+                         "An explicit REF makes either a refusal. Necessary, not sufficient: a probe "
+                         "reading an adjacent question passes both sides")
+    st.add_argument("--no-base", action="store_true",
+                    help="skip the base drive and say so (the head is still driven); the closing text "
+                         "then says what the base showed")
+    st.add_argument("--guard", action="append", metavar="NODE_ID",
+                    help="a pytest node id run at the head (green required) and at the base with this "
+                         "checkout's tests/ laid over the base tree (red required, by the test's own "
+                         "assertion or pytest.fail: an ImportError, AttributeError or NameError there "
+                         "proves only that the lane's symbol is new, and a collection error, the engine "
+                         "check or a timeout is a refusal). Repeatable; needs a readable base")
     cl = sub.add_parser("class", help="open a class: its class-index row and its empty section")
     cl.add_argument("section", help="the new class, e.g. C7")
     cl.add_argument("--title", required=True, help="one line: the unit of work the class names")
@@ -2203,7 +2598,8 @@ def _dispatch(ap: argparse.ArgumentParser, args: argparse.Namespace, *, ledger: 
     if args.verb == "strike":
         return strike(args.rid, ledger=ledger, probes=probes, text_file=Path(args.text_file),
                       day=args.date, anchor=args.anchor, dry_run=args.dry_run,
-                      despite_deferrals=args.despite_deferrals)
+                      despite_deferrals=args.despite_deferrals, root=root, base=args.base,
+                      no_base=args.no_base, guards=tuple(args.guard or ()))
     if args.verb == "class":
         return new_class(args.section, ledger=ledger, probes=probes, title=args.title,
                          population=args.population, audience=args.audience,
