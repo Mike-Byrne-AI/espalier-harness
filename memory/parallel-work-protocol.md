@@ -221,6 +221,14 @@ interactive session as under `-p`; a killed session leaves the lock behind.
      --early` refuse at a cap of 3 lanes, naming the count, the last row's
      date and the way out (the row committed on the lane). A read that fails
      is unread, never zero: no verdict is never a refusal on a guess.
+   - **A row another lane's unmerged edit carries is struck after that lane
+     merges (2026-10-20).** A re-pin of a row rode an open pull request while
+     the code that closed the row was built on `main`; a strike from the
+     second lane would have struck the row's old text and met the first lane
+     at the merge on the row file and its probe (a modify against a delete,
+     which the record merge cannot take). Build the code on `main`, and
+     strike after the first lane merges and `main` is pulled, so the strike
+     reads the row as the first lane left it.
 7. **A red `main` is reverted first and diagnosed second.** The post-merge
    proof (`.github/workflows/post-merge.yml`) runs after merges, and the ship
    preflight and the board name a red one. Each push's run goes to the end,
@@ -263,7 +271,7 @@ interactive session as under `-p`; a killed session leaves the lock behind.
 | Sequences jobs that would collide: two jobs on one hot file, a record-format change while lanes are open | Gate changes: seats ship their own lanes |
 | Keeps two jobs with clear gates on every seat's queue, each assign in its shape (*What an assign says*, under *How assignments behave*), and re-reads the gates when a lane merges; a gate names another seat's open lane and the file both touch | Gate a seat on its own open pull request (item 4: the cap is on pull requests, not work) |
 | Answers worker requests at its next prompt (the operator prompts "dispatch", or a `/loop` does) | Review all code, or act as the merge queue |
-| Backs up a red `main` that nobody else has reverted | Hold knowledge only in its own context: what it decides is written where every seat can read it |
+| Backs up a red `main` that nobody else has reverted, and reads the board after every ship it makes: the `main:` line names a red base and its suspects (`main` read red for about fifteen hours after a merge on 2026-10-20, a timing-dependent pin on Linux, and only the ship driver's refusal on the next lane surfaced it) | Hold knowledge only in its own context: what it decides is written where every seat can read it |
 | Carries a lighter lane of its own | Run the heaviest lanes, which compete with dispatching |
 | Files the rows nobody is assigned to fix, and the ones its own measurements find | File rows for a job it has assigned: the finding, its probe and its fix are the assignee's one job (rule 8) |
 | Reports counts that name their population, settings quoted from the tool that computes them, and the day's figures from `scripts/seat_day_census.py` | Carry a figure by hand, past a compaction or from memory |
