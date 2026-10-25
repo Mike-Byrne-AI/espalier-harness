@@ -2511,13 +2511,13 @@ and the dangling-id gate keep resolving. The convention is sound and the state
 is readable per file. Nothing aggregates it. So the listing says twenty-seven
 packs and a reader counts twenty-seven jobs.
 
-**Measured in this repo.** On 2026-10-24 the operator listed the pack
-directory, read every pack as still queued, and asked whether the wrong
+**Measured in this repo.** The operator listed the pack directory on
+2026-10-24, read every pack as still queued, and asked whether the wrong
 command had been in use all along. Four of the packs were landed children kept
 for their roadmap, four were roadmaps, six were drafts, and the convention
 that keeps a landed child in place was written in two places only: a held
-memory candidate and a note inside a sibling pack. The row is `DEF-4048`; the
-fix is a derived line that counts the root packs by their `State:` with the
+memory candidate and a note inside a sibling pack. The fix, filed as its own
+row, is a derived line that counts the root packs by their `State:` with the
 drafts named first, and the convention written where the pack docs live.
 
 **Why it stays hidden.** The per-file state was always correct, so no gate
@@ -3557,8 +3557,8 @@ seconds, every row completes, and the mark reads as applied. What that run
 proved is that a collection-time mark takes effect on the runner. It cannot
 reproduce the race, because the race needs the load the full leg supplies.
 
-**Measured in this repo.** On 2026-10-19 the nested-controller race module,
-dispatched alone on the macOS runner, ran in about twenty seconds at one
+**Measured in this repo.** The nested-controller race module, dispatched
+alone on the macOS runner on 2026-10-19, ran in about twenty seconds at one
 worker and at four, twelve of twelve marked rows completed, no race. Under the
 full leg the anchor had failed on eight of ten legs. Three neighbours were
 measured in the same sitting: a workflow with a concurrency group per ref
@@ -5514,8 +5514,8 @@ line of the gate reads it: the new surface is a citation surface in every
 sense but the gate's.
 
 **Measured in this repo.** The changelog fragments directory, one file per
-lane, carried path and symbol citations that neither doc-citation gate
-(`tests/test_doc_source_citations.py`, `tests/test_doc_test_citations.py`)
+lane, carried path and symbol citations that neither doc-citation gate (the
+one that resolves cited source paths, the one that resolves cited tests)
 swept; read from the lane's own record on 2026-10-20, the fragments that did
 pass a resolver passed on a nearby negation word that exempted the line, not
 because the citation resolved. A lane's own fragment surfaced it; both gates
@@ -8357,8 +8357,8 @@ on it: all of them stop in the same minute, for the same cause, and none of
 them is red. The coordination layer sees per-seat silence, which is also what
 an idle seat looks like.
 
-**Measured in this repo.** On 2026-10-15 a usage limit on the one account
-every seat ran under froze four seats at once for eighty minutes; two pull
+**Measured in this repo.** A usage limit on the one account every seat ran
+under froze four seats at once for eighty minutes on 2026-10-15; two pull
 requests went red in the gap and five board ticks queued behind the freeze.
 Later that day the account's weekly limit froze one machine for what would
 have been two and a half days until the operator switched it to a second
