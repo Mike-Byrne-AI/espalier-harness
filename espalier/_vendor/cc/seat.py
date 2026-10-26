@@ -74,6 +74,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -93,6 +94,20 @@ SETTINGS_REL = ".claude/settings.json"
 #: this driver creates looks like one Claude Code created.
 BRANCH_PREFIX = "worktree-"
 MAINTENANCE_KEY = "ESPALIER_MAINTENANCE_MODE"
+#: The box-wide lock file the suite's xdist runs take, so two seats on one
+#: machine run one tier at a time: one path per host under the temp directory
+#: (per user on both OSes), set by the launcher for every seat and never by
+#: CI. The suite's plugin exports the holder's pid beside it
+#: (``ESPALIER_BOX_LOCK_HOLDER``) to its own children; the launcher sets the
+#: path alone.
+BOX_LOCK_KEY = "ESPALIER_BOX_LOCK"
+BOX_LOCK_NAME = "espalier-box.lock"
+
+
+def box_lock_default() -> str:
+    """The host's default lock path: the temp directory the interpreter
+    resolves, which two seats of one user on one box resolve alike."""
+    return os.path.join(tempfile.gettempdir(), BOX_LOCK_NAME)
 #: What a running session sets in its children: the eleven names read in a
 #: session's environment on 2.1.300 (2026-10-15) and the five more Claude Code
 #: strips from a child session of its own. Carried into a session this driver
@@ -558,6 +573,9 @@ def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None 
         env[MAINTENANCE_KEY] = "1"
     else:
         env.pop(MAINTENANCE_KEY, None)
+    # The box lock: the inherited path when the parent named one, else the
+    # host's default, so every launched seat on this machine locks one file.
+    env.setdefault(BOX_LOCK_KEY, box_lock_default())
     bindir = venv_bindir(target.path)
     if bindir is not None:
         env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
@@ -590,6 +608,9 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
             parts.append(f"$env:PATH = {q(str(bindir) + ';')} + $env:PATH")
         else:
             parts.append("Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue")
+        # The host's default only where the terminal names no path of its own,
+        # as child_env keeps an inherited one: two seats must lock one file.
+        parts.append(f"if (-not $env:{BOX_LOCK_KEY}) {{ $env:{BOX_LOCK_KEY} = {q(box_lock_default())} }}")
         parts.append(" ".join(["claude", *(q(a) for a in args)]))
         return "; ".join(parts)
     env = [f"{MAINTENANCE_KEY}=1"] if maintenance else [f"-u {MAINTENANCE_KEY}"]
@@ -597,7 +618,12 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
         env += [f"VIRTUAL_ENV={shlex.quote(str(bindir.parent))}", f'PATH={shlex.quote(str(bindir))}:"$PATH"']
     else:
         env.append("-u VIRTUAL_ENV")
-    return f"cd {shlex.quote(str(target.path))} && env {' '.join(env)} claude {' '.join(shlex.quote(a) for a in args)}".rstrip()
+    # An export, not an `env` word: `env`'s options precede its assignments, and
+    # the exported path also puts a tier run from that terminal under the lock.
+    # The terminal's own path wins where it names one (`${VAR:-default}`), as
+    # child_env keeps an inherited one.
+    return (f"cd {shlex.quote(str(target.path))} && export {BOX_LOCK_KEY}=${{{BOX_LOCK_KEY}:-{shlex.quote(box_lock_default())}}} && "
+            f"env {' '.join(env)} claude {' '.join(shlex.quote(a) for a in args)}").rstrip()
 
 
 # -- brief ---------------------------------------------------------------------------

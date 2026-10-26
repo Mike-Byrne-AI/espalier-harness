@@ -111,15 +111,22 @@ RECEIPT_RE = re.compile(
     re.MULTILINE,
 )
 
+#: The two box-lock names pass through, the one exception to the ESPALIER_
+#: rule below: a lock path and a holder pid carry nothing of the parent's
+#: harness state into the proof, and without them the gate's legs (about 25
+#: minutes each) would run unlocked beside a seat's tier on the same box.
+BOX_LOCK_PASSTHROUGH: tuple[str, ...] = ("ESPALIER_BOX_LOCK", "ESPALIER_BOX_LOCK_HOLDER")
+
 #: The only parent keys the child sees (PATH is built, not copied). Everything
 #: else -- PYTHONPATH, VIRTUAL_ENV, PIP_*, ESPALIER_*, CLAUDE_* -- is absent by
-#: construction.
+#: construction, the two box-lock names excepted (above).
 ENV_WHITELIST: tuple[str, ...] = (
     "HOME", "TMPDIR", "TMP", "TEMP",
     "LANG", "LC_ALL", "LC_CTYPE",
     "USER", "LOGNAME", "SHELL", "TERM",
     "SYSTEMROOT", "COMSPEC",
     "PYTEST_XDIST_AUTO_NUM_WORKERS", "PYTEST_ADDOPTS",
+    *BOX_LOCK_PASSTHROUGH,
 )
 
 #: The whitelisted keys that change WHAT the tier runs; echoed per leg.

@@ -74,7 +74,17 @@ interactive session as under `-p`; a killed session leaves the lock behind.
 
 1. **Work the jobs assigned to you**, in order, and keep two queued (the
    dispatcher's duty to keep them there, the table below), so the
-   dispatcher's absence does not stall you. For a new job or a decision that
+   dispatcher's absence does not stall you. Two seats on one box run one
+   xdist run of the suite at a time by construction: such a run takes a lock
+   on the box's lock file (`ESPALIER_BOX_LOCK`, set by `seat.py launch`, one
+   path per host), waits while another run holds it and prints the holder and
+   its age; every tier line is an xdist run, the contract slice included, and
+   a tier's lines each take and release the lock, so two tiers interleave
+   line by line; a run without `-n` (a node-id or file run) takes no lock; a
+   note on the mail channel announces nothing; and a tool that runs pytest as
+   a probe inside a run that holds the box removes both lock variables from
+   the child's environment (the strike's guard drive, `ledger_row.py::_guard_env`,
+   strips them by prefix). For a new job or a decision that
    crosses jobs, send the dispatcher one request. On a fork inside your own
    job, the seat's side of the *Assign authority* paragraph below: one request
    carrying your recommendation, then proceed on it after the dispatcher's

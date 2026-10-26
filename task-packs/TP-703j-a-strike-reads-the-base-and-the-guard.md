@@ -379,7 +379,10 @@ under Motivation as the case the pack does not catch, so no later pass reads it 
   run.
 - A base guard run without `PYTHONPATH` on a tree whose fixture carries `espalier/__init__.py`
   and whose seat has an editable engine install exits 4 and the strike refuses naming the engine
-  check; with it, the run reaches the test. A guard child runs with `ESPALIER_BOX_LOCK` absent.
+  check; with it, the run reaches the test. A guard child runs with `ESPALIER_BOX_LOCK` absent
+  *(and `ESPALIER_BOX_LOCK_HOLDER` with it: the landed child strips both by prefix, as the
+  coordination section says; this sentence and Implementation's name the one the parent-wait
+  hazard is about. Clarified 2026-10-26 from `TP-703c`'s review)*.
 - `check_ledger_probes.rooted` restores `_ROOT`, `_PROBES`, `_LEDGER` and `_CONTAMINATION` after
   its block, and `pristine=True` lets a tree-walking probe run on a directory with no repository;
   no assertion in `tests/test_check_ledger_probes.py` is weakened.

@@ -9,8 +9,12 @@
   adopter's box gets those and not the plugin (Scope out).
 - Type: workflow infrastructure (a pytest plugin, a lock primitive, the launcher's environment)
   plus one protocol sentence that names a mechanism where the record held a conversation.
-- **Kind: PACK.** One lane, `lane/one-tier-per-box`, suited to a `win` seat: the contention it
-  removes is on that box, and Task 0's second item is driven where two seats share one clone.
+- **Kind: PACK.** One lane, `lane/one-tier-per-box`, authored for a `win` seat and moved to the
+  Mac worktree seat `air-work` by the operator's ruling of 2026-10-24 (two seats and their tiers
+  share the 8 GB Air now); the Windows half of Task 0 item 1 goes to a win seat on its next assign
+  (the dispatcher's ruling, ack `20261026T013626Z-air-447e73`), and the pull request's
+  windows-latest leg is the reading until then. Executed 2026-10-25/26 under assign
+  `20261025T224352Z-air-87c0d4`; the 0-A review's corrections are marked *(0-A, 2026-10-26)*.
 - Parent: `TP-703` (`task-packs/TP-703-multi-seat-discipline.md`), Scope (in) item 2, Wave 1. The
   roadmap's own Task 0 item 2 (seat-on-seat wait minutes) can hold this child before it is
   assigned; it is restated here as Task 0 item 2.
@@ -77,7 +81,13 @@ box bookkeeping on the channel built for claims and asks.
    `tests/conftest.py::pytest_configure` the way `tests/_never_ran.py::pytest_configure` and
    `tests/_timeout_backstop.py::pytest_configure` are (controller only: no `workerinput` on the
    config), active only when `ESPALIER_BOX_LOCK` names a path and the run will run tests
-   (`tests/_never_ran.py::NO_TEST_RUNS` says which options do not). It builds its holder record
+   (`tests/_never_ran.py::NO_TEST_RUNS` says which options do not) and is an xdist run (the
+   `numprocesses` option read from the config, never the argv, so `PYTEST_ADDOPTS=-n` counts and
+   `-n 0` takes none): every tier line takes the lock, the contract slice included (every line of
+   every tier has run under xdist since 2026-10-16, so the Mac rule of 2026-10-13 that exempted the
+   slice was already stale: the failure-mode review's correction), a tier's lines interleave with
+   a sibling's, and a run without `-n` (a node-id or file run, as a reviewer's or an agent's is)
+   takes none and never waits past a Bash call's cap *(0-A and review, 2026-10-26)*. It builds its holder record
    (seat, lane, pid, started-at, the argv head) BEFORE it tries the lock, tries without blocking,
    writes the record the instant the lock is held, exports `ESPALIER_BOX_LOCK_HOLDER=<pid>` so
    every child inherits it, and at `pytest_unconfigure` truncates the record and closes the
@@ -96,18 +106,26 @@ box bookkeeping on the channel built for claims and asks.
    (a per-host path under the temp directory unless the environment already names one) and
    `::command_line` prints it in both shells' forms, so a seat launched by the tool or by its
    printed line runs under the lock and CI, which never runs the launcher, never sees it; the two
-   variables join `docs/ENV_CATALOG.md` (read by `tests/test_catalog_self_consistency.py`) and its
+   variables join `docs/ENV_CATALOG.md` (read by `tests/test_env_catalog.py`, which lists every
+   `os.environ` reader and refuses a row with none *(0-A, 2026-10-26)*; the row says the temp
+   directory is per user on both OSes, so two OS users on one box do not share the lock) and its
    asset twin by `scripts/sync_asset_docs.py`.
 5. **The release gate keeps it.** `scripts/fresh_clone_gate.py::ENV_WHITELIST` drops every
    `ESPALIER_` name today, so the gate's legs (about 25 minutes each) would run unlocked beside a
    seat's tier. The two lock names join the whitelist, and
    `tests/test_fresh_clone_gate.py::TestChildEnv::test_the_whitelist_names_no_carrier` names them
    as its exceptions with the reason (a lock carries nothing of the parent's state into the proof).
-6. **The banner says when it is off.** Where `tools/cc/hooks/session_start.py::_sessions_line`
-   names another live session in this clone and this session has no `ESPALIER_BOX_LOCK`, one more
-   line, `Box lock: off (relaunch through seat.py launch, or export ESPALIER_BOX_LOCK=<path> before
-   claude)`, so a seat relaunched by hand after a reap (`claude --continue`, the maintenance-mode
-   form in the root `CLAUDE.md`) is told before its first tier. Reporter only, no spawn.
+6. **The banner says when it is off.** *(0-A, 2026-10-26: `_sessions_line` globs one checkout's
+   own session markers and never sees a sibling worktree seat, and the dispatcher, launched by a
+   plain `claude` in the main checkout, holds no assigns, so neither a new line nor the `Orders:`
+   line alone reaches the sessions this is for; the dispatcher's redirect, ack `447e73`.)* Where the
+   clone is named (`git config espalier.machine`) and this session has no `ESPALIER_BOX_LOCK`, the
+   banner says `box lock: off (relaunch through seat.py launch, or export ESPALIER_BOX_LOCK=<the
+   host's default path> before claude)`, folded onto an existing line so the banner keeps its line
+   count (the `Orders:` line on a worker holding assigns; the `Mail:` line's dispatcher clause on
+   the dispatcher seat), both polarities pinned in `tests/test_session_banner.py`, so a seat
+   relaunched by hand after a reap (`claude --continue`, the maintenance-mode form in the root
+   `CLAUDE.md`) is told before its first tier. Reporter only, no spawn.
 7. **The words.** One sentence in `memory/parallel-work-protocol.md` item 1 naming the lock as
    what serialises two seats' runs on one box, the holder line a waiter prints, and the rule that a
    tool running pytest as a probe inside a seat's own run (`TP-703j`'s guard drive among them)
@@ -154,11 +172,12 @@ box bookkeeping on the channel built for claims and asks.
   subagent launches on the seat's behalf (a `drive` or `mutants` allowance under the protocol's
   dispatch-model paragraph, 2026-10-25) is not such a child: its shell inherits Claude Code's
   environment, not the tier's, so it carries no holder and takes the lock like any run, and then
-  waits behind any tier on the box, its own seat's or a sibling's, past a Bash call's cap (ten
-  minutes, against a tier of 25 to 50), so the agent returns a timeout and a timed-out mutant
-  would read as a survivor. The rule the protocol's kinds carry: `drive` and `mutants` dispatch
-  before the tier, never beside it, and an agent whose run reports a lock wait reports no result
-  (expected from the environment model, not yet driven).
+  would wait behind a tier on the box only if it were an xdist run: since the lock gates xdist
+  runs alone *(0-A, 2026-10-26)*, a node-id or file run an agent launches takes no lock and never
+  waits past a Bash call's cap; an agent's `-n` run would, so `drive` and `mutants` dispatches run
+  their nodes serially, and an agent whose run reports a lock wait reports no result (expected
+  from the environment model, not yet driven). A bounded wait that exits distinctly (an
+  `ESPALIER_BOX_LOCK_WAIT_S`) is the review's proposal for a later lane.
 
 ## Task 0 — Verify (try to kill this pack)
 
@@ -363,7 +382,7 @@ tree, so the gap list at authoring is collisions (and the catalog's asset twin);
 - `tests/conftest.py::pytest_configure` (one more registration)
 - `tools/cc/seat.py::child_env` (one more key)
 - `tools/cc/seat.py::command_line` (the key in both shells' forms)
-- `tools/cc/seat.py::cmd_launch` (the per-user-directory note)
+- `tools/cc/seat.py::cmd_launch` *(0-A, 2026-10-26: dropped; the per-user clause lives in the catalog row, the dispatcher's ruling)*
 - `scripts/fresh_clone_gate.py::ENV_WHITELIST` (the two lock names)
 - `tests/test_fresh_clone_gate.py::TestChildEnv::test_the_whitelist_names_no_carrier` (two named exceptions)
 - `tools/cc/hooks/session_start.py::_sessions_line` (the off-note beside it)
@@ -422,6 +441,8 @@ figure that says it worked.
 **Modified:** `tools/cc/_json_safe.py`; `espalier/_atomic_io.py`; `tests/test_surface_contract.py`;
 `tests/conftest.py`; `tools/cc/seat.py`; `tests/test_seat.py`; `scripts/fresh_clone_gate.py`;
 `tests/test_fresh_clone_gate.py`; `tools/cc/hooks/session_start.py`; `tests/test_session_banner.py`;
+`tests/test_file_lock.py` (its lock-site allowlist gains the two `try_lock_file` owners and a
+cross-process class for the non-blocking try *(0-A, 2026-10-26)*);
 `memory/parallel-work-protocol.md`; `docs/WORKFLOW.md`; `docs/ENV_CATALOG.md`; the vendored twins
 under `espalier/_vendor/cc/` (by `scripts/sync_vendor_cc.py` only) and the asset twins under
 `espalier/assets/docs/` (by `scripts/sync_asset_docs.py` only).
@@ -469,18 +490,61 @@ Pack budgets here have run about 2.7 times over on one measured pack (`TP-459`);
 | Total | 6.5 to 7.5 h | 2 h | expect the measured overrun |
 
 ## Landing
-- State: DRAFT
-- Commits:
-- Suite: `python3 scripts/proof_tier.py --run --base origin/main` (the full tier: a hook and a
-  `tools/cc/` module changed)
-- Earn-the-red: per fix, against the eight mutations named under Implementation
-- Red-team: reasoning review at authoring (the reflect skill's checklist v1, failure-mode-reviewer,
-  2026-10-18): REQUEST CHANGES on the set; this file's findings: Part 2 items 5, 8, 9, 11, 17, 18,
-  21 and checklist items 4, 5, 8 addressed (the gate's whitelist and the banner's off-note; the
-  ancestry walk dropped for the inherited-pair rule plus a census pin; the record written before
-  the try and truncated at release; the orphan kill case and the holder-age line with its ceiling;
-  the wait log; the GOAL quote corrected; the probe child's environment); checklist item 13
-  acknowledged. The executor still runs both reviewers on a snapshot clone.
-- Reach: not a class pack; no row closed
-- Task 0: items 1 to 4 not yet run (item 3's authoring read is in the item; the test re-runs it)
-- Date: 2026-10-18 (authored, local)
+- State: LANDED
+- Commits: 4dda2a7c (the build: C-1 to C-6 and the pack's 0-A corrections), c78e36b8 (origin/main
+  merged in after #340, so the census covers the strike's guard builder), f647e2cf (both reviewers'
+  batch: the gate inside the try, the summary line, the prose corrected), and the landing commit (the
+  tier's two contracts, this stanza); on
+  `lane/one-tier-per-box`, seat `air-work`
+- Suite: `python3 scripts/proof_tier.py --run --base origin/main`, the full tier, run with
+  `ESPALIER_BOX_LOCK` set so every xdist line of the tier took and released the lock (the
+  failure-mode review's condition: the tier proves the environment the lane ships). At f647e2cf: mypy and ruff green, serial leg 2134 passed and 9 skipped in 4:30, parallel leg 3 failed and
+  25000 passed, 100 skipped, 3 xfailed in 26:06: the box-local Apple-git record-merge red
+  (`tests/test_record_merge.py::TestTheShipBodysRecordFinish::test_a_record_file_staged_with_its_markers_is_refused_until_unresolved`,
+  red on `main` here too), and two tree-wide contracts on the new test file (a child spawn with pipes and
+  no encoding; a module docstring with no rationale anchor), fixed in the landing commit; the test-only
+  follow-up re-ran the contract slice and the file (`2 failed, 5449 passed, 22 skipped, 1 xfailed, 5 warnings in 245.84s (0:04:05)`), the memory's rule for a
+  follow-up that changes no runtime; the slice's second red,
+  `tests/test_python_floor.py::TestAStartProbeThatNeverAnswers::test_doctor_names_an_interpreter_that_does_not_start_in_a_blocking_hooks_time`,
+  is box-local and pre-existing (red on a snapshot of 913c3a1d, before this lane: the test's substring
+  check reads this seat's `.venv/bin/python3` as the slow interpreter's spelling; reported to the
+  dispatcher). The pull request's cells are the reading on the other interpreters
+  and hosts.
+- Earn-the-red: every new test red first against the unfixed code. C-1's four try tests and the
+  parity contract red against a blocking mutant of one copy (the other copy green). C-2 and C-3's
+  tests red with no plugin, then eight named mutants run one at a time in fresh interpreters, 8 of
+  8 killed, twice (after the build and after the review batch): the blocking try, the pass-through
+  on the variable alone, the record not truncated, the wait log unwritten, every run gated, the
+  ceiling's commands left off, the census rule dropped, an empty record read as nobody. C-4's two
+  launcher tests, C-5's two gate tests and two banner polarity tests red first. The review batch's
+  twin test (a stub config under the variable) red against the first cut's gate outside the try.
+  No existing assertion weakened: the banner's exact-line tests run under a set variable through
+  autouse fixtures (conditioning), the launch line's existing tail assertion stands.
+- Red-team: `scripts/proof_tier.py --base origin/main` named `review: both` (a hook and two
+  hook-loaded modules). code-reviewer on a snapshot clone at 4dda2a7c: REQUEST CHANGES, no BLOCK
+  (a record in another encoding escaping `read_record`; a failed acquire keeping its handle; the
+  printed launch line taking the default over an inherited path; the banner note on adopter trees
+  with no plugin; the "node-id run takes no lock" wording; NITs). failure-mode-reviewer: REQUEST
+  CHANGES, one REGRESSION (the gate read the config outside the try: the suite's own stub-config
+  configure test raised on every seat launched with the variable), seven GAPs (the contract slice
+  has run under xdist since 2026-10-16, so five prose sites were stale; the per-line interleave;
+  the wait log alone unreadable as "no contention"; an unguarded run's one line scrolls off; the
+  printed line versus `child_env`; the banner's miss of a named-clone session with neither line;
+  census blind spots), ten rough edges. Landed as one batch (4e1d30fa); the rest reported to the
+  dispatcher as rows for its block (note `air-work` 2026-10-26).
+- Reach: not a class pack; no row closed. The note protocol was never recorded, so no rule is
+  struck; the roadmap's re-measure line 3 (START messages per day, 87 to 0) is the figure.
+- Task 0: item 1 on macOS: a SIGKILLed holder frees a non-blocking flock in 3 to 14 ms over five
+  kills, the waiter names the holder's record, an orphaned child keeps the lock at PPID 1 and is
+  named until it dies (14 ms); the Windows half unmeasured from this seat by the dispatcher's
+  ruling (ack `447e73`): CI's windows-latest proves the fail-immediately flag's error and the
+  release on a killed process through `tests/test_box_lock.py`; the starved-box release spread and
+  the PowerShell-vs-Git-Bash temp resolution stay unmeasured, the latter settled for launched seats
+  by the launcher's pinned path and open for a hand-launched session. Item 2: 19 win-seat wait
+  notes 10-16 to 10-18, the 4 with minutes all foreign holds, seat-on-seat minutes unmeasurable,
+  as the roadmap's own item 2 found. Item 3: a census over the 18 pytest-spawning test files and
+  the scripts: every test spawner copies the whole environment, the release gate's whitelist drops
+  both names, no spawner has the deadlock shape; pinned by `TestTheCensusOfPytestSpawners`. Item
+  4: `ENV_WHITELIST` drops `ESPALIER_` by construction with no stated reason beyond "no carrier";
+  the two names join as named exceptions.
+- Date: 2026-10-26 (landed, local 2026-10-25 evening)
