@@ -2844,6 +2844,33 @@ class TestOrdersLine:
     def _assign(mail, seat: str, *, frm: str = "hub", **job) -> dict:
         return mail.new_message(frm, "assign", f"to {seat}", seat=seat, **job)
 
+    @pytest.fixture(autouse=True)
+    def _under_the_box_lock(self, monkeypatch):
+        """The exact lines below are a seat launched by the tool, which runs
+        under the box lock; the off-note's own polarities are pinned apart."""
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+
+    def test_a_worker_without_the_box_lock_is_told_on_its_orders_line(self, tmp_path, monkeypatch):
+        """A seat relaunched by hand after a reap (``claude --continue``) runs
+        with no ``ESPALIER_BOX_LOCK`` and would run its tier unlocked beside a
+        sibling's: on a named clone the `Orders:` line says so, paste-ready
+        with the host's default path, and says nothing once the variable is
+        set. Mutation: the note printed while the variable is set, or on a
+        clone with no name."""
+        import tempfile
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+        by = {"hub": [self._assign(mail, "w", lane="lane/a")]}
+        read = {"machine": "w", "by_machine": by, "unread": 0}
+        monkeypatch.delenv("ESPALIER_BOX_LOCK", raising=False)
+        line = mod._orders_line(tmp_path, read, mail=mail, python="py -3")
+        default = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        assert line.endswith(f"; box lock: off (relaunch through seat.py launch, or export "
+                             f"ESPALIER_BOX_LOCK={default} before claude)"), line
+        assert line.isascii()
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+        assert "box lock" not in mod._orders_line(tmp_path, read, mail=mail, python="py -3")
+
     def test_a_worker_with_live_jobs_is_given_its_orders(self, tmp_path):
         """Dies to: counting another seat's jobs (3), or a worker's own
         assign counting where a dispatcher is named."""
@@ -3160,10 +3187,36 @@ class TestMailLine:
     once in main under a budget of its own, omitted where no machine is named
     or nothing is unread; the builders only render what they are given."""
 
+    @pytest.fixture(autouse=True)
+    def _under_the_box_lock(self, monkeypatch):
+        """The exact lines below are a seat launched by the tool, which runs
+        under the box lock; the off-note's own polarities are pinned apart."""
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+
     def test_the_line_is_omitted_where_no_machine_is_named_and_no_ref_is_held(self, tmp_path):
         mod = _load()
         stub = _mail_stub(machine_setting=lambda root, timeout=None: (None, "git config espalier.machine is not set"))
         assert mod._mail_line(tmp_path, mail=stub) == "" and stub.calls == []
+
+    def test_the_dispatcher_without_the_box_lock_is_told_on_its_mail_line(self, tmp_path, monkeypatch):
+        """The dispatcher, launched by a plain `claude` in the main checkout,
+        holds no assigns and gets no `Orders:` line, so its `Mail:` line's
+        dispatcher clause carries the off-note; a worker's `Mail:` line never
+        does (its `Orders:` line has it), and a set variable silences it.
+        Mutation: the note on every seat's `Mail:` line, or on none."""
+        import tempfile
+        mod = _load()
+        monkeypatch.delenv("ESPALIER_BOX_LOCK", raising=False)
+        default = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        dispatcher = _mail_stub(dispatcher_setting=lambda root: ("mac", "espalier.toml names mac"),
+                                live_requests=lambda by: [])
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=dispatcher)
+        assert line == f"box lock: off (relaunch through seat.py launch, or export ESPALIER_BOX_LOCK={default} before claude)", line
+        worker = _mail_stub(dispatcher_setting=lambda root: ("hub", "espalier.toml names hub"),
+                            live_requests=lambda by: [])
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=worker) == ""
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=dispatcher) == ""
 
     def test_a_nameless_clone_that_holds_another_machines_ref_is_told_how_to_opt_in(self, tmp_path):
         """The box that was never opted in is the one never told the channel

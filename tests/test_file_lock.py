@@ -39,8 +39,9 @@ HOOKS_DIR = TOOLS_CC / "hooks"
 
 #: How each copy of the primitive is imported inside a child process.
 _PRIMITIVE_IMPORT = {
-    "tools_cc": f"sys.path.insert(0, {str(TOOLS_CC)!r})\nfrom _json_safe import lock_file, unlock_file",
-    "engine": f"sys.path.insert(0, {str(REPO_ROOT)!r})\nfrom espalier._atomic_io import lock_file, unlock_file",
+    "tools_cc": f"sys.path.insert(0, {str(TOOLS_CC)!r})\nfrom _json_safe import lock_file, unlock_file, try_lock_file",
+    "engine": (f"sys.path.insert(0, {str(REPO_ROOT)!r})\n"
+               "from espalier._atomic_io import lock_file, unlock_file, try_lock_file"),
 }
 
 
@@ -134,6 +135,7 @@ class TestLockPrimitiveAcrossProcesses:
         self._hold_then_release(tmp_path, copy, parent_shared=True, child_shared=True,
                                 child_should_wait=False)
 
+
     def test_an_exclusive_lock_waits_for_a_shared_one(self, tmp_path, copy):
         self._hold_then_release(tmp_path, copy, parent_shared=True, child_shared=False,
                                 child_should_wait=True)
@@ -155,6 +157,75 @@ class TestLockPrimitiveAcrossProcesses:
                 unlock_file(fh)
         assert r.returncode == 0, r.stderr
         assert r.stdout == "first line\n"
+
+
+def _spawn_trier(tmp_path: Path, copy: str, lock_path: Path, *, tag: str) -> subprocess.Popen:
+    """A child that tries the lock without waiting, writes the first answer,
+    then keeps trying until it holds the lock and writes that too: the second
+    marker says the release reached it, the first that the try never waited."""
+    code = textwrap.dedent(f"""
+        import sys, time
+        from pathlib import Path
+        {{imp}}
+        first, held = Path({str(tmp_path / (tag + '.first'))!r}), Path({str(tmp_path / (tag + '.held'))!r})
+        with open({str(lock_path)!r}, "a+", encoding="utf-8") as fh:
+            got = try_lock_file(fh)
+            first.write_text(str(got), encoding="utf-8")
+            deadline = time.monotonic() + {_CHILD_DEADLINE_S}
+            while not got and time.monotonic() < deadline:
+                time.sleep(0.02)
+                got = try_lock_file(fh)
+            held.write_text(str(got), encoding="utf-8")
+            unlock_file(fh)
+    """).replace("{imp}", _PRIMITIVE_IMPORT[copy])
+    return subprocess.Popen([sys.executable, "-c", code], env=_child_env(tmp_path),
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+
+
+@pytest.mark.parametrize("copy", sorted(_PRIMITIVE_IMPORT))
+class TestTryLockFileAcrossProcesses:
+    """``try_lock_file`` answers at once: False while another process holds
+    the lock, True once it is free, and never a wait. The box lock between two
+    seats on one machine polls it to name the holder instead of sitting silent
+    inside a blocking call. Mutation: the non-blocking try replaced by the
+    blocking ``lock_file`` (the first marker is then written only after the
+    parent releases, so it reads True); the twin copies drifting apart (the
+    parity contract in tests/test_surface_contract.py)."""
+
+    def test_a_held_lock_answers_false_at_once_and_true_after_the_release(self, tmp_path, copy):
+        lock_file, unlock_file = _load_parent_copy(copy)
+        lock_path = tmp_path / ".probe.lock"
+        with open(lock_path, "a+", encoding="utf-8") as fh:
+            lock_file(fh)
+            child = _spawn_trier(tmp_path, copy, lock_path, tag="trier")
+            try:
+                assert _wait_for(tmp_path / "trier.first"), child.communicate(timeout=_CHILD_DEADLINE_S)
+                assert (tmp_path / "trier.first").read_text(encoding="utf-8") == "False"
+                time.sleep(0.3)
+                assert not (tmp_path / "trier.held").exists(), "the child took the lock while the parent held it"
+            finally:
+                unlock_file(fh)
+        out, err = child.communicate(timeout=_CHILD_DEADLINE_S)
+        assert child.returncode == 0, err
+        assert (tmp_path / "trier.held").read_text(encoding="utf-8") == "True"
+
+    def test_a_free_lock_answers_true_and_holds_it(self, tmp_path, copy):
+        """Mutation: the try reads every answer as False (a waiter that never
+        proceeds), or returns True without taking the lock (a second trier
+        would then take it too)."""
+        _lock_file, unlock_file = _load_parent_copy(copy)
+        import importlib
+        mod = (importlib.import_module("espalier._atomic_io") if copy == "engine"
+               else importlib.import_module("_json_safe"))
+        lock_path = tmp_path / ".probe.lock"
+        with open(lock_path, "a+", encoding="utf-8") as fh:
+            assert mod.try_lock_file(fh) is True
+            child = _spawn_trier(tmp_path, copy, lock_path, tag="second")
+            assert _wait_for(tmp_path / "second.first"), child.communicate(timeout=_CHILD_DEADLINE_S)
+            assert (tmp_path / "second.first").read_text(encoding="utf-8") == "False"
+            unlock_file(fh)
+        out, err = child.communicate(timeout=_CHILD_DEADLINE_S)
+        assert child.returncode == 0, err
 
 
 #: Each append site, called from a child: (import lines, one call writing token T).
@@ -316,9 +387,11 @@ def test_the_speedbump_cap_admits_exactly_cap_concurrent_firings(tmp_path):
 _LOCK_PRIMITIVE_ALLOWED: frozenset[tuple[str, str]] = frozenset({
     ("tools/cc/_json_safe.py", "lock_file"),
     ("tools/cc/_json_safe.py", "unlock_file"),
+    ("tools/cc/_json_safe.py", "try_lock_file"),
     ("tools/cc/_json_safe.py", "_lock_byte"),
     ("espalier/_atomic_io.py", "lock_file"),
     ("espalier/_atomic_io.py", "unlock_file"),
+    ("espalier/_atomic_io.py", "try_lock_file"),
     ("espalier/_atomic_io.py", "_lock_byte"),
     ("tools/cc/hooks/_hook_utils.py", "lock_file"),
     ("tools/cc/hooks/_hook_utils.py", "unlock_file"),

@@ -9,8 +9,12 @@
   adopter's box gets those and not the plugin (Scope out).
 - Type: workflow infrastructure (a pytest plugin, a lock primitive, the launcher's environment)
   plus one protocol sentence that names a mechanism where the record held a conversation.
-- **Kind: PACK.** One lane, `lane/one-tier-per-box`, suited to a `win` seat: the contention it
-  removes is on that box, and Task 0's second item is driven where two seats share one clone.
+- **Kind: PACK.** One lane, `lane/one-tier-per-box`, authored for a `win` seat and moved to the
+  Mac worktree seat `air-work` by the operator's ruling of 2026-10-24 (two seats and their tiers
+  share the 8 GB Air now); the Windows half of Task 0 item 1 goes to a win seat on its next assign
+  (the dispatcher's ruling, ack `20261026T013626Z-air-447e73`), and the pull request's
+  windows-latest leg is the reading until then. Executed 2026-10-25/26 under assign
+  `20261025T224352Z-air-87c0d4`; the 0-A review's corrections are marked *(0-A, 2026-10-26)*.
 - Parent: `TP-703` (`task-packs/TP-703-multi-seat-discipline.md`), Scope (in) item 2, Wave 1. The
   roadmap's own Task 0 item 2 (seat-on-seat wait minutes) can hold this child before it is
   assigned; it is restated here as Task 0 item 2.
@@ -77,7 +81,11 @@ box bookkeeping on the channel built for claims and asks.
    `tests/conftest.py::pytest_configure` the way `tests/_never_ran.py::pytest_configure` and
    `tests/_timeout_backstop.py::pytest_configure` are (controller only: no `workerinput` on the
    config), active only when `ESPALIER_BOX_LOCK` names a path and the run will run tests
-   (`tests/_never_ran.py::NO_TEST_RUNS` says which options do not). It builds its holder record
+   (`tests/_never_ran.py::NO_TEST_RUNS` says which options do not) and is an xdist run (the
+   `numprocesses` option read from the config, never the argv, so `PYTEST_ADDOPTS=-n` counts and
+   `-n 0` takes none): both tier legs take the lock, and a node-id, file or contract-slice run
+   takes none, the Mac rule of 2026-10-13, so a reviewer's or an agent's run never waits past a
+   Bash call's cap *(0-A, 2026-10-26)*. It builds its holder record
    (seat, lane, pid, started-at, the argv head) BEFORE it tries the lock, tries without blocking,
    writes the record the instant the lock is held, exports `ESPALIER_BOX_LOCK_HOLDER=<pid>` so
    every child inherits it, and at `pytest_unconfigure` truncates the record and closes the
@@ -96,18 +104,26 @@ box bookkeeping on the channel built for claims and asks.
    (a per-host path under the temp directory unless the environment already names one) and
    `::command_line` prints it in both shells' forms, so a seat launched by the tool or by its
    printed line runs under the lock and CI, which never runs the launcher, never sees it; the two
-   variables join `docs/ENV_CATALOG.md` (read by `tests/test_catalog_self_consistency.py`) and its
+   variables join `docs/ENV_CATALOG.md` (read by `tests/test_env_catalog.py`, which lists every
+   `os.environ` reader and refuses a row with none *(0-A, 2026-10-26)*; the row says the temp
+   directory is per user on both OSes, so two OS users on one box do not share the lock) and its
    asset twin by `scripts/sync_asset_docs.py`.
 5. **The release gate keeps it.** `scripts/fresh_clone_gate.py::ENV_WHITELIST` drops every
    `ESPALIER_` name today, so the gate's legs (about 25 minutes each) would run unlocked beside a
    seat's tier. The two lock names join the whitelist, and
    `tests/test_fresh_clone_gate.py::TestChildEnv::test_the_whitelist_names_no_carrier` names them
    as its exceptions with the reason (a lock carries nothing of the parent's state into the proof).
-6. **The banner says when it is off.** Where `tools/cc/hooks/session_start.py::_sessions_line`
-   names another live session in this clone and this session has no `ESPALIER_BOX_LOCK`, one more
-   line, `Box lock: off (relaunch through seat.py launch, or export ESPALIER_BOX_LOCK=<path> before
-   claude)`, so a seat relaunched by hand after a reap (`claude --continue`, the maintenance-mode
-   form in the root `CLAUDE.md`) is told before its first tier. Reporter only, no spawn.
+6. **The banner says when it is off.** *(0-A, 2026-10-26: `_sessions_line` globs one checkout's
+   own session markers and never sees a sibling worktree seat, and the dispatcher, launched by a
+   plain `claude` in the main checkout, holds no assigns, so neither a new line nor the `Orders:`
+   line alone reaches the sessions this is for; the dispatcher's redirect, ack `447e73`.)* Where the
+   clone is named (`git config espalier.machine`) and this session has no `ESPALIER_BOX_LOCK`, the
+   banner says `box lock: off (relaunch through seat.py launch, or export ESPALIER_BOX_LOCK=<the
+   host's default path> before claude)`, folded onto an existing line so the banner keeps its line
+   count (the `Orders:` line on a worker holding assigns; the `Mail:` line's dispatcher clause on
+   the dispatcher seat), both polarities pinned in `tests/test_session_banner.py`, so a seat
+   relaunched by hand after a reap (`claude --continue`, the maintenance-mode form in the root
+   `CLAUDE.md`) is told before its first tier. Reporter only, no spawn.
 7. **The words.** One sentence in `memory/parallel-work-protocol.md` item 1 naming the lock as
    what serialises two seats' runs on one box, the holder line a waiter prints, and the rule that a
    tool running pytest as a probe inside a seat's own run (`TP-703j`'s guard drive among them)
@@ -154,11 +170,11 @@ box bookkeeping on the channel built for claims and asks.
   subagent launches on the seat's behalf (a `drive` or `mutants` allowance under the protocol's
   dispatch-model paragraph, 2026-10-25) is not such a child: its shell inherits Claude Code's
   environment, not the tier's, so it carries no holder and takes the lock like any run, and then
-  waits behind any tier on the box, its own seat's or a sibling's, past a Bash call's cap (ten
-  minutes, against a tier of 25 to 50), so the agent returns a timeout and a timed-out mutant
-  would read as a survivor. The rule the protocol's kinds carry: `drive` and `mutants` dispatch
-  before the tier, never beside it, and an agent whose run reports a lock wait reports no result
-  (expected from the environment model, not yet driven).
+  would wait behind a tier on the box only if it were an xdist run: since the lock gates xdist
+  runs alone *(0-A, 2026-10-26)*, a node-id or file run an agent launches takes no lock and never
+  waits past a Bash call's cap; an agent's `-n` run would, so `drive` and `mutants` dispatches run
+  their nodes serially, and an agent whose run reports a lock wait reports no result (expected
+  from the environment model, not yet driven).
 
 ## Task 0 — Verify (try to kill this pack)
 
@@ -363,7 +379,7 @@ tree, so the gap list at authoring is collisions (and the catalog's asset twin);
 - `tests/conftest.py::pytest_configure` (one more registration)
 - `tools/cc/seat.py::child_env` (one more key)
 - `tools/cc/seat.py::command_line` (the key in both shells' forms)
-- `tools/cc/seat.py::cmd_launch` (the per-user-directory note)
+- `tools/cc/seat.py::cmd_launch` *(0-A, 2026-10-26: dropped; the per-user clause lives in the catalog row, the dispatcher's ruling)*
 - `scripts/fresh_clone_gate.py::ENV_WHITELIST` (the two lock names)
 - `tests/test_fresh_clone_gate.py::TestChildEnv::test_the_whitelist_names_no_carrier` (two named exceptions)
 - `tools/cc/hooks/session_start.py::_sessions_line` (the off-note beside it)
@@ -422,6 +438,8 @@ figure that says it worked.
 **Modified:** `tools/cc/_json_safe.py`; `espalier/_atomic_io.py`; `tests/test_surface_contract.py`;
 `tests/conftest.py`; `tools/cc/seat.py`; `tests/test_seat.py`; `scripts/fresh_clone_gate.py`;
 `tests/test_fresh_clone_gate.py`; `tools/cc/hooks/session_start.py`; `tests/test_session_banner.py`;
+`tests/test_file_lock.py` (its lock-site allowlist gains the two `try_lock_file` owners and a
+cross-process class for the non-blocking try *(0-A, 2026-10-26)*);
 `memory/parallel-work-protocol.md`; `docs/WORKFLOW.md`; `docs/ENV_CATALOG.md`; the vendored twins
 under `espalier/_vendor/cc/` (by `scripts/sync_vendor_cc.py` only) and the asset twins under
 `espalier/assets/docs/` (by `scripts/sync_asset_docs.py` only).

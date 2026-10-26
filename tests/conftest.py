@@ -23,7 +23,7 @@ from tests._report_os_name_guard import pytest_runtest_makereport  # noqa: F401
 # of the selected tests that never ran, in a line -q keeps (past xdist's
 # restart cap the run stops scheduling without a word under -q). Each module
 # says why.
-from tests import _never_ran, _timeout_backstop
+from tests import _box_lock, _never_ran, _timeout_backstop
 # Stops a session whose interpreter imports another tree's engine before any
 # test runs: every CLI-spawning test would otherwise pass about the wrong code.
 from tests._engine_check import pytest_sessionstart  # noqa: F401
@@ -45,6 +45,7 @@ def pytest_configure(config):
     say what each is for)."""
     _timeout_backstop.pytest_configure(config)
     _never_ran.pytest_configure(config)
+    _box_lock.pytest_configure(config)
 
 
 @pytest.fixture(autouse=True)
@@ -659,6 +660,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # The lock primitive's cross-process semantics and the three log
             # appends that rely on it, driven by concurrent child processes.
             "test_file_lock",
+            # The box lock between two seats' test runs on one machine: real
+            # pytest children with xdist workers, holders and waiters.
+            "test_box_lock",
             "test_reflect_trigger_path_normalization",
             # TP-189-A — reflect drift -> agent additionalContext + blueprint inject
             "test_reflect_trigger_additionalcontext",
@@ -1452,6 +1456,9 @@ _SLOW_FILES: set[str] = {
     # Spawns eight appender children per site behind a start barrier, and a
     # locker child per primitive case: a real process tree on every OS.
     "test_file_lock",
+    # Every case spawns pytest children with xdist workers, one of them
+    # sleeping while the other waits on the box: seconds each, a real tree.
+    "test_box_lock",
     # A launcher whose child holds the pipe and sleeps, and real git against an
     # origin whose upload-pack sleeps: each case waits out a 3 s cap.
     "test_bounded_spawn",

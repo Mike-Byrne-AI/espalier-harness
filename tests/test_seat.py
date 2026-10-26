@@ -1088,3 +1088,33 @@ class TestRetire:
         out = capsys.readouterr().out
         assert "dry-run: would release 1 claim(s) of box-feat (lane/feat)" in out
         assert feat.is_dir() and len(_live_claims_from(seat, clone, "box-feat")) == 1
+
+
+
+class TestTheLauncherSetsTheBoxLock:
+    """A seat launched by the tool, or by its printed line, runs under the box
+    lock: ``ESPALIER_BOX_LOCK`` names one path per host under the temp
+    directory unless the parent already named one, so two seats on one box
+    take the same lock and CI, which never runs the launcher, never sees it.
+    Mutations: the key dropped from the child's environment; an inherited path
+    overwritten with the default; the key left out of either shell's line."""
+
+    def test_the_child_gets_the_hosts_default_path_unless_the_parent_named_one(self, seat, tmp_path):
+        import tempfile
+        target = seat.Target("box-x", tmp_path, True, False)
+        env = seat.child_env(target, maintenance=False, base={"PATH": "/bin"})
+        assert env["ESPALIER_BOX_LOCK"] == os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        env = seat.child_env(target, maintenance=False, base={"PATH": "/bin", "ESPALIER_BOX_LOCK": "/elsewhere/box.lock"})
+        assert env["ESPALIER_BOX_LOCK"] == "/elsewhere/box.lock"
+        assert seat.BOX_LOCK_KEY == "ESPALIER_BOX_LOCK" and seat.BOX_LOCK_NAME == "espalier-box.lock"
+
+    def test_both_shells_lines_carry_the_path_before_claude(self, seat, tmp_path):
+        import shlex
+        import tempfile
+        target = seat.Target("box-x", tmp_path, True, False)
+        default = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        sh = seat.command_line(target, ["--model", "o p"], maintenance=False, shell="posix")
+        assert f"export ESPALIER_BOX_LOCK={shlex.quote(default)} && " in sh and sh.index("ESPALIER_BOX_LOCK") < sh.index("claude")
+        assert sh.endswith("&& env -u ESPALIER_MAINTENANCE_MODE -u VIRTUAL_ENV claude --model 'o p'")
+        ps = seat.command_line(target, [], maintenance=False, shell="powershell")
+        assert f"$env:ESPALIER_BOX_LOCK = '{default}'" in ps and ps.index("ESPALIER_BOX_LOCK") < ps.index("claude")

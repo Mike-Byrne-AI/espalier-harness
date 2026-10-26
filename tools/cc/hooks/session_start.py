@@ -1054,10 +1054,52 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None, read
     except Exception as e:  # noqa: BLE001 — the count costs itself, never the headlines read above
         _hook_utils.advise_exc("session_start: unanswered-asks count failed", e)
         asks = ""
+    # The dispatcher's clause carries the box lock's off-note too: the
+    # dispatcher holds no assigns, so the `Orders:` line a worker gets never
+    # reaches it, and a new line would move the banner's ruled line count.
+    box = _box_lock_note(root, machine) if _is_dispatcher_seat(root, mail, machine) else ""
+    clause = " ".join(part for part in (asks, box) if part)
     if not rows:
-        return " ".join(part for part in (asks, note) if part)
+        return " ".join(part for part in (clause, note) if part)
     line = _render_rows(rows) + "\n" + _PR_INDENT + _MAIL_TAIL + (f" {note}" if note else "")
-    return line + (f"\n{_PR_INDENT}{asks}" if asks else "")
+    return line + (f"\n{_PR_INDENT}{clause}" if clause else "")
+
+
+def _is_dispatcher_seat(root: Path, mail: Any, machine: str) -> bool:
+    """Whether ``espalier.toml``'s ``dispatcher`` names ``machine``; a channel
+    module that predates the setting, or a setting that cannot be read, reads
+    as no."""
+    setting = getattr(mail, "dispatcher_setting", None)
+    if setting is None:
+        return False
+    try:
+        return setting(root)[0] == machine
+    except Exception as e:  # noqa: BLE001 -- an unreadable setting costs the clause, never the line
+        _hook_utils.advise_exc("session_start: dispatcher setting read failed", e)
+        return False
+
+
+def _box_lock_note(root: Path, machine: str | None, seat: Any = None) -> str:
+    """The box lock's off-note: on a named clone (``machine``) whose session
+    has no ``ESPALIER_BOX_LOCK``, how to run under the lock, paste-ready with
+    the host's default path from the seat driver (``<path>`` where it does not
+    load); '' where the variable is set or the clone has no name. A seat
+    launched by ``seat.py launch`` always has it; a session relaunched by hand
+    after a reap (``claude --continue``) is the one this is for, since its
+    tier would run unlocked beside a sibling's. Folded onto an existing line
+    (`Orders:` on a worker, the `Mail:` line's dispatcher clause on the
+    dispatcher). Reporter only, no spawn."""
+    if not machine or os.environ.get("ESPALIER_BOX_LOCK"):
+        return ""
+    if seat is None:
+        try:
+            seat = _load_seat()
+        except Exception as e:  # noqa: BLE001 -- the driver costs the path, never the note
+            _hook_utils.advise_exc("session_start: seat driver load failed", e)
+            seat = None
+    default = getattr(seat, "box_lock_default", None)
+    path = default() if callable(default) else "<path>"
+    return _ascii(f"box lock: off (relaunch through seat.py launch, or export ESPALIER_BOX_LOCK={path} before claude)")
 
 
 def _asks_count(root: Path, mail: Any, machine: str, by_machine: dict) -> str:
@@ -1137,7 +1179,10 @@ def _orders_line(root: Path, read: dict, mail: Any = None, seat: Any = None, pyt
     line = getattr(seat, "brief_line", None)
     spelled = _hook_utils.python_command_hint() if python is None else python
     hint = line("worker", machine, spelled) if callable(line) else "run /inbox, then /inbox board"
-    return f"{head}; {_ascii(hint)}"
+    # A worker's box-lock off-note rides this line (the dispatcher's rides the
+    # `Mail:` line's clause): the seat driver already loaded gives the path.
+    box = _box_lock_note(root, machine, seat=seat)
+    return f"{head}; {_ascii(hint)}" + (f"; {box}" if box else "")
 
 
 def _latest_run_per_check(rows: list) -> list:
