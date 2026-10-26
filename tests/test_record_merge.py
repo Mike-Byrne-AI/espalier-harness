@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -1226,6 +1227,21 @@ class TestTheShipBodysRecordFinish:
         assert _run_finish_line(win).returncode == 0
         assert not (win / ".git" / "MERGE_HEAD").exists()
 
+    def test_the_body_prints_the_recovery_this_test_drives(self):
+        """The staged-with-a-conflict-marker arm of ship.md's refusal recipe prints
+        the one recovery line, and it is the spelling the test below drives: no
+        ``--`` before the path. Apple Git 2.39.5 (the git Xcode ships) reads that
+        separator as a path named ``--`` and exits 1 without unresolving anything,
+        so the body's old ``git update-index --unresolve -- <path>`` failed every
+        macOS operator who typed it while the test, red on every Air run, was
+        explained by hand in 37 of 100 merged pull-request bodies (the row the
+        probe reads). This pin reds the moment the body and the test spell the
+        recovery differently, on every host."""
+        body = SHIP_BODY.read_text(encoding="utf-8")
+        recipes = re.findall(r"`git update-index --unresolve[^`]*`", body)
+        assert recipes == ["`git update-index --unresolve <path>`"], recipes
+        assert "update-index --unresolve -- " not in body, "the separator is back: Apple Git 2.39.5 reads it as a path"
+
     def test_a_record_file_staged_with_its_markers_is_refused_until_unresolved(self, rm, two_machines):
         """``git add -A`` after the hand file stages the memory file with its
         markers, so git no longer reports it unmerged: the line must refuse,
@@ -1240,7 +1256,7 @@ class TestTheShipBodysRecordFinish:
         assert proc.returncode != 0 and "staged with a conflict marker: ESPALIER_MEMORY.md" in proc.stderr, \
             proc.stderr[-800:]
         assert (win / ".git" / "MERGE_HEAD").exists() and _git(win, "rev-parse", "HEAD").stdout == head
-        _git(win, "update-index", "--unresolve", "--", "ESPALIER_MEMORY.md")
+        _git(win, "update-index", "--unresolve", "ESPALIER_MEMORY.md")  # the body's spelling: no -- (Apple Git 2.39.5 reads it as a path)
         assert _run_finish_line(win).returncode == 0
         memory = _git(win, "show", "HEAD:ESPALIER_MEMORY.md").stdout.splitlines()
         assert mac_row in memory and win_row in memory and _no_markers(win, "ESPALIER_MEMORY.md")

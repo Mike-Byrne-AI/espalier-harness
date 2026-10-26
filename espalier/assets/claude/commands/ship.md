@@ -274,8 +274,11 @@ Six shapes to recognise:
   again:
 
   - **staged with a conflict marker** (a record file staged before the resolver
-    took it, by `git add -A`): `git update-index --unresolve -- <path>` puts it
-    back in conflict, and the resolver takes it.
+    took it, by `git add -A`): `git update-index --unresolve <path>` puts it
+    back in conflict, and the resolver takes it. No `--` before the path: Apple
+    Git 2.39.5 (the git Xcode ships) reads the separator as a path named `--`
+    and exits 1 without unresolving anything, and a record file's path never
+    begins with `-`, the one case the separator guarded.
   - **a path the resolver does not take** (a file you have not staged, a row
     file both sides wrote, a record file added or deleted on one side): settle
     that one path as above and `git add` (or `git rm`) it. A lane from before the
