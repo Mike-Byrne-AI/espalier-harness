@@ -467,7 +467,7 @@ read these as the author's guess, not a schedule.
 
 ## Landing
 - State: HELD at Task 0 item 1 (2026-10-26 local, seat `air-work`, lane `lane/host-expectations-registry`
-  at a020a586; re-raised to the dispatcher, request `20261026T053408Z-air-work-aa9122`, pending its ruling)
+  at a020a586; re-raised as `20261026T053408Z-air-work-aa9122`, held on the dispatcher's ruling, ack `20261026T053553Z-air-d0fd91`)
 - Commits: none of the pack's; this Landing only
 - Suite: not run (nothing built)
 - Earn-the-red: not run (nothing built)
