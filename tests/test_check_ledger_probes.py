@@ -1515,14 +1515,6 @@ class TestProbeShapesAreRatcheted:
         #: and executes it, so prose, a pointer or a changelog line cannot move it;
         #: only changing the command does. The DEF-672 shape: same reason, earns the slot.
         "DEF-1002", "DEF-1003",
-        #: DEF-5025 (filed 2026-10-26 at the host-expectations hold): the subject is the
-        #: /ship body, an agent-read body whose deliverable is one fenced command (the
-        #: record-finish recovery, which Apple Git 2.39.5 reads as a path named `--`).
-        #: The probe matches that command's exact spelling, so prose, a pointer or a
-        #: changelog line cannot move it; only respelling the command does. The
-        #: DEF-1002/1003 shape: same reason, earns the slot. The fix lane retires the
-        #: probe at its strike and drops this slot with it (the dead-entry test below).
-        "DEF-5025",
         "LG-12",
     }
 

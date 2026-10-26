@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -1112,6 +1113,24 @@ def _ship_finish_code() -> str:
     return argv[2]
 
 
+_RECIPE = re.compile(r"`git update-index --unresolve[^`]*`")
+
+
+def _recovery_argv(path: str) -> list[str]:
+    """The argv of the one recovery line ship.md prints for a record file staged
+    with its markers, with ``<path>`` filled in: the body's own spelling is what
+    the drive runs, never a retyped copy (the retyped copy is how the dashed
+    spelling stayed in the test after the body changed, and how the two could
+    drift apart again)."""
+    import shlex
+
+    recipes = _RECIPE.findall(SHIP_BODY.read_text(encoding="utf-8"))
+    assert len(recipes) == 1, recipes
+    argv = shlex.split(recipes[0].strip("`").replace("<path>", path))
+    assert argv[0] == "git", argv
+    return argv[1:]
+
+
 def _hand_plus_record(rm, two_machines, *, roster: bool) -> tuple[Path, str, str]:
     """A lane and its base that conflict on a hand file (``README.md``, added
     on both sides) and one record file (two handoffs into the memory file),
@@ -1226,6 +1245,37 @@ class TestTheShipBodysRecordFinish:
         assert _run_finish_line(win).returncode == 0
         assert not (win / ".git" / "MERGE_HEAD").exists()
 
+    def test_the_body_prints_the_recovery_this_test_drives(self):
+        """The staged-with-a-conflict-marker arm of ship.md's refusal recipe prints
+        the one recovery line, and it is the spelling the test below drives: no
+        ``--`` before the path. Apple Git 2.39.5 (the git Xcode ships) reads that
+        separator as a path named ``--`` and exits 1 without unresolving anything,
+        so the body's old ``git update-index --unresolve -- <path>`` failed every
+        macOS operator who typed it while the test, red on every Air run, was
+        explained by hand in 37 of 100 merged pull-request bodies (the ledger
+        row that filed and struck the defect). This pin reds the moment the body
+        and the test spell the recovery differently, on every host."""
+        body = SHIP_BODY.read_text(encoding="utf-8")
+        recipes = _RECIPE.findall(body)
+        assert recipes == ["`git update-index --unresolve <path>`"], (
+            f"ship.md must carry exactly one inline recovery recipe, spelled bare, found {recipes}: "
+            "Apple Git 2.39.5 takes every word after --unresolve as a path, the -- separator included; "
+            "the drive test reads its argv from this recipe, so change the two together"
+        )
+        assert not re.search(r"update-index\s+--unresolve\s+--\s", body), (
+            "the separator is back somewhere in ship.md: Apple Git 2.39.5 reads it as a path and exits 1"
+        )
+
+    def test_the_refusal_names_each_path_separated_by_a_space(self):
+        """The refusal lists the record files staged with their markers so the
+        operator can paste them after ``--unresolve``; joined with a comma the
+        paste fails the same way the separator did (``error: a.md,: not in our
+        branch``, exit 1, nothing unresolved, driven on Apple Git 2.39.5), so
+        the line joins them with spaces and this pins that it keeps doing so."""
+        code = _ship_finish_code()
+        assert "staged with a conflict marker: ' + ' '.join(m)" in code, code
+        assert "', '.join(" not in code, code
+
     def test_a_record_file_staged_with_its_markers_is_refused_until_unresolved(self, rm, two_machines):
         """``git add -A`` after the hand file stages the memory file with its
         markers, so git no longer reports it unmerged: the line must refuse,
@@ -1240,7 +1290,7 @@ class TestTheShipBodysRecordFinish:
         assert proc.returncode != 0 and "staged with a conflict marker: ESPALIER_MEMORY.md" in proc.stderr, \
             proc.stderr[-800:]
         assert (win / ".git" / "MERGE_HEAD").exists() and _git(win, "rev-parse", "HEAD").stdout == head
-        _git(win, "update-index", "--unresolve", "--", "ESPALIER_MEMORY.md")
+        _git(win, *_recovery_argv("ESPALIER_MEMORY.md"))  # the body's own recipe, read from ship.md
         assert _run_finish_line(win).returncode == 0
         memory = _git(win, "show", "HEAD:ESPALIER_MEMORY.md").stdout.splitlines()
         assert mac_row in memory and win_row in memory and _no_markers(win, "ESPALIER_MEMORY.md")
