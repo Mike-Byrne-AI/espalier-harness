@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 
 import pytest
+from tests._platform_standin import as_os
 
 TOOLS_CC = Path(__file__).resolve().parents[1] / "tools" / "cc"
 CAP_SECONDS = 3.0  # long enough that the holder has surely started inside it
@@ -257,41 +258,60 @@ def _load_copy(rel: str):
     return mod
 
 
+def _stand_in_popen(calls: list) -> type:
+    """A ``Popen`` that records what the harness does with it in ``calls`` and
+    answers from a ``plan`` the test sets (a return code, ``"timeout"``, or an
+    exception to raise). It is a context manager too, so the standard library's
+    own ``subprocess.run`` can hold it when the platform is read as POSIX."""
+
+    class StandInPopen:
+        plan: list = []
+
+        def __init__(self, args, **kw):
+            calls.append(("popen", args, kw))
+            self.args, self.pid, self.returncode = args, 4242, None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+        def poll(self):
+            return self.returncode
+
+        def communicate(self, input=None, timeout=None):
+            calls.append(("communicate", input, timeout))
+            step = StandInPopen.plan.pop(0)
+            if isinstance(step, BaseException):
+                raise step
+            if step == "timeout":
+                raise subprocess.TimeoutExpired(self.args, timeout)
+            self.returncode = step
+            return ("out", "err")
+
+        def wait(self, timeout=None):
+            calls.append(("wait", timeout))
+            return self.returncode if self.returncode is not None else 1
+
+        def kill(self):
+            calls.append(("kill",))
+
+    return StandInPopen
+
+
 class TestEveryCopysWindowsBranch:
     """Each copy's Windows branch, driven on every OS with a stand-in ``Popen``
-    and the platform read as ``win32`` (the required cells are Linux, where the
-    call is ``subprocess.run``), the tree kill recorded rather than made."""
+    and the platform read as ``win32`` through ``tests/_platform_standin.py``
+    (the required cells are Linux, where the call is ``subprocess.run``), the
+    tree kill recorded rather than made."""
 
     @pytest.fixture(params=_COPIES)
     def windows(self, request, monkeypatch):
         mod = _load_copy(request.param)
         calls: list[tuple] = []
-
-        class StandInPopen:
-            plan: list = []
-
-            def __init__(self, args, **kw):
-                calls.append(("popen", args, kw))
-                self.args, self.pid, self.returncode = args, 4242, None
-
-            def communicate(self, input=None, timeout=None):
-                calls.append(("communicate", input, timeout))
-                step = StandInPopen.plan.pop(0)
-                if isinstance(step, BaseException):
-                    raise step
-                if step == "timeout":
-                    raise subprocess.TimeoutExpired(self.args, timeout)
-                self.returncode = step
-                return ("out", "err")
-
-            def wait(self, timeout=None):
-                calls.append(("wait", timeout))
-                return self.returncode if self.returncode is not None else 1
-
-            def kill(self):
-                calls.append(("kill",))
-
-        monkeypatch.setattr(sys, "platform", "win32")
+        StandInPopen = _stand_in_popen(calls)
+        as_os(monkeypatch, "windows", os_name=False)
         monkeypatch.setattr(subprocess, "Popen", StandInPopen)
         monkeypatch.setattr(mod, "_end_tree", lambda proc, end: calls.append(("end_tree", proc.pid)))
         return mod, StandInPopen, calls
@@ -333,6 +353,40 @@ class TestEveryCopysWindowsBranch:
         monkeypatch.setattr(subprocess, "run", fake)
         mod.run_bounded(["git"], timeout=3)
         assert seen == [["git"]] and calls == [], (seen, calls)
+
+    @pytest.mark.parametrize("target_os", ["linux", "windows"])
+    def test_the_timeout_shape_follows_the_platform_the_harness_reads(self, target_os, monkeypatch):
+        """Read as ``windows``, every copy ends the child's whole tree at the
+        timeout, drains the pipes and reaps it (the one shape that bounds a
+        grandchild holding the pipe, the sharp edge this module exists for);
+        read as ``linux``, the call is ``subprocess.run``'s own and the child
+        alone is killed. The standard library's ``run`` stays in place on
+        purpose: ``_is_stdlib_run`` (``tools/cc/_json_safe.py``, the guard on
+        the Windows branch) sends a replaced ``run`` down the run branch at
+        BOTH values, so a node observing a fake ``run`` could not tell the two
+        apart; only the stand-in ``Popen`` is replaced, and ``run`` holds it as
+        its context manager. One node, two platforms, on whatever host runs it:
+        this is the adopter-axes registry's proof of the ``target_os/linux`` and
+        ``target_os/windows`` cells (tests/_axis_registry.py), so it carries the
+        ``target_os`` parameter and no skip, since a Linux cell that skipped the
+        Windows shape would prove nothing about it."""
+        copies = [(rel, _load_copy(rel)) for rel in _COPIES]  # imported before the platform is faked
+        as_os(monkeypatch, target_os, os_name=False)
+        for rel, mod in copies:
+            calls: list[tuple] = []
+            popen = _stand_in_popen(calls)
+            popen.plan = ["timeout", 0]
+            monkeypatch.setattr(subprocess, "Popen", popen)
+            monkeypatch.setattr(mod, "_end_tree", lambda proc, end: calls.append(("end_tree", proc.pid)))
+            with pytest.raises(subprocess.TimeoutExpired):
+                mod.run_bounded(["git", "log"], timeout=3, capture_output=True, text=True, encoding="utf-8")
+            names = [c[0] for c in calls]
+            if target_os == "windows":
+                assert names == ["popen", "communicate", "end_tree", "communicate", "wait"], (rel, calls)
+            else:
+                # subprocess.run's own handler: kill the child, then wait (POSIX)
+                # or drain (a Windows host); the tree is never ended.
+                assert "end_tree" not in names and names[:3] == ["popen", "communicate", "kill"], (rel, calls)
 
 
 class TestTheEngineWrapperClosesTheChildsStdin:

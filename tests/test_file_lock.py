@@ -162,20 +162,30 @@ class TestLockPrimitiveAcrossProcesses:
 def _spawn_trier(tmp_path: Path, copy: str, lock_path: Path, *, tag: str) -> subprocess.Popen:
     """A child that tries the lock without waiting, writes the first answer,
     then keeps trying until it holds the lock and writes that too: the second
-    marker says the release reached it, the first that the try never waited."""
+    marker says the release reached it, the first that the try never waited.
+    Each marker is written whole and renamed into place: the parent polls for
+    the marker's existence and reads it at once, and a ``write_text`` creates
+    the file before it holds the answer, so on a loaded CI box the parent read
+    an empty marker (two cells of #345's run, 2026-10-26)."""
     code = textwrap.dedent(f"""
-        import sys, time
+        import os, sys, time
         from pathlib import Path
         {{imp}}
         first, held = Path({str(tmp_path / (tag + '.first'))!r}), Path({str(tmp_path / (tag + '.held'))!r})
+
+        def mark(path, text):
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+
         with open({str(lock_path)!r}, "a+", encoding="utf-8") as fh:
             got = try_lock_file(fh)
-            first.write_text(str(got), encoding="utf-8")
+            mark(first, str(got))
             deadline = time.monotonic() + {_CHILD_DEADLINE_S}
             while not got and time.monotonic() < deadline:
                 time.sleep(0.02)
                 got = try_lock_file(fh)
-            held.write_text(str(got), encoding="utf-8")
+            mark(held, str(got))
             unlock_file(fh)
     """).replace("{imp}", _PRIMITIVE_IMPORT[copy])
     return subprocess.Popen([sys.executable, "-c", code], env=_child_env(tmp_path),

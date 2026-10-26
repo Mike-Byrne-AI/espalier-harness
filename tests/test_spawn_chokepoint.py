@@ -41,6 +41,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests._platform_standin import as_os
 from tests._live_tree import checkout_glob
 
 HOOKS_DIR = Path(__file__).resolve().parents[1] / "tools" / "cc" / "hooks"
@@ -417,7 +418,7 @@ class TestTheWindowsBranchOnEveryOS:
             def kill(self):
                 calls.append(("kill",))
 
-        monkeypatch.setattr(sys, "platform", "win32")
+        as_os(monkeypatch, "windows", os_name=False)
         monkeypatch.setattr(subprocess, "Popen", StandInPopen)
         monkeypatch.setattr(js, "_end_tree", lambda proc, end: calls.append(("end_tree", proc.pid)))
         return js, StandInPopen, calls
