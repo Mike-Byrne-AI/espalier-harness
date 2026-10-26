@@ -1369,7 +1369,11 @@ class TestAStartProbeThatNeverAnswers:
         again = [s for s in result["next_steps"]
                  if "-m espalier doctor ." in s and "less loaded" in s]
         assert again, result["next_steps"]
-        assert "python3 -m espalier" not in again[0], (
+        # Read from the command's opening backtick: the interpreter running
+        # doctor is the right spelling, and its own path may end in `python3`
+        # (a venv's), which a bare substring read as the hanging one (red on a
+        # worktree seat whose .venv/bin/python3 ran the slice, 2026-10-26).
+        assert "`python3 -m espalier" not in again[0], (
             f"the step was spelled with the interpreter that does not start: {again[0]}"
         )
 
