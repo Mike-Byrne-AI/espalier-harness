@@ -87,9 +87,31 @@ def _file(lr, t, rid: str, *, after: str | None = "DEF-2") -> int:
                          "--severity", "nit", "--subject", "site", "--why-not", "no local oracle"))
 
 
+def _close_probe(t, rid: str) -> None:
+    """The lane fixed what ``rid`` names: its probe no longer prints its open
+    value, which the strike's head drive requires since 2026-10-25 (a probe
+    still printing it is the refusal ``tests/test_ledger_row.py``'s
+    ``TestAStrikeReadsTheBaseAndTheHead`` pins). A fixture probe is an ``echo``,
+    so its command is the one lever; the row's entry is its file under
+    ``probes.d/`` where the tree keeps one, else the roster's."""
+    path = t["ledger"].parent / "probes.d" / f"{rid}.json"
+    if path.is_file():
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["cmd"] = "echo closed"
+        path.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+        return
+    if t["probes"].is_file():
+        data = json.loads(t["probes"].read_text(encoding="utf-8"))
+        for probe in data.get("probes", []):
+            if isinstance(probe, dict) and probe.get("id") == rid:
+                probe["cmd"] = "echo closed"
+        t["probes"].write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+
+
 def _strike(lr, t, rid: str) -> int:
     root = t["ledger"].parents[1]
     (root / "site").write_text("", encoding="utf-8")
+    _close_probe(t, rid)
     return lr.main(_args(t, "--root", str(root), "strike", rid, "--text-file", str(t["closing"])))
 
 

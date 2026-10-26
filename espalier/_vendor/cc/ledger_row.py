@@ -1437,7 +1437,8 @@ def _base_tree(root: Path, sha: str, scratch: Path) -> Path:
             proc = _CHK.run_bounded(["git", *argv], cwd=root, env=env, capture_output=True, text=True,
                                     encoding="utf-8", errors="replace", timeout=_CHK._TIMEOUT)
         except (OSError, subprocess.SubprocessError) as exc:
-            raise BaseUnavailable(f"git {argv[0]} of {sha[:12]} could not run ({exc})") from exc
+            raise BaseUnavailable(f"git {argv[0]} of {sha[:12]} could not run "
+                                  f"({_load('_json_safe').os_error_text(exc)})") from exc
         if proc.returncode != 0:
             raise BaseUnavailable(f"git {argv[0]} of {sha[:12]} exited {proc.returncode}: "
                                   f"{proc.stderr.strip()[:160]}")
@@ -1485,13 +1486,14 @@ def _run_guard(node: str, *, cwd: Path, plugin_dir: Path, report: Path) -> tuple
     except subprocess.TimeoutExpired:
         return None, {}
     except OSError as exc:
-        return 3, {"tail": f"pytest could not start: {exc}"}
+        return 3, {"tail": f"pytest could not start: {_load('_json_safe').os_error_text(exc)}"}
     record: dict = {}
     if report.is_file():
         try:
-            record = json.loads(report.read_text(encoding="utf-8"))
+            loaded = json.loads(report.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            record = {}
+            loaded = None
+        record = loaded if isinstance(loaded, dict) else {}
     lines = [ln for ln in ((proc.stdout or "") + "\n" + (proc.stderr or "")).splitlines() if ln.strip()]
     record["tail"] = lines[-1][:160] if lines else ""
     return proc.returncode, record
