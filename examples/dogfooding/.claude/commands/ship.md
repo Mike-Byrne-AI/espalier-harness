@@ -262,7 +262,7 @@ Six shapes to recognise:
   unmerged:
 
   ```bash
-  python -c "import sys, pathlib; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); sys.path.insert(0, 'tools/cc'); import record_merge as rm; u = rm.run(['git', 'diff', '--name-only', '--diff-filter=U'])[1].splitlines(); m = [p for p in rm.run(['git', 'diff', '--cached', '--name-only'])[1].splitlines() if rm.on_roster(p) and p not in u and pathlib.Path(p).is_file() and any(x[:7] in ('<' * 7, '>' * 7) for x in pathlib.Path(p).read_text(encoding='utf-8', errors='replace').splitlines())]; m and sys.exit('record_merge: refused -- staged with a conflict marker: ' + ', '.join(m)); r = rm._resolve_unmerged(pathlib.Path('.').resolve(), 'origin/<base>', u, run=rm.run, say=print); print(*r.notes, sep=chr(10))"
+  python -c "import sys, pathlib; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); sys.path.insert(0, 'tools/cc'); import record_merge as rm; u = rm.run(['git', 'diff', '--name-only', '--diff-filter=U'])[1].splitlines(); m = [p for p in rm.run(['git', 'diff', '--cached', '--name-only'])[1].splitlines() if rm.on_roster(p) and p not in u and pathlib.Path(p).is_file() and any(x[:7] in ('<' * 7, '>' * 7) for x in pathlib.Path(p).read_text(encoding='utf-8', errors='replace').splitlines())]; m and sys.exit('record_merge: refused -- staged with a conflict marker: ' + ' '.join(m)); r = rm._resolve_unmerged(pathlib.Path('.').resolve(), 'origin/<base>', u, run=rm.run, say=print); print(*r.notes, sep=chr(10))"
   ```
 
   It resolves the record files by shape, stages them and concludes the merge
@@ -275,10 +275,12 @@ Six shapes to recognise:
 
   - **staged with a conflict marker** (a record file staged before the resolver
     took it, by `git add -A`): `git update-index --unresolve <path>` puts it
-    back in conflict, and the resolver takes it. No `--` before the path: Apple
-    Git 2.39.5 (the git Xcode ships) reads the separator as a path named `--`
-    and exits 1 without unresolving anything, and a record file's path never
-    begins with `-`, the one case the separator guarded.
+    back in conflict, and the resolver takes it; the refusal names each such
+    path, separated by spaces, and the one line takes them all. No `--` before
+    the paths: Apple Git 2.39.5 (the git Xcode ships) takes every word after
+    `--unresolve` as a path, the separator included, and exits 1 without
+    unresolving anything; a record file's path never begins with `-`, so no
+    git needs the separator for these paths.
   - **a path the resolver does not take** (a file you have not staged, a row
     file both sides wrote, a record file added or deleted on one side): settle
     that one path as above and `git add` (or `git rm`) it. A lane from before the

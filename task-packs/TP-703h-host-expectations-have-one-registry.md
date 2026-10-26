@@ -481,6 +481,9 @@ read these as the author's guess, not a schedule.
   H-2's summary would be a second line beside `tests/conftest.py::report_platform_expected_failures`.
   Figures: platform-conditional marks 78 (not 80), xfail marks 20 (the pack's 13 is stale), none naming
   a platform or a ledger row; `DEF-5008` no longer matches item 4's grep.
+- 2026-10-26, later the same day: `DEF-5025` healed the Apple Git red (the `/ship` body's recovery
+  respelled, the drive test green on the Air), so H-4's first row and Task 0 item 4's grep now point
+  at a struck row; un-holding this pack as written would XPASS that row's strict `xfail` on the Air.
 - Reach: no row touched; the record-merge red's defect row is filed from the seat's block on the
   dispatcher's word (adopter-facing: the recovery the `/ship` body prints,
   `git update-index --unresolve`, exits 1 on Apple Git 2.39.5), not as an expectation

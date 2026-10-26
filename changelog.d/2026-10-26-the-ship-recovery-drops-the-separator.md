@@ -8,8 +8,11 @@
   merge stayed refused and the operator had no second path; on this box the
   test that drives the recipe was red on every run, and 37 of the last 100
   merged pull-request bodies explained it by hand. The body now prints
-  `git update-index --unresolve <path>`, which recreates the three stages on
-  2.39.5 and on git 2.40 and later (CI's git, where the test proves it); a
-  record file's path never begins with `-`, the one case the separator
-  guarded, and the body says so. The test drives the bare spelling and pins
-  the body to the spelling it drives, so the two cannot drift apart again.
+  `git update-index --unresolve <path>`, which recreates the index stages on
+  2.39.5 and, driven after `git add -A` on CI's git (the version the runner
+  prints), there too; after `--unresolve` Apple Git 2.39.5 takes every word
+  as a path, so the separator cannot be used there, and no record file's path
+  begins with `-`, so no git needs it for these paths. The refusal names each
+  staged path separated by spaces (a comma-joined paste failed the same way).
+  The test reads the recipe out of the body and drives it, and pins the body
+  to exactly one bare recipe, so the two cannot drift apart again.
