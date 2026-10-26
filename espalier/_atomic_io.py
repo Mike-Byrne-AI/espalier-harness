@@ -244,6 +244,10 @@ def atomic_write_bytes(path: Path, data: bytes, *, follow_symlinks: bool = False
 _LOCK_OFFSET_HIGH = 0x7FFFFFFF
 _LOCKFILE_EXCLUSIVE_LOCK = 0x2
 _ERROR_NOT_LOCKED = 158
+#: ``LockFileEx``'s fail-immediately flag, and the error a byte another process
+#: holds answers with under it: :func:`try_lock_file` reads that pair as False.
+_LOCKFILE_FAIL_IMMEDIATELY = 0x1
+_ERROR_LOCK_VIOLATION = 33
 
 
 def lock_file(fh: IO[Any], *, shared: bool = False) -> None:
@@ -289,9 +293,36 @@ def unlock_file(fh: IO[Any]) -> None:
         fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
 
 
-def _lock_byte(fh: IO[Any], flags: int, *, unlock: bool) -> None:
+def try_lock_file(fh: IO[Any], *, shared: bool = False) -> bool:
+    """:func:`lock_file` without the wait: True when the lock is now held,
+    False when another process holds it. Raises where ``lock_file`` would.
+
+    POSIX adds ``LOCK_NB`` to the ``flock`` and reads ``BlockingIOError`` as
+    False; Windows adds the fail-immediately flag to the ``LockFileEx`` call
+    and reads the lock-violation error as False. The box lock the test suite
+    takes between two seats on one machine polls this, so a waiter can name
+    the holder and its age instead of sitting silent inside a blocking call.
+    Held equal to the twin copy by the same parity test as ``lock_file``."""
+    if sys.platform == "win32":
+        return _lock_byte(fh, (0 if shared else _LOCKFILE_EXCLUSIVE_LOCK) | _LOCKFILE_FAIL_IMMEDIATELY,
+                          unlock=False)
+    try:
+        import fcntl
+    except ImportError as exc:  # a POSIX build without fcntl: no lock to take
+        raise OSError(f"no file locking on this platform: {exc}") from exc
+    try:
+        fcntl.flock(fh.fileno(), (fcntl.LOCK_SH if shared else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
+
+
+def _lock_byte(fh: IO[Any], flags: int, *, unlock: bool) -> bool:
     """``LockFileEx`` / ``UnlockFileEx`` on the one lock byte (Windows only).
-    A synchronous handle makes ``LockFileEx`` wait until the lock is granted."""
+    A synchronous handle makes ``LockFileEx`` wait until the lock is granted;
+    with the fail-immediately flag in ``flags`` a held byte answers at once,
+    and that one error, under that one flag, is read as False, so a blocking
+    caller's errors still raise. True when the call succeeded."""
     if sys.platform != "win32":  # pragma: no cover - the callers branch first
         raise OSError("LockFileEx is Windows-only")
     import ctypes
@@ -313,5 +344,8 @@ def _lock_byte(fh: IO[Any], flags: int, *, unlock: bool) -> None:
     if not ok:
         error = ctypes.get_last_error()
         if unlock and error == _ERROR_NOT_LOCKED:
-            return
+            return True
+        if flags & _LOCKFILE_FAIL_IMMEDIATELY and error == _ERROR_LOCK_VIOLATION:
+            return False
         raise ctypes.WinError(error)
+    return True
