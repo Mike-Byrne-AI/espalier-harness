@@ -466,13 +466,41 @@ read these as the author's guess, not a schedule.
 | Total | 6 to 7 h | 1.5 h | expect the measured overrun |
 
 ## Landing
-- State: DRAFT
-- Commits:
-- Suite: `python3 scripts/proof_tier.py --run --base origin/main` on the lane
-- Earn-the-red: per contract test, against the mutation H-3 names
-- Red-team: not yet run; the reasoning review at `TP-703`'s authoring covers the roadmap and
-  two siblings, not this file
-- Reach: see Reach; no row closed at authoring
-- Task 0: not yet run (the census figures in Motivation are the authoring-time run, 2026-10-18)
+- State: HELD at Task 0 item 1 (2026-10-26 local, seat `air-work`, lane `lane/host-expectations-registry`
+  at a020a586; re-raised to the dispatcher, request `20261026T053408Z-air-work-aa9122`, pending its ruling)
+- Commits: none of the pack's; this Landing only
+- Suite: not run (nothing built)
+- Earn-the-red: not run (nothing built)
+- Red-team: the 0-A code-reviewer (pack-artifact checklist v2, reads only): REQUEST CHANGES with
+  three BLOCKs, each a reading of the same ground move -- deleting the roster reds 40 references in
+  `tests/test_test_suite_contract.py` and `TP-703i`'s roster pin
+  (`tests/test_axis_registry.py::TestTheTargetOsCellsHoldOnEveryHost`, which imports
+  `tests.conftest::_expected_failures_for`); H-2's xdist premise is wrong (xdist 3.8.0's controller
+  never runs `pytest_collection_modifyitems`, `xdist/dsession.py:102-105`; the roster counts from
+  report node ids); the merge-settings row would XPASS the Air's own tier under `darwin_python3_only`;
+  H-2's summary would be a second line beside `tests/conftest.py::report_platform_expected_failures`.
+  Figures: platform-conditional marks 78 (not 80), xfail marks 20 (the pack's 13 is stale), none naming
+  a platform or a ledger row; `DEF-5008` no longer matches item 4's grep.
+- Reach: no row touched; the record-merge red's defect row is filed from the seat's block on the
+  dispatcher's word (adopter-facing: the recovery the `/ship` body prints,
+  `git update-index --unresolve`, exits 1 on Apple Git 2.39.5), not as an expectation
+- Task 0 (2026-10-26 local, at a020a586): item 1 **refuted the pack**: distinct expected reds live on
+  a seat's host, ONE. Measured on the Air (`git version 2.39.5 (Apple Git-154)`):
+  `tests/test_record_merge.py::TestTheShipBodysRecordFinish::test_a_record_file_staged_with_its_markers_is_refused_until_unresolved`
+  FAILED; `tests/test_merge_settings.py::TestEnforcementClaimSurvivesRealSettingsShapes::test_legacy_quoted_shell_form_is_not_reported_as_disarmed`
+  PASSED, so it is a premise red of python-only and Windows hosts (its fixture rewires hooks to
+  `python3`), not an expectation, by this pack's own Scope (out); `DEF-4032`'s six ids are a CI
+  runner's (`macos-ci`), not a seat's host, and have their home in `tests/conftest.py::PLATFORM_EXPECTED_FAILURES`
+  (non-strict, counted, its reporter wired); the win box's stop-gate red is a candidate only (the box
+  offline; the leads read a fixture defect). Bodies, `gh pr list --state merged --limit 100`
+  (#243..#344, 2026-10-15 to 2026-10-26): 49 explain a known red by hand, 37 of them the
+  record-merge test, 9 the merge-settings test with a host word (none from the Air since #307), 39
+  with the phrases; the ten-body line is met and the two-reds line is not, so the exit is the
+  pack's: stop and re-raise, never adjust. Item 2: marks on parametrised ids are enumerable by
+  `collected_items` (`tests/test_axis_registry.py`'s planted `test_xfailed[node]` row proves it).
+  Item 3: a strict `xfail` under a false condition is inert (probed on this box: PASS, not XPASS),
+  so the item is moot. Item 4: no live ledger row names either Air red (the grep prints nothing).
+  Item 5: decided before execution by `TP-703b` Wave 3 (non-strict, run, counted; the leads' five
+  macOS runs read the anchor red 5 of 5 and the siblings 4 of 5).
 - Re-measure (bodies explaining a known red, next 50 merges): window opens at the merge
 - Date: 2026-10-18 (authored, local)
