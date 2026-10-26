@@ -42,6 +42,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -50,7 +51,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 try:  # the bounded spawn beside this file; it is also loaded where that sibling is not importable
     from _json_safe import run_bounded
@@ -694,6 +695,36 @@ def run_probe(probe: dict) -> tuple[str, str]:
     return STRIKE_CANDIDATE, f"prints {got!r}, open_value is {expected!r}"
 
 
+@contextlib.contextmanager
+def rooted(root: "str | os.PathLike[str]", *, pristine: bool = False) -> Iterator[Path]:
+    """Root the runner at ``root`` for the block and restore its four module
+    globals after it, whatever the block did.
+
+    The one home of that swap: ``main``'s ``--root`` is this, and the strike
+    verb, which drives a probe on a tree it checked out from a ref (its base)
+    and then on its own checkout, goes through it too, because a bare ``_ROOT``
+    assignment would carry the first tree's contamination memo into the
+    second's drive (the memo is per tree; see ``_contamination_cache``).
+
+    ``pristine`` records that the caller built the tree itself from a ref, so it
+    holds no generated duplicate of tracked source: the memo is an empty map
+    for the block instead of being derived by ``git ls-files``, which in a plain
+    directory takes the git-unavailable path and reads every tree-walking probe
+    UNRESOLVED (19 of the live commands by ``_TREE_WALK_MARKERS``; measured on a
+    replayed strike, 2026-10-25). The subject and inputs gates are unchanged:
+    a tree that lacks the probe's subject still reads UNRESOLVED there."""
+    global _ROOT, _PROBES, _LEDGER, _CONTAMINATION
+    saved = _ROOT, _PROBES, _LEDGER, _CONTAMINATION
+    _ROOT = _grammar().find_root(root)
+    _PROBES = _ROOT / "task-packs" / "LEDGER_PROBES.json"
+    _LEDGER = _ROOT / "task-packs" / "FORWARD_LEDGER.md"
+    _CONTAMINATION = {} if pristine else None  # the memo is per tree
+    try:
+        yield _ROOT
+    finally:
+        _ROOT, _PROBES, _LEDGER, _CONTAMINATION = saved
+
+
 def main(argv: list[str] | None = None) -> int:
     # Drift details and probe output carry the ledger's own text, which is not
     # ASCII; on a cp1252 console or redirected stdout that raised
@@ -723,16 +754,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     # For this call only: the tests share one instance of this module, so a
     # --root that rebound the paths for good would redirect every later caller.
-    global _ROOT, _PROBES, _LEDGER, _CONTAMINATION
-    saved = _ROOT, _PROBES, _LEDGER, _CONTAMINATION
-    _ROOT = _grammar().find_root(args.root)
-    _PROBES = _ROOT / "task-packs" / "LEDGER_PROBES.json"
-    _LEDGER = _ROOT / "task-packs" / "FORWARD_LEDGER.md"
-    _CONTAMINATION = None  # the memo is per tree
-    try:
+    with rooted(args.root):
         return _run(args)
-    finally:
-        _ROOT, _PROBES, _LEDGER, _CONTAMINATION = saved
 
 
 def _ledger_live_rows() -> "int | None":

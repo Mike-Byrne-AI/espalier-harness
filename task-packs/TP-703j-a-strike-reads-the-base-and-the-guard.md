@@ -17,6 +17,11 @@
   strike is the one verb that drives nothing.
 - Ledger: no row filed at authoring (`memory/parallel-work-protocol.md` item 8). The lane strikes
   nothing and mints nothing; a defect its Task 0 finds in the runner is filed in-lane.
+- Executed 2026-10-25 by the seat `air-work` on `lane/strike-reads-the-base` (the dispatcher's
+  assign `20261025T224349Z-air-7e0520`). The 0-A review (code-reviewer, checklist v2: REQUEST
+  CHANGES, WARN and NIT only, the premise intact) and the readiness leads of 2026-10-19 were
+  folded in just in time, each marked *(0-A, 2026-10-25)* below; the request to the dispatcher
+  carrying them is `20261025T231336Z-air-work-3ea70d`, its ack `20261025T231952Z-air-6a811c`.
 - The discipline this pack carries forward is `docs/STANDING_PRINCIPLES.md` §7, earn the red, and
   the blueprint-authoring skill's rule that the measuring instrument is a claim: a strike's probe
   that was never driven at the base has never shown the defect existed where the row said it did.
@@ -58,7 +63,11 @@ the row's claim that the probe showed a defect.
 
 1. **`--base <ref>` on `strike`.** The row's probe is driven at `<ref>` (default:
    `git merge-base HEAD origin/<base>`, the commit the lane branched from, so a fix another lane
-   merged after that does not make a true strike refuse), on a temp-index checkout of the whole
+   merged after that does not make a true strike refuse; `<base>` is the default branch read
+   offline from `origin/HEAD`, else `main`, else `master`, never `gh`, and where none resolves
+   and no `--base` was given the strike prints one line and proceeds, since an adopter's clone may
+   have no remote and the suite's own strike fixtures are plain directories *(0-A, 2026-10-25)*),
+   on a temp-index checkout of the whole
    base tree in a temporary directory outside the checkout (`GIT_INDEX_FILE` pointed at a scratch
    file, `git read-tree <ref>`, `git checkout-index -a --prefix=<scratch>/tree/`: no
    `export-ignore` is honoured and no shared worktree state is written), with the runner rooted
@@ -71,17 +80,33 @@ the row's claim that the probe showed a defect.
 2. **`--guard <pytest node id>` on `strike`**, repeatable. The named test is run at the head
    (green required) and at the base with the head's `tests/` directory laid over the base
    checkout (red required: the new test against the unfixed code, which is what earn-the-red
-   means), with `PYTHONPATH` set to the scratch tree so `espalier` resolves to the base tree's
-   own package (`tests/_engine_check.py::pytest_sessionstart` exits 4 otherwise), the box lock
-   variable removed from the child, and the failure's exception read: `ImportError`,
+   means), with `PYTHONPATH` set to the tree each run is on, the base run's to the scratch tree
+   and the head run's to the checkout, so `espalier` resolves to that tree's own package
+   (`tests/_engine_check.py::pytest_sessionstart` exits 4 otherwise, and from a worktree seat the
+   head run would too *(0-A, 2026-10-25)*), the box lock's variables (`ESPALIER_BOX_LOCK` and
+   `ESPALIER_BOX_LOCK_HOLDER`) and the session marker removed from the child, no bytecode written
+   into either tree, and the failure's exception read from the strike's own one-file pytest plugin
+   on the child's path (pytest's junit report carries no exception type, measured on pytest 9: a
+   `<failure message="assert 1 == 2">` with no `type` attribute *(0-A, 2026-10-25)*): an earned
+   red fails by `AssertionError` or `pytest.fail`; `ImportError`, `ModuleNotFoundError`,
    `AttributeError` or `NameError` at the base is a refusal (the guard proves only that the symbol
-   is new), as is exit 2, 4 or 5 (a collection error, the engine check, nothing collected).
+   is new), any other exception there is a refusal too (the test never reached its assertion: a
+   helper raising because the scratch tree is not a repository proves nothing about the defect), as
+   is a failure outside the test's call, exit 2, 3, 4 or 5 (a collection error, an internal error,
+   the engine check, nothing collected), a run of skips, a run past the guard's own 300 s bound,
+   and green on both sides (a fix that lives under `tests/` rides the overlay to the base, and so
+   does a guard that does not read the defect: the refusal says the guard cannot tell the two trees
+   apart). A guard needs a readable base: `--no-base --guard` refuses.
 3. **The reads that cannot be made are said, not skipped.** A probe the runner itself reports
-   undrivable at the base (`NO_ORACLE` for a `why_not` row, 39 of 255 probe files; `UNRESOLVED`
+   undrivable at the base (`NO_ORACLE` for a `why_not` row, 48 of 270 probe files at the lane's
+   HEAD; `UNRESOLVED`
    for a missing subject or input, or a command that could not run outside a repository) is
-   printed as such, by the runner's verdict and never by a word match. The default, stated once:
-   the base drive runs, and a probe it cannot drive is one printed line; `--no-base` records the
-   choice in the closing text; an explicit `--base <ref>` makes a failure to drive a refusal.
+   printed as such, by the runner's verdict and never by a word match; a `why_not` row has no
+   command, so neither side is read: its reason is said once, and an explicit `--base` refuses it,
+   as it refuses a row with no probe entry at all *(0-A and code review, 2026-10-25)*. Every id of a multi-id cell is driven, not the id typed alone (the cell
+   closes together, `DEF-863`) *(0-A, 2026-10-25)*. The default, stated once:
+   the base drive runs, and a probe it cannot drive is one printed line; `--no-base` says so on stderr, and the closing text is the author's place to
+   record it; an explicit `--base <ref>` makes a failure to drive a refusal.
 4. **The words.** `ledger_row.py`'s module docstring and `strike --help`; one sentence in
    `memory/parallel-work-protocol.md` item 8 (a struck row's probe was driven on both sides where
    it could be); the two flags on the `/handoff` body's strike line only if one exists (none
@@ -111,7 +136,12 @@ the row's claim that the probe showed a defect.
   `TP-703f`'s kind of work if wanted.
 - **The checkout's blind spots.** The scratch tree is a plain directory, not a repository: a
   probe that runs `git` cannot run there, and the runner says so (`UNRESOLVED`); the inputs gate
-  `DEF-858` keeps refusing an absent input on either side. Not widened here.
+  `DEF-858` keeps refusing an absent input on either side. Not widened here. *(Measured
+  2026-10-25 at a pristine checkout of `origin/main` 57e6846f: 7 of 222 commands undrivable by
+  verdict, and 2 of the 215 drivable, `DEF-1143` and `DEF-877`, ask git inside the one-liner,
+  swallow its failure and print a false STRIKE_CANDIDATE on the plain directory, which the strike
+  reads as a refusal of a true strike, the safe direction; the refusal sentence names the no-.git
+  base, and `--no-base` is the way past. The worktree form stays a later lane's.)*
 
 ## Task 0 — Verify (try to kill this pack)
 
@@ -126,7 +156,11 @@ re-raise to the dispatcher, never adjust and continue.
    holds, recovered from history (`git log -1 --format=%H --diff-filter=D --
    task-packs/probes.d/<id>.json`, then `git show <sha>^:task-packs/probes.d/<id>.json`); for each,
    the probe driven on a temp-index checkout of the strike commit's first parent (the base) and
-   of its second parent or the lane head (the head). Candidates read 2026-10-18, none git-reading:
+   of its second parent or the lane head (the head). *(0-A, 2026-10-25: the deleting commit is a
+   `records:` commit whose first parent already holds the lane's fix, so the base is the pull
+   request's merge commit's first parent, read with `git log --merges --first-parent`, and the
+   head its second parent; read literally, the item met its own refuting result on a fixed tree.)*
+   Candidates read 2026-10-18, none git-reading:
    `DEF-1189` (deleted in `15fa4d35`, subject `tools/cc/hooks/_recall.py`), `DEF-1119`
    (`bc4f6f47`, `scripts/check_handoff_landing.py`), `DEF-1172` (`1e2473c8`,
    `tools/cc/ledger_row.py`), `DEF-928` (`a4ea6e03`, `espalier/analyze.py`), `DEF-982`
@@ -150,6 +184,19 @@ re-raise to the dispatcher, never adjust and continue.
    archive; the count is this read's, not a pin). *Refuting result:* over the probe runner's own
    timeout. *Exit:* check out only the paths the probe names (its `subject` and `inputs`) plus
    `tools/cc/`, the board's narrower shape, and say what a probe that walks the tree then misses.
+
+## Cross-pack coordination *(0-A, 2026-10-25)*
+
+- `TP-703b` (W1, the strike of `DEF-5024`) says the strike verb never runs the probe; once this
+  lane lands that sentence is false and W1's strike is the first default base drive on a live row.
+  Named to the dispatcher in the lane's request; the dispatcher corrects 703b in its next record
+  edit after this lane lands (ack `20261025T231952Z-air-6a811c`).
+- `TP-703c` names this pack's guard drive and prescribes stripping `ESPALIER_BOX_LOCK`; it also
+  exports `ESPALIER_BOX_LOCK_HOLDER` for the nested pass-through. The guard child strips both.
+- `memory/parallel-work-protocol.md` is shared with 703c, 703d, 703f, 703g and 703h; this lane
+  adds one sentence to item 8 and nothing else.
+- `tools/cc/_pack_scope.py` and `scripts/check_pack_landing.py` share the Scope (out) reader with
+  the strike verb; the drive sits after that reader's refusal and changes nothing it reads.
 
 ## Relevant memory
 
@@ -404,17 +451,54 @@ read these as the author's guess, not a schedule.
 | Total | 5.5 h | 1 h | expect the measured overrun |
 
 ## Landing
-- State: DRAFT
-- Commits:
-- Suite: `python3 scripts/proof_tier.py --run --base origin/main` (the tier the line names)
-- Earn-the-red: per fix, against the mutations named under Implementation
-- Red-team: reasoning review at authoring (the reflect skill's checklist v1, failure-mode-reviewer,
-  2026-10-18): REQUEST CHANGES on the set; this file's findings: Part 2 items 4, 6, 7, 15, 16, 21
-  addressed (PYTHONPATH on the base guard and the fixture's package; the temp-index checkout and
-  the runner's pristine-root argument, undrivable decided by the runner; the exception read and
-  exit 2; the rooted context manager; the merge-base, the pinned default, the HEAD probe; the probe
-  child's environment); checklist item 13 acknowledged. The executor still runs the reviewers the
-  tier line names.
-- Reach: not a class pack; no row closed
-- Task 0: items 1 to 4 not yet run (item 1's reading at authoring: the strike drives nothing)
-- Date: 2026-10-18 (authored, local)
+- State: LANDED
+- Commits: 913c3a1d (the lane: J-5, J-1, J-2, J-3, J-4, the pack's 0-A corrections),
+  5831c353 (the code-reviewer's batch: five refusals pinned), d9f129e1 (the tier's batch:
+  two contracts and the fragments fixtures); on `lane/strike-reads-the-base`, seat `air-work`
+- Suite: `python3 scripts/proof_tier.py --run --base origin/main`, the full tier, twice. First run
+  at 5831c353: mypy and ruff green, serial leg 2134 passed in 4:29, parallel leg 9 failed and
+  24967 passed in 25:49 (six fragments strikes whose placeholder probes still printed their open
+  value at the head, two tree-wide contracts on the new text, and this box's Apple-git
+  record-merge red). Second run at d9f129e1: mypy and ruff green, serial leg 2134 passed and 9 skipped in 4:29, parallel leg 1 failed and
+  24975 passed, 100 skipped, 3 xfailed in 26:08, the one red the box-local record-merge test
+  (`tests/test_record_merge.py::TestTheShipBodysRecordFinish::test_a_record_file_staged_with_its_markers_is_refused_until_unresolved`,
+  Apple git 2.39.5's `update-index --unresolve` exits 1 mid-merge; red here on `main` too, untouched
+  by the lane). The pull request's cells are the reading on the other interpreters and hosts.
+- Earn-the-red: every new test red first against the unfixed code. J-5's three (no `rooted`:
+  AttributeError). The strike's 21 at the first cut (argparse refused the flags) then 6 more at
+  the review batch, each docstring naming its mutation: the base drive removed, the head drive
+  removed, the tip taken for the merge-base, an explicit base ignored, the undrivable read
+  dropped, a `why_not` row skipped or refused, `--no-base` silent, a no-remote tree refusing, the
+  memo leaking through a bare `_ROOT` assignment, a multi-id cell driven by one id, the guard run
+  at the head alone, the overlay or PYTHONPATH dropped (the fixture's engine check exits 4 on
+  every host of this suite), the exception read dropped, a hung guard read as red, a probe-less
+  row under `--base`, a bogus `--base`, the `origin/master` fallback dropped, a failed checkout
+  read as empty, the dry run not driving. Six existing fixtures re-modelled as a closed defect
+  (`_closed`, `_close_probe`, a `state.txt` probe), no assertion weakened.
+- Red-team: `scripts/proof_tier.py --base origin/main` named `review: code-reviewer` alone (both
+  files on the review surface; no hook, gate, body or config changed, so failure-mode-reviewer was
+  not earned, protocol item 9). code-reviewer on a snapshot clone at 913c3a1d: REQUEST CHANGES,
+  WARN and NIT only, no BLOCK; process disclosure pytest on seven node ids in the clone. Its
+  findings landed as one batch (5831c353): a guard that pytest-timeout ends with `pytest.fail`
+  read as an earned red (its exception is `Failed`), now refused by its message; a row with no
+  probe entry escaped an explicit `--base`; `--base` and `--no-base` now mutually exclusive; the
+  exit 2 to 5 refusals carry the run's last line; the head drives share one `rooted` block; the
+  head-red guard test had been satisfied by the base refusal alone; four unpinned refusals pinned.
+- Reach: not a class pack; no row closed. The blind spot Scope (out) names was measured: 2 of the
+  215 drivable probes (`DEF-1143`, `DEF-877`) ask git inside the one-liner and read a plain
+  directory as empty, a false refusal of a true strike (the safe direction), named in the
+  refusal text.
+- Task 0: item 1 holds (the strike called `_retire_probe_files`, never `run_probe`). Item 2: five
+  replays (`DEF-1189`, `DEF-1119`, `DEF-1172`, `DEF-928`, `DEF-982`), the base the pull request's
+  merge commit's first parent, the head its second, the pre-strike probe recovered from the
+  deleting commit's parent: 5 of 5 STILL_OPEN at the base, 3 of 5 STRIKE_CANDIDATE at the head,
+  2 of 5 (`DEF-1189`, `DEF-928`) STILL_OPEN at the head too, the refusal J-2 adds; the
+  tree-walking probe (`DEF-928`) read UNRESOLVED on both trees without the pristine memo, J-5's
+  reason; the refuting result not met. Item 3: every probe file of a pristine checkout of
+  `origin/main` 57e6846f driven in 44 s: 270 files, 210 STILL_OPEN, 5 STRIKE_CANDIDATE, 7
+  UNRESOLVED, 48 NO_ORACLE; 7 of 222 commands undrivable (4 missing input, 1 missing subject, 2
+  commands that fail outside a repository); the refuting result (over half) not met. Item 4:
+  `read-tree` 0.02 s and `checkout-index` 0.3 to 0.6 s for about 2200 files on the Air, far
+  under the runner's 30 s; one pytest node with the suite's conftest 0.29 s wall. Windows
+  unmeasured on this seat; the pull request's windows-latest leg is the reading.
+- Date: 2026-10-25 (landed, local)

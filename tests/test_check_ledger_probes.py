@@ -1824,3 +1824,63 @@ class TestTextShaIsTheClaim:
         mod = self._mod(tmp_path, monkeypatch, self._LINE.replace("MAINTAINER", "ADOPTER"))
         probe = {"id": "DEF-7", "row_sha": mod.row_sha(self._LINE)}
         assert [s[0] for s in mod.stale_claims([probe])] == ["DEF-7"]
+
+
+class TestTheRunnerIsRootedForABlock:
+    """``rooted(root, pristine=...)`` is the one swap of the runner's four
+    globals: ``main``'s ``--root`` goes through it, and a verb that drives a
+    probe on a tree it checked out from a ref roots the runner there and then
+    on its own checkout, where a bare ``_ROOT`` assignment would carry the
+    first tree's contamination memo into the second's drive."""
+
+    def test_the_four_globals_are_restored_after_the_block_and_the_memo_is_per_tree(
+            self, tmp_path, monkeypatch):
+        """Mutation: a swap without ``finally``, or one that leaves the memo as
+        it was, so the next drive reads another tree's duplicates."""
+        mod = check_ledger_probes
+        monkeypatch.setattr(mod, "_CONTAMINATION", {"build": {".py"}})
+        before = mod._ROOT, mod._PROBES, mod._LEDGER, mod._CONTAMINATION
+        with mod.rooted(tmp_path) as root:
+            assert root == tmp_path.resolve() == mod._ROOT
+            assert mod._PROBES == tmp_path.resolve() / "task-packs" / "LEDGER_PROBES.json"
+            assert mod._LEDGER == tmp_path.resolve() / "task-packs" / "FORWARD_LEDGER.md"
+            assert mod._CONTAMINATION is None
+        assert (mod._ROOT, mod._PROBES, mod._LEDGER, mod._CONTAMINATION) == before
+        with pytest.raises(RuntimeError):
+            with mod.rooted(tmp_path):
+                raise RuntimeError("the block failed")
+        assert (mod._ROOT, mod._PROBES, mod._LEDGER, mod._CONTAMINATION) == before
+
+    def test_a_pristine_root_lets_a_tree_walking_probe_answer_on_a_plain_directory(self, tmp_path):
+        """A tree checked out from a ref into a plain directory holds no
+        generated duplicate, but ``git ls-files`` cannot run there, so the
+        derived memo reads git-unavailable and every tree-walking probe
+        UNRESOLVED (measured on a replayed strike, 2026-10-25). Mutation: the
+        ``pristine`` argument ignored."""
+        mod = check_ledger_probes
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "a.py").write_text("", encoding="utf-8")
+        probe = {"id": "T", "subject": "pkg/a.py", "open_value": "1",
+                 "cmd": "python3 -c \"import pathlib;print(len(list(pathlib.Path('pkg').glob('*.py'))))\""}
+        with mod.rooted(tmp_path):
+            verdict, detail = run_probe(probe)
+        assert verdict == UNRESOLVED and "git could not be consulted" in detail
+        with mod.rooted(tmp_path, pristine=True):
+            assert run_probe(probe) == (STILL_OPEN, "")
+
+    def test_main_root_goes_through_the_same_swap(self, tmp_path, monkeypatch, capsys):
+        """Mutation: ``main`` keeps a copy of the swap, which then drifts from
+        ``rooted`` (the memo reset, the ``finally``)."""
+        mod = check_ledger_probes
+        (tmp_path / "task-packs").mkdir()
+        seen: list[tuple[Path, bool]] = []
+        real = mod.rooted
+
+        def spy(root, *, pristine=False):
+            seen.append((Path(root), pristine))
+            return real(root, pristine=pristine)
+
+        monkeypatch.setattr(mod, "rooted", spy)
+        assert mod.main(["--root", str(tmp_path)]) == 0
+        assert "nothing to do" in capsys.readouterr().out
+        assert seen == [(tmp_path, False)]

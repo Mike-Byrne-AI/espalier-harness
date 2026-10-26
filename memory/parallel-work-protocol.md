@@ -255,7 +255,11 @@ interactive session as under `-p`; a killed session leaves the lock behind.
    by win at the #179 review batch (2026-10-11): the dispatcher had filed nine
    rows from its own review and landed a strict-xfail bridge in a test file
    the fix lane would then have had to edit to delete the mark. The bridge
-   went; the rows stayed for the fix lane to strike.
+   went; the rows stayed for the fix lane to strike. A strike drives the
+   row's probe at the base and at the head and runs the guard it names on
+   both (`ledger_row.py strike --base --guard`, since 2026-10-25: replayed on
+   five struck rows, two still read open at the lane head); a probe that
+   cannot run at the base is said in the closing text, never skipped silently.
 
 9. **Run the reviewers your lane's surface earns**: `python scripts/proof_tier.py
    --base origin/main` prints them on its `review:` line (`none`, `code-reviewer`
