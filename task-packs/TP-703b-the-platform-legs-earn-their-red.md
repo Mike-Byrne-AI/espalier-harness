@@ -407,7 +407,10 @@ import, `importlib` or `pytest_plugins`).
 **1-E Strike `DEF-5024`.** Drive the row's own probe first (`task-packs/probes.d/DEF-5024.json`'s
 `cmd`: it reads the contract file for the test's name, an `assert` inside it and the double-quoted
 `"hasattr"` string) and record True in Landing: the strike verb never runs it, and deletes the
-probe file. Then `python3 tools/cc/ledger_row.py strike DEF-5024 --despite-deferrals --text-file
+probe file (corrected 2026-10-25 by the dispatcher: true when W1 struck the row on 2026-10-20;
+since `TP-703j` landed as #340 the strike drives the row's probe at the merge-base, where it must
+read STILL_OPEN, and at the head, where it must read STRIKE_CANDIDATE, before it retires the
+file, so a strike in W2 follows that verb). Then `python3 tools/cc/ledger_row.py strike DEF-5024 --despite-deferrals --text-file
 <outside the checkout>`: `TP-703a`'s Scope (out) cites this row as this pack's (Cross-pack
 coordination), and the closing text says the deferred work landed here, without naming the loop in
 `tests/test_redos.py` as the one permanent instance (`TP-703i` moves it into a helper).
@@ -710,6 +713,9 @@ read these as the author's guess, not a schedule.
   `lane/packs-the-tp-703-children-corrected-before-wave`): the macOS red is one mechanism over
   six node ids, not one test; Motivation, W3 and W3-0 item 2 carry the measurement and the
   class-sized roster
+- Corrected 2026-10-25 (the dispatcher, after `TP-703j` landed as #340): 1-E's "the strike verb
+  never runs it" held when W1 struck `DEF-5024` on 2026-10-20 and is false since; the step's text
+  stands as the record of what ran, with the dated note beside it
 - W3 landed 2026-10-19, single-seat, on `lane/tests-macos-race-rows-run-as-expected-failures`;
   the pack stays DRAFT while W1 and W2 are open:
   - Commits: the lane's commit (its pull request names it).

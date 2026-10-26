@@ -1,0 +1,14 @@
+{
+ "id": "DEF-4049",
+ "subject": "espalier/doctor.py",
+ "cmd": "python3 -c 'import json, subprocess, sys; d = json.loads(subprocess.run([sys.executable, \"tools/cc/sister_site_probe.py\", \"--json\"], capture_output=True, text=True).stdout); print(sum(1 for m in d[\"canon_misses\"] if m[\"shadow_file\"] == \"espalier/doctor.py\" and m[\"shadow_name\"] == \"_host_is_windows\"))'",
+ "open_value": "1",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_hook_utils.py",
+  "tools/cc/sister_site_probe.py"
+ ],
+ "row_sha": "b01710464d0c",
+ "text_sha": "8cc557b44160",
+ "verified_2026_10_25": "OPEN (filed 2026-10-25; probe driven at filing)"
+}
