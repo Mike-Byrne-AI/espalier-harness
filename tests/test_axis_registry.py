@@ -8,7 +8,10 @@ and guards against the registry claiming a shape no test varies along.
 A cell either names the pytest node that proves it, or declares its gap. A
 proving node is parametrised with an argument named after the cell's axis whose
 value (``-`` read as ``_``) is the cell's value, carries no ``skip`` or
-``xfail`` mark, and runs and passes here. A test that never varies along its
+``xfail`` mark (an ``os`` node no ``skipif`` either: a stand-in's point is that
+the required Linux cells see the other host's shape, so an ``os`` cell is proven
+on every host or not at all, and the run-time check below sees only the host it
+runs on), and runs and passes here. A test that never varies along its
 own value proves nothing about that value. That is the born-blind shape, and
 the rule exists to refuse it. The rule reads the collected item's parameters,
 never its id: an id joins parameters with ``-``, so ``[node-pnpm]`` would read
@@ -65,6 +68,9 @@ sys.exit(pytest.main(["--collect-only", "-q", "-p", "no:cacheprovider", *sys.arg
 '''
 
 _REFUSING_MARKS = frozenset({"skip", "xfail"})
+# An `os` cell is proven on every host or not at all (the module docstring), so a
+# `skipif` on its node, whatever its condition, is refused at collection.
+_REFUSING_MARKS_BY_AXIS = {"os": _REFUSING_MARKS | {"skipif"}}
 
 
 def _child_env() -> dict[str, str]:
@@ -100,8 +106,14 @@ def refusal(cell: reg.AxisCell, items: dict[str, dict]) -> str | None:
     item = items.get(cell.proven_by)
     if item is None:
         return f"{cell.axis}/{cell.value}: {cell.proven_by!r} does not collect"
-    marks = sorted(_REFUSING_MARKS & set(item["marks"]))
+    marks = sorted(_REFUSING_MARKS_BY_AXIS.get(cell.axis, _REFUSING_MARKS) & set(item["marks"]))
     if marks:
+        if marks == ["skipif"]:
+            return (
+                f"{cell.axis}/{cell.value}: {cell.proven_by!r} carries {marks}: an {cell.axis!r} "
+                "cell is proven on every host or not at all, and a node that skips on one host "
+                "proves nothing there"
+            )
         return (
             f"{cell.axis}/{cell.value}: {cell.proven_by!r} carries {marks}, so it never "
             "runs green at the value it is named for"
@@ -247,6 +259,8 @@ class TestProvenCellsVaryRunAndPass:
 
 
 _PLANTED = '''\
+import sys
+
 import pytest
 
 
@@ -279,6 +293,18 @@ def test_skips_in_the_body(stack):
 
 def test_does_not_vary():
     pass
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="planted")
+@pytest.mark.parametrize("os", ["windows"])
+def test_skips_on_one_host(os):
+    pass
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="planted")
+@pytest.mark.parametrize("stack", ["rust"])
+def test_skips_on_one_host_along_another_axis(stack):
+    pass
 '''
 
 
@@ -289,7 +315,7 @@ class TestTheRuleRefusesTheBornBlindShape:
     def _planted(tmp_path: Path) -> dict[str, dict]:
         (tmp_path / "test_planted.py").write_bytes(_PLANTED.encode("utf-8"))
         items = collected_items(["test_planted.py::x"], tmp_path)
-        assert len(items) == 7, sorted(items)
+        assert len(items) == 9, sorted(items)
         return items
 
     @staticmethod
@@ -346,6 +372,19 @@ class TestTheRuleRefusesTheBornBlindShape:
         node = self._node(items, "test_skips_in_the_body", stack="go")
         assert refusal(reg.AxisCell("stack", "go", node, ""), items) is None
         assert not_passed([node], tmp_path) == [f"{node}: ['SKIPPED']"]
+
+    def test_a_skipif_on_an_os_node_is_refused_at_collection(self, tmp_path):
+        """A ``skipif`` whose condition is false here would pass the run-time
+        check on this host and skip the proof on another; for an ``os`` cell that
+        is the Linux cell skipping the Windows shape, so collection refuses it.
+        The rule is the ``os`` axis's: along another axis a ``skipif`` is left to
+        the run-time check, as before."""
+        items = self._planted(tmp_path)
+        node = self._node(items, "test_skips_on_one_host", os="windows")
+        reason = refusal(reg.AxisCell("os", "windows", node, ""), items)
+        assert reason is not None and "carries ['skipif']" in reason and "every host" in reason, reason
+        other = self._node(items, "test_skips_on_one_host_along_another_axis", stack="rust")
+        assert refusal(reg.AxisCell("stack", "rust", other, ""), items) is None
 
     def test_a_node_that_does_not_collect_is_refused(self, tmp_path):
         items = self._planted(tmp_path)

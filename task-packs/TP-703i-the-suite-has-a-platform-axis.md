@@ -35,6 +35,26 @@
 - Ledger: no row filed at authoring. `DEF-975` is the registry's own row and this pack extends
   the registry; the pack's claim about what the stand-ins would have prevented is a reading of
   their docstrings, tagged below.
+- **Execution read (2026-10-25 local, seat `air-work`, `main` at 78c16510; the 0-A code-reviewer
+  returned REQUEST CHANGES, no BLOCK).** Figures re-derived: nine platform-patch sites in **six**
+  files, not five (`tests/test_bounded_spawn.py`, `tests/test_spawn_chokepoint.py`,
+  `tests/test_demo_end_to_end.py`, `tests/test_final_release_matrix.py`, `tests/test_write_guard.py`,
+  `tests/test_redos.py`), plus the `core.ignorecase` toggle; the pack's own `skipif|xfail` command
+  prints **76** platform-conditional marks, not 80; `_emulate_windows_paths` has **15** call sites,
+  not 16; the alarm test deletes its three names in **one** `for` loop (`tests/test_redos.py:2785-2786`),
+  not three lines. Two claims were wrong, not stale: `_load_copy` loads the `tools/cc` copy under a
+  fresh module name for module identity, not to re-make an import-time platform read -- every
+  platform read the bounded-spawn tests drive is at call time (`tools/cc/_json_safe.py:255, 268,
+  281, 358`; `espalier/_spawn.py:73`; `espalier/scanners/freshness.py:78`), so no proving node
+  reloads and I-2's `reload` parameter is not built; and Task 0 item 5's oracle reads blind until
+  **two** cells are proven (`blind_axes`: fewer than two proven values), so with one proven value the
+  `os` line says every proving test ran at that value. New since authoring and excluded from the
+  census by name: the two `sys.platform` patches in `tests/test_test_suite_contract.py` (lines 4143
+  and 4455, `TP-703b` Wave 3) drive the roster predicate of
+  `tests/conftest.py::PLATFORM_EXPECTED_FAILURES`, `TP-703h`'s population, not a stand-in. The reads
+  of `darwin` under `tools/cc/` and `espalier/` number **zero**, so no stand-in can make the harness
+  do anything it does not do as `linux`: the `macos` cell is a declared gap with that reason. The
+  decisions the review opened are under *Cross-pack coordination* and *Decisions at execution*.
 
 ## Motivation
 
@@ -140,6 +160,58 @@ Windows and has no list of what the suite sees for it.
   stays their home.
 - **`tests/_report_os_name_guard.py`.** It stays as it is; the shared stand-in routes `os.name`
   through what it already protects.
+
+## Cross-pack coordination
+
+Written at execution (2026-10-25, `air-work`); the authoring text above predates `TP-703b` Wave 1
+and Wave 3.
+
+- **`TP-703b` Wave 1 (landed; `tests/test_test_suite_contract.py::_sigalrm_offenders`).** A unit
+  that deletes a name pytest-timeout's signal method reads is an arming unit, and a test module
+  that imports an arming function by name must carry
+  `pytestmark = pytest.mark.timeout(method="thread")`; a `tests/_*.py` helper is asked for no
+  mark, its importers are. So the stand-in keeps the alarm deletion in a module-level function of
+  its own, `without_the_alarm`, never inside `as_os`: `tests/test_bounded_spawn.py` imports
+  `as_os` alone and needs no mark (`TP-703b`'s sentence that this pack adds one there is
+  superseded by the split, which spares a file of real-timeout cases a change of timeout method),
+  and `tests/test_redos.py` imports `without_the_alarm` and already carries it. That contract is
+  the rule's one home: the runtime `pytestmark` check I-2 prescribed is not built (two homes for
+  one rule), and the red is earned against the static one (the mark removed on a snapshot copy
+  names the import).
+- **`TP-703b` Wave 3 (landed; `tests/conftest.py::PLATFORM_EXPECTED_FAILURES`).** An expectation
+  table, `TP-703h`'s ground; its predicate tests patch `sys.platform` and are excluded from this
+  pack's census by name (Status).
+- **`TP-703h`.** Reads `AXIS_REGISTRY` and `tests/test_axis_registry.py::collected_items`, edits
+  neither file; order-neutral with this pack.
+- **`TP-468`.** `State: DRAFT`, no wave live on the board at execution; this pack raises
+  `PROVEN_FLOOR` by the two cells it proves (6 to 8) and `TP-468`'s Status names the `os` axis as
+  this pack's; a later wave there raises the floor from where this pack left it.
+
+## Decisions at execution
+
+Request `20261026T034822Z-air-work-2234dc` to the dispatcher carried each with its citation;
+proceeded on the recommendations at 04:03Z (2026-10-26 UTC) with no answer, the protocol's
+fifteen minutes.
+
+1. `as_os(monkeypatch, value, *, os_name=False)` sets `sys.platform` and returns it; `os.name` is
+   opt-in, because a bare `Path(...)` under `nt` raises on 3.10 and 3.11
+   (`tests/_report_os_name_guard.py` covers report formation only) and neither proving node reads
+   it. No `reload` parameter (Status).
+2. The alarm deletion is `without_the_alarm(monkeypatch)`, a second function (Cross-pack
+   coordination); no runtime thread-method refusal.
+3. Two cells proven, not one. `os/windows` by the alarm test at its one honest value; `os/linux`
+   by a new node in `tests/test_bounded_spawn.py::TestEveryCopysWindowsBranch`,
+   `test_the_timeout_shape_follows_the_platform_the_harness_reads`, parametrised over `os` in
+   (`linux`, `windows`): read as Windows every copy ends the tree, drains and reaps at the
+   timeout; read as Linux the call is `subprocess.run`'s and the child alone is killed, on
+   whatever host runs it, since the stand-in `Popen` is a context manager the standard library's
+   `run` can hold. `os/macos` stays a gap: the harness reads `darwin` nowhere (Status). The axis
+   is not blind.
+4. I-4 is a collection-time refusal of `skipif` on an `os` cell's node (`_REFUSING_MARKS_BY_AXIS`
+   in `tests/test_axis_registry.py`, read by the existing `refusal`), with planted rows for the
+   refusal and for its scope; the run-time check stays
+   `test_every_proven_node_runs_and_passes_here`'s.
+5. `PROVEN_FLOOR` 6 to 8, dated.
 
 ## Task 0 — Verify (the census decides the roster; it can end the pack)
 

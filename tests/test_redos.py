@@ -47,6 +47,7 @@ from typing import Literal
 
 import pytest
 from tests._live_tree import checkout_glob
+from tests._platform_standin import as_os, without_the_alarm
 from tests._pytest_ini import declared_pytest_timeout
 
 sys.path.insert(
@@ -2766,11 +2767,12 @@ def test_the_walker_alarm_interrupts_a_call(tmp_path, monkeypatch):
     assert (time.perf_counter() - t0) * 1000 < 10 * _WALKER_CEILING_MS  # 500 ms under the 50 ms ceiling
 
 
+@pytest.mark.parametrize("os", ["windows"])
 @pytest.mark.parametrize("call", [
     lambda root: _walker_alarmed_ms(lambda _p, _r: None, "x", root),
     lambda root: _ps_body_call_ms(lambda _p: None, "x"),
 ], ids=["walker", "ps-body"])
-def test_the_walker_and_ps_body_timers_skip_on_a_host_without_sigalrm(tmp_path, monkeypatch, call):
+def test_the_walker_and_ps_body_timers_skip_on_a_host_without_sigalrm(tmp_path, monkeypatch, call, os):
     """The walker timer and the PowerShell body timer skip the test that reached
     them where the signal does not exist (Windows), never an AttributeError: once
     the walker row's warm call went under the alarm (DEF-5023), twelve
@@ -2778,12 +2780,19 @@ def test_the_walker_and_ps_body_timers_skip_on_a_host_without_sigalrm(tmp_path, 
     Windows leg. Driven on every host by taking the alarm away, so a dropped guard
     reds on any cell that runs this file. These two timers only: every other read
     of an alarm name is held to its guard by
-    tests/test_test_suite_contract.py::test_every_sigalrm_arming_function_guards_itself."""
+    tests/test_test_suite_contract.py::test_every_sigalrm_arming_function_guards_itself.
+    Parametrised over ``os`` at its one honest value: this node is the adopter-axes
+    registry's proof of the ``os/windows`` cell (tests/_axis_registry.py), read as
+    Windows through the shared stand-in, and it cannot run as ``linux``, where the
+    alarm is real and the timers do not skip. The ``os`` argument shadows the module
+    inside this function, which reads it nowhere."""
     # Safe only because this module runs pytest-timeout's thread method (the
-    # pytestmark above): under the signal method its cancel reads signal.SIGALRM
-    # while it is deleted, an INTERNALERROR that ends the session.
-    for name in ("SIGALRM", "setitimer", "ITIMER_REAL"):  # none exists on Windows
-        monkeypatch.delattr(signal, name, raising=False)
+    # pytestmark above), which importing without_the_alarm costs it
+    # (tests/_platform_standin.py and the suite contract): under the signal method
+    # the plugin's cancel reads signal.SIGALRM while it is deleted, an
+    # INTERNALERROR that ends the session.
+    as_os(monkeypatch, os)
+    without_the_alarm(monkeypatch)  # none of the three names exists on Windows
     with pytest.raises(pytest.skip.Exception):
         call(tmp_path)
 

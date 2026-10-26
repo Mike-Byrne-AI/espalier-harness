@@ -16,6 +16,9 @@ registry names the dimensions an adopter can differ along:
 * **tree**: a fresh tree, a dirty machine (an existing ``.claude/``, a
   ``master`` default branch, a stale ``espalier`` first on PATH), or a CRLF
   checkout.
+* **os**: the operating system a test makes the harness read, through
+  ``tests/_platform_standin.py``, on whatever host runs it (``linux``,
+  ``macos``, ``windows``).
 
 Each ``(axis, value)`` cell is in one of two states. Either it names the
 pytest node that proves it, or it declares its gap with a reason (a ledger
@@ -24,7 +27,7 @@ contract:
 
 * every cell has exactly one of the two;
 * a proving node is parametrised with an argument **named after the axis**
-  (``stack``, ``host``, ``session``, ``root``, ``tree``), whose value, with
+  (``stack``, ``host``, ``session``, ``root``, ``tree``, ``os``), whose value, with
   ``-`` read as ``_``, is the cell's value; it carries no ``skip`` or
   ``xfail`` mark; and it runs and passes on the host that checks it. This
   refuses the born-blind shape, a cell naming a test that never varies along
@@ -48,7 +51,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-AXES: tuple[str, ...] = ("stack", "host", "session", "root", "tree")
+AXES: tuple[str, ...] = ("stack", "host", "session", "root", "tree", "os")
 
 
 @dataclass(frozen=True)
@@ -143,6 +146,30 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
              "tests/_stack_trees.py writes LF on every host since 2026-10-06; before, "
              "Windows runs built CRLF fixture trees by accident. A CRLF checkout (Git "
              "for Windows' autocrlf default) is now built by no test"),
+    # -- os ------------------------------------------------------------------
+    # The operating system a test makes the harness read, through
+    # tests/_platform_standin.py (the platform the harness reads, and the
+    # alarm Windows lacks), on whatever host runs it. A cell is proven by a
+    # node parametrised over `os`; the surfaces the kernel decides (LockFileEx
+    # on one byte, PATHEXT, a grandchild holding a pipe past the timeout) are
+    # the Windows leg's and no stand-in on another host proves them.
+    # Proven 2026-10-25 by the platform stand-ins lane: the bounded spawn's
+    # timeout-shape test, parametrised over linux and windows, proves `linux`
+    # (the child alone is killed, subprocess.run's own shape) and is the second
+    # witness for `windows` (the tree kill, the drain and the reap); the alarm
+    # test of tests/test_redos.py, read as Windows with the alarm taken away,
+    # proves `windows` at its one honest value (as linux the alarm is real and
+    # its timers do not skip), the test that crossed a real red (DEF-5024).
+    AxisCell("os", "linux",
+             "tests/test_bounded_spawn.py::TestEveryCopysWindowsBranch::"
+             "test_the_timeout_shape_follows_the_platform_the_harness_reads[linux]", ""),
+    AxisCell("os", "macos", "",
+             "the harness reads darwin nowhere (zero hits under tools/cc/ and espalier/, "
+             "2026-10-25), so no stand-in can make it do anything it does not do as linux: "
+             "a node at this value could assert nothing of its own, the born-blind shape"),
+    AxisCell("os", "windows",
+             "tests/test_redos.py::"
+             "test_the_walker_and_ps_body_timers_skip_on_a_host_without_sigalrm[walker-windows]", ""),
 )
 
 # The proven-cell floor: it may only rise. Raise it in the same change that
@@ -154,7 +181,10 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
 #   pnpm and Bun trees (the stack registry's package-manager lane).
 # 2026-10-07: 6 -- stack/go and stack/rust, by the same test on the Go and Rust
 #   trees (the stack registry's source-and-manifests lane, Decision 6).
-PROVEN_FLOOR = 6
+# 2026-10-25: 8 -- os/linux and os/windows, by the platform stand-ins lane (the
+#   bounded spawn's timeout shape over linux and windows; the alarm test read as
+#   Windows).
+PROVEN_FLOOR = 8
 
 
 def proven(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> list[AxisCell]:
