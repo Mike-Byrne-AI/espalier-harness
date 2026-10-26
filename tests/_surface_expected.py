@@ -216,6 +216,9 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     # mail refs and gh; the closing rules come from tools/cc/mail.py's fold, by path.
     "seat_day_census.py",
     "proof_tier.py",
+    # 2026-10-26: where a session's tokens go by context size, from its
+    # transcripts; the threshold handoff's pre-registered instrument.
+    "usage_tail.py",
     "handoff_mechanics.py",
     "ledger_trend.py",
     "host_check.py",  # 2026-09-10: a host's suite + bench results as one pushed commit

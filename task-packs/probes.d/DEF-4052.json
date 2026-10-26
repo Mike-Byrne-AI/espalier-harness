@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4052",
+ "subject": "tools/cc/seat.py",
+ "cmd": "python3 -c \"import sys, inspect; sys.path.insert(0, 'tools/cc'); import seat; print('source' in inspect.signature(seat.brief_line).parameters)\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "c18dd65d1ae6",
+ "text_sha": "333b8d3dadf0",
+ "verified_2026_10_26": "OPEN (filed 2026-10-26; probe driven at filing)"
+}

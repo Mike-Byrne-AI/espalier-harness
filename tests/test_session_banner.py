@@ -3738,6 +3738,26 @@ class TestSessionsLine:
         assert hu.prune_session_markers(tmp_path, now=now + hu.SESSION_MARKER_PRUNE_S) == 1
         assert not path.exists()
 
+    def test_a_side_file_is_never_a_session_and_is_swept_with_its_marker(self, tmp_path):
+        # The marker readers glob `*.json`; a file a session keeps beside its
+        # marker takes a suffix that glob never matches (the roster says so),
+        # else the banner names the session's own record as a live sibling
+        # (the reasoning review of the threshold handoff caught a `.json`
+        # side file before it landed, 2026-10-26).
+        hu = _load_hook_utils()
+        now = time.time()
+        assert hu.HANDOFF_ASKED_SUFFIX in hu.SESSION_SIDE_SUFFIXES
+        assert not any(s.endswith(".json") for s in hu.SESSION_SIDE_SUFFIXES), hu.SESSION_SIDE_SUFFIXES
+        hu.write_session_marker(tmp_path, "other-1")
+        side = hu.sessions_dir(tmp_path) / f"other-1{hu.HANDOFF_ASKED_SUFFIX}"
+        side.write_text('{"at": "2026-10-26T09:19Z", "tokens": 270738}', encoding="utf-8")
+        named = hu.other_live_sessions(tmp_path, "me", now)
+        assert len(named) == 1, named
+        # The marker and its side file were written after `now`, so the sweep
+        # clock sits past the prune window by a margin, not on it.
+        assert hu.prune_session_markers(tmp_path, now=now + hu.SESSION_MARKER_PRUNE_S + 5) == 1
+        assert not side.exists() and not hu.session_marker_path(tmp_path, "other-1").exists()
+
     def test_the_mtime_counts_a_marker_whose_json_cannot_be_read(self, tmp_path):
         mod = _load()
         hu = _load_hook_utils()

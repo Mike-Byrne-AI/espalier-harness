@@ -167,6 +167,21 @@ The seat driver (`tools/cc/seat.py`, through `checkout_sync.occupancy`) is a fou
 
 ---
 
+## Assumption 7 — the session transcript's last assistant record carries the context size, a `/loop` tick is a prompt, and the loop survives `/clear`
+
+Three facts the threshold handoff (`task_router.py`, `handoff_context_tokens`) stands on. (1) Every hook payload carries `transcript_path` (a common input field, [hooks reference](external/cc-hook-protocol.md)), and the file there is one JSON record per line, one line per content block, each assistant record carrying `message.usage` with `input_tokens`, `cache_creation_input_tokens` and `cache_read_input_tokens`; their sum in the LAST assistant record is the context size the status line reports as `context_window.total_input_tokens`. Read on a live session on 2026-10-26 (Claude Code 2.1.310 on PATH, the payload's own `version` 2.1.299): the status line's payload carried 270738 and the transcript's record stamped 09:19:37Z summed to 270738. The record shape is **undocumented upstream** (the status-line payload is documented; the transcript is Claude Code's own file), and `post_compact.py` already reads the same file. (2) A `/loop` tick arrives as a `UserPromptSubmit` prompt, so the router runs on it: a looping seat's session marker, which the router touches on every prompt, stays live across ticks (every banner since 2026-10-13). (3) The seats' interval `/loop` survives `/clear` and a relaunched seat gets its loop from its brief (observed on the seats on 2026-10-24 and 25), which is why the ask's reset is a `/clear` the operator types.
+
+**Failure direction.** A transcript whose shape changes reads as no figure: the router asks nothing, and once the file is longer than the reader's first window it says so once a session on the prompt channel, so a seat with the setting on never silently stops asking; the status line's `ctx=` segment, read from the documented payload, is the operator's cross-check. A tick that stopped firing the router would show as a marker that stops moving on a quiet seat. The loop not surviving a `/clear` costs the next tick, not the ask.
+
+**Backed by:**
+<!-- canon: docs/external/cc-hook-protocol.md -->
+<!-- claim-id: hook-assumption-7-transcript-context -->
+- The hook utilities' tests, class `TestReadContextFromTranscript` -- the reader on the observed record shape, and every other shape reads `None`.
+- The router's tests, class `TestContextThreshold` -- the ask past the figure, an active plan included; nothing below, off, or on a first prompt; the once-a-session voice on a long transcript with no figure.
+- The live drive of 2026-10-26 on the dispatcher seat: the status-line payload and the transcript tail read the same figure.
+
+---
+
 ## Resolved open questions (from the retired Recall Engine design §7, probed 2026-06-02)
 
 The Recall Engine design (Trigger-Correlated Context Reinjection) left two hook-protocol

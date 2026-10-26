@@ -2592,7 +2592,7 @@ Espalier wires {n_hook_scripts} hook scripts that run automatically on Claude Co
 | Hook | Event | What It Does |
 |---|---|---|
 | `session_start.py` | SessionStart | Reports kill-switch findings + integrity drift; loads the blueprint chain (and advances it on a new session — source `startup`/`clear`); cleans flags. Cannot block (protocol). |
-| `task_router.py` | UserPromptSubmit | Classifies prompt scope; routes toward /implement-task or /implement-task --multi |
+| `task_router.py` | UserPromptSubmit | Classifies prompt scope; routes toward /implement-task or /implement-task --multi; where `espalier.toml` sets `handoff_context_tokens`, asks for the handoff once the session's context passes it (read from the transcript's tail; a lane in hand finishes first) |
 | `plan_guard.py` | PreToolUse | Blocks source file writes without an active execution plan |
 | `write_guard.py` | PreToolUse | Blocks tool calls when kill-switch is set; blocks mutations of protected zones (a write into, a delete of, a move out of); blocks dangerous bash patterns |
 | `config_guard.py` | ConfigChange | Blocks unsafe project/local/user settings changes; audits managed policy_settings (non-blockable) |
@@ -4714,6 +4714,14 @@ _FOREIGN_KEY_SENTENCES: dict[str, tuple[str, str]] = {
         "# holds the Stop once per commit while a finished lane sits unpushed\n"
         "# (docs/HOOKS.md, stop_gate).",
         "handoff_push = true",
+    ),
+    "handoff_context_tokens": (
+        "Ask the session to hand off once its context passes this many tokens\n"
+        "# (tools/cc/hooks/task_router.py reads the figure from the transcript's tail\n"
+        "# on every prompt and asks until the window is cleared; a lane in hand finishes\n"
+        "# first). Off when absent or 0: a session runs to the window's end. A token\n"
+        "# count, not a share of the window: set it for the model's window.",
+        "handoff_context_tokens = 200000",
     ),
     "id_blocks": (
         "Per-seat id blocks: tools/cc/ledger_row.py `file` with the id left out,\n"

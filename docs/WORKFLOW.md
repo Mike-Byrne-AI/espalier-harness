@@ -495,6 +495,16 @@ and its age; every tier line is one, so a tier's lines interleave with a
 sibling's; a run without `-n` (a node-id or file run) takes no lock, and no
 note on the mail channel announces a tier.
 
+A seat does not run to its context window's end. Where `espalier.toml` sets
+`handoff_context_tokens`, the prompt router asks for the handoff on every
+prompt once the session's context passes the figure (the status line's `ctx=`
+segment shows it): a lane in hand finishes through its own landing first and
+the seat starts no new job; with no lane in hand it runs `/handoff` now; after
+the handoff it takes no new job (its own pull request's red or conflict, and a
+red `main`'s revert, are not new work) and tells the operator the window needs
+a `/clear`, which the loop survives. `docs/HOOKS.md`'s router section has the
+mechanism; the briefs and the tick carry the rule.
+
 Before stating what is open, merging or blocked, read the board (`/inbox
 board`): it reads GitHub and the mail now, where the banner and a handoff note
 are snapshots. Two of its lines are about the seats themselves:

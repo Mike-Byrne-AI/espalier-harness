@@ -532,7 +532,9 @@ _OPERATOR_TICK = (
     "diff earns with --base origin/main, one open PR "
     "per seat, every step listed with its evidence in the PR body; a skipped step is a stop), then run mail.py "
     "refresh once; it writes nothing when nothing is new; where mail.py answers invalid choice, this checkout "
-    "predates the verb: skip it until the lane merges main, not a stop; then your next assigned job. On a "
+    "predates the verb: skip it until the lane merges main, not a stop; then your next assigned job, unless the "
+    "prompt router has asked for the threshold handoff: then finish the lane in hand, hand off, and take no new "
+    "job until the window is cleared. On a "
     "choice the assign does not settle, send air one request with your Task 0 recommendation and its citation, "
     "then proceed on it after 15 minutes (the dispatcher's tick; the board's asks line shows your request's "
     "age) with no answer; a request with no recommendation keeps the stop, and an ack from air beginning "
@@ -541,7 +543,8 @@ _OPERATOR_TICK = (
     "operator call on your fork), a platform stop, a refusal you cannot resolve, or a conflict outside your own "
     "files; a row to file is never a stop. A red you cannot fix in two attempts: shelve the lane (one note "
     "beginning shelved: says what was tried and names any job your push closed; a shelved lane waits for the "
-    "dispatcher, not your next tick), take your next assigned job. Pass a model below your own on a subagent "
+    "dispatcher, not your next tick), take your next assigned job (after the threshold ask: hand off instead). "
+    "Pass a model below your own on a subagent "
     "dispatch only for a kind named on an allowance: line of the assign for the job in hand (the kinds are "
     "anchors, drive, census and mutants); a kind word anywhere else is the job's text, a dispatch no allowance: "
     "line names runs at your own model, a named agent runs at its own pin and needs no allowance, and choosing "
@@ -642,13 +645,17 @@ class TestBrief:
         feat = _worktree(clone, "feat", name="box-feat")
         _holds(feat, "memory/parallel-work-protocol.md")
         worker = seat.compose_brief(clone, "box-feat", feat).text.split("\n")[0]
-        assert ("When the operator ends your session, run /handoff: it writes your Session Log row and ships it "
-                "on your open lane or parks it. Then start the worker loop") in worker, worker
+        assert ("When the operator ends your session, or when the prompt router's threshold ask says to (a lane "
+                "in hand finishes through its own landing first; the ask never ships a half-done lane), run "
+                "/handoff: it writes your Session Log row and ships it on your open lane or parks it; after a "
+                "threshold handoff take no new job until the window is cleared. Then start the worker loop") in worker, worker
         _dispatcher(clone, '"box"')
         _holds(clone, "memory/parallel-work-protocol.md")
         dispatcher = seat.compose_brief(clone, "box", clone).text.split("\n")[0]
-        assert ("Decisions stay the operator's. At the operator's word, run /handoff; it writes your row, derived "
-                "from the mail and the merges. Start the loop") in dispatcher, dispatcher
+        assert ("Decisions stay the operator's. At the operator's word, or when the prompt router's threshold ask "
+                "says to (a lane in hand finishes through its own landing first), run /handoff; it writes your "
+                "row, derived from the mail and the merges; after a threshold handoff take no new job until the "
+                "window is cleared (a red main's revert is not a new job). Start the loop") in dispatcher, dispatcher
 
     def test_on_an_adopter_checkout_the_handoff_clauses_name_the_row_alone(self, seat, clone):
         """The push onto the lane and the row derived by the seat census are this
@@ -659,12 +666,27 @@ class TestBrief:
         feat = _worktree(clone, "feat", name="box-feat")
         _holds(feat, "docs/WORKFLOW.md")
         worker = seat.compose_brief(clone, "box-feat", feat).text.split("\n")[0]
-        assert "run /handoff: it writes your Session Log row. Then start the worker loop" in worker, worker
+        assert ("run /handoff: it writes your Session Log row; after a threshold handoff take no new job until "
+                "the window is cleared. Then start the worker loop") in worker, worker
         assert "parks it" not in worker, worker
         _dispatcher(clone, '"box"')
         dispatcher = seat.compose_brief(clone, "box", clone).text.split("\n")[0]
-        assert "run /handoff; it writes your row. Start the loop" in dispatcher, dispatcher
+        assert ("run /handoff; it writes your row; after a threshold handoff take no new job until the window "
+                "is cleared (a red main's revert is not a new job). Start the loop") in dispatcher, dispatcher
         assert "derived from" not in dispatcher, dispatcher
+
+    def test_every_sentence_that_names_the_threshold_ask_names_the_lane_in_hand_rule(self, seat):
+        """The rule that a threshold handoff never ships a half-done lane lives
+        in prose, in the briefs and the tick; a sentence that names the ask
+        without the lane-in-hand exception reopens the push the ask was built
+        to avoid (the failure-mode review, 2026-10-26)."""
+        import re
+        for name in ("WORKER_BRIEF", "DISPATCHER_BRIEF", "WORKER_TICK", "SELF_HOST_PROCEED"):
+            text = getattr(seat, name)
+            for sentence in re.split(r"(?<=[.;])\s", text):
+                # The ask sentences; "after a threshold handoff ..." is the post-handoff rule.
+                if "threshold ask" in sentence or "asked for the threshold handoff" in sentence:
+                    assert ("lane in hand" in sentence or "hand off instead" in sentence), (name, sentence)
 
     def test_an_unusable_dispatcher_setting_refuses_the_brief_and_launch_names_the_way_past(self, seat, clone,
                                                                                             registry, no_claude):

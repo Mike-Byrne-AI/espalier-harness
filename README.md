@@ -295,7 +295,9 @@ Init (run directly, or by `fuse`) deploys the mechanical enforcement layer:
 - **12 hook entry scripts + 15 helper modules** in `tools/cc/hooks/`
 - **`.claude/settings.json`** wiring those hooks into Claude Code
 - **`tools/cc/statusline.py`** — prompt statusline surfacing MAINT /
-  STOP gate / blueprint chain depth
+  STOP gate / blueprint chain depth / the context size against the window
+  (`ctx=`) and the account's rate limits used (`limits=`), read from the
+  JSON Claude Code sends it
 - **`.claude/agents/*.md`** — 7 governance agents:
   `architecture-analyst`, `code-reviewer`, `docs-maintainer`,
   `failure-mode-reviewer`, `harness-config-advisor`, `repo-analyst`,

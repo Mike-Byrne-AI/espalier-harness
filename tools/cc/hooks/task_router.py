@@ -7,12 +7,14 @@ Claude sees alongside the user prompt. Empty stdout = no injection.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hook_utils import has_active_plan, hook_cwd, say_crash, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, STATE_DIR, COLD_OPEN_FLAG  # noqa: E402
+from _hook_utils import has_active_plan, hook_cwd, say_crash, say_once, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, atomic_write_text, handoff_context_threshold, handoff_push_on, read_context_from_transcript, sessions_dir, STATE_DIR, COLD_OPEN_FLAG, HANDOFF_ASKED_SUFFIX, ONCE_FLAG_PREFIX, TRANSCRIPT_TAIL_BYTES  # noqa: E402
 import _reinject  # noqa: E402  -- the UserPromptSubmit generative recall dispatch
 
 # Keywords that suggest a multi-step task
@@ -96,6 +98,128 @@ _COLD_OPEN_DIRECTIVE = (
     "already in your context; if that context is thin, say so in one line rather "
     "than inventing."
 )
+
+# The threshold handoff's ask (2026-10-26): the operator chose a handoff over a
+# compaction once a session's context passes a set size (`espalier.toml`
+# `handoff_context_tokens`, opt-in), the figure read from the transcript's
+# tail. One paragraph, 7-bit ASCII, idempotent by text, and it never says
+# "commit and hand off" mid-lane: on a tree with `handoff_push` the handoff's
+# last step opens the lane's pull request with auto-merge armed, and a
+# half-finished lane must not ride that. A lane in hand finishes first.
+_HANDOFF_ASK = (
+    "[HARNESS] Context is {tokens}k, past the handoff threshold ({threshold}k, espalier.toml "
+    "handoff_context_tokens). First asked {at} at {tokens0}k. Handoff replaces compaction: if a "
+    "lane is in hand, finish it through its own landing and start no new job; with no lane in "
+    "hand and no handoff written since that ask, run /handoff now (it writes your row{push}). "
+    "After the handoff take no new job (your own pull request's red or conflict, and a red "
+    "main's revert, are not new work), answer a loop tick in one line, and tell the operator "
+    "this window needs a /clear (the loop survives it; start no second one)."
+)
+_CONTEXT_UNREADABLE = (
+    "[HARNESS] handoff_context_tokens is set, but the context could not be read from this "
+    "session's transcript, so the threshold handoff cannot ask; the status line's ctx= segment "
+    "is the figure to watch by hand (said once a session)."
+)
+_UNREADABLE_KEY = "context_unreadable"
+_SETTING_FAULT_KEY = "context_setting"
+_FIRST_ASK_STAMP_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\dZ")
+
+
+def _setting_fault_once(root: Path, how: str) -> str | None:
+    """The voice for a setting that is there but unusable (a non-integer, a
+    negative, a file that does not parse): the key's presence says the
+    operator meant it on, so an off read is said once a session on the
+    prompt channel, with the audit record. Absent and ``0`` are choices and
+    say nothing."""
+    try:
+        if (root / STATE_DIR / (ONCE_FLAG_PREFIX + _SETTING_FAULT_KEY)).exists():
+            return None
+    except OSError:  # fail-open: ok deliberate -- a state dir that cannot be read means the flag cannot be written either; one more line costs nothing
+        pass
+    line = f"[HARNESS] {how} (said once a session)."
+    say_once(root, _SETTING_FAULT_KEY, "task_router", "userpromptsubmit_failed_open_context_setting", line)
+    return line
+
+
+def _forget_first_ask(root: Path, sid: str) -> None:
+    """Below the threshold again (a compaction, or a figure that fell), the
+    first-ask record is stale: the next crossing is a first ask of its own,
+    not a quote of one hours old. Never raises."""
+    if not sid:
+        return
+    try:
+        (sessions_dir(root) / f"{sid}{HANDOFF_ASKED_SUFFIX}").unlink(missing_ok=True)
+    except OSError:  # fail-open: ok deliberate -- a record that cannot be removed is quoted once more; the marker's sweep takes it
+        pass
+
+
+def _first_ask(root: Path, sid: str, tokens: int) -> tuple[str, int]:
+    """The stamp and figure of the first prompt on which this session was
+    asked: read from the session's side file when there is one, else written
+    now (this hook is that file's one writer, through the helper every marker
+    write uses; the marker's sweeps retire it). A session with no usable id is
+    asked without a record, and ``at`` is now."""
+    at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%MZ")
+    if not sid:
+        return at, tokens
+    path = sessions_dir(root) / f"{sid}{HANDOFF_ASKED_SUFFIX}"
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):  # fail-open: ok deliberate -- no record yet, or one that does not parse: this prompt is the first ask, and the write below records it
+        record = None
+    if isinstance(record, dict):
+        held_at, held_tokens = record.get("at"), record.get("tokens")
+        if (isinstance(held_at, str) and _FIRST_ASK_STAMP_RE.fullmatch(held_at)
+                and isinstance(held_tokens, int) and not isinstance(held_tokens, bool) and held_tokens >= 0):
+            return held_at, held_tokens
+    try:
+        atomic_write_text(path, json.dumps({"at": at, "tokens": tokens}))
+    except OSError:  # fail-open: ok deliberate -- a state dir that cannot be written costs the record, never the ask; the next prompt asks again as the first
+        pass
+    return at, tokens
+
+
+def _unreadable_once(root: Path, transcript: object) -> str | None:
+    """The voice for a transcript the reader could not read while the setting
+    is on. A session's first prompt, before any response, has no assistant
+    record yet and is not a fault, so this fires only once the transcript is
+    longer than the reader's first window; once a session (``say_once``'s
+    flag), on the same stdout channel as the ask, with the audit record
+    ``/status --log`` counts."""
+    try:
+        size = os.path.getsize(transcript) if isinstance(transcript, str) and transcript else 0
+        if size <= TRANSCRIPT_TAIL_BYTES:
+            return None
+        if (root / STATE_DIR / (ONCE_FLAG_PREFIX + _UNREADABLE_KEY)).exists():
+            return None
+    except (OSError, ValueError):  # fail-open: ok deliberate -- a transcript or a state dir that cannot be stat-ed (or a path with a NUL in it) is the reader's own None, silent by design
+        return None
+    say_once(root, _UNREADABLE_KEY, "task_router", "userpromptsubmit_failed_open_context_unreadable", _CONTEXT_UNREADABLE)
+    return _CONTEXT_UNREADABLE
+
+
+def _context_advisory(root: Path, data: dict) -> str | None:
+    """The threshold handoff's ask, or ``None``: nothing while the setting is
+    off (the default), while the transcript holds no figure (a session's first
+    prompt), or while the figure is under the threshold. Past it, every prompt
+    asks, loop ticks included, and the first ask is recorded beside the
+    session's marker so the later ones can quote it."""
+    threshold, how, fault = handoff_context_threshold(root)
+    if threshold <= 0:
+        return _setting_fault_once(root, how) if fault else None
+    transcript = data.get("transcript_path")
+    tokens = read_context_from_transcript(transcript)
+    if tokens is None:
+        return _unreadable_once(root, transcript)
+    sid = safe_session_id(data.get("session_id"))
+    if tokens < threshold:
+        _forget_first_ask(root, sid)
+        return None
+    at, tokens0 = _first_ask(root, sid, tokens)
+    push = ", and pushes the lane" if handoff_push_on(root) else ""
+    return _HANDOFF_ASK.format(tokens=tokens // 1000, threshold=threshold // 1000, at=at,
+                               tokens0=tokens0 // 1000, push=push)
+
 
 # Decision-shape patterns. The advisory is `print()`-ed to the
 # same plain-text stdout channel as ROUTING_GUIDANCE (UserPromptSubmit
@@ -299,6 +423,16 @@ def _run_main() -> int:
     # exactly when the operator most needs the where-was-I readout.
     if _consume_cold_open(root):
         print(_COLD_OPEN_DIRECTIVE)
+        printed_any = True
+
+    # The threshold handoff's ask sits ABOVE the active-plan return: a lane in
+    # hand is exactly the session that must hear it (finish the lane, start no
+    # new job), and a loop tick with a plan open is a prompt like any other.
+    ask = _context_advisory(root, data)
+    if ask is not None:
+        if printed_any:
+            print()
+        print(ask)
         printed_any = True
 
     if _has_active_plan(root):

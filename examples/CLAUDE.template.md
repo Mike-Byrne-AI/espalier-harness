@@ -32,7 +32,7 @@ Espalier wires 12 hook scripts that run automatically on Claude Code events:
 | Hook | Event | What It Does |
 |---|---|---|
 | `session_start.py` | SessionStart | Reports kill-switch findings + integrity drift; loads the blueprint chain (and advances it on a new session — source `startup`/`clear`); cleans flags. Cannot block (protocol). |
-| `task_router.py` | UserPromptSubmit | Classifies prompt scope; routes toward /implement-task or /implement-task --multi |
+| `task_router.py` | UserPromptSubmit | Classifies prompt scope; routes toward /implement-task or /implement-task --multi; where `espalier.toml` sets `handoff_context_tokens`, asks for the handoff once the session's context passes it (read from the transcript's tail; a lane in hand finishes first) |
 | `plan_guard.py` | PreToolUse | Blocks source file writes without an active execution plan |
 | `write_guard.py` | PreToolUse | Blocks tool calls when kill-switch is set; blocks mutations of protected zones (a write into, a delete of, a move out of); blocks dangerous bash patterns |
 | `config_guard.py` | ConfigChange | Blocks unsafe project/local/user settings changes; audits managed policy_settings (non-blockable) |
