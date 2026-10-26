@@ -794,18 +794,40 @@ def _regex_extract_string_list(text: str, key: str) -> list[str] | None:
     return re.findall(r"""["']([^"']*)["']""", m.group(1))
 
 
-def read_toml_string_list(
-    root: Path, key: str, *, parser: Any = _UNBOUND, on_error: Callable[[str], None] | None = None,
+def _regex_extract_scalar(text: str, key: str) -> object | None:
+    """``_regex_extract_string_list``'s twin for a flat scalar ``key = value``
+    when no TOML parser is importable: the same comment strip and the same
+    top-level cut, then the one value typed as TOML would type it -- ``true``
+    and ``false`` to a bool, an integer literal to an int, a quoted string to
+    its text. Any other spelling (a float, a date, a bare word) and an absent
+    key read as ``None``: this arm does not reimplement TOML, so it does not
+    guess."""
+    text = re.sub(r"(?m)^\s*#.*$", "", text)
+    header = re.search(r"(?m)^[ \t]*\[", text)
+    if header is not None:
+        text = text[: header.start()]
+    m = re.search(r"(?m)^[ \t]*" + re.escape(key) + r"[ \t]*=[ \t]*([^\n#]*)", text)
+    if m is None:
+        return None
+    value = m.group(1).strip()
+    if value in ("true", "false"):
+        return value == "true"
+    if re.fullmatch(r"[+-]?\d+(?:_\d+)*", value):
+        return int(value.replace("_", ""))
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return None
+
+
+def _read_toml_flat(
+    root: Path, key: str, *, fallback: Callable[[str, str], object | None],
+    parser: Any, on_error: Callable[[str], None] | None,
 ) -> object | None:
-    """The RAW value of the flat top-level ``key`` in ``<root>/espalier.toml``:
-    ``None`` when the file or the key is absent, or the file is malformed (then
-    ``on_error`` was told why). No validation -- the value is whatever TOML
-    parsed, so the ``isinstance(raw, list)`` check and any entry validator stay
-    with the caller, which is why the annotation is ``object``. Three arms:
-    ``tomllib``, ``tomli``, and the regex fallback when neither imports. The
-    hook-side reader of a FLAT key; ``plan_guard`` and ``write_guard`` both
-    route through it, and ``stop_gate`` reads its ``[extra_actions]`` table through
-    ``read_toml_table`` beside it (since 2026-10-08). Never raises."""
+    """The one body behind ``read_toml_string_list`` and ``read_toml_scalar``:
+    the three arms (``tomllib``, ``tomli``, and ``fallback`` over the raw text
+    when neither imports) for the RAW value of a flat top-level ``key`` in
+    ``<root>/espalier.toml``; ``None`` when the file or the key is absent or
+    the file is malformed (then ``on_error`` was told why). Never raises."""
     config_path = root / "espalier.toml"
     try:
         present = config_path.is_file()
@@ -826,11 +848,89 @@ def read_toml_string_list(
             if on_error is not None:
                 on_error(os_error_text(exc))
             return None
-        return _regex_extract_string_list(text, key)
+        return fallback(text, key)
     data = read_toml_table(root, parser=parser, on_error=on_error)
     if data is None:
         return None
     return data.get(key)
+
+
+def read_toml_string_list(
+    root: Path, key: str, *, parser: Any = _UNBOUND, on_error: Callable[[str], None] | None = None,
+) -> object | None:
+    """The RAW value of the flat top-level ``key`` in ``<root>/espalier.toml``:
+    ``None`` when the file or the key is absent, or the file is malformed (then
+    ``on_error`` was told why). No validation -- the value is whatever TOML
+    parsed, so the ``isinstance(raw, list)`` check and any entry validator stay
+    with the caller, which is why the annotation is ``object``. Three arms:
+    ``tomllib``, ``tomli``, and the regex fallback when neither imports. The
+    hook-side reader of a FLAT key; ``plan_guard`` and ``write_guard`` both
+    route through it, and ``stop_gate`` reads its ``[extra_actions]`` table through
+    ``read_toml_table`` beside it (since 2026-10-08). Never raises."""
+    return _read_toml_flat(root, key, fallback=_regex_extract_string_list, parser=parser, on_error=on_error)
+
+
+def read_toml_scalar(
+    root: Path, key: str, *, parser: Any = _UNBOUND, on_error: Callable[[str], None] | None = None,
+) -> object | None:
+    """``read_toml_string_list`` for a flat top-level SCALAR ``key``: the same
+    three arms, the regex fallback replaced by its scalar twin
+    (``_regex_extract_scalar``). The RAW value, untyped -- the caller checks
+    ``isinstance`` -- or ``None`` when the file or the key is absent or the
+    file is malformed (``on_error`` told why). The hook-side reader of the
+    opt-in bits (``handoff_context_threshold``, ``handoff_push_on``);
+    ``ship.py::handoff_push_setting`` is the driver's own reader of
+    ``handoff_push``, which also says how it read it. Never raises."""
+    return _read_toml_flat(root, key, fallback=_regex_extract_scalar, parser=parser, on_error=on_error)
+
+
+#: The context size, in tokens, at which ``task_router`` asks the session to
+#: hand off (``read_context_from_transcript`` is the figure). Opt-in, like
+#: ``handoff_push``: absent or ``0`` is off.
+HANDOFF_CONTEXT_KEY = "handoff_context_tokens"
+
+
+def handoff_context_threshold(root: Path) -> tuple[int, str, bool]:
+    """``(tokens, how, fault)`` for ``handoff_context_tokens`` in
+    ``<root>/espalier.toml``: the context size past which ``task_router``
+    asks for the handoff, how it was read, and whether the reading is a
+    FAULT the operator should hear (the key is there but unusable: a
+    non-integer, a negative, a file that does not parse) rather than a
+    choice (absent, or ``0``: off on purpose). ``0`` is off in every case,
+    named in ``how`` so a typo is visible instead of silently deciding.
+    Never raises."""
+    faults: list[str] = []
+    raw = read_toml_scalar(root, HANDOFF_CONTEXT_KEY, on_error=faults.append)
+    if faults:
+        return 0, f"espalier.toml could not be read ({faults[0]}), so the threshold handoff is off", True
+    if raw is None:
+        return 0, f"espalier.toml does not set {HANDOFF_CONTEXT_KEY}, so the threshold handoff is off (the default)", False
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return 0, (f"espalier.toml sets {HANDOFF_CONTEXT_KEY} = {raw!r}, which is not an integer, so the "
+                   "threshold handoff is off"), True
+    if raw < 0:
+        return 0, (f"espalier.toml sets {HANDOFF_CONTEXT_KEY} = {raw}, which is not a positive integer, so "
+                   "the threshold handoff is off"), True
+    if raw == 0:
+        return 0, f"espalier.toml sets {HANDOFF_CONTEXT_KEY} = 0, so the threshold handoff is off", False
+    return raw, f"espalier.toml sets {HANDOFF_CONTEXT_KEY} = {raw}", False
+
+
+def handoff_push_on(root: Path) -> bool:
+    """Whether this repository's /handoff pushes (``handoff_push = true`` at
+    the top level of ``<root>/espalier.toml``), read by the ship driver's own
+    reader, ``ship.py::handoff_push_setting``, imported lazily from the
+    deployed tools/cc beside this package: the one reading the push verb acts
+    on, so the ask says what the handoff will do (``stop_gate`` reads it the
+    same way for its gate, with the gate's own stand-down voice). A tree
+    without the driver, or one whose driver cannot import, has no push the
+    driver would make: the hook-side scalar reader's bit stands in for the one
+    cosmetic clause, never as the authority. Never raises."""
+    try:
+        import ship  # lazy: tools/cc is on sys.path (the insert at the top); only an ask past the threshold pays for it
+        return bool(ship.handoff_push_setting(root)[0])
+    except Exception:  # noqa: BLE001 -- fail-open: ok deliberate -- a missing or unimportable driver has no push to say; the scalar reader's bit stands in for the one cosmetic clause of the ask
+        return read_toml_scalar(root, "handoff_push") is True
 
 
 ADOPTER_ZONE_KEYS: tuple[tuple[str, str], ...] = (
@@ -1984,7 +2084,11 @@ SESSION_ID_MAX_CHARS = 64
 #: suffix the marker readers' ``*.json`` glob never matches. A file a session
 #: owns has one lifetime: the marker's two sweeps below retire them with it.
 ZONE_BASELINE_SUFFIX = ".zones"
-SESSION_SIDE_SUFFIXES = (ZONE_BASELINE_SUFFIX, ZONE_BASELINE_SUFFIX + ".lock")
+#: ``task_router``'s record of the first prompt on which it asked the session
+#: to hand off at the context threshold (``at``, ``tokens``; JSON inside, the
+#: suffix outside the marker readers' glob like the others here).
+HANDOFF_ASKED_SUFFIX = ".handoff-asked"
+SESSION_SIDE_SUFFIXES = (ZONE_BASELINE_SUFFIX, ZONE_BASELINE_SUFFIX + ".lock", HANDOFF_ASKED_SUFFIX)
 _SESSION_ID_UNSAFE_RE = re.compile(r"[^A-Za-z0-9_-]")
 _SESSION_MARKER_CWD_MAX_CHARS = 120    # keeps the record under the flag-parity pin's 1 KiB
 
@@ -2252,6 +2356,116 @@ def prune_session_markers(root: Path, now: float | None = None) -> int:
         except OSError:  # fail-open: ok deliberate -- a marker a sibling swept first, or one that cannot be read
             continue
     return swept
+
+
+# ---- The session's context size, read from its transcript -------------------
+#: How much of the transcript's tail the context reader takes. The transcript
+#: is one JSON record per line, a record per content block, the largest a tool
+#: result; the last assistant record is normally inside the first window, and
+#: the second window is the one retry when it is not (a 2 MB transcript held
+#: 29 assistant records in its last 256 KiB, 2026-10-26).
+TRANSCRIPT_TAIL_BYTES = 256 * 1024
+TRANSCRIPT_TAIL_MAX_BYTES = 1024 * 1024
+_USAGE_INPUT_KEYS = ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+
+
+def _read_tail_nofollow(path: str, tail: int) -> bytes | None:
+    """The last ``tail`` bytes of the regular file at ``path`` (the whole file
+    when it is shorter), opened with the fd-level flags the state readers use
+    (``O_NOFOLLOW`` refuses a symlink where the host has it, the explicit check
+    stands in where it does not; ``O_NONBLOCK`` and ``S_ISREG`` refuse a FIFO
+    or a device); ``None`` when it cannot be opened or is not a regular file."""
+    try:
+        if not getattr(os, "O_NOFOLLOW", 0) and os.path.islink(path):
+            return None
+        # The state readers' flags, plus O_BINARY where the host has it (a
+        # byte count on Windows is a byte count only in binary mode).
+        fd = os.open(path, _NOFOLLOW_OPEN_FLAGS | getattr(os, "O_BINARY", 0))
+    except (OSError, ValueError):  # fail-open: ok deliberate -- a transcript that cannot be opened (or a path with a NUL in it, which os.open refuses as ValueError) is no figure; the router asks nothing and the status line's own segment stays the operator's cross-check
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        start = max(0, st.st_size - tail)
+        os.lseek(fd, start, os.SEEK_SET)
+        chunks: list[bytes] = []
+        remaining = st.st_size - start
+        while remaining > 0:
+            chunk = os.read(fd, min(remaining, 1 << 16))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks)
+    except OSError:  # fail-open: ok deliberate -- a read that fails after the open is the same no-figure as an open that fails
+        return None
+    finally:
+        os.close(fd)
+
+
+def _last_assistant_context(data: bytes) -> int | None:
+    """The sum of the three input counts in the LAST assistant record of
+    ``data`` (transcript lines; the first may be cut) that carries a real
+    response, or ``None`` when no line holds one. A record whose counts are
+    not non-negative integers is skipped, not read as zero; so is a synthetic
+    record (``message.model`` ``<synthetic>``: the host's own "session limit
+    reached" and "API error" lines, usage 0/0/0, 33 of them in this box's
+    transcripts on 2026-10-26) or any other zero total, because the context
+    did not shrink to nothing when the host answered for the model."""
+    for raw in reversed(data.split(b"\n")):
+        if not raw.strip():
+            continue
+        try:
+            rec = json.loads(raw)
+        except (ValueError, RecursionError):  # fail-open: ok deliberate -- the cut first line of the window, a line that is not JSON, or one nested past the parser's depth is skipped and the walk goes on
+            continue
+        if not isinstance(rec, dict) or rec.get("type") != "assistant":
+            continue
+        message = rec.get("message")
+        if not isinstance(message, dict) or message.get("model") == "<synthetic>":
+            continue
+        usage = message.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        total = 0
+        for key in _USAGE_INPUT_KEYS:
+            count = usage.get(key)
+            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+                total = -1
+                break
+            total += count
+        if total > 0:
+            return total
+    return None
+
+
+def read_context_from_transcript(path: object) -> int | None:
+    """The session's context size in tokens: the three input counts
+    (``input_tokens``, ``cache_creation_input_tokens``,
+    ``cache_read_input_tokens``) of the last assistant record's
+    ``message.usage`` in the transcript at ``path`` (the hook payload's
+    ``transcript_path``), summed -- the figure the status line reports as
+    ``context_window.total_input_tokens`` (the two read equal on a live
+    session, 2026-10-26). ``None`` when there is nothing to read: no path, a
+    symlink, not a regular file, an empty or unreadable file, or no assistant
+    record with integer counts in the last TRANSCRIPT_TAIL_MAX_BYTES (the first
+    window is TRANSCRIPT_TAIL_BYTES; the second is read once, only when the
+    file is longer than the first). A session's first prompt, before any
+    response, reads ``None`` by design. Never raises; ``task_router`` is the
+    voice when the figure matters."""
+    if not isinstance(path, str) or not path:
+        return None
+    for tail in (TRANSCRIPT_TAIL_BYTES, TRANSCRIPT_TAIL_MAX_BYTES):
+        data = _read_tail_nofollow(path, tail)
+        if data is None:
+            return None
+        found = _last_assistant_context(data)
+        if found is not None:
+            return found
+        if len(data) < tail:
+            return None
+    return None
 
 
 def _marker_time_s(stamp: str) -> float | None:

@@ -338,6 +338,8 @@ class TestReadStdinSafely:
 
 import pytest  # noqa: E402
 
+from tests._symlink_support import requires_symlink  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Every doc line that ENUMERATES SPECIFIC protected zones, keyed by a stable
@@ -806,6 +808,234 @@ class TestSayOnce:
         assert flag.is_file(), "a continuation keeps the session's flags"
         ss._clean_state_flags(tmp_path, source="startup")
         assert not flag.exists(), "a fresh session speaks again"
+
+
+class TestReadTomlScalar:
+    """The flat-scalar twin of the string-list reader: the same three arms,
+    the regex fallback typing a bool, an int or a quoted string and nothing
+    else, and the one shared body behind both readers."""
+
+    def test_parsed_arm_returns_the_raw_top_level_value(self, tmp_path):
+        import _hook_utils
+        assert _hook_utils.read_toml_scalar(tmp_path, "handoff_context_tokens") is None
+        (tmp_path / "espalier.toml").write_text(
+            'handoff_context_tokens = 200000\nhandoff_push = true\nname = "x"\n'
+            '[t]\nhandoff_context_tokens = 5\n', encoding="utf-8")
+        assert _hook_utils.read_toml_scalar(tmp_path, "handoff_context_tokens") == 200000
+        assert _hook_utils.read_toml_scalar(tmp_path, "handoff_push") is True
+        assert _hook_utils.read_toml_scalar(tmp_path, "name") == "x"
+        assert _hook_utils.read_toml_scalar(tmp_path, "missing") is None
+
+    def test_regex_arm_types_a_bool_an_int_and_a_quoted_string_only(self, tmp_path):
+        import _hook_utils
+        (tmp_path / "espalier.toml").write_text(
+            '# n = 1\nn = 1_000  # a comment\nb = false\ns = "quoted"\nf = 1.5\nw = word\n'
+            '[t]\nunder = 7\n', encoding="utf-8")
+        read = lambda k: _hook_utils.read_toml_scalar(tmp_path, k, parser=None)  # noqa: E731
+        assert read("n") == 1000 and read("b") is False and read("s") == "quoted"
+        assert read("f") is None and read("w") is None   # not guessed at
+        assert read("under") is None                      # a table key is not top-level
+        assert read("zz") is None
+
+    def test_a_malformed_file_reports_through_on_error_and_returns_none(self, tmp_path):
+        import _hook_utils
+        (tmp_path / "espalier.toml").write_text("handoff_context_tokens = abc\n", encoding="utf-8")
+        said: list[str] = []
+        assert _hook_utils.read_toml_scalar(tmp_path, "handoff_context_tokens", on_error=said.append) is None
+        assert len(said) == 1 and said[0], said
+
+    def test_both_readers_go_through_the_one_body_with_their_own_fallback(self, tmp_path, monkeypatch):
+        import _hook_utils
+        calls: list[tuple[str, object]] = []
+
+        def _recorder(root, key, *, fallback, parser, on_error):
+            calls.append((key, fallback))
+            return "recorded"
+
+        monkeypatch.setattr(_hook_utils, "_read_toml_flat", _recorder)
+        assert _hook_utils.read_toml_string_list(tmp_path, "a") == "recorded"
+        assert _hook_utils.read_toml_scalar(tmp_path, "b") == "recorded"
+        assert calls == [("a", _hook_utils._regex_extract_string_list), ("b", _hook_utils._regex_extract_scalar)]
+
+    def test_the_regex_arm_s_declared_gaps_read_none(self, tmp_path):
+        # Pinned as gaps, not guessed at: a `#` inside a quoted value cuts it,
+        # and a quoted key is not matched (tomllib reads both).
+        import _hook_utils
+        (tmp_path / "espalier.toml").write_text('s = "a # b"\n"q" = 1\n', encoding="utf-8")
+        assert _hook_utils.read_toml_scalar(tmp_path, "s", parser=None) is None
+        assert _hook_utils.read_toml_scalar(tmp_path, "q", parser=None) is None
+
+    def test_the_push_bit_reads_as_the_ship_driver_reads_it(self, tmp_path):
+        # One reader: the ask's clause says what the push verb will do, so the
+        # hook-side bit is the driver's own reading (the Stop gate's rule).
+        import _hook_utils
+        sys.path.insert(0, str(HOOKS_DIR.parent))
+        import ship
+        bodies = ("handoff_push = true\n", 'handoff_push = "true"\n', "[t]\nhandoff_push = true\n",
+                  "handoff_push = true\nhandoff_push = true\n", "﻿handoff_push = true\n",
+                  "broken = [\nhandoff_push = true\n", '"handoff_push" = true\n', "")
+        for body in bodies:
+            (tmp_path / "espalier.toml").write_text(body, encoding="utf-8")
+            assert _hook_utils.handoff_push_on(tmp_path) is ship.handoff_push_setting(tmp_path)[0], body
+
+
+class TestHandoffContextThreshold:
+    """``handoff_context_tokens``: opt-in like ``handoff_push``; off (0) is
+    the default and the reading of every non-positive-integer value, each
+    named; ``handoff_push_on`` is the bit alone."""
+
+    def test_absent_file_and_key_are_off_and_say_the_default(self, tmp_path):
+        import _hook_utils
+        tokens, how, fault = _hook_utils.handoff_context_threshold(tmp_path)
+        assert tokens == 0 and "does not set handoff_context_tokens" in how and "default" in how
+        assert fault is False   # absent is a choice, not a fault
+        (tmp_path / "espalier.toml").write_text("handoff_push = true\n", encoding="utf-8")
+        assert _hook_utils.handoff_context_threshold(tmp_path)[0] == 0
+
+    def test_a_positive_integer_turns_it_on(self, tmp_path):
+        import _hook_utils
+        (tmp_path / "espalier.toml").write_text("handoff_context_tokens = 200000\n", encoding="utf-8")
+        assert _hook_utils.handoff_context_threshold(tmp_path) == (
+            200000, "espalier.toml sets handoff_context_tokens = 200000", False)
+
+    def test_this_repository_opts_in_at_200k(self):
+        # The live tree's own setting, pinned like the push bit's: a typo in
+        # the key or a moved value is a red here, not a seat that never asks.
+        import _hook_utils
+        tokens, how, fault = _hook_utils.handoff_context_threshold(Path(__file__).resolve().parent.parent)
+        assert (tokens, fault) == (200000, False), how
+
+    @pytest.mark.parametrize("value, fault", [("0", False), ("-5", True), ("true", True), ("1.5", True), ('"200000"', True)])
+    def test_zero_negative_bool_float_and_string_are_off_and_named(self, tmp_path, value, fault):
+        import _hook_utils
+        (tmp_path / "espalier.toml").write_text(f"handoff_context_tokens = {value}\n", encoding="utf-8")
+        tokens, how, read_fault = _hook_utils.handoff_context_threshold(tmp_path)
+        assert tokens == 0 and "off" in how and "handoff_context_tokens" in how, how
+        assert read_fault is fault and how.isascii()   # 0 is a choice; the rest are faults the router says once
+
+    def test_a_malformed_file_is_off_and_names_the_fault(self, tmp_path):
+        import _hook_utils
+        (tmp_path / "espalier.toml").write_text("handoff_context_tokens = abc\n", encoding="utf-8")
+        tokens, how, fault = _hook_utils.handoff_context_threshold(tmp_path)
+        assert tokens == 0 and "could not be read" in how and fault is True, how
+
+    def test_handoff_push_on_reads_the_bit_alone(self, tmp_path):
+        import _hook_utils
+        assert _hook_utils.handoff_push_on(tmp_path) is False
+        (tmp_path / "espalier.toml").write_text('handoff_push = "true"\n', encoding="utf-8")
+        assert _hook_utils.handoff_push_on(tmp_path) is False   # a string is not the bit
+        (tmp_path / "espalier.toml").write_text("handoff_push = true\n", encoding="utf-8")
+        assert _hook_utils.handoff_push_on(tmp_path) is True
+
+
+def _assistant_record(mid: str, counts: tuple[object, object, object]) -> dict:
+    inp, cc, cr = counts
+    return {"type": "assistant", "message": {"id": mid, "usage": {
+        "input_tokens": inp, "cache_creation_input_tokens": cc, "cache_read_input_tokens": cr,
+        "output_tokens": 7}}}
+
+
+def _write_transcript(path: Path, records: list[dict]) -> None:
+    import json
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+
+
+class TestReadContextFromTranscript:
+    """The session's context size from the transcript's tail: the last
+    assistant record's three input counts, summed; ``None`` for every shape
+    that is not that; the second window only when the first holds none."""
+
+    def test_the_last_assistant_record_is_summed_past_a_trailing_user_line(self, tmp_path):
+        import _hook_utils
+        t = tmp_path / "s.jsonl"
+        _write_transcript(t, [_assistant_record("a", (1, 2, 3)), _assistant_record("b", (10, 20, 30)),
+                              {"type": "user", "message": {"content": "x"}}])
+        assert _hook_utils.read_context_from_transcript(str(t)) == 60
+
+    def test_no_assistant_record_reads_none(self, tmp_path):
+        import _hook_utils
+        t = tmp_path / "s.jsonl"
+        _write_transcript(t, [{"type": "user", "message": {"content": "x"}}, {"type": "progress"}])
+        assert _hook_utils.read_context_from_transcript(str(t)) is None
+        t.write_text("", encoding="utf-8")
+        assert _hook_utils.read_context_from_transcript(str(t)) is None
+
+    def test_counts_that_are_not_non_negative_integers_are_skipped_not_zeroed(self, tmp_path):
+        import _hook_utils
+        t = tmp_path / "s.jsonl"
+        _write_transcript(t, [_assistant_record("good", (5, 5, 5)), _assistant_record("str", ("1", 2, 3)),
+                              _assistant_record("neg", (1, -2, 3)), _assistant_record("bool", (True, 2, 3)),
+                              {"type": "assistant", "message": {"usage": "none"}}])
+        assert _hook_utils.read_context_from_transcript(str(t)) == 15
+
+    def test_a_record_past_the_first_window_is_found_by_the_second(self, tmp_path):
+        import _hook_utils
+        t = tmp_path / "s.jsonl"
+        pad = "p" * (_hook_utils.TRANSCRIPT_TAIL_BYTES + 1024)
+        _write_transcript(t, [_assistant_record("a", (100, 200, 300)), {"type": "user", "message": {"content": pad}}])
+        assert t.stat().st_size > _hook_utils.TRANSCRIPT_TAIL_BYTES
+        assert _hook_utils.read_context_from_transcript(str(t)) == 600
+
+    def test_a_record_past_the_largest_window_reads_none(self, tmp_path):
+        import _hook_utils
+        t = tmp_path / "s.jsonl"
+        pad = "p" * (_hook_utils.TRANSCRIPT_TAIL_MAX_BYTES + 1024)
+        _write_transcript(t, [_assistant_record("a", (100, 200, 300)), {"type": "user", "message": {"content": pad}}])
+        assert _hook_utils.read_context_from_transcript(str(t)) is None
+
+    def test_a_synthetic_record_and_a_zero_total_are_skipped(self, tmp_path):
+        # The host writes `<synthetic>` assistant records with usage 0/0/0
+        # ("session limit reached", "API error"); one of them last must not
+        # read as a context of zero, or the ask goes quiet at 300k.
+        import _hook_utils
+        t = tmp_path / "s.jsonl"
+        synthetic = {"type": "assistant", "message": {"id": "syn", "model": "<synthetic>", "usage": {
+            "input_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0, "output_tokens": 0}}}
+        zero = _assistant_record("zero", (0, 0, 0))
+        _write_transcript(t, [_assistant_record("real", (100_000, 100_000, 100_000)), synthetic, zero])
+        assert _hook_utils.read_context_from_transcript(str(t)) == 300_000
+        _write_transcript(t, [synthetic, zero])
+        assert _hook_utils.read_context_from_transcript(str(t)) is None
+
+    def test_a_path_with_a_nul_and_a_deeply_nested_line_read_none_without_raising(self):
+        import _hook_utils
+        assert _hook_utils.read_context_from_transcript("a\0b") is None
+        assert _hook_utils._last_assistant_context(b"x\n" + b"[" * 200_000) is None
+
+    def test_a_cut_first_line_of_the_window_is_skipped(self):
+        import _hook_utils
+        import json
+        good = json.dumps(_assistant_record("a", (1, 1, 1))).encode()
+        cut = json.dumps(_assistant_record("z", (9, 9, 9))).encode()[20:]   # mid-record, as a window boundary cuts it
+        assert _hook_utils._last_assistant_context(cut + b"\n" + good + b"\n") == 3
+        assert _hook_utils._last_assistant_context(cut) is None
+
+    def test_no_path_a_non_string_a_missing_file_and_a_directory_read_none(self, tmp_path):
+        import _hook_utils
+        assert _hook_utils.read_context_from_transcript(None) is None
+        assert _hook_utils.read_context_from_transcript("") is None
+        assert _hook_utils.read_context_from_transcript(7) is None
+        assert _hook_utils.read_context_from_transcript(str(tmp_path / "absent.jsonl")) is None
+        assert _hook_utils.read_context_from_transcript(str(tmp_path)) is None
+
+    @requires_symlink
+    def test_a_symlinked_transcript_is_refused(self, tmp_path):
+        import _hook_utils
+        import os
+        real = tmp_path / "real.jsonl"
+        _write_transcript(real, [_assistant_record("a", (1, 2, 3))])
+        link = tmp_path / "link.jsonl"
+        os.symlink(real, link)
+        assert _hook_utils.read_context_from_transcript(str(real)) == 6
+        assert _hook_utils.read_context_from_transcript(str(link)) is None
+
+    @pytest.mark.skipif(not hasattr(__import__("os"), "mkfifo"), reason="FIFOs are POSIX")
+    def test_a_fifo_never_blocks_and_reads_none(self, tmp_path):
+        import _hook_utils
+        import os
+        fifo = tmp_path / "fifo.jsonl"
+        os.mkfifo(fifo)
+        assert _hook_utils.read_context_from_transcript(str(fifo)) is None
 
 
 class TestReadTomlStringList:

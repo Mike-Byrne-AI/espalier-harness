@@ -529,6 +529,21 @@ read deny stays the layer for `Read`.
 
 ---
 
+## "The prompt router keeps asking me to hand off"
+
+That is the threshold handoff: `espalier.toml` sets `handoff_context_tokens`,
+and this session's context is at or past it (the status line's `ctx=` segment
+shows the same figure). The ask repeats on every prompt by design, loop ticks
+included, until the window is cleared; it is idempotent by text, so a handoff
+already written is not written again, and a lane in hand finishes before the
+handoff rather than shipping half done. What ends it is a `/clear` (a
+`/loop` survives it). To turn it off for a tree, set the key to `0` or remove
+it; to ask later, raise the figure. If the ask arrives on a session whose
+context the status line shows as small, the transcript's last assistant record
+is not what the reader expects: `HOOK_ASSUMPTIONS.md` Assumption 7 names the
+shape, and the once-a-session line "the context could not be read" is the
+other symptom of the same drift.
+
 ## Still stuck?
 
 - For a known-footgun lookup matching your symptom, search the source

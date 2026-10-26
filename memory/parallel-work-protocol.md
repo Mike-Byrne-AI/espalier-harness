@@ -72,6 +72,22 @@ process); a relaunch is a new process and gets its loop from the brief, so
 it needs no second paste either. `claude --worktree` locks the worktree, in an
 interactive session as under `-p`; a killed session leaves the lock behind.
 
+**The threshold handoff (since 2026-10-26).** A seat does not run to the
+window's end. Where `espalier.toml` sets `handoff_context_tokens` (this tree:
+200000), the prompt router reads the session's context size from the
+transcript's tail on every prompt, loop ticks included, and past the figure
+asks on every prompt: a lane in hand finishes through its own landing (its
+tier and its push) and the seat starts no new job; with no lane in hand, the
+seat runs `/handoff` now; after it, the seat takes no new job (its own pull
+request's red or conflict, and a red `main`'s revert, are not new work),
+answers a tick in one line, and tells the operator the window needs a
+`/clear`, which the loop survives. The ask never says "commit and hand off"
+mid-lane, because the handoff's push opens the lane's pull request with
+auto-merge armed and a half-done lane must not ride it. The reset is the
+operator's `/clear` (a relaunch through the seat launcher is the next wave);
+the briefs and the tick carry the same rule, and `docs/HOOKS.md` (the router
+section) is the mechanism's home.
+
 1. **Work the jobs assigned to you**, in order, and keep two queued (the
    dispatcher's duty to keep them there, the table below), so the
    dispatcher's absence does not stall you. Two seats on one box run one

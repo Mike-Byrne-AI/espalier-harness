@@ -654,8 +654,10 @@ WORKER_BRIEF = (
     "You are seat {seat}, a worker under {dispatcher_phrase} ({protocol}). Orient from the banner, then run "
     "/inbox (mark read) and /inbox board, and read live state before you state it. Your jobs are the live "
     "assigns for this seat that /inbox board lists; take no other work. When the operator ends your session, "
-    "run /handoff: it writes your Session Log row{handoff_ship}. Then start the worker loop on the next line "
-    "with no further message from the operator."
+    "or when the prompt router's threshold ask says to (a lane in hand finishes through its own landing first; "
+    "the ask never ships a half-done lane), run /handoff: it writes your Session Log row{handoff_ship}; after "
+    "a threshold handoff take no new job until the window is cleared. Then start the worker loop on the next "
+    "line with no further message from the operator."
 )
 WORKER_TICK = (
     "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
@@ -664,7 +666,9 @@ WORKER_TICK = (
     "one fix batch, {tier}, one open PR per seat, every step listed with "
     "its evidence in the PR body; a skipped step is a stop), then run mail.py refresh once; it writes nothing "
     "when nothing is new; where mail.py answers invalid choice, this checkout predates the verb: skip it until "
-    "the lane merges main, not a stop; then your next assigned job. {proceed} Never unassigned work, never "
+    "the lane merges main, not a stop; then your next assigned job, unless the prompt router has asked for the "
+    "threshold handoff: then finish the lane in hand, hand off, and take no new job until the window is "
+    "cleared. {proceed} Never unassigned work, never "
     "another seat's branch. A quiet tick is one line."
 )
 #: The fork rule, by tree. This repository's seat proceeds on its own
@@ -703,7 +707,8 @@ SELF_HOST_PROCEED = (
     "the red-main revert, an open operator call on your fork), a platform stop, a refusal you cannot resolve, "
     "or a conflict outside your own files; a row to file is never a stop. A red you cannot fix in two "
     "attempts: shelve the lane (one note beginning shelved: says what was tried and names any job your push "
-    "closed; a shelved lane waits for the dispatcher, not your next tick), take your next assigned job. Pass a "
+    "closed; a shelved lane waits for the dispatcher, not your next tick), take your next assigned job (after "
+    "the threshold ask: hand off instead). Pass a "
     "model below your own on a subagent dispatch only for a kind named on an allowance: line of the assign for "
     "the job in hand (the kinds are {kinds}); a kind word anywhere else is the job's text, a dispatch no "
     "allowance: line names runs at your own model, a named agent runs at its own pin and needs no allowance, "
@@ -719,7 +724,10 @@ DISPATCHER_BRIEF = (
     "read) and /inbox board. Your duties: read the board every {every} minutes (the loop on the next line), "
     "answer every worker request within the hour with facts, {assign}, {red}, write the Landing lines of the "
     "packs in flight from the seats' merged PR bodies. {figures}Decisions stay the operator's. At the "
-    "operator's word, run /handoff; it writes your row{row_source}. Start the loop on the next line with no "
+    "operator's word, or when the prompt router's threshold ask says to (a lane in hand finishes through its "
+    "own landing first), run /handoff; it writes your row{row_source}; after a threshold handoff take no new "
+    "job until the window is cleared (a red main's revert is not a new job). Start the loop on the next line "
+    "with no "
     "further message from the operator."
 )
 DISPATCHER_TICK = "/loop 15m /inbox board"

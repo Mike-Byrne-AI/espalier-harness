@@ -314,7 +314,7 @@ class TestClaimDiscoverersNotStubs:
     #: the tautology this whole pack exists to remove.
     _EXPECTED_CLAIM_YIELD = {
         "CLAUDE.md": 20,  # 19 -> 20: Core Rule 15, parallel work (TP-479, 2026-10-09)
-        "docs/HOOK_ASSUMPTIONS.md": 6,
+        "docs/HOOK_ASSUMPTIONS.md": 7,
         "docs/CONVENTIONS.md": 3,
     }
 

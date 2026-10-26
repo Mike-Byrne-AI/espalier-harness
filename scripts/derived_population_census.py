@@ -1313,8 +1313,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension, for-assert
     "tests/test_session_banner.py": (
-        8, "4d0e355d55b7fe82af1be92d96e94fef61a562515ca4015c15efba5c0b79210d",
+        10, "f715c6721c6128aa1a21cf43b978f34bd16ab493e7a884f1d4e0ac7d5b260127",
         "MIXED_WITH_PRIOR_PASS",
+        "NEW 2026-10-26 (+2, the threshold-handoff lane): an all-any over "
+        "hu.SESSION_SIDE_SUFFIXES (no suffix ends in `.json`, else the marker readers' "
+        "glob names a session's own side file as a live sibling) and a comprehension "
+        "over the same roster in "
+        "test_a_side_file_is_never_a_session_and_is_swept_with_its_marker -- the "
+        "roster is the hooks' own constant, the property holds for everything "
+        "present, and the same test pins by name that HANDOFF_ASKED_SUFFIX is in it, "
+        "so a suffix dropped from the roster reds there: CORRECT. "
         "NEW 2026-10-08 (+1, the unwired-gate lane): one for-plain over "
         "self._GATES.items() in TestTheGovernanceWiringLine._tree -- the fixture "
         "builder that lays down the four gate files and wires all but the dropped "
@@ -1560,6 +1568,19 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "adjudicated in the parametrize/for-assert pass; per-row reason not preserved",
     ),
     # 1 row(s), shapes: comprehension
+    # 1 row(s), shapes: comprehension
+    "tests/test_usage_tail.py": (
+        1, "d996c9b7943807354c0fc523d60990bc8a746c05490fcf7c3d04658170d71616",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-26 (the threshold-handoff lane): one comprehension over "
+        "mod.USAGE_KEYS in test_the_context_figure_uses_the_hook_reader_s_keys -- "
+        "the instrument's own key constant, less output_tokens, compared with "
+        "_hook_utils._USAGE_INPUT_KEYS, so the measure and the gate it measures "
+        "sum the same three counts. A key dropped from BOTH would pass here, but "
+        "the hook reader's own tests (TestReadContextFromTranscript) sum the three "
+        "by name and the instrument's arithmetic tests use hand-computed figures, "
+        "so the pair is pinned one file over on each side: CORRECT.",
+    ),
     "tests/test_vendor_cc_parity.py": (
         1, "662f1b34646e9793620d7fbc2e00e4eb69176fded889c9361304207e31435c61",
         "CORRECT_BY_PROPERTY",

@@ -563,6 +563,39 @@ from proceeding differently. The hook never rejects a prompt.
 
 **Configuration:** None needed. The hook is silent for most interactions.
 
+**The threshold handoff (opt-in).** Where `espalier.toml` sets a top-level
+`handoff_context_tokens = <int>`, the hook reads the session's context size on
+every prompt, loop ticks included, from the tail of the session transcript the
+payload names (`transcript_path`: the last assistant record's `usage`, its
+input, cache-creation and cache-read counts summed, the same figure the status
+line shows as `ctx=`), and once the figure is at or past the setting it prints
+one ASCII paragraph beside the prompt:
+
+```
+[HARNESS] Context is 271k, past the handoff threshold (200k, espalier.toml
+handoff_context_tokens). First asked 2026-10-26T09:19Z at 271k. Handoff
+replaces compaction: if a lane is in hand, finish it through its own landing
+and start no new job; with no lane in hand, run /handoff now (it writes your
+row, and pushes the lane). After the handoff take no new work, answer a loop
+tick in one line, and tell the operator this window needs a /clear (the loop
+survives it).
+```
+
+The push clause rides only where `handoff_push = true`. The ask is idempotent
+by text: it repeats on every prompt past the figure until the window is
+cleared, and it never says "commit and hand off" mid-lane, because on a tree
+with `handoff_push` the handoff's last step opens the lane's pull request with
+auto-merge armed, and a half-finished lane must not ride that. The first ask
+is recorded beside the session's marker
+(`.espalier-state/sessions/<id>.handoff-asked`, swept with the marker) so the
+later ones can quote it. Absent, `0`, or anything but a positive integer is
+off. A session's first prompt, before any response, has no figure and asks
+nothing; a transcript longer than the reader's first window that still yields
+no figure is said once a session, on the same channel (the transcript's
+record shape is an assumption, `HOOK_ASSUMPTIONS.md` Assumption 7). The
+setting is a token count, not a share of the window: on a 200k-window model
+set it accordingly.
+
 ---
 
 ### 3. `plan_guard.py` — Execution plan gate

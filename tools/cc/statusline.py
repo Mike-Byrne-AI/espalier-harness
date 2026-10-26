@@ -12,13 +12,24 @@ operators see at a glance:
 - ``bp=<id>/d<N>``    short id + accumulated depth of the active
                       cognitive blueprint chain (from cc/blueprints/
                       latest.json).
+- ``ctx=<n>k/<w>k``   the context size and the window, from the JSON
+                      Claude Code sends on stdin (``context_window``): the
+                      figure the threshold handoff reads, shown so the
+                      operator sees it coming.
+- ``limits=<a>%/<b>%`` the five-hour and seven-day rate limits used, from
+                      the same payload (``rate_limits``), the account facts
+                      that decide when a box freezes; a window the payload
+                      lacks prints ``-``.
 
 Stdlib-only, zero espalier imports. Never raises on missing state;
-prints ``espalier`` alone when nothing is observable.
+prints ``espalier`` alone when nothing is observable. Reads stdin only
+when it is not a terminal, and writes nothing: the prompt router reads
+the context from the transcript, not from here.
 """
 from __future__ import annotations
 
 import json
+import math
 import os
 import stat as _stat
 import sys
@@ -186,6 +197,68 @@ def _freshness_summary(root: Path) -> str | None:
     return None
 
 
+#: The most stdin the status line reads: the payload is a few KB (1,770 bytes
+#: on a live session, 2026-10-26); past this it is not the payload.
+STATUSLINE_PAYLOAD_MAX_BYTES = 64 * 1024
+
+
+def _read_statusline_payload() -> dict:
+    """The JSON Claude Code sends the status line on stdin (``session_id``,
+    ``context_window``, ``rate_limits``, ...), or ``{}``: on a terminal (the
+    operator running the script by hand, where a read would wait), a missing
+    or closed stream, an empty or oversize one, bad JSON, or a top level
+    that is not an object. Bytes, decoded ``utf-8-sig`` so a BOM is not a
+    parse error (the hooks' stdin reader does the same). Never raises."""
+    stream = getattr(sys, "stdin", None)
+    try:
+        if stream is None or stream.isatty():
+            return {}
+        raw = stream.buffer.read(STATUSLINE_PAYLOAD_MAX_BYTES + 1)
+    except (OSError, ValueError, AttributeError):
+        return {}
+    if not raw or len(raw) > STATUSLINE_PAYLOAD_MAX_BYTES:
+        return {}
+    try:
+        data = json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _thousands(value: object) -> str | None:
+    """``<n>k`` for a finite non-negative number; None for anything else (a
+    bool is not a count, and JSON's NaN and Infinity are not figures)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+        return None
+    return f"{int(value) // 1000}k"
+
+
+def _context_segments(payload: dict) -> list[str]:
+    """``ctx=<tokens>k/<window>k`` from ``context_window`` (the sum the
+    status line calls ``total_input_tokens``: input plus cache creation plus
+    cache read, the figure the threshold handoff reads from the transcript)
+    and ``limits=<five_hour>%/<seven_day>%`` from ``rate_limits``. A segment
+    whose values are not numbers is dropped; an absent window size, or an
+    absent limit window, prints ``-``. Reads only; writes nothing."""
+    out: list[str] = []
+    window = payload.get("context_window")
+    if isinstance(window, dict):
+        tokens = _thousands(window.get("total_input_tokens"))
+        if tokens is not None:
+            out.append(f"ctx={tokens}/{_thousands(window.get('context_window_size')) or '-'}")
+    limits = payload.get("rate_limits")
+    if isinstance(limits, dict):
+        parts: list[str] = []
+        for name in ("five_hour", "seven_day"):
+            bucket = limits.get(name)
+            pct = bucket.get("used_percentage") if isinstance(bucket, dict) else None
+            known = isinstance(pct, (int, float)) and not isinstance(pct, bool) and math.isfinite(pct)
+            parts.append(f"{int(pct)}%" if known else "-")
+        if any(part != "-" for part in parts):
+            out.append("limits=" + "/".join(parts))
+    return out
+
+
 def main() -> int:
     # Resolve to absolute path so the statusline does not silently
     # degrade to a cwd-relative read when CLAUDE_PROJECT_DIR is unset
@@ -195,6 +268,7 @@ def main() -> int:
     # way. A raw Path.cwd() here misreports when launched from a subdirectory
     # even with the env var set.
     root = Path(os.environ.get("CLAUDE_PROJECT_DIR", ".")).resolve()
+    payload = _read_statusline_payload()
     parts = ["espalier"]
     # Compute each indicator independently so one failing segment
     # (e.g. a malformed freshness cache) degrades only ITSELF, not the healthy
@@ -205,6 +279,7 @@ def main() -> int:
         _maintenance_indicator,
         _stop_gate_indicator,
         lambda: _blueprint_summary(root),
+        lambda: " | ".join(_context_segments(payload)) or None,
         lambda: _freshness_summary(root),
     )
     for indicator in indicators:
