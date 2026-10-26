@@ -1097,7 +1097,9 @@ class TestTheLauncherSetsTheBoxLock:
     directory unless the parent already named one, so two seats on one box
     take the same lock and CI, which never runs the launcher, never sees it.
     Mutations: the key dropped from the child's environment; an inherited path
-    overwritten with the default; the key left out of either shell's line."""
+    overwritten with the default; the key left out of either shell's line; the
+    printed line taking the default over the terminal's own path (code review,
+    2026-10-26: two seats would then lock two files)."""
 
     def test_the_child_gets_the_hosts_default_path_unless_the_parent_named_one(self, seat, tmp_path):
         import tempfile
@@ -1114,7 +1116,9 @@ class TestTheLauncherSetsTheBoxLock:
         target = seat.Target("box-x", tmp_path, True, False)
         default = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
         sh = seat.command_line(target, ["--model", "o p"], maintenance=False, shell="posix")
-        assert f"export ESPALIER_BOX_LOCK={shlex.quote(default)} && " in sh and sh.index("ESPALIER_BOX_LOCK") < sh.index("claude")
+        assert f"export ESPALIER_BOX_LOCK=${{ESPALIER_BOX_LOCK:-{shlex.quote(default)}}} && " in sh, sh
+        assert sh.index("ESPALIER_BOX_LOCK") < sh.index("claude")
         assert sh.endswith("&& env -u ESPALIER_MAINTENANCE_MODE -u VIRTUAL_ENV claude --model 'o p'")
         ps = seat.command_line(target, [], maintenance=False, shell="powershell")
-        assert f"$env:ESPALIER_BOX_LOCK = '{default}'" in ps and ps.index("ESPALIER_BOX_LOCK") < ps.index("claude")
+        assert f"if (-not $env:ESPALIER_BOX_LOCK) {{ $env:ESPALIER_BOX_LOCK = '{default}' }}" in ps, ps
+        assert ps.index("ESPALIER_BOX_LOCK") < ps.index("claude")

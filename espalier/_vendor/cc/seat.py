@@ -608,7 +608,9 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
             parts.append(f"$env:PATH = {q(str(bindir) + ';')} + $env:PATH")
         else:
             parts.append("Remove-Item Env:VIRTUAL_ENV -ErrorAction SilentlyContinue")
-        parts.append(f"$env:{BOX_LOCK_KEY} = {q(box_lock_default())}")
+        # The host's default only where the terminal names no path of its own,
+        # as child_env keeps an inherited one: two seats must lock one file.
+        parts.append(f"if (-not $env:{BOX_LOCK_KEY}) {{ $env:{BOX_LOCK_KEY} = {q(box_lock_default())} }}")
         parts.append(" ".join(["claude", *(q(a) for a in args)]))
         return "; ".join(parts)
     env = [f"{MAINTENANCE_KEY}=1"] if maintenance else [f"-u {MAINTENANCE_KEY}"]
@@ -618,7 +620,9 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
         env.append("-u VIRTUAL_ENV")
     # An export, not an `env` word: `env`'s options precede its assignments, and
     # the exported path also puts a tier run from that terminal under the lock.
-    return (f"cd {shlex.quote(str(target.path))} && export {BOX_LOCK_KEY}={shlex.quote(box_lock_default())} && "
+    # The terminal's own path wins where it names one (`${VAR:-default}`), as
+    # child_env keeps an inherited one.
+    return (f"cd {shlex.quote(str(target.path))} && export {BOX_LOCK_KEY}=${{{BOX_LOCK_KEY}:-{shlex.quote(box_lock_default())}}} && "
             f"env {' '.join(env)} claude {' '.join(shlex.quote(a) for a in args)}").rstrip()
 
 

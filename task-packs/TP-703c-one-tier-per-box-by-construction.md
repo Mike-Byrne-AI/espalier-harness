@@ -83,9 +83,11 @@ box bookkeeping on the channel built for claims and asks.
    config), active only when `ESPALIER_BOX_LOCK` names a path and the run will run tests
    (`tests/_never_ran.py::NO_TEST_RUNS` says which options do not) and is an xdist run (the
    `numprocesses` option read from the config, never the argv, so `PYTEST_ADDOPTS=-n` counts and
-   `-n 0` takes none): both tier legs take the lock, and a node-id, file or contract-slice run
-   takes none, the Mac rule of 2026-10-13, so a reviewer's or an agent's run never waits past a
-   Bash call's cap *(0-A, 2026-10-26)*. It builds its holder record
+   `-n 0` takes none): every tier line takes the lock, the contract slice included (every line of
+   every tier has run under xdist since 2026-10-16, so the Mac rule of 2026-10-13 that exempted the
+   slice was already stale: the failure-mode review's correction), a tier's lines interleave with
+   a sibling's, and a run without `-n` (a node-id or file run, as a reviewer's or an agent's is)
+   takes none and never waits past a Bash call's cap *(0-A and review, 2026-10-26)*. It builds its holder record
    (seat, lane, pid, started-at, the argv head) BEFORE it tries the lock, tries without blocking,
    writes the record the instant the lock is held, exports `ESPALIER_BOX_LOCK_HOLDER=<pid>` so
    every child inherits it, and at `pytest_unconfigure` truncates the record and closes the
@@ -174,7 +176,8 @@ box bookkeeping on the channel built for claims and asks.
   runs alone *(0-A, 2026-10-26)*, a node-id or file run an agent launches takes no lock and never
   waits past a Bash call's cap; an agent's `-n` run would, so `drive` and `mutants` dispatches run
   their nodes serially, and an agent whose run reports a lock wait reports no result (expected
-  from the environment model, not yet driven).
+  from the environment model, not yet driven). A bounded wait that exits distinctly (an
+  `ESPALIER_BOX_LOCK_WAIT_S`) is the review's proposal for a later lane.
 
 ## Task 0 — Verify (try to kill this pack)
 

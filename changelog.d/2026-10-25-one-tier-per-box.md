@@ -3,12 +3,15 @@
 - **One pytest tier at a time on one machine, by construction.** `tests/_box_lock.py`,
   registered from the suite's conftest beside the never-ran count, takes a kernel lock on the
   file `ESPALIER_BOX_LOCK` names when the run is an xdist run that will run tests
-  (`numprocesses` read from the config, so an addopts `-n` counts and `-n 0` takes none; a
-  node-id, file or contract-slice run takes no lock, so a reviewer's or an agent's run never
-  waits past a Bash call's cap). While another run holds it the controller polls the primitive's
+  (`numprocesses` read from the config, so an addopts `-n` counts and `-n 0` takes none; every
+  tier line is an xdist run, the contract slice included, and a tier's lines each take and
+  release the lock, so two tiers interleave line by line; a run without `-n`, as a reviewer's or
+  an agent's node-id or file run is, takes no lock and never waits past a Bash call's cap). While another run holds it the controller polls the primitive's
   new non-blocking `try_lock_file`, prints the holder (seat, lane, pid, how long, the argv head)
-  on stderr at once and then once a report interval, past a 60-minute ceiling with the command
-  that kills the holder by pid, and appends one JSON line per wait to `<lock path>.log`. Once
+  on stderr at once and then once a report interval, with an inspect command and the stop command
+  once the holder itself is past a 60-minute ceiling, and appends one JSON line per wait to
+  `<lock path>.log`; the run's terminal summary says what the lock did (waited, passed through,
+  unguarded). Once
   held it writes its record into the file and exports `ESPALIER_BOX_LOCK_HOLDER=<pid>` before any
   worker is spawned, so a nested run that inherits the pair and finds the record's pid alive
   passes through; a dead holder's pid is no pass, an empty record under a held lock is said and
@@ -27,7 +30,8 @@
 
 - **The seat launcher sets the box lock.** `tools/cc/seat.py::child_env` sets `ESPALIER_BOX_LOCK`
   to the host's default (`espalier-box.lock` under the temp directory, per user on both OSes)
-  unless the parent named one, and the printed launch line exports it in both shells. The release
+  unless the parent named one, and the printed launch line exports it in both shells, the
+  terminal's own path winning where it names one. The release
   gate's whitelist passes the two lock names through, by name, so its legs run under the lock;
   `docs/ENV_CATALOG.md` carries both rows. On a named clone whose session has no
   `ESPALIER_BOX_LOCK` (a hand relaunch after a reap), the SessionStart banner says so and how to

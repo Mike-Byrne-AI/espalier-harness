@@ -1058,7 +1058,7 @@ def _mail_line(root: Path, deadline: float | None = None, mail: Any = None, read
     # dispatcher holds no assigns, so the `Orders:` line a worker gets never
     # reaches it, and a new line would move the banner's ruled line count.
     box = _box_lock_note(root, machine) if _is_dispatcher_seat(root, mail, machine) else ""
-    clause = " ".join(part for part in (asks, box) if part)
+    clause = "; ".join(part for part in (asks, box) if part)
     if not rows:
         return " ".join(part for part in (clause, note) if part)
     line = _render_rows(rows) + "\n" + _PR_INDENT + _MAIL_TAIL + (f" {note}" if note else "")
@@ -1090,6 +1090,11 @@ def _box_lock_note(root: Path, machine: str | None, seat: Any = None) -> str:
     (`Orders:` on a worker, the `Mail:` line's dispatcher clause on the
     dispatcher). Reporter only, no spawn."""
     if not machine or os.environ.get("ESPALIER_BOX_LOCK"):
+        return ""
+    # Only where the suite carries the plugin: this hook is deployed to
+    # adopters, whose trees have no tests/_box_lock.py and nothing to relaunch
+    # into (code review, 2026-10-26).
+    if not (root / "tests" / "_box_lock.py").is_file():
         return ""
     if seat is None:
         try:

@@ -2863,6 +2863,10 @@ class TestOrdersLine:
         by = {"hub": [self._assign(mail, "w", lane="lane/a")]}
         read = {"machine": "w", "by_machine": by, "unread": 0}
         monkeypatch.delenv("ESPALIER_BOX_LOCK", raising=False)
+        plain = mod._orders_line(tmp_path, read, mail=mail, python="py -3")
+        assert "box lock" not in plain, "an adopter's tree carries no plugin, so the note would send it nowhere"
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "_box_lock.py").write_text("", encoding="utf-8")
         line = mod._orders_line(tmp_path, read, mail=mail, python="py -3")
         default = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
         assert line.endswith(f"; box lock: off (relaunch through seat.py launch, or export "
@@ -3210,6 +3214,9 @@ class TestMailLine:
         default = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
         dispatcher = _mail_stub(dispatcher_setting=lambda root: ("mac", "espalier.toml names mac"),
                                 live_requests=lambda by: [])
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=dispatcher) == "", "no plugin, no note"
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "_box_lock.py").write_text("", encoding="utf-8")
         line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=dispatcher)
         assert line == f"box lock: off (relaunch through seat.py launch, or export ESPALIER_BOX_LOCK={default} before claude)", line
         worker = _mail_stub(dispatcher_setting=lambda root: ("hub", "espalier.toml names hub"),
