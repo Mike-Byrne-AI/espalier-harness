@@ -161,6 +161,14 @@ its start, and the board's `overlaps:` section is the oracle, not this paragraph
    pull-request bodies (49 of the last 100, by `TP-703h`'s census; the docs, memory and bench
    carry none) and in gitignored local files; `TP-703b`'s roster moves into it (expand there,
    contract here). `tests/_axis_registry.py` (`TP-468`) is the sibling store it sits beside.
+   *Held 2026-10-26 at its Task 0 item 1, on the pack's own pre-registered line (the dispatcher's
+   ruling on the seat's re-raise): the census read one expected red live on a seat's host (the
+   record-merge test on Apple Git, measured on the Air; the merge-settings red is a premise of
+   python-only hosts and passes here; `DEF-4032`'s six ids are a CI runner's, with their home in
+   `tests/conftest.py::PLATFORM_EXPECTED_FAILURES`), under the line of two, so a registry is
+   heavier than the problem; the roster, its reporter and its contract references stay. The one
+   real red is filed as a defect of the `/ship` body's recovery recipe, not an expectation, and
+   its fix lane is the next job; the figures are in the pack's Landing.*
 9. **`TP-703i` — The suite has a platform axis** (`lane/platform-stand-ins`). The stand-ins the
    seats improvised after the merges they would have prevented (a host without `SIGALRM`, among
    others its census enumerates: five across six files at authoring), registered as an `os` axis
