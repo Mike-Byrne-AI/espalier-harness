@@ -8,8 +8,12 @@ here drives real pytest children on a scratch test file with the plugin loaded
 by ``-p``, the way ``tests/test_file_lock.py`` drives the primitive: what the
 kernel does is the question, so only real processes can answer it. A holder
 never sleeps for a margin: it waits on a release marker the test writes, so a
-loaded box slows a case down and never turns it red. Each docstring names the
-mutation the test dies to (tests/CLAUDE.md rule 1).
+loaded box slows a case down and never turns it red. This file pins that
+contract because a lock the suite forgets is the note protocol again: it guards
+the gate (xdist runs only), the holder pair, the record's lifetime, the wait
+log, the summary line and the census of pytest spawners against the drift a
+refactor would bring. Each docstring names the mutation the test dies to
+(tests/CLAUDE.md rule 1).
 """
 # pytest-marker: security -- the lock serialises the suite's own runs on a box;
 # every case spawns real pytest children with xdist workers, so the file is
@@ -262,7 +266,8 @@ class TestTheInheritedPair:
             while not release.exists() and time.monotonic() < deadline:
                 time.sleep(0.05)
         """)
-        proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, encoding="utf-8")
         assert _wait_for(tmp_path / f"{tag}.ready"), proc.communicate(timeout=_CHILD_DEADLINE_S)
         return proc
 

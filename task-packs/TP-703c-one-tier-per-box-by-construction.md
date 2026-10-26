@@ -490,18 +490,61 @@ Pack budgets here have run about 2.7 times over on one measured pack (`TP-459`);
 | Total | 6.5 to 7.5 h | 2 h | expect the measured overrun |
 
 ## Landing
-- State: DRAFT
-- Commits:
-- Suite: `python3 scripts/proof_tier.py --run --base origin/main` (the full tier: a hook and a
-  `tools/cc/` module changed)
-- Earn-the-red: per fix, against the eight mutations named under Implementation
-- Red-team: reasoning review at authoring (the reflect skill's checklist v1, failure-mode-reviewer,
-  2026-10-18): REQUEST CHANGES on the set; this file's findings: Part 2 items 5, 8, 9, 11, 17, 18,
-  21 and checklist items 4, 5, 8 addressed (the gate's whitelist and the banner's off-note; the
-  ancestry walk dropped for the inherited-pair rule plus a census pin; the record written before
-  the try and truncated at release; the orphan kill case and the holder-age line with its ceiling;
-  the wait log; the GOAL quote corrected; the probe child's environment); checklist item 13
-  acknowledged. The executor still runs both reviewers on a snapshot clone.
-- Reach: not a class pack; no row closed
-- Task 0: items 1 to 4 not yet run (item 3's authoring read is in the item; the test re-runs it)
-- Date: 2026-10-18 (authored, local)
+- State: LANDED
+- Commits: 4dda2a7c (the build: C-1 to C-6 and the pack's 0-A corrections), c78e36b8 (origin/main
+  merged in after #340, so the census covers the strike's guard builder), f647e2cf (both reviewers'
+  batch: the gate inside the try, the summary line, the prose corrected), and the landing commit (the
+  tier's two contracts, this stanza); on
+  `lane/one-tier-per-box`, seat `air-work`
+- Suite: `python3 scripts/proof_tier.py --run --base origin/main`, the full tier, run with
+  `ESPALIER_BOX_LOCK` set so every xdist line of the tier took and released the lock (the
+  failure-mode review's condition: the tier proves the environment the lane ships). At f647e2cf: mypy and ruff green, serial leg 2134 passed and 9 skipped in 4:30, parallel leg 3 failed and
+  25000 passed, 100 skipped, 3 xfailed in 26:06: the box-local Apple-git record-merge red
+  (`tests/test_record_merge.py::TestTheShipBodysRecordFinish::test_a_record_file_staged_with_its_markers_is_refused_until_unresolved`,
+  red on `main` here too), and two tree-wide contracts on the new test file (a child spawn with pipes and
+  no encoding; a module docstring with no rationale anchor), fixed in the landing commit; the test-only
+  follow-up re-ran the contract slice and the file (`2 failed, 5449 passed, 22 skipped, 1 xfailed, 5 warnings in 245.84s (0:04:05)`), the memory's rule for a
+  follow-up that changes no runtime; the slice's second red,
+  `tests/test_python_floor.py::TestAStartProbeThatNeverAnswers::test_doctor_names_an_interpreter_that_does_not_start_in_a_blocking_hooks_time`,
+  is box-local and pre-existing (red on a snapshot of 913c3a1d, before this lane: the test's substring
+  check reads this seat's `.venv/bin/python3` as the slow interpreter's spelling; reported to the
+  dispatcher). The pull request's cells are the reading on the other interpreters
+  and hosts.
+- Earn-the-red: every new test red first against the unfixed code. C-1's four try tests and the
+  parity contract red against a blocking mutant of one copy (the other copy green). C-2 and C-3's
+  tests red with no plugin, then eight named mutants run one at a time in fresh interpreters, 8 of
+  8 killed, twice (after the build and after the review batch): the blocking try, the pass-through
+  on the variable alone, the record not truncated, the wait log unwritten, every run gated, the
+  ceiling's commands left off, the census rule dropped, an empty record read as nobody. C-4's two
+  launcher tests, C-5's two gate tests and two banner polarity tests red first. The review batch's
+  twin test (a stub config under the variable) red against the first cut's gate outside the try.
+  No existing assertion weakened: the banner's exact-line tests run under a set variable through
+  autouse fixtures (conditioning), the launch line's existing tail assertion stands.
+- Red-team: `scripts/proof_tier.py --base origin/main` named `review: both` (a hook and two
+  hook-loaded modules). code-reviewer on a snapshot clone at 4dda2a7c: REQUEST CHANGES, no BLOCK
+  (a record in another encoding escaping `read_record`; a failed acquire keeping its handle; the
+  printed launch line taking the default over an inherited path; the banner note on adopter trees
+  with no plugin; the "node-id run takes no lock" wording; NITs). failure-mode-reviewer: REQUEST
+  CHANGES, one REGRESSION (the gate read the config outside the try: the suite's own stub-config
+  configure test raised on every seat launched with the variable), seven GAPs (the contract slice
+  has run under xdist since 2026-10-16, so five prose sites were stale; the per-line interleave;
+  the wait log alone unreadable as "no contention"; an unguarded run's one line scrolls off; the
+  printed line versus `child_env`; the banner's miss of a named-clone session with neither line;
+  census blind spots), ten rough edges. Landed as one batch (4e1d30fa); the rest reported to the
+  dispatcher as rows for its block (note `air-work` 2026-10-26).
+- Reach: not a class pack; no row closed. The note protocol was never recorded, so no rule is
+  struck; the roadmap's re-measure line 3 (START messages per day, 87 to 0) is the figure.
+- Task 0: item 1 on macOS: a SIGKILLed holder frees a non-blocking flock in 3 to 14 ms over five
+  kills, the waiter names the holder's record, an orphaned child keeps the lock at PPID 1 and is
+  named until it dies (14 ms); the Windows half unmeasured from this seat by the dispatcher's
+  ruling (ack `447e73`): CI's windows-latest proves the fail-immediately flag's error and the
+  release on a killed process through `tests/test_box_lock.py`; the starved-box release spread and
+  the PowerShell-vs-Git-Bash temp resolution stay unmeasured, the latter settled for launched seats
+  by the launcher's pinned path and open for a hand-launched session. Item 2: 19 win-seat wait
+  notes 10-16 to 10-18, the 4 with minutes all foreign holds, seat-on-seat minutes unmeasurable,
+  as the roadmap's own item 2 found. Item 3: a census over the 18 pytest-spawning test files and
+  the scripts: every test spawner copies the whole environment, the release gate's whitelist drops
+  both names, no spawner has the deadlock shape; pinned by `TestTheCensusOfPytestSpawners`. Item
+  4: `ENV_WHITELIST` drops `ESPALIER_` by construction with no stated reason beyond "no carrier";
+  the two names join as named exceptions.
+- Date: 2026-10-26 (landed, local 2026-10-25 evening)
