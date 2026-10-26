@@ -538,13 +538,37 @@ read these as the author's guess, not a schedule.
 | Total | 4.5 to 6 h | 1 h | expect the measured overrun |
 
 ## Landing
-- State: DRAFT
-- Commits:
-- Suite: `python3 scripts/proof_tier.py --run --base origin/main` on the lane
-- Earn-the-red: the stand-in's refusal and the contract test, each against the mutation named
-  in I-2 and I-4; the proving nodes keep the assertions they had
-- Red-team: not yet run
-- Reach: see Reach; no row closed at authoring
-- Task 0: not yet run (the census in Motivation is the authoring-time run, 2026-10-18)
-- Budget (the `os`-proving nodes per cell, pre-registered 60 s): unmeasured
-- Date: 2026-10-18 (authored, local)
+- State: LANDED (2026-10-25 local; lane `lane/platform-stand-ins`, seat `air-work`)
+- Commits: c5a97746 (the build), 14ea9215 (the review batch, the two rulings), and the commit that fills this Landing
+- Suite: `python3 scripts/proof_tier.py --run --base origin/main` on the lane, the full tier (two
+  suite-config files): mypy and ruff clean; the parallel leg 24983 passed, 100 skipped, 3 xfailed, 1 failed in 25 min 40 s, the one red the box-local record-merge test (`tests/test_record_merge.py::TestTheShipBodysRecordFinish::test_a_record_file_staged_with_its_markers_is_refused_until_unresolved`, Apple Git 2.39.5's `update-index --unresolve` exit, red on `main` before this lane and on every lane this seat has run; `TP-703h`'s Task 0 item 4 names it), so `proof: FAIL (worst exit 1)` on that red alone; the serial leg 2134 passed, 9 skipped in 4 min 31 s. The tier ran on the tree before #343 merged, so without the box lock.
+- Earn-the-red: nine named mutants, one at a time in fresh interpreters on the committed tree, the
+  files restored and compared, 9 of 9 killed: the `skipif` refusal dropped from the `os` axis; a
+  `skipif` planted on a live `os` proving node; the thread mark removed from `tests/test_redos.py`;
+  a scratch module importing `without_the_alarm` by name under the default method (the alarm
+  contract names it, the receipt the dispatcher asked for); `as_os` reading `linux` as `win32`,
+  setting no platform, `without_the_alarm` leaving `SIGALRM`; the tree kill dropped from the
+  harness's Windows branch; the floor left at 6. The alarm test keeps the assertion it had; the
+  new node's are new and each mutant above that reaches them reds by name.
+- Red-team: `scripts/proof_tier.py --base origin/main` named `review: code-reviewer`; both
+  reviewers were dispatched on a snapshot clone at c5a97746 with a venv of its own. both dispatched on the snapshot clone at c5a97746 (a venv of its own), code-reviewer (pinned Sonnet) and failure-mode-reviewer (pinned Opus): both REQUEST CHANGES, no BLOCK. Agreed on by both and driven on the clone: the alarm test's `os` parameter was decorative (its timers are the suite's own, skip on `hasattr(signal, "SIGALRM")` and read no platform; as `linux` with the alarm gone both legs still skip), so the `windows` cell moves to the bounded-spawn node and the parameter is dropped. Code-reviewer: the helper's "one caller" claim was false (`_emulate_windows_paths` patches inline) and the 3.12+ clause under-stated the guard docstring; both reworded; the chokepoint's `StandInPopen` twin noted and left (not a defect class). Failure-mode-reviewer: a parameter named `os` shadows the module in every proving function and `hasattr(os, ...)`/`getattr(os, ..., default)` read False or the default silently with no lint catching it -- the axis is renamed `target_os` (request `20261026T042549Z-air-work-5bd2e5` with the recommendation, proceeded at 04:40Z); a one-value parametrisation passes the parameter rule and never varies -- the two-value rule, every axis, with planted rows; `_sigalrm_offenders` misses a helper that only re-exports `without_the_alarm` -- not this lane's code, named in the helper's docstring and sent to the dispatcher as a row to file; the copies now load before the platform is faked; `os_name` is keyword-only with no default; the platform roster and the harness's platform comparisons are pinned so "proven on every host" and the `macos` gap text cannot go stale silently. Attacks that found nothing: `subprocess.run`'s timeout path is the same shape in 3.9 to 3.14 and `_mswindows` is import-time, so the linux leg's assertion holds on every host; pytest-timeout picks its method per test, no session switch; module-level `pytestmark` and `pytest.param` skipifs are caught at collection; no mirror or sync is owed. One fix batch, commit 14ea9215; the dispatcher's rulings 116ca9 and 9a0be0 folded in it.
+- Reach: see Reach; no row closed; `DEF-975`'s registry gains the axis.
+- Task 0: item 1, the census read at 78c16510 (Status: five families in six files plus
+  `core.ignorecase`; the two roster-predicate tests excluded; by one command over every spelling,
+  20 sites in 10 files, 9 through an alias in 5 files: Decisions at execution, item 3), over the
+  threshold of three; item 2, both candidate nodes collect with an `os` parameter and no refusing
+  mark, `collected_items` over the two files in 0.7 s, and no module needs a reload; item 3, the
+  thread mark at `tests/test_redos.py:87` only, and the split helper means
+  `tests/test_bounded_spawn.py` needs none; item 4, the Budget line; item 5, before: no `os` line;
+  with the axis and no cells the contract reds `axes declaring fewer than two values: ['os']`
+  (I-1's earned red); with three gap cells `- os: **a blind axis** -- no value is proven.`; after
+  I-3 `- os: proven at 2 values (linux, windows).`
+- Budget (the `os`-proving nodes per cell, pre-registered 60 s): the four `os` nodes together
+  0.28 s, 0.24 s, 0.49 s over three runs on the Air (`--durations=0`); `collected_items` over the
+  two files 0.7 s. The post-merge run's `--durations=25` will not list them, which is the budget
+  met, not unread.
+- Interpreters: the targeted set (the registry contract with its proven-nodes child, the
+  bounded-spawn class, the alarm test, the three alarm contracts) 67 passed on 3.14.7 and on
+  3.10.21 (a fresh venv of this tree); the four touched files and the suite contracts whole under
+  xdist, 260 passed, 1 skipped; `tests/test_redos.py` whole, 955 passed.
+- Date: 2026-10-25 (landed, local)
