@@ -156,7 +156,7 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     # node parametrised over `target_os`; the surfaces the kernel decides (LockFileEx
     # on one byte, PATHEXT, a grandchild holding a pipe past the timeout) are
     # the Windows leg's and no stand-in on another host proves them.
-    # Proven 2026-10-25 by the platform stand-ins lane: the bounded spawn's
+    # Proven 2026-10-26 by the platform stand-ins lane: the bounded spawn's
     # timeout-shape test, one node parametrised over linux and windows, drives
     # the three copies of run_bounded with the standard library's own run in
     # place (its _is_stdlib_run guard sends a replaced run down the run branch
@@ -173,7 +173,7 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
     AxisCell("target_os", "macos", "",
              "the harness reads darwin nowhere, and its one Mac-differing read is "
              "platform.system() in tools/cc/hooks/_hook_utils.py::host_orientation_line, from uname, "
-             "which no sys.platform patch reaches (read 2026-10-25): a stand-in cannot make "
+             "which no sys.platform patch reaches (read 2026-10-26): a stand-in cannot make "
              "the harness do anything as macOS that it does not do as linux, so a node at "
              "this value could assert nothing of its own, the born-blind shape"),
     AxisCell("target_os", "windows",
@@ -190,7 +190,7 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
 #   pnpm and Bun trees (the stack registry's package-manager lane).
 # 2026-10-07: 6 -- stack/go and stack/rust, by the same test on the Go and Rust
 #   trees (the stack registry's source-and-manifests lane, Decision 6).
-# 2026-10-25: 8 -- target_os/linux and target_os/windows, by the platform stand-ins lane (the
+# 2026-10-26: 8 -- target_os/linux and target_os/windows, by the platform stand-ins lane (the
 #   bounded spawn's timeout-shape node over linux and windows).
 PROVEN_FLOOR = 8
 
@@ -217,7 +217,7 @@ def stdlib_shadowing(axes: tuple[str, ...] = AXES) -> list[str]:
     named after its axis (the contract's rule), so such an axis puts that name
     in every proving function, where ``hasattr(os, "geteuid")`` reads False and
     ``getattr(os, "name", "posix")`` the default, silently, with no lint rule
-    watching (the platform axis was nearly named ``os``, 2026-10-25). The list
+    watching (the platform axis was nearly named ``os``, 2026-10-26). The list
     is the interpreter's own (3.10 and later, the suite's floor), never a
     hand-kept one."""
     return [axis for axis in axes if axis in sys.stdlib_module_names]

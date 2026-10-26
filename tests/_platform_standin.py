@@ -26,7 +26,7 @@ The contract's one blind spot here: a helper that only re-exports
 :func:`without_the_alarm` (``from tests._platform_standin import
 without_the_alarm``, or ``import *``) is not followed, so that helper's
 importers are not asked for the mark (found by the failure-mode review of
-2026-10-25, a row of the detector's). Do not gather these functions into a
+2026-10-26, a row of the detector's). Do not gather these functions into a
 second helper.
 
 ``os.name`` is said at every call because it is the dangerous half: a bare ``Path(...)``
@@ -47,7 +47,7 @@ node parametrised with an argument named ``target_os``. The axis is not named
 ``os``: the parameter would shadow the module inside every proving function,
 where ``hasattr(os, "geteuid")`` or ``getattr(os, "name", "posix")`` would
 then read False or the default without a word (the failure-mode review of
-2026-10-25; no selected lint rule sees it).
+2026-10-26; no selected lint rule sees it).
 """
 from __future__ import annotations
 

@@ -205,7 +205,7 @@ class TestEveryCellIsWellFormed:
         """A proving node's parameter is named after its axis, so an axis named
         ``os`` would shadow the module inside every proving function, where
         ``hasattr(os, "geteuid")`` reads False and ``getattr(os, "name", "posix")``
-        the default, silently; no selected lint rule sees it (probed 2026-10-25,
+        the default, silently; no selected lint rule sees it (probed 2026-10-26,
         when the platform axis was nearly named ``os``). The list is the
         interpreter's own, so this rule cannot go stale by hand."""
         assert reg.stdlib_shadowing() == [], reg.stdlib_shadowing()
@@ -421,7 +421,7 @@ class TestTheRuleRefusesTheBornBlindShape:
         """A parameter with one value passes the parameter rule and still never
         varies: the function is collected at that value alone, which is the
         born-blind shape with a parameter on it (the alarm test's one-value
-        parameter was one, found 2026-10-25). Collection refuses it, so a cell
+        parameter was one, found 2026-10-26). Collection refuses it, so a cell
         cannot be proven by a node that could not have run any other way."""
         items = self._planted(tmp_path)
         node = self._node(items, "test_one_value", stack="go")

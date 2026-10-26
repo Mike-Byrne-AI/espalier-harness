@@ -134,14 +134,14 @@ Windows and has no list of what the suite sees for it.
    `tests/test_redos.py`'s comment and `DEF-5024`'s row), and reloads a named module by path when
    the caller asks (the `_load_copy` shape), returning what it set. The existing stand-ins keep
    their bodies and call it for the platform half, one caller at a time (expand); nothing is
-   removed (no contract step in this pack). *Corrected at execution (2026-10-25, the dispatcher's
+   removed (no contract step in this pack). *Corrected at execution (2026-10-26 local, the dispatcher's
    ruling on request `20261026T034822Z-air-work-2234dc`): `as_os(monkeypatch, value, *,
    os_name=False)` sets `sys.platform` and returns it, `os.name` opt-in; the alarm deletion is
    `without_the_alarm(monkeypatch)`, a function `as_os` never calls, and the thread-method rule's
    one home is the suite contract, so there is no runtime refusal; no `reload`.*
 3. **Proving nodes**: the alarm test (`tests/test_redos.py`) and the bounded-spawn Windows
    branch (`tests/test_bounded_spawn.py`) parametrised over `os`, so the `windows` cell is proven by tests that already run on every cell, as the
-   *(As built, 2026-10-25: one node in the bounded-spawn file proves both `linux` and `windows`; the
+   *(As built, 2026-10-26: one node in the bounded-spawn file proves both `linux` and `windows`; the
    alarm test calls the stand-in's alarm half and carries no axis parameter, Decisions at execution,
    items 3 and 6.)*
    Node-defaults session test proved the `stack` cells (the registry's comment block). `linux`
@@ -174,7 +174,7 @@ Windows and has no list of what the suite sees for it.
 
 ## Cross-pack coordination
 
-Written at execution (2026-10-25, `air-work`); the authoring text above predates `TP-703b` Wave 1
+Written at execution (2026-10-26 local, `air-work`; the 0-A read began the evening before); the authoring text above predates `TP-703b` Wave 1
 and Wave 3.
 
 - **`TP-703b` Wave 1 (landed; `tests/test_test_suite_contract.py::_sigalrm_offenders`).** A unit
@@ -358,7 +358,7 @@ _OS_CELLS = (
 
 ### I-2 The shared stand-in *(fix shape, untested)*
 
-*Built as the Decisions at execution say (2026-10-25): two functions, `os_name` opt-in, no
+*Built as the Decisions at execution say (2026-10-26): two functions, `os_name` opt-in, no
 `reload`, no runtime refusal; the fence below is the authoring shape.*
 
 ```python
@@ -476,7 +476,7 @@ Members derived by: the Task 0 item 1 census grep; re-run it.
   each with its dated line; the floor is never lowered.
 - Every `os`-proving node collects with an `os` parameter and no `skip` or `xfail` mark, and
   passes on the Linux cells (the new test), on the Air and on the Windows leg.
-- *(As built, 2026-10-25.)* A test module that imports `without_the_alarm` by name under the
+- *(As built, 2026-10-26.)* A test module that imports `without_the_alarm` by name under the
   default timeout method reds
   `tests/test_test_suite_contract.py::test_every_module_that_arms_sigalrm_declares_the_thread_method`
   (earn the red: a scratch module planted under `tests/`, the receipt in the pull request body), and
@@ -515,7 +515,7 @@ pack adds none).
 2. **I-1** the three gap cells (smallest; the table prints the blind axis). Checkpoint:
    `python3 tests/_axis_registry.py`, `pytest tests/test_axis_registry.py -q`.
 3. **I-2** the stand-in; the static contract's red driven against a scratch module importing
-   `without_the_alarm` under the default timeout method (as built, 2026-10-25). Checkpoint:
+   `without_the_alarm` under the default timeout method (as built, 2026-10-26). Checkpoint:
    `pytest tests/test_redos.py -q -k sigalrm` unchanged green.
 4. **I-3** the two proving nodes and the floor, then **I-4** the contract test, red first
    against a seeded `skipif`. Checkpoint: the two files' targeted runs, then
@@ -538,7 +538,7 @@ read these as the author's guess, not a schedule.
 | Total | 4.5 to 6 h | 1 h | expect the measured overrun |
 
 ## Landing
-- State: LANDED (2026-10-25 local; lane `lane/platform-stand-ins`, seat `air-work`)
+- State: LANDED (2026-10-26 local; lane `lane/platform-stand-ins`, seat `air-work`)
 - Commits: c5a97746 (the build), 14ea9215 (the review batch, the two rulings), and the commit that fills this Landing
 - Suite: `python3 scripts/proof_tier.py --run --base origin/main` on the lane, the full tier (two
   suite-config files): mypy and ruff clean; the parallel leg 24983 passed, 100 skipped, 3 xfailed, 1 failed in 25 min 40 s, the one red the box-local record-merge test (`tests/test_record_merge.py::TestTheShipBodysRecordFinish::test_a_record_file_staged_with_its_markers_is_refused_until_unresolved`, Apple Git 2.39.5's `update-index --unresolve` exit, red on `main` before this lane and on every lane this seat has run; `TP-703h`'s Task 0 item 4 names it), so `proof: FAIL (worst exit 1)` on that red alone; the serial leg 2134 passed, 9 skipped in 4 min 31 s. The tier ran on the tree before #343 merged, so without the box lock.
@@ -571,4 +571,4 @@ read these as the author's guess, not a schedule.
   bounded-spawn class, the alarm test, the three alarm contracts) 67 passed on 3.14.7 and on
   3.10.21 (a fresh venv of this tree); the four touched files and the suite contracts whole under
   xdist, 260 passed, 1 skipped; `tests/test_redos.py` whole, 955 passed.
-- Date: 2026-10-25 (landed, local)
+- Date: 2026-10-26 (landed, local; the box runs Eastern time, and the lane's three commits fell after its midnight)
