@@ -700,10 +700,10 @@ def rooted(root: "str | os.PathLike[str]", *, pristine: bool = False) -> Iterato
     """Root the runner at ``root`` for the block and restore its four module
     globals after it, whatever the block did.
 
-    The one home of that swap: ``main``'s ``--root`` is this, and the ledger
-    verbs that drive a probe on a tree they checked out from a ref (the strike's
-    base) and then on their own checkout go through it too, because a bare
-    ``_ROOT`` assignment carries the first tree's contamination memo into the
+    The one home of that swap: ``main``'s ``--root`` is this, and the strike
+    verb, which drives a probe on a tree it checked out from a ref (its base)
+    and then on its own checkout, goes through it too, because a bare ``_ROOT``
+    assignment would carry the first tree's contamination memo into the
     second's drive (the memo is per tree; see ``_contamination_cache``).
 
     ``pristine`` records that the caller built the tree itself from a ref, so it

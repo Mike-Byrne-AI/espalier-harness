@@ -101,12 +101,12 @@ the row's claim that the probe showed a defect.
    undrivable at the base (`NO_ORACLE` for a `why_not` row, 48 of 270 probe files at the lane's
    HEAD; `UNRESOLVED`
    for a missing subject or input, or a command that could not run outside a repository) is
-   printed as such, by the runner's verdict and never by a word match; a `why_not` row is driven
-   like any other, so it reads `NO_ORACLE` on both sides and refuses under an explicit `--base`
-   *(0-A, 2026-10-25)*. Every id of a multi-id cell is driven, not the id typed alone (the cell
+   printed as such, by the runner's verdict and never by a word match; a `why_not` row has no
+   command, so neither side is read: its reason is said once, and an explicit `--base` refuses it,
+   as it refuses a row with no probe entry at all *(0-A and code review, 2026-10-25)*. Every id of a multi-id cell is driven, not the id typed alone (the cell
    closes together, `DEF-863`) *(0-A, 2026-10-25)*. The default, stated once:
-   the base drive runs, and a probe it cannot drive is one printed line; `--no-base` records the
-   choice in the closing text; an explicit `--base <ref>` makes a failure to drive a refusal.
+   the base drive runs, and a probe it cannot drive is one printed line; `--no-base` says so on stderr, and the closing text is the author's place to
+   record it; an explicit `--base <ref>` makes a failure to drive a refusal.
 4. **The words.** `ledger_row.py`'s module docstring and `strike --help`; one sentence in
    `memory/parallel-work-protocol.md` item 8 (a struck row's probe was driven on both sides where
    it could be); the two flags on the `/handoff` body's strike line only if one exists (none

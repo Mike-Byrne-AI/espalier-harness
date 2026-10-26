@@ -2183,10 +2183,20 @@ def pytest_sessionstart(session):
 #: ImportError (the symbol is new), one by a KeyError (it never reaches its
 #: assertion there).
 _FIXTURE_GUARDS = '''\
+import time
+
 import pkg.mod as m
+import pytest
 
 
 def test_answer():
+    assert m.answer() == 2
+
+
+@pytest.mark.timeout(1)
+def test_hangs_on_old_code():
+    if m.answer() != 2:
+        time.sleep(5)
     assert m.answer() == 2
 
 
@@ -2216,7 +2226,8 @@ def _mod_source(fixed: bool) -> str:
 def _two_commit_repo(tmp_path: Path, *, base_fixed: bool = False, head_fixed: bool = True,
                      tip_fixed_after_branch: bool = False, probe_cmd: str = _PROBE_CMD,
                      open_value: str = "1", planted_duplicate: bool = False,
-                     ledger_text: str | None = None, def2: dict | None = None) -> dict:
+                     ledger_text: str | None = None, def2: dict | None = None,
+                     remote: str = "main", origin_head: bool = True) -> dict:
     """A scratch repository with two commits -- the base (``pkg/mod.py``
     unfixed, ``answer()`` printing 1) and the head (fixed, printing 2, with the
     guards) -- and ``origin/main`` plus ``origin/HEAD`` pointing at the base.
@@ -2273,8 +2284,9 @@ def _two_commit_repo(tmp_path: Path, *, base_fixed: bool = False, head_fixed: bo
         git("commit", "-q", "-m", "the base gains the fix after the lane branched")
         tip = git("rev-parse", "HEAD")
         git("checkout", "-q", "main")
-    git("update-ref", "refs/remotes/origin/main", tip)
-    git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    git("update-ref", f"refs/remotes/origin/{remote}", tip)
+    if origin_head:
+        git("symbolic-ref", "refs/remotes/origin/HEAD", f"refs/remotes/origin/{remote}")
     if planted_duplicate:
         write("build/pkg/mod.py", _mod_source(head_fixed))
     closing = tmp_path / "closing.md"
@@ -2360,9 +2372,9 @@ class TestAStrikeReadsTheBaseAndTheHead:
 
     def test_a_row_with_no_probe_command_is_said_and_refused_only_under_an_explicit_base(
             self, lr, tmp_path, capsys):
-        """A ``why_not`` row goes through the runner like any other and reads
-        NO_ORACLE on both sides. Mutation: a row with no command skipped
-        silently, or refused with no flag."""
+        """A ``why_not`` row has no command, so neither side is read: its reason
+        is said once, and an explicit ``--base`` refuses it. Mutation: a row with
+        no command skipped silently, or refused with no flag."""
         def2 = {"id": "DEF-2", "subject": "site", "cmd": None, "open_value": None,
                 "why_not": "an intermittent red has no steady open value", "row_sha": "y"}
         r = _two_commit_repo(tmp_path, def2=def2)
@@ -2440,12 +2452,68 @@ class TestAStrikeReadsTheBaseAndTheHead:
         assert _files(r) == before
 
     def test_a_guard_red_at_the_head_refuses(self, lr, tmp_path, capsys):
-        """Mutation: the head run's verdict unread."""
+        """The lane has not fixed what the guard reads: the probe and the guard
+        refuse, each by name. Mutation: the head run's verdict unread (code
+        review, 2026-10-25: the first cut of this test passed ``--no-base`` and
+        the base refusal alone satisfied it)."""
         r = _two_commit_repo(tmp_path, head_fixed=False)
-        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]), "--no-base",
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
                                   "--guard", "tests/test_guard.py::test_answer")) == 2
         err = capsys.readouterr().err
-        assert "--guard needs the base tree" in err or "is red at the head" in err
+        assert "is red at the head (AssertionError)" in err and "reads its open value '1' at the head too" in err
+
+    @pytest.mark.skipif(sys.platform == "win32",
+                        reason="pytest-timeout's thread method ends the whole run on Windows, so the "
+                               "refusal there is the no-record one")
+    def test_a_guard_that_hangs_on_the_unfixed_code_is_not_an_earned_red(self, lr, tmp_path, capsys):
+        """pytest-timeout ends a hung test with ``pytest.fail``, so its exception
+        is ``Failed`` like an earned red's; the message tells them apart.
+        Mutation: the timeout message unread, so a guard that hangs at the base
+        strikes (code review, 2026-10-25)."""
+        r = _two_commit_repo(tmp_path)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--guard", "tests/test_guard.py::test_hangs_on_old_code")) == 2
+        err = capsys.readouterr().err
+        assert "hung at the base" in err and "Timeout" in err
+
+    def test_a_row_with_no_probe_entry_is_said_and_refused_under_an_explicit_base(self, lr, tmp_path, capsys):
+        """Mutation: a row the roster never heard of skipped with one line under
+        a flag that asked for the drive (code review, 2026-10-25)."""
+        other = {"id": "DEF-9", "subject": "site", "cmd": "echo b", "open_value": "b", "why_not": None,
+                 "row_sha": "y"}
+        r = _two_commit_repo(tmp_path, def2=other)
+        assert lr.main(_repo_args(r, "strike", "DEF-2", "--text-file", str(r["closing"]))) == 0
+        assert "DEF-2 carries no probe entry" in capsys.readouterr().err
+        r = _two_commit_repo(tmp_path / "second", def2=other)
+        assert lr.main(_repo_args(r, "strike", "DEF-2", "--text-file", str(r["closing"]),
+                                  "--base", "origin/main")) == 2
+        assert "carries no probe entry, and --base asks for the drive" in capsys.readouterr().err
+
+    def test_an_explicit_base_this_clone_does_not_hold_refuses_naming_it(self, lr, tmp_path, capsys):
+        """Mutation: an unresolvable ``--base`` read as no base and skipped."""
+        r = _two_commit_repo(tmp_path)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]),
+                                  "--base", "nowhere")) == 2
+        assert "the base could not be read (this clone does not hold nowhere)" in capsys.readouterr().err
+
+    def test_the_default_base_falls_back_to_origin_master_with_no_origin_head(self, lr, tmp_path, capsys):
+        """Mutation: the fallback dropped, so a clone whose remote recorded no
+        HEAD and names ``master`` reads no base."""
+        r = _two_commit_repo(tmp_path, remote="master", origin_head=False)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 0
+        assert f"STILL_OPEN at the base {r['base'][:12]}" in capsys.readouterr().err
+
+    def test_a_base_that_cannot_be_checked_out_refuses(self, lr, tmp_path, monkeypatch, capsys):
+        """Mutation: a failed checkout read as an empty base, every probe
+        UNRESOLVED there with one note each."""
+        r = _two_commit_repo(tmp_path)
+
+        def broken(root, sha, scratch):
+            raise lr.BaseUnavailable(f"git read-tree of {sha[:12]} exited 128: forced")
+
+        monkeypatch.setattr(lr, "_base_tree", broken)
+        assert lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
+        assert "could not be checked out (git read-tree" in capsys.readouterr().err
 
     def test_a_guard_whose_base_failure_is_an_import_error_refuses(self, lr, tmp_path, capsys):
         """Mutation: the exception read dropped, so a guard that fails at the

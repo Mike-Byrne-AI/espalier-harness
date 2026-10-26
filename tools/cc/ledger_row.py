@@ -1507,7 +1507,12 @@ def _guard_reading(node: str, side: str, rc: int | None, record: dict) -> tuple[
         return "refused", f"the guard {node} did not finish within {_GUARD_TIMEOUT:g} s at the {side}"
     tests = record.get("tests") or {}
     if rc in _PYTEST_EXITS:
-        return "refused", f"the guard {node} does not run at the {side} (pytest exit {rc}: {_PYTEST_EXITS[rc]})"
+        # The run's last line rides along: a collection error names the module
+        # that would not import (a helper the lane added outside tests/, which
+        # the base lacks), a usage error the node id (code review, 2026-10-25).
+        tail = record.get("tail") or ""
+        return "refused", (f"the guard {node} does not run at the {side} (pytest exit {rc}: {_PYTEST_EXITS[rc]}"
+                           + (f"; {tail}" if tail else "") + ")")
     if rc == 0:
         if not any(t.get("outcome") == "passed" for t in tests.values()):
             skipped = next((t for t in tests.values() if t.get("outcome") == "skipped"), None)
@@ -1522,6 +1527,11 @@ def _guard_reading(node: str, side: str, rc: int | None, record: dict) -> tuple[
         exc, msg, when = t.get("exc") or "?", (t.get("message") or "")[:80], t.get("when") or "call"
         if when != "call":
             return "refused", f"the guard {node} errored in its {when} at the {side} ({exc}: {msg})"
+        if exc == "Failed" and msg.startswith("Timeout"):
+            # pytest-timeout ends a hung test with pytest.fail: the exception is
+            # an earned red's, the message is not (code review, 2026-10-25).
+            return "refused", (f"the guard {node} hung at the {side} ({msg}): a test that never reached "
+                               "its assertion")
         if exc in _SYMBOL_IS_NEW:
             return "refused", (f"the guard {node} fails at the {side} with {exc} ({msg}): that proves only "
                                "that the lane's symbol is new")
@@ -1545,7 +1555,9 @@ def _drive_both_sides(ids: list[str], *, root: Path, probes: Path, data: dict, b
     adjacent question passes both sides, and whether a probe reads the harm
     the row names stays the author's judgment. Driven on five replayed strikes
     (2026-10-25): every pre-strike probe read open at the base, and two still
-    read open at the lane head."""
+    read open at the lane head. Runs under the ledger lock, as the whole verb
+    does: a guard can hold it for two bounds per node, and the lock keeps only
+    the other verbs off this one tree."""
     def say(line: str) -> None:
         print(f"ledger_row: {line}", file=sys.stderr)
 
@@ -1559,35 +1571,40 @@ def _drive_both_sides(ids: list[str], *, root: Path, probes: Path, data: dict, b
         if guards:
             return [f"--guard needs the base tree, and the base was not read ({said})"]
         say(f"note -- the base was not read ({said}); the probe's reading there is the closing text's to say")
-    drivable = any(e and e.get("cmd") for e in entries.values())
+    probes_to_drive: dict[str, dict] = {}
+    for rid, entry in entries.items():
+        if entry is None:
+            if explicit:
+                refusals.append(f"{rid} carries no probe entry, and --base asks for the drive")
+            else:
+                say(f"note -- {rid} carries no probe entry, so neither side was read")
+        elif not entry.get("cmd"):
+            why = entry.get("why_not") or "no local oracle"
+            if explicit:
+                refusals.append(f"{rid} has no probe command ({why}), and --base asks for the drive")
+            else:
+                say(f"note -- {rid} has no probe command ({why}), so neither side was read")
+        else:
+            probes_to_drive[rid] = {"cmd": entry["cmd"], "open_value": entry.get("open_value"),
+                                    "subject": entry.get("subject"), "why_not": None, "inputs": entry.get("inputs")}
     with tempfile.TemporaryDirectory(prefix="strike-base-", ignore_cleanup_errors=True) as scratch_dir:
         scratch = Path(scratch_dir)
         tree: Path | None = None
-        if sha is not None and (drivable or guards):
+        if sha is not None and (probes_to_drive or guards):
             try:
                 tree = _base_tree(root, sha, scratch)
             except BaseUnavailable as exc:
                 return [f"the base {sha[:12]} could not be checked out ({exc})"]
         where = f"the base {sha[:12]}" if sha else "the base"
-        for rid, entry in entries.items():
-            if entry is None:
-                say(f"note -- {rid} carries no probe entry, so neither side was read")
-                continue
-            if not entry.get("cmd"):
-                why = entry.get("why_not") or "no local oracle"
-                if explicit:
-                    refusals.append(f"{rid} has no probe command ({why}), and --base asks for the drive")
-                else:
-                    say(f"note -- {rid} has no probe command ({why}), so neither side was read")
-                continue
-            probe = {"cmd": entry["cmd"], "open_value": entry.get("open_value"), "subject": entry.get("subject"),
-                     "why_not": None, "inputs": entry.get("inputs")}
-            at_base = None
-            if tree is not None:
-                with _CHK.rooted(tree, pristine=True):
-                    at_base = _CHK.run_probe(probe)
-            with _CHK.rooted(root):
-                at_head = _CHK.run_probe(probe)
+        # One block per tree, so a many-id cell derives each tree's memo once.
+        at_bases: dict[str, tuple[str, str]] = {}
+        if tree is not None:
+            with _CHK.rooted(tree, pristine=True):
+                at_bases = {rid: _CHK.run_probe(probe) for rid, probe in probes_to_drive.items()}
+        with _CHK.rooted(root):
+            at_heads = {rid: _CHK.run_probe(probe) for rid, probe in probes_to_drive.items()}
+        for rid, probe in probes_to_drive.items():
+            at_base, at_head = at_bases.get(rid), at_heads[rid]
             if at_base is not None and at_base[0] == _CHK.STRIKE_CANDIDATE:
                 refusals.append(f"the probe of {rid} did not read its open value at {where} ({at_base[0]}: "
                                 f"{at_base[1]}): the defect was not where the row says, or the probe never read "
@@ -2422,7 +2439,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="strike although an active pack's Scope (out) still defers into the row "
                          "or the section it empties; the deferrals print as an advisory "
                          "and the closing text should say where the work went")
-    st.add_argument("--base", metavar="REF",
+    sides = st.add_mutually_exclusive_group()
+    sides.add_argument("--base", metavar="REF",
                     help="the commit the row's probe is driven at before the strike, where it must "
                          "read STILL_OPEN (the defect was there); it is then driven at the head, "
                          "this checkout, where it must read STRIKE_CANDIDATE. Default: the merge-base "
@@ -2431,9 +2449,9 @@ def main(argv: list[str] | None = None) -> int:
                          "proceeds, and a probe the runner cannot drive on a side is one printed line. "
                          "An explicit REF makes either a refusal. Necessary, not sufficient: a probe "
                          "reading an adjacent question passes both sides")
-    st.add_argument("--no-base", action="store_true",
-                    help="skip the base drive and say so (the head is still driven); the closing text "
-                         "then says what the base showed")
+    sides.add_argument("--no-base", action="store_true",
+                       help="skip the base drive and say so (the head is still driven); the closing text "
+                            "then says what the base showed")
     st.add_argument("--guard", action="append", metavar="NODE_ID",
                     help="a pytest node id run at the head (green required) and at the base with this "
                          "checkout's tests/ laid over the base tree (red required, by the test's own "
