@@ -430,7 +430,21 @@ def live_surface_counts() -> tuple[int, int, int]:
 # canon arm's remedy cannot apply -- and its parity is pinned by
 # `tests/test_reflect_protocol.py::TestReflectTwinParity`. Unmarked since
 # 2026-10-06, it held this repo's own step 0-C at exit 2.
-EXPECTED_OPT_OUT_CEILING = 22  # class: literal
+#
+# 22 -> 24 on 2026-10-26, deliberately: the probe's one standing canon miss on
+# `main` (since at least e988224b, 2026-10-17) paired `doctor._host_is_windows`
+# (the statusLine host key's seam) with `_hook_utils._running_by_invoked_path`
+# (the interpreter-identity match's seam) on body text alone -- one body, two
+# concepts -- while the hook seam's real engine twin,
+# `_python_floor._running_by_invoked_path` (same concept, same docstring, parity
+# pinned by `tests/test_python_floor.py`'s `test_the_twins_keep_one_rule_per_platform`),
+# went unflagged, because the canon arm skips a shadow named like its canon
+# before it compares bodies. A purpose-scoped marker on the doctor seam hides
+# that one miss (the only finding the lane's two markers hide); a forced-twin
+# marker on the floor seam declares the pair the architecture forces
+# (`espalier/` may not import `tools/cc/`), as `reflect_protocol._next_fence_state`
+# does, and hides nothing today. No body changed.
+EXPECTED_OPT_OUT_CEILING = 24  # class: literal
 
 # Maximum number of pre-existing test files grandfathered as ``unit``
 # in ``tests/conftest.py::_MARKER_RULES``. TP-105 froze this list at

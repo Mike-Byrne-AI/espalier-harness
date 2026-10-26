@@ -181,7 +181,7 @@ Added at W3's 0-A (2026-10-19), from the pack-artifact review.
   unmarked importer read clean, on a scratch run). The clause counts the unit and the importer arm
   follows a function from module to module, so every test module that imports such a helper,
   directly or through another helper's function imported by name, is asked for the thread method
-  (a whole-module import of a wrapping helper is not followed yet: `DEF-4035`), and the helper itself is
+  (a whole-module import of a wrapping helper, and a subclass of an arming class, are followed since 2026-10-26: `DEF-4035` closed), and the helper itself is
   asked for nothing, since a `pytestmark` in a module pytest never collects applies to no test.
   `tests/test_bounded_spawn.py` carries no `pytestmark` today, so `TP-703i` adds one where it
   imports `as_os`. *(Superseded 2026-10-26 by `TP-703i`'s build: the alarm deletion is its own
@@ -587,7 +587,7 @@ over live and struck rows (re-run it; the rows below are the ones a wave's mecha
 | Item | Status | Evidence |
 |---|---|---|
 | `DEF-4034` (the alarm-guard contract judges a guard by its spelling) | **FILED by W1** (its review round) | four shapes, none in the tree; the row's probe is the fix's calibration test |
-| `DEF-4035` (the thread-method contract follows an arming import only by name) | **FILED by W1** (its review round) | a whole-module import of a wrapping helper, and a subclass; none in the tree |
+| `DEF-4035` (the thread-method contract follows an arming import only by name) | **FILED by W1** (its review round); **CLOSED 2026-10-26** (the whole-module branch reads the arming names a module exports, a class arms through its bases; two calibration rows) | a whole-module import of a wrapping helper, and a subclass; none in the tree |
 | `DEF-5024` (no check that each `SIGALRM`-arming test function guards itself) | **CLOSED by W1** | the detector reads 2 unguarded on `9c4ca09d^1` and 0 at the head; the must-trip module is flagged; the row's probe prints True; struck in-lane |
 | `DEF-977` (no Windows check gates a merge) | **NOT CLOSED**; W2 is its first step and gates nothing | the row's probe (Windows jobs in `test.yml`) still prints 0; the tail sentence names the advisory leg and its measured minutes |
 | `DEF-2025` (struck 2026-10-18; the runners' race in the nested child) | **RE-OPENED as a successor row, and its red marked a non-strict expected failure on the runners by W3, counted and still run**, on the operator's word (given 2026-10-19); the successor stays live while the race stands | the roster's entries; the contract tests; the crash watch; the leg's green rate (the roadmap's line 2) |

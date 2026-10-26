@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4056",
+ "subject": "tests/_box_lock.py",
+ "cmd": "python3 -c \"import os, shutil, subprocess, sys, tempfile, time, importlib.util; spec = importlib.util.spec_from_file_location('js', 'tools/cc/_json_safe.py'); js = importlib.util.module_from_spec(spec); spec.loader.exec_module(js); d = tempfile.mkdtemp(); lock = os.path.join(d, 'box.lock'); open(os.path.join(d, 'test_t.py'), 'w').write('def test_t():\\n    pass\\n'); fh = open(lock, 'a+'); held = js.try_lock_file(fh); env = {k: v for k, v in os.environ.items() if k not in ('ESPALIER_BOX_LOCK_HOLDER', 'PYTEST_ADDOPTS')}; env['ESPALIER_BOX_LOCK'] = lock; env['ESPALIER_BOX_LOCK_WAIT_S'] = '1'; p = subprocess.Popen([sys.executable, '-m', 'pytest', '-q', '-n', '1', '-p', 'tests._box_lock', '-p', 'no:cacheprovider', os.path.join(d, 'test_t.py')], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env); time.sleep(8); exited = p.poll() is not None; exited or p.kill(); out = p.communicate()[0]; fh.close(); shutil.rmtree(d, ignore_errors=True); closed = held and exited and 'did not run' in out and '1 passed' not in out; waiting = held and not exited and 'box lock: waiting' in out; print(0) if closed else (print(1) if waiting else sys.exit(2))\"",
+ "open_value": "1",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/_json_safe.py"
+ ],
+ "row_sha": "c57a5072cc12",
+ "text_sha": "4626100c955c",
+ "verified_2026_10_26": "STILL_OPEN (re-pinned value unchanged on 2026-10-26: the oracle read closed on any early exit, the fix shape's own pytest.exit included, which pytest_configure's except Exception swallows since Exit subclasses Exception (both reviews 2026-10-26); now 0 only on an exit carrying the did-not-run reason with no test passed, 1 only after the plugin's waiting line, else unresolved; the text now says the inspect and stop commands come past the ceiling and names the except clause the fix must let Exit through) [changed: probe, text]"
+}

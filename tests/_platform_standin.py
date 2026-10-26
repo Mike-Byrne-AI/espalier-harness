@@ -11,7 +11,8 @@ Two functions, kept apart on purpose:
 They are two functions because of how the suite polices the alarm.
 ``tests/test_test_suite_contract.py::_sigalrm_offenders`` reads a unit that
 deletes a name pytest-timeout's signal method reads as an arming unit, and asks
-every test module that imports such a function BY NAME for
+every test module that imports such a function (by name, through a whole-module
+alias or a star import, or from a helper that only re-exports it) for
 ``pytestmark = pytest.mark.timeout(method="thread")``: under the signal method
 the plugin's ``cancel()`` reads ``signal.SIGALRM`` after a failing call phase,
 before teardown restores it, and the session ends in INTERNALERROR. A module
@@ -22,12 +23,11 @@ that contract is the rule's one home: no check here repeats it, and
 call inside the module, and would then ask ``as_os``'s importers too). Import
 the names, never the module (``from tests import _platform_standin`` is a
 whole-module import, which the contract reads as importing everything in it).
-The contract's one blind spot here: a helper that only re-exports
-:func:`without_the_alarm` (``from tests._platform_standin import
-without_the_alarm``, or ``import *``) is not followed, so that helper's
-importers are not asked for the mark (found by the failure-mode review of
-2026-10-26, a row of the detector's). Do not gather these functions into a
-second helper.
+A helper that only re-exports :func:`without_the_alarm` (``from
+tests._platform_standin import without_the_alarm``, or ``import *``) is
+followed since 2026-10-26 (the detector exports the arming names a module
+imports, not only the units it defines; the blind spot was the failure-mode
+review's). Do not gather these functions into a second helper.
 
 ``os.name`` is said at every call because it is the dangerous half: a bare ``Path(...)``
 under ``os.name == "nt"`` on a POSIX host raises ``NotImplementedError`` on

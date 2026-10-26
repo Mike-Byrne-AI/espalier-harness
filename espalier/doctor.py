@@ -595,6 +595,7 @@ def _late_interpreter_hint(cmd: str, remedy: str, clears: bool, written: str) ->
     )
 
 
+# sister-site: ok purpose-scoped: the statusLine-fallback host key's seam, NOT _hook_utils._running_by_invoked_path (the interpreter-identity match's seam) -- one body, two concepts; a rule added there must not land here
 def _host_is_windows() -> bool:
     """Seam for the statusLine-fallback host key (tests patch this, not
     ``os.name``, which pathlib reads)."""

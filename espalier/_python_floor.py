@@ -478,6 +478,7 @@ def _is_running_interpreter(path: str) -> bool:
     return os.path.realpath(path) == os.path.realpath(sys.executable)
 
 
+# sister-site: ok forced engine twin of _hook_utils._running_by_invoked_path (espalier/ may not import tools/cc); parity pinned by tests/test_python_floor.py's test_the_twins_keep_one_rule_per_platform; a declaration that hides nothing today, since the probe's canon arm skips a shadow named like its canon before it compares bodies
 def _running_by_invoked_path() -> bool:
     """True on Windows, where :func:`_is_running_interpreter` matches by the
     path as invoked; a seam, so one host's tests drive both platforms' rules."""

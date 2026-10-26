@@ -419,6 +419,28 @@ class TestLaunch:
         posix_venv = seat.command_line(target, [], maintenance=True, shell="posix")
         assert "env ESPALIER_MAINTENANCE_MODE=1 VIRTUAL_ENV=" in posix_venv and ':"$PATH" claude' in posix_venv
 
+    def test_the_posix_line_puts_every_unset_before_the_first_assignment(self, seat, tmp_path):
+        """Driven 2026-10-26 on macOS 25.6: BSD env stops reading options at the
+        first assignment, so `env ESPALIER_MAINTENANCE_MODE=1 -u VIRTUAL_ENV ...`
+        exits 127 (`env: -u: No such file or directory`); GNU env permutes its
+        arguments and takes either order, so a Linux reader never sees it. All
+        four combinations (maintenance on or off, a .venv under the target or
+        not) are rendered, and in each no option follows the first assignment;
+        the one that mixed them in the wrong order is pinned word for word.
+        Dies to: the maintenance assignment rendered before the venv unset."""
+        target = seat.Target("box-x", tmp_path, True, False)
+        sh = seat.command_line(target, [], maintenance=True, shell="posix")
+        assert sh.endswith("&& env -u VIRTUAL_ENV ESPALIER_MAINTENANCE_MODE=1 claude"), sh
+        for venv in (False, True):
+            if venv:
+                (target.path / ".venv" / ("Scripts" if os.name == "nt" else "bin")).mkdir(parents=True)
+            for maintenance in (True, False):
+                line = seat.command_line(target, [], maintenance=maintenance, shell="posix")
+                words = line.split(" env ", 1)[1].split(" claude", 1)[0].split()
+                assignments = [i for i, w in enumerate(words) if "=" in w]
+                after = words[assignments[0]:] if assignments else []
+                assert not [w for w in after if w.startswith("-")], (venv, maintenance, words)
+
     def test_the_childs_environment_drops_the_parent_sessions_and_names_the_seats_venv(self, seat, tmp_path):
         """Read 2026-10-15: a session exports its pid, id and messaging token
         to its children, and VIRTUAL_ENV named the main checkout's .venv in a
