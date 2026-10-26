@@ -8,8 +8,8 @@ and guards against the registry claiming a shape no test varies along.
 A cell either names the pytest node that proves it, or declares its gap. A
 proving node is parametrised with an argument named after the cell's axis whose
 value (``-`` read as ``_``) is the cell's value, carries no ``skip`` or
-``xfail`` mark (an ``os`` node no ``skipif`` either: a stand-in's point is that
-the required Linux cells see the other host's shape, so an ``os`` cell is proven
+``xfail`` mark (a ``target_os`` node no ``skipif`` either: a stand-in's point is
+that the required Linux cells see the other host's shape, so a ``target_os`` cell is proven
 on every host or not at all, and the run-time check below sees only the host it
 runs on), and runs and passes here. A test that never varies along its
 own value proves nothing about that value. That is the born-blind shape, and
@@ -29,6 +29,7 @@ from __future__ import annotations
 # module, a few seconds in all. The one long child, the run of the proving
 # nodes, is `test_every_proven_node_runs_and_passes_here`, marked slow itself.
 
+import ast
 import json
 import os
 import re
@@ -40,6 +41,7 @@ import pytest
 
 from _stack_trees import ADOPTER_STACKS
 from tests import _axis_registry as reg
+from tests._live_tree import checkout_glob
 from tests import _interpreter_hosts as hosts
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -68,9 +70,9 @@ sys.exit(pytest.main(["--collect-only", "-q", "-p", "no:cacheprovider", *sys.arg
 '''
 
 _REFUSING_MARKS = frozenset({"skip", "xfail"})
-# An `os` cell is proven on every host or not at all (the module docstring), so a
+# A `target_os` cell is proven on every host or not at all (the module docstring), so a
 # `skipif` on its node, whatever its condition, is refused at collection.
-_REFUSING_MARKS_BY_AXIS = {"os": _REFUSING_MARKS | {"skipif"}}
+_REFUSING_MARKS_BY_AXIS = {"target_os": _REFUSING_MARKS | {"skipif"}}
 
 
 def _child_env() -> dict[str, str]:
@@ -125,6 +127,20 @@ def refusal(cell: reg.AxisCell, items: dict[str, dict]) -> str | None:
             f"parameter at {cell.value!r} (parameters: {item['params']}), so it never "
             f"varies along the value it is named for -- parametrise it with a "
             f"{cell.axis!r} argument, or declare the gap"
+        )
+    # A parameter with one value is the born-blind shape with a parameter on it:
+    # the function is collected at that value alone, so nothing it asserts was
+    # ever seen to differ along the axis. The function's other items are in
+    # `items`, collected from the same file.
+    function = cell.proven_by.split("[", 1)[0]
+    values = {it["params"].get(cell.axis) for nid, it in items.items()
+              if nid.split("[", 1)[0] == function} - {None}
+    if len(values) < 2:
+        return (
+            f"{cell.axis}/{cell.value}: {cell.proven_by!r}'s function is collected at one "
+            f"{cell.axis!r} value only ({sorted(values)}), so the node never varies along "
+            f"the axis -- give the parameter a second value the test can honestly take, or "
+            "declare the gap"
         )
     return None
 
@@ -184,6 +200,16 @@ class TestEveryCellIsWellFormed:
         # could ever show it was run at a second one.
         thin = [axis for axis in reg.AXES if sum(c.axis == axis for c in reg.AXIS_REGISTRY) < 2]
         assert not thin, f"axes declaring fewer than two values: {thin}"
+
+    def test_no_axis_is_named_for_a_standard_library_module(self):
+        """A proving node's parameter is named after its axis, so an axis named
+        ``os`` would shadow the module inside every proving function, where
+        ``hasattr(os, "geteuid")`` reads False and ``getattr(os, "name", "posix")``
+        the default, silently; no selected lint rule sees it (probed 2026-10-25,
+        when the platform axis was nearly named ``os``). The list is the
+        interpreter's own, so this rule cannot go stale by hand."""
+        assert reg.stdlib_shadowing() == [], reg.stdlib_shadowing()
+        assert reg.stdlib_shadowing(("stack", "os", "platform")) == ["os", "platform"]
 
     def test_the_stack_cells_are_the_adopter_rows(self):
         # Derived from the stack table both ways: a new row with no cell, or a
@@ -265,7 +291,7 @@ import pytest
 
 
 @pytest.mark.parametrize("stack", ["python", "node-pnpm"])
-@pytest.mark.parametrize("host", ["store_python3"])
+@pytest.mark.parametrize("host", ["store_python3", "launcher_only"])
 def test_varies(stack, host):
     pass
 
@@ -286,7 +312,7 @@ def test_skipped(stack):
     pass
 
 
-@pytest.mark.parametrize("stack", ["go"])
+@pytest.mark.parametrize("stack", ["go", "rust"])
 def test_skips_in_the_body(stack):
     pytest.skip("planted")
 
@@ -295,14 +321,19 @@ def test_does_not_vary():
     pass
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="planted")
-@pytest.mark.parametrize("os", ["windows"])
-def test_skips_on_one_host(os):
+@pytest.mark.parametrize("stack", ["go"])
+def test_one_value(stack):
     pass
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="planted")
-@pytest.mark.parametrize("stack", ["rust"])
+@pytest.mark.parametrize("target_os", ["windows"])
+def test_skips_on_one_host(target_os):
+    pass
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="planted")
+@pytest.mark.parametrize("stack", ["rust", "go"])
 def test_skips_on_one_host_along_another_axis(stack):
     pass
 '''
@@ -315,7 +346,7 @@ class TestTheRuleRefusesTheBornBlindShape:
     def _planted(tmp_path: Path) -> dict[str, dict]:
         (tmp_path / "test_planted.py").write_bytes(_PLANTED.encode("utf-8"))
         items = collected_items(["test_planted.py::x"], tmp_path)
-        assert len(items) == 9, sorted(items)
+        assert len(items) == 14, sorted(items)
         return items
 
     @staticmethod
@@ -375,16 +406,29 @@ class TestTheRuleRefusesTheBornBlindShape:
 
     def test_a_skipif_on_an_os_node_is_refused_at_collection(self, tmp_path):
         """A ``skipif`` whose condition is false here would pass the run-time
-        check on this host and skip the proof on another; for an ``os`` cell that
+        check on this host and skip the proof on another; for a ``target_os`` cell that
         is the Linux cell skipping the Windows shape, so collection refuses it.
-        The rule is the ``os`` axis's: along another axis a ``skipif`` is left to
+        The rule is the ``target_os`` axis's: along another axis a ``skipif`` is left to
         the run-time check, as before."""
         items = self._planted(tmp_path)
-        node = self._node(items, "test_skips_on_one_host", os="windows")
-        reason = refusal(reg.AxisCell("os", "windows", node, ""), items)
+        node = self._node(items, "test_skips_on_one_host", target_os="windows")
+        reason = refusal(reg.AxisCell("target_os", "windows", node, ""), items)
         assert reason is not None and "carries ['skipif']" in reason and "every host" in reason, reason
         other = self._node(items, "test_skips_on_one_host_along_another_axis", stack="rust")
         assert refusal(reg.AxisCell("stack", "rust", other, ""), items) is None
+
+    def test_a_function_collected_at_one_value_of_its_axis_is_refused(self, tmp_path):
+        """A parameter with one value passes the parameter rule and still never
+        varies: the function is collected at that value alone, which is the
+        born-blind shape with a parameter on it (the alarm test's one-value
+        parameter was one, found 2026-10-25). Collection refuses it, so a cell
+        cannot be proven by a node that could not have run any other way."""
+        items = self._planted(tmp_path)
+        node = self._node(items, "test_one_value", stack="go")
+        reason = refusal(reg.AxisCell("stack", "go", node, ""), items)
+        assert reason is not None and "collected at one 'stack' value only" in reason, reason
+        varied = self._node(items, "test_varies", stack="python", host="store_python3")
+        assert refusal(reg.AxisCell("host", "store_python3", varied, ""), items) is None
 
     def test_a_node_that_does_not_collect_is_refused(self, tmp_path):
         items = self._planted(tmp_path)
@@ -392,6 +436,113 @@ class TestTheRuleRefusesTheBornBlindShape:
             reg.AxisCell("stack", "python", "test_planted.py::test_gone[python]", ""), items,
         )
         assert reason is not None and "does not collect" in reason, reason
+
+
+class TestTheTargetOsCellsHoldOnEveryHost:
+    """A ``target_os`` cell is proven on every host or not at all (the module docstring),
+    and two things besides a ``skipif`` can take a host away: the platform roster
+    in ``tests/conftest.py``, whose marks are added only on the matching host, so
+    a Linux collection never sees them; and the harness growing a read that
+    splits macOS from Linux, which would make the ``macos`` gap text false
+    without a word. Both are pinned here, because the registry's own rules read
+    the collected items and the cell text, never the roster or the source."""
+
+    _HOSTS = (("linux", {"GITHUB_ACTIONS": "true"}), ("win32", {"GITHUB_ACTIONS": "true"}),
+              ("darwin", {"GITHUB_ACTIONS": "true"}), ("darwin", {}))
+
+    def test_no_target_os_proving_node_is_on_the_platform_roster(self):
+        from tests.conftest import _expected_failures_for
+        cells = [c for c in reg.proven() if c.axis == "target_os"]
+        assert cells, "no proven target_os cell -- the floor test says so; delete this test with the axis"
+        marked = [
+            f"{c.proven_by} on {host} {sorted(env)}" for c in cells for host, env in self._HOSTS
+            if _expected_failures_for(c.proven_by, host, env)
+        ]
+        assert not marked, "target_os proving nodes the platform roster marks on a host:\n" + "\n".join(marked)
+
+    # The harness tells the platforms apart by these comparisons alone; the one
+    # Mac-differing read is the SubagentStart host line's platform.system(),
+    # which prints and never branches. A new read that splits darwin from linux
+    # (a comparison to another string, a startswith, a platform.system() branch)
+    # reds here and names its site: re-read the target_os/macos gap text with it.
+    # The allowed site is cited path::symbol, never by line.
+    _PLATFORM_VALUES = {"win32"}
+    _OS_NAME_VALUES = {"nt", "posix"}
+    _ALLOWED_MAC_READS = {"tools/cc/hooks/_hook_utils.py::host_orientation_line"}
+
+    @staticmethod
+    def _harness_sources():
+        for base in (REPO_ROOT / "tools" / "cc", REPO_ROOT / "espalier"):
+            for path in checkout_glob(base, "**/*.py"):
+                if "_vendor" not in path.parts:
+                    yield path
+
+    def test_the_harness_reads_the_platform_as_win32_or_not_and_the_macos_gap_holds(self):
+        import ast
+        compared: list[str] = []
+        other_reads: list[str] = []
+        mac_reads: list[str] = []
+        for path in self._harness_sources():
+            rel = path.relative_to(REPO_ROOT).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            spans = [(n.lineno, n.end_lineno or n.lineno, n.name) for n in ast.walk(tree)
+                     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Compare):
+                    sides = [node.left, *node.comparators]
+                    for side in sides:
+                        read = _platform_read(side)
+                        if read is None:
+                            continue
+                        allowed = self._PLATFORM_VALUES if read == "sys.platform" else self._OS_NAME_VALUES
+                        for other in sides:
+                            for value in _constants(other):
+                                compared.append(f"{rel}:{node.lineno} {read} vs {value!r}")
+                                if value not in allowed:
+                                    other_reads.append(f"{rel}:{node.lineno} compares {read} with {value!r}")
+                elif isinstance(node, ast.Call):
+                    if (isinstance(node.func, ast.Attribute) and node.func.attr == "startswith"
+                            and _platform_read(node.func.value) == "sys.platform"):
+                        other_reads.append(f"{rel}:{node.lineno} sys.platform.startswith(...)")
+                    if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                            and node.func.value.id == "platform"
+                            and node.func.attr in {"system", "mac_ver", "uname", "platform"}):
+                        mac_reads.append(f"{_site(rel, spans, node.lineno)} platform.{node.func.attr}()")
+        assert len(compared) >= 40, f"only {len(compared)} platform comparisons read -- the walk regressed"
+        assert not other_reads, (
+            "a harness read that could split macOS from Linux; re-read the target_os/macos gap text in "
+            "tests/_axis_registry.py with it:\n" + "\n".join(other_reads)
+        )
+        unexpected = [r for r in mac_reads if r.split(" ", 1)[0] not in self._ALLOWED_MAC_READS]
+        assert mac_reads and not unexpected, (
+            f"platform.* reads under the harness roots: {mac_reads}; the target_os/macos gap text in "
+            f"tests/_axis_registry.py names only {sorted(self._ALLOWED_MAC_READS)} -- re-read it"
+        )
+
+
+def _platform_read(node) -> str | None:
+    """``"sys.platform"`` or ``"os.name"`` when ``node`` reads one, else None."""
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        if node.value.id == "sys" and node.attr == "platform":
+            return "sys.platform"
+        if node.value.id == "os" and node.attr == "name":
+            return "os.name"
+    return None
+
+
+def _site(rel: str, spans: list, lineno: int) -> str:
+    """``path::function`` for the innermost def holding ``lineno``, else the path."""
+    holding = [(end - start, name) for start, end, name in spans if start <= lineno <= end]
+    return f"{rel}::{min(holding)[1]}" if holding else rel
+
+
+def _constants(node) -> list:
+    """The string constants ``node`` holds: one, or the members of a tuple, list or set."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return [c for e in node.elts for c in _constants(e)]
+    return []
 
 
 class TestTheTable:

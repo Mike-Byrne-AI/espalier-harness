@@ -184,7 +184,10 @@ Added at W3's 0-A (2026-10-19), from the pack-artifact review.
   (a whole-module import of a wrapping helper is not followed yet: `DEF-4035`), and the helper itself is
   asked for nothing, since a `pytestmark` in a module pytest never collects applies to no test.
   `tests/test_bounded_spawn.py` carries no `pytestmark` today, so `TP-703i` adds one where it
-  imports `as_os`. Keep `as_os`'s deletes in a module-level function: a helper that deletes under
+  imports `as_os`. *(Superseded 2026-10-25 by `TP-703i`'s build: the alarm deletion is its own
+  module-level function, `without_the_alarm`, which `as_os` never calls, so a module importing
+  `as_os` alone is asked for no mark and `tests/test_bounded_spawn.py` keeps none; that pack's
+  Decisions at execution.)* Keep `as_os`'s deletes in a module-level function: a helper that deletes under
   a module-level or class-level statement is reported. A `tests/conftest.py` that imports such a
   helper is read and reds (no mark in `conftest.py` reaches a test), so wire `as_os` into the test
   modules, not through `conftest.py`. Not read: a `pytest_plugins` module, a relative or

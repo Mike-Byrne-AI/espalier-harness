@@ -311,7 +311,7 @@ class TestEveryCopysWindowsBranch:
         mod = _load_copy(request.param)
         calls: list[tuple] = []
         StandInPopen = _stand_in_popen(calls)
-        as_os(monkeypatch, "windows")
+        as_os(monkeypatch, "windows", os_name=False)
         monkeypatch.setattr(subprocess, "Popen", StandInPopen)
         monkeypatch.setattr(mod, "_end_tree", lambda proc, end: calls.append(("end_tree", proc.pid)))
         return mod, StandInPopen, calls
@@ -354,21 +354,25 @@ class TestEveryCopysWindowsBranch:
         mod.run_bounded(["git"], timeout=3)
         assert seen == [["git"]] and calls == [], (seen, calls)
 
-    @pytest.mark.parametrize("os", ["linux", "windows"])
-    def test_the_timeout_shape_follows_the_platform_the_harness_reads(self, os, monkeypatch):
+    @pytest.mark.parametrize("target_os", ["linux", "windows"])
+    def test_the_timeout_shape_follows_the_platform_the_harness_reads(self, target_os, monkeypatch):
         """Read as ``windows``, every copy ends the child's whole tree at the
         timeout, drains the pipes and reaps it (the one shape that bounds a
         grandchild holding the pipe, the sharp edge this module exists for);
         read as ``linux``, the call is ``subprocess.run``'s own and the child
-        alone is killed. One node, two platforms, on whatever host runs it: this
-        is the adopter-axes registry's proof of the ``os/linux`` cell and its
-        second witness for ``os/windows`` (tests/_axis_registry.py), so it carries
-        the ``os`` parameter (which shadows the module inside this function, read
-        nowhere here) and no skip, since a Linux cell that skipped the Windows
-        shape would prove nothing about it."""
-        as_os(monkeypatch, os)
-        for rel in _COPIES:
-            mod = _load_copy(rel)
+        alone is killed. The standard library's ``run`` stays in place on
+        purpose: ``_is_stdlib_run`` (``tools/cc/_json_safe.py``, the guard on
+        the Windows branch) sends a replaced ``run`` down the run branch at
+        BOTH values, so a node observing a fake ``run`` could not tell the two
+        apart; only the stand-in ``Popen`` is replaced, and ``run`` holds it as
+        its context manager. One node, two platforms, on whatever host runs it:
+        this is the adopter-axes registry's proof of the ``target_os/linux`` and
+        ``target_os/windows`` cells (tests/_axis_registry.py), so it carries the
+        ``target_os`` parameter and no skip, since a Linux cell that skipped the
+        Windows shape would prove nothing about it."""
+        copies = [(rel, _load_copy(rel)) for rel in _COPIES]  # imported before the platform is faked
+        as_os(monkeypatch, target_os, os_name=False)
+        for rel, mod in copies:
             calls: list[tuple] = []
             popen = _stand_in_popen(calls)
             popen.plan = ["timeout", 0]
@@ -377,7 +381,7 @@ class TestEveryCopysWindowsBranch:
             with pytest.raises(subprocess.TimeoutExpired):
                 mod.run_bounded(["git", "log"], timeout=3, capture_output=True, text=True, encoding="utf-8")
             names = [c[0] for c in calls]
-            if os == "windows":
+            if target_os == "windows":
                 assert names == ["popen", "communicate", "end_tree", "communicate", "wait"], (rel, calls)
             else:
                 # subprocess.run's own handler: kill the child, then wait (POSIX)
