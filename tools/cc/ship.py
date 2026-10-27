@@ -45,7 +45,11 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          tag, create the release
     handoff              /handoff's one push step: pushes only when
                          espalier.toml sets handoff_push = true (off by
-                         default: a push is outward-facing), else says so
+                         default: a push is outward-facing), else says so;
+                         last, once the step has landed, arms the own-clear
+                         marker for this session (.espalier-state/
+                         own_clear.json), which the own-clear mod a seat.py
+                         launch loads reads to clear and re-prime the window
 
 Stdlib-only (``tools/cc/`` runs standalone, zero espalier imports); the guard
 it asks about (``tools/cc/ci_guard.py``, an install-ci artifact) is loaded by
@@ -63,6 +67,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -947,6 +952,123 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False) -> bool:
     return True
 
 
+# ------------------------------------------------------------- the own-clear --
+
+#: The own-clear marker under the state directory: the handoff's last act arms
+#: it; the own-clear mod (``tools/cc/mods/own-clear``, loaded by ``seat.py
+#: launch``) reads it at the turn's end to run the real /clear, then consumes
+#: it on the clear's SessionStart and re-primes the window with its brief.
+#: Keyed by the session id a Claude Code session exports to its tool shells,
+#: so a marker another session left never clears a window;
+#: tests/test_state_file_flag_parity.py lists the file.
+STATE_DIR = ".espalier-state"
+OWN_CLEAR_MARKER = "own_clear.json"
+SESSION_ID_ENV = "CLAUDE_CODE_SESSION_ID"
+
+#: The seat driver (``tools/cc/seat.py``), loaded by path on first use and
+#: never at import, as the mail channel is: it composes the re-prime brief.
+_SEAT = None
+
+
+def _seat_module():
+    global _SEAT
+    if _SEAT is None:
+        path = Path(__file__).resolve().parent / "seat.py"
+        if not path.is_file():
+            return None
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_ship_seat", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["_ship_seat"] = module  # registered before exec (3.14)
+        spec.loader.exec_module(module)
+        _SEAT = module
+    return _SEAT
+
+
+def arm_own_clear(root: Path, *, session_id: str, head: str, seat: str | None, role: str | None,
+                  brief: str | None) -> str:
+    """Write the marker for ``session_id`` (state ``armed``) whole, rename it
+    into place, and return the one line the handoff says. ASCII JSON ending in
+    a newline, so the mod reads it with nothing beyond a JSON parse; a second
+    arm replaces the first."""
+    state_dir = root / STATE_DIR
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = {
+        "state": "armed", "session_id": session_id, "head": head, "seat": seat, "role": role,
+        "brief": brief, "written_at": datetime.now(timezone.utc).isoformat(),
+    }
+    target = state_dir / OWN_CLEAR_MARKER
+    text = json.dumps(marker, ensure_ascii=True, indent=2) + "\n"
+    # The hooks' atomic writer (a tempfile beside the target, then os.replace),
+    # loaded by path as the wiring note's reader is: a mod reads the marker at
+    # a turn's end and must never see a torn one. A tree whose hooks utilities
+    # are not beside this script (a fixture copying a subset) writes it plain.
+    loader = getattr(_paths, "hooks_module", None)
+    writer = getattr(loader("_hook_utils"), "atomic_write_text", None) if loader else None
+    if writer is not None:
+        writer(target, text)
+    else:
+        target.write_text(text, encoding="utf-8")
+    who = f"seat {seat}, {role}" if seat and role else "no seat name, no brief"
+    return (f"own-clear armed for session {session_id} ({who}): in a window seat.py launch started, the "
+            "own-clear mod clears it at this turn's end and re-primes it")
+
+
+def _reprime_brief(root: Path) -> tuple[str | None, str | None, str | None, str]:
+    """``(seat, role, brief, how)``: the seat this checkout answers to (the
+    mail channel's name) and the brief seat.py composes for it with its loop
+    line replaced (``seat.reprime_text``), or ``None``s and the reason: the
+    seat is unnamed, mail.py or seat.py is not beside this script, or the
+    brief refuses (an unusable dispatcher setting). Never raises: the handoff
+    has landed, and a marker with no brief still clears the window."""
+    mail = _mail_module()
+    if mail is None:
+        return None, None, None, "tools/cc/mail.py is not beside this script"
+    try:
+        # unread-name: ok unset and unread alike arm a marker with no brief, and `how` rides the handoff's line
+        name, how = mail.machine_setting(root)
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the reason rides the handoff's line
+        return None, None, None, f"the seat's name could not be read ({os_error_text(exc)})"
+    if name is None:
+        return None, None, None, how
+    try:
+        seat_driver = _seat_module()   # inside the try: a seat.py that will not load is said, never raised
+        if seat_driver is None:
+            return name, None, None, "tools/cc/seat.py is not beside this script"
+        brief = seat_driver.compose_brief(root, name, root)
+        return name, brief.role, seat_driver.reprime_text(brief), "composed"
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the reason rides the handoff's line
+        return name, None, None, f"the brief refused ({os_error_text(exc)})"
+
+
+#: Set by ``seat.py launch`` in a session it started with the own-clear mod
+#: (``seat.OWN_CLEAR_KEY``); any other window has no mod to read the marker.
+OWN_CLEAR_ENV = "ESPALIER_OWN_CLEAR"
+
+
+def arm_own_clear_here(root: Path) -> str:
+    """Arm the marker for the session this shell belongs to: the id Claude
+    Code exports (:data:`SESSION_ID_ENV`), HEAD, and the seat's re-prime brief.
+    Only in a window that loaded the mod (:data:`OWN_CLEAR_ENV`): elsewhere
+    nothing would read the marker, so nothing is armed and the by-hand reset is
+    said. With no id in the environment (a handoff run outside a session)
+    nothing is armed either: a marker with no session would clear any window."""
+    if os.environ.get(OWN_CLEAR_ENV, "").strip() != "1":
+        return (f"own-clear not armed: this window did not load the own-clear mod ({OWN_CLEAR_ENV} is not set; "
+                "seat.py launch sets it when the mod rides), so it needs a /clear by hand")
+    session_id = os.environ.get(SESSION_ID_ENV, "").strip()
+    if not session_id:
+        return (f"own-clear not armed: no {SESSION_ID_ENV} in the environment (this shell is not a Claude "
+                "Code session's), so no window is told to clear")
+    seat, role, brief, how = _reprime_brief(root)
+    line = arm_own_clear(root, session_id=session_id, head=head_sha(), seat=seat, role=role, brief=brief)
+    if brief is None:
+        line += f"; no brief rides it ({how}), so the mod re-primes with its own line"
+    return line
+
+
 def _release_claims(root: Path, lane: str, text: str) -> None:
     """After a push lands: close this machine's live claims on ``lane`` on the
     mail channel, so a claim's lifetime is the lane's time on this machine --
@@ -1490,12 +1612,36 @@ def _wait_for_pr_head(branch: str, sha: str) -> None:
 
 
 def handoff(title: str | None = None, body_file: str | None = None, dry_run: bool = False) -> int:
-    """/handoff's one push step. Pushes only when espalier.toml sets
-    ``handoff_push = true``; otherwise the handoff's commit stays local and this
-    says how to push it and how to opt in -- and, when a pull request is already
-    open for the branch, that it will merge WITHOUT this commit. On: the lane is
-    opened as a pull request, or, when one is already open, this commit is pushed
-    onto it and the marker re-bound to the new head."""
+    """/handoff's one push step, then the own-clear's arm. The push
+    (:func:`_handoff_push`) runs only when espalier.toml sets ``handoff_push =
+    true``, else the commit stays local and the verb says how to push it. Once
+    that step has completed -- the off path said (its commit stays local by
+    design and the window is done with it), the row parked, the pull request
+    opened or the push re-bound -- the own-clear marker is armed for this
+    session (:func:`arm_own_clear_here`), last: a refused or failed push never
+    arms, so no marker clears a window whose lane the push did not take. The
+    arm itself never fails a handoff whose step has landed: what stops it is
+    said, with the by-hand reset. A dry run says what it would arm."""
+    rc = _handoff_push(title, body_file, dry_run)
+    if rc != 0:
+        return rc
+    if dry_run:
+        _say("dry-run: the own-clear marker would be armed for this session, last")
+        return 0
+    try:
+        _say(arm_own_clear_here(repo_root()))
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the push landed; the reset is said instead
+        _note(f"the own-clear marker was not armed ({os_error_text(exc)}); this window will not clear itself, "
+              "so it needs a /clear by hand")
+    return 0
+
+
+def _handoff_push(title: str | None, body_file: str | None, dry_run: bool) -> int:
+    """The push half of :func:`handoff`. Off: the handoff's commit stays local
+    and this says how to push it and how to opt in -- and, when a pull request
+    is already open for the branch, that it will merge WITHOUT this commit. On:
+    the lane is opened as a pull request, or, when one is already open, this
+    commit is pushed onto it and the marker re-bound to the new head."""
     root = repo_root()
     on, how = handoff_push_setting(root)
     if not on:

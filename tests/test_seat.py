@@ -353,9 +353,11 @@ class TestLaunch:
         assert _out(path, "config", "--worktree", "--get", "espalier.machine") == "box-new"
         assert (path / ".claude" / "settings.json").read_bytes() == b'{"hooks": {}}\n'
         (call,) = no_claude
-        # The operator's arguments pass through unchanged; the first message rides last.
-        assert call["argv"][:3] == ["/fake/bin/claude", "--model", "x"] and Path(call["cwd"]) == path
-        assert call["argv"][3:] == ["--", seat.compose_brief(clone, "box-new", path).text]
+        # The own-clear mod rides first; the operator's arguments pass through
+        # unchanged; the first message rides last.
+        mod = _mod(seat)
+        assert call["argv"][:3 + len(mod)] == ["/fake/bin/claude", *mod, "--model", "x"] and Path(call["cwd"]) == path
+        assert call["argv"][3 + len(mod):] == ["--", seat.compose_brief(clone, "box-new", path).text]
         env = call["env"]
         assert "ESPALIER_MAINTENANCE_MODE" not in env and "CLAUDE_CODE_SESSION_ID" not in env
         assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
@@ -411,13 +413,13 @@ class TestLaunch:
         with pytest.raises(seat.Refused, match="Windows PowerShell 5.1 splits"):
             seat.command_line(target, ['say "hi"'], maintenance=False, shell="powershell")
         sh = seat.command_line(target, ["--model", "o p"], maintenance=False, shell="posix")
-        assert sh.endswith("&& env -u ESPALIER_MAINTENANCE_MODE -u VIRTUAL_ENV claude --model 'o p'")
+        assert sh.endswith(f"&& env -u ESPALIER_MAINTENANCE_MODE {_own_clear_unsets(seat)} -u VIRTUAL_ENV claude --model 'o p'")
         bindir = target.path / ".venv" / ("Scripts" if os.name == "nt" else "bin")
         bindir.mkdir(parents=True)
         with_venv = seat.command_line(target, [], maintenance=False, shell="powershell")
         assert f"$env:PATH = '{str(bindir).replace(chr(39), chr(39) * 2)};' + $env:PATH" in with_venv
         posix_venv = seat.command_line(target, [], maintenance=True, shell="posix")
-        assert "env ESPALIER_MAINTENANCE_MODE=1 VIRTUAL_ENV=" in posix_venv and ':"$PATH" claude' in posix_venv
+        assert f"env {_own_clear_unsets(seat)} ESPALIER_MAINTENANCE_MODE=1 VIRTUAL_ENV=" in posix_venv and ':"$PATH" claude' in posix_venv
 
     def test_the_posix_line_puts_every_unset_before_the_first_assignment(self, seat, tmp_path):
         """Driven 2026-10-26 on macOS 25.6: BSD env stops reading options at the
@@ -430,7 +432,7 @@ class TestLaunch:
         Dies to: the maintenance assignment rendered before the venv unset."""
         target = seat.Target("box-x", tmp_path, True, False)
         sh = seat.command_line(target, [], maintenance=True, shell="posix")
-        assert sh.endswith("&& env -u VIRTUAL_ENV ESPALIER_MAINTENANCE_MODE=1 claude"), sh
+        assert sh.endswith(f"&& env {_own_clear_unsets(seat)} -u VIRTUAL_ENV ESPALIER_MAINTENANCE_MODE=1 claude"), sh
         for venv in (False, True):
             if venv:
                 (target.path / ".venv" / ("Scripts" if os.name == "nt" else "bin")).mkdir(parents=True)
@@ -446,12 +448,16 @@ class TestLaunch:
         to its children, and VIRTUAL_ENV named the main checkout's .venv in a
         worktree seat's session. Dies to: dropping a name, or a prefix strip
         that also drops a user's CLAUDE_CODE_USE_BEDROCK."""
-        base = {name: "x" for name in seat.SESSION_ENV}
+        base = {name: "x" for name in seat.SESSION_ENV | seat.OWN_CLEAR_ENV}
         base.update({"CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CONFIG_DIR": "/cfg", "VIRTUAL_ENV": "/other/.venv",
                      "ESPALIER_MAINTENANCE_MODE": "1", "PATH": "/bin"})
         target = seat.Target("box-x", tmp_path, True, False)
         env = seat.child_env(target, maintenance=False, base=base)
         assert not set(seat.SESSION_ENV) & set(env)
+        # The own-clear's names never ride in from the launcher's shell; the
+        # flag is set only when the mod rides the launch (the own-clear lane).
+        assert not seat.OWN_CLEAR_ENV & set(env)
+        assert seat.child_env(target, maintenance=False, base=base, own_clear=True)["ESPALIER_OWN_CLEAR"] == "1"
         assert {"CLAUDECODE", "CLAUDE_CODE_MESSAGING_TOKEN", "AI_AGENT"} <= seat.SESSION_ENV
         assert env["CLAUDE_CODE_USE_BEDROCK"] == "1" and env["CLAUDE_CONFIG_DIR"] == "/cfg"
         assert "VIRTUAL_ENV" not in env and "ESPALIER_MAINTENANCE_MODE" not in env
@@ -589,6 +595,18 @@ def _holds(path: Path, *rels: str) -> None:
         (path / rel).write_bytes(b"x\n")
 
 
+def _mod(seat) -> list[str]:
+    """What launch puts first in claude's arguments: the own-clear mod beside
+    the driver (tools/cc/mods/own-clear), derived from the driver, never typed."""
+    return seat.mod_args()
+
+
+def _own_clear_unsets(seat) -> str:
+    """The `-u` words the POSIX launch line carries for the own-clear's names
+    when no mod rides it, derived from the driver, never typed."""
+    return " ".join(f"-u {name}" for name in sorted(seat.OWN_CLEAR_ENV))
+
+
 class TestBrief:
     """B-7: a seat's first message is composed by the tool, never pasted.
     Dies to: the self-host render drifting from the operator's tick, a form
@@ -723,7 +741,7 @@ class TestBrief:
         assert not (clone / ".claude" / "worktrees" / "new").exists()
         assert seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=False,
                                brief=False) == 0
-        assert no_claude[-1]["argv"] == ["/fake/bin/claude"]
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *_mod(seat)]
 
     def test_every_form_is_ascii_with_no_double_quote_and_survives_both_shells(self, seat, clone, tmp_path):
         _dispatcher(clone, '"air"')
@@ -749,13 +767,43 @@ class TestBrief:
         feat = _worktree(clone, "feat", name="box-feat")
         monkeypatch.chdir(clone)
         assert seat.main(["launch", "box-feat", "--", "--model", "x"]) == 0
-        assert no_claude[-1]["argv"] == ["/fake/bin/claude", "--model", "x", "--",
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *_mod(seat), "--model", "x", "--",
                                          seat.compose_brief(clone, "box-feat", feat).text]
         assert seat.main(["launch", "box-feat", "--no-brief", "--", "--model", "x"]) == 0
-        assert no_claude[-1]["argv"] == ["/fake/bin/claude", "--model", "x"]
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *_mod(seat), "--model", "x"]
         assert "no first message" in capsys.readouterr().out
         assert seat.main(["brief", "box-feat"]) == 0
         assert capsys.readouterr().out == seat.compose_brief(clone, "box-feat", feat).text + "\n"
+
+    def test_launch_loads_the_own_clear_mod_first_and_no_mod_drops_it(self, seat, clone, registry, no_claude,
+                                                                      monkeypatch, capsys):
+        """The own-clear lane (2026-10-26): the mod beside the driver rides
+        first in claude's arguments, before the operator's own and the brief's
+        `--`; `--no-mod` leaves it out and says so; the print form carries it.
+        Dies to: the flag after the brief's `--` (read as the prompt), a launch
+        that loads the mod silently, or a print line without it."""
+        _dispatcher(clone, '"air"')
+        _worktree(clone, "feat", name="box-feat")
+        monkeypatch.chdir(clone)
+        assert seat.mod_args() == ["--plugin-dir", str(seat.MOD_DIR)]   # this repository ships it
+        monkeypatch.setenv("ESPALIER_OWN_CLEAR_ROOT", "/elsewhere")   # a root left exported: never inherited
+        assert seat.main(["launch", "box-feat", "--", "--model", "x"]) == 0
+        argv = no_claude[-1]["argv"]
+        assert argv[:3] == ["/fake/bin/claude", "--plugin-dir", str(seat.MOD_DIR)]
+        assert argv.index("--") > argv.index("--plugin-dir")
+        env = no_claude[-1]["env"]
+        assert env["ESPALIER_OWN_CLEAR"] == "1" and "ESPALIER_OWN_CLEAR_ROOT" not in env
+        assert "own-clear mod loaded" in capsys.readouterr().out
+        assert seat.main(["launch", "box-feat", "--no-mod", "--", "--model", "x"]) == 0
+        assert "--plugin-dir" not in no_claude[-1]["argv"]
+        assert "ESPALIER_OWN_CLEAR" not in no_claude[-1]["env"]
+        assert "no own-clear mod" in capsys.readouterr().out
+        assert seat.main(["launch", "box-feat", "--print", "--shell", "posix"]) == 0
+        line = capsys.readouterr().out
+        assert f"--plugin-dir {seat.MOD_DIR}" in line and "ESPALIER_OWN_CLEAR=1" in line
+        assert seat.main(["launch", "box-feat", "--no-mod", "--print", "--shell", "posix"]) == 0
+        line = capsys.readouterr().out
+        assert "--plugin-dir" not in line and "-u ESPALIER_OWN_CLEAR " in line
 
     def test_an_adopters_dispatcher_proposes_the_revert_and_this_repository_reverts_first(self, seat, clone):
         """Reverting first on a red base is this repository's rule; an
@@ -928,7 +976,7 @@ class TestBrief:
         assert no_claude == []
         assert seat.cmd_launch(clone, "box-feat", args, maintenance=False, unchecked=False, print_only=False,
                                brief=False) == 0
-        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *args]
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *_mod(seat), *args]
 
     def test_a_list_option_keeps_its_values_and_the_brief_follows_a_dashdash(self, seat, clone, registry, no_claude):
         """Driven on 2.1.301: a prompt after `--add-dir <dir>` was read as a
@@ -937,7 +985,7 @@ class TestBrief:
         feat = _worktree(clone, "feat", name="box-feat")
         args = ["--add-dir", "a", "b"]
         assert seat.cmd_launch(clone, "box-feat", args, maintenance=False, unchecked=False, print_only=False) == 0
-        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *args, "--",
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *_mod(seat), *args, "--",
                                          seat.compose_brief(clone, "box-feat", feat).text]
 
     def test_a_cmd_shim_refuses_the_brief_because_cmd_cuts_it_at_its_line_break(self, seat, clone, registry,
@@ -1162,7 +1210,7 @@ class TestTheLauncherSetsTheBoxLock:
         sh = seat.command_line(target, ["--model", "o p"], maintenance=False, shell="posix")
         assert f"export ESPALIER_BOX_LOCK=${{ESPALIER_BOX_LOCK:-{shlex.quote(default)}}} && " in sh, sh
         assert sh.index("ESPALIER_BOX_LOCK") < sh.index("claude")
-        assert sh.endswith("&& env -u ESPALIER_MAINTENANCE_MODE -u VIRTUAL_ENV claude --model 'o p'")
+        assert sh.endswith(f"&& env -u ESPALIER_MAINTENANCE_MODE {_own_clear_unsets(seat)} -u VIRTUAL_ENV claude --model 'o p'")
         ps = seat.command_line(target, [], maintenance=False, shell="powershell")
         assert f"if (-not $env:ESPALIER_BOX_LOCK) {{ $env:ESPALIER_BOX_LOCK = '{default}' }}" in ps, ps
         assert ps.index("ESPALIER_BOX_LOCK") < ps.index("claude")

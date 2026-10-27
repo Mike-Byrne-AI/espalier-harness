@@ -84,9 +84,20 @@ answers a tick in one line, and tells the operator the window needs a
 `/clear`, which the loop survives. The ask never says "commit and hand off"
 mid-lane, because the handoff's push opens the lane's pull request with
 auto-merge armed and a half-done lane must not ride it. The reset is the
-operator's `/clear` (a relaunch through the seat launcher is the next wave);
-the briefs and the tick carry the same rule, and `docs/HOOKS.md` (the router
-section) is the mechanism's home.
+seat's own where the launcher started the window (the own-clear, 2026-10-26):
+`seat.py launch` loads the own-clear mod (`tools/cc/mods/own-clear`, a Claude
+Code plugin of function hooks, through `--plugin-dir`), `ship.py handoff`
+arms its marker last (`.espalier-state/own_clear.json`, the session id from
+`CLAUDE_CODE_SESSION_ID`, HEAD and the re-prime brief), and at the end of the
+next turn with nothing in flight (no tracked edit, no plan in progress, HEAD
+unmoved) the mod runs the real `/clear`, refuses a compaction while that
+clear is due (never while it waits), and on the clear's SessionStart submits
+the brief with its loop line replaced by the note that a loop started there
+survived the clear, to the window it was armed in alone. In a window the
+launcher did not start the handoff arms nothing and says the window needs a
+`/clear` by hand. No settings hook, skill or command body can do any of this
+(`docs/SHARP_EDGES.md`). The briefs and the tick carry the same rule, and
+`docs/HOOKS.md` (the router section) is the ask's home.
 
 1. **Work the jobs assigned to you**, in order, and keep two queued (the
    dispatcher's duty to keep them there, the table below), so the

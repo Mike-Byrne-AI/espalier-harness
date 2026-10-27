@@ -35,7 +35,13 @@ _SCOPE_DIRS = ("espalier", "tools", "scripts", "tests")
 # post_write_check.py — modified for subprocess invocation, not read.
 # PYTHONDONTWRITEBYTECODE: set write-shape into the ledger verb's spawn
 # environment in cli.py (`_file_onboarding_rows`); never read.
-_IMPLICIT_READERS = {"CLAUDE_PROJECT_DIR", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE"}
+_IMPLICIT_READERS = {
+    "CLAUDE_PROJECT_DIR", "PYTHONPATH", "PYTHONDONTWRITEBYTECODE",
+    # Read by the own-clear mod's TypeScript (`tools/cc/mods/own-clear/hooks/
+    # register.ts`, `$.env.get`), which the `*.py` reader scan cannot see; the
+    # catalog rows name that file (the own-clear lane, 2026-10-26).
+    "ESPALIER_OWN_CLEAR_ROOT", "ESPALIER_OWN_CLEAR_LOG",
+}
 
 # A catalog table row: `| \`VAR\` | ...` — the leading cell is the variable.
 _CATALOG_ROW_RE = re.compile(r"^\|\s*`(?P<var>[A-Z][A-Z0-9_]*)`\s*\|")
