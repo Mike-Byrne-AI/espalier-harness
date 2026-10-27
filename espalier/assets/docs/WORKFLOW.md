@@ -501,9 +501,16 @@ prompt once the session's context passes the figure (the status line's `ctx=`
 segment shows it): a lane in hand finishes through its own landing first and
 the seat starts no new job; with no lane in hand it runs `/handoff` now; after
 the handoff it takes no new job (its own pull request's red or conflict, and a
-red `main`'s revert, are not new work) and tells the operator the window needs
-a `/clear`, which the loop survives. `docs/HOOKS.md`'s router section has the
-mechanism; the briefs and the tick carry the rule.
+red `main`'s revert, are not new work). In a window `seat.py launch` started
+the reset is the seat's own: the launch loads the own-clear mod
+(`tools/cc/mods/own-clear`, `--plugin-dir`; `--no-mod` leaves it out), the
+handoff's last act arms its marker (`.espalier-state/own_clear.json`, keyed by
+the session id), and at the end of the next turn with nothing in flight the
+mod runs the real `/clear`, refuses a compaction meanwhile, and re-primes the
+cleared window with the seat brief less its loop line, since the loop survives
+the clear. A window started without the mod is told it needs a `/clear`.
+`docs/HOOKS.md`'s router section has the ask's mechanism; the briefs and the
+tick carry the rule; the mod's README has its measured facts.
 
 Before stating what is open, merging or blocked, read the board (`/inbox
 board`): it reads GitHub and the mail now, where the banner and a handoff note

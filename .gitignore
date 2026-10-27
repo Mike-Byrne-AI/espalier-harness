@@ -289,3 +289,9 @@ cc/discard_snapshots.log
 # design: the file names the strings the record must withhold, so tracking it
 # would publish exactly what it exists to keep out.
 .espalier/record_exclude_patterns.txt
+# What Claude Code writes beside a mod it loads (tools/cc/mods/*): the API
+# types for the editor, the tsconfig that extends them, and the scratch its
+# own tests write under; never source.
+tools/cc/mods/*/.claude-plugin/types/
+tools/cc/mods/*/.claude-plugin/test-tmp/
+tools/cc/mods/*/tsconfig.json

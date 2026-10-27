@@ -36,8 +36,11 @@ session) and every channel fact from ``mail.py``'s local refs:
   print the command line (the first message spans two lines inside its
   quotes). The brief is refused beside a flag that does not start a fresh
   session (``-p``, ``--resume`` and the like), a prompt of the operator's own,
-  or a ``claude`` that is a ``.cmd`` shim. The driver adds no permission flag
-  of its own.
+  or a ``claude`` that is a ``.cmd`` shim. The own-clear mod beside this
+  driver (``mods/own-clear``) rides first in claude's arguments as
+  ``--plugin-dir``, unless ``--no-mod``: it runs the real ``/clear`` once the
+  handoff's marker is armed and re-primes the window with the brief. The
+  driver adds no permission flag of its own.
 * ``brief <seat>`` -- print the seat's first message, the one ``launch`` passes:
   a worker's (its dispatcher, the reads to start with, its jobs, the worker
   loop) or the dispatcher's (its duties, the board loop), as the ``dispatcher``
@@ -53,8 +56,8 @@ session) and every channel fact from ``mail.py``'s local refs:
 Verbs::
 
     python tools/cc/seat.py list [--json] [--no-fetch]
-    python tools/cc/seat.py launch <seat> [--maintenance] [--unchecked] [--no-brief] [--print [--shell S]]
-                                          [-- <claude args>]
+    python tools/cc/seat.py launch <seat> [--maintenance] [--unchecked] [--no-brief] [--no-mod]
+                                          [--print [--shell S]] [-- <claude args>]
     python tools/cc/seat.py brief <seat>
     python tools/cc/seat.py retire <seat> [--dry-run] [--return-jobs] [--unchecked] [--no-fetch]
 
@@ -560,19 +563,27 @@ def venv_bindir(path: Path) -> Path | None:
     return bindir if bindir.is_dir() else None
 
 
-def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None = None) -> dict[str, str]:
+def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None = None,
+              own_clear: bool = False) -> dict[str, str]:
     """The session's environment: this one minus what a session it may be
     launched from sets in its children (:data:`SESSION_ENV`; the config dir and
-    user settings stay), the maintenance switch only when asked for, and the
+    user settings stay) and minus the own-clear's names (:data:`OWN_CLEAR_ENV`:
+    a root or a log left exported in the operator's shell would aim every
+    seat's mod at one checkout), the maintenance switch only when asked for,
+    ``ESPALIER_OWN_CLEAR=1`` only when the own-clear mod rides this launch (so
+    ``ship.py handoff`` can tell whether the window will clear itself), and the
     seat's own ``.venv`` first on ``PATH`` and named in ``VIRTUAL_ENV`` --
     or no ``VIRTUAL_ENV`` at all, since the inherited one names another
     checkout's (read 2026-10-15: a worktree session's named the main
     checkout's, where a ``uv pip install`` would land)."""
-    env = {k: v for k, v in (os.environ if base is None else base).items() if k not in SESSION_ENV}
+    env = {k: v for k, v in (os.environ if base is None else base).items()
+           if k not in SESSION_ENV and k not in OWN_CLEAR_ENV}
     if maintenance:
         env[MAINTENANCE_KEY] = "1"
     else:
         env.pop(MAINTENANCE_KEY, None)
+    if own_clear:
+        env[OWN_CLEAR_KEY] = "1"
     # The box lock: the inherited path when the parent named one, else the
     # host's default, so every launched seat on this machine locks one file.
     env.setdefault(BOX_LOCK_KEY, box_lock_default())
@@ -585,13 +596,16 @@ def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None 
     return env
 
 
-def command_line(target: Target, args: list[str], *, maintenance: bool, shell: str | None = None) -> str:
+def command_line(target: Target, args: list[str], *, maintenance: bool, shell: str | None = None,
+                 own_clear: bool = False) -> str:
     """The one line that launches the seat by hand: PowerShell (the default on
-    Windows) or a POSIX shell. Refused for PowerShell when an argument holds a
-    double quote, which Windows PowerShell 5.1 re-splits a native program's
-    argument at."""
+    Windows) or a POSIX shell, setting what :func:`child_env` sets (the
+    own-clear flag only with ``own_clear``, its other names unset either way).
+    Refused for PowerShell when an argument holds a double quote, which
+    Windows PowerShell 5.1 re-splits a native program's argument at."""
     shell = shell or ("powershell" if os.name == "nt" else "posix")
     bindir = venv_bindir(target.path)
+    own_clear_unsets = sorted(OWN_CLEAR_ENV - ({OWN_CLEAR_KEY} if own_clear else set()))
     if shell == "powershell":
         bad = [a for a in args if any(ch in a for ch in _PS_DOUBLE)]
         if bad:
@@ -603,6 +617,9 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
         parts = [f"Set-Location -LiteralPath {q(str(target.path))}"]
         parts.append(f"$env:{MAINTENANCE_KEY} = '1'" if maintenance
                      else f"Remove-Item Env:{MAINTENANCE_KEY} -ErrorAction SilentlyContinue")
+        parts += [f"Remove-Item Env:{name} -ErrorAction SilentlyContinue" for name in own_clear_unsets]
+        if own_clear:
+            parts.append(f"$env:{OWN_CLEAR_KEY} = '1'")
         if bindir is not None:
             parts.append(f"$env:VIRTUAL_ENV = {q(str(bindir.parent))}")
             parts.append(f"$env:PATH = {q(str(bindir) + ';')} + $env:PATH")
@@ -616,8 +633,8 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
     # Every `-u` before the first assignment: BSD `env` (macOS) stops reading
     # options at the first assignment and runs `-u` as the program (exit 127,
     # driven 2026-10-26); GNU `env` permutes its arguments and takes either order.
-    unsets = [] if maintenance else [MAINTENANCE_KEY]
-    assigns = [f"{MAINTENANCE_KEY}=1"] if maintenance else []
+    unsets = ([] if maintenance else [MAINTENANCE_KEY]) + own_clear_unsets
+    assigns = ([f"{MAINTENANCE_KEY}=1"] if maintenance else []) + ([f"{OWN_CLEAR_KEY}=1"] if own_clear else [])
     if bindir is not None:
         assigns += [f"VIRTUAL_ENV={shlex.quote(str(bindir.parent))}", f'PATH={shlex.quote(str(bindir))}:"$PATH"']
     else:
@@ -796,6 +813,28 @@ SELF_HOST_ROW_SOURCE = ", derived from the mail and the merges"
 #: message (a one-shot, a resumed or a continued conversation, a session
 #: brought over): the brief is refused beside them, never passed.
 SESSION_MODE_FLAGS = frozenset({"-p", "--print", "-c", "--continue", "-r", "--resume", "--from-pr", "--teleport"})
+#: The own-clear mod beside this driver (a Claude Code plugin of function
+#: hooks): ``launch`` loads it with ``--plugin-dir``, first in claude's
+#: arguments, when its manifest is there (this repository's seats; an adopter
+#: tree's deploy does not carry it yet), unless ``--no-mod``. Once ``ship.py
+#: handoff`` has armed its marker the mod runs the real ``/clear`` at the
+#: turn's end, refuses the duplicate compaction meanwhile, and re-primes the
+#: window with the brief (``reprime_text``); its README says the rest.
+MOD_DIR = Path(__file__).resolve().parent / "mods" / "own-clear"
+#: Set to ``1`` in a session this driver launched with the mod, and nowhere
+#: else: ``ship.py handoff`` arms the own-clear marker only where it is set,
+#: so the line it prints is true of the window it runs in.
+OWN_CLEAR_KEY = "ESPALIER_OWN_CLEAR"
+#: The own-clear's names, never inherited by a launched session: the flag
+#: above, and the root and log a drive or a test aims the mod with.
+OWN_CLEAR_ENV = frozenset({OWN_CLEAR_KEY, "ESPALIER_OWN_CLEAR_ROOT", "ESPALIER_OWN_CLEAR_LOG"})
+
+
+def mod_args(mod_dir: Path = MOD_DIR) -> list[str]:
+    """``--plugin-dir <dir>`` when the own-clear mod's manifest is at
+    ``mod_dir``, else nothing: claude refuses a plugin directory with no
+    manifest, so a half-deployed one is left out rather than passed."""
+    return ["--plugin-dir", str(mod_dir)] if (mod_dir / ".claude-plugin" / "plugin.json").is_file() else []
 
 
 @dataclass
@@ -849,6 +888,36 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
     return Brief("worker", first + "\n" + loop, loop)
 
 
+#: What a window the own-clear re-primes is told in place of its loop line: a
+#: seat's interval loop survives a /clear (DEF-4052, measured 2026-10-15), so a
+#: brief that still ended with the loop line would start a second loop beside
+#: the first. The loop's interval is named so the seat can tell its tick.
+REPRIME_NOTE = (
+    "This window was cleared by the own-clear after your handoff and re-primed with this message. The loop "
+    "line is left out on purpose: if {what} (every {every}) was started in this window it survived the clear "
+    "and is still running, so start no second one; where none was started, this window is the operator's own "
+    "and starts none now. Read live state before you state it: the board, the mail and this message are "
+    "snapshots."
+)
+
+
+def reprime_text(brief: Brief) -> str:
+    """The first message for a window the own-clear mod re-primes after the
+    handoff (``tools/cc/mods/own-clear``, read from the marker ``ship.py
+    handoff`` arms): ``brief`` with its loop line replaced by
+    :data:`REPRIME_NOTE`, since the loop survives the clear and a second would
+    tick beside it. A brief whose text does not end with its loop line keeps
+    the text whole and gains the note."""
+    text = brief.text
+    tail = "\n" + brief.loop
+    if text.endswith(tail):
+        text = text[: -len(tail)]
+    words = brief.loop.split(" ", 2)
+    every = words[1] if brief.loop.startswith("/loop ") and len(words) > 1 else "its interval"
+    what = "the board loop" if brief.role == "dispatcher" else "the worker loop"
+    return text + "\n" + REPRIME_NOTE.format(what=what, every=every)
+
+
 def brief_line(role: str, seat: str, python: str = "") -> str:
     """The short form of the same brief, for the SessionStart banner's
     ``Orders:`` line: the two reads to start with, the loop it ends with and
@@ -896,7 +965,7 @@ def brief_refusal(args: list[str], claude: str | None, root: Path, checkout: Pat
 
 
 def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unchecked: bool,
-               print_only: bool, shell: str | None = None, brief: bool = True) -> int:
+               print_only: bool, shell: str | None = None, brief: bool = True, mod: bool = True) -> int:
     target = resolve(root, seat)
     claude = None
     if not print_only:
@@ -941,7 +1010,13 @@ def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unc
     if venv_bindir(target.path) is None and (target.path / "espalier" / "__init__.py").is_file():
         say(f"note: {target.path} has no .venv, so a test run there imports espalier from wherever `python` "
             "finds it (the banner's Engine: line); a .venv of its own with an editable install fixes it")
-    argv = list(args)
+    # The own-clear mod first, before the operator's own arguments and the
+    # brief's `--`, so neither can take its directory as a value: the seat's
+    # own copy (a lane there that edits the mod runs its edit), else the
+    # launcher's.
+    own_copy = target.path / "tools" / "cc" / "mods" / "own-clear"
+    loaded = (mod_args(own_copy) or mod_args()) if mod else []
+    argv = loaded + list(args)
     if brief:
         # The first message rides as claude's prompt after a `--`, so no option
         # the operator passed can take it as a value: driven on 2.1.301,
@@ -951,10 +1026,16 @@ def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unc
             argv += ["--", compose_brief(root, seat, target.path).text]
         except Refused as exc:
             raise Refused(f"{exc}; --no-brief launches without the first message") from None
+    if loaded:
+        say(f"own-clear mod loaded from {MOD_DIR}: the window clears itself once the handoff lands")
+    elif mod:
+        say(f"no own-clear mod: nothing at {MOD_DIR}; the window will not clear itself after the handoff")
+    else:
+        say("no own-clear mod (--no-mod): the window will not clear itself after the handoff")
     if print_only:
-        say(command_line(target, argv, maintenance=maintenance, shell=shell))
+        say(command_line(target, argv, maintenance=maintenance, shell=shell, own_clear=bool(loaded)))
         return 0
-    env = child_env(target, maintenance=maintenance)
+    env = child_env(target, maintenance=maintenance, own_clear=bool(loaded))
     say(f"launching seat {seat} in {target.path}" + (" (maintenance mode)" if maintenance else "")
         + ("" if brief else ", no first message"))
     sys.stdout.flush()
@@ -1108,6 +1189,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--shell", choices=("powershell", "posix"), help="the shell --print writes for")
     p.add_argument("--no-brief", dest="brief", action="store_false",
                    help="start the session without the composed first message (`brief` prints it)")
+    p.add_argument("--no-mod", dest="mod", action="store_false",
+                   help="start the session without the own-clear mod (mods/own-clear beside this driver)")
     p = sub.add_parser("brief", help="print a seat's first message: its role, the reads to start with, its loop")
     p.add_argument("seat")
     p = sub.add_parser("retire", help="release a worktree seat's claims, then remove its worktree")
@@ -1141,7 +1224,7 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_list(root, as_json=args.json, fetch=not args.no_fetch)
         if args.verb == "launch":
             return cmd_launch(root, args.seat, claude_args, maintenance=args.maintenance, unchecked=args.unchecked,
-                              print_only=args.print_only, shell=args.shell, brief=args.brief)
+                              print_only=args.print_only, shell=args.shell, brief=args.brief, mod=args.mod)
         if args.verb == "brief":
             return cmd_brief(root, args.seat)
         return cmd_retire(root, args.seat, dry_run=args.dry_run, fetch=not args.no_fetch,

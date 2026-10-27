@@ -47,7 +47,11 @@ print a Python 3 version, try the other interpreter name, then the launcher's
 `/handoff`'s last step is one verb that reads the setting and either makes that
 push (the `lane` and `open` steps below, or a push and a re-bind onto a pull
 request already open) or says why it did not -- including, when the setting is
-off and a pull request is open, that it will merge without the handoff's commit:
+off and a pull request is open, that it will merge without the handoff's commit.
+Whichever way it went, the verb then arms the own-clear marker for this session
+(`.espalier-state/own_clear.json`): in a window `seat.py launch` started, the
+own-clear mod (`tools/cc/mods/own-clear`) clears it at the turn's end and
+re-primes it from the seat brief:
 
 ```bash
 python tools/cc/ship.py handoff

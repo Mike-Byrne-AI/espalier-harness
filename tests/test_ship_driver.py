@@ -105,6 +105,16 @@ def forget_guard():
     sys.modules.pop("_ship_ci_guard", None)
 
 
+@pytest.fixture(autouse=True)
+def _outside_a_session(monkeypatch):
+    """The suite may run inside a Claude session, which exports its id to the
+    shell; the handoff's last act arms the own-clear marker for that id (HEAD
+    and the seat's brief read through real git), which these rows' fake runner
+    does not describe. Without the id the arm stands down in one line, and
+    TestTheHandoffArmsTheOwnClear stands the arm in by name."""
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+
+
 # ── the recording runner ─────────────────────────────────────────────────────
 
 #: Spawns that change something: the ones a refusal must not have reached.
@@ -899,6 +909,105 @@ class TestHandoffVerb:
         monkeypatch.setattr(ship, "open_pr", lambda **kw: order.append("open") or 0)
         assert ship.handoff() == 0
         assert order == ["lane", "open"]
+
+
+class TestTheHandoffArmsTheOwnClear:
+    """The handoff's last act arms the own-clear marker (``arm_own_clear_here``,
+    its own rows in tests/test_own_clear.py): after the push has landed, on
+    the off path once the verb has said its piece, and never on a dry run or
+    a refusal. A marker armed before the push would clear a window whose lane
+    sat unpushed; the own-clear mod (tools/cc/mods/own-clear) reads nothing
+    else. Dies to: an arm before the rebind, an arm on a refused handoff or a
+    failed rebind, or a dry run that arms."""
+
+    @staticmethod
+    def _armed(ship, monkeypatch) -> list[str]:
+        order: list[str] = []
+        monkeypatch.setattr(ship, "arm_own_clear_here",
+                            lambda root: order.append("arm") or "own-clear armed (stand-in)")
+        return order
+
+    def test_the_off_path_arms_once_the_verb_has_said_its_piece(self, ship, tmp_path, monkeypatch, capsys):
+        order = self._armed(ship, monkeypatch)
+        answers = _reads(tmp_path)
+        answers[_list_key()] = (0, "[]", "")
+        _arm(ship, answers)
+        assert ship.handoff() == 0
+        assert order == ["arm"]
+        out = capsys.readouterr().out
+        assert out.index("handoff push is off") < out.index("own-clear armed")
+
+    def test_the_push_onto_an_open_pull_request_arms_after_the_rebind(self, ship, tmp_path, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        spawns = _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
+        order = self._armed(ship, monkeypatch)
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: order.append(
+            f"rebind after {spawns.count(('git', 'push'))} push") or 0)
+        assert ship.handoff() == 0
+        assert order == ["rebind after 1 push", "arm"]
+
+    def test_a_rebind_that_fails_arms_nothing(self, ship, tmp_path, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
+        order = self._armed(ship, monkeypatch)
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 1)
+        assert ship.handoff() == 1
+        assert order == []
+
+    def test_the_opened_pull_request_arms_after_the_open(self, ship, tmp_path, forget_guard, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", ""), _rows(_pr())]
+        spawns = _arm(ship, answers)
+        armed_after: list[int] = []
+        monkeypatch.setattr(ship, "arm_own_clear_here",
+                            lambda root: armed_after.append(len(spawns.calls)) or "own-clear armed (stand-in)")
+        assert ship.handoff() == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        assert armed_after and armed_after[0] > spawns.index(("gh", "pr", "create"))
+
+    def test_an_arm_that_raises_does_not_fail_the_landed_handoff(self, ship, tmp_path, monkeypatch, capsys):
+        """The push landed; what stops the arm is said with the by-hand reset,
+        and the verb exits 0 (a 1 here reads as a failed handoff, which a
+        session would run again)."""
+        answers = _reads(tmp_path)
+        answers[_list_key()] = (0, "[]", "")
+        _arm(ship, answers)
+
+        def broken(root):
+            raise OSError("read-only state directory")
+
+        monkeypatch.setattr(ship, "arm_own_clear_here", broken)
+        assert ship.handoff() == 0
+        out = capsys.readouterr().out
+        assert "was not armed" in out and "read-only state directory" in out and "/clear by hand" in out
+
+    def test_a_refused_handoff_arms_nothing(self, ship, tmp_path, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        ship._SYNC = _oracle(_two_sessions())
+        _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
+        order = self._armed(ship, monkeypatch)
+        with pytest.raises(ship.Refused, match="2 live sessions work in this checkout"):
+            ship.handoff()
+        assert order == []
+
+    def test_a_dry_run_arms_nothing_and_says_what_it_would(self, ship, tmp_path, forget_guard, monkeypatch,
+                                                           capsys):
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", ""), _rows(_pr())]
+        spawns = _arm(ship, answers)
+        order = self._armed(ship, monkeypatch)
+        assert ship.handoff(dry_run=True) == 0
+        assert order == [] and spawns.mutations == []
+        out = capsys.readouterr().out
+        assert "dry-run" in out and "the own-clear marker would be armed" in out
 
 
 class TestTheLaneCarriesItsMemoryRowWhenHandoffPushes:

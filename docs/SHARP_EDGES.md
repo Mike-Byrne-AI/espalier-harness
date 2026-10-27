@@ -6411,3 +6411,44 @@ engine loads in-process (`session_resume` for `doctor` and `recover`) still hand
 **Backed by:** `tests/test_cli_commands.py::TestInitRunsWithItsStdinHandleClosed` (init with a
 dead stdin handle, every failed start recorded), the census above, and
 `tests/test_bounded_spawn.py::TestTheWrappersHandleTradeOnWindows` (the trade, measured).
+
+## No settings hook, skill or command body can clear or compact a session; only a mod can, and its SessionStart hook reads before it hands the event on
+
+**What it is:** Claude Code's settings hooks observe or block (PreCompact), read
+(PostCompact) or inject text (SessionStart); none resets the session, the Skill tool cannot
+run `/clear` or `/compact`, and a compaction takes no supplied summary, so a compaction
+after `/handoff` writes the handoff's summary a second time at the window's cost. A mod (a
+plugin of function hooks, Claude Code 2.1.287+) can: `$.command.run({ command: 'clear',
+args: '' })` from a `turn.complete` hook performs the real `/clear` (measured 2026-10-26 on
+2.1.310: Stop, SessionEnd `reason=clear`, SessionStart `source=clear` with a new session id,
+the window alive); a `session.compact` hook answering `{ skip }` refuses a compaction before
+the classic PreCompact fires; and a non-awaited `$.prompt.submit` from a
+`classic.SessionStart` hook on `source: 'clear'` lands as the new session's first prompt 70 ms
+later. `$.prompt.submit('/clear')` is refused by a host check. In `claude -p` the process
+exits right after the clear, so the re-prime is interactive-only.
+
+**How you hit it:** two ways. Reaching for a settings hook, a skill or a command body to
+reset a window after the handoff: nothing there can, and a PreCompact block only leaves the
+window full. Or, in a mod, reading state on `classic.SessionStart` AFTER `next(e)`: the
+chain is managed hooks, then the hooks modules, then the project's settings hooks as core,
+so a settings hook beneath (`session_start.py`'s sweep of `.espalier-state/`) runs inside
+that `next(e)` and can take the file before the mod reads it. Two smaller edges from the
+same lane: `$.env.get` must name its variable literally (the engine lists what a module
+reads; a constant fails `claude plugin validate`), and a continuation a hook did not await
+must never reject (a log write after a test's environment had ended surfaced as an
+unhandled rejection that failed the file).
+
+**How to avoid it:** the reset after the handoff is the own-clear mod
+(`tools/cc/mods/own-clear`), loaded by `seat.py launch` through `--plugin-dir` (which also
+exports `ESPALIER_OWN_CLEAR=1`, the handoff's gate: any other window is told it needs a
+`/clear` by hand), armed by `ship.py handoff` through `.espalier-state/own_clear.json`, keyed
+by the session id and re-primed only in the window it was armed in; it reads the marker
+first and hands the event on second, and refuses a compaction only while the clear is due.
+Measure a mod from hook payloads on disk (a settings-hook log in a throwaway repository),
+never from the screen, and run `claude plugin validate` before a drive.
+
+**Backed by:** `tools/cc/mods/own-clear/hooks/own-clear.test.ts` (thirteen cases against
+the engine, `claude plugin test`), `bench/own_clear/drive.py` (a pty-driven session with the
+real marker writer: PASS 2026-10-26 in 27 s) and `reports/own-clear-probe-2026-10-26/` on
+the Air (the probe mod, its logs and the pty driver). `tools/cc/mods/own-clear/README.md`
+has the measured facts.

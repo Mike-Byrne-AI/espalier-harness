@@ -1344,6 +1344,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # session registry in a temp config dir. Real git and a real
             # channel are the oracle for what a seat holds; claude never runs.
             "test_seat",
+            # Drives tools/cc/ship.py's own-clear arm through real git in a
+            # scratch repository (the seat's name and HEAD are git's answers,
+            # the brief the driver's), so no mock stands in for it.
+            "test_own_clear",
             # Drives the fence checker's lookup against `git init`ed scratch
             # trees: which copy of a name the checkout holds is git's answer
             # (DEF-2013), so no mock stands in for it.
@@ -1491,6 +1495,8 @@ _SLOW_FILES: set[str] = {
     # Builds a bare origin and a named clone per case and drives real
     # `worktree add/remove` and mail pushes through them.
     "test_seat",
+    # Drives real git in a scratch repository for the own-clear arm's whole path.
+    "test_own_clear",
     # Runs `git ls-files` per census and the census over the real tree once.
     "test_symbol_census",
     # Drives the real post_write_check hook once as a subprocess; the rest is
