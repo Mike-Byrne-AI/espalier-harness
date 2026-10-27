@@ -58,8 +58,8 @@
         "espalier/managed_markers.py::_MARKER_LINE_RE",
         "espalier/managed_markers.py::has_managed_marker"
       ],
-      "last_verified_at": "2026-09-27T21:17:30Z",
-      "last_verified_sha": "c19280a81959fa82995f243444dda64d6ec7985f",
+      "last_verified_at": "2026-10-27T00:51:48Z",
+      "last_verified_sha": "25937f2f327b856c66fe9f240d380d95dc68c61d",
       "marker_path": "docs/SHARP_EDGES.md",
       "policy": "verify-on-touch"
     },
