@@ -522,12 +522,20 @@ read these as the author's guess, not a schedule.
   that a pre-send read would have reached it, and three assigns delegated exactly that check to
   Task 0 by choice; the refuting result (fewer than half findable) is not met, so `TP-703e`
   builds, and the dispatcher's own 10 of 18 and 7 of 10 were undercounts in both directions
-- Children: `TP-703a` LANDED (2026-10-19, single-seat, after `TP-703e`); `TP-703b` W3 LANDED
+- Children (the ten State lines and the merged pull requests as read 2026-10-26; a snapshot, the stanzas are the record):
+  `TP-703a` LANDED (2026-10-19, single-seat, after `TP-703e`); `TP-703b` W3 LANDED
   (2026-10-19, single-seat: `DEF-2025` re-opened as `DEF-4032`, `DEF-4033` filed), W1 LANDED
-  (2026-10-20, single-seat: `DEF-5024` struck), W2 DRAFT; `TP-703c` DRAFT;
-  `TP-703d` DRAFT; `TP-703e` LANDED (2026-10-19, single-seat on the dispatcher's checkout; the
+  (2026-10-20, single-seat: `DEF-5024` struck), W2 DRAFT; `TP-703c` LANDED (2026-10-26, seat
+  `air-work`, `lane/one-tier-per-box`, #343); `TP-703d` DRAFT (the first lane LANDED
+  2026-10-24, single-seat, `lane/the-records-say-what-happened`, #334; the pack stays open for
+  the second lane, 1-D); `TP-703e` LANDED (2026-10-19, single-seat on the dispatcher's checkout; the
   children stay in `task-packs/` with their state stamped until this roadmap lands, as `TP-702`
   did: the ledger gate reads a LANDED pack in `Done/` whose row is live as unstruck);
   `TP-703f` LANDED (2026-10-20, single-seat, one lane: the lane-begun rule on the operator's
-  word after the second review; `DEF-4036` to `DEF-4042` filed); `TP-703g` DRAFT; `TP-703h` DRAFT; `TP-703i` DRAFT; `TP-703j` DRAFT
+  word after the second review; `DEF-4036` to `DEF-4042` filed; #330); `TP-703g` LANDED
+  (2026-10-24, `lane/the-rules-say-what-the-tools-do`, #335); `TP-703h` HELD at Task 0 item 1
+  (2026-10-26, seat `air-work`, `lane/host-expectations-registry`, #346: the census read one
+  distinct expected red, re-raised and held on the dispatcher's ruling); `TP-703i` LANDED
+  (2026-10-26, seat `air-work`, `lane/platform-stand-ins`, #345); `TP-703j` LANDED (2026-10-25,
+  seat `air-work`, `lane/strike-reads-the-base`, #340)
 - Date: 2026-10-18 (authored, local)

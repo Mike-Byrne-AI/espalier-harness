@@ -1314,6 +1314,13 @@ def _terminal_name(node: ast.AST) -> str | None:
     return None
 
 
+def _root_name(node: ast.AST) -> str | None:
+    """``a`` for ``a`` and for ``a.b.x``; None for any other expression."""
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
 def _module_constants(tree: ast.Module) -> dict[str, float]:
     """Module-level ``NAME = <number>`` bindings."""
     out: dict[str, float] = {}
@@ -2009,11 +2016,19 @@ def _sigalrm_offenders(modules: list[tuple[str, str]]) -> tuple[list[str], list[
     A unit arms when its body calls ``setitimer``/``alarm``, installs a
     ``SIGALRM`` handler or deletes a name the timeout plugin's signal method
     reads (``_deletes_a_plugin_signal_name``), or uses a function that arms:
-    one of its own module, or one it imports by name from a sibling module,
-    followed from module to module until nothing new arms (a whole-module
-    import of a helper that only wraps another, and a subclass of a helper's
-    class, are not followed yet: DEF-4035). A class arms when one of its
-    methods does. A test module that arms, or imports an arming function or
+    one of its own module, or one it imports from a sibling module -- by name,
+    through a whole-module alias or a star import (a module imported whole
+    offers everything it arms or exports, and a module exports the arming
+    names it imports as well as the units it defines, so a helper that only
+    re-exports one is followed) -- followed from module to module until
+    nothing new arms. A class arms when one of its methods does, or when a
+    base of it does (an arming class of its module, at any depth, or an arming
+    import; a base reached through a whole-module alias counts whatever the
+    attribute names, as a body naming the alias does), so a subclass is
+    exported like the class it inherits from. Over-approximations by design:
+    that alias rule, and a star import read without ``__all__``; not followed:
+    ``import tests.x`` with no alias, used as ``tests.x.f`` (no use in the
+    tree). A test module that arms, or imports an arming function or
     class, must carry ``pytestmark = pytest.mark.timeout(method="thread")``,
     and every other timeout mark in it must name ``method="thread"`` too: the
     closest mark wins, and one that names no method takes the ini's
@@ -2033,9 +2048,11 @@ def _sigalrm_offenders(modules: list[tuple[str, str]]) -> tuple[list[str], list[
     words = (*_SIGALRM_TIMER_CALLS, "SIGALRM", "delattr", *sorted(_timeout_plugin_signal_names() - {"signal"}))
 
     def imported_arming(tree: ast.Module, stem: str) -> list[tuple[str, str, str]]:
+        # A module imported whole offers everything it arms or exports: a
+        # wrapper that arms nothing itself still hands out the names that do.
         return [(local, src, name) for local, src, name in _imports_from_tests(tree)
                 if src != stem and (name in arming_names.get(src, set())
-                                    or (name == "" and module_arms.get(src)))]
+                                    or (name == "" and (module_arms.get(src) or arming_names.get(src))))]
 
     def read(stem: str) -> bool:
         """Read ``stem``'s arming, from its own text and the arming names it
@@ -2048,16 +2065,21 @@ def _sigalrm_offenders(modules: list[tuple[str, str]]) -> tuple[list[str], list[
         units = _collect_units(tree, {})
         by_qual = {u.qual: u for u in units}
         class_bases: dict[str, list[str]] = {}
+        base_roots: dict[str, set[str]] = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 class_bases.setdefault(node.name, [b.id for b in node.bases if isinstance(b, ast.Name)])
+                base_roots.setdefault(node.name, {r for r in map(_root_name, node.bases) if r})
         edges = {u.qual: _unit_refs(u, by_qual, class_bases) for u in units}
         outside = _outside_units(tree)
         arms_direct = {u.qual for u in units if _arms_sigalrm(u.node, names_here)}
         deletes_direct = {u.qual for u in units if _deletes_a_plugin_signal_name(u.node, signal_modules)}
         arms_outside = any(_arms_sigalrm(n, names_here) for n in outside)
         deletes_outside = any(_deletes_a_plugin_signal_name(n, signal_modules) for n in outside)
-        locals_in = {local for local, _src, _name in imported_arming(tree, stem)}
+        locals_in: set[str] = set()
+        for local, src, _name in imported_arming(tree, stem):
+            # A star import binds every exported name; an alias binds itself.
+            locals_in |= arming_names.get(src, set()) if local == "*" else {local}
         arming = arms_direct | deletes_direct | {
             u.qual for u in units if any(isinstance(n, ast.Name) and n.id in locals_in for n in u.walked())}
         grew = True
@@ -2066,6 +2088,18 @@ def _sigalrm_offenders(modules: list[tuple[str, str]]) -> tuple[list[str], list[
             grew = bool(more)
             arming |= more
         names = {q for q in arming if "::" not in q} | {q.split("::", 1)[0] for q in arming if "::" in q}
+        # A module exports the arming names it imports as well as the units it
+        # defines: a helper holding one `from tests._x import f` line hands `f`
+        # on (a star import, every name its source exports; an alias, itself).
+        names |= locals_in
+        # A class arms through its bases too: an arming class of this module,
+        # at any depth, or an arming import (by name, or as `alias.Class`
+        # through a whole-module alias); followed until no class joins.
+        grew = True
+        while grew:
+            more = {cls for cls, roots in base_roots.items() if cls not in names and roots & names}
+            grew = bool(more)
+            names |= more
         arms = bool(arms_direct or deletes_direct or arms_outside or deletes_outside)
         before = (arming_names.get(stem), module_arms.get(stem))
         arming_names[stem], module_arms[stem] = names, arms
@@ -2861,6 +2895,68 @@ class TestTheSigalrmDetectorReportsBothVerdicts:
             [("_standin", self._STANDIN), ("_cases", cases), ("test_user", user)])
         assert armed == ["_cases", "_standin", "test_user"], armed
         assert len(offenders) == 1 and offenders[0].startswith("tests/test_user.py "), offenders
+
+    def test_a_whole_module_import_of_a_wrapping_helper_is_followed(self):
+        """A wrapper's importer that reaches it through the module (an alias
+        by either spelling, or a star import) is armed like one that imports
+        `run_case` by name: the wrapper arms nothing itself, so the
+        whole-module branch reads the arming names a module exports, not only
+        its own arming (read clean before 2026-10-26). The star importer's own
+        wrapper is exported in turn, since the star binds every exported name."""
+        cases = ("from tests._standin import as_windows\n\n"
+                 "def run_case(monkeypatch):\n    as_windows(monkeypatch)\n")
+        for user in ("from tests import _cases as c\n\ndef test_y(monkeypatch):\n    c.run_case(monkeypatch)\n",
+                     "import tests._cases as c\n\ndef test_y(monkeypatch):\n    c.run_case(monkeypatch)\n",
+                     "from tests._cases import *\n\ndef test_y(monkeypatch):\n    run_case(monkeypatch)\n"):
+            armed, offenders = _sigalrm_offenders(
+                [("_standin", self._STANDIN), ("_cases", cases), ("test_user", user)])
+            assert armed == ["_cases", "_standin", "test_user"], (user, armed)
+            assert len(offenders) == 1 and offenders[0].startswith("tests/test_user.py "), (user, offenders)
+        star = ("from tests._cases import *\n\ndef run_it(monkeypatch):\n    run_case(monkeypatch)\n\n"
+                "def test_y(monkeypatch):\n    run_it(monkeypatch)\n")
+        fourth = "from tests.test_user import run_it\n\ndef test_z(monkeypatch):\n    run_it(monkeypatch)\n"
+        armed, offenders = _sigalrm_offenders(
+            [("_standin", self._STANDIN), ("_cases", cases), ("test_user", star), ("test_fourth", fourth)])
+        assert armed == ["_cases", "_standin", "test_fourth", "test_user"], armed
+        assert len(offenders) == 2, offenders
+
+    def test_a_subclass_of_an_arming_class_is_followed_to_its_importers(self):
+        """A class arms through its bases: an arming class of its module, at
+        any depth, or an arming import, by name or as `alias.Class` through a
+        whole-module alias. So the module exports the subclass, and a third
+        module that subclasses the re-export is armed too (read clean before
+        2026-10-26: a class with no arming method of its own joined nothing)."""
+        src = ("import signal\n\nclass TestArms:\n    def test_x(self):\n"
+               "        signal.setitimer(signal.ITIMER_REAL, 0.1)\n\n"
+               "class TestSub(TestArms):\n    pass\n\nclass TestSubSub(TestSub):\n    pass\n")
+        user = "from tests.test_src import TestSubSub\n\nclass TestMine(TestSubSub):\n    pass\n"
+        armed, offenders = _sigalrm_offenders([("test_src", src), ("test_user", user)])
+        assert armed == ["test_src", "test_user"] and len(offenders) == 2, (armed, offenders)
+        third = ("from tests.test_user import TestMine\n\nclass TestThird(TestMine):\n"
+                 "    def test_q(self):\n        pass\n")
+        for user in ("from tests.test_src import TestArms\n\nclass TestMine(TestArms):\n    pass\n",
+                     "import tests.test_src as src\n\nclass TestMine(src.TestArms):\n    pass\n"):
+            armed, offenders = _sigalrm_offenders(
+                [("test_src", src), ("test_user", user), ("test_third", third)])
+            assert armed == ["test_src", "test_third", "test_user"], (user, armed)
+            assert len(offenders) == 3, (user, offenders)
+
+    def test_a_helper_that_only_re_exports_an_arming_name_is_followed(self):
+        """A module exports the arming names it imports, not only the units it
+        defines: a helper holding one `from tests._standin import as_windows`
+        line, or a star import, hands the name on, and the test that takes it
+        from the helper, by name or through a whole-module alias, is armed
+        (read clean before 2026-10-26: `names` held defined units alone, the
+        re-export blind spot the failure-mode review of this lane drove)."""
+        by_name = "from tests._standin import as_windows\n"
+        star = "from tests._standin import *\n"
+        direct = "from tests._wrap import as_windows\n\ndef test_y(monkeypatch):\n    as_windows(monkeypatch)\n"
+        aliased = "from tests import _wrap as w\n\ndef test_y(monkeypatch):\n    w.as_windows(monkeypatch)\n"
+        for wrap, user in ((by_name, direct), (star, direct), (star, aliased)):
+            armed, offenders = _sigalrm_offenders(
+                [("_standin", self._STANDIN), ("_wrap", wrap), ("test_user", user)])
+            assert armed == ["_standin", "_wrap", "test_user"], (wrap, user, armed)
+            assert len(offenders) == 1 and offenders[0].startswith("tests/test_user.py "), (wrap, user, offenders)
 
     def test_a_helper_that_arms_outside_a_module_level_function_is_reported(self):
         helper = ("import signal\n\nif hasattr(signal, 'SIGALRM'):\n"

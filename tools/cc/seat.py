@@ -613,11 +613,16 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
         parts.append(f"if (-not $env:{BOX_LOCK_KEY}) {{ $env:{BOX_LOCK_KEY} = {q(box_lock_default())} }}")
         parts.append(" ".join(["claude", *(q(a) for a in args)]))
         return "; ".join(parts)
-    env = [f"{MAINTENANCE_KEY}=1"] if maintenance else [f"-u {MAINTENANCE_KEY}"]
+    # Every `-u` before the first assignment: BSD `env` (macOS) stops reading
+    # options at the first assignment and runs `-u` as the program (exit 127,
+    # driven 2026-10-26); GNU `env` permutes its arguments and takes either order.
+    unsets = [] if maintenance else [MAINTENANCE_KEY]
+    assigns = [f"{MAINTENANCE_KEY}=1"] if maintenance else []
     if bindir is not None:
-        env += [f"VIRTUAL_ENV={shlex.quote(str(bindir.parent))}", f'PATH={shlex.quote(str(bindir))}:"$PATH"']
+        assigns += [f"VIRTUAL_ENV={shlex.quote(str(bindir.parent))}", f'PATH={shlex.quote(str(bindir))}:"$PATH"']
     else:
-        env.append("-u VIRTUAL_ENV")
+        unsets.append("VIRTUAL_ENV")
+    env = [f"-u {name}" for name in unsets] + assigns
     # An export, not an `env` word: `env`'s options precede its assignments, and
     # the exported path also puts a tier run from that terminal under the lock.
     # The terminal's own path wins where it names one (`${VAR:-default}`), as

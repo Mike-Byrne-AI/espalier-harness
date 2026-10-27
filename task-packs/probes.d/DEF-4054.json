@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4054",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": "python3 -c \"import ast, sys; t = ast.parse(open('tools/cc/hooks/session_start.py', encoding='utf-8').read()); defs = {f.name for f in ast.walk(t) if isinstance(f, ast.FunctionDef)}; '_box_lock_note' in defs or sys.exit(2); callers = sorted({f.name for f in ast.walk(t) if isinstance(f, ast.FunctionDef) for n in ast.walk(f) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == '_box_lock_note'}); print(int(callers == ['_mail_line', '_orders_line']))\"",
+ "open_value": "1",
+ "why_not": null,
+ "row_sha": "da7eae2fca9f",
+ "text_sha": "84e29188ac3c",
+ "verified_2026_10_26": "STILL_OPEN (re-pinned value unchanged on 2026-10-26: a renamed or deleted _box_lock_note read as closed (failure-mode review 2026-10-26); the oracle now exits 2, unresolved, when no such function is defined, and is otherwise unchanged) [changed: probe]"
+}
