@@ -487,13 +487,19 @@ has one.)
 at 10,000 characters and spills a longer one to a file, handing Claude a
 2,000-character preview it is not asked to read past
 (`docs/external/cc-hook-protocol.md`). The banner is fitted under 9,500,
-counted as the host counts (UTF-16 units). Each per-run line (the sessions,
-the pull requests, the mail, the orders, ...) is cut to 320 characters with a
-` [line cut]` marker; the blueprint takes what the rest of the header and the
-orientation leave, at most 3,000, and yields first; the body is clipped last.
-When anything is cut, a `BANNER HEALTH` block at the top of the body names it,
-with each tenant against its budget and the headroom left, and when the
-ceiling still binds it names the goal's 4,500 cap as the remaining lever.
+counted as the host counts (UTF-16 units). The per-run lines (the sessions,
+the pull requests, the mail, the orders, ...) share one pool of 320 characters
+each: a line rides whole on what the absent and short ones leave, and only past
+the pool are the longest cut, by whole rows (the first and the last kept, the
+mail's tail note too, the rest counted as `and N more`) or, for one row, on a
+word boundary with a ` [line cut]` marker. The reinject payloads are cut to
+1,000 together and the `Memory:` identity line to 400. The blueprint takes what
+the body leaves, health block included, at most 3,000 (6,000 for the compact
+banner's decisions), down to 400 and then to its header line; only then is the
+body clipped. When anything is cut, yielded or clipped, a `BANNER HEALTH` block
+at the top of the body names it, with each tenant against its budget and the
+headroom left, and a clip names its loss and what to shorten: `cc/GOAL.md` when
+the goal is past its soft budget, else the largest tenant's file.
 
 **Every GOAL clause above is conditional.** `cc/GOAL.md` is a local,
 gitignored snapshot: `init` seeds a skeleton when it is absent, `/handoff` step 7

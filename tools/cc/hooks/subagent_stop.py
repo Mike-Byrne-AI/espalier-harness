@@ -164,8 +164,9 @@ _RECORD_MAX_CHARS = 900
 # 3 KB blueprint budget with the operator's own pinned decisions
 # (session_start._MAX_BLUEPRINT_CONTEXT_BYTES; two leads at this cap take
 # about two fifths of it, and the budget shrinks further when the banner's
-# header is long). The prefix plus a lead at this cap stays under the
-# record CLI's 1000-char write-time advisory, which would otherwise print on
+# body is long: the blueprint yields to it). The prefix plus a lead at this
+# cap stays under the record CLI's 1000-char write-time advisory, which would
+# otherwise print on
 # every stop. The full message is in the agent transcript the entry names as
 # evidence, and in the parent's tool-result stream until that is compacted.
 # Whose lines pay for the two leads: cmd_load renders fragments ABOVE the
