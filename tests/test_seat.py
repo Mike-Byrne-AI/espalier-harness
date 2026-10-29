@@ -382,8 +382,10 @@ class TestLaunch:
         monkeypatch.chdir(clone)
         assert seat.main(["launch", "box", "--print", "--", "--model", "o p"]) == 0
         assert no_claude == []
-        # The first message spans two lines inside its quotes; claude's line is its first.
-        out = next(line for line in capsys.readouterr().out.splitlines() if "claude" in line)
+        # The first message spans two lines inside its quotes; claude's line is its first:
+        # the one holding `claude` as a word. A bare substring took the "own-clear mod
+        # loaded from <MOD_DIR>" notice on any checkout under .claude/worktrees/ (#351).
+        out = next(line for line in capsys.readouterr().out.splitlines() if " claude " in line)
         assert "'o p'" in out and "You are seat box" in out
         assert seat.split_claude_args(["launch", "x", "--", "--print"]) == (["launch", "x"], ["--print"])
 
@@ -800,7 +802,9 @@ class TestBrief:
         assert "no own-clear mod" in capsys.readouterr().out
         assert seat.main(["launch", "box-feat", "--print", "--shell", "posix"]) == 0
         line = capsys.readouterr().out
-        assert f"--plugin-dir {seat.MOD_DIR}" in line and "ESPALIER_OWN_CLEAR=1" in line
+        # The spelling the shell reads: shlex quotes a path with a backslash (a Windows
+        # seat's D:\...) or a space, and leaves a plain POSIX path bare.
+        assert f"--plugin-dir {seat.shlex.quote(str(seat.MOD_DIR))}" in line and "ESPALIER_OWN_CLEAR=1" in line
         assert seat.main(["launch", "box-feat", "--no-mod", "--print", "--shell", "posix"]) == 0
         line = capsys.readouterr().out
         assert "--plugin-dir" not in line and "-u ESPALIER_OWN_CLEAR " in line
@@ -1201,6 +1205,23 @@ class TestTheLauncherSetsTheBoxLock:
         env = seat.child_env(target, maintenance=False, base={"PATH": "/bin", "ESPALIER_BOX_LOCK": "/elsewhere/box.lock"})
         assert env["ESPALIER_BOX_LOCK"] == "/elsewhere/box.lock"
         assert seat.BOX_LOCK_KEY == "ESPALIER_BOX_LOCK" and seat.BOX_LOCK_NAME == "espalier-box.lock"
+
+    def test_the_posix_line_spells_the_mod_directory_as_the_shell_reads_it(self, seat, tmp_path):
+        """A mod directory the shell must quote -- a Windows seat's ``D:\\...``
+        (windows-latest red from #351, where the unquoted substring was
+        asserted) or a path with a space -- rides the posix print line quoted,
+        and the line's reader gets the one argument back. Dies to: an argument
+        joined bare, or an expectation spelled as the path alone."""
+        import shlex
+        mod_dir = tmp_path / "mods" / "own clear"
+        (mod_dir / ".claude-plugin").mkdir(parents=True)
+        (mod_dir / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+        target = seat.Target("box-x", tmp_path, True, False)
+        sh = seat.command_line(target, seat.mod_args(mod_dir), maintenance=False, shell="posix", own_clear=True)
+        quoted = shlex.quote(str(mod_dir))
+        assert quoted != str(mod_dir), quoted   # the case the Windows cell hits: a path shlex must quote
+        assert f"--plugin-dir {quoted}" in sh and f"--plugin-dir {mod_dir}" not in sh, sh
+        assert shlex.split(sh.split(" claude ", 1)[1]) == ["--plugin-dir", str(mod_dir)]
 
     def test_both_shells_lines_carry_the_path_before_claude(self, seat, tmp_path):
         import shlex

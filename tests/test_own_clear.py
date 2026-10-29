@@ -275,3 +275,48 @@ class TestReprimeText:
         text = seat.reprime_text(brief)
         assert text.startswith("a brief without its loop\n")
         assert "survived the clear" in text and "/loop" not in text
+
+
+class TestTheBenchDriverLoadsWhereThereIsNoPty:
+    """``bench/own_clear/drive.py`` is POSIX (it forks a pty) and the Windows
+    seats are driven by hand -- but it must still LOAD on Windows: the
+    bounded-spawn census (``tests/test_contracts.py::
+    TestEveryTimedSpawnOutsideToolsCcIsBounded``) imports every file outside
+    the engine that routes a spawn, to read which ``run_bounded`` it bound,
+    and a module-level ``import fcntl`` made that read ``ModuleNotFoundError``
+    on windows-latest (red on main from #351, 2026-10-27). The three
+    POSIX-only modules are made unimportable the way the import system reads
+    ``None`` in ``sys.modules`` (``ImportError``), on any host. Dies to: one of
+    those three back at module level, or a main that makes its output
+    directory before it refuses. The tuple below is typed by hand, so a
+    fourth POSIX-only name (``resource``, ``pwd``, ``grp``) imported bare would
+    pass here and red Windows again: the census-level stand-in that derives
+    the file set is the class fix (the failure-mode review, 2026-10-29)."""
+
+    POSIX_ONLY = ("fcntl", "pty", "termios")
+
+    def _load_without_a_pty(self, monkeypatch):
+        for name in self.POSIX_ONLY:
+            monkeypatch.setitem(sys.modules, name, None)
+        path = REPO_ROOT / "bench" / "own_clear" / "drive.py"
+        spec = importlib.util.spec_from_file_location("own_clear_drive_without_a_pty", path)
+        mod = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, spec.name, mod)
+        try:
+            spec.loader.exec_module(mod)
+        except ImportError as exc:   # the Windows census read: a failure by name, not a traceback
+            pytest.fail(f"the driver does not load where there is no pty: {type(exc).__name__}: {exc}")
+        return mod
+
+    def test_the_driver_loads_and_binds_this_checkouts_bounded_spawn(self, monkeypatch):
+        mod = self._load_without_a_pty(monkeypatch)
+        assert Path(mod.run_bounded.__code__.co_filename).resolve() == (TOOLS_CC / "_json_safe.py").resolve()
+        assert mod.fcntl is None and mod.pty is None and mod.termios is None
+
+    def test_main_refuses_by_name_before_it_writes(self, monkeypatch, tmp_path, capsys):
+        mod = self._load_without_a_pty(monkeypatch)
+        out = tmp_path / "drive-out"
+        assert mod.main(["--out", str(out)]) == 2
+        assert not out.exists()
+        err = capsys.readouterr().err
+        assert "POSIX" in err and "pty" in err and "Windows" in err and "by hand" in err
