@@ -2003,6 +2003,72 @@ class TestMergedRedReceiver:
         listing = json.dumps([_merged_row(47, green), _merged_row(46, _MERGED_ROLLUP_RED)])
         assert mod._merged_prs_line(listing, local_has_commit=_pulled) == ""
 
+    def test_without_the_post_merge_module_nothing_reads_as_a_pass_and_the_block_says_so(self, monkeypatch):
+        """The rule lives in tools/cc/_post_merge.py, loaded by path; a deploy
+        set without it must not crash the banner and must not read a red as
+        green. Dies to: a copy of a set or a rule kept in the hook, a missing
+        module read as all green, or the block's unread line renamed."""
+        mod = _load()
+        monkeypatch.setattr(mod, "_load_post_merge", lambda: None)
+        red = {"name": "portability", "status": "COMPLETED", "conclusion": "FAILURE"}
+        assert mod._check_outcome(red) == "running"
+        assert mod._latest_run_per_check([red, red]) == [red, red]
+        assert mod._post_merge_verdicts([_merged_row(46, [red])]) == {}
+        assert mod._merged_prs_line(json.dumps([_merged_row(46, [red])]), local_has_commit=_pulled) == ""
+        assert mod._POST_MERGE_UNREAD == "pull requests unread (tools/cc/_post_merge.py is not beside the hooks)"
+        assert mod._load_post_merge.__name__ == "<lambda>"   # the patch held for the reads above
+
+    def test_a_module_that_will_not_load_is_none_and_the_alias_is_not_left_half_made(self, monkeypatch):
+        """Dies to: a broken sibling raising past the loader into the hook's
+        crash guard (the whole banner lost), or a half-initialised module left
+        under the alias for the next call."""
+        import sys
+        mod = _load()
+        sys.modules.pop("_session_start_post_merge", None)
+        real = mod.importlib.util.spec_from_file_location
+
+        class _Broken:
+            def create_module(self, spec):
+                return None
+
+            def exec_module(self, module):
+                raise SyntaxError("a partial write")
+
+        def broken(alias, path):
+            spec = real(alias, path)
+            spec.loader = _Broken()
+            return spec
+        monkeypatch.setattr(mod.importlib.util, "spec_from_file_location", broken)
+        assert mod._load_post_merge() is None
+        assert "_session_start_post_merge" not in sys.modules
+
+    def test_the_banner_names_the_newest_merges_verdict_where_the_board_keeps_the_older_red(self):
+        """The two rules of one module, pinned apart: the board and the preflight
+        clear an older red only with a green run that started after that merge
+        landed; this five-row line names the newest merge that reached a verdict,
+        as its rows carry no run start times. Dies to: either rule silently
+        taking the other's place."""
+        mod = _load()
+        pm = mod._load_post_merge()
+        swapped = [
+            _merged_row(47, [{"name": "portability (windows-latest)", "status": "COMPLETED", "conclusion": "SUCCESS",
+                              "startedAt": "2026-09-29T20:00:00Z"}], when="2026-09-29T22:00:00Z"),
+            _merged_row(46, [{"name": "portability (windows-latest)", "status": "COMPLETED", "conclusion": "FAILURE",
+                              "startedAt": "2026-09-29T20:30:00Z"}], when="2026-09-29T21:00:00Z"),
+        ]
+        assert mod._merged_prs_line(json.dumps(swapped), local_has_commit=_pulled) == ""
+        board = pm.transitions(swapped)["portability (windows-latest)"]
+        assert board["verdict"] == "red" and board["owner"]["pr"] == 46 and [g["pr"] for g in board["green_beside"]] == [47]
+
+    def test_the_module_is_loaded_by_path_under_a_private_alias(self):
+        """Dies to: the loader importing by name (an installed engine's copy
+        would win over the hook's sibling) or registering under a public name."""
+        import sys
+        mod = _load()
+        loaded = mod._load_post_merge()
+        assert loaded is not None and loaded is sys.modules.get("_session_start_post_merge")
+        assert Path(loaded.__file__).resolve() == (HOOKS_DIR.parent / "_post_merge.py").resolve()
+
     def test_a_cancelled_latest_run_is_no_verdict_not_red(self):
         """`_check_outcome` reads CANCELLED as red -- right for an open pull
         request, where a cancelled cell holds the merge. On a merged one the leg
@@ -2769,6 +2835,37 @@ class TestOrdersLine:
     def _assign(mail, seat: str, *, frm: str = "hub", **job) -> dict:
         return mail.new_message(frm, "assign", f"to {seat}", seat=seat, **job)
 
+    @pytest.fixture(autouse=True)
+    def _under_the_box_lock(self, monkeypatch):
+        """The exact lines below are a seat launched by the tool, which runs
+        under the box lock; the off-note's own polarities are pinned apart."""
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+
+    def test_a_worker_without_the_box_lock_is_told_on_its_orders_line(self, tmp_path, monkeypatch):
+        """A seat relaunched by hand after a reap (``claude --continue``) runs
+        with no ``ESPALIER_BOX_LOCK`` and would run its tier unlocked beside a
+        sibling's: on a named clone the `Orders:` line says so, paste-ready
+        with the host's default path, and says nothing once the variable is
+        set. Mutation: the note printed while the variable is set, or on a
+        clone with no name."""
+        import tempfile
+        mod, mail = _load(), _real_mail()
+        (tmp_path / "espalier.toml").write_text('dispatcher = "hub"\n', encoding="utf-8")
+        by = {"hub": [self._assign(mail, "w", lane="lane/a")]}
+        read = {"machine": "w", "by_machine": by, "unread": 0}
+        monkeypatch.delenv("ESPALIER_BOX_LOCK", raising=False)
+        plain = mod._orders_line(tmp_path, read, mail=mail, python="py -3")
+        assert "box lock" not in plain, "an adopter's tree carries no plugin, so the note would send it nowhere"
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "_box_lock.py").write_text("", encoding="utf-8")
+        line = mod._orders_line(tmp_path, read, mail=mail, python="py -3")
+        default = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        assert line.endswith(f"; box lock: off (relaunch through seat.py launch, or export "
+                             f"ESPALIER_BOX_LOCK={default} before claude)"), line
+        assert line.isascii()
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+        assert "box lock" not in mod._orders_line(tmp_path, read, mail=mail, python="py -3")
+
     def test_a_worker_with_live_jobs_is_given_its_orders(self, tmp_path):
         """Dies to: counting another seat's jobs (3), or a worker's own
         assign counting where a dispatcher is named."""
@@ -3085,10 +3182,39 @@ class TestMailLine:
     once in main under a budget of its own, omitted where no machine is named
     or nothing is unread; the builders only render what they are given."""
 
+    @pytest.fixture(autouse=True)
+    def _under_the_box_lock(self, monkeypatch):
+        """The exact lines below are a seat launched by the tool, which runs
+        under the box lock; the off-note's own polarities are pinned apart."""
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+
     def test_the_line_is_omitted_where_no_machine_is_named_and_no_ref_is_held(self, tmp_path):
         mod = _load()
         stub = _mail_stub(machine_setting=lambda root, timeout=None: (None, "git config espalier.machine is not set"))
         assert mod._mail_line(tmp_path, mail=stub) == "" and stub.calls == []
+
+    def test_the_dispatcher_without_the_box_lock_is_told_on_its_mail_line(self, tmp_path, monkeypatch):
+        """The dispatcher, launched by a plain `claude` in the main checkout,
+        holds no assigns and gets no `Orders:` line, so its `Mail:` line's
+        dispatcher clause carries the off-note; a worker's `Mail:` line never
+        does (its `Orders:` line has it), and a set variable silences it.
+        Mutation: the note on every seat's `Mail:` line, or on none."""
+        import tempfile
+        mod = _load()
+        monkeypatch.delenv("ESPALIER_BOX_LOCK", raising=False)
+        default = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        dispatcher = _mail_stub(dispatcher_setting=lambda root: ("mac", "espalier.toml names mac"),
+                                live_requests=lambda by: [])
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=dispatcher) == "", "no plugin, no note"
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "_box_lock.py").write_text("", encoding="utf-8")
+        line = mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=dispatcher)
+        assert line == f"box lock: off (relaunch through seat.py launch, or export ESPALIER_BOX_LOCK={default} before claude)", line
+        worker = _mail_stub(dispatcher_setting=lambda root: ("hub", "espalier.toml names hub"),
+                            live_requests=lambda by: [])
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=worker) == ""
+        monkeypatch.setenv("ESPALIER_BOX_LOCK", "/t/espalier-box.lock")
+        assert mod._mail_line(tmp_path, deadline=time.monotonic() + 4.0, mail=dispatcher) == ""
 
     def test_a_nameless_clone_that_holds_another_machines_ref_is_told_how_to_opt_in(self, tmp_path):
         """The box that was never opted in is the one never told the channel
@@ -3602,6 +3728,26 @@ class TestSessionsLine:
         assert hu.prune_session_markers(tmp_path, now=now) == 0 and path.exists()
         assert hu.prune_session_markers(tmp_path, now=now + hu.SESSION_MARKER_PRUNE_S) == 1
         assert not path.exists()
+
+    def test_a_side_file_is_never_a_session_and_is_swept_with_its_marker(self, tmp_path):
+        # The marker readers glob `*.json`; a file a session keeps beside its
+        # marker takes a suffix that glob never matches (the roster says so),
+        # else the banner names the session's own record as a live sibling
+        # (the reasoning review of the threshold handoff caught a `.json`
+        # side file before it landed, 2026-10-26).
+        hu = _load_hook_utils()
+        now = time.time()
+        assert hu.HANDOFF_ASKED_SUFFIX in hu.SESSION_SIDE_SUFFIXES
+        assert not any(s.endswith(".json") for s in hu.SESSION_SIDE_SUFFIXES), hu.SESSION_SIDE_SUFFIXES
+        hu.write_session_marker(tmp_path, "other-1")
+        side = hu.sessions_dir(tmp_path) / f"other-1{hu.HANDOFF_ASKED_SUFFIX}"
+        side.write_text('{"at": "2026-10-26T09:19Z", "tokens": 270738}', encoding="utf-8")
+        named = hu.other_live_sessions(tmp_path, "me", now)
+        assert len(named) == 1, named
+        # The marker and its side file were written after `now`, so the sweep
+        # clock sits past the prune window by a margin, not on it.
+        assert hu.prune_session_markers(tmp_path, now=now + hu.SESSION_MARKER_PRUNE_S + 5) == 1
+        assert not side.exists() and not hu.session_marker_path(tmp_path, "other-1").exists()
 
     def test_the_mtime_counts_a_marker_whose_json_cannot_be_read(self, tmp_path):
         mod = _load()

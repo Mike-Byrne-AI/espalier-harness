@@ -207,7 +207,18 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     # from the diff by ast); the mapper moved into tools/cc/_symbols.py at Wave 1,
     # which this script loads by path. Guarded by tests/test_lane_overlap_census.py.
     "lane_overlap_census.py",
+    # 2026-10-19: which checks went red after a merge, on which merge, and when the
+    # record could have said so; replays tools/cc/_post_merge.py (loaded by path) at
+    # an instant and buckets red legs by the ledger rows naming their files.
+    "red_after_merge_census.py",
+    # 2026-10-20: what each seat did on a UTC day (merges, jobs given and how each
+    # closed, requests, Session Log rows, START, redirect: and shelved:), read off the
+    # mail refs and gh; the closing rules come from tools/cc/mail.py's fold, by path.
+    "seat_day_census.py",
     "proof_tier.py",
+    # 2026-10-26: where a session's tokens go by context size, from its
+    # transcripts; the threshold handoff's pre-registered instrument.
+    "usage_tail.py",
     "handoff_mechanics.py",
     "ledger_trend.py",
     "host_check.py",  # 2026-09-10: a host's suite + bench results as one pushed commit
@@ -419,7 +430,21 @@ def live_surface_counts() -> tuple[int, int, int]:
 # canon arm's remedy cannot apply -- and its parity is pinned by
 # `tests/test_reflect_protocol.py::TestReflectTwinParity`. Unmarked since
 # 2026-10-06, it held this repo's own step 0-C at exit 2.
-EXPECTED_OPT_OUT_CEILING = 22  # class: literal
+#
+# 22 -> 24 on 2026-10-26, deliberately: the probe's one standing canon miss on
+# `main` (since at least e988224b, 2026-10-17) paired `doctor._host_is_windows`
+# (the statusLine host key's seam) with `_hook_utils._running_by_invoked_path`
+# (the interpreter-identity match's seam) on body text alone -- one body, two
+# concepts -- while the hook seam's real engine twin,
+# `_python_floor._running_by_invoked_path` (same concept, same docstring, parity
+# pinned by `tests/test_python_floor.py`'s `test_the_twins_keep_one_rule_per_platform`),
+# went unflagged, because the canon arm skips a shadow named like its canon
+# before it compares bodies. A purpose-scoped marker on the doctor seam hides
+# that one miss (the only finding the lane's two markers hide); a forced-twin
+# marker on the floor seam declares the pair the architecture forces
+# (`espalier/` may not import `tools/cc/`), as `reflect_protocol._next_fence_state`
+# does, and hides nothing today. No body changed.
+EXPECTED_OPT_OUT_CEILING = 24  # class: literal
 
 # Maximum number of pre-existing test files grandfathered as ``unit``
 # in ``tests/conftest.py::_MARKER_RULES``. TP-105 froze this list at

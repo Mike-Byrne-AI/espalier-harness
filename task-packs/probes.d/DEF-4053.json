@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4053",
+ "subject": "tools/cc/seat.py",
+ "cmd": "python3 -c \"import os, subprocess, sys, tempfile; code = 'import sys; sys.path.insert(0, \\\"tools/cc\\\"); import seat; print(seat.box_lock_default())'; run = lambda d: subprocess.run([sys.executable, '-c', code], capture_output=True, text=True, env=dict(os.environ, TMPDIR=d, TMP=d, TEMP=d)).stdout.strip(); a, b = run(tempfile.mkdtemp()), run(tempfile.mkdtemp()); print(int(bool(a) and a != b))\"",
+ "open_value": "1",
+ "why_not": null,
+ "row_sha": "e2b13faebfac",
+ "text_sha": "6ca90b41cdaf",
+ "verified_2026_10_26": "STILL_OPEN (re-pinned value unchanged on 2026-10-26: the oracle keyed on the default's parent equalling gettempdir() read closed for any other name under the temp directory while the TMPDIR dependence stood (code review 2026-10-26); re-pointed at two child interpreters with different TMPDIR, open while their defaults differ; the text says the log half closes with the path) [changed: probe, text]"
+}

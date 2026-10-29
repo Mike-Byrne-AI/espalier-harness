@@ -91,6 +91,16 @@ def _strip_inline_code(text: str) -> str:
 # one member (2026-09-08 review). Forced twin of the hook side's
 # RESIDUE_EXEMPT_SURFACES, pinned by TestReflectTwinParity.
 RESIDUE_EXEMPT_SURFACES = tuple(k for k in RECORD_SURFACES if k != "docs/FAILURE_MODES.md")
+# The link check's reader of the same set: a dead pointer on one of these is
+# aging (kind "aging", severity low), never a gap, since editing it would
+# falsify the record. Wider than Core Rule 13's declared two (the records that
+# carry source citations) because the reason holds for every append-only
+# member; the hot index is the one left out, kept current at every handoff, so
+# its dead link is a gap to fix. The hook twin derives the same tuple
+# (AGING_RECORD_SURFACES, pinned by TestReflectTwinParity) and the lighter scan
+# in espalier/reflection.py imports this one, so the hook, `espalier
+# reflect-deep`, the doctor and `espalier reflect` read one answer.
+AGING_RECORD_SURFACES = tuple(s for s in RESIDUE_EXEMPT_SURFACES if s != _MEMORY_FILENAME)
 
 
 # Expected cross-references: (source_pattern, should_mention)
@@ -523,7 +533,8 @@ def detect_quality_signals(repo_root: Path) -> list[ReflectFinding]:
         # the residue-exempt records (Core Rule 13): a record that quotes a
         # template string is content, not residue — the old findings corpus
         # alone drew a "high" for 24 quoted tokens. Links in a record are still
-        # checked below, exactly as before.
+        # checked below; a dead one is aging there (AGING_RECORD_SURFACES), and
+        # the hot index's a gap.
         if any(rel.startswith(d) for d in DISCOVERY_DIRS) or rel in RESIDUE_EXEMPT_SURFACES:
             continue
         text = _safe_text(path)
@@ -631,6 +642,10 @@ def run_reflect_pass(repo_root: Path, pass_number: int = 1) -> ReflectPass:
     for path in _iter_surface_files(repo_root):
         if not path.suffix == ".md":
             continue
+        rel = _rel(path, repo_root)
+        # Core Rule 13: a dead pointer on an append-only record is aging, never a
+        # gap (AGING_RECORD_SURFACES, where the set says why).
+        record = rel in AGING_RECORD_SURFACES
         text = _text_without_fences(_safe_text(path))
         for m in LOCAL_LINK_RE.finditer(text):
             target = m.group(1).split("#")[0].strip()
@@ -646,13 +661,22 @@ def run_reflect_pass(repo_root: Path, pass_number: int = 1) -> ReflectPass:
             candidate = (path.parent / target).resolve() if not target.startswith("/") \
                 else (repo_root / target.lstrip("/"))
             if not candidate.exists():
-                findings.append(ReflectFinding(
-                    kind="gap",
-                    severity="high",
-                    description=f"Broken link in {_rel(path, repo_root)}: "
-                                f"[...]({target}) target does not exist",
-                    files=[_rel(path, repo_root)],
-                ))
+                if record:
+                    findings.append(ReflectFinding(
+                        kind="aging",
+                        severity="low",
+                        description=f"Aging pointer on a record surface {rel}: "
+                                    f"[...]({target}) target does not exist",
+                        files=[rel],
+                    ))
+                else:
+                    findings.append(ReflectFinding(
+                        kind="gap",
+                        severity="high",
+                        description=f"Broken link in {rel}: "
+                                    f"[...]({target}) target does not exist",
+                        files=[rel],
+                    ))
                 continue
             # The target file exists -- now check the `#fragment`, which this loop
             # used to discard. A renamed heading leaves the file in place, so the
@@ -661,13 +685,22 @@ def run_reflect_pass(repo_root: Path, pass_number: int = 1) -> ReflectPass:
             fragment = m.group(1).partition("#")[2].strip()
             if fragment and candidate.suffix == ".md" and candidate.is_file():
                 if fragment.lower() not in _heading_anchors(_safe_text(candidate)):
-                    findings.append(ReflectFinding(
-                        kind="gap",
-                        severity="medium",
-                        description=f"Broken anchor in {_rel(path, repo_root)}: "
-                                    f"[...]({target}#{fragment}) names no such heading",
-                        files=[_rel(path, repo_root)],
-                    ))
+                    if record:
+                        findings.append(ReflectFinding(
+                            kind="aging",
+                            severity="low",
+                            description=f"Aging pointer on a record surface {rel}: "
+                                        f"[...]({target}#{fragment}) names no such heading",
+                            files=[rel],
+                        ))
+                    else:
+                        findings.append(ReflectFinding(
+                            kind="gap",
+                            severity="medium",
+                            description=f"Broken anchor in {rel}: "
+                                        f"[...]({target}#{fragment}) names no such heading",
+                            files=[rel],
+                        ))
 
     gap_count = sum(1 for f in findings if f.kind == "gap")
     orphan_count = sum(1 for f in findings if f.kind == "orphan")
@@ -696,6 +729,9 @@ def render_reflect_pass(rp: ReflectPass) -> str:
         f"Cross-references:    {rp.total_references}",
         f"Cross-ref density:   {rp.cross_ref_density} refs/file",
         f"Gaps:                {rp.gap_count}",
+        # Derived here, not a ReflectPass field: the blueprint projection keeps
+        # the aging findings themselves (Core Rule 13), and nothing gates on it.
+        f"Aging:               {sum(1 for f in rp.findings if f.kind == 'aging')}",
         f"Orphans:             {rp.orphan_count}",
         f"Placeholders:        {rp.placeholder_count}",
         "",
@@ -704,7 +740,7 @@ def render_reflect_pass(rp: ReflectPass) -> str:
         by_kind: dict[str, list[ReflectFinding]] = {}
         for f in rp.findings:
             by_kind.setdefault(f.kind, []).append(f)
-        for kind in ("gap", "orphan", "quality_signal"):
+        for kind in ("gap", "orphan", "quality_signal", "aging"):
             items = by_kind.get(kind, [])
             if items:
                 lines.append(f"[{kind.upper()}]")

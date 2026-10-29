@@ -98,9 +98,17 @@ SELECTION: dict[str, str] = {
         "docs/ vs its shipped mirror",
     "tests/test_check_memory_md_tag_parity.py":
         "every released tag is narrated somewhere tracked",
+    # A node id: the class is the audience gate for every deployed text -- the
+    # seeded docs' ceiling and the .claude bodies' zero. Step 1b's fold writes
+    # both (docs/FAILURE_MODES.md, a promoted skill body) after the lane's tier
+    # has run, and the asset sync's own read is a step a hand-run handoff can
+    # skip; about one second.
+    "tests/test_deployed_text_audience.py::TestDeployedTextIsAddressedToTheAdopter":
+        "maintainer-addressed text in a deployed body -- the 2026-10-25 red, "
+        "six hits past the seeded ceiling, through the sync and this check",
 
     # ---- REGISTRATION obligations -------------------------------------------
-    # The ten members above are CONTENT-DRIFT gates, and that is not a
+    # The eleven members above are CONTENT-DRIFT gates, and that is not a
     # coincidence: this selection was originally derived from the artifacts
     # /handoff writes last, so it could see only the class it was derived from.
     # Measured 2026-09-01: of the nine gates that caught something real in the
@@ -504,41 +512,82 @@ GOAL_DOC = "cc/GOAL.md"
 OWED_PROBES = "cc/GOAL_OWED.json"
 
 
-def _linked_worktree_main(root: Path) -> "Path | None":
-    """The main checkout when ``root`` is a LINKED worktree of it, else None --
-    None too when git cannot answer (a scratch root that is no checkout). The
-    rule has one owner, ``scripts/record_snapshot.py::linked_worktree_main``,
-    loaded from this script's own directory: never from ``REPO_ROOT``, which a
-    test rebinds to a scratch tree."""
+def _record_snapshot():
+    """``scripts/record_snapshot.py``, the one owner of the linked-worktree rule
+    and of the operator marker, loaded from this script's own directory: never
+    from ``REPO_ROOT``, which a test rebinds to a scratch tree."""
     import importlib.util
     path = Path(__file__).resolve().parent / "record_snapshot.py"
     spec = importlib.util.spec_from_file_location("_chl_record_snapshot", path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod  # registered before exec, the 3.14 rule for a path-loaded module
     spec.loader.exec_module(mod)
-    try:
-        return mod.linked_worktree_main(root)
-    except mod.RecordError:
-        return None
+    return mod
 
 
 def _operator_root() -> "Path | None":
     """The operator's tree when this is one, else None.
 
-    The tell is the gitignored ``cc/GOAL.md`` that ``/handoff`` writes (the
-    owed-list arm keys on it too). A LINKED worktree of the operator's tree
-    never carries it -- git checks out tracked files only -- so until
-    2026-10-06 the operator's own session in a Claude Code worktree read as a
-    reviewer's clone and three arms demoted their reds to notes there
-    (DEF-1137). The main checkout's tell counts for its worktrees; the arms
-    then read each gitignored input where this session could have written it.
+    The tell is ``record_snapshot.OPERATOR_MARKER``, a gitignored file whose one
+    meaning is "this is the operator's tree", read through
+    ``record_snapshot.operator_root``. Until 2026-10-18 it was the goal doc, whose
+    job is the session goal, so a second clone keeping a goal of its own read as
+    the operator's and the arms red there on state that belongs to the first
+    (DEF-1119). A LINKED worktree of the operator's tree never carries the
+    marker -- git checks out tracked files only -- so the main checkout's counts
+    for its worktrees (DEF-1137); the arms then read each gitignored input where
+    this session could have written it.
     """
-    if (REPO_ROOT / GOAL_DOC).is_file():
-        return REPO_ROOT
-    main = _linked_worktree_main(REPO_ROOT)
-    if main is not None and (main / GOAL_DOC).is_file():
-        return main
-    return None
+    return _record_snapshot().operator_root(REPO_ROOT)
+
+
+def _main_checkout() -> "Path | None":
+    """The main checkout when this tree is a LINKED worktree of it, else None --
+    None too when git cannot answer (a scratch root that is no checkout)."""
+    mod = _record_snapshot()
+    try:
+        return mod.linked_worktree_main(REPO_ROOT)
+    except mod.RecordError:
+        return None
+
+
+def _seat_name() -> str:
+    """This checkout's seat name, or "" when it answers none: the mail channel's
+    own read of ``git config espalier.machine`` (``tools/cc/mail.py::
+    machine_setting``, loaded from this script's tree), so a seat here is exactly
+    a checkout whose mail channel is on -- a worktree's own name or its clone's."""
+    import importlib.util
+    path = Path(__file__).resolve().parents[1] / "tools" / "cc" / "mail.py"
+    if not path.is_file():
+        return ""
+    spec = importlib.util.spec_from_file_location("_chl_mail", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod  # registered before exec, the 3.14 rule for a path-loaded module
+    spec.loader.exec_module(mod)
+    return mod.machine_setting(REPO_ROOT)[0] or ""
+
+
+def _not_the_operators() -> str:
+    """Why an operator arm's red is a note here, and that nothing is owed."""
+    return (f"this tree is not the operator's (no {_record_snapshot().OPERATOR_MARKER} in its main "
+            "checkout); nothing to do unless this is the clone the operator works from, where the "
+            "operator creates that file from their own terminal (memory/local-codename-arm.md)")
+
+
+def _not_a_seat() -> str:
+    """Why a seat arm's red is a note here: neither a seat nor the operator's tree."""
+    return ("this checkout is neither a seat (no git config espalier.machine) nor the operator's "
+            f"tree (no {_record_snapshot().OPERATOR_MARKER}), so it is a contributor's clone")
+
+
+def _tree_status() -> str:
+    """The line every run prints first: whose tree this is, so a marker the
+    operator's own tree lost is visible on a clean run, not only inside a note."""
+    operator = _operator_root()
+    seat = _seat_name()
+    who = (f"operator tree: {operator}" if operator is not None else
+           f"not the operator's tree (no {_record_snapshot().OPERATOR_MARKER} in its main checkout)")
+    return who + (f"; seat: {seat}" if seat else "; no seat name")
 
 
 def _probe_runner():
@@ -615,13 +664,14 @@ def check_owed(notes: "list[str] | None" = None) -> list[str]:
     goal = REPO_ROOT / GOAL_DOC
     probes_path = REPO_ROOT / OWED_PROBES
     if not goal.is_file() and not probes_path.is_file():
-        # The goal and its probes are gitignored, so a linked worktree of the
-        # operator's tree never has them: say so rather than fall silent (the
-        # other arms red there through ``_operator_root``; this one cannot
-        # grade a list it cannot read, and its probes run against THIS tree).
-        operator = _operator_root()
-        if notes is not None and operator is not None and operator != REPO_ROOT:
-            notes.append(f"owed-list arm: {GOAL_DOC} and {OWED_PROBES} live in {operator} (a "
+        # The goal and its probes are gitignored, so a linked worktree never has
+        # them: where its main checkout keeps a goal doc, say so rather than fall
+        # silent (this arm cannot grade a list it cannot read, and its probes run
+        # against THIS tree). Keyed on the goal doc itself, never the operator
+        # marker: the list is the goal doc's content (DEF-1119).
+        main = _main_checkout()
+        if notes is not None and main is not None and (main / GOAL_DOC).is_file():
+            notes.append(f"owed-list arm: {GOAL_DOC} and {OWED_PROBES} live in {main} (a "
                          "linked worktree checks out tracked files only); not checked from "
                          "this worktree -- run the landing check there")
         return []  # repo keeps no goal doc -- nothing to check
@@ -1229,8 +1279,7 @@ def check_record_snapshot(notes: "list[str] | None" = None) -> list[str]:
         if _operator_root() is not None:
             return [problem]
         if notes is not None:
-            notes.append(f"{problem} (a note, not a red: this tree keeps no {GOAL_DOC}, so it "
-                         "is not the operator's)")
+            notes.append(f"{problem} (a note, not a red: {_not_the_operators()})")
         return []
     if proc.returncode == 0:
         if notes is not None:
@@ -1276,41 +1325,40 @@ def check_local_codename_arm(notes: "list[str] | None" = None) -> list[str]:
     file present but holding only comments is the same silent green with a
     file on disk.
 
-    A red only where this is the operator's tree -- the tell is the one the
-    owed-list arm already keys on, a goal doc at ``cc/GOAL.md`` (gitignored,
-    written by ``/handoff``), read through ``_operator_root`` so that a linked
-    worktree of the operator's tree counts as that tree (a worktree checks out
-    tracked files only, so it never carries the tell itself; the gate read the
-    worktree's own file, so the red there says which file to copy from where,
-    and a copy in the main checkout arms nothing here). Anywhere else -- a
-    contributor's clone of the public repo running ``/commit``, a reviewer's
-    shared clone -- the absence is a printed note, the shape
-    ``check_candidate_keys`` uses for its machine-local log, because the file's
-    content is by construction not theirs to recreate. A file that exists but
-    cannot be read is a red everywhere: the gate module raises on it too. The
+    A seat arm: a red on the operator's tree (the gitignored marker
+    ``record_snapshot.OPERATOR_MARKER``, read through ``_operator_root``) and on
+    every seat (a checkout answering ``git config espalier.machine``, read through
+    ``_seat_name``), since every seat pushes to the public repo (DEF-1119: until
+    then a seat was armed only because its goal doc was the operator tell). A
+    linked worktree counts as its main checkout's tree; it checks out tracked
+    files only, and the gate read the worktree's own file, so the red there says
+    which file to copy from where, and a copy in the main checkout arms nothing
+    here. Anywhere else -- a contributor's clone of the public repo running
+    ``/commit``, a reviewer's shared clone -- the absence is a printed note, the
+    shape ``check_candidate_keys`` uses for its machine-local log, because the
+    file's content is by construction not theirs to recreate. A file that exists
+    but cannot be read is a red everywhere: the gate module raises on it too. The
     clean path reports the armed count, so a file truncated to one line is
     visible where a 0-or-more check would read clean.
     """
     path = REPO_ROOT / LOCAL_CODENAMES
-    operator = _operator_root()
-    operator_tree = operator is not None
-    linked = operator is not None and operator != REPO_ROOT
+    red_here = _operator_root() is not None or bool(_seat_name())
+    main = _main_checkout()
 
     def _report(problem: str) -> list[str]:
-        if operator_tree:
+        if red_here:
             return [problem]
         if notes is not None:
-            notes.append(f"{problem} (a note, not a red: this tree keeps no "
-                         f"{GOAL_DOC}, so it is not the operator's)")
+            notes.append(f"{problem} (a note, not a red: {_not_a_seat()})")
         return []
 
     if not path.is_file():
         how = (
-            f"This tree is a linked worktree of {operator}, which checks out tracked "
-            f"files only: run the suite from {operator}, or copy {operator / LOCAL_CODENAMES} "
+            f"This tree is a linked worktree of {main}, which checks out tracked "
+            f"files only: run the suite from {main}, or copy {main / LOCAL_CODENAMES} "
             "here (the gate read this tree's; an ignored file left in a worktree makes "
             "`git worktree remove` ask for --force)."
-            if linked else
+            if main is not None else
             "Recreate it -- memory/local-codename-arm.md says how -- before trusting "
             "the green, or pass --skip-local-arm on a tree that is not the operator's."
         )
@@ -1371,10 +1419,10 @@ def check_hook_wiring_arm(notes: "list[str] | None" = None) -> list[str]:
 
     Two questions, in order:
 
-    1. Is the file here? Absent is a red on the operator's tree (the
-       ``_operator_root`` tell, so the operator's linked worktree counts) and a
-       note elsewhere -- the codename arm's shape, since a reviewer's clone may
-       have no reason to run the hooks.
+    1. Is the file here? Absent is a red on the operator's tree and on every
+       seat (``_operator_root`` or ``_seat_name``, so a seat's linked worktree
+       counts; DEF-1119) and a note elsewhere -- the codename arm's shape, since
+       a reviewer's clone may have no reason to run the hooks.
     2. Does it wire the gates? ``ci_guard._scan_settings_for_missing_governance_events``
        answers for every blocking gate whose script is on disk here, through
        its exec-form extractor rather than a substring match. Its own rule
@@ -1386,25 +1434,25 @@ def check_hook_wiring_arm(notes: "list[str] | None" = None) -> list[str]:
     shared file is the governance contract, and ``init`` wires the gates there).
     """
     path = REPO_ROOT / SETTINGS_REL
-    operator = _operator_root()
-    operator_tree = operator is not None
-    linked = operator is not None and operator != REPO_ROOT
+    # A seat arm, as the codename arm is (DEF-1119): the operator's tree and every
+    # seat red; only a contributor's clone, with neither, reads a note.
+    red_here = _operator_root() is not None or bool(_seat_name())
+    main = _main_checkout()
 
     def _report(problem: str) -> list[str]:
-        if operator_tree:
+        if red_here:
             return [problem]
         if notes is not None:
-            notes.append(f"{problem} (a note, not a red: this tree keeps no "
-                         f"{GOAL_DOC}, so it is not the operator's)")
+            notes.append(f"{problem} (a note, not a red: {_not_a_seat()})")
         return []
 
     if not (path.is_file() or path.is_symlink()):
         how = (
-            f"This tree is a linked worktree of {operator}: copy "
-            f"{operator / SETTINGS_REL} here before the next session launches in it "
+            f"This tree is a linked worktree of {main}: copy "
+            f"{main / SETTINGS_REL} here before the next session launches in it "
             f"({WORKTREE_INCLUDE} copies it into a worktree Claude Code creates, not "
             "into one that already exists)."
-            if linked else
+            if main is not None else
             "Run `espalier init .` or restore the file, or pass --skip-wiring-arm on "
             "a tree that is not the operator's."
         )
@@ -1486,8 +1534,8 @@ def check_changelog_records_on_record_branch(
     ``task-packs/Done/CHANGELOG_archive_<date>.md``, a gitignored file that
     only ``scripts/record_snapshot.py`` carries onto the ``record`` ref. Until
     that run, the record exists on one disk and the shipped sentence has no
-    referent anyone can check. On the operator's tree (the ``cc/GOAL.md``
-    tell ``check_local_codename_arm`` keys on) a parked record the ref cannot
+    referent anyone can check. On the operator's tree (the marker
+    ``check_local_codename_arm`` keys on) a parked record the ref cannot
     resolve is a red naming the run; anywhere else -- a contributor's clone,
     a reviewer's worktree -- it is a note, because the ref is by construction
     not theirs to build. The tell is ``_operator_root``'s, so the operator's
@@ -1523,8 +1571,7 @@ def check_changelog_records_on_record_branch(
     if operator_tree:
         return [problem]
     if notes is not None:
-        notes.append(f"{problem} (a note, not a red: this tree keeps no "
-                     f"{GOAL_DOC}, so it is not the operator's)")
+        notes.append(f"{problem} (a note, not a red: {_not_the_operators()})")
     return []
 
 
@@ -1559,6 +1606,9 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     problems: list[str] = []
+    # Whose tree this is, on every run (DEF-1119): the operator arms read the
+    # marker alone, so a marker lost on the operator's own tree shows here.
+    print(f"  note: {_tree_status()}", flush=True)
 
     # The two message arms first: they cost one `git log` each, and a red
     # here should not wait behind the ~70 s slice.

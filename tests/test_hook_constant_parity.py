@@ -339,31 +339,47 @@ class TestStopGateGrammarParity:
         )
 
 
-class TestCheckStateSetsAreOneRule:
-    """The ship driver restates the banner's check-state sets because a
-    tools/cc/ script cannot import a hook. Three hand-kept copies of one rule
-    diverge silently (the driver's first draft added the empty conclusion to
-    the no-verdict set, so a completed row with no conclusion was red in the
-    banner and invisible to the driver); this pin keeps the literals equal.
-    Parsed from source, never executed."""
+class TestTheCheckStateSetsHaveOneHome:
+    """The check-state sets once lived in three hand-kept copies (the banner, the
+    ship driver and, by the board's read, a third) held equal by a parity pin
+    on their literals; since the post-merge verdict module they live once, in
+    tools/cc/_post_merge.py, which the driver and the board import and the
+    banner loads by path. This pin keeps it so: the hook defines none of the
+    four names, the driver's four are attribute reads of the module, and the
+    module's four are the frozenset literals. Parsed from source, never
+    executed. Dies to: a literal returning to the hook or the driver (a third
+    copy nobody compares), or a set renamed in the module alone."""
 
     _SETS = ("_CHECK_GREEN", "_CHECK_RUNNING", "_NO_VERDICT", "_RED_BUCKETS")
 
     @staticmethod
-    def _frozenset_literal(path, name):
+    def _assignments(path, names):
         import ast
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign) and any(
-                isinstance(t, ast.Name) and t.id == name for t in node.targets
-            ):
-                call = node.value
-                assert isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "frozenset", name
-                return frozenset(ast.literal_eval(call.args[0]))
-        raise AssertionError(f"{path.name} has no {name} assignment")
+        found = {}
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in names:
+                        found[target.id] = node.value
+        return found
 
-    def test_the_driver_and_the_banner_share_the_check_state_sets(self):
+    def test_the_hook_defines_none_of_the_sets(self):
         hook = HOOKS_DIR / "session_start.py"
+        assert self._assignments(hook, set(self._SETS)) == {}, "a check-state set returned to the hook"
+
+    def test_the_driver_reads_each_set_from_the_module(self):
+        import ast
         driver = HOOKS_DIR.parent / "ship.py"
-        for name in self._SETS:
-            assert self._frozenset_literal(driver, name) == self._frozenset_literal(hook, name), name
+        found = self._assignments(driver, set(self._SETS))
+        assert set(found) == set(self._SETS), sorted(set(self._SETS) - set(found))
+        for name, value in found.items():
+            assert isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name), name
+            assert value.value.id == "_post_merge" and value.attr == name.lstrip("_"), name
+
+    def test_the_module_holds_the_four_literals(self):
+        import ast
+        module = HOOKS_DIR.parent / "_post_merge.py"
+        found = self._assignments(module, {n.lstrip("_") for n in self._SETS})
+        assert set(found) == {n.lstrip("_") for n in self._SETS}
+        for name, value in found.items():
+            assert isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "frozenset", name

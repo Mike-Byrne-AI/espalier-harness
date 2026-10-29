@@ -51,6 +51,12 @@ def _gh(answers: dict[str, object]):
     def run(argv, **kw):
         calls.append(list(argv))
         key = " ".join(argv[1:3]) if argv[1] != "api" else ("api compare" if "/compare/" in argv[2] else argv[2])
+        if key == "pr list" and "merged" in argv:
+            # The checks: line's read; a fixture that gives none reads no merges,
+            # so the open-PR answer is never mistaken for the merged listing.
+            key = "pr list merged"
+            if key not in answers:
+                return 0, "[]", ""
         if key not in answers:
             raise AssertionError(f"unexpected call {argv}")
         answer = answers[key]
@@ -69,6 +75,9 @@ def _stub_channel(monkeypatch, board, by_machine=None, dispatcher="air", fetch=(
     monkeypatch.setattr(board, "read_sessions", lambda root, **kw: sessions or {"checkouts": [], "unread": ""})
     monkeypatch.setattr(board.mail, "machine_setting", lambda root, run=None: ("win", "stubbed"))
     monkeypatch.setattr(board.mail, "fetch_mail", lambda root, run=None: fetch)
+    # The records refs' fetch beside the mail's: the parked rows the records
+    # section reads; TestRecordsLine drives a failed one.
+    monkeypatch.setattr(board.mail, "fetch_records", lambda root, run=None: (True, ""))
 
     def read_mail(root, run=None):
         if read_error:
@@ -88,6 +97,11 @@ def _stub_channel(monkeypatch, board, by_machine=None, dispatcher="air", fetch=(
     # interpreter, which tests/test_board_ledger_base.py drives for real.
     monkeypatch.setattr(board, "fetch_base", lambda *a, **k: (True, ""))
     monkeypatch.setattr(board, "read_ledger_at_base", lambda *a, **k: None)
+    # The records section's reads of the Session Log names: the base's (git
+    # ls-tree) and the rows parked on the records refs (mail.pending), which
+    # TestRecordsLine drives with names of its own and the first for real.
+    monkeypatch.setattr(board, "read_row_names", lambda *a, **k: [])
+    monkeypatch.setattr(board.mail, "pending", lambda root, directory, against, **k: [])
 
 
 def _run(status: str, conclusion: str, sha: str) -> dict:
@@ -116,6 +130,23 @@ class TestLaneSeats:
         assert mail.lane_seats({"win-2": [claim, release]}) == {"lane/x": "win-2"}
         later = mail.new_message("win", "claim", "", lane="lane/x", now=t.replace(minute=9))
         assert mail.lane_seats({"win-2": [claim, release], "win": [later]}) == {"lane/x": "win"}
+
+    def test_a_release_names_a_lane_only_from_a_seat_that_claimed_it(self, board):
+        """The dispatcher closes a job by lane after the seat's push released
+        the claim; its release is the lane's latest message and moved the
+        lane, its debt and its open pull request onto the dispatcher (TP-703d's
+        predicted defect, reproduced at its review). A release counts only
+        from a machine with an earlier claim on that lane; a lane only ever
+        released is nobody's. Dies to: the latest message taken whoever sent it."""
+        mail = board.mail
+        t = datetime(2026, 10, 9, 20, 0, 0, tzinfo=timezone.utc)
+        claim = mail.new_message("win", "claim", "", lane="lane/x", now=t)
+        shipped = mail.new_message("win", "release", "", lane="lane/x", now=t.replace(minute=5))
+        closed = mail.new_message("air", "release", "", lane="lane/x", now=t.replace(minute=9))
+        stray = mail.new_message("air", "release", "", lane="lane/y", now=t.replace(minute=9))
+        assert mail.lane_seats({"win": [claim, shipped], "air": [closed, stray]}) == {"lane/x": "win"}
+        taken = mail.new_message("air", "claim", "", lane="lane/x", now=t.replace(minute=20))
+        assert mail.lane_seats({"win": [claim, shipped], "air": [closed, taken]}) == {"lane/x": "air"}
 
 
 class TestOpenPullRequests:
@@ -338,6 +369,125 @@ class TestPostMergeVerdict:
         assert "main:     no post-merge proof here (post-merge.yml is not in this repository)" in text
 
 
+_POST_MERGE_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "post_merge"
+
+
+def _merged_rollups() -> list[dict]:
+    """The frozen #312/#313 rollups: the Windows leg red on #313 and green on
+    #312 from a run that finished after #313 merged; the macOS leg red on both."""
+    return [json.loads((_POST_MERGE_FIXTURES / f"pr{n}.json").read_text(encoding="utf-8")) for n in (313, 312)]
+
+
+def _with_leg(pr: dict, name: str, **fields) -> dict:
+    out = json.loads(json.dumps(pr))
+    for row in out["statusCheckRollup"]:
+        if row.get("name") == name:
+            row.update(fields)
+    return out
+
+
+class TestChecksLine:
+    """The board's `checks:` line: each check whose owned verdict over the last
+    RUN_WINDOW merged pull requests is red, with the merge it went red on, the
+    leg's finish and what stands beside it, read through tools/cc/_post_merge.py
+    (the rule the banner and the ship preflight read too). The Windows red of
+    2026-10-18 sat unread for six hours because no board line carried it."""
+
+    def test_the_line_names_the_red_with_its_merge_and_the_green_on(self, board, monkeypatch, tmp_path):
+        """Dies to: the merged listing not read, the since clause or the green-on
+        clause dropped, or the macOS red given a false origin."""
+        _stub_channel(monkeypatch, board)
+        run = _gh({"pr list": [], "pr list merged": _merged_rollups(), "run list": _GREEN_RUNS})
+        collected = board.collect(tmp_path, run_=run)
+        text = board.render(collected)
+        assert ("checks:   new: portability (windows-latest): red since #313 (merged 2026-10-18 13:26Z, "
+                "the leg finished 13:57Z), green on #312") in text   # new: on this checkout's first read
+        assert "          portability (macos-latest): red since #312 or earlier (the oldest merge read)" in text
+        assert collected["post_merge_checks"]["window"] == 2 and collected["post_merge_checks"]["logged"] == 1
+        reads = [c for c in run.calls if c[1:3] == ["pr", "list"]]
+        rollups = [c for c in reads if "merged" in c and "statusCheckRollup" in c[c.index("--json") + 1]]
+        assert len(reads) == 3 and len(rollups) == 1, "one rollup read for this line beside the records line's lane read and the open one"
+
+    def test_a_cancelled_latest_run_is_no_verdict_beside_the_red_never_green(self, board, monkeypatch, tmp_path):
+        """Dies to: a cancelled run read as a verdict, or not named."""
+        _stub_channel(monkeypatch, board)
+        rows = _merged_rollups()
+        newer = _with_leg(rows[0], "portability (windows-latest)", conclusion="CANCELLED",
+                          startedAt="2026-10-18T14:30:00Z", completedAt="2026-10-18T14:31:00Z")
+        newer.update(number=320, mergedAt="2026-10-18T15:00:00Z")
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": [newer, *rows],
+                                                              "run list": _GREEN_RUNS})))
+        assert "portability (windows-latest): red since #313" in text and "#320 no verdict (cancelled)" in text
+
+    def test_all_green_says_none_red(self, board, monkeypatch, tmp_path):
+        _stub_channel(monkeypatch, board)
+        rows = [_with_leg(_with_leg(pr, "portability (windows-latest)", conclusion="SUCCESS"),
+                          "portability (macos-latest)", conclusion="SUCCESS") for pr in _merged_rollups()]
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": rows,
+                                                              "run list": _GREEN_RUNS})))
+        assert "checks:   none red among the last 2 merges" in text
+
+    def test_a_first_mention_is_logged_once_and_a_failed_append_is_a_note(self, board, monkeypatch, tmp_path):
+        """The roadmap's red-to-first-mention figure is derived from this log.
+        Dies to: a transition logged on every read, or a failed append taking
+        the line down."""
+        _stub_channel(monkeypatch, board)
+        answers = {"pr list": [], "pr list merged": _merged_rollups(), "run list": _GREEN_RUNS}
+        board.collect(tmp_path, run_=_gh(answers))
+        log = tmp_path / board.CHECKS_LOG
+        first = log.read_text(encoding="utf-8").splitlines()
+        assert len(first) == 1 and json.loads(first[0])["since_pr"] == 313   # the macOS red predates the window
+        second = board.collect(tmp_path, run_=_gh(answers))
+        assert log.read_text(encoding="utf-8").splitlines() == first and second["post_merge_checks"]["logged"] == 0
+        log.unlink()
+        log.mkdir()   # a path that cannot be appended to
+        text = board.render(board.collect(tmp_path, run_=_gh(answers)))
+        assert "checks:   portability (windows-latest): red since #313" in text
+        assert "the transitions log could not be written" in text
+
+    def test_a_red_older_than_the_window_is_never_a_first_mention(self, board, monkeypatch, tmp_path):
+        """The window slides with every merge: a persistent red would otherwise
+        log a false first mention per merge. Dies to: the origin-unknown red
+        logged, or logged again when the window moves."""
+        _stub_channel(monkeypatch, board)
+        rows = _merged_rollups()
+        board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": rows, "run list": _GREEN_RUNS}))
+        log = tmp_path / board.CHECKS_LOG
+        first = log.read_text(encoding="utf-8").splitlines()
+        assert len(first) == 1 and json.loads(first[0])["check"] == "portability (windows-latest)"
+        newer = _with_leg(rows[0], "portability (windows-latest)", conclusion="FAILURE",
+                          startedAt="2026-10-18T14:30:00Z", completedAt="2026-10-18T15:00:00Z")
+        newer.update(number=320, mergedAt="2026-10-18T15:00:00Z")
+        slid = board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": [newer, rows[0]], "run list": _GREEN_RUNS}))
+        assert log.read_text(encoding="utf-8").splitlines() == first and slid["post_merge_checks"]["logged"] == 0
+
+    def test_a_first_mention_is_marked_new_on_that_read_only(self, board, monkeypatch, tmp_path):
+        _stub_channel(monkeypatch, board)
+        answers = {"pr list": [], "pr list merged": _merged_rollups(), "run list": _GREEN_RUNS}
+        first = board.render(board.collect(tmp_path, run_=_gh(answers)))
+        assert "checks:   new: portability (windows-latest): red since #313" in first
+        second = board.render(board.collect(tmp_path, run_=_gh(answers)))
+        assert "checks:   portability (windows-latest): red since #313" in second and "new:" not in second
+
+    def test_a_check_with_no_verdict_on_any_merge_is_named_never_green(self, board, monkeypatch, tmp_path):
+        _stub_channel(monkeypatch, board)
+        rows = [_with_leg(_with_leg(pr, "portability (windows-latest)", conclusion="CANCELLED"),
+                          "portability (macos-latest)", conclusion="SUCCESS") for pr in _merged_rollups()]
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": rows,
+                                                              "run list": _GREEN_RUNS})))
+        assert "checks:   portability (windows-latest): no verdict on every merge read (cancelled)" in text
+        assert "none red" not in text
+
+    def test_an_unread_listing_costs_only_the_checks_line(self, board, monkeypatch, tmp_path):
+        """Dies to: the merged read's failure taking another section down."""
+        _stub_channel(monkeypatch, board)
+        run = _gh({"pr list": [], "pr list merged": board.Unresolvable("gh pr list answered rc=1 with no JSON: x"),
+                   "run list": _GREEN_RUNS})
+        text = board.render(board.collect(tmp_path, run_=run))
+        assert "checks:   unread (gh pr list answered rc=1 with no JSON: x)" in text
+        assert "open PRs: none" in text and "main:     post-merge proof green on aaaaaaa" in text
+
+
 class TestMailSections:
     def test_one_unreadable_section_costs_only_itself(self, board, monkeypatch, tmp_path):
         _stub_channel(monkeypatch, board)
@@ -372,7 +522,7 @@ class TestMailSections:
         self_made = mail.new_message("win-2", "assign", "", seat="win-2", lane="other", now=t)
         _stub_channel(monkeypatch, board, {"air": [job], "win-2": [self_made]})
         text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS})))
-        assert ("jobs:     (dispatcher air) win: TP-479 wave B, TP-479 (since 2026-10-09T20:00:00Z; "
+        assert ("jobs:     (dispatcher air) 1 live: win: TP-479 wave B, TP-479 (since 2026-10-09T20:00:00Z; "
                 f"assign {job['id']})") in text, "the release verb needs the assign id the board shows"
         assert "other" not in text, "only the dispatcher's assigns are jobs"
 
@@ -436,6 +586,30 @@ class TestAsks:
         assert lines[at].startswith(f"asks:     {board.ASKS_SHOWN + 3} open")
         assert lines[at + board.ASKS_SHOWN] == "          and 3 more"
 
+    def test_the_header_counts_the_operator_calls_apart(self, board, monkeypatch, tmp_path):
+        """TP-703d: the dispatcher's question to the operator rides the channel
+        as a request opening with the prefix, so every seat's board lists it
+        with an age; the header counts those apart. Dies to: the prefix read
+        on a note, or the count printed when no request carries it."""
+        mail = board.mail
+        calls = [mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} 703c on the Mac or the win box?",
+                                  now=_T0),
+                 mail.new_message("air", "request", f"  {mail.OPERATOR_CALL_PREFIX} a fifth seat?", now=_T0.replace(minute=1))]
+        plain = mail.new_message("win", "request", "which base?", lane="lane/a", now=_T0.replace(minute=2))
+        note = mail.new_message("win-2", "note", f"{mail.OPERATOR_CALL_PREFIX} not a request", now=_T0)
+        text = board.render(self._board(board, monkeypatch, tmp_path, {"air": calls, "win": [plain], "win-2": [note]}))
+        assert "asks:     3 open, 2 operator calls (requests no ack names, oldest first): " in text, text
+        rows = [ln for ln in text.splitlines() if calls[0]["id"] in ln or calls[1]["id"] in ln or plain["id"] in ln]
+        assert [ln.endswith(" (operator call)") for ln in rows] == [True, True, False], rows
+        text = board.render(self._board(board, monkeypatch, tmp_path, {"win": [plain]}))
+        assert "asks:     1 open (requests no ack names, oldest first): " in text, text
+        assert "operator call" not in text
+        # The count is over every open ask, not the rows shown: the call last.
+        many = [mail.new_message("win", "request", f"r{i}", now=_T0.replace(minute=i)) for i in range(board.ASKS_SHOWN)]
+        last = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} last", now=_T0.replace(minute=30))
+        text = board.render(self._board(board, monkeypatch, tmp_path, {"win": many, "air": [last]}))
+        assert f"asks:     {board.ASKS_SHOWN + 1} open, 1 operator call (requests" in text, text
+
     def test_none_open_and_unread_mail_read_differently(self, board, monkeypatch, tmp_path):
         """Dies to: an unread mail printed as "none open", which reads as an answer."""
         text = board.render(self._board(board, monkeypatch, tmp_path, {}))
@@ -443,6 +617,204 @@ class TestAsks:
         text = board.render(self._board(board, monkeypatch, tmp_path, {}, read_error="git for-each-ref failed"))
         assert "asks:     unread (the mail could not be read: git for-each-ref failed)" in text
         assert "none open" not in text
+
+
+class TestRecordsLine:
+    """TP-703d: each seat with a checkout here, a live claim, a job or a lane
+    merged in the window shows its lanes merged since its newest Session Log
+    row on the BASE or parked on its records ref (three seats merged 2 to 11
+    lanes a day with no row, 2026-10-16 to 10-17, and nothing said so). The
+    count is the loader's own (``lanes_since_row``), the one the ship driver's
+    row-debt read shares, over the one merged read's lane fields."""
+
+    # Noon UTC: the same local day in every zone a seat runs in.
+    _LANES = [{"number": 1, "headRefName": "lane/a", "mergedAt": "2026-10-19T12:00:00Z"},
+              {"number": 2, "headRefName": "lane/b", "mergedAt": "2026-10-18T12:00:00Z"},
+              {"number": 3, "headRefName": "lane/c", "mergedAt": "2026-10-20T12:00:00Z"},
+              {"number": 4, "headRefName": "lane/d", "mergedAt": "2026-10-20T12:00:00Z"}]
+    _NAMES = ["memory/session-log.d/2026-10-15-073941-win.md", "memory/session-log.d/2026-10-18-163553-win.md",
+              "memory/session-log.d/2026-10-19-053029-air.md"]
+
+    def _channel(self, board):
+        mail = board.mail
+        return {"win": [mail.new_message("win", "claim", "", lane="lane/a", paths=["a.py"], now=_T0),
+                        mail.new_message("win", "claim", "", lane="lane/b", paths=["b.py"], now=_T0),
+                        mail.new_message("win", "release", "", lane="lane/b", now=_T0.replace(minute=1))],
+                "win-2": [mail.new_message("win-2", "claim", "", lane="lane/c", paths=["c.py"], now=_T0)],
+                # air-work shipped lane/d (claimed, then released by its push) and
+                # holds nothing live; air only ever released lane/x and is quiet.
+                "air-work": [mail.new_message("air-work", "claim", "", lane="lane/d", paths=["d.py"], now=_T0),
+                             mail.new_message("air-work", "release", "", lane="lane/d", now=_T0.replace(minute=2))],
+                "air": [mail.new_message("air", "release", "", lane="lane/x", now=_T0),
+                        mail.new_message("air", "note", "quiet", now=_T0)]}
+
+    def _collect(self, board, monkeypatch, tmp_path, names=None, merged=None, **kw):
+        _stub_channel(monkeypatch, board, self._channel(board), **kw)
+        monkeypatch.setattr(board, "read_row_names", lambda root, base, **k: list(self._NAMES if names is None else names))
+        run = _gh({"pr list": [], "pr list merged": self._LANES if merged is None else merged, "run list": _GREEN_RUNS})
+        return board.collect(tmp_path, run_=run, now=_NOW), run
+
+    def test_each_present_busy_or_shipping_seat_shows_its_lanes_since_its_newest_row(self, board, monkeypatch, tmp_path):
+        """win and win-2 hold live claims; air-work holds nothing live but
+        shipped a lane in the window, the end-of-day seat that owes its row;
+        air is quiet with no checkout here and nothing merged, so it is not
+        listed; lane/u no claim names is counted apart, never as some seat's
+        zero. Dies to: a merge on the row's own day counted, a lane another
+        seat released counted as this seat's, the shipping seat dropped, or the
+        quiet seat listed."""
+        lanes = self._LANES + [{"number": 5, "headRefName": "lane/u", "mergedAt": "2026-10-20T12:00:00Z"}]
+        collected, _ = self._collect(board, monkeypatch, tmp_path, merged=lanes)
+        assert collected["records"]["entries"] == [
+            {"seat": "air-work", "merges": 1, "since": "", "parked": False, "cut": False},
+            {"seat": "win", "merges": 1, "since": "2026-10-18", "parked": False, "cut": False},
+            {"seat": "win-2", "merges": 1, "since": "", "parked": False, "cut": False}]
+        assert collected["records"]["unclaimed"] == 1 and collected["records"]["read"] == 5
+        text = board.render(collected)
+        assert "records:  3 seats: air-work: 1 merge, no row on origin/main" in text, text
+        assert "          win: 1 merge since its last row (2026-10-18)" in text, text
+        assert "          win-2: 1 merge, no row on origin/main" in text, text
+        assert "          and 1 of the last 5 merges no claim names" in text, text
+        lines = text.splitlines()
+        at = next(i for i, ln in enumerate(lines) if ln.startswith("records:"))
+        assert lines[at - 1].startswith("          ") or lines[at - 1].startswith("seats:")
+        assert lines[at + 4].startswith("jobs:"), "records: sits after seats: and before jobs:"
+
+    def test_the_mail_line_says_when_the_records_refs_fetch_failed(self, board, monkeypatch, tmp_path):
+        """The board fetched the mail and the base but never the records refs,
+        so a dispatcher's days-long session read parked rows as of its start
+        (failure-mode review). Dies to: the fetch dropped, or its failure read
+        as fresh refs."""
+        calls: list = []
+        _stub_channel(monkeypatch, board, self._channel(board))
+        monkeypatch.setattr(board, "read_row_names", lambda root, base, **k: list(self._NAMES))
+        monkeypatch.setattr(board.mail, "fetch_records",
+                            lambda root, run=None: calls.append(root) or (False, "could not reach origin"))
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": self._LANES,
+                                                     "run list": _GREEN_RUNS}), now=_NOW)
+        assert calls == [tmp_path]
+        text = board.render(collected)
+        assert ("mail:     the records refs' fetch failed (could not reach origin), so the parked rows are as last "
+                "fetched") in text, text
+        assert "records:  3 seats:" in text
+
+    def test_an_unnamed_clone_says_so_and_a_json_answer_that_is_no_list_reads_as_unread(self, board, monkeypatch,
+                                                                                        tmp_path):
+        """An adopter's unnamed clone printed "no seat has a checkout here",
+        which is false (failure-mode review); and a gh answer that is JSON but
+        not a list went through prs() as no merges and printed 0, where the
+        open-PR read refuses the same shape. Dies to: either read as a count."""
+        _stub_channel(monkeypatch, board, self._channel(board))
+        monkeypatch.setattr(board.mail, "machine_setting", lambda root, run=None: (None, "git config espalier.machine is not set"))
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
+        assert "records:  none (this clone names no machine, so no seat's rows are read)" in text, text
+        collected, _ = self._collect(board, monkeypatch, tmp_path, merged={"message": "rate limited"})
+        text = board.render(collected)
+        assert "records:  unread (gh pr list answered no list" in text, text
+        counted = [ln for ln in text.splitlines() if ln.startswith("records:") and any(f"{n} merge" in ln for n in range(10))]
+        assert not counted, text
+
+    def test_a_row_parked_on_the_seats_records_ref_is_its_newest_and_the_line_says_so(self, board, monkeypatch, tmp_path):
+        """The dispatcher's own 10-20 row sat parked on 10-23 while the base's
+        newest was 10-19: the seat wrote its row and is not in debt, and the
+        fold is owed. Dies to: the parked rows ignored, or the parked read's
+        failure printed as a count."""
+        seen: list = []
+
+        def pending(root, directory, against, **kw):
+            seen.append((directory, list(against)))
+            return [("win", "memory/session-log.d/2026-10-19-210000-win.md", "refs/remotes/origin/records/win")]
+
+        _stub_channel(monkeypatch, board, self._channel(board))
+        monkeypatch.setattr(board, "read_row_names", lambda root, base, **k: list(self._NAMES))
+        monkeypatch.setattr(board.mail, "pending", pending)
+        run = _gh({"pr list": [], "pr list merged": self._LANES, "run list": _GREEN_RUNS})
+        collected = board.collect(tmp_path, run_=run, now=_NOW)
+        assert seen == [("memory/session-log.d", ["origin/main"])]
+        win = next(e for e in collected["records"]["entries"] if e["seat"] == "win")
+        assert win == {"seat": "win", "merges": 0, "since": "2026-10-19", "parked": True, "cut": False}
+        assert "win: 0 merges since its last row (2026-10-19, parked until the next fold)" in board.render(collected)
+        monkeypatch.setattr(board.mail, "pending",
+                            lambda *a, **k: (_ for _ in ()).throw(board.Unresolvable("git for-each-ref failed")))
+        text = board.render(board.collect(tmp_path, run_=run, now=_NOW))
+        assert "records:  unread (git for-each-ref failed)" in text, text
+
+    def test_the_read_is_the_base_tree_through_the_lane_fields_in_the_shared_window(self, board, monkeypatch, tmp_path):
+        """Dies to: the names read from the working tree, the rollup fields
+        asked for a hundred rows, or a window of the board's own."""
+        seen: list[tuple] = []
+        _stub_channel(monkeypatch, board, self._channel(board))
+        monkeypatch.setattr(board, "read_row_names", lambda root, base, **k: seen.append((root, base)) or list(self._NAMES))
+        run = _gh({"pr list": [], "pr list merged": self._LANES, "run list": _GREEN_RUNS})
+        collected = board.collect(tmp_path, run_=run, now=_NOW)
+        assert seen == [(tmp_path, "main")]
+        reads = [c for c in run.calls if c[:3] == ["gh", "pr", "list"] and "merged" in c
+                 and "headRefName" in c[c.index("--json") + 1]]
+        assert len(reads) == 1 and reads[0][reads[0].index("--limit") + 1] == str(board.ROW_DEBT_WINDOW)
+        assert collected["records"]["window"] == board.ROW_DEBT_WINDOW >= 75
+
+    def test_no_present_or_busy_seat_reads_as_none_and_reads_nothing(self, board, monkeypatch, tmp_path):
+        mail = board.mail
+        quiet = {"air": [mail.new_message("air", "note", "quiet", now=_T0)]}
+        _stub_channel(monkeypatch, board, quiet)
+        monkeypatch.setattr(board, "read_row_names", lambda *a, **k: (_ for _ in ()).throw(AssertionError("read")))
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
+        assert "records:  none (no seat has a checkout here, a live claim, a job or a lane merged in the window)" in text, text
+
+    def test_an_unreadable_tree_or_merged_list_reads_as_unread_never_as_zero(self, board, monkeypatch, tmp_path):
+        """Dies to: a failed read printed as 0 merges, which reads as a clean seat."""
+        collected, _ = self._collect(board, monkeypatch, tmp_path,
+                                     merged=board.Unresolvable("gh pr list answered rc=4 with no JSON: not logged in"))
+        text = board.render(collected)
+        assert "records:  unread (gh pr list answered rc=4 with no JSON: not logged in)" in text, text
+        assert "0 merges" not in text
+        _stub_channel(monkeypatch, board, self._channel(board))
+        monkeypatch.setattr(board, "read_row_names",
+                            lambda *a, **k: (_ for _ in ()).throw(board.Unresolvable("git ls-tree origin/main failed")))
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": self._LANES,
+                                                              "run list": _GREEN_RUNS}), now=_NOW))
+        assert "records:  unread (git ls-tree origin/main failed)" in text, text
+        assert "post-merge proof green" in text, "one unreadable section costs only itself"
+
+    def test_unread_mail_reads_as_unread(self, board, monkeypatch, tmp_path):
+        collected, _ = self._collect(board, monkeypatch, tmp_path, read_error="git for-each-ref failed")
+        assert "records:  unread (the mail could not be read: git for-each-ref failed)" in board.render(collected)
+
+    def test_a_count_is_a_floor_when_the_read_stops_short_of_the_seats_newest_row(self, board, monkeypatch, tmp_path):
+        """The window is the last 100 merges across EVERY seat, so one seat
+        can reach 100 only if every merge read is its own; the first cut rule
+        compared a seat's count with the window and never fired (code review).
+        A count is a floor when the read is full and its oldest merge is still
+        newer than the seat's row (or the seat has none). Dies to: the flag
+        read from the count, or a seat with a row newer than the oldest merge
+        read marked as cut."""
+        w = board.ROW_DEBT_WINDOW
+        many = ([{"number": n, "headRefName": "lane/a", "mergedAt": "2026-10-20T12:00:00Z"} for n in range(60)]
+                + [{"number": 100 + n, "headRefName": "lane/d", "mergedAt": "2026-10-19T12:00:00Z"} for n in range(w - 60)])
+        names = ["memory/session-log.d/2026-10-10-073941-win.md", "memory/session-log.d/2026-10-20-053029-win-2.md"]
+        collected, _ = self._collect(board, monkeypatch, tmp_path, names=names, merged=many)
+        text = board.render(collected)
+        assert f"air-work: {w - 60}+ merges, no row on origin/main (the last {w} read)" in text, text
+        assert f"win: 60+ merges since its last row (2026-10-10; the last {w} read)" in text, text
+        assert "win-2: 0 merges since its last row (2026-10-20)" in text, text
+        assert [e["cut"] for e in collected["records"]["entries"]] == [True, True, False]
+        # Short of the window, nothing is a floor however many lanes a seat has.
+        collected, _ = self._collect(board, monkeypatch, tmp_path, names=names, merged=many[:w - 1])
+        assert not any(e["cut"] for e in collected["records"]["entries"])
+        assert "+ merges" not in board.render(collected)
+
+    def test_the_row_names_are_git_ls_tree_of_the_base_and_a_failure_is_named(self, board, tmp_path):
+        """Dies to: a working-tree listing, or a failed git read as no rows."""
+        calls: list[list[str]] = []
+
+        def run(argv, **kw):
+            calls.append(list(argv))
+            return (0, "memory/session-log.d/2026-10-18-163553-win.md\nmemory/session-log.d/x.md\n", "")
+
+        assert board.read_row_names(tmp_path, "main", run_=run) == ["memory/session-log.d/2026-10-18-163553-win.md",
+                                                                     "memory/session-log.d/x.md"]
+        assert calls == [["git", "ls-tree", "--name-only", "origin/main", "--", "memory/session-log.d/"]]
+        with pytest.raises(board.Unresolvable, match="ls-tree"):
+            board.read_row_names(tmp_path, "main", run_=lambda argv, **kw: (128, "", "fatal: not a tree"))
 
 
 def _registry(tmp_path: Path, *cwds: Path) -> Path:
@@ -786,7 +1158,7 @@ class TestSeats:
                                 "sessions": [{"pid": 7, "session_id": "abcdef0123"}]}], "unread": "", "checked": True}
         _stub_channel(monkeypatch, board, read_error="git for-each-ref failed", sessions=local)
         text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
-        assert "seats:    win: mail unread; 1 live session in the main checkout" in text, text
+        assert "seats:    1 seat: win: mail unread; 1 live session in the main checkout" in text, text
         assert "          other seats unread (the mail could not be read: git for-each-ref failed)" in text, text
 
     def test_outside_a_session_the_registry_read_says_it_is_unchecked(self, board, tmp_path):
@@ -815,7 +1187,7 @@ class TestSeats:
                                 "sessions": [{"pid": 7, "session_id": "abcdef0123"}]}], "unread": "", "checked": True}
         _stub_channel(monkeypatch, board, {"win": [note]}, sessions=local)
         text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
-        assert "seats:    win: last mail 6 h 25 min ago (note); 1 live session in the main checkout" in text, text
+        assert "seats:    1 seat: win: last mail 6 h 25 min ago (note); 1 live session in the main checkout" in text, text
         _stub_channel(monkeypatch, board, {"win": [note]}, sessions={"checkouts": [], "unread": "registry gone"})
         text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
         assert "          live sessions here unread: registry gone" in text, text
@@ -879,7 +1251,7 @@ class TestSeats:
         [row] = rows
         assert row["seat"] == "air-work" and len(row["sessions"]) == 2 and row["shared"] is True
         text = board.render({"seats": {"rows": rows, "unread": ""}})
-        assert "seats:    air-work: no mail; 2 live sessions in .claude/worktrees/work (pid " in text, text
+        assert "seats:    1 seat: air-work: no mail; 2 live sessions in .claude/worktrees/work (pid " in text, text
         assert "): TWO SESSIONS IN ONE CHECKOUT" in text, text
         single, _ = self._seats(board, main, work, _registry(tmp_path / "one", work))
         assert single[0]["shared"] is False and "TWO SESSIONS" not in board.render({"seats": {"rows": single}})
@@ -947,7 +1319,7 @@ class TestSeats:
         key an older reader keys on is gone."""
         _stub_channel(monkeypatch, board)
         collected = board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW)
-        assert {"asks", "seats", "open_prs", "post_merge", "assignments", "claims"} <= set(collected)
+        assert {"asks", "seats", "open_prs", "post_merge", "post_merge_checks", "assignments", "claims"} <= set(collected)
         json.dumps(collected)
 
 
@@ -1061,7 +1433,7 @@ class TestOverlapsSection:
                   _claim("air-work", "lane/y", ["a.py"], ["a.py::f", "a.py::g"])]
         got = board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set()))
         assert board.overlap_lines(got) == [
-            "overlaps: win (lane/x, DEF-1) and air-work (lane/y) meet at a.py::f"]
+            "overlaps: 1 pair: win (lane/x, DEF-1) and air-work (lane/y) meet at a.py::f"]
 
     def test_the_same_file_in_different_functions_prints_the_certificate(self, board, tmp_path, by_head):
         """Dies to: the certificate inverted (two lanes in different functions
@@ -1070,7 +1442,7 @@ class TestOverlapsSection:
                   _claim("air-work", "lane/y", ["a.py"], ["a.py::g"])]
         got = board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set()))
         assert board.overlap_lines(got) == [
-            "overlaps: win (lane/x) and air-work (lane/y) both changed a.py: different functions, "
+            "overlaps: 1 pair: win (lane/x) and air-work (lane/y) both changed a.py: different functions, "
             "none shared or next to the other's"]
         # Every pair carries the sides it declines on, none here: the --json shape never drops a key.
         assert got["pairs"][0]["unplaced_labels"] == [] and got["pairs"][0]["unplaced_on"] == []
@@ -1085,7 +1457,7 @@ class TestOverlapsSection:
         name every changed line reads as different functions)."""
         claims = [_claim("win", "lane/x", ["a.py"], ["a.py::f"]), other]
         lines = board.overlap_lines(board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set())))
-        assert lines == ["overlaps: win (lane/x) and air-work (lane/y) both changed a.py: "
+        assert lines == ["overlaps: 1 pair: win (lane/x) and air-work (lane/y) both changed a.py: "
                          "unplaced lines on air-work's side"], lines
 
     def test_an_open_pull_requests_symbols_come_from_its_head_not_its_claim(self, board, tmp_path, by_head):
@@ -1096,7 +1468,7 @@ class TestOverlapsSection:
                   _claim("air-work", "lane/y", ["a.py"], ["a.py::g"])]
         got = board.read_overlaps_section(tmp_path, "main", claims, [_pr(7, "win", "lane/x", H1)],
                                           run_=_heads({H1}))
-        assert board.overlap_lines(got) == ["overlaps: air-work (lane/y) and #7 win (lane/x) meet at a.py::g"]
+        assert board.overlap_lines(got) == ["overlaps: 1 pair: air-work (lane/y) and #7 win (lane/x) meet at a.py::g"]
 
     def test_a_head_not_here_prints_the_not_read_state(self, board, tmp_path, by_head):
         """Dies to: an unread head given a function verdict (its paths are
@@ -1105,8 +1477,8 @@ class TestOverlapsSection:
         got = board.read_overlaps_section(tmp_path, "main", claims, [_pr(7, "win", "lane/x", H1)],
                                           run_=_heads(set()))
         lines = board.overlap_lines(got)
-        assert lines[0] == ("overlaps: air-work (lane/y) and #7 win (lane/x) both changed a.py "
-                            "(symbols not read for #7: head not here)"), lines
+        assert lines[0] == ("overlaps: 1 pair among what was read: air-work (lane/y) and #7 win (lane/x) "
+                            "both changed a.py (symbols not read for #7: head not here)"), lines
         assert not any("different functions" in ln or " meet at " in ln for ln in lines)
 
     def test_two_pull_requests_with_no_claim_between_them_are_compared(self, board, tmp_path, by_head):
@@ -1114,7 +1486,7 @@ class TestOverlapsSection:
         by_head.update({H1: _placed("a.py", "f"), H2: _placed("a.py", "f")})
         prs = [_pr(7, "win", "lane/x", H1), _pr(8, "air-work", "lane/y", H2)]
         got = board.read_overlaps_section(tmp_path, "main", [], prs, run_=_heads({H1, H2}))
-        assert board.overlap_lines(got) == ["overlaps: #7 win (lane/x) and #8 air-work (lane/y) meet at a.py::f"]
+        assert board.overlap_lines(got) == ["overlaps: 1 pair: #7 win (lane/x) and #8 air-work (lane/y) meet at a.py::f"]
 
     def test_a_seat_never_meets_itself(self, board, tmp_path, by_head):
         """Dies to: the same-seat skip removed (a seat's two lanes, or its claim
@@ -1132,13 +1504,13 @@ class TestOverlapsSection:
                   _claim("air-work", "lane/y", ["tools/cc/x.py"], ["tools/cc/x.py::k"])]
         got = board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set()))
         assert board.overlap_lines(got) == [
-            "overlaps: win (lane/x) and air-work (lane/y) meet at tools/cc/x.py::k"]
+            "overlaps: 1 pair: win (lane/x) and air-work (lane/y) meet at tools/cc/x.py::k"]
 
     def test_prose_is_a_path_tier(self, board, tmp_path, by_head):
         claims = [_claim("win", "lane/x", ["docs/a.md"]), _claim("air-work", "lane/y", ["docs/a.md"])]
         got = board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set()))
         assert board.overlap_lines(got) == [
-            "overlaps: win (lane/x) and air-work (lane/y) both changed docs/a.md "
+            "overlaps: 1 pair: win (lane/x) and air-work (lane/y) both changed docs/a.md "
             "(no symbols: not Python, or a folder claimed whole)"]
 
     def test_a_directory_claim_covers_the_files_under_it(self, board, tmp_path, by_head):
@@ -1148,7 +1520,7 @@ class TestOverlapsSection:
                                                                 ["tools/cc/x.py::k"])]
         got = board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set()))
         assert board.overlap_lines(got) == [
-            "overlaps: win (lane/x) and air-work (lane/y) both changed tools/cc/x.py: unplaced lines on win's side"]
+            "overlaps: 1 pair: win (lane/x) and air-work (lane/y) both changed tools/cc/x.py: unplaced lines on win's side"]
 
     def test_the_missing_heads_are_fetched_in_one_bounded_call(self, board, tmp_path, by_head):
         """Dies to: a fetch per head, an unbounded one, or one for a head
@@ -1197,11 +1569,28 @@ class TestOverlapsSection:
         monkeypatch.setattr(board.mail, "lane_seats", lambda by_machine: {"lane/w": "win-2"})
         monkeypatch.setattr(board, "read_open_prs", lambda root, run_=None: [dict(p) for p in listed])
         lines = board.lane_overlap_lines(tmp_path, "main", "lane/x", 7, H1, run_=_heads({H1, H3}))
-        assert lines == ["overlaps: win (lane/y) and #7 air-work (lane/x) meet at a.py::f",
+        assert lines == ["overlaps: 1 pair: win (lane/y) and #7 air-work (lane/x) meet at a.py::f",
                          "          the rule stands: the second of these to merge runs the ship driver's catch-up"], lines
         by_head[H1] = _placed("d.py", "k")
         lines = board.lane_overlap_lines(tmp_path, "main", "lane/x", 7, H1, run_=_heads({H1, H3}))
         assert lines == ["overlaps: none"], lines
+
+    def test_a_lane_notice_over_a_capped_pull_request_list_is_among_what_was_read(
+            self, board, monkeypatch, tmp_path, by_head):
+        """The notice reads the open pull requests to the list's limit too, so at
+        the limit its none is among what was read, as the board's is. Dies to:
+        the notice's none over a cut list printed as the whole."""
+        by_head.update({H1: _placed("a.py", "f")})
+        listed = [_pr(n, "win", f"lane/{n}", "0" * 40, paths=(f"z{n}.py",)) for n in range(board.OPEN_PR_LIMIT)]
+        monkeypatch.setattr(board.mail, "machine_setting", lambda root, run=None: ("air-work", "stubbed"))
+        monkeypatch.setattr(board.mail, "fetch_mail", lambda root, run=None: (True, ""))
+        monkeypatch.setattr(board.mail, "read_mail", lambda root, run=None: ({}, {}))
+        monkeypatch.setattr(board.mail, "live_claims", lambda by_machine: [])
+        monkeypatch.setattr(board.mail, "lane_seats", lambda by_machine: {})
+        monkeypatch.setattr(board, "read_open_prs", lambda root, run_=None: [dict(p) for p in listed])
+        lines = board.lane_overlap_lines(tmp_path, "main", "lane/x", 7, H1, run_=_heads({H1}))
+        assert lines[0] == "overlaps: none among what was read", lines
+        assert any(board.OPEN_PR_CUT_NOTE in ln for ln in lines), lines
 
     def test_a_lane_notice_names_a_claim_of_another_rule_beside_its_own_pairs_only(
             self, board, monkeypatch, tmp_path, by_head):
@@ -1215,7 +1604,7 @@ class TestOverlapsSection:
         self._notice_channel(board, monkeypatch, claims, [_pr(5, "air-work", "lane/x", "0" * 40)])
         lines = board.lane_overlap_lines(tmp_path, "main", "lane/x", 7, H1, run_=_heads({H1}))
         assert lines == [
-            "overlaps: win (lane/y) and #7 air-work (lane/x) both changed a.py: unplaced lines on win's side",
+            "overlaps: 1 pair: win (lane/y) and #7 air-work (lane/x) both changed a.py: unplaced lines on win's side",
             "          win (lane/y): claim c-win-lane/y was placed by another copy of tools/cc/_symbols.py and "
             "reads whole (its files as unplaced lines) until both checkouts hold the same copy (the older lane "
             "merges main, or ships) and its seat claims again",
@@ -1245,7 +1634,7 @@ class TestOverlapsSection:
         listed = [_pr(8, "win-2", "lane/w", H2), _pr(9, "air", "lane/z", H3, paths=("c.py",))]
         self._notice_channel(board, monkeypatch, [], listed)
         lines = board.lane_overlap_lines(tmp_path, "main", "lane/x", 7, H1, run_=_heads({H1, H2, H3}))
-        assert lines[0] == "overlaps: #7 air-work (lane/x) and #8 win-2 (lane/w) meet at a.py::f", lines
+        assert lines[0] == "overlaps: 1 pair: #7 air-work (lane/x) and #8 win-2 (lane/w) meet at a.py::f", lines
         assert sorted(reads) == [H1, H2], reads
 
     def test_a_lane_notice_reads_a_pull_request_at_githubs_file_cap(self, board, monkeypatch, tmp_path, by_head):
@@ -1255,7 +1644,7 @@ class TestOverlapsSection:
         capped = _pr(8, "win-2", "lane/w", H2, paths=tuple(f"f{i}.py" for i in range(board.GH_FILES_CAP)))
         self._notice_channel(board, monkeypatch, [], [capped])
         lines = board.lane_overlap_lines(tmp_path, "main", "lane/x", 7, H1, run_=_heads({H1, H2}))
-        assert lines[0] == "overlaps: #7 air-work (lane/x) and #8 win-2 (lane/w) meet at z.py::f", lines
+        assert lines[0] == "overlaps: 1 pair: #7 air-work (lane/x) and #8 win-2 (lane/w) meet at z.py::f", lines
 
     def test_a_pair_with_no_symbols_ranks_above_a_certificate(self, board, tmp_path, by_head):
         """Dies to: prose and whole-folder pairs sorted under the certificates (the pairs that
@@ -1294,7 +1683,7 @@ class TestOverlapsSection:
         claims = [_claim("win", "lane/x", [hand]), _claim("win", "lane/x", ["src/a.py"], ["src/a.py::f"]),
                   _claim("air-work", "lane/y", ["src/a.py"], ["src/a.py::g"])]
         lines = board.overlap_lines(board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set())))
-        assert lines == ["overlaps: win (lane/x) and air-work (lane/y) both changed src/a.py: "
+        assert lines == ["overlaps: 1 pair: win (lane/x) and air-work (lane/y) both changed src/a.py: "
                          "unplaced lines on win's side"], lines
 
     def test_a_shared_prose_file_is_kept_beside_the_certificate(self, board, tmp_path, by_head):
@@ -1303,7 +1692,7 @@ class TestOverlapsSection:
         claims = [_claim("win", "lane/x", ["a.py", "docs/x.md"], ["a.py::f"]),
                   _claim("air-work", "lane/y", ["a.py", "docs/x.md"], ["a.py::g"])]
         lines = board.overlap_lines(board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set())))
-        assert lines == ["overlaps: win (lane/x) and air-work (lane/y) both changed a.py: different functions, "
+        assert lines == ["overlaps: 1 pair: win (lane/x) and air-work (lane/y) both changed a.py: different functions, "
                          "none shared or next to the other's; also both changed docs/x.md "
                          "(no symbols: not Python, or a folder claimed whole)"], lines
 
@@ -1311,14 +1700,14 @@ class TestOverlapsSection:
         claims = [_claim("win", "lane/x", ["a.py"], ["a.py::<after:TestA.test_one>", "a.py::TestA.test_a"]),
                   _claim("air-work", "lane/y", ["a.py"], ["a.py::<after:TestA.test_one>", "a.py::TestA.test_b"])]
         lines = board.overlap_lines(board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set())))
-        assert lines == ["overlaps: win (lane/x) and air-work (lane/y) meet at the blank lines after "
+        assert lines == ["overlaps: 1 pair: win (lane/x) and air-work (lane/y) meet at the blank lines after "
                          "a.py::TestA.test_one"], lines
 
     def test_a_meeting_at_the_end_of_a_file_is_said_in_words(self, board, tmp_path, by_head):
         claims = [_claim("win", "lane/x", ["a.py"], ["a.py::<end>", "a.py::h1"]),
                   _claim("air-work", "lane/y", ["a.py"], ["a.py::<end>", "a.py::h2"])]
         lines = board.overlap_lines(board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set())))
-        assert lines == ["overlaps: win (lane/x) and air-work (lane/y) meet at the end of a.py"], lines
+        assert lines == ["overlaps: 1 pair: win (lane/x) and air-work (lane/y) meet at the end of a.py"], lines
 
     def test_a_pull_request_read_from_nothing_is_a_note_never_silence(self, board, tmp_path, by_head):
         """Dies to: an unread side with no file listed dropped (no pair forms,
@@ -1365,7 +1754,7 @@ class TestOverlapsSection:
         claims = [_claim("air-work", "lane/x", ["a.py"], ["a.py::f"]), _claim("air", "lane/q", ["a.py"], ["a.py::f"])]
         got = board.read_overlaps_section(tmp_path, "main", claims, [_pr(7, "win", "lane/x", H1, paths=("b.py",))],
                                           run_=_heads({H1}))
-        assert "overlaps: air-work (lane/x) and air (lane/q) meet at a.py::f" in board.overlap_lines(got)
+        assert "overlaps: 1 pair: air-work (lane/x) and air (lane/q) meet at a.py::f" in board.overlap_lines(got)
 
     def test_a_head_not_here_at_githubs_file_cap_says_more_may_meet(self, board, tmp_path, by_head):
         paths = tuple(f"f{i}.py" for i in range(board.GH_FILES_CAP))
@@ -1379,7 +1768,7 @@ class TestOverlapsSection:
         claims = [_claim(f"s{i}", f"lane/{i}", ["docs/x.md"]) for i in range(board.OVERLAPS_SHOWN)]
         claims += [_claim("win", "lane/x", ["a.py"], ["a.py::f"]), _claim("air-work", "lane/y", ["a.py"], ["a.py::f"])]
         got = board.read_overlaps_section(tmp_path, "main", claims, [], run_=_heads(set()), seat="win")
-        assert board.overlap_lines(got)[0] == "overlaps: win (lane/x) and air-work (lane/y) meet at a.py::f"
+        assert board.overlap_lines(got)[0] == "overlaps: 67 pairs: win (lane/x) and air-work (lane/y) meet at a.py::f"
 
     def test_a_pull_request_no_claim_names_is_labelled_so(self, board, tmp_path, by_head):
         """Dies to: an unattributed pull request labelled as nobody's (its own
@@ -1388,7 +1777,7 @@ class TestOverlapsSection:
         got = board.read_overlaps_section(tmp_path, "main", [_claim("win", "lane/y", ["a.py"], ["a.py::f"])],
                                           [_pr(7, "", "lane/x", H1)], run_=_heads({H1}))
         assert board.overlap_lines(got) == [
-            "overlaps: win (lane/y) and #7 (lane/x; no seat's claim names it) meet at a.py::f"]
+            "overlaps: 1 pair: win (lane/y) and #7 (lane/x; no seat's claim names it) meet at a.py::f"]
 
     def test_every_verdict_the_mapper_gives_has_its_words_and_its_place(self, board):
         """Dies to: a new verdict worded as prose (a fallback 'not Python' over a
@@ -1485,7 +1874,7 @@ class TestOverlapsSection:
         claims = [_claim("air-work", "lane/y", ["a.py"], ["a.py::g"])]
         lines = board.overlap_lines(board.read_overlaps_section(
             tmp_path, "main", claims, [_pr(7, "win", "lane/x", H1)], run_=_heads({H1})))
-        assert lines == ["overlaps: air-work (lane/y) and #7 win (lane/x) both changed a.py: "
+        assert lines == ["overlaps: 1 pair: air-work (lane/y) and #7 win (lane/x) both changed a.py: "
                          "unplaced lines on #7's side"], lines
 
     def test_the_section_reaches_the_board(self, board, monkeypatch, tmp_path):
@@ -1496,7 +1885,7 @@ class TestOverlapsSection:
         monkeypatch.setattr(board, "read_overlaps_section", lambda *a, **k: section)
         collected = board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW)
         json.dumps(collected)
-        assert "overlaps: win (lane/x) and air-work (lane/y) meet at a.py::f" in board.render(collected).splitlines()
+        assert "overlaps: 1 pair: win (lane/x) and air-work (lane/y) meet at a.py::f" in board.render(collected).splitlines()
 
 
 class TestTheReadingsAreTheProtocols:
@@ -1524,3 +1913,97 @@ class TestTheReadingsAreTheProtocols:
             assert not [w for w in self.WORDS.values() if f"`{w}" not in text], doc
         protocol = (REPO_ROOT / "memory" / "parallel-work-protocol.md").read_text(encoding="utf-8")
         assert "`different functions` is the certificate" in protocol
+
+
+class TestSectionCounts:
+    """Every list section's first line names its count, so a reader that keeps
+    only the header line still sees how many there are (on 2026-10-18 a line
+    filter cut ``jobs:`` from six rows to two, and the under-read looked like a
+    board defect). Each count is the length of the list the section renders,
+    computed where it renders and never stored on the board."""
+
+    @staticmethod
+    def _board(**kw) -> dict:
+        year = 365 * 86400  # past any quiet threshold the board folds at
+        built = {
+            "read_at": "2026-10-20T00:00:00Z", "dispatcher": {"name": "air"},
+            "open_prs": [{"number": 1, "headRefName": "lane/a", "seat": "win"},
+                         {"number": 2, "headRefName": "lane/b", "seat": "win-2"}],
+            "seats": {"rows": [{"name": "win", "last_mail": {"age_s": 60}},
+                               {"name": "win-2", "last_mail": {"age_s": 60}},
+                               {"name": "gone", "last_mail": {"age_s": year}}]},
+            "assignments": [{"id": "a1", "at": "t0", "re": {"seat": "win", "lane": "lane/a"}},
+                            {"id": "a2", "at": "t0", "re": {"seat": "win-2", "ids": ["DEF-1"]}}],
+            "claims": [{"from": "win", "at": "t0", "re": {"lane": "lane/a", "paths": ["a.py"]}},
+                       {"from": "win-2", "at": "t0", "re": {"lane": "lane/b", "paths": ["b.py"]}}],
+            "records": {"window": 100, "unread": "", "read": 40, "unclaimed": 0,
+                        "entries": [{"seat": "win", "merges": 3, "since": "2026-10-18", "parked": False, "cut": False},
+                                    {"seat": "win-2", "merges": 0, "since": "2026-10-20", "parked": True, "cut": False}]},
+            "overlaps": {"pairs": [
+                {"a": "win (lane/a)", "b": "win-2 (lane/b)", "files": ["a.py"], "verdict": "path only"},
+                {"a": "win (lane/a)", "b": "air (lane/c)", "files": ["c.py"], "verdict": "path only"}]},
+            # A stale stored count a renderer must never read.
+            "jobs_count": 6, "claims_count": 6, "seats_count": 6,
+        }
+        built.update(kw)
+        return built
+
+    def test_every_list_header_names_the_length_of_its_list(self, board):
+        """Dies to: a count read from a stored field, or a seat count that
+        leaves the folded quiet seat out."""
+        text = board.render(self._board())
+        assert "open PRs: 2 open: #1 lane/a [win]" in text, text
+        assert "seats:    3 seats: " in text, text
+        assert "and 1 seat with no mail in" in text, text
+        assert "jobs:     (dispatcher air) 2 live: win: " in text, text
+        assert "claims:   2 live: win: lane/a" in text, text
+        assert "records:  2 seats: win: 3 merges since its last row (2026-10-18)" in text, text
+        assert "overlaps: 2 pairs: win (lane/a) and win-2 (lane/b) both changed a.py" in text, text
+
+    def test_an_empty_section_keeps_its_none_form(self, board):
+        """Dies to: a count printed on a section with nothing in it."""
+        text = board.render(self._board(open_prs=[], assignments=[], claims=[], overlaps={"pairs": []},
+                                        seats={"rows": []}, records={"window": 100, "unread": "", "entries": []}))
+        for line in ("open PRs: none", "jobs:     (dispatcher air) no live assignments", "claims:   none live",
+                     "overlaps: none", "seats:    none: no machine has mail", "records:  none (no seat has"):
+            assert line in text, (line, text)
+
+    def test_the_jobs_count_is_the_length_of_the_assignments_list(self, board, monkeypatch, tmp_path, capsys):
+        """The re-measure's pin: ``jobs: N live`` equals the length of the list
+        ``mail.py assignments --json`` prints over the same refs. Dies to: a
+        filter or a dispatcher read in the board that the verb lacks, or in the
+        verb that the board lacks."""
+        mail = board.mail
+        t = datetime(2026, 10, 9, 20, 0, 0, tzinfo=timezone.utc)
+        jobs = [mail.new_message("air", "assign", "", seat="win", lane=f"lane/{n}", now=t) for n in "abc"]
+        self_made = mail.new_message("win-2", "assign", "", seat="win-2", lane="lane/self", now=t)
+        _stub_channel(monkeypatch, board, {"air": jobs, "win-2": [self_made]})
+        assert mail.main(["--root", str(tmp_path), "assignments", "--json", "--no-fetch"]) == 0
+        verb = json.loads(capsys.readouterr().out)
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}))
+        assert len(verb) == len(collected["assignments"]) == 3
+        assert f"jobs:     (dispatcher air) {len(verb)} live: " in board.render(collected)
+
+    def test_a_partial_or_capped_read_says_so_beside_its_count(self, board):
+        """A count over a list the read may have cut reads as the whole. Dies
+        to: ``overlaps: 1 pair`` on a partial read, or ``open PRs: 30 open`` at
+        the read's limit."""
+        partial = board.overlap_lines({"partial": True, "pairs": [
+            {"a": "win (lane/a)", "b": "win-2 (lane/b)", "files": ["a.py"], "verdict": "path only"}]})
+        assert partial[0].startswith("overlaps: 1 pair among what was read: "), partial
+        capped = [{"number": n, "headRefName": f"lane/{n}", "seat": "win"} for n in range(board.OPEN_PR_LIMIT)]
+        text = board.render(self._board(open_prs=capped))
+        assert f"open PRs: {board.OPEN_PR_LIMIT}+ open (the first {board.OPEN_PR_LIMIT}): #0 " in text, text
+
+    def test_the_overlaps_of_a_capped_pull_request_list_are_among_what_was_read(self, board, monkeypatch, tmp_path):
+        """The overlaps are read over the open pull requests the list returned;
+        at the read's limit some may be cut, so the section is partial and says
+        why. Dies to: the overlaps of a cut list counted as the whole."""
+        _stub_channel(monkeypatch, board, {})
+        monkeypatch.setattr(board, "read_overlaps_section", lambda *a, **kw: {"pairs": [], "notes": [], "partial": False})
+        monkeypatch.setattr(board, "read_stale_section", lambda *a, **kw: None)
+        for n, partial in ((board.OPEN_PR_LIMIT - 1, False), (board.OPEN_PR_LIMIT, True)):
+            prs = [{"number": i, "headRefName": f"lane/{i}", "headRefOid": "", "files": []} for i in range(n)]
+            collected = board.collect(tmp_path, fetch=False, run_=_gh({"pr list": prs, "run list": _GREEN_RUNS}))
+            assert collected["overlaps"]["partial"] is partial, (n, collected["overlaps"])
+            assert any(f"the first {board.OPEN_PR_LIMIT}" in note for note in collected["overlaps"]["notes"]) is partial

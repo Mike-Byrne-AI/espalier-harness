@@ -17,7 +17,9 @@ End the session cleanly and leave the next Claude Code session with usable conti
 > record, the goal and the archive it writes are the main checkout's. Carry this
 > worktree's `cc/_working_summary.md` notes and the goal changes into the main
 > checkout's own handoff, which files them under its session; a worktree session's
-> archive leg, blueprint and record snapshot are not filed from here.
+> archive leg, blueprint and record snapshot are not filed from here. Step 8's
+> push (`ship.py handoff`) does run from the worktree: it pushes this worktree's
+> branch, so a lane built here is not left unpushed because 6.2 onward refused.
 >
 > That is about **your code**. `/handoff` then writes tracked files of its own
 > (the session row always, under `memory/session-log.d/` or in ESPALIER_MEMORY.md; the target step 1b prints, on a step-1b
@@ -151,6 +153,21 @@ Update only durable repo operating knowledge:
   appear, so say the lane is committed locally)
 
 Keep the row compact: it is one line, and the digest shows its bold headline.
+
+<!-- espalier:self-host-only -->
+**On the dispatcher seat, derive the body first.** `python scripts/seat_day_census.py
+--seat "$(git config espalier.machine)" --date "$(date +%F)" --as-row` prints that date's
+figures from the mail refs and the merges. Pass the row's own local date (`date +%F`, never
+`date -u`): the census reads it as the UTC day 00:00Z to 24:00Z, so an evening handoff west
+of UTC names that window in the row. The figures are (assigns sent and the new jobs among them, the releases naming an assign, the
+worker requests answered, the jobs live at the day's end, lanes merged, rows, the counted
+words); add what the mail does not carry (the operator's words, each ruling as a
+sentence, a Lesson) and file it where `python tools/cc/_record_fragments.py new
+session-log` says (the seat is read from the clone, never typed: a typed name files the row
+under another seat and leaves the debt standing). The board's `records:` line shows every present or busy
+seat's lanes merged since its newest row; a seat whose count climbs owes this step, and
+the ship driver's `open --early` refuses past a cap once its second lane lands.
+<!-- /espalier:self-host-only -->
 
 ## 3. Finalize the cognitive blueprint
 
@@ -400,6 +417,17 @@ distinct from ESPALIER_MEMORY.md's durable knowledge and the session log's rows
 `_Updated: <date>_` line so staleness stays visible; keep it tight (it is
 byte-bounded in the banner) and honest — no "release-ready" without the evidence.
 
+<!-- espalier:self-host-only -->
+**What the file keeps on this repository, where several seats run (2026-10-23):** its
+four seeded sections, `## Notes to next session`, `## Still owed`, `## Goal` and
+`## Where we are / next gate`, the last in prose. It no longer carries lane names,
+pull-request numbers, queues or a state block that restates the board (`/inbox board`
+reads those live, and the records the seats write hold the history), nor the operator's
+open calls: those go out as `OPERATOR CALL:` requests on the mail channel, where every
+seat's board lists them with an age until the dispatcher's `ack`, naming the request's full
+id, carries the ruling.
+<!-- /espalier:self-host-only -->
+
 **Section ORDER is load-bearing — the perishable block first, the goal-proper last.**
 The banner bounds this file and cuts from the TOP, keeping whole trailing `## `
 sections (`session_start.py::_truncate_keeping_tail`). So the handoff notes belong
@@ -477,10 +505,11 @@ reasoning over this note, so write it to prime that first-thoughts read.
 
 **If the file is absent:**
 <!-- espalier:self-host-only -->
-on the Espalier source repo, skip this step and leave it absent. Its GOAL is the
-operator's own: `scripts/check_handoff_landing.py` reads the file's presence as the
-tell that a checkout is the operator's tree, and `scripts/handoff_mechanics.py`
-prints which case applies. On any other repo:
+on the Espalier source repo outside the operator's tree, skip this step and leave
+it absent: its GOAL is the operator's own. The operator's tree is the one carrying
+the gitignored marker `cc/OPERATOR_TREE` (`memory/local-codename-arm.md`), never the
+goal doc, and `scripts/handoff_mechanics.py` prints which case applies. On the
+operator's tree, and on any other repo:
 <!-- /espalier:self-host-only -->
 unless the repo has opted out, the tree predates the seed or the file
 was deleted: tell the operator you are recreating it and that `goal_snapshot = false`
@@ -664,7 +693,13 @@ python tools/cc/ship.py handoff
 Either way, say in the `Next:` line what happened -- the URL the driver
 printed, "committed locally, not pushed (handoff_push is off)", or the direct
 push -- so the next session knows whether its local default branch is behind a
-merge it did not see. Shipping here, after the row, is the order that costs one
+merge it did not see. And either way, once its step has landed, the verb's
+last act arms the own-clear marker for this session
+(`.espalier-state/own_clear.json`; the line it prints says so, or why not): in
+a window `seat.py launch` started, the own-clear mod clears the window at
+this turn's end and re-primes it from the seat brief, so after the handoff
+take no new job and end the turn; in any other window tell the operator it
+needs a `/clear`. Shipping here, after the row, is the order that costs one
 check cycle per lane: a lane shipped mid-session makes this commit a second push
 (the checks restart and the marker is re-bound), or its own pull request, which
 is why, where `handoff_push` is on, `open` refuses a lane that does not carry its

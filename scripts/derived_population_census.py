@@ -239,8 +239,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        29, "06cba0df6e83c1a64c08ec746a38929655c17a403d2f39de7aec193cef0d8c48",
+        33, "f89550597aa1ec80d5b90b19c0c18b5b41f49591268144946f8fbb3ef92790a9",
         "MIXED",
+        "GREW 29 -> 33 on 2026-10-18 (the engine-stdin lane, DEF-928): "
+        "TestAFailedFingerprintTakesTheSeedDocsWithIt reads `get_seed_docs()` to find the "
+        "seed docs a failed init left behind and the directories it made; the roster "
+        "itself is held literal-equal at tests/test_managed_inventory.py:286, so a member "
+        "dropped from it reds by name there while the rows here keep reading the rest. "
         "Lane 6 (DEF-806). Seven rows walk `PLAN_READERS`, the engine's hand-kept "
         "pair of plan-reading cc/ docs, asserting per member that a plan writer "
         "re-rendered it, named it, or failed on it by its own path: the 18.4 "
@@ -1159,7 +1164,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "excluded as a record that the canon does not call one reds too.",
     ),
     "tests/test_reflect_protocol.py": (
-        9, "8ebd372a763aa31ba5779edc71d23bb70ccf37824934346773fe2f524b3bbcbe",
+        11, "e10078278cfc6628b5bf138a056236f01ba14ecd914b66362c38e258bf906a2c",
         "CORRECT_BY_REMEDY",
         "GREW 1 -> 7 on 2026-09-08 (ledger §C12, the two /reflect halves aligned): "
         "the six new rows all walk the placeholder pattern twins, "
@@ -1186,7 +1191,15 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "(asserted EQUAL to a one-orphan literal) and the hook-twin leg of the "
         "still-checks-them pair (fed to `_assert_checked`, whose any() asserts need a "
         "broken link and a placeholder hit), so an emptied or narrowed population reds "
-        "instead of passing vacuously.",
+        "instead of passing vacuously. "
+        "GREW 9 -> 11 on 2026-10-24 (the record-surface aging lane): both new rows are "
+        "comprehensions over the hook twin's report `findings` in "
+        "TestARecordSurfacesBrokenLinkIsAgingNotAGap::test_the_hook_twin_counts_aging_apart_from_gaps, "
+        "one fed to `_assert_split` (whose asserts need exactly two aging rows and two "
+        "named link gaps) and one the `gap_count` consistency sum, so an emptied or "
+        "narrowed population reds; the same fixture drives the engine twin in the "
+        "sibling test, and tests/test_reflect_link_guards.py pins the three entrypoints "
+        "on a tree of its own.",
     ),
     "tests/test_reflect_reasoning.py": (
         1, "0c86c38855f10d0c1fa8fe84d4ac52af3f0332e0ffb13854c5165e04c61f8ad2",
@@ -1300,8 +1313,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension, for-assert
     "tests/test_session_banner.py": (
-        9, "4e26e0301abb93f0ce8cfb0a206e03c5886da9a483845423f55e762aa0374b38",
+        11, "8ca76a87fe387df12b7c8021b84fb5b9401a8f5ff54dc7b74fcf87d33fc15243",
         "MIXED_WITH_PRIOR_PASS",
+        "NEW 2026-10-26 (+2, the threshold-handoff lane): an all-any over "
+        "hu.SESSION_SIDE_SUFFIXES (no suffix ends in `.json`, else the marker readers' "
+        "glob names a session's own side file as a live sibling) and a comprehension "
+        "over the same roster in "
+        "test_a_side_file_is_never_a_session_and_is_swept_with_its_marker -- the "
+        "roster is the hooks' own constant, the property holds for everything "
+        "present, and the same test pins by name that HANDOFF_ASKED_SUFFIX is in it, "
+        "so a suffix dropped from the roster reds there: CORRECT. "
         "NEW 2026-10-18 (+1, the banner-fit lane): one comprehension over "
         "_run_line_names(mod._build_context) in _all_long -- each builder's per-run "
         "lines read from its own signature, every one handed a long value for the "
@@ -1554,6 +1575,19 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "adjudicated in the parametrize/for-assert pass; per-row reason not preserved",
     ),
     # 1 row(s), shapes: comprehension
+    # 1 row(s), shapes: comprehension
+    "tests/test_usage_tail.py": (
+        1, "d996c9b7943807354c0fc523d60990bc8a746c05490fcf7c3d04658170d71616",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-26 (the threshold-handoff lane): one comprehension over "
+        "mod.USAGE_KEYS in test_the_context_figure_uses_the_hook_reader_s_keys -- "
+        "the instrument's own key constant, less output_tokens, compared with "
+        "_hook_utils._USAGE_INPUT_KEYS, so the measure and the gate it measures "
+        "sum the same three counts. A key dropped from BOTH would pass here, but "
+        "the hook reader's own tests (TestReadContextFromTranscript) sum the three "
+        "by name and the instrument's arithmetic tests use hand-computed figures, "
+        "so the pair is pinned one file over on each side: CORRECT.",
+    ),
     "tests/test_vendor_cc_parity.py": (
         1, "662f1b34646e9793620d7fbc2e00e4eb69176fded889c9361304207e31435c61",
         "CORRECT_BY_PROPERTY",

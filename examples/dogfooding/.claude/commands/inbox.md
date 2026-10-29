@@ -125,15 +125,33 @@ python tools/cc/mail.py send --type assign --seat <seat> --id <pack id> --text "
 python tools/cc/mail.py send --type assign --seat <seat> --lane lane/<name> --text "<one wave of a pack>"
 ```
 
-Assign a whole pack by its id. To split a pack's waves across seats, name each
-wave by its lane alone: a pack id on two wave assigns would make each seat's
-plan warn about the other. A job closes when the dispatcher or the assigned
-seat releases it, by the assign's id or by its lane, and the ship driver's lane
-release at a push closes a job assigned by that lane:
+A job assigned by its ids closes at the first push of a lane whose claims name
+them all, so assign by id only work one lane finishes: a row, or a pack of one
+wave. A pack of several waves, or a row fixed across several lanes, is assigned
+wave by wave, each by its lane (or its id is re-sent after each lane ships). To
+split a pack's waves across seats, name each wave by its lane alone: a pack id
+on two wave assigns would make each seat's plan warn about the other. A job
+closes when the dispatcher or the assigned seat releases it, by the assign's id
+or by its lane, and the ship driver's lane release at a push closes a job
+assigned by that lane, or a job naming no lane whose every id the seat's own
+claims on that lane named, on a lane the seat began after the job was given
+(a lane begins at the seat's claim on it while it holds none there). A claim's
+ids name what a lane touches, so a lane whose claims were live when the job
+came does not close it; a push releases its lane's claims, so a claim on that
+lane after the push begins it again; and a re-send of a live job starts the
+job's clock again. Any other job is released by its id:
 
 ```bash
 python tools/cc/mail.py send --type release --ack <assign id>
 ```
+
+An assign carries the job, why now, what it waits for (the other seat's lane and the
+file both touch), the operator's constraints and any edge the dispatcher read with its
+citation, under 900 characters, and never the proof the seat's own tier run prints (the
+tier and the reviewers, where this repository's tier script computes them from the
+diff). The send prints a note, never a refusal, past 900 characters, and on Espalier's
+own source repository (where a tier script computes the tier and the reviewers from the
+diff) on such a phrase too, on `--dry-run` alike (`docs/WORKFLOW.md`, *Parallel seats*).
 
 ## Step 2c: Board
 
@@ -144,7 +162,13 @@ python tools/cc/board.py
 Read live state in the same turn before you state it: the SessionStart
 banner, a handoff note, the mail and a session's own context are snapshots,
 and with several seats (sessions, each in its own named worktree) pushing,
-they go stale within the hour. The board writes nothing into the tree; what it
+they go stale within the hour. The `open PRs:`, `seats:`, `records:`, `jobs:`,
+`asks:`, `claims:` and `overlaps:` sections name their count on their first line
+(`jobs:     (dispatcher air) 2 live: ...`), so a filter that keeps one line of
+them still shows how many rows each has. `checks:` carries no count (a line
+for each red check), so a filter that keeps its first line can cut it: read it
+whole. A count on a partial or capped
+read says so (`N pairs among what was read`, `30+ open (the first 30)`). The board writes nothing into the tree; what it
 moves is the mail fetch and the base branch's remote-tracking ref, and it
 fetches the open pull requests' heads by object id (objects only, no ref), all
 three skipped with `--no-fetch` (`--json` gives the same as data). Each section
@@ -163,6 +187,28 @@ is read on its own, and one that cannot be read says so on its own line:
   suspects otherwise, and lists the pull requests whose armed auto-merge would
   land on the red base.
   Revert first, diagnose second.
+- **checks:** each check whose owned verdict over the last 20 merged pull
+  requests is red, with the merge it went red on, the leg's finish and what
+  stands beside it (`portability (windows-latest): red since #313 (merged
+  2026-10-18 13:26Z, the leg finished 13:57Z), green on #312`), or `none red
+  among the last N merges`. A check name is owned by the newest merge whose
+  run of it reached a verdict; a newer green run clears an older red only
+  when it started after that merge landed, else it is printed beside the
+  red, never over it; a cancelled or stale latest run is `no verdict`, never
+  green; a red older than the window says `or earlier (the oldest merge
+  read)`. Pull-request runs only, so a red the merge combination itself makes
+  is the base line's above. These legs are not required checks: the board
+  prints, and never reverts over this line (the revert above is the base
+  line's alone). The same rule prints the ship preflight's `red after
+  merge:` lines; the banner's `Merged:` red clause reads the same module
+  with the per-pull-request rule its five rows carry (`tools/cc/_post_merge.py`,
+  the one home). The first time a red transition is printed from this
+  checkout, its entry carries `new:` and one line goes to the transitions log
+  in the harness's transient state folder (`board-checks.jsonl`: the check,
+  the merge, the red run's finish, the read time), so red-to-first-mention
+  is derived from a record; a red that has held since before the window is
+  never a first mention; a failed append is a note under the line, and the
+  section still renders.
 - **open PRs:** each with the seat whose latest claim or release names its
   branch, and what GitHub's merge state means: ready, blocked by a required
   check or review, in conflict with the base (its seat runs
@@ -201,12 +247,32 @@ is read on its own, and one that cannot be read says so on its own line:
   local sessions are unread, never that there are none, and nothing folds
   while any local reading is unread; run outside a session, it names every
   registry it read.
+- **records:** for each seat with a checkout here, a live claim or a job, its
+  lanes merged since its newest Session Log row on the base (`win: 9 merges
+  since its last row (2026-10-15)`; `no row on origin/main` where it has
+  none): the row a seat owes for the day's lanes, counted over the last 100
+  merges in the reading box's local day (a seat in another zone can differ by
+  a lane at the day's edge; a count the read stopped short of is a floor
+  and says `the last 100 read`), the same way the ship driver's row-debt
+  read counts it. A seat with a lane merged in the window is listed even
+  with nothing live (the end-of-day seat that owes its row), and lanes no
+  claim names are counted apart on a last line, never as a seat's zero.
+  An unnamed clone says so instead. The row goes through
+  `python tools/cc/_record_fragments.py new session-log`; where the handoff's
+  lane already merged, the row parks on the seat's records ref and the
+  landing check's cap note says how many are parked until a push folds them
+  in. A read that fails is `unread`, never `0 merges`.
 - **asks:** the requests no `ack` names, from every seat, oldest first, each
   as its full id, its sender, its lane and its age. Only an `ack` naming the
   full id answers a request (a note, a release or an assign that names one
-  does not), so a moot request is closed with an ack that says so. The
-  dispatcher seat also gets the count and the oldest age on the banner's
-  `Mail:` line.
+  does not), so a moot request is closed with an ack that says so. A request
+  whose text opens with `OPERATOR CALL:` is the dispatcher's question to the
+  operator (the question, the options, the recommendation); the header counts
+  those apart (`asks:     3 open, 2 operator calls ...`), and the ruling is
+  the dispatcher's `ack` naming the request's full id, with the ruling in its
+  text, so it lands on origin where every seat reads it; an ack from any
+  other seat leaves the call open, and the row says `(operator call)`. The dispatcher seat also gets the count and the oldest age on the
+  banner's `Mail:` line.
 - **jobs**, **claims** and the ledger's live row count, counted at the base
   branch's remote-tracking ref with the base's own ledger tools and naming the
   commit it read, so a checkout that stops moving still reads what the base
@@ -250,9 +316,10 @@ python tools/cc/mail.py send --type request --lane lane/<name> --text-file <file
 `--text-file` takes the body from a file, the whole of it as UTF-8 (CRLF read
 as LF), in place of `--text`, so a long or quote-heavy body never rides a
 shell string. Keep the file outside the checkout, where no `git add` picks it
-up. The cap is the same 2,000 characters; `--dry-run` prints the line it would
-send and, beside it, the body's count against the cap. An ack names the full
-id of what it answers; a lane is closed by a release, never an ack.
+up. The cap is `MAX_TEXT`'s in `tools/cc/mail.py`, and why is the comment above
+it; `--dry-run` prints the line it would send and, beside it, the body's count
+against the cap. An ack names the full id of what it answers; a lane is closed
+by a release, never an ack.
 
 A claim can name the functions its lane changes, not only its files:
 
@@ -281,7 +348,9 @@ python tools/cc/mail.py refresh
   signed out or offline; the next tick reads it again).
 - **A claim only grows.** An edit undone stays claimed, and so do a lower
   lane's symbols on a lane stacked on it, since `refresh` reads against the
-  default branch: release the lane's claims and claim again to shrink it.
+  default branch: release each of the lane's claims by its id (`send --type
+  release --ack <claim id>`: a lane release reads as the lane shipped and
+  closes a job you were given) and claim again to shrink it.
   After an edit to `tools/cc/_symbols.py` reaches this checkout, the first
   `refresh` sends a claim that replaces the older one, and each tick after
   names the older claim to release (`send --type release --ack <id>`) until
@@ -310,6 +379,13 @@ that reaches this seat about the files it claims is answered either way: an
 cross-platform request fulfilled retires the channel (the ledger row with the
 date-keyed probe says when).
 
+The dispatcher's own question to the operator goes out the same way, as a
+request whose text opens with `OPERATOR CALL:` (the question, the options, the
+recommendation), so the board's `asks:` line lists it for every seat with its
+age and counts it apart; the ruling comes back as the dispatcher's `ack`
+naming the request's full id, with the ruling in its text. A worker's ack does
+not close one.
+
 ## Step 5: A shipped lane releases its own claims
 
 A claim's lifetime is the lane's time on this machine: the ship driver's
@@ -317,7 +393,8 @@ A claim's lifetime is the lane's time on this machine: the ship driver's
 lands, and the `handoff` verb does the same after pushing onto an open pull
 request (one release for the lane, sent only when a claim is live). A claim
 on a lane that never ships -- work abandoned, or a claim made on the wrong
-lane name -- is yours to close:
+lane name -- is yours to close, by its id (a lane release reads as the lane
+shipped and closes a job you were given):
 
 ```bash
 python tools/cc/mail.py claims

@@ -45,7 +45,11 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          tag, create the release
     handoff              /handoff's one push step: pushes only when
                          espalier.toml sets handoff_push = true (off by
-                         default: a push is outward-facing), else says so
+                         default: a push is outward-facing), else says so;
+                         last, once the step has landed, arms the own-clear
+                         marker for this session (.espalier-state/
+                         own_clear.json), which the own-clear mod a seat.py
+                         launch loads reads to clear and re-prime the window
 
 Stdlib-only (``tools/cc/`` runs standalone, zero espalier imports); the guard
 it asks about (``tools/cc/ci_guard.py``, an install-ci artifact) is loaded by
@@ -63,6 +67,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -71,6 +76,7 @@ from typing import Callable
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _json_safe import decode_text_or_problem, fold_newlines, os_error_text, run_bounded  # noqa: E402
 import _merge_rules  # noqa: E402  the up-to-date rule and the stale-base read, shared with the board
+import _post_merge  # noqa: E402  the post-merge check verdicts, shared with the board and the banner
 import _paths  # noqa: E402  the hooks-module loader behind the checkout's wiring note
 import record_merge  # noqa: E402  the shape-aware merge of the record files (a deployed sibling)
 
@@ -96,12 +102,13 @@ HEAD_MOVE_WAIT_SECONDS = 30.0
 POLL_SECONDS = 3.0
 TITLE_MAX = 72
 POST_MERGE_ROWS = 20
-#: The banner's check-state sets (session_start.py), restated for a tool that
-#: cannot import a hook: green and running states, and states that reach no
-#: verdict; a red is any other state. sister-site: ok a two-site restatement, the hook cannot be imported from tools/cc/
-_CHECK_GREEN = frozenset({"SUCCESS", "SKIPPED", "NEUTRAL"})
-_CHECK_RUNNING = frozenset({"PENDING", "EXPECTED", "QUEUED", "IN_PROGRESS", "WAITING", "REQUESTED"})
-_NO_VERDICT = frozenset({"CANCELLED", "STALE"})
+#: The check-state sets, read from their one home (tools/cc/_post_merge.py,
+#: which the banner loads by path and the board imports): green and running
+#: states, and states that reach no verdict; a red is any other state. Aliases,
+#: never copies: tests/test_hook_constant_parity.py pins that no literal returns.
+_CHECK_GREEN = _post_merge.CHECK_GREEN
+_CHECK_RUNNING = _post_merge.CHECK_RUNNING
+_NO_VERDICT = _post_merge.NO_VERDICT
 #: The conclusions that make a post-merge run on the base RED. Every other
 #: completed conclusion (cancelled, stale, skipped by a job-level `if`, neutral,
 #: action required) is no verdict, so a skipped run never reads as a red base
@@ -123,18 +130,11 @@ LIVE_READ_STEP = "Read the pull request title as it is now"
 
 
 def _check_outcome(row: object) -> str:
-    """'green', 'running' or 'red' for one statusCheckRollup row, the banner's
-    rule verbatim (tests/test_hook_constant_parity.py pins the sets equal): a
-    row of a shape this reader does not know reads as running, not as a pass."""
-    if not isinstance(row, dict):
-        return "running"
-    state = row.get("state")
-    if isinstance(state, str) and state:  # StatusContext
-        s = state.upper()
-        return "green" if s in _CHECK_GREEN else "running" if s in _CHECK_RUNNING else "red"
-    if str(row.get("status") or "").upper() != "COMPLETED":
-        return "running"
-    return "green" if str(row.get("conclusion") or "").upper() in _CHECK_GREEN else "red"
+    """'green', 'running' or 'red' for one statusCheckRollup row: the one rule
+    in tools/cc/_post_merge.py (a row of a shape it does not know reads as
+    running, not as a pass), kept under this name for the open pull-request
+    path's callers."""
+    return _post_merge.check_outcome(row)
 
 
 class Refused(Exception):
@@ -462,36 +462,18 @@ def _second_push_message(how: str) -> str:
 
 
 def post_merge_reds(cwd: str | None = None) -> list[str]:
-    """One line per recently merged pull request whose latest run of a check
-    is red -- a check that is not required finishes after auto-merge has
-    landed the lane and reports to nobody unless something reads it (the
-    banner's `Merged:` rule, restated for a tool that cannot import the hook)."""
-    rows = _gh_json("pr", "list", "--author", "@me", "--state", "merged", "--limit", str(POST_MERGE_ROWS),
-                    "--json", "number,statusCheckRollup", cwd=cwd)
-    lines: list[str] = []
-    if not isinstance(rows, list):
-        return lines
-    for pr in rows:
-        if not isinstance(pr, dict):
-            continue
-        latest: dict[str, tuple[str, dict]] = {}
-        for row in pr.get("statusCheckRollup") or []:
-            if not isinstance(row, dict):
-                continue
-            name = str(row.get("name") or row.get("context") or "?")
-            started = str(row.get("startedAt") or "")
-            if name not in latest or started >= latest[name][0]:
-                latest[name] = (started, row)
-        reds = []
-        for name, (_, row) in sorted(latest.items()):
-            if _check_outcome(row) != "red":
-                continue
-            if str(row.get("conclusion") or "").upper() in _NO_VERDICT:
-                continue  # cancelled or stale: no verdict, the banner's Merged: rule
-            reds.append(name)
-        if reds:
-            lines.append(f"red after merge: #{pr.get('number')} {', '.join(reds)}")
-    return lines
+    """One line per check whose owned verdict over the last POST_MERGE_ROWS
+    merged pull requests is red -- a check that is not required finishes after
+    auto-merge has landed the lane and reports to nobody unless something
+    reads it. The rule and the words are tools/cc/_post_merge.py's, the one
+    home the banner's `Merged:` line and the board's `checks:` line read too:
+    the merge the red has held since, the leg's finish, the merge it was green
+    on, and a newer green that started before the red merge, printed beside
+    it, never over it. No author filter, on purpose: the lines describe the
+    base's state, which every merged pull request shapes whoever pushed it,
+    so on a team repository a colleague's red is named too."""
+    merged = _post_merge.read_merged(cwd, POST_MERGE_ROWS, gh=lambda args: _gh_json(*args, cwd=cwd))
+    return _post_merge.lines(_post_merge.transitions(merged), oldest=_post_merge.oldest_merge(merged))
 
 
 def base_red_after_merge(base: str, cwd: str | None = None) -> str | None:
@@ -580,6 +562,59 @@ def seat_open_prs(root: Path, branch: str, prs: list[dict]) -> tuple[str, list[s
     mine = [f"#{r.get('number')} ({r.get('headRefName')})" for r in prs
             if str(r.get("headRefName") or "") != branch and seats.get(str(r.get("headRefName") or "")) == machine]
     return machine, mine
+
+
+def seat_row_debt(root: Path, base: str) -> tuple[int, str, bool] | None:
+    """``(merged lanes since this seat's newest Session Log row, that row's
+    date or '', whether that row is parked on the seat's records ref and not
+    yet folded)``, or None where git, gh or the mail channel cannot answer: no
+    verdict is never a refusal on a guess (the rule ``lane_carries_memory_row``
+    keeps). Lanes are the merged pull requests whose branch the seat's latest
+    claim or release names (``mail.lane_seats``), their merge day read in this
+    clock's zone as the fragment names are; the rows are the fragments on
+    ``origin/<base>`` plus those parked on the records refs (``mail.pending``:
+    a seat that wrote its row and parked it is not in debt, and the early arm
+    runs before the fold that brings it in), read by name alone, never the
+    working tree a seat can edit. The count is
+    ``_record_fragments.lanes_since_row``, the board's ``records:`` line's own,
+    through the one merged read (``_post_merge.read_merged``, the lane
+    fields)."""
+    # The local reads first, every one under the guard: a sibling that cannot
+    # load, a git that raised (the runner's Refused on a timeout or a missing
+    # git), the channel's named stop. Unread, never a count, never a refusal.
+    try:
+        mail, fragments = _mail_module(), _fragments_module()
+        if mail is None or fragments is None:
+            return None
+        machine, _how = mail.machine_setting(root)  # unread-name: ok both an unread name and no name read as None, no verdict
+        if not machine:
+            return None
+        rc, names, _ = _git("ls-tree", "--name-only", f"origin/{base}", "--", SESSION_LOG_DIR, cwd=str(root))
+        if rc != 0:
+            return None
+        parked = [path for _machine, path, _ref in mail.pending(root, fragments.SESSION_LOG_DIR, [f"origin/{base}"])]
+        by_machine, _skipped = mail.read_mail(root)
+        newest, is_parked = fragments.newest_row_by_seat(names.split(), parked).get(machine, ("", False))
+    except Exception:  # noqa: BLE001 -- see above: every local read's failure is one answer, None
+        return None
+    failed: list[str] = []
+
+    def gh(args: list[str]) -> object:
+        try:
+            data = _gh_json(*args, cwd=str(root))
+        except Refused as exc:
+            failed.append(str(exc))
+            return None
+        if not isinstance(data, list):
+            failed.append("gh pr list answered no list")   # prs() would read it as no merges
+            return None
+        return data
+
+    merged = _post_merge.read_merged(str(root), fragments.ROW_DEBT_WINDOW, gh=gh, fields=_post_merge.LANE_FIELDS)
+    if failed:
+        return None
+    seat_of = mail.lane_seats(by_machine)
+    return fragments.lanes_since_row(merged, seat_of, machine, newest), newest, is_parked
 
 
 def stale_base_line(root: Path, base: str, pr: dict) -> str:
@@ -915,6 +950,123 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False) -> bool:
               f"{head[:7]} stays ahead, so SessionStart will not catch this checkout up until you move it "
               f"(`git reset --keep $(git merge-base origin/{base} HEAD)`)")
     return True
+
+
+# ------------------------------------------------------------- the own-clear --
+
+#: The own-clear marker under the state directory: the handoff's last act arms
+#: it; the own-clear mod (``tools/cc/mods/own-clear``, loaded by ``seat.py
+#: launch``) reads it at the turn's end to run the real /clear, then consumes
+#: it on the clear's SessionStart and re-primes the window with its brief.
+#: Keyed by the session id a Claude Code session exports to its tool shells,
+#: so a marker another session left never clears a window;
+#: tests/test_state_file_flag_parity.py lists the file.
+STATE_DIR = ".espalier-state"
+OWN_CLEAR_MARKER = "own_clear.json"
+SESSION_ID_ENV = "CLAUDE_CODE_SESSION_ID"
+
+#: The seat driver (``tools/cc/seat.py``), loaded by path on first use and
+#: never at import, as the mail channel is: it composes the re-prime brief.
+_SEAT = None
+
+
+def _seat_module():
+    global _SEAT
+    if _SEAT is None:
+        path = Path(__file__).resolve().parent / "seat.py"
+        if not path.is_file():
+            return None
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_ship_seat", path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["_ship_seat"] = module  # registered before exec (3.14)
+        spec.loader.exec_module(module)
+        _SEAT = module
+    return _SEAT
+
+
+def arm_own_clear(root: Path, *, session_id: str, head: str, seat: str | None, role: str | None,
+                  brief: str | None) -> str:
+    """Write the marker for ``session_id`` (state ``armed``) whole, rename it
+    into place, and return the one line the handoff says. ASCII JSON ending in
+    a newline, so the mod reads it with nothing beyond a JSON parse; a second
+    arm replaces the first."""
+    state_dir = root / STATE_DIR
+    state_dir.mkdir(parents=True, exist_ok=True)
+    marker = {
+        "state": "armed", "session_id": session_id, "head": head, "seat": seat, "role": role,
+        "brief": brief, "written_at": datetime.now(timezone.utc).isoformat(),
+    }
+    target = state_dir / OWN_CLEAR_MARKER
+    text = json.dumps(marker, ensure_ascii=True, indent=2) + "\n"
+    # The hooks' atomic writer (a tempfile beside the target, then os.replace),
+    # loaded by path as the wiring note's reader is: a mod reads the marker at
+    # a turn's end and must never see a torn one. A tree whose hooks utilities
+    # are not beside this script (a fixture copying a subset) writes it plain.
+    loader = getattr(_paths, "hooks_module", None)
+    writer = getattr(loader("_hook_utils"), "atomic_write_text", None) if loader else None
+    if writer is not None:
+        writer(target, text)
+    else:
+        target.write_text(text, encoding="utf-8")
+    who = f"seat {seat}, {role}" if seat and role else "no seat name, no brief"
+    return (f"own-clear armed for session {session_id} ({who}): in a window seat.py launch started, the "
+            "own-clear mod clears it at this turn's end and re-primes it")
+
+
+def _reprime_brief(root: Path) -> tuple[str | None, str | None, str | None, str]:
+    """``(seat, role, brief, how)``: the seat this checkout answers to (the
+    mail channel's name) and the brief seat.py composes for it with its loop
+    line replaced (``seat.reprime_text``), or ``None``s and the reason: the
+    seat is unnamed, mail.py or seat.py is not beside this script, or the
+    brief refuses (an unusable dispatcher setting). Never raises: the handoff
+    has landed, and a marker with no brief still clears the window."""
+    mail = _mail_module()
+    if mail is None:
+        return None, None, None, "tools/cc/mail.py is not beside this script"
+    try:
+        # unread-name: ok unset and unread alike arm a marker with no brief, and `how` rides the handoff's line
+        name, how = mail.machine_setting(root)
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the reason rides the handoff's line
+        return None, None, None, f"the seat's name could not be read ({os_error_text(exc)})"
+    if name is None:
+        return None, None, None, how
+    try:
+        seat_driver = _seat_module()   # inside the try: a seat.py that will not load is said, never raised
+        if seat_driver is None:
+            return name, None, None, "tools/cc/seat.py is not beside this script"
+        brief = seat_driver.compose_brief(root, name, root)
+        return name, brief.role, seat_driver.reprime_text(brief), "composed"
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the reason rides the handoff's line
+        return name, None, None, f"the brief refused ({os_error_text(exc)})"
+
+
+#: Set by ``seat.py launch`` in a session it started with the own-clear mod
+#: (``seat.OWN_CLEAR_KEY``); any other window has no mod to read the marker.
+OWN_CLEAR_ENV = "ESPALIER_OWN_CLEAR"
+
+
+def arm_own_clear_here(root: Path) -> str:
+    """Arm the marker for the session this shell belongs to: the id Claude
+    Code exports (:data:`SESSION_ID_ENV`), HEAD, and the seat's re-prime brief.
+    Only in a window that loaded the mod (:data:`OWN_CLEAR_ENV`): elsewhere
+    nothing would read the marker, so nothing is armed and the by-hand reset is
+    said. With no id in the environment (a handoff run outside a session)
+    nothing is armed either: a marker with no session would clear any window."""
+    if os.environ.get(OWN_CLEAR_ENV, "").strip() != "1":
+        return (f"own-clear not armed: this window did not load the own-clear mod ({OWN_CLEAR_ENV} is not set; "
+                "seat.py launch sets it when the mod rides), so it needs a /clear by hand")
+    session_id = os.environ.get(SESSION_ID_ENV, "").strip()
+    if not session_id:
+        return (f"own-clear not armed: no {SESSION_ID_ENV} in the environment (this shell is not a Claude "
+                "Code session's), so no window is told to clear")
+    seat, role, brief, how = _reprime_brief(root)
+    line = arm_own_clear(root, session_id=session_id, head=head_sha(), seat=seat, role=role, brief=brief)
+    if brief is None:
+        line += f"; no brief rides it ({how}), so the mod re-primes with its own line"
+    return line
 
 
 def _release_claims(root: Path, lane: str, text: str) -> None:
@@ -1460,12 +1612,36 @@ def _wait_for_pr_head(branch: str, sha: str) -> None:
 
 
 def handoff(title: str | None = None, body_file: str | None = None, dry_run: bool = False) -> int:
-    """/handoff's one push step. Pushes only when espalier.toml sets
-    ``handoff_push = true``; otherwise the handoff's commit stays local and this
-    says how to push it and how to opt in -- and, when a pull request is already
-    open for the branch, that it will merge WITHOUT this commit. On: the lane is
-    opened as a pull request, or, when one is already open, this commit is pushed
-    onto it and the marker re-bound to the new head."""
+    """/handoff's one push step, then the own-clear's arm. The push
+    (:func:`_handoff_push`) runs only when espalier.toml sets ``handoff_push =
+    true``, else the commit stays local and the verb says how to push it. Once
+    that step has completed -- the off path said (its commit stays local by
+    design and the window is done with it), the row parked, the pull request
+    opened or the push re-bound -- the own-clear marker is armed for this
+    session (:func:`arm_own_clear_here`), last: a refused or failed push never
+    arms, so no marker clears a window whose lane the push did not take. The
+    arm itself never fails a handoff whose step has landed: what stops it is
+    said, with the by-hand reset. A dry run says what it would arm."""
+    rc = _handoff_push(title, body_file, dry_run)
+    if rc != 0:
+        return rc
+    if dry_run:
+        _say("dry-run: the own-clear marker would be armed for this session, last")
+        return 0
+    try:
+        _say(arm_own_clear_here(repo_root()))
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the push landed; the reset is said instead
+        _note(f"the own-clear marker was not armed ({os_error_text(exc)}); this window will not clear itself, "
+              "so it needs a /clear by hand")
+    return 0
+
+
+def _handoff_push(title: str | None, body_file: str | None, dry_run: bool) -> int:
+    """The push half of :func:`handoff`. Off: the handoff's commit stays local
+    and this says how to push it and how to opt in -- and, when a pull request
+    is already open for the branch, that it will merge WITHOUT this commit. On:
+    the lane is opened as a pull request, or, when one is already open, this
+    commit is pushed onto it and the marker re-bound to the new head."""
     root = repo_root()
     on, how = handoff_push_setting(root)
     if not on:
@@ -1623,8 +1799,9 @@ _DECIDED_NOTES = (
 #: An Actions job's link as `gh pr checks --json link` gives it: run, then job.
 _JOB_LINK_RE = re.compile(r"/actions/runs/(\d+)/job/(\d+)(?![0-9])")
 #: The buckets of `gh pr checks` that hold a merge: a cancelled required cell
-#: holds it as surely as a failed one. sister-site: ok the banner's twin, pinned equal by tests/test_hook_constant_parity.py
-_RED_BUCKETS = frozenset({"fail", "cancel"})
+#: holds it as surely as a failed one. An alias of the one home's set
+#: (tools/cc/_post_merge.py), never a copy.
+_RED_BUCKETS = _post_merge.RED_BUCKETS
 #: A finished job's conclusions that hold nothing, in the REST spelling.
 _JOB_GREEN = frozenset(s.lower() for s in _CHECK_GREEN)
 

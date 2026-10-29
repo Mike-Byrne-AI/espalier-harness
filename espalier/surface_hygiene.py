@@ -26,13 +26,20 @@ A third object asks a wider question -- who the text is addressed to:
 ``tests/test_deployed_text_audience.py`` over everything ``init`` deploys and
 by ``espalier surface-impact`` on the self-host tree.
 
+A fourth is the seeded docs' walk: :data:`SEED_ROOTS`, :data:`SEED_TEXT_SUFFIXES`,
+:data:`SEED_BASELINE` and :func:`seeded_marker_hits`, read by that gate (over
+git's view of the checkout) and by ``scripts/sync_asset_docs.py`` after every
+copy, so the fold into a seeded doc is judged where it is written and the two
+readers cannot hold different roots or ceilings.
+
 Stdlib-only by contract: importable from both ``espalier/`` and the test
 tree without pulling a third-party dependency into the pre-flight path.
 """
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from pathlib import Path
 
 # Specific IDs contain at least one digit (a real pack number). Generic
 # placeholders without a digit (``TP-NN``, ``BC-NNN``) are explicitly
@@ -204,3 +211,70 @@ def maintainer_marker_hits(
         if path_re is not None and SELF_HOST_EXAMPLE_LABEL not in line:
             hits.extend((SELF_HOST_PATH_FAMILY, m.group(0)) for m in path_re.finditer(line))
     return hits
+
+
+#: The packaged directories ``init`` seeds an adopter's tree from, read whole by
+#: the audience gate (``tests/test_deployed_text_audience.py``) and by the asset
+#: sync (``scripts/sync_asset_docs.py``) after every copy: one roster, two readers.
+SEED_ROOTS: tuple[str, ...] = (
+    "espalier/assets/docs",
+    "espalier/assets/memory",
+    "espalier/assets/seed",
+    "espalier/assets/task-packs",
+)
+#: The suffixes the seeded walk reads as text.
+SEED_TEXT_SUFFIXES: frozenset[str] = frozenset(
+    {".md", ".js", ".yml", ".yaml", ".json", ".toml", ".txt"}
+)
+#: The seeded docs' maintainer-addressed hit count on the date it was taken: a
+#: ceiling, not an exact pin. Two lanes that each remove a hit would both write
+#: the same lowered pair and red main on the merge, so a cleanup leaves headroom
+#: rather than a chore; lower the pair by hand when a cleanup lane wants the
+#: floor to follow it. Never raised: a body over it is reworded at its source.
+SEED_BASELINE: tuple[str, int] = ("2026-10-12", 266)
+
+
+def seeded_text_files(
+    repo_root: Path, *, walk: Callable[[Path], Iterable[Path]] | None = None,
+) -> list[Path]:
+    """Every text file under :data:`SEED_ROOTS`, sorted.
+
+    ``walk(base)`` yields the candidates under one root (default:
+    ``base.rglob("*")``; the audience gate passes git's view of the checkout). A
+    root that is not there yields nothing: the gate holds its own floor on each
+    root's presence.
+    """
+    out: list[Path] = []
+    for root in SEED_ROOTS:
+        base = repo_root / root
+        if not base.is_dir():
+            continue
+        candidates = (
+            base.rglob("*")  # espalier:safe-walk-ok the packaged assets of this checkout, never an adopter tree
+            if walk is None else walk(base)
+        )
+        out.extend(
+            p for p in candidates
+            if p.is_file() and p.suffix in SEED_TEXT_SUFFIXES and "__pycache__" not in p.parts
+        )
+    return sorted(out)
+
+
+def seeded_marker_hits(
+    repo_root: Path,
+    *,
+    deployed_prefixes: Iterable[str] = (),
+    walk: Callable[[Path], Iterable[Path]] | None = None,
+) -> dict[str, list[tuple[str, str]]]:
+    """Repo-relative POSIX path -> its :func:`maintainer_marker_hits`, for every
+    seeded text file that carries one. The sum of the lengths is the count
+    :data:`SEED_BASELINE` holds."""
+    prefixes = tuple(deployed_prefixes)
+    out: dict[str, list[tuple[str, str]]] = {}
+    for path in seeded_text_files(repo_root, walk=walk):
+        hits = maintainer_marker_hits(
+            path.read_text(encoding="utf-8", errors="replace"), deployed_prefixes=prefixes,
+        )
+        if hits:
+            out[path.relative_to(repo_root).as_posix()] = hits
+    return out

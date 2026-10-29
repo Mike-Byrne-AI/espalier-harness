@@ -32,13 +32,13 @@ Espalier wires 12 hook scripts that run automatically on Claude Code events:
 | Hook | Event | What It Does |
 |---|---|---|
 | `session_start.py` | SessionStart | Reports kill-switch findings + integrity drift; loads the blueprint chain (and advances it on a new session — source `startup`/`clear`); cleans flags. Cannot block (protocol). |
-| `task_router.py` | UserPromptSubmit | Classifies prompt scope; routes toward /implement-task or /implement-task --multi |
+| `task_router.py` | UserPromptSubmit | Classifies prompt scope; routes toward /implement-task or /implement-task --multi; where `espalier.toml` sets `handoff_context_tokens`, asks for the handoff once the session's context passes it (read from the transcript's tail; a lane in hand finishes first) |
 | `plan_guard.py` | PreToolUse | Blocks source file writes without an active execution plan |
 | `write_guard.py` | PreToolUse | Blocks tool calls when kill-switch is set; blocks mutations of protected zones (a write into, a delete of, a move out of); blocks dangerous bash patterns |
 | `config_guard.py` | ConfigChange | Blocks unsafe project/local/user settings changes; audits managed policy_settings (non-blockable) |
 | `post_write_check.py` | PostToolUse | Validates each written file for JSON validity and path consistency |
 | `reflect_trigger.py` | PostToolUse | Runs reflect protocol every 10th source write; opens the execution plan from an approved plan-mode plan (the ExitPlanMode bridge) |
-| `stop_gate.py` | Stop | Lightweight session hygiene by default (docs, review, blueprint, state); full core pytest gate opt-in via `ESPALIER_STOP_GATE=full`; `ESPALIER_STOP_GATE_TEST_CMD=<command>` runs your suite under it |
+| `stop_gate.py` | Stop | Lightweight session hygiene by default (docs, review, the handoff gate where `handoff_push` is on, blueprint); full core pytest gate opt-in via `ESPALIER_STOP_GATE=full`; `ESPALIER_STOP_GATE_TEST_CMD=<command>` runs your suite under it |
 | `subagent_stop.py` | SubagentStop | Appends subagent reasoning to the active blueprint (Gate 4 only); never blocks the subagent |
 | `post_compact.py` | PostCompact | Captures the compaction summary (`cc/_working_summary.md`) and arms the post-compaction checkpoint; re-injects nothing, since PostCompact has no channel to Claude (SessionStart's `compact` banner re-orients) |
 | `subagent_start.py` | SubagentStart | Injects cold-subagent orientation (host facts + fan-out finding-schema pointer); never blocks (reporter) |

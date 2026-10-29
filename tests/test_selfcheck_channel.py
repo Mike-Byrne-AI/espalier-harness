@@ -75,7 +75,6 @@ class TestSelfcheckChannel:
         # env=None and the PYTHONPATH assertion below reds even under an editable
         # install (which would otherwise mask the bug via test_run_selfcheck_*).
         import os
-        import subprocess
         from pathlib import Path
 
         import espalier
@@ -83,13 +82,15 @@ class TestSelfcheckChannel:
 
         pkg_parent = str(Path(espalier.__file__).resolve().parents[1])
         captured: dict[str, object] = {}
-        real_run = subprocess.run
+        from espalier import selfcheck
+        real_run = selfcheck.run_no_stdin
 
         def _spy(cmd, *args, **kwargs):
             captured["env"] = kwargs.get("env")
             return real_run(cmd, *args, **kwargs)
 
-        monkeypatch.setattr("espalier.selfcheck.subprocess.run", _spy)
+        # selfcheck's spawn goes through the engine wrapper (DEF-928)
+        monkeypatch.setattr(selfcheck, "run_no_stdin", _spy)
         rc = run_selfcheck(tmp_path)
 
         assert rc == 0

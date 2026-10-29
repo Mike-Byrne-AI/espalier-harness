@@ -612,10 +612,10 @@ class TestGoalSnapshotSeed:
         assert "cc/GOAL.md" in surface_contract.ADOPTER_RUNTIME_GENERATED
 
     def test_the_source_tree_is_never_seeded(self, tmp_path, monkeypatch):
-        """On the Espalier source tree GOAL is the operator's own, and
-        scripts/check_handoff_landing.py reads its presence as the tell that a
-        checkout is the operator's tree: a seeded skeleton on a second clone
-        turned two of its notes into reds (driven, 2026-09-30 review)."""
+        """On the Espalier source tree GOAL is the operator's own, so a seeded
+        skeleton on a contributor's or a seat's clone would be a goal nobody set
+        (until DEF-1119 its presence was also the landing check's operator-tree
+        tell, and a seeded one turned two notes into reds on a second clone)."""
         from espalier import surface_contract
         from espalier.cli import preview_managed_surface
 
@@ -2894,7 +2894,7 @@ class TestUpgradeRepinsAFiledOnboardingProbe:
             calls.append(argv)
             return subprocess.CompletedProcess(argv, 2, "", held + "\n")
 
-        monkeypatch.setattr(cli, "run_bounded", fake)
+        monkeypatch.setattr(cli, "run_no_stdin", fake)
         lines = cli._refresh_onboarding_probes(tmp_path)
         assert len(calls) == 1
         assert [line for line in lines if "could not re-pin" in line] == [
@@ -2905,7 +2905,7 @@ class TestUpgradeRepinsAFiledOnboardingProbe:
         from espalier import cli
         TestLedgerSeed._install(tmp_path)
         self._stale_entries(tmp_path, "ONB-1")
-        monkeypatch.setattr(cli, "run_bounded", lambda argv, **k: subprocess.CompletedProcess(
+        monkeypatch.setattr(cli, "run_no_stdin", lambda argv, **k: subprocess.CompletedProcess(
             argv, 2, "", "ledger_row: the subject is unreadable\n"))
         lines = cli._refresh_onboarding_probes(tmp_path)
         assert any("could not re-pin ONB-1 (ledger_row: the subject is unreadable)" in line for line in lines), lines
@@ -2926,7 +2926,7 @@ class TestUpgradeRepinsAFiledOnboardingProbe:
         assert any(line.startswith("| `ONB-6` |") for line in kept), "the index row should remain"
         target.write_text("".join(kept), encoding="utf-8")
         calls = []
-        monkeypatch.setattr(cli, "run_bounded", lambda *a, **k: calls.append(a))
+        monkeypatch.setattr(cli, "run_no_stdin", lambda *a, **k: calls.append(a))
         assert cli._refresh_onboarding_probes(tmp_path) == []
         assert calls == []
 
@@ -3138,7 +3138,7 @@ class TestUpgradeRepinsAFiledOnboardingProbe:
         self._stale_entries(tmp_path, "ONB-1")
         (tmp_path / "tools" / "cc" / "ledger_row.py").rename(tmp_path / "ledger_row.py.kept")
         calls = []
-        monkeypatch.setattr(cli, "run_bounded", lambda *a, **k: calls.append(a))
+        monkeypatch.setattr(cli, "run_no_stdin", lambda *a, **k: calls.append(a))
         assert cli._refresh_onboarding_probes(tmp_path) == []
         assert cli._onboarding_repin_preview(tmp_path) == []
         assert calls == []
@@ -3272,7 +3272,7 @@ class TestUpgradeRepinsAFiledOnboardingProbe:
                 rc = lr.main(argv[2:])
             return types.SimpleNamespace(returncode=rc, stdout="", stderr=err.getvalue())
 
-        monkeypatch.setattr(cli, "run_bounded", verb)
+        monkeypatch.setattr(cli, "run_no_stdin", verb)
         before = self._store(tmp_path).read_bytes()
         lines = cli._onboarding_repin_preview(tmp_path)
         assert self._store(tmp_path).read_bytes() == before
@@ -3284,7 +3284,7 @@ class TestUpgradeRepinsAFiledOnboardingProbe:
         from espalier import cli
         TestLedgerSeed._install(tmp_path)
         calls = []
-        monkeypatch.setattr(cli, "run_bounded", lambda *a, **k: calls.append(a))
+        monkeypatch.setattr(cli, "run_no_stdin", lambda *a, **k: calls.append(a))
         assert cli._refresh_onboarding_probes(tmp_path) == []
         assert calls == []
 
@@ -5687,3 +5687,100 @@ class TestRenderTemplateRendersForTheTreeItRunsIn:
     def test_a_tree_with_no_saved_fingerprint_gets_the_canonical_render(self, tmp_path, monkeypatch, capsys):
         from espalier.cli import render_canonical_template
         assert self._render(tmp_path, monkeypatch, capsys, canonical=False) == render_canonical_template("claude")
+
+
+class TestAFailedFingerprintTakesTheSeedDocsWithIt:
+    """``init`` writes its seed docs before its fingerprint, so the saved
+    fingerprint reflects them, and the fingerprint's git reads are its first
+    spawns. One that raised left the seed docs behind -- 23 files on a fresh
+    tree, driven 2026-10-18 with a closed stdin handle -- under an error that
+    said nothing about them (DEF-928)."""
+
+    def test_the_seed_docs_it_created_go_and_what_was_there_stays(self, tmp_path, monkeypatch, capsys):
+        import argparse
+
+        from espalier import cli
+        from espalier.managed_inventory import get_seed_docs
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL)
+        (tmp_path / "docs").mkdir()
+        (tmp_path / "docs" / "mine.md").write_text("mine\n", encoding="utf-8")
+
+        def fails(*args, **kwargs):
+            raise OSError(6, "The handle is invalid")
+
+        monkeypatch.setattr(cli, "fingerprint_repo", fails)
+        with pytest.raises(OSError):
+            cli.cmd_init(argparse.Namespace(repo=str(tmp_path), config=None, write_gitignore=True))
+        assert [rel for rel in get_seed_docs() if (tmp_path / rel).exists()] == []
+        assert (tmp_path / "docs" / "mine.md").read_text(encoding="utf-8") == "mine\n"
+        made = {Path(rel).parts[0] for rel in get_seed_docs()} - {"docs"}
+        assert made and not [d for d in sorted(made) if (tmp_path / d).exists()], made
+        assert "seed docs it had created were removed" in capsys.readouterr().err
+
+    def test_what_the_operator_owns_stays(self, tmp_path, monkeypatch):
+        """The twin a rollback that removed every seed path would fail: an
+        operator's own copy of a seed doc, which init leaves as it is, and an
+        empty seed directory that was there before."""
+        import argparse
+
+        from espalier import cli
+        from espalier.managed_inventory import get_seed_docs
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL)
+        mine = tmp_path / next(rel for rel in get_seed_docs() if rel.startswith("docs/"))
+        mine.parent.mkdir(parents=True)
+        mine.write_text("my own copy\n", encoding="utf-8")
+        empty = tmp_path / "task-packs"
+        empty.mkdir()
+
+        def fails(*args, **kwargs):
+            raise OSError(6, "The handle is invalid")
+
+        monkeypatch.setattr(cli, "fingerprint_repo", fails)
+        with pytest.raises(OSError):
+            cli.cmd_init(argparse.Namespace(repo=str(tmp_path), config=None, write_gitignore=True))
+        assert mine.read_text(encoding="utf-8") == "my own copy\n"
+        assert empty.is_dir() and not any(empty.iterdir())
+
+    def test_a_doc_that_will_not_go_is_named_and_the_first_error_still_reaches_the_operator(
+            self, tmp_path, monkeypatch, capsys):
+        """A seed doc another process holds open cannot be removed; the rollback
+        names it and the fingerprint's error is the one raised, never the
+        removal's."""
+        import argparse
+        import os as _os
+
+        from espalier import cli
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL)
+        real_unlink = _os.unlink
+
+        def held(path, *args, **kwargs):
+            if str(tmp_path) in str(path):
+                raise PermissionError(13, "held by another process", str(path))
+            return real_unlink(path, *args, **kwargs)
+
+        def fails(*args, **kwargs):
+            raise OSError(6, "The handle is invalid")
+
+        monkeypatch.setattr(cli, "fingerprint_repo", fails)
+        monkeypatch.setattr(_os, "unlink", held)
+        with pytest.raises(OSError) as raised:
+            cli.cmd_init(argparse.Namespace(repo=str(tmp_path), config=None, write_gitignore=True))
+        assert raised.value.errno == 6, raised.value
+        assert "init could not remove these seed docs it had created" in capsys.readouterr().err
+
+    def test_a_fingerprint_that_answers_keeps_every_seed_doc(self, tmp_path):
+        import argparse
+
+        from espalier import cli
+        from espalier.managed_inventory import get_seed_docs
+
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True,
+                       stdin=subprocess.DEVNULL)
+        assert cli.cmd_init(argparse.Namespace(repo=str(tmp_path), config=None, write_gitignore=True)) == 0
+        assert [rel for rel in get_seed_docs() if not (tmp_path / rel).is_file()] == []

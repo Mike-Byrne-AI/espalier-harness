@@ -1,0 +1,5 @@
+{
+  "name": "espalier-own-clear",
+  "version": "0.1.0",
+  "description": "Runs the real /clear once the handoff's marker is armed and nothing is in flight, refuses the duplicate compaction meanwhile, and re-primes the cleared window with the seat brief"
+}

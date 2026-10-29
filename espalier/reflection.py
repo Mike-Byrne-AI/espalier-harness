@@ -8,7 +8,7 @@ from typing import Any
 
 from espalier._report_io import load_report_json
 from espalier._safe_walk import dependency_dirs_for, safe_rglob
-from espalier.reflect_protocol import LOCAL_LINK_RE, _text_without_fences
+from espalier.reflect_protocol import AGING_RECORD_SURFACES, LOCAL_LINK_RE, _text_without_fences
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -71,6 +71,12 @@ def reflect_repo(repo_root: Path) -> dict[str, Any]:
     plan_missing_docs: list[str] = []
     manifest_missing_docs: list[str] = []
     broken_markdown_links: list[dict[str, str]] = []
+    # Core Rule 13: a dead pointer on an append-only record (AGING_RECORD_SURFACES,
+    # the same set the two structured twins read) is aging, never a broken link
+    # to fix, since editing it would falsify the record. Listed apart, so the
+    # doctor's `broken_links` count and `espalier reflect`'s exit never send a
+    # seat to edit a record the hook told it to leave alone.
+    aging_pointers: list[dict[str, str]] = []
 
     if plan_path.exists():
         plan = _load_json(plan_path)
@@ -90,6 +96,8 @@ def reflect_repo(repo_root: Path) -> dict[str, Any]:
                 manifest_missing_docs.append(rel)
 
     for md_path in _iter_markdown_files(repo_root):
+        rel_file = md_path.relative_to(repo_root).as_posix()
+        dead_links = aging_pointers if rel_file in AGING_RECORD_SURFACES else broken_markdown_links
         text = _text_without_fences(
             md_path.read_text(encoding="utf-8", errors="replace"), strip_html_comments=True
         )
@@ -113,10 +121,7 @@ def reflect_repo(repo_root: Path) -> dict[str, Any]:
                 continue
             candidate = _normalize_link(md_path, target, repo_root)
             if not candidate.exists():
-                broken_markdown_links.append({
-                    "file": md_path.relative_to(repo_root).as_posix(),
-                    "target": target,
-                })
+                dead_links.append({"file": rel_file, "target": target})
 
     missing_connections: list[str] = []
     if plan_missing_docs and not manifest_missing_docs:
@@ -139,6 +144,7 @@ def reflect_repo(repo_root: Path) -> dict[str, Any]:
         "plan_missing_docs": sorted(set(plan_missing_docs)),
         "manifest_missing_docs": sorted(set(manifest_missing_docs)),
         "broken_markdown_links": broken_markdown_links,
+        "aging_pointers": aging_pointers,
         "missing_connections": missing_connections,
         "recommended_actions": recommended_actions,
     }
@@ -174,6 +180,7 @@ def render_reflection_report(report: dict[str, Any]) -> str:
         f"Plan gaps: {len(report.get('plan_missing_docs', []))}",
         f"Manifest gaps: {len(report.get('manifest_missing_docs', []))}",
         f"Broken markdown links: {len(report.get('broken_markdown_links', []))}",
+        f"Aging pointers on records: {len(report.get('aging_pointers', []))}",
         "",
     ]
     if report.get("plan_missing_docs"):
@@ -187,6 +194,10 @@ def render_reflection_report(report: dict[str, Any]) -> str:
     if report.get("broken_markdown_links"):
         lines.append("Broken local markdown links:")
         lines.extend(f"- {item['file']} -> {item['target']}" for item in report["broken_markdown_links"][:20])
+        lines.append("")
+    if report.get("aging_pointers"):
+        lines.append("Aging pointers on record surfaces (left as they are, Core Rule 13):")
+        lines.extend(f"- {item['file']} -> {item['target']}" for item in report["aging_pointers"][:20])
         lines.append("")
     lines.append("Recommended actions:")
     lines.extend(f"- {item}" for item in report.get("recommended_actions", []))

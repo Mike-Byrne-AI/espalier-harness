@@ -77,6 +77,11 @@ SESSION_LOG_CAP = 30
 #: 10-15); with the slack a prune lands about once in six rows, and two lanes off
 #: one base usually stay inside it. Air fc87ad on DEF-5007, 2026-10-16.
 SESSION_LOG_SLACK = 5
+#: How many merged pull requests the Session Log debt readers walk (the
+#: board's ``records:`` line and the ship driver's row-debt read): three days
+#: at the 25 lanes a day measured across four seats, 2026-10-16 to 10-18; the
+#: ship driver's POST_MERGE_ROWS (20) covers under one.
+ROW_DEBT_WINDOW = 100
 
 #: The trailer on the commits a lane's push makes to fold the parked rows in and
 #: prune to the cap (``tools/cc/ship.py``, the one writer of the count): the
@@ -297,6 +302,78 @@ def this_sessions_row(root: Path, seat: str, now: _dt.datetime | None = None) ->
         if m and m.group(1) == today and m.group(3) == seat:
             mine.append(name)
     return root / SESSION_LOG_DIR / max(mine) if mine else None
+
+
+def newest_row_date_by_seat(names: list[str]) -> dict[str, str]:
+    """``{seat: YYYY-MM-DD}`` of each seat's newest Session Log fragment among
+    ``names`` (file names or paths, as ``git ls-tree --name-only`` or a
+    directory listing gives them). A name the pattern does not match is not a
+    row and is skipped, as the loader skips it. Read by name alone, so a caller
+    can ask the base's tree and never a checkout a seat can edit."""
+    newest: dict[str, str] = {}
+    for name in names:
+        m = SESSION_LOG_NAME_RE.match(str(name).strip().rsplit("/", 1)[-1])
+        if m and m.group(1) > newest.get(m.group(3), ""):
+            newest[m.group(3)] = m.group(1)
+    return newest
+
+
+def newest_row_by_seat(names: list[str], parked: list[str] | tuple[str, ...] = ()) -> dict[str, tuple[str, bool]]:
+    """``{seat: (YYYY-MM-DD, parked)}``: each seat's newest Session Log row
+    across ``names`` (the base's tree) and ``parked`` (the rows on the records
+    refs no push has folded yet, as ``mail.pending`` lists them), ``parked``
+    True when the newest is only on a ref. A seat that wrote its row and
+    parked it is not in debt, and the readers say the fold is owed; the ship
+    driver's early arm runs before its fold, so without this a seat that did
+    write its row would be refused."""
+    on_base = newest_row_date_by_seat(names)
+    on_ref = newest_row_date_by_seat(list(parked))
+    return {seat: (max(on_base.get(seat, ""), on_ref.get(seat, "")), on_ref.get(seat, "") > on_base.get(seat, ""))
+            for seat in sorted(set(on_base) | set(on_ref))}
+
+
+def local_day(stamp: object, tz: _dt.tzinfo | None = None) -> str:
+    """The YYYY-MM-DD of an ISO stamp (a ``mergedAt``, UTC with its Z) in this
+    clock's zone (``tz`` for a test), '' for none or an unreadable one. The
+    fragment names carry the writer's local day (``session_log_name``), and a
+    merge at 21:00 EDT is that day's lane, not the next UTC day's."""
+    if not stamp:
+        return ""
+    try:
+        when = _dt.datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=_dt.timezone.utc)
+    return when.astimezone(tz).date().isoformat()
+
+
+def window_stops_short(merged: list[object], since: str, window: int, tz: _dt.tzinfo | None = None) -> bool:
+    """Whether a count over ``merged`` (a ``gh pr list --state merged`` read of
+    at most ``window`` rows across EVERY seat) is a floor for a seat whose
+    newest row is ``since``: the read is full and its oldest merge day is still
+    after the row (or the seat has no row), so lanes between the row and the
+    oldest merge read were never seen. One seat can reach the window only when
+    every merge read is its own, so the count alone never says (the first cut
+    rule compared the two and never fired; found at review)."""
+    rows = [pr for pr in merged if isinstance(pr, dict)]
+    if window <= 0 or len(rows) < window:
+        return False
+    days = [d for d in (local_day(pr.get("mergedAt"), tz) for pr in rows) if d]
+    return not since or (min(days) if days else "") > since
+
+
+def lanes_since_row(merged: list[object], seat_of: dict[str, str], seat: str, newest: str,
+                    tz: _dt.tzinfo | None = None) -> int:
+    """How many of ``merged`` (``gh pr list --state merged`` rows with
+    ``headRefName`` and ``mergedAt``) are ``seat``'s lanes (``seat_of``, the
+    board's ``mail.lane_seats``) merged on a local day after ``newest``, the
+    seat's newest row date ('' for no row: every dated lane counts). The one
+    count behind the board's ``records:`` line and the ship driver's row-debt
+    read, so the two never disagree."""
+    return sum(1 for pr in merged if isinstance(pr, dict)
+               and seat_of.get(str(pr.get("headRefName") or "")) == seat
+               and local_day(pr.get("mergedAt"), tz) > newest)
 
 
 def prune_session_log(root: Path, keep: int = SESSION_LOG_CAP, archive: str = ARCHIVE,

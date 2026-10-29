@@ -80,12 +80,13 @@ EXPECTED_REFS = [("CLAUDE.md", [_MEMORY_FILENAME, "docs/SHARP_EDGES.md"]),
 DISCOVERY_DIRS = {".claude/commands/", ".claude/agents/", ".claude/skills/", ".claude/workflows/"}
 # Residue-exempt surfaces: the append-only RECORDS (Core Rule 13). A findings
 # corpus that quotes a template string, or a session archive that spells "TODO:"
-# while describing one, is content, not residue. They stay link-checked exactly
-# as before; only the quality scan skips them. Forced twin of the KEYS of
-# espalier/claim_extractor.RECORD_SURFACES MINUS docs/FAILURE_MODES.md -- a
-# record for its point-in-time counts, but also a catalog adopters receive and
-# edit, so residue there must stay reportable (2026-09-08 review). Pinned by
-# tests/test_reflect_protocol.py::TestReflectTwinParity.
+# while describing one, is content, not residue, so the quality scan skips
+# them. Forced twin of the KEYS of espalier/claim_extractor.RECORD_SURFACES
+# MINUS docs/FAILURE_MODES.md -- a record for its point-in-time counts, but
+# also a catalog adopters receive and edit, so residue there must stay
+# reportable (2026-09-08 review). Pinned by
+# tests/test_reflect_protocol.py::TestReflectTwinParity. Two readers: the
+# residue scan above, and the link check through AGING_RECORD_SURFACES below.
 RESIDUE_EXEMPT_SURFACES = (
     _MEMORY_FILENAME,
     "CHANGELOG.md",
@@ -93,6 +94,16 @@ RESIDUE_EXEMPT_SURFACES = (
     "docs/RELEASE_DECISIONS.md",
     "memory/CONVERGENCE_LEDGER.md",
 )
+# The link check's reader of the same set: a dead pointer on one of these is
+# aging (kind "aging", severity low, its own count), never a gap, since editing
+# it would falsify the record. Wider than Core Rule 13's declared two (the
+# records that carry source citations) because the reason holds for every
+# append-only member; the hot index is the one left out, kept current at every
+# handoff, so its dead link is a gap to fix. Named once here and in the engine
+# twin (espalier/reflect_protocol.py) and in espalier/reflection.py's scan,
+# pinned by the same parity class, so the hook, `espalier reflect-deep`, the
+# doctor and `espalier reflect` read one answer.
+AGING_RECORD_SURFACES = tuple(s for s in RESIDUE_EXEMPT_SURFACES if s != _MEMORY_FILENAME)
 # Surfaces reached by a LOADER, not by a link, so "nothing references it" is not
 # a finding: the .claude discovery dirs (a directory scan), memory/ notes (the
 # recall index), .claude/rules/ files (Claude Code's loader reads each at launch,
@@ -1379,6 +1390,9 @@ def main() -> int:
     for path in surface:
         if path.suffix != ".md": continue
         rel = _rel(path, root)
+        # Core Rule 13: a dead pointer on an append-only record is aging, never a
+        # gap (AGING_RECORD_SURFACES, where the set says why).
+        record = rel in AGING_RECORD_SURFACES
         text = _strip_fences(_safe(path))
         for m in LOCAL_LINK_RE.finditer(text):
             t = m.group(1).split("#")[0].strip()
@@ -1390,8 +1404,12 @@ def main() -> int:
             if t.rstrip().endswith("/") or "<" in t or t == "...": continue
             c = (path.parent / t).resolve() if not t.startswith("/") else (root / t.lstrip("/"))
             if not c.exists():
-                findings.append({"kind": "gap", "severity": "high",
-                                 "description": f"Broken link in {rel}: {t}"})
+                if record:
+                    findings.append({"kind": "aging", "severity": "low",
+                                     "description": f"Aging pointer on a record surface {rel}: {t}"})
+                else:
+                    findings.append({"kind": "gap", "severity": "high",
+                                     "description": f"Broken link in {rel}: {t}"})
                 continue
             # The target file exists -- now check the `#fragment`, which this loop
             # used to discard. A renamed heading leaves the file in place, so the
@@ -1400,10 +1418,17 @@ def main() -> int:
             frag = m.group(1).partition("#")[2].strip()
             if frag and c.suffix == ".md" and c.is_file():
                 if frag.lower() not in _heading_anchors(_safe(c)):
-                    findings.append({"kind": "gap", "severity": "medium",
-                                     "description": f"Broken anchor in {rel}: {t}#{frag}"})
+                    if record:
+                        findings.append({"kind": "aging", "severity": "low",
+                                         "description": f"Aging pointer on a record surface {rel}: {t}#{frag}"})
+                    else:
+                        findings.append({"kind": "gap", "severity": "medium",
+                                         "description": f"Broken anchor in {rel}: {t}#{frag}"})
 
     gap_count = sum(1 for f in findings if f["kind"] == "gap")
+    # Counted apart from the gaps, and read by nothing that gates: the hook's
+    # clean test ignores aging findings and the engine's exit code reads gaps.
+    aging_count = sum(1 for f in findings if f["kind"] == "aging")
     report = {
         "pass_number": args.pass_number,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1411,6 +1436,7 @@ def main() -> int:
         "total_references": total_refs,
         "cross_ref_density": density,
         "gap_count": gap_count,
+        "aging_count": aging_count,
         "orphan_count": len(orphans),
         "findings": findings,
     }
@@ -1423,6 +1449,7 @@ def main() -> int:
         print(f"Cross-references:  {total_refs}")
         print(f"Cross-ref density: {density} refs/file")
         print(f"Gaps:              {gap_count}")
+        print(f"Aging:             {aging_count}")
         print(f"Orphans:           {len(orphans)}")
         if findings:
             print()

@@ -482,9 +482,35 @@ worktree renames the clone and its main checkout instead. Seats coordinate
 through the mail channel (`/inbox`): a seat claims the files it works so
 another does not duplicate them, a dispatcher seat (the `dispatcher` key in
 `espalier.toml`) assigns the jobs, and a seat with a question sends a request,
-which the dispatcher answers (or you, where no dispatcher is named). Two
-sessions in one checkout are one seat, which must not happen: they share its
-plan, its git index and its mail cursor.
+which the dispatcher answers (or you, where no dispatcher is named). An assign
+names the job and the reasons (why now, what it waits for, the operator's
+constraints, an edge with its citation; under 900 characters), never the proof
+the seat's own tier run prints; the send prints a note past that shape and
+refuses nothing. Two sessions in one checkout are one seat, which must not
+happen: they share its plan, its git index and its mail cursor. Two seats on
+one machine run one xdist run of the suite at a time by construction: such a
+run takes a lock on the file `ESPALIER_BOX_LOCK` names (`seat.py launch` sets
+it, one path per host), waits while another run holds it and prints the holder
+and its age; every tier line is one, so a tier's lines interleave with a
+sibling's; a run without `-n` (a node-id or file run) takes no lock, and no
+note on the mail channel announces a tier.
+
+A seat does not run to its context window's end. Where `espalier.toml` sets
+`handoff_context_tokens`, the prompt router asks for the handoff on every
+prompt once the session's context passes the figure (the status line's `ctx=`
+segment shows it): a lane in hand finishes through its own landing first and
+the seat starts no new job; with no lane in hand it runs `/handoff` now; after
+the handoff it takes no new job (its own pull request's red or conflict, and a
+red `main`'s revert, are not new work). In a window `seat.py launch` started
+the reset is the seat's own: the launch loads the own-clear mod
+(`tools/cc/mods/own-clear`, `--plugin-dir`; `--no-mod` leaves it out), the
+handoff's last act arms its marker (`.espalier-state/own_clear.json`, keyed by
+the session id), and at the end of the next turn with nothing in flight the
+mod runs the real `/clear`, refuses a compaction meanwhile, and re-primes the
+cleared window with the seat brief less its loop line, since the loop survives
+the clear. A window started without the mod is told it needs a `/clear`.
+`docs/HOOKS.md`'s router section has the ask's mechanism; the briefs and the
+tick carry the rule; the mod's README has its measured facts.
 
 Before stating what is open, merging or blocked, read the board (`/inbox
 board`): it reads GitHub and the mail now, where the banner and a handoff note
@@ -496,13 +522,21 @@ are snapshots. Two of its lines are about the seats themselves:
   A seat with no checkout here is its last mail and nothing more: the channel
   cannot say whether a session elsewhere is running, so ask a quiet seat
   rather than presume it gone.
+- `records:` gives each seat with a checkout here, a live claim or a job its
+  lanes merged since its newest Session Log row on the base: the row a seat
+  owes for the day's lanes, counted the same way the ship driver's row-debt
+  read counts it. A read that fails is unread, never zero.
 - `asks:` gives every request no ack answers yet, oldest first, with its full
   id and age. The dispatcher answers them, and another seat answers only a
   request about the files it claims; any seat's ack closes a request, so a
   worker never acks one meant for the dispatcher. Answer with an ack naming
   that id (`python tools/cc/mail.py send --type ack --ack <id> --text "<what
   was done>"`); the dispatcher seat also sees the count on its banner's
-  `Mail:` line.
+  `Mail:` line. A request whose text opens with `OPERATOR CALL:` is the
+  dispatcher's question to the operator, counted apart on the header and
+  tagged on its row; the ruling is the dispatcher's ack naming the request's
+  full id, with the ruling in its text, and an ack from any other seat leaves
+  the call open.
 
 `/inbox` has the rest: the channel's verbs, claims and releases, and what each
 board line means.

@@ -46,7 +46,8 @@ from espalier._python_floor import (
     start_unconfirmed_of,
 )
 from espalier._safe_walk import safe_rglob, visible, is_own_git_repo as _is_own_git_repo
-from espalier._spawn import run_bounded
+from espalier._rmtree import remove_file
+from espalier._spawn import run_no_stdin
 from espalier._text import os_error_text, pin_utf8_streams, plural, quoted_if_spaced
 from espalier._venv import (
     after_head_index,
@@ -576,7 +577,10 @@ def _stream_isatty(stream: object | None) -> bool:
     OR whose ``isatty()`` raises — a *closed* (non-None) file object raises
     ``ValueError`` — so an interactive gate degrades to the non-interactive
     default instead of propagating (``AttributeError`` on ``None.isatty()`` or
-    ``ValueError`` on a closed stream)."""
+    ``ValueError`` on a closed stream). That is the interpreter's own stream
+    object: a child that inherits stdin gets the OS handle instead, which a
+    closed descriptor leaves invalid on Windows, so every engine spawn hands its
+    child a closed stdin (``espalier/_spawn.py::run_no_stdin``, DEF-928)."""
     isatty = getattr(stream, "isatty", None)
     if not callable(isatty):
         return False
@@ -722,7 +726,7 @@ def _ask_resolves_only_inside_a_virtualenv(name: str, resolved: str) -> bool:
     """The spawn half of :func:`_resolves_only_inside_a_virtualenv`, unkept."""
     import subprocess
     try:
-        probe = run_bounded(
+        probe = run_no_stdin(
             [resolved, "-c", "import sys,json;"
              "print('ESPALIER_PROBE'+json.dumps([sys.prefix,sys.base_prefix]))"],
             capture_output=True, text=True, encoding="utf-8", timeout=5,
@@ -2588,13 +2592,13 @@ Espalier wires {n_hook_scripts} hook scripts that run automatically on Claude Co
 | Hook | Event | What It Does |
 |---|---|---|
 | `session_start.py` | SessionStart | Reports kill-switch findings + integrity drift; loads the blueprint chain (and advances it on a new session — source `startup`/`clear`); cleans flags. Cannot block (protocol). |
-| `task_router.py` | UserPromptSubmit | Classifies prompt scope; routes toward /implement-task or /implement-task --multi |
+| `task_router.py` | UserPromptSubmit | Classifies prompt scope; routes toward /implement-task or /implement-task --multi; where `espalier.toml` sets `handoff_context_tokens`, asks for the handoff once the session's context passes it (read from the transcript's tail; a lane in hand finishes first) |
 | `plan_guard.py` | PreToolUse | Blocks source file writes without an active execution plan |
 | `write_guard.py` | PreToolUse | Blocks tool calls when kill-switch is set; blocks mutations of protected zones (a write into, a delete of, a move out of); blocks dangerous bash patterns |
 | `config_guard.py` | ConfigChange | Blocks unsafe project/local/user settings changes; audits managed policy_settings (non-blockable) |
 | `post_write_check.py` | PostToolUse | Validates each written file for JSON validity and path consistency |
 | `reflect_trigger.py` | PostToolUse | Runs reflect protocol every 10th source write; opens the execution plan from an approved plan-mode plan (the ExitPlanMode bridge) |
-| `stop_gate.py` | Stop | Lightweight session hygiene by default (docs, review, blueprint, state); full core pytest gate opt-in via `ESPALIER_STOP_GATE=full`; `ESPALIER_STOP_GATE_TEST_CMD=<command>` runs your suite under it |
+| `stop_gate.py` | Stop | Lightweight session hygiene by default (docs, review, the handoff gate where `handoff_push` is on, blueprint); full core pytest gate opt-in via `ESPALIER_STOP_GATE=full`; `ESPALIER_STOP_GATE_TEST_CMD=<command>` runs your suite under it |
 | `subagent_stop.py` | SubagentStop | Appends subagent reasoning to the active blueprint (Gate 4 only); never blocks the subagent |
 | `post_compact.py` | PostCompact | Captures the compaction summary (`cc/_working_summary.md`) and arms the post-compaction checkpoint; re-injects nothing, since PostCompact has no channel to Claude (SessionStart's `compact` banner re-orients) |
 | `subagent_start.py` | SubagentStart | Injects cold-subagent orientation (host facts + fan-out finding-schema pointer); never blocks (reporter) |
@@ -2812,10 +2816,10 @@ def _goal_seed_applies(repo_root: Path, *, enabled: bool) -> bool:
     """Whether a deploy seeds cc/GOAL.md here when it is absent.
 
     Never on the Espalier source tree: its GOAL is the operator's own curated
-    doc, and ``scripts/check_handoff_landing.py`` reads the file's presence as
-    the tell that a checkout is the operator's tree -- a seeded skeleton on a
-    second clone turned two of that script's notes into reds (driven, the
-    failure-mode review of 2026-09-30).
+    doc, so a seeded skeleton on a contributor's or a seat's clone would be a goal
+    nobody set. (Until DEF-1119 the landing check also read the file's presence as
+    the operator-tree tell, and a seeded skeleton on a second clone turned two of
+    its notes into reds; the tell is ``cc/OPERATOR_TREE`` now.)
     """
     return enabled and not surface_contract.is_self_host_repo(repo_root)
 
@@ -3079,7 +3083,7 @@ def _file_onboarding_rows(repo_root: Path) -> dict[str, list[str]]:
                      else ["--probe-cmd", f'{_PROBE_PY} -c "{row["code"]}"',
                            "--open-value", row["open"]])
             try:
-                proc = run_bounded(
+                proc = run_no_stdin(
                     argv, capture_output=True, text=True, encoding="utf-8",
                     errors="replace", check=False, timeout=120, env=env,
                 )
@@ -3261,7 +3265,7 @@ def _repin_onboarding(repo_root: Path, rids: list[str], *, dry_run: bool) -> dic
                 "repin", rid, "--probe-cmd", f'{_PROBE_PY} -c "{row["code"]}"', "--open-value", row["open"],
                 "--reason", _ONBOARDING_REPIN_REASON.format(version=__version__)]
         try:
-            proc = run_bounded(
+            proc = run_no_stdin(
                 argv, capture_output=True, text=True, encoding="utf-8",
                 errors="replace", check=False, timeout=120, env=env,
             )
@@ -4706,8 +4710,18 @@ _FOREIGN_KEY_SENTENCES: dict[str, tuple[str, str]] = {
     "handoff_push": (
         "Let /handoff push the lane after it commits the memory row (through\n"
         "# tools/cc/ship.py: a pull request with auto-merge armed). Off when absent:\n"
-        "# push a lane yourself with /ship.",
+        "# push a lane yourself with /ship. On, the Stop hook's handoff gate also\n"
+        "# holds the Stop once per commit while a finished lane sits unpushed\n"
+        "# (docs/HOOKS.md, stop_gate).",
         "handoff_push = true",
+    ),
+    "handoff_context_tokens": (
+        "Ask the session to hand off once its context passes this many tokens\n"
+        "# (tools/cc/hooks/task_router.py reads the figure from the transcript's tail\n"
+        "# on every prompt and asks until the window is cleared; a lane in hand finishes\n"
+        "# first). Off when absent or 0: a session runs to the window's end. A token\n"
+        "# count, not a share of the window: set it for the model's window.",
+        "handoff_context_tokens = 200000",
     ),
     "id_blocks": (
         "Per-seat id blocks: tools/cc/ledger_row.py `file` with the id left out,\n"
@@ -5285,7 +5299,7 @@ def _git_covered_entries(
             prefix="espalier-check-ignore-", ignore_cleanup_errors=True,
         ) as scratch:
             scratch_root = Path(scratch)
-            init = run_bounded(
+            init = run_no_stdin(
                 ["git", "init", "-q", "--template=", str(scratch_root)],
                 capture_output=True, text=True, encoding="utf-8",
                 errors="replace", check=False, timeout=30, env=env,
@@ -5296,7 +5310,7 @@ def _git_covered_entries(
             stdin = "".join(
                 path + "\0" for paths in probes.values() for path in paths
             ) + _GITIGNORE_CONTROL_PROBE + "\0"
-            proc = run_bounded(
+            proc = run_no_stdin(
                 ["git", "-C", str(scratch_root),
                  "-c", f"core.excludesFile={scratch_root / 'no-global-excludes'}",
                  "-c", f"core.ignorecase={'true' if fold else 'false'}",
@@ -5401,7 +5415,7 @@ def _git_ignorecase(repo_root: Path) -> bool:
     direction for a diagnostic that must never abort a completed deploy.
     """
     try:
-        proc = run_bounded(
+        proc = run_no_stdin(
             ["git", "-C", str(repo_root), "config", "--type=bool",
              "core.ignorecase"],
             capture_output=True, text=True, encoding="utf-8",
@@ -5490,7 +5504,7 @@ def _untracked_conflicts(
     # platform most operators are sitting on.
     fold = _git_ignorecase(repo_root)
     try:
-        result = run_bounded(
+        result = run_no_stdin(
             ["git", "ls-files", "--others", "--exclude-standard", "-z"],
             cwd=repo_root, capture_output=True, text=True,
             # errors= AND ValueError, together: a filename that is not valid
@@ -5591,7 +5605,7 @@ def _git_tracked(repo_root: Path) -> tuple[list[str], bool] | None:
     (``cleanup._retire_gitignore_block``): an ignore rule guards no tracked
     file, so a tracked one is never the reason to keep it."""
     try:
-        proc = run_bounded(
+        proc = run_no_stdin(
             ["git", "-C", str(repo_root), "ls-files", "-z"],
             capture_output=True, text=True, encoding="utf-8",
             errors="replace", check=False, timeout=120,
@@ -5599,7 +5613,7 @@ def _git_tracked(repo_root: Path) -> tuple[list[str], bool] | None:
         # git itself is case-insensitive on macOS/Windows checkouts; match it,
         # or the check misses `Reports/q4.md` against `/reports/` and silently
         # creates the state it exists to prevent.
-        case_proc = run_bounded(
+        case_proc = run_no_stdin(
             ["git", "-C", str(repo_root), "config", "--type=bool",
              "core.ignorecase"],
             capture_output=True, text=True, encoding="utf-8",
@@ -6034,7 +6048,7 @@ def _ignored_files_under(repo_root: Path, folder: str) -> list[str] | None:
     cannot answer. Nothing is fed to the child, so its stdin is closed (the
     DEF-928 shape)."""
     try:
-        proc = run_bounded(
+        proc = run_no_stdin(
             ["git", "-C", str(repo_root), "ls-files", "-z", "--others", "--ignored",
              "--exclude-standard", "--", f"{folder}/"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -6307,7 +6321,7 @@ def _git_hides(repo_root: Path, rel: str) -> bool:
     catch-all such as ``.*`` would hide the include from every commit);
     False when it does not, or when git cannot be asked."""
     try:
-        done = run_bounded(
+        done = run_no_stdin(
             ["git", "-C", str(repo_root), "check-ignore", "-q", "--", rel],
             capture_output=True, timeout=10, check=False,
         )
@@ -6328,7 +6342,7 @@ def _git_ignored(repo_root: Path, rels: Sequence[str]) -> set[str] | None:
         return set()
     try:
         # NUL-separated both ways (-z needs --stdin), so no path is quoted.
-        done = run_bounded(
+        done = run_no_stdin(
             ["git", "-C", str(repo_root), "check-ignore", "--stdin", "-z"],
             input=b"\0".join(rel.encode("utf-8") for rel in rels) + b"\0",
             capture_output=True, timeout=10, check=False,
@@ -7383,6 +7397,43 @@ def _deploy_seed_docs(repo_root: Path, *, dry_run: bool = False) -> dict[str, li
     return outcome
 
 
+def _seed_dirs_present(repo_root: Path) -> set[str]:
+    """The directories above each seed doc that exist now: what
+    :func:`_roll_back_seed` must leave standing."""
+    from espalier.managed_inventory import get_seed_docs
+    return {parent.as_posix() for rel in get_seed_docs() for parent in Path(rel).parents
+            if parent != Path(".") and (repo_root / parent).is_dir()}
+
+
+def _roll_back_seed(repo_root: Path, outcome: dict[str, list[str]], dirs_before: set[str]) -> None:
+    """Remove the seed docs ``_deploy_seed_docs`` created (absent before it ran),
+    and each directory it made that is empty again, deepest first. A refreshed
+    seed is an untouched copy brought current and stays; a directory that was
+    there before stays. Each removal is best effort (``remove_file``), so a doc
+    another process holds open stays and is named, and the error that stopped
+    ``init`` is the one that reaches the operator, never one of these. Says on
+    stderr what it removed and what stayed, since that error follows it."""
+    created = outcome.get("created", [])
+    stayed = []
+    for rel in created:
+        remove_file(repo_root / rel, best_effort=True)
+        if (repo_root / rel).exists():
+            stayed.append(rel)
+    made = {parent.as_posix() for rel in created for parent in Path(rel).parents if parent != Path(".")}
+    for rel in sorted(made - dirs_before, key=lambda d: d.count("/"), reverse=True):
+        try:
+            (repo_root / rel).rmdir()
+        except OSError:  # fail-open: ok deliberate -- not empty (something else wrote there): it stays
+            pass
+    removed = len(created) - len(stayed)
+    if removed:
+        print(f"init stopped at its fingerprint: the {plural(removed, 'seed doc')} it had "
+              f"created {'was' if removed == 1 else 'were'} removed", file=sys.stderr)
+    if stayed:
+        print("init could not remove these seed docs it had created: " + _name_paths(stayed),
+              file=sys.stderr)
+
+
 def _seed_outcome_sentence(outcome: dict[str, list[str]], *, done: bool) -> str:
     """One sentence naming what a seed deploy did (``done``) or, on a dry
     run, would do: the refreshed and the created seeds by root-relative
@@ -7751,10 +7802,17 @@ def cmd_init(args: argparse.Namespace) -> int:
     # stamp: an operator-untouched-but-stale copy refreshes, an edited or
     # legacy-unstamped copy is preserved on re-init. Extracted to
     # _deploy_seed_docs so cmd_upgrade shares the same refresh path.
+    seed_dirs_before = _seed_dirs_present(repo_root)
     seed_outcome = _deploy_seed_docs(repo_root)
 
-    # Step 1: Fingerprint
-    fp = fingerprint_repo(repo_root, config)
+    # Step 1: Fingerprint. Its git reads are init's first spawns; one that
+    # raises takes the seed docs just created with it, so a failed init does
+    # not leave a half-written tree whose author is unclear (DEF-928).
+    try:
+        fp = fingerprint_repo(repo_root, config)
+    except BaseException:  # noqa: BLE001 -- any stop here, Ctrl-C included, takes the seed back and goes on as it came
+        _roll_back_seed(repo_root, seed_outcome, seed_dirs_before)
+        raise
 
     # Step 2: Build harness config
     harness = build_harness_config(fp, config)
@@ -11571,7 +11629,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
     if not config_sets_key(repo_root, "handoff_push"):
         print("[upgrade] /handoff pushes the lane only when espalier.toml sets "
               "handoff_push = true (off when the key is absent): set it to keep "
-              "handoffs pushing, or push a lane yourself with /ship.")
+              "handoffs pushing, or push a lane yourself with /ship. On, the Stop "
+              "hook's handoff gate also holds the Stop once per commit while a "
+              "finished lane sits unpushed (docs/HOOKS.md).")
 
     if not execute and plan_missing:
         print(f"[upgrade] dry-run complete. --execute refuses here until the saved "

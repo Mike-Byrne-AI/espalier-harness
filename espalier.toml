@@ -37,6 +37,16 @@ record_remote_required = true
 # lane's one push, its memory row included.
 handoff_push = true
 
+# The context size, in tokens, past which the prompt router asks the session to
+# hand off (tools/cc/hooks/task_router.py reads the figure from the session
+# transcript's tail on every prompt). Absent or 0 means off for every
+# repository: a seat that runs to the window's end is the default. This one
+# opts in: measured 2026-10-26 on this box, turns past 150k carried about
+# nine tenths of a session's weighted spend, and a cut at 200k reads as roughly
+# half of that spend on the dispatcher seat and a third on a worker. A lane in
+# hand finishes before the handoff; the ask never ships a half-done lane.
+handoff_context_tokens = 200000
+
 # Whether a lane records its changelog entries in a file of its own under
 # changelog.d/ (`python tools/cc/_record_fragments.py new changelog` names it)
 # rather than under [Unreleased] in CHANGELOG.md. Absent means off: the loader

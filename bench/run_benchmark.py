@@ -1457,8 +1457,10 @@ def invoke_reflect_iter_surface(
 
       1. the planted docs file appears in ``iter_surface``'s coverage
          (the post-fix walk reaches it), AND
-      2. the REAL broken-link detector (identical logic to ``main()``)
-         actually fires a gap on the planted file's content_signature.
+      2. the REAL broken-link detector (``main()``'s link check as it reads
+         a plain doc; a record surface's dead pointer is aging there, and
+         none is planted here) actually fires a gap on the planted file's
+         content_signature.
 
     A roots-only iter_surface fails condition 1; a presence-only check
     would never exercise the detector and is exactly the trap avoided.

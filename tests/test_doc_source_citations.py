@@ -228,12 +228,16 @@ def _swept_docs(tracked: set[str]) -> list[str]:
     the files it proposes to create (44 such citations across 14 drafts when they
     first entered the tree), and its Affected-symbols walk re-derives them at
     execution -- so the one predicate that defines a pack keeps it out, and the
-    ledger, whose rows are live claims, comes in."""
+    ledger, whose rows are live claims, comes in. The changelog's fragments
+    (``changelog.d/``) come in beside ``CHANGELOG.md``, which the release fold
+    folds them into: the unreleased entries are the same claims before the fold,
+    and the sibling test-citation gate sweeps them too, so the two gates agree
+    about one surface (measured clean on all 71 fragments, 2026-10-19)."""
     return sorted(
         p for p in tracked
         if p.endswith(".md")
         and (
-            p.startswith(("docs/", "memory/"))
+            p.startswith(("docs/", "memory/", "changelog.d/"))
             or "/" not in p
             or (p.startswith("task-packs/") and not is_shipped_pack(p))
         )
@@ -395,6 +399,11 @@ class TestSourceCitationPopulation:
         # surfaces, excluded by predicate), so the five-doc floor the other
         # roots carry would misread that as an emptied subtree.
         floors = {"docs": 5, "memory": 5, "<root>": 5, "task-packs": 1}
+        # changelog.d/ joined 2026-10-19: the fragments the release fold folds into
+        # CHANGELOG.md. The fold leaves the folder empty, so it is a root exactly
+        # while a fragment is tracked, and its floor is that presence, not a count.
+        if any(p.startswith("changelog.d/") and p.endswith(".md") for p in tracked):
+            floors["changelog.d"] = 1
         assert set(by_root) == set(floors), (
             f"the swept population gained or lost a root: {dict(by_root)} — re-derive "
             "_swept_docs deliberately instead of letting a subtree drop out silently"

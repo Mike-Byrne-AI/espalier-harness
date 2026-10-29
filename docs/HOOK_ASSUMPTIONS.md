@@ -24,7 +24,7 @@ Espalier governs a **subset** of Claude Code's hook surface. The 10 events Espal
 | ConfigChange | guarantee | `config_guard` settings.json safety |
 | PostToolUse | visibility | `post_write_check` + `reflect_trigger` -- which, on an approved `ExitPlanMode`, also writes `cc/execution_plan.json` (the plan-mode bridge), a state the friction tier's `plan_guard` reads |
 | PostToolUseFailure | reporting | re-inject untrusted-oracle re-derivation on a failed edit (Rule A, `context_reinject_failure`) |
-| Stop | guarantee | `stop_gate` four-gate sequence |
+| Stop | guarantee | `stop_gate` five-gate sequence |
 | SubagentStart | reporting | inject cold-subagent orientation + finding-schema pointer (`subagent_start`) |
 | SubagentStop | reporting | append subagent reasoning to active blueprint |
 | PostCompact | reporting | capture the compaction summary and arm the post-compaction checkpoint; re-injects nothing (the event has no channel to Claude -- SessionStart's `compact` source re-orients) |
@@ -101,7 +101,7 @@ The same blindness holds for an exit-0 hook's **stderr**, on every event: it rea
 
 ## Assumption 3 — Stop hook fires on graceful session exit
 
-The `Stop` hook event fires when a session ends through the normal exit path, giving `stop_gate` its window to run the four-gate sequence (pytest → docs refresh → code review → blueprint finalize). Behavior on **abnormal** termination (crash, kill -9, OOM, network drop) is environment-dependent and not guaranteed by the hook protocol.
+The `Stop` hook event fires when a session ends through the normal exit path, giving `stop_gate` its window to run the five-gate sequence (pytest → docs refresh → code review → handoff → blueprint finalize). Behavior on **abnormal** termination (crash, kill -9, OOM, network drop) is environment-dependent and not guaranteed by the hook protocol.
 
 This is the basis of the "transcript-gated compulsion" primitive: a session cannot exit cleanly without satisfying the gates. The boundary is graceful exit only. A non-graceful termination skips the gate.
 
@@ -164,6 +164,21 @@ The seat driver (`tools/cc/seat.py`, through `checkout_sync.occupancy`) is a fou
 - `tests/test_checkout_sync.py::TestReapWorktrees` -- the idle session in a clean, merged worktree is kept (`::test_todays_case_an_idle_session_in_a_clean_merged_worktree_keeps_it`); every unknown registry shape reaps nothing (`::test_a_registry_that_cannot_be_read_reaps_nothing`); an entry whose pid has exited does not keep a worktree (`::test_a_registry_entry_whose_process_is_gone_does_not_keep_it`); `TestSessionStartWiring::test_a_registry_without_this_session_reaps_nothing` drives the own-entry check through the hook. All against a fixture registry of the observed shape.
 - The live drive of 2026-10-08 against Claude Code's own registry: a headless session's entry kept its worktree, and once it exited the worktree went.
 - The board's seat tests (class `TestSeats`, beside the board's other tests) -- its reading: an unreadable registry is unread, never "no live session" (`::test_an_unreadable_registry_is_unread_never_no_session`); a registry without this session is unread (`::test_a_registry_that_does_not_list_this_session_is_unread`); outside a session the row names every registry read (`::test_outside_a_session_the_registry_read_says_it_is_unchecked`, `::test_the_unchecked_row_names_every_registry_read`); nothing folds while the registry is unread (`::test_nothing_folds_while_the_registry_is_unread`).
+
+---
+
+## Assumption 7 — the session transcript's last assistant record carries the context size, a `/loop` tick is a prompt, and the loop survives `/clear`
+
+Three facts the threshold handoff (`task_router.py`, `handoff_context_tokens`) stands on. (1) Every hook payload carries `transcript_path` (a common input field, [hooks reference](external/cc-hook-protocol.md)), and the file there is one JSON record per line, one line per content block, each assistant record carrying `message.usage` with `input_tokens`, `cache_creation_input_tokens` and `cache_read_input_tokens`; their sum in the LAST assistant record is the context size the status line reports as `context_window.total_input_tokens`. Read on a live session on 2026-10-26 (Claude Code 2.1.310 on PATH, the payload's own `version` 2.1.299): the status line's payload carried 270738 and the transcript's record stamped 09:19:37Z summed to 270738. The record shape is **undocumented upstream** (the status-line payload is documented; the transcript is Claude Code's own file), and `post_compact.py` already reads the same file. (2) A `/loop` tick arrives as a `UserPromptSubmit` prompt, so the router runs on it: a looping seat's session marker, which the router touches on every prompt, stays live across ticks (every banner since 2026-10-13). (3) The seats' interval `/loop` survives `/clear` and a relaunched seat gets its loop from its brief (observed on the seats on 2026-10-24 and 25), which is why the ask's reset is a `/clear` the operator types.
+
+**Failure direction.** A transcript whose shape changes reads as no figure: the router asks nothing, and once the file is longer than the reader's first window it says so once a session on the prompt channel, so a seat with the setting on never silently stops asking; the status line's `ctx=` segment, read from the documented payload, is the operator's cross-check. A tick that stopped firing the router would show as a marker that stops moving on a quiet seat. The loop not surviving a `/clear` costs the next tick, not the ask.
+
+**Backed by:**
+<!-- canon: docs/external/cc-hook-protocol.md -->
+<!-- claim-id: hook-assumption-7-transcript-context -->
+- The hook utilities' tests, class `TestReadContextFromTranscript` -- the reader on the observed record shape, and every other shape reads `None`.
+- The router's tests, class `TestContextThreshold` -- the ask past the figure, an active plan included; nothing below, off, or on a first prompt; the once-a-session voice on a long transcript with no figure.
+- The live drive of 2026-10-26 on the dispatcher seat: the status-line payload and the transcript tail read the same figure.
 
 ---
 

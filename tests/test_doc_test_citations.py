@@ -72,6 +72,13 @@ _SCAN_GLOBS = (
     # test_doc_source_citations._RECORD_SURFACE_DOCS too, since one file should
     # not be a record for one citation kind and a live surface for the other.
     "CHANGELOG.md",
+    # Its fragments, by the same reasoning: the release fold folds them into
+    # CHANGELOG.md, so they are its unreleased entries before the fold. Until
+    # 2026-10-19 they sat outside the sweep, and the completeness contract below
+    # passed only because each fragment that named a test file had a negation word
+    # beside it; the first fragment without one redded it. Swept, all 71 resolve,
+    # and test_doc_source_citations sweeps them too.
+    "changelog.d/*.md",
 )
 _EXCLUDE_PREFIXES = ("reports/", "task-packs/")
 _EXCLUDE_FILES = frozenset({

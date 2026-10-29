@@ -326,7 +326,7 @@ def list_tracked_or_walked_files(
     import subprocess
 
     from espalier._safe_walk import is_own_git_repo
-    from espalier._spawn import run_bounded
+    from espalier._spawn import run_no_stdin
 
     if not is_own_git_repo(repo_root):
         if require_git:
@@ -337,7 +337,7 @@ def list_tracked_or_walked_files(
         return (_walked_files_matching_git_tracked(repo_root), "filesystem")
 
     try:
-        result = run_bounded(
+        result = run_no_stdin(
             # core.quotePath=false: non-ASCII paths come back as real UTF-8
             # (matching the filesystem-walk fallback in
             # list_repo_files_via_filesystem), not git's default octal-escaped,

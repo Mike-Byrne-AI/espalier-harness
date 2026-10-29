@@ -140,10 +140,38 @@ SYMBOLS_RULE_KEY = "symbols_rule"
 #: never is. Declared in espalier/config.py::FOREIGN_KEYS.
 DISPATCHER_KEY = "dispatcher"
 _REQUIRED_KEYS: tuple[str, ...] = ("id", "type", "from", "at")
+#: The cap on a message's text. Declared on 2026-10-24: the channel's first
+#: commit and the packs since state the number with no reason. A message points
+#: at a lane, a row, a pack or a decision and carries the one thing only its
+#: sender knows; the proof, the diff and the file live in the tree, where every
+#: seat reads them at HEAD. A body over the cap is split into a message and
+#: notes (``--text-file`` for a quote-heavy one), never raised: the dispatcher's
+#: assigns written up to it (17 of its 25 on 2026-10-18 at or over 1,950
+#: characters; 19 of its 96 messages that day) carried retyped tool output, the
+#: symptom the assign's shrinking treated.
 MAX_TEXT = 2000
+#: What a dispatcher's question to the operator opens with: a ``request`` the
+#: board's ``asks:`` line counts apart, for every seat to read, until the
+#: dispatcher's own ``ack`` naming its id carries the ruling
+#: (memory/parallel-work-protocol.md, *Assign authority*). One constant, read
+#: by the board and the fold; the message shape is unchanged, and an ack from
+#: any other seat leaves the call open (``live_requests``).
+OPERATOR_CALL_PREFIX = "OPERATOR CALL:"
 MAX_PATHS = 64
 MAX_CLASSES = 16
 MAX_IDS = 64
+#: The assign's shape (memory/parallel-work-protocol.md, "What an assign says"): a
+#: note, never a refusal, past this many characters or on a phrase the tier script
+#: prints from the diff, the dispatcher's own "tier:" and "review:" forms among them,
+#: a hyphen read as a space. A literal: the driver deploys where the tier script does
+#: not, and there the phrases are not noted (tests/test_mail.py pins the list against
+#: scripts/proof_tier.py's TIERS and REVIEWS).
+ASSIGN_SHAPE_CHARS = 900
+ASSIGN_SHAPE_WORDS: tuple[str, ...] = (
+    "contract slice", "contract tier", "recall tier", "full tier",
+    "code-reviewer", "failure-mode-reviewer", "both reviewers",
+    "tier:", "review:",
+)
 #: The symbols one claim carries; the rest are a count (``SYMBOLS_MORE_KEY``),
 #: and their paths are kept whole in ``paths``.
 MAX_SYMBOLS = 128
@@ -650,19 +678,31 @@ def lane_seats(by_machine: dict[str, list[dict]]) -> dict[str, str]:
     """``{lane: machine}``: the machine whose LATEST claim or release names the
     lane. A release counts because the ship driver releases a lane's claims
     once its push lands, so the open pull request a seat just shipped has no
-    live claim left; the release still says whose lane it was. The board names
-    each open pull request's seat from this, and ``ship.py open`` a seat's
-    other open pull requests."""
-    latest: dict[str, tuple[str, str, int, str]] = {}
+    live claim left; the release still says whose lane it was. It counts only
+    from a machine with an earlier claim on that lane: the dispatcher closing
+    a job by lane after the seat's push was the lane's latest message and
+    moved the lane, its open pull request and its Session Log debt onto the
+    dispatcher (the records line's predicted defect, reproduced at its
+    review), and a lane only ever released is nobody's. The board names each open pull
+    request's seat from this, ``ship.py open`` a seat's other open pull
+    requests, and the records line and the census a seat's merged lanes."""
+    events: list[tuple[str, str, int, str, str]] = []
     for machine, messages in by_machine.items():
         for i, m in enumerate(messages):
             lane = str((m.get("re") or {}).get("lane") or "")
-            if not lane or m.get("type") not in ("claim", "release"):
-                continue
-            key = (str(m.get("at") or ""), str(m.get("from") or machine), i, str(m.get("from") or machine))
-            if lane not in latest or key[:3] > latest[lane][:3]:
-                latest[lane] = key
-    return {lane: key[3] for lane, key in latest.items()}
+            kind = str(m.get("type") or "")
+            if lane and kind in ("claim", "release"):
+                events.append((str(m.get("at") or ""), str(m.get("from") or machine), i, lane, kind))
+    events.sort(key=lambda t: t[:3])
+    claimed: dict[str, set[str]] = {}
+    latest: dict[str, str] = {}
+    for _at, who, _i, lane, kind in events:
+        if kind == "claim":
+            claimed.setdefault(lane, set()).add(who)
+        elif who not in claimed.get(lane, ()):
+            continue   # a release from a seat that never claimed the lane names nobody's lane
+        latest[lane] = who
+    return latest
 
 
 def age_seconds(message: dict, now: datetime | None = None) -> int | None:
@@ -686,15 +726,37 @@ def live_requests(by_machine: dict[str, list[dict]], *, now: datetime | None = N
     machine's ref is read, the asker's own included: an asker may close its
     own request, and the dispatcher's acks live on its own ref. Ordered as
     the claims fold is: the stamp, the machine, the position in its file."""
-    answered = {str(m.get("ack") or "") for messages in by_machine.values() for m in messages
-                if m.get("type") == "ack"}
+    answered: dict[str, set[str]] = {}   # the request id -> the machines whose acks name it
+    for machine, messages in by_machine.items():
+        for m in messages:
+            if m.get("type") == "ack":
+                answered.setdefault(str(m.get("ack") or ""), set()).add(str(m.get("from") or machine))
     asks: list[tuple[str, str, int, dict]] = []
     for machine, messages in by_machine.items():
         for i, m in enumerate(messages):
-            if m.get("type") == "request" and m.get("id") not in answered:
-                asks.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
+            if m.get("type") != "request":
+                continue
+            who = str(m.get("from") or machine)
+            acked_by = answered.get(str(m.get("id") or ""), set())
+            # An operator call (the dispatcher's question to the operator) closes
+            # on its sender's own ack alone: any seat's ack closed any request,
+            # and a worker clearing a "moot" ask would have taken the operator's
+            # question off every board with no trace (found at the records line's review).
+            closed = who in acked_by if is_operator_call(m) else bool(acked_by)
+            if not closed:
+                asks.append((str(m.get("at") or ""), who, i, m))
     asks.sort(key=lambda t: t[:3])
     return [{**m, "age_s": age_seconds(m, now)} for _at, _who, _i, m in asks]
+
+
+def is_operator_call(message: object) -> bool:
+    """Whether ``message`` is a request whose text opens with
+    :data:`OPERATOR_CALL_PREFIX`, the text as the driver stores it (stripped
+    on send): the dispatcher's question to the operator. A note or an ack
+    carrying the words is not one, a request quoting the prefix mid-text is
+    not one, and the prefix is read as spelled."""
+    return (isinstance(message, dict) and message.get("type") == "request"
+            and str(message.get("text") or "").startswith(OPERATOR_CALL_PREFIX))
 
 
 def _count(value: object) -> int:
@@ -853,10 +915,16 @@ def overlapping_claims(claims: list[dict], *, paths: list[str] | tuple[str, ...]
 
 
 def _job_key(re_: dict) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
-    """A job is its lane (or pack wave), its classes and its ids together."""
+    """A job is its lane (or pack wave), its classes and its ids together;
+    a list field of any other shape reads as empty (``_str_list``)."""
     return (str(re_.get("lane") or ""),
-            tuple(sorted(str(c) for c in re_.get("classes") or [])),
-            tuple(sorted(str(i) for i in re_.get("ids") or [])))
+            tuple(sorted(_str_list(re_.get("classes")))),
+            tuple(sorted(_str_list(re_.get("ids")))))
+
+
+def _lane_of(message: dict) -> str:
+    """The lane a message names, or the empty string."""
+    return str((message.get("re") or {}).get("lane") or "")
 
 
 #: What :func:`dispatcher_setting` answers when ``espalier.toml`` names a
@@ -867,44 +935,85 @@ def _job_key(re_: dict) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
 DISPATCHER_UNUSABLE = "-"
 
 
-def live_assignments(by_machine: dict[str, list[dict]], dispatcher: str | None = None) -> list[dict]:
+def live_assignments(by_machine: dict[str, list[dict]], dispatcher: str | None = None, *,
+                     closed: list[tuple[dict, dict, str]] | None = None) -> list[dict]:
     """The jobs given out and not taken back, oldest first. For each job the
     LATEST assign wins, so a re-sent assign of the same lane, classes and ids
     replaces the first; one naming a different id set is a new job beside the
-    old, which stays live until released by its id. A job closes when
-    the machine that assigned it, or the seat it was given to, sends a release
-    whose ``ack`` names the assign, or that names the assign's lane -- the lane
-    release the ship driver sends at a push closes a job assigned by that lane,
-    so a finished job does not warn forever. With ``dispatcher`` named, only its
-    assigns count, so a worker cannot assign itself work; unnamed, every
-    machine's do (a lone operator's default); :data:`DISPATCHER_UNUSABLE` counts
-    none. Ordered as the claims fold is: the stamp, the machine, the position in
-    its file, never an id's random tail (two assigns of one job in the same
-    second, with no dispatcher named, resolve by machine name)."""
+    old, which stays live until a release closes it. A job closes on one of
+    three releases from the machine that assigned it or the seat it was given
+    to: one whose ``ack`` names the assign; one that names the assign's lane --
+    the lane release the ship driver sends at a push closes a job assigned by
+    that lane, so a finished job does not warn forever; or, for a job that
+    names no lane, from the seat alone, one that names a lane the seat began
+    after the job's latest assign and on which its live claims, together,
+    named every id the job names -- the same push closes a job assigned by
+    its ids (a job naming a lane is that lane's to close, so a claim on
+    another lane never does). A claim counts while it is live (a release of
+    it, by its id or by its lane, takes it out first, as the claims fold
+    does), and a lane is begun by a claim the seat sends while it holds no
+    live claim on that lane (a push releases them all, so a follow-up claim
+    after it begins the lane again). A claim's ids name the rows its lane
+    touches, not the rows it fixed, so a lane begun before the job never
+    closes it: a seat whose current lane touches a row the dispatcher has just
+    queued as its next job does not close that job at the current lane's push. A
+    re-sent assign starts the job's clock again, so a lane begun before the
+    re-send leaves the job to a later lane or to a release by its id. A
+    malformed ``ids`` or ``classes`` field costs its own message and never
+    the fold (``_str_list``). With ``dispatcher``
+    named, only its assigns count, so a worker cannot assign itself work;
+    unnamed, every machine's do (a lone operator's default);
+    :data:`DISPATCHER_UNUSABLE` counts none. ``closed``, when a list is given,
+    gets one ``(assign, release, rule)`` per job the fold closes, ``rule`` one
+    of ``ack``, ``lane`` and ``claim``, so a reader counts closures by the
+    rules' one home. Ordered as the claims fold is: the stamp, the machine, the
+    position in its file, never an id's random tail (two assigns of one job in
+    the same second, with no dispatcher named, resolve by machine name)."""
     events: list[tuple[str, str, int, dict]] = []
     for machine, messages in by_machine.items():
         for i, m in enumerate(messages):
             kind = m.get("type")
-            if kind == "assign" and (not dispatcher or machine == dispatcher):
-                events.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
-            elif kind == "release":
+            if (kind == "assign" and (not dispatcher or machine == dispatcher)) or kind in ("release", "claim"):
                 events.append((str(m.get("at") or ""), str(m.get("from") or machine), i, m))
     events.sort(key=lambda t: t[:3])
     by_job: dict[tuple[str, tuple[str, ...], tuple[str, ...]], dict] = {}
     order: dict[str, int] = {}
+    claims: dict[str, dict[str, dict]] = {}  # each sender's live claims, by id
+    begun: dict[tuple[str, str], int] = {}  # (sender, lane): where its live claims there began
     for n, (_at, who, _i, m) in enumerate(events):
-        if m.get("type") == "assign":
+        kind = m.get("type")
+        if kind == "assign":
             by_job[_job_key(m.get("re") or {})] = m
             order[str(m.get("id"))] = n
             continue
+        mine = claims.setdefault(who, {})
+        if kind == "claim":
+            if not any(_lane_of(c) == _lane_of(m) for c in mine.values()):
+                begun[(who, _lane_of(m))] = n
+            mine[str(m.get("id"))] = m
+            continue
         ack = m.get("ack") or ""
-        lane = str((m.get("re") or {}).get("lane") or "")
+        lane = _lane_of(m)
+        start = begun.get((who, lane), -1)
+        cover = set() if ack or not lane else {
+            i for c in mine.values() if _lane_of(c) == lane for i in _str_list((c.get("re") or {}).get("ids"))}
         for key, a in list(by_job.items()):
             a_re = a.get("re") or {}
             if who not in (a.get("from"), a_re.get(ASSIGN_SEAT_KEY)):
                 continue
-            if (ack and a.get("id") == ack) or (not ack and lane and a_re.get("lane") == lane):
+            ids = set(_str_list(a_re.get("ids")))
+            rule = ("ack" if ack and a.get("id") == ack
+                    else "lane" if not ack and lane and a_re.get("lane") == lane
+                    else "claim" if (not a_re.get("lane") and who == a_re.get(ASSIGN_SEAT_KEY) and ids
+                                     and start > order.get(str(a.get("id")), -1) and ids <= cover)
+                    else "")
+            if rule:
                 del by_job[key]
+                if closed is not None:
+                    closed.append((a, m, rule))
+        for cid in list(mine):
+            if (ack and cid == ack) or (not ack and lane and _lane_of(mine[cid]) == lane):
+                del mine[cid]   # a lane left with no live claim begins again at its next claim
     return sorted(by_job.values(), key=lambda m: order[str(m.get("id"))])
 
 
@@ -1215,7 +1324,8 @@ def refresh_argv(root: Path, machine: str, *, run: Runner = run) -> tuple[list[s
     typed, the spelling ``release_lane`` warns of), the base the ship driver's
     default, and the send a ``--delta`` claim, so a tick writes only what the
     lane's diff adds. Each way there is nothing to do is a line and exit 0, for
-    a worker stops on anything not green: a detached HEAD; a lane this machine
+    a worker's tick reads a non-zero exit as a refusal, and an unresolved
+    refusal is a stop: a detached HEAD; a lane this machine
     never claimed (the default branch between jobs among them; a lane's first
     claim is sent by hand), the line naming the lanes its live claims are on,
     since a claim spelled unlike the branch is never refreshed; a released
@@ -1703,6 +1813,29 @@ def _repo_root(explicit: str | None) -> Path:
     return Path(out.strip()).resolve()
 
 
+def assign_shape_notes(text: str, *, phrases: bool = True) -> list[str]:
+    """What an assign's text carries that its shape says it should not: the
+    length past ``ASSIGN_SHAPE_CHARS``, and, with ``phrases``, each phrase of
+    ``ASSIGN_SHAPE_WORDS`` it names (case-insensitive, a hyphen read as a
+    space), since the tier script prints those from the diff; the send passes
+    ``phrases`` only where that script is on the tree. Notes, never a refusal:
+    an operator's tier override is a reason to name one, and the dispatcher
+    decides. ASCII, one line each."""
+    notes: list[str] = []
+    if len(text) > ASSIGN_SHAPE_CHARS:
+        notes.append(f"note: the assign is {len(text)} characters; the shape is under "
+                     f"{ASSIGN_SHAPE_CHARS} (the job, why now, what it waits for, the "
+                     "operator's constraints, an edge with its citation)")
+    if not phrases:
+        return notes
+    low = text.lower().replace("-", " ")
+    for phrase in ASSIGN_SHAPE_WORDS:
+        if phrase.replace("-", " ") in low:
+            notes.append(f"note: the assign names '{phrase}', which scripts/proof_tier.py "
+                         "--base prints from the diff")
+    return notes
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mail.py", description=__doc__.split("\n\n", 1)[0])
     parser.add_argument("--root", default=None, help="the checkout (default: the one around the cwd)")
@@ -1915,6 +2048,9 @@ def main(argv: list[str] | None = None) -> int:
                 refusal = assign_refusal(root, machine)
                 if refusal:
                     raise Unresolvable(refusal)
+                tier_script = (root / "scripts" / "proof_tier.py").is_file()   # the self-host tell
+                for line in assign_shape_notes(message["text"], phrases=tier_script):
+                    print(line, file=sys.stderr)
             if args.dry_run:
                 hits = secret_hits(message)
                 if hits:

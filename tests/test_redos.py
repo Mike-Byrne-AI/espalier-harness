@@ -47,6 +47,7 @@ from typing import Literal
 
 import pytest
 from tests._live_tree import checkout_glob
+from tests._platform_standin import without_the_alarm
 from tests._pytest_ini import declared_pytest_timeout
 
 sys.path.insert(
@@ -1129,7 +1130,10 @@ def _window_order(zero: str, small: str, big: str, samples: int) -> list[tuple[i
 
 def _ps_body_call_ms(fn: Callable[[str], object], payload: str) -> float | None:
     """One timed call, the memoised readers cleared first; None when it
-    overran `_CHAIN_CEILING_MS`. The caller pauses the cyclic collector."""
+    overran `_CHAIN_CEILING_MS`. The caller pauses the cyclic collector. On a
+    host without SIGALRM (Windows) it skips the test that reached it."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("the PowerShell body timer arms signal.SIGALRM, not available on this platform")
     _clear_walker_caches()
     signal.signal(signal.SIGALRM, _alarm)
     signal.setitimer(signal.ITIMER_REAL, _CHAIN_CEILING_MS / 1000.0)
@@ -1391,8 +1395,8 @@ def _window_costs_clock(
     """A stand-in for a one-call timer reading fixed costs by window, for the rows
     that read a sentence: ``per_window[k]`` is window ``k``'s ``(zero, small, big)``
     cost, the window counted from the calls seen (each is :func:`_window_order`'s
-    length; the walker's warm call goes to the consumer, not the timer). Records
-    each length."""
+    length; the walker's warm call goes to :func:`_walker_alarmed_ms`, not this
+    stand-in). Records each length."""
     size = len(_window_order("", "", "", samples))
 
     def reading(*args: object) -> float:
@@ -1846,7 +1850,11 @@ def _walker_alarmed_ms(
     `_WALKER_CEILING_MS` (the alarm fires inside the call, so a runaway costs
     one ceiling, not minutes). The warm call reads this directly (DEF-5023: it
     had no alarm); a window's samples read it through :func:`_walker_call_ms`,
-    the seam the simulated-clock rows replace."""
+    the seam the simulated-clock rows replace. On a host without SIGALRM
+    (Windows) it skips the test that reached it, the warm call of a
+    simulated-clock row included."""
+    if not hasattr(signal, "SIGALRM"):
+        pytest.skip("the walker timer arms signal.SIGALRM, not available on this platform")
     _clear_walker_caches()
     signal.signal(signal.SIGALRM, _alarm)
     signal.setitimer(signal.ITIMER_REAL, _WALKER_CEILING_MS / 1000.0)
@@ -2366,8 +2374,9 @@ def test_walker_scaling_row_reads_a_quadratic_through_a_slowdown_on_its_small_sa
     2.67, inside the 3.0 bound and over the flat ratio, so no second window was
     asked and the consumer passed. The window interleaves its samples, so the
     slowdown also covers the first big sample and the clean ones set both
-    floors. On a simulated clock (:func:`_burst_call_clock`), so it needs no
-    alarm and runs on every host."""
+    floors. On a simulated clock (:func:`_burst_call_clock`), so its windows
+    need no alarm; its warm call is the real one under the alarm, so it skips
+    on a host without SIGALRM."""
     cap = _BASH_COMMAND_CAP
     n_big, n_small = _walker_sizes(cap)
     small_ms = 40.0 * (n_small / n_big) ** 2
@@ -2396,8 +2405,9 @@ def test_walker_scaling_row_reads_a_linear_consumer_linear_through_a_slowdown_on
     (``tail``) leaves the other end to set the floor: no problem, nothing unjudged,
     and no second window asked (a window that took the larger of its two zero
     samples would read the first window super-linear and be rescued by the second).
-    On a simulated clock (:func:`_floor_slowdown_clock`), so it needs no alarm and
-    runs on every host."""
+    On a simulated clock (:func:`_floor_slowdown_clock`), so its windows need no
+    alarm; its warm call is the real one under the alarm, so it skips on a host
+    without SIGALRM."""
     cap = _BASH_COMMAND_CAP
     n_big, _n_small = _walker_sizes(cap)
     calls: list[tuple[int, bool]] = []
@@ -2420,8 +2430,9 @@ def test_each_scaling_window_is_judged_net_of_its_own_floor(tmp_path, monkeypatc
     PowerShell arm's half-cap sample under its 5 ms floor on the first window, which
     is not asked again: that red names the per-call cost as its cause
     (:func:`test_the_ps_body_under_floor_red_names_a_swamped_sample_by_cause`). On a
-    simulated clock (:func:`_floor_slowdown_clock`), so it needs no alarm and runs
-    on every host."""
+    simulated clock (:func:`_floor_slowdown_clock`), so its windows need no alarm;
+    the walker arm's warm call is the real one under the alarm, so on a host
+    without SIGALRM the row skips there, after the PowerShell arm has run."""
     n_big = _WORST_CASE_BODY_LEN
     calls: list[tuple[int, bool]] = []
     monkeypatch.setattr(sys.modules[__name__], "_ps_body_call_ms", _floor_slowdown_clock(
@@ -2756,6 +2767,35 @@ def test_the_walker_alarm_interrupts_a_call(tmp_path, monkeypatch):
     assert (time.perf_counter() - t0) * 1000 < 10 * _WALKER_CEILING_MS  # 500 ms under the 50 ms ceiling
 
 
+@pytest.mark.parametrize("call", [
+    lambda root: _walker_alarmed_ms(lambda _p, _r: None, "x", root),
+    lambda root: _ps_body_call_ms(lambda _p: None, "x"),
+], ids=["walker", "ps-body"])
+def test_the_walker_and_ps_body_timers_skip_on_a_host_without_sigalrm(tmp_path, monkeypatch, call):
+    """The walker timer and the PowerShell body timer skip the test that reached
+    them where the signal does not exist (Windows), never an AttributeError: once
+    the walker row's warm call went under the alarm (DEF-5023), twelve
+    simulated-clock rows reached the walker timer through it and each redded the
+    Windows leg. Driven on every host by taking the alarm away, so a dropped guard
+    reds on any cell that runs this file. These two timers only: every other read
+    of an alarm name is held to its guard by
+    tests/test_test_suite_contract.py::test_every_sigalrm_arming_function_guards_itself.
+    The alarm half of the shared stand-in (tests/_platform_standin.py) takes the
+    names away; the platform half is not called, because these timers are the
+    suite's own, skip on ``hasattr(signal, "SIGALRM")`` and read no platform, so
+    an ``os`` parameter here would never vary anything (the born-blind shape the
+    adopter-axes registry refuses). This node proves no registry cell; the
+    bounded spawn's timeout-shape node is the ``os/windows`` proof."""
+    # Safe only because this module runs pytest-timeout's thread method (the
+    # pytestmark above), which importing without_the_alarm costs it
+    # (tests/_platform_standin.py and the suite contract): under the signal method
+    # the plugin's cancel reads signal.SIGALRM while it is deleted, an
+    # INTERNALERROR that ends the session.
+    without_the_alarm(monkeypatch)  # none of the three names exists on Windows
+    with pytest.raises(pytest.skip.Exception):
+        call(tmp_path)
+
+
 def test_the_walker_row_passes_inside_its_budget_and_keeps_the_swamped_guard(tmp_path, monkeypatch):
     """Polarity for DEF-5023's budget: five healthy consumers finish well inside
     it and the row passes; and DEF-926's guard still holds under it, a label on
@@ -2846,7 +2886,8 @@ def test_walker_scaling_judgement_routes_an_under_floor_sample_by_cause(
     never neither -- a swapped or dropped return retires the guard on the hosts
     it should red on (DEF-926; the failure-mode review of DEF-2000, which
     moved this branch into :func:`_walker_scaling_judgement`). On a stubbed
-    one-call timer, so it needs no alarm and runs on every host."""
+    one-call timer, so its windows need no alarm; its warm call is the real one
+    under the alarm, so it skips on a host without SIGALRM."""
     cap = _BASH_COMMAND_CAP
     n_big, n_small = _walker_sizes(cap)
     costs = {64: t_zero, n_small: t_small, n_big: 2 * t_small}

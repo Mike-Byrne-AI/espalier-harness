@@ -1746,6 +1746,11 @@ PAUSE_EVENT_TYPES = frozenset({
     "stop_blocked_pytest",
     "stop_blocked_docs_refresh",
     "stop_blocked_code_review",
+    # Gate 5 (the handoff gate): nothing in flight and the branch holds
+    # commits its upstream does not, made this session, where espalier.toml
+    # sets handoff_push = true; once per commit (``details.ahead`` is the
+    # count, never the branch name or the plan's title).
+    "stop_blocked_handoff",
     "stop_blocked_internal_error",
 })
 

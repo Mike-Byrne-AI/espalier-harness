@@ -1,13 +1,14 @@
 """Generate git worktree lane plans for parallel work with explicit ownership."""
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
+
+from espalier._spawn import run_no_stdin
 
 
 def _git_branch(repo_root: Path) -> str:
     try:
-        proc = subprocess.run(["git", "-C", str(repo_root), "branch", "--show-current"], capture_output=True, text=True, encoding="utf-8", check=False)
+        proc = run_no_stdin(["git", "-C", str(repo_root), "branch", "--show-current"], capture_output=True, text=True, encoding="utf-8", check=False)
     except (OSError, ValueError):  # strict decode: a structured answer (DEF-821)
         return "main"
     branch = proc.stdout.strip()

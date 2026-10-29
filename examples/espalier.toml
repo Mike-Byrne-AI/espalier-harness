@@ -142,9 +142,18 @@
 # Read by tools/cc/mail.py, not by the engine.
 # dispatcher = <value>
 
+# Ask the session to hand off once its context passes this many tokens
+# (tools/cc/hooks/task_router.py reads the figure from the transcript's tail
+# on every prompt and asks until the window is cleared; a lane in hand finishes
+# first). Off when absent or 0: a session runs to the window's end. A token
+# count, not a share of the window: set it for the model's window.
+# handoff_context_tokens = 200000
+
 # Let /handoff push the lane after it commits the memory row (through
 # tools/cc/ship.py: a pull request with auto-merge armed). Off when absent:
-# push a lane yourself with /ship.
+# push a lane yourself with /ship. On, the Stop hook's handoff gate also
+# holds the Stop once per commit while a finished lane sits unpushed
+# (docs/HOOKS.md, stop_gate).
 # handoff_push = true
 
 # Per-seat id blocks: tools/cc/ledger_row.py `file` with the id left out,

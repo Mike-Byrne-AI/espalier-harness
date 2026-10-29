@@ -168,7 +168,14 @@ git pull --ff-only origin main`), answered by a read-only `git merge-base`
 per merged row, the five most recent -- and each whose latest run of a check
 is red (`; red after merge: portability (windows-latest)`), because a check
 that is not required finishes after the merge and otherwise reports to
-nobody. Each check name is owned by the newest merge whose run of it reached
+nobody. The rule and its sets live in `tools/cc/_post_merge.py`, loaded by
+path: the one home the board's `checks:` line and the ship preflight read
+too (those two add the start gate this five-row line does not carry: a
+newer merge's green run clears an older red only when it started after that
+merge landed, else it is printed beside the red), and a tree without the module beside the
+hooks gets one line in the block's place, `pull requests unread
+(tools/cc/_post_merge.py is not beside the hooks)`, never a silent green.
+Each check name is owned by the newest merge whose run of it reached
 a verdict, so a later green run clears an older red, while a run still
 pending, cancelled or stale supersedes nothing (the last two read
 `no verdict:`). A lane shipped with auto-merge armed lands while nobody is watching,
@@ -564,6 +571,39 @@ as additional context alongside your prompt, but nothing prevents it
 from proceeding differently. The hook never rejects a prompt.
 
 **Configuration:** None needed. The hook is silent for most interactions.
+
+**The threshold handoff (opt-in).** Where `espalier.toml` sets a top-level
+`handoff_context_tokens = <int>`, the hook reads the session's context size on
+every prompt, loop ticks included, from the tail of the session transcript the
+payload names (`transcript_path`: the last assistant record's `usage`, its
+input, cache-creation and cache-read counts summed, the same figure the status
+line shows as `ctx=`), and once the figure is at or past the setting it prints
+one ASCII paragraph beside the prompt:
+
+```
+[HARNESS] Context is 271k, past the handoff threshold (200k, espalier.toml
+handoff_context_tokens). First asked 2026-10-26T09:19Z at 271k. Handoff
+replaces compaction: if a lane is in hand, finish it through its own landing
+and start no new job; with no lane in hand, run /handoff now (it writes your
+row, and pushes the lane). After the handoff take no new work, answer a loop
+tick in one line, and tell the operator this window needs a /clear (the loop
+survives it).
+```
+
+The push clause rides only where `handoff_push = true`. The ask is idempotent
+by text: it repeats on every prompt past the figure until the window is
+cleared, and it never says "commit and hand off" mid-lane, because on a tree
+with `handoff_push` the handoff's last step opens the lane's pull request with
+auto-merge armed, and a half-finished lane must not ride that. The first ask
+is recorded beside the session's marker
+(`.espalier-state/sessions/<id>.handoff-asked`, swept with the marker) so the
+later ones can quote it. Absent, `0`, or anything but a positive integer is
+off. A session's first prompt, before any response, has no figure and asks
+nothing; a transcript longer than the reader's first window that still yields
+no figure is said once a session, on the same channel (the transcript's
+record shape is an assumption, `HOOK_ASSUMPTIONS.md` Assumption 7). The
+setting is a token count, not a share of the window: on a 200k-window model
+set it accordingly.
 
 ---
 
@@ -1986,18 +2026,45 @@ infrequent.
 
 **Event:** Stop · **Can block:** Yes
 
-Runs a four-gate sequence when Claude tries to finish a turn. By default
-only the lightweight hygiene gates run. The full pytest gate is opt-in.
+Runs a five-gate sequence when Claude tries to finish a turn. By default
+only the lightweight hygiene gates and the handoff gate run. The full pytest
+gate is opt-in.
 
 | Gate | What it checks | Blocks? | Default |
 |------|---------------|---------|---------|
 | **1. Pytest** | Runs core test suite | Yes, on failure | **Off** (opt-in via env var) |
 | **2. Docs refresh** | ≥10 writes and no `docs-maintainer` subagent run that changed docs (`.espalier-state/docs_refreshed`)? | Yes, the first Stop of each turn until one has | On |
 | **3. Code review** | ≥10 writes and no `code-reviewer` subagent run (`.espalier-state/code_reviewed`)? | Yes, the first Stop of each turn until one has | On |
+| **5. Handoff** | Nothing in flight (no plan in progress, no tracked edit) and the branch holds commits its upstream does not (its own upstream, else `origin/HEAD`, else `origin/main` or `origin/master`), made this session, on a repository whose `espalier.toml` sets `handoff_push = true` | Yes, once per commit (`.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart) | On where the handoff pushes |
 | **4. Blueprint finalize** | Auto-finalizes the active blueprint | Never blocks | On |
 
 Gates 2 and 3 only fire on sessions with 10+ source writes. Short
-sessions pass through all gates silently. Session-state coverage falls
+sessions pass through them silently. Gate 5 runs before Gate 4 and keeps the
+number a retired gate freed: it fires at the one moment a session is most
+likely to stop short, the turn that commits a lane's finished work, and tells
+Claude to run `/handoff` then, while the context is warm, instead of reporting
+and waiting for the operator (a lane left that way sat unpushed, with no
+Session Log row and its claims live, for eleven hours, 2026-10-24). "Made this
+session" is the flag: SessionStart seeds `.espalier-state/handoff_gate_said`
+with HEAD on a new session (a compaction keeps it), and every judgment rewrites
+it, so a lane an earlier session left unpushed is the banner's `Checkout:`
+line's to name, never a block into a cold context, and a handoff whose push
+failed (its row moved HEAD) is told again. The reason names the plan (or that
+none is in progress), the branch, the count and the upstream, says what the
+push does for this branch (open the pull request, or push onto the one already
+open), and names three carve-outs the collaborator says in one line before
+stopping again: the operator asked to hold the push, the lane ships together
+with another, or more of the lane's work is still to come this session. The
+gate also runs alone on the continuation Stop that follows a Gate 2 or Gate 3
+block, so a lane held by the hygiene gates is told in the same turn. A plan in
+progress or an edit in flight passes and writes nothing; nothing unpushed, a
+detached HEAD, a checkout with no remote to compare against, and a repository
+whose handoff does not push pass and remember the HEAD. A `git` that cannot be
+asked lets the Stop through and says so once (`stop_failed_open_handoff_git`);
+a tree without `tools/cc/ship.py` has no gate, and a driver that cannot
+import, is shadowed by another module of that name, predates
+`handoff_push_setting` or fails its read stands the gate down and says so once
+(`stop_failed_open_handoff_driver`). Session-state coverage otherwise falls
 back to `/handoff`, `git status`, and IDE gutters.
 
 A source write is one whose extension is in
@@ -2062,7 +2129,7 @@ same for the checks the flag switches off in them
 | `ESPALIER_STOP_GATE=light` (default) | Skip gate 1 (pytest). Run hygiene gates 2-3 only. |
 | `ESPALIER_STOP_GATE=full` | Run gate 1 (the test gate; the row below says what it runs) before hygiene gates. **Caution:** Stop fires on every turn, not just end-of-session. If set permanently, the test command runs on every turn. A pytest file list runs under the hook interpreter, so pytest must be installed for that form: on a Windows host wired to the launcher (`py -3`, a system Python) while your pytest lives in a virtualenv, the gate skips with a note (`stop_failed_open_pytest_missing`) until you install pytest for that interpreter or set `ESPALIER_STOP_GATE_TEST_CMD`. |
 | `ESPALIER_STOP_GATE_TEST_CMD=<command>` | The command gate 1 runs as *your* suite, as an argv at the repository root without a shell (a non-zero exit, a timeout or a command that cannot start blocks the Stop; an entry carrying shell syntax -- `&&`, `||`, a pipe, `;`, a redirection, `$(` -- is refused before the spawn, once a session per command, with the shape named: one program per entry, each started at the root, so `test = ["npm run build", "npm test"]` where a shell line would chain them). It is the first of three sources: without it, under `full`, gate 1 runs the `test` entry under `[extra_actions]` in `espalier.toml` (read on every Stop; the hook interpreter needs Python 3.11+ or `tomli` to read it), else the test command detected from the repository's own files (`npm test`, `go test ./...`, `cargo test`, a bare `pytest -q`), and a pytest tree holding the harness default test files runs only those. `doctor` and the SessionStart banner say which one runs here (gate 1's own stderr line is a debug-log copy). A Gate 1 that skips -- nothing declared or detected and no default file here, no fingerprint test path exists, pytest timed out or could not run, the override splits to nothing, the fingerprint is unreadable, the mode is misspelt -- records `stop_failed_open_*` once a session, so `/status --log` counts it. |
-| `ESPALIER_MAINTENANCE_MODE=1` | Skip gates 2 and 3 (hygiene friction). Gate 1 (pytest, if opted in) and gate 4 (blueprint finalize) still run. One advisory audit record per session says so (`stop_bypassed_maintenance_mode`; `/status --log` counts it). |
+| `ESPALIER_MAINTENANCE_MODE=1` | Skip gates 2 and 3 (hygiene friction). Gate 1 (pytest, if opted in), gate 5 (the handoff gate: continuity, not friction) and gate 4 (blueprint finalize) still run. One advisory audit record per session says so (`stop_bypassed_maintenance_mode`; `/status --log` counts it). |
 
 Set the stop gate mode for a single session:
 ```text
@@ -2165,6 +2232,7 @@ Espalier-Harness has three levels of configuration, from surgical to nuclear:
 | `ESPALIER_MAINTENANCE_MODE=1` | write_guard (protected-zone check) but not its speed-bump checkpoints, plan_guard (plan requirement), stop_gate (gates 2/3), subagent_stop (blueprint append) | Env var before launch |
 
 What maintenance mode does NOT bypass:
+- stop_gate's gate 1 (pytest, where opted in), gate 5 (the handoff gate) and gate 4 (the blueprint finalize)
 - write_guard's kill-switch gate and dangerous-command blocking
 - write_guard's speed-bump checkpoints (`CP-*`), which dispatch before the maintenance gate is read
 - config_guard (settings safety)
@@ -2442,6 +2510,7 @@ inside a window of twenty.
 | `stop_blocked_pytest` | pause | Gate 1 blocked the Stop: the core test run, or the command Gate 1 runs as your suite (`ESPALIER_STOP_GATE_TEST_CMD`, the declared `[extra_actions] test`, or the detected command; `details.source` names which of the three: `env`, `espalier.toml`, `fingerprint`), failed, timed out or could not be started; `details.rule` names the case, `details.returncode` the exit code, and `details.error` the exception's class when the command never started |
 | `stop_blocked_docs_refresh` | pause | Gate 2 blocked the Stop: ten or more source writes and no docs refresh recorded (or a relief record that is not one); `details.rule` names the case, `details.write_count` the count |
 | `stop_blocked_code_review` | pause | Gate 3 blocked the Stop: ten or more source writes and no code review has run (or a relief record that is not one); `details.rule`, `details.write_count` as above |
+| `stop_blocked_handoff` | pause | Gate 5 blocked the Stop: nothing in flight and the branch holds commits its upstream does not, made this session, on a repository whose `espalier.toml` sets `handoff_push = true`; once per commit (the flag `.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart); `details.ahead` is the count, never the branch or the plan's title |
 | `post_shell_zone_change` | report | after a Bash or PowerShell call, protected files changed that nothing accounts for (`post_write_check`, "The protected files after a shell call"); `details` names them by kind (`changed`, `added`, `removed`, twenty each at most) with their `count`, the same kinds suffixed `_between_calls` for what landed before the call began, and the `tool` |
 | `hook_layer_failed_open_stack_table` | fail-open | the hook layer could not read `tools/cc/_stack_table.py` (absent, a `SyntaxError`, or older than the hooks) and every gate runs on `_hook_utils`'s pinned copy of its projections; written once a session where a root is known, by the two source gates at their root and by the reporters' `repo_name`, with the fault in `details` |
 | `stop_blocked_internal_error` | pause | the Stop hook crashed and re-blocked the Stop fail-closed (the loop signal lets the continuation's Stop through; a persistent crash re-blocks on the first Stop of every later turn until its cause is fixed); `details.rule` is the internal-error reason's name, `details.error` the exception's class |

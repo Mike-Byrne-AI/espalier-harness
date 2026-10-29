@@ -226,7 +226,22 @@ For one bounded change, one main proof path, or a small localized edit.
    python tools/cc/cognitive_blueprint.py record --kind decision --description "..."
    ```
 
-10. **Report results.** Summarize changed files, test results, and any follow-up needed.
+10. **Report results, then commit and hand off.** Summarize changed files,
+    test results, and any follow-up needed. Then, in this same turn, **run
+    `/commit`, then `/handoff`**: this command commits nothing of yours, and
+    `/handoff` commits only its own row, so the lane's work reaches origin only
+    through that pair. Where `espalier.toml` sets `handoff_push = true`, the
+    lane's one push is `/handoff`'s last step, so the task is not done until
+    the handoff has run. Do not stop and wait for the operator to type it -- a
+    lane finished at 05:13 and left that way sat unpushed, with no Session Log
+    row and its claims live, for eleven hours (2026-10-24), and the next
+    session had to hand it off from a cold context. The Stop hook's handoff
+    gate (`stop_gate` Gate 5) holds the Stop once per commit while nothing is
+    in flight and the lane holds commits origin does not, so a session that
+    forgets is told once; it is the floor, not the plan. Three carve-outs,
+    each said in one line before stopping: the operator asked to hold the
+    push; this lane ships together with another; or more of this lane's work
+    is still to come this session (a lane group).
 
 ### If tests fail
 
@@ -327,6 +342,18 @@ the in-flight `ACTIVE PLAN (live -- this is where you were)`.
 ```bash
 python tools/cc/cognitive_blueprint.py record --kind decision --description "..."
 ```
+
+### Phase 5: Hand off
+
+```bash
+python tools/cc/execution_plan.py status   # expect: complete
+```
+
+With the plan complete and the lane holding commits origin does not, run
+`/handoff` in this same turn (focused-mode step 10 says why, and names the two
+carve-outs). A plan that completes and then waits for the operator's `/handoff`
+is the stale-session shape this phase exists to end; the Stop hook's handoff
+gate holds the Stop once per complete plan if you stop first.
 
 ### Resume after interruption
 

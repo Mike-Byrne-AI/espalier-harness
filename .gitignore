@@ -89,6 +89,9 @@ cc/_cold/
 cc/finding_ledger.jsonl
 # Local goal/progress snapshot (curated; refreshed at /handoff, read at SessionStart)
 cc/GOAL.md
+# The operator's-tree marker: present only in the clone the operator works from,
+# read by scripts/record_snapshot.py::operator_root (DEF-1119)
+cc/OPERATOR_TREE
 docs/session-archive.md
 docs/blueprint-archive/
 .espalier-state/
@@ -286,3 +289,9 @@ cc/discard_snapshots.log
 # design: the file names the strings the record must withhold, so tracking it
 # would publish exactly what it exists to keep out.
 .espalier/record_exclude_patterns.txt
+# What Claude Code writes beside a mod it loads (tools/cc/mods/*): the API
+# types for the editor, the tsconfig that extends them, and the scratch its
+# own tests write under; never source.
+tools/cc/mods/*/.claude-plugin/types/
+tools/cc/mods/*/.claude-plugin/test-tmp/
+tools/cc/mods/*/tsconfig.json

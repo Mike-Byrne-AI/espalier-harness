@@ -1598,7 +1598,9 @@ class TestStopGateBlocksReachTheLog:
         # never the message, which can carry a path.
         # ``source`` is one of three fixed words (env, espalier.toml, fingerprint):
         # where Gate 1's command came from, never the command itself.
-        allowed = {"gate", "rule", "write_count", "returncode", "error", "source"}
+        # ``ahead`` is Gate 5's count of commits the upstream lacks: an
+        # integer, never the branch name or the plan's title.
+        allowed = {"gate", "rule", "write_count", "returncode", "error", "source", "ahead"}
         for call in calls:
             text = ast.unparse(call)
             assert len(call.args) == 3, text  # root, event_type, reason

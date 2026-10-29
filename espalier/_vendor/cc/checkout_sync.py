@@ -1512,9 +1512,12 @@ def _seat_claims_kept(here: _Git, root: Path) -> str:
     if not claims:
         return ""
     lanes = sorted({str((c.get("re") or {}).get("lane") or "no lane") for c in claims})
+    ids = [str(c.get("id") or "") for c in claims if c.get("id")]
     return (f"its seat {seat} holds {_plural(len(claims), 'live claim')} ({_names(lanes)}) that only it can "
             f"release: `python tools/cc/seat.py retire {seat}` releases them from inside it and removes it, "
-            "or in it, `python tools/cc/mail.py send --type release --lane <lane>`, then it can go")
+            "or in it, `python tools/cc/mail.py send --type release --ack <claim id>` for each"
+            + (f" ({_names(ids)})" if ids else "")
+            + " (by id: a lane release reads as its lane shipped), then it can go")
 
 
 # -- the banner's words ------------------------------------------------------------

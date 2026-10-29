@@ -16,6 +16,10 @@ registry names the dimensions an adopter can differ along:
 * **tree**: a fresh tree, a dirty machine (an existing ``.claude/``, a
   ``master`` default branch, a stale ``espalier`` first on PATH), or a CRLF
   checkout.
+* **target_os**: the operating system a test makes the harness read, through
+  ``tests/_platform_standin.py``, on whatever host runs it (``linux``,
+  ``macos``, ``windows``); not ``os``, which a proving node's parameter would
+  shadow inside the test.
 
 Each ``(axis, value)`` cell is in one of two states. Either it names the
 pytest node that proves it, or it declares its gap with a reason (a ledger
@@ -24,7 +28,8 @@ contract:
 
 * every cell has exactly one of the two;
 * a proving node is parametrised with an argument **named after the axis**
-  (``stack``, ``host``, ``session``, ``root``, ``tree``), whose value, with
+  (``stack``, ``host``, ``session``, ``root``, ``tree``, ``target_os``), whose value,
+with
   ``-`` read as ``_``, is the cell's value; it carries no ``skip`` or
   ``xfail`` mark; and it runs and passes on the host that checks it. This
   refuses the born-blind shape, a cell naming a test that never varies along
@@ -46,9 +51,10 @@ two proven values is a blind axis, and the table says so in those words.
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
-AXES: tuple[str, ...] = ("stack", "host", "session", "root", "tree")
+AXES: tuple[str, ...] = ("stack", "host", "session", "root", "tree", "target_os")
 
 
 @dataclass(frozen=True)
@@ -143,6 +149,36 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
              "tests/_stack_trees.py writes LF on every host since 2026-10-06; before, "
              "Windows runs built CRLF fixture trees by accident. A CRLF checkout (Git "
              "for Windows' autocrlf default) is now built by no test"),
+    # -- target_os -----------------------------------------------------------
+    # The operating system a test makes the harness read, through
+    # tests/_platform_standin.py (the platform the harness reads, and the
+    # alarm Windows lacks), on whatever host runs it. A cell is proven by a
+    # node parametrised over `target_os`; the surfaces the kernel decides (LockFileEx
+    # on one byte, PATHEXT, a grandchild holding a pipe past the timeout) are
+    # the Windows leg's and no stand-in on another host proves them.
+    # Proven 2026-10-26 by the platform stand-ins lane: the bounded spawn's
+    # timeout-shape test, one node parametrised over linux and windows, drives
+    # the three copies of run_bounded with the standard library's own run in
+    # place (its _is_stdlib_run guard sends a replaced run down the run branch
+    # at both values, so only a real run can tell them apart) and asserts the
+    # shape that differs: read as Windows the tree is ended, the pipes drained
+    # and the child reaped; read as Linux the call is run's and the child alone
+    # is killed. The alarm test of tests/test_redos.py is the home of the
+    # Windows-alarm behaviour (the suite's timers skip where SIGALRM is missing,
+    # the alarm taken away through the same stand-in); its timers are the
+    # suite's own, not harness code, so it proves no cell.
+    AxisCell("target_os", "linux",
+             "tests/test_bounded_spawn.py::TestEveryCopysWindowsBranch::"
+             "test_the_timeout_shape_follows_the_platform_the_harness_reads[linux]", ""),
+    AxisCell("target_os", "macos", "",
+             "the harness reads darwin nowhere, and its one Mac-differing read is "
+             "platform.system() in tools/cc/hooks/_hook_utils.py::host_orientation_line, from uname, "
+             "which no sys.platform patch reaches (read 2026-10-26): a stand-in cannot make "
+             "the harness do anything as macOS that it does not do as linux, so a node at "
+             "this value could assert nothing of its own, the born-blind shape"),
+    AxisCell("target_os", "windows",
+             "tests/test_bounded_spawn.py::TestEveryCopysWindowsBranch::"
+             "test_the_timeout_shape_follows_the_platform_the_harness_reads[windows]", ""),
 )
 
 # The proven-cell floor: it may only rise. Raise it in the same change that
@@ -154,7 +190,9 @@ AXIS_REGISTRY: tuple[AxisCell, ...] = (
 #   pnpm and Bun trees (the stack registry's package-manager lane).
 # 2026-10-07: 6 -- stack/go and stack/rust, by the same test on the Go and Rust
 #   trees (the stack registry's source-and-manifests lane, Decision 6).
-PROVEN_FLOOR = 6
+# 2026-10-26: 8 -- target_os/linux and target_os/windows, by the platform stand-ins lane (the
+#   bounded spawn's timeout-shape node over linux and windows).
+PROVEN_FLOOR = 8
 
 
 def proven(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> list[AxisCell]:
@@ -172,6 +210,17 @@ def blind_axes(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> list[str]:
     """Axes with fewer than two proven values: reported, not failed. One proven
     value means every proving test ran at that value, so the axis is blind."""
     return [axis for axis, values in proven_values_by_axis(cells).items() if len(values) < 2]
+
+
+def stdlib_shadowing(axes: tuple[str, ...] = AXES) -> list[str]:
+    """Axes named for a standard-library module. A proving node's parameter is
+    named after its axis (the contract's rule), so such an axis puts that name
+    in every proving function, where ``hasattr(os, "geteuid")`` reads False and
+    ``getattr(os, "name", "posix")`` the default, silently, with no lint rule
+    watching (the platform axis was nearly named ``os``, 2026-10-26). The list
+    is the interpreter's own (3.10 and later, the suite's floor), never a
+    hand-kept one."""
+    return [axis for axis in axes if axis in sys.stdlib_module_names]
 
 
 def render_table(cells: tuple[AxisCell, ...] = AXIS_REGISTRY) -> str:

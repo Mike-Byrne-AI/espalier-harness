@@ -273,8 +273,11 @@ When you add a new test file:
   just above the final counts (`DEF-2020`).
   `test_no_wait_budget_meets_the_ceiling_of_a_test_that_runs_it` in
   `tests/test_test_suite_contract.py` reds on one and names the file and line.
-  A file that arms SIGALRM itself carries
-  `pytestmark = pytest.mark.timeout(method="thread")`. Where the ceiling is a
+  A file that arms SIGALRM itself, deletes a `signal` name pytest-timeout reads,
+  or imports a function that does, carries
+  `pytestmark = pytest.mark.timeout(method="thread")`, and every read of an alarm
+  name Windows lacks sits under a `hasattr(signal, "SIGALRM")` guard that covers
+  it (`test_every_sigalrm_arming_function_guards_itself`). Where the ceiling is a
   signal alarm, `tests/_timeout_backstop.py` fails a phase that passes after
   the alarm fired in it (its `Failed` was caught) and ends a test that blocks
   again, in its body or a fixture's teardown, a grace period later.

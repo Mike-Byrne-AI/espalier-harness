@@ -150,7 +150,7 @@ are the same system cut by guarantee rather than by event.
 | Route | UserPromptSubmit | Classifies the prompt, injects the routing advisory | none |
 | Guard | PreToolUse, ConfigChange | Protected-zone floor, dangerous-command catch, secret-path reads, plan gate | `plan_exempt_prefixes`, maintenance mode |
 | Check | PostToolUse, PostToolUseFailure | Written-file validation, reflect trigger every tenth source write, re-derivation on a failed edit | none |
-| Gate | Stop, SubagentStop | Four-gate stop sequence; subagent reasoning appended | `ESPALIER_STOP_GATE` |
+| Gate | Stop, SubagentStop | Five-gate stop sequence; subagent reasoning appended | `ESPALIER_STOP_GATE` |
 | Work | commands, skills, agents, workflows | The daily loop, the review roster, the task-pack loop, the review workflows | edit or delete any body |
 | Remember | `/recall`, `/handoff`, `memory/`, the cognitive docs | Pull-only footgun catalog, cross-session blueprints, committed memory | none |
 
@@ -295,7 +295,9 @@ Init (run directly, or by `fuse`) deploys the mechanical enforcement layer:
 - **12 hook entry scripts + 15 helper modules** in `tools/cc/hooks/`
 - **`.claude/settings.json`** wiring those hooks into Claude Code
 - **`tools/cc/statusline.py`** — prompt statusline surfacing MAINT /
-  STOP gate / blueprint chain depth
+  STOP gate / blueprint chain depth / the context size against the window
+  (`ctx=`) and the account's rate limits used (`limits=`), read from the
+  JSON Claude Code sends it
 - **`.claude/agents/*.md`** — 7 governance agents:
   `architecture-analyst`, `code-reviewer`, `docs-maintainer`,
   `failure-mode-reviewer`, `harness-config-advisor`, `repo-analyst`,
@@ -321,7 +323,7 @@ and cannot drift from what lands in your repo.
 - **`memory/`** — 3 files, seeded, refreshed on re-init only while untouched, and yours to edit: `CONVERGENCE_LEDGER.md`, `README.md`, `convergence-review-protocol.md`
 - **`task-packs/`** — 2 files, seeded, refreshed on re-init only while untouched, and yours to edit: `CLAUDE.md`, `FORWARD_LEDGER.md`
 - **`cc/`** — 3 files, generated surface docs: `COMMANDS.md`, `LIVE_SURFACE.md`, `PACK_MANIFEST.txt`
-- **`tools/cc/`** — 27 files, standalone scripts alongside the hook tree: `_blueprint_limits.py`, `_freshness_cache.py`, `_json_safe.py`, `_merge_rules.py`, `_pack_scope.py`, `_paths.py`, `_record_fragments.py`, `_stack_table.py`, `_symbols.py`, `board.py`, `check_ledger_probes.py`, `checkout_sync.py`, `cognitive_blueprint.py`, `execution_plan.py`, `generate_ledger_regions.py`, `ledger_row.py`, `mail.py`, `read_summary.py`, `record_merge.py`, `reflect_protocol.py`, `seat.py`, `session_resume.py`, `session_summary.py`, `ship.py`, `sister_site_probe.py`, `statusline.cmd`, `statusline.py`
+- **`tools/cc/`** — 28 files, standalone scripts alongside the hook tree: `_blueprint_limits.py`, `_freshness_cache.py`, `_json_safe.py`, `_merge_rules.py`, `_pack_scope.py`, `_paths.py`, `_post_merge.py`, `_record_fragments.py`, `_stack_table.py`, `_symbols.py`, `board.py`, `check_ledger_probes.py`, `checkout_sync.py`, `cognitive_blueprint.py`, `execution_plan.py`, `generate_ledger_regions.py`, `ledger_row.py`, `mail.py`, `read_summary.py`, `record_merge.py`, `reflect_protocol.py`, `seat.py`, `session_resume.py`, `session_summary.py`, `ship.py`, `sister_site_probe.py`, `statusline.cmd`, `statusline.py`
 - **`.claude/`** — 1 file, generated per install, never committed: `settings.json`
 - **`.espalier/`** — 1 file, generated per install, never committed: `integrity.json`
 - **`reports/`** — 3 files, generated per install, never committed: `cc_surface_gate.json`, `harness_config.json`, `repo_fingerprint.json`

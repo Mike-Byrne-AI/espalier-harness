@@ -739,3 +739,146 @@ class TestSessionHeartbeat:
         )
         assert res.returncode == 0, res.stderr
         assert (tmp_path / ".espalier-state" / "sessions" / "nop-1.json").exists()
+
+
+def _run_payload(payload: dict, cwd: Path) -> subprocess.CompletedProcess:
+    """Invoke the hook with a whole payload (session id, transcript path, prompt)."""
+    return subprocess.run(
+        [HOOK_PYTHON, str(SCRIPT)], input=json.dumps(payload), capture_output=True,
+        text=True, timeout=5, cwd=str(cwd), check=False, encoding="utf-8",
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(cwd)},
+    )
+
+
+def _threshold_tree(cwd: Path, tokens: int, *, setting: str | None = "200000", push: bool = False) -> dict:
+    """A tree whose transcript's last assistant record sums to ``tokens`` and
+    whose espalier.toml sets the threshold (None: no file); the payload."""
+    lines = ""
+    if setting is not None:
+        lines = f"handoff_context_tokens = {setting}\n" + ("handoff_push = true\n" if push else "")
+        (cwd / "espalier.toml").write_text(lines, encoding="utf-8")
+    transcript = cwd / "transcript.jsonl"
+    record = {"type": "assistant", "message": {"id": "m1", "usage": {
+        "input_tokens": 1, "cache_creation_input_tokens": 1, "cache_read_input_tokens": tokens - 2,
+        "output_tokens": 3}}}
+    transcript.write_text(json.dumps({"type": "user", "message": {"content": "hi"}}) + "\n"
+                          + json.dumps(record) + "\n", encoding="utf-8")
+    return {"session_id": "ctx-1", "transcript_path": str(transcript), "prompt": "/inbox board"}
+
+
+class TestContextThreshold:
+    """The threshold handoff's ask: off by default; past the figure it prints
+    on every prompt, an active plan included, records the first ask once and
+    quotes it after; ASCII, under the cap, and never a mid-lane push."""
+
+    def test_off_by_default_even_past_the_figure(self, tmp_path):
+        payload = _threshold_tree(tmp_path, 300_000, setting=None)
+        res = _run_payload(payload, tmp_path)
+        assert res.returncode == 0 and "handoff threshold" not in res.stdout, res.stdout
+
+    def test_past_the_threshold_prints_the_ask_with_the_figures(self, tmp_path):
+        payload = _threshold_tree(tmp_path, 271_000)
+        res = _run_payload(payload, tmp_path)
+        assert res.returncode == 0, res.stderr
+        assert "[HARNESS] Context is 271k, past the handoff threshold (200k" in res.stdout, res.stdout
+        assert "run /handoff now (it writes your row)." in res.stdout
+        assert "finish it through its own landing" in res.stdout and "commit" not in res.stdout.lower()
+        side = tmp_path / ".espalier-state" / "sessions" / "ctx-1.handoff-asked"
+        record = json.loads(side.read_text(encoding="utf-8"))
+        assert record["tokens"] == 271_000 and record["at"].endswith("Z")
+        assert f"First asked {record['at']} at 271k" in res.stdout
+
+    def test_below_the_threshold_prints_nothing(self, tmp_path):
+        payload = _threshold_tree(tmp_path, 199_999)
+        res = _run_payload(payload, tmp_path)
+        assert res.returncode == 0 and "handoff threshold" not in res.stdout, res.stdout
+        assert not (tmp_path / ".espalier-state" / "sessions" / "ctx-1.handoff-asked").exists()
+
+    def test_an_active_plan_still_hears_the_ask(self, tmp_path):
+        _write_plan(tmp_path, "in_progress")
+        payload = _threshold_tree(tmp_path, 250_000)
+        res = _run_payload(payload, tmp_path)
+        assert res.returncode == 0, res.stderr
+        assert "past the handoff threshold" in res.stdout, res.stdout
+        assert "ROUTING" not in res.stdout   # the plan's own early return still holds for the rest
+
+    def test_the_first_ask_is_recorded_once_and_quoted_after(self, tmp_path):
+        payload = _threshold_tree(tmp_path, 250_000)
+        first = _run_payload(payload, tmp_path)
+        side = tmp_path / ".espalier-state" / "sessions" / "ctx-1.handoff-asked"
+        recorded = side.read_text(encoding="utf-8")
+        payload = _threshold_tree(tmp_path, 300_000)   # the context grew
+        second = _run_payload(payload, tmp_path)
+        assert side.read_text(encoding="utf-8") == recorded
+        stamp = json.loads(recorded)["at"]
+        assert f"First asked {stamp} at 250k" in first.stdout and f"First asked {stamp} at 250k" in second.stdout
+        assert "Context is 300k" in second.stdout
+
+    def test_handoff_push_adds_the_push_clause(self, tmp_path):
+        payload = _threshold_tree(tmp_path, 250_000, push=True)
+        res = _run_payload(payload, tmp_path)
+        assert "(it writes your row, and pushes the lane)." in res.stdout, res.stdout
+
+    def test_the_ask_is_ascii_one_paragraph_and_under_the_cap(self, tmp_path):
+        payload = _threshold_tree(tmp_path, 999_999, push=True)
+        res = _run_payload(payload, tmp_path)
+        ask = res.stdout.strip()
+        assert ask.isascii() and "\n" not in ask and len(ask) < 700, (len(ask), ask)
+
+    @pytest.mark.parametrize("setting", ["abc", '"200000"', "0", "-1", "1.5"])
+    def test_a_setting_that_is_not_a_positive_integer_is_off(self, tmp_path, setting):
+        payload = _threshold_tree(tmp_path, 300_000, setting=setting)
+        res = _run_payload(payload, tmp_path)
+        assert res.returncode == 0 and "past the handoff threshold" not in res.stdout, res.stdout
+
+    def test_a_setting_that_is_a_fault_is_said_once_and_zero_is_not(self, tmp_path):
+        # The key's presence says the operator meant it on: an unusable value
+        # is said once a session on the prompt channel; 0 is a choice.
+        payload = _threshold_tree(tmp_path, 300_000, setting='"200000"')
+        first = _run_payload(payload, tmp_path)
+        assert "the threshold handoff is off (said once a session)." in first.stdout, first.stdout
+        assert "not an integer" in first.stdout and first.stdout.isascii()
+        second = _run_payload(payload, tmp_path)
+        assert "threshold handoff is off" not in second.stdout
+        zero = _threshold_tree(tmp_path / "z", 300_000, setting="0") if (tmp_path / "z").mkdir() is None else None
+        res = _run_payload(zero, tmp_path / "z")
+        assert "[HARNESS]" not in res.stdout.replace("Cold open", ""), res.stdout
+
+    def test_below_the_threshold_again_forgets_the_first_ask(self, tmp_path):
+        # After a compaction the figure falls; the next crossing is a first
+        # ask of its own, not a quote of one hours old.
+        payload = _threshold_tree(tmp_path, 250_000)
+        _run_payload(payload, tmp_path)
+        side = tmp_path / ".espalier-state" / "sessions" / "ctx-1.handoff-asked"
+        assert side.exists()
+        _run_payload(_threshold_tree(tmp_path, 50_000), tmp_path)
+        assert not side.exists()
+        res = _run_payload(_threshold_tree(tmp_path, 260_000), tmp_path)
+        assert "at 260k" in res.stdout and "at 250k" not in res.stdout, res.stdout
+
+    def test_the_ask_keeps_the_standing_duties_and_guards_a_second_handoff(self, tmp_path):
+        res = _run_payload(_threshold_tree(tmp_path, 250_000), tmp_path)
+        assert "no handoff written since that ask" in res.stdout
+        assert "your own pull request's red or conflict, and a red main's revert, are not new work" in res.stdout
+        assert "start no second one" in res.stdout
+
+    def test_no_transcript_path_and_a_first_prompt_ask_nothing_and_say_nothing(self, tmp_path):
+        (tmp_path / "espalier.toml").write_text("handoff_context_tokens = 200000\n", encoding="utf-8")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path)
+        assert res.returncode == 0 and "[HARNESS]" not in res.stdout.replace("Cold open", ""), res.stdout
+        short = tmp_path / "t.jsonl"
+        short.write_text(json.dumps({"type": "user", "message": {"content": "hi"}}) + "\n", encoding="utf-8")
+        res = _run_payload({"session_id": "ctx-1", "transcript_path": str(short), "prompt": "hi"}, tmp_path)
+        assert "could not be read" not in res.stdout and not (tmp_path / ".espalier-state" / "once_context_unreadable").exists()
+
+    def test_a_long_transcript_with_no_figure_says_so_once(self, tmp_path):
+        (tmp_path / "espalier.toml").write_text("handoff_context_tokens = 200000\n", encoding="utf-8")
+        big = tmp_path / "t.jsonl"
+        big.write_text(json.dumps({"type": "user", "message": {"content": "p" * (256 * 1024 + 10)}}) + "\n",
+                       encoding="utf-8")
+        payload = {"session_id": "ctx-1", "transcript_path": str(big), "prompt": "hi"}
+        first = _run_payload(payload, tmp_path)
+        assert "could not be read from this session's transcript" in first.stdout, first.stdout
+        assert (tmp_path / ".espalier-state" / "once_context_unreadable").exists()
+        second = _run_payload(payload, tmp_path)
+        assert "could not be read" not in second.stdout

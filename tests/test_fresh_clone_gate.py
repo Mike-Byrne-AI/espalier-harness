@@ -78,8 +78,24 @@ class TestChildEnv:
         assert "PYTEST_XDIST_AUTO_NUM_WORKERS" not in env and "PYTEST_ADDOPTS" not in env
 
     def test_the_whitelist_names_no_carrier(self, gate):
+        """The two box-lock names are the exceptions, by name: a lock path and
+        a holder pid carry nothing of the parent's harness state into the
+        proof, and without them the gate's legs would run unlocked beside a
+        seat's tier. Any other ``ESPALIER_`` name still reds here."""
         for key in gate.ENV_WHITELIST:
+            if key in gate.BOX_LOCK_PASSTHROUGH:
+                continue
             assert not key.startswith(("ESPALIER_", "CLAUDE_", "PIP_", "PYTHON")) and key != "VIRTUAL_ENV", key
+        assert set(gate.BOX_LOCK_PASSTHROUGH) == {"ESPALIER_BOX_LOCK", "ESPALIER_BOX_LOCK_HOLDER"}
+
+    def test_the_box_lock_pair_passes_the_whitelist(self, gate, tmp_path):
+        """Mutation: the two names dropped from the whitelist, so the release
+        gate's legs run beside a seat's tier unlocked."""
+        parent = {"HOME": "/h", "ESPALIER_BOX_LOCK": "/t/box.lock", "ESPALIER_BOX_LOCK_HOLDER": "77",
+                  "ESPALIER_MAINTENANCE_MODE": "1", "PATH": "/bin"}
+        env = gate.child_env(parent, tmp_path / ".venv")
+        assert env["ESPALIER_BOX_LOCK"] == "/t/box.lock" and env["ESPALIER_BOX_LOCK_HOLDER"] == "77"
+        assert "ESPALIER_MAINTENANCE_MODE" not in env
 
     def test_the_passthroughs_are_echoed_set_or_unset(self, gate):
         lines = gate.passthrough_lines({"PYTEST_ADDOPTS": "-rs"})

@@ -58,6 +58,106 @@ def _run(env: dict | None = None, cwd: Path | None = None) -> str:
 pytestmark = [pytest.mark.integration]
 
 
+def _run_payload(payload: str | bytes, cwd: Path) -> str:
+    """The status line fed ``payload`` on stdin, as Claude Code feeds it."""
+    proc_env = {**os.environ, "CLAUDE_PROJECT_DIR": str(cwd)}
+    for var in ("ESPALIER_MAINTENANCE_MODE", "ESPALIER_STOP_GATE", "ESPALIER_AUDIT_DIR"):
+        proc_env.pop(var, None)
+    result = run_hook_through([sys.executable, str(STATUSLINE)], env=proc_env, input=payload,
+                              cwd=str(cwd), statusline=True)
+    assert result.returncode == 0, f"statusline exited {result.returncode}; stderr={result.stderr!r}"
+    return result.stdout.strip()
+
+
+def _load_statusline():
+    """The module in-process, for the reader's terminal and stream cases."""
+    import importlib.util
+    sys.path.insert(0, str(STATUSLINE.parent))
+    spec = importlib.util.spec_from_file_location("_statusline_under_test", STATUSLINE)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_statusline_under_test"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_DOCS_SAMPLE = json.dumps({
+    "session_id": "abc123", "cwd": "/x",
+    "context_window": {"total_input_tokens": 15500, "total_output_tokens": 2500,
+                       "context_window_size": 200000, "used_percentage": 8, "remaining_percentage": 92},
+    "rate_limits": {"five_hour": {"used_percentage": 38, "resets_at": 1}, "seven_day": {"used_percentage": 83.4}},
+})
+
+
+class TestContextSegments:
+    """The status line shows the context size and the rate limits from the
+    payload Claude Code sends it, and writes nothing: the threshold handoff
+    reads the transcript, this is the operator's view of the same figure."""
+
+    def test_the_docs_sample_payload_prints_both_segments(self, tmp_path):
+        out = _run_payload(_DOCS_SAMPLE, tmp_path)
+        assert "ctx=15k/200k" in out and "limits=38%/83%" in out, out
+        assert out.startswith("espalier | ") and out.isascii()
+
+    def test_an_absent_window_size_and_an_absent_limit_window_print_a_dash(self, tmp_path):
+        out = _run_payload(json.dumps({"context_window": {"total_input_tokens": 271000},
+                                       "rate_limits": {"five_hour": {"used_percentage": 38}}}), tmp_path)
+        assert "ctx=271k/-" in out and "limits=38%/-" in out, out
+
+    @pytest.mark.parametrize("payload", [
+        "", "not json", "[1, 2]", json.dumps({"context_window": {"total_input_tokens": "x"}}),
+        json.dumps({"context_window": 5, "rate_limits": []}),
+        json.dumps({"context_window": {"total_input_tokens": True}, "rate_limits": {"five_hour": {"used_percentage": "38"}}}),
+        json.dumps({"rate_limits": {"five_hour": {}, "seven_day": None}}),
+    ])
+    def test_a_payload_with_no_usable_figure_prints_the_line_without_a_segment(self, tmp_path, payload):
+        assert _run_payload(payload, tmp_path) == "espalier"
+
+    def test_the_run_writes_nothing_under_the_tree(self, tmp_path):
+        _run_payload(_DOCS_SAMPLE, tmp_path)
+        # The spawn helper's own audit directory aside, the tree is untouched:
+        # no state dir, no session record, no side file.
+        assert not (tmp_path / ".espalier-state").exists()
+        assert {p.name for p in tmp_path.iterdir()} <= {"audit"}, sorted(tmp_path.iterdir())
+
+    def test_a_bom_prefixed_payload_parses_and_an_oversize_one_is_dropped(self, tmp_path):
+        # The spawn helper runs text mode in UTF-8, so the BOM character
+        # reaches the script as the three BOM bytes.
+        assert "ctx=15k/200k" in _run_payload("﻿" + _DOCS_SAMPLE, tmp_path)
+        big = json.dumps({"context_window": {"total_input_tokens": 1000}, "pad": "p" * (64 * 1024)})
+        assert _run_payload(big, tmp_path) == "espalier"
+
+    def test_a_terminal_stdin_is_not_read(self, monkeypatch):
+        mod = _load_statusline()
+
+        class _Tty:
+            def isatty(self):
+                return True
+
+            @property
+            def buffer(self):  # pragma: no cover -- the reader must not get here
+                raise AssertionError("a terminal stdin was read")
+
+        monkeypatch.setattr(mod.sys, "stdin", _Tty())
+        assert mod._read_statusline_payload() == {}
+        monkeypatch.setattr(mod.sys, "stdin", None)
+        assert mod._read_statusline_payload() == {}
+
+    def test_nan_and_infinity_are_not_figures(self, tmp_path):
+        # JSON's NaN and Infinity parse; neither is a count, and neither may raise.
+        out = _run_payload('{"context_window": {"total_input_tokens": NaN, "context_window_size": Infinity}, '
+                           '"rate_limits": {"five_hour": {"used_percentage": NaN}, "seven_day": {"used_percentage": Infinity}}}',
+                           tmp_path)
+        assert out == "espalier", out
+        mod = _load_statusline()
+        assert mod._context_segments({"context_window": {"total_input_tokens": 1000, "context_window_size": float("inf")}}) == ["ctx=1k/-"]
+
+    def test_the_segments_are_pure_functions_of_the_payload(self):
+        mod = _load_statusline()
+        assert mod._context_segments({}) == []
+        assert mod._context_segments({"context_window": {"total_input_tokens": 999_999, "context_window_size": 1_000_000}}) == ["ctx=999k/1000k"]
+        assert mod._context_segments({"rate_limits": {"seven_day": {"used_percentage": 0}}}) == ["limits=-/0%"]
+
+
 class TestStatuslineOutput:
     def test_minimal_output_when_no_state(self, tmp_path):
         out = _run(env={"CLAUDE_PROJECT_DIR": str(tmp_path)}, cwd=tmp_path)

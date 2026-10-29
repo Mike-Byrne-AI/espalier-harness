@@ -23,7 +23,7 @@ from typing import Iterable
 
 from espalier._python_floor import LAUNCHER_VERSION_FLAG, is_python_launcher
 from espalier._safe_walk import is_own_git_repo, visible
-from espalier._spawn import run_bounded
+from espalier._spawn import run_no_stdin
 from espalier.release_noise import RELEASE_NOISE_PATTERNS
 
 from espalier._compat import tomllib as _tomllib
@@ -189,6 +189,10 @@ _LOCAL_ONLY_PATHS: tuple[str, ...] = (
     # espalier's OWN goal doc into an adopter release. EXACT entry, never a
     # `cc/` prefix (cc/ carries committed PUBLIC surfaces).
     "cc/GOAL.md",
+    # The operator's-tree marker (DEF-1119): gitignored, present in the clone the
+    # operator works from only, the one tree a release is built on, so a no-index
+    # walk there must not carry it out. EXACT entry, as above.
+    "cc/OPERATOR_TREE",
     "reports/analysis.json",
     "reports/cc_surface_gate.json",
     # Internal release planning doc that lived in repo root. Gitignored; this
@@ -538,7 +542,7 @@ def tracked_paths(repo_root: Path) -> set[str] | None:
     if not is_own_git_repo(repo_root):
         return None
     try:
-        result = run_bounded(
+        result = run_no_stdin(
             ["git", "ls-files", "--cached", "-z"],
             cwd=str(repo_root), capture_output=True, text=True,
             encoding="utf-8", errors="replace", timeout=120, check=False,

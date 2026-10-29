@@ -1769,13 +1769,14 @@ class TestReadmeHookCount:
 # don't, so the bug class (XPLAT-1) can't regress as new call sites are added.
 
 _SUBPROCESS_TEXT_FUNCS = {"run", "check_output", "Popen", "call", "check_call"}
-#: The spawn wrappers under tools/cc that take ``subprocess.run``'s own keywords
+#: The spawn wrappers that take ``subprocess.run``'s own keywords
 #: (``_hook_utils.spawn_checked``; ``_json_safe.run_bounded``, which every timed
-#: spawn there routes through since 2026-10-13): a decode one makes is the
+#: spawn in tools/cc routes through since 2026-10-13; the engine's
+#: ``_spawn.run_no_stdin``, every engine spawn's since DEF-928): a decode one makes is the
 #: decode ``run`` makes, so both contracts below read them as spawns. Matched by
 #: bare name or attribute (``_hook_utils.run_bounded``). Held equal to the
 #: scanners' copies by ``TestSpawnWrappersReadEverywhere``.
-_SPAWN_WRAPPERS = frozenset({"spawn_checked", "run_bounded"})
+_SPAWN_WRAPPERS = frozenset({"spawn_checked", "run_bounded", "run_no_stdin"})
 
 
 def _spawn_call_name(f: ast.expr) -> str | None:
@@ -2139,6 +2140,117 @@ _ORIGIN_PROBE = (
     "        out[rel] = 'load failed: ' + type(exc).__name__ + ': ' + str(exc)\n"
     "print(json.dumps(out))\n"
 )
+
+
+#: The engine bodies that are the spawn itself, whose own calls hand on what
+#: they were given: the bounded spawn's (both engine homes) and the wrapper's.
+_ENGINE_SPAWN_OWN = _BOUNDED_SPAWN_OWN | {("espalier/_spawn.py", "run_no_stdin")}
+#: The one engine file whose spawns may call the bounded spawn directly: the
+#: stdlib-only scanner, which cannot import the wrapper and keeps its own copy.
+_ENGINE_STDLIB_SPAWNER = "espalier/scanners/freshness.py"
+#: The ``stdin=`` values that hand a child no stdin of the parent's.
+_CLOSED_STDIN = frozenset({"subprocess.DEVNULL", "subprocess.PIPE", "DEVNULL", "PIPE"})
+#: ``run_no_stdin`` calls at the reroute (DEF-928, 2026-10-18): the 35 engine
+#: calls that went through ``run_bounded`` and the 13 raw sites. A walk that
+#: finds fewer broke, or sites went around the wrapper.
+_ENGINE_NO_STDIN_FLOOR = 48
+
+
+def _engine_spawns_that_inherit_stdin(root: Path, rels: list[str]) -> list[str]:
+    """Each engine spawn in ``rels`` that may hand its child the parent's
+    standard input, with why. An engine spawn calls ``run_no_stdin``; else it
+    hands its child a closed stdin itself (``stdin=`` one of ``_CLOSED_STDIN``,
+    or an ``input=`` that is not ``None``) and is the freshness scanner's own
+    ``run_bounded`` or a raw call marked ``# spawn: ok``. A ``stdin=None`` is the
+    parent's stdin, as the wrapper reads it. The spawn's own bodies
+    (``_ENGINE_SPAWN_OWN``) are the mechanism and are not read."""
+    out = []
+    for site in _spawn_sites_in(root, rels):
+        if site["no_stdin"] or (site["path"], site["function"]) in _ENGINE_SPAWN_OWN:
+            continue
+        where = f"{site['path']}:{site['lineno']} in {site['function']}"
+        values = site["values"]
+        fed = values.get("stdin") in _CLOSED_STDIN or values.get("input", "None") != "None"
+        if site["bounded"] and site["path"] == _ENGINE_STDLIB_SPAWNER and fed:
+            continue
+        if site["raw"] and site["declared"] and fed:
+            continue
+        if site["bounded"] and site["path"] == _ENGINE_STDLIB_SPAWNER:
+            out.append(f"{where}: the stdlib-only scanner's own spawn hands on the parent's stdin: "
+                       "pass stdin=subprocess.DEVNULL (it cannot import run_no_stdin)")
+        elif site["raw"] and site["declared"]:
+            out.append(f"{where}: marked `# spawn: ok` but hands on the parent's stdin "
+                       "(no stdin=subprocess.DEVNULL or PIPE, no input=)")
+        elif site["raw"]:
+            out.append(f"{where}: a raw spawn, unmarked")
+        else:
+            out.append(f"{where}: calls the bounded spawn around run_no_stdin")
+    return out
+
+
+class TestEveryEngineSpawnClosesItsChildsStdin:
+    """A child the engine spawns with no ``stdin`` inherits the parent's, and on
+    Windows a parent whose standard-input handle was closed -- an installer, a
+    CI step, a wrapper -- hands on a dead handle, so the child never starts:
+    ``init`` died at its first ``git`` read with ``[WinError 6] The handle is
+    invalid`` after writing its seed docs (DEF-928). ``espalier/_spawn.py::
+    run_no_stdin`` closes the child's stdin unless the caller feeds it, and it
+    is the engine's one spawn chokepoint (DEF-985): every engine spawn calls it,
+    or feeds its child and is one of the two shapes it cannot reach (the
+    stdlib-only scanner's own copy, a raw call marked ``# spawn: ok``). The
+    ``tools/cc`` copy's callers, the hooks among them, keep inheriting stdin;
+    that sweep is not this census's."""
+
+    @staticmethod
+    def _engine_files() -> list[str]:
+        return [rel for rel in _census_files() if rel.startswith("espalier/")]
+
+    def test_no_engine_spawn_goes_around_the_wrapper(self):
+        stray = _engine_spawns_that_inherit_stdin(REPO_ROOT, self._engine_files())
+        assert not stray, (
+            "an engine spawn that hands its child the parent's stdin dies on Windows when that "
+            "handle is closed (WinError 6, DEF-928): call espalier._spawn.run_no_stdin, or pass "
+            "stdin= or input= on a call marked `# spawn: ok <reason>`:\n  " + "\n  ".join(stray)
+        )
+
+    def test_the_wrapper_population_holds_its_floor(self):
+        routed = [s for s in _spawn_sites_in(REPO_ROOT, self._engine_files()) if s["no_stdin"]]
+        assert len(routed) >= _ENGINE_NO_STDIN_FLOOR, (
+            f"{len(routed)} run_no_stdin calls in the engine, below the floor {_ENGINE_NO_STDIN_FLOOR} "
+            "recorded at the reroute: the walk broke, or spawns went around the wrapper -- lower the "
+            "floor on purpose, naming it"
+        )
+
+    def test_the_census_names_each_shape_it_refuses_and_passes_the_rest(self, tmp_path):
+        (tmp_path / "espalier").mkdir()
+        (tmp_path / "espalier" / "m.py").write_text(
+            "import subprocess\n"
+            "from espalier._spawn import run_bounded, run_no_stdin\n"
+            "def bounded():\n    run_bounded(['git', 'log'], timeout=5)\n"
+            "def raw():\n    subprocess.run(['git', 'log'])\n"
+            "def marked_unfed():\n    subprocess.run(['git', 'log'])  # spawn: ok holds no pipe at all\n"
+            "def marked_fed():\n    subprocess.run(['git', 'log'], stdin=subprocess.DEVNULL)  # spawn: ok holds no pipe at all\n"
+            "def routed():\n    run_no_stdin(['git', 'log'], timeout=5)\n"
+            "def marked_none():\n    subprocess.run(['git', 'log'], stdin=None)  # spawn: ok holds no pipe at all\n"
+            "def marked_fed_none():\n    subprocess.run(['git', 'log'], input=None)  # spawn: ok holds no pipe at all\n",
+            encoding="utf-8")
+        (tmp_path / "espalier" / "scanners").mkdir()
+        (tmp_path / "espalier" / "scanners" / "freshness.py").write_text(
+            "import subprocess\n"
+            "def unfed():\n    run_bounded(['git', 'log'], timeout=5)\n"
+            "def fed():\n    run_bounded(['git', 'log'], stdin=subprocess.DEVNULL, timeout=5)\n",
+            encoding="utf-8")
+        stray = _engine_spawns_that_inherit_stdin(tmp_path, ["espalier/m.py", "espalier/scanners/freshness.py"])
+        hands_on = "marked `# spawn: ok` but hands on the parent's stdin (no stdin=subprocess.DEVNULL or PIPE, no input=)"
+        assert stray == [
+            "espalier/m.py:4 in bounded: calls the bounded spawn around run_no_stdin",
+            "espalier/m.py:6 in raw: a raw spawn, unmarked",
+            f"espalier/m.py:8 in marked_unfed: {hands_on}",
+            f"espalier/m.py:14 in marked_none: {hands_on}",
+            f"espalier/m.py:16 in marked_fed_none: {hands_on}",
+            "espalier/scanners/freshness.py:3 in unfed: the stdlib-only scanner's own spawn hands on the "
+            "parent's stdin: pass stdin=subprocess.DEVNULL (it cannot import run_no_stdin)",
+        ], stray
 
 
 class TestEveryTimedSpawnOutsideToolsCcIsBounded:

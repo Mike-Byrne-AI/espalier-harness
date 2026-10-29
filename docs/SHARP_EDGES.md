@@ -6347,8 +6347,9 @@ catch-up). `tests/test_spawn_chokepoint.py::TestEveryTimedSpawnIsBounded` refuse
 spawn anywhere under `tools/cc` but the bounded spawn itself, its import fallbacks, and the CI
 guard: CI runs `ci_guard.py` from the pull request's own tree and `_json_safe.py` is not a
 gated path, so the guard imports no sibling a pull request could rewrite under it. In the
-engine, call `espalier/_spawn.py::run_bounded`, the engine's copy (it cannot import
-`tools/cc`); the stdlib-only freshness scanner keeps a third copy inline, and
+engine, call `espalier/_spawn.py::run_no_stdin`, which runs the engine's copy, `run_bounded`
+(it cannot import `tools/cc`), with the child's stdin closed (the next entry); the stdlib-only
+freshness scanner keeps a third copy inline, and
 `tests/test_contracts.py::TestTheBoundedSpawnTwins` holds the three equal. `scripts/`,
 `bench/` and the top-level `tools/` load the `tools/cc` copy by path from their own checkout,
 never the engine's, which may be another checkout's. A call that holds no pipe (every stream
@@ -6379,3 +6380,75 @@ copy); and
 `tests/test_spawn_chokepoint.py`, which also drives the Windows branch on every OS with a
 stand-in `Popen`, so a Linux-only required gate still pins the tree kill, the drain and the
 reap.
+
+## On Windows, a child handed no stdin never starts when the parent's stdin handle is dead
+
+**What it is:** a child spawned with no `stdin=` inherits the parent's standard-input
+handle. Where a launcher closed it -- an installer, a CI step, a wrapper -- the value the
+parent holds is no longer a handle, and CPython's Windows `Popen` fails duplicating it for
+the child: `[WinError 6] The handle is invalid`, before the child exists. Driven on Windows 11
+with CPython 3.11.9 (2026-10-18): `espalier init` exited 1 that way at its fingerprint's
+first `git` read, after writing its 23 seed docs (DEF-928). The same spawn with
+`stdin=subprocess.DEVNULL` starts.
+
+**How you hit it:** any spawn that does not feed its child, under a parent whose stdin was
+closed. Git Bash's `0<&-` does not reproduce it: it leaves a live handle, so a drive through
+it reads clean. Closing the handle in-process (`CloseHandle`) usually does, but the next file
+opened can take the freed value and make the spawn pass by luck; setting the slot to a value
+no handle has (`SetStdHandle` with a never-opened value) is what the child of a closing
+launcher holds, and is the deterministic drive.
+
+**How to avoid it:** in the engine, spawn through `espalier/_spawn.py::run_no_stdin`, which
+passes `stdin=subprocess.DEVNULL` unless the caller feeds the child; the stdlib-only
+freshness scanner passes it on each of its own calls.
+`tests/test_contracts.py::TestEveryEngineSpawnClosesItsChildsStdin` refuses an engine spawn
+that goes around it. It costs one thing: a child handed any one handle has the other two
+duplicated from the parent (with all three left alone `Popen` duplicates none), so a child
+that streams to a dead stdout or stderr now fails where it used to start -- measured, not
+guarded. The `tools/cc` copy's callers, the hooks among them, and the `tools/cc` modules the
+engine loads in-process (`session_resume` for `doctor` and `recover`) still hand on stdin.
+
+**Backed by:** `tests/test_cli_commands.py::TestInitRunsWithItsStdinHandleClosed` (init with a
+dead stdin handle, every failed start recorded), the census above, and
+`tests/test_bounded_spawn.py::TestTheWrappersHandleTradeOnWindows` (the trade, measured).
+
+## No settings hook, skill or command body can clear or compact a session; only a mod can, and its SessionStart hook reads before it hands the event on
+
+**What it is:** Claude Code's settings hooks observe or block (PreCompact), read
+(PostCompact) or inject text (SessionStart); none resets the session, the Skill tool cannot
+run `/clear` or `/compact`, and a compaction takes no supplied summary, so a compaction
+after `/handoff` writes the handoff's summary a second time at the window's cost. A mod (a
+plugin of function hooks, Claude Code 2.1.287+) can: `$.command.run({ command: 'clear',
+args: '' })` from a `turn.complete` hook performs the real `/clear` (measured 2026-10-26 on
+2.1.310: Stop, SessionEnd `reason=clear`, SessionStart `source=clear` with a new session id,
+the window alive); a `session.compact` hook answering `{ skip }` refuses a compaction before
+the classic PreCompact fires; and a non-awaited `$.prompt.submit` from a
+`classic.SessionStart` hook on `source: 'clear'` lands as the new session's first prompt 70 ms
+later. `$.prompt.submit('/clear')` is refused by a host check. In `claude -p` the process
+exits right after the clear, so the re-prime is interactive-only.
+
+**How you hit it:** two ways. Reaching for a settings hook, a skill or a command body to
+reset a window after the handoff: nothing there can, and a PreCompact block only leaves the
+window full. Or, in a mod, reading state on `classic.SessionStart` AFTER `next(e)`: the
+chain is managed hooks, then the hooks modules, then the project's settings hooks as core,
+so a settings hook beneath (`session_start.py`'s sweep of `.espalier-state/`) runs inside
+that `next(e)` and can take the file before the mod reads it. Two smaller edges from the
+same lane: `$.env.get` must name its variable literally (the engine lists what a module
+reads; a constant fails `claude plugin validate`), and a continuation a hook did not await
+must never reject (a log write after a test's environment had ended surfaced as an
+unhandled rejection that failed the file).
+
+**How to avoid it:** the reset after the handoff is the own-clear mod
+(`tools/cc/mods/own-clear`), loaded by `seat.py launch` through `--plugin-dir` (which also
+exports `ESPALIER_OWN_CLEAR=1`, the handoff's gate: any other window is told it needs a
+`/clear` by hand), armed by `ship.py handoff` through `.espalier-state/own_clear.json`, keyed
+by the session id and re-primed only in the window it was armed in; it reads the marker
+first and hands the event on second, and refuses a compaction only while the clear is due.
+Measure a mod from hook payloads on disk (a settings-hook log in a throwaway repository),
+never from the screen, and run `claude plugin validate` before a drive.
+
+**Backed by:** `tools/cc/mods/own-clear/hooks/own-clear.test.ts` (thirteen cases against
+the engine, `claude plugin test`), `bench/own_clear/drive.py` (a pty-driven session with the
+real marker writer: PASS 2026-10-26 in 27 s) and `reports/own-clear-probe-2026-10-26/` on
+the Air (the probe mod, its logs and the pty driver). `tools/cc/mods/own-clear/README.md`
+has the measured facts.

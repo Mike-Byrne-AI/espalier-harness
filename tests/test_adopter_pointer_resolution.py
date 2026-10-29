@@ -253,6 +253,23 @@ def _carrier_disclaims_source_paths(carrier: str, text: str) -> bool:
 # real findings). Better one row that names the creating call than a
 # reclassification that quietly moves a shipped surface.
 _NOT_POINTERS: tuple[NotAPointer, ...] = (
+    # The own-clear marker (2026-10-26): a state file `ship.py handoff` CREATES
+    # as its last act (`arm_own_clear_here`, under .espalier-state/, which
+    # .gitignore keeps out of every tree) and the own-clear mod reads at the
+    # turn's end. The prose names it so the reader knows what the mod acts on;
+    # nobody is sent to open it, and on no tree does it exist before a handoff.
+    NotAPointer(
+        carrier=".claude/commands/handoff.md",
+        target=".espalier-state/own_clear.json",
+        reason="Creation announcement: the handoff verb writes this file as its last act; the body says "
+               "what the mod reads, and sends nobody to open it.",
+    ),
+    NotAPointer(
+        carrier="docs/WORKFLOW.md",
+        target=".espalier-state/own_clear.json",
+        reason="The same creation announcement in the workflow guide's seat section: the file is the "
+               "handoff's to write and the mod's to read, never the reader's to open.",
+    ),
     NotAPointer(
         carrier="tools/cc/hooks/post_write_check.py",
         target="docs/session-archive.md",

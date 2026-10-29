@@ -92,6 +92,11 @@
     - The pnpm tree's test command reads `npm test` (`DEF-976`).
     - For 2-C: Gate 1 is dormant on the **Python** adopter tree too when no override is set.
       0-D drove it.
+- **The `target_os` axis is `TP-703i`'s (2026-10-26).** `tests/_axis_registry.py` carries a sixth
+  axis, `target_os` (`linux`, `macos`, `windows`: the operating system a test makes the harness read, through
+  `tests/_platform_standin.py`), added and proven by `TP-703i` under this registry's rules. This
+  pack's waves take none of its cells and change none; a wave here that proves a cell raises
+  `PROVEN_FLOOR` from where `TP-703i` left it, so two packs never edit one cell.
 
 ## Motivation
 

@@ -353,9 +353,11 @@ class TestLaunch:
         assert _out(path, "config", "--worktree", "--get", "espalier.machine") == "box-new"
         assert (path / ".claude" / "settings.json").read_bytes() == b'{"hooks": {}}\n'
         (call,) = no_claude
-        # The operator's arguments pass through unchanged; the first message rides last.
-        assert call["argv"][:3] == ["/fake/bin/claude", "--model", "x"] and Path(call["cwd"]) == path
-        assert call["argv"][3:] == ["--", seat.compose_brief(clone, "box-new", path).text]
+        # The own-clear mod rides first; the operator's arguments pass through
+        # unchanged; the first message rides last.
+        mod = _mod(seat)
+        assert call["argv"][:3 + len(mod)] == ["/fake/bin/claude", *mod, "--model", "x"] and Path(call["cwd"]) == path
+        assert call["argv"][3 + len(mod):] == ["--", seat.compose_brief(clone, "box-new", path).text]
         env = call["env"]
         assert "ESPALIER_MAINTENANCE_MODE" not in env and "CLAUDE_CODE_SESSION_ID" not in env
         assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
@@ -411,25 +413,51 @@ class TestLaunch:
         with pytest.raises(seat.Refused, match="Windows PowerShell 5.1 splits"):
             seat.command_line(target, ['say "hi"'], maintenance=False, shell="powershell")
         sh = seat.command_line(target, ["--model", "o p"], maintenance=False, shell="posix")
-        assert sh.endswith("&& env -u ESPALIER_MAINTENANCE_MODE -u VIRTUAL_ENV claude --model 'o p'")
+        assert sh.endswith(f"&& env -u ESPALIER_MAINTENANCE_MODE {_own_clear_unsets(seat)} -u VIRTUAL_ENV claude --model 'o p'")
         bindir = target.path / ".venv" / ("Scripts" if os.name == "nt" else "bin")
         bindir.mkdir(parents=True)
         with_venv = seat.command_line(target, [], maintenance=False, shell="powershell")
         assert f"$env:PATH = '{str(bindir).replace(chr(39), chr(39) * 2)};' + $env:PATH" in with_venv
         posix_venv = seat.command_line(target, [], maintenance=True, shell="posix")
-        assert "env ESPALIER_MAINTENANCE_MODE=1 VIRTUAL_ENV=" in posix_venv and ':"$PATH" claude' in posix_venv
+        assert f"env {_own_clear_unsets(seat)} ESPALIER_MAINTENANCE_MODE=1 VIRTUAL_ENV=" in posix_venv and ':"$PATH" claude' in posix_venv
+
+    def test_the_posix_line_puts_every_unset_before_the_first_assignment(self, seat, tmp_path):
+        """Driven 2026-10-26 on macOS 25.6: BSD env stops reading options at the
+        first assignment, so `env ESPALIER_MAINTENANCE_MODE=1 -u VIRTUAL_ENV ...`
+        exits 127 (`env: -u: No such file or directory`); GNU env permutes its
+        arguments and takes either order, so a Linux reader never sees it. All
+        four combinations (maintenance on or off, a .venv under the target or
+        not) are rendered, and in each no option follows the first assignment;
+        the one that mixed them in the wrong order is pinned word for word.
+        Dies to: the maintenance assignment rendered before the venv unset."""
+        target = seat.Target("box-x", tmp_path, True, False)
+        sh = seat.command_line(target, [], maintenance=True, shell="posix")
+        assert sh.endswith(f"&& env {_own_clear_unsets(seat)} -u VIRTUAL_ENV ESPALIER_MAINTENANCE_MODE=1 claude"), sh
+        for venv in (False, True):
+            if venv:
+                (target.path / ".venv" / ("Scripts" if os.name == "nt" else "bin")).mkdir(parents=True)
+            for maintenance in (True, False):
+                line = seat.command_line(target, [], maintenance=maintenance, shell="posix")
+                words = line.split(" env ", 1)[1].split(" claude", 1)[0].split()
+                assignments = [i for i, w in enumerate(words) if "=" in w]
+                after = words[assignments[0]:] if assignments else []
+                assert not [w for w in after if w.startswith("-")], (venv, maintenance, words)
 
     def test_the_childs_environment_drops_the_parent_sessions_and_names_the_seats_venv(self, seat, tmp_path):
         """Read 2026-10-15: a session exports its pid, id and messaging token
         to its children, and VIRTUAL_ENV named the main checkout's .venv in a
         worktree seat's session. Dies to: dropping a name, or a prefix strip
         that also drops a user's CLAUDE_CODE_USE_BEDROCK."""
-        base = {name: "x" for name in seat.SESSION_ENV}
+        base = {name: "x" for name in seat.SESSION_ENV | seat.OWN_CLEAR_ENV}
         base.update({"CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CONFIG_DIR": "/cfg", "VIRTUAL_ENV": "/other/.venv",
                      "ESPALIER_MAINTENANCE_MODE": "1", "PATH": "/bin"})
         target = seat.Target("box-x", tmp_path, True, False)
         env = seat.child_env(target, maintenance=False, base=base)
         assert not set(seat.SESSION_ENV) & set(env)
+        # The own-clear's names never ride in from the launcher's shell; the
+        # flag is set only when the mod rides the launch (the own-clear lane).
+        assert not seat.OWN_CLEAR_ENV & set(env)
+        assert seat.child_env(target, maintenance=False, base=base, own_clear=True)["ESPALIER_OWN_CLEAR"] == "1"
         assert {"CLAUDECODE", "CLAUDE_CODE_MESSAGING_TOKEN", "AI_AGENT"} <= seat.SESSION_ENV
         assert env["CLAUDE_CODE_USE_BEDROCK"] == "1" and env["CLAUDE_CONFIG_DIR"] == "/cfg"
         assert "VIRTUAL_ENV" not in env and "ESPALIER_MAINTENANCE_MODE" not in env
@@ -511,19 +539,45 @@ class TestLaunch:
 
 #: The worker tick as the operator pasted it on 2026-10-15 18:56Z (mail note
 #: 215fbb, verbatim), with its review step read from the diff since 2026-10-16
-#: (air's assign 0b750e, on the operator's yes): the self-host render must
-#: reproduce it byte for byte.
+#: (air's assign 0b750e, on the operator's yes), and since 2026-10-24 the two
+#: sentences the operator approved on the channel (the ack on the call
+#: 20261024T065923Z-air-b366a4): TP-702 3-A's refresh sentence after the lane
+#: step, and TP-703e 1-C-2's proceed clause in place of the STOP clause, as
+#: amended by that lane's failure-mode review to the protocol paragraph as it
+#: stood on 2026-10-24 ("an open goal call" read as "an open operator call" on
+#: the seat's own fork, since TP-703d moved the calls to the board; the
+#: request's age read from the board's asks line; a redirect: ack re-aims; a
+#: row is never a stop; the shelved: note names the job the push closed, the
+#: push having released the claims; a shelved lane is not re-fixed each tick;
+#: the refresh command spelled like the tick's other commands, with no bare
+#: interpreter). The self-host render must reproduce it byte for byte; its 15
+#: minutes is DISPATCHER_TICK's interval, rendered, never copied.
 _OPERATOR_TICK = (
     "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
     "yours, in this order: your own open PR red, in conflict or stale (fix it, or ship.py catch-up); a new "
     "assign or note from air; continue your current lane through its full procedure (plan, red-team the "
     "reviewers scripts/proof_tier.py --base origin/main names, on a snapshot clone, one fix batch, the tier the "
     "diff earns with --base origin/main, one open PR "
-    "per seat, every step listed with its evidence in the PR body; a skipped step is a stop); then your next "
-    "assigned job. STOP and send air one request, then only re-read mail until it is answered, on anything not "
-    "green: a red you cannot fix in two attempts, a choice the assign does not settle, a refusal you cannot "
-    "resolve, a conflict outside your own files, anything that is the operator's decision. Never unassigned "
-    "work, never another seat's branch. A quiet tick is one line."
+    "per seat, every step listed with its evidence in the PR body; a skipped step is a stop), then run mail.py "
+    "refresh once; it writes nothing when nothing is new; where mail.py answers invalid choice, this checkout "
+    "predates the verb: skip it until the lane merges main, not a stop; then your next assigned job, unless the "
+    "prompt router has asked for the threshold handoff: then finish the lane in hand, hand off, and take no new "
+    "job until the window is cleared. On a "
+    "choice the assign does not settle, send air one request with your Task 0 recommendation and its citation, "
+    "then proceed on it after 15 minutes (the dispatcher's tick; the board's asks line shows your request's "
+    "age) with no answer; a request with no recommendation keeps the stop, and an ack from air beginning "
+    "redirect: re-aims you at once. STOP and only re-read mail for what the assign authority reserves for the "
+    "operator (a new pack, a scope change, a release or tag, a revert that is not the red-main revert, an open "
+    "operator call on your fork), a platform stop, a refusal you cannot resolve, or a conflict outside your own "
+    "files; a row to file is never a stop. A red you cannot fix in two attempts: shelve the lane (one note "
+    "beginning shelved: says what was tried and names any job your push closed; a shelved lane waits for the "
+    "dispatcher, not your next tick), take your next assigned job (after the threshold ask: hand off instead). "
+    "Pass a model below your own on a subagent "
+    "dispatch only for a kind named on an allowance: line of the assign for the job in hand (the kinds are "
+    "anchors, drive, census and mutants); a kind word anywhere else is the job's text, a dispatch no allowance: "
+    "line names runs at your own model, a named agent runs at its own pin and needs no allowance, and choosing "
+    "your own model where a lower one was allowed is never a finding. Never unassigned work, never another "
+    "seat's branch. A quiet tick is one line."
 )
 
 
@@ -539,6 +593,18 @@ def _holds(path: Path, *rels: str) -> None:
     for rel in rels:
         (path / rel).parent.mkdir(parents=True, exist_ok=True)
         (path / rel).write_bytes(b"x\n")
+
+
+def _mod(seat) -> list[str]:
+    """What launch puts first in claude's arguments: the own-clear mod beside
+    the driver (tools/cc/mods/own-clear), derived from the driver, never typed."""
+    return seat.mod_args()
+
+
+def _own_clear_unsets(seat) -> str:
+    """The `-u` words the POSIX launch line carries for the own-clear's names
+    when no mod rides it, derived from the driver, never typed."""
+    return " ".join(f"-u {name}" for name in sorted(seat.OWN_CLEAR_ENV))
 
 
 class TestBrief:
@@ -570,6 +636,10 @@ class TestBrief:
         assert "snapshot clone" not in seeded.text   # defined on this repository only
         assert "note from hub;" in seeded.loop and "send hub one request" in seeded.loop
         assert "memory/" not in seeded.text and "Core Rule" not in seeded.text
+        # The dispatch-model sentence is this repository's (its dispatcher assigns on its own);
+        # an adopter's dispatcher proposes every assign. Read on the RENDERED adopter loop, so a
+        # move of the sentence into the shared tick template cannot carry it here unseen.
+        assert "allowance:" not in seeded.text and "below your own" not in seeded.text
         bare = seat.compose_brief(clone, "box-feat", clone / "no-such-checkout")   # the clone holds neither
         assert "(the /inbox command's body)" in bare.text
 
@@ -588,9 +658,75 @@ class TestBrief:
         assert first.startswith("You are the dispatcher seat box (Core Rule 15, memory/parallel-work-protocol.md). "
                                 "Orient from the banner, then run /inbox (mark read) and /inbox board.")
         assert "revert first on a red main" in first and "Decisions stay the operator's." in first
-        assert "model" not in first   # the operator's own setting, never the template's
+        # The model is the operator's launch setting, never the template's: no flag and no model
+        # name in the brief. The word itself may appear (the allowance clause names what a
+        # subagent may run below, 2026-10-25).
+        import re
+        assert re.search(r"--model|\b(opus|sonnet|haiku|fable)\b", first, re.IGNORECASE) is None, first
         _holds(clone, "cc/GOAL.md")
         assert "Orient from the banner and cc/GOAL.md's notes, then" in seat.compose_brief(clone, "box", clone).text
+
+    def test_the_self_host_dispatcher_is_sent_to_the_channel_for_the_operators_open_calls(self, seat, clone):
+        """TP-703d sub-task 4: the open calls ride the mail channel as
+        `OPERATOR CALL:` requests the board lists for every seat, not a
+        gitignored goal file one checkout reads. Dies to: the brief still
+        naming cc/GOAL.md as their home."""
+        _dispatcher(clone, '"box"')
+        _holds(clone, "memory/parallel-work-protocol.md")
+        first = seat.compose_brief(clone, "box", clone).text.split("\n")[0]
+        assert "OPERATOR CALL:" in first and "asks" in first, first
+        assert "open calls in cc/GOAL.md" not in first and "cc/GOAL.md" not in seat.SELF_HOST_ASSIGN
+
+    def test_both_briefs_name_the_handoff_that_writes_the_seats_row(self, seat, clone):
+        """A seat's first message named the reads, the jobs and the loop and
+        never the handoff that writes its Session Log row. Dies to: either
+        clause dropped, or moved past the last sentence the endswith pin reads."""
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "memory/parallel-work-protocol.md")
+        worker = seat.compose_brief(clone, "box-feat", feat).text.split("\n")[0]
+        assert ("When the operator ends your session, or when the prompt router's threshold ask says to (a lane "
+                "in hand finishes through its own landing first; the ask never ships a half-done lane), run "
+                "/handoff: it writes your Session Log row and ships it on your open lane or parks it; after a "
+                "threshold handoff take no new job until the window is cleared. Then start the worker loop") in worker, worker
+        _dispatcher(clone, '"box"')
+        _holds(clone, "memory/parallel-work-protocol.md")
+        dispatcher = seat.compose_brief(clone, "box", clone).text.split("\n")[0]
+        assert ("Decisions stay the operator's. At the operator's word, or when the prompt router's threshold ask "
+                "says to (a lane in hand finishes through its own landing first), run /handoff; it writes your "
+                "row, derived from the mail and the merges; after a threshold handoff take no new job until the "
+                "window is cleared (a red main's revert is not a new job). Start the loop") in dispatcher, dispatcher
+
+    def test_on_an_adopter_checkout_the_handoff_clauses_name_the_row_alone(self, seat, clone):
+        """The push onto the lane and the row derived by the seat census are this
+        repository's (`handoff_push`, scripts/seat_day_census.py), so an adopter's
+        briefs say only what its /handoff does: write the row. Dies to: either
+        self-host phrase pasted into the template instead of its slot."""
+        _dispatcher(clone, '"hub"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "docs/WORKFLOW.md")
+        worker = seat.compose_brief(clone, "box-feat", feat).text.split("\n")[0]
+        assert ("run /handoff: it writes your Session Log row; after a threshold handoff take no new job until "
+                "the window is cleared. Then start the worker loop") in worker, worker
+        assert "parks it" not in worker, worker
+        _dispatcher(clone, '"box"')
+        dispatcher = seat.compose_brief(clone, "box", clone).text.split("\n")[0]
+        assert ("run /handoff; it writes your row; after a threshold handoff take no new job until the window "
+                "is cleared (a red main's revert is not a new job). Start the loop") in dispatcher, dispatcher
+        assert "derived from" not in dispatcher, dispatcher
+
+    def test_every_sentence_that_names_the_threshold_ask_names_the_lane_in_hand_rule(self, seat):
+        """The rule that a threshold handoff never ships a half-done lane lives
+        in prose, in the briefs and the tick; a sentence that names the ask
+        without the lane-in-hand exception reopens the push the ask was built
+        to avoid (the failure-mode review, 2026-10-26)."""
+        import re
+        for name in ("WORKER_BRIEF", "DISPATCHER_BRIEF", "WORKER_TICK", "SELF_HOST_PROCEED"):
+            text = getattr(seat, name)
+            for sentence in re.split(r"(?<=[.;])\s", text):
+                # The ask sentences; "after a threshold handoff ..." is the post-handoff rule.
+                if "threshold ask" in sentence or "asked for the threshold handoff" in sentence:
+                    assert ("lane in hand" in sentence or "hand off instead" in sentence), (name, sentence)
 
     def test_an_unusable_dispatcher_setting_refuses_the_brief_and_launch_names_the_way_past(self, seat, clone,
                                                                                             registry, no_claude):
@@ -605,7 +741,7 @@ class TestBrief:
         assert not (clone / ".claude" / "worktrees" / "new").exists()
         assert seat.cmd_launch(clone, "box-feat", [], maintenance=False, unchecked=False, print_only=False,
                                brief=False) == 0
-        assert no_claude[-1]["argv"] == ["/fake/bin/claude"]
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *_mod(seat)]
 
     def test_every_form_is_ascii_with_no_double_quote_and_survives_both_shells(self, seat, clone, tmp_path):
         _dispatcher(clone, '"air"')
@@ -631,13 +767,43 @@ class TestBrief:
         feat = _worktree(clone, "feat", name="box-feat")
         monkeypatch.chdir(clone)
         assert seat.main(["launch", "box-feat", "--", "--model", "x"]) == 0
-        assert no_claude[-1]["argv"] == ["/fake/bin/claude", "--model", "x", "--",
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *_mod(seat), "--model", "x", "--",
                                          seat.compose_brief(clone, "box-feat", feat).text]
         assert seat.main(["launch", "box-feat", "--no-brief", "--", "--model", "x"]) == 0
-        assert no_claude[-1]["argv"] == ["/fake/bin/claude", "--model", "x"]
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *_mod(seat), "--model", "x"]
         assert "no first message" in capsys.readouterr().out
         assert seat.main(["brief", "box-feat"]) == 0
         assert capsys.readouterr().out == seat.compose_brief(clone, "box-feat", feat).text + "\n"
+
+    def test_launch_loads_the_own_clear_mod_first_and_no_mod_drops_it(self, seat, clone, registry, no_claude,
+                                                                      monkeypatch, capsys):
+        """The own-clear lane (2026-10-26): the mod beside the driver rides
+        first in claude's arguments, before the operator's own and the brief's
+        `--`; `--no-mod` leaves it out and says so; the print form carries it.
+        Dies to: the flag after the brief's `--` (read as the prompt), a launch
+        that loads the mod silently, or a print line without it."""
+        _dispatcher(clone, '"air"')
+        _worktree(clone, "feat", name="box-feat")
+        monkeypatch.chdir(clone)
+        assert seat.mod_args() == ["--plugin-dir", str(seat.MOD_DIR)]   # this repository ships it
+        monkeypatch.setenv("ESPALIER_OWN_CLEAR_ROOT", "/elsewhere")   # a root left exported: never inherited
+        assert seat.main(["launch", "box-feat", "--", "--model", "x"]) == 0
+        argv = no_claude[-1]["argv"]
+        assert argv[:3] == ["/fake/bin/claude", "--plugin-dir", str(seat.MOD_DIR)]
+        assert argv.index("--") > argv.index("--plugin-dir")
+        env = no_claude[-1]["env"]
+        assert env["ESPALIER_OWN_CLEAR"] == "1" and "ESPALIER_OWN_CLEAR_ROOT" not in env
+        assert "own-clear mod loaded" in capsys.readouterr().out
+        assert seat.main(["launch", "box-feat", "--no-mod", "--", "--model", "x"]) == 0
+        assert "--plugin-dir" not in no_claude[-1]["argv"]
+        assert "ESPALIER_OWN_CLEAR" not in no_claude[-1]["env"]
+        assert "no own-clear mod" in capsys.readouterr().out
+        assert seat.main(["launch", "box-feat", "--print", "--shell", "posix"]) == 0
+        line = capsys.readouterr().out
+        assert f"--plugin-dir {seat.MOD_DIR}" in line and "ESPALIER_OWN_CLEAR=1" in line
+        assert seat.main(["launch", "box-feat", "--no-mod", "--print", "--shell", "posix"]) == 0
+        line = capsys.readouterr().out
+        assert "--plugin-dir" not in line and "-u ESPALIER_OWN_CLEAR " in line
 
     def test_an_adopters_dispatcher_proposes_the_revert_and_this_repository_reverts_first(self, seat, clone):
         """Reverting first on a red base is this repository's rule; an
@@ -664,6 +830,110 @@ class TestBrief:
         own = seat.compose_brief(clone, "box", clone).text
         assert "within approved packs and live ledger rows on your own" in own
         assert "Assign authority paragraph" in own and "send them on a yes" not in own
+        # TP-703e 1-D: the assign's shape rides the self-host brief and never the adopter's.
+        assert "each assign in its shape" in own and "under 900 characters" in own
+        assert "in its shape" not in adopter
+
+    def test_this_repositorys_dispatcher_keeps_the_report_rules_and_an_adopters_brief_is_unchanged(self, seat, clone):
+        """The operator's rules for a dispatcher's report (2026-10-20): counts
+        name their population, a tool's setting is quoted from the tool, the
+        day's figures come from the census. They name a script only this
+        repository holds, so they ride the self-host slot and an adopter's
+        brief is what it was, byte for byte. Dies to: the sentence rendered
+        for every tree, or left out of this repository's."""
+        _dispatcher(clone, '"box"')
+        _holds(clone, "docs/WORKFLOW.md")
+        adopter = seat.compose_brief(clone, "box", clone).text
+        assert "seat_day_census" not in adopter and "names its population" not in adopter
+        # Up to the operator's sentence only: TP-703g inserts its clause after it.
+        assert "merged PR bodies. Decisions stay the operator's." in adopter
+        _holds(clone, "memory/parallel-work-protocol.md")
+        own = seat.compose_brief(clone, "box", clone).text
+        assert ("merged PR bodies. " + seat.SELF_HOST_FIGURES + "Decisions stay the operator's.") in own
+        assert "the day's figures come from scripts/seat_day_census.py, never carried by hand." in own
+
+    def test_the_seats_wait_in_the_protocol_is_the_dispatchers_tick_interval(self, seat):
+        """The seat proceeds on its Task 0 recommendation after the dispatcher's
+        tick interval with no answer (the protocol's "The seat's side of it", the
+        operator's yes of 2026-10-19). Dies to: the loop's interval moved and the
+        paragraph left saying the old number."""
+        import re
+        minutes = re.search(r"/loop (\d+)m", seat.DISPATCHER_TICK).group(1)
+        text = (Path(__file__).resolve().parents[1] / "memory" / "parallel-work-protocol.md").read_text(encoding="utf-8")
+        start = text.index("**The seat's side of it**")
+        paragraph = text[start:text.index("\n\n", start)]
+        assert f"{minutes} minutes" in paragraph and "DISPATCHER_TICK" in paragraph
+        # the worker-seat section quotes the dispatcher's loop line whole
+        assert f"`{seat.DISPATCHER_TICK}`" in text
+
+    def test_the_dispatch_model_kinds_in_the_tick_are_the_protocols(self, seat, clone):
+        """The allowance kinds have one source, DISPATCH_KINDS, rendered into the
+        self-host tick and the dispatcher brief, and the protocol's "The model
+        on a dispatch" paragraph defines each as a backticked word in the same
+        order (the operator's rule, 2026-10-25). The lists are compared to each
+        other, never to a copy here. Dies to: a kind renamed or added in one
+        place and not the other, a kinds field left unrendered in either brief,
+        the allowance: marker dropped from the tick, or the sentence rendered
+        into the adopter form, whose dispatcher proposes every assign."""
+        import re
+        kinds = seat.DISPATCH_KINDS
+        assert len(kinds) >= 2 and len(set(kinds)) == len(kinds), kinds
+        phrase = seat.dispatch_kinds_phrase()
+        assert phrase.startswith(kinds[0]) and phrase.endswith(f" and {kinds[-1]}")
+        assert "(the kinds are {kinds})" in seat.SELF_HOST_PROCEED and "(the kinds are {kinds})" in seat.SELF_HOST_ASSIGN
+        text = (Path(__file__).resolve().parents[1] / "memory" / "parallel-work-protocol.md").read_text(encoding="utf-8")
+        start = text.index("**The model on a dispatch")
+        paragraph = text[start:text.index("\n\n", start)]
+        assert re.findall(r"`([a-z]+)`\s+\(", paragraph) == list(kinds), paragraph   # the note wraps at 80
+        assert "`allowance:`" in paragraph and "DISPATCH_KINDS" in paragraph
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "memory/parallel-work-protocol.md", "scripts/proof_tier.py")
+        loop = seat.compose_brief(clone, "box-feat", feat).loop
+        assert f"(the kinds are {phrase})" in loop and "named on an allowance: line" in loop and "{" not in loop
+        _holds(clone, "memory/parallel-work-protocol.md")   # the dispatcher's own checkout picks its form
+        dispatcher = seat.compose_brief(clone, "air", clone).text
+        assert f"(the kinds are {phrase})" in dispatcher and "an allowance: line" in dispatcher and "{" not in dispatcher
+        assert "a model below" not in seat.ADOPTER_PROCEED and "{kinds}" not in seat.ADOPTER_PROCEED
+
+    def test_the_ticks_wait_is_the_dispatchers_tick_interval_rendered_never_copied(self, seat, clone):
+        """The proceed clause waits the dispatcher's tick interval (TP-703e 1-C-2,
+        in the tick on the operator's yes of 2026-10-24), and the dispatcher
+        brief quotes the same interval, so both numbers come from
+        DISPATCHER_TICK at render. Dies to: a literal number typed into either
+        template, which the next change to DISPATCHER_TICK would leave behind,
+        or the clause dropped from the self-host tick."""
+        import re
+        minutes = re.search(r"/loop (\d+)m", seat.DISPATCHER_TICK).group(1)
+        assert seat.TICK_MINUTES == minutes
+        assert "proceed on it after {wait} minutes (the dispatcher's tick" in seat.SELF_HOST_PROCEED
+        assert "read the board every {every} minutes" in seat.DISPATCHER_BRIEF
+        for template in (seat.WORKER_TICK, seat.SELF_HOST_PROCEED, seat.ADOPTER_PROCEED, seat.DISPATCHER_BRIEF):
+            assert re.search(r"\d+ minutes", template) is None, template
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "memory/parallel-work-protocol.md", "scripts/proof_tier.py")
+        loop = seat.compose_brief(clone, "box-feat", feat).loop
+        assert f"proceed on it after {minutes} minutes (the dispatcher's tick" in loop
+        assert "run mail.py refresh once" in loop and "{" not in loop
+        dispatcher = seat.compose_brief(clone, "air", clone).text
+        assert f"read the board every {minutes} minutes" in dispatcher and "{" not in dispatcher
+
+    def test_an_adopters_worker_keeps_the_stop_and_ask_form(self, seat, clone):
+        """The proceed authority is this repository's operator's decision (the
+        protocol's "The seat's side of it"); an adopter's dispatcher proposes
+        every assign, so its seat stops and asks, as the tick did before
+        2026-10-24, and still refreshes its claim. Dies to: the proceed clause
+        rendered on a tree whose protocol home is the seeded workflow guide,
+        where no Task 0, assign authority or dispatcher tick is defined."""
+        _dispatcher(clone, '"ops"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        _holds(feat, "docs/WORKFLOW.md")
+        loop = seat.compose_brief(clone, "box-feat", feat).loop
+        assert "STOP and send ops one request, then only re-read mail until it is answered, on anything not green" in loop
+        assert "proceed on it" not in loop and "Task 0" not in loop and "shelve" not in loop
+        assert "run mail.py refresh once" in loop and "{" not in loop
+        assert loop.isascii() and '"' not in loop and "%" not in loop
 
     def test_this_repositorys_worker_runs_the_reviewers_its_diff_earns(self, seat, clone):
         """The self-host tick names the review line the tier script prints, at
@@ -706,7 +976,7 @@ class TestBrief:
         assert no_claude == []
         assert seat.cmd_launch(clone, "box-feat", args, maintenance=False, unchecked=False, print_only=False,
                                brief=False) == 0
-        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *args]
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *_mod(seat), *args]
 
     def test_a_list_option_keeps_its_values_and_the_brief_follows_a_dashdash(self, seat, clone, registry, no_claude):
         """Driven on 2.1.301: a prompt after `--add-dir <dir>` was read as a
@@ -715,7 +985,7 @@ class TestBrief:
         feat = _worktree(clone, "feat", name="box-feat")
         args = ["--add-dir", "a", "b"]
         assert seat.cmd_launch(clone, "box-feat", args, maintenance=False, unchecked=False, print_only=False) == 0
-        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *args, "--",
+        assert no_claude[-1]["argv"] == ["/fake/bin/claude", *_mod(seat), *args, "--",
                                          seat.compose_brief(clone, "box-feat", feat).text]
 
     def test_a_cmd_shim_refuses_the_brief_because_cmd_cuts_it_at_its_line_break(self, seat, clone, registry,
@@ -855,7 +1125,7 @@ class TestRetire:
 
     def test_a_seat_whose_worktree_is_gone_gets_the_recipe(self, seat, clone, registry):
         gone = _worktree(clone, "gone", name="box-gone")
-        _send(seat, gone, "box-gone", "claim", "lost", lane="lane/gone")
+        lost = _send(seat, gone, "box-gone", "claim", "lost", lane="lane/gone")
         _git(clone, "worktree", "remove", "--force", str(gone))
         with pytest.raises(seat.Refused) as refused:
             seat.cmd_retire(clone, "box-gone", dry_run=False, fetch=True)
@@ -863,7 +1133,43 @@ class TestRetire:
         assert said.startswith("seat box-gone holds 1 live claim(s) and its worktree is gone")
         assert "git worktree add --detach .claude/worktrees/gone origin/main" in said
         assert "git -C .claude/worktrees/gone config --worktree espalier.machine box-gone" in said
-        assert "python tools/cc/mail.py send --type release --lane lane/gone" in said
+        assert f"python tools/cc/mail.py send --type release --ack {lost['id']}" in said
+
+    def test_the_gone_worktree_recipe_names_only_that_seats_claims(self, seat, clone, registry):
+        """Dies to: the recipe built from every live claim on the channel."""
+        gone = _worktree(clone, "gone", name="box-gone")
+        other = _worktree(clone, "other", name="box-other")
+        lost = _send(seat, gone, "box-gone", "claim", "lost", lane="lane/gone")
+        theirs = _send(seat, other, "box-other", "claim", "theirs", lane="lane/other")
+        _git(clone, "worktree", "remove", "--force", str(gone))
+        with pytest.raises(seat.Refused) as refused:
+            seat.cmd_retire(clone, "box-gone", dry_run=False, fetch=True)
+        said = str(refused.value)
+        assert f"--ack {lost['id']}" in said and theirs["id"] not in said, said
+
+    def test_the_gone_worktree_recipe_hands_the_seats_job_back_never_closes_it(self, seat, clone, registry):
+        """The recipe releases the seat's claims by their ids. A lane release
+        from the seat would read as its lane shipped and close the job it was
+        given by its ids (the third closing rule), so the second retire would
+        remove the seat with its job closed and never handed back. Dies to:
+        the recipe's release by lane."""
+        gone = _worktree(clone, "gone", name="box-gone")
+        job = _send(seat, clone, "box", "assign", "fix DEF-7", ids=["DEF-7"], seat="box-gone")
+        claim = _send(seat, gone, "box-gone", "claim", "DEF-7, started", lane="lane/gone", ids=["DEF-7"])
+        _git(clone, "worktree", "remove", "--force", str(gone))
+        with pytest.raises(seat.Refused) as refused:
+            seat.cmd_retire(clone, "box-gone", dry_run=False, fetch=True)
+        recipe = str(refused.value)
+        assert f"python tools/cc/mail.py send --type release --ack {claim['id']}" in recipe, recipe
+        assert "--lane" not in recipe, recipe
+        _git(clone, "worktree", "add", "--detach", str(gone), "origin/main")
+        _git(gone, "config", "--worktree", "espalier.machine", "box-gone")
+        _send(seat, gone, "box-gone", "release", "", ack=claim["id"])
+        seat.mail.fetch_mail(clone)
+        by_machine, _ = seat.mail.read_mail(clone)
+        assert [j["id"] for j in seat.mail.live_assignments(by_machine, "box")] == [job["id"]]
+        with pytest.raises(seat.Refused, match=r"holds 1 job\(s\) from the dispatcher"):
+            seat.cmd_retire(clone, "box-gone", dry_run=False, fetch=True)
 
     def test_the_clone_itself_is_never_retired_and_a_dry_run_changes_nothing(self, seat, clone, registry, capsys):
         with pytest.raises(seat.Refused, match="box is the clone itself"):
@@ -874,3 +1180,37 @@ class TestRetire:
         out = capsys.readouterr().out
         assert "dry-run: would release 1 claim(s) of box-feat (lane/feat)" in out
         assert feat.is_dir() and len(_live_claims_from(seat, clone, "box-feat")) == 1
+
+
+
+class TestTheLauncherSetsTheBoxLock:
+    """A seat launched by the tool, or by its printed line, runs under the box
+    lock: ``ESPALIER_BOX_LOCK`` names one path per host under the temp
+    directory unless the parent already named one, so two seats on one box
+    take the same lock and CI, which never runs the launcher, never sees it.
+    Mutations: the key dropped from the child's environment; an inherited path
+    overwritten with the default; the key left out of either shell's line; the
+    printed line taking the default over the terminal's own path (code review,
+    2026-10-26: two seats would then lock two files)."""
+
+    def test_the_child_gets_the_hosts_default_path_unless_the_parent_named_one(self, seat, tmp_path):
+        import tempfile
+        target = seat.Target("box-x", tmp_path, True, False)
+        env = seat.child_env(target, maintenance=False, base={"PATH": "/bin"})
+        assert env["ESPALIER_BOX_LOCK"] == os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        env = seat.child_env(target, maintenance=False, base={"PATH": "/bin", "ESPALIER_BOX_LOCK": "/elsewhere/box.lock"})
+        assert env["ESPALIER_BOX_LOCK"] == "/elsewhere/box.lock"
+        assert seat.BOX_LOCK_KEY == "ESPALIER_BOX_LOCK" and seat.BOX_LOCK_NAME == "espalier-box.lock"
+
+    def test_both_shells_lines_carry_the_path_before_claude(self, seat, tmp_path):
+        import shlex
+        import tempfile
+        target = seat.Target("box-x", tmp_path, True, False)
+        default = os.path.join(tempfile.gettempdir(), "espalier-box.lock")
+        sh = seat.command_line(target, ["--model", "o p"], maintenance=False, shell="posix")
+        assert f"export ESPALIER_BOX_LOCK=${{ESPALIER_BOX_LOCK:-{shlex.quote(default)}}} && " in sh, sh
+        assert sh.index("ESPALIER_BOX_LOCK") < sh.index("claude")
+        assert sh.endswith(f"&& env -u ESPALIER_MAINTENANCE_MODE {_own_clear_unsets(seat)} -u VIRTUAL_ENV claude --model 'o p'")
+        ps = seat.command_line(target, [], maintenance=False, shell="powershell")
+        assert f"if (-not $env:ESPALIER_BOX_LOCK) {{ $env:ESPALIER_BOX_LOCK = '{default}' }}" in ps, ps
+        assert ps.index("ESPALIER_BOX_LOCK") < ps.index("claude")

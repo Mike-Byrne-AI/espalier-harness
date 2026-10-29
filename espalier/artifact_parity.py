@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
@@ -39,6 +38,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from espalier._rmtree import remove_file, remove_tree
+from espalier._spawn import run_no_stdin
 
 
 CLAUDE_PROJECT_DIR_MARKER = '"$CLAUDE_PROJECT_DIR/'
@@ -350,9 +350,10 @@ def _build_artifact(
     try:
         staged = stage_build_tree(repo_root, staging_root)
         dest_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.check_call(
+        run_no_stdin(
             [sys.executable, "-m", "build", f"--{kind}", "--no-isolation",
              "--outdir", str(dest_dir)],
+            check=True,
             cwd=str(staged),
         )
     finally:
@@ -392,13 +393,14 @@ def run_init_in_clean_venv(wheel_path: Path, target_repo: Path) -> dict:
     Returns the parsed `.claude/settings.json` from the target.
     """
     target_repo.mkdir(parents=True, exist_ok=True)
-    subprocess.check_call(["git", "init", "-q", str(target_repo)])
+    run_no_stdin(["git", "init", "-q", str(target_repo)], check=True)
     venv_dir = target_repo.parent / "venv"
-    subprocess.check_call([sys.executable, "-m", "venv", str(venv_dir)])
+    run_no_stdin([sys.executable, "-m", "venv", str(venv_dir)], check=True)
     vpython = _venv_python(venv_dir)
-    subprocess.check_call([str(vpython), "-m", "pip", "install", "--quiet", str(wheel_path)])
-    subprocess.check_call(
+    run_no_stdin([str(vpython), "-m", "pip", "install", "--quiet", str(wheel_path)], check=True)
+    run_no_stdin(
         [str(vpython), "-m", "espalier.cli", "init", str(target_repo)],
+        check=True,
     )
     settings_path = target_repo / ".claude" / "settings.json"
     # bom-exempt: this reads a settings.json espalier itself generated in a
@@ -410,9 +412,10 @@ def run_init_in_clean_venv(wheel_path: Path, target_repo: Path) -> dict:
 def run_init_source_path(target_repo: Path) -> dict:
     """Run `python -m espalier.cli init <target>` with the current interpreter."""
     target_repo.mkdir(parents=True, exist_ok=True)
-    subprocess.check_call(["git", "init", "-q", str(target_repo)])
-    subprocess.check_call(
+    run_no_stdin(["git", "init", "-q", str(target_repo)], check=True)
+    run_no_stdin(
         [sys.executable, "-m", "espalier.cli", "init", str(target_repo)],
+        check=True,
     )
     settings_path = target_repo / ".claude" / "settings.json"
     # bom-exempt: this reads a settings.json espalier itself generated in a

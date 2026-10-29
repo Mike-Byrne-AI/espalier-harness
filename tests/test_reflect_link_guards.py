@@ -167,6 +167,50 @@ class TestBlueprintArchiveExclusion:
         assert any("LIVE_SURFACE.md" in d for d in _standalone_links(surface_repo))
 
 
+# ─── record surfaces age on every entrypoint ─────────────────────────────────
+
+class TestARecordSurfacesDeadPointerAgesOnEveryEntrypoint:
+    """Core Rule 13 across the three entrypoints: a dead link on an append-only
+    record (the convergence ledger here, a public record the reference scan
+    walks) is never a broken link to fix. The reference ``reflect_repo`` keeps
+    it out of ``broken_markdown_links`` and lists it under ``aging_pointers``,
+    so ``espalier reflect`` and the doctor stay green on it; both structured
+    twins report it as kind ``aging``; and the positive control in
+    docs/CONVENTIONS.md still fires on all three. Dies to: any one entrypoint
+    reading the record's dead link as broken again (the three disagreeing is
+    the failure: the hook says leave it while the doctor says fix it)."""
+
+    @pytest.fixture()
+    def record_repo(self, surface_repo: Path) -> Path:
+        (surface_repo / "memory").mkdir()
+        (surface_repo / "memory" / "CONVERGENCE_LEDGER.md").write_text(
+            "# Ledger\n\n| round 3 | see [the finding](../docs/zqretired-finding.md) |\n",
+            encoding="utf-8")
+        return surface_repo
+
+    def test_the_reference_scan_lists_it_apart_and_keeps_the_control(self, record_repo):
+        report = reflect_repo(record_repo)
+        assert not any("zqretired-finding.md" in b["target"] for b in report["broken_markdown_links"]), report
+        assert any("definitely-missing-target.md" in b["target"] for b in report["broken_markdown_links"]), report
+        assert [(a["file"], a["target"]) for a in report["aging_pointers"]] == \
+            [("memory/CONVERGENCE_LEDGER.md", "../docs/zqretired-finding.md")], report
+        assert "fix broken markdown links before handoff" in report["recommended_actions"], report
+
+    def test_the_engine_and_the_standalone_read_it_as_aging(self, record_repo):
+        engine = run_reflect_pass(record_repo, 1).findings
+        assert not any("zqretired-finding.md" in f.description for f in engine if f.kind == "gap"), engine
+        assert any(f.kind == "aging" and "memory/CONVERGENCE_LEDGER.md" in f.description for f in engine), engine
+        assert any("definitely-missing-target.md" in d for d in _engine_links(record_repo))
+        proc = subprocess.run([sys.executable, str(STANDALONE), "--pass", "1", "--json"], cwd=record_repo,
+                              capture_output=True, text=True, timeout=45, encoding="utf-8")
+        assert proc.returncode == 0, proc.stderr
+        report = json.loads(proc.stdout)
+        assert report["aging_count"] == 1, report
+        assert not any(f["kind"] == "gap" and "zqretired-finding.md" in f["description"]
+                       for f in report["findings"]), report
+        assert any("definitely-missing-target.md" in d for d in _standalone_links(record_repo))
+
+
 # ─── regenerated-summary exclusion ───────────────────────────────────────────
 
 class TestRegeneratedSummaryExclusion:

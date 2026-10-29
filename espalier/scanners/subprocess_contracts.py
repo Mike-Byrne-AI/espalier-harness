@@ -56,7 +56,7 @@ SUBPROCESS_CONTRACTS: dict[str, str] = {
 #: ``run_bounded`` in tools/cc/_json_safe.py, the route every timed spawn there
 #: takes since 2026-10-13), read by bare name or attribute. Held equal to the
 #: encoding scanner's and tests/test_contracts.py's copies.
-SPAWN_WRAPPERS: frozenset[str] = frozenset({"spawn_checked", "run_bounded"})
+SPAWN_WRAPPERS: frozenset[str] = frozenset({"spawn_checked", "run_bounded", "run_no_stdin"})
 
 OS_BINARIES: frozenset[str] = frozenset({
     "git", "pytest", "tar", "gzip", "find", "grep", "sed", "awk",

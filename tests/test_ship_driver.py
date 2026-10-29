@@ -105,6 +105,16 @@ def forget_guard():
     sys.modules.pop("_ship_ci_guard", None)
 
 
+@pytest.fixture(autouse=True)
+def _outside_a_session(monkeypatch):
+    """The suite may run inside a Claude session, which exports its id to the
+    shell; the handoff's last act arms the own-clear marker for that id (HEAD
+    and the seat's brief read through real git), which these rows' fake runner
+    does not describe. Without the id the arm stands down in one line, and
+    TestTheHandoffArmsTheOwnClear stands the arm in by name."""
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+
+
 # ── the recording runner ─────────────────────────────────────────────────────
 
 #: Spawns that change something: the ones a refusal must not have reached.
@@ -372,7 +382,7 @@ def _preflight_answers(root, *, dirty="", untracked="", commits="abc1234 feat: a
         ("git", "log", "--oneline"): (0, commits, ""),
         ("git", "merge-tree"): (0, "abc123\n", ""),   # the merge verdict: clean unless a test says otherwise
         ("git", "diff", "--name-only"): (0, "", ""),   # the attribute walk: nothing changed on both sides
-        ("gh", "pr", "list", "--author"): (0, merged, ""),
+        ("gh", "pr", "list", "--state"): (0, merged, ""),   # no author filter: every seat pushes as one account
         ("gh", "run", "list", "--workflow", "post-merge.yml"): (0, base_runs, ""),
         _ROW_FILES: _row_log(),   # no row added by the lane's own commits
     })
@@ -899,6 +909,105 @@ class TestHandoffVerb:
         monkeypatch.setattr(ship, "open_pr", lambda **kw: order.append("open") or 0)
         assert ship.handoff() == 0
         assert order == ["lane", "open"]
+
+
+class TestTheHandoffArmsTheOwnClear:
+    """The handoff's last act arms the own-clear marker (``arm_own_clear_here``,
+    its own rows in tests/test_own_clear.py): after the push has landed, on
+    the off path once the verb has said its piece, and never on a dry run or
+    a refusal. A marker armed before the push would clear a window whose lane
+    sat unpushed; the own-clear mod (tools/cc/mods/own-clear) reads nothing
+    else. Dies to: an arm before the rebind, an arm on a refused handoff or a
+    failed rebind, or a dry run that arms."""
+
+    @staticmethod
+    def _armed(ship, monkeypatch) -> list[str]:
+        order: list[str] = []
+        monkeypatch.setattr(ship, "arm_own_clear_here",
+                            lambda root: order.append("arm") or "own-clear armed (stand-in)")
+        return order
+
+    def test_the_off_path_arms_once_the_verb_has_said_its_piece(self, ship, tmp_path, monkeypatch, capsys):
+        order = self._armed(ship, monkeypatch)
+        answers = _reads(tmp_path)
+        answers[_list_key()] = (0, "[]", "")
+        _arm(ship, answers)
+        assert ship.handoff() == 0
+        assert order == ["arm"]
+        out = capsys.readouterr().out
+        assert out.index("handoff push is off") < out.index("own-clear armed")
+
+    def test_the_push_onto_an_open_pull_request_arms_after_the_rebind(self, ship, tmp_path, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        spawns = _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
+        order = self._armed(ship, monkeypatch)
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: order.append(
+            f"rebind after {spawns.count(('git', 'push'))} push") or 0)
+        assert ship.handoff() == 0
+        assert order == ["rebind after 1 push", "arm"]
+
+    def test_a_rebind_that_fails_arms_nothing(self, ship, tmp_path, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
+        order = self._armed(ship, monkeypatch)
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 1)
+        assert ship.handoff() == 1
+        assert order == []
+
+    def test_the_opened_pull_request_arms_after_the_open(self, ship, tmp_path, forget_guard, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", ""), _rows(_pr())]
+        spawns = _arm(ship, answers)
+        armed_after: list[int] = []
+        monkeypatch.setattr(ship, "arm_own_clear_here",
+                            lambda root: armed_after.append(len(spawns.calls)) or "own-clear armed (stand-in)")
+        assert ship.handoff() == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        assert armed_after and armed_after[0] > spawns.index(("gh", "pr", "create"))
+
+    def test_an_arm_that_raises_does_not_fail_the_landed_handoff(self, ship, tmp_path, monkeypatch, capsys):
+        """The push landed; what stops the arm is said with the by-hand reset,
+        and the verb exits 0 (a 1 here reads as a failed handoff, which a
+        session would run again)."""
+        answers = _reads(tmp_path)
+        answers[_list_key()] = (0, "[]", "")
+        _arm(ship, answers)
+
+        def broken(root):
+            raise OSError("read-only state directory")
+
+        monkeypatch.setattr(ship, "arm_own_clear_here", broken)
+        assert ship.handoff() == 0
+        out = capsys.readouterr().out
+        assert "was not armed" in out and "read-only state directory" in out and "/clear by hand" in out
+
+    def test_a_refused_handoff_arms_nothing(self, ship, tmp_path, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        ship._SYNC = _oracle(_two_sessions())
+        _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
+        order = self._armed(ship, monkeypatch)
+        with pytest.raises(ship.Refused, match="2 live sessions work in this checkout"):
+            ship.handoff()
+        assert order == []
+
+    def test_a_dry_run_arms_nothing_and_says_what_it_would(self, ship, tmp_path, forget_guard, monkeypatch,
+                                                           capsys):
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", ""), _rows(_pr())]
+        spawns = _arm(ship, answers)
+        order = self._armed(ship, monkeypatch)
+        assert ship.handoff(dry_run=True) == 0
+        assert order == [] and spawns.mutations == []
+        out = capsys.readouterr().out
+        assert "dry-run" in out and "the own-clear marker would be armed" in out
 
 
 class TestTheLaneCarriesItsMemoryRowWhenHandoffPushes:
@@ -2895,6 +3004,114 @@ class TestOneOpenPullRequestPerSeat:
         channel.machine_setting = lambda root, **kw: (None, "git config espalier.machine is not set")
         assert ship.seat_open_prs(tmp_path, "lane/x", json.loads(self._OTHERS)) == ("", [])
         assert "could not be read" not in capsys.readouterr().out   # an unset name stays silent
+
+
+class TestSeatRowDebt:
+    """The Session Log debt the board's `records:` line prints and `open
+    --early` will refuse on (the second lane): this seat's lanes merged, in
+    the writer's local day, after its newest row on the BASE's tree. No
+    verdict is never a refusal on a guess: git, gh or the channel failing
+    reads as None, never as zero."""
+
+    _NAMES = ("memory/session-log.d/2026-10-15-073941-win.md\n"
+              "memory/session-log.d/2026-10-18-163553-win.md\n"
+              "memory/session-log.d/2026-10-19-053029-air.md\n")
+    # Noon UTC: the same local day in every zone a seat runs in.
+    _MERGED = json.dumps([{"number": 1, "headRefName": "lane/a", "mergedAt": "2026-10-18T12:00:00Z"},
+                          {"number": 2, "headRefName": "lane/b", "mergedAt": "2026-10-19T12:00:00Z"},
+                          {"number": 3, "headRefName": "lane/c", "mergedAt": "2026-10-20T12:00:00Z"},
+                          {"number": 4, "headRefName": "lane/d", "mergedAt": "2026-10-20T12:00:00Z"}])
+    _LANES = {"lane/a": "win", "lane/b": "win", "lane/c": "win", "lane/d": "air"}
+
+    @staticmethod
+    def _channel(seat, lanes, parked=(), pending_error=None):
+        def pending(root, directory, against, **kw):
+            if pending_error:
+                raise RuntimeError(pending_error)
+            assert directory.rstrip("/") == "memory/session-log.d" and against == ["origin/main"], (directory, against)
+            return [(seat, path, f"refs/remotes/origin/records/{seat}") for path in parked]
+        return types.SimpleNamespace(
+            machine_setting=lambda root, **kw: (seat, "stubbed"),
+            read_mail=lambda root, **kw: ({"win": []}, {}),
+            lane_seats=lambda by_machine: dict(lanes),
+            pending=pending)
+
+    def _answers(self, names=_NAMES, merged=_MERGED, tree_rc=0, gh_rc=0):
+        return {("git", "ls-tree"): (tree_rc, names if tree_rc == 0 else "", "fatal: not a tree" if tree_rc else ""),
+                ("gh", "pr", "list"): (gh_rc, merged if gh_rc == 0 else "", "gh: not logged in" if gh_rc else "")}
+
+    def test_the_debt_is_the_seats_lanes_merged_after_its_newest_row_on_the_base(self, ship, tmp_path, monkeypatch):
+        """Dies to: the names read from the working tree (a seat can edit it),
+        the window read as POST_MERGE_ROWS, or a second merged read outside
+        _post_merge.read_merged."""
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES))
+        spawns = _arm(ship, self._answers())
+        assert ship.seat_row_debt(tmp_path, "main") == (2, "2026-10-18", False)
+        tree = spawns.matching(("git", "ls-tree"))
+        assert len(tree) == 1 and "origin/main" in tree[0] and ship.SESSION_LOG_DIR in tree[0]
+        reads = spawns.matching(("gh", "pr", "list"))
+        fragments = ship._fragments_module()
+        assert len(reads) == 1 and "--state" in reads[0] and "merged" in reads[0]
+        assert reads[0][reads[0].index("--limit") + 1] == str(fragments.ROW_DEBT_WINDOW)
+        assert "headRefName" in reads[0][reads[0].index("--json") + 1]
+        assert spawns.mutations == []
+
+    def test_a_row_parked_on_the_seats_records_ref_is_its_newest_and_said_so(self, ship, tmp_path, monkeypatch):
+        """A handoff whose lane already merged parks its row; open's early arm
+        runs before the fold brings it in, so the reader must count it or a
+        seat that wrote its row is refused. Dies to: the parked row ignored."""
+        parked = ["memory/session-log.d/2026-10-19-210000-win.md"]
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES, parked=parked))
+        _arm(ship, self._answers())
+        assert ship.seat_row_debt(tmp_path, "main") == (1, "2026-10-19", True)
+
+    def test_a_seat_with_no_row_counts_every_lane_and_says_it_has_none(self, ship, tmp_path, monkeypatch):
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win-2", {"lane/a": "win-2", "lane/b": "win-2"}))
+        _arm(ship, self._answers())
+        assert ship.seat_row_debt(tmp_path, "main") == (2, "", False)
+
+    def test_an_unreadable_records_ref_reads_as_unread(self, ship, tmp_path, monkeypatch):
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES, pending_error="git for-each-ref failed"))
+        _arm(ship, self._answers())
+        assert ship.seat_row_debt(tmp_path, "main") is None
+
+    def test_a_git_that_raises_or_a_channel_that_raises_reads_as_unread(self, ship, tmp_path, monkeypatch):
+        """ship's runner raises Refused on a timeout or a missing git, and the
+        tree read sat outside any guard, so the second lane's refusal would
+        have fired on a git outage (code review). Dies to: the Refused or the
+        channel's error reaching the caller."""
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES))
+        _arm(ship, self._answers())
+        monkeypatch.setattr(ship, "_git", lambda *a, **k: (_ for _ in ()).throw(ship.Refused("git took longer than 10s")))
+        assert ship.seat_row_debt(tmp_path, "main") is None
+        monkeypatch.undo()
+        channel = self._channel("win", self._LANES)
+        channel.read_mail = lambda root, **kw: (_ for _ in ()).throw(RuntimeError("the fold raised"))
+        monkeypatch.setattr(ship, "_MAIL", channel)
+        _arm(ship, self._answers())
+        assert ship.seat_row_debt(tmp_path, "main") is None
+
+    def test_a_gh_that_answers_without_json_reads_as_unread_never_as_zero(self, ship, tmp_path, monkeypatch):
+        """Dies to: the driver's Refused escaping the reader (open would refuse
+        on a gh outage), or the empty answer counted as no lanes."""
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES))
+        _arm(ship, self._answers(gh_rc=1))
+        assert ship.seat_row_debt(tmp_path, "main") is None
+
+    def test_a_failed_tree_read_or_an_unnamed_box_reads_as_unread(self, ship, tmp_path, monkeypatch):
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES))
+        _arm(ship, self._answers(tree_rc=128))
+        assert ship.seat_row_debt(tmp_path, "main") is None
+        monkeypatch.setattr(ship, "_MAIL", self._channel(None, self._LANES))
+        spawns = _arm(ship, self._answers())
+        assert ship.seat_row_debt(tmp_path, "main") is None
+        assert spawns.count(("gh", "pr", "list")) == 0
+
+    def test_a_tree_without_the_channel_reads_as_unread(self, ship, tmp_path, monkeypatch):
+        monkeypatch.setattr(ship, "_mail_module", lambda: None)
+        spawns = _arm(ship, self._answers())
+        assert ship.seat_row_debt(tmp_path, "main") is None
+        assert spawns.calls == []
 
 
 class TestStaleBaseInStatus:

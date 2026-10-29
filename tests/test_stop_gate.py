@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -898,3 +899,526 @@ class TestUnbalancedQuotesBlockOnce:
         assert (tmp_path / ".espalier-state" / mod.GATE1_SPAWN_FAILURE_REPORTED_FLAG).is_file()
         assert mod._run_command_gate(tmp_path, ('npm "unbalanced',), source="env") == 0
         assert "reported earlier this session" in capsys.readouterr().err
+
+
+# ─── Gate 5: the handoff gate ─────────────────────────────────────────────────
+
+def _git(cwd: Path, *args: str) -> str:
+    from tests._git_oracle import _git_env
+
+    result = subprocess.run(
+        ["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True,
+        encoding="utf-8", env=_git_env(),
+    )
+    return result.stdout.strip()
+
+
+def _write_plan(root: Path, status: str, *, task: str = "TP-fixture: the lane",
+                created: str = "2026-10-24T00:00:00+00:00") -> None:
+    step_status = "passed" if status == "complete" else "running"
+    (root / "cc" / "execution_plan.json").write_text(json.dumps({
+        "task": task, "created": created, "status": status,
+        "steps": [{"title": "the step", "status": step_status}],
+    }), encoding="utf-8")
+
+
+def _commit(root: Path, name: str) -> None:
+    (root / f"{name}.txt").write_text(name, encoding="utf-8")
+    _git(root, "add", f"{name}.txt")
+    _git(root, "commit", "-q", "-m", name)
+
+
+def _lane_repo(tmp_path: Path, *, ahead: int = 1, handoff_push: str | None = "true",
+               plan_status: str | None = "complete", branch: str = "lane/the-fixture",
+               push_lane: bool = False) -> Path:
+    """A checkout with a bare origin beside it: ``main`` pushed with an
+    upstream and ``origin/HEAD`` set, then ``branch`` holding ``ahead``
+    commits origin does not. ``push_lane`` pushes the lane with an upstream
+    before those commits, so the lane's own upstream is what the gate reads.
+    ``plan_status`` None writes no plan."""
+    from tests._git_oracle import _git_env
+    from tests._quiet_git import NO_BACKGROUND_GIT
+
+    origin = tmp_path / "origin.git"
+    root = tmp_path / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True,
+                   capture_output=True, env=_git_env())
+    _git(root, "init", "-q")
+    for key, value in NO_BACKGROUND_GIT:
+        _git(root, "config", key, value)
+    _git(root, "config", "user.email", "fixture@example.invalid")
+    _git(root, "config", "user.name", "fixture")
+    _git(root, "checkout", "-q", "-b", "main")
+    (root / "README.md").write_text("base\n", encoding="utf-8")
+    _git(root, "add", "README.md")
+    _git(root, "commit", "-q", "-m", "base")
+    _git(root, "remote", "add", "origin", str(origin))
+    _git(root, "push", "-q", "-u", "origin", "main")
+    _git(root, "remote", "set-head", "origin", "main")
+    if branch != "main":
+        _git(root, "checkout", "-q", "-b", branch)
+    if push_lane:
+        _git(root, "push", "-q", "-u", "origin", branch)
+    for i in range(ahead):
+        _commit(root, f"c{i}")
+    if handoff_push is not None:
+        (root / "espalier.toml").write_text(f"handoff_push = {handoff_push}\n", encoding="utf-8")
+    (root / "cc").mkdir()
+    if plan_status is not None:
+        _write_plan(root, plan_status)
+    return root
+
+
+def _audit_rows(audit_dir: Path, event_type: str) -> list[dict]:
+    return [
+        json.loads(ln) for log in audit_dir.glob("*.log")
+        for ln in log.read_text(encoding="utf-8").splitlines()
+        if f'"{event_type}"' in ln
+    ]
+
+
+def _head(root: Path) -> str:
+    return _git(root, "rev-parse", "HEAD")
+
+
+class TestTheHandoffGate:
+    """Gate 5, the handoff gate (live since 2026-10-24; TP-70 retired an earlier,
+    different fifth gate on 2026-05-18): nothing in flight -- no plan in
+    progress, no tracked edit -- and the branch holds commits its upstream does
+    not, made in this session, on a repository whose espalier.toml sets
+    ``handoff_push = true``, blocks the Stop once per commit and names /handoff.
+    "This session" is the flag SessionStart seeds with HEAD: a HEAD already
+    judged, or already there when the session began, is passed over. The
+    measured cause: a lane finished at 05:13 EDT and left for the operator's
+    /handoff sat unpushed, unrowed and claimed for eleven hours, and the next
+    session handed it off from a cold context (2026-10-24)."""
+
+    @staticmethod
+    def _load():
+        import importlib.util
+
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        name = "stop_gate_handoff_under_test"
+        spec = importlib.util.spec_from_file_location(name, str(HOOKS_DIR / "stop_gate.py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    @staticmethod
+    def _fresh_voice(mod, root: Path) -> None:
+        """``say_once`` speaks once per process and per session: reset both so a
+        test owns its own voice."""
+        mod._hook_utils._SAID_THIS_PROCESS.clear()
+        for once in (root / ".espalier-state").glob("once_*"):
+            once.unlink()
+
+    def test_a_committed_unpushed_lane_blocks_once_and_names_the_handoff(
+        self, tmp_path, monkeypatch, capsys,
+    ):
+        root = _lane_repo(tmp_path, ahead=2)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        assert mod._gate_handoff(root) == 1
+        out = capsys.readouterr()
+        assert out.err == "", out.err
+        reason = json.loads(out.out)["reason"]
+        assert "/handoff" in reason
+        assert "lane/the-fixture holds 2 commits that origin/main does not" in reason
+        assert "must be handed off now" in reason
+        assert "the plan `TP-fixture: the lane` is complete" in reason
+        assert "opening the pull request with auto-merge armed" in reason
+        assert "Don't:" in reason and "Do:" in reason
+        flag = root / ".espalier-state" / mod.HANDOFF_GATE_FLAG
+        assert flag.read_text(encoding="utf-8").strip() == _head(root)
+        records = _audit_rows(tmp_path / "audit", "stop_blocked_handoff")
+        assert len(records) == 1
+        assert records[0]["details"] == {"gate": 5, "rule": "GATE_HANDOFF_OWED", "ahead": 2}
+        assert "lane/the-fixture" not in json.dumps(records[0])
+        # Once per commit: the next Stop of the session passes and writes nothing.
+        assert mod._gate_handoff(root) == 0
+        assert capsys.readouterr().out == ""
+        assert len(_audit_rows(tmp_path / "audit", "stop_blocked_handoff")) == 1
+
+    def test_a_new_commit_speaks_again(self, tmp_path, monkeypatch, capsys):
+        """The handoff's own row commit moves HEAD: a push that then fails leaves
+        a lane the gate speaks about again at the next Stop."""
+        root = _lane_repo(tmp_path, ahead=1)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        assert mod._gate_handoff(root) == 1
+        assert mod._gate_handoff(root) == 0
+        _commit(root, "the-row")
+        assert mod._gate_handoff(root) == 1
+        decisions = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        assert [d["decision"] for d in decisions] == ["block", "block"]
+        assert "2 commits" in decisions[1]["reason"]
+
+    def test_the_head_a_session_began_on_is_never_spoken_about(self, tmp_path, monkeypatch, capsys):
+        """SessionStart seeds the flag with HEAD: a lane an earlier session left
+        unpushed is the banner's to name, never a block into a cold context."""
+        root = _lane_repo(tmp_path, ahead=1)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        state = root / ".espalier-state"
+        state.mkdir()
+        (state / mod.HANDOFF_GATE_FLAG).write_text(_head(root) + "\n", encoding="utf-8")
+        assert mod._gate_handoff(root) == 0
+        out = capsys.readouterr()
+        assert out.out == "" and out.err == ""
+        assert not (tmp_path / "audit").exists() or not _audit_rows(tmp_path / "audit", "stop_blocked_handoff")
+
+    def test_nothing_unpushed_passes_and_remembers_the_head(self, tmp_path, monkeypatch, capsys):
+        root = _lane_repo(tmp_path, ahead=0)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        assert mod._gate_handoff(root) == 0
+        out = capsys.readouterr()
+        assert out.out == "" and out.err == ""
+        flag = root / ".espalier-state" / mod.HANDOFF_GATE_FLAG
+        assert flag.read_text(encoding="utf-8").strip() == _head(root)
+        assert not (tmp_path / "audit").exists() or not _audit_rows(tmp_path / "audit", "stop_blocked_handoff")
+
+    def test_an_edit_in_flight_passes_and_writes_nothing(self, tmp_path, monkeypatch, capsys):
+        """A modified tracked file, or one staged, is work in flight: the pack
+        flow's reviewers and tier run on a dirty tree before the commit, and the
+        gate must not send the collaborator to push mid-flow."""
+        root = _lane_repo(tmp_path, ahead=1)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        flag = root / ".espalier-state" / mod.HANDOFF_GATE_FLAG
+        (root / "README.md").write_text("base\nedited\n", encoding="utf-8")
+        assert mod._gate_handoff(root) == 0
+        assert not flag.exists()
+        (root / "README.md").write_text("base\n", encoding="utf-8")
+        (root / "staged.txt").write_text("s", encoding="utf-8")
+        _git(root, "add", "staged.txt")
+        assert mod._gate_handoff(root) == 0
+        assert not flag.exists()
+        _git(root, "rm", "-q", "--cached", "staged.txt")
+        (root / "staged.txt").unlink()
+        assert capsys.readouterr().out == ""
+        assert mod._gate_handoff(root) == 1
+
+    def test_an_untracked_file_is_not_work_in_flight(self, tmp_path, monkeypatch, capsys):
+        root = _lane_repo(tmp_path, ahead=1)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        (root / "scratch-note.md").write_text("beside the lane\n", encoding="utf-8")
+        mod = self._load()
+        assert mod._gate_handoff(root) == 1
+        assert "1 commit" in json.loads(capsys.readouterr().out)["reason"]
+
+    def test_a_plan_in_progress_passes_and_writes_nothing(self, tmp_path, monkeypatch, capsys):
+        root = _lane_repo(tmp_path, ahead=1, plan_status="in_progress")
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        assert mod._gate_handoff(root) == 0
+        assert capsys.readouterr().out == ""
+        assert not (root / ".espalier-state" / mod.HANDOFF_GATE_FLAG).exists()
+
+    @pytest.mark.parametrize("status", ["planned", "cancelled", None])
+    def test_no_plan_in_progress_still_speaks(self, tmp_path, monkeypatch, capsys, status):
+        """A committed lane with no plan at all (a free-hand lane under
+        maintenance mode) is as unpushed as one with a complete plan."""
+        root = _lane_repo(tmp_path, ahead=1, plan_status=status)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        assert mod._gate_handoff(root) == 1
+        assert "no plan is in progress" in json.loads(capsys.readouterr().out)["reason"]
+
+    @pytest.mark.parametrize("setting", ["false", None, "maybe"])
+    def test_a_repository_whose_handoff_does_not_push_has_no_gate(
+        self, tmp_path, monkeypatch, capsys, setting,
+    ):
+        root = _lane_repo(tmp_path, ahead=1, handoff_push=setting)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        assert mod._gate_handoff(root) == 0
+        assert capsys.readouterr().out == ""
+        # Judged: the next Stop at this HEAD stops at the flag.
+        flag = root / ".espalier-state" / mod.HANDOFF_GATE_FLAG
+        assert flag.read_text(encoding="utf-8").strip() == _head(root)
+
+    def test_a_pushed_lane_counts_only_what_its_upstream_lacks(self, tmp_path, monkeypatch, capsys):
+        root = _lane_repo(tmp_path, ahead=1, push_lane=True)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        assert mod._gate_handoff(root) == 1
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert "lane/the-fixture holds 1 commit that origin/lane/the-fixture does not" in reason
+        assert "onto its open pull request" in reason
+        _git(root, "push", "-q", "origin", "lane/the-fixture")
+        assert mod._gate_handoff(root) == 0            # the same HEAD, judged
+        _commit(root, "c-after")
+        _git(root, "push", "-q", "origin", "lane/the-fixture")
+        assert mod._gate_handoff(root) == 0            # a new HEAD with nothing owed
+        assert capsys.readouterr().out == ""
+        flag = root / ".espalier-state" / mod.HANDOFF_GATE_FLAG
+        assert flag.read_text(encoding="utf-8").strip() == _head(root)
+
+    def test_the_default_branch_ahead_of_origin_blocks_too(self, tmp_path, monkeypatch, capsys):
+        # The ship driver's `lane` verb moves these onto a lane at the push, so
+        # work committed on main is as unpushed as a lane's.
+        root = _lane_repo(tmp_path, ahead=1, branch="main")
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        assert mod._gate_handoff(root) == 1
+        assert "main holds 1 commit that origin/main does not" in json.loads(capsys.readouterr().out)["reason"]
+
+    def test_a_detached_head_passes(self, tmp_path, monkeypatch, capsys):
+        root = _lane_repo(tmp_path, ahead=1)
+        _git(root, "checkout", "-q", "--detach")
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        assert mod._gate_handoff(root) == 0
+        assert capsys.readouterr().out == ""
+
+    def test_no_origin_head_falls_back_to_the_default_branch_name(self, tmp_path, monkeypatch, capsys):
+        """A clone made with `git remote add` and a push never sets origin/HEAD;
+        the lane is then measured against origin/main."""
+        root = _lane_repo(tmp_path, ahead=1)
+        _git(root, "remote", "set-head", "origin", "-d")
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        assert mod._gate_handoff(root) == 1
+        assert "that origin/main does not" in json.loads(capsys.readouterr().out)["reason"]
+
+    def test_a_checkout_with_nothing_to_compare_against_passes(self, tmp_path, monkeypatch, capsys):
+        root = _lane_repo(tmp_path, ahead=1)
+        _git(root, "remote", "remove", "origin")
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        assert mod._gate_handoff(root) == 0
+        out = capsys.readouterr()
+        assert out.out == "" and out.err == ""
+
+    def test_a_git_that_cannot_start_allows_and_speaks_once(self, tmp_path, monkeypatch, capsys):
+        root = _lane_repo(tmp_path, ahead=1)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        self._fresh_voice(mod, root)
+        monkeypatch.setattr(
+            mod._hook_utils, "spawn_checked",
+            lambda argv, **kw: mod._hook_utils.SpawnFailure(tuple(argv), "Unresolved", None),
+        )
+        assert mod._gate_handoff(root) == 0
+        out = capsys.readouterr()
+        assert out.out == ""
+        assert "[stop_gate]" in out.err and "handoff gate" in out.err
+        assert len(_audit_rows(tmp_path / "audit", "stop_failed_open_handoff_git")) == 1
+        assert mod._gate_handoff(root) == 0
+        assert capsys.readouterr().err == ""
+
+    def test_a_missing_driver_is_silent_and_a_faulty_one_speaks_once(self, tmp_path, monkeypatch, capsys):
+        """Four driver states. No tools/cc/ship.py: no handoff push to owe, so no
+        gate and nothing said. A driver importing a sibling the tree lacks, a
+        module elsewhere answering to the name, and a driver predating the
+        reader or failing its read: the gate stands down and says so once."""
+        import types
+
+        root = _lane_repo(tmp_path, ahead=1)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        flag = root / ".espalier-state" / mod.HANDOFF_GATE_FLAG
+        real = str(HOOKS_DIR.parent / "ship.py")
+
+        def arm(module) -> list[dict]:
+            self._fresh_voice(mod, root)
+            flag.unlink(missing_ok=True)
+            monkeypatch.setitem(sys.modules, "ship", module)
+            assert mod._gate_handoff(root) == 0
+            assert capsys.readouterr().out == ""
+            return _audit_rows(tmp_path / "audit", "stop_failed_open_handoff_driver")
+
+        before = len(arm(None))                       # no driver: silent
+        assert before == 0
+
+        shadow = types.ModuleType("ship")             # another module answers
+        assert len(arm(shadow)) == 1
+        assert _audit_rows(tmp_path / "audit", "stop_failed_open_handoff_driver")[-1]["details"]["fault"] == "ShadowedDriver"
+
+        old = types.ModuleType("ship")                # a driver before the reader
+        old.__file__ = real
+        assert len(arm(old)) == 2
+        assert _audit_rows(tmp_path / "audit", "stop_failed_open_handoff_driver")[-1]["details"]["fault"] == "NoHandoffPushSetting"
+
+        def _fails(root_):
+            raise RuntimeError("the read failed")
+
+        faulty = types.ModuleType("ship")             # a read that fails
+        faulty.__file__ = real
+        faulty.handoff_push_setting = _fails
+        assert len(arm(faulty)) == 3
+        assert _audit_rows(tmp_path / "audit", "stop_failed_open_handoff_driver")[-1]["details"]["fault"] == "RuntimeError"
+        assert "[stop_gate]" not in capsys.readouterr().out
+
+    def test_maintenance_mode_does_not_lift_it(self, tmp_path):
+        """The one that would have caught the measured case: the overnight
+        session ran under ESPALIER_MAINTENANCE_MODE=1. Gates 2 and 3 are the
+        friction the flag lifts; continuity is not friction."""
+        root = _lane_repo(tmp_path, ahead=1)
+        env = os.environ.copy()
+        env.update(CLAUDE_PROJECT_DIR=str(root), ESPALIER_MAINTENANCE_MODE="1",
+                   ESPALIER_AUDIT_DIR=str(tmp_path / "audit"))
+        env.pop("ESPALIER_STOP_GATE", None)
+
+        def stop(payload: dict) -> str:
+            result = subprocess.run(
+                [sys.executable, str(HOOKS_DIR / "stop_gate.py")],
+                input=json.dumps(payload), capture_output=True, text=True, timeout=30,
+                env=env, encoding="utf-8", cwd=str(root),
+            )
+            assert result.returncode == 0, result.stderr
+            return result.stdout
+
+        first = json.loads(stop({}))
+        assert first["decision"] == "block"
+        assert "/handoff" in first["reason"] and "lane/the-fixture" in first["reason"]
+        assert _audit_rows(tmp_path / "audit", "stop_blocked_handoff")
+        assert '"block"' not in stop({}), "the same HEAD is not spoken about twice"
+
+    def test_the_continuation_stop_runs_the_handoff_gate_alone(self, tmp_path):
+        """Outside maintenance mode a long turn's first Stop is held by the docs
+        gate; the continuation Stop carries the loop signal, which lets Gates 1
+        to 4 go, and the handoff gate alone still speaks -- once -- so the lane
+        is told in the same turn, not at the operator's next prompt."""
+        root = _lane_repo(tmp_path, ahead=1)
+        state = root / ".espalier-state"
+        state.mkdir()
+        (state / "write_count").write_text("12", encoding="utf-8")
+        env = os.environ.copy()
+        env.update(CLAUDE_PROJECT_DIR=str(root), ESPALIER_AUDIT_DIR=str(tmp_path / "audit"))
+        env.pop("ESPALIER_MAINTENANCE_MODE", None)
+        env.pop("ESPALIER_STOP_GATE", None)
+
+        def stop(payload: dict) -> str:
+            result = subprocess.run(
+                [sys.executable, str(HOOKS_DIR / "stop_gate.py")],
+                input=json.dumps(payload), capture_output=True, text=True, timeout=30,
+                env=env, encoding="utf-8", cwd=str(root),
+            )
+            assert result.returncode == 0, result.stderr
+            return result.stdout
+
+        first = json.loads(stop({}))
+        assert first["decision"] == "block" and "docs" in first["reason"].lower()
+        second = json.loads(stop({"stop_hook_active": True}))
+        assert second["decision"] == "block" and "/handoff" in second["reason"]
+        assert '"block"' not in stop({"stop_hook_active": True})
+
+    def test_session_start_seeds_the_flag_with_head_and_keeps_it_across_a_compaction(
+        self, tmp_path,
+    ):
+        import importlib.util
+
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        name = "session_start_handoff_flag_under_test"
+        spec = importlib.util.spec_from_file_location(name, str(HOOKS_DIR / "session_start.py"))
+        ss = importlib.util.module_from_spec(spec)
+        sys.modules[name] = ss
+        spec.loader.exec_module(ss)
+        mod = self._load()
+        root = _lane_repo(tmp_path, ahead=1)
+        flag = root / ".espalier-state" / mod.HANDOFF_GATE_FLAG
+        ss._clean_state_flags(root, "startup")
+        assert flag.read_text(encoding="utf-8").strip() == _head(root), "a new session starts judged at HEAD"
+        flag.write_text("judged-earlier", encoding="utf-8")
+        ss._clean_state_flags(root, "compact")
+        assert flag.read_text(encoding="utf-8") == "judged-earlier", "a compaction keeps the flag"
+        ss._clean_state_flags(root, "clear")
+        assert flag.read_text(encoding="utf-8").strip() == _head(root)
+        # Seeded, the gate has nothing to say about the HEAD the session began on.
+        assert mod._gate_handoff(root) == 0
+
+
+class TestTheGateCountHasOneOwner:
+    """The docs say how many gates the Stop hook runs ("a five-gate sequence",
+    "Five gates fire in sequence"). The owner of that count is the hook's own
+    module docstring, its ``Gate N:`` lines; every doc's number word is derived
+    from it here, so a sixth gate cannot land with "five" standing in seven
+    places (the hand-maintained enumeration, docs/SHARP_EDGES.md). Record
+    surfaces, the mirrors and the archives are left out: a record keeps the
+    count of its day."""
+
+    _WORDS = {3: "three", 4: "four", 5: "five", 6: "six", 7: "seven", 8: "eight"}
+    _PHRASE = re.compile(r"\b(three|four|five|six|seven|eight)-gate\b", re.IGNORECASE)
+    _FIRE = re.compile(r"\b(three|four|five|six|seven|eight) gates fire\b", re.IGNORECASE)
+    _LEFT_OUT = (
+        "docs/session-archive.md", "memory/CONVERGENCE_LEDGER.md", "memory/session-log.d/",
+        "task-packs/", "changelog.d/", "CHANGELOG.md", "espalier/assets/", "espalier/_vendor/",
+        "examples/", "cc/", "reports/",
+    )
+
+    @classmethod
+    def _declared(cls) -> int:
+        import ast
+
+        doc = ast.get_docstring(ast.parse((HOOKS_DIR / "stop_gate.py").read_text(encoding="utf-8"))) or ""
+        numbered = set(re.findall(r"^Gate (\d+):", doc, flags=re.M))
+        assert len(numbered) >= 4, f"the hook's docstring declares {sorted(numbered)}"
+        return len(numbered)
+
+    def test_every_doc_names_the_count_the_hook_declares(self):
+        from tests._live_tree import checkout_files
+
+        # magic-depth: ok the repo root, three above tools/cc/hooks
+        repo_root = HOOKS_DIR.parents[2]
+        word = self._WORDS[self._declared()]
+        wrong: list[str] = []
+        seen = 0
+        for path in checkout_files(repo_root):
+            rel = path.relative_to(repo_root).as_posix()
+            if path.suffix != ".md" or rel.startswith(self._LEFT_OUT):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for pattern in (self._PHRASE, self._FIRE):
+                for match in pattern.finditer(text):
+                    seen += 1
+                    if match.group(1).lower() != word:
+                        line = text.count("\n", 0, match.start()) + 1
+                        wrong.append(f"{rel}:{line}: {match.group(0)!r} (the hook declares {word})")
+        assert seen >= 3, "the docs no longer say how many gates the Stop hook runs; the pin reads nothing"
+        assert not wrong, "\n".join(wrong)
+
+
+class TestPlanCompletion:
+    """``_hook_utils.plan_completion``: the handoff gate's plan read, failing
+    closed to not-complete on everything unreadable (the same domain as
+    ``has_active_plan``)."""
+
+    @staticmethod
+    def _utils():
+        import importlib.util
+
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        spec = importlib.util.spec_from_file_location(
+            "_hook_utils_plan_completion_under_test", str(HOOKS_DIR / "_hook_utils.py"),
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_a_complete_plan_reads_complete_with_its_title(self, tmp_path):
+        (tmp_path / "cc").mkdir()
+        _write_plan(tmp_path, "complete")
+        assert self._utils().plan_completion(tmp_path) == (True, "TP-fixture: the lane")
+
+    @pytest.mark.parametrize("body", [
+        "", "not json", "[]", json.dumps({"status": "complete"}),
+        json.dumps({"status": "complete", "steps": []}),
+        json.dumps({"status": "in_progress", "steps": [{"title": "s"}]}),
+    ])
+    def test_everything_else_reads_not_complete(self, tmp_path, body):
+        (tmp_path / "cc").mkdir()
+        (tmp_path / "cc" / "execution_plan.json").write_text(body, encoding="utf-8")
+        assert self._utils().plan_completion(tmp_path) == (False, "")
+
+    def test_a_missing_plan_reads_not_complete(self, tmp_path):
+        assert self._utils().plan_completion(tmp_path) == (False, "")

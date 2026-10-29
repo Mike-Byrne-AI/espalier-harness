@@ -28,6 +28,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests import _never_ran
+from tests._nested_race import RACE_RAISE, NestedControllerRaceLost, lost_to_the_race
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFTEST = Path(__file__).resolve().parent / "conftest.py"
@@ -41,10 +42,6 @@ _CAP_REASON = " (xdist stopped replacing crashed workers: its --max-worker-resta
 #: What the six-test run prints: five crashes (the first worker and its four
 #: replacements, xdist's default cap at one worker), then one test never runs.
 _AT_THE_CAP = "1 of 6 selected tests never ran" + _CAP_REASON
-#: What the same run prints when its controller raised once its five workers
-#: went down (:data:`_BUILD_AND_COUNT_CONFTEST` with its raise), driven: the raise comes in
-#: the fifth worker's node-down, before xdist reports the test it crashed in.
-_AT_THE_CAP_CRASHED = "2 of 6 selected tests never ran" + _CAP_REASON
 
 
 def _drive(tmp_path: Path, body: str, *args: str, workers: tuple[str, ...] = ("-n", "1"),
@@ -74,15 +71,19 @@ def _drive(tmp_path: Path, body: str, *args: str, workers: tuple[str, ...] = ("-
 class NestedControllerCrashed(UserWarning):
     """A child run that was no reading of what its row asserts -- its own
     controller crashed, ending it in pytest's internal error before the row's
-    own signal -- and that the row drove again (DEF-2025). The run's summary
-    counts these (``tests/conftest.py::report_nested_controller_crashes``)."""
+    own signal -- and that the row drove again (DEF-2025's fix). The run's
+    summary counts these (``tests/conftest.py::report_nested_controller_crashes``),
+    the watch of DEF-4032, its successor."""
 
 
 #: At most this many child runs per row. A child whose controller's channel to
 #: a dying worker raised inside execnet ends in pytest's internal error, which
 #: prints no summary: CI cells from 2026-10-18 on (DEF-2025's struck row counts
-#: them), never this box (12 of 12 runs complete). The signal is the exit code,
-#: never the shape execnet prints.
+#: them; on GitHub's macOS runners all three attempts lose on most runs,
+#: DEF-4032), never this box (12 of 12 runs complete). Whether a run was a
+#: reading is the exit code's question, never the shape execnet prints; which
+#: failure a row that lost every attempt raises is the shape's
+#: (:func:`_drive_to_a_reading`).
 _ATTEMPTS = 3
 #: The per-test ceiling of a row that may drive that many children, each under
 #: :func:`_drive`'s 45 s bound, with room left for the kill and the teardown:
@@ -125,8 +126,12 @@ def _drive_to_a_reading(tmp_path: Path, body: str, *args: str, reading=_complete
     internal error), each in its own directory. A run that was not is a warning
     in this run's warnings summary, its attempt, exit code and what raised
     named, so the retry never hides the race it absorbs; the summary counts
-    them (DEF-2025's watch). Three such runs fail by name."""
+    them (DEF-4032's watch). Three such runs fail by name: as
+    :class:`~tests._nested_race.NestedControllerRaceLost` where each one ended
+    in the runners' race (the one failure the platform roster may expect), and
+    as pytest's plain failure otherwise."""
     rc, lines = 0, []
+    raised_each: list[str] = []
     for attempt in range(1, _ATTEMPTS + 1):
         run = tmp_path / f"attempt-{attempt}"
         run.mkdir()
@@ -134,12 +139,16 @@ def _drive_to_a_reading(tmp_path: Path, body: str, *args: str, reading=_complete
         if reading(rc, lines):
             return rc, lines
         raised = _what_raised(lines)
+        raised_each.append(raised)
         warnings.warn(NestedControllerCrashed(
             f"nested run {attempt} of {_ATTEMPTS} was no reading: exit code {int(rc)}"
-            + (f", {raised}" if raised else "") + "; driven again (DEF-2025)"), stacklevel=2)
+            + (f", {raised}" if raised else "") + "; driven again (DEF-4032)"), stacklevel=2)
     raised = _what_raised(lines)
-    pytest.fail(f"all {_ATTEMPTS} nested runs were no reading of the row (the last: exit code {int(rc)}"
-                + (f", {raised}" if raised else "") + f"); its lines: {lines}", pytrace=False)
+    said = (f"all {_ATTEMPTS} nested runs were no reading of the row (the last: exit code {int(rc)}"
+            + (f", {raised}" if raised else "") + f"); its lines: {lines}")
+    if lost_to_the_race(raised_each):
+        raise NestedControllerRaceLost(said, pytrace=False)
+    pytest.fail(said, pytrace=False)
 
 
 class TestARealQuietRunSaysWhatNeverRan:
@@ -266,6 +275,20 @@ def _build_lines(lines: list[str]) -> list[str]:
     return [line for line in lines if line == _HEADER or _WENT_DOWN in line]
 
 
+#: A run of pytest's progress marks where one can sit in a child's quiet output:
+#: before an xdist node-down line, glued to an internal error's first line, or
+#: alone on a line.
+_MARKS = re.compile(r"^([.FEsxX]+)(?=\[gw\d+\] node down|INTERNALERROR> |\s*$)")
+
+
+def _reported(lines: list[str]) -> int:
+    """How many test reports the child's terminal reporter wrote a progress
+    mark for, as each arrived: the witness the crashed-controller row reads its
+    never-ran count from, since the order of xdist's node-downs and its crash
+    reports is the runner's (DEF-4033)."""
+    return sum(len(m.group(1)) for line in lines if (m := _MARKS.match(line)))
+
+
 class TestACrashedWorkerIsNamedOnlyWhereItsBuildCanBe:
     """DEF-2021: a worker's build report rides xdist's ``workeroutput``, which a
     crash loses, so the controller printed a went-down line for every crashed
@@ -385,8 +408,19 @@ class TestACrashedControllerStillPrintsWhatItSaw:
 
     @pytest.mark.timeout(_CHILDREN_CEILING_S)
     def test_the_never_ran_line_is_written_where_no_summary_ran(self, crashed):
+        """Written once, and its count is the six less the tests the child
+        reported, read from the child's own progress marks: how many crashed
+        tests xdist reports before the probe's raise depends on the runner's
+        timing (2 never ran on this repository's Mac, 4 on a macOS runner, 3 on
+        a Linux one: DEF-4033), so no one count is pinned. At most four are
+        reported: the raise comes in the fifth worker's node-down, before xdist
+        reports the test it crashed in. Dies to: a count other than the selected
+        tests less the reported ones, or the line written twice."""
         rc, lines = crashed
-        assert [line for line in lines if "never ran" in line] == [_AT_THE_CAP_CRASHED], lines
+        reported = _reported(lines)
+        assert reported <= 4, lines
+        assert [line for line in lines if "never ran" in line] == [
+            f"{6 - reported} of 6 selected tests never ran" + _CAP_REASON], lines
 
     @pytest.mark.timeout(_CHILDREN_CEILING_S)
     def test_no_summary_asked_for_none_and_gets_none(self, tmp_path):
@@ -396,6 +430,29 @@ class TestACrashedControllerStillPrintsWhatItSaw:
                                         extra_env={"PROBE_BUILD_DIES": "1"})
         assert rc == 1, lines
         assert _build_lines(lines) == [] and not [line for line in lines if "never ran" in line], lines
+
+
+class TestTheProgressMarksCountTheReports:
+    """The witness the crashed-controller row reads its count from: pytest's
+    terminal reporter writes a progress mark as each report arrives, and the
+    never-ran plugin counts the same reporter's stats at the session's finish."""
+
+    def test_marks_before_a_node_down_glued_to_the_error_or_alone_are_counted(self):
+        """Three shapes: this repository's Mac (each crash reported before the
+        next worker went down), a Linux runner's (its first lines as read on run
+        39375526510, a report lagging past the next node-down, the rest built to
+        the count it printed) and a mark glued to the internal error's first
+        line. Dies to: a mark read at only one of its places, or a line's own
+        text read as marks."""
+        down = "node down: Not properly terminated"
+        here = ["bringing up nodes...", f"[gw0] {down}", f"F[gw1] {down}", f"F[gw2] {down}", f"F[gw3] {down}",
+                f"F[gw4] {down}", "INTERNALERROR> Traceback (most recent call last):"]
+        lagging = [f"[gw0] {down}", f"F[gw1] {down}", f"F[gw2] {down}", f"[gw3] {down}", f"F[gw4] {down}",
+                   "INTERNALERROR> Traceback (most recent call last):"]
+        glued = [f"[gw0] {down}", f"F[gw1] {down}", "FINTERNALERROR> Traceback (most recent call last):", "F"]
+        assert [_reported(here), _reported(lagging), _reported(glued)] == [4, 3, 3]
+        assert _reported(["Exception in thread", "xdist: worker gw0 crashed", "FAILED test_probe.py::test_0",
+                          "sxs and more"]) == 0
 
 
 def _suite_finish(conftest, warned, *, summary_ran: bool) -> list[str]:
@@ -434,7 +491,7 @@ class TestTheFinishWritesWhatTheSummaryWould:
         lines = _suite_finish(conftest, self._WARNED, summary_ran=False)
         assert lines == [_HEADER, f"  xdist worker gw0 FAILED: {_WENT_DOWN}",
                          "hook spawn retries: 1 row(s) missed once and answered on the retry:", "  tests/test_a.py::one",
-                         "nested controller crashes: 1 child run(s) in 1 row(s) were driven again (DEF-2025):",
+                         "nested controller crashes: 1 child run(s) in 1 row(s) were driven again (DEF-4032):",
                          "  tests/test_b.py::two"], lines
 
     def test_where_the_summary_ran_nothing_more_is_written(self, conftest, monkeypatch):
@@ -523,13 +580,35 @@ class TestANestedRunWhoseControllerCrashedIsDrivenAgain:
     def test_three_crashed_children_fail_by_name(self, tmp_path, monkeypatch):
         calls = self._children(monkeypatch, [(3, ["INTERNALERROR> boom"])] * _ATTEMPTS)
         with pytest.warns(NestedControllerCrashed) as said, \
-                pytest.raises(pytest.fail.Exception, match=r"all 3 nested runs were no reading of the row"):
+                pytest.raises(pytest.fail.Exception, match=r"all 3 nested runs were no reading of the row") as failed:
             _drive_to_a_reading(tmp_path, "body")
         assert len(calls) == _ATTEMPTS and len(said) == _ATTEMPTS, (calls, [str(w.message) for w in said])
+        assert not isinstance(failed.value, NestedControllerRaceLost), "a crash that is not the race read as the race"
+
+    def test_three_children_lost_to_the_race_fail_as_the_race(self, tmp_path, monkeypatch):
+        """Each attempt ended in execnet's refusal to send on the closed channel:
+        the row fails as the race, the one failure the platform roster expects."""
+        lost = ["FINTERNALERROR> Traceback (most recent call last):",
+                'INTERNALERROR>   File "execnet/gateway_base.py", line 1, in _send',
+                f"INTERNALERROR> {RACE_RAISE}"]
+        self._children(monkeypatch, [(3, lost)] * _ATTEMPTS)
+        with pytest.warns(NestedControllerCrashed), \
+                pytest.raises(NestedControllerRaceLost, match=r"all 3 nested runs were no reading of the row"):
+            _drive_to_a_reading(tmp_path, "body")
+
+    def test_a_row_that_lost_only_some_attempts_to_the_race_fails_by_name_alone(self, tmp_path, monkeypatch):
+        """Two attempts lost to the race and one to something else: not the race
+        alone, so the row fails as pytest's plain failure and the roster's mark
+        does not take it."""
+        lost = [f"INTERNALERROR> {RACE_RAISE}"]
+        self._children(monkeypatch, [(3, lost), (3, ["INTERNALERROR> RuntimeError: boom"]), (3, lost)])
+        with pytest.warns(NestedControllerCrashed), pytest.raises(pytest.fail.Exception) as failed:
+            _drive_to_a_reading(tmp_path, "body")
+        assert not isinstance(failed.value, NestedControllerRaceLost), failed.value
 
     def test_the_run_summary_counts_the_crashed_children(self, monkeypatch):
         """Each crashed child counted, its rows named once; other warnings left
-        out; under GitHub Actions an annotation as well, the count DEF-2025's
+        out; under GitHub Actions an annotation as well, the count DEF-4032's
         watch reads."""
         from tests.conftest import report_nested_controller_crashes
 
@@ -542,7 +621,7 @@ class TestANestedRunWhoseControllerCrashedIsDrivenAgain:
             SimpleNamespace(nodeid="tests/test_y.py::two", message="tests/test_y.py:3: PytestRemovedIn10Warning: ..."),
         ]})
         report_nested_controller_crashes(reporter)
-        head = "nested controller crashes: 2 child run(s) in 1 row(s) were driven again (DEF-2025)"
+        head = "nested controller crashes: 2 child run(s) in 1 row(s) were driven again (DEF-4032)"
         assert lines == [head + ":", "  tests/test_x.py::T::one", f"::warning::{head}: tests/test_x.py::T::one"]
         quiet: list[str] = []
         report_nested_controller_crashes(SimpleNamespace(write_line=quiet.append, stats={"warnings": []}))

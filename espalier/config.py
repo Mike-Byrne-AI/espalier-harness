@@ -25,6 +25,7 @@ FOREIGN_KEYS: dict[str, str] = {
     "record_requires_exclusions": "scripts/record_snapshot.py",
     "record_remote_required": "scripts/record_snapshot.py",
     "handoff_push": "tools/cc/ship.py",
+    "handoff_context_tokens": "tools/cc/hooks/task_router.py",
     "dispatcher": "tools/cc/mail.py",
     "id_blocks": "tools/cc/ledger_row.py",
     "changelog_fragments": "tools/cc/_record_fragments.py",

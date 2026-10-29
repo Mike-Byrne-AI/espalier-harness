@@ -980,11 +980,11 @@ def detect_git_conventions(repo_root: Path) -> dict[str, Any]:
     """Analyze git log to detect commit message patterns."""
     import subprocess
 
-    from espalier._spawn import run_bounded
+    from espalier._spawn import run_no_stdin
     result: dict[str, Any] = {"format": "freeform", "evidence": [], "confidence": 0.0}
 
     try:
-        log = run_bounded(
+        log = run_no_stdin(
             ["git", "log", "--oneline", "-30", "--format=%s"],
             cwd=repo_root,
             capture_output=True,

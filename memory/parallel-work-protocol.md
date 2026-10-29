@@ -57,7 +57,9 @@ absent), refuses one a live session is in, and starts `claude` there with the
 seat's first message as its prompt, so nothing is pasted. `seat.py brief
 <seat>` prints that message: the worker form names the dispatcher, the two
 reads to start with and the jobs, and ends with the worker loop (`/loop 10m`,
-the tick this repository's workers have run since 2026-10-15); the dispatcher
+the tick this repository's workers have run since 2026-10-15, carrying the
+proceed clause and the refresh sentence since 2026-10-24 and the dispatch-model
+sentence since 2026-10-25); the dispatcher
 form names its duties and ends with `/loop 15m /inbox board`. `espalier.toml`'s
 `dispatcher` line picks the form, and `--no-brief` launches without one. The
 banner check: a worker seat holding live assigns opens on an `Orders:` line
@@ -70,10 +72,50 @@ process); a relaunch is a new process and gets its loop from the brief, so
 it needs no second paste either. `claude --worktree` locks the worktree, in an
 interactive session as under `-p`; a killed session leaves the lock behind.
 
-1. **Work the jobs assigned to you**, and keep two or three queued, so the
-   dispatcher's absence does not stall you. For a new job or a decision that
-   crosses jobs, send the dispatcher one request. Never negotiate with another
-   worker seat.
+**The threshold handoff (since 2026-10-26).** A seat does not run to the
+window's end. Where `espalier.toml` sets `handoff_context_tokens` (this tree:
+200000), the prompt router reads the session's context size from the
+transcript's tail on every prompt, loop ticks included, and past the figure
+asks on every prompt: a lane in hand finishes through its own landing (its
+tier and its push) and the seat starts no new job; with no lane in hand, the
+seat runs `/handoff` now; after it, the seat takes no new job (its own pull
+request's red or conflict, and a red `main`'s revert, are not new work),
+answers a tick in one line, and tells the operator the window needs a
+`/clear`, which the loop survives. The ask never says "commit and hand off"
+mid-lane, because the handoff's push opens the lane's pull request with
+auto-merge armed and a half-done lane must not ride it. The reset is the
+seat's own where the launcher started the window (the own-clear, 2026-10-26):
+`seat.py launch` loads the own-clear mod (`tools/cc/mods/own-clear`, a Claude
+Code plugin of function hooks, through `--plugin-dir`), `ship.py handoff`
+arms its marker last (`.espalier-state/own_clear.json`, the session id from
+`CLAUDE_CODE_SESSION_ID`, HEAD and the re-prime brief), and at the end of the
+next turn with nothing in flight (no tracked edit, no plan in progress, HEAD
+unmoved) the mod runs the real `/clear`, refuses a compaction while that
+clear is due (never while it waits), and on the clear's SessionStart submits
+the brief with its loop line replaced by the note that a loop started there
+survived the clear, to the window it was armed in alone. In a window the
+launcher did not start the handoff arms nothing and says the window needs a
+`/clear` by hand. No settings hook, skill or command body can do any of this
+(`docs/SHARP_EDGES.md`). The briefs and the tick carry the same rule, and
+`docs/HOOKS.md` (the router section) is the ask's home.
+
+1. **Work the jobs assigned to you**, in order, and keep two queued (the
+   dispatcher's duty to keep them there, the table below), so the
+   dispatcher's absence does not stall you. Two seats on one box run one
+   xdist run of the suite at a time by construction: such a run takes a lock
+   on the box's lock file (`ESPALIER_BOX_LOCK`, set by `seat.py launch`, one
+   path per host), waits while another run holds it and prints the holder and
+   its age; every tier line is an xdist run, the contract slice included, and
+   a tier's lines each take and release the lock, so two tiers interleave
+   line by line; a run without `-n` (a node-id or file run) takes no lock; a
+   note on the mail channel announces nothing; and a tool that runs pytest as
+   a probe inside a run that holds the box removes both lock variables from
+   the child's environment (the strike's guard drive, `ledger_row.py::_guard_env`,
+   strips them by prefix). For a new job or a decision that
+   crosses jobs, send the dispatcher one request. On a fork inside your own
+   job, the seat's side of the *Assign authority* paragraph below: one request
+   carrying your recommendation, then proceed on it after the dispatcher's
+   tick with no answer. Never negotiate with another worker seat.
 2. **Claim the files a lane edits** on the mail channel, as before. Assignments
    are for jobs; claims are for files. A claim can name the functions too:
    `send --type claim --symbols-from` derives them from the lane's diff, and
@@ -200,7 +242,31 @@ interactive session as under `-p`; a killed session leaves the lock behind.
      moved, and the hook and the handoff stopped pruning in the same lane.
      **Another seat sees a parked row only after the next fold:** the
      banner's recent rows read the tree, so until some lane's push lands the
-     row reaches no banner, the parking seat's next session included.
+     row reaches no banner, the parking seat's next session included; the
+     landing check's session-log-cap note prints how many rows sit parked.
+     **A row per active seat per day is a debt the board reads (2026-10-23,
+     `TP-703d`).** Over 2026-10-16 and 10-17 three seats merged 2 to 11 lanes
+     a day with no row from any of them, and 29 of 48 early ships since 10-16
+     were followed by the seat's row within a day. The board's `records:` line
+     prints, for each seat with a checkout there, a live claim or a job, its
+     lanes merged since its newest row on the base, or parked on its records ref, in the
+     reading box's local day (a seat in another zone can differ by a lane at the day's
+     edge; a count the read stopped short of is a floor and says so; lanes no claim
+     names are counted apart, never as a seat's zero)
+     (`tools/cc/_record_fragments.py::lanes_since_row`, over the one merged
+     read's lane fields, the last 100 merges); the ship driver's
+     `seat_row_debt` counts the same way, and its second lane makes `open
+     --early` refuse at a cap of 3 lanes, naming the count, the last row's
+     date and the way out (the row committed on the lane). A read that fails
+     is unread, never zero: no verdict is never a refusal on a guess.
+   - **A row another lane's unmerged edit carries is struck after that lane
+     merges (2026-10-20).** A re-pin of a row rode an open pull request while
+     the code that closed the row was built on `main`; a strike from the
+     second lane would have struck the row's old text and met the first lane
+     at the merge on the row file and its probe (a modify against a delete,
+     which the record merge cannot take). Build the code on `main`, and
+     strike after the first lane merges and `main` is pulled, so the strike
+     reads the row as the first lane left it.
 7. **A red `main` is reverted first and diagnosed second.** The post-merge
    proof (`.github/workflows/post-merge.yml`) runs after merges, and the ship
    preflight and the board name a red one. Each push's run goes to the end,
@@ -226,7 +292,11 @@ interactive session as under `-p`; a killed session leaves the lock behind.
    by win at the #179 review batch (2026-10-11): the dispatcher had filed nine
    rows from its own review and landed a strict-xfail bridge in a test file
    the fix lane would then have had to edit to delete the mark. The bridge
-   went; the rows stayed for the fix lane to strike.
+   went; the rows stayed for the fix lane to strike. A strike drives the
+   row's probe at the base and at the head and runs the guard it names on
+   both (`ledger_row.py strike --base --guard`, since 2026-10-25: replayed on
+   five struck rows, two still read open at the lane head); a probe that
+   cannot run at the base is said in the closing text, never skipped silently.
 
 9. **Run the reviewers your lane's surface earns**: `python scripts/proof_tier.py
    --base origin/main` prints them on its `review:` line (`none`, `code-reviewer`
@@ -238,13 +308,15 @@ interactive session as under `-p`; a killed session leaves the lock behind.
 
 | Does | Does not |
 |---|---|
-| Turns the operator's priorities into assignments (`mail.py send --type assign --seat <seat> ...`): which seat works which job, and since 2026-10-15 sends them without a per-assign yes when the job is inside an approved pack or a live ledger row (the paragraph below) | Set the priorities: the operator does, by approving packs and naming the classes to drain; a new pack, a scope change, a release, or a call `cc/GOAL.md` lists as the operator's still goes to the operator |
+| Turns the operator's priorities into assignments (`mail.py send --type assign --seat <seat> ...`): which seat works which job, and since 2026-10-15 sends them without a per-assign yes when the job is inside an approved pack or a live ledger row (the paragraph below) | Set the priorities: the operator does, by approving packs and naming the classes to drain; a new pack, a scope change, a release, or an open operator call (a `request` whose text opens with `OPERATOR CALL:`, on the board's `asks:` line for every seat until the dispatcher's `ack` naming its full id carries the ruling) still goes to the operator |
+| Writes its own day row, derived from the mail and the merges (`scripts/seat_day_census.py --seat "$(git config espalier.machine)" --date "$(date +%F)" --as-row`, the row's own local date, which the census reads as the UTC day 00:00Z to 24:00Z, prints the figures: assigns sent and the new jobs among them, the releases naming an assign, the worker requests answered, the jobs live at the day's end, lanes merged, rows, the counted words), then the rulings and the operator's words by hand, filed where `_record_fragments.py new session-log` says, the seat read from the clone and never typed (since 2026-10-23) | Leave its day to the workers' rows: the dispatcher's decisions are on its mail ref, and the row is where the next session on any seat reads them |
 | Sequences jobs that would collide: two jobs on one hot file, a record-format change while lanes are open | Gate changes: seats ship their own lanes |
-| Keeps at least one job with clear gates on every seat's queue, and re-reads the gates when a lane merges; a gate names another seat's open lane and the file both touch | Gate a seat on its own open pull request (item 4: the cap is on pull requests, not work) |
+| Keeps two jobs with clear gates on every seat's queue, each assign in its shape (*What an assign says*, under *How assignments behave*), and re-reads the gates when a lane merges; a gate names another seat's open lane and the file both touch | Gate a seat on its own open pull request (item 4: the cap is on pull requests, not work) |
 | Answers worker requests at its next prompt (the operator prompts "dispatch", or a `/loop` does) | Review all code, or act as the merge queue |
-| Backs up a red `main` that nobody else has reverted | Hold knowledge only in its own context: what it decides is written where every seat can read it |
+| Backs up a red `main` that nobody else has reverted, and reads the board after every ship it makes: the `main:` line names a red base and its suspects (`main` read red for about fifteen hours after a merge on 2026-10-20, a timing-dependent pin on Linux, and only the ship driver's refusal on the next lane surfaced it) | Hold knowledge only in its own context: what it decides is written where every seat can read it |
 | Carries a lighter lane of its own | Run the heaviest lanes, which compete with dispatching |
 | Files the rows nobody is assigned to fix, and the ones its own measurements find | File rows for a job it has assigned: the finding, its probe and its fix are the assignee's one job (rule 8) |
+| Reports counts that name their population, settings quoted from the tool that computes them, and the day's figures from `scripts/seat_day_census.py` | Carry a figure by hand, past a compaction or from memory |
 
 **Assign authority (decided by the operator 2026-10-15, after two days'
 measurement).** The dispatcher assigns, re-sequences and releases jobs on its
@@ -252,8 +324,15 @@ own when the job is a wave of a pack the operator has approved (its `Status`
 not waiting on an operator decision) or a live ledger row or class; it does not
 wait for a yes per assign. Outside that set the operator decides: a new pack,
 a change to an approved pack's scope, a release or tag, a revert that is not
-the Core Rule 15 red-`main` revert, and every item `cc/GOAL.md` lists under the
-operator's open calls. Each assign is reported at the dispatcher's next tick
+the Core Rule 15 red-`main` revert, and every open operator call. Since
+2026-10-23 an operator call is a `request` the dispatcher sends with a text
+opening with `OPERATOR CALL:` (the question, the options, the recommendation),
+so the board's `asks:` line lists it for every seat, with its age, and counts
+it apart until the dispatcher's `ack` naming the request's full id carries the
+ruling (an ack from any other seat leaves the call open); `cc/GOAL.md` no longer
+carries the calls (it holds the goal, the priorities and what is owed), and the
+ruling lands on origin where every seat reads it instead of in one checkout's
+gitignored file. Each assign is reported at the dispatcher's next tick
 with the job and the reason, so the operator can veto it, and the day's
 assigns go in the Session Log row. Why: the per-assign yes was the queue's
 single point of failure. Measured on 2026-10-14 and 10-15, assign-to-first-claim
@@ -263,6 +342,87 @@ worker ask was answered within ten minutes; the dispatcher's recommendations
 had been taken 13 of 13 times since 2026-10-14. The data point that falsifies
 this: an assign the operator vetoes after the fact; two in a week re-opens the
 rule.
+
+**The seat's side of it** (the operator's yes, 2026-10-19; `TP-703e`). On a fork
+the assign does not settle, the seat sends one request carrying its Task 0
+recommendation and the citation behind it, and proceeds on that recommendation
+after the dispatcher's tick interval with no answer: 15 minutes, the `/loop` in
+`tools/cc/seat.py::DISPATCHER_TICK`, which a test holds this paragraph to
+(`tests/test_seat.py::TestBrief`); the ack can still redirect it. The seat
+stops, and only re-reads mail, for what the assign authority above reserves
+for the operator (a new pack, a change to an approved pack's scope, a release
+or tag, a revert that is not the red-`main` revert, an open operator call, an
+`OPERATOR CALL:` request on the board's `asks:` line), for a platform safety stop, for a refusal it cannot resolve, and for a
+conflict outside its own files; a finding's row is the seat's own to file
+(item 8), never a stop. A red the seat cannot fix in two attempts shelves the
+lane (its claims stay, unless its push already released them; one note
+beginning `shelved:` says what was tried and names any job that lane's push
+closed) and the seat takes its next queued job; the dispatcher re-sequences
+the shelved lane at its next tick and re-sends the assign of each job the note
+names (the third closing rule closes a job at the push its claims cover,
+before CI has run, and no read lists such jobs yet: `DEF-4037`). A redirect after the fact is an ack beginning
+`redirect:`, and the Session Log row counts it as rework; `TP-703f`'s census
+counts both words from the refs, so the falsifier below is read, never
+recalled. The tick has carried the sentence since 2026-10-24
+(`tools/cc/seat.py::SELF_HOST_PROCEED`, on the operator's yes to the call
+`20261024T065923Z-air-b366a4`, amended to this paragraph as it stood that
+day; its wait is rendered from `DISPATCHER_TICK`, never copied; a request
+with no recommendation keeps the stop); a loop started before that keeps its
+`STOP` until its seat is relaunched from a checkout that holds the change
+(`seat.py launch` composes the brief from the launcher checkout's own copy,
+so a launcher that has not pulled hands out the old tick). Measured before
+this clause: 19 of 20 rulings matched the
+recommendation the request carried (10-17 to 10-18, hand-classified by the
+dispatcher from its tick notes, not second-read), and the stop cost the seat
+the ack latency (111 of 111 requests since 10-14 answered, median 8
+minutes, p75 12, max 23, `scripts/mail_latency_census.py --since 2026-10-14`
+read 2026-10-19) plus a read each time. What falsifies it: an
+override after the fact that forces rework, twice in twenty.
+
+**The model on a dispatch (the operator's rule, 2026-10-25).** A seat passes a
+model below its own on a subagent dispatch only for a kind named on a line
+opening with `allowance:` in the assign for the job in hand, a marker in the
+family of `OPERATOR CALL:`, `redirect:` and `shelved:`. The kinds, rendered
+into the tick and the dispatcher brief from `tools/cc/seat.py::DISPATCH_KINDS`
+and held to this paragraph by a test: `anchors` (the 0-A re-derivation of a
+pack's anchors and figures against HEAD, each tagged verified, probable or
+unverified), `drive` (a probe's shapes driven against their oracle, each answer
+recorded), `census` (a count, with the command that reproduces it), `mutants`
+(a kill table for mutations the seat itself named, run on a snapshot clone,
+dispatched before the lane's tier and never beside it: an agent's run that
+waits on the box lock behind a tier outlives a Bash call's cap, and a timed-out
+mutant would read as a survivor). A kind word anywhere else in an assign is the
+job's text: the four words are ordinary assign vocabulary (54 of the
+dispatcher's first 129 assigns carried one as plain instruction, "drive the
+probe" above all, read from the mail ref 2026-10-25), which is why the marker
+exists. The dispatcher writes the line, since the job's oracle shape is what it
+reads at assign time and the seat should have nothing to weigh; an assign with
+no `allowance:` line allows nothing. A dispatch no such line names runs at the
+seat's own model; a named agent under `.claude/agents/` runs at its own
+frontmatter pin and needs no allowance (dispatching `code-reviewer`, pinned to
+Sonnet, passes no model); and a seat that chose its own model where a lower one
+was allowed has done nothing wrong: the one outcome the rule exists to prevent
+is a lower model where the seat's own was needed, so the rule fails upward
+only. Why the seat does not judge it: by the operator's account no seat has
+ever chosen a lower model on its own (the operator's user-level Claude Code
+setting pins general-purpose dispatches to Opus; the Sonnet agents are the
+operator's pins; the 609-entry register verification was a designed pipeline
+with an Opus critic over every still-open verdict,
+`memory/convergence-review-protocol.md`), so the choice has no track record,
+and the completion audit of 2026-10-15 (a local report on the Air; `reports/`
+is gitignored) showed seats do what a template names and skip what it does not.
+What records a dispatch's model: each box's transcript holds the per-call
+parameter where one was passed, and no tool reads it yet. The cheapest real
+check, not built: a count of model-carrying dispatches written into the Session
+Log row from the session's transcript
+(`scripts/handoff_mechanics.py::newest_transcript_stem` already finds it), which
+would reach the dispatcher through git. The tick has carried the sentence since
+2026-10-25 (`tools/cc/seat.py::SELF_HOST_PROCEED`, the operator's wording,
+pinned byte for byte in `tests/test_seat.py`); a loop started before that keeps
+the old tick until its seat is relaunched, and dispatches nothing downward
+meanwhile. Deliberately not built: a hook that refuses a lower model with no
+allowance. It waits until that count shows a seat dispatching downward unasked
+(expand, then contract).
 
 A Claude session acts only when prompted. The design tolerates a dispatcher
 that is away: a seat with a queue does not need it in real time.
@@ -302,6 +462,20 @@ cross-seat gate.
 - Only the dispatcher may send an `assign`. The send refuses any other seat,
   a setting it cannot use, and a linked worktree whose name it inherited from
   its clone (that worktree would assign as the seat owning the name).
+- **What an assign says.** The job (a row id, a class, or a lane for a pack's
+  wave); why now; what it waits for, by the other seat's lane name and the file
+  both touch; the operator's constraints on it; any edge the dispatcher
+  read, with the citation it read; and, where a subagent may run below the
+  seat's model, one line opening with `allowance:` naming the kinds (*The model
+  on a dispatch*, above), else no such line. Nothing the row or the tier script already
+  says: `scripts/proof_tier.py --base origin/main` prints the tier and the
+  reviewers from the diff, and an assign that restated them was wrong 3 times
+  in 25 on 2026-10-18. A fix shape only with the citation behind it. Under 900
+  characters: every assign of 2026-10-18 ran past that (median 1,957, 17 of 25
+  at the 2,000 cap), and what filled the rest was the tool's output retyped.
+  The send prints a note, never a refusal, past 900 characters or on a tier or
+  reviewer phrase (`mail.py::assign_shape_notes`): an operator's tier override
+  is a reason to name one, and the dispatcher decides.
 - A job is its lane, classes and ids together, and the latest assign of a job
   wins. An assign that names the same lane with a different id set is a NEW
   job, not a replacement: the earlier one stays live until it is released by
@@ -313,7 +487,23 @@ cross-seat gate.
   each seat's plan warn about the other.
 - A job closes when the assigner or the assigned seat releases it, by the
   assign's id or by its lane. The ship driver's lane release closes a job
-  assigned by that lane, so a finished job stops warning.
+  assigned by that lane, and a job naming no lane when the seat's own live
+  claims on the released lane named every id it names and the seat began that
+  lane (its first claim there) after the job was given, so a finished job stops
+  warning without a release by hand (of the 25 jobs given on 2026-10-18, UTC,
+  22 were closed by a hand release, and for 21 of them the seat's claims had
+  named every id before that release). A claim's ids name what a lane touches,
+  not what it fixed, so a lane whose claims were live when the job came does
+  not close it: a row the current lane touches, queued as the seat's next job,
+  stays live until a lane begun for it ships. A push releases its lane's
+  claims, so a follow-up claim on that lane after the job came begins it again
+  (no such case is on the refs yet: `DEF-4042`). A re-send of a live job starts
+  its clock again. A seat releases its own claims by hand by their ids, never
+  by lane: a lane release reads as the lane shipped (`DEF-4041`). A job assigned by its ids closes at the first push of a lane whose
+  claims name them all, so a pack of several waves, or a row fixed across
+  several lanes, is assigned wave by wave by lane, or its id is re-sent after
+  each lane ships (the seat-day census names each such re-send, rows apart from
+  packs).
 - An unusable `dispatcher` setting (not a machine name, under a table, an
   unreadable file) counts no assign at all. It fails closed, and the board
   says why.

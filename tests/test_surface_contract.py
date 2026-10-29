@@ -1442,9 +1442,10 @@ def test_lock_file_two_copy_parity():
         node = ast.parse(textwrap.dedent(inspect.getsource(fn))).body[0]
         return ast.dump(ast.Module(body=node.body[1:], type_ignores=[]))
 
-    for name in ("lock_file", "unlock_file", "_lock_byte"):
+    for name in ("lock_file", "unlock_file", "try_lock_file", "_lock_byte"):
         assert _body(getattr(_atomic_io, name)) == _body(getattr(jsm, name)), name
-    for name in ("_LOCK_OFFSET_HIGH", "_LOCKFILE_EXCLUSIVE_LOCK", "_ERROR_NOT_LOCKED"):
+    for name in ("_LOCK_OFFSET_HIGH", "_LOCKFILE_EXCLUSIVE_LOCK", "_ERROR_NOT_LOCKED",
+                 "_LOCKFILE_FAIL_IMMEDIATELY", "_ERROR_LOCK_VIOLATION"):
         assert getattr(_atomic_io, name) == getattr(jsm, name), name
     # The byte itself is a cross-VERSION contract, not only a two-copy one: the
     # engine (updated by `pip install -U`) and the deployed hooks (updated by
