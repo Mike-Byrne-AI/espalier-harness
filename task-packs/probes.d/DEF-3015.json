@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3015",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "a host timing: the oracle is Claude Code's transcript record (hook_cancelled, durationMs, timeoutMs), which no probe on a CI checkout can read; re-measure from ~/.claude/projects/*/*.jsonl as this row's figures were",
+ "row_sha": "9de3c03bd0a9",
+ "text_sha": "7d534acd5e84",
+ "verified_2026_10_29": "OPEN (filed 2026-10-29; probe driven at filing)"
+}
