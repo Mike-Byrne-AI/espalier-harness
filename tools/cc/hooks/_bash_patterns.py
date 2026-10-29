@@ -9039,18 +9039,126 @@ def powershell_scan_text(command: str) -> str:
     """
     return powershell_scan_pair(command)[1]
 
+
+def _ps_group_depths(scan: str) -> list[int]:
+    """How many groups hold each character of the scan text -- a grouping, a
+    subexpression, an array subexpression or a script block, by their
+    parentheses and braces; a bracket is counted at the depth outside it.
+    Square brackets open no group: a wildcard range sits inside a bare path.
+    Strings, comments and here-strings are already blank in the scan, so a
+    bracket inside one opens nothing. Linear: one pass, clamped at zero."""
+    depths: list[int] = []
+    depth = 0
+    for ch in scan:
+        if ch in ")}":
+            depth = max(0, depth - 1)
+        depths.append(depth)
+        if ch in "({":
+            depth += 1
+    return depths
+
+
+def _ps_level_view(scan: str, depths: list[int], level: int) -> str:
+    """The scan as a command at nesting *level* reads it, same length, same
+    offsets (DEF-4029): the text at that level kept with the brackets of the
+    groups it holds, and what those groups hold blanked, so a separator or a
+    flag inside a value's parentheses (`-Value (1..3 | % {$_}) -Path <file>`,
+    `-Value (Get-Content -Path <other>) -Path <file>`) is neither a statement
+    boundary nor the verb's own flag; around it, the opener of each group at
+    the level kept (a verb right after it is at a command position), the
+    group's closer written as a separator (a verb's span ends with its group,
+    never reaching the next group's flags), and the rest blanked. A separator
+    at the level itself still ends a statement, so a write in a block never
+    borrows the path flag of the command after it."""
+    out: list[str] = []
+    for ch, depth in zip(scan, depths):
+        if depth == level:
+            out.append(ch)
+        elif depth == level - 1 and ch in "({":
+            out.append(ch)
+        elif depth == level - 1 and ch in ")}":
+            out.append(";")
+        else:
+            out.append(" ")
+    return "".join(out)
+
+
+# The nesting levels `_ps_level_view` reads, shallowest first: a write verb
+# nested deeper is read by the scan alone, the rule before DEF-4029, so a
+# flood of nested groups costs a bounded number of passes.
+_PS_LEVELS_READ = 8
+
+
 # `Clear-Content` truncates: a write with no value (driven ALLOW at HEAD on
 # the PowerShell tool while `Set-Content <hook> ''` denied; §C52's sibling).
+# The write verbs by name and by the aliases Windows PowerShell 5.1 ships for
+# them (`Get-Alias -Definition` on 5.1.26100: `sc`, `ac`, `clc`, `tee`, `ni`;
+# Out-File has none), the host the PowerShell tool runs on a stock Windows
+# box: each alias wrote a hook file there with no deny until DEF-4029
+# (PowerShell 7 dropped `sc` for the service tool, so a 7.x drive never saw
+# it). `(?![-.\w])`: the verb ends there, so `sc.exe` by its full name -- the
+# service tool -- is not Set-Content.
+_PS_WRITE_VERB = (
+    r"(?:Set-Content|Add-Content|Clear-Content|Out-File|Tee-Object|New-Item"
+    r"|sc|ac|clc|tee|ni)(?![-.\w])"
+)
+# A write verb's path parameter in every spelling 5.1 binds to it (DEF-4029):
+# the name, its `PSPath` alias, and each prefix that, on every one of the six
+# verbs, binds a path parameter, binds nothing, or is ambiguous (a binding
+# error: the command writes nothing), derived from each verb's
+# `(Get-Command).Parameters` on 5.1. Not `-Fil` (`-Filter` on the content
+# verbs) or `-F` (`-Force` on New-Item): read as a path flag, each would take
+# its own value as the path and hide the real one after it; `-P` is ambiguous
+# on all six (`-LiteralPath`'s `-PSPath` alias beside `-PipelineVariable`,
+# and `-Path` or `-PassThru` where a verb has them), so it writes nothing.
+# Written out literally, as `_PS_DESTINATION_FLAG` is, for the ReDoS gate.
+# The flag ends at a colon (`-Path:<file>` binds as `-Path <file>`) or a
+# blank, so `-PassThru` is never `-Pa`.
+_PS_WRITE_PATH_FLAG = (
+    r"-(?:LiteralPath|LiteralPat|LiteralPa|LiteralP|Literal|Litera|Liter|Lite|Lit|Li|L"
+    r"|FilePath|FilePat|FilePa|FileP|File"
+    r"|PSPath|PSPat|PSPa|PSP|PS"
+    r"|Path|Pat|Pa)"
+    r"(?::\s*|\s+)"
+)
+# Where a path flag starts: wherever a token ends -- a blank of any kind, or a
+# closing quote, paren or brace with the flag glued to it, both of which 5.1
+# tokenizes as the start of a parameter -- never inside a bare word, so the
+# short spellings never read the tail of one (`a-L b` is one word). The three
+# full names keep the rule before DEF-4029, read after any character, so a
+# spelling that denied then still denies (the code review).
+_PS_WRITE_PATH_FLAG_AT = (
+    r"(?:(?<![\w$-])" + _PS_WRITE_PATH_FLAG
+    + r"|(?<=[\w$-])-(?:Path|FilePath|LiteralPath)\s+)"
+)
+# Out-File and Tee-Object name their path FilePath and have no other
+# parameter that begins `-Fi`, and Tee-Object none that begins `-F` (on
+# Out-File `-F` is ambiguous with `-Force`: a binding error, nothing written),
+# where on the content verbs these prefixes bind `-Filter` or `-Force`: so
+# they are read for these two verbs alone (5.1.26100's metadata; the DEF-4029
+# reviews).
+_PS_FILE_VERB_PATH_FLAG = r"-(?:Fil|Fi|F)(?::\s*|\s+)"
+# A path operand, or the array a comma builds of several (`a,b`, `a, b`):
+# a quoted element whole, a bare one as the one-path capture read it, less
+# the comma that separates them (DEF-4029: only a list's first element was
+# read). The element never holds the separator, so the list is linear.
+_PS_PATH_ELEMENT = r"(?:\"[^\"]*\"|'[^']*'|[^\s|;&,]+)"
+_PS_PATH_LIST = _PS_PATH_ELEMENT + r"(?:[ \t]*,\s*" + _PS_PATH_ELEMENT + r")*"
 _PS_PATH_FLAG_RE = re.compile(
-    _PS_CMD_POS + r"\b(?:Set-Content|Out-File|Add-Content|Tee-Object|New-Item|Clear-Content)\b"
-    + _QUOTED_VERB_TAIL
+    _PS_CMD_POS + r"\b" + _PS_WRITE_VERB + _QUOTED_VERB_TAIL
     # {0,512}: verb-regex class bound (see _SED_INPLACE_RE comment).
-    + r"[^|;&\n]{0,512}?-(?:Path|FilePath|LiteralPath)\s+([^\s|;&]+)",
+    + r"[^|;&\n]{0,512}?" + _PS_WRITE_PATH_FLAG_AT + r"(" + _PS_PATH_LIST + r")",
+    re.IGNORECASE,
+)
+_PS_FILE_VERB_PATH_FLAG_RE = re.compile(
+    _PS_CMD_POS + r"\b(?:Out-File|Tee-Object|tee)(?![-.\w])" + _QUOTED_VERB_TAIL
+    # {0,512}: verb-regex class bound (see _SED_INPLACE_RE comment).
+    + r"[^|;&\n]{0,512}?(?<![\w$-])" + _PS_FILE_VERB_PATH_FLAG + r"(" + _PS_PATH_LIST + r")",
     re.IGNORECASE,
 )
 _PS_POSITIONAL_RE = re.compile(
-    _PS_CMD_POS + r"\b(?:Set-Content|Out-File|Add-Content|Clear-Content)" + _QUOTED_VERB_TAIL
-    + r"\s+(?!-)([^\s|;&]+)",
+    _PS_CMD_POS + r"\b" + _PS_WRITE_VERB + _QUOTED_VERB_TAIL
+    + r"\s+(?!-)(" + _PS_PATH_LIST + r")",
     re.IGNORECASE,
 )
 
@@ -9114,10 +9222,12 @@ _PS_COPY_MOVE_POSITIONAL_RE = re.compile(
 # -Destination .claude/` lands `.claude/settings.json`; the directory alone is
 # not protected, the landed file is). `-Pat` is the shortest unambiguous prefix
 # of `-Path` (`-Pa` collides with `-PassThru`); `-L` already resolves to
-# `-LiteralPath`. Driven red before this existed.
+# `-LiteralPath`. Driven red before this existed. `-PSPath` is `-LiteralPath`'s
+# alias on both verbs, and no other parameter of theirs begins `-PS` (5.1.26100's
+# metadata; the DEF-4029 failure-mode review).
 _PS_COPY_MOVE_SRC_FLAG_RE = re.compile(
     r"-(?:Path|Pat|LiteralPath|LiteralPat|LiteralPa|LiteralP|Literal|Litera"
-    r"|Liter|Lite|Lit|Li|L):?\s*(" + _PS_OPERAND + r")",
+    r"|Liter|Lite|Lit|Li|L|PSPath|PSPat|PSPa|PSP|PS):?\s*(" + _PS_OPERAND + r")",
     re.IGNORECASE,
 )
 
@@ -14074,12 +14184,38 @@ def powershell_dotnet_paths(command: str) -> list[str]:
     return _ps_dotnet_paths(_cap_for_scan(scan), _cap_for_scan(raw))
 
 
+def _ps_list_targets(token: str) -> list[str]:
+    """One operand as the targets it names: a comma outside its quotes builds
+    an array (`a,b` is two targets, `"a,b"` one), each element read as the
+    zone check compares one (`_ps_operand_text`), so a spaced list's first
+    token (`a,`) loses its comma too (DEF-4029). An unterminated quote is one
+    target, as before."""
+    elements = _ps_array_elements(token)
+    return [_ps_operand_text(e) for e in (elements if elements is not None else [token])]
+
+
+def _ps_path_flag_operands(raw: str, m: "re.Match[str]") -> list[str]:
+    """The paths a write verb's path operand (group 1) names: one operand
+    read as it always was (`raw_operand`), or each element of the array a
+    comma builds (`_ps_list_targets`; DEF-4029)."""
+    span = raw_span(raw, m, 1)
+    if _ps_array_elements(span) in (None, [span.strip()]):
+        return [raw_operand(raw, m, powershell=True)]
+    return _ps_list_targets(span)
+
+
 def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]:
     """Extract write-path candidates from a PowerShell command.
 
-    Covers Set-Content / Out-File / Add-Content / Tee-Object / New-Item
-    with -Path / -FilePath / -LiteralPath, the positional first-arg form
-    of Set-Content / Out-File / Add-Content, `>` / `>>` redirects
+    Covers Set-Content / Add-Content / Clear-Content / Out-File /
+    Tee-Object / New-Item and the aliases 5.1 ships for them (`sc`, `ac`,
+    `clc`, `tee`, `ni`), by a path flag in every spelling 5.1 binds
+    (`-Path`, `-FilePath`, `-LiteralPath`, `-PSPath`, the prefixes that
+    bind a path or nothing on every write verb, `-F`/`-Fi`/`-Fil` on
+    Out-File and Tee-Object, a colon-bound value, a flag glued to a closing
+    quote or bracket) or the positional first argument, a comma list element
+    by element, a flag or separator inside a value's group never taken as
+    the verb's own (`_ps_level_view`; DEF-4029), `>` / `>>` redirects
     (shared with bash via _REDIRECT_RE), Copy-Item / Move-Item (plus
     their aliases) by -Destination or the positional pair, with a
     directory destination landing the source's basename inside it, and
@@ -14135,10 +14271,20 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
     # `raw_span`, DEF-794): the PowerShell masker blanks a string's parens
     # and a bare capture stops at its first blank, so an operand read off
     # the scan was a path that existed nowhere.
-    for m in _PS_PATH_FLAG_RE.finditer(command):
-        paths.append(raw_operand(raw, m, powershell=True))
-    for m in _PS_POSITIONAL_RE.finditer(command):
-        paths.append(raw_operand(raw, m, powershell=True))
+    # A separator or a flag inside a value's group is not the verb's own: the
+    # write verbs and the copy and move destination are read on the scan and
+    # on its view at each nesting level (`_ps_level_view`), a read two passes
+    # share taken once, keyed by its pattern (DEF-4029).
+    depths = _ps_group_depths(command)
+    top = min(max(depths, default=0), _PS_LEVELS_READ - 1)
+    scans = [command] + ([_ps_level_view(command, depths, lv) for lv in range(top + 1)] if top else [])
+    read: set[tuple["re.Pattern[str]", int, int]] = set()
+    for scan in scans:
+        for rx in (_PS_PATH_FLAG_RE, _PS_FILE_VERB_PATH_FLAG_RE, _PS_POSITIONAL_RE):
+            for m in rx.finditer(scan):
+                if (rx, *m.span(1)) not in read:
+                    read.add((rx, *m.span(1)))
+                    paths.extend(_ps_path_flag_operands(raw, m))
     # `truncate` under pwsh on a POSIX host empties a file (the native
     # binary; the failure-mode review drove a hook to zero bytes)
     for m in _PS_TRUNCATE_RE.finditer(command):
@@ -14149,24 +14295,26 @@ def _candidate_paths_from_powershell(command: str, _depth: int = 0) -> list[str]
     for rx in (_PS_GIT_CHECKOUT_DASHDASH_RE, _PS_GIT_CHECKOUT_BARE_RE, _PS_GIT_RESTORE_RE):
         for m in rx.finditer(command):
             paths.append(_ps_unquote(raw_operand(raw, m, keep_quotes=True, powershell=True)))
-    for m in _PS_COPY_MOVE_DEST_RE.finditer(command):
-        dst = _ps_operand_text(raw_span(raw, m, 3))   # 1 is the verb, 2 the pre span (§C52)
-        paths.append(dst)
-        # The source flag may sit AFTER -Destination, outside the match span:
-        # found on the scan's statement segment (a separator inside a string
-        # is a blank there), read from the raw text at the same offsets.
-        segment = re.split(r"[|;&\n]", command[m.start():], maxsplit=1)[0]
-        src_flag = _PS_COPY_MOVE_SRC_FLAG_RE.search(segment)
-        src = raw[m.start() + src_flag.start(1):m.start() + src_flag.end(1)] if src_flag else None
-        landed = _ps_landed_path(src, dst) if src is not None else None
-        if landed:
-            paths.append(landed)
+    for scan in scans:
+        for m in _PS_COPY_MOVE_DEST_RE.finditer(scan):
+            if (_PS_COPY_MOVE_DEST_RE, *m.span(3)) in read:
+                continue
+            read.add((_PS_COPY_MOVE_DEST_RE, *m.span(3)))
+            dst = _ps_operand_text(raw_span(raw, m, 3))   # 1 is the verb, 2 the pre span (§C52)
+            paths.append(dst)
+            # The source flag may sit AFTER -Destination, outside the match span:
+            # found on the scan's statement segment (a separator inside a string
+            # is a blank there), read from the raw text at the same offsets; a
+            # comma list of sources lands each one (DEF-4029).
+            segment = re.split(r"[|;&\n]", scan[m.start():], maxsplit=1)[0]
+            src_flag = _PS_COPY_MOVE_SRC_FLAG_RE.search(segment)
+            if src_flag:
+                src = raw[m.start() + src_flag.start(1):m.start() + src_flag.end(1)]
+                paths.extend(p for p in (_ps_landed_path(s, dst) for s in _ps_list_targets(src)) if p)
     for m in _PS_COPY_MOVE_POSITIONAL_RE.finditer(command):
         src, dst = raw_span(raw, m, 2), _ps_operand_text(raw_span(raw, m, 3))   # 1 is the verb (§C52)
         paths.append(dst)
-        landed = _ps_landed_path(src, dst)
-        if landed:
-            paths.append(landed)
+        paths.extend(p for p in (_ps_landed_path(s, dst) for s in _ps_list_targets(src)) if p)
     # icacls / attrib / Set-Acl / Set-ItemProperty -- a permission, attribute
     # or ACL change on a hook silences it as surely as a write. Per-verb
     # operand rule; the two display forms are reads (`_ps_permission_targets`).
@@ -14276,7 +14424,7 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
         tokens = _ps_removal_target_tokens(
             args, tokens=_ps_operand_tokens(args), unknown_takes_value=False,
         )
-        return [_ps_operand_text(t) for t in tokens]
+        return [p for t in tokens for p in _ps_list_targets(t)]   # a comma list, each element (DEF-4029)
 
     for m in _PS_REMOVE_ITEM_RE.finditer(scan):
         out.extend(("delete", p) for p in named_targets(m))
@@ -14309,20 +14457,20 @@ def iter_ps_removed_or_relocated_operands(command: str, _depth: int = 0) -> list
         out.extend(("clean", p) for p in _git_clean_operands(_named_span(raw, m, "args"), powershell=True))
     for m in _PS_COPY_MOVE_POSITIONAL_RE.finditer(scan):
         if m.group("verb").lower() in _PS_MOVE_VERB_NAMES:
-            out.append(("move", _ps_unquote(raw_span(raw, m, 2))))
+            out.extend(("move", p) for p in _ps_list_targets(raw_span(raw, m, 2)))
     for m in _PS_COPY_MOVE_DEST_RE.finditer(scan):
         if m.group("verb").lower() not in _PS_MOVE_VERB_NAMES:
             continue
         pre = _named_span(raw, m, "pre")
-        sources = [_ps_unquote(t) for t in _ps_removal_target_tokens(
+        sources = [p for t in _ps_removal_target_tokens(
             pre, tokens=_ps_operand_tokens(pre), unknown_takes_value=False,
-        )]
+        ) for p in _ps_list_targets(t)]   # a comma list, each element (DEF-4029)
         # The source flag may sit AFTER the destination flag: the write arm's
         # statement-segment search, scan for the offsets, raw for the text.
         segment = re.split(r"[|;&\n]", scan[m.start():], maxsplit=1)[0]
         src_flag = _PS_COPY_MOVE_SRC_FLAG_RE.search(segment)
         if src_flag:
-            sources.append(_ps_operand_text(raw[m.start() + src_flag.start(1):m.start() + src_flag.end(1)]))
+            sources.extend(_ps_list_targets(raw[m.start() + src_flag.start(1):m.start() + src_flag.end(1)]))
         out.extend(("move", p) for p in sources)
     for m in _PS_RENAME_RE.finditer(scan):
         # every named token: the new name is one of them and lands nowhere

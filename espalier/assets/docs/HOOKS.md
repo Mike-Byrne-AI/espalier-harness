@@ -1437,9 +1437,19 @@ one is inlined first), a call continued on the next
 line and a comma inside the path literal are declared limits there, pinned by
 `tests/test_write_guard.py::TestPowerShellDotNetFileApi::test_dotnet_declared_limits_are_pinned`. The
 PowerShell write forms themselves (`Set-Content`,
-`Out-File`, `Add-Content`, `Tee-Object`, `New-Item`, the `>` redirect,
-`Copy-Item`/`Move-Item` and their aliases) are caught on that tool as the
-Bash forms are on Bash; a bare `icacls PATH` or `attrib PATH` displays and
+`Add-Content`, `Clear-Content`, `Out-File`, `Tee-Object`, `New-Item` and the
+aliases Windows PowerShell 5.1 ships for them, `sc`, `ac`, `clc`, `tee` and
+`ni`, with the path flag by its name, by the `-PSPath` alias, by each prefix
+that binds a path parameter or nothing on every one of these verbs (`-Pat`,
+`-FileP`, `-L`, `-Pa`, which is `-Path` on `Clear-Content` and ambiguous with
+`-PassThru`, so a write of nothing, where a verb has both), by `-F`, `-Fi` and
+`-Fil` on `Out-File` and
+`Tee-Object` alone, colon-bound (`-Path:<file>`) or glued to a closing quote
+or bracket; a comma list read element by element; and a flag or a separator
+inside a value's parentheses or braces never taken as the verb's own, since
+2026-10-18; the `>` redirect; `Copy-Item`/`Move-Item` and their
+aliases, a comma list of sources and a `-PSPath` source included)
+are caught on that tool as the Bash forms are on Bash; a bare `icacls PATH` or `attrib PATH` displays and
 is a read, and a bare or `&`-called quoted executable path before any of
 these heads (`& "C:\Windows\System32\icacls.exe" <hook> /deny ...`) is the
 head, behind either wrapper quote kind -- and since DEF-791 (2026-09-13) the
