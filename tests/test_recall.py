@@ -1522,9 +1522,10 @@ def test_no_corpus_document_quotes_the_off_topic_arm():
 #     be the WRONG expected answer there. The pinned count below therefore measures a
 #     defensible reading, not ground truth.
 # (2) This arm is mechanical, so it is unaffected by a contamination that would ruin
-#     any MODEL-side version of it: session_start.py injects all 16 principle titles
-#     into every self-host session, so a model asked to pick has part of the key in
-#     context already. Do not reuse these queries to evaluate a model-side design
+#     any MODEL-side version of it: session_start.py injected all 16 principle titles
+#     into every self-host session until 2026-10 (it now injects their count and
+#     where they are), so a model asked to pick may have had part of the key in
+#     context. Do not reuse these queries to evaluate a model-side design
 #     without controlling for that.
 # (3) THESE COUNTS MOVE ON ORDINARY DOCUMENTATION WORK, and that is why the
 #     MAGNITUDES below are banded +/-1 rather than pinned with `==`. Measured
