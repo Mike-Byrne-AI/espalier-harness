@@ -425,7 +425,13 @@ class TestACrashedControllerStillPrintsWhatItSaw:
     @pytest.mark.timeout(_CHILDREN_CEILING_S)
     def test_no_summary_asked_for_none_and_gets_none(self, tmp_path):
         """``--no-summary``: pytest prints none, and the finish writes neither
-        the report nor the line in its place."""
+        the report nor the line in its place. From pytest 9.2.0 the hooks are
+        called under the option and read it themselves (its changelog #14724;
+        the day the dev extra floated to it, this row red every leg, DEF-5027):
+        a red here after a pytest release is read against the Install step's
+        version first, and ``TestNoSummaryGetsNoneFromEveryHook`` says which
+        hook wrote. This row exercises the conftest and never-ran hooks, not
+        the box lock's."""
         rc, lines = _drive_to_a_reading(tmp_path, self._BODY, "--no-summary", conftest_text=_BUILD_AND_COUNT_CONFTEST,
                                         extra_env={"PROBE_BUILD_DIES": "1"})
         assert rc == 1, lines
@@ -455,24 +461,40 @@ class TestTheProgressMarksCountTheReports:
                           "sxs and more"]) == 0
 
 
+def _suite_reporter(lines: list[str], *, no_summary: bool, warned=()) -> SimpleNamespace:
+    """A terminal reporter that writes into ``lines``, with ``warned`` among the
+    run's warnings, asked for no summary or not."""
+    return SimpleNamespace(write_line=lines.append, stats={"warnings": list(warned)}, no_summary=no_summary)
+
+
+def _suite_config(reporter) -> SimpleNamespace:
+    """A config that holds ``reporter`` and one crashed worker's build report,
+    under the suite's own ceiling."""
+    return SimpleNamespace(
+        pluginmanager=SimpleNamespace(get_plugin={"terminalreporter": reporter}.get),
+        getini=lambda name: "60", getoption=lambda name, default=None: None,
+        _initialized_repo_build_reports=[{"place": "xdist worker gw0", "seconds": 0.0, "steps": [],
+                                          "failure": _WENT_DOWN}])
+
+
+def _run_finish(conftest, config) -> None:
+    """Run the suite conftest's session-finish wrapper around nothing, on ``config``."""
+    wrapper = conftest.pytest_sessionfinish(SimpleNamespace(config=config), pytest.ExitCode.INTERNAL_ERROR)
+    next(wrapper)
+    with pytest.raises(StopIteration):
+        wrapper.send(None)
+
+
 def _suite_finish(conftest, warned, *, summary_ran: bool) -> list[str]:
     """Run the suite conftest's session-finish wrapper around a terminal
     reporter that did, or did not, print its summary inside it, with one crashed
     worker's report recorded and ``warned`` among the run's warnings; what the
     finish wrote."""
     lines: list[str] = []
-    reporter = SimpleNamespace(write_line=lines.append, stats={"warnings": warned}, no_summary=False)
-    config = SimpleNamespace(
-        pluginmanager=SimpleNamespace(get_plugin={"terminalreporter": reporter}.get),
-        getini=lambda name: "60", getoption=lambda name, default=None: None,
-        _initialized_repo_build_reports=[{"place": "xdist worker gw0", "seconds": 0.0, "steps": [],
-                                          "failure": _WENT_DOWN}])
+    config = _suite_config(_suite_reporter(lines, no_summary=False, warned=warned))
     if summary_ran:
         config.__dict__["_initialized_repo_summary_ran"] = True
-    wrapper = conftest.pytest_sessionfinish(SimpleNamespace(config=config), pytest.ExitCode.INTERNAL_ERROR)
-    next(wrapper)
-    with pytest.raises(StopIteration):
-        wrapper.send(None)
+    _run_finish(conftest, config)
     return lines
 
 
@@ -505,6 +527,74 @@ class TestTheFinishWritesWhatTheSummaryWould:
         monkeypatch.setitem(conftest.pytest_sessionfinish.__globals__, "_write_summary_lines", broken)
         assert _suite_finish(conftest, [], summary_ran=False) == [
             "the summary lines at the session's finish failed (RuntimeError: boom; tests/conftest.py)"]
+
+
+class TestNoSummaryGetsNoneFromEveryHook:
+    """pytest 9.2.0 calls every plugin's ``pytest_terminal_summary`` under
+    ``--no-summary`` and leaves the gating to the plugin (its changelog #14724);
+    9.1.1 and earlier never called it there, so none of this suite's summary
+    hooks had read the option, and the day the dev extra floated to 9.2.0 the
+    portability legs and main's post-merge proof red on the crashed-controller
+    row's ``--no-summary`` case above. Each hook writes nothing where none was
+    asked for, and marks that it ran all the same, so a hook and its finish
+    stay in step where a summary was asked for; the finish reads the option
+    for itself, which is what keeps it quiet on the one run that still calls
+    no hook under the option, pytest's internal error. The box lock's two hooks
+    are pinned beside the lock (``tests/test_box_lock.py``). Dies to: a hook
+    that writes under the option, one that returns without marking, or a
+    finish whose own read of the option is dropped as redundant."""
+
+    def test_the_suite_conftests_hook_writes_nothing_and_marks_that_it_ran(self, conftest, monkeypatch):
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("PYTEST_TIMEOUT", raising=False)
+        lines: list[str] = []
+        reporter = _suite_reporter(lines, no_summary=True)
+        config = _suite_config(reporter)
+        conftest.pytest_terminal_summary(reporter, pytest.ExitCode.TESTS_FAILED, config)
+        assert lines == [], lines
+        assert config.__dict__.get("_initialized_repo_summary_ran") is True
+        _run_finish(conftest, config)
+        assert lines == [], lines
+
+    def test_where_no_hook_ran_the_suite_conftests_finish_reads_the_option_itself(self, conftest, monkeypatch):
+        """pytest's internal error calls no summary hook on any pytest line, so
+        the finish fallback is the only reader there: asked for none, it
+        writes none, with nothing marked. Dies to: the finish's own
+        ``no_summary`` read dropped as redundant with the hook's."""
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("PYTEST_TIMEOUT", raising=False)
+        lines: list[str] = []
+        _run_finish(conftest, _suite_config(_suite_reporter(lines, no_summary=True)))
+        assert lines == [], lines
+
+    def test_with_a_summary_asked_for_the_suite_conftests_hook_writes_the_report(self, conftest, monkeypatch):
+        """The control: the same reporter, a summary asked for, gets the build report."""
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        monkeypatch.delenv("PYTEST_TIMEOUT", raising=False)
+        lines: list[str] = []
+        reporter = _suite_reporter(lines, no_summary=False)
+        conftest.pytest_terminal_summary(reporter, pytest.ExitCode.TESTS_FAILED, _suite_config(reporter))
+        assert lines == [_HEADER, f"  xdist worker gw0 FAILED: {_WENT_DOWN}"], lines
+
+    def test_the_never_ran_plugins_hook_writes_nothing_and_marks_that_it_ran(self, monkeypatch):
+        """No crashed worker, so no xdist is needed and the count reads the
+        plain line: a run without xdist pins this half too."""
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        plugin = _never_ran.NeverRan()
+        plugin.selected, plugin.crashes = 6, 0
+        stats = {"failed": _reports(*(f"t::{i}" for i in range(5)))}
+        assert _summarise(plugin, stats, no_summary=True) == []
+        assert plugin.summarised
+        assert _summarise(plugin, stats) == ["1 of 6 selected tests never ran"], "the control: a summary asked for gets the line"
+
+    def test_where_no_hook_ran_the_never_ran_plugins_finish_reads_the_option_itself(self, monkeypatch):
+        """Dies to: the finish's own ``no_summary`` read dropped as redundant."""
+        monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+        plugin = _never_ran.NeverRan()
+        plugin.crashes = 0
+        stats = {"failed": _reports(*(f"t::{i}" for i in range(5)))}
+        assert _finish(plugin, stats, summarised=False, no_summary=True) == []
+        assert _finish(plugin, stats, summarised=False) == ["1 of 6 selected tests never ran"], "the control"
 
 
 class TestANestedRunWhoseControllerCrashedIsDrivenAgain:
@@ -648,11 +738,12 @@ def _reports(*nodeids: str) -> list:
             for nodeid in nodeids for when in ("setup", "call")]
 
 
-def _summarise(plugin, stats, **options) -> list[str]:
+def _summarise(plugin, stats, *, no_summary: bool = False, **options) -> list[str]:
     """Run the plugin's terminal-summary wrapper around nothing, at one xdist
-    worker with xdist's default cap; what it wrote."""
+    worker with xdist's default cap, the reporter asked for no summary or not;
+    what it wrote."""
     lines: list[str] = []
-    reporter = SimpleNamespace(write_line=lines.append, stats=stats)
+    reporter = SimpleNamespace(write_line=lines.append, stats=stats, no_summary=no_summary)
     config = SimpleNamespace(option=SimpleNamespace(maxworkerrestart=None, numprocesses=1, **options))
     wrapper = plugin.pytest_terminal_summary(reporter, config)
     next(wrapper)
@@ -661,11 +752,12 @@ def _summarise(plugin, stats, **options) -> list[str]:
     return lines
 
 
-def _finish(plugin, stats, *, summarised: bool, selected: int = 6) -> list[str]:
+def _finish(plugin, stats, *, summarised: bool, selected: int = 6, no_summary: bool = False) -> list[str]:
     """Run the plugin's session-finish wrapper around a terminal reporter that
-    did, or did not, print its summary inside it; what the finish wrote."""
+    did, or did not, print its summary inside it, asked for no summary or not;
+    what the finish wrote."""
     lines: list[str] = []
-    reporter = SimpleNamespace(write_line=lines.append, stats=stats, no_summary=False)
+    reporter = SimpleNamespace(write_line=lines.append, stats=stats, no_summary=no_summary)
     config = SimpleNamespace(option=SimpleNamespace(maxworkerrestart=None, numprocesses=1),
                              pluginmanager=SimpleNamespace(get_plugin={"terminalreporter": reporter}.get))
     wrapper = plugin.pytest_sessionfinish(SimpleNamespace(testscollected=selected, config=config))
