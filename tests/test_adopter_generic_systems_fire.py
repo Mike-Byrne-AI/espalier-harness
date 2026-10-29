@@ -193,8 +193,8 @@ class TestTheBannerCarriesTheAdoptersPrinciples:
             "session_id": "class-test-banner", "hook_event_name": "SessionStart",
             "source": "startup", "cwd": str(node_tree),
         })
-        assert "STANDING PRINCIPLES" in banner, banner[:800]
-        assert "- 1. One writer per file" in banner and "- 2. Measure before you tune" in banner
+        assert "STANDING PRINCIPLES: 2 " in banner, banner[:800]  # the count, one line (the banner-fit lane)
+        assert "docs/STANDING_PRINCIPLES.md" in banner and "/recall" in banner
 
 
 class TestTheEncodingScannerRunsBounded:

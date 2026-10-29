@@ -126,9 +126,15 @@ _WARNING_LINE_MAX_BYTES = 320
 # run standalone; adding a sibling import risks the copy-subset footgun.
 _MEMORY_FILENAME = "ESPALIER_MEMORY.md"
 
-_SECTION_SOURCE = {
+# The files the banner-health lever may name (_lever): the two tenants that can
+# grow, both on every adopter's tree. The standing index is one summary line and
+# its doc is never seeded, so it is never the lever.
+_LEVER_FILES = {
     "goal": "cc/GOAL.md",
     "memory": _MEMORY_FILENAME,
+}
+_SECTION_SOURCE = {
+    **_LEVER_FILES,
     "standing": "docs/STANDING_PRINCIPLES.md",
 }
 # GOAL is FLAGGED at its 2_000 soft budget but rides through WHOLE up to this
@@ -4100,17 +4106,18 @@ def _blueprint_head(text: str) -> str:
 def _lever(tenants: "list[tuple[str, str, int, int | None]]") -> str:
     """What is left to do when the ceiling still binds: shorten cc/GOAL.md when
     the goal rides past its soft budget (it alone may, up to its hard cap, the
-    operator's call), else the largest tenant's source file. The tenants come
-    here bounded, so no other one is past its own budget."""
+    operator's call), else the larger of the goal and the memory digest
+    (_LEVER_FILES). The tenants come here bounded, so no other one is past its
+    own budget."""
     sizes = {name: (len(text.encode("utf-8")), soft) for name, text, soft, _ in tenants if text}
     goal, soft = sizes.get("goal", (0, 0))
     if soft and goal > soft:
-        return (f"shorten {_SECTION_SOURCE['goal']}, past its {soft}-byte budget "
+        return (f"shorten {_LEVER_FILES['goal']}, past its {soft}-byte budget "
                 f"(its {_GOAL_HARD_CAP}-byte hard cap is the operator's call)")
-    sourced = [(size, name) for name, (size, _) in sizes.items() if name in _SECTION_SOURCE]
+    sourced = [(size, name) for name, (size, _) in sizes.items() if name in _LEVER_FILES]
     if sourced:
         size, name = max(sourced)
-        return f"shorten {_SECTION_SOURCE[name]}, the largest tenant ({size} bytes)"
+        return f"shorten {_LEVER_FILES[name]}, the largest tenant ({size} bytes)"
     return "no tenant is left to shorten; the header's lines take the room"
 
 

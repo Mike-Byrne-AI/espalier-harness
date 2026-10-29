@@ -1001,7 +1001,7 @@ class TestStandingPrinciplesIndex:
         assert "STANDING PRINCIPLES" not in mod._build_context(tmp_path, False, False)
         assert "STANDING PRINCIPLES" not in mod._build_compact_context(tmp_path, False)
 
-    def test_index_counts_every_live_principle(self):
+    def test_index_surfaces_every_live_principle(self):
         """Doc-derived, not a hardcoded 9: the index must count every title the
         live doc defines, counted by the SAME rule the renderer selects them with
         (a line starting ``"## "``). A 10th principle tracks automatically and a
