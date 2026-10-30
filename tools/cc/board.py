@@ -1508,14 +1508,19 @@ def render(board: dict) -> str:
         # request on its full id only, and an ack naming a suffix is accepted
         # and closes nothing on an append-only record.
         ask_rows = [f"{m.get('id')} {m.get('from')} {(m.get('re') or {}).get('lane') or '-'}: {_age(m.get('age_s'))}"
-                    + (" (operator call)" if mail.is_operator_call(m) else "")
+                    + (" (operator call)" if mail.is_operator_call(m) else " (stopped)" if mail.is_stop(m) else "")
                     for m in asks[:ASKS_SHOWN]]
         if len(asks) > ASKS_SHOWN:
             ask_rows.append(f"and {len(asks) - ASKS_SHOWN} more")
-        # The dispatcher's questions to the operator, counted apart: a request
-        # opening with mail.OPERATOR_CALL_PREFIX, which a worker never acks.
+        # The workers' stops and the dispatcher's questions to the operator,
+        # counted apart: a request opening with mail.STOPPED_PREFIX (the worker
+        # tick's STOP clause; its age is the dispatcher's past-the-hour gridlock
+        # read, and a stopped seat showed nowhere before it, DEF-5030) or with
+        # mail.OPERATOR_CALL_PREFIX (which a worker never acks).
+        stops = sum(1 for m in asks if mail.is_stop(m))
         calls = sum(1 for m in asks if mail.is_operator_call(m))
-        apart = f", {calls} operator call{'s' if calls != 1 else ''}" if calls else ""
+        apart = ((f", {stops} stopped" if stops else "")
+                 + (f", {calls} operator call{'s' if calls != 1 else ''}" if calls else ""))
         for i, text in enumerate(ask_rows):
             lines.append((f"asks:     {len(asks)} open{apart} (requests no ack names, oldest first): " if i == 0
                           else "          ") + text)

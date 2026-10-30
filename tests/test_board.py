@@ -634,6 +634,32 @@ class TestAsks:
         text = board.render(self._board(board, monkeypatch, tmp_path, {"win": many, "air": [last]}))
         assert f"asks:     {board.ASKS_SHOWN + 1} open, 1 operator call (requests" in text, text
 
+    def test_the_header_counts_the_stops_apart_and_tags_the_row(self, board, monkeypatch, tmp_path):
+        """DEF-5030 (2026-10-30): a worker's stop rides the channel as a
+        request opening with ``stopped:`` (the worker tick's STOP clause), so
+        the dispatcher's past-the-hour gridlock read is the row's age; the
+        header counts the stops apart beside the operator calls and the row
+        says which it is. Dies to: a stop counted as a plain ask, the prefix
+        read on a note, or the count printed with no stop open."""
+        mail = board.mail
+        stop = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} a conflict outside my files, docs/HOOKS.md",
+                                lane="lane/a", now=_T0)
+        call = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} a fifth seat?", now=_T0.replace(minute=1))
+        plain = mail.new_message("win-2", "request", "which base?", lane="lane/b", now=_T0.replace(minute=2))
+        note = mail.new_message("win-2", "note", f"{mail.STOPPED_PREFIX} not a request", now=_T0)
+        text = board.render(self._board(board, monkeypatch, tmp_path, {"win": [stop], "air": [call], "win-2": [plain, note]}))
+        assert "asks:     3 open, 1 stopped, 1 operator call (requests no ack names, oldest first): " in text, text
+        rows = [ln for ln in text.splitlines() if stop["id"] in ln or call["id"] in ln or plain["id"] in ln]
+        assert [ln.endswith(" (stopped)") for ln in rows] == [True, False, False], rows
+        assert rows[0].endswith(f"{stop['id']} win lane/a: 6 h 25 min (stopped)"), rows
+        second = mail.new_message("win-2", "request", f"{mail.STOPPED_PREFIX} the guard refuses the edit",
+                                  lane="lane/b", now=_T0.replace(minute=3))
+        text = board.render(self._board(board, monkeypatch, tmp_path, {"win": [stop], "win-2": [second]}))
+        assert "asks:     2 open, 2 stopped (requests no ack names, oldest first): " in text, text
+        text = board.render(self._board(board, monkeypatch, tmp_path, {"win-2": [plain, note]}))
+        assert "asks:     1 open (requests no ack names, oldest first): " in text, text
+        assert " stopped" not in text and "(stopped)" not in text
+
     def test_none_open_and_unread_mail_read_differently(self, board, monkeypatch, tmp_path):
         """Dies to: an unread mail printed as "none open", which reads as an answer."""
         text = board.render(self._board(board, monkeypatch, tmp_path, {}))

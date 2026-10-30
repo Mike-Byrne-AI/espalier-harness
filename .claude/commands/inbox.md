@@ -275,7 +275,12 @@ is read on its own, and one that cannot be read says so on its own line:
   those apart (`asks:     3 open, 2 operator calls ...`), and the ruling is
   the dispatcher's `ack` naming the request's full id, with the ruling in its
   text, so it lands on origin where every seat reads it; an ack from any
-  other seat leaves the call open, and the row says `(operator call)`. The dispatcher seat also gets the count and the oldest age on the
+  other seat leaves the call open, and the row says `(operator call)`. A
+  request whose text opens with `stopped:` is a worker's stop (the tick's STOP
+  clause: what stops it, in its text), counted apart on the header
+  (`asks:     3 open, 1 stopped, 1 operator call ...`) and tagged `(stopped)`
+  on its row; its age is what the dispatcher reads first, and any seat's ack
+  naming it closes it. The dispatcher seat also gets the count and the oldest age on the
   banner's `Mail:` line.
 - **jobs**, **claims** and the ledger's live row count, counted at the base
   branch's remote-tracking ref with the base's own ledger tools and naming the
@@ -390,11 +395,21 @@ age and counts it apart; the ruling comes back as the dispatcher's `ack`
 naming the request's full id, with the ruling in its text. A worker's ack does
 not close one.
 
+A worker's own stop goes out the same way: one request whose text opens with
+`stopped:`, naming what stops it (a refusal it cannot resolve, a conflict
+outside the files it claims, a decision only the operator makes), sent at the
+stop so the board's `asks:` line carries it with its age; the ack that re-aims
+or frees the seat closes it, and so does the seat's own ack once what stopped
+it is gone (a release, or the ruling on an operator call, names no stop); an
+ack that frees nothing is answered by sending the stop again, and a stop
+opening with anything else is a plain ask no reader counts apart.
+
 <!-- espalier:self-host-only -->
 A gridlock ruling (Core Rule 15, this repository's own rule) is the
 dispatcher's `ack` whose text opens with `gridlock:` (its first word; one
-ruling per ack), the marker in the family of `OPERATOR CALL:`, `redirect:` and
-`shelved:`:
+ruling per ack), the marker in the family of `OPERATOR CALL:`, `redirect:`,
+`shelved:` and `stopped:`; a `(stopped)` row past the hour on the `asks:` line
+is the gridlock's read, answered by the ack that frees or re-aims the seat:
 
 ```bash
 python tools/cc/mail.py send --type ack --ack <request id> --text "gridlock: <the ruling, the facts you read>"
