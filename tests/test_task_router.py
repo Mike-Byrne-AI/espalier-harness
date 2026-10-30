@@ -882,3 +882,50 @@ class TestContextThreshold:
         assert (tmp_path / ".espalier-state" / "once_context_unreadable").exists()
         second = _run_payload(payload, tmp_path)
         assert "could not be read" not in second.stdout
+
+
+class TestOwnClearRefused:
+    """DEF-5031: the own-clear mod asks the engine for the clear at a turn's
+    end and puts a rejected ask on its marker (the reason, when, a count); the
+    window whose clear it is gets loop ticks and nothing else, so the router
+    tells the model to say so where the operator reads. Fires only on a marker
+    armed for THIS session with a refusal on it, above an active plan; a torn
+    marker says nothing. The banner's Own-clear: line is every other session's
+    reader. Dies to: the advisory on another session's marker or on a clear
+    not yet refused, or a torn marker read as a crash."""
+
+    def _marker(self, root: Path, **fields) -> None:
+        state = root / ".espalier-state"
+        state.mkdir(parents=True, exist_ok=True)
+        base = {"state": "armed", "session_id": "ctx-1", "head": "h" * 40,
+                "clear_asked_at": "2026-10-30T09:09:13.751Z"}
+        (state / "own_clear.json").write_text(json.dumps({**base, **fields}), encoding="utf-8")
+
+    def test_a_refused_clear_of_this_session_is_named_with_its_count_reason_and_the_hand_clear(self, tmp_path):
+        self._marker(tmp_path, clear_refusals=41,
+                     clear_refused="HooksError: the turn was interrupted\nbefore the command ran")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "/inbox board"}, tmp_path)
+        assert res.returncode == 0, res.stderr
+        assert "[HARNESS] own-clear: the clear this window asked the engine for at 2026-10-30T09:09Z" in res.stdout
+        assert "refused 41 time(s)" in res.stdout and "interrupted before the command ran" in res.stdout
+        assert "/clear by hand" in res.stdout and "Take no new job" in res.stdout
+        assert res.stdout.isascii(), res.stdout
+
+    def test_it_fires_above_an_active_plan(self, tmp_path):
+        _write_plan(tmp_path, "in_progress")
+        self._marker(tmp_path, clear_refusals=1, clear_refused="HooksError: x")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "/inbox board"}, tmp_path)
+        assert "own-clear: the clear this window asked" in res.stdout, res.stdout
+
+    def test_another_sessions_marker_a_clear_not_yet_refused_a_consumed_one_and_a_torn_one_say_nothing(
+            self, tmp_path):
+        self._marker(tmp_path, clear_refusals=41, clear_refused="HooksError: x")
+        assert "own-clear" not in _run_payload({"session_id": "ctx-2", "prompt": "hi"}, tmp_path).stdout
+        self._marker(tmp_path)
+        assert "own-clear" not in _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path).stdout
+        self._marker(tmp_path, state="consumed", clear_refusals=41, clear_refused="HooksError: x",
+                     new_session_id="ctx-1")
+        assert "own-clear" not in _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path).stdout
+        (tmp_path / ".espalier-state" / "own_clear.json").write_text('{"state": "arm', encoding="utf-8")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path)
+        assert res.returncode == 0 and "own-clear" not in res.stdout, res.stdout + res.stderr

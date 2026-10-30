@@ -222,6 +222,44 @@ def _context_advisory(root: Path, data: dict) -> str | None:
                                tokens0=tokens0 // 1000, push=push)
 
 
+# The own-clear's refused clear (DEF-5031, 2026-10-30): the own-clear mod
+# (tools/cc/mods/own-clear) asks the engine for the clear at a turn's end and
+# puts a rejected ask on its marker (the reason, when, a count) and on a status
+# line; the dispatcher window re-asked 41 times over ten hours with nobody
+# reading that line. The window's own ticks still run, so the prompt router
+# tells the model, which says so where the operator reads. 7-bit ASCII, one
+# paragraph, on every prompt while the marker is armed for this session with a
+# refusal on it; the marker's path and fields are the mod's (tests/test_own_clear.py
+# pins them across the language line, beside the banner's reader).
+_OWN_CLEAR_MARKER = "own_clear.json"
+_OWN_CLEAR_REFUSED = (
+    "[HARNESS] own-clear: the clear this window asked the engine for at {asked}Z was refused "
+    "{count} time(s) (latest: {reason}); the mod asks again at each turn's end, and no clear has "
+    "run. Say so in the first line of your reply, so the operator at this terminal sees it: this "
+    "window needs /clear by hand (the loop survives it; start no second one). Take no new job "
+    "meanwhile."
+)
+
+
+def _own_clear_advisory(root: Path, sid: str) -> str | None:
+    """DEF-5031: the own-clear marker armed for THIS session with a refusal on
+    it, or ``None`` (no marker, another session's, no refusal yet, a torn
+    file). The banner's ``Own-clear:`` line is the sibling reader for every
+    other session; this one speaks in the window whose clear it is."""
+    try:
+        marker = json.loads((root / STATE_DIR / _OWN_CLEAR_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # fail-open: ok deliberate an advisory: a missing marker, or one torn mid-rewrite, says nothing
+        return None
+    if not isinstance(marker, dict) or marker.get("state") != "armed" or not sid or marker.get("session_id") != sid:
+        return None
+    count = marker.get("clear_refusals")
+    if not isinstance(count, int) or count <= 0:
+        return None
+    reason = str(marker.get("clear_refused") or "no reason recorded").replace("\n", " ")[:160]
+    asked = str(marker.get("clear_asked_at") or marker.get("clear_refused_at") or "?")[:16]
+    return _OWN_CLEAR_REFUSED.format(asked=asked, count=count, reason=reason)
+
+
 # Decision-shape patterns. The advisory is `print()`-ed to the
 # same plain-text stdout channel as ROUTING_GUIDANCE (UserPromptSubmit
 # injects stdout as additional context per
@@ -434,6 +472,16 @@ def _run_main() -> int:
         if printed_any:
             print()
         print(ask)
+        printed_any = True
+
+    # A clear this window asked for that the engine refused (DEF-5031) sits
+    # above the active-plan return too: the stuck window's ticks are the only
+    # prompts it gets, and a plan open there changes nothing about the clear.
+    refused = _own_clear_advisory(root, safe_session_id(data.get("session_id")))
+    if refused is not None:
+        if printed_any:
+            print()
+        print(refused)
         printed_any = True
 
     if _has_active_plan(root):

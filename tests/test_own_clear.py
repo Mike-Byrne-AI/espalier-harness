@@ -356,6 +356,60 @@ class TestModArgs:
         assert seat.mod_args() == ["--plugin-dir", str(seat.MOD_DIR)]
 
 
+class TestTheRecordTheModWritesIsWhatTheHooksRead:
+    """DEF-5031, DEF-5032 (2026-10-30): the marker's record crosses the language
+    line twice -- the mod (TypeScript) writes it, the banner's ``Own-clear:``
+    line (``session_start.py``) and the router's advisory (``task_router.py``)
+    read it. The field names are pinned here on all three sides, and the two
+    fixes' shapes are pinned by text in the module, since no Python test drives
+    the mod's hooks (the kit does, ``claude plugin test``). Dies to: a field
+    renamed on one side, the refusal record dropped or written with the state
+    moved off ``armed``, or the ``lastId`` guard loosened back to the
+    unconditional write that took the new session's id under a pending clear."""
+
+    #: What the mod writes beyond the arm's own fields; the readers below read a subset.
+    FIELDS = ("clear_asked_at", "clear_refused", "clear_refusals", "clear_refused_at", "clear_resolved_at",
+              "turns_since_ask", "previous_session_id", "stale_because")
+
+    def test_every_field_the_hooks_read_is_one_the_mod_writes(self, module_text):
+        banner = (TOOLS_CC / "hooks" / "session_start.py").read_text(encoding="utf-8")
+        router = (TOOLS_CC / "hooks" / "task_router.py").read_text(encoding="utf-8")
+        for field in self.FIELDS:
+            assert field in module_text, f"the mod no longer writes {field}"
+        for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_resolved_at", "turns_since_ask",
+                     "stale_because"):
+            assert f'"{name}"' in banner, f"the banner no longer reads {name}"
+        for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_refused_at"):
+            assert f'"{name}"' in router, f"the router no longer reads {name}"
+        assert 'OWN_CLEAR_MARKER = "own_clear.json"' in banner
+        assert '_OWN_CLEAR_MARKER = "own_clear.json"' in router
+
+    def test_a_refusal_is_recorded_with_the_state_left_armed(self, module_text):
+        """DEF-5031's guard: the rejected ask's continuation writes the reason,
+        the count and the time onto the armed marker, and never its state (Gate
+        5, the handoff's refusal of a second arm and the mod's own retry all
+        read ``armed``)."""
+        assert "clear_refused: reason" in module_text, "the refusal is not recorded on the marker"
+        start = module_text.index(".catch(async err =>")
+        catch = module_text[start:module_text.index("return next(e)", start)]
+        assert "clear_refusals: count" in catch and "clear_refused_at" in catch
+        assert "state:" not in catch
+
+    def test_a_pending_clear_holds_the_last_session(self, module_text):
+        """DEF-5032's guard: a turn's end writes ``lastId`` only outside a
+        pending clear or for the asked session; the clear's SessionStart reads
+        its last session before the marker (three engine round-trips a turn's
+        end could land inside) and takes the marker as its own for the asked
+        session, or, with no last session known, by the marker's own ask."""
+        assert "if (clearedFor === undefined || id === clearedFor) lastId = id" in module_text, (
+            "the turn end writes lastId unconditionally: a queued clear's flip is taken as the last session")
+        start = module_text.index("on('classic.SessionStart'")
+        handler = module_text[start:module_text.find("\n  on('", start + 1)]
+        assert handler.index("const before = lastId") < handler.index("await readMarker($)")
+        assert "marker.session_id === asked" in handler
+        assert "typeof marker.clear_asked_at === 'string'" in handler
+
+
 class TestTheModReadsWhatTheDriverWrites:
     """The Python side and the TypeScript side share a contract no test could
     see across the language line: the marker's path and states, the flag the

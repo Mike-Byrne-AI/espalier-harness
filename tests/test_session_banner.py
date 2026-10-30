@@ -3636,6 +3636,90 @@ def _iso_ago(now: float, seconds: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(now - seconds))
 
 
+class TestOwnClearLine:
+    """DEF-5031, DEF-5032: the own-clear mod writes every outcome on its marker
+    (a refusal's text and count, the turns a queued clear has waited, when the
+    engine took the ask, the ids a stale marking compared), and the banner
+    reads it: a window elsewhere waiting on a clear the engine refused, this
+    window re-primed after refusals, or cleared and not re-primed. Reporter
+    only, omit-when-empty, ASCII, one line; the field names are the mod's
+    (tests/test_own_clear.py pins them across the language line). Dies to: a
+    line over a clean consume or this window's own pending clear, a torn
+    marker read as a crash, or a field renamed on one side."""
+
+    def _marker(self, root: Path, **fields) -> None:
+        state = root / ".espalier-state"
+        state.mkdir(parents=True, exist_ok=True)
+        base = {"state": "armed", "session_id": "aaaaaaaa-1111", "head": "h" * 40, "seat": "box",
+                "role": "worker", "brief": "the seat brief", "written_at": "2026-10-30T09:00:07.123456+00:00"}
+        (state / "own_clear.json").write_text(json.dumps({**base, **fields}), encoding="utf-8")
+
+    def test_no_marker_a_torn_one_and_a_clean_consume_print_nothing(self, tmp_path):
+        mod = _load()
+        assert mod._own_clear_line(tmp_path, "s-1") == ""
+        (tmp_path / ".espalier-state").mkdir()
+        (tmp_path / ".espalier-state" / "own_clear.json").write_text('{"state": "arm', encoding="utf-8")
+        assert mod._own_clear_line(tmp_path, "s-1") == ""
+        self._marker(tmp_path, state="consumed", new_session_id="s-1", consumed_at="2026-10-30T09:00:17Z")
+        assert mod._own_clear_line(tmp_path, "s-1") == ""
+
+    def test_this_windows_own_pending_clear_is_the_status_lines_not_the_banners(self, tmp_path):
+        mod = _load()
+        self._marker(tmp_path, session_id="s-1", clear_asked_at="2026-10-30T09:09:13.751Z", clear_refusals=3)
+        assert mod._own_clear_line(tmp_path, "s-1") == ""
+
+    def test_a_marker_armed_for_another_session_names_the_refusals_the_reason_and_the_hand_clear(self, tmp_path):
+        mod = _load()
+        self._marker(tmp_path, clear_asked_at="2026-10-30T19:09:14.001Z", clear_refusals=41,
+                     clear_refused="HooksError: the turn was interrupted\nbefore the command ran")
+        line = mod._own_clear_line(tmp_path, "s-2")
+        assert "armed for session aaaaaaaa (not this one)" in line and "written 2026-10-30T09:00Z" in line
+        assert "refused 41 time(s)" in line and "interrupted before the command ran" in line
+        assert "asked 2026-10-30T19:09Z" in line and "/clear by hand" in line
+        assert line.isascii() and "\n" not in line, line
+
+    def test_a_clear_taken_and_not_run_an_unanswered_ask_and_no_ask_each_read_apart(self, tmp_path):
+        mod = _load()
+        self._marker(tmp_path, clear_asked_at="2026-10-30T09:09:13Z", clear_resolved_at="2026-10-30T09:09:14Z",
+                     turns_since_ask=2)
+        taken = mod._own_clear_line(tmp_path, "s-2")
+        assert "taken 2026-10-30T09:09Z" in taken and "after 2 turn(s)" in taken and "lost" in taken
+        self._marker(tmp_path, clear_asked_at="2026-10-30T09:09:13Z")
+        assert "the engine has not answered" in mod._own_clear_line(tmp_path, "s-2")
+        self._marker(tmp_path)
+        assert "never asked" in mod._own_clear_line(tmp_path, "s-2")
+
+    def test_this_window_re_primed_after_refusals_says_so_and_a_clean_re_prime_does_not(self, tmp_path):
+        mod = _load()
+        self._marker(tmp_path, state="consumed", new_session_id="s-2", consumed_at="2026-10-30T19:22:02Z",
+                     clear_asked_at="2026-10-30T19:09:14Z", clear_refusals=41, clear_refused="HooksError: x")
+        line = mod._own_clear_line(tmp_path, "s-2")
+        assert "re-primed after the engine refused the clear 41 time(s)" in line
+        assert "consumed 2026-10-30T19:22Z" in line
+        assert mod._own_clear_line(tmp_path, "s-3") == ""   # another session's consume is not this window's
+
+    def test_a_marker_marked_stale_at_the_clear_into_this_window_names_the_ids_and_the_brief(self, tmp_path):
+        mod = _load()
+        self._marker(tmp_path, state="stale", new_session_id="s-2", consumed_at="2026-10-30T19:55:52Z",
+                     previous_session_id="bbbbbbbb-2222",
+                     stale_because="armed for aaaaaaaa-1111; this process's last session was bbbbbbbb-2222")
+        line = mod._own_clear_line(tmp_path, "s-2")
+        assert "marked stale at the clear into this window" in line
+        assert "aaaaaaaa-1111" in line and "bbbbbbbb-2222" in line
+        assert "no brief was submitted" in line and "seat.py brief" in line
+        assert mod._own_clear_line(tmp_path, "s-3") == ""
+
+    def test_banner_carries_the_line_only_when_given_in_both_builders(self, tmp_path):
+        mod = _load()
+        assert "Own-clear:" not in mod._build_context(tmp_path, False, False)
+        given = "marker armed for session aaaaaaaa (not this one), written 2026-10-30T09:00Z; its clear was never asked"
+        fresh = mod._build_context(tmp_path, False, False, sessions="s", permissions="p", own_clear=given)
+        assert f"Own-clear: {given}\n" in fresh
+        assert fresh.index("Permissions:") < fresh.index("Own-clear:") < fresh.index("Memory:")
+        compact = mod._build_context(tmp_path, False, False, "compact", own_clear=given)
+        assert f"Own-clear: {given}\n" in compact
+
+
 class TestPermissionsLine:
     """DEF-1108: a bypassPermissions default is a permission posture, not a
     kill-switch -- the hooks still run and still deny -- so the banner says what

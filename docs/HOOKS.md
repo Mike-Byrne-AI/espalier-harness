@@ -85,6 +85,16 @@ your terminal.
 A `bypassPermissions` default is not a kill-switch -- the hooks still run and
 still deny in bypass mode -- so it gets its own `Permissions:` line naming the
 settings file.
+The own-clear marker (`.espalier-state/own_clear.json`, written by the handoff
+and rewritten by the own-clear mod with every outcome) gets an `Own-clear:`
+line when its record is one a reader should see: armed for a session other
+than this one (a window elsewhere whose clear the engine refused, with the
+count and the engine's reason, took and never ran, or never asked; or a
+window since closed), consumed into this session after refusals, or marked
+stale at the clear into this session (cleared, not re-primed: no brief was
+submitted, and the line names the two ids the mod compared). A clean consume,
+this window's own pending clear (the mod's status line has it), no marker or
+a torn one print nothing; reporter only.
 
 Three more states it reads. On POSIX it reads the process table and, when a
 process reparented to PID 1 is a `python*` or `yes` command with ten or more
@@ -596,6 +606,27 @@ no figure is said once a session, on the same channel (the transcript's
 record shape is an assumption, `HOOK_ASSUMPTIONS.md` Assumption 7). The
 setting is a token count, not a share of the window: on a 200k-window model
 set it accordingly.
+
+**A refused own-clear.** The own-clear mod (`tools/cc/mods/own-clear`) asks
+the engine for the clear at a turn's end and puts a rejected ask on its marker
+(`.espalier-state/own_clear.json`: the engine's reason, when, a count); the
+window whose clear it is gets loop ticks and nothing else, and its status line
+is read by nobody (the dispatcher window re-asked 41 times over ten hours on
+2026-10-30). So while the marker is armed for this session with a refusal on
+it, every prompt gets one ASCII paragraph, above an active plan too:
+
+```
+[HARNESS] own-clear: the clear this window asked the engine for at
+2026-10-30T09:09Z was refused 41 time(s) (latest: <the engine's text>); the mod
+asks again at each turn's end, and no clear has run. Say so in the first line
+of your reply, so the operator at this terminal sees it: this window needs
+/clear by hand (the loop survives it; start no second one). Take no new job
+meanwhile.
+```
+
+Another session's marker, a clear not yet refused, a consumed marker and a
+torn one say nothing. The SessionStart banner's `Own-clear:` line is every
+other session's reader of the same record.
 
 ---
 
