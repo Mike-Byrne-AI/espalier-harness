@@ -370,7 +370,29 @@ class TestTheOtherColumns:
                    _m("air", "ack", "2026-10-18T08:00:00Z", "k8", ack="q4", text="gridlock: ruling on q4, the facts read"))
         rows = {r["seat"]: (r["redirect"], r["shelved"], r.get("gridlock")) for r in census_mod.census(src, DAY, NEXT)["rows"]}
         assert rows == {"win": (1, 1, 0), "air": (0, 0, 1)}
-        assert census_mod.MARKERS == {"redirect": "redirect:", "shelved": "shelved:", "gridlock": "gridlock:"}
+        assert census_mod.MARKERS == {"redirect": "redirect:", "shelved": "shelved:", "gridlock": "gridlock:",
+                                      "stopped": "stopped:"}
+
+    def test_a_stop_counts_on_a_request_alone_where_its_text_opens_with_the_marker(self):
+        """DEF-5030 (2026-10-30): a worker's stop is a request opening with
+        ``stopped:`` (``tools/cc/mail.py::STOPPED_PREFIX``; the board's asks
+        line counts it apart), counted on the sender's row on a request alone,
+        as the operator call is read: a note, an ack or an assign opening with
+        the word, or a quotation mid-text, is no stop, and a leading space is
+        no opening. Dies to: the word read on a note, read anywhere in a text,
+        or left out of the row's text form."""
+        src = _src(_m("win", "request", "2026-10-18T01:00:00Z", "q1", text="stopped: a conflict outside my files"),
+                   _m("win", "note", "2026-10-18T02:00:00Z", "n2", text="stopped: a note is no stop"),
+                   _m("air", "ack", "2026-10-18T03:00:00Z", "k3", ack="q1", text="stopped: an ack is no stop either"),
+                   _m("air", "assign", "2026-10-18T04:00:00Z", "a4", seat="win-2",
+                      text="a request opening with stopped: is a stop"),
+                   _m("win-2", "request", "2026-10-18T05:00:00Z", "q5", text="  stopped: a leading space is no opening"))
+        data = census_mod.census(src, DAY, NEXT)
+        rows = {r["seat"]: r["stopped"] for r in data["rows"]}
+        assert rows["win"] == 1 and not any(v for s, v in rows.items() if s != "win"), rows
+        assert data["totals"]["stopped"] == 1
+        assert "gridlock: 0, stopped: 1." in census_mod.as_row(data, "win", "2026-10-18")
+        assert "gridlock: 0, stopped: 0." in census_mod.as_row(data, "win-2", "2026-10-18")
 
     def test_a_gridlock_ruling_counts_on_its_senders_row_and_the_row_names_each_rulings_id(self):
         """The ruling's ack opens with ``gridlock:`` (the dispatcher brief's
@@ -396,13 +418,13 @@ class TestTheOtherColumns:
         assert rows == {"air": (2, ["k2", "k1"]), "win": (0, [])}
         assert data["totals"]["gridlock"] == 2
         air_row = census_mod.as_row(data, "air", "2026-10-18")
-        assert "shelved: 0, gridlock: 2 (k2, k1)." in air_row, air_row
+        assert "shelved: 0, gridlock: 2 (k2, k1), stopped: 0." in air_row, air_row
         for seat in ("win", "win-2"):
             row = census_mod.as_row(data, seat, "2026-10-18")
-            assert "shelved: 0, gridlock: 0." in row and "(" not in row.split("gridlock:")[1], row
+            assert "shelved: 0, gridlock: 0, stopped: 0." in row and "(" not in row.split("gridlock:")[1], row
         text = census_mod.render(data, {})
-        assert "2026-10-18 air: merged 0, " in text and "shelved: 0, gridlock: 2 (k2, k1)\n" in text, text
-        assert "2026-10-18 win: merged 0, " in text and "shelved: 0, gridlock: 0\n" in text, text
+        assert "2026-10-18 air: merged 0, " in text and "shelved: 0, gridlock: 2 (k2, k1), stopped: 0\n" in text, text
+        assert "2026-10-18 win: merged 0, " in text and "shelved: 0, gridlock: 0, stopped: 0\n" in text, text
         assert "2026-10-18 win-2:" not in text, text
 
     def test_each_senders_releases_naming_an_assign_count_on_its_row_split_by_whether_each_closed_a_job(self):

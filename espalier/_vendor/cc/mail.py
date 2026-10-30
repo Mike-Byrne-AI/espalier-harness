@@ -157,6 +157,15 @@ MAX_TEXT = 2000
 #: by the board and the fold; the message shape is unchanged, and an ack from
 #: any other seat leaves the call open (``live_requests``).
 OPERATOR_CALL_PREFIX = "OPERATOR CALL:"
+#: What a worker's stop opens with: a ``request`` the worker sends when it
+#: cannot advance its job (a refusal it cannot resolve, a conflict outside its
+#: own files, a decision reserved for the operator: the worker tick's STOP
+#: clause, ``seat.py``), so the board's ``asks:`` line carries the stop with
+#: its age (the dispatcher's past-the-hour gridlock read) and counts the stops
+#: apart; it closes on any ack naming it, as a plain request does. The sibling
+#: of the operator call, read the same way (``is_stop``); before it a stopped
+#: worker sent nothing and the board showed no stopped seat (``DEF-5030``).
+STOPPED_PREFIX = "stopped:"
 MAX_PATHS = 64
 MAX_CLASSES = 16
 MAX_IDS = 64
@@ -817,6 +826,18 @@ def is_operator_call(message: object) -> bool:
     not one, and the prefix is read as spelled."""
     return (isinstance(message, dict) and message.get("type") == "request"
             and str(message.get("text") or "").startswith(OPERATOR_CALL_PREFIX))
+
+
+def is_stop(message: object) -> bool:
+    """Whether ``message`` is a request whose text opens with
+    :data:`STOPPED_PREFIX`, as the driver stores it (stripped on send): a
+    worker's stop, which the board's asks line counts apart with its age.
+    Read as :func:`is_operator_call` reads its prefix: a note, an ack or an
+    assign carrying the word is no stop, a request quoting it mid-text is
+    not one, and the prefix is read as spelled. It closes as a plain request
+    does, on any ack naming it (``live_requests``)."""
+    return (isinstance(message, dict) and message.get("type") == "request"
+            and str(message.get("text") or "").startswith(STOPPED_PREFIX))
 
 
 def _count(value: object) -> int:

@@ -733,7 +733,10 @@ SELF_HOST_PROCEED = (
     "On a choice the assign does not settle, send {dispatcher} one request with your Task 0 recommendation and "
     "its citation, then proceed on it after {wait} minutes (the dispatcher's tick; the board's asks line shows "
     "your request's age) with no answer; a request with no recommendation keeps the stop, and an ack from "
-    "{dispatcher} beginning redirect: re-aims you at once. STOP and only re-read mail for what the assign "
+    "{dispatcher} beginning redirect: re-aims you at once. STOP, send {dispatcher} one request opening with "
+    "stopped: that names what stops you (an operator call by its id), and only re-read mail until an ack frees "
+    "or re-aims you or what stops you is gone, then ack your own stop saying so (an ack that does not free you: "
+    "send the stop again), for what the assign "
     "authority reserves for the operator (a new pack, a scope change, a release or tag, a revert that is not "
     "the red-main revert, an open operator call on your fork), a platform stop, a refusal you cannot resolve, "
     "or a conflict outside your own files; a row to file is never a stop. A red you cannot fix in two "
@@ -745,10 +748,16 @@ SELF_HOST_PROCEED = (
     "allowance: line names runs at your own model, a named agent runs at its own pin and needs no allowance, "
     "and choosing your own model where a lower one was allowed is never a finding."
 )
+#: Both clauses send one request opening with stopped: at the stop (the
+#: board's asks line counts it apart and the census tallies it; the word's
+#: home is tools/cc/mail.py::STOPPED_PREFIX, which tests/test_seat.py holds
+#: both clauses to): before 2026-10-30 this repository's STOP sent nothing and
+#: the adopter's sent a plain request, so the board showed no stopped seat for
+#: the dispatcher's past-the-hour gridlock read (DEF-5030).
 ADOPTER_PROCEED = (
-    "STOP and send {dispatcher} one request, then only re-read mail until it is answered, on anything not "
-    "green: a red you cannot fix in two attempts, a choice the assign does not settle, a refusal you cannot "
-    "resolve, a conflict outside your own files, anything that is the operator's decision."
+    "STOP and send {dispatcher} one request opening with stopped:, then only re-read mail until it is answered, "
+    "on anything not green: a red you cannot fix in two attempts, a choice the assign does not settle, a "
+    "refusal you cannot resolve, a conflict outside your own files, anything that is the operator's decision."
 )
 #: The one exception to the operator's decisions, this repository's own (the
 #: operator's standing rule, 2026-10-30, after seats held eleven hours on
@@ -760,11 +769,14 @@ ADOPTER_PROCEED = (
 #: renders right after the operator's sentence, and an adopter's brief
 #: carries nothing in the slot, as with SELF_HOST_FIGURES. The ruling's ack
 #: opens with the marker ``gridlock:`` (DEF-5029, 2026-10-30), in the family
-#: of OPERATOR CALL:, redirect: and shelved:, and the seat-day census counts
-#: a ruling by that opening alone and names its id on the dispatcher's row:
-#: the first two rulings under the rule were plain acks no reader counted,
+#: of OPERATOR CALL:, redirect:, shelved: and stopped:, and the seat-day census
+#: counts a ruling by that opening alone and names its id on the dispatcher's
+#: row: the first two rulings under the rule were plain acks no reader counted,
 #: and a word read anywhere in a text counts the brief's and the assigns' own
-#: quotations of it. The same test holds the word to the census's table.
+#: quotations of it. The same test holds the word to the census's table. A
+#: worker's stop is a request opening with stopped: on the board's asks line
+#: (DEF-5030), so the past-the-hour read is that row's age, and the sentence
+#: says what answers it.
 SELF_HOST_GRIDLOCK = (
     "A gridlock, where no seat can advance its assigned job and the next step is a decision (a red main no "
     "revert clears, two lanes in conflict, a ruling a worker waits on past the hour), is yours to resolve, the "
@@ -773,7 +785,8 @@ SELF_HOST_GRIDLOCK = (
     "per ack) and carries the facts you read, instead of filing an operator call and waiting "
     "(scripts/seat_day_census.py counts the "
     "rulings by that opening and your row names them); the operator can reverse it, and a new pack, a scope "
-    "change, a release or tag stay the operator's. "
+    "change, a release or tag stay the operator's. A (stopped) row on the asks line past the hour is that "
+    "read: answer it with the ack that frees or re-aims the seat. "
 )
 DISPATCHER_BRIEF = (
     "You are the dispatcher seat {seat} ({protocol}). Orient from the banner{goal}, then run /inbox (mark "

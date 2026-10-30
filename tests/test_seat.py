@@ -552,7 +552,10 @@ class TestLaunch:
 #: row is never a stop; the shelved: note names the job the push closed, the
 #: push having released the claims; a shelved lane is not re-fixed each tick;
 #: the refresh command spelled like the tick's other commands, with no bare
-#: interpreter). The self-host render must reproduce it byte for byte; its 15
+#: interpreter); and since 2026-10-30 the STOP sends one request opening with
+#: stopped: (DEF-5030, the fix shape the seat named under the ruling d6ef5a
+#: that minted the row: a stopped worker sent nothing, so the board showed no
+#: stopped seat). The self-host render must reproduce it byte for byte; its 15
 #: minutes is DISPATCHER_TICK's interval, rendered, never copied.
 _OPERATOR_TICK = (
     "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
@@ -568,10 +571,13 @@ _OPERATOR_TICK = (
     "choice the assign does not settle, send air one request with your Task 0 recommendation and its citation, "
     "then proceed on it after 15 minutes (the dispatcher's tick; the board's asks line shows your request's "
     "age) with no answer; a request with no recommendation keeps the stop, and an ack from air beginning "
-    "redirect: re-aims you at once. STOP and only re-read mail for what the assign authority reserves for the "
-    "operator (a new pack, a scope change, a release or tag, a revert that is not the red-main revert, an open "
-    "operator call on your fork), a platform stop, a refusal you cannot resolve, or a conflict outside your own "
-    "files; a row to file is never a stop. A red you cannot fix in two attempts: shelve the lane (one note "
+    "redirect: re-aims you at once. STOP, send air one request opening with stopped: that names what stops you "
+    "(an operator call by its id), and only re-read mail until an ack frees or re-aims you or what stops you is "
+    "gone, then ack your own stop saying so (an ack that does not free you: send the stop again), for what the "
+    "assign authority reserves for the operator (a new pack, a scope change, a release or tag, a revert that is "
+    "not the red-main revert, an open operator call on your fork), a platform stop, a refusal you cannot resolve, "
+    "or a conflict outside your own files; a row to file is never a stop. A red you cannot fix in two attempts: "
+    "shelve the lane (one note "
     "beginning shelved: says what was tried and names any job your push closed; a shelved lane waits for the "
     "dispatcher, not your next tick), take your next assigned job (after the threshold ask: hand off instead). "
     "Pass a model below your own on a subagent "
@@ -728,7 +734,8 @@ class TestBrief:
                 "the facts you read, "
                 "instead of filing an operator call and waiting (scripts/seat_day_census.py counts the rulings "
                 "by that opening and your row names them); the operator can reverse it, and a new pack, a scope "
-                "change, a release or tag stay the operator's. At the operator's word") in own, own
+                "change, a release or tag stay the operator's. A (stopped) row on the asks line past the hour is "
+                "that read: answer it with the ack that frees or re-aims the seat. At the operator's word") in own, own
         assert own.count(seat.SELF_HOST_GRIDLOCK) == 1, own
         shapes = "a red main no revert clears, two lanes in conflict, a ruling a worker waits on past the hour"
         kept = "a new pack, a scope change, a release or tag stay the operator's"
@@ -748,9 +755,56 @@ class TestBrief:
                     if line.startswith("15. **Parallel work"))
         assert "is resolved by the dispatcher seat" in rule and kept in rule, rule
 
+    def test_a_stop_is_a_request_opening_with_the_marker_the_board_counts(self, seat):
+        """DEF-5030 (2026-10-30): a worker that stopped sent nothing (the
+        self-host STOP clause said only re-read mail; the adopter's sent a
+        plain request the board could not tell from a question), so the
+        board showed no stopped seat for the dispatcher's past-the-hour
+        gridlock read. Both clauses send one request opening with
+        ``stopped:``, the word's one home ``tools/cc/mail.py::STOPPED_PREFIX``
+        beside the operator call's, which the board's asks line counts apart
+        and the census table carries; the record homes carry the same word:
+        the protocol's seat's-side paragraph and the dispatcher's first-read
+        paragraph, the inbox body's asks bullet and the workflow guide's.
+        Dies to: a clause that stops without the send, the marker spelled
+        apart from the constant in a clause or the census table, or a record
+        home that names the stop without the word."""
+        root = Path(__file__).resolve().parents[1]
+        marker = seat.mail.STOPPED_PREFIX
+        assert marker == "stopped:"
+        # The resume rule (the failure-mode review): a release or the ruling on an operator
+        # call names no stop, so the seat acks its own stop when the cause is gone, and an
+        # interim ack that frees nothing is answered by sending the stop again.
+        assert (f"STOP, send {{dispatcher}} one request opening with {marker} that names what stops you (an operator "
+                "call by its id), and only re-read mail until an ack frees or re-aims you or what stops you is gone, "
+                "then ack your own stop saying so (an ack that does not free you: send the stop again), for what the "
+                "assign authority reserves for the operator") in seat.SELF_HOST_PROCEED
+        assert (f"STOP and send {{dispatcher}} one request opening with {marker}, then only re-read mail until it is "
+                "answered, on anything not green") in seat.ADOPTER_PROCEED
+        # The dispatcher's side: the stop row past the hour is the gridlock read.
+        assert ("A (stopped) row on the asks line past the hour is that read: answer it with the ack that frees or "
+                "re-aims the seat") in seat.SELF_HOST_GRIDLOCK
+        census_path = root / "scripts" / "seat_day_census.py"
+        if not census_path.is_file():  # pragma: no cover - adopter tree
+            pytest.skip("scripts/seat_day_census.py is self-host dev tooling")
+        spec = importlib.util.spec_from_file_location("census_for_the_stop", census_path)
+        census = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = census
+        spec.loader.exec_module(census)
+        assert census.MARKERS["stopped"] == marker
+        protocol = " ".join((root / "memory" / "parallel-work-protocol.md").read_text(encoding="utf-8").split())
+        assert f"one `request` whose text opens with `{marker}`" in protocol, "the seat's-side paragraph"
+        assert "the seat acks its own stop when what stopped it is gone" in protocol, "the resume rule"
+        assert f"a request opening with `{marker}`" in protocol, "the dispatcher's first-read paragraph"
+        for rel in (".claude/commands/inbox.md", "docs/WORKFLOW.md"):
+            body = " ".join((root / rel).read_text(encoding="utf-8").split())
+            assert f"A request whose text opens with `{marker}` is a worker's stop" in body, rel
+        inbox = " ".join((root / ".claude" / "commands" / "inbox.md").read_text(encoding="utf-8").split())
+        assert "a `(stopped)` row past the hour on the `asks:` line is the gridlock's read" in inbox
+
     def test_the_gridlock_ruling_opens_with_the_marker_the_census_counts(self, seat):
         """DEF-5029 (2026-10-30): the ruling's ack opens with ``gridlock:``, a
-        marker in the family of OPERATOR CALL:, redirect: and shelved:, and
+        marker in the family of OPERATOR CALL:, redirect:, shelved: and stopped:, and
         scripts/seat_day_census.py counts a ruling by that opening alone and
         names its id on the dispatcher's row (the first two rulings under the
         rule were plain acks no reader counted; a word read anywhere in a text
@@ -1035,7 +1089,8 @@ class TestBrief:
         feat = _worktree(clone, "feat", name="box-feat")
         _holds(feat, "docs/WORKFLOW.md")
         loop = seat.compose_brief(clone, "box-feat", feat).loop
-        assert "STOP and send ops one request, then only re-read mail until it is answered, on anything not green" in loop
+        assert ("STOP and send ops one request opening with stopped:, then only re-read mail until it is answered, on "
+                "anything not green") in loop
         assert "proceed on it" not in loop and "Task 0" not in loop and "shelve" not in loop
         assert "run mail.py refresh once" in loop and "{" not in loop
         assert loop.isascii() and '"' not in loop and "%" not in loop

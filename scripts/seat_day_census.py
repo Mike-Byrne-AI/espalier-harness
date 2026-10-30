@@ -55,7 +55,7 @@ Per seat per UTC day in ``[since, until)``, one row:
   all three, and the oldest day the tree holds.
 * **START**: the seat's messages that day whose text carries the word (the
   tier-run announcement, anywhere in a text).
-* **redirect:**, **shelved:** and **gridlock:**: the seat's messages that day
+* **redirect:**, **shelved:**, **gridlock:** and **stopped:**: the seat's messages that day
   whose text opens with the marker (``MARKERS``, on the text as the driver
   stores it, stripped on send), as the operator-call rule reads ``OPERATOR CALL:``
   (``tools/cc/mail.py::is_operator_call``). The briefs and the assigns quote
@@ -107,15 +107,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 #: The markers a seat opens a message with: ``redirect:`` (an ack that re-aims
 #: a seat) and ``shelved:`` (a note that shelves a lane) when it moves off a
-#: job, and ``gridlock:`` (the dispatcher's ruling ack on a gridlock, the
-#: brief's sentence in ``tools/cc/seat.py::SELF_HOST_GRIDLOCK``). Read where
+#: job, ``gridlock:`` (the dispatcher's ruling ack on a gridlock, the
+#: brief's sentence in ``tools/cc/seat.py::SELF_HOST_GRIDLOCK``), and
+#: ``stopped:`` (a worker's request when it cannot advance its job, the tick's
+#: STOP clause; ``tools/cc/mail.py::STOPPED_PREFIX`` is its home, and the
+#: board's asks line counts it apart, ``DEF-5030``). Read where
 #: the text opens with the marker, never anywhere in it: the briefs and the
 #: assigns quote these words mid-text (``DEF-5029``), as ``OPERATOR CALL:`` is
 #: quoted and read at the opening alone (``tools/cc/mail.py::is_operator_call``);
-#: ``gridlock:`` counts on an ack from the dispatcher alone, as that rule
-#: counts a request alone. ``tests/test_seat.py`` holds the brief's word to
-#: this table.
-MARKERS = {"redirect": "redirect:", "shelved": "shelved:", "gridlock": "gridlock:"}
+#: ``gridlock:`` counts on an ack from the dispatcher alone, and ``stopped:``
+#: on a request alone, as that rule counts a request alone.
+#: ``tests/test_seat.py`` holds the brief's words to this table, and the
+#: table's ``stopped:`` to the mail driver's constant.
+MARKERS = {"redirect": "redirect:", "shelved": "shelved:", "gridlock": "gridlock:", "stopped": "stopped:"}
 #: Every counted word, in the order a row prints them: the seats' START (a
 #: word anywhere in a text: the tier-run announcement, which never opens a
 #: message), then the markers.
@@ -213,14 +217,17 @@ def _words(m: dict, dispatcher: str | None = None) -> dict[str, bool]:
     """The counted words a message carries: its fixture booleans, else its
     text -- START anywhere in it, a marker where the text opens with it, as
     the driver stores it (stripped on send; ``tools/cc/mail.py::is_operator_call``
-    reads ``OPERATOR CALL:`` the same way, with no strip of its own), and
+    reads ``OPERATOR CALL:`` the same way, with no strip of its own),
     ``gridlock:`` on an ack from ``dispatcher`` alone (any seat's where none
-    is named)."""
+    is named), and ``stopped:`` on a request alone (a worker's stop, which the
+    board's asks line counts apart; a note or an ack opening with the word is
+    not one)."""
     text = str(m.get("text") or "")
     hits = {"start": bool(START_RE.search(text))}
     hits.update({k: text.startswith(marker) for k, marker in MARKERS.items()})
     ruling = m.get("type") == "ack" and (dispatcher is None or str(m.get("from")) == dispatcher)
     hits["gridlock"] = hits["gridlock"] and ruling
+    hits["stopped"] = hits["stopped"] and m.get("type") == "request"
     return {k: bool(m.get(k)) or hits[k] for k in WORDS}
 
 
@@ -439,11 +446,11 @@ def _hand(r: dict) -> str:
 
 def _words_line(r: dict) -> str:
     """A row's counted words, the gridlock rulings named by id after their
-    count (none: the count alone)."""
+    count (none: the count alone), then the stops."""
     ids = r.get("gridlock_ids") or []
     named = f" ({', '.join(ids)})" if ids else ""
     return (f"START {r['start']}, redirect: {r['redirect']}, shelved: {r['shelved']}, "
-            f"gridlock: {r['gridlock']}{named}")
+            f"gridlock: {r['gridlock']}{named}, stopped: {r['stopped']}")
 
 
 def as_row(data: dict, seat: str, day: str, extra: dict | None = None) -> str:
