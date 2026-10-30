@@ -173,7 +173,7 @@ def read_live(repo: Path, fetch: bool) -> dict:
     out["dispatcher"], out["dispatcher_how"] = mail.dispatcher_setting(repo)
     try:
         gh = run_bounded(["gh", "pr", "list", "--state", "merged", "--limit", str(GH_LIMIT), "--json",
-                          "number,headRefName,mergedAt"], cwd=repo, capture_output=True, encoding="utf-8",
+                          "number,headRefName,mergedAt,labels"], cwd=repo, capture_output=True, encoding="utf-8",
                          errors="replace", timeout=60)
         out["merged"] = json.loads(gh.stdout) if gh.returncode == 0 else None
         if gh.returncode != 0:
@@ -333,7 +333,9 @@ def census(src: dict, since: datetime, until: datetime, now: datetime | None = N
         d = day_of(pr.get("mergedAt"))
         if d is None:
             continue
-        seat = lanes.get(str(pr.get("headRefName")))
+        # The claim first, else the seat label the ship driver stamped on the
+        # pull request (the loader's one attribution, DEF-4044).
+        seat = _fragments().lane_seat(pr, lanes)
         if seat:
             row(seat, d)["lanes_merged"].append(int(pr["number"]))
         else:

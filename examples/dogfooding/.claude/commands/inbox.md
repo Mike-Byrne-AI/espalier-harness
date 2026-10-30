@@ -248,15 +248,19 @@ is read on its own, and one that cannot be read says so on its own line:
   while any local reading is unread; run outside a session, it names every
   registry it read.
 - **records:** for each seat with a checkout here, a live claim or a job, its
-  lanes merged since its newest Session Log row on the base (`win: 9 merges
-  since its last row (2026-10-15)`; `no row on origin/main` where it has
-  none): the row a seat owes for the day's lanes, counted over the last 100
-  merges in the reading box's local day (a seat in another zone can differ by
-  a lane at the day's edge; a count the read stopped short of is a floor
-  and says `the last 100 read`), the same way the ship driver's row-debt
-  read counts it. A seat with a lane merged in the window is listed even
-  with nothing live (the end-of-day seat that owes its row), and lanes no
-  claim names are counted apart on a last line, never as a seat's zero.
+  lanes merged since its newest Session Log row (`win: 9 merges since its
+  last row (2026-10-15)`; `no row on origin/main` where it has none; `parked
+  until the next fold`, `riding its open pull request` or `pruned from
+  origin/main since` beside a date the base's tree does not hold): the row a
+  seat owes for the day's lanes, counted over the last 100 merges in the
+  reading box's local day (a seat in another zone can differ by a lane at
+  the day's edge; a count the read stopped short of is a floor and says `the
+  last 100 read`), the same way the ship driver's row-debt read counts it,
+  and past a cap of 3 the driver's `open --early` refuses. A seat with a lane
+  merged in the window is listed even with nothing live (the end-of-day seat
+  that owes its row), and lanes no claim or `seat:` label names (the driver
+  stamps the label at the open) are counted apart on a last line, never as a
+  seat's zero.
   An unnamed clone says so instead. The row goes through
   `python tools/cc/_record_fragments.py new session-log`; where the handoff's
   lane already merged, the row parks on the seat's records ref and the

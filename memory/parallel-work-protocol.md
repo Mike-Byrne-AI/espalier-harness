@@ -263,10 +263,18 @@ launcher did not start the handoff arms nothing and says the window needs a
      names are counted apart, never as a seat's zero)
      (`tools/cc/_record_fragments.py::lanes_since_row`, over the one merged
      read's lane fields, the last 100 merges); the ship driver's
-     `seat_row_debt` counts the same way, and its second lane makes `open
-     --early` refuse at a cap of 3 lanes, naming the count, the last row's
-     date and the way out (the row committed on the lane). A read that fails
-     is unread, never zero: no verdict is never a refusal on a guess.
+     `seat_row_debt` counts the same way, and since 2026-10-30 (the second
+     lane) `open --early` refuses at a cap of 3 lanes, naming the count, the
+     last row's date and where it sits (on the base; parked; riding the
+     seat's own open pull request; pruned from the base and read from its
+     history by the fold trailer, after #354's prune took two seats' newest
+     rows off the tree and the line read `no row` for seats that had rowed
+     every lane) and the way out (the row committed on the lane); a lane no
+     claim names is the seat its `seat:` label names, stamped by the driver
+     at the open, so a lane the driver opened on a named box counts for its
+     seat without a claim (a hand-opened pull request, a label the token
+     could not make, or an unnamed box still needs the claim). A read that
+     fails is unread, never zero: no verdict is never a refusal on a guess.
    - **A row another lane's unmerged edit carries is struck after that lane
      merges (2026-10-20).** A re-pin of a row rode an open pull request while
      the code that closed the row was built on `main`; a strike from the

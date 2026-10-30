@@ -297,6 +297,7 @@ class TestReadMerged:
         rows = pm.read_merged(".", 100, gh=gh, fields=pm.LANE_FIELDS)
         assert [r["headRefName"] for r in rows] == ["lane/a"]
         assert calls == [["pr", "list", "--state", "merged", "--limit", "100", "--json", pm.LANE_FIELDS]]
-        assert set(pm.LANE_FIELDS.split(",")) == {"number", "mergedAt", "headRefName"}
+        # labels: the seat:<name> label the ship driver stamps names a lane no claim does (DEF-4044).
+        assert set(pm.LANE_FIELDS.split(",")) == {"number", "mergedAt", "headRefName", "labels"}
         pm.read_merged(".", 2, gh=gh)
         assert calls[-1][-1] == pm.MERGED_FIELDS and "statusCheckRollup" in pm.MERGED_FIELDS

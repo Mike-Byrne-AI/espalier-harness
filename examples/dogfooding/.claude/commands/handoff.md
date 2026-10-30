@@ -166,7 +166,8 @@ sentence, a Lesson) and file it where `python tools/cc/_record_fragments.py new
 session-log` says (the seat is read from the clone, never typed: a typed name files the row
 under another seat and leaves the debt standing). The board's `records:` line shows every present or busy
 seat's lanes merged since its newest row; a seat whose count climbs owes this step, and
-the ship driver's `open --early` refuses past a cap once its second lane lands.
+the ship driver's `open --early` refuses past a cap of 3 lanes since that row (since
+2026-10-30), naming the way out: this step's row, committed on the lane.
 <!-- /espalier:self-host-only -->
 
 ## 3. Finalize the cognitive blueprint

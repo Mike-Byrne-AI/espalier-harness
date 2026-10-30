@@ -57,8 +57,8 @@ import _symbols  # noqa: E402  the symbols a head changed and the one pair rule,
 import mail  # noqa: E402  the claims and assignments folds
 from _json_safe import os_error_text  # noqa: E402  an OSError rendered as its path and reason
 from _record_fragments import (  # noqa: E402  the ledger and its rows, and the Session Log debt's count, named once by the loader
-    LEDGER_DIR, LEDGER_FILE, ROW_DEBT_WINDOW, SESSION_LOG_DIR, lanes_since_row, newest_row_by_seat,
-    window_stops_short)
+    FOLD_TRAILER, LEDGER_DIR, LEDGER_FILE, ROW_DEBT_WINDOW, SESSION_LOG_DIR, SHALLOW_ARGV, lane_seat, lanes_since_row,
+    newest_rows, pruned_rows_argv, pruned_rows_from, riding_rows, window_stops_short)
 from record_merge import Unresolvable, run  # noqa: E402  the one spawn and the named stop
 
 Runner = Callable[..., tuple[int, str, str]]
@@ -178,7 +178,7 @@ def _ascii(text: str) -> str:
 
 def read_open_prs(root: Path, *, run_: Runner = run) -> list[dict]:
     answer = _gh_json(root, "pr", "list", "--state", "open", "--limit", str(OPEN_PR_LIMIT), "--json",
-                      "number,headRefName,headRefOid,mergeStateStatus,isDraft,autoMergeRequest,title,files",
+                      "number,headRefName,headRefOid,labels,mergeStateStatus,isDraft,autoMergeRequest,title,files",
                       run_=run_)
     if not isinstance(answer, list):
         raise Unresolvable("gh pr list answered something other than a list")
@@ -826,7 +826,7 @@ def lane_overlap_lines(root: Path, base: str, lane: str, number: object, head: s
            or any(mail._touches(_symbols.canonical(str(f.get("path"))), p)
                   for f in pr.get("files") or [] if isinstance(f, dict) and f.get("path") for p in own)]
     for pr in prs:
-        pr["seat"] = seat_of_lane.get(str(pr.get("headRefName") or ""), "")
+        pr["seat"] = lane_seat(pr, seat_of_lane)   # the claim first, else the seat label (DEF-4044)
     section = _overlaps_or_unread(root, base, claims, [mine, *prs], notes, run_=run_, seat=machine or "",
                                   known={head: (own, "")})
     if "unread" in section:
@@ -1009,23 +1009,76 @@ def read_row_names(root: Path, base: str, *, run_: Runner = run) -> list[str]:
     return out.split()
 
 
+def read_pruned_names(root: Path, base: str, *, run_: Runner = run) -> list[str]:
+    """The Session Log fragment names the fold's prunes deleted from
+    ``origin/<base>``, read from its history by the fold trailer through the
+    loader's one argv and parser (``pruned_rows_argv``, ``pruned_rows_from``):
+    a row the cap pruned is still the row its seat wrote, and #354's prune
+    took two seats' newest rows off the tree (2026-10-30), so the line read
+    "no row on origin/main" for seats that had rowed every lane. A deletion by
+    any other commit (a revert, a hand prune) is left out and counts as debt.
+    A failed read, or a shallow clone (its history is cut, so the read lists
+    nothing), is a named ``Unresolvable``, never no names."""
+    rc, out, err = run_(["git", *SHALLOW_ARGV], cwd=str(root), timeout=GH_TIMEOUT)
+    if rc != 0 or out.strip() == "true":
+        raise Unresolvable(f"origin/{base}'s history is cut here (a shallow clone), so the Session Log names its "
+                           "prunes deleted are unread")
+    rc, out, err = run_(["git", *pruned_rows_argv(f"origin/{base}")], cwd=str(root), timeout=GH_TIMEOUT)
+    if rc != 0:
+        raise Unresolvable(f"git log origin/{base} (the Session Log names its prunes deleted) failed (rc={rc}): "
+                           f"{(err or out).strip()[:120] or 'nothing'}")
+    return pruned_rows_from(out)
+
+
+def read_riding_names(root: Path, prs: list[dict], seat_of: dict[str, str], *, run_: Runner = run) -> list[str]:
+    """The Session Log fragment names riding the open pull requests (``prs``,
+    with ``headRefOid``; ``fetch_heads`` brought the heads here): each head's
+    names that are its own seat's (``lane_seat``, then the loader's
+    ``riding_rows``: a head carries the base's fragments as of its branch
+    point too, which are not riding). A row riding a seat's own open pull
+    request is written and waits for its merge, neither on the base nor
+    parked (the first lane's failure-mode review). A head that is not here is
+    skipped: ``--no-fetch`` reads what is here, and the open-PR line says what
+    a fetch could not bring."""
+    heads: list[tuple[str, list[str]]] = []
+    read: set[str] = set()
+    for pr in prs:
+        oid = str(pr.get("headRefOid") or "") if isinstance(pr, dict) else ""
+        seat = lane_seat(pr, seat_of)
+        if not oid or not seat or oid in read or not _have(root, oid, run_=run_):
+            continue
+        read.add(oid)
+        rc, out, _err = run_(["git", "ls-tree", "--name-only", oid, "--", SESSION_LOG_DIR + "/"], cwd=str(root),
+                             timeout=GH_TIMEOUT)
+        if rc == 0:
+            heads.append((seat, out.split()))
+    return riding_rows(heads)
+
+
 def read_records_section(root: Path, base: str, by_machine: dict[str, list[dict]], rows: list[dict], *,
-                         machine: str = "", run_: Runner = run) -> dict:
+                         machine: str = "", run_: Runner = run, prs: list[dict] | None = None) -> dict:
     """``{"window", "read", "unclaimed", "entries": [{"seat", "merges",
-    "since", "parked", "cut"}], "unread"}``: for each seat with a checkout
-    here, a live claim, a job (the ``seats`` rows that are present or busy) or
-    a lane merged in the window (the end-of-day seat that owes its row), its
-    lanes merged since its newest Session Log row -- on the base, or parked on
-    its records ref and not yet folded (``mail.pending``; ``parked`` says
-    which, since a seat that wrote its row and parked it is not in debt and
-    the fold is owed) -- the count ``tools/cc/ship.py::seat_row_debt`` reads
-    too, ``_record_fragments.lanes_since_row`` over the one merged read's lane
+    "since", "parked", "where", "cut"}], "unread", "note"}``: for each seat
+    with a checkout here, a live claim, a job (the ``seats`` rows that are
+    present or busy) or a lane merged in the window (the end-of-day seat that
+    owes its row), its lanes merged since its newest Session Log row -- on the
+    base, parked on its records ref and not yet folded (``mail.pending``; a
+    seat that wrote its row and parked it is not in debt and the fold is
+    owed), riding one of the open pull requests (``read_riding_names``), or
+    pruned from the base and read from its history (``read_pruned_names``);
+    ``where`` says which, one of the loader's ``ROW_PLACES`` or '' for no row,
+    and ``parked`` is the first lane's bool of it -- the count
+    ``tools/cc/ship.py::seat_row_debt`` reads too,
+    ``_record_fragments.lanes_since_row`` over the one merged read's lane
     fields (``_post_merge.read_merged``), so the board and the driver never
-    disagree. ``cut`` marks a count the read stopped short of, a floor
-    (``window_stops_short``); ``unclaimed`` counts the merged lanes no claim
-    names, apart and never as a seat's zero; ``unnamed`` says this clone names
-    no machine, so nothing was read. A merged answer that is JSON but no list
-    is unread, as the open-PR read's is, never no merges."""
+    disagree. A lane's seat is the one its claim names, else its ``seat:``
+    label (``lane_seat``, DEF-4044). ``cut`` marks a count the read stopped
+    short of, a floor (``window_stops_short``); ``unclaimed`` counts the merged
+    lanes no claim or label names, apart and never as a seat's zero;
+    ``unnamed`` says this clone names no machine, so nothing was read;
+    ``note`` says the open pull requests were unread (``prs`` None), so a row
+    riding one is not counted. A merged answer that is JSON but no list is
+    unread, as the open-PR read's is, never no merges."""
     if not machine:
         return {"window": ROW_DEBT_WINDOW, "read": 0, "unclaimed": 0, "entries": [], "unread": "", "unnamed": True}
 
@@ -1038,22 +1091,29 @@ def read_records_section(root: Path, base: str, by_machine: dict[str, list[dict]
 
     merged = _post_merge.read_merged(root, ROW_DEBT_WINDOW, gh=gh, fields=_post_merge.LANE_FIELDS)
     seat_of = mail.lane_seats(by_machine)
-    branches = [str(pr.get("headRefName") or "") for pr in merged]
-    unclaimed = sum(1 for b in branches if b not in seat_of)
+    lane_seats = [lane_seat(pr, seat_of) for pr in merged]
+    unclaimed = sum(1 for seat in lane_seats if not seat)
     seats = sorted({str(r.get("name") or "") for r in rows
                     if r.get("name") and (r.get("checkout") is not None or r.get("busy"))}
-                   | {seat_of[b] for b in branches if b in seat_of})
+                   | {seat for seat in lane_seats if seat})
+    note = "the open pull requests are unread, so a row riding one is not counted" if prs is None else ""
     if not seats:
-        return {"window": ROW_DEBT_WINDOW, "read": len(merged), "unclaimed": unclaimed, "entries": [], "unread": ""}
+        return {"window": ROW_DEBT_WINDOW, "read": len(merged), "unclaimed": unclaimed, "entries": [], "unread": "",
+                "note": note}
     names = read_row_names(root, base, run_=run_)
-    parked = [path for _machine, path, _ref in mail.pending(root, SESSION_LOG_DIR, [f"origin/{base}"], run=run_)]
-    newest = newest_row_by_seat(names, parked)
+    pruned = read_pruned_names(root, base, run_=run_)
+    riding = read_riding_names(root, prs or [], seat_of, run_=run_)
+    parked = [path for _machine, path, _ref in
+              mail.pending(root, SESSION_LOG_DIR, [f"origin/{base}"], run=run_, trailer=FOLD_TRAILER)]
+    newest = newest_rows(names, parked, riding=riding, pruned=pruned)
     entries = []
     for seat in seats:
-        since, is_parked = newest.get(seat, ("", False))
+        since, where = newest.get(seat, ("", ""))
         entries.append({"seat": seat, "merges": lanes_since_row(merged, seat_of, seat, since), "since": since,
-                        "parked": is_parked, "cut": window_stops_short(merged, since, ROW_DEBT_WINDOW)})
-    return {"window": ROW_DEBT_WINDOW, "read": len(merged), "unclaimed": unclaimed, "entries": entries, "unread": ""}
+                        "parked": where == "parked", "where": where,
+                        "cut": window_stops_short(merged, since, ROW_DEBT_WINDOW)})
+    return {"window": ROW_DEBT_WINDOW, "read": len(merged), "unclaimed": unclaimed, "entries": entries, "unread": "",
+            "note": note}
 
 
 def records_lines(board: dict) -> list[str]:
@@ -1072,10 +1132,10 @@ def records_lines(board: dict) -> list[str]:
     entries = section.get("entries") or []
     read = int(section.get("read") or 0)
     unclaimed = int(section.get("unclaimed") or 0)
-    stray = f"{unclaimed} of the last {read} merges no claim names" if unclaimed else ""
+    stray = f"{unclaimed} of the last {read} merges no claim or seat label names" if unclaimed else ""
     if not entries:
         return ["records:  none (no seat has a checkout here, a live claim, a job or a lane merged in the window)"
-                + (f"; {stray}" if stray else "")]
+                + (f"; {stray}" if stray else "") + (f" ({section['note']})" if section.get("note") else "")]
     base = board.get("base") or "main"
     window = int(section.get("window") or 0)
     texts = []
@@ -1085,13 +1145,17 @@ def records_lines(board: dict) -> list[str]:
         count = f"{n}+ merges" if cut else f"{n} merge{'s' if n != 1 else ''}"
         since = str(entry.get("since") or "")
         if since:
-            parked = ", parked until the next fold" if entry.get("parked") else ""
-            tail = f" since its last row ({since}{parked}{f'; the last {window} read' if cut else ''})"
+            where = str(entry.get("where") or ("parked" if entry.get("parked") else "base"))
+            place = {"parked": ", parked until the next fold", "open": ", riding its open pull request",
+                     "pruned": f", pruned from origin/{base} since"}.get(where, "")
+            tail = f" since its last row ({since}{place}{f'; the last {window} read' if cut else ''})"
         else:
             tail = f", no row on origin/{base}{f' (the last {window} read)' if cut else ''}"
         texts.append(f"{entry.get('seat')}: {count}{tail}")
     if stray:
         texts.append("and " + stray)
+    if section.get("note"):
+        texts.append(f"({section['note']})")
     head = f"records:  {len(entries)} seat{'s' if len(entries) != 1 else ''}: "
     return [(head if i == 0 else "          ") + text for i, text in enumerate(texts)]
 
@@ -1156,29 +1220,13 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
     if fetch:
         ok, problem = fetch_base(root, base, run_=run_)
         board["base_fetch"] = {"state": "ok" if ok else "failed", "problem": problem}
-    # The records section after the base fetch, so origin/<base>'s Session Log
-    # names are as fresh as the rest; --no-fetch reads them as they are here.
-    try:
-        if board.get("mail_unread"):
-            board["records"] = {"unread": f"the mail could not be read: {board['mail_unread']}"}
-        elif not machine and str(machine_how).startswith(mail.MACHINE_UNREAD):
-            # A name git could not be asked about is not an unnamed clone.
-            board["records"] = {"unread": f"this checkout's machine name could not be read ({machine_how}), so no "
-                                          "seat's rows were read"}
-        else:
-            board["records"] = read_records_section(root, base, by_machine, board["seats"]["rows"],
-                                                    machine=machine or "", run_=run_)
-    except Unresolvable as exc:
-        board["records"] = {"unread": str(exc)}
-    except Exception as exc:  # noqa: BLE001 -- each section is read on its own; the records line says unread and why
-        board["records"] = {"unread": f"{type(exc).__name__}: {os_error_text(exc)}"}
     overlap_claims = [] if board.get("mail_unread") else claims
     overlap_notes = ["the claims are unread (the mail could not be read)"] if board.get("mail_unread") else []
     try:
         prs = read_open_prs(root, run_=run_)
         for pr in prs:
-            pr["seat"] = (seat_of_lane.get(str(pr.get("headRefName") or ""), "")
-                          if not board.get("mail_unread") else None)
+            # The claim first, else the seat label the driver stamped (DEF-4044).
+            pr["seat"] = lane_seat(pr, seat_of_lane) if not board.get("mail_unread") else None
         # The heads first, so the stale clause and the overlaps read the same ones;
         # --no-fetch reads them as they are here.
         head_notes = fetch_heads(root, prs, run_=run_) if fetch else []
@@ -1195,6 +1243,25 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
         board["overlaps"] = _overlaps_or_unread(root, base, overlap_claims, [],
                                                 [*overlap_notes, "the open pull requests are unread"], run_=run_,
                                                 fetch=False, seat=board["seat"])
+    # The records section after the base fetch, so origin/<base>'s Session Log
+    # names are as fresh as the rest, and after the open pull requests, whose
+    # fetched heads a seat's row may ride; --no-fetch reads them as they are here.
+    try:
+        if board.get("mail_unread"):
+            board["records"] = {"unread": f"the mail could not be read: {board['mail_unread']}"}
+        elif not machine and str(machine_how).startswith(mail.MACHINE_UNREAD):
+            # A name git could not be asked about is not an unnamed clone.
+            board["records"] = {"unread": f"this checkout's machine name could not be read ({machine_how}), so no "
+                                          "seat's rows were read"}
+        else:
+            open_prs = board.get("open_prs")
+            board["records"] = read_records_section(root, base, by_machine, board["seats"]["rows"],
+                                                    machine=machine or "", run_=run_,
+                                                    prs=open_prs if isinstance(open_prs, list) else None)
+    except Unresolvable as exc:
+        board["records"] = {"unread": str(exc)}
+    except Exception as exc:  # noqa: BLE001 -- each section is read on its own; the records line says unread and why
+        board["records"] = {"unread": f"{type(exc).__name__}: {os_error_text(exc)}"}
     try:
         board["post_merge"] = read_post_merge(root, base, run_=run_)
     except Unresolvable as exc:

@@ -480,7 +480,8 @@ def _second_push_message(how: str) -> str:
     return (f"{how}, and this lane's commits carry no Session Log row (no change to ESPALIER_MEMORY.md "
             f"and no new file under {SESSION_LOG_DIR}): /handoff writes the row and ships the lane once. "
             "To ship before it, pass --early \"<reason>\" to `open` (the handoff's row then becomes a "
-            "second push on this lane)")
+            f"second push on this lane); past {ROW_DEBT_CAP} lanes shipped since this seat's newest Session Log "
+            "row, --early is refused until a row is committed on the lane (the cap)")
 
 
 def post_merge_reds(cwd: str | None = None) -> list[str]:
@@ -526,16 +527,18 @@ def base_red_after_merge(base: str, cwd: str | None = None) -> str | None:
     return None
 
 
-def _open_prs(cwd: str) -> list[dict]:
-    """Every open pull request's number, branch and auto-merge state, for the
-    red-base refusal and the one-per-seat advisory; [] when gh cannot say
-    (both fail open: the refusal still stands on the red read itself)."""
+def _open_prs(cwd: str) -> list[dict] | None:
+    """Every open pull request's number, branch, head, labels and auto-merge
+    state, for the red-base refusal, the one-per-seat advisory and the
+    row-debt read; None when gh cannot say (the first two fail open on it: the
+    refusal still stands on the red read itself; the debt reads it as unread,
+    since a row riding this seat's open pull request is read from its head)."""
     try:
         rows = _gh_json("pr", "list", "--state", "open", "--limit", "50", "--json",
-                        "number,headRefName,autoMergeRequest", cwd=cwd)
+                        "number,headRefName,headRefOid,labels,autoMergeRequest", cwd=cwd)
     except Refused:
-        return []
-    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+        return None
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else None
 
 
 def red_base_refusal(base: str, branch: str, prs: list[dict], cwd: str) -> str | None:
@@ -582,28 +585,59 @@ def seat_open_prs(root: Path, branch: str, prs: list[dict]) -> tuple[str, list[s
         _note(f"could not read which open pull requests are this seat's ({os_error_text(exc)})")
         return "", []
     mine = [f"#{r.get('number')} ({r.get('headRefName')})" for r in prs
-            if str(r.get("headRefName") or "") != branch and seats.get(str(r.get("headRefName") or "")) == machine]
+            if str(r.get("headRefName") or "") != branch and _lane_seat(r, seats) == machine]
     return machine, mine
 
 
-def seat_row_debt(root: Path, base: str) -> tuple[int, str, bool] | None:
-    """``(merged lanes since this seat's newest Session Log row, that row's
-    date or '', whether that row is parked on the seat's records ref and not
-    yet folded)``, or None where git, gh or the mail channel cannot answer: no
-    verdict is never a refusal on a guess (the rule ``lane_carries_memory_row``
-    keeps). Lanes are the merged pull requests whose branch the seat's latest
-    claim or release names (``mail.lane_seats``), their merge day read in this
-    clock's zone as the fragment names are; the rows are the fragments on
-    ``origin/<base>`` plus those parked on the records refs (``mail.pending``:
-    a seat that wrote its row and parked it is not in debt, and the early arm
-    runs before the fold that brings it in), read by name alone, never the
-    working tree a seat can edit. The count is
+def _lane_seat(pr: dict, seat_of: dict[str, str]) -> str:
+    """Whose lane a pull request is: the loader's ``lane_seat`` (the seat its
+    claim names, else the seat its ``seat:`` label names, DEF-4044), or the
+    claim alone where the kept loader predates the reader."""
+    fragments = _fragments_module()
+    reader = getattr(fragments, "lane_seat", None) if fragments is not None else None
+    if reader is None:
+        return seat_of.get(str(pr.get("headRefName") or ""), "")
+    return str(reader(pr, seat_of) or "")
+
+
+#: How many lanes a seat may ship past its newest Session Log row before
+#: `open --early` refuses (pre-registered 2026-10-18 with the records line and
+#: kept at its measurement, 2026-10-23: six seat-days with merges and no row
+#: over 10-16 and 10-17, 60% of early ships followed by a row against the 80%
+#: line; the refusal switched on 2026-10-30, after six days of board lines).
+ROW_DEBT_CAP = 3
+
+
+def _row_debt_reading(root: Path, base: str, prs: list[dict] | None = None) -> dict | None:
+    """What the row-debt refusal reads, or None where git, gh or the mail
+    channel cannot answer: ``{"machine", "count", "since", "where", "newest"}``
+    -- this seat's name, its merged lanes since its newest Session Log row,
+    that row's date ('' for none) and where it sits (one of the loader's
+    ``ROW_PLACES``: on the base, parked on the records ref, riding one of the
+    seat's own open pull requests, or pruned from the base and read from its
+    history; '' for none), every seat's ``(date, where)`` for the words (a
+    worktree seat renamed since its last row finds it under the old name) and
+    the seats the mail channel names (``seats``).
+    No verdict is never a refusal on a guess (the rule ``lane_carries_memory_row``
+    keeps). Lanes are the merged pull requests the seat's claim or seat label
+    names (``_record_fragments.lane_seat``), their merge day read in this
+    clock's zone as the fragment names are; the rows are read by name alone,
+    never from the working tree a seat can edit: the fragments on
+    ``origin/<base>``, those parked on the records refs (``mail.pending``: a
+    seat that wrote its row and parked it is not in debt, and the early arm
+    runs before the fold that brings it in), those on the heads of this seat's
+    open pull requests among ``prs`` (``_open_prs``: written, waiting for a
+    merge) and those the fold's prunes deleted from the base, read from its
+    history by the fold trailer (``pruned_rows_argv``, ``pruned_rows_from``:
+    #354's prune took two seats' newest rows off the tree, 2026-10-30; a
+    deletion by any other commit still counts as debt). The count is
     ``_record_fragments.lanes_since_row``, the board's ``records:`` line's own,
     through the one merged read (``_post_merge.read_merged``, the lane
     fields)."""
     # The local reads first, every one under the guard: a sibling that cannot
-    # load, a git that raised (the runner's Refused on a timeout or a missing
-    # git), the channel's named stop. Unread, never a count, never a refusal.
+    # load or predates a name read here (an older kept loader's AttributeError),
+    # a git that raised (the runner's Refused on a timeout or a missing git),
+    # the channel's named stop. Unread, never a count, never a refusal.
     try:
         mail, fragments = _mail_module(), _fragments_module()
         if mail is None or fragments is None:
@@ -611,12 +645,45 @@ def seat_row_debt(root: Path, base: str) -> tuple[int, str, bool] | None:
         machine, _how = mail.machine_setting(root)  # unread-name: ok both an unread name and no name read as None, no verdict
         if not machine:
             return None
-        rc, names, _ = _git("ls-tree", "--name-only", f"origin/{base}", "--", SESSION_LOG_DIR, cwd=str(root))
+        directory = fragments.SESSION_LOG_DIR
+        rc, names, _ = _git("ls-tree", "--name-only", f"origin/{base}", "--", directory + "/", cwd=str(root))
         if rc != 0:
             return None
-        parked = [path for _machine, path, _ref in mail.pending(root, fragments.SESSION_LOG_DIR, [f"origin/{base}"])]
+        rc, shallow, _ = _git(*fragments.SHALLOW_ARGV, cwd=str(root))
+        if rc != 0 or shallow.strip() == "true":
+            return None   # a cut history reads no pruned names: unread, never none
+        rc, deleted, _ = _git(*fragments.pruned_rows_argv(f"origin/{base}"), cwd=str(root))
+        if rc != 0:
+            return None
+        pruned = fragments.pruned_rows_from(deleted)
+        parked_rows = mail.pending(root, directory, [f"origin/{base}"], trailer=fragments.FOLD_TRAILER)
+        parked = [path for _machine, path, _ref in parked_rows]
         by_machine, _skipped = mail.read_mail(root)
-        newest, is_parked = fragments.newest_row_by_seat(names.split(), parked).get(machine, ("", False))
+        seat_of = mail.lane_seats(by_machine)
+        heads = list(dict.fromkeys(str(pr.get("headRefOid") or "") for pr in (prs or [])
+                                   if isinstance(pr, dict) and pr.get("headRefOid")
+                                   and fragments.lane_seat(pr, seat_of) == machine))
+        riding: list[str] = []
+        if heads:
+            # The seat's other open pull requests' heads, by object id (objects
+            # only, no ref), then their Session Log names: a row riding one is
+            # written and waits for a merge (the first lane's failure-mode review).
+            rc, _out, _err = _git("fetch", "origin", *heads, "--quiet", cwd=str(root))
+            if rc != 0:
+                return None
+            listed: list[tuple[str, list[str]]] = []
+            for head in heads:
+                rc, out, _ = _git("ls-tree", "--name-only", head, "--", directory + "/", cwd=str(root))
+                if rc != 0:
+                    return None
+                listed.append((machine, out.split()))
+            riding = fragments.riding_rows(listed)   # this seat's own rows on its heads, never the base's copies
+        newest = fragments.newest_rows(names.split(), parked, riding=riding, pruned=pruned)
+        since, where = newest.get(machine, ("", ""))
+        window, fields, count = fragments.ROW_DEBT_WINDOW, _post_merge.LANE_FIELDS, fragments.lanes_since_row
+        # The seats the records know: a mail ref, a records ref or a claimed
+        # lane (the legacy pseudo-seat of the first fragments has none).
+        seats = sorted(set(by_machine) | {str(m) for m, _p, _r in parked_rows} | set(seat_of.values()))
     except Exception:  # noqa: BLE001 -- see above: every local read's failure is one answer, None
         return None
     failed: list[str] = []
@@ -632,11 +699,136 @@ def seat_row_debt(root: Path, base: str) -> tuple[int, str, bool] | None:
             return None
         return data
 
-    merged = _post_merge.read_merged(str(root), fragments.ROW_DEBT_WINDOW, gh=gh, fields=_post_merge.LANE_FIELDS)
+    merged = _post_merge.read_merged(str(root), window, gh=gh, fields=fields)
     if failed:
         return None
-    seat_of = mail.lane_seats(by_machine)
-    return fragments.lanes_since_row(merged, seat_of, machine, newest), newest, is_parked
+    return {"machine": machine, "count": count(merged, seat_of, machine, since), "since": since, "where": where,
+            "newest": newest, "seats": seats}
+
+
+def seat_row_debt(root: Path, base: str, prs: list[dict] | None = None) -> tuple[int, str, str] | None:
+    """``(merged lanes since this seat's newest Session Log row, that row's
+    date or '', where that row sits: 'base', 'parked', 'open', 'pruned' or
+    '')``, or None where git, gh or the mail channel cannot answer -- the
+    row-debt reading (``_row_debt_reading``) in the shape the first lane's
+    readers took, the third element a place since the second lane (it was
+    "parked", a bool). ``prs``: the open pull requests, whose heads this
+    seat's lanes' rows are read from."""
+    reading = _row_debt_reading(root, base, prs)
+    if reading is None:
+        return None
+    return reading["count"], reading["since"], reading["where"]
+
+
+def _row_place_words(since: str, where: str, base: str) -> str:
+    if not since:
+        return "none"
+    tail = {"parked": ", parked on this seat's records ref until the next fold",
+            "open": ", riding one of this seat's open pull requests",
+            "pruned": f", pruned from origin/{base} since and read from its history"}.get(where, "")
+    return since + tail
+
+
+def _refuse_on_row_debt(root: Path, base: str, prs: list[dict] | None) -> None:
+    """The early arm's one refusal that --early does not pass (the records
+    line's second lane, 2026-10-30): a seat that has shipped ``ROW_DEBT_CAP`` or more lanes since
+    its newest Session Log row is refused until a row is committed on this
+    lane, which ``lane_carries_memory_row`` then reads as carried and the arm
+    is not asked. The base and the records refs are fetched first: the early
+    arm runs before ``open``'s base fetch and before the fold's records fetch,
+    so a row merged forty minutes ago was not in the local base (the first
+    lane's failure-mode review). A fetch, a read or a channel that cannot
+    answer is said and --early is taken as given: no verdict is never a
+    refusal on a guess."""
+    unread = ""
+    try:
+        rc, _out, err = _git("fetch", "origin", base, "--quiet", cwd=str(root))
+    except Refused as exc:   # the runner's timeout: unread, never a refusal
+        rc, err = 1, str(exc)
+    if rc != 0:
+        unread = f"origin/{base} could not be fetched ({err.strip()[:120] or 'no reason printed'})"
+    else:
+        try:
+            mail = _mail_module()
+            if mail is None:
+                ok, problem = False, "tools/cc/mail.py is not beside this script"
+            else:
+                machine, how = mail.machine_setting(root)
+                if machine:
+                    ok, problem = mail.fetch_records(root)
+                elif str(how).startswith(getattr(mail, "MACHINE_UNREAD", "\0")):
+                    ok, problem = False, ""   # a name read that failed is not an unnamed clone
+                    unread = f"this clone's seat name could not be read ({how}), so no seat's rows are its own"
+                else:
+                    ok, problem = False, ""
+                    unread = "this clone names no machine (git config espalier.machine), so no seat's rows are its own"
+        except Exception as exc:  # noqa: BLE001 -- a channel that raised is unread, said below
+            ok, problem = False, os_error_text(exc)
+        if not ok and not unread:
+            unread = f"the records refs could not be fetched ({problem})"
+    if not unread and prs is None:
+        unread = "the open pull requests could not be read (gh pr list answered no JSON)"
+    reading = None if unread else _row_debt_reading(root, base, prs)
+    if reading is None:
+        _note(f"this seat's Session Log debt is unread ({unread or 'git, gh or the mail channel did not answer'}), "
+              "so --early is taken as given")
+        return
+    count, since, where = int(reading["count"]), str(reading["since"]), str(reading["where"])
+    if count < ROW_DEBT_CAP:
+        return
+    # The seats the mail channel knows (a records ref's name is a seat's; the
+    # legacy pseudo-seat of the first fragments is not one).
+    others = ", ".join(f"{seat} {date}" for seat, (date, _where) in sorted(reading["newest"].items())
+                       if seat != reading["machine"] and seat in reading.get("seats", [seat]))
+    raise Refused(f"this seat ({reading['machine']}) has {count} lane{'s' if count != 1 else ''} merged on the days "
+                  f"after its newest Session Log row ({_row_place_words(since, where, base)}); the cap is {ROW_DEBT_CAP}. "
+                  "Write the row on this lane (python tools/cc/_record_fragments.py new session-log names the file) "
+                  "and commit it, and this question is not asked; --early does not pass this one. The rows were "
+                  f"read under this clone's seat name, {reading['machine']} (git config espalier.machine); the other "
+                  f"seats' newest rows: {others or 'none'} (a worktree seat renamed since its last row finds it "
+                  "under the old name)")
+
+
+def _seat_label(root: Path) -> str:
+    """The ``seat:<machine>`` label ``open`` stamps on the pull request so a
+    lane no claim names is still this seat's (``_record_fragments.lane_seat``
+    reads it back from the merged listing; DEF-4044: a lane shipped without a
+    claim was nobody's, and the row-debt cap was passed by not claiming). ''
+    where the box is unnamed, the channel or the loader is absent or the name
+    could not be read: the label is a fallback attribution, and an unnamed
+    box is told so by the claims it cannot send, not here."""
+    try:
+        mail, fragments = _mail_module(), _fragments_module()
+        if mail is None or fragments is None:
+            return ""
+        machine, how = mail.machine_setting(root)
+        if not machine:
+            if str(how).startswith(getattr(mail, "MACHINE_UNREAD", "\0")):
+                _note(f"this clone's seat name could not be read ({how}), so the pull request carries no seat label")
+            return ""
+        return f"{fragments.SEAT_LABEL_PREFIX}{machine}"
+    except Exception:  # noqa: BLE001 -- a channel or loader that raised stamps nothing; the claim still attributes
+        return ""
+
+
+def _ensure_seat_label(root: Path, label: str) -> str:
+    """The repository's copy of ``label``, created or kept (``gh label create
+    --force`` updates one that exists), before ``gh pr create --label`` names
+    it: a label the repository does not hold fails the create whole. '' with a
+    note when it could not be made, so the pull request opens without it and
+    the lane is attributed by its claim alone."""
+    if not label:
+        return ""
+    try:
+        rc, _out, err = _gh("label", "create", label, "--force", "--color", "ededed", "--description",
+                            f"lanes the seat {label.split(':', 1)[-1]} shipped (ship.py open stamps it)", cwd=str(root))
+    except Refused as exc:   # the runner's timeout: the pull request still opens, without the label
+        rc, err = 1, str(exc)
+    if rc != 0:
+        _note(f"the seat label {label} could not be created ({err.strip()[:120] or 'no reason printed'}); the pull "
+              "request opens without it, so the Session Log debt attributes this lane by its claim alone")
+        return ""
+    return label
 
 
 def stale_base_line(root: Path, base: str, pr: dict) -> str:
@@ -835,12 +1027,18 @@ def _fold_session_log(root: Path, base: str, *, keep: int | None = None, slack: 
     ok, problem = mail.fetch_records(root)
     if not ok:
         _note(f"the records refs were not fetched ({problem}): folding what this clone last fetched")
+    trailer = fragments.FOLD_TRAILER
     try:
-        rows = mail.pending(root, directory, [f"origin/{base}", "HEAD"])
+        # With the trailer, a row a revert took off the base is pending again
+        # (DEF-4045); the prune's deletion, which carries it, stays final.
+        rows = mail.pending(root, directory, [f"origin/{base}", "HEAD"], trailer=trailer)
     except mail.Unresolvable as exc:
         _note(f"the Session Log fold is skipped: {exc}")
         return 0, 0
-    trailer = fragments.FOLD_TRAILER
+    except TypeError as exc:   # a kept, older tools/cc/mail.py without the trailer read: never a refusal
+        _note(f"the Session Log fold is skipped: tools/cc/mail.py predates the fold-trailer read ({exc}); "
+              "upgrade it beside this script")
+        return 0, 0
     if dry_run:
         if rows:
             _say(f"dry-run: fold {len(rows)} parked Session Log row(s) into the lane, then prune to {cap} "
@@ -951,9 +1149,15 @@ def _park_the_row(root: Path, base: str, *, dry_run: bool = False) -> bool:
         _say(f"dry-run: park {', '.join(added)} on this seat's records ref and move this branch back to its "
              f"merge base with origin/{base}; no pull request")
         return True
+    fragments = _fragments_module()
+    trailer = getattr(fragments, "FOLD_TRAILER", "") if fragments is not None else ""
     try:
         for rel in added:
-            mail.park(root, rel, None, f"origin/{base}", from_rev="HEAD", say=_say)
+            try:
+                # The pending rule's drop (a reverted fold's row stays on the ref, DEF-4045).
+                mail.park(root, rel, None, f"origin/{base}", from_rev="HEAD", say=_say, trailer=trailer)
+            except TypeError:   # a kept, older channel without the trailer: the first rule
+                mail.park(root, rel, None, f"origin/{base}", from_rev="HEAD", say=_say)
     except (mail.Unresolvable, OSError) as exc:
         _note(f"the row was not parked ({os_error_text(exc)}): opening a pull request for it, as before")
         return False
@@ -1550,6 +1754,11 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
                       f"(git merge origin/{branch}); never rebase or force-push a pushed lane")
     _refuse_a_marked_record(root)
     _refuse_a_shared_checkout(root)
+    # The open pull requests once, for the row-debt read (a row riding this
+    # seat's own open pull request), the red-base refusal and the one-per-seat
+    # advisory; None where gh could not say, which the first reads as unread
+    # and the other two as none.
+    prs = _open_prs(str(root))
     # The row question before the base's: a lane with no row is the window's
     # to fix, whatever the base reads, and the held refusal below promises the
     # next window a row written (both reviews, 2026-10-30).
@@ -1558,10 +1767,11 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         early_reason = (early or "").strip()
         if not early_reason:
             raise Refused(_second_push_message(how))
+        _refuse_on_row_debt(root, base, prs)
         _note(f"shipping before the handoff ({early_reason}): its row will be a second push on this lane")
     else:
         early_reason = ""
-    prs = _open_prs(str(root))
+    prs = prs or []
     refusal = red_base_refusal(base, branch, prs, str(root))
     if refusal:
         # The lane is whole and stays here: the handoff arms the own-clear on
@@ -1620,9 +1830,11 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         title = bind(title, sha)
         _say(f"marker required ({', '.join(hits[:3])}{', ...' if len(hits) > 3 else ''}): bound to {sha[:7]} in the title")
     push = ["git", "push", "-u", "origin", "HEAD"]
+    label = _seat_label(root)
     if dry_run:
         _say("dry-run: " + " ".join(push))
-        _say(f"dry-run: gh pr create --base {base} --title '{title}' --body-file <tmp>")
+        _say(f"dry-run: gh pr create --base {base} --title '{title}' --body-file <tmp>"
+             + (f" --label {label}" if label else ""))
         _say("dry-run: gh pr merge <n> --auto --merge")
         return 0
     rc, _, err = RUN(push, cwd=str(root))
@@ -1633,11 +1845,13 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     # (failure-mode review, 2026-10-05), the operator finishing by hand with
     # the claims already closed.
     try:
+        label = _ensure_seat_label(root, label)
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", newline="", suffix=".md", delete=False) as fh:
             fh.write(body)
             body_path = fh.name
         try:
-            rc, out, err = _gh("pr", "create", "--base", base, "--title", title, "--body-file", body_path, cwd=str(root))
+            rc, out, err = _gh("pr", "create", "--base", base, "--title", title, "--body-file", body_path,
+                               *(["--label", label] if label else []), cwd=str(root))
         finally:
             try:
                 Path(body_path).unlink()

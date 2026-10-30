@@ -2603,8 +2603,11 @@ def _row(name: str) -> bytes:
     return f"| {name[:10]} | {name[18:-3]} | the row of {name} |\n".encode("ascii")
 
 
-def _main_rows(machines, tmp_path, *add: str, prune: tuple[str, ...] = ()) -> None:
-    """Land rows on main, and prune some, the way a merged lane does."""
+def _main_rows(machines, tmp_path, *add: str, prune: tuple[str, ...] = (), trailer: str = "") -> None:
+    """Land rows on main, and prune some, the way a merged lane does: a prune
+    carries the fold's trailer (``trailer``, the loader's ``FOLD_TRAILER``), as
+    the ship driver's prune commit does, since a deletion without it reads as
+    a loss (DEF-4045)."""
     keeper = tmp_path / "keeper"
     if not keeper.exists():
         _git(tmp_path, "clone", "--quiet", str(machines["origin"]), str(keeper))
@@ -2617,7 +2620,7 @@ def _main_rows(machines, tmp_path, *add: str, prune: tuple[str, ...] = ()) -> No
     for name in prune:
         (keeper / _ROW_DIR / name).unlink()
     _git(keeper, "add", "-A", "--", _ROW_DIR)
-    _git(keeper, "commit", "--quiet", "-m", "rows")
+    _git(keeper, "commit", "--quiet", "-m", "rows" + (f"\n\n{trailer}\n" if prune and trailer else ""))
     _git(keeper, "push", "--quiet", "origin", "main")
 
 
@@ -2670,20 +2673,121 @@ class TestTheRecordsRef:
         _park(mail, mac, third)
         assert _ref_rows(origin, "mac") == [f"{_ROW_DIR}/{second}", f"{_ROW_DIR}/{third}"]
 
-    def test_pending_is_what_no_branch_has_ever_added(self, mail, machines, tmp_path):
+    def test_pending_is_what_no_branch_has_ever_added(self, mail, fragments, machines, tmp_path):
         """Dies to: pending read as on a ref but not in the tree, which brings a
-        row the prune archived back on every fold."""
+        row the prune archived back on every fold. Both rules: the first (no
+        trailer: a row ever added is never pending again) and the second
+        lane's (the trailer: a row the fold pruned is never pending again)."""
         mac, win = machines["mac"], machines["win"]
         folded, waiting = "2026-10-16-010101-mac.md", "2026-10-16-020101-mac.md"
         _park(mail, mac, folded)
         _park(mail, mac, waiting)
         _main_rows(machines, tmp_path, folded)
-        _main_rows(machines, tmp_path, prune=(folded,))
+        _main_rows(machines, tmp_path, prune=(folded,), trailer=fragments.FOLD_TRAILER)
         ok, problem = mail.fetch_records(win, run=_real_run(mail))
         assert ok, problem
         _git(win, "fetch", "--quiet", "origin")
         got = mail.pending(win, _ROW_DIR, ["origin/main", "HEAD"], run=_real_run(mail))
         assert [(m, p) for m, p, _ref in got] == [("mac", f"{_ROW_DIR}/{waiting}")]
+        got = mail.pending(win, _ROW_DIR, ["origin/main", "HEAD"], run=_real_run(mail), trailer=fragments.FOLD_TRAILER)
+        assert [(m, p) for m, p, _ref in got] == [("mac", f"{_ROW_DIR}/{waiting}")]
+
+    def test_a_row_a_revert_took_off_the_base_is_pending_again(self, mail, fragments, machines, tmp_path):
+        """DEF-4045: a row folded by a lane that is later reverted is deleted
+        by the revert, but its add stays in history, so ``pending`` (which
+        read 'no history ever added it') never listed it again and the row
+        was lost for good. A deletion by a commit WITHOUT the fold trailer is
+        a loss and the row is pending once more; the prune's deletion carries
+        the trailer and stays final. Dies to: the ever-added rule alone, or
+        every deletion read as a loss (the pruned row then re-folds forever)."""
+        mac, win = machines["mac"], machines["win"]
+        folded, pruned = "2026-10-16-010101-mac.md", "2026-10-16-020101-mac.md"
+        _park(mail, mac, folded)
+        _park(mail, mac, pruned)
+        _main_rows(machines, tmp_path, folded)
+        _main_rows(machines, tmp_path, pruned)
+        _main_rows(machines, tmp_path, prune=(pruned,), trailer=fragments.FOLD_TRAILER)
+        keeper = tmp_path / "keeper"
+        fold_sha = _git(keeper, "log", "--format=%H", "-1", "--diff-filter=A", "--",
+                        f"{_ROW_DIR}/{folded}").stdout.strip()
+        _git(keeper, "revert", "--no-edit", fold_sha)
+        _git(keeper, "push", "--quiet", "origin", "main")
+        ok, problem = mail.fetch_records(win, run=_real_run(mail))
+        assert ok, problem
+        _git(win, "fetch", "--quiet", "origin")
+        got = mail.pending(win, _ROW_DIR, ["origin/main", "HEAD"], run=_real_run(mail), trailer=fragments.FOLD_TRAILER)
+        assert [(m, p) for m, p, _ref in got] == [("mac", f"{_ROW_DIR}/{folded}")]
+        assert mail.pruned_rows(win, ["origin/main"], _ROW_DIR, fragments.FOLD_TRAILER, run=_real_run(mail)) == {
+            f"{_ROW_DIR}/{pruned}"}
+        assert mail.present_rows(win, ["origin/main"], _ROW_DIR, run=_real_run(mail)) == set()
+
+    def test_the_next_fold_brings_a_reverted_row_back_and_leaves_a_pruned_one_out(
+        self, mail, ship_driver, fragments, machines, tmp_path
+    ):
+        """DEF-4045 at its one writer: the lane's push folds the row a revert
+        took off the base back in (one fold, no prune), and a row the cap
+        pruned stays out. Dies to: the fold reading the parked rows by the
+        ever-added rule (the reverted row never comes back), or every deletion
+        read as a loss (the pruned row re-folds)."""
+        mac, win = machines["mac"], machines["win"]
+        folded, pruned = "2026-10-16-010101-mac.md", "2026-10-16-020101-mac.md"
+        _park(mail, mac, folded)
+        _park(mail, mac, pruned)
+        _main_rows(machines, tmp_path, folded)
+        _main_rows(machines, tmp_path, pruned)
+        _main_rows(machines, tmp_path, prune=(pruned,), trailer=fragments.FOLD_TRAILER)
+        keeper = tmp_path / "keeper"
+        fold_sha = _git(keeper, "log", "--format=%H", "-1", "--diff-filter=A", "--",
+                        f"{_ROW_DIR}/{folded}").stdout.strip()
+        _git(keeper, "revert", "--no-edit", fold_sha)
+        _git(keeper, "push", "--quiet", "origin", "main")
+        self._lane(win)
+        assert ship_driver._fold_session_log(win, "main", keep=30, slack=5) == (1, 0)
+        assert sorted(p.name for p in (win / _ROW_DIR).iterdir()) == [folded]
+        assert ship_driver._fold_session_log(win, "main", keep=30, slack=5) == (0, 0)
+
+    def test_a_park_keeps_a_row_a_revert_took_off_the_base(self, mail, fragments, machines, tmp_path):
+        """DEF-4045 at the records ref's writer (both reviews of the second
+        lane): a park dropped every row the base's history ever added, so a
+        reverted fold's row, pending again, left the ref at the seat's next
+        park and was lost for good. With the trailer the park drops by the
+        pending rule. Dies to: the park's drop left as ever_added."""
+        mac, origin = machines["mac"], machines["origin"]
+        folded, later = "2026-10-16-010101-mac.md", "2026-10-16-020101-mac.md"
+        _park(mail, mac, folded)
+        _main_rows(machines, tmp_path, folded)
+        keeper = tmp_path / "keeper"
+        fold_sha = _git(keeper, "log", "--format=%H", "-1", "--diff-filter=A", "--",
+                        f"{_ROW_DIR}/{folded}").stdout.strip()
+        _git(keeper, "revert", "--no-edit", fold_sha)
+        _git(keeper, "push", "--quiet", "origin", "main")
+        _git(mac, "fetch", "--quiet", "origin")
+        mail.park(mac, f"{_ROW_DIR}/{later}", _row(later), "origin/main", run=_real_run(mail),
+                  say=lambda _s: None, trailer=fragments.FOLD_TRAILER)
+        assert _ref_rows(origin, "mac") == [f"{_ROW_DIR}/{folded}", f"{_ROW_DIR}/{later}"]
+
+    def test_the_fold_beside_an_older_channel_is_skipped_never_a_refusal(self, mail, ship_driver, machines, monkeypatch,
+                                                                         capsys):
+        """A kept, older tools/cc/mail.py has no trailer argument on pending;
+        the fold's call then raised TypeError out of open, before the push
+        (failure-mode review). Dies to: the TypeError escaping the fold."""
+        win = machines["win"]
+        self._lane(win)
+
+        class Older:
+            Unresolvable = mail.Unresolvable
+
+            @staticmethod
+            def fetch_records(root, **kw):
+                return True, ""
+
+            @staticmethod
+            def pending(root, directory, against):
+                return []
+
+        monkeypatch.setattr(ship_driver, "_MAIL", Older())
+        assert ship_driver._fold_session_log(win, "main", keep=30, slack=5) == (0, 0)
+        assert "predates the fold-trailer read" in capsys.readouterr().out
 
     def test_an_unnamed_clone_parks_nothing(self, mail, machines, tmp_path):
         nameless = tmp_path / "nameless"
