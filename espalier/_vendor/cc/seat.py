@@ -750,11 +750,27 @@ ADOPTER_PROCEED = (
     "green: a red you cannot fix in two attempts, a choice the assign does not settle, a refusal you cannot "
     "resolve, a conflict outside your own files, anything that is the operator's decision."
 )
+#: The one exception to the operator's decisions, this repository's own (the
+#: operator's standing rule, 2026-10-30, after seats held eleven hours on
+#: 10-29 and seven calls sat two and a half hours on 10-30 waiting on
+#: decisions): a gridlock, where no seat can advance its assigned job and the
+#: next step is a decision, is resolved by the dispatcher seat, which has the
+#: context to see every seat and the authority to act; the protocol's Assign
+#: authority paragraph is its home, and a test holds this sentence to it. It
+#: renders right after the operator's sentence, and an adopter's brief
+#: carries nothing in the slot, as with SELF_HOST_FIGURES.
+SELF_HOST_GRIDLOCK = (
+    "A gridlock, where no seat can advance its assigned job and the next step is a decision (a red main no "
+    "revert clears, two lanes in conflict, a ruling a worker waits on past the hour), is yours to resolve, the "
+    "one exception to what you propose to the operator: rule, act and report the ruling as an ack with the "
+    "facts you read, instead of filing an operator call and waiting; the operator can reverse it, and a new "
+    "pack, a scope change, a release or tag stay the operator's. "
+)
 DISPATCHER_BRIEF = (
     "You are the dispatcher seat {seat} ({protocol}). Orient from the banner{goal}, then run /inbox (mark "
     "read) and /inbox board. Your duties: read the board every {every} minutes (the loop on the next line), "
     "answer every worker request within the hour with facts, {assign}, {red}, write the Landing lines of the "
-    "packs in flight from the seats' merged PR bodies. {figures}Decisions stay the operator's. At the "
+    "packs in flight from the seats' merged PR bodies. {figures}Decisions stay the operator's. {gridlock}At the "
     "operator's word, or when the prompt router's threshold ask says to (a lane in hand finishes through its "
     "own landing first), run /handoff; it writes your row{row_source}; after a threshold handoff take no new "
     "job until the window is cleared (a red main's revert is not a new job). Start the loop on the next line "
@@ -884,7 +900,8 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
         assign = SELF_HOST_ASSIGN.format(kinds=dispatch_kinds_phrase()) if self_host else ADOPTER_ASSIGN
         figures = SELF_HOST_FIGURES if self_host else ""
         text = DISPATCHER_BRIEF.format(seat=seat, protocol=protocol, goal=goal, assign=assign, red=red,
-                                       figures=figures, every=TICK_MINUTES,
+                                       figures=figures, gridlock=SELF_HOST_GRIDLOCK if self_host else "",
+                                       every=TICK_MINUTES,
                                        row_source=SELF_HOST_ROW_SOURCE if self_host else "")
         return Brief("dispatcher", text + "\n" + DISPATCHER_TICK, DISPATCHER_TICK)
     has_tier_script = (where / TIER_SCRIPT).is_file()

@@ -694,10 +694,56 @@ class TestBrief:
         _dispatcher(clone, '"box"')
         _holds(clone, "memory/parallel-work-protocol.md")
         dispatcher = seat.compose_brief(clone, "box", clone).text.split("\n")[0]
-        assert ("Decisions stay the operator's. At the operator's word, or when the prompt router's threshold ask "
-                "says to (a lane in hand finishes through its own landing first), run /handoff; it writes your "
-                "row, derived from the mail and the merges; after a threshold handoff take no new job until the "
-                "window is cleared (a red main's revert is not a new job). Start the loop") in dispatcher, dispatcher
+        assert ("Decisions stay the operator's. " + seat.SELF_HOST_GRIDLOCK + "At the operator's word, or when the "
+                "prompt router's threshold ask says to (a lane in hand finishes through its own landing first), run "
+                "/handoff; it writes your row, derived from the mail and the merges; after a threshold handoff take "
+                "no new job until the window is cleared (a red main's revert is not a new job). Start the loop") in dispatcher, dispatcher
+
+    def test_this_repositorys_dispatcher_resolves_a_gridlock_and_an_adopters_brief_is_unchanged(self, seat, clone):
+        """The operator's standing rule (2026-10-30): a gridlock -- no seat can
+        advance its assigned job and the next step is a decision -- is resolved
+        by the dispatcher seat, which rules, acts and reports the ruling as an
+        ack, instead of filing an operator call and waiting; the operator can
+        reverse it. It names this repository's operator, so it rides the
+        self-host slot right after 'Decisions stay the operator's.' and an
+        adopter's brief is what it was. The sentence is held to its homes by
+        its two lists (the gridlock shapes, and what stays the operator's):
+        the protocol's Assign authority paragraph and dispatcher row, and Core
+        Rule 15, each read with its line wrapping collapsed. Dies to: the
+        sentence rendered for every tree, left out of this repository's,
+        rendered twice, placed anywhere but after the operator's sentence, or
+        either list drifting between the brief and any of the three homes."""
+        _dispatcher(clone, '"box"')
+        _holds(clone, "docs/WORKFLOW.md")
+        adopter = seat.compose_brief(clone, "box", clone).text
+        assert "gridlock" not in adopter, adopter
+        assert "merged PR bodies. Decisions stay the operator's. At the operator's word" in adopter
+        _holds(clone, "memory/parallel-work-protocol.md")
+        own = seat.compose_brief(clone, "box", clone).text
+        assert ("Decisions stay the operator's. A gridlock, where no seat can advance its assigned job and the "
+                "next step is a decision (a red main no revert clears, two lanes in conflict, a ruling a worker "
+                "waits on past the hour), is yours to resolve, the one exception to what you propose to the "
+                "operator: rule, act and report the ruling as an ack with the facts you read, instead of filing "
+                "an operator call and waiting; the operator can reverse it, and a new pack, a scope change, a "
+                "release or tag stay the operator's. At the operator's word") in own, own
+        assert own.count(seat.SELF_HOST_GRIDLOCK) == 1, own
+        shapes = "a red main no revert clears, two lanes in conflict, a ruling a worker waits on past the hour"
+        kept = "a new pack, a scope change, a release or tag stay the operator's"
+        assert shapes in seat.SELF_HOST_GRIDLOCK and kept in seat.SELF_HOST_GRIDLOCK
+        prose_shapes = shapes.replace("red main", "red `main`")
+        root = Path(__file__).resolve().parents[1]
+        protocol = (root / "memory" / "parallel-work-protocol.md").read_text(encoding="utf-8")
+        start = protocol.index("**Assign authority")
+        paragraph = " ".join(protocol[start:protocol.index("\n\n", start)].split())
+        assert "a gridlock is the dispatcher's to resolve" in paragraph and "SELF_HOST_GRIDLOCK" in paragraph
+        assert prose_shapes in paragraph and kept in paragraph, paragraph
+        assert "the operator can reverse it" in paragraph, paragraph
+        assert "falsifies this: a gridlock ruling the operator reverses" in paragraph, paragraph
+        row = next((line for line in protocol.splitlines() if line.startswith("| Resolves a gridlock")), "")
+        assert prose_shapes in row and "the operator can reverse it" in row, row
+        rule = next(line for line in (root / "CLAUDE.md").read_text(encoding="utf-8").splitlines()
+                    if line.startswith("15. **Parallel work"))
+        assert "is resolved by the dispatcher seat" in rule and kept in rule, rule
 
     def test_on_an_adopter_checkout_the_handoff_clauses_name_the_row_alone(self, seat, clone):
         """The push onto the lane and the row derived by the seat census are this
@@ -849,7 +895,7 @@ class TestBrief:
         _holds(clone, "docs/WORKFLOW.md")
         adopter = seat.compose_brief(clone, "box", clone).text
         assert "seat_day_census" not in adopter and "names its population" not in adopter
-        # Up to the operator's sentence only: TP-703g inserts its clause after it.
+        # Up to the operator's sentence only: the gridlock slot and the handoff clause sit after it.
         assert "merged PR bodies. Decisions stay the operator's." in adopter
         _holds(clone, "memory/parallel-work-protocol.md")
         own = seat.compose_brief(clone, "box", clone).text
