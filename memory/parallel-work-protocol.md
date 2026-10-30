@@ -333,6 +333,7 @@ launcher did not start the handoff arms nothing and says the window needs a
 | Carries a lighter lane of its own | Run the heaviest lanes, which compete with dispatching |
 | Files the rows nobody is assigned to fix, and the ones its own measurements find | File rows for a job it has assigned: the finding, its probe and its fix are the assignee's one job (rule 8) |
 | Reports counts that name their population, settings quoted from the tool that computes them, and the day's figures from `scripts/seat_day_census.py` | Carry a figure by hand, past a compaction or from memory |
+| Resolves a gridlock (the operator's standing rule, 2026-10-30), the one exception to the first row's operator list: where no seat can advance its assigned job and the next step is a decision (a red `main` no revert clears, two lanes in conflict, a ruling a worker waits on past the hour), it rules, acts and reports the ruling as an `ack` with the facts it read, instead of filing an operator call and waiting; the operator can reverse it (the paragraph below) | Rule on what stays the operator's, gridlock or not: a new pack, a scope change, a release or tag |
 
 **Assign authority (decided by the operator 2026-10-15, after two days'
 measurement).** The dispatcher assigns, re-sequences and releases jobs on its
@@ -348,7 +349,31 @@ it apart until the dispatcher's `ack` naming the request's full id carries the
 ruling (an ack from any other seat leaves the call open); `cc/GOAL.md` no longer
 carries the calls (it holds the goal, the priorities and what is owed), and the
 ruling lands on origin where every seat reads it instead of in one checkout's
-gitignored file. Each assign is reported at the dispatcher's next tick
+gitignored file. Since 2026-10-30 a gridlock is the dispatcher's to resolve,
+the one exception to the list above, an open operator call on the gridlocked
+seat included (the operator's standing rule, set that day in the dispatcher
+session: "if there is a gridlock, that gridlock is resolved here. The
+dispatcher has the strongest model and the authority, the context to see
+everything and resolve issues"): where no seat can advance its assigned job
+and the next step is a decision (a red `main` no revert clears, two lanes in
+conflict, a ruling a worker waits on past the hour), the dispatcher rules,
+acts and reports the ruling as an `ack` with the facts it read, instead of
+filing an operator call and waiting; the operator can reverse it, and a new
+pack, a scope change, a release or tag stay the operator's. Reconciled with
+the list above (the dispatcher's ruling, 2026-10-30): a new pack, a scope
+change, a release or a tag stay the operator's even inside a gridlock; a
+revert that is not the red-`main` revert and an open operator call become the
+dispatcher's only when they are the next step of a gridlock, a seat's
+assigned job unable to advance past the hour. Item 7's revert still comes
+first: the gridlock is the red that outlives it. Why: seats held
+eleven hours on 2026-10-29 and seven calls sat two and a half hours on
+2026-10-30, each a decision the dispatcher had the context to make. The
+dispatcher brief carries the sentence from
+`tools/cc/seat.py::SELF_HOST_GRIDLOCK`, on this repository only, held to this
+paragraph, the row above and Core Rule 15 by a test
+(`tests/test_seat.py::TestBrief`). The data point that falsifies this: a
+gridlock ruling the operator reverses; two in a week re-opens the rule. Each
+assign is reported at the dispatcher's next tick
 with the job and the reason, so the operator can veto it, and the day's
 assigns go in the Session Log row. Why: the per-assign yes was the queue's
 single point of failure. Measured on 2026-10-14 and 10-15, assign-to-first-claim
