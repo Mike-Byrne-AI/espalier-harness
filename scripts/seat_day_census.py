@@ -53,8 +53,20 @@ Per seat per UTC day in ``[since, until)``, one row:
   date is its writer's local day, a row parked on a records ref is not in the
   tree, and fragments older than the newest few are archived; the report says
   all three, and the oldest day the tree holds.
-* **START**, **redirect:** and **shelved:**: the seat's messages that day whose
-  text carries the word.
+* **START**: the seat's messages that day whose text carries the word (the
+  tier-run announcement, anywhere in a text).
+* **redirect:**, **shelved:** and **gridlock:**: the seat's messages that day
+  whose text opens with the marker (``MARKERS``, on the text as the driver
+  stores it, stripped on send), as the operator-call rule reads ``OPERATOR CALL:``
+  (``tools/cc/mail.py::is_operator_call``). The briefs and the assigns quote
+  the same words mid-text, so a mention anywhere is prose, not a use: 8 of 9
+  ``redirect:`` and 5 of 5 ``shelved:`` mentions on the refs by 2026-10-30
+  were quotations (``DEF-5029``). A ``gridlock:`` ack from the dispatcher
+  (every seat's where none is named) is a ruling on a gridlock
+  (``tools/cc/seat.py::SELF_HOST_GRIDLOCK``, one ruling per ack); a note or a
+  request opening with the word is not, and the row names each ruling's id
+  beside the count, in time order, so the operator can find the ruling to
+  reverse (the protocol's falsifier).
 
 The dispatcher's own row adds what it sent: its assigns, and of those the new
 jobs (an assign of a job already live is a re-send, not a new job); and, of the
@@ -93,10 +105,22 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-#: The words counted in a message's text, as words: the seats' START, and the
-#: ``redirect:`` and ``shelved:`` a seat writes when it moves off a job.
-WORDS = {"start": re.compile(r"\bSTART\b"), "redirect": re.compile(r"\bredirect:"),
-         "shelved": re.compile(r"\bshelved:")}
+#: The markers a seat opens a message with: ``redirect:`` (an ack that re-aims
+#: a seat) and ``shelved:`` (a note that shelves a lane) when it moves off a
+#: job, and ``gridlock:`` (the dispatcher's ruling ack on a gridlock, the
+#: brief's sentence in ``tools/cc/seat.py::SELF_HOST_GRIDLOCK``). Read where
+#: the text opens with the marker, never anywhere in it: the briefs and the
+#: assigns quote these words mid-text (``DEF-5029``), as ``OPERATOR CALL:`` is
+#: quoted and read at the opening alone (``tools/cc/mail.py::is_operator_call``);
+#: ``gridlock:`` counts on an ack from the dispatcher alone, as that rule
+#: counts a request alone. ``tests/test_seat.py`` holds the brief's word to
+#: this table.
+MARKERS = {"redirect": "redirect:", "shelved": "shelved:", "gridlock": "gridlock:"}
+#: Every counted word, in the order a row prints them: the seats' START (a
+#: word anywhere in a text: the tier-run announcement, which never opens a
+#: message), then the markers.
+WORDS = ("start", *MARKERS)
+START_RE = re.compile(r"\bSTART\b")
 #: The closing rules the fold records, in the order a row prints them.
 RULES = ("claim", "lane", "ack")
 #: The merged pull requests' read limit; the read's argv spells it.
@@ -185,10 +209,19 @@ def read_live(repo: Path, fetch: bool) -> dict:
     return out
 
 
-def _words(m: dict) -> dict[str, bool]:
-    """The counted words a message carries: its fixture booleans, else its text."""
+def _words(m: dict, dispatcher: str | None = None) -> dict[str, bool]:
+    """The counted words a message carries: its fixture booleans, else its
+    text -- START anywhere in it, a marker where the text opens with it, as
+    the driver stores it (stripped on send; ``tools/cc/mail.py::is_operator_call``
+    reads ``OPERATOR CALL:`` the same way, with no strip of its own), and
+    ``gridlock:`` on an ack from ``dispatcher`` alone (any seat's where none
+    is named)."""
     text = str(m.get("text") or "")
-    return {k: bool(m.get(k)) or bool(rx.search(text)) for k, rx in WORDS.items()}
+    hits = {"start": bool(START_RE.search(text))}
+    hits.update({k: text.startswith(marker) for k, marker in MARKERS.items()})
+    ruling = m.get("type") == "ack" and (dispatcher is None or str(m.get("from")) == dispatcher)
+    hits["gridlock"] = hits["gridlock"] and ruling
+    return {k: bool(m.get(k)) or hits[k] for k in WORDS}
 
 
 def session_log_names(names: list[str]) -> list[tuple[str, str]]:
@@ -213,7 +246,9 @@ def _new_row(seat: str, day: str) -> dict:
     return {"seat": seat, "day": day, "lanes_merged": [], "assigns_received": 0,
             "closed": dict.fromkeys(RULES, 0), "reassigned_after_close": 0, "reassigned_rows": [],
             "reassigned_packs": [], "hand_releases": 0, "hand_releases_closing": 0, "requests": 0,
-            "answered": 0, "median_minutes": None, "session_log_rows": 0, **dict.fromkeys(WORDS, 0)}
+            "answered": 0, "median_minutes": None, "session_log_rows": 0, **dict.fromkeys(WORDS, 0),
+            # The rulings' own ids, so the day row names what the operator can reverse.
+            "gridlock_ids": []}
 
 
 #: What the dispatcher sent on a day, by the census's own counts.
@@ -288,15 +323,19 @@ def census(src: dict, since: datetime, until: datetime, now: datetime | None = N
             sends[d]["jobs_given"] += new
             if new:
                 new_jobs.append(str(a.get("at") or ""))
-    for m in flat:
+    # In time order across the refs, so a row's ruling ids read oldest first.
+    for m in sorted(flat, key=lambda x: str(x.get("at") or "")):
         d = day_of(m.get("at"))
         if d is None:
             continue
         if m.get("type") == "release" and str(m.get("ack") or "") in assign_ids:
             row(str(m.get("from")), d)["hand_releases"] += 1
-        for k, hit in _words(m).items():
+        for k, hit in _words(m, dispatcher).items():
             if hit:
-                row(str(m.get("from")), d)[k] += 1
+                r = row(str(m.get("from")), d)
+                r[k] += 1
+                if k == "gridlock":
+                    r["gridlock_ids"].append(str(m.get("id")))
     for assign, release, rule in closed:
         d = day_of(release.get("at"))
         seat = (assign.get("re") or {}).get("seat")
@@ -398,6 +437,15 @@ def _hand(r: dict) -> str:
             f"{r['hand_releases'] - r['hand_releases_closing']} named a job already closed)")
 
 
+def _words_line(r: dict) -> str:
+    """A row's counted words, the gridlock rulings named by id after their
+    count (none: the count alone)."""
+    ids = r.get("gridlock_ids") or []
+    named = f" ({', '.join(ids)})" if ids else ""
+    return (f"START {r['start']}, redirect: {r['redirect']}, shelved: {r['shelved']}, "
+            f"gridlock: {r['gridlock']}{named}")
+
+
 def as_row(data: dict, seat: str, day: str, extra: dict | None = None) -> str:
     """One Session Log row body for ``seat`` on the UTC ``day``: the figures
     only, an unread read said as unread. The dispatcher's row adds what it sent."""
@@ -419,7 +467,7 @@ def as_row(data: dict, seat: str, day: str, extra: dict | None = None) -> str:
     else:
         listed = ", ".join(f"#{n}" for n in r["lanes_merged"])
         merged = f"lanes merged {len(r['lanes_merged'])}{f' ({listed})' if listed else ''}"
-    words = f"START {r['start']}, redirect: {r['redirect']}, shelved: {r['shelved']}"
+    words = _words_line(r)
     logs = f"Session Log rows {r['session_log_rows']}"
     hand = _hand(r)
     if seat == data["dispatcher"]:
@@ -467,7 +515,7 @@ def render(data: dict, extra: dict) -> str:
                      f"closed {sum(c.values())} (claim {c['claim']}, lane {c['lane']}, ack {c['ack']}), "
                      f"re-assigned after a close {r['reassigned_after_close']}{_again(r)}, {_hand(r)}, requests "
                      f"{r['requests']} ({r['answered']} answered{median}), Session Log rows {r['session_log_rows']}, "
-                     f"START {r['start']}, redirect: {r['redirect']}, shelved: {r['shelved']}")
+                     f"{_words_line(r)}")
     for d, s in data["dispatcher_sends"].items():
         lines.append(f"{d} {data['dispatcher']} sent: assigns {s['assigns_sent']} ({s['jobs_given']} new jobs), "
                      f"the day's worker requests it answered {s['requests_answered']}")

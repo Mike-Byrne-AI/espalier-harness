@@ -758,13 +758,22 @@ ADOPTER_PROCEED = (
 #: context to see every seat and the authority to act; the protocol's Assign
 #: authority paragraph is its home, and a test holds this sentence to it. It
 #: renders right after the operator's sentence, and an adopter's brief
-#: carries nothing in the slot, as with SELF_HOST_FIGURES.
+#: carries nothing in the slot, as with SELF_HOST_FIGURES. The ruling's ack
+#: opens with the marker ``gridlock:`` (DEF-5029, 2026-10-30), in the family
+#: of OPERATOR CALL:, redirect: and shelved:, and the seat-day census counts
+#: a ruling by that opening alone and names its id on the dispatcher's row:
+#: the first two rulings under the rule were plain acks no reader counted,
+#: and a word read anywhere in a text counts the brief's and the assigns' own
+#: quotations of it. The same test holds the word to the census's table.
 SELF_HOST_GRIDLOCK = (
     "A gridlock, where no seat can advance its assigned job and the next step is a decision (a red main no "
     "revert clears, two lanes in conflict, a ruling a worker waits on past the hour), is yours to resolve, the "
-    "one exception to what you propose to the operator: rule, act and report the ruling as an ack with the "
-    "facts you read, instead of filing an operator call and waiting; the operator can reverse it, and a new "
-    "pack, a scope change, a release or tag stay the operator's. "
+    "one exception to what you propose to the operator: rule, act and report the ruling as an ack whose text "
+    "opens with gridlock: (its first word; an ack opening with RULING or an address is not counted; one ruling "
+    "per ack) and carries the facts you read, instead of filing an operator call and waiting "
+    "(scripts/seat_day_census.py counts the "
+    "rulings by that opening and your row names them); the operator can reverse it, and a new pack, a scope "
+    "change, a release or tag stay the operator's. "
 )
 DISPATCHER_BRIEF = (
     "You are the dispatcher seat {seat} ({protocol}). Orient from the banner{goal}, then run /inbox (mark "

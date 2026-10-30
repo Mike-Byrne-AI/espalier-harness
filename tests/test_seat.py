@@ -723,9 +723,12 @@ class TestBrief:
         assert ("Decisions stay the operator's. A gridlock, where no seat can advance its assigned job and the "
                 "next step is a decision (a red main no revert clears, two lanes in conflict, a ruling a worker "
                 "waits on past the hour), is yours to resolve, the one exception to what you propose to the "
-                "operator: rule, act and report the ruling as an ack with the facts you read, instead of filing "
-                "an operator call and waiting; the operator can reverse it, and a new pack, a scope change, a "
-                "release or tag stay the operator's. At the operator's word") in own, own
+                "operator: rule, act and report the ruling as an ack whose text opens with gridlock: (its first "
+                "word; an ack opening with RULING or an address is not counted; one ruling per ack) and carries "
+                "the facts you read, "
+                "instead of filing an operator call and waiting (scripts/seat_day_census.py counts the rulings "
+                "by that opening and your row names them); the operator can reverse it, and a new pack, a scope "
+                "change, a release or tag stay the operator's. At the operator's word") in own, own
         assert own.count(seat.SELF_HOST_GRIDLOCK) == 1, own
         shapes = "a red main no revert clears, two lanes in conflict, a ruling a worker waits on past the hour"
         kept = "a new pack, a scope change, a release or tag stay the operator's"
@@ -744,6 +747,58 @@ class TestBrief:
         rule = next(line for line in (root / "CLAUDE.md").read_text(encoding="utf-8").splitlines()
                     if line.startswith("15. **Parallel work"))
         assert "is resolved by the dispatcher seat" in rule and kept in rule, rule
+
+    def test_the_gridlock_ruling_opens_with_the_marker_the_census_counts(self, seat):
+        """DEF-5029 (2026-10-30): the ruling's ack opens with ``gridlock:``, a
+        marker in the family of OPERATOR CALL:, redirect: and shelved:, and
+        scripts/seat_day_census.py counts a ruling by that opening alone and
+        names its id on the dispatcher's row (the first two rulings under the
+        rule were plain acks no reader counted; a word read anywhere in a text
+        counts the briefs' and the assigns' own quotations of it). The word
+        has one home, the census's MARKERS table, and the brief's sentences
+        are held to it: the dispatcher's ruling clause and the worker tick's
+        redirect: and shelved: clauses. Its record homes carry the same word:
+        the protocol's Assign authority paragraph and dispatcher row, Core
+        Rule 15 and the inbox body's ruling paragraph. Dies to: the brief
+        saying the ack carries the facts with no marker, the marker spelled
+        apart from the table in any clause, or a record home that names the
+        ruling without the word."""
+        root = Path(__file__).resolve().parents[1]
+        census_path = root / "scripts" / "seat_day_census.py"
+        if not census_path.is_file():  # pragma: no cover - adopter tree
+            pytest.skip("scripts/seat_day_census.py is self-host dev tooling")
+        spec = importlib.util.spec_from_file_location("census_for_the_brief", census_path)
+        census = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = census
+        spec.loader.exec_module(census)
+        marker = census.MARKERS["gridlock"]
+        assert marker == "gridlock:"
+        assert (f"rule, act and report the ruling as an ack whose text opens with {marker} (its first word; an "
+                "ack opening with RULING or an address is not counted; one ruling per ack) and carries the facts "
+                "you read, instead "
+                "of filing an operator call and waiting (scripts/seat_day_census.py counts the rulings by that "
+                "opening and your row names them); the operator can reverse it") in seat.SELF_HOST_GRIDLOCK
+        assert f"an ack from {{dispatcher}} beginning {census.MARKERS['redirect']} re-aims" in seat.SELF_HOST_PROCEED
+        assert f"one note beginning {census.MARKERS['shelved']} says" in seat.SELF_HOST_PROCEED
+        protocol = (root / "memory" / "parallel-work-protocol.md").read_text(encoding="utf-8")
+        start = protocol.index("**Assign authority")
+        paragraph = " ".join(protocol[start:protocol.index("\n\n", start)].split())
+        assert f"The ruling's `ack` opens with `{marker}`" in paragraph, paragraph
+        assert "names each ruling's id" in paragraph, paragraph
+        row = next((line for line in protocol.splitlines() if line.startswith("| Resolves a gridlock")), "")
+        assert f"an `ack` opening with `{marker}`" in row, row
+        rule = next(line for line in (root / "CLAUDE.md").read_text(encoding="utf-8").splitlines()
+                    if line.startswith("15. **Parallel work"))
+        assert f"as an ack opening with `{marker}`" in rule, rule
+        raw = (root / ".claude" / "commands" / "inbox.md").read_text(encoding="utf-8")
+        inbox = " ".join(raw.split())
+        assert f"whose text opens with `{marker}`" in inbox
+        assert "seat-day census counts a ruling by that opening on the dispatcher's acks alone" in inbox
+        assert f'--text "{marker} <the ruling, the facts you read>"' in inbox
+        # The rule renders on this repository alone (the brief's slot is empty elsewhere), so the
+        # inbox body says it inside a self-host block that the asset deploy strips.
+        from espalier.surface_hygiene import strip_self_host_blocks
+        assert marker not in strip_self_host_blocks(raw) and "Core Rule 15" not in strip_self_host_blocks(raw)
 
     def test_on_an_adopter_checkout_the_handoff_clauses_name_the_row_alone(self, seat, clone):
         """The push onto the lane and the row derived by the seat census are this
