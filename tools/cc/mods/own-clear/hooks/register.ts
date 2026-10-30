@@ -16,8 +16,11 @@ import type { EngineInterface, Register } from 'claude-code'
 //     (measured 2026-10-26 on 2.1.310: Stop, SessionEnd reason=clear,
 //     SessionStart source=clear with a new session id, the window alive);
 //     anything in flight keeps the marker armed and names the wait on the
-//     status line; a clear the engine refuses says so there and is tried again
-//     at the next turn's end;
+//     status line; a clear the engine refuses says so there and on the marker
+//     (the reason, when, a count: the record the banner's Own-clear: line
+//     reads, DEF-5031) and is tried again at the next turn's end; a turn's
+//     end under a pending clear never moves the session this process was last
+//     in (DEF-5032: the queued clear flips the session under that handler);
 //   - on that SessionStart (classic.SessionStart, source=clear) the mod reads
 //     the marker, and what the old window left in flight against the marker's
 //     head, BEFORE handing the event on (the project's settings hooks run
@@ -41,6 +44,11 @@ import type { EngineInterface, Register } from 'claude-code'
 
 const MARKER = '.espalier-state/own_clear.json'
 const PLAN = 'cc/execution_plan.json'
+// The log's bound: past LOG_BYTES the newest LOG_KEEP rows are kept (the
+// launcher turns the log on by default since DEF-5031, so a long-lived window
+// must not grow it without end).
+const LOG_BYTES = 256 * 1024
+const LOG_KEEP = 500
 // Two variables, each named literally at its $.env.get (the engine lists what
 // a module reads): ESPALIER_OWN_CLEAR_ROOT, the checkout the marker lives in
 // when a test or a drive names one (else `git rev-parse --show-toplevel` from
@@ -67,8 +75,18 @@ type Marker = {
   outcome?: string | null
   written_at?: string
   clear_asked_at?: string
+  // The record the process does not keep (DEF-5031, DEF-5032): read by the
+  // banner's Own-clear: line (tools/cc/hooks/session_start.py) and the prompt
+  // router's advisory; the field names are pinned across the language line in
+  // tests/test_own_clear.py.
+  clear_refused?: string // the engine's rejection text, the latest
+  clear_refusals?: number // how many asks the engine rejected
+  clear_refused_at?: string
+  turns_since_ask?: number // main-loop turn ends since the ask with the clear still queued
   consumed_at?: string
   new_session_id?: string
+  previous_session_id?: string | null // at a stale marking: the session this process was last in
+  stale_because?: string
 }
 
 type Engine = EngineInterface
@@ -77,11 +95,21 @@ type Engine = EngineInterface
 let root: string | undefined
 let clearedFor: string | undefined // the session this process asked to clear
 let turnsSinceAsk = 0 // main-loop turn ends in that session since the ask (the queued clear's one turn among them)
+let clearResolvedAt: number | undefined // when the engine took the ask (the promise resolved) with the session still standing
 let lastId: string | undefined // the session this process was in at its last event
+let logChain: Promise<void> = Promise.resolve() // the log's writes, one after another (read-whole then write-whole)
 
 // A line in the log the environment names, or nothing; never rejects (it runs
-// in continuations the hook did not await, after the hook has answered).
-async function note($: Engine, text: string): Promise<void> {
+// in continuations the hook did not await, after the hook has answered). The
+// writes are chained: each is a read of the whole file then a write of the
+// whole, and two in flight at once (a continuation beside a handler) would
+// drop a line.
+function note($: Engine, text: string): Promise<void> {
+  const run = () => noteNow($, text)
+  return (logChain = logChain.then(run, run))
+}
+
+async function noteNow($: Engine, text: string): Promise<void> {
   try {
     const log = await $.env.get('ESPALIER_OWN_CLEAR_LOG')
     if (!log) return
@@ -91,7 +119,9 @@ async function note($: Engine, text: string): Promise<void> {
     } catch {
       prev = ''
     }
-    await $.fs.write(log, prev + JSON.stringify({ t: await $.clock.now(), text }) + '\n')
+    let body = prev + JSON.stringify({ t: await $.clock.now(), text }) + '\n'
+    if (body.length > LOG_BYTES) body = body.split('\n').slice(-LOG_KEEP - 1).join('\n')
+    await $.fs.write(log, body)
   } catch {
     // the log is a convenience; a refused read or write costs nothing
   }
@@ -130,6 +160,16 @@ async function readMarker($: Engine): Promise<Marker | undefined> {
 
 async function writeMarker($: Engine, marker: Marker): Promise<void> {
   await $.fs.write(`${await repoRoot($)}/${MARKER}`, JSON.stringify(marker, null, 2) + '\n')
+}
+
+// A field on the marker's record; a marker that cannot take it costs a log
+// line, never the hook (DEF-5031: the record is what outlives the process).
+async function record($: Engine, marker: Marker, fields: Partial<Marker>, what: string): Promise<void> {
+  try {
+    await writeMarker($, { ...marker, ...fields })
+  } catch (err) {
+    await note($, `the marker could not take ${what} (${String(err)})`)
+  }
 }
 
 function armedFor(marker: Marker | undefined, id: string): marker is Marker {
@@ -175,9 +215,18 @@ export const register: Register = on => {
     // Once per process (a /clear raises no second session.start, measured
     // 2026-10-26): nothing is cleared yet, and the root is read afresh.
     root = undefined
-    clearedFor = undefined
-    turnsSinceAsk = 0
-    lastId = await $.session.id()
+    const id = await $.session.id()
+    // Measured on 2.1.310: a /clear raises no second session.start. Should a
+    // later engine raise one, it would hand the NEW id to the clear's
+    // SessionStart as this process's last and the mod would read its own
+    // marker as another window's (DEF-5032): under a pending clear the last
+    // session stays the asked one, and the ask itself is kept for that
+    // SessionStart to read.
+    if (clearedFor === undefined) {
+      turnsSinceAsk = 0
+      clearResolvedAt = undefined
+      lastId = id
+    }
     await repoRoot($)
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -185,7 +234,16 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     if (e.agentId !== undefined) return next(e)
     const id = await $.session.id()
-    lastId = id
+    // The session this process was last in, for the clear's SessionStart to
+    // compare the marker with -- except under a clear this process asked and
+    // is still waiting on: the session is then either still the asked one
+    // (lastId already names it) or the queued clear is flipping it under this
+    // handler, whose session.id() reads the NEW id. Taken here, that id made
+    // the clear's SessionStart read its own marker as another window's, mark
+    // it stale and re-prime nothing (DEF-5032: the worker window 19cab033,
+    // 2026-10-30, the clear dequeued 5 ms after the tick turn's end). The
+    // clear's SessionStart sets the new id itself.
+    if (clearedFor === undefined || id === clearedFor) lastId = id
     if (e.reason !== 'answer') return next(e)
     if (clearedFor === id) {
       // Asked already, and the session is still this one, so the clear has
@@ -204,6 +262,14 @@ export const register: Register = on => {
       const { marker, why } = await clearable($, id)
       const left = marker && why ? `; this turn left ${why} (the queued clear runs anyway)` : ''
       $.ui.status(QUEUED_STATUS + left)
+      // On the record: the turns the clear has waited and, once the engine
+      // has answered the ask with the session still standing, when -- a taken
+      // clear that never runs reads apart from a queued one and a refused one
+      // (DEF-5031; the banner's Own-clear: line tells the three).
+      if (marker) {
+        const taken = clearResolvedAt === undefined ? {} : { clear_resolved_at: new Date(clearResolvedAt).toISOString() }
+        await record($, marker, { turns_since_ask: turnsSinceAsk, ...taken }, 'the queued turn count')
+      }
       await note($, `turn.complete: the clear asked for ${id} has not run after ${turnsSinceAsk} more turn(s)${left}`)
       return next(e)
     }
@@ -216,6 +282,7 @@ export const register: Register = on => {
     }
     clearedFor = id
     turnsSinceAsk = 0
+    clearResolvedAt = undefined
     $.ui.status(undefined)
     $.ui.toast('own-clear: the handoff landed; clearing this window and re-priming it')
     await note($, `turn.complete: clearing for ${id}`)
@@ -228,14 +295,46 @@ export const register: Register = on => {
     }
     $.command
       .run({ command: 'clear', args: '' })
-      .then(r => note($, `command.run(clear) resolved: ${JSON.stringify(r)}`))
-      .catch(err => {
-        // Not cleared: say so where the operator looks, and let the next
-        // turn's end try again (the marker is still armed).
+      .then(async r => {
+        // The engine took the ask. With the session still standing (a queued
+        // clear, or one taken and never run) the next turn's end puts the time
+        // on the record; module state only here, since a write from this
+        // continuation could race the clear's SessionStart over the marker.
+        try {
+          if (clearedFor === id) clearResolvedAt = await $.clock.now()
+        } catch {
+          // no clock: the record goes without the time
+        }
+        return note($, `command.run(clear) resolved: ${JSON.stringify(r)}`)
+      })
+      .catch(async err => {
+        // Not cleared: say so where the operator looks, put it on the record
+        // the process does not keep, and let the next turn's end try again
+        // (the marker is still armed). The dispatcher window 88a94ba9 re-asked
+        // 41 times over ten hours with the refusal on this status line alone
+        // and the log off (DEF-5031): the marker now carries the engine's
+        // reason, when, and the count, for the banner's Own-clear: line and
+        // the prompt router's advisory to read. Every await here is guarded:
+        // a continuation the hook did not await must never reject.
         clearedFor = undefined
         turnsSinceAsk = 0
-        $.ui.status(FAILED_STATUS)
-        return note($, `command.run(clear) rejected: ${String(err)}`)
+        const reason = String(err)
+        $.ui.status(FAILED_STATUS) // at once; the count follows the record below
+        let count = 1
+        try {
+          const current = await readMarker($)
+          if (armedFor(current, id)) {
+            count = (typeof current.clear_refusals === 'number' ? current.clear_refusals : 0) + 1
+            await writeMarker($, {
+              ...current, clear_refused: reason, clear_refusals: count,
+              clear_refused_at: new Date(await $.clock.now()).toISOString(),
+            })
+          }
+        } catch (e2) {
+          await note($, `the marker could not take the refusal (${String(e2)})`)
+        }
+        $.ui.status(`${FAILED_STATUS} (refused ${count} time(s): ${reason})`)
+        return note($, `command.run(clear) rejected: ${reason}`)
       })
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -249,12 +348,23 @@ export const register: Register = on => {
     // named itself as a HEAD move on every re-prime whose lane had merged
     // (DEF-5028, 2026-10-30). Only for the marker this process's last session
     // armed; a stale one is marked below and nothing of it is read.
-    const marker = e.source === 'clear' ? await readMarker($) : undefined
+    // Read before the marker (three engine round-trips a turn's end could
+    // land inside): the session this process was last in, and the one it
+    // asked to clear while that ask stands.
     const before = lastId
-    // Ours: armed for the session this process was last in. The one predicate
+    const asked = clearedFor
+    const marker = e.source === 'clear' ? await readMarker($) : undefined
+    // Ours: armed for the session this process was last in, or for the one it
+    // asked to clear (DEF-5032: the queued clear flipped the session under the
+    // tick turn's end, whose handler then read the new id), or -- with no last
+    // session known, a reload having reset this module -- a marker whose own
+    // record says a mod in this checkout asked its clear. The one predicate
     // for the read here and for the stale branch below, so a widening of one
     // cannot turn the other off with no signal.
-    const ours = marker !== undefined && before !== undefined && armedFor(marker, before)
+    const ours = marker !== undefined && marker.state === 'armed' && (
+      (before !== undefined && marker.session_id === before)
+      || (asked !== undefined && marker.session_id === asked)
+      || (before === undefined && typeof marker.clear_asked_at === 'string' && marker.clear_asked_at !== ''))
     let left = ''
     if (ours && marker) {
       try {
@@ -267,14 +377,25 @@ export const register: Register = on => {
     const id = await $.session.id()
     lastId = id
     if (e.source !== 'clear') return r
+    // A clear came (this process's, or the operator's hand): no ask is pending
+    // past it, so turn ends move lastId again (turn.complete, above).
+    clearedFor = undefined
+    turnsSinceAsk = 0
+    clearResolvedAt = undefined
     $.ui.status(undefined)
     try {
       if (!marker || marker.state !== 'armed') return r
       const stamp = new Date(await $.clock.now()).toISOString()
       if (!ours) {
         // Armed by another window, or by a session this process never saw:
-        // not this clear's. Marked, so no later clear re-primes on it either.
-        await writeMarker($, { ...marker, state: 'stale', consumed_at: stamp, new_session_id: id })
+        // not this clear's. Marked, so no later clear re-primes on it either,
+        // with the two ids compared on the record (DEF-5032: the banner's
+        // Own-clear: line names a window cleared and not re-primed).
+        const was = before ?? 'unknown (this process kept no last session: a reload resets it)'
+        await writeMarker($, {
+          ...marker, state: 'stale', consumed_at: stamp, new_session_id: id, previous_session_id: before ?? null,
+          stale_because: `armed for ${marker.session_id}; this process's last session was ${was}`,
+        })
         await note($, `classic.SessionStart source=clear: a marker of ${marker.session_id} is not this window's (${before}); marked stale`)
         return r
       }

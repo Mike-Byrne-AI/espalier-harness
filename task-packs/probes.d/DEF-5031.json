@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5031",
+ "subject": "tools/cc/mods/own-clear/hooks/register.ts",
+ "cmd": "python3 -c \"t=open('tools/cc/mods/own-clear/hooks/register.ts',encoding='utf-8').read(); print('clear_refused' in t)\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "90974e16c32b",
+ "text_sha": "9084edf86794",
+ "verified_2026_10_30": "OPEN (filed 2026-10-30; probe driven at filing)"
+}
