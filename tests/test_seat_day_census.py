@@ -241,12 +241,19 @@ class TestTheOtherColumns:
     """Merges, requests and words, each read from the source its docstring names."""
 
     def test_a_merged_branch_no_message_names_is_unattributed(self):
-        """Dies to: an unnamed branch dropped silently, or given to a seat."""
+        """Dies to: an unnamed branch dropped silently, or given to a seat; or
+        (DEF-4044) a branch no claim names but whose pull request carries the
+        seat label the ship driver stamps left unattributed, or the label read
+        over a claim."""
         src = _src(_m("win", "claim", "2026-10-18T01:00:00Z", "c1", lane="lane/y", ids=["DEF-1"]),
                    merged=[{"number": 7, "headRefName": "lane/y", "mergedAt": "2026-10-18T05:00:00Z"},
-                           {"number": 8, "headRefName": "refresh-externals/x", "mergedAt": "2026-10-18T06:00:00Z"}])
+                           {"number": 8, "headRefName": "refresh-externals/x", "mergedAt": "2026-10-18T06:00:00Z"},
+                           {"number": 9, "headRefName": "lane/u", "mergedAt": "2026-10-18T07:00:00Z",
+                            "labels": [{"name": "seat:win"}]},
+                           {"number": 10, "headRefName": "lane/y", "mergedAt": "2026-10-18T08:00:00Z",
+                            "labels": [{"name": "seat:air"}]}])
         data = census_mod.census(src, DAY, NEXT)
-        assert [(r["seat"], r["lanes_merged"]) for r in data["rows"]] == [("win", [7])]
+        assert [(r["seat"], r["lanes_merged"]) for r in data["rows"]] == [("win", [7, 9, 10])]
         assert data["unattributed_merges"] == [8]
 
     def test_a_workers_request_is_counted_and_the_dispatchers_is_not(self):
@@ -491,7 +498,7 @@ class TestALiveReadSaysWhatItCouldNotRead:
         assert data["merged_note"] == "gh pr list failed: gh: not logged in"
         assert data["merged_read"] is False and data["totals"]["lanes_merged"] is None
         assert seen == [(["gh", "pr", "list", "--state", "merged", "--limit", str(census_mod.GH_LIMIT), "--json",
-                          "number,headRefName,mergedAt"], tmp_path.resolve())]
+                          "number,headRefName,mergedAt,labels"], tmp_path.resolve())]
         assert census_mod.main(["--repo", str(tmp_path), "--seat", "win", "--date", "2026-10-18", "--as-row"]) == 0
         row = capsys.readouterr().out
         assert "mail failed (origin unreachable)" in row

@@ -591,17 +591,77 @@ def ever_added(root: Path, revs: list[str], directory: str, *, run: Runner = run
     return added
 
 
+def present_rows(root: Path, revs: list[str], directory: str, *, run: Runner = run,
+                 timeout: float = DEFAULT_TIMEOUT) -> set[str]:
+    """Every path under ``directory`` in the tree of any of ``revs``. Raises
+    ``Unresolvable`` where git cannot answer."""
+    present: set[str] = set()
+    for rev in revs:
+        out = _git(root, "ls-tree", "-r", "--name-only", rev, "--", directory, run=run, timeout=timeout)
+        present.update(ln.strip() for ln in out.splitlines() if ln.strip())
+    return present
+
+
+def pruned_rows(root: Path, revs: list[str], directory: str, trailer: str, *, run: Runner = run,
+                timeout: float = DEFAULT_TIMEOUT) -> set[str]:
+    """Every path under ``directory`` whose NEWEST change in the history of
+    some rev of ``revs`` is a deletion by a commit carrying ``trailer`` (the
+    fold's, ``_record_fragments.FOLD_TRAILER``: the Session Log cap's prune,
+    the one writer that deletes rows on purpose) -- removed for good, never
+    pending again. A deletion by any other commit, the revert of the lane that
+    folded the row, leaves the row lost, not pruned, so ``pending`` lists it
+    once more (DEF-4045: ``ever_added`` saw the revert's victim as added, and
+    the row was neither in the tree nor pending, a Session Log row silently
+    lost). ``--topo-order``: the revert descends from the fold it undoes, so
+    it is read first whatever the two clocks said; ``--full-history`` as
+    ``ever_added`` reads. Raises ``Unresolvable`` where git cannot answer."""
+    key, _sep, value = trailer.partition(": ")
+    pruned: set[str] = set()
+    for rev in revs:
+        seen: set[str] = set()
+        # Unstripped: str.strip() takes the record separator (\x1e) for white
+        # space and would drop the newest commit's record, the prune's.
+        rc, out, err = run(["git", "log", f"--format=%x1e%(trailers:key={key},valueonly)%x1f", "--name-status",
+                            "--no-renames", "--full-history", "--topo-order", rev, "--", directory],
+                           cwd=str(root), timeout=timeout, env=git_env())
+        if rc != 0:
+            raise Unresolvable(f"git log {rev} failed: {(err.strip() or out.strip())[:200]}")
+        for record in out.split("\x1e")[1:]:
+            trailers, _sep2, changes = record.partition("\x1f")
+            by_fold = value in (ln.strip() for ln in trailers.splitlines())
+            for line in changes.splitlines():
+                status, _tab, path = line.partition("\t")
+                path = path.strip()
+                if not path or path in seen:
+                    continue
+                seen.add(path)
+                if status.strip().startswith("D") and by_fold:
+                    pruned.add(path)
+    return pruned
+
+
 def pending(root: Path, directory: str, against: list[str], *, run: Runner = run,
-            timeout: float = DEFAULT_TIMEOUT) -> list[tuple[str, str, str]]:
+            timeout: float = DEFAULT_TIMEOUT, trailer: str = "") -> list[tuple[str, str, str]]:
     """The rows parked on the LOCAL remote-tracking records refs (no network)
-    under ``directory`` that no history in ``against`` ever added:
-    ``(machine, path, remote ref)``, by path. Raises ``Unresolvable`` where git
-    cannot answer."""
+    under ``directory`` that ``against`` does not hold: ``(machine, path,
+    remote ref)``, by path. With ``trailer`` (the fold's,
+    ``_record_fragments.FOLD_TRAILER``), a parked row is pending unless some
+    rev's tree holds it (``present_rows``) or some rev's history pruned it
+    (``pruned_rows``), so a row a revert took off the base is pending again
+    and the next fold brings it back (DEF-4045); a row deleted by hand, with
+    no trailer, comes back the same way while its ref still holds it. Without
+    it, the first rule: a row any history in ``against`` ever added is never
+    pending again (``ever_added``), which a revert's victim passed. Raises
+    ``Unresolvable`` where git cannot answer."""
     out = _git(root, "for-each-ref", "--format=%(refname)", REMOTE_RECORDS_PREFIX, run=run, timeout=timeout)
     refs = sorted(ref for ref in out.split() if ref.startswith(REMOTE_RECORDS_PREFIX))
     if not refs:
         return []
-    seen = ever_added(root, against, directory, run=run, timeout=timeout)
+    if trailer:
+        seen = present_rows(root, against, directory, run=run, timeout=timeout) \
+            | pruned_rows(root, against, directory, trailer, run=run, timeout=timeout)
+    else:
+        seen = ever_added(root, against, directory, run=run, timeout=timeout)
     rows: list[tuple[str, str, str]] = []
     for ref in refs:
         prefix = directory.rstrip("/") + "/"
@@ -1760,15 +1820,18 @@ def send(root: Path, message: dict, *, run: Runner = run, say: Callable[[str], N
 
 
 def park(root: Path, path: str, data: bytes | None, base_ref: str, *, from_rev: str | None = None,
-         run: Runner = run, say: Callable[[str], None] = print, timeout: float = DEFAULT_TIMEOUT) -> str:
+         run: Runner = run, say: Callable[[str], None] = print, timeout: float = DEFAULT_TIMEOUT,
+         trailer: str = "") -> str:
     """Leave ``data`` at ``path`` on this machine's records ref and push it: a
     handoff with no open pull request parks its Session Log row here instead of
     opening a pull request for the row alone (``tools/cc/ship.py``), and the
     next lane's push folds it in. ``from_rev`` parks the blob committed at
     ``<from_rev>:<path>`` instead, byte for byte (a working-tree read would
     carry a checkout's CRLF). The ref keeps what is still pending: each park
-    drops the rows ``base_ref``'s history has added (a failed read of that
-    history drops nothing). Refused where this clone names no machine, as a
+    drops the rows ``base_ref``'s tree holds or its history pruned under
+    ``trailer`` (``pending``'s rule; without the trailer, the rows its history
+    ever added), and a failed read of that history drops nothing. Refused
+    where this clone names no machine, as a
     send is; the same compare-and-swap push. Returns the commit id."""
     root = Path(root)
     machine, how = machine_setting(root, run=run)
@@ -1786,7 +1849,15 @@ def park(root: Path, path: str, data: bytes | None, base_ref: str, *, from_rev: 
         if parent:
             entries = _tree_records(root, parent, run=run, timeout=timeout)
             try:
-                folded = ever_added(root, [base_ref], directory, run=run, timeout=timeout)
+                # The pending rule's own drop: with the trailer, a row leaves
+                # the ref once the base's tree holds it or its history pruned
+                # it; a reverted fold's row stays (DEF-4045's writer side, both
+                # reviews of the second lane). Without it, the first rule.
+                if trailer:
+                    folded = present_rows(root, [base_ref], directory, run=run, timeout=timeout) \
+                        | pruned_rows(root, [base_ref], directory, trailer, run=run, timeout=timeout)
+                else:
+                    folded = ever_added(root, [base_ref], directory, run=run, timeout=timeout)
             except Unresolvable:
                 folded = set()   # keep every row: a pending one dropped is a row lost
             entries = {name: blob for name, blob in entries.items() if name not in folded}

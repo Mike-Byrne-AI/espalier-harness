@@ -1512,7 +1512,8 @@ def check_session_log_cap(notes: "list[str] | None" = None) -> list[str]:
         note += "; the records refs were not read (tools/cc/mail.py is not beside this script)"
     else:
         try:
-            pending = len(mail.pending(REPO_ROOT, fragments.SESSION_LOG_DIR, ["origin/main", "HEAD"]))
+            pending = len(mail.pending(REPO_ROOT, fragments.SESSION_LOG_DIR, ["origin/main", "HEAD"],
+                                       trailer=fragments.FOLD_TRAILER))
         except mail.Unresolvable as exc:
             note += f"; the records refs could not be read ({exc})"
     if pending:

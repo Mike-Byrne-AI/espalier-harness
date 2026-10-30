@@ -529,9 +529,16 @@ are snapshots. Two of its lines are about the seats themselves:
   cannot say whether a session elsewhere is running, so ask a quiet seat
   rather than presume it gone.
 - `records:` gives each seat with a checkout here, a live claim or a job its
-  lanes merged since its newest Session Log row on the base: the row a seat
-  owes for the day's lanes, counted the same way the ship driver's row-debt
-  read counts it. A read that fails is unread, never zero.
+  lanes merged since its newest Session Log row -- on the base, parked on its
+  records ref, riding its open pull request, or pruned from the base and read
+  from its history (the line says which): the row a seat owes for the day's
+  lanes, counted the same way the ship driver's row-debt read counts it, and
+  a lane no claim names is the seat its `seat:` label names (the driver
+  stamps it at the open). On a named clone, past a cap of 3 lanes merged on
+  the days after that row, `ship.py open --early` refuses until a row is
+  committed on the lane; a debt that cannot be read (an unnamed clone, or git,
+  gh or the mail channel not answering) is said and `--early` stands. A read
+  that fails is unread, never zero.
 - `asks:` gives every request no ack answers yet, oldest first, with its full
   id and age. The dispatcher answers them, and another seat answers only a
   request about the files it claims; any seat's ack closes a request, so a

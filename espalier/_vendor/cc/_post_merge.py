@@ -48,9 +48,10 @@ RED_BUCKETS = frozenset({"fail", "cancel"})
 #: The fields one merged listing carries for these readers.
 MERGED_FIELDS = "number,mergedAt,statusCheckRollup"
 #: The fields the Session Log debt readers ask for (the board's ``records:``
-#: line, the ship driver's row-debt read): a lane's branch and merge stamp,
-#: never a hundred rollups.
-LANE_FIELDS = "number,mergedAt,headRefName"
+#: line, the ship driver's row-debt read): a lane's branch, merge stamp and
+#: labels (the ``seat:<name>`` label ``ship.py open`` stamps, which names a
+#: lane's seat where no claim does, DEF-4044), never a hundred rollups.
+LANE_FIELDS = "number,mergedAt,headRefName,labels"
 
 Gh = Callable[[list[str]], object]
 
