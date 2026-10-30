@@ -6432,7 +6432,10 @@ reset a window after the handoff: nothing there can, and a PreCompact block only
 window full. Or, in a mod, reading state on `classic.SessionStart` AFTER `next(e)`: the
 chain is managed hooks, then the hooks modules, then the project's settings hooks as core,
 so a settings hook beneath (`session_start.py`'s sweep of `.espalier-state/`) runs inside
-that `next(e)` and can take the file before the mod reads it. Or arming the marker only
+that `next(e)` and can take the file before the mod reads it, and its checkout catch-up (the
+banner's `Checkout:` line) moves a checkout whose lane merged onto the base there, so an
+in-flight read after the hand-on named that move as work left in the old window on every
+such re-prime (DEF-5028, 2026-10-30: six tool calls on a clean tree). Or arming the marker only
 after a push that landed: a handoff refused on a red base, a push whose follow-up refused,
 or a lane opened by hand then leaves the window with no marker, and the threshold ask fires
 on every prompt until someone types `/clear` (DEF-4057: win, win-2 and air-work sat so for
@@ -6457,10 +6460,11 @@ with (the base red, the lane whole and unpushed here; a step after a landed push
 refusal in the marker (`landed`, `outcome`) and the lane to land first appended to the brief;
 a refusal the window must fix first arms nothing; `ship.py arm --why ...` arms by hand after
 a hand-open -- keyed by the session id and re-primed only in the window it was armed in; it
-reads the marker first and hands the event on second, refuses a compaction only while the
-clear is due, writes `clear_asked_at` into the marker at the ask (record only), never asks
-again while the session stands (two prompts queued ahead would make a second ask a second
-clear, over the window the first re-primes), names the queued clear and what each later turn
+reads the marker, and what the old window left in flight, first and hands the event on
+second, refuses a compaction only while the clear is due, writes `clear_asked_at` into the
+marker at the ask (record only), never asks again while the session stands (two prompts
+queued ahead would make a second ask a second clear, over the window the first re-primes),
+names the queued clear and what each later turn
 left in flight on the status line, lets a compaction through once two turns have passed since
 the ask, and on the clear's SessionStart tells the new window what the old one left in
 flight. The Stop hook's handoff gate (Gate 5) lets a Stop through over a marker armed at HEAD,
@@ -6468,8 +6472,9 @@ since the handoff ran and a block would only ask for a second row. Measure a mod
 payloads on disk (a settings-hook log in a throwaway repository, or the transcript's queue
 rows), never from the screen, and run `claude plugin validate` before a drive.
 
-**Backed by:** `tools/cc/mods/own-clear/hooks/own-clear.test.ts` (twenty cases against
-the engine, `claude plugin test`), `bench/own_clear/drive.py` (a pty-driven session with the
+**Backed by:** `tools/cc/mods/own-clear/hooks/own-clear.test.ts` (the cases against the
+engine, `claude plugin test`, which `tests/test_own_clear.py` runs wherever `claude` is on
+PATH with the count derived from the kit file), `bench/own_clear/drive.py` (a pty-driven session with the
 real marker writer: PASS 2026-10-26 in 27 s) and `reports/own-clear-probe-2026-10-26/` on
 the Air (the probe mod, its logs and the pty driver). `tools/cc/mods/own-clear/README.md`
 has the measured facts.

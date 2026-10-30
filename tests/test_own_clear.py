@@ -388,6 +388,32 @@ class TestTheModReadsWhatTheDriverWrites:
             assert f"$.env.get('{name}')" in module_text
             assert name in seat.OWN_CLEAR_ENV
 
+    def test_the_in_flight_read_precedes_the_hand_on_of_the_clears_session_start(self, module_text):
+        """The project's SessionStart hook runs inside the mod's ``next(e)`` and
+        catches the checkout up (a lane branch GitHub deleted at the merge moves
+        onto the base), so what the old window left in flight is read before the
+        event is handed on, beside the marker; read after it, the catch-up named
+        itself as a HEAD move on every re-prime whose lane had merged (the
+        dispatcher window 28cea670, 2026-10-30). Pinned by text, since no Python
+        test drives the hooks; the kit's case moves HEAD beneath the mod. Read
+        with the line comments stripped (the module keeps no ``//`` inside a
+        string) and bounded to this handler: the read must be awaited before the
+        hand-on and absent after it. Dies to: the read moved back below ``await
+        next(e)`` with or without a comment naming it, the hoisted read kept
+        and a second one after the hand-on feeding the brief, and the read
+        started before the hand-on but awaited after it (the failure-mode
+        review drove all four, 2026-10-30)."""
+        code = "\n".join(line.split("//", 1)[0] for line in module_text.splitlines())
+        start = code.index("on('classic.SessionStart'")
+        end = code.find("\n  on('", start + 1)
+        handler = code[start:end if end != -1 else None]
+        before, hand_on, after = handler.partition("await next(e)")
+        assert hand_on, "the handler no longer hands the event on with `await next(e)`"
+        assert "await inFlight(" in before, (
+            "the in-flight read is not awaited before the hand-on: the catch-up beneath reads as a HEAD move")
+        assert "inFlight(" not in after, (
+            "an in-flight read after the hand-on reads the caught-up checkout, not the old window")
+
     @pytest.mark.skipif(shutil.which("claude") is None, reason="claude is not on PATH")
     def test_the_engine_accepts_the_manifest_and_the_module(self, seat):
         """`claude plugin validate` reads the module as the engine will (the
@@ -395,6 +421,22 @@ class TestTheModReadsWhatTheDriverWrites:
         done = subprocess.run(["claude", "plugin", "validate", str(seat.MOD_DIR)], capture_output=True,
                               text=True, encoding="utf-8", errors="replace", timeout=30)
         assert "Validation passed" in done.stdout, done.stdout[-600:] + done.stderr[-300:]
+
+    @pytest.mark.skipif(shutil.which("claude") is None, reason="claude is not on PATH")
+    def test_the_engine_runs_the_kit_green_with_every_case_counted(self, seat):
+        """`claude plugin test` is the mod's own kit, and no workflow runs it
+        (the cells install no `claude`), so the suite drives it wherever the
+        engine is on PATH: green, with as many passes as the kit file holds
+        cases, so the count is derived and never kept by hand. The failure-mode
+        review (2026-10-30) drove three refactors of the SessionStart handler
+        that only the kit catches; without this case a lane could merge them on
+        a green tier."""
+        done = subprocess.run([shutil.which("claude"), "plugin", "test", str(seat.MOD_DIR)], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=30)
+        cases = (seat.MOD_DIR / "hooks" / "own-clear.test.ts").read_text(encoding="utf-8").count("\ntest(")
+        assert cases > 0, "no case found in the kit file"
+        assert done.returncode == 0 and f" {cases} pass" in done.stdout and " 0 fail" in done.stdout, (
+            done.stdout[-800:] + done.stderr[-300:])
 
 
 class TestReprimeText:
