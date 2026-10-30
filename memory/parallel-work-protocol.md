@@ -412,7 +412,20 @@ stops, and only re-reads mail, for what the assign authority above reserves
 for the operator (a new pack, a change to an approved pack's scope, a release
 or tag, a revert that is not the red-`main` revert, an open operator call, an
 `OPERATOR CALL:` request on the board's `asks:` line), for a platform safety stop, for a refusal it cannot resolve, and for a
-conflict outside its own files; a finding's row is the seat's own to file
+conflict outside its own files; the stop is said as one `request` whose text
+opens with `stopped:` (its first word; it names what stops the seat, an open
+operator call by its id; no proceeding on it), so the board's `asks:` line
+carries it with its age, the dispatcher's past-the-hour read under the gridlock
+rule, counted apart on the header and tagged `(stopped)`; any `ack` naming it
+closes it, and since a release or the ruling on an operator call names no
+stop, the seat acks its own stop when what stopped it is gone, and sends the
+stop again after an ack that frees nothing (the failure-mode review's
+regression: the first clause waited on an ack the freeing events never send;
+since
+2026-10-30, `DEF-5030`: before it this repository's stop sent nothing and an
+adopter's sent a plain request, so the board showed no stopped seat; the word's
+home is `tools/cc/mail.py::STOPPED_PREFIX`, beside the operator call's, held to
+both ticks and the census by `tests/test_seat.py::TestBrief`); a finding's row is the seat's own to file
 (item 8), never a stop. A red the seat cannot fix in two attempts shelves the
 lane (its claims stay, unless its push already released them; one note
 beginning `shelved:` says what was tried and names any job that lane's push
@@ -446,7 +459,7 @@ override after the fact that forces rework, twice in twenty.
 **The model on a dispatch (the operator's rule, 2026-10-25).** A seat passes a
 model below its own on a subagent dispatch only for a kind named on a line
 opening with `allowance:` in the assign for the job in hand, a marker in the
-family of `OPERATOR CALL:`, `redirect:` and `shelved:`. The kinds, rendered
+family of `OPERATOR CALL:`, `redirect:`, `shelved:`, `gridlock:` and `stopped:`. The kinds, rendered
 into the tick and the dispatcher brief from `tools/cc/seat.py::DISPATCH_KINDS`
 and held to this paragraph by a test: `anchors` (the 0-A re-derivation of a
 pack's anchors and figures against HEAD, each tagged verified, probable or
@@ -494,7 +507,10 @@ that is away: a seat with a queue does not need it in real time.
 **The dispatcher's first read is the board's `seats:` and `asks:` lines**
 (`python3 tools/cc/board.py`, `TP-701` Wave A). `asks:` is every request no
 `ack` names, from every seat (the dispatcher's own outgoing ones included: a
-request names no addressee), oldest first with its full id and age; on the
+request names no addressee), oldest first with its full id and age; a request
+opening with `stopped:` is a worker that cannot advance its job (the tick's
+STOP clause), counted apart on the header and tagged `(stopped)` on its row,
+its age the past-the-hour read of the gridlock rule (`DEF-5030`); on the
 dispatcher seat the banner's `Mail:` line carries the count and the oldest
 age. A request that went moot is closed with an ack naming its full id and
 saying so, or it stays on the line. `seats:` is each seat name's last mail

@@ -549,7 +549,11 @@ are snapshots. Two of its lines are about the seats themselves:
   dispatcher's question to the operator, counted apart on the header and
   tagged on its row; the ruling is the dispatcher's ack naming the request's
   full id, with the ruling in its text, and an ack from any other seat leaves
-  the call open.
+  the call open. A request whose text opens with `stopped:` is a worker's stop
+  (the tick's STOP clause: what stops it, in its text), counted apart on the
+  header and tagged on its row; its age is what the dispatcher reads first,
+  and any seat's ack naming it closes it, the worker's own included once what
+  stopped it is gone.
 
 `/inbox` has the rest: the channel's verbs, claims and releases, and what each
 board line means.

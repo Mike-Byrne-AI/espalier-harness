@@ -1103,6 +1103,37 @@ class TestOperatorCalls:
             True, True, False, False, False, False]
         assert mail.is_operator_call({"type": "request"}) is False and mail.is_operator_call("junk") is False
 
+    def test_a_stop_is_a_request_opening_with_its_own_prefix_and_closes_on_any_ack(self, mail):
+        """DEF-5030 (2026-10-30): a worker that stops (a refusal it cannot
+        resolve, a conflict outside its files, a decision reserved for the
+        operator) sends one request opening with ``stopped:``, the sibling of
+        the operator call, so the board's asks line carries the stop with its
+        age (the dispatcher's past-the-hour gridlock read). Read as the
+        operator call is: a request alone, at the text's opening, as spelled;
+        a note, an ack or an assign carrying the word is no stop, nor a
+        request quoting it mid-text, nor an operator call that nests it. It
+        closes on any ack naming it (the plain rule: the dispatcher's ruling,
+        or the seat whose files the conflict is in), never on its sender's
+        alone. Dies to: the prefix read on a note, mid-text or in another
+        case; or the operator-call closing rule applied to a stop."""
+        t = datetime(2026, 10, 30, 15, 0, 0, tzinfo=timezone.utc)
+        assert mail.STOPPED_PREFIX == "stopped:"
+        stop = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} a conflict outside my files, docs/HOOKS.md",
+                                lane="lane/a", now=t)
+        padded = mail.new_message("win", "request", f"  {mail.STOPPED_PREFIX} the guard refuses the edit", now=t)
+        plain = mail.new_message("win", "request", "which base?", lane="lane/a", now=t)
+        note = mail.new_message("win-2", "note", f"{mail.STOPPED_PREFIX} not a request", now=t)
+        upper = mail.new_message("win-2", "request", "STOPPED: not the prefix", now=t)
+        quoted = mail.new_message("air", "assign", f"a request opening with {mail.STOPPED_PREFIX} is a stop", seat="win",
+                                  lane="lane/a", now=t)
+        call = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} {mail.STOPPED_PREFIX} nested", now=t)
+        assert [mail.is_stop(m) for m in (stop, padded, plain, note, upper, quoted, call)] == [
+            True, True, False, False, False, False, False]
+        assert mail.is_stop({"type": "request"}) is False and mail.is_stop("junk") is False
+        # Any seat's ack closes a stop: here the seat holding the files it names.
+        freed = mail.new_message("win-2", "ack", "released docs/HOOKS.md", ack=stop["id"], now=t.replace(minute=5))
+        assert mail.live_requests({"win": [stop], "win-2": [freed]}, now=t.replace(minute=9)) == []
+
     def test_only_the_askers_own_ack_closes_an_operator_call(self, mail):
         """Any seat's ack closed any request, and inbox.md tells a worker to
         close a moot ask, so a worker could clear the operator's question from
