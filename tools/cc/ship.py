@@ -1443,7 +1443,7 @@ def arm(why: str | None = None, dry_run: bool = False) -> int:
     armed = _armed_for_this_session(root)
     if armed:
         refused = _refusals_on_marker(root)
-        tail = (f"; the engine has refused its clear {refused} time(s) (the marker's record, DEF-5031): this window "
+        tail = (f"; the engine has refused its clear {refused} time(s) (the marker's record): this window "
                 "needs /clear by hand, and a second arm would drop what the first one's brief says" if refused else
                 ": the mod clears this window at the turn's end, and a second arm would drop what the first one's "
                 "brief says")

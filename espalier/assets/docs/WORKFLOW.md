@@ -517,8 +517,8 @@ survives the clear. A window started without the mod is told it needs a
 `/clear`. Every outcome the mod meets goes on the marker -- a clear the engine
 refused (the reason, when, a count), one taken and never run, the turns a
 queued one has waited, the two ids a stale marking compared -- and the launch
-logs the mod by default (`.espalier-state/own_clear.log`, capped;
-`--no-own-clear-log` leaves it off): the SessionStart banner's `Own-clear:`
+logs the mod by default (an `own_clear.log` beside the marker in the harness's
+state directory, capped; `--no-own-clear-log` leaves it off): the SessionStart banner's `Own-clear:`
 line reads the record for every later session, and the prompt router tells a
 window whose own asked clear was refused to say so in its reply, since its
 ticks run while nobody reads its status line (a dispatcher window re-asked a
