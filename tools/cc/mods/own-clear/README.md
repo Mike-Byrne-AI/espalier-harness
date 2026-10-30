@@ -107,7 +107,9 @@ have cleared the re-primed window; with two prompts queued ahead no turn count
 tells a queued clear from a lost one. That is why the mod never asks again while
 the session stands, names the queued clear on the status line instead, lets a
 compaction through once two turns have passed, and records `clear_asked_at` in
-the marker (record only: nothing reads it back).
+the marker (read back by the banner's `Own-clear:` line, the prompt router, and
+the mod's own reload arm, which takes a marker asked under a day ago as this
+checkout's own when a reload has reset the module's memory).
 
 ## Environment
 

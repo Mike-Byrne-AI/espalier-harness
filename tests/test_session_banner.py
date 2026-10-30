@@ -3709,6 +3709,39 @@ class TestOwnClearLine:
         assert "no brief was submitted" in line and "seat.py brief" in line
         assert mod._own_clear_line(tmp_path, "s-3") == ""
 
+    def test_the_clears_own_session_start_prints_nothing_over_the_old_sessions_armed_marker(self, tmp_path):
+        """The failure-mode review (2026-10-30): this hook runs beneath the mod's
+        SessionStart handler, which consumes or marks the marker only after it,
+        so at source=clear an armed marker is the old session's, mid-clear --
+        and the line would have read "not this one ... needs /clear by hand" on
+        every clean own-clear. The router tells the new session on its first
+        prompt instead."""
+        mod = _load()
+        self._marker(tmp_path, clear_asked_at="2026-10-30T19:55:41Z", clear_refusals=3, clear_refused="HooksError: x")
+        assert mod._own_clear_line(tmp_path, "s-new", "clear") == ""
+        assert mod._own_clear_line(tmp_path, "s-new", "startup") != ""
+        assert mod._own_clear_line(tmp_path, "s-new", "resume") != ""
+
+    def test_a_refusal_followed_by_an_ask_the_engine_took_does_not_read_as_refused(self, tmp_path):
+        """The mod takes the latest refusal off the marker at a new ask and keeps
+        the count; the line keys on the refusal, not the count (the code review,
+        2026-10-30: a queued clear reported as refused)."""
+        mod = _load()
+        self._marker(tmp_path, clear_asked_at="2026-10-30T09:10:00Z", clear_refusals=2)
+        line = mod._own_clear_line(tmp_path, "s-2")
+        assert "has not answered" in line and "refused" not in line, line
+
+    def test_engine_text_is_folded_to_one_ascii_line(self, tmp_path):
+        mod = _load()
+        self._marker(tmp_path, clear_asked_at="2026-10-30T09:09:13Z", clear_refusals=1,
+                     clear_refused="HooksError: “the turn” was\r\ninterrupted\tbefore it ran — twice")
+        line = mod._own_clear_line(tmp_path, "s-2")
+        assert line.isascii() and "\n" not in line and "\r" not in line and "\t" not in line, line
+        assert "?the turn? was interrupted before it ran ? twice" in line, line
+        self._marker(tmp_path, state="stale", new_session_id="s-2", stale_because="armed for aéb;\nlast was c")
+        stale = mod._own_clear_line(tmp_path, "s-2")
+        assert stale.isascii() and "\n" not in stale and "armed for a?b; last was c" in stale, stale
+
     def test_banner_carries_the_line_only_when_given_in_both_builders(self, tmp_path):
         mod = _load()
         assert "Own-clear:" not in mod._build_context(tmp_path, False, False)
@@ -3831,10 +3864,12 @@ class TestSessionsLine:
         hu = _load_hook_utils()
         now = time.time()
         assert hu.HANDOFF_ASKED_SUFFIX in hu.SESSION_SIDE_SUFFIXES
+        assert hu.OWN_CLEAR_TOLD_SUFFIX in hu.SESSION_SIDE_SUFFIXES   # the router's once-flag (DEF-5031)
         assert not any(s.endswith(".json") for s in hu.SESSION_SIDE_SUFFIXES), hu.SESSION_SIDE_SUFFIXES
         hu.write_session_marker(tmp_path, "other-1")
         side = hu.sessions_dir(tmp_path) / f"other-1{hu.HANDOFF_ASKED_SUFFIX}"
         side.write_text('{"at": "2026-10-26T09:19Z", "tokens": 270738}', encoding="utf-8")
+        (hu.sessions_dir(tmp_path) / f"other-1{hu.OWN_CLEAR_TOLD_SUFFIX}").write_text("told\n", encoding="utf-8")
         named = hu.other_live_sessions(tmp_path, "me", now)
         assert len(named) == 1, named
         # The marker and its side file were written after `now`, so the sweep

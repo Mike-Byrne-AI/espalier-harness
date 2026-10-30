@@ -296,9 +296,18 @@ class TestTheByHandArm:
         _with_origin(repo)
         ship.arm_own_clear_here(repo, held=ship.Held("main red after merge", landed=False))
         before = _marker(repo)
-        with pytest.raises(ship.Refused, match="already armed"):
+        with pytest.raises(ship.Refused, match="already armed") as plain:
             ship.arm(why="again")
         assert _marker(repo) == before
+        assert "clears this window at the turn's end" in str(plain.value) and "refused" not in str(plain.value)
+        # The mod's record of a refused clear (DEF-5031): the refusal says so and
+        # sends the operator to the hand clear, not a second arm.
+        path = repo / ".espalier-state" / "own_clear.json"
+        path.write_text(json.dumps({**before, "clear_refusals": 41, "clear_refused": "HooksError: x"}), encoding="utf-8")
+        with pytest.raises(ship.Refused, match="already armed") as refused:
+            ship.arm(why="again")
+        assert "refused its clear 41 time(s)" in str(refused.value) and "/clear by hand" in str(refused.value)
+        assert "clears this window at the turn's end" not in str(refused.value)
 
     def test_a_dirty_tracked_tree_is_refused_and_nothing_is_armed(self, ship, repo, monkeypatch):
         monkeypatch.chdir(repo)
@@ -390,10 +399,13 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
         5, the handoff's refusal of a second arm and the mod's own retry all
         read ``armed``)."""
         assert "clear_refused: reason" in module_text, "the refusal is not recorded on the marker"
-        start = module_text.index(".catch(async err =>")
-        catch = module_text[start:module_text.index("return next(e)", start)]
-        assert "clear_refusals: count" in catch and "clear_refused_at" in catch
-        assert "state:" not in catch
+        # The rejection handler is the second argument of the one then(), so a
+        # throw in the fulfilment handler is never read as a refusal.
+        start = module_text.index("}, async err => {")
+        rejected = module_text[start:module_text.index("return next(e)", start)]
+        assert "clear_refusals: count" in rejected and "clear_refused_at" in rejected
+        assert "state:" not in rejected
+        assert ".catch(" not in module_text[module_text.rindex("$.command", 0, start):start]
 
     def test_a_pending_clear_holds_the_last_session(self, module_text):
         """DEF-5032's guard: a turn's end writes ``lastId`` only outside a
@@ -407,7 +419,18 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
         handler = module_text[start:module_text.find("\n  on('", start + 1)]
         assert handler.index("const before = lastId") < handler.index("await readMarker($)")
         assert "marker.session_id === asked" in handler
-        assert "typeof marker.clear_asked_at === 'string'" in handler
+        assert "recentAsk(marker, now)" in handler, "the reload arm no longer reads the marker's own ask, bounded"
+
+    def test_a_session_start_under_a_pending_clear_keeps_the_asked_session(self, module_text):
+        """The third defense, pinned alone (the failure-mode review drove the
+        kit with each of the three removed and found the others covering):
+        ``session.start`` resets the module's memory only outside a pending
+        clear, so an engine that raised it at a clear would not hand the new id
+        to the clear's SessionStart as this process's last."""
+        start = module_text.index("on('session.start'")
+        handler = module_text[start:module_text.find("\n  on('", start + 1)]
+        assert "if (clearedFor === undefined) {" in handler, "session.start resets lastId under a pending clear"
+        assert handler.index("if (clearedFor === undefined) {") < handler.index("lastId = id")
 
 
 class TestTheModReadsWhatTheDriverWrites:

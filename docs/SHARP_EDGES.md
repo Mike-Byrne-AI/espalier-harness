@@ -6459,10 +6459,14 @@ whenever the handoff ran to its end -- the push landed, or a refusal the window 
 with (the base red, the lane whole and unpushed here; a step after a landed push), with the
 refusal in the marker (`landed`, `outcome`) and the lane to land first appended to the brief;
 a refusal the window must fix first arms nothing; `ship.py arm --why ...` arms by hand after
-a hand-open -- keyed by the session id and re-primed only in the window it was armed in; it
+a hand-open -- keyed by the session id and re-primed only in the process that armed it (the
+session it was last in, the one it asked to clear, or, after a reload reset the module, a
+marker whose own ask is under a day old); it
 reads the marker, and what the old window left in flight, first and hands the event on
 second, refuses a compaction only while the clear is due, writes `clear_asked_at` into the
-marker at the ask (record only), never asks again while the session stands (two prompts
+marker at the ask (read back by the banner's `Own-clear:` line, the prompt router and the
+mod's own reload arm, with every later outcome beside it: a refusal's text, time and count,
+the turns a queued clear has waited, the ids a stale marking compared), never asks again while the session stands (two prompts
 queued ahead would make a second ask a second clear, over the window the first re-primes),
 names the queued clear and what each later turn
 left in flight on the status line, lets a compaction through once two turns have passed since
