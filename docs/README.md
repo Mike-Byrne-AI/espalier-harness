@@ -17,7 +17,7 @@
 | [CHEAT-SHEET.md](CHEAT-SHEET.md) | Daily users | One-page quick reference for commands and conventions |
 | [SHARP_EDGES.md](SHARP_EDGES.md) | All users | Known gotchas, footguns, and documented bypass classes |
 | [INSTALL-CI.md](INSTALL-CI.md) | Repo admins | Enabling the CI guarantee layer with branch protection |
-| [SURFACE_SUPPORT_MATRIX.md](SURFACE_SUPPORT_MATRIX.md) | Evaluators | Normative per-surface support tiers (the front-door docs — README, QUICKSTART, CHEAT-SHEET — are tested against it for overclaiming) |
+| [SURFACE_SUPPORT_MATRIX.md](SURFACE_SUPPORT_MATRIX.md) | Evaluators | Normative per-surface support tiers (every curated public doc, the set `espalier/surface_contract.py::get_public_doc_relpaths` names, is tested against it for overclaiming; the matrix itself, which quotes the forbidden phrases as examples, is the one left out) |
 | [FRESHNESS.md](FRESHNESS.md) | Contributors | How documented numeric claims are pinned and re-verified |
 | [CONVENTIONS.md](CONVENTIONS.md) | Contributors | Part I: layout, code style, agent/command/hook/testing design. Part II: the test-cited invariant registry (reach via its index). |
 | [TASK_RECIPES.md](TASK_RECIPES.md) | Contributors | Step-by-step recipes for common harness tasks |

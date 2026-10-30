@@ -483,7 +483,7 @@ class TestTheLiveOwedProbesAreSound:
         """
         probes = REPO_ROOT / "cc" / "GOAL_OWED.json"
         if not probes.is_file():
-            pytest.skip("cc/GOAL_OWED.json is local session state")
+            pytest.skip("cc/GOAL_OWED.json is local session state (gitignored)")
         import json as _json
         for item in _json.loads(probes.read_text(encoding="utf-8"))["owed"]:  # ledger-read: cc/GOAL_OWED.json, the owed list, not the roster
             cmd = item.get("cmd") or ""

@@ -990,6 +990,7 @@ def replace_writers(root: Path) -> set[tuple[str, str]]:
 
 
 class TestReplaceWriters:
+    @pytest.mark.contract
     def test_every_os_replace_writer_is_rostered_and_every_roster_entry_is_live(self):
         actual = replace_writers(REPO_ROOT)
         expected = set(_REPLACE_WRITERS)
@@ -1216,6 +1217,7 @@ class TestOneArgumentMoves:
     twice; the plan's demotion) now wait it out; the housekeeping ones stay a
     single try, rostered with why."""
 
+    @pytest.mark.contract
     def test_every_one_argument_move_is_a_rostered_single_try(self):
         actual = one_argument_moves(REPO_ROOT)
         expected = set(_SINGLE_SHOT_MOVES)
@@ -1226,6 +1228,7 @@ class TestOneArgumentMoves:
         )
         assert {k: n for k, n in actual.items() if n != 1} == {}, "a rostered function holds one move, no more"
 
+    @pytest.mark.contract
     def test_a_planted_move_is_seen_and_nothing_else_is(self, tmp_path):
         """A sixth move planted in a copy is seen; a two-argument
         ``str.replace``, ``os.replace`` and the vendored mirror are not."""

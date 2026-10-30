@@ -138,19 +138,61 @@ class TestMatrixFile:
         )
 
 
+#: The one public doc the two overclaim scans leave out, with its reason: the
+#: matrix DEFINES the anti-overclaiming rule and quotes the forbidden phrases as
+#: examples of what not to write, so scanning it would red the rule on its own
+#: examples (measured 2026-10-30: over all thirteen public docs the two scans red
+#: on nothing else). A relpath here that the roster no longer names is a dead
+#: exclusion and reds ``test_the_population_is_the_public_roster_less_the_rule``.
+_OVERCLAIM_SCAN_NOT_SCANNED: dict[str, str] = {
+    "docs/SURFACE_SUPPORT_MATRIX.md": "quotes the forbidden phrases as the rule's own examples",
+}
+
+#: The three docs a stranger reads first. A floor on the derived population, not
+#: a roster of their own: each must be a roster member the scans reach, so the
+#: derivation cannot narrow past the front door silently.
+_FRONT_DOOR: tuple[str, ...] = ("README.md", "docs/QUICKSTART.md", "docs/CHEAT-SHEET.md")
+
+
+def _overclaim_scan_population() -> tuple[Path, ...]:
+    """Every curated public doc but the rule's own file: derived from the one
+    roster the engine keeps, so a doc that joins the public set joins both
+    scans with no edit here."""
+    return tuple(
+        REPO_ROOT / rel
+        for rel in get_public_doc_relpaths()
+        if rel not in _OVERCLAIM_SCAN_NOT_SCANNED
+    )
+
+
 class TestPublicDocsNoOverclaim:
     """Public docs must not claim coverage of deferred/unsupported surfaces."""
 
-    # The front-door docs, deliberately -- not every public doc. The front door
-    # is where an overclaim costs: a stranger reads these first and decides on
-    # them. README.md and docs/README.md say "the front-door docs" for exactly
-    # this population (2026-09-22; they used to say "public docs", which read
-    # as the whole public set). Widen the tuple only with a measured reason.
-    PUBLIC_DOCS = (
-        REPO_ROOT / "README.md",
-        REPO_ROOT / "docs" / "QUICKSTART.md",
-        REPO_ROOT / "docs" / "CHEAT-SHEET.md",
-    )
+    # Derived from `espalier/surface_contract.py::get_public_doc_relpaths`.
+    # Until 2026-10-30 this was a hand-kept 3-tuple (README, QUICKSTART,
+    # CHEAT-SHEET: "the front door, where an overclaim costs"), kept narrow on
+    # a cost objection -- widening "would expand two unrelated scans" -- while
+    # README.md, docs/README.md and docs/SHARP_EDGES.md said public docs are
+    # tested against the matrix, and an overclaim planted in docs/POSITIONING.md
+    # passed. The measured reason to widen is above the class: the widened scans
+    # red on nothing but the matrix's own examples.
+    NOT_SCANNED = _OVERCLAIM_SCAN_NOT_SCANNED
+    PUBLIC_DOCS = _overclaim_scan_population()
+
+    def test_the_population_is_the_public_roster_less_the_rule(self):
+        """The derivation, both ways: every roster member but the excluded one is
+        scanned and nothing else is; the exclusion names a live roster member
+        (a dead exclusion is a stale reason nobody reads); the front door is in."""
+        roster = set(get_public_doc_relpaths())
+        scanned = {p.relative_to(REPO_ROOT).as_posix() for p in self.PUBLIC_DOCS}
+        dead = set(self.NOT_SCANNED) - roster
+        assert not dead, (
+            f"excluded from the overclaim scans but no longer a public doc: {sorted(dead)}; "
+            "drop the dead exclusion from _OVERCLAIM_SCAN_NOT_SCANNED"
+        )
+        assert scanned == roster - set(self.NOT_SCANNED)
+        missing = set(_FRONT_DOOR) - scanned
+        assert not missing, f"the front door is outside the overclaim scans: {sorted(missing)}"
 
     OVERCLAIM_PATTERNS = (
         r"governs?\s+all\s+Claude\s+Code",
@@ -199,10 +241,11 @@ class TestPublicDocsNoOverclaim:
         which includes ``docs/POSITIONING.md``), not README alone -- the identical
         false sentence had sailed through in POSITIONING.md because this scan was
         README-only (STANDING_PRINCIPLES ss8, class-fix scope = every shipped
-        surface). Kept off the shared ``PUBLIC_DOCS`` 3-tuple deliberately: that
-        tuple also drives ``test_no_overclaim_phrases`` /
-        ``test_deferred_surfaces_not_claimed``, and widening it there would expand
-        two unrelated scans."""
+        surface). Reads the roster directly rather than ``PUBLIC_DOCS``: these
+        absolutes are not quoted in the matrix, so this scan has no doc to leave
+        out (the two overclaim scans derive from the same roster since
+        2026-10-30; before that ``PUBLIC_DOCS`` was a hand-kept 3-tuple this
+        scan was deliberately kept off)."""
         offenders = []
         for rel in get_public_doc_relpaths():
             path = REPO_ROOT / rel

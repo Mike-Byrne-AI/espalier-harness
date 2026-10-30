@@ -984,6 +984,7 @@ class TestExitCodeConvention:
         assert exc.value.code == 2
 
 
+@pytest.mark.contract
 class TestRepoConfigArgConsistency:
     """TP-189-C CLI-5/CLI-4: every repo positional renders a consistent REPO
     metavar (not lowercase `repo`), and --config carries help text — both via the
@@ -1228,6 +1229,7 @@ class TestArgparseErrorCuration:
         "self-host", "surface-handoff", "verify-landing",
     )
 
+    @pytest.mark.contract
     def test_hidden_tuple_is_the_parsers_help_less_set(self):
         """The tuple above is a hand-kept enumeration; this derives the same
         set from the parser so a verb that gains or loses ``help=`` is a
@@ -1329,6 +1331,7 @@ class TestArgparseErrorCuration:
         assert "memory_action" not in err
         assert "prune" in err
 
+    @pytest.mark.contract
     def test_subparser_metavars_derive_from_registered_choices(self):
         # Enumeration-integrity STRUCTURAL pin (not a value pin): the
         # freshness/memory sub-verb brace list is DERIVED from the registered
@@ -1487,6 +1490,7 @@ class TestHelpListsTheDocumentedVerbs:
         listed = {a.dest for a in sub._choices_actions}
         return listed, set(sub.choices) - listed
 
+    @pytest.mark.contract
     def test_every_verb_the_readme_documents_is_listed_in_help(self):
         documented = self._documented_verbs(self._README.read_text(encoding="utf-8"))
         # The derivation found the CLI section and reads every spelling:
@@ -1511,6 +1515,7 @@ class TestHelpListsTheDocumentedVerbs:
         documented = self._documented_verbs(text)
         assert {"init", "doctor", "scan"} <= documented, sorted(documented)
 
+    @pytest.mark.contract
     def test_the_three_adopter_verbs_are_listed(self):
         listed, _hidden = self._help_verbs()
         assert {"blueprint", "reflect-deep", "worktree-plan"} <= listed, sorted(listed)
@@ -1553,6 +1558,7 @@ class TestInitByNamespaceGetsTheParsersGitignoreDefault:
             assert not gitignore.exists()
 
 
+@pytest.mark.contract
 class TestCmdGetattrDefaultsAgreeWithTheParser:
     """The DEF-399b CLASS, censused rather than one site pinned: every
     `getattr(args, "<dest>", <literal>)` in espalier/cli.py whose dest a
@@ -1774,6 +1780,7 @@ class TestCommandsOnAClaudeTheyCannotRead:
         assert not os.path.exists(out_dir), "fuse touched the output on a host it refused"
 
 
+@pytest.mark.contract
 class TestEveryRepoTakingCommandAsksTheClaudeQuestion:
     """DEF-763's command-layer gate has three homes -- `cli._resolve_repo_arg`
     for the commands that resolve through it, `_refuse_unreadable_harness_root`

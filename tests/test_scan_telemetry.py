@@ -13,28 +13,40 @@ change the existing ``scan_summary.json`` shape.
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
+import pkgutil
+import re
+from pathlib import Path
 
+import espalier.scanners
 from espalier import cli, scan_telemetry
+from tests._live_tree import checkout_glob
+from espalier import scan_composition
 
-# The 11 scanners cmd_scan drives; one telemetry row each per run.
-_SCANNERS = [
-    "exceptions", "prints", "godfiles", "perf_smells", "test_loosening",
-    "convergence_theater", "subprocess_contracts", "filesystem_contracts",
-    "magic_depth", "retired_vocab", "encoding_contracts",
-]
+# The scanners cmd_scan drives, read from the map it writes telemetry through
+# (one row each per run); TestScannerRosterIsDerivedFromThePackage holds that
+# map to the package, so this list is never a hand copy.
+_SCANNERS = list(cli.SCAN_TELEMETRY_KEYS)
+# The summary's keys that are not a scanner's count.
+_SUMMARY_ENVELOPE = {"status", "files_scanned", "not_run"}
 
 
 def _counts(fires: int = 1, exemptions: int = 0) -> dict:
+    # A fresh row object per scanner (a shared one would alias every row).
+    # The derived-population census lists this comprehension; its entry in
+    # scripts/derived_population_census.py::ADJUDICATED says why it is correct.
     return {s: {"fires": fires, "exemptions": exemptions} for s in _SCANNERS}
 
 
 class TestAppendRun:
     def test_writes_one_row_per_scanner(self, tmp_path):
         n = scan_telemetry.append_run(tmp_path, "2026-06-02T00:00:00+00:00", _counts())
-        assert n == 11
+        # 11 on 2026-10-30: a floor, so a roster that shrinks says so here
+        # rather than passing on fewer rows.
+        assert n == len(_SCANNERS) >= 11
         records = scan_telemetry.read_history(tmp_path)
-        assert len(records) == 11
+        assert len(records) == len(_SCANNERS)
         assert {r["scanner"] for r in records} == set(_SCANNERS)
 
     def test_two_runs_are_additive(self, tmp_path):
@@ -42,7 +54,7 @@ class TestAppendRun:
         scan_telemetry.append_run(tmp_path, "2026-06-02T00:00:00+00:00", _counts())
         scan_telemetry.append_run(tmp_path, "2026-06-02T01:00:00+00:00", _counts(fires=2))
         records = scan_telemetry.read_history(tmp_path)
-        assert len(records) == 22
+        assert len(records) == 2 * len(_SCANNERS)
         # both run timestamps survive — history, not a snapshot.
         assert {r["run_ts"] for r in records} == {
             "2026-06-02T00:00:00+00:00", "2026-06-02T01:00:00+00:00"
@@ -107,8 +119,9 @@ class TestReadHistory:
 
 
 class TestCmdScanWiring:
-    """Integration: cmd_scan appends a 10-row telemetry run AND leaves the
-    point-in-time scan_summary.json shape unchanged (no duplication)."""
+    """Integration: cmd_scan appends one telemetry row per scanner it drives
+    AND leaves the point-in-time scan_summary.json shape unchanged (no
+    duplication)."""
 
     def _run_scan(self, repo):
         return cli.cmd_scan(argparse.Namespace(repo=str(repo)))
@@ -125,18 +138,110 @@ class TestCmdScanWiring:
         assert self._run_scan(repo) == 0
         assert self._run_scan(repo) == 0
         records = scan_telemetry.read_history(repo / "reports")
-        assert len(records) >= 20
-        # every scanner appears in the history
-        assert set(_SCANNERS).issubset({r["scanner"] for r in records})
+        # one row per driven scanner per run, and every one of them
+        assert len(records) == 2 * len(_SCANNERS)
+        assert {r["scanner"] for r in records} == set(_SCANNERS)
 
     def test_summary_shape_preserved(self, tmp_path):
         repo = self._python_repo(tmp_path)
         assert self._run_scan(repo) == 0
         summary = json.loads((repo / "reports" / "scan_summary.json").read_text(encoding="utf-8"))
         assert summary["status"] == "scanned"
-        # the 11 count keys cmd_scan writes remain present.
-        for key in ("exceptions", "prints", "large_files", "perf_hotspots",
-                    "test_loosening", "convergence_theater", "subprocess_contracts",
-                    "filesystem_contracts", "magic_depth", "retired_vocab",
-                    "encoding_contracts"):
-            assert key in summary
+        # The count keys cmd_scan writes are exactly the map's values, both
+        # ways: a count written under no map entry gets no telemetry row, and
+        # an entry with no count breaks the telemetry read.
+        assert set(summary) - _SUMMARY_ENVELOPE == set(cli.SCAN_TELEMETRY_KEYS.values())
+
+
+# An import of a scanner module, in the three spellings the tree uses.
+_SCANNER_IMPORT = re.compile(
+    r"^\s*(?:from espalier\.scanners\.(\w+) import"
+    r"|from espalier\.scanners import (\w+)"
+    r"|import espalier\.scanners\.(\w+))",
+    re.MULTILINE,
+)
+
+
+def _scanner_imports(text: str) -> set[str]:
+    return {"".join(groups) for groups in _SCANNER_IMPORT.findall(text)}
+
+
+def _package_modules() -> set[str]:
+    """The public modules of ``espalier.scanners``, read from its directory:
+    the population a dropped-in file joins, and neither map."""
+    return {m.name for m in pkgutil.iter_modules(espalier.scanners.__path__)
+            if not m.name.startswith("_")}
+
+
+def _scanner_drivers() -> set[tuple[str, tuple[str, str]]]:
+    """Every (scanner module, (kind, name)) pair the tree holds, read from source.
+
+    The two kinds ``cli.SCANNERS_NOT_DRIVEN_BY_SCAN`` records: a ``"verb"``,
+    a top-level subcommand whose handlers (its own and its nested
+    subcommands') import the module, and a ``"test"`` file that does."""
+    parser = cli.build_parser()
+    top = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    pairs: set[tuple[str, tuple[str, str]]] = set()
+    for verb, sub in top.choices.items():
+        handlers = [sub.get_default("func")]
+        for action in sub._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                handlers += [nested.get_default("func") for nested in action.choices.values()]
+        source = "".join(inspect.getsource(h) for h in handlers if inspect.isfunction(h))
+        pairs |= {(module, ("verb", verb)) for module in _scanner_imports(source)}
+    for path in checkout_glob(Path(__file__).parent, "test_*.py"):
+        text = path.read_text(encoding="utf-8")
+        pairs |= {(module, ("test", f"tests/{path.name}")) for module in _scanner_imports(text)}
+    return pairs
+
+
+class TestScannerRosterIsDerivedFromThePackage:
+    """Every public module of ``espalier.scanners`` is driven by ``cmd_scan``
+    (``SCAN_TELEMETRY_KEYS``: a summary count and a telemetry row each run) or
+    recorded with what drives it instead (``SCANNERS_NOT_DRIVEN_BY_SCAN``).
+    Until 2026-10-30 the map was a dict local to ``cmd_scan`` that no test
+    read, and the two absentees were adjudicated nowhere: a scanner added to
+    the package wrote no telemetry, earned no credibility verdict and never
+    reached the wallpaper report, with nothing red. A module dropped into the
+    package reds the first test here, by name, until one of the two maps
+    names it."""
+
+    def test_every_public_scanner_module_is_driven_by_scan_or_recorded(self):
+        driven = set(cli.SCAN_TELEMETRY_KEYS)
+        recorded = set(cli.SCANNERS_NOT_DRIVEN_BY_SCAN)
+        modules = _package_modules()
+        assert not driven & recorded, sorted(driven & recorded)
+        assert driven | recorded == modules, {
+            "in the package, in neither map": sorted(modules - driven - recorded),
+            "in a map, not in the package": sorted((driven | recorded) - modules),
+        }
+
+    def test_scan_imports_exactly_the_scanners_its_map_names(self):
+        """The ``scan`` verb's handler imports every scanner the map names and
+        no other, so an entry cannot stand without the scan behind it, nor a
+        scan without its entry."""
+        by_scan = {module for module, driver in _scanner_drivers()
+                   if driver == ("verb", "scan")}
+        driven = set(cli.SCAN_TELEMETRY_KEYS)
+        assert by_scan == driven, {
+            "imported by cmd_scan, not in the map": sorted(by_scan - driven),
+            "in the map, not imported by cmd_scan": sorted(driven - by_scan),
+        }
+
+    def test_each_recorded_absentee_names_a_driver_that_imports_it(self):
+        """The adjudication is checkable, not prose: each recorded (module,
+        (kind, name)) pair is one the source holds -- a subcommand of
+        ``build_parser()`` whose handlers import the module, or a test file
+        that does -- so a driver renamed, removed or rewired reds here."""
+        recorded = set(cli.SCANNERS_NOT_DRIVEN_BY_SCAN.items())
+        assert recorded - _scanner_drivers() == set()
+
+
+def test_the_report_file_roster_names_the_same_scanners():
+    """The sister roster: ``espalier/scan_composition.py::REPORT_FILES`` maps a
+    report file to its scanner for the credibility baseline, the co-flag
+    intersect and the pre-release noise set. A scanner enrolled in
+    ``SCAN_TELEMETRY_KEYS`` and not here writes a report nothing downstream
+    reads; the two populations are held equal, so a twelfth scanner reds here
+    by name until both know it."""
+    assert set(scan_composition.REPORT_FILES.values()) == set(cli.SCAN_TELEMETRY_KEYS)

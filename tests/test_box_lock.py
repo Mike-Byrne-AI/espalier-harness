@@ -30,6 +30,8 @@ import time
 import types
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: Every wait here stays well under pytest-timeout's 60 s: under the thread
@@ -418,6 +420,7 @@ class TestTheCensusOfPytestSpawners:
         assert bl.pair_asymmetry('env = dict(os.environ)') is None
         assert bl.pair_asymmetry('WHITELIST = ("ESPALIER_BOX_LOCK", "ESPALIER_BOX_LOCK_HOLDER")') is None
 
+    @pytest.mark.contract
     def test_no_spawner_in_the_tree_names_one_of_the_pair_and_drops_the_other(self):
         from tests._live_tree import checkout_rglob
         bl = _box_lock()
