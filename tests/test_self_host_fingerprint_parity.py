@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+
+import pytest
 from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -92,6 +94,7 @@ def test_the_pinned_region_warns_its_own_editor() -> None:
         )
 
 
+@pytest.mark.contract
 def test_every_pin_carrier_is_refreshed() -> None:
     """`_refresh-self-host-pin` must cover EVERY file holding the hash.
 

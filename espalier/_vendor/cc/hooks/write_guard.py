@@ -1643,8 +1643,9 @@ def _zone_reason(
     The only caller of ``_zone_template`` and ``_zone_hint``, so no site can
     render their text for such an operand.
     A named producer, so the deny-marker contract can read the site
-    (``x = <call>; deny(x)``); it is registered in
-    ``tests/test_deny_markers.py::_RUNTIME_PRODUCERS``."""
+    (``x = <call>; deny(x)``) and the templates this function returns
+    (``tests/test_deny_markers.py::_producer_templates`` reads the return
+    flow; nothing is registered by name)."""
     if takes:
         zone, ground = _zone_reading(rel_path, root)
         if ground and zone is None:

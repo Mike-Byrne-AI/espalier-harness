@@ -64,6 +64,7 @@ def _git_ls_files(path: str) -> list[str]:
     return [f for f in files if f == path or f.startswith(prefix)]
 
 
+@pytest.mark.contract  # a whole-tree sweep: the tree-sweep census names it
 def test_bench_results_not_tracked():
     """bench/results/ must not be tracked. It's regenerable per run."""
     tracked = _git_ls_files("bench/results")
@@ -443,6 +444,7 @@ def _readme_region(start_marker: str, end_marker: str) -> str:
     return readme[start:end]
 
 
+@pytest.mark.contract  # a whole-tree sweep: the tree-sweep census names it
 def test_bench_readme_tracked_list_names_every_top_level_oracle():
     scripts = _top_level_bench_scripts()
     region = _readme_region("**Curated, tracked**", "**Generated, NOT tracked**")
@@ -454,6 +456,7 @@ def test_bench_readme_tracked_list_names_every_top_level_oracle():
     )
 
 
+@pytest.mark.contract  # a whole-tree sweep: the tree-sweep census names it
 def test_bench_readme_layout_tree_names_every_top_level_oracle():
     scripts = _top_level_bench_scripts()
     region = _readme_region("```\nbench/\n", "\n```")

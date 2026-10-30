@@ -839,7 +839,7 @@ class TestLandedRowLingering:
 
 @pytest.mark.skipif(
     not (_DONE.is_dir() and _LEDGER.is_file() and _landed_state is not None),
-    reason="self-host only: task-packs/Done/ + FORWARD_LEDGER.md + dev tooling absent",
+    reason="self-host only: task-packs/Done/ (gitignored) + FORWARD_LEDGER.md + dev tooling absent",
 )
 def test_no_landed_pack_row_lingers_in_ledger():
     # Standing proof the U8 sweep was complete: run the guard against the LIVE

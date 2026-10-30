@@ -1,4 +1,4 @@
-"""The census of live-tree enumerations in ``tests/``: one walker, two readers.
+"""The census of live-tree enumerations in ``tests/``: one walker, three readers.
 
 ``tests/test_utf8_text_io.py::TestLiveTreeWalkRatchet`` holds the ratchet on
 it. ``python3 tests/_live_tree_census.py`` from the repository root prints
@@ -7,7 +7,10 @@ listed (:func:`probe_open`), and ``--list`` prints the work list. It was the
 probe of the live-tree walk row, DEF-2013, struck 2026-10-15 when both halves
 reached zero; a row that declares a new engine site takes the same line (the
 ratchet reds a declared site no live probe reads). One walker for both, so
-the ratchet and a probe cannot disagree about what a site is.
+the ratchet and a probe cannot disagree about what a site is. The third
+reader is ``tests/test_marker_taxonomy.py``'s tree-wide sweep census, which
+asks :func:`sites_in` for the routed listings too (its ``listings``) and keeps
+the walks rooted at the checkout root, so "rooted" means one thing in both.
 
 **What a site is.** A call in a module directly under ``tests/`` (a test file,
 ``conftest.py`` or a ``_*.py`` helper) that lists the files of THIS checkout
@@ -501,8 +504,22 @@ def _marked(lines: list[str], line: int) -> bool:
     return False
 
 
-def sites_in(text: str, rel: str) -> list[Site]:
-    """Every live-tree enumeration in one module's source."""
+#: The base a listing called without one lists: ``checkout_files()``'s
+#: default, the checkout root (``Path(__file__).parent.parent`` from tests/).
+_CHECKOUT_ROOT_EXPR = ast.parse("Path(__file__).parent.parent", mode="eval").body
+
+
+def sites_in(text: str, rel: str, *, listings: tuple[str, ...] = ()) -> list[Site]:
+    """Every live-tree enumeration in one module's source.
+
+    ``listings`` names calls that list git's view of the checkout (the
+    ``tests/_live_tree.py`` listings, ``require_tracked_paths``): a call of one
+    rooted in the checkout is then a site too, of its own name's kind and
+    routed by construction. The ratchet passes none -- a listing is the routed
+    spelling, not work -- and ``tests/test_marker_taxonomy.py``'s tree-wide
+    sweep census passes them, to ask where a test enumerates the tree at all.
+    The base is the first argument, ``base=`` or ``repo_root=``; a listing
+    called with none (``checkout_files()``) lists the checkout root."""
     tree = ast.parse(text)
     lines = text.splitlines()
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
@@ -623,6 +640,10 @@ def sites_in(text: str, rel: str) -> list[Site]:
             kind = _BARE_KINDS[f.id]
             target = node.args[0] if node.args else next(
                 (k.value for k in node.keywords if k.arg in ("top", "path", "pathname", "src", "root")), None)
+        elif isinstance(f, ast.Name) and f.id in listings:
+            kind = f.id
+            target = node.args[0] if node.args else next(
+                (k.value for k in node.keywords if k.arg in ("base", "repo_root")), _CHECKOUT_ROOT_EXPR)
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.attr in ("safe_rglob", "_safe_rglob"):
             kind, target = "safe_rglob", (node.args[0] if node.args else None)
         else:
@@ -637,7 +658,7 @@ def sites_in(text: str, rel: str) -> list[Site]:
         if root is None:
             continue
         parent = parents.get(node)
-        routed = isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name) \
+        routed = kind in listings or isinstance(parent, ast.Call) and isinstance(parent.func, ast.Name) \
             and parent.func.id in _ROUTERS and parent.args and parent.args[0] is node
         if routed and kind.startswith("scanner:"):
             module = scanner_module.get(f.value.id if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)

@@ -464,6 +464,7 @@ class TestMirrorCensusCoverage:
         assert hits, f"row {r.name!r} matched no real file under {r.sot!r}"
         return str(hits[0].relative_to(REPO)).replace("\\", "/")
 
+    @pytest.mark.contract
     def test_every_row_declares_paths_that_exist(self):
         missing = []
         for r in mirror_registry.MIRROR_ROWS:
@@ -525,6 +526,7 @@ class TestMirrorCensusCoverage:
             "_CENSUS_EXCLUDED_SYNC_SCRIPTS with a reason."
         )
 
+    @pytest.mark.contract
     def test_prose_never_restates_a_stale_row_count(self):
         """The recursion guard.
 
@@ -723,6 +725,7 @@ class TestMirrorCensusCoverage:
             "mirror registry rows cite tests that do not exist: " + str(unresolved)
         )
 
+    @pytest.mark.contract
     def test_every_row_has_an_edit_time_advisory(self, tmp_path):
         """The spine. A row with no advisory is a drift you learn about from a
         full-suite red six minutes later -- if a full suite is run at all."""
@@ -770,6 +773,7 @@ class TestMirrorCensusCoverage:
             "mirror rows with no advisory of their OWN: " + "; ".join(unadvised)
         )
 
+    @pytest.mark.contract
     def test_no_generated_side_advisory_prescribes_its_own_destruction(self):
         """An advisory on the GENERATED side may name its sync only after the discard.
 
@@ -879,6 +883,7 @@ class TestMirrorCensusCoverage:
             "the edit:\n  " + "\n  ".join(offenders)
         )
 
+    @pytest.mark.contract
     def test_surface_impact_generated_side_also_never_prescribes_its_own_destruction(self):
         """The SAME property, on the second advisory surface.
 
@@ -993,6 +998,7 @@ class TestMirrorCensusCoverage:
             "path, never a suffix."
         )
 
+    @pytest.mark.contract
     def test_every_row_has_a_surface_impact_obligation(self):
         """The second advisory surface -- the shipped, adopter-facing one.
 

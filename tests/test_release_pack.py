@@ -595,6 +595,7 @@ class TestWalkPruning:
                 "is acting as a second exclusion authority, not a report filter"
             )
 
+    @pytest.mark.contract
     def test_no_tracked_shippable_path_is_pruned(self):
         """The invariant against the REAL population, not a sample list.
 

@@ -263,11 +263,11 @@ supports, defers, or considers out of scope. Quick summary:
 - **Unsupported** (out of scope): user-added skills/agents, MCP
   elicitation, notification routing, plugin marketplace.
 
-The matrix is normative — the front-door docs (this README,
-`docs/QUICKSTART.md` and `docs/CHEAT-SHEET.md`) are tested against it for
-overclaiming via
-`tests/test_surface_support_matrix.py::TestPublicDocsNoOverclaim`; the rest
-of the public set is not in that scan.
+The matrix is normative — every public doc (the set
+`espalier/surface_contract.py::get_public_doc_relpaths` names; the matrix
+itself, which quotes the forbidden phrases as examples, is the one left out)
+is tested against it for overclaiming via
+`tests/test_surface_support_matrix.py::TestPublicDocsNoOverclaim`.
 
 ## Quick start
 

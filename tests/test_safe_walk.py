@@ -645,6 +645,7 @@ def _oswalk_loop_dump(func) -> str | None:
     return None
 
 
+@pytest.mark.contract
 def test_inline_safe_rglob_copies_match_canonical_oswalk_loop():
     """TP-194 drift-pin: scanners and tools/cc CANNOT import espalier
     (TestScannerSelfContainment — they are inspect.getsource-copied), so each

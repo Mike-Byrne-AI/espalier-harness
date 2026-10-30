@@ -305,6 +305,7 @@ class TestWriteSeed:
         )
         return [root / p for p in tracked]
 
+    @pytest.mark.contract
     def test_no_copy_of_the_old_promise_survives(self):
         """Every tracked markdown and Python file, checked for the ABSENCE of
         the sentences the writer refutes -- derived from the git index, not

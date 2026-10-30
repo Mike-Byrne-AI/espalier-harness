@@ -520,6 +520,7 @@ class TestFragmentDirectoryNamesHaveOneSource:
         got = {d: classify_release_path(d + "2026-10-10-x.md") for d in _SHIP_DECISIONS}
         assert got == {d: bucket for d, (bucket, _) in _SHIP_DECISIONS.items()}, got
 
+    @pytest.mark.contract
     def test_no_module_outside_the_registry_names_a_directory(self, rf):
         found = _dir_literals(REPO_ROOT)
         known = {"tools/cc/_record_fragments.py", *_FULL_SET_COPIES, *_ONE_DIRECTORY_SITES}
@@ -531,11 +532,13 @@ class TestFragmentDirectoryNamesHaveOneSource:
         stale = {rel: [t for t in tokens if t not in names] for rel, tokens in found.items()}
         assert not any(stale.values()), f"literals naming no directory the loader has: {stale}"
 
+    @pytest.mark.contract
     def test_no_registry_entry_is_stale(self):
         found = _dir_literals(REPO_ROOT)
         stale = [rel for rel in (*_FULL_SET_COPIES, *_ONE_DIRECTORY_SITES) if rel not in found]
         assert not stale, f"registered copies that no longer name a directory: {stale}"
 
+    @pytest.mark.contract
     def test_the_scan_sees_a_planted_copy_and_skips_a_docstring(self, tmp_path):
         _write(tmp_path / "scripts" / "planted.py",
                '"""Reads memory/session-log.d/ in prose."""\nDIRS = ("changelog.d/",)\n')
@@ -580,6 +583,7 @@ def _table_home_prose(root: Path) -> list[str]:
     return out
 
 
+@pytest.mark.contract
 class TestNoDocSendsTheRowToTheMemoryFile:
     """The pointer half of the census. Mutation seen red: a planted
     ``update ESPALIER_MEMORY.md session log`` in a command body."""
@@ -622,6 +626,7 @@ _DECLARED_ONE_FILE_READERS = {
 }
 
 
+@pytest.mark.contract
 class TestEveryReaderTakesBothForms:
     """The class census Wave C adds. A reader that applies a regex to the one
     file does not red when an entry moves to a fragment: it reads less and

@@ -115,7 +115,7 @@ def test_session_started_shape() -> None:
     """
     target = _FLAGS / "session_started"
     if not target.exists():
-        pytest.skip(".espalier-state/session_started not present")
+        pytest.skip(".espalier-state/session_started not present (gitignored)")
     _assert_marker_shape(
         "session_started", target.read_text(encoding="utf-8"), 1024
     )
@@ -350,7 +350,7 @@ def _is_documented_flag(name: str) -> bool:
 def test_no_unexpected_flag_files() -> None:
     """Anything in .espalier-state/ must be in the documented set."""
     if not _FLAGS.exists():
-        pytest.skip(".espalier-state/ not present")
+        pytest.skip(".espalier-state/ not present (gitignored)")
     # live-tree: ok -- the gitignored .espalier-state/ is the subject: every flag file a writer drops there
     unexpected = [p.name for p in _FLAGS.iterdir() if not _is_documented_flag(p.name)]
     assert not unexpected, (

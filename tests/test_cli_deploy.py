@@ -5030,6 +5030,7 @@ class TestEveryCommandThatWritesAGatedPathNamesTheMarker:
     every gated path ignored), which this census does not build."""
 
     @pytest.mark.parametrize("census_id", sorted(_CENSUS_VARIANTS))
+    @pytest.mark.contract
     def test_a_run_that_changes_a_gated_path_names_the_marker(
         self, census_id, census_tree, tmp_path, capsys, monkeypatch,
     ):
@@ -5092,6 +5093,7 @@ class TestEveryCommandThatWritesAGatedPathNamesTheMarker:
                 f"`espalier {census_id}` changed {gated} and its parser does not set "
                 "zone_writer=True, so a session watching the tree reports the write back")
 
+    @pytest.mark.contract
     def test_the_census_tables_name_only_what_the_parser_has(self):
         """Both ways: a reason or a value for something the parser no longer
         has would excuse nothing while reading as coverage."""
@@ -5108,6 +5110,7 @@ class TestEveryCommandThatWritesAGatedPathNamesTheMarker:
             "a floor writer cannot be excused")
         assert all(reason.strip() for reason in _CENSUS_REFUSES.values())
 
+    @pytest.mark.contract
     def test_no_command_group_runs_on_its_own(self):
         """The census runs leaves. A group with subcommands that also runs by
         itself (a default ``func``) would be a command it never runs."""

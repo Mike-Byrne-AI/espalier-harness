@@ -1360,6 +1360,7 @@ class TestTheHandoffGate:
         assert mod._gate_handoff(root) == 0
 
 
+@pytest.mark.contract
 class TestTheGateCountHasOneOwner:
     """The docs say how many gates the Stop hook runs ("a five-gate sequence",
     "Five gates fire in sequence"). The owner of that count is the hook's own

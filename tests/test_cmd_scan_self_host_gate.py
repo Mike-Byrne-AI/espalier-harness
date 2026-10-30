@@ -6,10 +6,11 @@ subprocess_contracts / filesystem_contracts / magic_depth / retired_vocab
 (count 0, findings []) rather than walking the repo — encoding_contracts left
 that set on 2026-10-08 and walks the adopter's tree with the deployed harness
 output left out, pinned below — but
-must NOT drop the report files, the 11 summary count keys, or the 11 telemetry rows. The
-precision boundary is "report 0, don't vanish": the summary/telemetry
-contracts (test_scan_telemetry.py) pin all 11, so an over-aggressive gate
-that removed keys/rows would regress them.
+must NOT drop the report files, the summary count keys, or the telemetry rows
+(one each per ``cli.SCAN_TELEMETRY_KEYS`` entry). The precision boundary is
+"report 0, don't vanish": the summary/telemetry contracts
+(test_scan_telemetry.py) pin every entry, so an over-aggressive gate that
+removed keys/rows would regress them.
 """
 from __future__ import annotations
 
@@ -62,13 +63,9 @@ def test_gate_does_not_drop_summary_keys_on_adopter(tmp_path):
     assert cli.cmd_scan(argparse.Namespace(repo=str(repo))) == 0
     summary = json.loads((repo / "reports" / "scan_summary.json").read_text(encoding="utf-8"))
     assert summary["status"] == "scanned"
-    for key in (
-        "exceptions", "prints", "large_files", "perf_hotspots",
-        "test_loosening", "convergence_theater", "subprocess_contracts",
-        "filesystem_contracts", "magic_depth", "retired_vocab",
-        "encoding_contracts",
-    ):
-        assert key in summary
+    # every count key the map names is still written, and no other
+    counts = set(summary) - {"status", "files_scanned", "not_run"}
+    assert counts == set(cli.SCAN_TELEMETRY_KEYS.values())
     # the four gated scanners report 0 on an adopter
     for key in ("subprocess_contracts", "filesystem_contracts",
                 "magic_depth", "retired_vocab"):
