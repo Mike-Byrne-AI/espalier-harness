@@ -271,6 +271,12 @@ _NOT_POINTERS: tuple[NotAPointer, ...] = (
                "handoff's to write and the mod's to read, never the reader's to open.",
     ),
     NotAPointer(
+        carrier=".claude/commands/ship.md",
+        target=".espalier-state/own_clear.json",
+        reason="The same creation announcement in /ship's handoff paragraph (DEF-4057 widened it to a held "
+               "refusal): the verb writes the file, the mod reads it, and nobody is sent to open it.",
+    ),
+    NotAPointer(
         carrier="tools/cc/hooks/post_write_check.py",
         target="docs/session-archive.md",
         reason=(

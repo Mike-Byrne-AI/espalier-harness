@@ -119,10 +119,19 @@ class TestArmOwnClear:
                                   brief="the brief\nits note")
         marker = _marker(tmp_path)
         assert marker == {"state": "armed", "session_id": "s-1", "head": HEAD, "seat": "box", "role": "worker",
-                          "brief": "the brief\nits note", "written_at": marker["written_at"]}
+                          "brief": "the brief\nits note", "landed": True, "outcome": None,
+                          "written_at": marker["written_at"]}
         assert marker["written_at"].endswith("+00:00")
         assert "own-clear armed for session s-1" in line and "box" in line
         assert [p.name for p in (tmp_path / ".espalier-state").iterdir()] == ["own_clear.json"]
+
+    def test_a_held_arm_records_the_refusal_and_whether_the_push_landed(self, ship, tmp_path):
+        """DEF-4057: the marker says why the handoff did not land, so the record
+        on disk outlives the window that printed it."""
+        ship.arm_own_clear(tmp_path, session_id="s-1", head=HEAD, seat="box", role="worker", brief="b",
+                           landed=False, outcome="main red after merge")
+        marker = _marker(tmp_path)
+        assert marker["landed"] is False and marker["outcome"] == "main red after merge"
 
     def test_a_second_arm_replaces_the_first(self, ship, tmp_path):
         ship.arm_own_clear(tmp_path, session_id="s-1", head=HEAD, seat="box", role="worker", brief="one")
@@ -193,6 +202,137 @@ class TestArmOwnClearHere:
         assert _marker(repo)["brief"] is None
         assert "no brief" in line and "seat.py: a syntax error" in line
 
+    def test_a_handoff_refused_on_the_red_base_arms_with_the_lane_to_land_in_the_brief(
+            self, ship, seat, repo, monkeypatch):
+        """DEF-4057: the window is done with the lane (its row written, the
+        tree clean) and the next window must land it before any new job, so
+        the brief says so after the role brief: the refusal, the branch and
+        the verbs. The tail keeps the brief's rules (ASCII, no double quote,
+        no percent), whatever the refusal's text carried."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        held = ship.Held('main red after merge: run 9 concluded "failure" (100% red — read it)', landed=False)
+        line = ship.arm_own_clear_here(repo, held=held)
+        marker = _marker(repo)
+        assert marker["landed"] is False and marker["outcome"] == str(held)
+        role_brief = seat.reprime_text(seat.compose_brief(repo, "box", repo))
+        assert marker["brief"].startswith(role_brief)
+        tail = marker["brief"][len(role_brief):]
+        assert "THE HANDOFF DID NOT LAND THIS LANE" in tail and "The push was refused" in tail
+        assert "main red after merge" in tail and _git(repo, "branch", "--show-current") in tail
+        for verb in ("ship.py status", "ship.py open", "ship.py rebind"):
+            assert verb in tail
+        assert tail.isascii() and '"' not in tail and "%" not in tail
+        assert "with the refusal in its brief" in line and "lands the lane first" in line
+
+    def test_a_push_that_landed_then_refused_says_so_in_the_brief(self, ship, repo, monkeypatch):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        ship.arm_own_clear_here(repo, held=ship.Held("the push landed, then: gh pr edit failed", landed=True))
+        marker = _marker(repo)
+        assert marker["landed"] is True
+        assert "The push landed and a step after it refused" in marker["brief"]
+
+    def test_an_unnamed_seat_still_gets_the_lane_to_land(self, ship, repo, monkeypatch):
+        """No role brief composes, yet the next window must be told: the tail
+        rides alone rather than the mod's generic line."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        _git(repo, "config", "--unset", "espalier.machine")
+        ship.arm_own_clear_here(repo, held=ship.Held("main red after merge", landed=False))
+        brief = _marker(repo)["brief"]
+        assert brief is not None and brief.startswith(ship.GENERIC_BRIEF)
+        assert "start no second one" in brief and "THE HANDOFF DID NOT LAND THIS LANE" in brief
+
+
+def _with_origin(repo: Path) -> None:
+    """A bare origin the lane is pushed to with an upstream set: what a
+    hand-opened lane looks like to git."""
+    bare = repo.parent / "origin.git"
+    _git(repo, "init", "--quiet", "--bare", str(bare))
+    _git(repo, "remote", "add", "origin", str(bare))
+    _git(repo, "push", "--quiet", "-u", "origin", "main")
+
+
+class TestTheByHandArm:
+    """``ship.py arm``: the handoff's last act by hand, for a lane opened by
+    hand (``gh pr create``; air-work's #353 on 2026-10-30 ran no verb, left no
+    marker, and its window sat past the threshold) or a handoff whose arm did
+    not run. Only over a lane that is on origin (the failure-mode review: a
+    handoff refused for a reason the window must fix first could otherwise be
+    cleared past with the plain role brief, the lane left unpushed and
+    unmentioned), and never over a marker already armed for this session (a
+    held marker's tail would be dropped). Dies to: an arm on a dirty tracked
+    tree (the verb would promise a clear the mod holds), an arm outside a mod
+    window that exits 0 as if it had armed, or an arm over an unpushed lane."""
+
+    def test_it_arms_for_this_session_and_records_why(self, ship, repo, monkeypatch, capsys):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        _with_origin(repo)
+        assert ship.arm(why="hand-opened #353") == 0
+        marker = _marker(repo)
+        assert marker["session_id"] == "s-here" and marker["landed"] is True
+        assert marker["outcome"] == "armed by hand: hand-opened #353"
+        assert "THE HANDOFF DID NOT LAND" not in (marker["brief"] or "")
+        assert "own-clear armed" in capsys.readouterr().out
+
+    def test_a_lane_not_on_origin_is_refused_and_names_the_verbs_that_land_it(self, ship, repo, monkeypatch):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        with pytest.raises(ship.Refused, match="never pushed"):
+            ship.arm()
+        _with_origin(repo)
+        (repo / "README.md").write_bytes(b"more\n")
+        _git(repo, "commit", "--quiet", "-am", "ahead")
+        with pytest.raises(ship.Refused, match="1 commit") as stop:
+            ship.arm()
+        assert "/handoff" in str(stop.value) and "ship.py open" in str(stop.value)
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+
+    def test_a_marker_already_armed_for_this_session_is_kept(self, ship, repo, monkeypatch):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        _with_origin(repo)
+        ship.arm_own_clear_here(repo, held=ship.Held("main red after merge", landed=False))
+        before = _marker(repo)
+        with pytest.raises(ship.Refused, match="already armed"):
+            ship.arm(why="again")
+        assert _marker(repo) == before
+
+    def test_a_dirty_tracked_tree_is_refused_and_nothing_is_armed(self, ship, repo, monkeypatch):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        _with_origin(repo)
+        (repo / "README.md").write_bytes(b"edited\n")
+        with pytest.raises(ship.Refused, match="dirty"):
+            ship.arm()
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+
+    def test_outside_a_mod_window_it_refuses_by_name(self, ship, repo, monkeypatch):
+        monkeypatch.chdir(repo)
+        monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-here")
+        with pytest.raises(ship.Refused, match="did not load the own-clear mod"):
+            ship.arm()
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+
+    def test_a_dry_run_arms_nothing_and_says_what_it_would(self, ship, repo, monkeypatch, capsys):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        _with_origin(repo)
+        assert ship.arm(dry_run=True) == 0
+        assert not (repo / ".espalier-state" / "own_clear.json").exists()
+        assert "dry-run" in capsys.readouterr().out
+
+    def test_the_verb_runs_through_main(self, ship, repo, monkeypatch):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        _with_origin(repo)
+        assert ship.main(["arm", "--why", "x"]) == 0
+        assert _marker(repo)["outcome"] == "armed by hand: x"
+        args = ship.build_parser().parse_args(["arm", "--why", "x", "--dry-run"])
+        assert args.verb == "arm" and args.why == "x" and args.dry_run
+
 
 class TestModArgs:
     """What `seat.py launch` puts first in claude's arguments: `--plugin-dir`
@@ -231,6 +371,15 @@ class TestTheModReadsWhatTheDriverWrites:
     def test_the_launchers_flag_is_the_drivers_gate(self, ship, seat):
         assert ship.OWN_CLEAR_ENV == seat.OWN_CLEAR_KEY == "ESPALIER_OWN_CLEAR"
         assert seat.OWN_CLEAR_KEY in seat.OWN_CLEAR_ENV
+
+    def test_the_stop_gate_reads_the_marker_the_driver_writes(self, ship, module_text):
+        """Gate 5 lets a Stop through over a marker armed at HEAD (DEF-4057), and
+        the generic brief the driver puts before a held tail is the mod's own
+        line: both pinned by text, since neither side imports the other."""
+        gate = (TOOLS_CC / "hooks" / "stop_gate.py").read_text(encoding="utf-8")
+        assert f'OWN_CLEAR_MARKER = "{ship.OWN_CLEAR_MARKER}"' in gate
+        for phrase in ("cleared by the own-clear", "start no second one"):
+            assert phrase in ship.GENERIC_BRIEF and phrase in module_text
 
     def test_the_mod_names_its_two_variables_literally(self, seat, module_text):
         """The engine lists what a module reads and refuses a constant at

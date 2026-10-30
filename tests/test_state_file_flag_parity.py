@@ -233,15 +233,24 @@ _ALLOWED_FLAGS = {
                           # across a compaction (_hook_utils.HANDOFF_GATE_FLAG)
     # The own-clear marker (the own-clear lane, 2026-10-26): tools/cc/ship.py
     # arms it as the handoff's last act ({state, session_id, head, seat, role,
-    # brief, written_at}, tools/cc/ship.py::arm_own_clear); the own-clear mod
+    # brief, landed, outcome, written_at}, tools/cc/ship.py::arm_own_clear;
+    # landed and outcome since DEF-4057 say how the handoff ended, and the
+    # `arm` verb writes the same by hand); the own-clear mod
     # (tools/cc/mods/own-clear) reads it at the turn's end to run the real
-    # /clear and consumes it on the clear's SessionStart (state consumed; one
+    # /clear (adding clear_asked_at) and consumes it on the clear's SessionStart (state consumed; one
     # armed by another window reads stale). Keyed by the session id, and
     # re-primed only in the window it was armed in, so a stale one does nothing: no
     # _clean_state_flags glob needs to reach it, and the next handoff
     # replaces it. PERSISTS across the clear by design (the mod reads it on
     # the new session's start).
     "own_clear.json",
+    # The own-clear mod's log (DEF-4057's lane, 2026-10-30): one JSON line per
+    # event, written by tools/cc/mods/own-clear/hooks/register.ts where
+    # `seat.py launch --own-clear-log` named it (bare: this file under the
+    # seat's checkout); read by hand. PERSISTS: the record of a clear that
+    # never came (the failure-mode review: without this entry the first seat
+    # launched with the switch reds this contract at its next tier).
+    "own_clear.log",
     # TP-164: the recall-engine reinjection session counter. _reinject's
     # SessionStart orientation row (non-exempt) writes reinject_count via
     # _hook_utils._locked_increment each session; session_start._clean_state_flags

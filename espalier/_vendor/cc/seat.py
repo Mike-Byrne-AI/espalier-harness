@@ -564,18 +564,19 @@ def venv_bindir(path: Path) -> Path | None:
 
 
 def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None = None,
-              own_clear: bool = False) -> dict[str, str]:
+              own_clear: bool = False, own_clear_log: str | None = None) -> dict[str, str]:
     """The session's environment: this one minus what a session it may be
     launched from sets in its children (:data:`SESSION_ENV`; the config dir and
     user settings stay) and minus the own-clear's names (:data:`OWN_CLEAR_ENV`:
     a root or a log left exported in the operator's shell would aim every
     seat's mod at one checkout), the maintenance switch only when asked for,
     ``ESPALIER_OWN_CLEAR=1`` only when the own-clear mod rides this launch (so
-    ``ship.py handoff`` can tell whether the window will clear itself), and the
-    seat's own ``.venv`` first on ``PATH`` and named in ``VIRTUAL_ENV`` --
-    or no ``VIRTUAL_ENV`` at all, since the inherited one names another
-    checkout's (read 2026-10-15: a worktree session's named the main
-    checkout's, where a ``uv pip install`` would land)."""
+    ``ship.py handoff`` can tell whether the window will clear itself), the
+    mod's log (``own_clear_log``, :data:`OWN_CLEAR_LOG_KEY`) only beside that
+    flag, and the seat's own ``.venv`` first on ``PATH`` and named in
+    ``VIRTUAL_ENV`` -- or no ``VIRTUAL_ENV`` at all, since the inherited one
+    names another checkout's (read 2026-10-15: a worktree session's named the
+    main checkout's, where a ``uv pip install`` would land)."""
     env = {k: v for k, v in (os.environ if base is None else base).items()
            if k not in SESSION_ENV and k not in OWN_CLEAR_ENV}
     if maintenance:
@@ -584,6 +585,8 @@ def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None 
         env.pop(MAINTENANCE_KEY, None)
     if own_clear:
         env[OWN_CLEAR_KEY] = "1"
+        if own_clear_log:
+            env[OWN_CLEAR_LOG_KEY] = own_clear_log
     # The box lock: the inherited path when the parent named one, else the
     # host's default, so every launched seat on this machine locks one file.
     env.setdefault(BOX_LOCK_KEY, box_lock_default())
@@ -597,15 +600,18 @@ def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None 
 
 
 def command_line(target: Target, args: list[str], *, maintenance: bool, shell: str | None = None,
-                 own_clear: bool = False) -> str:
+                 own_clear: bool = False, own_clear_log: str | None = None) -> str:
     """The one line that launches the seat by hand: PowerShell (the default on
     Windows) or a POSIX shell, setting what :func:`child_env` sets (the
-    own-clear flag only with ``own_clear``, its other names unset either way).
-    Refused for PowerShell when an argument holds a double quote, which
-    Windows PowerShell 5.1 re-splits a native program's argument at."""
+    own-clear flag only with ``own_clear``, its log only beside that flag, its
+    other names unset either way). Refused for PowerShell when an argument
+    holds a double quote, which Windows PowerShell 5.1 re-splits a native
+    program's argument at."""
     shell = shell or ("powershell" if os.name == "nt" else "posix")
     bindir = venv_bindir(target.path)
-    own_clear_unsets = sorted(OWN_CLEAR_ENV - ({OWN_CLEAR_KEY} if own_clear else set()))
+    log = own_clear_log if own_clear and own_clear_log else None
+    own_clear_unsets = sorted(OWN_CLEAR_ENV - ({OWN_CLEAR_KEY} if own_clear else set())
+                              - ({OWN_CLEAR_LOG_KEY} if log else set()))
     if shell == "powershell":
         bad = [a for a in args if any(ch in a for ch in _PS_DOUBLE)]
         if bad:
@@ -620,6 +626,8 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
         parts += [f"Remove-Item Env:{name} -ErrorAction SilentlyContinue" for name in own_clear_unsets]
         if own_clear:
             parts.append(f"$env:{OWN_CLEAR_KEY} = '1'")
+            if log:
+                parts.append(f"$env:{OWN_CLEAR_LOG_KEY} = {q(log)}")
         if bindir is not None:
             parts.append(f"$env:VIRTUAL_ENV = {q(str(bindir.parent))}")
             parts.append(f"$env:PATH = {q(str(bindir) + ';')} + $env:PATH")
@@ -634,7 +642,8 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
     # options at the first assignment and runs `-u` as the program (exit 127,
     # driven 2026-10-26); GNU `env` permutes its arguments and takes either order.
     unsets = ([] if maintenance else [MAINTENANCE_KEY]) + own_clear_unsets
-    assigns = ([f"{MAINTENANCE_KEY}=1"] if maintenance else []) + ([f"{OWN_CLEAR_KEY}=1"] if own_clear else [])
+    assigns = (([f"{MAINTENANCE_KEY}=1"] if maintenance else []) + ([f"{OWN_CLEAR_KEY}=1"] if own_clear else [])
+               + ([f"{OWN_CLEAR_LOG_KEY}={shlex.quote(log)}"] if log else []))
     if bindir is not None:
         assigns += [f"VIRTUAL_ENV={shlex.quote(str(bindir.parent))}", f'PATH={shlex.quote(str(bindir))}:"$PATH"']
     else:
@@ -825,9 +834,17 @@ MOD_DIR = Path(__file__).resolve().parent / "mods" / "own-clear"
 #: else: ``ship.py handoff`` arms the own-clear marker only where it is set,
 #: so the line it prints is true of the window it runs in.
 OWN_CLEAR_KEY = "ESPALIER_OWN_CLEAR"
+#: The checkout the mod reads the marker in (a test's or a drive's), and the
+#: file it appends one JSON line per event to -- set for a session only by
+#: ``launch --own-clear-log`` (bare: :data:`OWN_CLEAR_LOG_DEFAULT` under the
+#: seat's checkout), after the deferred clear of 2026-10-30 had to be read
+#: from the transcript's queue rows for want of the mod's own record.
+OWN_CLEAR_ROOT_KEY = "ESPALIER_OWN_CLEAR_ROOT"
+OWN_CLEAR_LOG_KEY = "ESPALIER_OWN_CLEAR_LOG"
+OWN_CLEAR_LOG_DEFAULT = ".espalier-state/own_clear.log"
 #: The own-clear's names, never inherited by a launched session: the flag
 #: above, and the root and log a drive or a test aims the mod with.
-OWN_CLEAR_ENV = frozenset({OWN_CLEAR_KEY, "ESPALIER_OWN_CLEAR_ROOT", "ESPALIER_OWN_CLEAR_LOG"})
+OWN_CLEAR_ENV = frozenset({OWN_CLEAR_KEY, OWN_CLEAR_ROOT_KEY, OWN_CLEAR_LOG_KEY})
 
 
 def mod_args(mod_dir: Path = MOD_DIR) -> list[str]:
@@ -965,8 +982,19 @@ def brief_refusal(args: list[str], claude: str | None, root: Path, checkout: Pat
 
 
 def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unchecked: bool,
-               print_only: bool, shell: str | None = None, brief: bool = True, mod: bool = True) -> int:
+               print_only: bool, shell: str | None = None, brief: bool = True, mod: bool = True,
+               own_clear_log: str | None = None) -> int:
+    """``own_clear_log``: None, no log; ``""`` (the switch given bare),
+    :data:`OWN_CLEAR_LOG_DEFAULT` under the seat's checkout; else the path
+    given. Set for the session only when the mod rides (``mod``), since the
+    mod is what writes it."""
     target = resolve(root, seat)
+    # A path given is resolved where the operator typed it (the session's own
+    # directory is the seat's checkout, where a relative file would land as an
+    # untracked one); bare, the seat's own state file.
+    log = None if own_clear_log is None else (
+        os.path.abspath(os.path.expanduser(own_clear_log)) if own_clear_log
+        else str(target.path / OWN_CLEAR_LOG_DEFAULT))
     claude = None
     if not print_only:
         why = session_refusal()
@@ -1026,16 +1054,19 @@ def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unc
             argv += ["--", compose_brief(root, seat, target.path).text]
         except Refused as exc:
             raise Refused(f"{exc}; --no-brief launches without the first message") from None
+    no_log = "; --own-clear-log names nothing without it" if log else ""
     if loaded:
-        say(f"own-clear mod loaded from {MOD_DIR}: the window clears itself once the handoff lands")
+        say(f"own-clear mod loaded from {MOD_DIR}: the window clears itself once the handoff lands"
+            + (f"; its log: {log}" if log else ""))
     elif mod:
-        say(f"no own-clear mod: nothing at {MOD_DIR}; the window will not clear itself after the handoff")
+        say(f"no own-clear mod: nothing at {MOD_DIR}; the window will not clear itself after the handoff{no_log}")
     else:
-        say("no own-clear mod (--no-mod): the window will not clear itself after the handoff")
+        say(f"no own-clear mod (--no-mod): the window will not clear itself after the handoff{no_log}")
     if print_only:
-        say(command_line(target, argv, maintenance=maintenance, shell=shell, own_clear=bool(loaded)))
+        say(command_line(target, argv, maintenance=maintenance, shell=shell, own_clear=bool(loaded),
+                         own_clear_log=log))
         return 0
-    env = child_env(target, maintenance=maintenance, own_clear=bool(loaded))
+    env = child_env(target, maintenance=maintenance, own_clear=bool(loaded), own_clear_log=log)
     say(f"launching seat {seat} in {target.path}" + (" (maintenance mode)" if maintenance else "")
         + ("" if brief else ", no first message"))
     sys.stdout.flush()
@@ -1191,6 +1222,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="start the session without the composed first message (`brief` prints it)")
     p.add_argument("--no-mod", dest="mod", action="store_false",
                    help="start the session without the own-clear mod (mods/own-clear beside this driver)")
+    p.add_argument("--own-clear-log", nargs="?", const="", metavar="PATH",
+                   help=f"set {OWN_CLEAR_LOG_KEY} for the session, the file the own-clear mod appends one JSON "
+                        f"line per event to (bare: {OWN_CLEAR_LOG_DEFAULT} under the seat's checkout)")
     p = sub.add_parser("brief", help="print a seat's first message: its role, the reads to start with, its loop")
     p.add_argument("seat")
     p = sub.add_parser("retire", help="release a worktree seat's claims, then remove its worktree")
@@ -1224,7 +1258,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_list(root, as_json=args.json, fetch=not args.no_fetch)
         if args.verb == "launch":
             return cmd_launch(root, args.seat, claude_args, maintenance=args.maintenance, unchecked=args.unchecked,
-                              print_only=args.print_only, shell=args.shell, brief=args.brief, mod=args.mod)
+                              print_only=args.print_only, shell=args.shell, brief=args.brief, mod=args.mod,
+                              own_clear_log=args.own_clear_log)
         if args.verb == "brief":
             return cmd_brief(root, args.seat)
         return cmd_retire(root, args.seat, dry_run=args.dry_run, fetch=not args.no_fetch,

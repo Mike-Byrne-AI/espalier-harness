@@ -693,13 +693,22 @@ python tools/cc/ship.py handoff
 Either way, say in the `Next:` line what happened -- the URL the driver
 printed, "committed locally, not pushed (handoff_push is off)", or the direct
 push -- so the next session knows whether its local default branch is behind a
-merge it did not see. And either way, once its step has landed, the verb's
-last act arms the own-clear marker for this session
-(`.espalier-state/own_clear.json`; the line it prints says so, or why not): in
-a window `seat.py launch` started, the own-clear mod clears the window at
-this turn's end and re-primes it from the seat brief, so after the handoff
-take no new job and end the turn; in any other window tell the operator it
-needs a `/clear`. Shipping here, after the row, is the order that costs one
+merge it did not see. And either way, once its step has run to its end, the
+verb's last act arms the own-clear marker for this session
+(`.espalier-state/own_clear.json`; the line it prints says so, or why not):
+after a push that landed, and after a refusal this window is done with -- the
+base red (nothing lands on it; the lane stays here, whole) or a step after a
+landed push refusing (the head wait, the rebind) -- with the refusal in the
+marker and the lane to land first appended to the brief, the refusal still
+printed (exit 1); never after a refusal this window must fix first (a dirty
+tree, a lane behind its remote, a shared checkout), which arms nothing. In a
+window `seat.py launch` started, the own-clear mod clears the window at this
+turn's end and re-primes it from the seat brief, so after the handoff take no
+new job and end the turn (a loop tick queued as the turn ends runs first, and
+the clear runs after it); in any other window tell the operator it needs a
+`/clear`. A lane opened by hand (`gh pr create` outside the driver) ran no
+verb and armed nothing: `python tools/cc/ship.py arm --why "<how>"` arms by
+hand on a clean tree. Shipping here, after the row, is the order that costs one
 check cycle per lane: a lane shipped mid-session makes this commit a second push
 (the checks restart and the marker is re-bound), or its own pull request, which
 is why, where `handoff_push` is on, `open` refuses a lane that does not carry its

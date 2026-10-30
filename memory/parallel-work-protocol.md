@@ -88,9 +88,17 @@ seat's own where the launcher started the window (the own-clear, 2026-10-26):
 `seat.py launch` loads the own-clear mod (`tools/cc/mods/own-clear`, a Claude
 Code plugin of function hooks, through `--plugin-dir`), `ship.py handoff`
 arms its marker last (`.espalier-state/own_clear.json`, the session id from
-`CLAUDE_CODE_SESSION_ID`, HEAD and the re-prime brief), and at the end of the
-next turn with nothing in flight (no tracked edit, no plan in progress, HEAD
-unmoved) the mod runs the real `/clear`, refuses a compaction while that
+`CLAUDE_CODE_SESSION_ID`, HEAD and the re-prime brief) whenever it ran to its
+end: the push landed, or a refusal the window is done with -- the base red,
+the lane whole and unpushed here, or a step after a landed push -- with the
+refusal in the marker and the lane to land first appended to the brief (a
+refusal the window must fix first arms nothing; a lane opened by hand is
+armed with `ship.py arm`; DEF-4057, after three seats sat past the threshold
+for 17.5 h on 2026-10-29 with their handoffs refused on a red base), and at
+the end of the next turn with nothing in flight (no tracked edit, no plan in
+progress, HEAD unmoved) the mod runs the real `/clear` -- after any prompt
+already queued as the turn ended, a loop tick among them, measured
+2026-10-30 -- refuses a compaction while that
 clear is due (never while it waits), and on the clear's SessionStart submits
 the brief with its loop line replaced by the note that a loop started there
 survived the clear, to the window it was armed in alone. In a window the
