@@ -39,7 +39,9 @@ re-open it):
   cannot reach ``scripts/``): the worktree, HEAD and the live index are never
   touched, the ref moves by compare-and-swap, and the push carries no force,
   so a second checkout writing under the same name is refused, never
-  overwritten;
+  overwritten; a push that outlives its timeout is read back before anything
+  is said, since it may have landed (one did, 2026-10-30: the refusal said
+  nothing was sent, and a re-send would have doubled the message);
 * the public origin carries it, so a message is refused when a token of its
   text or a path it names matches the guard's secret-path patterns
   (``hooks/write_guard.py``'s own matcher, loaded by path) -- token friction,
@@ -82,7 +84,7 @@ from typing import Callable
 # deploy set; tests/test_deploy_set_import_closure.py pins the reachability).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _json_safe import decode_text_or_problem, os_error_text  # noqa: E402
-from record_merge import Unresolvable, run  # noqa: E402  the one spawn and the named stop
+from record_merge import TimedOut, Unresolvable, run  # noqa: E402  the one spawn and the named stops
 import _symbols  # noqa: E402  the symbols a lane changes, derived from its diff, carried by claims
 
 #: The git config key that names this box and turns the channel on; per clone
@@ -1733,13 +1735,18 @@ def _commit_blob(root: Path, content: str, parent: str | None, subject: str, *, 
 
 
 def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callable[[str | None], str], *,
-              run: Runner, timeout: float, verb: tuple[str, str]) -> str:
+              run: Runner, timeout: float, verb: tuple[str, str],
+              say: Callable[[str], None] = lambda _line: None) -> str:
     """Move this machine's ``ref`` to the commit ``build(parent)`` makes and push
     it: origin's tip is read fresh and must be what this checkout last saw (a
     local ref behind it is adopted, one ahead of or diverged from it refuses:
     one writer per machine); the ref moves by compare-and-swap, the push carries
     no force, and a push origin refuses is rolled back so the next write starts
-    clean. ``verb`` names the write in a refusal (``("send", "sent")``)."""
+    clean. A push that outlives its timeout is read back before anything is
+    said, since it may have landed (one did, 2026-10-30): origin's tip at the
+    commit counts it as landed, told through ``say``; anything else puts the
+    ref back and refuses, naming the commit to compare when origin could not
+    be read. ``verb`` names the write in a refusal (``("send", "sent")``)."""
     noun, past = verb
     out = _git(root, "ls-remote", "--heads", REMOTE, ref, run=run, timeout=timeout)
     remote_tip = out.split()[0] if out else None
@@ -1774,15 +1781,51 @@ def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callab
         raise Unresolvable(f"{ref} moved under this {noun} (another write from this checkout, at the same "
                            f"moment); that write stands and nothing was {past} -- {noun} again (a refresh does, "
                            "on the next tick)") from None
-    rc, _out, err = run(["git", "push", "--quiet", REMOTE, f"{ref}:{ref}"], cwd=str(root), timeout=timeout,
-                        env=git_env())
-    if rc != 0:
+    def put_back() -> None:
         # Back to where this checkout was, so the next write reads origin fresh
         # instead of refusing forever on a ref only this box has.
         if local_tip:
             _git(root, "update-ref", ref, local_tip, commit, run=run)
         else:
             _git(root, "update-ref", "-d", ref, commit, run=run)
+
+    try:
+        rc, _out, err = run(["git", "push", "--quiet", REMOTE, f"{ref}:{ref}"], cwd=str(root), timeout=timeout,
+                            env=git_env())
+    except TimedOut as slow:
+        # The runner gave up on the push, which may still have landed (an
+        # assign did, 2026-10-30, a minute after origin had refused the first
+        # attempt with an Internal Server Error). Origin's tip is read back
+        # before anything is said: a write repeated on a wrong "nothing was
+        # sent" is a second message on the ref.
+        try:
+            back = _git(root, "ls-remote", "--heads", REMOTE, ref, run=run, timeout=timeout)
+        except Unresolvable as unread:
+            put_back()
+            raise Unresolvable(
+                f"{slow}, and {REMOTE} could not be read back ({unread}): the {noun} may have landed as "
+                f"{commit[:7]}. Read `git ls-remote --heads {REMOTE} {ref}` before you {noun} again, and "
+                f"{noun} again only if the tip it prints is not {commit[:7]}") from None
+        landed = back.split()[0] if back else None
+        if landed != commit:
+            put_back()
+            if landed == remote_tip:
+                where = "unchanged"
+            elif landed:
+                where = (f"at {landed[:7]}, not this {noun}'s commit (another checkout writes under the name "
+                         f"{machine!r}: one writer per machine)")
+            else:
+                where = "gone (the ref is no longer on origin)"
+            raise Unresolvable(f"{slow}; {REMOTE}'s tip read back {where}, so nothing was {past} -- "
+                               f"{noun} again") from None
+        say(f"git push took longer than {timeout:.0f}s and landed anyway: {REMOTE}'s tip read back as {commit[:7]}")
+        rc, err = 0, ""
+    except Unresolvable as failed:
+        # git could not run the push at all: nothing left this box.
+        put_back()
+        raise Unresolvable(f"{failed}; nothing was {past} -- {noun} again") from None
+    if rc != 0:
+        put_back()
         lines = err.strip().splitlines()
         detail = next((ln for ln in lines if ln.startswith("remote:")), lines[-1] if lines else "no detail")
         raise Unresolvable(f"{REMOTE} refused the push ({detail.strip()[:160]}); nothing was {past} -- fetch, "
@@ -1835,7 +1878,7 @@ def send(root: Path, message: dict, *, run: Runner = run, say: Callable[[str], N
         return _commit_blob(root, content, parent, subject, run=run)
 
     commit = _push_ref(root, machine, ref, remote_ref_for(machine), build, run=run, timeout=timeout,
-                       verb=("send", "sent"))
+                       verb=("send", "sent"), say=say)
     say(f"sent {message['type']} {message['id']} as {commit[:7]} on {ref}")
     return commit
 
@@ -1889,7 +1932,7 @@ def park(root: Path, path: str, data: bytes | None, base_ref: str, *, from_rev: 
         return _commit_entries(root, entries, parent, f"records({machine}): {parts[-1]}", run=run)
 
     commit = _push_ref(root, machine, ref, remote_records_ref_for(machine), build, run=run, timeout=timeout,
-                       verb=("park", "parked"))
+                       verb=("park", "parked"), say=say)
     say(f"parked {path} as {commit[:7]} on {ref}")
     return commit
 

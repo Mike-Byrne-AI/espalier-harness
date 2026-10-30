@@ -372,11 +372,15 @@ The driver builds the commit under a scratch index from the message alone
 (the worktree, HEAD and the live index are never touched), moves this
 machine's ref by compare-and-swap and pushes without force; origin's tip for
 the ref is read fresh and a local ref not behind it refuses (one writer per
-machine). The public origin carries the channel, so a message is refused when
-a token of its text or a path it names reads to the guard as a secret-bearing
-path (`tools/cc/hooks/write_guard.py`'s own patterns) -- token friction, not a
-security boundary. `--dry-run` prints the line that would be sent and touches
-nothing.
+machine). A push that outlives its wait is read back before anything is said:
+origin's tip at the commit means it landed, and the send says so; unchanged,
+the ref is put back and the refusal says nothing was sent; unreadable, the ref
+is put back and the refusal names the commit to compare against `git ls-remote`
+before sending again. The public origin carries the channel, so a message is
+refused when a token of its text or a path it names reads to the guard as a
+secret-bearing path (`tools/cc/hooks/write_guard.py`'s own patterns) -- token
+friction, not a security boundary. `--dry-run` prints the line that would be
+sent and touches nothing.
 
 ## Step 4: What to do with a request
 

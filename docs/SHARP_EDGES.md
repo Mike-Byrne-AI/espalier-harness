@@ -6292,6 +6292,34 @@ the lanes and the release to run in it. It does not release them itself: a relea
 push to origin, and a claim nobody released usually marks work someone abandoned. A
 worktree removed by hand (`git worktree remove`) still strands its seat's claims.
 
+## A runner's timeout is not a refusal of the action: read the remote back before saying nothing was sent
+
+**What it is:** `tools/cc/record_merge.py::run` gives a spawned program a bounded wait and
+raises a named stop when the program outlives it. The stop says what the runner knows --
+the program did not return in time -- and nothing about what the program did. A `git push`
+that outlives the wait may have landed: the dispatcher's assign at 14:25:11Z on 2026-10-30
+was refused with `git push took longer than 30s`, and origin's ref held it when read back
+at 14:40Z (a GitHub `Internal Server Error` had refused the attempt a minute earlier, which
+was a real refusal, rolled back). Until that day `tools/cc/mail.py::_push_ref` let the
+timeout raise past its rollback, so the refusal read as "nothing was sent" while the local
+ref was neither read back nor put back: a seat that trusted it and sent again doubled the
+message (a re-sent assign restarts its job's clock), and a seat whose push had not landed
+was refused as a second writer under its own name at the next send.
+
+**How you hit it:** writing a verb whose action is not idempotent (a send appends, so a
+re-send is a second message) and treating the runner's timeout like the program's own
+non-zero exit, which is the one outcome the rollback branch below the spawn handles.
+
+**How to avoid it:** after a timeout on the action, read the remote back before saying
+anything. `_push_ref` does: origin's tip at the commit means the push landed, and the send
+says so; unchanged, the ref is put back and the refusal says nothing was sent; unreadable,
+the ref is put back (a local ref behind origin's is adopted at the next write) and the
+refusal names the commit to compare against `git ls-remote --heads origin <ref>` before
+sending again. The runner tells the timeout apart as `record_merge.TimedOut`, under
+`Unresolvable` so every existing catch holds. A push whose re-run is a no-op needs no
+read-back: the ship driver's branch and tag pushes re-push the same object, and git
+answers up to date.
+
 ## An idle session leaves no trace a file scan can see, so recency cannot say a worktree is free
 
 **What it is:** a Claude Code session that is open but idle writes nothing: no file in its

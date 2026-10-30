@@ -164,6 +164,15 @@ class Unresolvable(Exception):
     is the reason the operator reads."""
 
 
+class TimedOut(Unresolvable):
+    """A program that outlived its timeout. Told apart from the runner's other
+    stops because the caller knows nothing of what the program did before the
+    runner gave up: a push that outlives its wait may have landed (a mail send
+    did, 2026-10-30), so a caller whose action is not idempotent reads the
+    remote back before it says nothing was sent. Under ``Unresolvable``, so
+    every existing catch holds."""
+
+
 # ---------------------------------------------------------------- spawning --
 
 def run(argv: list[str], *, timeout: float = DEFAULT_TIMEOUT, cwd: str | None = None,
@@ -171,7 +180,9 @@ def run(argv: list[str], *, timeout: float = DEFAULT_TIMEOUT, cwd: str | None = 
     """The one spawn. Resolves the program through PATH (so ``git.exe`` on
     Windows is found by its bare name), never a shell, always a timeout, stdin
     closed unless input is given, UTF-8 on both streams. A program that is
-    missing, cannot start or outlives the timeout is a named refusal."""
+    missing or cannot start is a named refusal; one that outlives the timeout
+    is :class:`TimedOut`, the refusal that says what the runner knows and no
+    more."""
     prog = shutil.which(argv[0])
     if prog is None:
         raise Unresolvable(f"{argv[0]} is not on PATH")
@@ -190,7 +201,7 @@ def run(argv: list[str], *, timeout: float = DEFAULT_TIMEOUT, cwd: str | None = 
             errors="replace", timeout=timeout, cwd=cwd, env=env, **stdin_kw,
         )
     except subprocess.TimeoutExpired:
-        raise Unresolvable(f"{' '.join(argv[:2])} took longer than {timeout:.0f}s") from None
+        raise TimedOut(f"{' '.join(argv[:2])} took longer than {timeout:.0f}s") from None
     except OSError as exc:
         raise Unresolvable(f"could not run {argv[0]}: {os_error_text(exc)}") from None
     return result.returncode, result.stdout, result.stderr
