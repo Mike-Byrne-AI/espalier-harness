@@ -7,9 +7,12 @@ import { expect, mock, test } from 'claude-code/testing'
 // status line, with the test's own hooks as the bottom of each chain the mod
 // raises (command.run, prompt.submit, session.compact), recording what the
 // mod asked for. The bottom of classic.SessionStart deletes the marker, so a
-// mod that read it after next(e) would find nothing: that pins the order. The
-// root reaches the mod through ESPALIER_OWN_CLEAR_ROOT, mocked before the
-// plugin loads.
+// mod that read it after next(e) would find nothing, and moves HEAD when a
+// test asks, standing for the checkout catch-up the project's SessionStart
+// hook runs beneath the mod, so a mod that read what the old window left in
+// flight after next(e) would name that move: both pin the order. The root
+// reaches the mod through ESPALIER_OWN_CLEAR_ROOT, mocked before the plugin
+// loads.
 
 const ROOT = '/scratch'
 const MARKER = `${ROOT}/.espalier-state/own_clear.json`
@@ -24,7 +27,7 @@ function markerText(fields: Fields): string {
 }
 
 function world(on: any, opts: { id?: string } = {}) {
-  const state = { id: opts.id ?? 'this-session', dirty: false, failWrites: false, refuseClear: false }
+  const state = { id: opts.id ?? 'this-session', head: HEAD, headBeneath: '', dirty: false, failWrites: false, refuseClear: false }
   const files = new Map<string, string>()
   const seen = { commands: [] as string[], prompts: [] as string[], compactions: 0, status: [] as (string | undefined)[], toasts: [] as string[] }
   const transcript = [{ role: 'user', text: 'Reply with the single word ready.', toolUses: [], handle: 'm-1' }]
@@ -44,7 +47,7 @@ function world(on: any, opts: { id?: string } = {}) {
   on('process.run', (_$: any, e: any) => {
     const argv = e.argv.join(' ')
     if (argv === 'git status --porcelain --untracked-files=no') return done(state.dirty ? ' M tracked.txt\n' : '')
-    if (argv === 'git rev-parse HEAD') return done(`${HEAD}\n`)
+    if (argv === 'git rev-parse HEAD') return done(`${state.head}\n`)
     if (argv === 'git rev-parse --show-toplevel') return done(`${ROOT}\n`)
     return done('', 1)
   })
@@ -59,7 +62,11 @@ function world(on: any, opts: { id?: string } = {}) {
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
   on('classic.SessionStart', () => {
-    files.delete(MARKER) // a sweep beneath the mod: the marker must have been read already
+    // The hooks beneath the mod: a sweep that takes the marker (it must have
+    // been read already) and the checkout catch-up that moves HEAD when a test
+    // asks (what the old window left in flight must have been read already).
+    files.delete(MARKER)
+    if (state.headBeneath) state.head = state.headBeneath
     return {}
   })
   on('command.run', (_$: any, e: any) => {
@@ -282,6 +289,26 @@ test("a marker whose head moved re-primes with the move named", async ($, on) =>
   await $.classic.SessionStart({ source: 'clear' })
   expect(w.seen.prompts.length).toBe(1)
   expect(w.seen.prompts[0]).toContain('HEAD moved since the handoff')
+})
+
+test("the clear's SessionStart reads what the old window left in flight before the hooks beneath move HEAD", async ($, on) => {
+  // The project's SessionStart hook runs inside next(e) and catches the
+  // checkout up (the banner's Checkout: line): a lane branch GitHub deleted
+  // at the merge moves onto the base. Read after next(e), that move named
+  // itself as work left in the old window on every re-prime whose lane had
+  // merged (the dispatcher window 28cea670, 2026-10-30: six tool calls on a
+  // clean tree). The old window's final state is read beside the marker,
+  // before the event is handed on.
+  const w = world(on)
+  await $.classic.SessionStart({ source: 'startup' })
+  w.arm({ session_id: w.id(), head: HEAD })
+  w.state.id = 'the-new-session'
+  w.state.headBeneath = '0f1e2d3c4b5a69788796a5b4c3d2e1f098765432'
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(w.state.head).toBe(w.state.headBeneath) // the stage beneath ran
+  expect(w.seen.prompts.length).toBe(1)
+  expect(w.seen.prompts[0].includes('HEAD moved')).toBe(false)
+  expect(w.marker().state).toBe('consumed')
 })
 
 test('a compaction is refused only while the marker is armed and the clear can run, or is under way', async ($, on) => {

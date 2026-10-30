@@ -19,12 +19,16 @@ import type { EngineInterface, Register } from 'claude-code'
 //     status line; a clear the engine refuses says so there and is tried again
 //     at the next turn's end;
 //   - on that SessionStart (classic.SessionStart, source=clear) the mod reads
-//     the marker BEFORE handing the event on (the project's settings hooks run
-//     beneath it), and only when the marker names the session this process was
-//     in before the clear (a marker another window armed, or one this process
-//     never knew, is marked stale and re-primes nothing) marks it consumed and
-//     submits the brief as the first message of the new session (measured: it
-//     lands 70 ms after the start);
+//     the marker, and what the old window left in flight against the marker's
+//     head, BEFORE handing the event on (the project's settings hooks run
+//     beneath it: a sweep there would take the marker, and the checkout
+//     catch-up there moves a merged lane's checkout onto the base, which read
+//     after the hand-on named itself as work left in the old window), and only
+//     when the marker names the session this process was in before the clear
+//     (a marker another window armed, or one this process never knew, is
+//     marked stale and re-primes nothing) marks it consumed and submits the
+//     brief as the first message of the new session, what was left in flight
+//     named after it (measured: it lands 70 ms after the start);
 //   - a compaction asked for while the marker is armed for this session AND
 //     the clear can run (or is already under way) is refused ({ skip }): the
 //     handoff already wrote the summary. While the clear waits, the compaction
@@ -135,7 +139,12 @@ function armedFor(marker: Marker | undefined, id: string): marker is Marker {
 // Why the clear must wait, or '' when nothing is in flight: the handoff gate's
 // predicate (tools/cc/hooks/stop_gate.py, Gate 5) read from this side, plus
 // HEAD unmoved since the handoff (a commit after it means a handoff is owed
-// again, and that handoff re-arms the marker with the new head).
+// again, and that handoff re-arms the marker with the new head). Three
+// callers: clearable, at the ask and at a compaction, and the clear's
+// SessionStart, which reads it BEFORE the project's settings hooks run beneath
+// it, so everything read here must be the old window's own state as the
+// handoff left it; a predicate about the base (a merge-base, the remote tip)
+// would read the checkout before the catch-up there and belongs elsewhere.
 async function inFlight($: Engine, marker: Marker): Promise<string> {
   const cwd = await repoRoot($)
   const status = await git($, cwd, 'status', '--porcelain', '--untracked-files=no')
@@ -232,19 +241,37 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   on('classic.SessionStart', async ($, e, next) => {
-    // Before next(e): the project's settings hooks run beneath this one, and a
-    // sweep there must not take the marker before it is read.
+    // Before next(e): the project's settings hooks run beneath this one. A
+    // sweep there must not take the marker before it is read, and the checkout
+    // catch-up there (the banner's Checkout: line) moves a checkout whose lane
+    // merged onto the base, so what the old window left in flight is read here
+    // too, against the marker's head: read after the hand-on, the catch-up
+    // named itself as a HEAD move on every re-prime whose lane had merged
+    // (DEF-5028, 2026-10-30). Only for the marker this process's last session
+    // armed; a stale one is marked below and nothing of it is read.
     const marker = e.source === 'clear' ? await readMarker($) : undefined
+    const before = lastId
+    // Ours: armed for the session this process was last in. The one predicate
+    // for the read here and for the stale branch below, so a widening of one
+    // cannot turn the other off with no signal.
+    const ours = marker !== undefined && before !== undefined && armedFor(marker, before)
+    let left = ''
+    if (ours && marker) {
+      try {
+        left = await inFlight($, marker)
+      } catch (err) {
+        await note($, `classic.SessionStart source=clear: the in-flight read before the hand-on failed (${String(err)}); nothing named`)
+      }
+    }
     const r = await next(e)
     const id = await $.session.id()
-    const before = lastId
     lastId = id
     if (e.source !== 'clear') return r
     $.ui.status(undefined)
     try {
       if (!marker || marker.state !== 'armed') return r
       const stamp = new Date(await $.clock.now()).toISOString()
-      if (marker.session_id !== before) {
+      if (!ours) {
         // Armed by another window, or by a session this process never saw:
         // not this clear's. Marked, so no later clear re-primes on it either.
         await writeMarker($, { ...marker, state: 'stale', consumed_at: stamp, new_session_id: id })
@@ -253,8 +280,8 @@ export const register: Register = on => {
       }
       let brief = marker.brief && marker.brief.trim() ? marker.brief : GENERIC_BRIEF
       // A clear queued behind a prompt ran over whatever that turn did (the
-      // in-flight check held only at the ask): the new window is told first.
-      const left = await inFlight($, marker)
+      // in-flight check held only at the ask): the new window is told first,
+      // from the read above the hand-on.
       if (left) {
         brief += `\n\nown-clear: at the clear, ${left} -- work in the old window after its handoff; read git status and git log -3 before anything else.`
       }

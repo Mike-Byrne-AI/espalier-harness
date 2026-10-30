@@ -46,10 +46,15 @@ says the window needs a `/clear` by hand.
    clear the engine refuses says so there and is tried again at the next
    turn's end.
 3. **The re-prime.** On the clear's SessionStart (`classic.SessionStart`,
-   `source: 'clear'`) the mod reads the marker before handing the event on (the
-   project's settings hooks run beneath a mod's), and only when the marker
+   `source: 'clear'`) the mod reads the marker, and what the old window left
+   in flight against the marker's head, before handing the event on (the
+   project's settings hooks run beneath a mod's: a sweep there would take the
+   marker, and the checkout catch-up there moves a checkout whose lane merged
+   onto the base, which read after the hand-on named itself as work left in
+   the old window on every such re-prime, DEF-5028), and only when the marker
    names the session this process was in before the clear rewrites it as
-   `consumed` with the new session id and submits the brief with `asUser`. A
+   `consumed` with the new session id and submits the brief with `asUser`,
+   what was left in flight named after it. A
    marker armed by another window, or by a session this process never saw, is
    marked `stale` and re-primes nothing. A marker with no brief gets one
    generic line; a marker that cannot be rewritten still re-primes.
@@ -106,6 +111,10 @@ python bench/own_clear/drive.py                     # the real thing: a pty-driv
 ```
 
 A Python contract test in the suite pins the two sides to each other (the
-marker's path and states, the flag, the two variables). The engine writes
+marker's path and states, the flag, the two variables, the SessionStart
+handler's two reads before the hand-on) and runs
+the kit above wherever `claude` is on PATH, with the pass count derived from
+the kit file, so a broken case reds the local tier; no CI cell installs
+`claude`, so there the kit is the seat's run. The engine writes
 `.claude-plugin/types/` and a `tsconfig.json` beside a mod it loads (for the
 editor); both are gitignored.
