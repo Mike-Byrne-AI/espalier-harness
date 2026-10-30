@@ -13,9 +13,16 @@
   (`record_merge.TimedOut`, under `Unresolvable`), and after a push that
   outlived its wait the driver reads origin's tip for the ref back before it
   says anything: at the commit, the push landed, the send is counted and says
-  so; unchanged, nothing landed, the ref is put back and the refusal says so;
-  unreadable, the ref is put back (a local ref behind origin's is adopted at
-  the next write) and the refusal names the commit to compare against
-  `git ls-remote` before sending again. Any other failure of the push spawn
-  puts the ref back too. A send and a park alike; the ship driver's pushes
-  need no read-back, since a re-run re-pushes the same object.
+  so; anything else puts the ref back, keeps the commit under a local
+  `refs/unconfirmed/` ref and refuses with the push's fate as read (an
+  unchanged tip had not landed when read and can still land, since the
+  push's transport and origin's side outlive the runner's kill; a foreign tip
+  or a gone ref did not land; an unreadable origin may have), and the next
+  send from this checkout settles it: landed after all, and that send is
+  refused once, naming the commit, so the message is not repeated; never,
+  once origin moved past its parent, and the record is dropped. Any other
+  failure of the push spawn puts the ref back too, and a rollback that fails
+  is a clause on the refusal, never in its place. A send and a park alike;
+  the ship driver's pushes need no read-back (a re-run re-pushes the same
+  branch head; the release is refused before its tag push when the tag
+  exists locally).

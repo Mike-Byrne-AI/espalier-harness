@@ -6311,14 +6311,22 @@ re-send is a second message) and treating the runner's timeout like the program'
 non-zero exit, which is the one outcome the rollback branch below the spawn handles.
 
 **How to avoid it:** after a timeout on the action, read the remote back before saying
-anything. `_push_ref` does: origin's tip at the commit means the push landed, and the send
-says so; unchanged, the ref is put back and the refusal says nothing was sent; unreadable,
-the ref is put back (a local ref behind origin's is adopted at the next write) and the
-refusal names the commit to compare against `git ls-remote --heads origin <ref>` before
-sending again. The runner tells the timeout apart as `record_merge.TimedOut`, under
-`Unresolvable` so every existing catch holds. A push whose re-run is a no-op needs no
-read-back: the ship driver's branch and tag pushes re-push the same object, and git
-answers up to date.
+anything, and remember what the read could not settle: an unchanged tip read milliseconds
+after the kill is not the end of it, since the push's transport and origin's side outlive
+the runner (driven with a pre-receive hook that sleeps: the tip moved five seconds after
+the refusal). `_push_ref` does both: origin's tip at the commit means the push landed, and
+the send says so; anything else puts the ref back, keeps the commit under a local
+`refs/unconfirmed/` ref and refuses with the push's fate as read (unchanged: it had not
+landed when read and can still land; a foreign tip or a gone ref: it did not land;
+unreadable: it may have), and the next write from this checkout settles the record --
+landed after all, and that write is refused once, naming the commit, so the message is not
+repeated; never, once origin moved past its parent on another line, and the record is
+dropped. The runner tells the timeout apart as `record_merge.TimedOut`, under
+`Unresolvable` so every existing catch holds. The ship driver's pushes need none of this:
+a re-run re-pushes the same branch head and git answers up to date, and a re-run of the
+release is refused before the tag push because the tag exists locally; its own runner
+(`tools/cc/ship.py::run`) has no `TimedOut`, so a non-idempotent ship verb would need the
+split first.
 
 ## An idle session leaves no trace a file scan can see, so recency cannot say a worktree is free
 
