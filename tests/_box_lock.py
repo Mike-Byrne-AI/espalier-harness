@@ -312,7 +312,11 @@ class BoxLock:
 
     def pytest_terminal_summary(self, terminalreporter: Any) -> None:
         """What the lock did, in the line ``-q`` keeps (the never-ran count's
-        pattern): nothing for a run that took the lock at once."""
+        pattern): nothing for a run that took the lock at once, and nothing
+        under ``--no-summary`` (pytest 9.2.0 calls the hook under it too and
+        leaves the gating to the plugin)."""
+        if getattr(terminalreporter, "no_summary", False):
+            return
         holder = self.holder_seen or {}
         who = f"{holder.get('seat') or '?'} {holder.get('lane') or '?'} (pid {holder.get('pid')})"
         if self.passed_through:
@@ -358,6 +362,9 @@ class _Unguarded:
         self.why = why
 
     def pytest_terminal_summary(self, terminalreporter: Any) -> None:
+        """Nothing under ``--no-summary``, as :meth:`BoxLock.pytest_terminal_summary`."""
+        if getattr(terminalreporter, "no_summary", False):
+            return
         terminalreporter.write_line(_ascii(f"box lock: unguarded ({self.why})"))
 
 

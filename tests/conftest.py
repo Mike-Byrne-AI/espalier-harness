@@ -2933,8 +2933,15 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
     cell's step times are the reading DEF-1177's bound and DEF-2014's measure
     are judged by. Under a ceiling raised above the suite's, every unmarked test
     that took longer than the suite's own is named, and under GitHub Actions as
-    a warning annotation too: the raised ceiling must not hide a slowdown."""
+    a warning annotation too: the raised ceiling must not hide a slowdown.
+    Nothing under ``--no-summary``: pytest 9.2.0 calls every plugin's summary
+    hook under it and leaves the gating to the plugin (its changelog #14724;
+    9.1.1 never called it there), and the run asked for none -- marked as ran
+    all the same, so the session's finish stays in step; the finish reads the
+    option for itself (:func:`pytest_sessionfinish`)."""
     config.__dict__["_initialized_repo_summary_ran"] = True
+    if getattr(terminalreporter, "no_summary", False):
+        return
     _write_summary_lines(terminalreporter, config)
 
 

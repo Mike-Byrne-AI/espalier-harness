@@ -102,9 +102,14 @@ class NeverRan:
     @pytest.hookimpl(hookwrapper=True, tryfirst=True)
     def pytest_terminal_summary(self, terminalreporter, config):
         """Outermost, so the line follows the terminal reporter's short test
-        summary."""
+        summary. Nothing under ``--no-summary``: pytest 9.2.0 calls this hook
+        under it too and leaves the gating to the plugin (9.1.1 never called it
+        there); marked as summarised all the same, so the finish stays in step,
+        and the finish reads the option for itself."""
         yield
         self.summarised = True
+        if getattr(terminalreporter, "no_summary", False):
+            return
         self._write(terminalreporter, config)
 
     def _write(self, terminalreporter, config) -> None:

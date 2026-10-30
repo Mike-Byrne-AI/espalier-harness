@@ -377,6 +377,30 @@ class TestTheSummaryNamesAnUnguardedRun:
         assert (tmp_path / "u.done").exists()
 
 
+class TestTheSummaryHooksHonourNoSummary:
+    def test_neither_the_locks_line_nor_the_unguarded_line_is_written_where_none_was_asked_for(self, tmp_path):
+        """pytest 9.2.0 calls every plugin's terminal-summary hook under
+        ``--no-summary`` and leaves the gating to the plugin (9.1.1 never called
+        it there): the lock's line and the unguarded line are the summary's,
+        written only where one was asked for. Mutation: either hook writing
+        before it reads the reporter's ``no_summary``."""
+        bl = _box_lock()
+        lock = bl.BoxLock(tmp_path / "box.lock", {"seat": "s", "lane": "lane/s", "pid": 1}, None)
+        lock.passed_through, lock.holder_seen = True, {"seat": "air", "lane": "lane/x", "pid": 7}
+        unguarded = bl._Unguarded("FileNotFoundError: no such lock")
+        asked_for_none: list[str] = []
+        reporter = types.SimpleNamespace(write_line=asked_for_none.append, no_summary=True)
+        lock.pytest_terminal_summary(reporter)
+        unguarded.pytest_terminal_summary(reporter)
+        assert asked_for_none == [], asked_for_none
+        written: list[str] = []
+        reporter = types.SimpleNamespace(write_line=written.append, no_summary=False)
+        lock.pytest_terminal_summary(reporter)
+        unguarded.pytest_terminal_summary(reporter)
+        assert written == ["box lock: inside the holder air lane/x (pid 7)",
+                           "box lock: unguarded (FileNotFoundError: no such lock)"], written
+
+
 class TestTheCensusOfPytestSpawners:
     """The one deadlock shape: a child that keeps ``ESPALIER_BOX_LOCK``, loses
     ``ESPALIER_BOX_LOCK_HOLDER`` and loads the suite's conftest. No spawner in
