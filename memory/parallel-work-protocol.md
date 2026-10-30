@@ -333,7 +333,7 @@ launcher did not start the handoff arms nothing and says the window needs a
 | Carries a lighter lane of its own | Run the heaviest lanes, which compete with dispatching |
 | Files the rows nobody is assigned to fix, and the ones its own measurements find | File rows for a job it has assigned: the finding, its probe and its fix are the assignee's one job (rule 8) |
 | Reports counts that name their population, settings quoted from the tool that computes them, and the day's figures from `scripts/seat_day_census.py` | Carry a figure by hand, past a compaction or from memory |
-| Resolves a gridlock (the operator's standing rule, 2026-10-30), the one exception to the first row's operator list: where no seat can advance its assigned job and the next step is a decision (a red `main` no revert clears, two lanes in conflict, a ruling a worker waits on past the hour), it rules, acts and reports the ruling as an `ack` with the facts it read, instead of filing an operator call and waiting; the operator can reverse it (the paragraph below) | Rule on what stays the operator's, gridlock or not: a new pack, a scope change, a release or tag |
+| Resolves a gridlock (the operator's standing rule, 2026-10-30), the one exception to the first row's operator list: where no seat can advance its assigned job and the next step is a decision (a red `main` no revert clears, two lanes in conflict, a ruling a worker waits on past the hour), it rules, acts and reports the ruling as an `ack` opening with `gridlock:` and carrying the facts it read, instead of filing an operator call and waiting; the operator can reverse it, and the seat-day census names each ruling by id on the dispatcher's row (the paragraph below) | Rule on what stays the operator's, gridlock or not: a new pack, a scope change, a release or tag |
 
 **Assign authority (decided by the operator 2026-10-15, after two days'
 measurement).** The dispatcher assigns, re-sequences and releases jobs on its
@@ -371,7 +371,25 @@ eleven hours on 2026-10-29 and seven calls sat two and a half hours on
 dispatcher brief carries the sentence from
 `tools/cc/seat.py::SELF_HOST_GRIDLOCK`, on this repository only, held to this
 paragraph, the row above and Core Rule 15 by a test
-(`tests/test_seat.py::TestBrief`). The data point that falsifies this: a
+(`tests/test_seat.py::TestBrief`). The ruling's `ack` opens with `gridlock:`
+(since 2026-10-30, `DEF-5029`), a marker in the family of `OPERATOR CALL:`,
+`redirect:` and `shelved:`, and `scripts/seat_day_census.py` counts a ruling
+by that opening alone and names each ruling's id beside the count on the
+dispatcher's day row, so the falsifier below is read from the record: the
+first two rulings under the rule (`20261030T095503Z-air-d6ef5a`,
+`20261030T113931Z-air-f0a99e`) were plain acks no reader counted, and a word
+read anywhere in a text counts the briefs' and the assigns' own quotations of
+it (on 2026-10-30 the four mentions of `gridlock:` on the refs were all
+quotations); the ack's first word is the marker, so a ruling opening with
+`RULING` or an address is not counted (10 of the dispatcher's 18 acks since
+2026-10-28 open with `RULING`, read 2026-10-30), one ruling per ack, and only
+the dispatcher's acks count: a worker's request opening with the word is a
+question, not a ruling. The figures count from the first dispatcher window
+launched or re-primed from a checkout holding this change (the brief reaches
+a window at its launch and at the re-prime, from that checkout's own
+`seat.py`): a day row already written is a frozen record and is not
+re-derived under the opening rule (Core Rule 13, the dispatcher's condition
+on `20261030T143356Z-air-work-b67559`). The data point that falsifies this: a
 gridlock ruling the operator reverses; two in a week re-opens the rule. Each
 assign is reported at the dispatcher's next tick
 with the job and the reason, so the operator can veto it, and the day's
@@ -404,7 +422,12 @@ names (the third closing rule closes a job at the push its claims cover,
 before CI has run, and no read lists such jobs yet: `DEF-4037`). A redirect after the fact is an ack beginning
 `redirect:`, and the Session Log row counts it as rework; `TP-703f`'s census
 counts both words from the refs, so the falsifier below is read, never
-recalled. The tick has carried the sentence since 2026-10-24
+recalled -- where a text opens with the word, since 2026-10-30 (`DEF-5029`):
+a word read anywhere in a text counted the briefs' and the assigns' own
+quotations of it, 8 of the 9 `redirect:` and 5 of the 5 `shelved:` mentions
+on the refs that day, and the one real redirect written mid-text (item 3 of
+the composite ack `20261026T013626Z-air-447e73`) is not a use of the
+convention as this paragraph states it. The tick has carried the sentence since 2026-10-24
 (`tools/cc/seat.py::SELF_HOST_PROCEED`, on the operator's yes to the call
 `20261024T065923Z-air-b366a4`, amended to this paragraph as it stood that
 day; its wait is rendered from `DISPATCHER_TICK`, never copied; a request

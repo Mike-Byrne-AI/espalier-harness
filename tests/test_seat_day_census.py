@@ -267,13 +267,18 @@ class TestTheOtherColumns:
             ("win", 1, 1, 6.0)]
 
     def test_the_counted_words_are_read_from_a_text_or_a_fixture_flag(self):
-        """Dies to: a word counted inside another word, or a fixture's flag ignored."""
+        """START is a word anywhere in a text (the tier-run announcement); a
+        marker is read where the text opens with it; a fixture carries either
+        as a flag. Dies to: a word counted inside another word, or a fixture's
+        flag ignored."""
         src = _src(_m("win", "note", "2026-10-18T01:00:00Z", "n1", text="START lane/y"),
                    _m("win", "note", "2026-10-18T02:00:00Z", "n2", text="RESTARTED the tier"),
                    _m("win", "note", "2026-10-18T03:00:00Z", "n3", shelved=True),
-                   _m("win", "note", "2026-10-18T04:00:00Z", "n4", text="redirect: back to the census"))
+                   _m("win", "note", "2026-10-18T04:00:00Z", "n4", text="redirect: back to the census"),
+                   _m("win", "ack", "2026-10-18T05:00:00Z", "k5", ack="q1", gridlock=True))
         r = census_mod.census(src, DAY, NEXT)["rows"][0]
-        assert (r["start"], r["redirect"], r["shelved"]) == (1, 1, 1)
+        assert (r["start"], r["redirect"], r["shelved"], r.get("gridlock")) == (1, 1, 1, 1)
+        assert r.get("gridlock_ids") == ["k5"]
 
     def test_the_census_reuses_the_latency_pairing_and_the_fragments_pattern(self):
         """The pairing and the Session Log name pattern have their homes; the
@@ -341,15 +346,64 @@ class TestTheOtherColumns:
         assert [(r["seat"], r["day"], r["session_log_rows"]) for r in census_mod.census(src, DAY, NEXT)["rows"]] == [
             ("win", "2026-10-18", 1)]
 
-    def test_redirect_and_shelved_count_only_as_the_seats_write_them(self):
-        """``redirect:`` and ``shelved:`` are the words a seat writes when it
-        moves off a job. Dies to: the colon dropped (prose about a redirect
-        counted)."""
+    def test_a_marker_counts_where_a_text_opens_with_it_and_a_quotation_mid_text_does_not(self):
+        """``redirect:``, ``shelved:`` and ``gridlock:`` are the words a seat
+        opens a message with when it moves off a job or rules a gridlock; the
+        briefs and the assigns quote the same words mid-text (8 of 9
+        ``redirect:`` and 5 of 5 ``shelved:`` mentions on the refs by
+        2026-10-30 were such quotations, DEF-5029). The text is read as the
+        driver stores it, stripped on send, so a leading space is no opening
+        (the operator-call rule reads the same way), and ``gridlock:`` counts
+        on the dispatcher's ack alone. Dies to: the colon dropped (prose about
+        a redirect counted), the marker searched anywhere in the text (a
+        quotation counted), a leading space let through, or a worker's ack
+        counted as a ruling."""
         src = _src(_m("win", "note", "2026-10-18T01:00:00Z", "n1", text="redirect to the census"),
                    _m("win", "note", "2026-10-18T02:00:00Z", "n2", text="shelved the idea for now"),
-                   _m("win", "note", "2026-10-18T03:00:00Z", "n3", text="redirect: lane/z first"))
-        r = census_mod.census(src, DAY, NEXT)["rows"][0]
-        assert (r["redirect"], r["shelved"]) == (1, 0)
+                   _m("win", "note", "2026-10-18T03:00:00Z", "n3", text="redirect: lane/z first"),
+                   _m("win", "request", "2026-10-18T04:00:00Z", "q4",
+                      text="an ack beginning redirect: re-aims; one note beginning shelved: says what was tried; "
+                           "a gridlock: marker on the ruling ack"),
+                   _m("win", "note", "2026-10-18T05:00:00Z", "n5", text="shelved: the tier reds twice on test_x"),
+                   _m("win", "ack", "2026-10-18T06:00:00Z", "k6", ack="q4", text="gridlock: a worker's ack is no ruling"),
+                   _m("win", "note", "2026-10-18T07:00:00Z", "n7", text="  redirect: a leading space is no opening"),
+                   _m("air", "ack", "2026-10-18T08:00:00Z", "k8", ack="q4", text="gridlock: ruling on q4, the facts read"))
+        rows = {r["seat"]: (r["redirect"], r["shelved"], r.get("gridlock")) for r in census_mod.census(src, DAY, NEXT)["rows"]}
+        assert rows == {"win": (1, 1, 0), "air": (0, 0, 1)}
+        assert census_mod.MARKERS == {"redirect": "redirect:", "shelved": "shelved:", "gridlock": "gridlock:"}
+
+    def test_a_gridlock_ruling_counts_on_its_senders_row_and_the_row_names_each_rulings_id(self):
+        """The ruling's ack opens with ``gridlock:`` (the dispatcher brief's
+        sentence, tools/cc/seat.py::SELF_HOST_GRIDLOCK), so the day row the
+        handoff derives names the rulings the operator can reverse (the
+        protocol's falsifier: two reversals in a week re-open the rule). Only
+        the dispatcher's acks count, as only a request is an operator call.
+        Dies to: the count kept without the ids, the ids printed on a row with
+        none or out of time order, a ruling counted on the row of the seat it
+        answered, a worker's request or the dispatcher's note counted, or the
+        text form leaving the word out."""
+        src = _src(_m("win", "request", "2026-10-18T01:00:00Z", "q1",
+                      text="gridlock: lane/x and lane/y both edit board.py; which first?"),
+                   _m("air", "ack", "2026-10-18T02:00:00Z", "k1", ack="q1", text="gridlock: win first, the facts read"),
+                   _m("air", "ack", "2026-10-18T01:30:00Z", "k2", ack="q1", text="gridlock: and win-2 catches up"),
+                   _m("air", "note", "2026-10-18T02:30:00Z", "n4", text="gridlock: a note is no ruling"),
+                   _m("win-2", "note", "2026-10-18T03:00:00Z", "n3", text="read k1, a gridlock: ruling, catching up"))
+        data = census_mod.census(src, DAY, NEXT)
+        rows = {r["seat"]: (r["gridlock"], r["gridlock_ids"]) for r in data["rows"]}
+        # The worker's request opening with the word is a question, not a ruling; the
+        # dispatcher's note is not one either; win-2's quotation opens no row of its own;
+        # the ids read in time order, not in the order the ref lists them.
+        assert rows == {"air": (2, ["k2", "k1"]), "win": (0, [])}
+        assert data["totals"]["gridlock"] == 2
+        air_row = census_mod.as_row(data, "air", "2026-10-18")
+        assert "shelved: 0, gridlock: 2 (k2, k1)." in air_row, air_row
+        for seat in ("win", "win-2"):
+            row = census_mod.as_row(data, seat, "2026-10-18")
+            assert "shelved: 0, gridlock: 0." in row and "(" not in row.split("gridlock:")[1], row
+        text = census_mod.render(data, {})
+        assert "2026-10-18 air: merged 0, " in text and "shelved: 0, gridlock: 2 (k2, k1)\n" in text, text
+        assert "2026-10-18 win: merged 0, " in text and "shelved: 0, gridlock: 0\n" in text, text
+        assert "2026-10-18 win-2:" not in text, text
 
     def test_each_senders_releases_naming_an_assign_count_on_its_row_split_by_whether_each_closed_a_job(self):
         """A seat may release its own job by hand too; the measure counts every

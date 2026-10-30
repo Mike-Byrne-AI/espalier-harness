@@ -390,6 +390,21 @@ age and counts it apart; the ruling comes back as the dispatcher's `ack`
 naming the request's full id, with the ruling in its text. A worker's ack does
 not close one.
 
+<!-- espalier:self-host-only -->
+A gridlock ruling (Core Rule 15, this repository's own rule) is the
+dispatcher's `ack` whose text opens with `gridlock:` (its first word; one
+ruling per ack), the marker in the family of `OPERATOR CALL:`, `redirect:` and
+`shelved:`:
+
+```bash
+python tools/cc/mail.py send --type ack --ack <request id> --text "gridlock: <the ruling, the facts you read>"
+```
+
+The seat-day census counts a ruling by that opening on the dispatcher's acks
+alone and names its id on the dispatcher's day row, so a mention of the word
+mid-text, or a worker's request opening with it, is never a ruling.
+<!-- /espalier:self-host-only -->
+
 ## Step 5: A shipped lane releases its own claims
 
 A claim's lifetime is the lane's time on this machine: the ship driver's

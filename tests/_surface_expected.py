@@ -212,7 +212,8 @@ EXPECTED_SCRIPT_NAMES = frozenset({  # class: literal
     # an instant and buckets red legs by the ledger rows naming their files.
     "red_after_merge_census.py",
     # 2026-10-20: what each seat did on a UTC day (merges, jobs given and how each
-    # closed, requests, Session Log rows, START, redirect: and shelved:), read off the
+    # closed, requests, Session Log rows, START, and the redirect:, shelved: and
+    # gridlock: markers a text opens with, the rulings named by id), read off the
     # mail refs and gh; the closing rules come from tools/cc/mail.py's fold, by path.
     "seat_day_census.py",
     "proof_tier.py",
