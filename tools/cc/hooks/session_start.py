@@ -3926,10 +3926,87 @@ def _permissions_line(root: Path) -> str:
             "Espalier's hooks still run and still deny")
 
 
+#: The own-clear marker under the state directory: ``tools/cc/ship.py`` arms
+#: it as the handoff's last act, the own-clear mod (``tools/cc/mods/own-clear``)
+#: rewrites it with every outcome, ``stop_gate.py`` reads it for Gate 5, and
+#: the banner names what it records when the clear or the re-prime did not go
+#: as the mod meant (DEF-5031, DEF-5032). The field names are the mod's;
+#: tests/test_own_clear.py pins them across the language line.
+OWN_CLEAR_MARKER = "own_clear.json"
+
+
+def _plain_line(text: object, cap: int) -> str:
+    """Engine text folded for the banner: ASCII, one line, at most ``cap``
+    characters. A rejection's text or a stale note may carry a newline, a CR
+    or a quote outside ASCII, and a Windows console raises on a character
+    outside its code page."""
+    folded = "".join(ch if ch.isprintable() else " " for ch in _ascii(str(text)))
+    return " ".join(folded.split())[:cap]
+
+
+def _own_clear_line(root: Path, sid: str, source: str = "") -> str:
+    """The ``Own-clear:`` line: the marker's record, when it holds one a reader
+    should see -- armed for a session other than this one (a window waiting on
+    a clear the engine refused, took and never ran, or was never asked for; or
+    a window since closed), consumed into this session after refusals, or
+    marked stale at the clear into this session (cleared, not re-primed: the
+    brief was never submitted). Empty for a clean consume, this window's own
+    pending clear (the mod's status line has it), the clear's own SessionStart
+    (``source == "clear"``: this hook runs beneath the mod's handler, which
+    consumes or marks the marker only after it, so an armed marker here is the
+    old session's mid-clear; the prompt router tells the new session what the
+    mod wrote, on its first prompt), no marker, or one that cannot be read: a
+    reporter, never a block. ASCII, one line."""
+    try:
+        marker = json.loads((root / _hook_utils.STATE_DIR / OWN_CLEAR_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # fail-open: ok deliberate a reporter: a missing marker, or one torn mid-rewrite, is no line
+        return ""
+    if not isinstance(marker, dict):
+        return ""
+    state = marker.get("state")
+    owner = str(marker.get("session_id") or "")[:8] or "?"
+    refusals = marker.get("clear_refusals")
+    refusals = refusals if isinstance(refusals, int) and refusals > 0 else 0
+    # The latest ask's refusal: the mod takes it off the marker at a new ask,
+    # so a refusal followed by an ask the engine took never reads as refused.
+    refused = _plain_line(marker.get("clear_refused") or "", 120)
+    asked = str(marker.get("clear_asked_at") or "")[:16]
+    taken = str(marker.get("clear_resolved_at") or "")[:16]
+    turns = marker.get("turns_since_ask")
+    turns = turns if isinstance(turns, int) else 0
+    new = str(marker.get("new_session_id") or "")
+    if state == "armed":
+        if marker.get("session_id") == sid or source == "clear":
+            return ""
+        head = (f"marker armed for session {owner} (not this one), written "
+                f"{str(marker.get('written_at') or '?')[:16]}Z")
+        if refused and refusals:
+            tail = (f"; its clear, asked {asked}Z, was refused {refusals} time(s) by the engine (latest: {refused}); "
+                    "that window needs /clear by hand")
+        elif taken:
+            tail = (f"; its clear was asked {asked}Z and taken {taken}Z but had not run after {turns} turn(s): "
+                    "lost, or still queued behind a prompt")
+        elif asked:
+            tail = f"; its clear was asked {asked}Z and the engine has not answered"
+        else:
+            tail = "; its clear was never asked (no turn ended there since the handoff)"
+        return head + tail
+    if state == "consumed" and new == sid and refusals:
+        latest = f" (latest: {refused})" if refused else ""
+        return (f"this window was re-primed after the engine refused the clear {refusals} time(s){latest}; "
+                f"asked {asked}Z, consumed {str(marker.get('consumed_at') or '?')[:16]}Z")
+    if state == "stale" and new == sid:
+        because = _plain_line(marker.get("stale_because") or f"armed for {owner}; this window's mod knew another last session", 200)
+        return (f"the marker of session {owner} was marked stale at the clear into this window ({because}): "
+                "no brief was submitted; python3 tools/cc/seat.py brief <seat> prints it")
+    return ""
+
+
 def _build_compact_context(
     root: Path, self_host: bool, integrity: str = "", loose: str = "",
     open_prs: str = "", merged_prs: str = "", mail: str = "", sessions: str = "",
     permissions: str = "", merging: str = "", seat: str = "", engine: str = "", orders: str = "",
+    own_clear: str = "",
 ) -> str:
     """The mid-session COMPACT-orientation banner. Reshapes the normal banner:
     OMITS the MEMORY digest + the prior-session blueprint note (the compaction
@@ -3964,6 +4041,9 @@ def _build_compact_context(
         # A bypassPermissions default: prompts off, hooks still live.
         # Same omit-when-empty contract.
         *([f"Permissions: {permissions}\n"] if permissions else []),
+        # The own-clear marker's record, when the clear or the re-prime did not
+        # go as the mod meant (DEF-5031, DEF-5032). Same omit-when-empty contract.
+        *([f"Own-clear: {own_clear}\n"] if own_clear else []),
         # The operator's open pull requests: a lane that auto-merged during
         # the session, or one a red check is holding. Same omit-when-empty
         # contract as Loose.
@@ -4062,6 +4142,7 @@ def _build_context(
     seat: str = "",
     engine: str = "",
     orders: str = "",
+    own_clear: str = "",
 ) -> str:
     """Assemble the SessionStart additionalContext banner. ``self_host`` is the
     once-computed value from main so is_self_host_repo is not re-probed here.
@@ -4074,7 +4155,8 @@ def _build_context(
     normal banner byte-identical."""
     if source == "compact":
         return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs, mail, sessions,
-                                      permissions, merging, seat=seat, engine=engine, orders=orders)
+                                      permissions, merging, seat=seat, engine=engine, orders=orders,
+                                      own_clear=own_clear)
     name = repo_name(root, warn_label="session_start")
     branch = check_branch(root)
     status = _check_dirty(root)
@@ -4123,6 +4205,12 @@ def _build_context(
         # permission prompts, while the hooks still run and deny. Same
         # omit-when-empty contract; production passes _permissions_line.
         *([f"Permissions: {permissions}\n"] if permissions else []),
+        # The own-clear marker's record, when the clear or the re-prime did not
+        # go as the mod meant (DEF-5031, DEF-5032): a window elsewhere waiting
+        # on a clear the engine refused, this window re-primed after refusals,
+        # or cleared and not re-primed. Same omit-when-empty contract;
+        # production passes _own_clear_line.
+        *([f"Own-clear: {own_clear}\n"] if own_clear else []),
         # The operator's pull requests (the /ship lane's SessionStart half):
         # the open ones with number, head branch, check tally and auto-merge
         # state, then the merged ones the local base branch does not reach yet
@@ -4440,6 +4528,14 @@ def _run_main() -> int:
         _late_load_failed("session_start: permissions read failed", e)
         permissions_line = ""
 
+    # The own-clear marker's record (DEF-5031, DEF-5032), read here like the
+    # markers: a reporter, so a torn file costs the line, never the banner.
+    try:
+        own_clear_line = _own_clear_line(root, sid, source)
+    except Exception as e:  # noqa: BLE001 — bounded warn, never block session
+        _late_load_failed("session_start: own-clear marker read failed", e)
+        own_clear_line = ""
+
     # The operator's pull requests, read here for the same reason: two bounded
     # `gh` reads under one deadline, and a host without `gh`, a sign-in or a
     # GitHub remote costs the lines, never the banner. Two handlers, so the
@@ -4523,7 +4619,7 @@ def _run_main() -> int:
     context = _build_context(
         root, self_host, _should_advance_chain(source) and not _CHILD_ADVANCED_CHAIN, source,
         integrity=integrity_line, loose=loose_line, sessions=sessions_line,
-        permissions=permissions_line,
+        permissions=permissions_line, own_clear=own_clear_line,
         open_prs=open_prs_line, merged_prs=merged_prs_line, mail=mail_line,
         checkout=checkout_line, worktrees=worktrees_line, merging=merge_rules_line, seat=seat_line,
         engine=engine_line, orders=orders_line,

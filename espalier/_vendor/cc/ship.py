@@ -1408,6 +1408,17 @@ def _armed_for_this_session(root: Path) -> str | None:
     return None
 
 
+def _refusals_on_marker(root: Path) -> int:
+    """How many asks the engine refused on the marker's record (the own-clear
+    mod writes ``clear_refusals``, DEF-5031); 0 for none, or no marker."""
+    try:
+        marker = json.loads((root / STATE_DIR / OWN_CLEAR_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return 0
+    count = marker.get("clear_refusals") if isinstance(marker, dict) else None
+    return count if isinstance(count, int) and count > 0 else 0
+
+
 def arm(why: str | None = None, dry_run: bool = False) -> int:
     """The handoff's last act by hand: arm the own-clear marker for this
     session, for a lane opened by hand (``gh pr create`` ran no verb, so no
@@ -1431,8 +1442,12 @@ def arm(why: str | None = None, dry_run: bool = False) -> int:
                       "on origin (opened by hand)")
     armed = _armed_for_this_session(root)
     if armed:
-        raise Refused(f"the own-clear marker is already armed for this session ({armed}): the mod clears this "
-                      "window at the turn's end, and a second arm would drop what the first one's brief says")
+        refused = _refusals_on_marker(root)
+        tail = (f"; the engine has refused its clear {refused} time(s) (the marker's record): this window "
+                "needs /clear by hand, and a second arm would drop what the first one's brief says" if refused else
+                ": the mod clears this window at the turn's end, and a second arm would drop what the first one's "
+                "brief says")
+        raise Refused(f"the own-clear marker is already armed for this session ({armed}){tail}")
     if dry_run:
         _say("dry-run: the own-clear marker would be armed for this session by hand" + (f" ({why})" if why else ""))
         return 0

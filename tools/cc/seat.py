@@ -873,10 +873,13 @@ MOD_DIR = Path(__file__).resolve().parent / "mods" / "own-clear"
 #: so the line it prints is true of the window it runs in.
 OWN_CLEAR_KEY = "ESPALIER_OWN_CLEAR"
 #: The checkout the mod reads the marker in (a test's or a drive's), and the
-#: file it appends one JSON line per event to -- set for a session only by
-#: ``launch --own-clear-log`` (bare: :data:`OWN_CLEAR_LOG_DEFAULT` under the
-#: seat's checkout), after the deferred clear of 2026-10-30 had to be read
-#: from the transcript's queue rows for want of the mod's own record.
+#: file it appends one JSON line per event to -- set for every session the
+#: launcher starts with the mod (:data:`OWN_CLEAR_LOG_DEFAULT` under the
+#: seat's checkout, capped by the mod; ``launch --own-clear-log PATH`` moves
+#: it, ``--no-own-clear-log`` leaves it unset), since the deferred clear of
+#: 2026-10-30 had to be read from the transcript's queue rows for want of the
+#: mod's own record, and the refused clear of the same day (DEF-5031, 41
+#: re-asks over ten hours) left no record of the engine's reason at all.
 OWN_CLEAR_ROOT_KEY = "ESPALIER_OWN_CLEAR_ROOT"
 OWN_CLEAR_LOG_KEY = "ESPALIER_OWN_CLEAR_LOG"
 OWN_CLEAR_LOG_DEFAULT = ".espalier-state/own_clear.log"
@@ -1022,16 +1025,18 @@ def brief_refusal(args: list[str], claude: str | None, root: Path, checkout: Pat
 
 def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unchecked: bool,
                print_only: bool, shell: str | None = None, brief: bool = True, mod: bool = True,
-               own_clear_log: str | None = None) -> int:
-    """``own_clear_log``: None, no log; ``""`` (the switch given bare),
-    :data:`OWN_CLEAR_LOG_DEFAULT` under the seat's checkout; else the path
-    given. Set for the session only when the mod rides (``mod``), since the
-    mod is what writes it."""
+               own_clear_log: str | None = None, log_off: bool = False) -> int:
+    """``own_clear_log``: None or ``""`` (the switch left out, or given bare),
+    :data:`OWN_CLEAR_LOG_DEFAULT` under the seat's checkout -- the log is on by
+    default since DEF-5031 (a clear the engine refused 41 times over ten hours
+    left no record with it off; the mod caps the file); else the path given.
+    ``log_off`` (``--no-own-clear-log``): no log. Set for the session only
+    when the mod rides (``mod``), since the mod is what writes it."""
     target = resolve(root, seat)
     # A path given is resolved where the operator typed it (the session's own
     # directory is the seat's checkout, where a relative file would land as an
-    # untracked one); bare, the seat's own state file.
-    log = None if own_clear_log is None else (
+    # untracked one); left out or bare, the seat's own state file.
+    log = None if log_off else (
         os.path.abspath(os.path.expanduser(own_clear_log)) if own_clear_log
         else str(target.path / OWN_CLEAR_LOG_DEFAULT))
     claude = None
@@ -1093,7 +1098,7 @@ def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unc
             argv += ["--", compose_brief(root, seat, target.path).text]
         except Refused as exc:
             raise Refused(f"{exc}; --no-brief launches without the first message") from None
-    no_log = "; --own-clear-log names nothing without it" if log else ""
+    no_log = "; --own-clear-log names nothing without it" if log and own_clear_log is not None else ""
     if loaded:
         say(f"own-clear mod loaded from {MOD_DIR}: the window clears itself once the handoff lands"
             + (f"; its log: {log}" if log else ""))
@@ -1262,8 +1267,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-mod", dest="mod", action="store_false",
                    help="start the session without the own-clear mod (mods/own-clear beside this driver)")
     p.add_argument("--own-clear-log", nargs="?", const="", metavar="PATH",
-                   help=f"set {OWN_CLEAR_LOG_KEY} for the session, the file the own-clear mod appends one JSON "
-                        f"line per event to (bare: {OWN_CLEAR_LOG_DEFAULT} under the seat's checkout)")
+                   help=f"where {OWN_CLEAR_LOG_KEY} points for the session, the file the own-clear mod appends one "
+                        f"JSON line per event to (the default, switch left out or bare: {OWN_CLEAR_LOG_DEFAULT} "
+                        "under the seat's checkout, capped by the mod)")
+    p.add_argument("--no-own-clear-log", dest="log_off", action="store_true",
+                   help="start the session with no own-clear log (the mod then records on its marker alone)")
     p = sub.add_parser("brief", help="print a seat's first message: its role, the reads to start with, its loop")
     p.add_argument("seat")
     p = sub.add_parser("retire", help="release a worktree seat's claims, then remove its worktree")
@@ -1298,7 +1306,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "launch":
             return cmd_launch(root, args.seat, claude_args, maintenance=args.maintenance, unchecked=args.unchecked,
                               print_only=args.print_only, shell=args.shell, brief=args.brief, mod=args.mod,
-                              own_clear_log=args.own_clear_log)
+                              own_clear_log=args.own_clear_log, log_off=args.log_off)
         if args.verb == "brief":
             return cmd_brief(root, args.seat)
         return cmd_retire(root, args.seat, dry_run=args.dry_run, fetch=not args.no_fetch,

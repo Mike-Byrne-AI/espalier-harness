@@ -44,7 +44,18 @@ says the window needs a `/clear` by hand.
    freezes the window; the operator's own `/clear` ends the wait. Anything in
    flight keeps the marker armed and names the wait on the status line; a
    clear the engine refuses says so there and is tried again at the next
-   turn's end.
+   turn's end. **Every outcome goes on the marker** (DEF-5031, 2026-10-30: the
+   dispatcher window re-asked a refused clear 41 times over ten hours with the
+   refusal on a status line nobody read and the log off): a rejected ask
+   writes `clear_refused` (the engine's text), `clear_refusals` (a count) and
+   `clear_refused_at`, the state staying `armed`; each later turn's end under a
+   queued clear writes `turns_since_ask` and, once the engine has answered the
+   ask with the session still standing, `clear_resolved_at`, so a clear taken
+   and never run reads apart from a queued one and a refused one. The
+   SessionStart banner's `Own-clear:` line (`tools/cc/hooks/session_start.py`)
+   reads the record for every other session, and the prompt router
+   (`tools/cc/hooks/task_router.py`) tells the window whose own asked clear was
+   refused to say so in its reply.
 3. **The re-prime.** On the clear's SessionStart (`classic.SessionStart`,
    `source: 'clear'`) the mod reads the marker, and what the old window left
    in flight against the marker's head, before handing the event on (the
@@ -52,12 +63,22 @@ says the window needs a `/clear` by hand.
    marker, and the checkout catch-up there moves a checkout whose lane merged
    onto the base, which read after the hand-on named itself as work left in
    the old window on every such re-prime, DEF-5028), and only when the marker
-   names the session this process was in before the clear rewrites it as
-   `consumed` with the new session id and submits the brief with `asUser`,
-   what was left in flight named after it. A
-   marker armed by another window, or by a session this process never saw, is
-   marked `stale` and re-primes nothing. A marker with no brief gets one
-   generic line; a marker that cannot be rewritten still re-primes.
+   is this process's own -- armed for the session it was last in, or for the
+   session it asked to clear while that ask stands, or, with no last session
+   known (a reload reset the module), carrying its own `clear_asked_at` --
+   rewrites it as `consumed` with the new session id and submits the brief
+   with `asUser`, what was left in flight named after it. A marker armed by
+   another window, or by a session this process never saw, is marked `stale`
+   with the two ids it compared (`previous_session_id`, `stale_because`) and
+   re-primes nothing. A marker with no brief gets one generic line; a marker
+   that cannot be rewritten still re-primes. Under a pending clear a turn's
+   end, and a `session.start` should an engine raise one at a clear, move the
+   last session only to the asked one (DEF-5032, 2026-10-30: a queued clear
+   was dequeued 5 ms after the tick turn's end, while that turn's handler was
+   still resolving the session id, so the handler took the new id, the
+   SessionStart read its own marker as another window's and re-primed nothing);
+   the clear's SessionStart clears the pending ask once the marker is consumed
+   or stale.
 
 While the marker is armed for this session and the clear can run (or is under
 way), `session.compact` on the main loop answers `{ skip }`; while the clear
@@ -86,7 +107,9 @@ have cleared the re-primed window; with two prompts queued ahead no turn count
 tells a queued clear from a lost one. That is why the mod never asks again while
 the session stands, names the queued clear on the status line instead, lets a
 compaction through once two turns have passed, and records `clear_asked_at` in
-the marker (record only: nothing reads it back).
+the marker (read back by the banner's `Own-clear:` line, the prompt router, and
+the mod's own reload arm, which takes a marker asked under a day ago as this
+checkout's own when a reload has reset the module's memory).
 
 ## Environment
 
@@ -94,13 +117,16 @@ the marker (record only: nothing reads it back).
   the handoff's gate.
 - `ESPALIER_OWN_CLEAR_ROOT`: the checkout the marker lives in, for a test or a
   drive; unset, `git rev-parse --show-toplevel` from the session's directory.
-- `ESPALIER_OWN_CLEAR_LOG`: a file the mod appends one JSON line per event to;
-  unset, nothing is written. `seat.py launch --own-clear-log [PATH]` sets it
-  for the session (bare: `.espalier-state/own_clear.log` under the seat's
-  checkout; a relative path is resolved where it was typed).
+- `ESPALIER_OWN_CLEAR_LOG`: a file the mod appends one JSON line per event to,
+  capped (past 256 KB the newest 500 rows are kept), its writes chained so two
+  in flight at once drop nothing; unset, nothing is written and the marker is
+  the one record. `seat.py launch` sets it for every session the mod rides
+  (`.espalier-state/own_clear.log` under the seat's checkout, the default since
+  DEF-5031); `--own-clear-log PATH` moves it (a relative path is resolved where
+  it was typed) and `--no-own-clear-log` leaves it unset.
 
 The launcher never passes the three into a session from its own environment;
-the log switch is the one way a launch sets one of them.
+the log is the one it sets on its own.
 
 ## Checking it
 

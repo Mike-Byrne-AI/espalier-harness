@@ -514,7 +514,15 @@ the mod runs the real `/clear` (a prompt queued as the turn ended runs first,
 and the clear runs after it), refuses a compaction meanwhile, and re-primes
 the cleared window with the seat brief less its loop line, since the loop
 survives the clear. A window started without the mod is told it needs a
-`/clear`.
+`/clear`. Every outcome the mod meets goes on the marker -- a clear the engine
+refused (the reason, when, a count), one taken and never run, the turns a
+queued one has waited, the two ids a stale marking compared -- and the launch
+logs the mod by default (an `own_clear.log` beside the marker in the harness's
+state directory, capped; `--no-own-clear-log` leaves it off): the SessionStart banner's `Own-clear:`
+line reads the record for every later session, and the prompt router tells a
+window whose own asked clear was refused to say so in its reply, since its
+ticks run while nobody reads its status line (a dispatcher window re-asked a
+refused clear 41 times over ten hours on 2026-10-30).
 `docs/HOOKS.md`'s router section has the ask's mechanism; the briefs and the
 tick carry the rule; the mod's README has its measured facts.
 
