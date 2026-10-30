@@ -47,6 +47,7 @@ const GENERIC_BRIEF =
   'The previous session handed off and this window was cleared by the own-clear. Orient from the banner and ' +
   'read live state before you state it. A loop that was running survived the clear: start no second one.'
 const FAILED_STATUS = 'own-clear: the clear was refused; type /clear, or it is tried again at the next turn'
+const QUEUED_STATUS = "own-clear: the clear is queued behind the prompt that ran first; it runs at this turn's end"
 const SKIP_REASON = "own-clear: the handoff wrote the summary; this window clears at the turn's end instead"
 
 type Marker = {
@@ -56,7 +57,12 @@ type Marker = {
   seat?: string | null
   role?: string | null
   brief?: string | null
+  // How the handoff ended (tools/cc/ship.py, DEF-4057): read by nobody here,
+  // kept whole through every rewrite; the brief carries what the next window does.
+  landed?: boolean
+  outcome?: string | null
   written_at?: string
+  clear_asked_at?: string
   consumed_at?: string
   new_session_id?: string
 }
@@ -66,6 +72,7 @@ type Engine = EngineInterface
 // Module state: a reload starts it over, and the marker's own state then decides.
 let root: string | undefined
 let clearedFor: string | undefined // the session this process asked to clear
+let turnsSinceAsk = 0 // main-loop turn ends in that session since the ask (the queued clear's one turn among them)
 let lastId: string | undefined // the session this process was in at its last event
 
 // A line in the log the environment names, or nothing; never rejects (it runs
@@ -160,6 +167,7 @@ export const register: Register = on => {
     // 2026-10-26): nothing is cleared yet, and the root is read afresh.
     root = undefined
     clearedFor = undefined
+    turnsSinceAsk = 0
     lastId = await $.session.id()
     await repoRoot($)
     return next(e)
@@ -169,7 +177,27 @@ export const register: Register = on => {
     if (e.agentId !== undefined) return next(e)
     const id = await $.session.id()
     lastId = id
-    if (e.reason !== 'answer' || clearedFor === id) return next(e)
+    if (e.reason !== 'answer') return next(e)
+    if (clearedFor === id) {
+      // Asked already, and the session is still this one, so the clear has
+      // not run. Measured 2026-10-30 on 2.1.314: a prompt queued while the
+      // asking turn ran (a loop tick) is dequeued first, the engine queues the
+      // clear behind it and runs it when that turn ends. It is never asked
+      // again while this session stands: with two prompts queued ahead, a
+      // second ask would be a second clear, wiping the window the first one
+      // re-primes. The status line names the queued clear and what this turn
+      // left in flight (the queued clear runs over it: the clear's
+      // SessionStart says so to the new window), a compaction is let through
+      // once two turns have passed (session.compact, below), so a clear the
+      // engine lost never freezes the window, and the operator's own /clear
+      // ends the wait.
+      turnsSinceAsk += 1
+      const { marker, why } = await clearable($, id)
+      const left = marker && why ? `; this turn left ${why} (the queued clear runs anyway)` : ''
+      $.ui.status(QUEUED_STATUS + left)
+      await note($, `turn.complete: the clear asked for ${id} has not run after ${turnsSinceAsk} more turn(s)${left}`)
+      return next(e)
+    }
     const { marker, why } = await clearable($, id)
     if (!marker) return next(e)
     if (why) {
@@ -178,9 +206,17 @@ export const register: Register = on => {
       return next(e)
     }
     clearedFor = id
+    turnsSinceAsk = 0
     $.ui.status(undefined)
     $.ui.toast('own-clear: the handoff landed; clearing this window and re-priming it')
     await note($, `turn.complete: clearing for ${id}`)
+    try {
+      // The ask on the record (record only: nothing reads it back; the marker
+      // on disk is what outlives this process when a clear never comes).
+      await writeMarker($, { ...marker, clear_asked_at: new Date(await $.clock.now()).toISOString() })
+    } catch (err) {
+      await note($, `the marker could not take the ask (${String(err)}); clearing anyway`)
+    }
     $.command
       .run({ command: 'clear', args: '' })
       .then(r => note($, `command.run(clear) resolved: ${JSON.stringify(r)}`))
@@ -188,6 +224,7 @@ export const register: Register = on => {
         // Not cleared: say so where the operator looks, and let the next
         // turn's end try again (the marker is still armed).
         clearedFor = undefined
+        turnsSinceAsk = 0
         $.ui.status(FAILED_STATUS)
         return note($, `command.run(clear) rejected: ${String(err)}`)
       })
@@ -214,7 +251,13 @@ export const register: Register = on => {
         await note($, `classic.SessionStart source=clear: a marker of ${marker.session_id} is not this window's (${before}); marked stale`)
         return r
       }
-      const brief = marker.brief && marker.brief.trim() ? marker.brief : GENERIC_BRIEF
+      let brief = marker.brief && marker.brief.trim() ? marker.brief : GENERIC_BRIEF
+      // A clear queued behind a prompt ran over whatever that turn did (the
+      // in-flight check held only at the ask): the new window is told first.
+      const left = await inFlight($, marker)
+      if (left) {
+        brief += `\n\nown-clear: at the clear, ${left} -- work in the old window after its handoff; read git status and git log -3 before anything else.`
+      }
       try {
         await writeMarker($, { ...marker, state: 'consumed', consumed_at: stamp, new_session_id: id })
       } catch (err) {
@@ -239,6 +282,12 @@ export const register: Register = on => {
       // plan in progress, HEAD moved) lets the compaction through.
       const { marker, why } = await clearable($, id)
       if (!marker || why) return next(e)
+    } else if (turnsSinceAsk >= 2) {
+      // The clear asked two turns ago has not come. The refusal exists so the
+      // handoff's summary is not written twice; held over a clear the engine
+      // lost, it would fill the window instead. The compaction runs.
+      await note($, `session.compact (${e.trigger}) let through: the clear asked for ${id} has not run after ${turnsSinceAsk} more turns`)
+      return next(e)
     }
     await note($, `session.compact (${e.trigger}) refused: armed for ${id}`)
     return { skip: SKIP_REASON }

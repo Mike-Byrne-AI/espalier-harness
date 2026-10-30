@@ -578,7 +578,8 @@ replaces compaction: if a lane is in hand, finish it through its own landing
 and start no new job; with no lane in hand, run /handoff now (it writes your
 row, and pushes the lane). After the handoff take no new work, answer a loop
 tick in one line, and tell the operator this window needs a /clear (the loop
-survives it).
+survives it; start no second one), or, after a lane opened by hand, run
+python tools/cc/ship.py arm --why <how>.
 ```
 
 The push clause rides only where `handoff_push = true`. The ask is idempotent

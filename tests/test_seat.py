@@ -1235,3 +1235,75 @@ class TestTheLauncherSetsTheBoxLock:
         ps = seat.command_line(target, [], maintenance=False, shell="powershell")
         assert f"if (-not $env:ESPALIER_BOX_LOCK) {{ $env:ESPALIER_BOX_LOCK = '{default}' }}" in ps, ps
         assert ps.index("ESPALIER_BOX_LOCK") < ps.index("claude")
+
+
+class TestTheLogSwitch:
+    """``launch --own-clear-log [PATH]`` (DEF-4057's lane, 2026-10-30): the mod
+    appends one JSON line per event to the file ``ESPALIER_OWN_CLEAR_LOG``
+    names, and the launcher strips that name from every session it starts, so
+    the deferred clear of 2026-10-30 was read from the transcript's queue rows
+    instead of the mod's own record. The switch sets the name for the session,
+    after the unsets on both printed lines, only when the mod rides; bare, it
+    names ``.espalier-state/own_clear.log`` under the seat's checkout. Dies
+    to: the name set with no mod to write it, a log left exported in the
+    launcher's shell riding in, or an assignment rendered before an unset on
+    the POSIX line (BSD env stops reading options at the first assignment)."""
+
+    def test_the_childs_environment_carries_the_log_only_with_the_mod(self, seat, tmp_path):
+        target = seat.Target("box-x", tmp_path, True, False)
+        base = {"PATH": "/bin", "ESPALIER_OWN_CLEAR_LOG": "/left/exported.log"}
+        env = seat.child_env(target, maintenance=False, base=base, own_clear=True, own_clear_log="/x/own_clear.log")
+        assert env["ESPALIER_OWN_CLEAR_LOG"] == "/x/own_clear.log" and env["ESPALIER_OWN_CLEAR"] == "1"
+        without_mod = seat.child_env(target, maintenance=False, base=base, own_clear=False, own_clear_log="/x/o.log")
+        assert "ESPALIER_OWN_CLEAR_LOG" not in without_mod
+        assert "ESPALIER_OWN_CLEAR_LOG" not in seat.child_env(target, maintenance=False, base=base, own_clear=True)
+
+    def test_both_shells_lines_set_the_log_after_the_unsets(self, seat, tmp_path):
+        import shlex
+        target = seat.Target("box-x", tmp_path, True, False)
+        log = str(tmp_path / "state dir" / "own_clear.log")
+        sh = seat.command_line(target, [], maintenance=False, shell="posix", own_clear=True, own_clear_log=log)
+        assert f"ESPALIER_OWN_CLEAR=1 ESPALIER_OWN_CLEAR_LOG={shlex.quote(log)}" in sh, sh
+        assert "-u ESPALIER_OWN_CLEAR_LOG" not in sh and "-u ESPALIER_OWN_CLEAR_ROOT" in sh
+        words = sh.split(" env ", 1)[1].split(" claude", 1)[0].split()
+        first = next(i for i, w in enumerate(words) if "=" in w)
+        assert not [w for w in words[first:] if w.startswith("-")], words
+        ps = seat.command_line(target, [], maintenance=False, shell="powershell", own_clear=True, own_clear_log=log)
+        assert f"$env:ESPALIER_OWN_CLEAR_LOG = '{log}'" in ps and "Remove-Item Env:ESPALIER_OWN_CLEAR_LOG" not in ps
+        assert "Remove-Item Env:ESPALIER_OWN_CLEAR_ROOT" in ps
+        plain = seat.command_line(target, [], maintenance=False, shell="posix", own_clear=True)
+        assert "ESPALIER_OWN_CLEAR_LOG=" not in plain and "-u ESPALIER_OWN_CLEAR_LOG" in plain
+
+    def test_launch_takes_the_switch_bare_as_the_seats_state_file_and_says_so(self, seat, clone, registry, no_claude,
+                                                                             monkeypatch, capsys):
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        monkeypatch.chdir(clone)
+        monkeypatch.setenv("ESPALIER_OWN_CLEAR_LOG", "/left/exported.log")   # never inherited, switch or not
+        expected = str(feat / ".espalier-state" / "own_clear.log")
+        assert seat.main(["launch", "box-feat", "--own-clear-log", "--", "--model", "x"]) == 0
+        env = no_claude[-1]["env"]
+        assert env["ESPALIER_OWN_CLEAR_LOG"] == expected and env["ESPALIER_OWN_CLEAR"] == "1"
+        assert expected in capsys.readouterr().out
+        assert seat.main(["launch", "box-feat", "--own-clear-log", str(feat / "elsewhere.log"), "--", "--model", "x"]) == 0
+        assert no_claude[-1]["env"]["ESPALIER_OWN_CLEAR_LOG"] == str(feat / "elsewhere.log")
+        capsys.readouterr()
+        assert seat.main(["launch", "box-feat", "--no-mod", "--own-clear-log", "--", "--model", "x"]) == 0
+        assert "ESPALIER_OWN_CLEAR_LOG" not in no_claude[-1]["env"]
+        assert "names nothing without it" in capsys.readouterr().out
+        assert seat.main(["launch", "box-feat", "--", "--model", "x"]) == 0
+        assert "ESPALIER_OWN_CLEAR_LOG" not in no_claude[-1]["env"]
+        capsys.readouterr()
+        assert seat.main(["launch", "box-feat", "--own-clear-log", "--print", "--shell", "posix"]) == 0
+        assert f"ESPALIER_OWN_CLEAR_LOG={seat.shlex.quote(expected)}" in capsys.readouterr().out
+
+    def test_a_relative_log_path_is_resolved_where_the_operator_typed_it(self, seat, clone, registry, no_claude,
+                                                                          monkeypatch):
+        """The session's own directory is the seat's checkout, so a relative
+        path handed through would land there as an untracked file (the
+        failure-mode review); it is resolved where the operator typed it."""
+        _dispatcher(clone, '"air"')
+        _worktree(clone, "feat", name="box-feat")
+        monkeypatch.chdir(clone)
+        assert seat.main(["launch", "box-feat", "--own-clear-log", "logs/oc.log", "--", "--model", "x"]) == 0
+        assert no_claude[-1]["env"]["ESPALIER_OWN_CLEAR_LOG"] == os.path.abspath("logs/oc.log")

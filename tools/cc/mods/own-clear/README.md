@@ -1,7 +1,8 @@
 # The own-clear mod
 
 A Claude Code mod (a plugin of function hooks, 2.1.287+) that ends a seat's
-window the way the handoff means it to: once `ship.py handoff` has landed, the
+window the way the handoff means it to: once `ship.py handoff` has run to its
+end (its push landed, or refused by something the window is done with), the
 window runs the real `/clear` on its own, refuses the compaction that would
 write the handoff's summary a second time, and re-primes the cleared window
 with the seat brief. A seat launched by `tools/cc/seat.py launch` loads it
@@ -16,17 +17,34 @@ says the window needs a `/clear` by hand.
    (the id Claude Code exports to its tool shells as `CLAUDE_CODE_SESSION_ID`,
    which tracks the session across a clear), `head`, `seat`, `role`, `brief`
    (`seat.py::reprime_text`: the role brief with its loop line replaced, since
-   the interval loop survives a `/clear`) and `written_at`. Only in a window
-   that loaded the mod; with no session id in the environment nothing is
-   armed; and an arm that fails never fails the handoff whose push landed.
+   the interval loop survives a `/clear`), `landed` and `outcome` (how the
+   handoff ended, DEF-4057: a push that landed, or a refusal the window is
+   done with -- the base red and the lane whole here, or a step after a landed
+   push -- whose text rides `outcome` while the lane to land first is appended
+   to `brief`, so the next window lands it before any new job) and
+   `written_at`. The handoff arms on every end it ran to; a refusal the
+   window must fix first (a dirty tree, a lane behind its remote) arms
+   nothing, and `python tools/cc/ship.py arm [--why ...]` arms by hand after a
+   lane opened by hand. Only in a window that loaded the mod; with no session
+   id in the environment nothing is armed; and an arm that fails never fails
+   the handoff whose step has run.
 2. **The clear.** At the end of the main loop's next turn (`turn.complete`,
    reason `answer`), when the marker names this session, HEAD is still the
    marker's, `git status --porcelain --untracked-files=no` is empty and
-   `cc/execution_plan.json` is not `in_progress`, the mod runs
-   `$.command.run({ command: 'clear', args: '' })`, not awaited, once per
-   session. Anything in flight keeps the marker armed and names the wait on
-   the status line; a clear the engine refuses says so there and is tried
-   again at the next turn's end.
+   `cc/execution_plan.json` is not `in_progress`, the mod writes
+   `clear_asked_at` into the marker and runs
+   `$.command.run({ command: 'clear', args: '' })`, not awaited. A clear
+   asked while a prompt is already queued (a loop tick that fired as the turn
+   ended) runs after that prompt's turn (measured 2026-10-30, below), and is
+   never asked again while the session stands (with two prompts queued, a
+   second ask would be a second clear over the window the first re-primes):
+   every later turn's end in the same session names the queued clear on the
+   status line, with what that turn left in flight, and a compaction is let
+   through once two turns have passed, so a clear the engine lost never
+   freezes the window; the operator's own `/clear` ends the wait. Anything in
+   flight keeps the marker armed and names the wait on the status line; a
+   clear the engine refuses says so there and is tried again at the next
+   turn's end.
 3. **The re-prime.** On the clear's SessionStart (`classic.SessionStart`,
    `source: 'clear'`) the mod reads the marker before handing the event on (the
    project's settings hooks run beneath a mod's), and only when the marker
@@ -52,6 +70,19 @@ after the clear, so the re-prime is interactive-only. A `/compact` while a
 never fires. `CLAUDE_CODE_SESSION_ID` in a tool shell changes with the session
 at a clear. The Windows seats are unmeasured (their `claude` is a cmd shim).
 
+**A queued prompt defers the clear by one turn (2026-10-30, 2.1.314, the
+dispatcher seat).** The handoff armed the marker at 02:08:22Z; the board loop's
+tick, due at 02:07, fired as the turn's Stop hook returned (02:08:32.069Z), its
+prompt was dequeued at .073, and the mod's `/clear` was enqueued at .130 behind
+it (the transcript's `queue-operation` rows). The engine dequeued the clear when
+the tick's turn ended (02:10:19Z) and the marker was consumed at 02:10:24Z. The
+clear was deferred, never lost, and a second ask at the tick turn's end would
+have cleared the re-primed window; with two prompts queued ahead no turn count
+tells a queued clear from a lost one. That is why the mod never asks again while
+the session stands, names the queued clear on the status line instead, lets a
+compaction through once two turns have passed, and records `clear_asked_at` in
+the marker (record only: nothing reads it back).
+
 ## Environment
 
 - `ESPALIER_OWN_CLEAR`: `1` in a session `seat.py launch` started with the mod;
@@ -59,9 +90,12 @@ at a clear. The Windows seats are unmeasured (their `claude` is a cmd shim).
 - `ESPALIER_OWN_CLEAR_ROOT`: the checkout the marker lives in, for a test or a
   drive; unset, `git rev-parse --show-toplevel` from the session's directory.
 - `ESPALIER_OWN_CLEAR_LOG`: a file the mod appends one JSON line per event to;
-  unset, nothing is written.
+  unset, nothing is written. `seat.py launch --own-clear-log [PATH]` sets it
+  for the session (bare: `.espalier-state/own_clear.log` under the seat's
+  checkout; a relative path is resolved where it was typed).
 
-The launcher never passes the three into a session from its own environment.
+The launcher never passes the three into a session from its own environment;
+the log switch is the one way a launch sets one of them.
 
 ## Checking it
 

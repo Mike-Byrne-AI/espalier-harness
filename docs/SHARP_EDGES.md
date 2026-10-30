@@ -6427,12 +6427,22 @@ the classic PreCompact fires; and a non-awaited `$.prompt.submit` from a
 later. `$.prompt.submit('/clear')` is refused by a host check. In `claude -p` the process
 exits right after the clear, so the re-prime is interactive-only.
 
-**How you hit it:** two ways. Reaching for a settings hook, a skill or a command body to
+**How you hit it:** four ways. Reaching for a settings hook, a skill or a command body to
 reset a window after the handoff: nothing there can, and a PreCompact block only leaves the
 window full. Or, in a mod, reading state on `classic.SessionStart` AFTER `next(e)`: the
 chain is managed hooks, then the hooks modules, then the project's settings hooks as core,
 so a settings hook beneath (`session_start.py`'s sweep of `.espalier-state/`) runs inside
-that `next(e)` and can take the file before the mod reads it. Two smaller edges from the
+that `next(e)` and can take the file before the mod reads it. Or arming the marker only
+after a push that landed: a handoff refused on a red base, a push whose follow-up refused,
+or a lane opened by hand then leaves the window with no marker, and the threshold ask fires
+on every prompt until someone types `/clear` (DEF-4057: win, win-2 and air-work sat so for
+17.5 h on 2026-10-29, about twenty silent ticks each). Or asking the clear again at the
+next turn's end because the session id has not changed: the engine queues a clear issued
+while a prompt is already queued (a loop tick that fired as the turn ended) and runs it
+after that prompt's turn (measured 2026-10-30 from the transcript's `queue-operation`
+rows: the tick dequeued 150 ms after the turn's end, the clear enqueued 57 ms behind it and
+dequeued when the tick's turn ended), so a retry there clears the window that clear just
+re-primed. Two smaller edges from the
 same lane: `$.env.get` must name its variable literally (the engine lists what a module
 reads; a constant fails `claude plugin validate`), and a continuation a hook did not await
 must never reject (a log write after a test's environment had ended surfaced as an
@@ -6441,13 +6451,24 @@ unhandled rejection that failed the file).
 **How to avoid it:** the reset after the handoff is the own-clear mod
 (`tools/cc/mods/own-clear`), loaded by `seat.py launch` through `--plugin-dir` (which also
 exports `ESPALIER_OWN_CLEAR=1`, the handoff's gate: any other window is told it needs a
-`/clear` by hand), armed by `ship.py handoff` through `.espalier-state/own_clear.json`, keyed
-by the session id and re-primed only in the window it was armed in; it reads the marker
-first and hands the event on second, and refuses a compaction only while the clear is due.
-Measure a mod from hook payloads on disk (a settings-hook log in a throwaway repository),
-never from the screen, and run `claude plugin validate` before a drive.
+`/clear` by hand), armed by `ship.py handoff` through `.espalier-state/own_clear.json`
+whenever the handoff ran to its end -- the push landed, or a refusal the window is done
+with (the base red, the lane whole and unpushed here; a step after a landed push), with the
+refusal in the marker (`landed`, `outcome`) and the lane to land first appended to the brief;
+a refusal the window must fix first arms nothing; `ship.py arm --why ...` arms by hand after
+a hand-open -- keyed by the session id and re-primed only in the window it was armed in; it
+reads the marker first and hands the event on second, refuses a compaction only while the
+clear is due, writes `clear_asked_at` into the marker at the ask (record only), never asks
+again while the session stands (two prompts queued ahead would make a second ask a second
+clear, over the window the first re-primes), names the queued clear and what each later turn
+left in flight on the status line, lets a compaction through once two turns have passed since
+the ask, and on the clear's SessionStart tells the new window what the old one left in
+flight. The Stop hook's handoff gate (Gate 5) lets a Stop through over a marker armed at HEAD,
+since the handoff ran and a block would only ask for a second row. Measure a mod from hook
+payloads on disk (a settings-hook log in a throwaway repository, or the transcript's queue
+rows), never from the screen, and run `claude plugin validate` before a drive.
 
-**Backed by:** `tools/cc/mods/own-clear/hooks/own-clear.test.ts` (thirteen cases against
+**Backed by:** `tools/cc/mods/own-clear/hooks/own-clear.test.ts` (twenty cases against
 the engine, `claude plugin test`), `bench/own_clear/drive.py` (a pty-driven session with the
 real marker writer: PASS 2026-10-26 in 27 s) and `reports/own-clear-probe-2026-10-26/` on
 the Air (the probe mod, its logs and the pty driver). `tools/cc/mods/own-clear/README.md`

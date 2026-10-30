@@ -46,10 +46,16 @@ Verbs (each stands alone and derives what it needs from git and gh):
     handoff              /handoff's one push step: pushes only when
                          espalier.toml sets handoff_push = true (off by
                          default: a push is outward-facing), else says so;
-                         last, once the step has landed, arms the own-clear
-                         marker for this session (.espalier-state/
-                         own_clear.json), which the own-clear mod a seat.py
-                         launch loads reads to clear and re-prime the window
+                         last, once the step has run to its end -- landed, or
+                         refused by a red base or after a landed push -- arms
+                         the own-clear marker for this session
+                         (.espalier-state/own_clear.json), which the own-clear
+                         mod a seat.py launch loads reads to clear and re-prime
+                         the window; a held refusal rides the marker and the
+                         lane to land first rides the brief
+    arm [--why ...]      the same arm by hand, for a lane opened by hand
+                         (gh pr create ran no verb): a clean tree, a lane on
+                         origin, no marker already armed for this session
 
 Stdlib-only (``tools/cc/`` runs standalone, zero espalier imports); the guard
 it asks about (``tools/cc/ci_guard.py``, an install-ci artifact) is loaded by
@@ -139,6 +145,22 @@ def _check_outcome(row: object) -> str:
 
 class Refused(Exception):
     """A named stop. The message is the reason the operator reads; exit 1."""
+
+
+class Held(Refused):
+    """A refusal the handoff arms the own-clear on, then re-raises: the lane
+    is whole -- its row written, its tracked tree clean (both refused before
+    this) -- and the window is done with it. ``landed`` says where it waits:
+    False, held here because the base is red (nothing lands on a red base;
+    the push never ran); True, on origin, the push landed and a step after
+    it refused (the head wait, the rebind, the pull request's creation or
+    arming). Any other refusal is the window's to fix first, and arms nothing
+    (DEF-4057: three seats sat past the threshold for 17.5 h on 2026-10-29,
+    their handoffs refused on a red base and no marker to clear them)."""
+
+    def __init__(self, message: str, *, landed: bool) -> None:
+        super().__init__(message)
+        self.landed = landed
 
 
 # ---------------------------------------------------------------- spawning --
@@ -988,16 +1010,22 @@ def _seat_module():
 
 
 def arm_own_clear(root: Path, *, session_id: str, head: str, seat: str | None, role: str | None,
-                  brief: str | None) -> str:
+                  brief: str | None, landed: bool = True, outcome: str | None = None) -> str:
     """Write the marker for ``session_id`` (state ``armed``) whole, rename it
     into place, and return the one line the handoff says. ASCII JSON ending in
     a newline, so the mod reads it with nothing beyond a JSON parse; a second
-    arm replaces the first."""
+    arm replaces the first. ``landed`` and ``outcome`` are the record of how
+    the handoff ended (DEF-4057): True and None for a push that landed; False
+    and the refusal for a lane held here by a red base; True and the refusal
+    for a step that refused after the push landed; True and the reason for an
+    arm by hand. The mod reads neither: the brief carries what the next window
+    must do, and the marker on disk outlives the window that printed it."""
     state_dir = root / STATE_DIR
     state_dir.mkdir(parents=True, exist_ok=True)
     marker = {
         "state": "armed", "session_id": session_id, "head": head, "seat": seat, "role": role,
-        "brief": brief, "written_at": datetime.now(timezone.utc).isoformat(),
+        "brief": brief, "landed": landed, "outcome": outcome,
+        "written_at": datetime.now(timezone.utc).isoformat(),
     }
     target = state_dir / OWN_CLEAR_MARKER
     text = json.dumps(marker, ensure_ascii=True, indent=2) + "\n"
@@ -1022,7 +1050,7 @@ def _reprime_brief(root: Path) -> tuple[str | None, str | None, str | None, str]
     line replaced (``seat.reprime_text``), or ``None``s and the reason: the
     seat is unnamed, mail.py or seat.py is not beside this script, or the
     brief refuses (an unusable dispatcher setting). Never raises: the handoff
-    has landed, and a marker with no brief still clears the window."""
+    has run to its end, and a marker with no brief still clears the window."""
     mail = _mail_module()
     if mail is None:
         return None, None, None, "tools/cc/mail.py is not beside this script"
@@ -1048,25 +1076,167 @@ def _reprime_brief(root: Path) -> tuple[str | None, str | None, str | None, str]
 OWN_CLEAR_ENV = "ESPALIER_OWN_CLEAR"
 
 
-def arm_own_clear_here(root: Path) -> str:
-    """Arm the marker for the session this shell belongs to: the id Claude
-    Code exports (:data:`SESSION_ID_ENV`), HEAD, and the seat's re-prime brief.
-    Only in a window that loaded the mod (:data:`OWN_CLEAR_ENV`): elsewhere
-    nothing would read the marker, so nothing is armed and the by-hand reset is
-    said. With no id in the environment (a handoff run outside a session)
-    nothing is armed either: a marker with no session would clear any window."""
+def _own_clear_gate() -> str | None:
+    """Why nothing can be armed from this shell, or None. Not a window the
+    launcher started with the mod (:data:`OWN_CLEAR_ENV`): nothing would read
+    a marker, so the by-hand reset is said instead. No session id in the
+    environment (a handoff run outside a session): a marker with no session
+    would clear any window."""
     if os.environ.get(OWN_CLEAR_ENV, "").strip() != "1":
         return (f"own-clear not armed: this window did not load the own-clear mod ({OWN_CLEAR_ENV} is not set; "
                 "seat.py launch sets it when the mod rides), so it needs a /clear by hand")
-    session_id = os.environ.get(SESSION_ID_ENV, "").strip()
-    if not session_id:
+    if not os.environ.get(SESSION_ID_ENV, "").strip():
         return (f"own-clear not armed: no {SESSION_ID_ENV} in the environment (this shell is not a Claude "
                 "Code session's), so no window is told to clear")
-    seat, role, brief, how = _reprime_brief(root)
-    line = arm_own_clear(root, session_id=session_id, head=head_sha(), seat=seat, role=role, brief=brief)
-    if brief is None:
-        line += f"; no brief rides it ({how}), so the mod re-primes with its own line"
+    return None
+
+
+#: The first words of the brief's tail after a handoff that did not land: the
+#: re-primed window lands the lane before any new job (DEF-4057).
+LAND_FIRST = "THE HANDOFF DID NOT LAND THIS LANE."
+
+
+def _brief_text(text: str) -> str:
+    """A refusal's text as the brief may carry it: 7-bit ASCII (anything else
+    becomes ``?``), no double quote and no percent -- the rules every brief
+    keeps (tests/test_seat.py pins them on the composed one; a Windows
+    PowerShell 5.1 launch line splits at a double quote and cmd.exe expands a
+    percent). The marker's brief is submitted as a prompt, never typed, but
+    one rule for every brief is the one that stays pinned."""
+    folded = text.encode("ascii", "replace").decode("ascii")
+    return folded.replace('"', "'").replace("%", " pct")
+
+
+def _land_first_tail(held: Held, branch: str) -> str:
+    """What the re-primed window reads after its role brief when the handoff
+    did not land: the refusal, where the lane waits, and the verbs that land
+    it. The row is written and the tree clean (the handoff refused before
+    this otherwise), so the next window's first job is the lane, not a new
+    one."""
+    what = "The push landed and a step after it refused" if held.landed else "The push was refused"
+    lane = _brief_text(branch)
+    where = (f"The lane {lane} is on origin" if held.landed
+             else f"The lane {lane} is committed in this checkout and unpushed")
+    return (f"\n\n{LAND_FIRST} {what}: {_brief_text(str(held))}\n"
+            f"{where}, its row written and the tree clean; the window that handed off is done with it, and "
+            "this one lands it before any new job: python tools/cc/ship.py status says what is on origin; "
+            "with no pull request yet, python tools/cc/ship.py open once the base is green (the board, "
+            "/inbox board, says when); after a push that landed, python tools/cc/ship.py rebind, or the "
+            "command the refusal above names (auto-merge that did not arm is armed by hand).")
+
+
+#: The mod's own first line for a window with no role brief (register.ts
+#: GENERIC_BRIEF says the same; tests/test_own_clear.py pins the two by
+#: phrase). It rides before a held tail, so a window with no seat name still
+#: hears that its loop survived the clear.
+GENERIC_BRIEF = ("The previous session handed off and this window was cleared by the own-clear. Orient from "
+                 "the banner and read live state before you state it. A loop that was running survived the "
+                 "clear: start no second one.")
+
+
+def arm_own_clear_here(root: Path, *, held: Held | None = None, by_hand: str | None = None) -> str:
+    """Arm the marker for the session this shell belongs to: the id Claude
+    Code exports (:data:`SESSION_ID_ENV`), HEAD, and the seat's re-prime brief
+    -- with, after a handoff that did not land (``held``), the refusal in the
+    marker and the lane to land first appended to the brief (an unnamed seat's
+    window reads it after the mod's generic line); or, from the ``arm`` verb,
+    why it was armed by hand. Only where :func:`_own_clear_gate` lets it:
+    elsewhere nothing is armed and the reason is the line."""
+    why_not = _own_clear_gate()
+    if why_not:
+        return why_not
+    session_id = os.environ[SESSION_ID_ENV].strip()
+    seat, role, role_brief, how = _reprime_brief(root)
+    brief, landed, outcome = role_brief, True, None
+    if held is not None:
+        landed, outcome = held.landed, str(held)
+        try:
+            branch = current_branch()
+        except Refused:
+            branch = "(its branch could not be read)"
+        brief = (role_brief or GENERIC_BRIEF) + _land_first_tail(held, branch)
+    elif by_hand:
+        outcome = f"armed by hand: {by_hand}"
+    line = arm_own_clear(root, session_id=session_id, head=head_sha(), seat=seat, role=role, brief=brief,
+                         landed=landed, outcome=outcome)
+    if held is not None:
+        line += ("; with the refusal in its brief: this window is done with the lane, and the next window "
+                 "lands the lane first")
+    elif by_hand:
+        line += f" (by hand: {by_hand})"
+    if role_brief is None:
+        line += (f"; no brief of its own rides it ({how}), so the mod re-primes with "
+                 + ("its generic line and the lane to land" if held is not None else "its own line"))
     return line
+
+
+def _lane_not_on_origin(root: Path) -> str | None:
+    """Why HEAD is not on origin, or None when it is: no upstream (the lane was
+    never pushed), commits the upstream lacks, or a push state git could not
+    read. The by-hand arm clears a window only over a lane that is on origin:
+    a handoff refused for a reason the window must fix first (a lane behind
+    its remote, a rejected push) could otherwise be cleared past with the
+    plain role brief, the lane left unpushed and unmentioned (the failure-mode
+    review, 2026-10-30)."""
+    rc, upstream, _ = _git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", cwd=str(root))
+    upstream = upstream.strip()
+    if rc != 0 or not upstream:
+        return "HEAD has no upstream: the lane was never pushed"
+    rc, count, _ = _git("rev-list", "--count", f"{upstream}..HEAD", cwd=str(root))
+    if rc != 0 or not count.strip().isdigit():
+        return f"the push state against {upstream} could not be read"
+    ahead = int(count.strip())
+    if ahead:
+        return f"HEAD holds {ahead} commit{'s' if ahead != 1 else ''} that {upstream} does not"
+    return None
+
+
+def _armed_for_this_session(root: Path) -> str | None:
+    """When the marker is armed for this shell's session, its ``written_at``
+    (or ``earlier``); else None, a missing or unreadable marker included."""
+    try:
+        marker = json.loads((root / STATE_DIR / OWN_CLEAR_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if (isinstance(marker, dict) and marker.get("state") == "armed"
+            and marker.get("session_id") == os.environ.get(SESSION_ID_ENV, "").strip()):
+        return str(marker.get("written_at") or "earlier")
+    return None
+
+
+def arm(why: str | None = None, dry_run: bool = False) -> int:
+    """The handoff's last act by hand: arm the own-clear marker for this
+    session, for a lane opened by hand (``gh pr create`` ran no verb, so no
+    marker: air-work's #353, 2026-10-30, its window left past the threshold)
+    or a handoff whose arm did not run. The handoff's gates
+    (:func:`_own_clear_gate`) refuse by name here; a dirty tracked tree
+    refuses first (the mod would hold the clear on it anyway, and this verb
+    should not promise one); a lane that is not on origin refuses and names
+    the verbs that land it (:func:`_lane_not_on_origin`); a marker already
+    armed for this session is kept, since a second arm would drop what the
+    first one's brief says. ``why`` rides the marker's ``outcome``."""
+    root = repo_root()
+    why_not = _own_clear_gate()
+    if why_not:
+        raise Refused(why_not)
+    _refuse_a_dirty_tree(root)
+    off = _lane_not_on_origin(root)
+    if off:
+        raise Refused(f"nothing armed: {off}. The handoff arms on its own end, held or landed: run /handoff, or "
+                      "python tools/cc/ship.py open for a lane with no pull request; `arm` is for a lane already "
+                      "on origin (opened by hand)")
+    armed = _armed_for_this_session(root)
+    if armed:
+        raise Refused(f"the own-clear marker is already armed for this session ({armed}): the mod clears this "
+                      "window at the turn's end, and a second arm would drop what the first one's brief says")
+    if dry_run:
+        _say("dry-run: the own-clear marker would be armed for this session by hand" + (f" ({why})" if why else ""))
+        return 0
+    try:
+        _say(arm_own_clear_here(root, by_hand=why or "ship.py arm"))
+    except OSError as exc:
+        raise Refused(f"the marker could not be written: {os_error_text(exc)}") from None
+    return 0
 
 
 def _release_claims(root: Path, lane: str, text: str) -> None:
@@ -1380,14 +1550,9 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
                       f"(git merge origin/{branch}); never rebase or force-push a pushed lane")
     _refuse_a_marked_record(root)
     _refuse_a_shared_checkout(root)
-    prs = _open_prs(str(root))
-    refusal = red_base_refusal(base, branch, prs, str(root))
-    if refusal:
-        raise Refused(refusal)
-    seat, mine = seat_open_prs(root, branch, prs)
-    if mine:
-        _note(f"this seat ({seat}) already has an open pull request: {', '.join(mine)}. One open pull request "
-              "per seat keeps a seat's lanes off each other's base; this one opens beside it")
+    # The row question before the base's: a lane with no row is the window's
+    # to fix, whatever the base reads, and the held refusal below promises the
+    # next window a row written (both reviews, 2026-10-30).
     on, how = handoff_push_setting(root)
     if on and lane_carries_memory_row(base, root) is False:
         early_reason = (early or "").strip()
@@ -1396,6 +1561,16 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         _note(f"shipping before the handoff ({early_reason}): its row will be a second push on this lane")
     else:
         early_reason = ""
+    prs = _open_prs(str(root))
+    refusal = red_base_refusal(base, branch, prs, str(root))
+    if refusal:
+        # The lane is whole and stays here: the handoff arms the own-clear on
+        # this one (the next window lands the lane once the base is green).
+        raise Held(refusal, landed=False)
+    seat, mine = seat_open_prs(root, branch, prs)
+    if mine:
+        _note(f"this seat ({seat}) already has an open pull request: {', '.join(mine)}. One open pull request "
+              "per seat keeps a seat's lanes off each other's base; this one opens beside it")
     _wiring_note(root)
     # The base is fetched here, before the merge-first question and the guard
     # question below (both read origin/<base> and neither needs the remote
@@ -1486,9 +1661,11 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         armed = _gh_json("pr", "view", number, "--json", "autoMergeRequest", cwd=str(root))
         if not isinstance(armed, dict) or not armed.get("autoMergeRequest"):
             raise Refused(f"auto-merge reads back as NOT armed on #{number}: arm it by hand (gh pr merge {number} --auto --merge) -- {url}")
-    except Refused:
+    except Refused as exc:
         _release_claims(root, branch, "Lane pushed; claims closed.")
-        raise
+        # The lane is on origin: what refused is the next window's to finish,
+        # and a handoff running this arms the own-clear on it.
+        raise Held(f"the push landed, then: {exc}", landed=True) from None
     _say(f"#{number} open, auto-merge armed, one push: {url}")
     # The release first: a notice that is slow or interrupted never leaves the claims live.
     _release_claims(root, branch, f"Lane shipped as #{number}; claims closed.")
@@ -1615,25 +1792,46 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     """/handoff's one push step, then the own-clear's arm. The push
     (:func:`_handoff_push`) runs only when espalier.toml sets ``handoff_push =
     true``, else the commit stays local and the verb says how to push it. Once
-    that step has completed -- the off path said (its commit stays local by
-    design and the window is done with it), the row parked, the pull request
-    opened or the push re-bound -- the own-clear marker is armed for this
-    session (:func:`arm_own_clear_here`), last: a refused or failed push never
-    arms, so no marker clears a window whose lane the push did not take. The
-    arm itself never fails a handoff whose step has landed: what stops it is
-    said, with the by-hand reset. A dry run says what it would arm."""
-    rc = _handoff_push(title, body_file, dry_run)
+    that step has run to its end -- the off path said (its commit stays local
+    by design and the window is done with it), the row parked, the pull
+    request opened or the push re-bound, or a refusal the window is done with
+    (:class:`Held`: the base is red and the lane stays here whole, or the push
+    landed and a step after it refused) -- the own-clear marker is armed for
+    this session (:func:`arm_own_clear_here`), last; a held refusal rides the
+    marker, the lane to land first rides the brief, and the refusal is
+    re-raised (exit 1 still). A refusal the window must fix first -- a dirty
+    tree, a shared checkout, a lane behind its remote, a rejected push --
+    never arms, so no marker clears a window with work in it (DEF-4057: until
+    this, no refusal armed, and three seats sat past the threshold with no
+    clear). The arm itself never fails a handoff whose step has run: what
+    stops it is said, with the by-hand reset. A dry run says what it would
+    arm."""
+    try:
+        rc = _handoff_push(title, body_file, dry_run)
+    except Held as whole:
+        if dry_run:
+            _say("dry-run: the own-clear marker would be armed for this session with this refusal in its brief")
+            raise
+        _arm_or_say(held=whole)
+        raise
     if rc != 0:
         return rc
     if dry_run:
         _say("dry-run: the own-clear marker would be armed for this session, last")
         return 0
+    _arm_or_say()
+    return 0
+
+
+def _arm_or_say(*, held: Held | None = None) -> None:
+    """The handoff's arm, which never fails the handoff: what stops it, the
+    root's own read included, is said, with the by-hand reset."""
     try:
-        _say(arm_own_clear_here(repo_root()))
-    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the push landed; the reset is said instead
+        root = repo_root()
+        _say(arm_own_clear_here(root, held=held) if held is not None else arm_own_clear_here(root))
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the step has run; the reset is said instead
         _note(f"the own-clear marker was not armed ({os_error_text(exc)}); this window will not clear itself, "
               "so it needs a /clear by hand")
-    return 0
 
 
 def _handoff_push(title: str | None, body_file: str | None, dry_run: bool) -> int:
@@ -1709,12 +1907,23 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool) -> in
     if rc != 0:
         raise Refused(f"git push failed: {err.strip()[:200]}")
     pushed = head_sha()
-    _wait_for_pr_head(branch, pushed)
-    rc = rebind()
-    if rc == 0:
+    # From here the push has landed: a refusal after it is the next window's
+    # to finish (`rebind`), not this one's to fix, and the handoff arms on it.
+    try:
+        _wait_for_pr_head(branch, pushed)
+        rc = rebind()
+    except Refused as exc:
+        # The claims close with the push, as open_pr's do (its 2026-10-05
+        # rule): the next window runs `rebind`, which releases nothing.
         _release_claims(root, branch, "Handoff pushed onto the open pull request; claims closed.")
-        _overlap_notice(root, branch, base, pr.get("number"), pushed)
-    return rc
+        raise Held(f"the push landed, then: {exc}", landed=True) from None
+    if rc != 0:
+        _release_claims(root, branch, "Handoff pushed onto the open pull request; claims closed.")
+        raise Held(f"the push landed, then the rebind returned {rc}: run `python tools/cc/ship.py rebind`",
+                   landed=True)
+    _release_claims(root, branch, "Handoff pushed onto the open pull request; claims closed.")
+    _overlap_notice(root, branch, base, pr.get("number"), pushed)
+    return 0
 
 
 def catch_up() -> int:
@@ -2144,6 +2353,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_hand.add_argument("--title", help="the pull request title (default: the head commit's subject)")
     p_hand.add_argument("--body-file", help="the pull request body (default: the commit subjects)")
     p_hand.add_argument("--dry-run", action="store_true")
+    p_arm = sub.add_parser("arm", help="arm the own-clear marker for this session by hand: after a lane opened "
+                                       "by hand (gh pr create), or a handoff whose arm did not run")
+    p_arm.add_argument("--why", help="why it is armed by hand (recorded in the marker)")
+    p_arm.add_argument("--dry-run", action="store_true")
     return parser
 
 
@@ -2171,6 +2384,8 @@ def main(argv: list[str] | None = None) -> int:
             return fold(dry_run=args.dry_run)
         if args.verb == "handoff":
             return handoff(title=args.title, body_file=args.body_file, dry_run=args.dry_run)
+        if args.verb == "arm":
+            return arm(why=args.why, dry_run=args.dry_run)
     except Refused as stop:
         print(f"ship: refused -- {stop}", file=sys.stderr)
         return 1

@@ -1056,6 +1056,32 @@ class TestTheHandoffGate:
         assert [d["decision"] for d in decisions] == ["block", "block"]
         assert "2 commits" in decisions[1]["reason"]
 
+    def test_a_held_handoff_marker_at_head_lets_the_stop_through(self, tmp_path, monkeypatch, capsys):
+        """DEF-4057 (both reviews, 2026-10-30): the handoff ran to its end and
+        its push was held by a red base, so the ship driver armed the own-clear
+        marker for this HEAD and told the next window to land the lane. A block
+        here would ask for a handoff that only writes a second row and re-arms,
+        and the clear waits on the very Stop it blocks. Dies to: a marker at
+        another head letting the Stop through (an older handoff's), or a torn
+        marker raising instead of reading as not armed."""
+        root = _lane_repo(tmp_path, ahead=1)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = self._load()
+        state = root / ".espalier-state"
+        state.mkdir(exist_ok=True)
+        marker = state / mod.OWN_CLEAR_MARKER
+        marker.write_text(json.dumps({"state": "armed", "head": "0" * 40, "landed": False}), encoding="utf-8")
+        assert mod._gate_handoff(root) == 1   # another head's marker: this lane is still owed
+        _commit(root, "the-row")
+        marker.write_text(json.dumps({"state": "armed", "head": _head(root), "landed": False}), encoding="utf-8")
+        assert mod._gate_handoff(root) == 0
+        assert (state / mod.HANDOFF_GATE_FLAG).read_text(encoding="utf-8").strip() == _head(root)
+        _commit(root, "another")
+        marker.write_text("{not json", encoding="utf-8")
+        assert mod._gate_handoff(root) == 1
+        decisions = [json.loads(ln) for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+        assert [d["decision"] for d in decisions] == ["block", "block"]
+
     def test_the_head_a_session_began_on_is_never_spoken_about(self, tmp_path, monkeypatch, capsys):
         """SessionStart seeds the flag with HEAD: a lane an earlier session left
         unpushed is the banner's to name, never a block into a cold context."""

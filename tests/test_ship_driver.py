@@ -913,19 +913,56 @@ class TestHandoffVerb:
 
 class TestTheHandoffArmsTheOwnClear:
     """The handoff's last act arms the own-clear marker (``arm_own_clear_here``,
-    its own rows in tests/test_own_clear.py): after the push has landed, on
-    the off path once the verb has said its piece, and never on a dry run or
-    a refusal. A marker armed before the push would clear a window whose lane
-    sat unpushed; the own-clear mod (tools/cc/mods/own-clear) reads nothing
-    else. Dies to: an arm before the rebind, an arm on a refused handoff or a
-    failed rebind, or a dry run that arms."""
+    its own rows in tests/test_own_clear.py) whenever the verb ran to its end
+    on a clean tree with the row written: after the push has landed, on the
+    off path once the verb has said its piece, and -- DEF-4057, measured
+    2026-10-29 (win, win-2 and air-work frozen past the threshold for 17.5 h)
+    -- after a refusal the window is done with: the red base (nothing lands
+    on it; the lane stays here, whole) or a step after a landed push (the head
+    wait, the rebind). Those arm with the refusal in the marker (``Held``) and
+    re-raise it. Never on a dry run, and never on a refusal the window must fix
+    first (a dirty tree, a shared checkout, a lane behind its remote): a marker
+    there would clear a window with work in it. The own-clear mod
+    (tools/cc/mods/own-clear) reads nothing else. Dies to: an arm before the
+    rebind, an arm skipped after the red-base refusal, an arm on a dirty tree,
+    or a dry run that arms."""
 
     @staticmethod
     def _armed(ship, monkeypatch) -> list[str]:
         order: list[str] = []
         monkeypatch.setattr(ship, "arm_own_clear_here",
-                            lambda root: order.append("arm") or "own-clear armed (stand-in)")
+                            lambda root, **kw: order.append("arm") or "own-clear armed (stand-in)")
         return order
+
+    @staticmethod
+    def _arm_calls(ship, monkeypatch) -> list[dict]:
+        """The arm stood in by name, recording what the handoff hands it: the
+        ``held`` refusal, or nothing on a landed handoff."""
+        calls: list[dict] = []
+
+        def stand_in(root, **kw):
+            calls.append(dict(kw))
+            return "own-clear armed (stand-in)"
+
+        monkeypatch.setattr(ship, "arm_own_clear_here", stand_in)
+        return calls
+
+    @staticmethod
+    def _red_base() -> str:
+        """The base's newest post-merge run, red: the read `open` refuses on."""
+        return json.dumps([{"databaseId": 900, "status": "completed", "conclusion": "failure",
+                            "headSha": "b" * 40, "url": "https://example/run/900"}])
+
+    def _red_base_answers(self, tmp_path) -> dict:
+        """A lane with its row written and a clean tree, no pull request yet,
+        on a base whose post-merge proof is red."""
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path, base_runs=self._red_base())
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", "")]
+        return answers
 
     def test_the_off_path_arms_once_the_verb_has_said_its_piece(self, ship, tmp_path, monkeypatch, capsys):
         order = self._armed(ship, monkeypatch)
@@ -946,13 +983,36 @@ class TestTheHandoffArmsTheOwnClear:
         assert ship.handoff() == 0
         assert order == ["rebind after 1 push", "arm"]
 
-    def test_a_rebind_that_fails_arms_nothing(self, ship, tmp_path, monkeypatch):
+    def test_a_push_that_landed_and_a_refused_rebind_arm_with_the_refusal(self, ship, tmp_path, monkeypatch):
+        """The lane is on origin; the rebind after it refused (gh down, a
+        title that did not take). The window is done with the lane: armed,
+        the refusal in the marker, and the next window runs `rebind`."""
+        _toml(tmp_path, "handoff_push = true\n")
+        spawns = _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
+        calls = self._arm_calls(ship, monkeypatch)
+
+        def refused_rebind(dry_run=False):
+            raise ship.Refused("gh pr edit failed: boom")
+
+        monkeypatch.setattr(ship, "rebind", refused_rebind)
+        with pytest.raises(ship.Refused, match="boom"):
+            ship.handoff()
+        assert spawns.count(("git", "push")) == 1
+        assert calls, "the handoff armed nothing after a push that landed"
+        held = calls[0]["held"]
+        assert held.landed is True and "the push landed" in str(held) and "boom" in str(held)
+
+    def test_a_rebind_that_returns_non_zero_after_the_push_arms_and_refuses(self, ship, tmp_path, monkeypatch):
+        """Before DEF-4057 the handoff returned the rebind's code and armed
+        nothing, although the push had landed."""
         _toml(tmp_path, "handoff_push = true\n")
         _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
-        order = self._armed(ship, monkeypatch)
+        calls = self._arm_calls(ship, monkeypatch)
         monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 1)
-        assert ship.handoff() == 1
-        assert order == []
+        with pytest.raises(ship.Refused, match="rebind"):
+            ship.handoff()
+        assert calls, "the handoff armed nothing after a push that landed"
+        assert calls[0]["held"].landed is True
 
     def test_the_opened_pull_request_arms_after_the_open(self, ship, tmp_path, forget_guard, monkeypatch):
         _toml(tmp_path, "handoff_push = true\n")
@@ -1008,6 +1068,95 @@ class TestTheHandoffArmsTheOwnClear:
         assert order == [] and spawns.mutations == []
         out = capsys.readouterr().out
         assert "dry-run" in out and "the own-clear marker would be armed" in out
+
+    def test_a_handoff_refused_on_the_red_base_arms_with_the_refusal_then_refuses(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """DEF-4057's first shape. The row is written and the tree clean; what
+        refused the push is the base, not this window, so the marker is armed
+        with the refusal for the next window to read, and the refusal still
+        stands (the lane stays here, unpushed). Dies to: an arm skipped because
+        the push never ran (the unfixed driver), or a push made on the red
+        base."""
+        spawns = _arm(ship, self._red_base_answers(tmp_path))
+        calls = self._arm_calls(ship, monkeypatch)
+        with pytest.raises(ship.Refused, match="Nothing lands on a red base"):
+            ship.handoff()
+        assert calls, "the handoff armed nothing after the red-base refusal"
+        assert spawns.mutations == []
+        held = calls[0]["held"]
+        assert isinstance(held, ship.Held) and held.landed is False
+        assert "main red after merge" in str(held)
+        assert "own-clear armed" in capsys.readouterr().out
+
+    def test_a_dry_run_on_the_red_base_says_what_it_would_arm_and_arms_nothing(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        spawns = _arm(ship, self._red_base_answers(tmp_path))
+        calls = self._arm_calls(ship, monkeypatch)
+        with pytest.raises(ship.Refused, match="Nothing lands on a red base"):
+            ship.handoff(dry_run=True)
+        assert calls == [] and spawns.mutations == []
+        assert "dry-run: the own-clear marker would be armed" in capsys.readouterr().out
+
+    def test_a_refusal_the_window_must_fix_arms_nothing(self, ship, tmp_path, monkeypatch):
+        """A dirty tree, a lane behind its remote: the handoff is not at its
+        end, and a marker here would clear a window with work in it."""
+        _toml(tmp_path, "handoff_push = true\n")
+        calls = self._arm_calls(ship, monkeypatch)
+        answers = TestHandoffVerb._existing_pr_answers(tmp_path)
+        answers[("git", "status", "--porcelain", "-uno")] = (0, " M tools/cc/ship.py\n", "")
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused, match="dirty"):
+            ship.handoff()
+        answers = TestHandoffVerb._existing_pr_answers(tmp_path)
+        answers[("git", "rev-list", "--count")] = (0, "2\n", "")
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused, match="does not reach"):
+            ship.handoff()
+        assert calls == [] and spawns.mutations == []
+
+    def test_a_red_base_with_no_row_is_the_rows_refusal_and_arms_nothing(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """Both reviews, 2026-10-30: the red-base refusal came before the row
+        question, so a rowless lane on a red base armed and its window cleared
+        with the row unwritten, the tail promising one."""
+        answers = self._red_base_answers(tmp_path)
+        answers[_MEMORY_LOG] = (0, "", "")   # the lane's commits carry no row
+        spawns = _arm(ship, answers)
+        calls = self._arm_calls(ship, monkeypatch)
+        with pytest.raises(ship.Refused, match="Session Log row"):
+            ship.handoff()
+        assert calls == [] and spawns.mutations == []
+
+    def test_a_pull_request_that_fails_to_open_after_the_push_arms_with_the_refusal(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """The push landed and `gh pr create` refused: the lane is on origin,
+        the next window finishes it, and the refusal names what to run."""
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path, create=(1, "", "boom"))
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", "")]
+        spawns = _arm(ship, answers)
+        calls = self._arm_calls(ship, monkeypatch)
+        with pytest.raises(ship.Refused, match="boom"):
+            ship.handoff()
+        assert spawns.count(("git", "push")) == 1
+        assert calls, "the handoff armed nothing after a push that landed"
+        assert calls[0]["held"].landed is True and "the push landed" in str(calls[0]["held"])
+
+    def test_a_rejected_push_arms_nothing(self, ship, tmp_path, forget_guard, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path, push=(1, "", "rejected by the remote"))
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", "")]
+        _arm(ship, answers)
+        calls = self._arm_calls(ship, monkeypatch)
+        with pytest.raises(ship.Refused, match="rejected by the remote"):
+            ship.handoff()
+        assert calls == []
 
 
 class TestTheLaneCarriesItsMemoryRowWhenHandoffPushes:

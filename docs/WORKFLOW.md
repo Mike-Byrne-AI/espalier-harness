@@ -505,10 +505,16 @@ red `main`'s revert, are not new work). In a window `seat.py launch` started
 the reset is the seat's own: the launch loads the own-clear mod
 (`tools/cc/mods/own-clear`, `--plugin-dir`; `--no-mod` leaves it out), the
 handoff's last act arms its marker (`.espalier-state/own_clear.json`, keyed by
-the session id), and at the end of the next turn with nothing in flight the
-mod runs the real `/clear`, refuses a compaction meanwhile, and re-primes the
-cleared window with the seat brief less its loop line, since the loop survives
-the clear. A window started without the mod is told it needs a `/clear`.
+the session id) whenever it ran to its end -- the push landed, or a refusal
+the window is done with (the base red, or a step after a landed push), which
+rides the marker with the lane to land first appended to the brief; a refusal
+the window must fix first arms nothing, and a lane opened by hand is armed
+with `ship.py arm` -- and at the end of the next turn with nothing in flight
+the mod runs the real `/clear` (a prompt queued as the turn ended runs first,
+and the clear runs after it), refuses a compaction meanwhile, and re-primes
+the cleared window with the seat brief less its loop line, since the loop
+survives the clear. A window started without the mod is told it needs a
+`/clear`.
 `docs/HOOKS.md`'s router section has the ask's mechanism; the briefs and the
 tick carry the rule; the mod's README has its measured facts.
 
