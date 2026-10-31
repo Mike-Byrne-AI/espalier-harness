@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -1358,6 +1359,417 @@ class TestTheHandoffGate:
         assert flag.read_text(encoding="utf-8").strip() == _head(root)
         # Seeded, the gate has nothing to say about the HEAD the session began on.
         assert mod._gate_handoff(root) == 0
+
+
+class TestTheHandoffGateHoldsForAnOpenPullRequest:
+    """DEF-4058: a worker commits its second lane while its first pull request
+    is in CI -- the day's commonest shape under one open pull request per seat
+    (memory/parallel-work-protocol.md item 4: the next job is built on a new
+    branch and opened when the first merges) -- and the gate told it to hand
+    off now: a gate obeyed opened a second pull request whose CI never tested
+    the first's merge, a gate disobeyed was a gate learned to disobey. Now the
+    gate reads this seat's other open pull requests at its decision point (one
+    bounded gh read through its chokepoint, the ship driver's attribution) and
+    holds the lane while one is open: no block, one record per held HEAD, a
+    hold file re-checked past an interval, and the block once none is. A read
+    that cannot be made is a word in the block's text, with the wait as the
+    fourth carve-out. The driver's own voice (`note:` lines on its stdout)
+    never reaches this hook's decision channel."""
+
+    _ROWS = json.dumps([{"number": 41, "headRefName": "lane/first", "labels": []}])
+
+    _FIELDS = "number,headRefName,headRefOid,labels,autoMergeRequest"
+
+    @staticmethod
+    def _driver(seat: str, mine: list[str], *, notes: str = "", raises: Exception | None = None,
+                calls: list | None = None, problem: str = ""):
+        """A ship driver as the gate vets it (the real path, a handoff_push
+        reader, the field list) whose name read answers ``(seat, problem)``
+        and whose attribution answers ``(seat, mine)``, prints ``notes`` on
+        its stdout first, or raises; ``calls`` records what it was asked."""
+        import types
+
+        drv = types.ModuleType("ship")
+        drv.__file__ = str(HOOKS_DIR.parent / "ship.py")
+        drv.handoff_push_setting = lambda root: (True, "espalier.toml: handoff_push = true")
+        drv.OPEN_PR_FIELDS = TestTheHandoffGateHoldsForAnOpenPullRequest._FIELDS
+        drv.seat_name = lambda root, **kw: (seat, problem)
+
+        def seat_open_prs(root, branch, prs, **kw):
+            if calls is not None:
+                calls.append((branch, [r.get("headRefName") for r in prs], kw.get("timeout")))
+            if notes:
+                print(notes)
+            if raises is not None:
+                raise raises
+            return seat, list(mine)
+
+        drv.seat_open_prs = seat_open_prs
+        return drv
+
+    @staticmethod
+    def _hook(name: str, alias: str):
+        import importlib.util
+
+        if str(HOOKS_DIR) not in sys.path:
+            sys.path.insert(0, str(HOOKS_DIR))
+        spec = importlib.util.spec_from_file_location(alias, str(HOOKS_DIR / f"{name}.py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    @staticmethod
+    def _gh(monkeypatch, mod, answer, spawns: list | None = None) -> None:
+        """``gh`` answers through the gate's chokepoint -- ``answer`` is the
+        listing's JSON text, a SpawnFailure's error word, ``"timeout"``,
+        ``("rc", n)`` for a gh that ran and refused, or ``("stdout", text)``
+        for one that answered something else -- and every other program (git)
+        runs for real; ``spawns`` records each gh argv."""
+        real = mod._hook_utils.spawn_checked
+
+        def fake(argv, **kw):
+            if not argv or argv[0] != "gh":
+                return real(argv, **kw)
+            if spawns is not None:
+                spawns.append(tuple(argv))
+            if answer == "timeout":
+                raise subprocess.TimeoutExpired(list(argv), kw.get("timeout", 0))
+            if isinstance(answer, tuple) and answer[0] == "rc":
+                return subprocess.CompletedProcess(list(argv), answer[1], stdout="", stderr="refused")
+            if isinstance(answer, tuple):
+                return subprocess.CompletedProcess(list(argv), 0, stdout=answer[1], stderr="")
+            if answer == "" or answer.lstrip().startswith("["):
+                return subprocess.CompletedProcess(list(argv), 0, stdout=answer, stderr="")
+            return mod._hook_utils.SpawnFailure(tuple(argv), answer, None)
+
+        monkeypatch.setattr(mod._hook_utils, "spawn_checked", fake)
+
+    @staticmethod
+    def _arm(tmp_path, monkeypatch, **repo):
+        root = _lane_repo(tmp_path, **repo)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(tmp_path / "audit"))
+        mod = TestTheHandoffGate._load()
+        TestTheHandoffGate._fresh_voice(mod, root)
+        return root, mod
+
+    def test_a_seat_with_another_open_pull_request_is_held_not_blocked(self, tmp_path, monkeypatch, capsys):
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", ["#41 (lane/first)"]))
+        spawns: list = []
+        self._gh(monkeypatch, mod, self._ROWS, spawns)
+        assert mod._gate_handoff(root) == 0
+        out = capsys.readouterr()
+        assert out.out == "", out.out
+        assert "[stop_gate]" in out.err and "holds lane/the-fixture" in out.err and "#41 (lane/first)" in out.err
+        state = root / ".espalier-state"
+        hold = json.loads((state / mod.HANDOFF_GATE_HOLD).read_text(encoding="utf-8"))
+        assert hold["head"] == _head(root) and hold["branch"] == "lane/the-fixture"
+        assert hold["seat"] == "air-work" and hold["prs"] == ["#41 (lane/first)"] and hold["ahead"] == 1
+        assert isinstance(hold["checked"], float) and hold["since"] == hold["checked"]
+        assert not (state / mod.HANDOFF_GATE_FLAG).exists(), "a held HEAD is not remembered as judged"
+        # The one read, in the driver's own field set, open pull requests only.
+        assert spawns[0][:7] == ("gh", "pr", "list", "--state", "open", "--limit", "50")
+        assert spawns[0][-2:] == ("--json", self._FIELDS)
+        records = _audit_rows(tmp_path / "audit", "stop_held_handoff")
+        assert len(records) == 1
+        assert records[0]["details"] == {"hook": "stop_gate", "ahead": 1, "open": 1}
+        assert "lane/" not in json.dumps(records[0])
+        assert (state / f"once_handoff-gate-hold-{_head(root)[:12]}").exists(), "the record's once-flag, swept at SessionStart"
+        assert not _audit_rows(tmp_path / "audit", "stop_blocked_handoff")
+        # Inside the interval the next Stop reads the hold file alone: no gh, no block, no word.
+        assert mod._gate_handoff(root) == 0
+        assert capsys.readouterr() == ("", "")
+        assert len(spawns) == 1
+
+    def _held(self, tmp_path, monkeypatch, capsys):
+        """A lane held at this Stop, the gate's clock then moved past the
+        re-check interval (the named clock, never a sleep or a rewritten stamp)."""
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        clock = {"now": time.time()}
+        monkeypatch.setattr(mod, "HOLD_CLOCK", lambda: clock["now"])
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", ["#41 (lane/first)"]))
+        self._gh(monkeypatch, mod, self._ROWS)
+        assert mod._gate_handoff(root) == 0
+        capsys.readouterr()
+        path = root / ".espalier-state" / mod.HANDOFF_GATE_HOLD
+        clock["now"] += mod.HANDOFF_GATE_HOLD_RECHECK_S + 1
+        return root, mod, path
+
+    def test_the_hold_lifts_once_the_other_pull_request_merges(self, tmp_path, monkeypatch, capsys):
+        root, mod, path = self._held(tmp_path, monkeypatch, capsys)
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", []))
+        spawns: list = []
+        self._gh(monkeypatch, mod, self._ROWS, spawns)   # another seat's lane is still open
+        assert mod._gate_handoff(root) == 1
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert "/handoff" in reason and "lane/the-fixture holds 1 commit that origin/main does not" in reason
+        assert "This seat (air-work) has no other open pull request." in reason
+        assert "opening the pull request with auto-merge armed" in reason
+        assert "Three carve-outs" in reason and "remembered from earlier" not in reason, (
+            "a read that was made lists no fourth carve-out")
+        assert not path.exists(), "the hold is cleared with the block"
+        assert (root / ".espalier-state" / mod.HANDOFF_GATE_FLAG).read_text(encoding="utf-8").strip() == _head(root)
+        assert len(spawns) == 1
+        records = _audit_rows(tmp_path / "audit", "stop_blocked_handoff")
+        assert len(records) == 1 and records[0]["details"] == {"gate": 5, "rule": "GATE_HANDOFF_OWED", "ahead": 1}
+        assert mod._gate_handoff(root) == 0            # judged: once per commit, as before
+        assert capsys.readouterr() == ("", "")
+
+    def test_a_re_check_that_cannot_ask_gh_keeps_the_hold_and_says_so_once(self, tmp_path, monkeypatch, capsys):
+        root, mod, path = self._held(tmp_path, monkeypatch, capsys)
+        before = json.loads(path.read_text(encoding="utf-8"))
+        spawns: list = []
+        self._gh(monkeypatch, mod, "Unresolved", spawns)
+        assert mod._gate_handoff(root) == 0
+        out = capsys.readouterr()
+        assert out.out == "" and "could not be re-checked (Unresolved)" in out.err
+        records = _audit_rows(tmp_path / "audit", "stop_failed_open_handoff_prs")
+        assert len(records) == 1 and records[0]["details"]["fault"] == "Unresolved"
+        hold = json.loads(path.read_text(encoding="utf-8"))
+        assert hold["checked"] > before["checked"] and hold["prs"] == ["#41 (lane/first)"], (
+            "the hold stands for another interval")
+        assert hold["since"] == before["since"] and hold["ahead"] == 1, "the first hold's stamp is kept"
+        assert mod._gate_handoff(root) == 0            # inside the interval again: no read
+        assert len(spawns) == 1 and capsys.readouterr() == ("", "")
+
+    @pytest.mark.parametrize("answer, fault", [
+        ("Unresolved", "Unresolved"),
+        ("timeout", "TimeoutExpired"),
+        (("rc", 4), "rc=4"),
+        (("stdout", "To get started with GitHub CLI, run: gh auth login"), "NotJSON"),
+        (("stdout", '{"number": 41}'), "NotJSON"),
+    ])
+    def test_a_read_that_cannot_be_made_blocks_and_names_the_wait(
+        self, tmp_path, monkeypatch, capsys, answer, fault,
+    ):
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", ["#41 (lane/first)"]))
+        self._gh(monkeypatch, mod, answer)
+        assert mod._gate_handoff(root) == 1
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert f"could not be read ({fault})" in reason
+        assert "hold only on a read you make in this turn" in reason and "one open pull request per seat" in reason
+        assert "Four carve-outs" in reason and "remembered from earlier in the session is not that read" in reason
+        assert not (root / ".espalier-state" / mod.HANDOFF_GATE_HOLD).exists()
+
+    def test_the_drivers_notes_stay_off_the_decision_channel(self, tmp_path, monkeypatch, capsys):
+        """The driver's reader is fail-open with voice on ITS stdout; here
+        stdout is the decision channel, so a note is captured and read as the
+        read not made, never printed beside the block JSON."""
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        note = "note: could not read which open pull requests are this seat's (the refs could not be read)"
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", [], notes=note))
+        self._gh(monkeypatch, mod, self._ROWS)
+        assert mod._gate_handoff(root) == 1
+        out = capsys.readouterr().out
+        assert out.count("\n") == 1 and "note:" not in out, out
+        assert "could not be read (DriverNote)" in json.loads(out)["reason"]
+
+    def test_a_driver_that_raises_is_a_word_in_the_block(self, tmp_path, monkeypatch, capsys):
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", [], raises=RuntimeError("the channel broke")))
+        self._gh(monkeypatch, mod, self._ROWS)
+        assert mod._gate_handoff(root) == 1
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert "could not be read (RuntimeError)" in reason and "the channel broke" not in reason
+
+    def test_an_unnamed_checkout_reads_nothing_and_blocks_as_before(self, tmp_path, monkeypatch, capsys):
+        """One open pull request per seat is the named seats' rule: a checkout
+        with no `espalier.machine` (every single-seat adopter) pays no gh
+        spawn and is never told to hold, even where gh would fail (the
+        failure-mode review of 2026-10-31 reproduced the failed read's hold
+        text on an unnamed fixture)."""
+        calls: list = []
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        monkeypatch.setitem(sys.modules, "ship", self._driver("", [], calls=calls))
+        spawns: list = []
+        self._gh(monkeypatch, mod, "Unresolved", spawns)
+        assert mod._gate_handoff(root) == 1
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert "names no seat" in reason and "/handoff" in reason
+        assert "hold only on a read" not in reason and "Three carve-outs" in reason
+        assert spawns == [] and calls == []
+
+    def test_a_seat_name_that_cannot_be_read_blocks_and_names_the_wait(self, tmp_path, monkeypatch, capsys):
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        problem = "the machine name could not be read (git config took longer than 5s)"
+        monkeypatch.setitem(sys.modules, "ship", self._driver("", ["#41 (lane/first)"], problem=problem))
+        spawns: list = []
+        self._gh(monkeypatch, mod, self._ROWS, spawns)
+        assert mod._gate_handoff(root) == 1
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert "could not be read (NameUnread)" in reason and "Four carve-outs" in reason
+        assert "took longer" not in reason and spawns == []
+
+    def test_a_lane_tracking_the_default_branch_is_not_its_own_pull_request(self, tmp_path, monkeypatch, capsys):
+        """A branch created from origin/main tracks it (git's autoSetupMerge):
+        an upstream, but not the lane's own, so the push would OPEN a pull
+        request and the hold applies -- the very lane the protocol tells a seat
+        to start (the failure-mode review of 2026-10-31 reproduced the skipped
+        hold and the block's false 'lands on its own pull request')."""
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        _git(root, "branch", "--set-upstream-to=origin/main", "lane/the-fixture")
+        clock = {"now": time.time()}
+        monkeypatch.setattr(mod, "HOLD_CLOCK", lambda: clock["now"])
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", ["#41 (lane/first)"]))
+        spawns: list = []
+        self._gh(monkeypatch, mod, self._ROWS, spawns)
+        assert mod._gate_handoff(root) == 0, "held: the push would open a pull request"
+        assert len(spawns) == 1 and capsys.readouterr().out == ""
+        clock["now"] += mod.HANDOFF_GATE_HOLD_RECHECK_S + 1
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", []))
+        assert mod._gate_handoff(root) == 1
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert "lane/the-fixture holds 1 commit that origin/main does not" in reason
+        assert "opening the pull request with auto-merge armed" in reason and "own pull request" not in reason
+
+    def test_the_real_driver_attributes_through_the_mail_channel(self, tmp_path, monkeypatch, capsys):
+        """The real ship driver under the gate: its seat_name and seat_open_prs
+        over a stood-in mail channel (the shape tests/test_ship_driver.py uses),
+        its field list on the gh read, its reads bounded by the gate's cap."""
+        import importlib.util
+        import types
+
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        spec = importlib.util.spec_from_file_location("ship", str(HOOKS_DIR.parent / "ship.py"))
+        ship = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, "ship", ship)
+        spec.loader.exec_module(ship)
+        seen: dict = {}
+
+        def machine_setting(root_, **kw):
+            seen["name_timeout"] = kw.get("timeout")
+            return "air-work", "git config"
+
+        def read_mail(root_, **kw):
+            seen["mail_timeout"] = kw.get("timeout")
+            return {}, {}
+
+        monkeypatch.setattr(ship, "_MAIL", types.SimpleNamespace(
+            MACHINE_UNREAD="the machine name could not be read", machine_setting=machine_setting,
+            read_mail=read_mail, lane_seats=lambda by_machine: {"lane/first": "air-work"},
+            release_lane=lambda root_, lane, text="", **kw: None,
+        ))
+        spawns: list = []
+        self._gh(monkeypatch, mod, self._ROWS, spawns)
+        assert mod._gate_handoff(root) == 0
+        assert capsys.readouterr().out == ""
+        hold = json.loads((root / ".espalier-state" / mod.HANDOFF_GATE_HOLD).read_text(encoding="utf-8"))
+        assert hold["seat"] == "air-work" and hold["prs"] == ["#41 (lane/first)"]
+        assert spawns[0][-1] == ship.OPEN_PR_FIELDS
+        assert seen == {"name_timeout": mod.HANDOFF_GATE_DRIVER_CAP_S, "mail_timeout": mod.HANDOFF_GATE_DRIVER_CAP_S}
+
+    def test_the_prompt_router_names_the_hold_on_every_prompt(self, tmp_path, monkeypatch, capsys):
+        """A Stop that passes has no channel to Claude: the router's line is
+        where the model reads the hold, in the operator's window and on every
+        worker tick, with the branch, the count, the pull request and the age."""
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", ["#41 (lane/first)"]))
+        self._gh(monkeypatch, mod, self._ROWS)
+        assert mod._gate_handoff(root) == 0
+        router = self._hook("task_router", "task_router_hold_under_test")
+        line = router._handoff_hold_line(root)
+        assert line is not None and line.isascii() and "\n" not in line
+        assert "holds lane/the-fixture (1 commit unpushed) behind #41 (lane/first)" in line
+        assert "held 0 min" in line and "handoff_gate_hold" in line
+        assert router._handoff_hold_line(tmp_path / "nowhere") is None
+        (root / ".espalier-state" / mod.HANDOFF_GATE_HOLD).write_text("{torn", encoding="utf-8")
+        assert router._handoff_hold_line(root) is None
+
+    def test_no_other_pull_request_open_blocks_without_asking_the_driver(self, tmp_path, monkeypatch, capsys):
+        calls: list = []
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", ["#9 (lane/x)"], calls=calls))
+        self._gh(monkeypatch, mod, "[]")
+        assert mod._gate_handoff(root) == 1
+        assert "No other pull request is open." in json.loads(capsys.readouterr().out)["reason"]
+        assert calls == []
+
+    def test_a_pushed_lane_opens_no_second_pull_request_so_nothing_is_read(self, tmp_path, monkeypatch, capsys):
+        calls: list = []
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1, push_lane=True)
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", ["#41 (lane/first)"], calls=calls))
+        spawns: list = []
+        self._gh(monkeypatch, mod, self._ROWS, spawns)
+        assert mod._gate_handoff(root) == 1
+        reason = json.loads(capsys.readouterr().out)["reason"]
+        assert "onto its open pull request" in reason
+        assert "The push lands on lane/the-fixture's own pull request, so no second one opens." in reason
+        assert spawns == [] and calls == []
+
+    def test_a_new_commit_on_a_held_lane_is_held_again(self, tmp_path, monkeypatch, capsys):
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", ["#41 (lane/first)"]))
+        spawns: list = []
+        self._gh(monkeypatch, mod, self._ROWS, spawns)
+        assert mod._gate_handoff(root) == 0
+        _commit(root, "the-row")
+        assert mod._gate_handoff(root) == 0
+        assert capsys.readouterr().out == ""
+        hold = json.loads((root / ".espalier-state" / mod.HANDOFF_GATE_HOLD).read_text(encoding="utf-8"))
+        assert hold["head"] == _head(root)
+        assert len(spawns) == 2
+        assert len(_audit_rows(tmp_path / "audit", "stop_held_handoff")) == 2, "one record per held commit"
+
+    def test_a_torn_or_foreign_hold_is_no_hold(self, tmp_path, monkeypatch, capsys):
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", ["#41 (lane/first)"]))
+        spawns: list = []
+        self._gh(monkeypatch, mod, self._ROWS, spawns)
+        state = root / ".espalier-state"
+        state.mkdir(exist_ok=True)
+        path = state / mod.HANDOFF_GATE_HOLD
+        path.write_text("{not json", encoding="utf-8")
+        assert mod._gate_handoff(root) == 0
+        assert json.loads(path.read_text(encoding="utf-8"))["head"] == _head(root)
+        path.write_text(json.dumps({
+            "head": "0" * 40, "branch": "lane/the-fixture", "checked": time.time(),
+            "seat": "air-work", "prs": ["#41 (lane/first)"],
+        }), encoding="utf-8")
+        assert mod._gate_handoff(root) == 0
+        assert json.loads(path.read_text(encoding="utf-8"))["head"] == _head(root), "another head's hold is re-judged"
+        assert len(spawns) == 2
+        assert capsys.readouterr().out == ""
+
+    def test_a_held_lane_whose_handoff_stops_pushing_is_judged_as_before(self, tmp_path, monkeypatch, capsys):
+        root, mod, path = self._held(tmp_path, monkeypatch, capsys)
+        (root / "espalier.toml").write_text("handoff_push = false\n", encoding="utf-8")   # untracked: nothing in flight
+        spawns: list = []
+        self._gh(monkeypatch, mod, self._ROWS, spawns)
+        monkeypatch.delitem(sys.modules, "ship", raising=False)   # the real driver reads the toml
+        assert mod._gate_handoff(root) == 0
+        assert capsys.readouterr().out == ""
+        assert not path.exists() and spawns == []
+        assert (root / ".espalier-state" / mod.HANDOFF_GATE_FLAG).read_text(encoding="utf-8").strip() == _head(root)
+
+    def test_a_new_session_keeps_a_hold_that_names_its_head_and_judges_again(self, tmp_path, monkeypatch, capsys):
+        """A /clear on a held lane: the sweep once deleted the hold and the seed
+        then wrote HEAD as judged, so the gate never spoke about that lane
+        again, even after the first pull request merged (the failure-mode
+        review of 2026-10-31 reproduced the silence). A mechanical hold is not
+        a forgotten operator hold: the new session keeps it and seeds no flag,
+        so the block returns once none is open. A hold naming another HEAD is
+        stale and goes with the seed; a compaction keeps whatever is there."""
+        ss = self._hook("session_start", "session_start_handoff_hold_under_test")
+        root, mod, path = self._held(tmp_path, monkeypatch, capsys)
+        flag = root / ".espalier-state" / mod.HANDOFF_GATE_FLAG
+        ss._clean_state_flags(root, "compact")
+        assert path.exists() and not flag.exists(), "a compaction keeps the hold"
+        ss._clean_state_flags(root, "startup")
+        assert path.exists() and not flag.exists(), "a new session keeps the hold; the seed stands aside"
+        monkeypatch.setitem(sys.modules, "ship", self._driver("air-work", []))
+        self._gh(monkeypatch, mod, self._ROWS)
+        assert mod._gate_handoff(root) == 1, "the first pull request merged: the block returns in the new window"
+        assert "/handoff" in json.loads(capsys.readouterr().out)["reason"]
+        assert not path.exists() and flag.read_text(encoding="utf-8").strip() == _head(root)
+        stale = {"head": "0" * 40, "branch": "lane/the-fixture", "checked": time.time(), "since": time.time(),
+                 "seat": "air-work", "prs": ["#41 (lane/first)"], "ahead": 1}
+        path.write_text(json.dumps(stale), encoding="utf-8")
+        flag.unlink()
+        ss._clean_state_flags(root, "startup")
+        assert not path.exists(), "a hold naming another HEAD is stale"
+        assert flag.read_text(encoding="utf-8").strip() == _head(root), "and the seed proceeds"
 
 
 @pytest.mark.contract
