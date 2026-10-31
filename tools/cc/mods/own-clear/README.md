@@ -153,7 +153,11 @@ the kit above wherever `claude` is on PATH, with the pass count derived from
 the kit file, so a broken case reds the local tier; no CI cell installs
 `claude`, so there the kit is the seat's run. The engine writes
 `.claude-plugin/types/` and a `tsconfig.json` beside a mod it loads (for the
-editor); both are gitignored.
+editor); both are gitignored. The types directory ignores itself (its own
+`.gitignore` is a bare `*`), and the post-shell protected-file check prunes a
+directory that does, so the type declarations the engine rewrites at a launch
+report nothing; the `tsconfig.json` beside the mod is written once, at the
+mod's first load in a checkout, and that one appearance reports once.
 
 The engine hands an `fs.*` hook the path as it resolved it on the host: on
 Windows the kit's `/scratch/...` arrives as `C:\scratch\...`. So the kit's

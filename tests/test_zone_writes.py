@@ -145,6 +145,26 @@ class TestTheTwinsAgree:
         assert (ze.RUNNING_SUFFIX, ze.RUNNING_MAX_S) == (zw.RUNNING_SUFFIX, zw.WRITER_RUNNING_MAX_S)
         for name in ("x.py", ".DS_Store", "a.swp", "a.swo", "a~", ".#a", ".a.1f2e.tmp", "a.tmp", ".env"):
             assert ze.is_clutter(name) == zw.is_clutter(name), name
+        assert (ze.SELF_IGNORE_FILE, ze.SELF_IGNORE_READ_LIMIT) == (zw.SELF_IGNORE_FILE, zw.SELF_IGNORE_READ_LIMIT)
+
+    def test_a_directory_that_ignores_itself_is_read_alike_and_pruned_on_both_sides(self, tree: Path) -> None:
+        """The declaration is one predicate on both sides, over every shape
+        it meets, and both walks prune what it names: a recorder that kept
+        walking it would record what the hook never asks about, and a hook that
+        kept walking it would ask about what no writer recorded. Mutations:
+        prune it in the hook's walk only; in the recorder's only."""
+        gen = tree / "tools" / "cc" / "gen"
+        gen.mkdir()
+        (gen / "a.d.ts").write_bytes(b"export {};\n")
+        for raw, generated in (
+            (b"*\n", True), (b"# made by a tool\n\n*\r\n", True), (b"\xef\xbb\xbf*\n", True),
+            (b"*\n!keep\n", False), (b"*.log\n", False), (b"", False), (b"\\*\n", False),
+            (b"*\n" + b"# padding\n" * 600, False),
+        ):
+            (gen / ".gitignore").write_bytes(raw)
+            assert ze.is_self_ignoring(gen) is zw.is_self_ignoring(gen) is generated, raw[:40]
+            assert ("tools/cc/gen/a.d.ts" in ze._stats(tree)) is ("tools/cc/gen/a.d.ts" in zw.snapshot(tree)) is (not generated), raw[:40]
+        assert ze.is_self_ignoring(tree / "tools" / "cc" / "none") is zw.is_self_ignoring(tree / "tools" / "cc" / "none") is False
 
     def test_a_large_file_has_the_same_identity_on_both_sides(self, tmp_path: Path) -> None:
         big = tmp_path / "weights.bin"
