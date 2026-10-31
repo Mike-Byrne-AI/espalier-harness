@@ -85,10 +85,11 @@ Per seat per UTC day in ``[since, until)``, one row:
   (``tools/cc/mail.py::is_operator_call``). The briefs and the assigns quote
   the same words mid-text, so a mention anywhere is prose, not a use: 8 of 9
   ``redirect:`` and 5 of 5 ``shelved:`` mentions on the refs by 2026-10-30
-  were quotations (``DEF-5029``). A ``gridlock:`` ack from the dispatcher
-  (every seat's where none is named) is a ruling on a gridlock
-  (``tools/cc/seat.py::SELF_HOST_GRIDLOCK``, one ruling per ack); a note or a
-  request opening with the word is not, and the row names each ruling's id
+  were quotations (``DEF-5029``). A ``gridlock:`` ack or note from the
+  dispatcher (every seat's where none is named) is a ruling on a gridlock
+  (``tools/cc/seat.py::SELF_HOST_GRIDLOCK``, one ruling per message: a note
+  where no request waits on the ruling, ``DEF-4060``); a worker's ack or note,
+  or a request opening with the word, is not, and the row names each ruling's id
   beside the count, in time order, so the operator can find the ruling to
   reverse (the protocol's falsifier).
 
@@ -132,19 +133,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 #: The markers a seat opens a message with: ``redirect:`` (an ack that re-aims
 #: a seat) and ``shelved:`` (a note that shelves a lane) when it moves off a
-#: job, ``gridlock:`` (the dispatcher's ruling ack on a gridlock, the
-#: brief's sentence in ``tools/cc/seat.py::SELF_HOST_GRIDLOCK``), and
+#: job, ``gridlock:`` (the dispatcher's ruling on a gridlock, an ack or a
+#: note, the brief's sentence in ``tools/cc/seat.py::SELF_HOST_GRIDLOCK``), and
 #: ``stopped:`` (a worker's request when it cannot advance its job, the tick's
 #: STOP clause; ``tools/cc/mail.py::STOPPED_PREFIX`` is its home, and the
 #: board's asks line counts it apart, ``DEF-5030``). Read where
 #: the text opens with the marker, never anywhere in it: the briefs and the
 #: assigns quote these words mid-text (``DEF-5029``), as ``OPERATOR CALL:`` is
 #: quoted and read at the opening alone (``tools/cc/mail.py::is_operator_call``);
-#: ``gridlock:`` counts on an ack from the dispatcher alone, and ``stopped:``
-#: on a request alone, as that rule counts a request alone.
+#: ``gridlock:`` counts on an ack or a note from the dispatcher alone, and
+#: ``stopped:`` on a request alone, as that rule counts a request alone.
 #: ``tests/test_seat.py`` holds the brief's words to this table, and the
 #: table's ``stopped:`` to the mail driver's constant.
 MARKERS = {"redirect": "redirect:", "shelved": "shelved:", "gridlock": "gridlock:", "stopped": "stopped:"}
+#: The kinds a gridlock ruling rides: an ack, or a note where no request waits
+#: on the ruling (``DEF-4060``: air-work's window sat held from 07:25Z to
+#: 10:58Z on 2026-10-31 with no request open, and the ruling went out as note
+#: 20261031T105813Z-air-c80653, the first of the day's three and the one the
+#: row left out). A request is a question, an assign a job, a release or a
+#: claim a lane's bookkeeping, so none of them rules. The ship driver's
+#: fix-forward ruling is always an ack (it names the fix lane;
+#: ``tools/cc/mail.py::ruling_run``).
+RULING_KINDS = frozenset({"ack", "note"})
 #: Every counted word, in the order a row prints them: the seats' START (a
 #: word anywhere in a text: the tier-run announcement, which never opens a
 #: message), then the markers.
@@ -269,14 +279,15 @@ def _words(m: dict, dispatcher: str | None = None) -> dict[str, bool]:
     text -- START anywhere in it, a marker where the text opens with it, as
     the driver stores it (stripped on send; ``tools/cc/mail.py::is_operator_call``
     reads ``OPERATOR CALL:`` the same way, with no strip of its own),
-    ``gridlock:`` on an ack from ``dispatcher`` alone (any seat's where none
-    is named), and ``stopped:`` on a request alone (a worker's stop, which the
-    board's asks line counts apart; a note or an ack opening with the word is
-    not one)."""
+    ``gridlock:`` on an ack or a note from ``dispatcher`` alone (any seat's
+    where none is named; a note carries the ruling no request waits on,
+    ``DEF-4060``), and ``stopped:`` on a request alone (a worker's stop, which
+    the board's asks line counts apart; a note or an ack opening with the word
+    is not one)."""
     text = str(m.get("text") or "")
     hits = {"start": bool(START_RE.search(text))}
     hits.update({k: text.startswith(marker) for k, marker in MARKERS.items()})
-    ruling = m.get("type") == "ack" and (dispatcher is None or str(m.get("from")) == dispatcher)
+    ruling = m.get("type") in RULING_KINDS and (dispatcher is None or str(m.get("from")) == dispatcher)
     hits["gridlock"] = hits["gridlock"] and ruling
     hits["stopped"] = hits["stopped"] and m.get("type") == "request"
     return {k: bool(m.get(k)) or hits[k] for k in WORDS}

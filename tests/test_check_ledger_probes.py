@@ -1431,6 +1431,14 @@ class TestProbeShapesAreRatcheted:
     # ledger-oldest-a: the actionability checks tightened; its probe keyed on the
     # old regex's spelling).
     _TEXT_OVER_OWN_SUBJECT = {
+        # DEF-4065, DEF-4066 and DEF-4070 added 2026-10-31 by the records lane that
+        # filed them. Two run the deployed fence on an init'd temp tree, the §C58
+        # oracle (a bare-`0` count under the Phase 1 headings; a `memory/` path the
+        # `own` walk lists), which no comment or pointer in the body can move; the
+        # third is a prose deliverable (the reap recipe's missing step) keyed on its
+        # command, `lsof -a -d cwd` or a `/cwd` path, the DEF-672 shape. All three
+        # read their Markdown subject, so the detector counts them.
+        "DEF-4065", "DEF-4066", "DEF-4070",
         "CONV-3", "DEC-29", "DEF-20",
         # DEF-378a and DEF-661 left on 2026-10-09 with their rows (struck by lane
         # ledger-decisions on the operator's calls: a check that a pack-led row

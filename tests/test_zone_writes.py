@@ -89,6 +89,18 @@ class TestTheRecorder:
         assert files[".claude/settings.json"][0] is None
         assert all(isinstance(entry[1], int) for entry in files.values())
 
+    def test_a_writer_that_declares_over_recorded_files_still_records_their_changes(self, watched: Path) -> None:
+        """A run that drops a bare `*` into a directory it began with (a venv
+        made inside a source directory) keeps that directory in its
+        after-stats, so a change it made there is recorded with its digest,
+        not read as a removal. Mutation: take the after-stats with no prior."""
+        with ze.recorded(watched, "espalier upgrade"):
+            (watched / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+            _bump(watched / _HOOK, b"print('upgraded under the declaration')\n")
+        files = _record(watched, "espalier upgrade")["files"]
+        assert set(files) == {_HOOK, "tools/cc/hooks/.gitignore"}
+        assert files[_HOOK][0] == zw.content_digest(watched / _HOOK)
+
     def test_a_change_made_before_the_run_is_not_recorded(self, watched: Path) -> None:
         """The slip just before the writer, in the same shell call, stays the
         hook's to report. Mutation: record every watched file whose mtime is
@@ -145,6 +157,62 @@ class TestTheTwinsAgree:
         assert (ze.RUNNING_SUFFIX, ze.RUNNING_MAX_S) == (zw.RUNNING_SUFFIX, zw.WRITER_RUNNING_MAX_S)
         for name in ("x.py", ".DS_Store", "a.swp", "a.swo", "a~", ".#a", ".a.1f2e.tmp", "a.tmp", ".env"):
             assert ze.is_clutter(name) == zw.is_clutter(name), name
+        assert (ze.SELF_IGNORE_FILE, ze.SELF_IGNORE_READ_LIMIT) == (zw.SELF_IGNORE_FILE, zw.SELF_IGNORE_READ_LIMIT)
+
+    def test_a_directory_that_ignores_itself_is_read_alike_and_pruned_on_both_sides(self, tree: Path) -> None:
+        """The declaration is one predicate on both sides, over every shape
+        it meets, and both walks prune what it names: a recorder that kept
+        walking it would record what the hook never asks about, and a hook that
+        kept walking it would ask about what no writer recorded. Mutations:
+        prune it in the hook's walk only; in the recorder's only."""
+        gen = tree / "tools" / "cc" / "gen"
+        gen.mkdir()
+        (gen / "a.d.ts").write_bytes(b"export {};\n")
+        limit = zw.SELF_IGNORE_READ_LIMIT
+        for raw, generated in (
+            (b"*\n", True), (b"# made by a tool\n\n*\r\n", True), (b"\xef\xbb\xbf*\n", True),
+            (b"*\n" + b"#" * (limit - 2), True),       # at the limit
+            (b"*\n" + b"#" * (limit - 1), False),      # one byte past it
+            (b"*\n!keep\n", False), (b"*.log\n", False), (b"", False), (b"\\*\n", False),
+            (b"/*\n", False), (b"**\n", False), (b" *\n", False), (b"*\n*\n", False),
+        ):
+            (gen / ".gitignore").write_bytes(raw)
+            assert ze.is_self_ignoring(gen) is zw.is_self_ignoring(gen) is generated, raw[:40]
+            assert ("tools/cc/gen/a.d.ts" in ze._stats(tree)) is ("tools/cc/gen/a.d.ts" in zw.snapshot(tree)) is (not generated), raw[:40]
+        (gen / ".gitignore").unlink()
+        (gen / "elsewhere").write_bytes(b"*\n")
+        try:
+            os.symlink(gen / "elsewhere", gen / ".gitignore")
+        except OSError:
+            pass  # no symlink on this host: the regular-file arm above is the pin
+        else:
+            assert ze.is_self_ignoring(gen) is zw.is_self_ignoring(gen) is False  # a link is not git's file
+        assert ze.is_self_ignoring(tree / "tools" / "cc" / "none") is zw.is_self_ignoring(tree / "tools" / "cc" / "none") is False
+
+    def test_a_watched_top_never_prunes_itself_on_either_side(self, tree: Path) -> None:
+        """A bare `*` at a zone's own root, the zone spelled as the adopter
+        wrote it (`./vault`): both walks read the top by where the walk is,
+        never by the prefix string. Mutations: drop the top test on the engine
+        side; compare the top against the prefix string."""
+        (tree / "espalier.toml").write_text('protected_paths = ["./vault"]\n', encoding="utf-8")
+        (tree / "vault").mkdir()
+        (tree / "vault" / ".gitignore").write_bytes(b"*\n")
+        (tree / "vault" / "f.txt").write_bytes(b"x\n")
+        (tree / "tools" / "cc" / ".gitignore").write_bytes(b"*\n")
+        for side in (ze._stats(tree), zw.snapshot(tree)):
+            assert "vault/f.txt" in side and _HOOK in side, sorted(side)
+
+    def test_a_declaration_made_during_a_run_retires_nothing_on_either_side(self, watched: Path) -> None:
+        """A writer (or a shell call) that drops a bare `*` into a directory
+        the run began with keeps it walked on both sides: the recorder's
+        after-stats and the hook's snapshot both still hold the hook.
+        Mutations: take the after-stats with no prior; prune whatever the
+        baseline holds."""
+        before = ze._stats(watched)
+        baseline = zw.read_baseline(zw.baseline_path(watched, "s-1"))["files"]
+        (watched / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+        assert _HOOK in ze._stats(watched, before) and _HOOK not in ze._stats(watched)
+        assert _HOOK in zw.snapshot(watched, baseline) and _HOOK not in zw.snapshot(watched)
 
     def test_a_large_file_has_the_same_identity_on_both_sides(self, tmp_path: Path) -> None:
         big = tmp_path / "weights.bin"
