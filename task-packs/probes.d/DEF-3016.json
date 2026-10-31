@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3016",
+ "subject": "tools/cc/mods/own-clear/hooks/own-clear.test.ts",
+ "cmd": "python -c \"import re; t=open('tools/cc/mods/own-clear/hooks/own-clear.test.ts', encoding='utf-8').read(); print(int(len(set(re.findall(r'super[.](get|set|has|delete)[(]key[(]', t))) < 4))\"",
+ "open_value": "1",
+ "why_not": null,
+ "row_sha": "bdcc6f9b34d5",
+ "text_sha": "e0e83c416297",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}
