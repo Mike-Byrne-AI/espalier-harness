@@ -316,6 +316,14 @@ def plan_completion(root: Path) -> tuple[bool, str]:
 #: compaction, and stop_gate rewrites it at every judgment. One owner, two
 #: readers (tests/test_state_file_flag_parity.py lists the file).
 HANDOFF_GATE_FLAG = "handoff_gate_said"
+#: The handoff gate's hold under STATE_DIR (DEF-4058): JSON ``{"head",
+#: "branch", "checked", "seat", "prs"}``, written by stop_gate while this seat
+#: has another pull request open (one open pull request per seat), so the Stop
+#: passes without a block and gh is asked again only past the gate's re-check
+#: interval; cleared when none is open, and the block then returns. One owner
+#: (stop_gate); session_start clears it with the flag on a new session and
+#: keeps it across a compaction (tests/test_state_file_flag_parity.py lists it).
+HANDOFF_GATE_HOLD = "handoff_gate_hold"
 
 
 # Canonical noqa annotation for governance-hook

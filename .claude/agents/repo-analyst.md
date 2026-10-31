@@ -52,9 +52,11 @@ Classify the project:
 # Every census here walks the repository's own files. `walk` is find without
 # .git, the dependency trees and the build and cache directories the harness's
 # own repository walk skips (each named twice: the directory and what is under
-# it, at any depth); `own` is `walk` without the layer the harness deployed,
-# tools/cc/ and .claude/. A caller passes tests only, parenthesised around any
-# -o, and never an action: the prunes come after "$@".
+# it, at any depth); `own` is `walk` without what the harness wrote: the two
+# deployed layers here, and at deploy every path init, install-ci and fuse
+# wrote on this tree, rendered into that one line and anchored at the root.
+# A caller passes tests only, parenthesised around any -o, and never an
+# action: the prunes come after "$@".
 walk() {
   find . "$@" ! -path "*/.git" ! -path "*/.git/*" ! -path "*/__pycache__" ! -path "*/__pycache__/*" \
     ! -path "*/node_modules" ! -path "*/node_modules/*" ! -path "*/bower_components" ! -path "*/bower_components/*" \
@@ -112,7 +114,8 @@ ls Dockerfile docker-compose*.yml .dockerignore 2>/dev/null
 # The same `walk` and `own` as STACK DETECTION (a fence is one shell, so each
 # fence defines the pair, byte for byte): the repository's files without .git,
 # the dependency trees and the build and cache directories, and then without
-# the layer the harness deployed, tools/cc/ and .claude/. Tests only in "$@".
+# what the harness wrote (the two deployed layers here; at deploy, every path
+# init, install-ci and fuse write). Tests only in "$@".
 walk() {
   find . "$@" ! -path "*/.git" ! -path "*/.git/*" ! -path "*/__pycache__" ! -path "*/__pycache__/*" \
     ! -path "*/node_modules" ! -path "*/node_modules/*" ! -path "*/bower_components" ! -path "*/bower_components/*" \
@@ -129,7 +132,9 @@ own() { walk "$@"; }
 # <!-- /espalier:self-host-only -->
 
 echo "=== Directory structure ==="
-own -maxdepth 3 -type d | sort
+# The directories that hold the repository's own files, to depth 3, derived
+# from the files: a directory the harness alone populated is not listed.
+own -type f | sed 's#/[^/]*$##' | awk -F/ '{p = $1; print p; for (i = 2; i <= NF && i <= 4; i++) {p = p "/" $i; print p}}' | sort -u
 
 echo "=== Module structure ==="
 own -name "__init__.py" 2>/dev/null | sort
@@ -155,8 +160,9 @@ own -type f \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.go" -o -
 ```bash
 # The same `walk` and `own` as STACK DETECTION (each fence is one shell): the
 # repository's files without .git, the dependency trees and the build and cache
-# directories, and then without the layer the harness deployed, tools/cc/ and
-# .claude/. Tests only in "$@".
+# directories, and then without what the harness wrote (the two deployed
+# layers here; at deploy, every path init, install-ci and fuse write). Tests
+# only in "$@".
 walk() {
   find . "$@" ! -path "*/.git" ! -path "*/.git/*" ! -path "*/__pycache__" ! -path "*/__pycache__/*" \
     ! -path "*/node_modules" ! -path "*/node_modules/*" ! -path "*/bower_components" ! -path "*/bower_components/*" \

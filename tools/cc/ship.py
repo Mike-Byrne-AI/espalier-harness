@@ -550,6 +550,14 @@ def base_red_after_merge(base: str, cwd: str | None = None) -> str | None:
     return None if run_ is None else _red_base_words(base, run_)
 
 
+#: What one `gh pr list` row carries for this driver's readers (the red-base
+#: refusal, the one-per-seat advisory, the row-debt read) and for the Stop
+#: hook's handoff gate, which asks gh in this field set and hands the rows to
+#: ``seat_open_prs`` (DEF-4058): the one home, so a reader that grows a field
+#: finds it from both.
+OPEN_PR_FIELDS = "number,headRefName,headRefOid,labels,autoMergeRequest"
+
+
 def _open_prs(cwd: str) -> list[dict] | None:
     """Every open pull request's number, branch, head, labels and auto-merge
     state, for the red-base refusal, the one-per-seat advisory and the
@@ -558,7 +566,7 @@ def _open_prs(cwd: str) -> list[dict] | None:
     since a row riding this seat's open pull request is read from its head)."""
     try:
         rows = _gh_json("pr", "list", "--state", "open", "--limit", "50", "--json",
-                        "number,headRefName,headRefOid,labels,autoMergeRequest", cwd=cwd)
+                        OPEN_PR_FIELDS, cwd=cwd)
     except Refused:
         return None
     return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else None
@@ -703,28 +711,47 @@ def red_base_verdict(base: str, branch: str, prs: list[dict], cwd: str, *, ruled
             f"`{RULING_HEAD}{run_id}` with --lane {branch}" + armed_words), None
 
 
-def seat_open_prs(root: Path, branch: str, prs: list[dict]) -> tuple[str, list[str]]:
+def seat_name(root: Path, *, timeout: float | None = None) -> tuple[str, str]:
+    """``(name, problem)``: this seat's name as the mail channel reads it
+    (``git config espalier.machine``), with ``problem`` the channel's unread
+    phrase where the read could not be made (a config git did not answer in
+    time) and '' otherwise. ``("", "")`` for an unnamed box or a tree without
+    the channel: not a seat, and nothing to attribute. ``timeout`` bounds the
+    one git read (a hook passes what is left of its budget)."""
+    mail = _mail_module()
+    if mail is None:
+        return "", ""
+    machine, how = mail.machine_setting(root, timeout=timeout) if timeout is not None else mail.machine_setting(root)
+    if machine:
+        return str(machine), ""
+    unread = getattr(mail, "MACHINE_UNREAD", None)  # a channel module from before the phrase has none
+    return "", str(how) if unread and str(how).startswith(unread) else ""
+
+
+def seat_open_prs(root: Path, branch: str, prs: list[dict], *,
+                  timeout: float | None = None) -> tuple[str, list[str]]:
     """``(seat, ["#n (lane)", ...])``: this seat's open pull requests other
     than ``branch``'s, by the seat whose latest claim or release names each
     lane (``mail.lane_seats``, the board's own attribution). Every seat may
     push as one GitHub account, so the author cannot tell seats apart; the
     mail can. ``("", [])`` where the box is unnamed or the channel absent; a
     failed read, of the mail or of the box's name, is said and never stops
-    the push."""
+    the push. ``timeout`` bounds each git read (the name, the local mail refs);
+    the Stop hook's handoff gate passes its own cap, this driver's verbs the
+    channel's default."""
     if not any(str(r.get("headRefName") or "") != branch for r in prs):
         return "", []   # no other open pull request: nothing to attribute, no mail read
     try:
         mail = _mail_module()
         if mail is None:
             return "", []
-        machine, how = mail.machine_setting(root)
+        machine, problem = seat_name(root, timeout=timeout)
         if not machine:
-            unread = getattr(mail, "MACHINE_UNREAD", None)  # a channel module from before the phrase has none
-            if unread and str(how).startswith(unread):
-                _note(f"this seat's machine name could not be read ({how}), so its other open pull requests "
-                      "were not checked (one open pull request per seat)")
+            if problem:
+                _note(f"this seat's machine name could not be read ({problem}), so its other open pull "
+                      "requests were not checked (one open pull request per seat)")
             return "", []
-        by_machine, _ = mail.read_mail(root)
+        by_machine, _ = mail.read_mail(root, timeout=timeout) if timeout is not None else mail.read_mail(root)
         seats = mail.lane_seats(by_machine)
     except Exception as exc:  # noqa: BLE001 -- fail-open with voice: an advisory that cannot read says so
         _note(f"could not read which open pull requests are this seat's ({os_error_text(exc)})")

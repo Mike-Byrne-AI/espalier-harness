@@ -1972,6 +1972,14 @@ _TASK_ARM = (
      "mirror, a protocol paragraph defining the four kinds and the asymmetric rule, and one "
      "sentence in TP-703c",
      "memory/recall-engine-extension.md"),  # 2026-10-25 lane/seat-the-assign-names-a-dispatch-below-the-model (hazard query: recall-indexed memory edit moves the corpus; applied by the lane before review: a memory/ edit moves the calibrated corpus, so the recall engine's own tests ran before the tier)
+    ("DEF-4059: the post-shell zone check prunes a directory that ignores itself (a .gitignore "
+     "holding a bare *) as generated, in the hook's walk, is_watched and the engine twin's walk; "
+     "the own-clear mod's generated types directory stops firing the notice at each launch",
+     "docs/SHARP_EDGES.md :: Engine ↔ hook copies share a concept but not bytes — a fix lands in one and rots the other"),  # 2026-10-31 lane/a-directory-that-ignores-itself-is-never-watched (hazard query: twin constants in the hook and the engine kept equal by a parity test; applied: the twin test pins both predicates' verdicts and both walks' prunes over one shape list, and the engine side's top test was the review's find)
+    ("DEF-4059: the post-shell zone check prunes a directory that ignores itself (a .gitignore "
+     "holding a bare *) as generated, in the hook's walk, is_watched and the engine twin's walk; "
+     "the own-clear mod's generated types directory stops firing the notice at each launch",
+     "docs/SHARP_EDGES.md :: Every new tree-walking scanner re-implements the walk contract, and nothing enforces it"),  # 2026-10-31 lane/a-directory-that-ignores-itself-is-never-watched (hazard query: os.walk prune of a directory by name under a time budget; applied: the declaration read is size-bounded and OSError-guarded inside the existing os.walk loop, no new walker; a line landing between the nested-repo pragma and the engine's loop redded the tier once)
 )
 
 #: The ratchet: every (query, source) pair filed on 2026-09-11, and every row a
@@ -2215,6 +2223,14 @@ _TASK_ARM_FILED = frozenset({
      "mirror, a protocol paragraph defining the four kinds and the asymmetric rule, and one "
      "sentence in TP-703c",
      "memory/recall-engine-extension.md"),
+    # 2026-10-31, the self-ignoring-directory lane (engine-hook copies share a
+    # concept, not bytes; the walk contract): two rows
+    *[("DEF-4059: the post-shell zone check prunes a directory that ignores itself (a .gitignore "
+     "holding a bare *) as generated, in the hook's walk, is_watched and the engine twin's walk; "
+     "the own-clear mod's generated types directory stops firing the notice at each launch", source) for source in (
+        "docs/SHARP_EDGES.md :: Engine ↔ hook copies share a concept but not bytes — a fix lands in one and rots the other",
+        "docs/SHARP_EDGES.md :: Every new tree-walking scanner re-implements the walk contract, and nothing enforces it",
+    )],
 })
 
 #: Characterisation counts, all pinned with `==`. Re-measured 2026-08-19 at a budget

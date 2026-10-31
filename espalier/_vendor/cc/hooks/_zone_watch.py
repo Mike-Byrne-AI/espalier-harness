@@ -18,8 +18,13 @@ through shell calls (measured 2026-10-09: six of six), and write_guard still
 guards it by path. The settings files are left to config_guard, which sees
 every settings change on ConfigChange, Claude Code's own permission writes
 included; this check would report a "don't ask again" click as a slip.
-Dependency, cache and tool directories are pruned during the walk, and editor
-and OS clutter is skipped by name.
+Dependency, cache and tool directories are pruned during the walk, so is a
+directory that declares itself generated (its own ``.gitignore`` one bare
+``*``, the form pytest, ruff, mypy, uv, venv since 3.13 and Claude Code's
+plugin loader write into what they generate; read below a watched top, never
+at it, and never over a file the session's baseline already holds, so a
+declaration that lands mid-session retires nothing and is reported as the
+added file it is), and editor and OS clutter is skipped by name.
 
 Shared helper: it returns data and speaks to no one. post_write_check renders
 what it finds (a shared helper never collects advisories; tests/test_failopen_voice.py).
@@ -160,15 +165,78 @@ def is_clutter(name: str) -> bool:
             or name.startswith(".#") or (name.startswith(".") and name.endswith(".tmp")))
 
 
-def is_watched(root: Path, rel: str) -> bool:
-    """Whether the repo-relative posix path ``rel`` is in the watched set."""
+#: A directory whose own ``.gitignore`` is one bare ``*`` declares itself
+#: generated: pytest, ruff, mypy, uv and venv (since 3.13) write one into the
+#: directory they make so that nothing in it is meant to be git's, and Claude
+#: Code writes one into the type declarations beside a mod it loads
+#: (``.claude-plugin/types/``, rewritten at a launch). Such a directory is
+#: pruned wherever it sits below a watched top, unless the session's baseline
+#: already holds a file under it: a declaration retires nothing the session
+#: watches, so one that lands mid-session (a venv made inside a source
+#: directory) is reported as the added file it is and the directory stays
+#: watched. The top itself is never read this way, since a zone is watched
+#: whatever sits at its root. Twin of ``espalier.zone_writes.SELF_IGNORE_FILE``.
+SELF_IGNORE_FILE = ".gitignore"
+#: Longer than this, a ``.gitignore`` is a rule set, never the one-line declaration.
+SELF_IGNORE_READ_LIMIT = 4096
+
+
+def is_self_ignoring(directory: Path) -> bool:
+    """Whether ``directory`` declares itself generated: its own ``.gitignore``
+    is a regular file (never a link or a FIFO, which git does not read either)
+    holding one ``*`` and nothing else but comments and blank lines (pytest's
+    and ruff's carry a comment line first). A ``*`` beside a negation
+    (``!keep``), a pattern (``*.log``), an escaped or indented asterisk (git
+    reads a leading space as the pattern's) or a longer file is a rule set,
+    not the declaration; an absent or unreadable file is no declaration, so
+    the directory stays watched."""
+    path = directory / SELF_IGNORE_FILE
+    try:
+        if not stat.S_ISREG(os.lstat(path).st_mode):
+            return False
+        with open(path, "rb") as fh:
+            raw = fh.read(SELF_IGNORE_READ_LIMIT + 1)
+    except (OSError, ValueError):  # fail-open: ok deliberate -- no declaration could be read (absent, unreadable, a NUL in the path), so the directory stays watched: the loud side
+        return False
+    if len(raw) > SELF_IGNORE_READ_LIMIT:
+        return False
+    lines = [line.rstrip() for line in raw.decode("utf-8-sig", errors="replace").splitlines()]
+    return [line for line in lines if line and not line.startswith("#")] == ["*"]
+
+
+def self_ignoring_ancestor(root: Path, rel: str, prefix: str) -> str | None:
+    """The first directory below the watched top ``prefix`` on the way to
+    ``rel`` (its parent included) that ignores itself -- the one the walk
+    prunes -- else None."""
+    current = prefix.rstrip("/")
+    for part in rel[len(prefix):].split("/")[:-1]:
+        current = f"{current}/{part}" if current else part
+        if is_self_ignoring(root / current):
+            return current
+    return None
+
+
+def _holds_under(files: dict[str, Entry], base: str) -> bool:
+    """Whether any path in ``files`` sits under the directory ``base``."""
+    head = base + "/"
+    return any(rel.startswith(head) for rel in files)
+
+
+def is_watched(root: Path, rel: str, prior: dict[str, Entry] | None = None) -> bool:
+    """Whether the repo-relative posix path ``rel`` is in the watched set.
+    ``prior`` is the session's baseline where the caller holds one: a file it
+    names stays watched whatever declaration has since appeared above it, as
+    the walk keeps it."""
     if rel in watched_files():
         return True
     parts = rel.split("/")
     pruned = pruned_dir_names(root)
     if any(part in pruned for part in parts[:-1]) or is_clutter(parts[-1]):
         return False
-    return any(rel.startswith(prefix) for prefix in watched_prefixes(root))
+    if prior and rel in prior:
+        return any(rel.startswith(prefix) for prefix in watched_prefixes(root))
+    return any(rel.startswith(prefix) and self_ignoring_ancestor(root, rel, prefix) is None
+               for prefix in watched_prefixes(root))
 
 
 def bytes_digest(raw: bytes) -> str:
@@ -228,9 +296,19 @@ def snapshot(root: Path, prior: dict[str, Entry] | None = None,
         top = root / prefix
         # os.walk reports a missing or unreadable directory to no one (its
         # onerror is None), which is the answer here: nothing to watch.
+        at_top = True
         for dirpath, dirnames, filenames in os.walk(top):
-            dirnames[:] = sorted(d for d in dirnames if d not in pruned)
             base = Path(dirpath).relative_to(root).as_posix()
+            if not at_top and is_self_ignoring(Path(dirpath)) and not _holds_under(prior, base):
+                # Generated by its own declaration, below the top, with
+                # nothing of it in the baseline: nothing in it is meant to be
+                # git's, so nothing in it is a slip. Over files the baseline
+                # holds, the declaration is the added file it is (the module
+                # docstring), and the directory stays walked.
+                dirnames[:] = []
+                continue
+            at_top = False
+            dirnames[:] = sorted(d for d in dirnames if d not in pruned)
             for name in sorted(filenames):
                 if not is_clutter(name):
                     take(f"{base}/{name}", os.path.join(dirpath, name))
@@ -1289,7 +1367,7 @@ def audit_new_stashes(root: Path, made: dict[str, str], before: dict[str, Entry]
         compare: list[tuple[str, bytes]] = []
         for path, sha in changes or []:
             r = f"{top}/{path}" if top else path
-            if not is_watched(root, r):
+            if not is_watched(root, r, before):
                 continue
             if sha is None:
                 if r in before:
@@ -1540,13 +1618,18 @@ def after_file_tool(root: Path, sid: object, rels: list[str]) -> None:
     session with no baseline yet is left to its next shell call. Raises
     OSError when the baseline cannot be replaced; the caller says so."""
     path = baseline_path(root, sid)
-    watched = [rel for rel in rels if is_watched(root, rel)]
-    if path is None or not watched:
+    # By zone first, without the baseline: a write outside every zone never
+    # takes the lock. Under it, the baseline decides for a path a declaration
+    # has since appeared above (it stays watched while the baseline holds it).
+    candidates = [rel for rel in rels if rel in watched_files()
+                  or any(rel.startswith(prefix) for prefix in watched_prefixes(root))]
+    if path is None or not candidates:
         return
     with baseline_lock(path):
         record = read_baseline(path)
         if record is None or record.get("disabled"):
             return
+        watched = [rel for rel in candidates if is_watched(root, rel, record["files"])]
         for rel in watched:
             full = root / rel
             try:

@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hook_utils import has_active_plan, hook_cwd, say_crash, say_once, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, atomic_write_text, handoff_context_threshold, handoff_push_on, read_context_from_transcript, sessions_dir, STATE_DIR, COLD_OPEN_FLAG, HANDOFF_ASKED_SUFFIX, OWN_CLEAR_TOLD_SUFFIX, ONCE_FLAG_PREFIX, TRANSCRIPT_TAIL_BYTES  # noqa: E402
+from _hook_utils import has_active_plan, hook_cwd, say_crash, say_once, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, atomic_write_text, HANDOFF_GATE_HOLD, handoff_context_threshold, handoff_push_on, read_context_from_transcript, sessions_dir, STATE_DIR, COLD_OPEN_FLAG, HANDOFF_ASKED_SUFFIX, OWN_CLEAR_TOLD_SUFFIX, ONCE_FLAG_PREFIX, TRANSCRIPT_TAIL_BYTES  # noqa: E402
 import _reinject  # noqa: E402  -- the UserPromptSubmit generative recall dispatch
 
 # Keywords that suggest a multi-step task
@@ -323,6 +323,43 @@ def _own_clear_told_once(root: Path, sid: str) -> str | None:
     return text
 
 
+#: The Stop hook's handoff hold (``_hook_utils.HANDOFF_GATE_HOLD``, DEF-4058):
+#: a Stop that passes has no channel to Claude, so the hold the gate took is
+#: said here, on every prompt while the file stands -- the one line the model
+#: reads in the operator's own window and on every worker tick.
+_HANDOFF_HOLD = (
+    "[HARNESS] The Stop hook's handoff gate holds {branch} ({ahead} unpushed) behind {prs}: one open "
+    "pull request per seat, so it asks for the handoff once that one merges (held {age}; gh re-read at a "
+    "Stop every 5 min). Nothing to do for it now; the record is .espalier-state/handoff_gate_hold."
+)
+
+
+def _handoff_hold_line(root: Path) -> str | None:
+    """The hold as the gate wrote it, or None: no hold, a torn one, or one
+    naming no branch (the fields are the gate's; tests/test_stop_gate.py pins
+    them across the two readers)."""
+    import time  # lazy: the one caller that needs a clock
+
+    try:
+        hold = json.loads((root / STATE_DIR / HANDOFF_GATE_HOLD).read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # fail-open: ok deliberate an advisory: no hold, or one torn mid-rewrite, says nothing
+        return None
+    if not isinstance(hold, dict) or not hold.get("branch"):
+        return None
+    prs = hold.get("prs")
+    named = (", ".join(_plain(p, 80) for p in prs) if isinstance(prs, list) and prs
+             else "another of this seat's pull requests")
+    ahead = hold.get("ahead")
+    commits = (f"{ahead} commit{'s' if ahead != 1 else ''}"
+               if isinstance(ahead, int) and not isinstance(ahead, bool) else "commits")
+    since = hold.get("since")
+    age = "for a while"
+    if isinstance(since, (int, float)) and not isinstance(since, bool):
+        minutes = max(0, int((time.time() - since) // 60))
+        age = f"{minutes // 60} h {minutes % 60} min" if minutes >= 60 else f"{minutes} min"
+    return _HANDOFF_HOLD.format(branch=_plain(hold.get("branch"), 120), ahead=commits, prs=named, age=age)
+
+
 # Decision-shape patterns. The advisory is `print()`-ed to the
 # same plain-text stdout channel as ROUTING_GUIDANCE (UserPromptSubmit
 # injects stdout as additional context per
@@ -555,6 +592,16 @@ def _run_main() -> int:
         if printed_any:
             print()
         print(told)
+        printed_any = True
+
+    # The Stop hook's handoff hold (DEF-4058): said on every prompt while it
+    # stands, since the Stop that took it has no channel to Claude. Above the
+    # active-plan return: a plan open on the held lane changes nothing.
+    held = _handoff_hold_line(root)
+    if held is not None:
+        if printed_any:
+            print()
+        print(held)
         printed_any = True
 
     if _has_active_plan(root):

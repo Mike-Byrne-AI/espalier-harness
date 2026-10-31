@@ -394,7 +394,8 @@ asking and every entry in it parses with a numeric pid; otherwise nothing is
 removed and the line says so. While another session is live in this checkout,
 nothing is removed either (it may be working in one of them). The catch-up
 has its own six-second budget, so the pull-request block keeps its eight, and
-the two together stay under twelve of the hook's fifteen; a backlog of
+the two together stay inside the hook's network budget of ten and a half (the
+wall below, less two and a half seconds for the work after the reads); a backlog of
 removals clears over a few sessions. A resume or a compaction never moves the
 tree. The hook has imported its helper modules before the catch-up runs, so
 when the move changes one of them, the rest of the start runs in a fresh
@@ -410,6 +411,27 @@ default in the Espalier-Harness source repository; elsewhere off until
 moving someone's branch unasked is a surprise. `ESPALIER_SESSION_CATCH_UP=0`
 or `1` in the launching shell overrides both. `python tools/cc/checkout_sync.py`
 says what it would do; `--apply` does it now.
+
+**The wall.** Claude Code cancels a SessionStart hook that runs past the
+`timeout` in `settings.json` (fifteen seconds) and keeps none of its output,
+so a start that ran long once lost the whole banner, and the session read as
+one whose hooks had not loaded. The network reads have budgets; the local
+work around them (the zone baseline, the integrity and audit-log reads, the
+banner build) has none, and on the Windows box 13 of 95 starts ran past the
+timeout.
+So a start counts thirteen seconds from the moment the hook's module loads,
+and if it is still running then, it prints a short banner and ends. The
+banner's first line says where it stopped (`SessionStart (short: cut at 13.0 s
+in the zone baseline; ...)`), a `Cut:` line says the hooks are loaded and the
+banner is short, not missing, and the lines already read (`Checkout:`,
+`Open PRs:`, `Mail:`, `Orders:` and the rest) follow; a cut in the catch-up
+adds that a checkout move may still be running, so `git status` comes before
+any edit. The catch-up and the network reads end two and a half seconds before
+the wall, so an ordinary slow start finishes first. A cut leaves one
+`sessionstart_failed_open_wall_cut` record a session, which `/status --log`
+counts with the other fail-open records. Only
+the hook run as a script arms the wall; a test that calls its `main()` in
+process arms none.
 
 **Auto-orient block.** The context output also carries the harness's
 continuity surface -- each section gated on the artifact it describes,
@@ -1842,8 +1864,15 @@ new state as the next one to compare with.
   `.claude/settings.local.json`), and judges the ones that matter. Not
   `generated_paths`. The walk skips dependency, cache and tool directories
   (the stack's `node_modules` and its siblings, `__pycache__`, `.mypy_cache`,
-  a virtualenv, and your `dependency_dirs`) and editor and OS clutter (swap
-  and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its
+  a virtualenv, and your `dependency_dirs`), a directory that ignores itself
+  (its own `.gitignore` one bare `*`, the form pytest, ruff, mypy, uv, `venv`
+  since Python 3.13 and Claude Code's plugin loader write into what they
+  generate; read below a watched directory's top only, never at it; a
+  `.gitignore` holding anything else, and a root `.gitignore` entry naming
+  the directory, skip nothing; and a declaration that lands during a session
+  retires nothing the session's snapshot already holds, so it is reported as
+  the added file it is), and editor and OS clutter
+  (swap and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its
   size and modification time and never read by the hook: when git is asked
   about it (below), git hashes it through the checkout's own filters, up to
   1 GiB of such files in one call and within the 5 s that one call's git asks
@@ -2110,7 +2139,7 @@ gate is opt-in.
 | **1. Pytest** | Runs core test suite | Yes, on failure | **Off** (opt-in via env var) |
 | **2. Docs refresh** | ≥10 writes and no `docs-maintainer` subagent run that changed docs (`.espalier-state/docs_refreshed`)? | Yes, the first Stop of each turn until one has | On |
 | **3. Code review** | ≥10 writes and no `code-reviewer` subagent run (`.espalier-state/code_reviewed`)? | Yes, the first Stop of each turn until one has | On |
-| **5. Handoff** | Nothing in flight (no plan in progress, no tracked edit) and the branch holds commits its upstream does not (its own upstream, else `origin/HEAD`, else `origin/main` or `origin/master`), made this session, on a repository whose `espalier.toml` sets `handoff_push = true` | Yes, once per commit (`.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart) | On where the handoff pushes |
+| **5. Handoff** | Nothing in flight (no plan in progress, no tracked edit) and the branch holds commits its upstream does not (its own upstream, else `origin/HEAD`, else `origin/main` or `origin/master`), made this session, on a repository whose `espalier.toml` sets `handoff_push = true`; and, where the push would open a pull request, that this seat has no other one open (one open pull request per seat: one bounded `gh pr list` read, attributed by the ship driver's `seat_open_prs`) | Yes, once per commit (`.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart); while another of this seat's pull requests is open the lane is held instead (`.espalier-state/handoff_gate_hold`, re-checked every five minutes), and the block returns once none is | On where the handoff pushes |
 | **4. Blueprint finalize** | Auto-finalizes the active blueprint | Never blocks | On |
 
 Gates 2 and 3 only fire on sessions with 10+ source writes. Short
@@ -2127,9 +2156,42 @@ line's to name, never a block into a cold context, and a handoff whose push
 failed (its row moved HEAD) is told again. The reason names the plan (or that
 none is in progress), the branch, the count and the upstream, says what the
 push does for this branch (open the pull request, or push onto the one already
-open), and names three carve-outs the collaborator says in one line before
-stopping again: the operator asked to hold the push, the lane ships together
-with another, or more of the lane's work is still to come this session. The
+open), says what it read of this seat's other open pull requests, and names
+three carve-outs the collaborator says in one line before stopping again: the
+operator asked to hold the push, the lane ships together with another, or more
+of the lane's work is still to come this session -- and a fourth, listed only
+where the read could not be made: a read made in this turn that names one of
+this seat's pull requests open, by number (a pull request remembered from
+earlier in the session is not that read). One open pull request per seat is
+the gate's own rule where the push would OPEN a pull request (the branch has no
+upstream of its own, `origin/<branch>`; a branch created from `origin/main`
+tracks it and is not its own): at its decision point it reads the seat's name
+through the ship driver (`seat_name`: the mail channel's `espalier.machine`; an
+unnamed checkout or a tree without the channel reads nothing and blocks as
+before), makes one bounded `gh pr list` read in the driver's field set
+(`OPEN_PR_FIELDS`; its one network read, five seconds at most) and hands the
+rows to the driver's `seat_open_prs` (the seat whose latest claim or release
+names each lane, else its `seat:` label; each git read bounded by the gate's
+cap; the driver's own notes kept off the hook's decision channel). Another of
+this seat's pull requests open: the Stop passes without a block, one advisory
+record per held HEAD (`stop_held_handoff`, with the counts and never the
+branch), and `.espalier-state/handoff_gate_hold` names the HEAD, the branch,
+the seat, the rows, the commit count, the first hold's stamp and the read's;
+while it names HEAD the gate asks gh again no more than every five minutes, and
+once none is open the hold clears and the block returns, which makes the gate
+the reminder that the first lane merged (a re-check that cannot be made keeps
+the hold one more interval and says so once, `stop_failed_open_handoff_prs`). A
+Stop that passes has no channel to Claude, so the prompt router
+(`task_router.py`) names the hold on every prompt while it stands, with the
+branch, the count, the pull request and the age; and a new session keeps a
+hold that names its HEAD (SessionStart's seed stands aside for it, so the gate
+judges the lane again) and clears a stale one. A read that cannot be made at
+the decision point (no `gh`, a timeout, not signed in, no GitHub remote, the
+seat's name unread) blocks as before and names the wait as the fourth
+carve-out; a lane with an upstream of its own (the push lands on its own pull
+request) reads nothing. A seat renamed since it claimed the other pull request
+(a worktree given a name of its own) reads that one as another seat's and is
+asked for the handoff as before. The
 gate also runs alone on the continuation Stop that follows a Gate 2 or Gate 3
 block, so a lane held by the hygiene gates is told in the same turn. A plan in
 progress or an edit in flight passes and writes nothing; nothing unpushed, a
@@ -2593,6 +2655,7 @@ inside a window of twenty.
 | `stop_blocked_docs_refresh` | pause | Gate 2 blocked the Stop: ten or more source writes and no docs refresh recorded (or a relief record that is not one); `details.rule` names the case, `details.write_count` the count |
 | `stop_blocked_code_review` | pause | Gate 3 blocked the Stop: ten or more source writes and no code review has run (or a relief record that is not one); `details.rule`, `details.write_count` as above |
 | `stop_blocked_handoff` | pause | Gate 5 blocked the Stop: nothing in flight and the branch holds commits its upstream does not, made this session, on a repository whose `espalier.toml` sets `handoff_push = true`; once per commit (the flag `.espalier-state/handoff_gate_said` holds the HEAD it judged, seeded at SessionStart); `details.ahead` is the count, never the branch or the plan's title |
+| `stop_held_handoff` | report | Gate 5 held the lane instead of blocking: the push would open a pull request and this seat has another one open (one open pull request per seat); once per held HEAD (`.espalier-state/handoff_gate_hold`, re-checked every five minutes, and the block returns once none is open); `details.ahead` is the commit count and `details.open` the pull requests held against, never the branch |
 | `post_shell_zone_change` | report | after a Bash or PowerShell call, protected files changed that nothing accounts for (`post_write_check`, "The protected files after a shell call"); `details` names them by kind (`changed`, `added`, `removed`, twenty each at most) with their `count`, the same kinds suffixed `_between_calls` for what landed before the call began, and the `tool` |
 | `hook_layer_failed_open_stack_table` | fail-open | the hook layer could not read `tools/cc/_stack_table.py` (absent, a `SyntaxError`, or older than the hooks) and every gate runs on `_hook_utils`'s pinned copy of its projections; written once a session where a root is known, by the two source gates at their root and by the reporters' `repo_name`, with the fault in `details` |
 | `stop_blocked_internal_error` | pause | the Stop hook crashed and re-blocked the Stop fail-closed (the loop signal lets the continuation's Stop through; a persistent crash re-blocks on the first Stop of every later turn until its cause is fixed); `details.rule` is the internal-error reason's name, `details.error` the exception's class |

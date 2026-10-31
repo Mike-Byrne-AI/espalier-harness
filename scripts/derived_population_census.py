@@ -969,7 +969,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "no pin cited: the property is 'everything present is safe', so a smaller population makes a s...",
     ),
     "tests/test_managed_inventory.py": (
-        8, "ddaa42235091e8bdc77fd2c734835b4455b384830b8f9c99658239d01039845e",
+        11, "24436c38461dee3c12ce44bccada2ac2616671adce952f64bc70eec51c912ed8",
         "MIXED_WITH_PRIOR_PASS",
         "tests/test_managed_inventory.py:252 — `assert get_seed_docs() == (…20 hand-typed paths…)`; th... "
         "PLUS (2026-09-05, DEF-696) two rows in TestSeedStampRenderParity iterating "
@@ -981,7 +981,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "unproven; and the population must be the seed list, because the claim is 'for "
         "every seed init deploys', not 'for these twenty' -- the hand-typed tuple at :252 "
         "one class up is the deletion guard for the list itself.  "
-        "GROWTH 7->8 adjudicated 2026-09-27: TestSeedAssetSourceIndirection.test_no_override_is_the_identity loops _SEED_ASSET_SOURCES asserting no row is the identity; deriving is correct, a literal pair went stale the day two memory seeds joined the map, and the harm (the asset-docs sync copying this tree's own memo over a stub) has no other pin.",
+        "GROWTH 7->8 adjudicated 2026-09-27: TestSeedAssetSourceIndirection.test_no_override_is_the_identity loops _SEED_ASSET_SOURCES asserting no row is the identity; deriving is correct, a literal pair went stale the day two memory seeds joined the map, and the harm (the asset-docs sync copying this tree's own memo over a stub) has no other pin.  "
+        "GROWTH 8->11 adjudicated 2026-10-31 (the census-walk roster, DEF-4066): three rows in "
+        "TestHarnessWrittenPaths -- all-any and comprehension over HARNESS_OWNED_ROOTS, for-assert "
+        "over fusion_manifest.HARNESS_INCLUDE -- each asserting the roster `harness_written_paths()` "
+        "covers a source roster it is derived from. CORRECT_BY_PROPERTY with a driven floor: the claim "
+        "is 'every path the harness writes is pruned', and "
+        "tests/test_first_contact_diagnostics.py::TestTheSizeCensusCountsTheAdoptersFiles::test_every_file_the_harness_wrote_is_on_the_engines_roster "
+        "walks a real init'd tree and asserts more than 40 harness files before checking each, so a "
+        "source roster shrunk to nothing fails the floor rather than passing; the fuse tree's hand copy "
+        "is pinned to git's view of tools/ one test over, the deletion guard for that list.",
     ),
     "tests/test_managed_paths.py": (
         2, "3ddecd462f189a35e27aa7c406ee240f6e4ab4a5d89abcf9551bca979159b672",

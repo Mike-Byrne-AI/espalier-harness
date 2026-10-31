@@ -3813,6 +3813,24 @@ class TestOneOpenPullRequestPerSeat:
                   {"number": 43, "headRefName": "lane/w", "autoMergeRequest": None, "labels": [{"name": "seat:air"}]}]
         assert ship.seat_open_prs(tmp_path, "lane/x", others) == ("win", ["#41 (lane/y)"])
 
+    def test_seat_name_is_the_one_reader_for_the_gate_and_the_advisory(self, ship, tmp_path, monkeypatch):
+        """DEF-4058: the Stop hook's handoff gate reads the seat's name before
+        any gh spawn through this reader, and the one-per-seat advisory reads
+        it the same way. An unset name is ("", ""), as is a tree without the
+        channel; the channel's unread phrase is the problem, nothing else is."""
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/y": "win"}))
+        assert ship.seat_name(tmp_path) == ("win", "")
+        assert ship.seat_name(tmp_path, timeout=2.0) == ("win", "")
+        channel = self._channel("", {})
+        channel.MACHINE_UNREAD = "the machine name could not be read"
+        channel.machine_setting = lambda root, **kw: (
+            "", "the machine name could not be read (git config took longer than 2s)")
+        monkeypatch.setattr(ship, "_MAIL", channel)
+        name, problem = ship.seat_name(tmp_path)
+        assert name == "" and problem.startswith("the machine name could not be read")
+        channel.machine_setting = lambda root, **kw: ("", "git config espalier.machine is not set")
+        assert ship.seat_name(tmp_path) == ("", "")
+
     def test_an_unread_seat_name_is_said_never_read_as_no_seat(self, ship, tmp_path, forget_guard, monkeypatch,
                                                               capsys):
         """A name read that failed (a timeout, a config git cannot parse) is not

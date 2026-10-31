@@ -241,7 +241,11 @@ For one bounded change, one main proof path, or a small localized edit.
     forgets is told once; it is the floor, not the plan. Three carve-outs,
     each said in one line before stopping: the operator asked to hold the
     push; this lane ships together with another; or more of this lane's work
-    is still to come this session (a lane group).
+    is still to come this session (a lane group). A fourth only where the
+    gate says its read of this seat's other open pull requests could not be
+    made: a read made in this turn naming one open, by number (where the gate
+    can read, it holds the lane itself, one open pull request per seat, and
+    asks again once that one merges).
 
 ### If tests fail
 

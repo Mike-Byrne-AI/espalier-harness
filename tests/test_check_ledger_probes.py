@@ -1430,7 +1430,16 @@ class TestProbeShapesAreRatcheted:
     # DEF-343a left this set on 2026-10-08 with its row (struck by lane
     # ledger-oldest-a: the actionability checks tightened; its probe keyed on the
     # old regex's spelling).
+    # DEF-4065 and DEF-4066 left this set on 2026-10-31 with their rows (struck by
+    # lane the-deployed-censuses-read-the-adopters-own-files: the code-reviewer's
+    # census reads the adopter's modules, and the census walk prunes what the
+    # harness wrote on the tree; each struck on a guard red at the base).
     _TEXT_OVER_OWN_SUBJECT = {
+        # DEF-4070 added 2026-10-31 by the records lane that filed it: a prose
+        # deliverable (the reap recipe's missing step) keyed on its command,
+        # `lsof -a -d cwd` or a `/cwd` path, the DEF-672 shape. It reads its
+        # Markdown subject, so the detector counts it.
+        "DEF-4070",
         "CONV-3", "DEC-29", "DEF-20",
         # DEF-378a and DEF-661 left on 2026-10-09 with their rows (struck by lane
         # ledger-decisions on the operator's calls: a check that a pack-led row

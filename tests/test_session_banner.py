@@ -3110,7 +3110,7 @@ class TestEngineLine:
         """The probe runs after the network reads and adds its cap to theirs;
         the sum stays a second under settings.json's 15 s SessionStart ceiling."""
         mod = _load()
-        assert mod._HOOK_BUDGET_SECONDS + mod._ENGINE_CAP_SECONDS <= 14.0
+        assert mod._HOOK_BUDGET_SECONDS + mod._ENGINE_CAP_SECONDS <= mod._WALL_SECONDS
 
     def test_run_main_feeds_the_probe_into_the_banner(self):
         """Structural: _run_main assigns engine_line from a call to

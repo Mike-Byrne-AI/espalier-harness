@@ -172,8 +172,10 @@ OPERATOR_CALL_PREFIX = "OPERATOR CALL:"
 #: worker sent nothing and the board showed no stopped seat (``DEF-5030``).
 STOPPED_PREFIX = "stopped:"
 #: What the dispatcher's ruling on a gridlock opens with (root CLAUDE.md Core
-#: Rule 15): an ``ack`` whose text opens with the marker, the one the seat-day
-#: census counts a ruling by. The marker carries no direction -- a hold, a veto
+#: Rule 15): an ``ack`` whose text opens with the marker, or a ``note`` where no
+#: request waits on the ruling (``DEF-4060``), the one the seat-day census
+#: counts a ruling by; the fix-forward head below rides an ack alone. The
+#: marker carries no direction -- a hold, a veto
 #: or a status under it is a ruling too -- so a reader that needs the way a
 #: ruling went reads the head below, never the marker alone.
 RULING_PREFIX = "gridlock:"

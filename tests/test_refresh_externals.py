@@ -316,6 +316,53 @@ class TestDriftDetection:
         assert compare_pin_to_fetched(pin, _fetch(page)).drift_kind == DRIFT_SEMANTIC
         assert compare_pin_to_fetched(pin, _fetch(page + page.replace("SubagentStop", "Stop"))).drift_kind == DRIFT_NONE
 
+    def test_a_quote_across_two_lines_of_a_callout_is_one_paragraph(self, tmp_path):
+        """A callout's line-leading `>` is the page's markup, as the pin's own
+        `>` is the pin's (DEF-3020): the worktrees page's two bullets, quoted
+        as one passage, read as moved while the page kept `checkout. > cwd
+        follows`. A callout indented under a list item reads the same; a word
+        moved inside the callout is still drift; a `>` inside a line is text."""
+        lines = ["> [!NOTE]", "> **Hook paths don't follow the worktree.** After Claude enters one:", ">",
+                 "> * **`${CLAUDE_PROJECT_DIR}` stays put**: a hook still runs the script in the main checkout.",
+                 "> * **`cwd` follows Claude**: the `cwd` field in the input is the worktree root."]
+        page = "\n".join(lines) + "\n"
+        pin = self._pin(tmp_path, "## S\n\n"
+                                  "> * **`${CLAUDE_PROJECT_DIR}` stays put**: a hook still runs the script\n"
+                                  ">   in the main checkout.\n"
+                                  "> * **`cwd` follows Claude**: the `cwd` field in the input is the worktree root.\n")
+        assert compare_pin_to_fetched(pin, _fetch(page)).drift_kind == DRIFT_NONE
+        indented = "* A list item:\n\n" + "".join(f"   {line}\n" for line in lines)
+        assert compare_pin_to_fetched(pin, _fetch(indented)).drift_kind == DRIFT_NONE
+        moved = page.replace("the worktree root", "the project root")
+        assert compare_pin_to_fetched(pin, _fetch(moved)).drift_kind == DRIFT_SEMANTIC
+        midline = self._pin(tmp_path / "b", "## S\n\n> Run it with 2>&1 > out, then a → b.\n")
+        kept = compare_pin_to_fetched(midline, _fetch("> Run it with 2>&1 > out,\n  > > then a -> b.\n"))
+        dropped = compare_pin_to_fetched(midline, _fetch("Run it with 2>&1 out, then a -> b.\n"))
+        assert (kept.drift_kind, dropped.drift_kind) == (DRIFT_NONE, DRIFT_SEMANTIC)
+
+    def test_a_marker_is_read_off_a_line_never_off_a_fragment(self, tmp_path):
+        """A fragment that opens after an elision does not open a line, so its
+        `>` is the quote's text: where upstream dropped it, the quote moved
+        (the review of DEF-3020's first cut drove this through as `none`)."""
+        pin = self._pin(tmp_path, "## S\n\n> The managed rule applies […] > deny rules take precedence over all.\n")
+        dropped = "The managed rule applies here, ask, deny rules take precedence over all."
+        assert compare_pin_to_fetched(pin, _fetch(dropped)).drift_kind == DRIFT_SEMANTIC
+        kept = dropped.replace("ask, deny", "ask > deny")
+        assert compare_pin_to_fetched(pin, _fetch(kept)).drift_kind == DRIFT_NONE
+
+    def test_a_nested_quote_loses_every_marker_on_every_line(self, tmp_path):
+        """The pin side of the same rule: a `> >` quote kept its inner `>` as
+        text on every line, where the page loses it on all of them; a bare
+        `> >` line breaks a paragraph as a bare `>` does."""
+        page = "> > Exit 0 means success for the hook.\n> > Exit 2 means a blocking error.\n"
+        pin = self._pin(tmp_path, f"## S\n\n{page}")
+        assert compare_pin_to_fetched(pin, _fetch(page)).drift_kind == DRIFT_NONE
+        assert [q.text for q in quoted_passages(pin)] == [
+            "Exit 0 means success for the hook. Exit 2 means a blocking error."]
+        split = self._pin(tmp_path / "b", "## S\n\n> > First nested sentence.\n> >\n> > Second nested sentence.\n")
+        assert [q.text for q in quoted_passages(split)] == [
+            "First nested sentence. Second nested sentence."] and len(quoted_passages(split)[0].fragments) == 2
+
     def test_a_comment_opener_inside_a_fence_is_fence_text(self, tmp_path):
         """A fence is read first: a `<!--` inside one used to switch the
         parser into comment mode and swallow every quote after the fence."""
