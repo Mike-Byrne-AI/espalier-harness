@@ -1,0 +1,73 @@
+name: Post-merge Windows leg
+# Advisory: the serial test files (scripts/proof_tier.py's SERIAL_FILES, the
+# wall-clock-budget and timeout-near files the local tier keeps at one worker)
+# on windows-latest after each push to main. It gates nothing and reverts
+# nothing: tools/cc/board.py reads its newest push run through
+# tools/cc/_post_merge.py's base-run rule and prints a red on the board's
+# checks: line in the legs' shape, `post-merge-windows (main, advisory): red
+# since <sha> (run <id>)`, never on the main: line, whose red is the
+# revert-first rule's. The board alone reads it (neither the ship preflight
+# nor the SessionStart banner). A dispatched run carries workflow_dispatch and
+# never clears that line: the next push run does, or a re-run of the red one.
+#
+# A separate workflow, never a second job in post-merge.yml: the proof's
+# readers (board.py::read_post_merge, ship.py::base_red_after_merge) read a
+# run's conclusion, and a run is red when any job fails, so a Windows flake
+# inside the proof would turn main red and ask for a revert on every flake.
+# tests/test_ci_job_bounds.py pins that, this file's name, its push trigger,
+# no continue-on-error, the ceiling below and the bound.
+#
+# No concurrency group: the required cells' queue over 240 jobs (2026-10-18 to
+# 10-29) had a median of 0.2 min and a worst of 1.7, and the serial files ran
+# in 2 to 4 minutes as portability.yml dispatches of the same pytest line on a
+# shallow checkout (2026-10-29 and 10-30, runs 40402314684 and 40828944655;
+# this job adds proof_tier.py's receipt around it), so two of it overlap only
+# when two merges land within about four minutes, and a cancelled run would
+# read as no verdict. Re-measure that queue over the leg's first day: a median
+# above 2 minutes, or a worst above 5, asks for a group with cancel-in-progress.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Read-only token; the job never pushes.
+permissions:
+  contents: read
+
+jobs:
+  serial-leg:
+    runs-on: windows-latest
+    # The serial files' longest own timeout mark (900 s, the PowerShell gate's
+    # test_the_gate_completes_against_head; a mark outranks the ceiling below)
+    # plus the ten minutes tests/test_ci_job_bounds.py gives the test-serial
+    # cell on top of its worst mark. Twice the measured 3:59 would round to
+    # ten and cut that mark with no test named, and five xdist worker restarts
+    # at the ceiling below are fifteen.
+    timeout-minutes: 25
+    steps:
+      # A shallow checkout, as the measured portability runs made it: no
+      # serial file reads past commits or release tags.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .[dev]
+
+      - name: Run the full tier's serial leg
+        # bash, as portability.yml runs on every runner: the Windows default is
+        # PowerShell, with its own quoting. The file list is proof_tier.py's
+        # SERIAL_FILES, read by the script, never restated here. The line runs
+        # under xdist at one worker, so a per-test ceiling crossing names its
+        # test and the controller replaces the worker (the script's own note).
+        shell: bash
+        env:
+          # windows-latest is the slow host: the same per-test ceiling the
+          # portability leg exports there, above the suite's 60 s; pytest-timeout
+          # reads it ahead of the ini, and a test's own mark wins.
+          PYTEST_TIMEOUT: "180"
+          PYTEST_ADDOPTS: --durations=25
+        run: python scripts/proof_tier.py --run --tier full --leg serial

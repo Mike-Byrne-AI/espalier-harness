@@ -301,3 +301,166 @@ class TestReadMerged:
         assert set(pm.LANE_FIELDS.split(",")) == {"number", "mergedAt", "headRefName", "labels"}
         pm.read_merged(".", 2, gh=gh)
         assert calls[-1][-1] == pm.MERGED_FIELDS and "statusCheckRollup" in pm.MERGED_FIELDS
+
+
+def _run_row(status: str, conclusion: str | None, sha: str, run_id: int) -> dict:
+    """One ``gh run list`` row as the board's base-run read asks for it."""
+    return {"databaseId": run_id, "status": status, "conclusion": conclusion, "headSha": sha, "url": f"u-{run_id}"}
+
+
+class TestTheBaseRunVerdict:
+    """The base-run rule the board's ``checks:`` line reads the advisory
+    Windows leg through (``post-merge-windows.yml`` on Espalier's own
+    repository, the serial test files on windows-latest after each push to
+    main): a push run attaches to the merge commit and appears in no pull
+    request's rollup, so the merges' ownership rule above cannot see it.
+    Frozen listings, newest first, as ``gh run list`` prints them."""
+
+    def test_a_red_newest_is_red_since_itself_with_the_green_before_it(self, pm):
+        """Dies to: the newest red not the verdict, or the green before it unread."""
+        state = pm.base_run_verdict([_run_row("completed", "failure", "a" * 40, 3),
+                                     _run_row("completed", "success", "b" * 40, 2)])
+        assert state["verdict"] == "red" and state["sha"] == "a" * 40 and state["run"] == "3"
+        assert state["since"] == {"sha": "a" * 40, "run": "3", "url": "u-3"}
+        assert state["green_sha"] == "b" * 40 and not state["running"]
+
+    def test_a_cancelled_newest_is_walked_past_to_the_older_red(self, pm):
+        """Dies to: a cancelled run read as a verdict, green or red."""
+        state = pm.base_run_verdict([_run_row("completed", "cancelled", "c" * 40, 4),
+                                     _run_row("completed", "failure", "a" * 40, 3),
+                                     _run_row("completed", "success", "b" * 40, 2)])
+        assert state["verdict"] == "red" and state["run"] == "3" and state["no_verdict"] == ["cancelled"]
+
+    def test_a_green_newest_is_green_and_the_walk_stops(self, pm):
+        """Dies to: the walk going past a green to an older red."""
+        state = pm.base_run_verdict([_run_row("completed", "success", "b" * 40, 5),
+                                     _run_row("completed", "failure", "a" * 40, 3)])
+        assert state["verdict"] == "green" and state["sha"] == "b" * 40 and state["since"] is None
+
+    def test_a_streak_is_red_since_its_first_red_not_its_newest(self, pm):
+        """Dies to: the since clause naming the newest red (the pack review's
+        finding), the walk stopped by a run going or cancelled inside the
+        streak, or the green before the streak unread."""
+        state = pm.base_run_verdict([_run_row("completed", "timed_out", "d" * 40, 9),
+                                     _run_row("in_progress", None, "e" * 40, 8),
+                                     _run_row("completed", "cancelled", "c" * 40, 7),
+                                     _run_row("completed", "failure", "a" * 40, 6),
+                                     _run_row("completed", "success", "b" * 40, 5),
+                                     _run_row("completed", "failure", "f" * 40, 4)])
+        assert state["verdict"] == "red" and state["sha"] == "d" * 40 and state["run"] == "9"
+        assert state["since"] == {"sha": "a" * 40, "run": "6", "url": "u-6"}
+        assert state["green_sha"] == "b" * 40 and not state["running"] and state["no_verdict"] == []
+
+    def test_no_green_in_the_listing_leaves_the_green_sha_empty(self, pm):
+        state = pm.base_run_verdict([_run_row("completed", "failure", "a" * 40, 3),
+                                     _run_row("completed", "startup_failure", "f" * 40, 1)])
+        assert state["verdict"] == "red" and state["since"]["run"] == "1" and state["green_sha"] == ""
+
+    def test_a_newer_run_going_is_running_beside_the_verdict(self, pm):
+        """Dies to: a run still going read as a verdict, or not said."""
+        state = pm.base_run_verdict([_run_row("queued", None, "e" * 40, 8),
+                                     _run_row("completed", "success", "b" * 40, 5)])
+        assert state["verdict"] == "green" and state["running"]
+
+    def test_every_run_without_a_verdict_is_none_with_its_kinds(self, pm):
+        state = pm.base_run_verdict([_run_row("completed", "cancelled", "c" * 40, 4),
+                                     _run_row("completed", "skipped", "s" * 40, 3),
+                                     _run_row("completed", "", "n" * 40, 2)])
+        assert state["verdict"] == "none" and state["no_verdict"] == ["cancelled", "skipped", "no conclusion"]
+        assert state["read"] == 3 and not state["running"]
+
+    def test_an_empty_listing_a_non_list_and_a_foreign_row_read_as_no_runs(self, pm):
+        """Dies to: a crash on a shape gh never promised."""
+        assert pm.base_run_verdict([])["verdict"] == "none"
+        assert pm.base_run_verdict({"total_count": 0})["verdict"] == "none"
+        state = pm.base_run_verdict(["not a row", None, _run_row("completed", "success", "b" * 40, 5)])
+        assert state["verdict"] == "green" and state["read"] == 1
+
+    def test_the_red_set_is_the_three_conclusions_and_the_workflow_is_named_once(self, pm):
+        """Dies to: the set widened (a cancelled run would read red) or narrowed
+        (a timed-out run would read as no verdict); the board's `_RED` is
+        pinned to this object in tests/test_board.py."""
+        assert pm.RUN_RED == frozenset({"FAILURE", "TIMED_OUT", "STARTUP_FAILURE"})
+        assert pm.WINDOWS_WORKFLOW == "post-merge-windows.yml"
+
+
+class TestTheBaseRunWords:
+    def test_a_red_names_the_first_red_the_newest_and_the_green_before(self, pm):
+        """Dies to: the since clause naming the newest red, or the newest red
+        and the green before the streak dropped."""
+        state = pm.base_run_verdict([_run_row("completed", "timed_out", "d" * 40, 9),
+                                     _run_row("completed", "failure", "a" * 40, 6),
+                                     _run_row("completed", "success", "b" * 40, 5)])
+        assert pm.base_run_lines(state) == [
+            "post-merge-windows (main, advisory): red since aaaaaaa (run 6), still red on ddddddd (run 9), green on bbbbbbb"]
+
+    def test_a_single_red_says_since_itself_and_a_newer_run_going(self, pm):
+        state = pm.base_run_verdict([_run_row("in_progress", None, "e" * 40, 8),
+                                     _run_row("completed", "failure", "a" * 40, 6),
+                                     _run_row("completed", "success", "b" * 40, 5)])
+        assert pm.base_run_lines(state, base="trunk") == [
+            "post-merge-windows (trunk, advisory): red since aaaaaaa (run 6), green on bbbbbbb; a newer run is going"]
+
+    def test_no_green_in_the_window_says_so(self, pm):
+        state = pm.base_run_verdict([_run_row("completed", "failure", "a" * 40, 6)])
+        assert pm.base_run_lines(state) == [
+            "post-merge-windows (main, advisory): red since aaaaaaa (run 6) (no green among the runs read)"]
+
+    def test_green_absent_empty_going_and_no_state_render_nothing(self, pm):
+        """Dies to: a line for a leg that is not red (the deployed board runs
+        on trees without the workflow, and here before its first run)."""
+        assert pm.base_run_lines(pm.base_run_verdict([_run_row("completed", "success", "b" * 40, 5)])) == []
+        assert pm.base_run_lines({"verdict": "absent"}) == []
+        assert pm.base_run_lines(pm.base_run_verdict([])) == []
+        assert pm.base_run_lines(pm.base_run_verdict([_run_row("queued", None, "e" * 40, 8)])) == []
+        assert pm.base_run_lines(None) == []
+
+    def test_no_verdict_and_unread_are_each_one_line(self, pm):
+        state = pm.base_run_verdict([_run_row("completed", "cancelled", "c" * 40, 4)])
+        assert pm.base_run_lines(state) == ["post-merge-windows (main, advisory): no verdict on every run read (cancelled; 1 run)"]
+        two = pm.base_run_verdict([_run_row("completed", "cancelled", "c" * 40, 4), _run_row("completed", "stale", "s" * 40, 3)])
+        assert pm.base_run_lines(two) == ["post-merge-windows (main, advisory): no verdict on every run read (cancelled, stale; 2 runs)"]
+        assert pm.base_run_lines({"unread": "gh run list answered rc=1 with no JSON"}) == [
+            "post-merge-windows (main, advisory): unread (gh run list answered rc=1 with no JSON)"]
+
+    def test_board_lines_keep_the_none_line_off_only_when_the_leg_is_red(self, pm):
+        """Dies to: `none red among the last N merges` printed above a red leg,
+        or dropped above an unread or silent one, or the leg's line printed
+        before the pull-request legs."""
+        green = copy.deepcopy(_pr(312))
+        for leg in (WIN, MAC):
+            _leg(green, leg)["conclusion"] = "SUCCESS"
+        checks = pm.transitions([green])
+        red = pm.base_run_verdict([_run_row("completed", "failure", "a" * 40, 6)])
+        assert pm.board_lines(checks, window=1, oldest=312, base_run=red) == [
+            "post-merge-windows (main, advisory): red since aaaaaaa (run 6) (no green among the runs read)"]
+        assert pm.board_lines(checks, window=1, oldest=312, base_run={"unread": "x"}) == [
+            "none red among the last 1 merges", "post-merge-windows (main, advisory): unread (x)"]
+        assert pm.board_lines(checks, window=1, oldest=312, base_run={"verdict": "absent"}) == [
+            "none red among the last 1 merges"]
+        assert pm.board_lines(checks, window=1, oldest=312) == ["none red among the last 1 merges"]
+        both = pm.board_lines(pm.transitions([_pr(312), _pr(313)]), window=2, oldest=312, base_run=red)
+        assert len(both) == 3 and both[0].startswith("portability (windows-latest)")
+        assert both[-1].startswith("post-merge-windows (main, advisory): red since")
+
+    def test_newer_runs_without_a_verdict_above_a_green_are_named_never_hidden(self, pm):
+        """Dies to: a cancelled newest run walked past to an older green with
+        nothing printed (a hang the job's bound cuts may conclude cancelled on
+        every push, and one old green would hide them all), or a run going
+        dropped from the all-no-verdict line."""
+        state = pm.base_run_verdict([_run_row("completed", "cancelled", "c" * 40, 7),
+                                     _run_row("completed", "cancelled", "d" * 40, 6),
+                                     _run_row("completed", "success", "b" * 40, 5)])
+        assert pm.base_run_lines(state) == [
+            "post-merge-windows (main, advisory): no verdict on the newest 2 runs (cancelled), green on bbbbbbb before them"]
+        one = pm.base_run_verdict([_run_row("in_progress", None, "e" * 40, 8), _run_row("completed", "stale", "c" * 40, 7),
+                                   _run_row("completed", "success", "b" * 40, 5)])
+        assert pm.base_run_lines(one) == [
+            "post-merge-windows (main, advisory): no verdict on the newest 1 run (stale), green on bbbbbbb before it; "
+            "a newer run is going"]
+        none = pm.base_run_verdict([_run_row("queued", None, "e" * 40, 8), _run_row("completed", "cancelled", "c" * 40, 4)])
+        assert pm.base_run_lines(none) == [
+            "post-merge-windows (main, advisory): no verdict on every run read (cancelled; 1 run); a run is going"]
+
+    def test_the_base_run_words_are_ascii(self, pm):
+        assert all(line.isascii() for line in pm.base_run_lines({"unread": "café"}))
