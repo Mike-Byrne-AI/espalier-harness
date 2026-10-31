@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4065",
+ "subject": ".claude/agents/code-reviewer.md",
+ "cmd": "python3 -c \"s=open('.claude/agents/code-reviewer.md',encoding='utf-8').read();b=s[s.index('### Phase 1'):s.index('### Phase 2')];print('self-host-only' in b)\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "93ff682c69bb",
+ "text_sha": "29855c15d8bd",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}

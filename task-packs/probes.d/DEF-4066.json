@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4066",
+ "subject": ".claude/agents/repo-analyst.md",
+ "cmd": "python3 -c \"import tempfile,pathlib;from espalier.cli import _asset_transform as t;b=open('.claude/agents/repo-analyst.md',encoding='utf-8').read();r=t('agents/repo-analyst.md',[],pathlib.Path(tempfile.mkdtemp()));b=r(b) if r else b;i=b.index('own() {');print('memory' in b[i:b.index(chr(10),i)])\"",
+ "open_value": "False",
+ "why_not": null,
+ "inputs": [
+  "espalier/cli.py"
+ ],
+ "row_sha": "ceced396ec9a",
+ "text_sha": "de099bcccb6b",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}

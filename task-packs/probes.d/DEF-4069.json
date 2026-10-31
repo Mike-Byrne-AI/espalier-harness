@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4069",
+ "subject": "tools/cc/hooks/write_guard.py",
+ "cmd": "python3 -c \"import json,os,subprocess,sys;S=[\\\"GIT_EXTERNAL_DIFF='cat .env' git diff HEAD~1 HEAD\\\",\\\"GIT_PAGER='cat .env' git log -1\\\"];E={k:v for k,v in os.environ.items() if k!='ESPALIER_MAINTENANCE_MODE'};print(sum('deny' not in subprocess.run([sys.executable,'tools/cc/hooks/write_guard.py'],input=json.dumps({'session_id':'probe','hook_event_name':'PreToolUse','tool_name':'Bash','tool_input':{'command':c}}),capture_output=True,text=True,env=E,timeout=60).stdout for c in S))\"",
+ "open_value": "2",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_bash_patterns.py"
+ ],
+ "row_sha": "b5023785b6a1",
+ "text_sha": "e72fa5dce996",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}

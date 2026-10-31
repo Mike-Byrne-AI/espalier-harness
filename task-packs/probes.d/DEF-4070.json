@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4070",
+ "subject": "CLAUDE.md",
+ "cmd": "python3 -c \"s=open('CLAUDE.md',encoding='utf-8').read();i=s.index('Reap first');j=s.index('1. **',i);print('cwd' in s[i:j])\"",
+ "open_value": "False",
+ "why_not": null,
+ "row_sha": "dad500cd697a",
+ "text_sha": "f3d41ea5a2c7",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}

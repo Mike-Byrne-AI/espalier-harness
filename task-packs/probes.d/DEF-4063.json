@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4063",
+ "subject": "tools/cc/board.py",
+ "cmd": "python3 -c \"print(any('--required' in open(f,encoding='utf-8').read() for f in ('tools/cc/board.py','tools/cc/_post_merge.py')))\"",
+ "open_value": "False",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/_post_merge.py"
+ ],
+ "row_sha": "ef3eb3bd03f2",
+ "text_sha": "ade47a171d1e",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}
