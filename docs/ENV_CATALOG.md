@@ -41,6 +41,7 @@ here.
 | `CLAUDE_PROJECT_DIR` | Claude Code | 8+ hooks/scripts | (always set by CC) | Project root path. Hook entry-point convention. |
 | `PYTHONDONTWRITEBYTECODE` | `espalier/cli.py` (`_file_onboarding_rows`, and `_repin_onboarding` for the onboarding-probe refresh): set to `1` in the environment of the deployed ledger verb each spawns, at `init` and at `upgrade` (its dry run included) | The interpreter running `tools/cc/ledger_row.py`, and the probe it runs in turn; never read by the engine | unset | Keeps the verb's by-path imports of its siblings from caching bytecode under the adopter's `tools/cc/__pycache__` before the gitignore block exists -- the uncommitted-work disclosure named the harness's own `.pyc` files as the adopter's work on every fresh install (2026-09-30). The variable rather than the `-B` flag, because a flag stops at the child. Write-shape only, like `PYTHONPATH`; documented here for completeness. |
 | `PYTHONPATH` | Hook bridge | `tools/cc/hooks/post_write_check.py:188` | unset | Pushed/popped via `env.pop`/`env[]=` to make `espalier` importable from a source checkout when running hook subprocess. Not accessed via `os.environ.get`; documented here for completeness. |
+| `CLAUDE_CODE_GIT_BASH_PATH` | Operator (shell, or a settings file's `env`) | Claude Code; the installed engine's Git Bash lookup (`git_bash_path`, read by `init` and `doctor`) | unset | Claude Code's own variable naming the Git Bash it runs shell-form commands under on Windows. Whether one is found decides the statusline `init` writes there: the shim's quoted path where Git Bash is found, `& "<shim>" <interpreter>` only where it is not; the settings files' `env` value is read too. |
 | `TMPDIR` | OS / tests | `tools/cc/hooks/_integrity.py:1482` | OS default | Override-validated: `tempfile.gettempdir()` returns `$TMPDIR` when that is set, so the destination is validated rather than trusted. |
 
 > **Scope, read off the Consumer column.** `espalier init` deploys
@@ -55,7 +56,8 @@ here.
 
 Claude Code *platform* vars that influence harness-composed workflows but are
 read by Claude Code itself (not by harness code) are documented outside this
-catalog, whose contract is that every listed var has a live harness reader.
+catalog, whose contract is that every listed var has a live harness reader
+(`CLAUDE_CODE_GIT_BASH_PATH` is in the table because the engine reads it too).
 `docs/CC_AUTOMATION.md` (Espalier source repo — not deployed by `init`) covers
 `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` (raises the consecutive-Stop-block override;
 affects `/goal` and `stop_gate.py`) and `CLAUDE_CODE_DISABLE_CRON` (`=1`

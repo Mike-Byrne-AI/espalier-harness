@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3018",
+ "subject": "docs/external/cc-statusline.md",
+ "cmd": "python3 -c \"import pathlib;print(not any('CLAUDE_CODE_GIT_BASH_PATH' in p.read_text(encoding='utf-8') for p in pathlib.Path('docs/external').glob('*.md') if p.name != 'cc-statusline.md'))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "6de30e583cb7",
+ "text_sha": "193154d26010",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}

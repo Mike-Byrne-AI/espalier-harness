@@ -87,7 +87,10 @@ def _catalog_read_sites() -> list[tuple[str, str, int]]:
 def _is_recognized(var: str) -> bool:
     if var.startswith("ESPALIER_"):
         return True
-    return var in {"CLAUDE_PROJECT_DIR", "TMPDIR", "PYTHONPATH"}
+    # CLAUDE_CODE_GIT_BASH_PATH: Claude Code's variable, read by the engine
+    # too since its Windows statusline render follows Claude Code's Git Bash
+    # lookup (DEF-929), so it has a harness reader to catalog.
+    return var in {"CLAUDE_PROJECT_DIR", "TMPDIR", "PYTHONPATH", "CLAUDE_CODE_GIT_BASH_PATH"}
 
 
 def _catalog_vars() -> set[str]:

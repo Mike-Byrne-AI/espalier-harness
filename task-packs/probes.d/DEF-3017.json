@@ -1,0 +1,13 @@
+{
+ "id": "DEF-3017",
+ "subject": "tools/cc/hooks/session_start.py",
+ "cmd": "python3 -c \"import pathlib;print('statusline.cmd' not in pathlib.Path('tools/cc/hooks/session_start.py').read_text(encoding='utf-8') and '-NoProfile -Command' not in pathlib.Path('espalier/cli.py').read_text(encoding='utf-8'))\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "espalier/cli.py"
+ ],
+ "row_sha": "48fd4fe690db",
+ "text_sha": "211bf29f9c08",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}
