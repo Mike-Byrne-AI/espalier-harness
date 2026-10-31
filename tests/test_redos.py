@@ -405,6 +405,7 @@ def test_other_extraction_regex_linear_on_long_input(name, pattern):
 _QUOTE_NORMALISER_RUNS = {
     "spaces": " ", "dashes": "-", "bars": "|", "brackets": "[", "backslashes": "\\",
     "tag-openers": "<a", "dash-separators": " -- ", "link-openers": "[x](", "escapes": "\\_",
+    "quote-markers": " >", "quote-lines": "\n >",
 }
 
 

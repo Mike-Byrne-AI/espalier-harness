@@ -86,6 +86,10 @@ _HTML_TAG = re.compile(r"</?[A-Za-z][^<>\n]{0,200}>")    # <Warning>, </Note>, <
 _ESCAPE = re.compile(r"\\([\\`*_{}\[\]()#+.!|-])")       # \_ -> _
 _ELISION = re.compile(r"\[(?:" + _ELLIPSIS + r"|\.\.\.)\]|" + _ELLIPSIS + r"|\.\.\.")
 _INLINE_COMMENT = re.compile(r"<!--.*?-->")
+# A line's blockquote markers, nested ones included: a callout's `>` is the
+# page's markup as the pin's own `>` is the pin's (DEF-3020). Each repeat ends
+# at a `>`, so the two runs of spaces never meet.
+_QUOTE_MARK = re.compile(r"^[ \t]*>(?:[ \t]*>)*", re.MULTILINE)
 _UNICODE = str.maketrans({
     chr(0x2014): " -- ", chr(0x2013): "-", chr(0x2018): "'", chr(0x2019): "'",
     chr(0x201C): '"', chr(0x201D): '"', chr(0x2192): "->", chr(0x00A0): " ",
@@ -95,13 +99,15 @@ _UNICODE = str.maketrans({
 def normalize_quote_text(text: str) -> str:
     """The one normalisation a pin's quote and the fetched page both pass
     through, so a match never depends on which side was formatted how:
-    a link keeps its text and loses its target (parsed apart, so a `<` in
-    the text does not matter); HTML-ish tags (`<Warning>`) go; Markdown
-    escapes, emphasis and code ticks go; a table's cell bars and an em dash
-    both become ` -- `, so a pin that flattens a table row into "name — text"
-    matches the row; typographic quotes and dashes fold to ASCII; whitespace
-    collapses; case folds."""
+    a line's blockquote markers go (a callout's `> [!NOTE]` lines read as one
+    paragraph; a `>` inside a line stays text); a link keeps its text and
+    loses its target (parsed apart, so a `<` in the text does not matter);
+    HTML-ish tags (`<Warning>`) go; Markdown escapes, emphasis and code ticks
+    go; a table's cell bars and an em dash both become ` -- `, so a pin that
+    flattens a table row into "name — text" matches the row; typographic
+    quotes and dashes fold to ASCII; whitespace collapses; case folds."""
     t = text.translate(_UNICODE)
+    t = _QUOTE_MARK.sub(" ", t)
     t = _LINK.sub(r"\1", t)
     t = _HTML_TAG.sub(" ", t)
     t = _ESCAPE.sub(r"\1", t)
@@ -135,7 +141,8 @@ def _paragraph_fragments(paragraph: str) -> list[str]:
 
 def quoted_passages(pin: ExternalPin) -> list[QuotedPassage]:
     """Every `>` blockquote in the pin body, outside fenced code and HTML
-    comments. A bare `>` line, or a comment, breaks a passage; a `> |` table
+    comments. A line loses every marker (`> >` included, as the page's lines
+    do); a bare `>` line, or a comment, breaks a passage; a `> |` table
     row stands alone (a pin may quote two rows that are not adjacent on the
     page) and keeps its cell bars; an elision (`[…]`, `…`, `...`) breaks a
     paragraph into fragments. Every `>` line in a pin is read as an upstream
@@ -177,7 +184,7 @@ def quoted_passages(pin: ExternalPin) -> list[QuotedPassage]:
             comment = "-->" not in stripped
             continue
         if stripped.startswith(">"):
-            content = _INLINE_COMMENT.sub(" ", stripped[1:]).strip()
+            content = _INLINE_COMMENT.sub(" ", _QUOTE_MARK.sub("", stripped)).strip()
             if not paragraphs and not rows:
                 start, paragraphs[:] = n, [[]]
             if content.startswith("|"):

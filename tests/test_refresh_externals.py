@@ -27,6 +27,7 @@ from espalier.external_diff import (
     DRIFT_SEMANTIC,
     DRIFT_UNVERIFIABLE,
     compare_pin_to_fetched,
+    normalize_quote_text,
     quoted_passages,
     write_candidate,
 )
@@ -315,6 +316,33 @@ class TestDriftDetection:
         page = "| `SubagentStop` | Yes | Prevents the subagent from stopping |\n"
         assert compare_pin_to_fetched(pin, _fetch(page)).drift_kind == DRIFT_SEMANTIC
         assert compare_pin_to_fetched(pin, _fetch(page + page.replace("SubagentStop", "Stop"))).drift_kind == DRIFT_NONE
+
+    def test_a_quote_across_two_lines_of_a_callout_is_one_paragraph(self, tmp_path):
+        """A callout's line-leading `>` is the page's markup, as the pin's own
+        `>` is the pin's (DEF-3020): the worktrees page's two bullets, quoted
+        as one passage, read as moved while the page kept `checkout. > cwd
+        follows`. A word moved inside the callout is still drift, and a `>`
+        inside a line is still text."""
+        page = ("> [!NOTE]\n> **Hook paths don't follow the worktree.** After Claude enters one:\n>\n"
+                "> * **`${CLAUDE_PROJECT_DIR}` stays put**: a hook still runs the script in the main checkout.\n"
+                "> * **`cwd` follows Claude**: the `cwd` field in the input is the worktree root.\n")
+        pin = self._pin(tmp_path, "## S\n\n"
+                                  "> * **`${CLAUDE_PROJECT_DIR}` stays put**: a hook still runs the script\n"
+                                  ">   in the main checkout.\n"
+                                  "> * **`cwd` follows Claude**: the `cwd` field in the input is the worktree root.\n")
+        assert compare_pin_to_fetched(pin, _fetch(page)).drift_kind == DRIFT_NONE
+        moved = page.replace("the worktree root", "the project root")
+        assert compare_pin_to_fetched(pin, _fetch(moved)).drift_kind == DRIFT_SEMANTIC
+        assert normalize_quote_text("Run 2>&1 > out, then a → b.") == "run 2>&1 > out, then a -> b."
+
+    def test_a_nested_quote_loses_every_marker_on_every_line(self, tmp_path):
+        """The pin side of the same rule: a `> >` quote kept its inner `>` on
+        every line after its first, where the page loses it on all of them."""
+        page = "> > Exit 0 means success for the hook.\n> > Exit 2 means a blocking error.\n"
+        pin = self._pin(tmp_path, f"## S\n\n{page}")
+        assert compare_pin_to_fetched(pin, _fetch(page)).drift_kind == DRIFT_NONE
+        assert [q.text for q in quoted_passages(pin)] == [
+            "Exit 0 means success for the hook. Exit 2 means a blocking error."]
 
     def test_a_comment_opener_inside_a_fence_is_fence_text(self, tmp_path):
         """A fence is read first: a `<!--` inside one used to switch the
