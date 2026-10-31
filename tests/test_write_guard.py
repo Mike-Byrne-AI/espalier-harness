@@ -9958,16 +9958,11 @@ class TestSecretPathAccess:
         assert_hook_denied(result, contains_reason=reason)
 
     # DECLARED LIMITS of the class's first landing, pinned so a change to them
-    # is a decision. Still refused: a statement opening with a quoted string
-    # (DEF-1045: the carrier reader, DEF-1131, does not read a string piped
-    # into `iex` or joined with `+`, which the old split refuses), and a
-    # spaced path whose comment holds an apostrophe (the quote never closes).
-    # Still allowed: the quoted-path head the gate keeps on the old split, and
-    # an input redirect, which no leg reads as a source (filed as DEF-1132).
+    # is a decision. Still refused: a spaced path whose comment holds an
+    # apostrophe (the quote never closes). Still allowed: the quoted-path head
+    # the gate keeps on the old split, and an input redirect, which no leg
+    # reads as a source (filed as DEF-1132).
     @pytest.mark.parametrize("tool, command", [
-        ("PowerShell", "$hint = 'gc .env'"),
-        ("PowerShell", '$msg = "type .env to see the values"'),
-        ("PowerShell", 'Write-Host ("type .env")'),
         ("PowerShell", "Get-Content \"work/client secrets/notes.md\" # it's"),
     ])
     def test_the_first_landing_still_refuses(self, tool, command, tmp_path):
@@ -9980,6 +9975,51 @@ class TestSecretPathAccess:
     ])
     def test_the_first_landing_still_allows(self, tool, command, tmp_path):
         assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
+
+    # DEF-1045: a statement that opens with a quoted string is a mention when
+    # nothing in the command can run it. A positive gate with two arms, each
+    # read on the raw command: the right-hand side of an assignment that is
+    # the command's last statement, to a plain variable the command names
+    # nowhere else, in a command with no pipe, call operator, group or script
+    # block; and the one literal in Write-Host's parentheses, with nothing
+    # after them in its statement. Every other quoted opener keeps the old
+    # split, which reads the string's first word as the verb.
+    @pytest.mark.parametrize("command", [
+        "$hint = 'gc .env'",
+        '$msg = "type .env to see the values"',
+        'Write-Host ("type .env")',
+        "$hint = 'gc .env';",
+        "Set-Location docs; $hint = 'Get-Content .env first'",
+        "Write-Host ('Get-Content .env'); Write-Host done",
+    ])
+    def test_a_quoted_mention_nothing_runs_is_not_a_read(self, command, tmp_path):
+        assert_hook_allowed(run_guard_tool("PowerShell", {"command": command}, tmp_path))
+
+    # The gate's other side: a quoted opener something in the command could
+    # run, bind past the last statement or reach by another name keeps the
+    # old split. The first five are the reads both reviewers of the carrier
+    # reader's lane drove through a relief keyed on the carriers it names.
+    @pytest.mark.parametrize("command", [
+        "'gc .env' | iex",
+        '"Get-Content .env" | Invoke-Expression',
+        "$c='gc .env'; $c | iex",
+        "'gc .env' | pwsh -Command -",
+        'iex ("gc " + ".env")',
+        "$script:c = 'gc .env'; iex $c",
+        "$hint = 'gc .env'; iex $script:hint",
+        "$hint = 'gc .env'; Write-Host done",
+        "$hint = ('gc .env')",
+        "$hint = 'gc .env' | Out-String",
+        "Write-Host ('x'); $hint = 'gc .env'",
+        "$hint = \"x $(gc .env)\"",
+        'Write-Host ("type .env") 6>&1 | iex',
+        '$x = Write-Host ("type .env")',
+        'Write-Output ("type .env")',
+        "$c = 'gc .env'; " + "x" * 33_000 + "; iex $c",
+    ])
+    def test_a_quoted_opener_something_could_run_keeps_the_old_split(self, command, tmp_path):
+        assert_hook_denied(run_guard_tool("PowerShell", {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
 
     @pytest.mark.parametrize("text, expected", [
         # separators cut outside quotes; a quoted span glues to its neighbours
@@ -10032,8 +10072,10 @@ class TestQuotedProgramsAreReadAsPrograms:
     legs reached a quoted program through four body readers only, so the
     carriers below read a dotenv the Read tool's rule would refuse. RED on
     main e9f0872f and again on 70bc9778: the carrier rows allowed. The two
-    reliefs that waited on this reader stay open (DEF-1044, DEF-1045): each
-    needs carriers this roster does not name read first."""
+    reliefs that waited on this reader (DEF-1044, DEF-1045) landed as
+    positive gates instead, since each needed carriers this roster does not
+    name: a quoted word is relieved only where nothing can run it, and every
+    carrier, named here or not, keeps the old reading."""
 
     @pytest.mark.parametrize("tool, command", [
         ("Bash", 'eval "cat .env"'),

@@ -439,7 +439,10 @@ def _statement_launches_claude(segment: str) -> bool:
     into `iex` and `Start-Process -ArgumentList` carrying one, and each
     `$env:` tail's re-read made a repeated prefix quadratic (measured
     2026-10-31). The carried launches are must-deny rows in the polarity
-    test file.
+    test file. So the relief is a positive gate instead of a reader of
+    carriers: `_a_test_run_holds_no_launch` re-reads a statement this scan
+    refuses only where it is a test run, the one kind of command whose
+    quoted operands are never run.
     """
     for raw in _TOKEN_SPLIT_RE.split(segment):
         if _normalise_target_token(raw) == _CLAUDE_BASENAME:
@@ -447,12 +450,106 @@ def _statement_launches_claude(segment: str) -> bool:
     return False
 
 
-def _occurrence_is_benign(tail: str) -> bool:
+#: DEF-1044's positive gate: the programs whose quoted operands the launch
+#: scan reads whole. A test run's operands name tests, paths and `-k`
+#: expressions, none of which it runs as a command, so a quoted path that
+#: crosses a `Claude Code` folder is a path there. Any other program keeps
+#: the quote-blind read, so a name missing here costs a false deny, never a
+#: launch let through. The interpreters reach a test run as `-m pytest`
+#: (`py` after a version switch), and an interpreter's script path is read
+#: whole too -- the hook a maintenance loop runs -- its later operands as
+#: before, since a script may run what it is handed.
+_TEST_RUN_PROGRAMS = ("pytest", "py.test")
+_TEST_RUN_INTERPRETERS = ("python", "python3", "py")
+#: Outside quotes, these could hand a quoted word to something other than
+#: the test run (a subshell, a group, a substitution, a script block): no
+#: relief. A pipe, a list operator or a redirect only ends the run's own
+#: operands; the words past one keep the quote-blind read.
+_TEST_RUN_NO_RELIEF = "()`{}"
+_TEST_RUN_OPERAND_ENDS = "|&<>"
+
+
+def _blank_quoted_spans(text: str) -> "str | None":
+    """``text`` with each quoted span blanked to its length, or None where a
+    quote never closes or a double-quoted span holds a substitution the
+    shell runs -- the fallbacks `_quote_aware_words` takes. The leftmost
+    span wins at each quote, as there, so a quote left over after the spans
+    are blanked is one that never closed."""
+    runs_something = False
+
+    def blank(span: "re.Match[str]") -> str:
+        nonlocal runs_something
+        if span.group()[0] == '"' and ("$(" in span.group() or "`" in span.group()):
+            runs_something = True
+        return " " * (span.end() - span.start())
+
+    out = _QUOTED_SPAN_RE.sub(blank, text)
+    if runs_something or '"' in out or "'" in out:
+        return None
+    return out
+
+
+def _test_run_operands(words: list[tuple[str, str]]) -> "set[int] | None":
+    """The indexes of the words DEF-1044's gate reads whole, or None when
+    ``words`` (one command, its program first) is neither a test run nor a
+    python script."""
+    program = _normalise_target_token(words[0][0])
+    if program in _TEST_RUN_PROGRAMS:
+        return set(range(1, len(words)))
+    if program not in _TEST_RUN_INTERPRETERS:
+        return None
+    i = 1
+    if (program == "py" and i < len(words) and words[i][0][:1] == "-"
+            and words[i][0][1:].replace(".", "").isdigit()):
+        i += 1  # `py -3`, `py -3.12`
+    if (i + 1 < len(words) and words[i][0] == "-m"
+            and words[i + 1][0] in _TEST_RUN_PROGRAMS):
+        return set(range(i + 2, len(words)))
+    if (i < len(words) and words[i][0][:1] != "-"
+            and words[i][1].lower().endswith(".py")):
+        return {i}
+    return None
+
+
+def _a_test_run_holds_no_launch(command: str, opaque: tuple[str, ...]) -> bool:
+    """DEF-1044: True when ``command`` -- one command, from its program word
+    on -- is a test run or a python script whose quoted operands, each read
+    whole, hold no launch, and whose every other word holds none read
+    quote-blind. False wherever the gate cannot read the command plainly
+    (an opaque character, a quote that never closes, a substitution, a
+    subshell or group), which leaves the caller's quote-blind deny standing.
+    """
+    if any(o in command for o in opaque):
+        return False
+    blank = _blank_quoted_spans(command)
+    if blank is None or any(c in blank for c in _TEST_RUN_NO_RELIEF):
+        return False
+    cut = min((blank.find(c) for c in _TEST_RUN_OPERAND_ENDS if c in blank),
+              default=len(command))
+    words = _quote_aware_words(command[:cut], _TOKEN_SPLIT_RE, opaque)
+    whole = _test_run_operands(words) if words else None
+    if whole is None:
+        return False
+    for index, (raw, word) in enumerate(words):
+        if index in whole and raw != word:
+            if _normalise_target_token(word) == _CLAUDE_BASENAME:
+                return False
+        elif _statement_launches_claude(raw):
+            return False
+    return not _statement_launches_claude(command[cut:])
+
+
+def _occurrence_is_benign(tail: str, reads: "dict[str, bool] | None" = None) -> bool:
     """Judge ONE assignment by the statement it heads.
 
     Scoped to the first statement of ``tail``: `VAR=1 pytest; claude` does NOT
     pass the variable across the `;`, so that `claude` is somebody else's
     business and must not make this occurrence deny.
+
+    A statement the quote-blind scan refuses is read again by DEF-1044's
+    gate from its program word on, once per command text: ``reads`` holds
+    the verdicts, so each of a chain of prefixes heading one test run costs
+    a dictionary lookup, not another read of the run.
     """
     # ⚠ A BACKSLASH-NEWLINE IS A CONTINUATION, NOT A STATEMENT BOUNDARY. Splicing
     # it out BEFORE the split is what keeps `VAR=1 \<nl>claude` one statement. Left
@@ -470,9 +567,19 @@ def _occurrence_is_benign(tail: str) -> bool:
     # sequence before segmenting, for the same reason.
     segment = _STATEMENT_SPLIT_RE.split(
         _bash_patterns.splice_line_continuations(tail), 1)[0]
-    if _BASH_ENV_PREFIX_TARGET_RE.search(segment) is None:
+    target = _BASH_ENV_PREFIX_TARGET_RE.search(segment)
+    if target is None:
         return False  # invokes nothing -> the deny stands
-    return not _statement_launches_claude(segment)
+    if not _statement_launches_claude(segment):
+        return True
+    if _statement_launches_claude(segment[:target.start(1)]):
+        return False  # the launch is in an assignment's value: no gate reads it
+    command = segment[target.start(1):]
+    if reads is None:
+        reads = {}
+    if command not in reads:
+        reads[command] = _a_test_run_holds_no_launch(command, _BASH_OPAQUE)
+    return reads[command]
 
 
 _STATEMENT_SPLIT_RE = re.compile(r"[;\n]")
@@ -492,7 +599,8 @@ def _harness_env_prefix_is_benign(command: str) -> bool:
     matches = list(_HARNESS_ENV_PREFIX_RE.finditer(command))
     if not matches:
         return False
-    return all(_occurrence_is_benign(command[m.end():]) for m in matches)
+    reads: dict[str, bool] = {}
+    return all(_occurrence_is_benign(command[m.end():], reads) for m in matches)
 
 # Pattern + message paired in one record so the message travels with the
 # pattern -- a parallel `dict[re.Pattern, str]` would key by compiled-regex
@@ -624,7 +732,37 @@ _PS_HARNESS_ENV_PREFIX_RE = re.compile(
 _PS_ENV_PREFIX_TARGET_RE = re.compile(r"^[^\n;|&]*[;\n][ \t]*([^\s;|&]+)")
 
 
-def _ps_occurrence_is_benign(match: "re.Match[str]", command: str) -> bool:
+def _ps_statements_hold_no_launch(tail: str, reads: dict[str, bool]) -> bool:
+    """DEF-1044 on the PowerShell leg, where the variable reaches every later
+    statement: True when the tail's first statement (the value) holds no
+    launch and each later one the quote-blind scan refuses is a test run the
+    gate reads clean (`_a_test_run_holds_no_launch`). Statements are cut at
+    `;` and line ends outside quotes; an opaque character or a quote that
+    never closes keeps the deny. ``reads`` keeps each statement's verdict, so
+    a chain of `$env:` prefixes reads each statement once, not once per
+    prefix."""
+    if any(o in tail for o in _PS_OPAQUE):
+        return False
+    blank = _blank_quoted_spans(tail)
+    if blank is None:
+        return False
+    pieces = blank.replace("\r", ";").replace("\n", ";").split(";")
+    if _statement_launches_claude(tail[:len(pieces[0])]):
+        return False
+    start = len(pieces[0]) + 1
+    for piece in pieces[1:]:
+        statement = tail[start:start + len(piece)]
+        start += len(piece) + 1
+        if statement not in reads:
+            reads[statement] = (not _statement_launches_claude(statement)
+                                or _a_test_run_holds_no_launch(statement.strip(), _PS_OPAQUE))
+        if not reads[statement]:
+            return False
+    return True
+
+
+def _ps_occurrence_is_benign(match: "re.Match[str]", command: str,
+                             reads: "dict[str, bool] | None" = None) -> bool:
     # ⚠ ONLY the anchored `$env:` arm gets the carve-out. `Set-Item` and
     # `SetEnvironmentVariable` are deliberately unanchored (they read far less
     # naturally inside prose), and handing THEM a carve-out keyed on a trailing
@@ -645,7 +783,9 @@ def _ps_occurrence_is_benign(match: "re.Match[str]", command: str) -> bool:
     # Bash `VAR=1 cmd` prefix scopes to that ONE command, but `$env:VAR` mutates
     # the running process, so EVERY later statement inherits it -- the variable
     # really does reach a `claude` three statements down.
-    return not _statement_launches_claude(tail)
+    if not _statement_launches_claude(tail):
+        return True
+    return _ps_statements_hold_no_launch(tail, {} if reads is None else reads)
 
 
 def _ps_harness_env_prefix_is_benign(command: str) -> bool:
@@ -655,7 +795,8 @@ def _ps_harness_env_prefix_is_benign(command: str) -> bool:
     matches = list(_PS_HARNESS_ENV_PREFIX_RE.finditer(command))
     if not matches:
         return False
-    return all(_ps_occurrence_is_benign(m, command) for m in matches)
+    reads: dict[str, bool] = {}
+    return all(_ps_occurrence_is_benign(m, command, reads) for m in matches)
 
 
 # ⚠ CMD.EXE `set` (DEF-1070). cmd.exe's `set` changes the cmd process's own
@@ -1296,6 +1437,79 @@ def _stream_editor_file_operands(args: list[tuple[str, str]]) -> list[tuple[str,
     return out
 
 
+def _names_once(command: str, name: str) -> bool:
+    """True when ``name`` appears exactly once in ``command`` as a whole
+    word, letter case aside: the variable an assignment binds is named
+    nowhere else, by any scope, brace or string that could reach it."""
+    low, key = command.lower(), name.lower()
+    count, i = 0, low.find(key)
+    while i != -1:
+        before = low[i - 1:i]
+        after = low[i + len(key):i + len(key) + 1]
+        if not (before.isalnum() or before == "_" or after.isalnum() or after == "_"):
+            count += 1
+        i = low.find(key, i + 1)
+    return count == 1
+
+
+def _ps_quoted_mentions(command: str) -> frozenset[int]:
+    """DEF-1045's positive gate: the offsets of the quoted strings that open
+    a statement and that nothing in ``command`` can run, read on the raw
+    command. Two arms:
+
+    - the right-hand side of an assignment that is the command's last
+      statement, to a plain `$name` the command names nowhere else, in a
+      command with no pipe, call operator, group or script block -- nothing
+      after it can run the string, and nothing before it can hold it;
+    - the one literal in `Write-Host (...)`, a statement of its own with
+      nothing after the parentheses: Write-Host writes to the host, which
+      no later command reads, and a redirect or pipe after it is excluded.
+
+    Empty wherever the command cannot be read plainly: an opaque character,
+    a quote that never closes, or a double-quoted span holding a
+    substitution, which runs."""
+    if any(o in command for o in _PS_OPAQUE):
+        return frozenset()
+    blank = _blank_quoted_spans(command)
+    if blank is None:
+        return frozenset()
+    plain = not any(c in blank for c in "|&(){}")
+    pieces = blank.replace("\r", ";").replace("\n", ";").split(";")
+    begins = [0]
+    for piece in pieces:
+        begins.append(begins[-1] + len(piece) + 1)
+    last = max((i for i in range(len(pieces))
+                if command[begins[i]:begins[i] + len(pieces[i])].strip()), default=-1)
+    found: set[int] = set()
+    start = 0
+    for index, piece in enumerate(pieces):
+        # Stripped on the raw piece: a blanked span at either end is blanks.
+        raw_piece = command[start:start + len(piece)]
+        at = start + len(raw_piece) - len(raw_piece.lstrip())
+        raw = raw_piece.strip()
+        body = blank[at:at + len(raw)]
+        start += len(piece) + 1
+        if body[:10].lower() == "write-host" and body[10:11] in (" ", "\t", "("):
+            opener, closer = body.find("("), len(body) - 1
+            if (opener != -1 and body[closer] == ")" and not body[10:opener].strip()
+                    and not body[opener + 1:closer].strip()):
+                inner = raw[opener + 1:closer]
+                if _QUOTED_SPAN_RE.fullmatch(inner.strip()):
+                    found.add(at + opener + 1 + len(inner) - len(inner.lstrip()))
+            continue
+        equals = body.find("=")
+        if not (plain and index == last and body[:1] == "$" and equals > 1
+                and body[equals + 1:equals + 2] != "="):
+            continue
+        name = body[1:equals].strip()
+        if not (name.replace("_", "a").isalnum() and not name[0].isdigit()):
+            continue
+        rhs = raw[equals + 1:]
+        if _QUOTED_SPAN_RE.fullmatch(rhs.strip()) and _names_once(command, name):
+            found.add(at + equals + 1 + len(rhs) - len(rhs.lstrip()))
+    return frozenset(found)
+
+
 def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     """Path tokens read by a recognized PowerShell read verb, per statement --
     the PowerShell twin of `_secret_read_targets` (DEF-718).
@@ -1310,13 +1524,15 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     first word, unquoted, with its path and `.exe` stripped (`& 'Get-Content'
     .env`, `C:\\Windows\\System32\\certutil.exe -encode .env x`);
     `return`/`throw` before it are skipped. A statement that OPENS with a
-    quoted string the old split cuts apart keeps the old split, so
-    `$hint = 'gc .env'` is still read as `gc` and refused: whether that
-    string is harmless depends on whether the command later runs it, and the
-    carrier reader below (DEF-1131) reads a string only where a carrier takes
-    it as an operand, not one piped into `iex`, joined with `+` or bound by
-    a form the pre-pass declines, all of which the old split refuses
-    (`DEF-1045`, measured 2026-10-31). A
+    quoted string the old split cuts apart keeps the old split, and reads
+    the string's first word as the verb, unless `_ps_quoted_mentions` finds
+    nothing in the command can run it (DEF-1045): whether a string is
+    harmless depends on whether the command runs it, and the carrier reader
+    below (DEF-1131) reads a string only where a carrier takes it as an
+    operand, not one piped into `iex`, joined with `+` or bound by a form
+    the pre-pass declines, all of which the old split refuses (measured
+    2026-10-31). So `$hint = 'gc .env'` alone is a mention, and the same
+    assignment with a later `iex $hint` is refused as a read. A
     switch's colon-bound value (`-Path:.env`) is an operand; a bare `#` or a
     redirect ends the operands; a `(` glued to the head or to `@`/`$` opens
     an argument (`_PS_GLUED_PAREN_RE`), a free-standing one a statement.
@@ -1327,12 +1543,17 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     scan = _ps_blank_argument_parens(_bash_patterns.powershell_scan_text(command))
     out: list[str] = []
     aware = not _a_boundary_sits_in_a_quote(scan, _PS_STATEMENT_BOUNDARY_RE)
-    for statement in _PS_STATEMENT_BOUNDARY_RE.split(scan):
+    # The scan keeps the command's offsets wherever no backtick joined a
+    # line, and a backtick is opaque to the gate, which then reads nothing.
+    mentions = _ps_quoted_mentions(command) if len(scan) == len(command) else frozenset()
+    starts = [0] + [m.end() for m in _PS_STATEMENT_BOUNDARY_RE.finditer(scan)]
+    for start, statement in zip(starts, _PS_STATEMENT_BOUNDARY_RE.split(scan)):
         text = statement.strip()
         words = (_quote_aware_words(text, _PS_SECRET_TOKEN_SPLIT_RE, _PS_OPAQUE)
                  if aware else _split_words(text, _PS_SECRET_TOKEN_SPLIT_RE))
         if words and words[0][0][:1] in ("'", '"') and len(
-                _split_words(words[0][0], _PS_SECRET_TOKEN_SPLIT_RE)) > 1:
+                _split_words(words[0][0], _PS_SECRET_TOKEN_SPLIT_RE)) > 1 and (
+                start + len(statement) - len(statement.lstrip()) not in mentions):
             words = _split_words(text, _PS_SECRET_TOKEN_SPLIT_RE)
         if words and words[0][0].lower() in ("return", "throw"):
             words = words[1:]

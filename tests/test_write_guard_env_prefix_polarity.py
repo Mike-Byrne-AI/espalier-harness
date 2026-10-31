@@ -735,3 +735,142 @@ def test_powershell_anchor_is_derived_not_hand_inlined():
         "the `$env:` arm must COMPOSE `_PS_CMD_POS`, not restate part of it — "
         "the hand-inlined class had no exec-quote arm and dropped four separators"
     )
+
+
+# ── DEF-1044: a test run's quoted operands are read whole ───────────────────
+#
+# The launch scan reads every quoted word one blank-cut fragment at a time on
+# purpose (`write_guard._statement_launches_claude` says why: a launch handed
+# to any carrier inside a quoted string stays refused without a roster of the
+# carriers). Its cost fell on the maintenance loop's own commands: a quoted
+# path crossing a `Claude Code` folder, and a quoted `-k` expression opening
+# with `claude`, each folded to the launcher's basename and were refused with
+# a message that says the prefix reaches nothing. The relief is a positive
+# gate: a quoted word is read whole only as an operand of a test run, or as a
+# python interpreter's script path, before any pipe or redirect of a command
+# with no subshell or substitution. Everything else keeps the quote-blind
+# scan, so the rows below pin the gate from both sides.
+
+_SPACED_TESTS = "work/Claude Code/repo/tests"
+_SPACED_HOOK = "work/Claude Code/repo/tools/cc/hooks/write_guard.py"
+_TEST_RUNS = ("pytest", "py.test", "pytest.exe", "python -m pytest",
+              "python3 -m pytest", "py -3 -m pytest")
+_QUOTED_OPERANDS = (f'"{_SPACED_TESTS}"', f"'{_SPACED_TESTS}'",
+                    '-k "claude and not slow"', "-k 'claude or slow'",
+                    f'-q "{_SPACED_TESTS}/test_x.py::TestY" -x')
+
+
+@pytest.mark.parametrize("run", _TEST_RUNS)
+@pytest.mark.parametrize("operand", _QUOTED_OPERANDS)
+def test_bash_a_test_runs_quoted_operand_is_read_whole(run, operand):
+    command = f"{STOP}=full {run} {operand}"
+    assert not _denies(wg.check_bash_dangerous_patterns, command), command
+
+
+@pytest.mark.parametrize("run", _TEST_RUNS)
+@pytest.mark.parametrize("operand", _QUOTED_OPERANDS)
+def test_powershell_a_test_runs_quoted_operand_is_read_whole(run, operand):
+    command = f'$env:{STOP}="full"; {run} {operand}'
+    assert not _denies(wg.check_powershell, command), command
+
+
+@pytest.mark.parametrize("command", [
+    f'{ENV_VAR}=1 python "{_SPACED_HOOK}"',
+    f'{ENV_VAR}=1 python3 "{_SPACED_HOOK}" --verbose',
+    f'{ENV_VAR}=1 py -3 "{_SPACED_HOOK}"',
+    f'{ENV_VAR}=1 {STOP}=full pytest "{_SPACED_TESTS}"',
+    f'{STOP}=full pytest "{_SPACED_TESTS}" 2>&1 | tail -5',
+    f'{STOP}=full pytest "{_SPACED_TESTS}" > out.txt',
+])
+def test_bash_the_relief_covers_the_maintenance_loops_other_shapes(command):
+    assert not _denies(wg.check_bash_dangerous_patterns, command), command
+
+
+@pytest.mark.parametrize("command", [
+    f'$env:{ENV_VAR}="1"; python "{_SPACED_HOOK}"',
+    f'$env:{ENV_VAR}="1"; $env:{STOP}="full"; pytest "{_SPACED_TESTS}"',
+    f"$env:{STOP}='full'\npytest '{_SPACED_TESTS}'",
+    f'$env:{STOP}="full"; pytest "{_SPACED_TESTS}" 2>&1 | Select-Object -Last 5',
+])
+def test_powershell_the_relief_covers_the_maintenance_loops_other_shapes(command):
+    assert not _denies(wg.check_powershell, command), command
+
+
+# The gate's other side. Each row keeps today's refusal, because the quoted
+# word that folds to the launcher is not a plain operand of a test run: it IS
+# the launcher read whole, it sits past the run's first pipe or redirect, a
+# substitution or subshell could run it, an escape character makes the quoting
+# unreadable, it follows a python script's path, or the program is not a test
+# run at all (the last two are declared false denies, kept on purpose).
+_NOT_A_PLAIN_OPERAND = (
+    'pytest "claude"',
+    'pytest "work/bin/claude.exe"',
+    f'pytest "{_SPACED_TESTS}" | sh -c "claude -p x"',
+    f'pytest "{_SPACED_TESTS}" && claude -p x',
+    'pytest "$(claude -p x)"',
+    'pytest "`claude -p x`"',
+    f'pytest $(echo "{_SPACED_TESTS}")',
+    f'pytest "a\\" b" "{_SPACED_TESTS}"',
+    'python run.py "claude -p x"',
+    'python -c "claude"',
+    'python -m runner "claude -p x"',
+    f'X="$(claude -p x)" pytest "{_SPACED_TESTS}"',
+    f'ls "{_SPACED_TESTS}"',
+)
+
+
+@pytest.mark.parametrize("tail", _NOT_A_PLAIN_OPERAND)
+def test_bash_the_relief_is_a_positive_gate(tail):
+    command = f"{STOP}=full {tail}"
+    assert _denies(wg.check_bash_dangerous_patterns, command), command
+
+
+_PS_NOT_A_PLAIN_OPERAND = (
+    'pytest "claude"',
+    f'pytest "{_SPACED_TESTS}" | Invoke-Expression "claude -p x"',
+    f'pytest "{_SPACED_TESTS}"; claude -p x',
+    f'pytest "{_SPACED_TESTS}"; ls "{_SPACED_TESTS}"',
+    'pytest "$(claude -p x)"',
+    f'pytest (Get-Item "{_SPACED_TESTS}")',
+    f'pytest "a`" b" "{_SPACED_TESTS}"',
+    "python run.py 'claude -p x'",
+    f'ls "{_SPACED_TESTS}"',
+)
+
+
+@pytest.mark.parametrize("tail", _PS_NOT_A_PLAIN_OPERAND)
+def test_powershell_the_relief_is_a_positive_gate(tail):
+    command = f'$env:{STOP}="full"; {tail}'
+    assert _denies(wg.check_powershell, command), command
+
+
+def test_powershell_a_launch_in_the_value_keeps_the_deny():
+    """The gate reads only the statements after the value; a launch in the
+    value itself runs before any of them, and keeps the quote-blind deny."""
+    command = f'$env:{STOP}=$(claude -p x); pytest "{_SPACED_TESTS}"'
+    assert _denies(wg.check_powershell, command), command
+
+
+def _quote_aware_reads(monkeypatch, fn, command):
+    calls = []
+    real = wg._quote_aware_words
+
+    def counting(*args, **kwargs):
+        calls.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(wg, "_quote_aware_words", counting)
+    assert not _denies(fn, command), command[:80]
+    return len(calls)
+
+
+def test_the_relief_reads_a_statement_once_however_many_prefixes_head_it(monkeypatch):
+    """A repeated prefix reads the test run once, not once per prefix: the
+    first cut re-read each prefix's whole tail, and 200 of them (10 KB) took
+    3.55 s against 0.11 s, past the hook's budget (measured 2026-10-31)."""
+    bash = lambda n: " ".join([f"{STOP}=full"] * n) + f' pytest "{_SPACED_TESTS}"'
+    assert (_quote_aware_reads(monkeypatch, wg.check_bash_dangerous_patterns, bash(200))
+            == _quote_aware_reads(monkeypatch, wg.check_bash_dangerous_patterns, bash(2)))
+    ps = lambda n: f'$env:{STOP}="full"; ' * n + f'pytest "{_SPACED_TESTS}"'
+    assert (_quote_aware_reads(monkeypatch, wg.check_powershell, ps(200))
+            == _quote_aware_reads(monkeypatch, wg.check_powershell, ps(2)))
