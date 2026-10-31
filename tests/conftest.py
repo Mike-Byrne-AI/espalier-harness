@@ -730,6 +730,9 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             "test_session_start_maintenance_warn",
             # TP-177 W6-3 — SessionStart WARN on an unresolved hook interpreter
             "test_session_start_interpreter_warn",
+            # DEF-3015 — SessionStart cuts itself at its wall with a short banner
+            # inside the host's 15 s timeout; spawns the hook with a phase stalled.
+            "test_session_start_wall",
             # DEF-968 class — every reader of a wired hook's interpreter reads
             # the argv the hook runs (the warning, doctor, the rewire, the
             # enforcement claim, the gate-wiring check); spawns real launcher
@@ -1663,6 +1666,7 @@ _SLOW_FILES: set[str] = {
     "test_session_start_freshness_banner",
     "test_session_start_interpreter_warn",
     "test_session_start_maintenance_warn",
+    "test_session_start_wall",
     "test_settings_profiles",
     "test_sister_site_probe_regression",
     # One `git init` + `espalier init` per module, then the DEPLOYED probe as a
