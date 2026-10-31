@@ -25,16 +25,20 @@ Pack §1 functions return deterministic, slash-normalized lists.
 """
 from __future__ import annotations
 
+import fnmatch
 import hashlib
+import os
 from pathlib import Path
 
-from espalier import __version__, surface_contract
+from espalier import __version__, fusion_manifest, surface_contract
 from espalier._safe_walk import safe_rglob, visible
 from espalier.asset_inventory import get_packaged_surface
 from espalier.assets import assets_root
 from espalier.managed_markers import SEED_STAMP_TOKEN, path_has_seed_stamp
 from espalier.managed_paths import (
+    HARNESS_OWNED_ROOTS,
     STANDARD_MANAGED_CC_DOCS,
+    STANDARD_MANAGED_ROOT_DOCS,
     STANDARD_MANAGED_TOOLS,
 )
 
@@ -55,6 +59,8 @@ __all__ = [
     "count_unstamped_seed_docs",
     "get_seed_asset_source",
     "get_install_ci_artifacts",
+    "census_prune_paths",
+    "harness_written_paths",
     "seed_needs_adapt_header",
     "SEED_ADAPT_HEADER",
     "seed_stamp_line",
@@ -464,6 +470,179 @@ def get_install_ci_artifacts() -> tuple[str, ...]:
     it. See ``_INSTALL_CI_ARTIFACT_REL_PATHS``.
     """
     return _INSTALL_CI_ARTIFACT_REL_PATHS
+
+
+_FUSE_TOOLS_TREE: tuple[str, ...] = (
+    "tools/cc/",
+    "tools/__init__.py",
+    "tools/review_agent_audit.py",
+)
+"""What ``fusion_manifest.HARNESS_INCLUDE``'s ``tools/`` brings: this
+repository's tracked ``tools/`` tree, entry by entry, so a deployed census
+prunes those and never an adopter's own ``tools/`` (``espalier.analyze``
+keeps the same line: only ``tools/cc/`` is the harness's). A hand copy of
+the tracked tree, pinned equal to it by
+``tests/test_managed_inventory.py::TestHarnessWrittenPaths``."""
+
+
+#: The harness's own records that grow with use, one file per entry: the
+#: Session Log rows a handoff writes (``surface_contract.SESSION_LOG_DIR``,
+#: pinned equal to the loader's by tests/test_managed_inventory.py) and the
+#: forward ledger's row and probe files.
+_HARNESS_RECORD_DIRS: tuple[str, ...] = (
+    surface_contract.SESSION_LOG_DIR, *surface_contract.SHIPPED_TASK_PACK_DIRS,
+)
+
+#: What the harness writes under ``reports/`` (its fingerprint, config, gate
+#: and scanner reports): JSON, JSON lines and Markdown, at any depth. A census
+#: prunes these rather than the directory, so an adopter's own ``reports/``
+#: package (a Django app of that name) stays theirs, and a report the harness
+#: adds later is pruned without a name joining a list.
+_REPORT_GLOBS: tuple[str, ...] = ("reports/*.json", "reports/*.jsonl", "reports/*.md")
+
+
+def _init_written_paths() -> set[str]:
+    """What ``init``, ``install-ci`` and the deployed runtime write: the owned
+    roots, the root docs and the seeds, the runtime files and roots, the CI
+    artifacts, the ledger's files and the records that grow with use."""
+    paths = {root + "/" for root in HARNESS_OWNED_ROOTS}
+    paths.update(STANDARD_MANAGED_ROOT_DOCS)
+    paths.update(_SEED_DOC_REL_PATHS)
+    paths.update(_LOCAL_RUNTIME_REL_PATHS)
+    paths.update(_LOCAL_RUNTIME_PREFIXES)
+    paths.update(_INSTALL_CI_ARTIFACT_REL_PATHS)
+    # The ledger's probe roster beside the two seeded task-pack files: init
+    # creates it through the deployed ledger verb, so no seed list names it.
+    paths.update(surface_contract.SHIPPED_TASK_PACK_FILES)
+    paths.update(_HARNESS_RECORD_DIRS)
+    return paths
+
+
+def _fuse_written_paths() -> set[str]:
+    """What ``fuse`` adds: ``fusion_manifest.HARNESS_INCLUDE``, its ``tools/``
+    read as :data:`_FUSE_TOOLS_TREE`, and the two files it writes itself."""
+    paths = set(fusion_manifest.FUSE_WRITTEN_FILES)
+    for rel in fusion_manifest.HARNESS_INCLUDE:
+        if rel == "tools/":
+            paths.update(_FUSE_TOOLS_TREE)
+        else:
+            paths.add(rel)
+    return paths
+
+
+def _collapse(paths: set[str]) -> tuple[str, ...]:
+    """``paths`` sorted, a member under a listed directory or matched by a
+    listed glob dropped: the roster names it once, as the directory or the
+    glob (``find -path``'s ``*`` crosses ``/``, and so does ``fnmatch``'s)."""
+    dirs = [p for p in paths if p.endswith("/")]
+    globs = [p for p in paths if "*" in p]
+    return tuple(sorted(
+        p for p in paths
+        if not any(p != d and p.startswith(d) for d in dirs)
+        and not any(p != g and fnmatch.fnmatchcase(p, g) for g in globs)
+    ))
+
+
+def harness_written_paths() -> tuple[str, ...]:
+    """Every path the harness may write into an adopter's tree, sorted: a
+    directory with a trailing ``/``, a file without.
+
+    The union of what ``init``, ``install-ci`` and the runtime write and what
+    ``fuse`` vendors, whatever the tree. It is the population
+    :func:`census_prune_paths` filters for one tree, and the coverage oracle's
+    roster: a file the harness writes that is on no list here is a census row
+    no tree prunes.
+    """
+    return _collapse(_init_written_paths() | _fuse_written_paths())
+
+
+def _case_insensitive(root: Path) -> bool:
+    """Whether ``root``'s filesystem folds case (APFS and NTFS by default):
+    ``root``'s own name, case-swapped, names it. A name with no letter cannot
+    tell, and reads as case-sensitive."""
+    try:
+        resolved = root.resolve()
+    except OSError:
+        return False
+    name = resolved.name
+    if not any(c.isalpha() for c in name):
+        return False
+    return (resolved.parent / name.swapcase()).exists()
+
+
+def _on_disk_casing(root: Path, rel: str) -> str:
+    """``rel`` spelled as the directories under ``root`` spell it, on a
+    filesystem that folds case: an adopter's ``Docs/`` holds the seeds ``init``
+    wrote to ``docs/``, and ``find -path`` compares case. A component no
+    directory holds, or one with a glob, is kept as written."""
+    parts = rel.rstrip("/").split("/")
+    trail = "/" if rel.endswith("/") else ""
+    out: list[str] = []
+    cur = root
+    for i, part in enumerate(parts):
+        if "*" in part:
+            out.extend(parts[i:])
+            break
+        try:
+            names = os.listdir(cur)
+        except OSError:
+            out.extend(parts[i:])
+            break
+        if part not in names:
+            folded = [n for n in names if n.lower() == part.lower()]
+            if len(folded) == 1:
+                part = folded[0]
+        out.append(part)
+        cur = cur / part
+    return "/".join(out) + trail
+
+
+def census_prune_paths(repo_root: Path, *, fused: bool | None = None) -> tuple[str, ...]:
+    """The paths the deployed censuses prune on ``repo_root``: what the
+    harness wrote there, never a file of the adopter's that shares a name.
+
+    ``harness_written_paths`` read against the tree, at deploy:
+
+    - ``fuse``'s paths only on a fused tree (``fused``, else its marker
+      ``fusion_manifest.FUSION_MARKER`` on disk), so a plain tree's own
+      ``tools/__init__.py``, ``bench/`` or ``docs/external/`` stay counted;
+    - a seed only where it is absent (``init`` is about to write it) or opens
+      with the seed stamp (``init`` wrote it): ``init`` keeps an adopter's own
+      ``docs/HOOKS.md``, and so does the census. On a fused tree a path the
+      overlay brings is the harness's whatever its stamp, since ``fuse``
+      refuses a host file at a harness path;
+    - ``reports/`` by :data:`_REPORT_GLOBS`, never whole;
+    - each path in the casing the tree's directories hold, on a filesystem
+      that folds case.
+
+    The deployed censuses (the repo-analyst's three fences, the
+    code-reviewer's two) walk the adopter's files minus these:
+    ``harness_config.render_own_walk`` renders them into their ``own`` line
+    (``cli._asset_transform`` at ``init`` and ``upgrade``, ``fuse`` once its
+    overlay is down), where the source bodies keep a two-root fallback
+    (DEF-4066: on a fresh ``init`` 38 of the 44 files the census counted were
+    the harness's, and Markdown was the first language). The render is fixed
+    at deploy: a seed the adopter later strips the stamp from is theirs at
+    the next ``upgrade``.
+    """
+    if fused is None:
+        fused = (repo_root / fusion_manifest.FUSION_MARKER).is_file()
+    fuse_paths = _fuse_written_paths() if fused else set()
+    seeds = set(_SEED_DOC_REL_PATHS)
+    insensitive = _case_insensitive(repo_root)
+    out: set[str] = set()
+    for rel in _init_written_paths() | fuse_paths:
+        if rel == "reports/":
+            candidates: tuple[str, ...] = _REPORT_GLOBS
+        else:
+            if rel in seeds and rel not in fuse_paths:
+                path = repo_root / rel
+                if path.exists() and not path_has_seed_stamp(path):
+                    continue
+            candidates = (rel,)
+        for cand in candidates:
+            out.add(_on_disk_casing(repo_root, cand) if insensitive else cand)
+    return _collapse(out)
 
 
 _PUBLIC_PREFIXES: tuple[str, ...] = (

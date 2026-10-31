@@ -246,6 +246,91 @@ class TestRenderAgentTools:
         assert out == "---\r\nname: x\r\ntools: Read, Grep, Bash(npm test), Bash(npm test *)\r\n---\r\nbody\r\n"
 
 
+class TestRenderOwnWalk:
+    """The deploy's render of a census fence's ``own`` walk: the one line in the
+    fallback's shape takes every path the harness writes, so no body keeps the
+    roster by hand (DEF-4066: the body-kept list named two of the 38 files
+    init had written)."""
+
+    FALLBACK = 'own() { walk "$@" ! -path "*/tools/cc" ! -path "*/tools/cc/*" ! -path "*/.claude" ! -path "*/.claude/*"; }'
+    OVERRIDE = 'own() { walk "$@"; }'
+    BODY = (
+        'walk() {\n  find . "$@" ! -path "*/.git"\n}\n' + FALLBACK + "\n"
+        "# <!-- espalier:self-host-only -->\n" + OVERRIDE + "\n# <!-- /espalier:self-host-only -->\n"
+        "own -type f\n"
+    )
+
+    def test_a_directory_prunes_itself_and_its_contents_and_a_file_itself(self):
+        from espalier.harness_config import own_walk_prunes
+
+        assert own_walk_prunes(["cc/", "docs/HOOKS.md"]) == (
+            '! -path "./cc" ! -path "./cc/*" ! -path "./docs/HOOKS.md"'
+        )
+        assert own_walk_prunes([]) == ""
+
+    def test_the_fallback_line_alone_is_rendered(self):
+        from espalier.harness_config import render_own_walk
+
+        out = render_own_walk(self.BODY, ["cc/", "docs/HOOKS.md"])
+        rendered = 'own() { walk "$@" ! -path "./cc" ! -path "./cc/*" ! -path "./docs/HOOKS.md"; }'
+        assert out == self.BODY.replace(self.FALLBACK, rendered), out
+        assert self.OVERRIDE in out and "own -type f\n" in out
+
+    def test_a_trees_roster_keeps_the_fallbacks_roots_on_one_line(self, tmp_path):
+        from espalier.harness_config import own_walk_prunes, render_own_walk
+        from espalier.managed_inventory import census_prune_paths
+
+        roster = census_prune_paths(tmp_path)
+        out = render_own_walk(self.BODY, roster)
+        line = [ln for ln in out.splitlines() if ln.startswith("own() {") and ln != self.OVERRIDE]
+        assert line == ['own() { walk "$@" ' + own_walk_prunes(roster) + '; }'], line
+        for root in ("tools/cc", ".claude"):
+            assert f'! -path "./{root}" ! -path "./{root}/*"' in line[0], root
+        assert len(line[0]) > 1000, len(line[0])  # one line: the ledger probe reads to the first newline
+
+    def test_a_rendered_body_renders_again_to_the_line_its_paths_give(self):
+        from espalier.harness_config import render_own_walk
+
+        once = render_own_walk(self.BODY, ["cc/"])
+        assert once != self.BODY and render_own_walk(once, ["cc/"]) == once
+        again = render_own_walk(once, ["cc/", "espalier/"])
+        assert again == render_own_walk(self.BODY, ["cc/", "espalier/"]), again
+
+    def test_a_suffix_glob_prunes_every_such_file_under_its_directory(self):
+        from espalier.harness_config import own_walk_prunes
+
+        assert own_walk_prunes(["reports/*.json"]) == '! -path "./reports/*.json"'
+
+    @pytest.mark.parametrize("bad", [
+        'docs/"x".md', "docs/$HOME.md", "docs/`x`.md", "docs\\x.md",
+        "docs/x?.md", "docs/[x].md", "*.md", "reports/*", "a/*/b.md",
+    ])
+    def test_a_path_a_find_test_cannot_carry_raises(self, bad):
+        from espalier.harness_config import own_walk_prunes
+
+        with pytest.raises(ValueError, match="not a path a find test can carry"):
+            own_walk_prunes([bad])
+
+    def test_a_body_without_the_definition_is_returned_as_it_is(self):
+        from espalier.harness_config import render_own_walk
+
+        for body in ("no walk here\n", self.OVERRIDE + "\n", 'own() { walk "$@" -type f; }\n'):
+            assert render_own_walk(body, ["cc/"]) == body, body
+
+    def test_an_empty_roster_renders_nothing(self):
+        from espalier.harness_config import render_own_walk
+
+        assert render_own_walk(self.BODY, []) == self.BODY
+
+    def test_a_crlf_body_keeps_its_line_endings(self):
+        from espalier.harness_config import render_own_walk
+
+        body = self.BODY.replace("\n", "\r\n")
+        out = render_own_walk(body, ["cc/"])
+        assert out == body.replace(self.FALLBACK, 'own() { walk "$@" ! -path "./cc" ! -path "./cc/*"; }'), out
+        assert "\n" not in out.replace("\r\n", "")
+
+
 class TestChooseAgents:
     def test_always_includes_code_reviewer(self):
         fp = _minimal_fp(test_commands=["pytest"])

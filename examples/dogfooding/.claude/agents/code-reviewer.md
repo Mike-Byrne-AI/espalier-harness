@@ -204,6 +204,33 @@ Run this phase when asked to check convention health or when reviewing a large s
 ### Phase 1 — Code Convention Detection
 
 ```bash
+# Every census here reads the repository's own source. `walk` is find without
+# .git, the dependency trees and the build and cache directories the harness's
+# own repository walk skips (each named twice: the directory and what is under
+# it, at any depth); `own` is `walk` without what the harness wrote: the two
+# deployed layers here, and at deploy every path init, install-ci and fuse
+# wrote on this tree, rendered into that one line and anchored at the root.
+# The same pair, byte for byte, as the repo-analyst's fences (a fence is one
+# shell); run the fence whole, or `own` is undefined. A caller
+# passes tests only, parenthesised around any -o, and never an action: the
+# prunes come after "$@". CENSUS says which census ran.
+walk() {
+  find . "$@" ! -path "*/.git" ! -path "*/.git/*" ! -path "*/__pycache__" ! -path "*/__pycache__/*" \
+    ! -path "*/node_modules" ! -path "*/node_modules/*" ! -path "*/bower_components" ! -path "*/bower_components/*" \
+    ! -path "*/jspm_packages" ! -path "*/jspm_packages/*" ! -path "*/.yarn" ! -path "*/.yarn/*" ! -path "*/.pnpm-store" ! -path "*/.pnpm-store/*" \
+    ! -path "*/.venv" ! -path "*/.venv/*" ! -path "*/venv" ! -path "*/venv/*" ! -path "*/vendor" ! -path "*/vendor/*" ! -path "*/third_party" ! -path "*/third_party/*" \
+    ! -path "*/build" ! -path "*/build/*" ! -path "*/dist" ! -path "*/dist/*" ! -path "*/target" ! -path "*/target/*" \
+    ! -path "*/coverage" ! -path "*/coverage/*" ! -path "*/htmlcov" ! -path "*/htmlcov/*" ! -path "*/.next" ! -path "*/.next/*" \
+    ! -path "*/.mypy_cache" ! -path "*/.mypy_cache/*" ! -path "*/.pytest_cache" ! -path "*/.pytest_cache/*" ! -path "*/.ruff_cache" ! -path "*/.ruff_cache/*"
+}
+own() { walk "$@" ! -path "*/tools/cc" ! -path "*/tools/cc/*" ! -path "*/.claude" ! -path "*/.claude/*"; }
+CENSUS=
+# <!-- espalier:self-host-only -->
+# On this repository tools/cc/ and .claude/ are its source, and the census is
+# of its engine, espalier/, against tests/; init strips this block from every
+# other tree, where the census below it reads the adopter's own modules.
+own() { walk "$@"; }
+CENSUS=harness
 echo "=== SURFACE STATUS ==="
 [ -d espalier/ ] && echo "espalier/ present" || echo "espalier/ MISSING — phase 1 skipped"
 [ -d tests/ ] && echo "tests/ present" || echo "tests/ MISSING"
@@ -213,7 +240,7 @@ echo "=== Naming style (multi-file sample) ==="
 grep -rn "^def " espalier/ --include="*.py" 2>/dev/null | grep -v __pycache__ | head -20
 
 echo "=== Type hints coverage ==="
-grep -c "-> " espalier/*.py 2>/dev/null | sort -t: -k2 -rn | head -10
+grep -c -e "-> " espalier/*.py 2>/dev/null | sort -t: -k2 -rn | head -10
 grep -c "^def " espalier/*.py 2>/dev/null | sort -t: -k2 -rn | head -10
 
 echo "=== Error handling style ==="
@@ -226,6 +253,42 @@ grep -rn "file=sys.stderr" espalier/ --include="*.py" 2>/dev/null | wc -l
 echo "=== Private function prefix usage ==="
 grep -rn "^def _" espalier/ --include="*.py" 2>/dev/null | grep -v __pycache__ | wc -l
 grep -rn "^def [^_]" espalier/ --include="*.py" 2>/dev/null | grep -v __pycache__ | wc -l
+# <!-- /espalier:self-host-only -->
+if [ -z "$CENSUS" ]; then
+  # The repository's own Python modules outside its test tree, through find
+  # (a glob a zsh host cannot expand aborts the command), one path per line;
+  # every grep below reads that list and nothing else. A tree with none says
+  # so and runs no census: a bare 0 under a heading reads as a finding.
+  SRC=$(own -type f -name "*.py" ! -name "test_*.py" ! -name "*_test.py" ! -name "conftest.py" ! -path "*/tests/*" ! -path "*/test/*" | sort)
+  TDIR=; for d in tests test; do [ -d "$d" ] && { TDIR=$d; break; }; done
+  echo "=== SURFACE STATUS ==="
+  if [ -n "$SRC" ]; then
+    echo "Python modules outside the test tree: $(printf '%s\n' "$SRC" | grep -c .)"
+  else
+    echo "no Python modules outside the test tree — phase 1 NOT EVALUATED"
+  fi
+  [ -n "$TDIR" ] && echo "$TDIR/ present" || echo "test tree MISSING (tests/, test/)"
+  [ -f docs/CONVENTIONS.md ] && echo "docs/CONVENTIONS.md present ($(wc -l < docs/CONVENTIONS.md) lines)" || echo "docs/CONVENTIONS.md MISSING"
+  if [ -n "$SRC" ]; then
+    echo "=== Naming style (multi-file sample) ==="
+    printf '%s\n' "$SRC" | tr '\n' '\0' | xargs -0 grep -Hn "^def " 2>/dev/null | head -20
+
+    echo "=== Type hints coverage ==="
+    printf '%s\n' "$SRC" | tr '\n' '\0' | xargs -0 grep -cH -e "-> " 2>/dev/null | sort -t: -k2 -rn | head -10
+    printf '%s\n' "$SRC" | tr '\n' '\0' | xargs -0 grep -cH "^def " 2>/dev/null | sort -t: -k2 -rn | head -10
+
+    echo "=== Error handling style ==="
+    printf '%s\n' "$SRC" | tr '\n' '\0' | xargs -0 grep -Hn "except" 2>/dev/null | head -10
+
+    echo "=== Print vs stderr (output convention) ==="
+    printf '%s\n' "$SRC" | tr '\n' '\0' | xargs -0 grep -Hn "print(" 2>/dev/null | grep -v "file=sys.stderr" | head -10
+    printf '%s\n' "$SRC" | tr '\n' '\0' | xargs -0 grep -Hn "file=sys.stderr" 2>/dev/null | wc -l
+
+    echo "=== Private function prefix usage ==="
+    printf '%s\n' "$SRC" | tr '\n' '\0' | xargs -0 grep -Hn "^def _" 2>/dev/null | wc -l
+    printf '%s\n' "$SRC" | tr '\n' '\0' | xargs -0 grep -Hn "^def [^_]" 2>/dev/null | wc -l
+  fi
+fi
 ```
 
 ### Phase 2 — Git Convention Detection
@@ -244,17 +307,29 @@ git log --format="%b" -20 2>/dev/null | grep -c "Co-Authored-By" && echo "co-aut
 ### Phase 3 — Testing Patterns
 
 ```bash
+# The repository's test tree by its usual names; every grep here reads it
+# alone, and a tree without one says so and runs no census.
+TDIR=; for d in tests test; do [ -d "$d" ] && { TDIR=$d; break; }; done
 echo "=== Test file naming ==="
-ls tests/ 2>/dev/null
+if [ -n "$TDIR" ]; then
+  ls "$TDIR"
+  # The checks below read pytest's shapes; a test tree with no Python file
+  # (a Node project's test/) says so in place of their empty sections.
+  if find "$TDIR" -type f -name "*.py" 2>/dev/null | grep -q .; then
+    echo "=== Test function naming ==="
+    grep -rn "def test_" "$TDIR" --include="*.py" 2>/dev/null | head -10
 
-echo "=== Test function naming ==="
-grep -rn "def test_" tests/ --include="*.py" 2>/dev/null | head -10
+    echo "=== Mock/patch usage ==="
+    grep -rn "mock\|Mock\|patch\|MagicMock" "$TDIR" --include="*.py" 2>/dev/null | head -10
 
-echo "=== Mock/patch usage ==="
-grep -rn "mock\|Mock\|patch\|MagicMock" tests/ --include="*.py" 2>/dev/null | head -10
-
-echo "=== tmp_path fixture usage ==="
-grep -rn "tmp_path" tests/ --include="*.py" 2>/dev/null | wc -l
+    echo "=== tmp_path fixture usage ==="
+    grep -rn "tmp_path" "$TDIR" --include="*.py" 2>/dev/null | wc -l
+  else
+    echo "no Python test files under $TDIR/ — the pytest checks are NOT EVALUATED"
+  fi
+else
+  echo "test tree MISSING (tests/, test/) — phase 3 NOT EVALUATED"
+fi
 ```
 
 ### Phase 4 — Convention Drift Check
@@ -263,27 +338,65 @@ grep -rn "tmp_path" tests/ --include="*.py" 2>/dev/null | wc -l
 echo "=== Documented conventions (full file) ==="
 [ -f docs/CONVENTIONS.md ] && cat docs/CONVENTIONS.md || echo "SURFACE MISSING: docs/CONVENTIONS.md not found — drift check cannot proceed"
 
+# The same `walk` and `own` as Phase 1 (a fence is one shell, so each fence
+# defines the pair, byte for byte): the repository's files without .git, the
+# dependency trees and the build and cache directories, and then without
+# what the harness wrote. Tests only in "$@". CENSUS says which census ran.
+walk() {
+  find . "$@" ! -path "*/.git" ! -path "*/.git/*" ! -path "*/__pycache__" ! -path "*/__pycache__/*" \
+    ! -path "*/node_modules" ! -path "*/node_modules/*" ! -path "*/bower_components" ! -path "*/bower_components/*" \
+    ! -path "*/jspm_packages" ! -path "*/jspm_packages/*" ! -path "*/.yarn" ! -path "*/.yarn/*" ! -path "*/.pnpm-store" ! -path "*/.pnpm-store/*" \
+    ! -path "*/.venv" ! -path "*/.venv/*" ! -path "*/venv" ! -path "*/venv/*" ! -path "*/vendor" ! -path "*/vendor/*" ! -path "*/third_party" ! -path "*/third_party/*" \
+    ! -path "*/build" ! -path "*/build/*" ! -path "*/dist" ! -path "*/dist/*" ! -path "*/target" ! -path "*/target/*" \
+    ! -path "*/coverage" ! -path "*/coverage/*" ! -path "*/htmlcov" ! -path "*/htmlcov/*" ! -path "*/.next" ! -path "*/.next/*" \
+    ! -path "*/.mypy_cache" ! -path "*/.mypy_cache/*" ! -path "*/.pytest_cache" ! -path "*/.pytest_cache/*" ! -path "*/.ruff_cache" ! -path "*/.ruff_cache/*"
+}
+own() { walk "$@" ! -path "*/tools/cc" ! -path "*/tools/cc/*" ! -path "*/.claude" ! -path "*/.claude/*"; }
+CENSUS=
+# <!-- espalier:self-host-only -->
+# On this repository tools/cc/ and .claude/ are its source, and the drift
+# check reads its engine, espalier/; init strips this block from every other
+# tree, where the check below it reads the adopter's own modules.
+own() { walk "$@"; }
+CENSUS=harness
 echo "=== Bare except violations ==="
-[ -d espalier/ ] && grep -rn "except:" espalier/ --include="*.py" 2>/dev/null | grep -v __pycache__ | head -10 \
-  || echo "SURFACE MISSING: espalier/ absent"
+grep -rn "except:" espalier/ --include="*.py" 2>/dev/null | grep -v __pycache__ | head -10
 
 echo "=== Missing type hints on public functions ==="
-[ -d espalier/ ] && grep -n "^def " espalier/*.py 2>/dev/null | grep -v " -> " | head -10 \
-  || echo "SURFACE MISSING"
+grep -n "^def " espalier/*.py 2>/dev/null | grep -v " -> " | head -10
 
 echo "=== Print to stdout in source (convention: use stderr) ==="
-[ -d espalier/ ] && grep -rn "^print\|    print" espalier/ --include="*.py" 2>/dev/null | \
-  grep -v "__pycache__\|file=sys.stderr" | head -10 || echo "SURFACE MISSING"
+grep -rn "^print\|    print" espalier/ --include="*.py" 2>/dev/null | grep -v "__pycache__\|file=sys.stderr" | head -10
 
 echo "=== Hardcoded path separators ==="
-[ -d espalier/ ] && grep -rn "\\\\\\\\" espalier/ --include="*.py" 2>/dev/null | grep -v "__pycache__\|replace" | head -10 \
-  || echo "SURFACE MISSING"
+grep -rn "\\\\\\\\" espalier/ --include="*.py" 2>/dev/null | grep -v "__pycache__\|replace" | head -10
+# <!-- /espalier:self-host-only -->
+if [ -z "$CENSUS" ]; then
+  # The repository's own Python modules outside its test tree, as Phase 1
+  # lists them; a tree with none says so in place of the four checks.
+  SRC=$(own -type f -name "*.py" ! -name "test_*.py" ! -name "*_test.py" ! -name "conftest.py" ! -path "*/tests/*" ! -path "*/test/*" | sort)
+  if [ -z "$SRC" ]; then
+    echo "SURFACE MISSING: no Python modules outside the test tree — the source checks are NOT EVALUATED"
+  else
+    echo "=== Bare except violations ==="
+    printf '%s\n' "$SRC" | tr '\n' '\0' | xargs -0 grep -Hn "except:" 2>/dev/null | head -10
+
+    echo "=== Missing type hints on public functions ==="
+    printf '%s\n' "$SRC" | tr '\n' '\0' | xargs -0 grep -Hn "^def " 2>/dev/null | grep -v " -> " | head -10
+
+    echo "=== Print to stdout in source (convention: use stderr) ==="
+    printf '%s\n' "$SRC" | tr '\n' '\0' | xargs -0 grep -Hn "^print\|    print" 2>/dev/null | grep -v "file=sys.stderr" | head -10
+
+    echo "=== Hardcoded path separators ==="
+    printf '%s\n' "$SRC" | tr '\n' '\0' | xargs -0 grep -Hn "\\\\\\\\" 2>/dev/null | grep -v "replace" | head -10
+  fi
+fi
 ```
 
 **Confidence downgrade rules** — apply before labelling any claim:
 - Only one file inspected for a pattern → confidence cannot exceed LOW; label the claim "sampled from 1 file"
 - docs/CONVENTIONS.md unreadable or absent → all drift claims are NOT EVALUATED
-- Surface directory missing → mark that phase NOT EVALUATED, not "no convention found"
+- Surface directory missing, or a census that says it found no Python modules outside the test tree → mark that phase NOT EVALUATED, not "no convention found"
 - Pattern found in <3 files → confidence MEDIUM at most
 
 Convention drift output format:

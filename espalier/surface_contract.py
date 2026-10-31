@@ -81,6 +81,12 @@ _MANAGED_REPORT_PATHS: tuple[str, ...] = (
     "reports/repo_fingerprint.json",
 )
 
+#: The Session Log's row directory, one file a handoff: the engine's one
+#: spelling of ``tools/cc/_record_fragments.py``'s ``SESSION_LOG_DIR`` (the
+#: engine imports nothing from tools/cc), read by the ship decision below and
+#: by ``managed_inventory``'s census roster.
+SESSION_LOG_DIR = "memory/session-log.d/"
+
 _INTERNAL_PATH_PREFIXES: tuple[str, ...] = (
     "docs/internal/",
     # The Session Log as one row per file (since 2026-10-10): the same dev log
@@ -89,7 +95,7 @@ _INTERNAL_PATH_PREFIXES: tuple[str, ...] = (
     # write them), so it is classified internal here, and the derived gates hold
     # its two leak closures: the export-ignore row in .gitattributes and the
     # prune in MANIFEST.in.
-    "memory/session-log.d/",
+    SESSION_LOG_DIR,
 )
 
 # sister-site: ok purpose-scoped: don't-SHIP filename vocab, not claim_extractor.EXCLUDED_DOC_GLOBS (don't-AUDIT-as-claim)

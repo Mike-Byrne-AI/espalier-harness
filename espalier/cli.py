@@ -477,12 +477,17 @@ def _asset_transform(
 ) -> Callable[[str], str] | None:
     """The render a packaged ``.claude`` body takes on ``repo_root``, or None.
 
-    Two renders, composed:
+    Three renders, composed:
 
     - off the harness's own tree, the self-host-only blocks go
       (``surface_hygiene.strip_self_host_blocks``). This repository's sessions keep them,
       so each mirror stays byte-equal to its source and the strip is a render
-      at deploy, like the next one;
+      at deploy, like the next two;
+    - off it too, a census fence's ``own`` walk prunes what the harness wrote
+      on ``repo_root`` (``harness_config.render_own_walk`` over
+      ``managed_inventory.census_prune_paths``, read when a body carries the
+      walk): the source bodies keep a two-root fallback, so the roster is
+      never hand-kept in a body;
     - a runner agent (``harness_config.RUNNER_AGENT_PATHS``) gains the narrowed
       rules the fingerprint's test commands derive, the ones its packaged
       ``tools:`` line does not already grant.
@@ -495,13 +500,22 @@ def _asset_transform(
         RUNNER_AGENT_PATHS,
         agent_runner_rules,
         render_agent_tools,
+        render_own_walk,
     )
 
     from espalier.surface_hygiene import strip_self_host_blocks
 
+    from espalier.managed_inventory import census_prune_paths
+
+    def render_walk(body: str) -> str:
+        if "own() { walk" not in body:
+            return body
+        return render_own_walk(body, census_prune_paths(repo_root))
+
     renders: list[Callable[[str], str]] = []
     if surface_contract.off_self_host(repo_root):
         renders.append(strip_self_host_blocks)
+        renders.append(render_walk)
     if rel in RUNNER_AGENT_PATHS:
         rules = agent_runner_rules(test_commands)
         if rules:
