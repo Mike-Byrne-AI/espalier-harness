@@ -94,7 +94,10 @@ clear and re-prime together took 1.4 s. In `claude -p` the process exits right
 after the clear, so the re-prime is interactive-only. A `/compact` while a
 `session.compact` hook skips reads `Not compacted` and the classic PreCompact
 never fires. `CLAUDE_CODE_SESSION_ID` in a tool shell changes with the session
-at a clear. The Windows seats are unmeasured (their `claude` is a cmd shim).
+at a clear. The Windows seats were unmeasured then (their `claude` is a cmd
+shim); on win-2 (2.1.314, 2026-10-31) the mod's log names a clear's marker
+consumed and its brief submitted, and the kit runs green there. The pty driver
+(`bench/own_clear/drive.py`) stays POSIX-only.
 
 **A queued prompt defers the clear by one turn (2026-10-30, 2.1.314, the
 dispatcher seat).** The handoff armed the marker at 02:08:22Z; the board loop's
@@ -144,3 +147,9 @@ the kit file, so a broken case reds the local tier; no CI cell installs
 `claude`, so there the kit is the seat's run. The engine writes
 `.claude-plugin/types/` and a `tsconfig.json` beside a mod it loads (for the
 editor); both are gitignored.
+
+The engine hands an `fs.*` hook the path as it resolved it on the host: on
+Windows the kit's `/scratch/...` arrives as `C:\scratch\...`. So the kit's
+world holds its files in one store that keys every path one way (`Files`,
+`key()`), and a case that keeps a path anywhere else reds on Windows alone
+(`DEF-3016`: 27 of 32 cases did, on 2.1.311, 2.1.312 and 2.1.314 alike).
