@@ -19,7 +19,10 @@ stands (a new sentence after it, a clause before it). Each fragment is
 matched at word boundaries, a paragraph keeps its closing punctuation, and a
 table row keeps its cell bars, so a clause added inside a quoted sentence or
 before its period, and a row that only a longer name's row would contain,
-are caught; an addition beside the quote is not drift by this measure.
+are caught; an addition beside the quote is not drift by this measure. A
+blockquote marker is read off every line of the page, fenced code included,
+so a `>` that opens a line inside a fence (a shell redirect) is read as a
+marker there: none of the pinned pages has one (read 2026-10-31).
 
 `write_candidate` writes to `<pin>.candidate.md` and never overwrites
 the original pin — auto-apply is the failure mode this whole TP exists
@@ -87,8 +90,11 @@ _ESCAPE = re.compile(r"\\([\\`*_{}\[\]()#+.!|-])")       # \_ -> _
 _ELISION = re.compile(r"\[(?:" + _ELLIPSIS + r"|\.\.\.)\]|" + _ELLIPSIS + r"|\.\.\.")
 _INLINE_COMMENT = re.compile(r"<!--.*?-->")
 # A line's blockquote markers, nested ones included: a callout's `>` is the
-# page's markup as the pin's own `>` is the pin's (DEF-3020). Each repeat ends
-# at a `>`, so the two runs of spaces never meet.
+# page's markup as the pin's own `>` is the pin's (DEF-3020). Read off whole
+# lines only (the pin's in `quoted_passages`, the page's in
+# `normalize_page_text`), never off a fragment, whose start is not a line's: a
+# `>` after an elision is text. Each repeat ends at a `>`, so the two runs of
+# spaces never meet.
 _QUOTE_MARK = re.compile(r"^[ \t]*>(?:[ \t]*>)*", re.MULTILINE)
 _UNICODE = str.maketrans({
     chr(0x2014): " -- ", chr(0x2013): "-", chr(0x2018): "'", chr(0x2019): "'",
@@ -99,15 +105,14 @@ _UNICODE = str.maketrans({
 def normalize_quote_text(text: str) -> str:
     """The one normalisation a pin's quote and the fetched page both pass
     through, so a match never depends on which side was formatted how:
-    a line's blockquote markers go (a callout's `> [!NOTE]` lines read as one
-    paragraph; a `>` inside a line stays text); a link keeps its text and
-    loses its target (parsed apart, so a `<` in the text does not matter);
-    HTML-ish tags (`<Warning>`) go; Markdown escapes, emphasis and code ticks
-    go; a table's cell bars and an em dash both become ` -- `, so a pin that
-    flattens a table row into "name — text" matches the row; typographic
-    quotes and dashes fold to ASCII; whitespace collapses; case folds."""
+    a link keeps its text and loses its target (parsed apart, so a `<` in
+    the text does not matter); HTML-ish tags (`<Warning>`) go; Markdown
+    escapes, emphasis and code ticks go; a table's cell bars and an em dash
+    both become ` -- `, so a pin that flattens a table row into "name — text"
+    matches the row; typographic quotes and dashes fold to ASCII; whitespace
+    collapses; case folds. A blockquote marker is a line's, so it is read
+    before this (`normalize_page_text`, `quoted_passages`)."""
     t = text.translate(_UNICODE)
-    t = _QUOTE_MARK.sub(" ", t)
     t = _LINK.sub(r"\1", t)
     t = _HTML_TAG.sub(" ", t)
     t = _ESCAPE.sub(r"\1", t)
@@ -117,6 +122,14 @@ def normalize_quote_text(text: str) -> str:
     t = re.sub(r"\s+", " ", t)
     t = re.sub(r"(?: ?-- ?)+", " -- ", t)
     return t.strip().lower()
+
+
+def normalize_page_text(page: str) -> str:
+    """A fetched page as a quote is matched against it: every line's
+    blockquote markers off first, as `quoted_passages` takes them off the
+    pin's own lines, so a callout's `> [!NOTE]` lines read as one paragraph
+    and a `>` inside a line stays text; then `normalize_quote_text`."""
+    return normalize_quote_text(_QUOTE_MARK.sub(" ", page))
 
 
 def _judgeable(fragment: str) -> bool:
@@ -218,7 +231,7 @@ def _found(fragment: str, page: str) -> bool:
 
 def missing_passages(passages: Sequence[QuotedPassage], pages: Sequence[str]) -> list[QuotedPassage]:
     """The passages with a fragment found on none of ``pages``."""
-    normalized = [normalize_quote_text(p) for p in pages]
+    normalized = [normalize_page_text(p) for p in pages]
     return [q for q in passages if any(not any(_found(f, page) for page in normalized) for f in q.fragments)]
 
 

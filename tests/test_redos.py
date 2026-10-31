@@ -411,21 +411,22 @@ _QUOTE_NORMALISER_RUNS = {
 
 @pytest.mark.parametrize("name,unit", sorted(_QUOTE_NORMALISER_RUNS.items()))
 def test_quote_normaliser_linear_on_a_hostile_run(name, unit):
-    """``espalier.external_diff.normalize_quote_text`` finishes within
+    """``espalier.external_diff.normalize_page_text`` (the page's blockquote
+    markers, then ``normalize_quote_text``) finishes within
     ``_CI_SAFE_BUDGET_MS`` on a ``_WORST_CASE_BODY_LEN`` run. Its two link
     classes were quadratic until each stopped at the bracket that opens the
     next attempt: 47 s on 20,000 `[` and 29 s on 37,500 `[x](`, driven
     2026-10-10 on the Windows host."""
     if not hasattr(signal, "SIGALRM"):
         pytest.skip("signal.alarm not available on this platform")
-    from espalier.external_diff import normalize_quote_text
+    from espalier.external_diff import normalize_page_text
 
     payload = (unit * (_WORST_CASE_BODY_LEN // len(unit) + 1))[:_WORST_CASE_BODY_LEN]
     signal.signal(signal.SIGALRM, _alarm)
     signal.setitimer(signal.ITIMER_REAL, _CI_SAFE_BUDGET_MS / 1000.0)
     t = time.time()
     try:
-        normalize_quote_text(payload)
+        normalize_page_text(payload)
         elapsed_ms = (time.time() - t) * 1000
     except _Timeout:
         pytest.fail(f"the quote normaliser exceeded {_CI_SAFE_BUDGET_MS}ms on a {name} run")
