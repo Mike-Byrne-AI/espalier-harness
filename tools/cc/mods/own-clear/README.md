@@ -30,7 +30,12 @@ says the window needs a `/clear` by hand.
    the handoff whose step has run.
 2. **The clear.** At the end of the main loop's next turn (`turn.complete`,
    reason `answer`), when the marker names this session, HEAD is still the
-   marker's, `git status --porcelain --untracked-files=no` is empty and
+   marker's (a pull that moved HEAD with nothing to hand off re-arms the
+   marker at the new head, its brief and record kept: the ship driver's
+   `catch-up` does it as it pulls or pushes, and `ship.py arm` does it by hand
+   after a pull by hand, so only a commit holds the clear on a moved head;
+   until 2026-10-31 a worker window sat held 3 h 33 min after its tick's
+   catch-up), `git status --porcelain --untracked-files=no` is empty and
    `cc/execution_plan.json` is not `in_progress`, the mod writes
    `clear_asked_at` into the marker and runs
    `$.command.run({ command: 'clear', args: '' })`, not awaited. A clear
