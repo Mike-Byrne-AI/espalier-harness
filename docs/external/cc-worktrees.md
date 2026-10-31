@@ -58,7 +58,7 @@ background-session worktrees", "Replace worktree creation with a hook",
      cc-hook-protocol.md. -->
 
 <!-- re-excerpt 2026-10-31, against the page fetched that day (the 2026-10-26
-     refresh, pull request #348, found 2 of 15 quotes off; by this day, 3).
+     refresh found 2 of 15 quotes off; by this day, 3).
      No quoted sentence changed its words. Both pages now print the "cwd
      follows Claude" note as a `> [!NOTE]` callout, so a `>` stands between
      its two bullets on the page and the quote check, which reads that `>` as

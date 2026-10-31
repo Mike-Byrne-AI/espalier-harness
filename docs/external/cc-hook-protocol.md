@@ -913,7 +913,7 @@ read this pin, never a candidate; the forward ledger carries that row. -->
      the hook's output. -->
 
 <!-- re-excerpt 2026-10-31, against the page fetched that day (the 2026-10-26
-     refresh, pull request #348, found 8 of 56 quotes off; by this day, 9).
+     refresh found 8 of 56 quotes off; by this day, 9).
      Upstream reworded "Exit code output" again without changing its
      contract: each failure outcome now carries "except for hooks whose
      failure blocks the action", the stdout-syntax rule moved under "Exit code
