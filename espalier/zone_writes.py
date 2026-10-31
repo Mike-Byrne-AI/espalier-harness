@@ -177,8 +177,8 @@ def _stats(root: Path, prior: dict[str, tuple[int, int]] | None = None) -> dict[
 
     prefixes, files, pruned = _watched(root)
     for prefix in prefixes:
-        # nested-repo-ok the recorder must walk exactly the hook's set (_zone_watch.snapshot), which enters a nested checkout under a protected path
         at_top = True
+        # nested-repo-ok the recorder must walk exactly the hook's set (_zone_watch.snapshot), which enters a nested checkout under a protected path
         for dirpath, dirnames, filenames in os.walk(root / prefix):
             base = Path(dirpath).relative_to(root).as_posix()
             if (not at_top and is_self_ignoring(Path(dirpath))
