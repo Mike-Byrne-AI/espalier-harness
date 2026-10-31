@@ -7,8 +7,9 @@ it did in the terminal summary, and leaves a record of every wait. Each case
 here drives real pytest children on a scratch test file with the plugin loaded
 by ``-p``, the way ``tests/test_file_lock.py`` drives the primitive: what the
 kernel does is the question, so only real processes can answer it. A holder
-never sleeps for a margin: it waits on a release marker the test writes, so a
-loaded box slows a case down and never turns it red. This file pins that
+never sleeps for a margin: it waits on a release marker the test writes, and
+the test writes it at the waiter's own first waiting line, never after a sleep,
+so a loaded box slows a case down and never turns it red. This file pins that
 contract because a lock the suite forgets is the note protocol again: it guards
 the gate (xdist runs only), the holder pair, the record's lifetime, the wait
 log, the summary line and the census of pytest spawners against the drift a
@@ -26,9 +27,11 @@ import re
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 import types
 from pathlib import Path
+from typing import IO
 
 import pytest
 
@@ -59,6 +62,33 @@ def test_marks_and_waits():
     (stamp.parent / (stamp.name + ".done")).write_text(f"{time.time():.3f}", encoding="utf-8")
 '''
 
+#: How long, at most, a waiter's controller sits in the scratch conftest before
+#: its ``pytest_configure`` takes the lock: until the lock is free, or this
+#: long. A case that releases its holder at the waiter's own line holds the lock
+#: all along, so its waiter sits the whole time, as a loaded runner still
+#: importing pytest would. A case that releases on a margin instead (the 0.8 to
+#: 1.0 s the waits once slept) frees the lock first, so its waiter arrives to a
+#: free lock, takes it without a word, and the case reds wherever the holder
+#: frees the lock inside this time (0.05 to 0.11 s after the marker on the win
+#: box, 2026-10-31; DEF-2027). A fixed sleep here would only race the holder's
+#: release. The xdist worker never sits.
+_SLOW_WAITER_S = 3.0
+
+_SCRATCH_CONFTEST = '''\
+import os, time
+
+slow, path = float(os.environ.get("BOX_PROBE_SLOW_S") or 0), os.environ.get("ESPALIER_BOX_LOCK")
+if slow and path and "PYTEST_XDIST_WORKER" not in os.environ:
+    from tests._box_lock import _primitive
+    lock, deadline = _primitive(), time.monotonic() + slow
+    with open(path, "a+", encoding="utf-8") as fh:
+        while time.monotonic() < deadline:
+            if lock.try_lock_file(fh):
+                lock.unlock_file(fh)
+                break
+            time.sleep(0.05)
+'''
+
 
 def _box_lock():
     from tests import _box_lock
@@ -69,19 +99,21 @@ def _scratch(tmp_path: Path) -> Path:
     tree = tmp_path / "scratch"
     tree.mkdir(exist_ok=True)
     (tree / "test_probe.py").write_text(_SCRATCH_TEST, encoding="utf-8")
-    (tree / "conftest.py").write_text("", encoding="utf-8")
+    (tree / "conftest.py").write_text(_SCRATCH_CONFTEST, encoding="utf-8")
     return tree
 
 
 def _child_env(tmp_path: Path, lock: Path | None, *, stamp: str, hold: bool = False,
-               holder: str | None = None) -> dict[str, str]:
+               holder: str | None = None, slow: bool = False) -> dict[str, str]:
     env = {k: v for k, v in os.environ.items()
-           if not k.startswith(("CLAUDE", "ESPALIER_BOX_LOCK", "PYTEST_ADDOPTS", "PYTEST_XDIST"))}
+           if not k.startswith(("CLAUDE", "ESPALIER_BOX_LOCK", "PYTEST_ADDOPTS", "PYTEST_XDIST", "BOX_PROBE"))}
     env["PYTHONPATH"] = str(REPO_ROOT)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["BOX_PROBE_STAMP"] = str(tmp_path / stamp)
     if hold:
         env["BOX_PROBE_HOLD"] = str(tmp_path / f"{stamp}.release")
+    if slow:
+        env["BOX_PROBE_SLOW_S"] = str(_SLOW_WAITER_S)
     if lock is not None:
         env["ESPALIER_BOX_LOCK"] = str(lock)
     if holder is not None:
@@ -126,6 +158,57 @@ def _holding(tmp_path: Path, tree: Path, lock: Path, stamp: str = "a") -> subpro
     return first
 
 
+_WAITING = "box lock: waiting on"
+
+
+class _Waiter:
+    """A run spawned to wait behind a holder, its stderr read on a thread from
+    the spawn on, so the test releases the holder at the run's first ``box
+    lock: waiting on`` line (the plugin prints it, flushed, at its first failed
+    try) and never after a margin. A margin's check, that the run has not
+    exited and wrote no stamp, is also true of a run still importing pytest, so
+    a slow runner released the holder before the run reached the lock and the
+    line never came (DEF-2027: the Windows portability leg on #354). Mutation:
+    a margin put back at any site (each case asserts after the run what only a
+    run that waited prints or logs, and every waiter sits in the scratch
+    conftest until the lock is free, ``_SLOW_WAITER_S``); the line read
+    anywhere but the waiter's stderr."""
+
+    def __init__(self, tmp_path: Path, tree: Path, env: dict[str, str], *extra: str) -> None:
+        self.child = _spawn(tmp_path, tree, env, *extra)
+        self.lines: list[str] = []
+        self._said = threading.Event()  # at the waiting line, or at the stream's end without one
+        # The reader owns the pipe from here, so communicate() reads stdout alone.
+        stream, self.child.stderr = self.child.stderr, None
+        self._reader = threading.Thread(target=self._read, args=(stream,), daemon=True)
+        self._reader.start()
+
+    def _read(self, stream: IO[str]) -> None:
+        with stream:
+            for line in stream:
+                self.lines.append(line)
+                if line.startswith(_WAITING):
+                    self._said.set()
+        self._said.set()
+
+    @property
+    def stderr(self) -> str:
+        return "".join(self.lines)
+
+    def at_the_lock(self, timeout: float = 25.0) -> bool:
+        """Whether the run said it waits within ``timeout``: False as soon as
+        its stderr ends without the line (a run that never waited)."""
+        self._said.wait(timeout)
+        return any(line.startswith(_WAITING) for line in self.lines)
+
+    def finish(self, rc: int = 0) -> tuple[str, str]:
+        out, _ = self.child.communicate(timeout=_CHILD_DEADLINE_S)
+        self._reader.join(timeout=_CHILD_DEADLINE_S)
+        err = self.stderr
+        assert self.child.returncode == rc, f"rc={self.child.returncode}\n{out}\n{err}"
+        return out, err
+
+
 class TestTwoRunsOnOneBox:
     def test_the_second_run_waits_names_the_holder_and_runs_after_it(self, tmp_path):
         """Mutation: the non-blocking try replaced by the blocking ``lock_file``
@@ -133,11 +216,11 @@ class TestTwoRunsOnOneBox:
         registered under ``-n`` (both runs' tests overlap)."""
         tree, lock = _scratch(tmp_path), tmp_path / "box.lock"
         first = _holding(tmp_path, tree, lock)
-        second = _spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp="b"))
-        time.sleep(1.0)
-        assert second.poll() is None and not (tmp_path / "b").exists(), "the second run's test ran while the first held the box"
+        second = _Waiter(tmp_path, tree, _child_env(tmp_path, lock, stamp="b", slow=True))
+        assert second.at_the_lock(), second.stderr
+        assert second.child.poll() is None and not (tmp_path / "b").exists(), "the second run's test ran while the first held the box"
         _release(tmp_path, "a")
-        out, err = _finish(second)
+        out, err = second.finish()
         _finish(first)
         assert "box lock: waiting on" in err and f"pid {first.pid}" in err, err
         assert "box lock: waited" in out and f"pid {first.pid}" in out, out
@@ -157,14 +240,14 @@ class TestTwoRunsOnOneBox:
         waited."""
         tree, lock = _scratch(tmp_path), tmp_path / "box.lock"
         first = _holding(tmp_path, tree, lock)
-        second = _spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp="b"))
-        time.sleep(0.8)
+        second = _Waiter(tmp_path, tree, _child_env(tmp_path, lock, stamp="b", slow=True))
+        assert second.at_the_lock(), second.stderr
         _release(tmp_path, "a")
-        _finish(second)
+        second.finish()
         _finish(first)
         lines = [json.loads(ln) for ln in (tmp_path / "box.lock.log").read_text(encoding="utf-8").splitlines() if ln.strip()]
         assert len(lines) == 1, lines
-        assert lines[0]["holder"]["pid"] == first.pid and lines[0]["waiter"]["pid"] == second.pid
+        assert lines[0]["holder"]["pid"] == first.pid and lines[0]["waiter"]["pid"] == second.child.pid
         assert lines[0]["waited_s"] > 0
 
 
@@ -186,15 +269,18 @@ class TestWhichRunsTheLockGates:
         """Every tier line runs under xdist, the contract slice included (since
         2026-10-16), so a seat's slice waits behind a sibling's tier: the gate
         reads the option, not the selection. Mutation: a marker expression or
-        a selection read as an exemption."""
+        a selection read as an exemption; the waiting line left unasserted
+        after the run (a holder released early keeps the stamp order, so the
+        order alone passes an exempted slice)."""
         tree, lock = _scratch(tmp_path), tmp_path / "box.lock"
         first = _holding(tmp_path, tree, lock)
-        slice_ = _spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp="b"), "-m", "contract")
-        time.sleep(1.0)
-        assert slice_.poll() is None and not (tmp_path / "b").exists()
+        slice_ = _Waiter(tmp_path, tree, _child_env(tmp_path, lock, stamp="b", slow=True), "-m", "contract")
+        assert slice_.at_the_lock(), slice_.stderr
+        assert slice_.child.poll() is None and not (tmp_path / "b").exists()
         _release(tmp_path, "a")
-        _finish(slice_)
+        _out, err = slice_.finish()
         _finish(first)
+        assert "box lock: waiting on" in err, err
         assert _stamp(tmp_path, "b") >= _stamp(tmp_path, "a.done")
 
     def test_without_the_variable_nothing_is_registered(self, tmp_path):
@@ -293,11 +379,11 @@ class TestTheInheritedPair:
         dead = subprocess.Popen([sys.executable, "-c", "pass"])
         dead.wait()
         holder = self._holder(tmp_path, lock, dead.pid)
-        child = _spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp="c", holder=str(dead.pid)))
-        time.sleep(1.0)
-        assert child.poll() is None and not (tmp_path / "c").exists(), "the child ran past a live hold"
+        waiter = _Waiter(tmp_path, tree, _child_env(tmp_path, lock, stamp="c", holder=str(dead.pid), slow=True))
+        assert waiter.at_the_lock(), f"the child ran past a live hold: {waiter.stderr}"
+        assert waiter.child.poll() is None and not (tmp_path / "c").exists(), "the child ran past a live hold"
         _release(tmp_path, "h")
-        out, err = _finish(child)
+        out, err = waiter.finish()
         holder.wait(timeout=_CHILD_DEADLINE_S)
         assert "box lock: waiting on" in err, err
 
@@ -319,11 +405,11 @@ class TestTheInheritedPair:
         """)
         holder = subprocess.Popen([sys.executable, "-c", code])
         assert _wait_for(tmp_path / "e.ready")
-        child = _spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp="c"))
-        time.sleep(1.0)
-        assert child.poll() is None
+        waiter = _Waiter(tmp_path, tree, _child_env(tmp_path, lock, stamp="c", slow=True))
+        assert waiter.at_the_lock(), waiter.stderr
+        assert waiter.child.poll() is None
         _release(tmp_path, "e")
-        out, err = _finish(child)
+        out, err = waiter.finish()
         holder.wait(timeout=_CHILD_DEADLINE_S)
         assert "no holder record" in err, err
 
