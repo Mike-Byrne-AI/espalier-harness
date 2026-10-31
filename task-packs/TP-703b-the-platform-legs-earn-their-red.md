@@ -827,7 +827,9 @@ read these as the author's guess, not a schedule.
   operator's call read through the dispatcher after the measured leg), on `lane/windows-main-leg`;
   with W1 and W3 landed the pack is LANDED and stays in `task-packs/` until the roadmap lands, as
   `TP-703a` does:
-  - Commits: the lane's commit (its pull request names it).
+  - Commits: the lane's commit (its pull request names it). *Read 2026-10-31 by the dispatcher
+    seat `air`:* #369, merged 08:16:49Z as 4fd54db9; 97aab13c the leg off origin/main 70bc9778,
+    3eea9974 the seat's row, 27236bc4 the catch-up's merge of `main`.
   - Task 0: W2-0's four items, read above (both dispatched runs green at 3:59 and 2:16; both
     base-run readers read `conclusion`; the queue median 0.2 min): build.
   - 0-A (2026-10-31, `main` at f333e8c9): code-reviewer, Pack-artifact review checklist v2,
@@ -864,7 +866,13 @@ read these as the author's guess, not a schedule.
   - Runner proof: the first push run after the merge, read and recorded by the session that reads
     it (`gh run list --workflow post-merge-windows.yml --branch main --event push --limit 1`), and
     the board's `checks:` line on the next tick; a dispatch of the workflow on the pushed lane was
-    not attempted (a workflow not yet on the default branch).
+    not attempted (a workflow not yet on the default branch). *Read 2026-10-31 by the dispatcher seat
+    `air` at 08:25Z:* run 41183947669 on 4fd54db9 (the merge), `push`, `success`, the `serial-leg`
+    job 08:16:55Z to 08:20:47Z (3 min 52 s), from `gh run view 41183947669 --json
+    createdAt,updatedAt,conclusion,jobs`; the board at 08:28Z, on a checkout holding the workflow
+    file: `post_merge_checks.windows` in `board.py --json` reads `verdict` green, `sha` 4fd54db9,
+    `run` 41183947669, `read` 1, and the text `checks:` line prints `none red among the last 20
+    merges` with no leg line, as a green leg renders none.
   - Reach: `DEF-977` repinned (a tail sentence naming the leg and its measured minutes); it stays
     open, since its probe counts Windows jobs that gate a merge.
 - W3 landed 2026-10-19, single-seat, on `lane/tests-macos-race-rows-run-as-expected-failures`;

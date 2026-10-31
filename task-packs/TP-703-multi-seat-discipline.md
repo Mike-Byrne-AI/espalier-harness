@@ -526,7 +526,9 @@ read these as the author's guess, not a schedule.
 - Children (the ten State lines and the merged pull requests as read 2026-10-26; a snapshot, the stanzas are the record):
   `TP-703a` LANDED (2026-10-19, single-seat, after `TP-703e`); `TP-703b` W3 LANDED
   (2026-10-19, single-seat: `DEF-2025` re-opened as `DEF-4032`, `DEF-4033` filed), W1 LANDED
-  (2026-10-20, single-seat: `DEF-5024` struck), W2 DRAFT; `TP-703c` LANDED (2026-10-26, seat
+  (2026-10-20, single-seat: `DEF-5024` struck), W2 DRAFT (re-read 2026-10-31: W2 LANDED as #369,
+  seat `air-work`, `lane/windows-main-leg`, the advisory Windows serial leg on `main`, its first
+  push run green; the pack LANDED; `DEF-977` stays open); `TP-703c` LANDED (2026-10-26, seat
   `air-work`, `lane/one-tier-per-box`, #343); `TP-703d` DRAFT (the first lane LANDED
   2026-10-24, single-seat, `lane/the-records-say-what-happened`, #334; the pack stays open for
   the second lane, 1-D); `TP-703e` LANDED (2026-10-19, single-seat on the dispatcher's checkout; the
