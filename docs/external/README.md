@@ -44,7 +44,9 @@ this excerpt" section listing the binding tests.
 
 **Every `>` line in a pin is an upstream quote**, word for word apart from
 formatting (links, emphasis, table bars, line wrapping), with any omission
-marked `[…]`. The refresh reads a pin's drift off those lines alone, so
+marked `[…]`. A wrapped line never opens on a quoted `>` (a precedence
+chain, a redirect): Markdown reads `> > ask` as a nested quote, and so does
+the refresh, so keep such a `>` mid-line. The refresh reads a pin's drift off those lines alone, so
 espalier's own commentary, a callout or a warning included, is written as
 prose, never as a blockquote.
 
