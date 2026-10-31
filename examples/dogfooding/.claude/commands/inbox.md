@@ -282,7 +282,27 @@ is read on its own, and one that cannot be read says so on its own line:
   on its row; its age is what the dispatcher reads first, and any seat's ack
   naming it closes it. The dispatcher seat also gets the count and the oldest age on the
   banner's `Mail:` line.
-- **jobs**, **claims** and the ledger's live row count, counted at the base
+- **jobs:** the dispatcher's live assignments, one row per job with its seat,
+  its lane, classes and ids, its stamp and the assign's id (the one a release
+  names). The section ends with `under two: <seat> (<n>, last mail <age>),
+  ...`: each seat holding fewer than two live jobs with its count and its last
+  mail's age (`no mail` for a seat a job alone names; a live job keeps a dark
+  seat on the line, so read the age before giving it a job), over the seats
+  the `seats:` line names (its quiet fold left out; while the registry or a
+  seat's name is unread nothing folds, so every named row counts, and a
+  checkout with no seat name is not a seat) and the jobs' seats, the
+  dispatcher apart where `espalier.toml` names one (unnamed, every seat
+  counts, the operator's own box included), and the line names that
+  population (`of 3 seats (the seats line names 4, the jobs 3, the dispatcher
+  air apart)`); `none of N seats` when every one holds two or more, `no worker
+  seat named` when the population is empty; no line while the mail is unread
+  or the dispatcher setting is unusable. The dispatcher keeps each worker at
+  two live jobs as the fold counts them (a shelved or stopped job is live
+  until released; one open pull request per seat, the next job built while
+  the first is in CI), and a seat holding none has no jobs row, so which
+  seats were short was once remembered between ticks; the line is where they
+  are read, every tick.
+- **claims** and the ledger's live row count, counted at the base
   branch's remote-tracking ref with the base's own ledger tools and naming the
   commit it read, so a checkout that stops moving still reads what the base
   holds. The line says `as last fetched` when the fetch failed or `--no-fetch`
@@ -308,6 +328,16 @@ is read on its own, and one that cannot be read says so on its own line:
   `none among what was read` means something was not read. The ship driver
   prints the same lines for a lane after `open` and `handoff` push. The rule
   stays the same: the second to merge runs catch-up.
+
+<!-- espalier:self-host-only -->
+On this repository the `under two:` tail and its census are `DEF-5034`'s fix:
+air-work sat idle from 03:27Z to 06:38Z on 2026-10-30 while which seats were
+short was remembered between the dispatcher's ticks. The seat-day census
+(`scripts/seat_day_census.py`, self-host only -- not deployed by `init`)
+counts, per worker seat per UTC day, the tick slots of the dispatcher's loop
+interval (laid from 00:00Z) at which the seat stood under two, on the report,
+each worker's row and the dispatcher's row.
+<!-- /espalier:self-host-only -->
 
 If the board and your own account disagree, the board is the one that read
 GitHub just now.
