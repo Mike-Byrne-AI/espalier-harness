@@ -1,8 +1,9 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 // The own-clear's hooks against the engine (`claude plugin test`). Under test
-// every call the mod makes on `$` is an event the test answers with `{ value }`,
-// so the checkout is a world in memory: the files, git's three answers, the
+// every call the mod makes on `$` is an event the test answers with `{ value }`
+// (or `{ deny }`, standing for the engine's rejection), so the checkout is a
+// world in memory: the files, git's three answers or a failure a case sets, the
 // session id (which a test moves to stand for a clear), the clock and the
 // status line, with the test's own hooks as the bottom of each chain the mod
 // raises (command.run, prompt.submit, session.compact), recording what the
@@ -84,7 +85,7 @@ function world(on: any, opts: { id?: string; env?: Record<string, string> } = {}
     const fail = state.gitFails[argv]
     if (fail?.deny) return { deny: fail.deny }
     if (fail) return { value: { ...done('', fail.exitCode ?? 128).value, stderr: fail.stderr ?? '' } }
-    if (argv ==='git status --porcelain --untracked-files=no') return done(state.dirty ? ' M tracked.txt\n' : '')
+    if (argv === 'git status --porcelain --untracked-files=no') return done(state.dirty ? ' M tracked.txt\n' : '')
     if (argv === 'git rev-parse HEAD') return done(`${state.head}\n`)
     if (argv === 'git rev-parse --show-toplevel') return done(`${ROOT}\n`)
     return done('', 1)
@@ -614,15 +615,27 @@ test('a git read the engine rejects names the rejection', async ($, on) => {
   expect(w.seen.status.at(-1)).toContain('git outran its 10000 ms')
 })
 
-test("git's words are one line, bounded, on the status line", async ($, on) => {
+test("git's words are one line of at most 200 characters, its fatal line kept", async ($, on) => {
+  // git prints `fatal:` after its warnings, so the cut keeps the end.
   const w = world(on)
-  w.state.gitFails['git rev-parse HEAD'] = { exitCode: 128, stderr: `warning: one\n\nfatal: two ${'x'.repeat(600)}\n` }
+  w.state.gitFails['git rev-parse HEAD'] = { exitCode: 128, stderr: `${'warning: a long preamble\n\n'.repeat(20)}fatal: bad object HEAD\n` }
   w.arm({ session_id: w.id(), head: HEAD })
   await $.turn.complete(TURN)
   const shown = w.seen.status.at(-1) ?? ''
-  expect(shown).toContain('warning: one fatal: two')
   expect(shown.includes('\n')).toBe(false)
-  expect(shown.length).toBeLessThan(400)
+  expect(shown.endsWith('fatal: bad object HEAD)')).toBe(true)
+  const said = shown.slice(shown.indexOf('exit 128: ') + 'exit 128: '.length, -1)
+  expect(said.startsWith('...')).toBe(true)
+  expect(said.length).toBe(200)
+})
+
+test('a checkout top git answers with no path is named on the log', async ($, on) => {
+  const LOG = '/logs/own-clear.jsonl'
+  const w = world(on, { env: { ESPALIER_OWN_CLEAR_LOG: LOG } })
+  w.state.gitFails['git rev-parse --show-toplevel'] = { exitCode: 0 }
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.session.start({ cwd: ROOT } as any)
+  expect(w.files.get(LOG) ?? '').toContain('git printed no path')
 })
 
 test("a checkout top git cannot read is named on the log, and the marker is read from the session's folder", async ($, on) => {

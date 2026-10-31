@@ -43,13 +43,14 @@ says the window needs a `/clear` by hand.
    through once two turns have passed, so a clear the engine lost never
    freezes the window; the operator's own `/clear` ends the wait. Anything in
    flight keeps the marker armed and names the wait on the status line; so
-   does a git read that fails, with why: git's own words (its stderr on one
-   line, cut at 200 characters), else its exit code, else the engine's
-   rejection (git could not start, or outran its 10 s timeout), and the
-   re-prime's brief carries the same text (DEF-3019, 2026-10-31: win-2's
-   re-prime said `HEAD could not be read` while HEAD equalled the marker's,
-   and nothing said why). A clear the engine refuses says so there and is
-   tried again at the next turn's end. **Every outcome goes on the marker** (DEF-5031, 2026-10-30: the
+   does a git read that fails, with why: `exit <code>` and git's stderr
+   after it (one line, its last 200 characters, where `fatal:` sits), or
+   the engine's rejection when git could not start or outran its 10 s
+   timeout; the re-prime's brief carries the same text (DEF-3019,
+   2026-10-31: win-2's re-prime said `HEAD could not be read` while HEAD
+   equalled the marker's, and nothing said why; that read's cause is still
+   unknown, and the next such read names its own). A clear the engine
+   refuses says so there and is tried again at the next turn's end. **Every outcome goes on the marker** (DEF-5031, 2026-10-30: the
    dispatcher window re-asked a refused clear 41 times over ten hours with the
    refusal on a status line nobody read and the log off): a rejected ask
    writes `clear_refused` (the engine's text), `clear_refusals` (a count) and

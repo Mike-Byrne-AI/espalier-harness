@@ -497,17 +497,25 @@ class TestTheModReadsWhatTheDriverWrites:
         win-2's 06:25Z re-prime said 'HEAD could not be read' while HEAD
         equalled the marker's head, and nothing said why. The kit hands each
         read a failing value and reads the reason back, but no CI cell installs
-        ``claude``, so the shape is pinned here by text, line comments stripped.
-        Dies to: the helper dropping git's stderr again, and a git read whose
-        reason its caller never reads (a new ``git(`` call included)."""
-        code = "\n".join(line.split("//", 1)[0] for line in module_text.splitlines())
-        start = code.index("async function git(")
+        ``claude``, so the shape is pinned here by text, comments stripped:
+        the helper reads stderr, every ``await git(`` call is a named read, and
+        each read's reason is read after it in the function that made it. Dies
+        to: the helper no longer reading stderr, a read in any function whose
+        reason is never read there (a new one included), and a call form this
+        pin does not parse (a destructured or bare call). A helper that reads
+        stderr and drops it reads green here: the kit's cases are the measure."""
+        code = re.sub(r"/\*.*?\*/", "", module_text, flags=re.S)
+        code = "\n".join(line.split("//", 1)[0] for line in code.splitlines())
+        start = code.find("async function git(")
+        assert start != -1, "the git helper `async function git(` is gone: re-point this pin at its successor"
         helper = code[start:code.index("\n}\n", start)]
         assert ".stderr" in helper, "the git helper drops git's own words again"
-        reads = re.findall(r"const (\w+) = await git\(", code)
+        reads = list(re.finditer(r"const (\w+) = await git\(", code))
         assert reads, "no git read found: the helper's callers were renamed past this pin"
-        for name in reads:
-            assert f"{name}.why" in code, f"the git read `{name}` drops why it failed"
+        assert code.count("await git(") == len(reads), "a git read this pin cannot follow (not `const NAME = await git(`)"
+        for read in reads:
+            scope = code[read.end():code.index("\n}\n", read.end())]
+            assert f"{read.group(1)}.why" in scope, f"the git read `{read.group(1)}` drops why it failed"
 
     @pytest.mark.skipif(shutil.which("claude") is None, reason="claude is not on PATH")
     def test_the_engine_accepts_the_manifest_and_the_module(self, seat):

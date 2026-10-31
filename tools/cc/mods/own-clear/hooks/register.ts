@@ -127,17 +127,19 @@ async function noteNow($: Engine, text: string): Promise<void> {
   }
 }
 
-// A git read's output, or why it failed: git's own words (stderr on one line,
-// cut at WHY_CHARS), else its exit code, else the engine's rejection (git could
-// not start, or outran the timeout). Every caller names it (DEF-3019: win-2's
-// 06:25Z re-prime said 'HEAD could not be read' while HEAD equalled the
-// marker's, and nothing said why).
+// Text on one line, at most WHY_CHARS characters: its end is kept, since git
+// prints `fatal:` after any warnings; cut by code point, never mid-character.
 const WHY_CHARS = 200
 function oneLine(text: string): string {
-  const flat = text.replace(/\s+/g, ' ').trim()
-  return flat.length > WHY_CHARS ? `${flat.slice(0, WHY_CHARS)}...` : flat
+  const chars = Array.from(text.replace(/\s+/g, ' ').trim())
+  return chars.length > WHY_CHARS ? `...${chars.slice(3 - WHY_CHARS).join('')}` : chars.join('')
 }
 
+// A git read's output, or why it failed: `exit <code>`, git's stderr after it
+// when it printed any, or the engine's rejection, which process.run gives when
+// git cannot start or is still running at the timeout (its typings). Every
+// caller names it (DEF-3019: win-2's 06:25Z re-prime said 'HEAD could not be
+// read' while HEAD equalled the marker's, and nothing said why).
 async function git($: Engine, cwd: string, ...argv: string[]): Promise<{ ok: boolean; out: string; why: string }> {
   try {
     const r = await $.process.run(['git', ...argv], { cwd, timeoutMs: 10000 })
@@ -145,7 +147,7 @@ async function git($: Engine, cwd: string, ...argv: string[]): Promise<{ ok: boo
     const said = oneLine(r.stderr ?? '')
     return { ok: false, out: r.stdout.trim(), why: `exit ${r.exitCode}${said ? `: ${said}` : ''}` }
   } catch (err) {
-    return { ok: false, out: '', why: `git did not run: ${oneLine(String(err))}` }
+    return { ok: false, out: '', why: `no exit (git could not start, or outran 10 s): ${oneLine(String(err))}` }
   }
 }
 
@@ -158,8 +160,9 @@ async function repoRoot($: Engine): Promise<string> {
   const cwd = await $.session.cwd()
   const top = await git($, cwd, 'rev-parse', '--show-toplevel')
   if (top.ok && top.out) return (root = top.out)
+  root = cwd
   await note($, `the checkout's top could not be read from ${cwd} (${top.why || 'git printed no path'}); the marker is read from there`)
-  return (root = cwd)
+  return root
 }
 
 async function readMarker($: Engine): Promise<Marker | undefined> {
