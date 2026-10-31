@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4063",
+ "subject": "tools/cc/board.py",
+ "cmd": "python3 -c \"import ast;t=[ast.parse(open(f,encoding='utf-8').read()) for f in ('tools/cc/board.py','tools/cc/_post_merge.py')];print(any(isinstance(c,ast.Constant) and c.value=='--required' for m in t for n in ast.walk(m) if isinstance(n,ast.Call) for a in n.args+[k.value for k in n.keywords] for c in ast.walk(a)))\"",
+ "open_value": "False",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/_post_merge.py"
+ ],
+ "row_sha": "d28ade761676",
+ "text_sha": "cb7c9335fe50",
+ "verified_2026_10_31": "STILL_OPEN (re-pinned value unchanged on 2026-10-31: the ratchet test_no_new_probe_is_satisfiable_by_its_own_fixs_paperwork named the text predicate at the lane's first tier, before any push; the probe is re-pointed and the claim stands: an AST predicate over call arguments in board.py and _post_merge.py) [changed: probe, text]"
+}
