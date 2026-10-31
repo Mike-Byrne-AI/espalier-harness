@@ -735,7 +735,11 @@ class TestBrief:
                 "instead of filing an operator call and waiting (scripts/seat_day_census.py counts the rulings "
                 "by that opening and your row names them); the operator can reverse it, and a new pack, a scope "
                 "change, a release or tag stay the operator's. A (stopped) row on the asks line past the hour is "
-                "that read: answer it with the ack that frees or re-aims the seat. At the operator's word") in own, own
+                "that read: answer it with the ack that frees or re-aims the seat. A red main no revert clears is "
+                "ruled the same way: the gridlock: ack names the red post-merge run by its id in its own text "
+                "(never only through the call it answers) and, with --lane, the fix lane; the seat lands it with "
+                "python tools/cc/ship.py open --base-red-ruled <that ack's full id> (handoff takes the same "
+                "flag), and the revert stays the default. At the operator's word") in own, own
         assert own.count(seat.SELF_HOST_GRIDLOCK) == 1, own
         shapes = "a red main no revert clears, two lanes in conflict, a ruling a worker waits on past the hour"
         kept = "a new pack, a scope change, a release or tag stay the operator's"

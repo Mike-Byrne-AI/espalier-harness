@@ -87,8 +87,10 @@ auto-merge has landed the lane and reports to nobody otherwise (the SessionStart
 banner's `Merged:` rule, the same states) -- so read that log
 (`gh run view <id> --log-failed`) before arming another lane on top of it. When
 the base's own post-merge proof is red, notes that `open` will refuse this lane
-(a `revert/` lane excepted); likewise when two or more live sessions work in
-this checkout (Step 2). Where
+(a `revert/` lane excepted) and names the way through -- the revert, or
+`open --base-red-ruled <ack id>` where the dispatcher ruled the red a
+fix-forward, with the run id the ack must name; likewise when two or more live
+sessions work in this checkout (Step 2). Where
 `handoff_push` is on, notes when this lane's commits carry no Session Log row
 (no new file under `memory/session-log.d/` and no change to
 `ESPALIER_MEMORY.md`): the handoff has not run for it, and `open` will refuse
@@ -132,9 +134,23 @@ Refuses, too, while the base's newest post-merge proof is red: nothing lands on
 a red base, so the revert goes first, from a `revert/` lane, which it lets
 through. The refusal names each pull request whose armed auto-merge would land
 on the red base, with `gh pr merge --disable-auto <n>`; a flake clears with a
-re-run of that run. It notes, without refusing, when this seat already has
-another open pull request (by the seat whose latest claim or release names its
-lane: every seat may push as one GitHub account).
+re-run of that run. A red no revert can clear -- its failing test outside every
+suspect's diff, reproduced at the last green base with the moved dependency --
+lands on the dispatcher's ruling: `open --base-red-ruled <ack id>` (and
+`handoff`, the same flag) is let through when an `ack` with that full id is on
+the local mail refs, from the seat `dispatcher` names in `espalier.toml` (any
+seat where none is named), its text opens with `gridlock:` (the dispatcher's
+ruling marker, the one the census counts) and names the red post-merge run by
+its id in its own text, and, where its `--lane` names one, that lane is this
+one; no such ack, a request with that id, one on another seat's ref, one
+without the marker, one naming no run or another run, one ruling for another
+lane, or a dispatcher setting or channel that cannot be read refuses by name.
+A ruling that holds is said with its text's head and, by `open` alone, written
+into the pull request body (a `handoff` onto an open pull request says it and
+edits no body). The refusal, and `preflight`'s note, name the flag and the run
+id the ack must name. It notes, without refusing, when this seat
+already has another open pull request (by the seat whose latest claim or
+release names its lane: every seat may push as one GitHub account).
 
 Refuses, before anything moves, when two or more live sessions work in this
 checkout -- Claude Code's own session registry places them, the session running

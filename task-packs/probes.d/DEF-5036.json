@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5036",
+ "subject": "tools/cc/board.py",
+ "cmd": "python -c \"import re; print(len(re.findall(r'base-red-ruled', open('tools/cc/board.py', encoding='utf-8').read())))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "7e6f21e78b25",
+ "text_sha": "79c746ab3b10",
+ "verified_2026_10_30": "OPEN (filed 2026-10-30; probe driven at filing)"
+}

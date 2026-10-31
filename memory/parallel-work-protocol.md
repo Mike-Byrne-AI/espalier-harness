@@ -298,6 +298,20 @@ launcher did not start the handoff arms nothing and says the window needs a
      branch re-merges only its new commits, and the reverted change stays
      out of `main` without anyone seeing it go. Re-land on a fresh branch from
      `main`: `git revert <the revert's sha>`, then the fix on top.
+   - **A red no revert can clear is fixed forward on the dispatcher's ruling,
+     named by run id (the operator's word, 2026-10-30).** A red whose failing
+     test is outside every suspect's diff and reproduces at the last green
+     base with the moved dependency has no merge to revert: pytest 9.2.0
+     redded `main` at b207744 on 2026-10-29 outside #352's diff, no revert
+     could clear it, every seat held about eleven hours, and the fix landed
+     only by a hand-opened pull request (#353). The dispatcher rules it a
+     fix-forward in an `ack` on the mail channel whose text names the red
+     post-merge run by its id, and the fix lane lands with
+     `python tools/cc/ship.py open --base-red-ruled <ack id>` (`handoff` takes
+     the same flag): the driver reads the ack from the local mail refs,
+     refuses by name an ack that is not the dispatcher's, one naming another
+     run, or none, and writes the ruling into the pull request body. The
+     revert stays the default, and a `revert/` lane needs no flag.
 
 8. **A finding's row, its probe and its fix are one job**, filed by the seat
    assigned the fix, or not filed at all when the fix lands in the same lane

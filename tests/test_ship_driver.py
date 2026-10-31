@@ -3252,6 +3252,346 @@ class TestARedBaseRefusesOpen:
         assert "gh pr merge --disable-auto 7 until the revert merges" in capsys.readouterr().out
 
 
+#: The dispatcher's ruling on a red base: an ack id as the channel mints them.
+_RULING = "20261030T120000Z-air-ab12cd"
+
+
+def _ruling_ack(run: str = "900", *, machine: str = "air", ack_id: str = _RULING, text: str | None = None,
+                lane: str = "", kind: str = "ack") -> dict:
+    """A message as the mail channel stores it: by default the dispatcher's
+    gridlock ack ruling a fix-forward on the post-merge run ``run``."""
+    if text is None:
+        text = (f"gridlock: fix forward; the red on post-merge.yml run {run} is pytest's, outside every "
+                "suspect's diff, and reproduces at the last green base")
+    return {"v": 1, "id": ack_id, "type": kind, "from": machine, "at": "2026-10-30T12:00:00Z",
+            "re": {"lane": lane, "classes": [], "paths": [], "ids": []},
+            "text": text, "ack": "20261030T110000Z-air-work-0f0f0f"}
+
+
+def _ruling_channel(by_machine: dict, *, dispatcher, how: str, unusable: str):
+    """A mail channel stood in: the local refs' messages by machine, the
+    dispatcher setting, and what the verbs after a push ask of it."""
+    return types.SimpleNamespace(
+        read_mail=lambda root, **kw: (dict(by_machine), {}),
+        dispatcher_setting=lambda root: (dispatcher, how),
+        DISPATCHER_UNUSABLE=unusable,
+        MACHINE_UNREAD="git config could not be read",
+        machine_setting=lambda root, **kw: ("air-work", "stubbed"),
+        lane_seats=lambda by_machine: {},
+        release_lane=lambda root, lane, text="", **kw: None,
+        pending=lambda *a, **kw: [],
+        Unresolvable=Exception,
+        fetch_records=lambda root, **kw: (True, ""))
+
+
+class TestARedBaseRuledByTheDispatcher:
+    """A red no revert can clear (pytest 9.2.0 redded main outside every
+    suspect's diff on 2026-10-29; every seat held eleven hours; the fix landed
+    by a hand-opened pull request) has a way through the driver: `open` and
+    `handoff` take --base-red-ruled <ack id>, and let the lane land when the
+    dispatcher's ack with that id is on the local mail refs and names the red
+    run by its id. The revert stays the default: without the flag the refusal
+    names the way through, and with it every way the ruling does not hold
+    refuses by name."""
+
+    @staticmethod
+    def _stand_in(ship, monkeypatch, by_machine: dict, *, dispatcher: str | None = "air",
+                  how: str = "espalier.toml sets dispatcher = air") -> None:
+        monkeypatch.setattr(ship, "_MAIL", None)
+        unusable = ship._mail_module().DISPATCHER_UNUSABLE   # the real phrase: a stub that copied it would not drift
+        if dispatcher == "unusable":
+            dispatcher = unusable
+        monkeypatch.setattr(ship, "_MAIL", _ruling_channel(by_machine, dispatcher=dispatcher, how=how,
+                                                           unusable=unusable))
+
+    def test_the_refusal_names_the_ruling_as_the_way_through(self, ship, tmp_path, forget_guard):
+        """Without the flag the refusal stands, and says what lets a ruled
+        fix-forward through, by the run id the ack must name. Dies to: a
+        refusal whose only way out is the revert (the eleven-hour hold)."""
+        _write_guard(tmp_path)
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        text = str(stop.value)
+        assert "Nothing lands on a red base" in text and "revert/" in text
+        assert "--base-red-ruled <ack id>" in text and "run 900" in text
+        assert spawns.mutations == []
+
+    def test_preflight_names_the_ruling_as_the_way_through(self, ship, tmp_path, capsys):
+        _memory(tmp_path, "2026-10-09")
+        _arm(ship, _preflight_answers(tmp_path, base_runs=_RED_BASE))
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert "`open` will refuse this lane: main red after merge" in out
+        assert "--base-red-ruled <ack id>" in out and "run 900" in out
+
+    def test_the_dispatchers_ack_naming_the_run_lets_the_lane_through(self, ship, tmp_path, forget_guard,
+                                                                       monkeypatch, capsys):
+        """The ruling on the record twice: said at the open, and in the pull
+        request body every reader of the lane sees."""
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack("900")]})
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        assert ship.open_pr(base_red_ruled=_RULING) == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        out = capsys.readouterr().out
+        assert f"ruling {_RULING}" in out and "run 900" in out and "air" in out
+        assert any(f"ruling {_RULING}" in body and "run 900" in body for body in spawns.body_texts), spawns.body_texts
+
+    def test_no_such_ack_on_the_local_refs_refuses_by_name(self, ship, tmp_path, forget_guard, monkeypatch):
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack("900", ack_id="20261030T120000Z-air-000000")]})
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(base_red_ruled=_RULING)
+        text = str(stop.value)
+        assert f"no ack {_RULING}" in text and "mail.py inbox" in text
+        assert "Nothing lands on a red base" in text
+        assert spawns.mutations == []
+
+    def test_an_ack_on_another_seats_ref_does_not_rule(self, ship, tmp_path, forget_guard, monkeypatch):
+        """The ref is the sender, never the message's from field: an ack on
+        win's ref claiming to be air's is win's."""
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"win": [_ruling_ack("900", machine="air")]})
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(base_red_ruled=_RULING)
+        text = str(stop.value)
+        assert "win's ref" in text and "dispatcher's (air)" in text
+        assert spawns.mutations == []
+
+    def test_an_ack_naming_another_run_does_not_rule(self, ship, tmp_path, forget_guard, monkeypatch):
+        """A ruling on an older red does not let a newer one through, and a
+        run id is matched whole: 9001 does not name 900."""
+        _write_guard(tmp_path)
+        for other in ("800", "9001"):
+            self._stand_in(ship, monkeypatch, {"air": [_ruling_ack(other)]})
+            spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+            with pytest.raises(ship.Refused) as stop:
+                ship.open_pr(base_red_ruled=_RULING)
+            assert "does not name run 900" in str(stop.value), (other, str(stop.value))
+            assert spawns.mutations == []
+
+    def test_with_no_dispatcher_named_any_seats_ack_rules(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """A lone operator's default, the fold's own rule for assigns."""
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"win": [_ruling_ack("900", machine="win")]}, dispatcher=None,
+                       how="espalier.toml does not set dispatcher, so every machine's assigns count")
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        assert ship.open_pr(base_red_ruled=_RULING) == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        assert "win" in capsys.readouterr().out
+
+    def test_an_unusable_dispatcher_setting_refuses_by_name(self, ship, tmp_path, forget_guard, monkeypatch):
+        """A broken team setting fails closed, as it does for assigns."""
+        _write_guard(tmp_path)
+        how = ("espalier.toml sets dispatcher = Air, which is not a machine name (lowercase letters, digits "
+               "and hyphens), so no assign counts until it is")
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack("900")]}, dispatcher="unusable", how=how)
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(base_red_ruled=_RULING)
+        assert "not a machine name" in str(stop.value)
+        assert spawns.mutations == []
+
+    def test_no_mail_channel_refuses_by_name(self, ship, tmp_path, forget_guard, monkeypatch):
+        _write_guard(tmp_path)
+        monkeypatch.setattr(ship, "_mail_module", lambda: None)
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(base_red_ruled=_RULING)
+        assert "mail.py is not beside this script" in str(stop.value)
+        assert spawns.mutations == []
+
+    def test_a_green_base_with_the_flag_notes_and_opens(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack("900")]})
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr(base_red_ruled=_RULING) == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        out = capsys.readouterr().out
+        assert "not red" in out and _RULING in out
+        assert not any(_RULING in body for body in spawns.body_texts)   # no ruling was used: none on the record
+
+    def test_a_handoff_with_the_ruling_lands_the_lane_and_arms_without_a_held_refusal(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """The no-pull-request path: the handoff's open takes the ruling, the
+        push runs, and the own-clear arms as after any landed handoff."""
+        answers = TestTheHandoffArmsTheOwnClear()._red_base_answers(tmp_path)
+        calls = TestTheHandoffArmsTheOwnClear._arm_calls(ship, monkeypatch)
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack("900")]})
+        spawns = _arm(ship, answers)
+        assert ship.handoff(base_red_ruled=_RULING) == 0
+        assert spawns.count(("git", "push")) == 1
+        assert calls == [{}], calls
+
+    def test_a_handoff_onto_an_armed_pull_request_names_the_ruling_not_the_disarm(
+            self, ship, tmp_path, monkeypatch, capsys):
+        _toml(tmp_path, "handoff_push = true\n")
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack("900")]})
+        _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path, base_runs=_RED_BASE))
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 0)
+        assert ship.handoff(base_red_ruled=_RULING) == 0
+        out = capsys.readouterr().out
+        assert f"ruling {_RULING}" in out and "run 900" in out
+        assert "disable-auto" not in out
+
+    def test_a_handoff_onto_an_armed_pull_request_with_a_ruling_that_does_not_hold_names_both(
+            self, ship, tmp_path, monkeypatch, capsys):
+        _toml(tmp_path, "handoff_push = true\n")
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack("800")]})
+        _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path, base_runs=_RED_BASE))
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 0)
+        assert ship.handoff(base_red_ruled=_RULING) == 0   # the row still reaches the pull request
+        out = capsys.readouterr().out
+        assert "does not name run 900" in out and "gh pr merge --disable-auto 7" in out
+
+    def test_main_parses_the_flag_on_open_and_handoff(self, ship, monkeypatch):
+        seen: list[tuple[str, dict]] = []
+        monkeypatch.setattr(ship, "open_pr", lambda **kw: seen.append(("open", kw)) or 0)
+        monkeypatch.setattr(ship, "handoff", lambda **kw: seen.append(("handoff", kw)) or 0)
+        assert ship.main(["open", "--base-red-ruled", _RULING]) == 0
+        assert ship.main(["handoff", "--base-red-ruled", _RULING]) == 0
+        assert [(verb, kw["base_red_ruled"]) for verb, kw in seen] == [("open", _RULING), ("handoff", _RULING)]
+        seen.clear()
+        assert ship.main(["open"]) == 0 and seen[0][1]["base_red_ruled"] is None
+
+    def test_an_ack_without_the_gridlock_marker_does_not_rule(self, ship, tmp_path, forget_guard, monkeypatch):
+        """A status or a veto that names the run is not a ruling: the marker is
+        the dispatcher's own (Core Rule 15), the one the census counts. Dies
+        to: any dispatcher ack naming the run read as a ruling (the failure-mode
+        review drove 'do NOT fix forward on run 900' through)."""
+        _write_guard(tmp_path)
+        for text in ("seen: run 900 is red; every lane holds", "do NOT fix forward on run 900; revert first"):
+            self._stand_in(ship, monkeypatch, {"air": [_ruling_ack(text=text)]})
+            spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+            with pytest.raises(ship.Refused) as stop:
+                ship.open_pr(base_red_ruled=_RULING)
+            assert "does not open with gridlock:" in str(stop.value), str(stop.value)
+            assert spawns.mutations == []
+
+    def test_a_request_with_the_id_is_not_a_ruling(self, ship, tmp_path, forget_guard, monkeypatch):
+        """The operator call that lists the run is the question; its answer is the ruling."""
+        _write_guard(tmp_path)
+        call = "OPERATOR CALL: run 900 is red outside every suspect's diff; (a) fix forward (b) revert"
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack(kind="request", text=call)]})
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(base_red_ruled=_RULING)
+        assert "is a request, not an ack" in str(stop.value)
+        assert spawns.mutations == []
+
+    def test_an_id_of_another_shape_is_told_the_shape(self, ship, tmp_path, forget_guard, monkeypatch):
+        """Seats name messages by their 6-character tail in prose; the flag takes the full id."""
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack()]})
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(base_red_ruled="ab12cd")
+        assert "ab12cd is not a message id" in str(stop.value) and "full id" in str(stop.value)
+        assert spawns.mutations == []
+
+    def test_a_ruling_naming_no_run_says_so(self, ship, tmp_path, forget_guard, monkeypatch):
+        """The 2026-10-29 ruling named its run only through the call it answered."""
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack(text="gridlock: (a) fix-forward, the operator's "
+                                                                     "word at 01:30Z; no revert")]})
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(base_red_ruled=_RULING)
+        text = str(stop.value)
+        assert "does not name run 900" in text and "never only through the request it answers" in text
+        assert spawns.mutations == []
+
+    def test_a_mail_channel_that_cannot_be_read_refuses_by_name(self, ship, tmp_path, forget_guard, monkeypatch):
+        """Never a traceback past main, and never a handoff whose arm is skipped."""
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack()]})
+
+        def boom(root, **kw):
+            raise TimeoutError("git for-each-ref took longer than 30s")
+
+        ship._MAIL.read_mail = boom
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(base_red_ruled=_RULING)
+        assert "mail channel could not be read" in str(stop.value)
+        assert spawns.mutations == []
+
+    def test_the_dispatchers_own_ack_rules_over_a_same_id_ack_on_another_ref(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """A stray same-id message on a ref that sorts first does not block the dispatcher's own."""
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"aaa": [_ruling_ack(text="seen: run 900", machine="aaa")],
+                                           "air": [_ruling_ack()]})
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        assert ship.open_pr(base_red_ruled=_RULING) == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        assert "air's gridlock ack" in capsys.readouterr().out
+
+    def test_a_ruling_for_another_lane_does_not_rule_this_one(self, ship, tmp_path, forget_guard, monkeypatch):
+        """Core Rule 15 says the FIX lane lands; an ack naming a lane rules for it alone."""
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack(lane="lane/the-fix")]})
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(base_red_ruled=_RULING)
+        assert "rules for lane/the-fix, not this lane (lane/x)" in str(stop.value)
+        assert spawns.mutations == []
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack(lane="lane/x")]})
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        assert ship.open_pr(base_red_ruled=_RULING) == 0
+
+    def test_the_rulings_text_rides_the_terminal_and_the_body(self, ship, tmp_path, forget_guard, monkeypatch,
+                                                              capsys):
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack()]})
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        assert ship.open_pr(base_red_ruled=_RULING) == 0
+        assert "gridlock: fix forward" in capsys.readouterr().out
+        assert any("Landed on a red base by ruling:" in body and "gridlock: fix forward" in body
+                   for body in spawns.body_texts), spawns.body_texts
+
+    def test_a_dry_run_with_the_ruling_says_it_and_touches_nothing(self, ship, tmp_path, forget_guard, monkeypatch,
+                                                                   capsys):
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack()]})
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        assert ship.open_pr(base_red_ruled=_RULING, dry_run=True) == 0
+        assert f"ruling {_RULING}" in capsys.readouterr().out
+        assert spawns.mutations == []
+
+    def test_a_revert_lane_notes_a_flag_it_did_not_read(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        _write_guard(tmp_path)
+        monkeypatch.setattr(ship, "_mail_module", lambda: None)   # never read: a revert/ lane asks no ruling
+        spawns = _arm(ship, _open_answers(tmp_path, branch="revert/abc1234", base_runs=_RED_BASE))
+        assert ship.open_pr(base_red_ruled=_RULING) == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        assert "needs no ruling" in capsys.readouterr().out
+
+    def test_the_run_id_is_matched_whole_on_both_sides(self, ship, tmp_path, forget_guard, monkeypatch):
+        _write_guard(tmp_path)
+        for other in ("1900", "9001"):
+            self._stand_in(ship, monkeypatch, {"air": [_ruling_ack(other)]})
+            spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+            with pytest.raises(ship.Refused) as stop:
+                ship.open_pr(base_red_ruled=_RULING)
+            text = str(stop.value)
+            assert "does not name run 900" in text and f"names run {other} instead" in text, text
+            assert spawns.mutations == []
+
+    def test_the_ruling_marker_is_the_census_marker_and_the_brief_names_the_flag(self, ship):
+        """One word across the driver, the census's table and the dispatcher's
+        brief; and the brief tells the dispatcher to name the run and the flag."""
+        root = Path(ship.__file__).resolve().parents[2]
+        census = (root / "scripts" / "seat_day_census.py").read_text(encoding="utf-8")
+        assert f'"gridlock": "{ship.RULING_PREFIX}"' in census
+        brief = (root / "tools" / "cc" / "seat.py").read_text(encoding="utf-8")
+        assert f"the {ship.RULING_PREFIX} ack names the red post-merge run by its id" in brief
+        assert f"open {ship.BASE_RED_RULED_FLAG} <that ack's full id>" in brief
+
+
 class TestTheRedBaseReadsTheBoardsWindow:
     """DEF-2018: each push's post-merge proof runs to the end beside the next
     (DEF-2015), so a burst of merges holds several runs still going above the
