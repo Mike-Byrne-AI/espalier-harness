@@ -42,9 +42,15 @@ says the window needs a `/clear` by hand.
    status line, with what that turn left in flight, and a compaction is let
    through once two turns have passed, so a clear the engine lost never
    freezes the window; the operator's own `/clear` ends the wait. Anything in
-   flight keeps the marker armed and names the wait on the status line; a
-   clear the engine refuses says so there and is tried again at the next
-   turn's end. **Every outcome goes on the marker** (DEF-5031, 2026-10-30: the
+   flight keeps the marker armed and names the wait on the status line; so
+   does a git read that fails, with why: `exit <code>` and git's stderr
+   after it (one line, its last 200 characters, where `fatal:` sits), or
+   the engine's rejection when git could not start or outran its 10 s
+   timeout; the re-prime's brief carries the same text (DEF-3019,
+   2026-10-31: win-2's re-prime said `HEAD could not be read` while HEAD
+   equalled the marker's, and nothing said why; that read's cause is still
+   unknown, and the next such read names its own). A clear the engine
+   refuses says so there and is tried again at the next turn's end. **Every outcome goes on the marker** (DEF-5031, 2026-10-30: the
    dispatcher window re-asked a refused clear 41 times over ten hours with the
    refusal on a status line nobody read and the log off): a rejected ask
    writes `clear_refused` (the engine's text), `clear_refusals` (a count) and
@@ -119,7 +125,8 @@ checkout's own when a reload has reset the module's memory).
 - `ESPALIER_OWN_CLEAR`: `1` in a session `seat.py launch` started with the mod;
   the handoff's gate.
 - `ESPALIER_OWN_CLEAR_ROOT`: the checkout the marker lives in, for a test or a
-  drive; unset, `git rev-parse --show-toplevel` from the session's directory.
+  drive; unset, `git rev-parse --show-toplevel` from the session's directory
+  (a read that fails falls back to that directory, git's reason on the log).
 - `ESPALIER_OWN_CLEAR_LOG`: a file the mod appends one JSON line per event to,
   capped (past 256 KB the newest 500 rows are kept), its writes chained so two
   in flight at once drop nothing; unset, nothing is written and the marker is
@@ -141,7 +148,7 @@ python bench/own_clear/drive.py                     # the real thing: a pty-driv
 
 A Python contract test in the suite pins the two sides to each other (the
 marker's path and states, the flag, the two variables, the SessionStart
-handler's two reads before the hand-on) and runs
+handler's two reads before the hand-on, every git read's reason read) and runs
 the kit above wherever `claude` is on PATH, with the pass count derived from
 the kit file, so a broken case reds the local tier; no CI cell installs
 `claude`, so there the kit is the seat's run. The engine writes

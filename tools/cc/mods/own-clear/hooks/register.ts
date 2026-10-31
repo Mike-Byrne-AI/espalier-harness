@@ -127,12 +127,27 @@ async function noteNow($: Engine, text: string): Promise<void> {
   }
 }
 
-async function git($: Engine, cwd: string, ...argv: string[]): Promise<{ ok: boolean; out: string }> {
+// Text on one line, at most WHY_CHARS characters: its end is kept, since git
+// prints `fatal:` after any warnings; cut by code point, never mid-character.
+const WHY_CHARS = 200
+function oneLine(text: string): string {
+  const chars = Array.from(text.replace(/\s+/g, ' ').trim())
+  return chars.length > WHY_CHARS ? `...${chars.slice(3 - WHY_CHARS).join('')}` : chars.join('')
+}
+
+// A git read's output, or why it failed: `exit <code>`, git's stderr after it
+// when it printed any, or the engine's rejection, which process.run gives when
+// git cannot start or is still running at the timeout (its typings). Every
+// caller names it (DEF-3019: win-2's 06:25Z re-prime said 'HEAD could not be
+// read' while HEAD equalled the marker's, and nothing said why).
+async function git($: Engine, cwd: string, ...argv: string[]): Promise<{ ok: boolean; out: string; why: string }> {
   try {
     const r = await $.process.run(['git', ...argv], { cwd, timeoutMs: 10000 })
-    return { ok: r.exitCode === 0, out: r.stdout.trim() }
+    if (r.exitCode === 0) return { ok: true, out: r.stdout.trim(), why: '' }
+    const said = oneLine(r.stderr ?? '')
+    return { ok: false, out: r.stdout.trim(), why: `exit ${r.exitCode}${said ? `: ${said}` : ''}` }
   } catch (err) {
-    return { ok: false, out: String(err) }
+    return { ok: false, out: '', why: `no exit (git could not start, or outran 10 s): ${oneLine(String(err))}` }
   }
 }
 
@@ -144,7 +159,10 @@ async function repoRoot($: Engine): Promise<string> {
   if (root) return root
   const cwd = await $.session.cwd()
   const top = await git($, cwd, 'rev-parse', '--show-toplevel')
-  return (root = top.ok && top.out ? top.out : cwd)
+  if (top.ok && top.out) return (root = top.out)
+  root = cwd
+  await note($, `the checkout's top could not be read from ${cwd} (${top.why || 'git printed no path'}); the marker is read from there`)
+  return root
 }
 
 async function readMarker($: Engine): Promise<Marker | undefined> {
@@ -204,10 +222,10 @@ function armedFor(marker: Marker | undefined, id: string): marker is Marker {
 async function inFlight($: Engine, marker: Marker): Promise<string> {
   const cwd = await repoRoot($)
   const status = await git($, cwd, 'status', '--porcelain', '--untracked-files=no')
-  if (!status.ok) return `git status could not be read (${status.out || 'no output'})`
+  if (!status.ok) return `git status could not be read (${status.why})`
   if (status.out) return 'a tracked edit is in flight'
   const head = await git($, cwd, 'rev-parse', 'HEAD')
-  if (!head.ok) return 'HEAD could not be read'
+  if (!head.ok) return `HEAD could not be read (${head.why})`
   if (marker.head && head.out !== marker.head) return 'HEAD moved since the handoff (that handoff re-arms the marker)'
   try {
     const plan: unknown = JSON.parse(await $.fs.read(`${cwd}/${PLAN}`))
