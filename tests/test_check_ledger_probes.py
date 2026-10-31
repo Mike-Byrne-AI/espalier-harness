@@ -1512,13 +1512,10 @@ class TestProbeShapesAreRatcheted:
         #: which is the fix. The DEF-672 shape: same reason, earns the slot. The body
         #: contract the fix brings (beside the staging one) is what will hold it after.
         "DEF-944",
-        #: DEF-1002 and DEF-1003 (filed 2026-10-01 from the post-flip review): each
-        #: subject is an agent-read body whose deliverable is one fenced command (the
-        #: /analyze coverage loop; the dead-config pass). The probe runs `init` into a
-        #: temp tree, cuts that fence out of the DEPLOYED copy under its fixed header,
-        #: and executes it, so prose, a pointer or a changelog line cannot move it;
-        #: only changing the command does. The DEF-672 shape: same reason, earns the slot.
-        "DEF-1002", "DEF-1003",
+        #: DEF-1002 and DEF-1003 (filed 2026-10-01 from the post-flip review) left this
+        #: set on 2026-10-31: struck by lane first-contact-diagnostics-read-the-adopters-tree
+        #: (their fenced commands, the /analyze coverage loop and the dead-config pass,
+        #: now census the adopter's tree), so their probes retired with them.
         "LG-12",
     }
 
