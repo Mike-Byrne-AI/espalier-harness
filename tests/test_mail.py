@@ -1207,6 +1207,126 @@ class TestLiveRequests:
         assert mail.live_requests({"win": [asked]}, now=self._NOW)[0]["age_s"] is None
 
 
+class TestFixForwardRulings:
+    """The dispatcher's fix-forward ruling on a red base has one reader, here,
+    which the ship driver's ``--base-red-ruled`` check and the board's red line
+    both read: an ``ack`` on the dispatcher's own ref whose text opens with the
+    fixed head ``gridlock: fix forward run <id>`` (the red post-merge run's id,
+    read from that head alone) and whose ``re`` names the fix lane. Before the
+    reader lived here the driver alone held the rule, and the board printed the
+    revert of the blameless suspect after the ruling (a seat back from offline
+    read `/inbox board`, claimed a revert/ lane and reverted it)."""
+
+    _T = datetime(2026, 10, 30, 12, 0, 0, tzinfo=timezone.utc)
+    _ASKED = "20261030T110000Z-air-work-0f0f0f"
+
+    def _ack(self, mail, machine="air", text="gridlock: fix forward run 900; pytest's red, outside every suspect's diff",
+             lane="lane/x", minute=0, kind="ack"):
+        return mail.new_message(machine, kind, text, ack=self._ASKED if kind == "ack" else None, lane=lane,
+                                now=self._T.replace(minute=minute))
+
+    def test_the_head_names_the_run_and_the_constants_are_the_drivers(self, mail):
+        """Dies to: the run read from anywhere but the fixed head, or a head
+        that drifts from the marker the census counts."""
+        assert mail.RULING_PREFIX == "gridlock:" and mail.RULING_HEAD == "gridlock: fix forward run "
+        assert mail.RULING_TEXT_CHARS == 160
+        assert mail.ruling_run(self._ack(mail)) == "900"
+        assert mail.ruling_run(self._ack(mail, text="  gridlock:   fix forward run 900 (folded whitespace)")) == "900"
+        assert mail.ruling_run(self._ack(mail, text="gridlock: fix forward run 9001")) == "9001"
+        for text in ("gridlock: run 900 is red outside #352's diff; do NOT fix forward yet, every seat holds",
+                     "RULING: fix forward run 900", "re gridlock: fix forward run 900", "gridlock: fix forward run",
+                     "fix forward run 900"):
+            assert mail.ruling_run(self._ack(mail, text=text)) == "", text
+        assert mail.ruling_run(self._ack(mail, kind="request")) == "" and mail.ruling_run("junk") == ""
+
+    def test_a_ruling_is_the_dispatchers_ack_under_the_head_naming_the_run_and_a_lane(self, mail):
+        ruled = self._ack(mail)
+        by_machine = {"air": [ruled], "win": [_msg(mail, "win", "note", "seen", now=self._T)]}
+        assert mail.fix_forward_rulings(by_machine, "air", "900") == [
+            {"id": ruled["id"], "lane": "lane/x", "text": ruled["text"], "machine": "air", "at": "2026-10-30T12:00:00Z"}]
+        assert mail.fix_forward_rulings(by_machine, "air", 900) == mail.fix_forward_rulings(by_machine, "air", "900")
+        assert mail.fix_forward_ruling(by_machine, "air", ruled["id"], "900", branch="lane/x") == ("air", None, ruled["text"])
+        sender, problem, text = mail.fix_forward_ruling(by_machine, "air", ruled["id"], "900", branch="lane/y")
+        assert (sender, text) == ("air", ruled["text"]) and problem == f"ack {ruled['id']} rules for lane/x, not this lane (lane/y)"
+
+    def test_the_ref_is_the_sender_never_the_from_field(self, mail):
+        """An ack on win's ref claiming to be air's is win's. Dies to: the
+        message's ``from`` trusted over the ref it rides."""
+        forged = self._ack(mail, machine="air")
+        by_machine = {"win": [forged]}
+        assert mail.fix_forward_rulings(by_machine, "air", "900") == []
+        sender, problem, text = mail.fix_forward_ruling(by_machine, "air", forged["id"], "900", branch="lane/x")
+        assert sender == "win" and text == "" and "is on win's ref, and the ruling is the dispatcher's (air) to give" in problem
+        # The dispatcher's own ref is read past a same-id ack elsewhere.
+        assert mail.fix_forward_ruling({"win": [forged], "air": [forged]}, "air", forged["id"], "900",
+                                       branch="lane/x") == ("air", None, forged["text"])
+
+    @pytest.mark.parametrize("text, lane, names", [
+        ("gridlock: run 900 is red outside #352's diff; do NOT fix forward yet, every seat holds", "lane/x",
+         "does not open with the head `gridlock: fix forward run <run id>`"),
+        ("gridlock: fix forward run 901; another red", "lane/x", "rules on run 901, not the base's red run 900"),
+        ("gridlock: fix forward run 1900", "lane/x", "rules on run 1900, not the base's red run 900"),
+        ("gridlock: fix forward run 900", None, "names no lane"),
+    ])
+    def test_another_head_another_run_or_no_lane_rules_nothing(self, mail, text, lane, names):
+        """A hold under the marker, a ruling on another red (the id matched
+        whole) and an ack naming no lane are left out of the board's read and
+        refused by name on the driver's. Dies to: the marker alone read as the
+        ruling, a prefix match on the run id, or a lane-less ack passing."""
+        ack = self._ack(mail, text=text, lane=lane)
+        by_machine = {"air": [ack]}
+        assert mail.fix_forward_rulings(by_machine, "air", "900") == []
+        sender, problem, got = mail.fix_forward_ruling(by_machine, "air", ack["id"], "900", branch="lane/x")
+        assert sender == "air" and got == ack["text"] and names in problem, problem
+
+    def test_no_dispatcher_named_counts_any_seats_ack_and_an_unusable_setting_none(self, mail):
+        """A lone operator's default, and the fail-closed setting, as the
+        assign fold takes them. Dies to: a worker's ack ruling under a named
+        dispatcher, or an unusable setting counting every ack."""
+        ruled = self._ack(mail, machine="win")
+        by_machine = {"win": [ruled]}
+        assert [r["id"] for r in mail.fix_forward_rulings(by_machine, None, "900")] == [ruled["id"]]
+        assert mail.fix_forward_ruling(by_machine, None, ruled["id"], "900", branch="lane/x") == ("win", None, ruled["text"])
+        assert mail.fix_forward_rulings(by_machine, "air", "900") == []
+        assert mail.fix_forward_rulings(by_machine, mail.DISPATCHER_UNUSABLE, "900") == []
+        sender, problem, text = mail.fix_forward_ruling(by_machine, mail.DISPATCHER_UNUSABLE, ruled["id"], "900",
+                                                        branch="lane/x")
+        assert (sender, text) == ("", "") and "the dispatcher setting cannot be used, so no ruling counts" == problem
+
+    def test_a_renamed_lane_gets_a_second_ack_and_the_newest_is_last(self, mail):
+        """Oldest first, as every fold here orders: the stamp, the machine, the
+        position in its file; the board takes the last as the ruling in force."""
+        first = self._ack(mail, lane="lane/x", minute=0)
+        second = self._ack(mail, lane="lane/x-renamed", minute=5)
+        other_run = self._ack(mail, text="gridlock: fix forward run 950", lane="lane/z", minute=7)
+        rulings = mail.fix_forward_rulings({"air": [second, other_run, first]}, "air", "900")
+        assert [(r["id"], r["lane"]) for r in rulings] == [(first["id"], "lane/x"), (second["id"], "lane/x-renamed")]
+        assert mail.fix_forward_rulings({"air": [first]}, "air", "") == []
+
+    def test_the_named_check_tells_an_ids_shape_a_request_and_a_missing_ack_apart(self, mail):
+        asked = _msg(mail, "air-work", "request", "may I land?", lane="lane/x", now=self._T)
+        by_machine = {"air-work": [asked], "air": [self._ack(mail)]}
+        for bad in ("ab12cd", "20261030T120000Z-air", "not an id"):
+            sender, problem, text = mail.fix_forward_ruling(by_machine, "air", bad, "900", branch="lane/x")
+            assert (sender, text) == ("", "") and problem.startswith(f"{bad} is not a message id"), problem
+        sender, problem, text = mail.fix_forward_ruling(by_machine, "air", asked["id"], "900", branch="lane/x")
+        assert (sender, text) == ("", "") and problem.startswith(f"{asked['id']} is a request, not an ack")
+        missing = "20261030T120000Z-air-000000"
+        sender, problem, text = mail.fix_forward_ruling(by_machine, "air", missing, "900", branch="lane/x")
+        assert (sender, text) == ("", "") and problem.startswith(f"no ack {missing} on the local mail refs")
+        assert "python tools/cc/mail.py inbox" in problem and "its --lane this lane" in problem
+
+    def test_the_reader_leaves_the_messages_untouched_and_speaks_ascii(self, mail):
+        ruled = self._ack(mail)
+        before = json.dumps(ruled, sort_keys=True)
+        by_machine = {"air": [ruled]}
+        mail.fix_forward_rulings(by_machine, "air", "900")
+        for branch in ("lane/x", "lane/y"):
+            _s, problem, _t = mail.fix_forward_ruling(by_machine, "air", ruled["id"], "900", branch=branch)
+            assert (problem or "").isascii()
+        assert json.dumps(ruled, sort_keys=True) == before
+
+
 class TestTextFile:
     """TP-701 Wave A-4: ``send --text-file`` takes the body from a file, so a
     long or quote-heavy body never rides a shell string (an assign of 2,083

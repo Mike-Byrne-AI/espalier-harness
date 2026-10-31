@@ -132,7 +132,9 @@ rewrite is what puts a push's check run and a title edit's run in a race.
 
 Refuses, too, while the base's newest post-merge proof is red: nothing lands on
 a red base, so the revert goes first, from a `revert/` lane, which it lets
-through. The refusal names each pull request whose armed auto-merge would land
+through (with a note where the base's red run was ruled a fix-forward: that
+revert undoes a merge the ruling found blameless, so it had better be the
+dispatcher's call). The refusal names each pull request whose armed auto-merge would land
 on the red base, with `gh pr merge --disable-auto <n>`; a flake clears with a
 re-run of that run. A red no revert can clear -- its failing test outside every
 suspect's diff, reproduced at the last green base with the moved dependency --

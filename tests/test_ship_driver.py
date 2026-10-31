@@ -3269,9 +3269,11 @@ def _ruling_ack(run: str = "900", *, machine: str = "air", ack_id: str = _RULING
             "text": text, "ack": "20261030T110000Z-air-work-0f0f0f"}
 
 
-def _ruling_channel(by_machine: dict, *, dispatcher, how: str, unusable: str):
+def _ruling_channel(by_machine: dict, *, dispatcher, how: str, unusable: str, real):
     """A mail channel stood in: the local refs' messages by machine, the
-    dispatcher setting, and what the verbs after a push ask of it."""
+    dispatcher setting, and what the verbs after a push ask of it. The ruling's
+    reader is ``real``'s (the channel module itself: the one home the board's
+    red line reads too), so the stand-in carries the channel and never the rule."""
     return types.SimpleNamespace(
         read_mail=lambda root, **kw: (dict(by_machine), {}),
         dispatcher_setting=lambda root: (dispatcher, how),
@@ -3282,7 +3284,20 @@ def _ruling_channel(by_machine: dict, *, dispatcher, how: str, unusable: str):
         release_lane=lambda root, lane, text="", **kw: None,
         pending=lambda *a, **kw: [],
         Unresolvable=Exception,
-        fetch_records=lambda root, **kw: (True, ""))
+        fetch_records=lambda root, **kw: (True, ""),
+        fix_forward_ruling=real.fix_forward_ruling,
+        fix_forward_rulings=real.fix_forward_rulings,
+        MESSAGE_ID_RE=real.MESSAGE_ID_RE)
+
+
+def _real_mail():
+    """The channel module loaded by path, apart from the driver's cached handle."""
+    path = Path(__file__).resolve().parents[1] / "tools" / "cc" / "mail.py"
+    spec = importlib.util.spec_from_file_location("_mail_for_the_ruling_tests", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["_mail_for_the_ruling_tests"] = module   # registered before exec (3.14)
+    spec.loader.exec_module(module)
+    return module
 
 
 class TestARedBaseRuledByTheDispatcher:
@@ -3299,11 +3314,90 @@ class TestARedBaseRuledByTheDispatcher:
     def _stand_in(ship, monkeypatch, by_machine: dict, *, dispatcher: str | None = "air",
                   how: str = "espalier.toml sets dispatcher = air") -> None:
         monkeypatch.setattr(ship, "_MAIL", None)
-        unusable = ship._mail_module().DISPATCHER_UNUSABLE   # the real phrase: a stub that copied it would not drift
+        real = ship._mail_module()
+        unusable = real.DISPATCHER_UNUSABLE   # the real phrase: a stub that copied it would not drift
         if dispatcher == "unusable":
             dispatcher = unusable
         monkeypatch.setattr(ship, "_MAIL", _ruling_channel(by_machine, dispatcher=dispatcher, how=how,
-                                                           unusable=unusable))
+                                                           unusable=unusable, real=real))
+
+    def test_the_rulings_words_are_the_channels(self, ship):
+        """The driver keeps the marker, the head and the text cap as literals
+        (the channel is loaded on first use, and the refusal names the head
+        where no ruling was given); the channel's reader is the rule. Dies
+        to: either side's words changed alone."""
+        mail = _real_mail()
+        assert ship.RULING_PREFIX == mail.RULING_PREFIX == "gridlock:"
+        assert ship.RULING_HEAD == mail.RULING_HEAD == "gridlock: fix forward run "
+        assert ship.RULING_TEXT_CHARS == mail.RULING_TEXT_CHARS
+        source = (Path(__file__).resolve().parents[1] / "tools" / "cc" / "ship.py").read_text(encoding="utf-8")
+        assert "_RULING_HEAD_RE" not in source and "_MESSAGE_ID_RE" not in source, \
+            "the driver grew a reader of its own beside the channel's"
+        # By shape, not by name: no regex the driver builds or runs mentions the
+        # ruling's words, under any name (the channel's reader is the one).
+        import ast
+
+        from tests._source_segment import segment, source_lines   # split once, slice per node (the suite's slicer)
+        lines = source_lines(source)
+        for node in ast.walk(ast.parse(source)):
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and isinstance(node.func.value, ast.Name) and node.func.value.id == "re"
+                    and node.func.attr in ("compile", "match", "search", "fullmatch")):
+                text = segment(lines, node) or ""
+                assert "RULING" not in text.upper(), f"the driver reads the ruling's words with a regex of its own: {text}"
+
+    def test_a_mistyped_id_is_told_the_shape_before_the_channel_is_read(self, ship, tmp_path, monkeypatch):
+        """The shape check runs before any read, as it did when the driver held
+        the rule: a mistyped id on a tree whose channel cannot be read gets the
+        shape, not the channel error, and costs no git read."""
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack("900")]})
+
+        def torn(root, **kw):
+            raise OSError("the refs are torn")
+
+        monkeypatch.setattr(ship._MAIL, "read_mail", torn)
+        for bad in ("ab12cd", "20261030T110000Z-air-work-0f0f0", "not an id"):
+            sender, problem, text = ship.red_base_ruling(tmp_path, bad, "900", branch="lane/x")
+            assert (sender, text) == ("", "") and problem.startswith(f"{bad} is not a message id"), problem
+        sender, problem, text = ship.red_base_ruling(tmp_path, _RULING, "900", branch="lane/x")
+        assert "the mail channel could not be read" in problem and "the refs are torn" in problem
+
+    def test_an_older_channel_without_the_reader_is_named_not_raised(self, ship, tmp_path, monkeypatch):
+        """An upgrade keeps an adopter's edited mail.py beside the new driver:
+        the driver says the channel predates the reader instead of a traceback."""
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack("900")]})
+        monkeypatch.delattr(ship._MAIL, "fix_forward_ruling")
+        sender, problem, text = ship.red_base_ruling(tmp_path, _RULING, "900", branch="lane/x")
+        assert (sender, text) == ("", "") and "predates the ruling reader (upgrade it)" in problem
+
+    def test_a_revert_lane_on_a_ruled_run_is_told_the_merge_was_found_blameless(self, ship, tmp_path, forget_guard,
+                                                                                  monkeypatch, capsys):
+        """The route the defect's record names: a seat acting on an older read
+        of the board claims revert/<sha> after the ruling, and the driver let
+        it through without a word. It still lets it through (the revert-first
+        rule), and says what the revert undoes. Dies to: silence."""
+        _write_guard(tmp_path)
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack("900", lane="lane/x")]})
+        spawns = _arm(ship, _open_answers(tmp_path, branch="revert/abc1234", base_runs=_RED_BASE))
+        assert ship.open_pr() == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        out = capsys.readouterr().out
+        assert (f"the base's red run 900 was ruled a fix-forward by {_RULING} for lane/x: this revert undoes a "
+                "merge that ruling found blameless") in out
+        assert "make sure it is the dispatcher's call" in out
+        # No ruling on the run: nothing said; the mail channel torn: said, and the revert goes on.
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack("950", lane="lane/x")]})
+        _arm(ship, _open_answers(tmp_path, branch="revert/abc1234", base_runs=_RED_BASE))
+        assert ship.open_pr() == 0 and "found blameless" not in capsys.readouterr().out
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack("900", lane="lane/x")]})
+
+        def torn(root, **kw):
+            raise OSError("the refs are torn")
+
+        monkeypatch.setattr(ship._MAIL, "read_mail", torn)
+        _arm(ship, _open_answers(tmp_path, branch="revert/abc1234", base_runs=_RED_BASE))
+        assert ship.open_pr() == 0
+        assert "was not checked for a ruling (the mail channel could not be read: the refs are torn)" in capsys.readouterr().out
 
     def test_the_refusal_names_the_ruling_as_the_way_through(self, ship, tmp_path, forget_guard):
         """Without the flag the refusal stands, and says what lets a ruled

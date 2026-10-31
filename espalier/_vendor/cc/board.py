@@ -292,17 +292,21 @@ def read_base_runs(root: Path, base: str, workflow: str, *, run_: Runner = run) 
 
 def read_post_merge(root: Path, base: str, *, run_: Runner = run) -> dict:
     """The newest post-merge run on ``base`` that reached a verdict:
-    ``{"verdict": "green"|"red"|"none"|"absent", "sha", "url", "running",
-    "between", "green_sha", "suspects", "suspects_unread"}``. ``running`` says
-    a run newer than the verdict is going. On red, ``green_sha`` is the last
-    green run before it and ``suspects`` the pull requests merged in between,
-    several when a run between the two is red or still going (None when no
-    green run is in the window); ``between`` holds the head of each run still
-    going there, whose verdict can narrow the suspects (runs overlap since no
-    newer push cancels an older one). A failed
-    suspects read keeps the red and says so; it never turns red into unread."""
-    out: dict = {"verdict": "none", "sha": "", "url": "", "running": False, "between": [], "green_sha": "",
-                 "suspects": None, "suspects_unread": ""}
+    ``{"verdict": "green"|"red"|"none"|"absent", "sha", "url", "run_id",
+    "running", "between", "green_sha", "suspects", "suspects_unread"}``.
+    ``running`` says a run newer than the verdict is going. On red, ``run_id``
+    is the red run's id (the one a dispatcher's fix-forward ruling names,
+    ``read_ruling``), ``red_runs`` the ids of every red run back to the last
+    green, newest first (the newest is ``run_id``; a ruling on an older one is
+    named when the newest has none), ``green_sha`` the last green run before
+    it and ``suspects`` the pull requests merged in between, several when a
+    run between the two is red or still going (None when no green run is in
+    the window); ``between`` holds the head of each run still going there,
+    whose verdict can narrow the suspects (runs overlap since no newer push
+    cancels an older one). A failed suspects read keeps the red and says so;
+    it never turns red into unread."""
+    out: dict = {"verdict": "none", "sha": "", "url": "", "run_id": "", "red_runs": [], "running": False,
+                 "between": [], "green_sha": "", "suspects": None, "suspects_unread": ""}
     try:
         runs = _gh_json(root, "run", "list", "--workflow", POST_MERGE_WORKFLOW, "--branch", base, "--event", "push",
                         "--limit", str(RUN_WINDOW), "--json", "databaseId,status,conclusion,headSha,url", run_=run_)
@@ -330,8 +334,13 @@ def read_post_merge(root: Path, base: str, *, run_: Runner = run) -> dict:
             else:
                 out["green_sha"] = sha
             break
-        if conclusion in _RED and out["verdict"] == "none":
-            out.update(verdict="red", sha=sha, url=str(run_row.get("url") or ""))
+        if conclusion in _RED:
+            if out["verdict"] == "none":
+                out.update(verdict="red", sha=sha, url=str(run_row.get("url") or ""),
+                           run_id=str(run_row.get("databaseId") or ""))
+            # Every red back to the last green, newest first: a ruling on an
+            # older red in the stretch is named when the newest has none.
+            out["red_runs"].append(str(run_row.get("databaseId") or ""))
     if out["verdict"] == "red":
         try:
             out["suspects"] = read_suspects(root, out["green_sha"], out["sha"], run_=run_)
@@ -1307,6 +1316,12 @@ def collect(root: Path, *, fetch: bool = True, run_: Runner = run, now: datetime
         board["post_merge"] = read_post_merge(root, base, run_=run_)
     except Unresolvable as exc:
         board["post_merge"] = {"unread": str(exc)}
+    if board["post_merge"].get("verdict") == "red":
+        # The dispatcher's fix-forward ruling on this red run, from the mail
+        # read above: the line prints it in place of the revert.
+        pm = board["post_merge"]
+        pm.update(read_ruling(by_machine, dispatcher, how, pm.get("run_id"), red_runs=pm.get("red_runs") or [],
+                              mail_unread=board.get("mail_unread") or "", mail_note=board.get("mail_note") or ""))
     try:
         board["post_merge_checks"] = read_post_merge_checks(root, base=base, run_=run_, read_at=board["read_at"])
     except Unresolvable as exc:
@@ -1341,16 +1356,71 @@ def _pr_line(pr: dict) -> str:
     return f"#{pr.get('number')} {pr.get('headRefName')}{seat}: {meaning}; {auto}"
 
 
+def read_ruling(by_machine: dict, dispatcher: str | None, how: str, run_id: object, *,
+                red_runs: list[str] | tuple[str, ...] = (), mail_unread: str = "", mail_note: str = "") -> dict:
+    """``{"ruling", "rulings", "superseded", "ruling_unread", "ruling_as_fetched"}``:
+    the dispatcher's fix-forward rulings on the red post-merge run ``run_id``
+    -- every ack the mail channel's reader finds (``mail.fix_forward_rulings``:
+    on the dispatcher's own ref, any seat's where none is named, opening with
+    the fixed head that names this run, naming a lane), oldest first, the
+    newest as ``ruling`` -- the same rule the ship driver lands a lane on
+    (``open --base-red-ruled <ack id>``). Where the newest red has none,
+    ``superseded`` names the ruling on the newest older red in ``red_runs``
+    (the stretch back to the last green) and that run: a ruling covers the run
+    it names alone, so the merges since it are the suspects, and the one it
+    found blameless is not reverted. ``ruling_unread`` says why none could be
+    looked for: the mail unread, a dispatcher setting that cannot be used
+    (``how`` says why), or no run id on the read; ``ruling_as_fetched`` says
+    the read is of the refs as last fetched where ``mail_note`` says the fetch
+    failed or was skipped. No ruling and nothing to say: the revert is the
+    default."""
+    out: dict = {"ruling": None, "rulings": [], "superseded": None, "ruling_unread": "", "ruling_as_fetched": ""}
+    if mail_unread:
+        out["ruling_unread"] = f"no ruling was looked for: the mail could not be read ({mail_unread})"
+        return out
+    if dispatcher == mail.DISPATCHER_UNUSABLE:
+        out["ruling_unread"] = f"no ruling counts: the dispatcher setting cannot be used ({how})"
+        return out
+    if not str(run_id or ""):
+        out["ruling_unread"] = "no ruling was looked for: the red run's id was not read"
+        return out
+    rulings = mail.fix_forward_rulings(by_machine, dispatcher, run_id)
+    out["rulings"] = rulings
+    out["ruling"] = rulings[-1] if rulings else None
+    if not rulings:
+        for older in red_runs:   # newest first; the newest is run_id itself
+            if not str(older or "") or str(older) == str(run_id):
+                continue
+            earlier = mail.fix_forward_rulings(by_machine, dispatcher, older)
+            if earlier:
+                out["superseded"] = {"run_id": str(older), "ruling": earlier[-1]}
+                break
+    if mail_note:
+        out["ruling_as_fetched"] = f"the ruling was read from the mail refs as last fetched ({mail_note})"
+    return out
+
+
 def _red_line(pm: dict, base: str, prs: object) -> str:
     """The red base and what to do about it. A red run's suspects are the
     merges since the last green run before it, several when a run between the
     two is red or still going: the revert is printed only when exactly one
-    pull request merged in between, and otherwise the suspects are named."""
+    pull request merged in between, and otherwise the suspects are named.
+    Where the dispatcher has ruled the red run a fix-forward (``read_ruling``)
+    the ruling is printed in place of the revert and of the suspects' advice,
+    whatever the suspects: the fix lands on it, and no suspect is reverted.
+    Where no ruling could be looked for, the line says so beside the default."""
     sha = str(pm.get("sha") or "")[:7]
     head = f"RED (post-merge proof on {sha}, {pm.get('url')})"
     suspects = pm.get("suspects")
     green = str(pm.get("green_sha") or "")[:7]
-    if pm.get("suspects_unread"):
+    ruling = pm.get("ruling")
+    ruled = isinstance(ruling, dict) and bool(ruling.get("id"))
+    if ruled:
+        text = (f"{head}; ruled a fix-forward by {ruling['id']} for {ruling.get('lane')} ({ruling.get('machine')}'s "
+                f"gridlock ack: {str(ruling.get('text') or '')[:mail.RULING_TEXT_CHARS]}): land the fix with "
+                f"ship.py open --base-red-ruled {ruling['id']} on that lane (handoff takes the same flag), and "
+                "revert nothing")
+    elif pm.get("suspects_unread"):
         text = f"{head}; the suspects could not be read ({pm['suspects_unread']}): read the run before reverting"
     elif suspects is None:
         text = (f"{head}; no green run in the last {RUN_WINDOW}, so every merge before it is a suspect: "
@@ -1369,15 +1439,43 @@ def _red_line(pm: dict, base: str, prs: object) -> str:
         names = ", ".join(f"#{s['pr']}" for s in suspects)
         text = (f"{head}; suspects {names} (merged since the last green run on {green}): read the run to find "
                 "which, then revert that one first")
-    armed = [pr.get("number") for pr in prs if isinstance(pr, dict) and pr.get("autoMergeRequest")] \
+    if ruled:
+        earlier = [r for r in pm.get("rulings") or [] if isinstance(r, dict) and r.get("id") != ruling["id"]]
+        if earlier:
+            # A renamed lane gets a second ack, and the driver still lands the
+            # first lane on the first: every ruling on the run is on the line.
+            text += "; earlier rulings on this run: " + ", ".join(f"{r.get('id')} for {r.get('lane')}" for r in earlier)
+    superseded = pm.get("superseded")
+    if isinstance(superseded, dict) and isinstance(superseded.get("ruling"), dict):
+        older = superseded["ruling"]
+        text += (f"; run {superseded.get('run_id')}, an older red in this stretch, was ruled a fix-forward by "
+                 f"{older.get('id')} for {older.get('lane')}, and that ruling does not cover run {pm.get('run_id')}: "
+                 "the dispatcher rules again, or the suspects are read against the merges since the ruled run")
+    if pm.get("ruling_unread"):
+        text += f"; {pm['ruling_unread']}"
+    if pm.get("ruling_as_fetched"):
+        text += f"; {pm['ruling_as_fetched']}"
+    armed_prs = [pr for pr in prs if isinstance(pr, dict) and pr.get("autoMergeRequest")] \
         if isinstance(prs, list) else []
-    if armed:
-        text += ("; auto-merge is armed on " + ", ".join(f"#{n}" for n in armed)
-                 + ", which lands on the red base unless disarmed (gh pr merge --disable-auto <n>)")
+    disarm = ", which lands on the red base unless disarmed (gh pr merge --disable-auto <n>)"
+    if ruled:
+        # The ruling is for its lane alone (the driver leaves the pushing lane
+        # out of its own armed list): every other armed lane still lands on
+        # the red base, and its merge would be a newer red the ruling does not cover.
+        own = [pr.get("number") for pr in armed_prs if str(pr.get("headRefName") or "") == str(ruling.get("lane") or "")]
+        others = [pr.get("number") for pr in armed_prs if pr.get("number") not in own]
+        if own:
+            text += ("; auto-merge is armed on " + ", ".join(f"#{n}" for n in own)
+                     + " (the fix lane), which lands by the ruling")
+        if others:
+            text += ("; auto-merge is armed on " + ", ".join(f"#{n}" for n in others) + disarm
+                     + ": the ruling is for the fix lane alone")
+    elif armed_prs:
+        text += "; auto-merge is armed on " + ", ".join(f"#{pr.get('number')}" for pr in armed_prs) + disarm
     between = [str(sha)[:7] for sha in pm.get("between") or [] if sha]
     if between:
-        text += ("; a run between it and the last green is still going (on " + ", ".join(between)
-                 + "), and its verdict can narrow the suspects")
+        text += ("; a run between it and the last green is still going (on " + ", ".join(between) + ")"
+                 + ("" if ruled else ", and its verdict can narrow the suspects"))
     if pm.get("running"):
         # Runs overlap (no newer push cancels an older one), so a newer tip's
         # proof is often in flight beside a red: say so, as the green line does.

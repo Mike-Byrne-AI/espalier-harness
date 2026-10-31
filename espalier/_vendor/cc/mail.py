@@ -171,6 +171,29 @@ OPERATOR_CALL_PREFIX = "OPERATOR CALL:"
 #: of the operator call, read the same way (``is_stop``); before it a stopped
 #: worker sent nothing and the board showed no stopped seat (``DEF-5030``).
 STOPPED_PREFIX = "stopped:"
+#: What the dispatcher's ruling on a gridlock opens with (root CLAUDE.md Core
+#: Rule 15): an ``ack`` whose text opens with the marker, the one the seat-day
+#: census counts a ruling by. The marker carries no direction -- a hold, a veto
+#: or a status under it is a ruling too -- so a reader that needs the way a
+#: ruling went reads the head below, never the marker alone.
+RULING_PREFIX = "gridlock:"
+#: The fixed head a fix-forward ruling on a red base opens with, the red
+#: post-merge run's id read from it alone: ``gridlock: fix forward run <id>``.
+#: A red no revert can clear (its failing test outside every suspect's diff,
+#: reproduced at the last green base with the moved dependency) is fixed
+#: forward on this ruling, for the lane the ack's ``re`` names and no other.
+#: One reader (``fix_forward_rulings``, ``fix_forward_ruling``): the ship
+#: driver lands that lane on it (``--base-red-ruled <ack id>``) and the board's
+#: red line prints it in place of the revert, so the two agree on what rules.
+RULING_HEAD = RULING_PREFIX + " fix forward run "
+_RULING_HEAD_RE = re.compile(r"^" + re.escape(RULING_HEAD) + r"([0-9]+)(?![0-9])")
+#: How much of a ruling's text a reader repeats (the driver's terminal and pull
+#: request body, the board's line): enough to show what was ruled, never the whole.
+RULING_TEXT_CHARS = 160
+#: A message id as this channel mints them (<stamp>-<machine>-<6 hex>): the
+#: shape a flag naming an ack must take, so a 6-character tail or a request's
+#: id is told the shape instead of being looked for.
+MESSAGE_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[a-z0-9][a-z0-9-]*-[0-9a-f]{6}$")
 MAX_PATHS = 64
 MAX_CLASSES = 16
 MAX_IDS = 64
@@ -843,6 +866,129 @@ def is_stop(message: object) -> bool:
     does, on any ack naming it (``live_requests``)."""
     return (isinstance(message, dict) and message.get("type") == "request"
             and str(message.get("text") or "").startswith(STOPPED_PREFIX))
+
+
+def ruling_text(message: dict) -> str:
+    """A message's text on one line, as a ruling's reader repeats it."""
+    return " ".join(str(message.get("text") or "").split())
+
+
+def ruling_run(message: object) -> str:
+    """The red post-merge run id ``message`` rules a fix-forward on: the digits
+    after :data:`RULING_HEAD` at the text's opening, read from that head alone
+    and matched whole; '' for a text under any other head (a hold, a veto or a
+    status under the gridlock marker that names the run mid-text rules
+    nothing, and so does the run named only through the request the message
+    answers) and for anything that is not an ack."""
+    if not isinstance(message, dict) or message.get("type") != "ack":
+        return ""
+    found = _RULING_HEAD_RE.match(ruling_text(message))
+    return found.group(1) if found else ""
+
+
+def fix_forward_rulings(by_machine: dict[str, list[dict]], dispatcher: str | None, run_id: object) -> list[dict]:
+    """The dispatcher's fix-forward rulings on the red post-merge run
+    ``run_id``, oldest first: ``{"id", "lane", "text", "machine", "at"}`` for
+    each ack on the dispatcher's ref (every machine's where ``dispatcher`` is
+    None, a lone operator's default; none for :data:`DISPATCHER_UNUSABLE`, as
+    the assign fold counts none) whose text opens with :data:`RULING_HEAD`
+    followed by that run's id (:func:`ruling_run`) and whose ``re`` names a
+    lane. The ref is the sender, never the message's ``from``: an ack on
+    another seat's ref claiming to be the dispatcher's is that seat's. An ack
+    under another head, one ruling on another run, and one naming no lane are
+    left out: a fix-forward ruling is for its lane alone, and a renamed lane
+    gets a second ack, so the newest entry is the ruling in force and the
+    earlier ones are listed beside it. A later hold under the marker does not
+    withdraw a ruling (nothing expresses a withdrawal today), and a ruling
+    covers the run it names alone: a newer red run on the base is not ruled by
+    it. The board's read: with no ack id in hand it asks whether a ruling
+    holds for the red run it is about to print, and prints the ruling in
+    place of the revert."""
+    if dispatcher == DISPATCHER_UNUSABLE or not str(run_id or ""):
+        return []
+    found: list[tuple[str, str, int, dict]] = []
+    for machine, messages in by_machine.items():
+        if dispatcher and machine != dispatcher:
+            continue
+        for i, m in enumerate(messages):
+            if not isinstance(m, dict) or ruling_run(m) != str(run_id):
+                continue
+            lane = _lane_of(m)
+            if not lane:
+                continue
+            at = str(m.get("at") or "")
+            found.append((at, machine, i, {"id": str(m.get("id") or ""), "lane": lane, "text": ruling_text(m),
+                                           "machine": machine, "at": at}))
+    found.sort(key=lambda t: t[:3])
+    return [entry for _at, _machine, _i, entry in found]
+
+
+def fix_forward_ruling(by_machine: dict[str, list[dict]], dispatcher: str | None, ack_id: str, run_id: object, *,
+                       branch: str = "") -> tuple[str, str | None, str]:
+    """``(sender, problem, text)``: whether the ack ``ack_id`` on the local
+    refs' messages ``by_machine`` rules the red post-merge run ``run_id`` a
+    fix-forward for the lane ``branch`` -- the ship driver's check behind its
+    ``--base-red-ruled <ack id>`` flag, the same rule :func:`fix_forward_rulings`
+    reads for the board. A ruling is the dispatcher's (``dispatcher``, as the
+    assign fold takes it: any seat's where None, none for
+    :data:`DISPATCHER_UNUSABLE`), carried as an ``ack`` on its own ref -- the
+    ref is the sender, never the message's ``from``, and the dispatcher's own
+    ref is read past a same-id ack elsewhere -- whose text opens with
+    :data:`RULING_HEAD` followed by the run's id, read from that head alone
+    (a hold or a veto under the gridlock marker that names the run rules
+    nothing, so a ruling on an older red lets no newer one through), and
+    whose ``re`` names the fix lane, which must be ``branch`` (the ruling is
+    for that lane alone, so a hold on every lane is never read as a pass for
+    one). ``problem`` says, by name, what does not hold: an id of another
+    shape, a dispatcher setting that cannot be used, no such ack among the
+    messages, a request or a note with that id, an ack on another seat's ref,
+    an ack under another head, an ack whose head names another run, an ack
+    naming no lane or another lane; None where the ruling holds. ``sender``
+    is the ref's machine when the ack was found, else ''; ``text`` the ack's
+    text on one line when found, else ''."""
+    if not MESSAGE_ID_RE.match(ack_id):
+        return "", (f"{ack_id} is not a message id: a ruling is named by its full id as /inbox prints it "
+                    "(<stamp>-<machine>-<6 hex>)"), ""
+    if dispatcher == DISPATCHER_UNUSABLE:
+        return "", "the dispatcher setting cannot be used, so no ruling counts", ""
+    elsewhere = ""
+    other_kind = ""
+    for machine, messages in sorted(by_machine.items()):
+        for message in messages:
+            if not isinstance(message, dict) or str(message.get("id") or "") != ack_id:
+                continue
+            kind = str(message.get("type") or "")
+            if kind != "ack":
+                other_kind = other_kind or (kind or "a message of no type")
+                continue
+            if dispatcher and machine != dispatcher:
+                elsewhere = elsewhere or machine   # the dispatcher's own ref may still carry the ruling
+                continue
+            text = ruling_text(message)
+            head = text[:RULING_TEXT_CHARS]
+            ruled = ruling_run(message)
+            if not ruled:
+                return machine, (f"ack {ack_id} does not open with the head `{RULING_HEAD}<run id>` (its text: "
+                                 f"{head}): a fix-forward ruling opens with those words, and an ack that names "
+                                 "the run under another head (a hold, a veto, a status) rules nothing"), text
+            if ruled != str(run_id):
+                return machine, (f"ack {ack_id} rules on run {ruled}, not the base's red run {run_id} "
+                                 f"(its text: {head}): it ruled on another red"), text
+            lane = _lane_of(message)
+            if not lane:
+                return machine, (f"ack {ack_id} names no lane (its text: {head}): a fix-forward ruling names the "
+                                 "fix lane with --lane and rules for that lane alone"), text
+            if lane != branch:
+                return machine, f"ack {ack_id} rules for {lane}, not this lane ({branch})", text
+            return machine, None, text
+    if elsewhere:
+        return elsewhere, (f"ack {ack_id} is on {elsewhere}'s ref, and the ruling is the dispatcher's "
+                           f"({dispatcher}) to give"), ""
+    if other_kind:
+        return "", (f"{ack_id} is a {other_kind}, not an ack: the ruling is the dispatcher's ack opening "
+                    f"`{RULING_HEAD}<run id>` (an operator call's answer, never the call)"), ""
+    return "", (f"no ack {ack_id} on the local mail refs (python tools/cc/mail.py inbox fetches them); the "
+                f"ruling is the dispatcher's ack opening `{RULING_HEAD}<run id>`, its --lane this lane"), ""
 
 
 def _count(value: object) -> int:

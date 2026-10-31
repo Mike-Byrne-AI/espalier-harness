@@ -317,6 +317,220 @@ class TestPostMergeVerdict:
         assert "suspects #41, #42 (merged since the last green run on 9999999)" in text
         assert "git revert" not in text
 
+    @staticmethod
+    def _ruling(board, run: str = "900", *, machine: str = "air", lane: str | None = "lane/x",
+                text: str | None = None) -> dict:
+        """The dispatcher's gridlock ack ruling a fix-forward on the post-merge
+        run ``run`` for ``lane``, as the channel stores it."""
+        if text is None:
+            text = (f"gridlock: fix forward run {run}; pytest's red is outside every suspect's diff and "
+                    "reproduces at the last green base with the moved dependency")
+        return board.mail.new_message(machine, "ack", text, ack="20261030T110000Z-air-work-0f0f0f", lane=lane,
+                                      now=datetime(2026, 10, 30, 12, 0, 0, tzinfo=timezone.utc))
+
+    @staticmethod
+    def _red_runs(run_id: int = 900) -> list[dict]:
+        """The run fixture with the red run carrying its id, as gh lists it."""
+        return [dict(r, databaseId=run_id) if r["conclusion"] == "failure" else r for r in _RED_THEN_GREEN]
+
+    def test_a_ruled_red_prints_the_ruling_in_place_of_the_revert(self, board, monkeypatch, tmp_path):
+        """A red no revert can clear is ruled a fix-forward by the dispatcher's
+        ack (the fixed head naming the run, a lane named, on its own ref), the
+        rule the ship driver lands the fix lane on. The board read the same
+        channel and still printed the revert of the one suspect, so a seat back
+        from offline reverted the lane the ruling found blameless. Dies to: the
+        revert, or the suspect blamed in the head, printed under a ruling."""
+        ruled = self._ruling(board)
+        _stub_channel(monkeypatch, board, by_machine={"air": [ruled]})
+        merge_sha = "dddd111" + "1" * 33
+        run = _gh({"pr list": [], "run list": self._red_runs(),
+                   "api compare": {"commits": [_merge(42, merge_sha)]}})
+        collected = board.collect(tmp_path, run_=run)
+        line = next(ln for ln in board.render(collected).splitlines() if ln.startswith("main:"))
+        assert line.startswith(f"main:     RED (post-merge proof on abc1234, u-abc); ruled a fix-forward by {ruled['id']} "
+                               "for lane/x (air's gridlock ack: gridlock: fix forward run 900; pytest's red"), line
+        assert f"land the fix with ship.py open --base-red-ruled {ruled['id']} on that lane" in line
+        assert "handoff takes the same flag" in line and "revert nothing" in line and line.isascii()
+        assert "Revert first" not in line and "git revert" not in line and "RED after #42" not in line
+        pm = collected["post_merge"]
+        assert pm["run_id"] == "900" and pm["ruling_unread"] == ""
+        assert pm["ruling"] == {"id": ruled["id"], "lane": "lane/x", "text": ruled["text"], "machine": "air",
+                                "at": "2026-10-30T12:00:00Z"}
+
+    def test_several_suspects_under_a_ruling_print_the_ruling_not_the_suspects_advice(self, board, monkeypatch,
+                                                                                        tmp_path):
+        """The several-suspects line told the reader to find which and revert
+        it first; under a ruling no suspect is reverted. Dies to: the suspects'
+        advice kept beside the ruling."""
+        ruled = self._ruling(board)
+        _stub_channel(monkeypatch, board, by_machine={"air": [ruled]})
+        run = _gh({"pr list": [], "run list": self._red_runs(),
+                   "api compare": {"commits": [_merge(41, "1" * 40), _merge(42, "2" * 40)]}})
+        text = board.render(board.collect(tmp_path, run_=run))
+        assert f"ruled a fix-forward by {ruled['id']} for lane/x" in text and "revert nothing" in text
+        assert "read the run to find which" not in text and "revert that one first" not in text
+        assert "suspects #41" not in text
+
+    @pytest.mark.parametrize("shape, kw", [
+        ("a ruling on another run", {"run": "950"}),
+        ("a hold under the marker", {"text": "gridlock: run 900 is red outside #42's diff; do NOT fix forward yet"}),
+        ("an ack naming no lane", {"lane": None}),
+    ])
+    def test_what_rules_nothing_leaves_the_revert(self, board, monkeypatch, tmp_path, shape, kw):
+        """The board reads the ruling by the channel's one rule, as the driver
+        does. Dies to: the marker alone, another run's ruling or a lane-less
+        ack read as the ruling."""
+        _stub_channel(monkeypatch, board, by_machine={"air": [self._ruling(board, **kw)]})
+        run = _gh({"pr list": [], "run list": self._red_runs(),
+                   "api compare": {"commits": [_merge(42, "dddd111" + "1" * 33)]}})
+        collected = board.collect(tmp_path, run_=run)
+        text = board.render(collected)
+        assert "RED after #42" in text and "Revert first: git switch -c revert/dddd111 origin/main" in text, shape
+        assert "ruled a fix-forward" not in text, shape
+        assert collected["post_merge"]["ruling"] is None and collected["post_merge"]["ruling_unread"] == ""
+
+    def test_the_ref_is_the_sender_and_no_dispatcher_named_takes_any_seats(self, board, monkeypatch, tmp_path):
+        """An ack on win's ref claiming to be air's is win's and rules nothing
+        under a named dispatcher; with none named a lone operator's ack rules."""
+        forged = self._ruling(board, machine="air")
+        run = _gh({"pr list": [], "run list": self._red_runs(),
+                   "api compare": {"commits": [_merge(42, "dddd111" + "1" * 33)]}})
+        _stub_channel(monkeypatch, board, by_machine={"win": [forged]})
+        text = board.render(board.collect(tmp_path, run_=run))
+        assert "Revert first" in text and "ruled a fix-forward" not in text
+        _stub_channel(monkeypatch, board, by_machine={"win": [forged]}, dispatcher=None)
+        text = board.render(board.collect(tmp_path, run_=run))
+        assert f"ruled a fix-forward by {forged['id']} for lane/x (win's gridlock ack" in text
+
+    def test_unread_mail_or_an_unusable_dispatcher_says_no_ruling_was_looked_for(self, board, monkeypatch, tmp_path):
+        """A default printed over a channel that was not read is the shape the
+        ruling line exists to end: the revert stands, and the line says the
+        ruling could not be looked for. Dies to: silence on the unread mail."""
+        run = _gh({"pr list": [], "run list": self._red_runs(),
+                   "api compare": {"commits": [_merge(42, "dddd111" + "1" * 33)]}})
+        _stub_channel(monkeypatch, board, read_error="the mail refs are torn")
+        collected = board.collect(tmp_path, run_=run)
+        line = next(ln for ln in board.render(collected).splitlines() if ln.startswith("main:"))
+        assert "Revert first" in line and "no ruling was looked for: the mail could not be read (the mail refs are torn)" in line
+        assert collected["post_merge"]["ruling"] is None
+        _stub_channel(monkeypatch, board, by_machine={"air": [self._ruling(board)]},
+                      dispatcher=board.mail.DISPATCHER_UNUSABLE)
+        line = next(ln for ln in board.render(board.collect(tmp_path, run_=run)).splitlines() if ln.startswith("main:"))
+        assert "Revert first" in line and "no ruling counts: the dispatcher setting cannot be used (stubbed reason)" in line
+        assert "ruled a fix-forward" not in line
+
+    def test_the_post_merge_read_keeps_the_red_runs_id_and_every_red_back_to_the_green(self, board, tmp_path):
+        red = board.read_post_merge(tmp_path, "main", run_=_gh({"run list": self._red_runs(4242),
+                                                                 "api compare": {"commits": []}}))
+        assert red["verdict"] == "red" and red.get("run_id") == "4242" and red.get("red_runs") == ["4242"]
+        runs = [dict(_run("completed", "failure", RED_SHA), databaseId=910),
+                dict(_run("completed", "failure", "b" * 40), databaseId=900),
+                dict(_run("completed", "success", GREEN_SHA), databaseId=890)]
+        stretch = board.read_post_merge(tmp_path, "main", run_=_gh({"run list": runs, "api compare": {"commits": []}}))
+        assert stretch.get("run_id") == "910" and stretch.get("red_runs") == ["910", "900"]
+        green = board.read_post_merge(tmp_path, "main", run_=_gh({"run list": _GREEN_RUNS}))
+        assert green["verdict"] == "green" and green.get("run_id") == "" and green.get("red_runs") == []
+
+    def test_the_armed_clause_under_a_ruling_keeps_the_disarm_for_every_other_lane(self, board):
+        """The ruling is for its lane alone (the driver leaves the pushing lane
+        out of its own armed list): another lane armed before the red still
+        lands on the red base, and its merge would be a newer red the ruling
+        does not cover. Dies to: every armed lane called ruled."""
+        pm = {"sha": RED_SHA, "url": "u-abc", "suspects": [{"pr": 42, "sha": "d" * 40, "parents": 2}],
+              "ruling": {"id": "20261030T120000Z-air-ab12cd", "lane": "lane/x", "machine": "air",
+                         "text": "gridlock: fix forward run 900"}}
+        prs = [{"number": 7, "headRefName": "lane/x", "autoMergeRequest": {"x": 1}},
+               {"number": 8, "headRefName": "lane/y", "autoMergeRequest": {"x": 1}},
+               {"number": 9, "headRefName": "lane/z", "autoMergeRequest": None}]
+        line = board._red_line(pm, "main", prs)
+        assert ("revert nothing; auto-merge is armed on #7 (the fix lane), which lands by the ruling; auto-merge is "
+                "armed on #8, which lands on the red base unless disarmed (gh pr merge --disable-auto <n>): the "
+                "ruling is for the fix lane alone") in line
+        assert "#9" not in line
+        bare = board._red_line({**pm, "ruling": None}, "main", prs)
+        assert "auto-merge is armed on #7, #8, which lands on the red base unless disarmed (gh pr merge --disable-auto <n>)" in bare
+
+    def test_a_newer_red_names_an_older_runs_ruling_as_not_covering_it(self, board, monkeypatch, tmp_path):
+        """After the ruling another merge lands (or the fix's own run is red),
+        and the newest red is a run the ruling does not name: the suspects are
+        printed again, with the older run's ruling beside them, so nobody
+        reverts the merge it found blameless. Dies to: the ruling vanishing
+        with the run it named."""
+        ruled = self._ruling(board, run="900")
+        _stub_channel(monkeypatch, board, by_machine={"air": [ruled]})
+        runs = [dict(_run("completed", "failure", RED_SHA), databaseId=910),
+                dict(_run("completed", "failure", "b" * 40), databaseId=900),
+                dict(_run("completed", "success", GREEN_SHA), databaseId=890)]
+        run = _gh({"pr list": [], "run list": runs,
+                   "api compare": {"commits": [_merge(42, "1" * 40), _merge(50, "2" * 40)]}})
+        collected = board.collect(tmp_path, run_=run)
+        line = next(ln for ln in board.render(collected).splitlines() if ln.startswith("main:"))
+        assert "suspects #42, #50" in line and "; ruled a fix-forward by" not in line and "revert nothing" not in line
+        assert (f"; run 900, an older red in this stretch, was ruled a fix-forward by {ruled['id']} for lane/x, and "
+                "that ruling does not cover run 910: the dispatcher rules again, or the suspects are read against "
+                "the merges since the ruled run") in line
+        pm = collected["post_merge"]
+        assert pm["ruling"] is None and pm["superseded"] == {"run_id": "900", "ruling": pm["superseded"]["ruling"]}
+        assert pm["superseded"]["ruling"]["id"] == ruled["id"]
+
+    def test_a_failed_or_skipped_fetch_says_the_ruling_was_read_as_last_fetched(self, board, monkeypatch, tmp_path):
+        """The defect's own victim is a seat back from offline: with the fetch
+        failed, the ruling (or its absence) is as of the last fetch, and the
+        line says so instead of a bare default. Dies to: the note three lines
+        below on the mail line alone."""
+        run = _gh({"pr list": [], "run list": self._red_runs(),
+                   "api compare": {"commits": [_merge(42, "dddd111" + "1" * 33)]}})
+        _stub_channel(monkeypatch, board, by_machine={"air": [self._ruling(board)]}, fetch=(False, "offline"))
+        line = next(ln for ln in board.render(board.collect(tmp_path, run_=run)).splitlines() if ln.startswith("main:"))
+        assert "ruled a fix-forward by" in line
+        assert "; the ruling was read from the mail refs as last fetched (the fetch failed (offline), so mail is the local refs as last fetched)" in line
+        _stub_channel(monkeypatch, board, fetch=(False, "offline"))
+        line = next(ln for ln in board.render(board.collect(tmp_path, run_=run)).splitlines() if ln.startswith("main:"))
+        assert "Revert first" in line and "; the ruling was read from the mail refs as last fetched (" in line
+
+    def test_earlier_rulings_on_the_run_are_listed_beside_the_newest(self, board, monkeypatch, tmp_path):
+        """A renamed lane gets a second ack and the driver still lands the first
+        lane on the first ack: the line names both, the newest first."""
+        first = self._ruling(board, lane="lane/x")
+        second = board.mail.new_message("air", "ack", "gridlock: fix forward run 900; renamed", lane="lane/x-renamed",
+                                        ack="20261030T110000Z-air-work-0f0f0f",
+                                        now=datetime(2026, 10, 30, 12, 5, 0, tzinfo=timezone.utc))
+        _stub_channel(monkeypatch, board, by_machine={"air": [first, second]})
+        run = _gh({"pr list": [], "run list": self._red_runs(),
+                   "api compare": {"commits": [_merge(42, "dddd111" + "1" * 33)]}})
+        collected = board.collect(tmp_path, run_=run)
+        line = next(ln for ln in board.render(collected).splitlines() if ln.startswith("main:"))
+        assert f"ruled a fix-forward by {second['id']} for lane/x-renamed" in line
+        assert f"; earlier rulings on this run: {first['id']} for lane/x" in line
+        assert [r["id"] for r in collected["post_merge"]["rulings"]] == [first["id"], second["id"]]
+
+    @pytest.mark.parametrize("shape, answers, stale", [
+        ("the suspects unread", {"api compare": None}, "read the run before reverting"),
+        ("no green in the window", {"run list": [dict(_run("completed", "failure", RED_SHA), databaseId=900)]},
+         "every merge before it is a suspect"),
+        ("no merge since the green", {"api compare": {"commits": []}}, "re-run it before reverting"),
+    ])
+    def test_every_red_shape_prints_the_ruling_in_place_of_its_advice(self, board, monkeypatch, tmp_path, shape,
+                                                                      answers, stale):
+        _stub_channel(monkeypatch, board, by_machine={"air": [self._ruling(board)]})
+        base = {"pr list": [], "run list": self._red_runs(), "api compare": {"commits": [_merge(42, "d" * 40)]}}
+        base.update(answers)
+        if base["api compare"] is None:
+            base["api compare"] = board.Unresolvable("the compare timed out")
+        line = next(ln for ln in board.render(board.collect(tmp_path, run_=_gh(base))).splitlines()
+                    if ln.startswith("main:"))
+        assert "ruled a fix-forward by" in line and "revert nothing" in line, shape
+        assert stale not in line and "Revert first" not in line, shape
+
+    def test_the_between_clause_under_a_ruling_does_not_speak_of_suspects(self, board):
+        pm = {"sha": RED_SHA, "url": "u-abc", "suspects": [], "between": ["c0ffee1" + "0" * 33],
+              "ruling": {"id": "20261030T120000Z-air-ab12cd", "lane": "lane/x", "machine": "air",
+                         "text": "gridlock: fix forward run 900"}}
+        line = board._red_line(pm, "main", [])
+        assert "; a run between it and the last green is still going (on c0ffee1)" in line
+        assert "narrow the suspects" not in line
+        assert "narrow the suspects" in board._red_line({**pm, "ruling": None}, "main", [])
+
     def test_no_green_in_the_window_makes_every_earlier_merge_a_suspect(self, board, monkeypatch, tmp_path):
         _stub_channel(monkeypatch, board)
         run = _gh({"pr list": [], "run list": [_run("completed", "failure", RED_SHA)]})
@@ -1732,7 +1946,7 @@ class TestDerivedNotRestated:
         """One name for the post-merge proof and one set of red conclusions."""
         ship = _load("ship", "ship_for_board_test")
         assert board.POST_MERGE_WORKFLOW == ship.POST_MERGE_WORKFLOW
-        assert board._RED == ship.POST_MERGE_RED
+        assert board._RED == ship._RUN_RED == ship._post_merge.RUN_RED
         assert board._RED is board._post_merge.RUN_RED, "the board's red set is the one home's object, not a copy"
 
 
