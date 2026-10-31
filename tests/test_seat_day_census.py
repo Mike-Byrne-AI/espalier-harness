@@ -546,12 +546,14 @@ class TestTheTicksASeatStoodUnderTwo:
                    _m("win", "release", "2026-10-18T03:00:00Z", "r1", lane="lane/a"))
         data = census_mod.census(src, DAY, NEXT)
         assert "under_two" in data and "tick_minutes" in data, sorted(data)
-        minutes = self._cadence()
-        assert data["tick_minutes"] == minutes and 60 % minutes == 0
-        per_hour = 60 // minutes
-        # win holds one job from 01:00 and two from 02:00 to the lane release at 03:00:
-        # under two at every tick of the day but that hour's.
-        assert data["under_two"] == {"2026-10-18": {"win": {"under_two": 23 * per_hour, "ticks": 24 * per_hour}}}
+        assert data["tick_minutes"] == self._cadence() == census_mod.dispatcher_tick_minutes()   # the default: seat.py's line
+        data = census_mod.census(src, DAY, NEXT, tick_minutes=15)
+        assert data["tick_minutes"] == 15
+        per_hour = 4
+        # win is present from the first assign naming it at 01:00, holds one job from
+        # then and two from 02:00 to the lane release at 03:00: under two at every
+        # present slot but that hour's.
+        assert data["under_two"] == {"2026-10-18": {"win": {"under_two": 22 * per_hour, "ticks": 23 * per_hour}}}
 
     def test_a_re_send_keeps_the_job_one_and_a_re_send_to_another_seat_moves_it(self):
         """The fold's rule: the latest assign of a job wins, so a re-send is
@@ -566,38 +568,44 @@ class TestTheTicksASeatStoodUnderTwo:
                    _m("air", "release", "2026-10-18T03:00:00Z", "r1", ack="a1"),                  # lane/a closed
                    _m("air", "assign", "2026-10-18T04:00:00Z", "a4", seat="win-2", lane="lane/a"),  # new after the close
                    _m("air", "assign", "2026-10-18T05:00:00Z", "a5", seat="win-2", lane="lane/b"))  # lane/b moved
-        data = census_mod.census(src, DAY, NEXT)
+        data = census_mod.census(src, DAY, NEXT, tick_minutes=15)
         assert "under_two" in data, sorted(data)
-        per_hour = 60 // data["tick_minutes"]
+        per_hour = 4
         # win: lane/c all day, lane/a to 03:00, lane/b from 01:00 to its move at 05:00 -> under two from 05:00 only.
-        # win-2: lane/a from 04:00, lane/b from 05:00 -> under two to 05:00.
+        # win-2: present from 04:00 (lane/a), lane/b from 05:00 -> under two for that one hour of its 20.
         assert data["under_two"]["2026-10-18"] == {"win": {"under_two": 19 * per_hour, "ticks": 24 * per_hour},
-                                                   "win-2": {"under_two": 5 * per_hour, "ticks": 24 * per_hour}}
+                                                   "win-2": {"under_two": 1 * per_hour, "ticks": 20 * per_hour}}
 
     def test_a_day_so_far_counts_the_ticks_to_now_and_the_figure_prints_on_the_row_and_the_report(self):
-        """Dies to: ticks counted past now on a day not over, the figure left
-        off the seat's row or the report, or printed on the dispatcher's row."""
+        """Dies to: slots counted past now on a day not over, the figure left
+        off the seat's row, the dispatcher's row (the one row a workflow writes
+        from the census, so the workers' idle time lands on the record there)
+        or the report."""
         src = _src(_m("air", "assign", "2026-10-18T01:00:00Z", "a1", seat="win", lane="lane/a"))
-        data = census_mod.census(src, DAY, NEXT, now=DAY.replace(hour=6))
+        data = census_mod.census(src, DAY, NEXT, now=DAY.replace(hour=6), tick_minutes=15)
         assert "under_two" in data, sorted(data)
-        n = 6 * (60 // data["tick_minutes"])
+        n = 5 * 4   # present from the assign at 01:00, counted to now at 06:00
         assert data["under_two"] == {"2026-10-18": {"win": {"under_two": n, "ticks": n}}}
         row = census_mod.as_row(data, "win", "2026-10-18")
-        assert f"; under two at {n} of {n} ticks;" in row, row
-        assert "under two" not in census_mod.as_row(data, "air", "2026-10-18")
+        assert f"; under two at {n} of {n} tick slots;" in row, row
+        own = census_mod.as_row(data, "air", "2026-10-18")
+        assert f"; under two: win {n} of {n} tick slots;" in own, own
         text = census_mod.render(data, {})
-        assert f"2026-10-18 under two (ticks of {data['tick_minutes']} min): win {n} of {n}" in text, text
+        assert f"2026-10-18 under two (15-min tick slots from 00:00Z): win {n} of {n}" in text, text
+        empty = census_mod.census(_src(), DAY, NEXT, tick_minutes=15)
+        assert "under two: no worker seat present" in census_mod.as_row(empty, "air", "2026-10-18")
 
     def test_the_fixtures_ticks_under_two_on_10_18_are_pinned(self):
-        """The frozen refs' figures (read 2026-10-31): a day of one-wave jobs
+        """The frozen refs' figures (read 2026-10-30): a day of one-wave jobs
         closed at each push, so two of the three workers stood under two at
-        nearly every tick. Dies to: the timeline's rules moved (a span's end,
-        a re-send, the dispatcher's seat) or the cadence sampled elsewhere."""
+        nearly every tick; every seat first wrote on 10-17, so each is present
+        all day. Dies to: the timeline's rules moved (a span's end, the
+        presence rule, the dispatcher's seat) or the cadence sampled elsewhere."""
         data = census_mod.census(census_mod.read_fixture(FIXTURE), DAY, NEXT)
         assert "under_two" in data, sorted(data)
-        # At the 15-minute cadence the brief carries (96 ticks a day); a changed
-        # cadence re-reads these figures with it.
-        assert data["tick_minutes"] == self._cadence() == 15
+        # Pinned at 15 minutes outright (96 slots a day), so a changed loop
+        # interval moves the default read's test, never these figures.
+        data = census_mod.census(census_mod.read_fixture(FIXTURE), DAY, NEXT, tick_minutes=15)
         assert data["under_two"] == {"2026-10-18": {"air-work": {"under_two": 93, "ticks": 96},
                                                     "win": {"under_two": 53, "ticks": 96},
                                                     "win-2": {"under_two": 96, "ticks": 96}}}
@@ -610,11 +618,71 @@ class TestTheTicksASeatStoodUnderTwo:
         the roster read from the day's rows, or a row made for the figure."""
         src = _src(_m("win-2", "note", "2026-10-17T01:00:00Z", "n1", text="x"),
                    _m("air", "assign", "2026-10-18T01:00:00Z", "a1", seat="win", lane="lane/a"))
-        data = census_mod.census(src, DAY, NEXT)
+        data = census_mod.census(src, DAY, NEXT, tick_minutes=15)
         assert "under_two" in data, sorted(data)
+        per_hour = 4
         day = data["under_two"]["2026-10-18"]
-        assert set(day) == {"win", "win-2"} and day["win-2"] == {"under_two": day["win-2"]["ticks"], "ticks": day["win"]["ticks"]}
+        assert day == {"win": {"under_two": 23 * per_hour, "ticks": 23 * per_hour},
+                       "win-2": {"under_two": 24 * per_hour, "ticks": 24 * per_hour}}
         assert [r["seat"] for r in data["rows"]] == ["win"]
+
+    def test_a_seat_is_counted_from_its_first_stamp_while_within_the_quiet_horizon_or_holding_a_job(self):
+        """The code review's case: a roster of every seat the refs ever named
+        read a seat under two on days before it existed and after it retired.
+        Dies to: a seat counted before its first stamp, a retired seat (no
+        message in the board's quiet horizon, no live job) counted, or a dark
+        seat holding a live job dropped."""
+        import re
+        text = (REPO_ROOT / "tools" / "cc" / "board.py").read_text(encoding="utf-8")
+        assert census_mod.quiet_days() == int(re.search(r"^SEAT_QUIET_DAYS = (\d+)", text, re.M).group(1)) >= 2
+        src = _src(_m("win-2", "note", "2026-10-18T05:00:00Z", "n1", text="x"),             # first seen at 05:00 on 10-18
+                   _m("gone", "note", "2026-10-01T00:00:00Z", "n2", text="x"),               # retired: quiet, no job
+                   _m("dark", "note", "2026-10-01T00:00:00Z", "n3", text="x"),               # quiet, but its job is live
+                   _m("air", "assign", "2026-10-02T00:00:00Z", "a1", seat="dark", lane="lane/d"),
+                   _m("air", "assign", "2026-10-17T01:00:00Z", "a2", seat="win", lane="lane/a"))
+        data = census_mod.census(src, DAY.replace(day=16), NEXT, tick_minutes=15)
+        assert "under_two" in data, sorted(data)
+        per_hour = 4
+        assert set(data["under_two"]["2026-10-16"]) == {"dark"}, data["under_two"]
+        assert set(data["under_two"]["2026-10-17"]) == {"dark", "win"}, data["under_two"]
+        assert data["under_two"]["2026-10-18"] == {"dark": {"under_two": 24 * per_hour, "ticks": 24 * per_hour},
+                                                   "win": {"under_two": 24 * per_hour, "ticks": 24 * per_hour},
+                                                   "win-2": {"under_two": 19 * per_hour, "ticks": 19 * per_hour}}
+
+    def test_two_assigns_of_one_job_in_one_second_read_in_the_folds_order(self):
+        """With no dispatcher named every machine's assigns count, and the fold
+        orders two assigns of one job in one second by the sender's name, the
+        later one winning. Dies to: the census ordering them by the stamp
+        alone (a dict's order), so the span it ends and the span it keeps swap."""
+        src = {"by_machine": {
+                   "b": [_m("b", "assign", "2026-10-18T01:00:00Z", "b1", seat="win", lane="lane/x")],
+                   "a": [_m("a", "assign", "2026-10-18T01:00:00Z", "a1", seat="win-2", lane="lane/x"),
+                         _m("a", "assign", "2026-10-18T00:00:00Z", "a0", seat="win", lane="lane/y")]},
+               "dispatcher": None, "merged": [], "session_log": []}
+        data = census_mod.census(src, DAY, NEXT, tick_minutes=15)
+        assert "under_two" in data, sorted(data)
+        per_hour = 4
+        assert data["live"] == {"win": ["a0", "b1"]}   # the fold keeps b's: the later sender
+        day = data["under_two"]["2026-10-18"]
+        # win holds lane/y and, from 01:00, lane/x; win-2's lane/x ended the second it was given;
+        # the two senders are seats too here (no dispatcher stands apart), present from their first stamp.
+        assert day["win"] == {"under_two": 1 * per_hour, "ticks": 24 * per_hour}
+        assert day["win-2"] == {"under_two": 23 * per_hour, "ticks": 23 * per_hour}
+        assert set(day) == {"a", "b", "win", "win-2"} and day["a"]["ticks"] == 24 * per_hour
+
+    def test_a_closure_whose_stamp_does_not_read_drops_the_job_rather_than_keeping_it_live(self):
+        """The fold pairs a release with its assign by the string order of the
+        stamps; a stamp the parser refuses then has no place on the timeline.
+        Dies to: the closed job read as live to the window's end (a fall-through
+        to the next assign or to none)."""
+        src = _src(_m("air", "assign", "2026-10-18T00:00:00Z", "a0", seat="win", lane="lane/c"),
+                   _m("air", "assign", "2026-10-18T01:00:00Z", "a1", seat="win", lane="lane/a"),
+                   _m("air", "release", "2026-10-18T03:00:00Q", "r1", ack="a1"))
+        data = census_mod.census(src, DAY, NEXT, tick_minutes=15)
+        assert "under_two" in data, sorted(data)
+        per_hour = 4
+        assert data["live"] == {"win": ["a0"]}, "the fold closed lane/a on the release, whatever its stamp reads"
+        assert data["under_two"]["2026-10-18"]["win"] == {"under_two": 24 * per_hour, "ticks": 24 * per_hour}
 
 
 def _stub_mail(monkeypatch, by_machine: dict, *, fetched=(True, ""), skipped=None, raises: str = ""):

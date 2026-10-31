@@ -53,20 +53,30 @@ Per seat per UTC day in ``[since, until)``, one row:
   date is its writer's local day, a row parked on a records ref is not in the
   tree, and fragments older than the newest few are archived; the report says
   all three, and the oldest day the tree holds.
-* **under two**: the ticks of the dispatcher's cadence
-  (``tools/cc/seat.py::TICK_MINUTES``, its loop line's own figure, read by
-  path) at which the seat held fewer than two live jobs, of the day's ticks in
-  the window, sampled from 00:00Z: the loop's phase is not on the record, so
-  this is the time under two at the cadence's resolution, not the loop's own
-  reads. A job is live from its assign to the release that closed it, by the
+* **under two**: the tick slots -- the dispatcher's loop interval, read from
+  ``tools/cc/seat.py::DISPATCHER_TICK``'s own ``/loop <n>m`` line
+  (``census(..., tick_minutes=)`` takes another), laid from 00:00Z -- at
+  which the seat held fewer than two live jobs, of the day's slots in the
+  window. The loop's own phase and whether a session was
+  running are not on the record, so this is the time under two at the
+  interval's resolution, never the loop's own reads (a seat off all day
+  reads under two all day). A job is live from its assign to the release that closed it, by the
   fold's own pairing; a re-send of a live job keeps it one (the latest assign
   wins) and moves it where the re-send names another seat; a re-send after a
-  close is a new job. Every worker seat the refs name gets the figure for
-  every day of the window, the dispatcher apart (it is given no job), in the
-  ``under_two`` table and on its row; a seat with no message that day gets no
-  row for it, since the rows are the day's events. The board's ``jobs:``
-  section ends with the same read live (``under two:``, ``DEF-5034``), so the
-  seats short of two are read every tick, never remembered between them.
+  close is a new job; a closure whose release stamp does not read drops the
+  job rather than keeping it live to the window's end. A seat is counted at
+  a tick while a message of its own or an assign naming it is within the
+  board's quiet horizon before the tick (``tools/cc/board.py::SEAT_QUIET_DAYS``,
+  read by path, the ``seats:`` line's own fold) or a job of its is live at
+  it, so a seat is never under two before it exists or after it retires, and
+  the day's ``under_two`` table names the seats present that day with each
+  one's present slots, the dispatcher apart (it is given no job), on the
+  report's day line, on each worker's row and, since the dispatcher's row is
+  the one a workflow writes, on the dispatcher's row for every worker; a seat
+  with no message that day gets no row for the figure, since the rows are the
+  day's events. The board's ``jobs:`` section reads the same fold live
+  (``under two:``, ``DEF-5034``), so the seats short of two are read every
+  tick, never remembered between them.
 * **START**: the seat's messages that day whose text carries the word (the
   tier-run announcement, anywhere in a text).
 * **redirect:**, **shelved:**, **gridlock:** and **stopped:**: the seat's messages that day
@@ -108,6 +118,7 @@ cannot be read. Self-host only: the channel runs where a clone names its machine
 from __future__ import annotations
 
 import argparse
+import bisect
 import functools
 import importlib.util
 import json
@@ -181,12 +192,30 @@ def _fragments():
     return _load("_sdc_fragments", "tools/cc/_record_fragments.py")
 
 
-@functools.lru_cache(maxsize=None)
-def _seat():
-    """``tools/cc/seat.py`` by path: the dispatcher's loop interval
-    (``TICK_MINUTES``, read from its own ``/loop`` line), the one figure the
-    briefs quote and the under-two count samples at."""
-    return _load("_sdc_seat", "tools/cc/seat.py")
+def _source_int(rel: str, pattern: str) -> int:
+    """One integer read from a sibling's own source line, matched by
+    ``pattern``'s group, without importing the module: ``seat.py`` and
+    ``board.py`` each import a stack of their own, and a break anywhere in it
+    would fail the dispatcher's day row for a figure the line carries."""
+    text = (ROOT / rel).read_text(encoding="utf-8")
+    m = re.search(pattern, text, re.M)
+    if not m:
+        raise ValueError(f"{rel} no longer carries the line {pattern!r}")
+    return int(m.group(1))
+
+
+def dispatcher_tick_minutes() -> int:
+    """The dispatcher's loop interval, from ``tools/cc/seat.py::DISPATCHER_TICK``'s
+    own ``/loop <n>m`` (``TICK_MINUTES`` is read from that line there too), the
+    one figure the briefs quote and the under-two count samples at."""
+    return _source_int("tools/cc/seat.py", r'^DISPATCHER_TICK = "/loop (\d+)m ')
+
+
+def quiet_days() -> int:
+    """The board's quiet horizon, ``tools/cc/board.py::SEAT_QUIET_DAYS``: the
+    days without mail after which its ``seats:`` line folds a seat holding
+    nothing, the one figure the under-two presence rule reads."""
+    return _source_int("tools/cc/board.py", r"^SEAT_QUIET_DAYS = (\d+)\b")
 
 
 #: ``run_bounded`` from this checkout's ``tools/cc/_json_safe.py``, by path:
@@ -266,9 +295,13 @@ def session_log_names(names: list[str]) -> list[tuple[str, str]]:
 
 def _counted_assigns(by_machine: dict[str, list[dict]], dispatcher: str | None) -> list[dict]:
     """The assigns the fold reads: the dispatcher's when one is named, every
-    machine's when none is."""
-    return [m for machine, ms in by_machine.items() for m in ms
-            if m.get("type") == "assign" and (not dispatcher or machine == dispatcher)]
+    machine's when none is; in the fold's own order (the stamp, the sender,
+    the position in its file: ``tools/cc/mail.py::live_assignments``), so two
+    assigns of one job in one second read here as they fold there."""
+    found = [(str(m.get("at") or ""), str(m.get("from") or machine), i, m)
+             for machine, ms in by_machine.items() for i, m in enumerate(ms)
+             if m.get("type") == "assign" and (not dispatcher or machine == dispatcher)]
+    return [m for _at, _who, _i, m in sorted(found, key=lambda t: t[:3])]
 
 
 def _new_row(seat: str, day: str) -> dict:
@@ -297,10 +330,12 @@ def _job_name(mail, a: dict) -> str:
             or " ".join(mail._str_list(re_.get("classes"))))
 
 
-def census(src: dict, since: datetime, until: datetime, now: datetime | None = None) -> dict:
+def census(src: dict, since: datetime, until: datetime, now: datetime | None = None, *,
+           tick_minutes: int | None = None) -> dict:
     """The rows for every seat and UTC day in ``[since, until)``, the jobs live
     at ``until`` (or ``now``, when that is earlier) per seat, the dispatcher's
-    sends, and the totals."""
+    sends, the ticks each worker seat stood under two (at ``tick_minutes``,
+    the dispatcher's own loop interval when none is given), and the totals."""
     mail, lat = _mail(), _latency()
     stamp = lat.parse_stamp
     now = now or datetime.now(timezone.utc)
@@ -333,7 +368,7 @@ def census(src: dict, since: datetime, until: datetime, now: datetime | None = N
     def row(seat: str, d: str) -> dict:
         return rows.setdefault((seat, d), _new_row(seat, d))
 
-    assigns = sorted(_counted_assigns(before, dispatcher), key=lambda a: str(a.get("at") or ""))
+    assigns = _counted_assigns(before, dispatcher)
     assign_ids = {str(a.get("id")) for a in assigns}
     sends = {d: dict.fromkeys(SENDS, 0) for d in days}
     closed_at = {str(a.get("id")): str(r.get("at") or "") for a, r, _rule in closed}
@@ -426,11 +461,14 @@ def census(src: dict, since: datetime, until: datetime, now: datetime | None = N
                    | {str((a.get("re") or {}).get("seat")) for a in assigns if (a.get("re") or {}).get("seat")})
     # The ticks each worker seat stood under two live jobs (DEF-5034): the
     # dispatcher's cadence sampled from 00:00Z (its loop's phase is not on the
-    # record), each job live from an assign's stamp to the release that closed
-    # it (the fold's own pairing, closed_at) or to the next assign of the same
-    # job, which replaced it (a re-send keeps the job one and moves it where it
-    # names another seat; one after a close is a new job), else to the window's end.
-    tick_minutes = int(_seat().TICK_MINUTES)
+    # record), each job live from an assign's stamp to the release the fold
+    # paired with it (closed_at; a closing stamp that does not read drops the
+    # job rather than keeping it live to the window's end) or to the next
+    # assign of the same job, which replaced it (a re-send keeps the job one
+    # and moves it where it names another seat; one after a close is a new
+    # job), else to the window's end.
+    tick_minutes = tick_minutes or dispatcher_tick_minutes()
+    horizon = timedelta(days=quiet_days())
 
     def at(value) -> datetime | None:
         try:
@@ -447,8 +485,29 @@ def census(src: dict, since: datetime, until: datetime, now: datetime | None = N
             start, seat = at(a.get("at")), str((a.get("re") or {}).get("seat") or "")
             if start is None or not seat:
                 continue
-            end = at(closed_at.get(str(a.get("id"))) or (run[i + 1].get("at") if i + 1 < len(run) else None))
+            if str(a.get("id")) in closed_at:
+                end = at(closed_at[str(a.get("id"))])
+                if end is None:
+                    continue
+            else:
+                end = at(run[i + 1].get("at")) if i + 1 < len(run) else None
             spans.append((seat, start, end))
+    # A seat is present at a tick while a message of its own or an assign
+    # naming it is within the board's quiet horizon before the tick, or a job
+    # of its is live at it (the seats: line's own fold), so a seat is never
+    # under two before it exists or after it retires, and the day's table
+    # names the seats present that day.
+    seen: dict[str, list[datetime]] = {}
+    for m in flat:
+        t_m = at(m.get("at"))
+        if t_m is not None and m.get("from"):
+            seen.setdefault(str(m["from"]), []).append(t_m)
+    for a in assigns:
+        t_a, named = at(a.get("at")), str((a.get("re") or {}).get("seat") or "")
+        if t_a is not None and named:
+            seen.setdefault(named, []).append(t_a)
+    for stamps in seen.values():
+        stamps.sort()
     live_until = min(until, now)
     under: dict[str, dict[str, dict[str, int]]] = {}
     for d in days:
@@ -463,8 +522,17 @@ def census(src: dict, since: datetime, until: datetime, now: datetime | None = N
             if seat == dispatcher:
                 continue
             mine = [(s, e) for who, s, e in spans if who == seat]
-            short = sum(1 for t in ticks if sum(1 for s, e in mine if s <= t and (e is None or t < e)) < 2)
-            under[d][seat] = {"under_two": short, "ticks": len(ticks)}
+            stamps = seen.get(seat) or []
+            present = short = 0
+            for t in ticks:
+                live = sum(1 for s, e in mine if s <= t and (e is None or t < e))
+                i = bisect.bisect_right(stamps, t - horizon)
+                if not live and not (i < len(stamps) and stamps[i] <= t):
+                    continue
+                present += 1
+                short += live < 2
+            if present:
+                under[d][seat] = {"under_two": short, "ticks": present}
     totals = {**{k: sum(s[k] for s in sends.values()) for k in SENDS},
               "assigns_received": sum(r["assigns_received"] for r in ordered),
               "closed": {rule: sum(r["closed"][rule] for r in ordered) for rule in RULES},
@@ -547,8 +615,13 @@ def as_row(data: dict, seat: str, day: str, extra: dict | None = None) -> str:
         live_by_seat = {k: len(v) for k, v in sorted(data["live"].items()) if v}
         owed = (f"jobs live at {data['live_at']} {sum(live_by_seat.values())}"
                 + (f" ({', '.join(f'{k} {n}' for k, n in live_by_seat.items())})" if live_by_seat else ""))
+        # The workers' idle measure rides the dispatcher's row, the one row a
+        # workflow writes from the census (the handoff's day row).
+        table = (data.get("under_two") or {}).get(day) or {}
+        named = ", ".join(f"{k} {v['under_two']} of {v['ticks']}" for k, v in table.items())
+        short = f"under two: {named} tick slots" if table else "under two: no worker seat present"
         body = (f"assigns sent {s['assigns_sent']} ({s['jobs_given']} new jobs); {hand}; the day's worker "
-                f"requests it answered {s['requests_answered']}; {owed}; {merged}; {logs}; {words}.")
+                f"requests it answered {s['requests_answered']}; {owed}; {short}; {merged}; {logs}; {words}.")
     else:
         c = r["closed"]
         median = f", median {r['median_minutes']} min to an answer" if r["median_minutes"] is not None else ""
@@ -558,7 +631,7 @@ def as_row(data: dict, seat: str, day: str, extra: dict | None = None) -> str:
                 f"{sum(c.values())} ({c['claim']} by its own claim on the shipped lane, {c['lane']} by the "
                 f"assign's lane, {c['ack']} by a release naming the assign), re-assigned after a close "
                 f"{r['reassigned_after_close']}{_again(r)}; jobs live at {data['live_at']} {live}; "
-                f"under two at {u['under_two']} of {u['ticks']} ticks; {hand}; "
+                f"under two at {u['under_two']} of {u['ticks']} tick slots; {hand}; "
                 f"requests {r['requests']}, {r['answered']} answered{median}; {logs}; {words}.")
     return f"| {day} | **{seat}: the day's figures (seat-day census, {head})** | {body} |"
 
@@ -595,8 +668,8 @@ def render(data: dict, extra: dict) -> str:
     for seat, ids in data["live"].items():
         lines.append(f"live at {data['live_at']}, {seat}: {len(ids)} ({', '.join(ids)})")
     for d, table in (data.get("under_two") or {}).items():
-        body = ", ".join(f"{seat} {v['under_two']} of {v['ticks']}" for seat, v in table.items()) or "no worker seat read"
-        lines.append(f"{d} under two (ticks of {data['tick_minutes']} min): {body}")
+        body = ", ".join(f"{seat} {v['under_two']} of {v['ticks']}" for seat, v in table.items()) or "no worker seat present"
+        lines.append(f"{d} under two ({data['tick_minutes']}-min tick slots from 00:00Z): {body}")
     t = data["totals"]
     merged_total = "unread" if t["lanes_merged"] is None else f"{t['lanes_merged']} (unattributed {t['unattributed_merges']})"
     lines.append(f"totals: assigns {t['assigns_received']} (sent {t['assigns_sent']}, {t['jobs_given']} new jobs), "

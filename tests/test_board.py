@@ -577,6 +577,11 @@ class TestUnderTwo:
         _stub_channel(monkeypatch, board, by_machine, **kw)
         return board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "run list": _GREEN_RUNS}), now=_NOW))
 
+    @staticmethod
+    def _since(board, t: datetime) -> str:
+        """The age clause as the seats line would print a last mail at ``t``."""
+        return f"last mail {board._ago(int((_NOW - t).total_seconds()))}"
+
     def test_the_section_ends_naming_each_seat_under_two_with_its_count_and_its_population(
             self, board, monkeypatch, tmp_path):
         """The row's red. Dies to: the line missing, a seat holding none left
@@ -587,25 +592,39 @@ class TestUnderTwo:
                 self._assign(board, "win-2", "lane/c")]
         notes = {s: [mail.new_message(s, "note", "here", now=_T0)] for s in ("air-work", "win")}
         lines = self._text(board, monkeypatch, tmp_path, {"air": jobs, **notes}).splitlines()
-        line = ("          under two: air-work (0), win-2 (1), of 3 seats (the seats line names 3, the jobs 2, "
-                "the dispatcher air apart)")
+        line = (f"          under two: air-work (0, {self._since(board, _T0)}), win-2 (1, no mail), of 3 seats "
+                "(the seats line names 3, the jobs 2, the dispatcher air apart)")
         assert line in lines, lines
         i = lines.index(line)
         assert "(since 2026-10-14T20:00:00Z; assign " in lines[i - 1] and lines[i + 1].startswith("asks:"), lines[i - 1:i + 2]
 
-    def test_a_quiet_seat_is_left_out_and_a_busy_one_is_kept(self, board, monkeypatch, tmp_path):
+    def test_a_quiet_seat_is_left_out_and_a_busy_one_is_kept_with_its_age(self, board, monkeypatch, tmp_path):
         """A seat with no mail in SEAT_QUIET_DAYS and nothing live is folded off
         the seats line and is not one to give a job; one a job names is kept
-        whatever its mail's age. Dies to: the population read from every row,
-        or from the jobs alone."""
+        whatever its mail's age, and the age rides the line, since a job given
+        to a dark seat while a live one idles is the row's harm turned round
+        (the failure-mode review). Dies to: the population read from every
+        row, or from the jobs alone, or the age dropped."""
         mail = board.mail
         old = datetime(2026, 10, 1, 0, 0, 0, tzinfo=timezone.utc)
         gone, kept = mail.new_message("air-gone", "note", "x", now=old), mail.new_message("win-2", "note", "x", now=old)
         jobs = [self._assign(board, "win-2", "lane/c")]
         text = self._text(board, monkeypatch, tmp_path, {"air": jobs, "air-gone": [gone], "win-2": [kept]})
         assert f"and 1 seat with no mail in {board.SEAT_QUIET_DAYS} d" in text, text
-        assert ("          under two: win-2 (1), of 1 seat (the seats line names 2, the jobs 1, the dispatcher air "
-                "apart)") in text, text
+        assert (f"          under two: win-2 (1, {self._since(board, old)}), of 1 seat (the seats line names 2, "
+                "the jobs 1, the dispatcher air apart)") in text, text
+        assert "14 d" in self._since(board, old), "the planted age is past the quiet horizon"
+
+    def test_no_worker_seat_in_the_population_says_so(self, board, monkeypatch, tmp_path):
+        """Only the dispatcher has mail (a week's break, a solo adopter): the
+        failure-mode review rendered ``none of 0 seats``, which the body
+        defines as every seat at two. Dies to: the none form on an empty
+        population."""
+        own = board.mail.new_message("air", "note", "x", now=_T0)
+        text = self._text(board, monkeypatch, tmp_path, {"air": [own]})
+        assert ("          under two: no worker seat named (the seats line names 1, the jobs 0, the dispatcher "
+                "air apart)") in text, text
+        assert "none of 0" not in text
 
     def test_every_seat_at_two_or_more_reads_none_of_the_population(self, board, monkeypatch, tmp_path):
         """Dies to: an empty list printed as nothing, so a reader cannot tell
@@ -621,15 +640,20 @@ class TestUnderTwo:
         notes = {s: [mail.new_message(s, "note", "x", now=_T0)] for s in ("win", "win-2")}
         lines = self._text(board, monkeypatch, tmp_path, notes).splitlines()
         i = lines.index("jobs:     (dispatcher air) no live assignments")
-        assert lines[i + 1] == ("          under two: win (0), win-2 (0), of 2 seats (the seats line names 2, the jobs 0, "
-                                "the dispatcher air apart)"), lines[i:i + 2]
+        when = self._since(board, _T0)
+        assert lines[i + 1] == (f"          under two: win (0, {when}), win-2 (0, {when}), of 2 seats (the seats line "
+                                "names 2, the jobs 0, the dispatcher air apart)"), lines[i:i + 2]
 
     def test_with_no_dispatcher_named_every_seat_counts(self, board, monkeypatch, tmp_path):
         """A lone operator's default: every machine's assigns count, and no
-        seat stands apart. Dies to: the apart clause printed with no name."""
+        seat stands apart, the operator's own box included. Dies to: the apart
+        clause printed with no name, or a machine with no job dropped."""
         jobs = [board.mail.new_message("win-2", "assign", "", seat="win-2", lane="lane/c", now=_T0)]
-        text = self._text(board, monkeypatch, tmp_path, {"win-2": jobs}, dispatcher="")
-        assert "          under two: win-2 (1), of 1 seat (the seats line names 1, the jobs 1)" in text, text
+        own = board.mail.new_message("air", "note", "x", now=_T0)
+        text = self._text(board, monkeypatch, tmp_path, {"win-2": jobs, "air": [own]}, dispatcher="")
+        when = self._since(board, _T0)
+        assert (f"          under two: air (0, {when}), win-2 (1, {when}), of 2 seats (the seats line names 2, "
+                "the jobs 1)") in text, text
 
     def test_an_unread_mail_prints_no_under_two_line(self, board, monkeypatch, tmp_path):
         """Dies to: every seat read as idle from an empty fold."""
@@ -641,8 +665,9 @@ class TestUnderTwo:
         field. Dies to: a stored ``under_two`` read, or the folded quiet seat
         counted."""
         text = board.render(TestSectionCounts._board(under_two="stale"))
-        assert ("          under two: win (1), win-2 (1), of 2 seats (the seats line names 2, the jobs 2, the dispatcher "
-                "air apart)") in text, text
+        when = f"last mail {board._ago(60)}"
+        assert (f"          under two: win (1, {when}), win-2 (1, {when}), of 2 seats (the seats line names 2, the jobs 2, "
+                "the dispatcher air apart)") in text, text
 
 
 class TestAsks:
