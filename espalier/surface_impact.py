@@ -539,9 +539,11 @@ def classify_surface(rel_path: str) -> tuple[str, list[str]] | None:
             "(scripts/sync_vendor_cc.py; tests/test_vendor_cc_parity.py)",
             "no label search -- no goto, no call to a label (cmd.exe misreads "
             "one in an LF-only file; .gitattributes pins *.cmd eol=lf), ASCII "
-            "only, exit 0 on the fallback branch; the shim's own fallback text "
-            "equals cli.STATUSLINE_FALLBACK_TEXT (tests/test_hook_exec_form.py "
-            "pins every tools/cc/*.cmd)",
+            "only, exit 0 on the fallback branch; @echo off the first command, "
+            "after at most the one line for Git Bash (a colon line, its own "
+            "fallback and return, a hash last), the marker after the echo-off; "
+            "the shim's fallback text equals cli.STATUSLINE_FALLBACK_TEXT on "
+            "both lines (tests/test_hook_exec_form.py pins every tools/cc/*.cmd)",
         ]
     # "Is this path a shipped TEST MODULE?" (tests/ prefix, .py) — a third, distinct
     # "is it a test path?" question. Cf. strengthen._is_test_path (coverage view) and

@@ -24,9 +24,10 @@ Marker placement rules:
 - ``.toml`` / ``.txt`` / ``.py`` → ``apply_marker_to_text`` prepends a
   ``# espalier:managed`` line (or after a ``#!`` shebang).
 - ``.cmd`` (the Windows statusline shim) → ``apply_marker_to_batch`` inserts
-  a ``:: espalier:managed`` line after a leading ``@echo off``: to cmd.exe a
-  ``#`` line is a command, and a line before the echo-off is echoed to stdout,
-  which is the statusline's channel.
+  a ``:: espalier:managed`` line after an ``@echo off`` that only label lines
+  precede: to cmd.exe a ``#`` line is a command, a command line before the
+  echo-off is echoed to stdout, which is the statusline's channel, and the
+  shim's first line is the one Git Bash runs when it sources the file.
 - ``.js`` (a ``.claude/workflows/`` body) → ``// espalier:managed`` on LINE 1 and
   nowhere else: the module's first statement must be ``export const meta``, so the
   marker is the one line before it, and the recogniser accepts the ``//`` form
@@ -487,17 +488,24 @@ def apply_marker_to_text(content: str) -> str:
 def apply_marker_to_batch(content: str) -> str:
     """Return ``content`` with the ``:: espalier:managed`` line inserted.
 
-    A batch file's first line is ``@echo off``; every line before it is
-    echoed to stdout as cmd.exe runs it, and stdout is the statusline. So
-    the marker goes on the line AFTER a leading ``@echo off`` (matched
-    case-insensitively, as cmd.exe reads it), and at the top only when the
-    file has none. Idempotent: already-marked content is returned unchanged.
+    A batch file's first command is ``@echo off``; every command line before
+    it is echoed to stdout as cmd.exe runs it, and stdout is the statusline.
+    A label line (one opening with a colon) is skipped and never echoed,
+    even there (raw stdout, win-2 2026-10-31), and the statusline shim opens
+    with one that bash runs when it sources the file (DEF-3017), where a
+    ``::`` line is a command it cannot find. So the marker goes on the line
+    AFTER an ``@echo off`` (matched case-insensitively, as cmd.exe reads it)
+    that only label lines precede, and at the top only when the file has
+    none. Idempotent: already-marked content is returned unchanged.
     """
     if has_managed_marker(content):
         return content
-    first, sep, rest = content.partition("\n")
-    if first.strip().lower() == "@echo off" and sep:
-        return first + "\n" + MARKER_BATCH_COMMENT + "\n" + rest
+    lines = content.split("\n")
+    for index, line in enumerate(lines[:-1]):
+        if line.strip().lower() == "@echo off":
+            return "\n".join(lines[:index + 1] + [MARKER_BATCH_COMMENT] + lines[index + 1:])
+        if not line.lstrip().startswith(":"):
+            break
     return MARKER_BATCH_COMMENT + "\n" + content
 
 

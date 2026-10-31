@@ -207,8 +207,10 @@ def is_statusline_shim_head(token: str) -> bool:
     """Is ``token`` (an unquoted argv[0]) the Windows statusline shim?
 
     ``init`` on Windows wires ``statusLine.command`` as
-    ``"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" <interpreter>``
-    (DEF-729): the shim is the head so batch's or-operator can print the
+    ``. "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" <interpreter>``
+    (DEF-729, DEF-3017; the operator before it is
+    :func:`statusline_shim_end`'s to read): the shim is the head so batch's
+    or-operator can print the
     fallback line when the interpreter is gone, and the interpreter is its
     first ARGUMENT. Matched on the tail so a drive-absolute or a
     backslash spelling from a hand edit still reads as the shim.
@@ -269,11 +271,13 @@ def git_bash_path(repo_root: Path | None = None) -> str | None:
     :data:`GIT_BASH_DEFAULT_PATHS`, else ``bin\\bash.exe`` two levels above
     the first ``git`` ``where.exe`` names.
 
-    Followed in that order and WIDENED, because the two wrong answers cost
-    differently: a None where Claude Code finds Git Bash renders the
-    PowerShell form, which bash cannot parse, on a host whose bare line
-    worked before; a path where it finds none leaves the bare line those
-    hosts always had. So the variable is also read from the settings files
+    ``init`` no longer reads it: its render runs in both shells (DEF-3017).
+    ``doctor`` does, to name a bare or ``&`` line an older install carries
+    for the shell this host does not run. Followed in that order and
+    WIDENED, because the two wrong answers cost differently there: a None
+    where Claude Code finds Git Bash names a working bare line and asks for
+    the dot, which also works; a path where it finds none stays silent over
+    a bare line PowerShell blanks. So the variable is also read from the settings files
     Claude Code applies to its environment (``repo_root``'s and the
     user's), and every ``git`` on PATH is asked, not the first: a Git Bash
     terminal puts ``mingw64\\bin`` first, and a Claude Code launched from
@@ -322,21 +326,31 @@ def after_head_index(command: str, head: str) -> int:
     return end
 
 
+def _dot_operator(body: str) -> bool:
+    """Does ``body`` (left-stripped) open with the dot operator: a ``.``
+    and then whitespace? Glued to what follows, bash reads one word and
+    not its builtin, and ``./x`` is a relative path."""
+    return body[:1] == "." and body[1:2].isspace()
+
+
 def statusline_shim_end(command: str) -> int:
     """The index in ``command`` (unstripped) just past its Windows statusline
-    shim head and the quote that closed it, PowerShell's call operator before
-    the head included; ``-1`` when the shim is not the head.
+    shim head and the quote that closed it, the operator before the head
+    included; ``-1`` when the shim is not the head.
 
-    ``init`` renders the shim bare where Claude Code will find Git Bash and as
-    ``& "<shim>" <interpreter>`` where it will run the line under PowerShell,
-    which reads a quoted head as an expression (DEF-929). Every reader of the
-    head asks here -- :func:`interpreter_site_token`, the rewire's swap and its
-    launcher-flag read, ``doctor``'s fallback notes -- so none reads the ``&``
-    as the interpreter, and none decides "shim-headed" by a copy of its own.
+    ``init`` renders ``. "<shim>" <interpreter>``: the dot is an operator in
+    both shells Claude Code picks between on Windows, so one line runs in
+    either (DEF-3017). An install can carry the two forms before it: the
+    bare head, which only Git Bash runs, and ``& "<shim>" <interpreter>``,
+    PowerShell's call operator, which only PowerShell runs (DEF-929). Every
+    reader of the head asks here -- :func:`interpreter_site_token`, the
+    rewire's swap and its launcher-flag read, ``doctor``'s fallback notes --
+    so none reads an operator as the interpreter, and none decides
+    "shim-headed" by a copy of its own.
     """
     text = command or ""
     body = text.lstrip()
-    if body[:1] == "&":
+    if body[:1] == "&" or _dot_operator(body):
         body = body[1:].lstrip()
     head = interpreter_token(body)
     if not is_statusline_shim_head(head):
@@ -347,19 +361,25 @@ def statusline_shim_end(command: str) -> int:
 
 def statusline_shim_called(command: str) -> bool:
     """Is ``command`` headed by the Windows statusline shim behind
-    PowerShell's call operator -- the form ``init`` renders where Claude
-    Code finds no Git Bash (DEF-929)? Read beside
-    :func:`statusline_shim_end`, so the two forms are told apart in one
-    place."""
+    PowerShell's call operator -- the form ``init`` rendered, from DEF-929
+    until DEF-3017, where Claude Code found no Git Bash? Read beside
+    :func:`statusline_shim_end`, so the forms are told apart in one place."""
     return statusline_shim_end(command) >= 0 and (command or "").lstrip()[:1] == "&"
+
+
+def statusline_shim_dotted(command: str) -> bool:
+    """Is ``command`` headed by the Windows statusline shim behind the dot,
+    the one form ``init`` renders, which runs under Git Bash and PowerShell
+    alike (DEF-3017)? Read beside :func:`statusline_shim_end`."""
+    return statusline_shim_end(command) >= 0 and _dot_operator((command or "").lstrip())
 
 
 def interpreter_site_token(command: str) -> str:
     """The interpreter a settings.json command string runs.
 
     argv[0] for every hook entry and for a POSIX statusLine; the word after
-    the Windows statusline shim when the shim is the head, bare or called
-    (:func:`statusline_shim_end`). BOTH readers of a statusLine --
+    the Windows statusline shim when the shim is the head, bare, called or
+    dotted (:func:`statusline_shim_end`). BOTH readers of a statusLine --
     ``doctor``'s resolver check and ``cli.rewire_interpreter_in_settings``
     -- take the token from here, so they cannot disagree about which word is
     the interpreter (the disagreement DEF-620 measured on the legacy shell

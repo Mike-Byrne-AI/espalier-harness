@@ -3707,48 +3707,108 @@ class TestStatuslineFallbackNotes:
         assert "PowerShell" in notes[0] and " || " in notes[0]
 
     _BASH = r"C:\Program Files\Git\bin\bash.exe"
+    # The two Windows forms `init` wrote before DEF-3017, kept as literals:
+    # an install can still carry either (the merge never rewrites the key).
+    _BARE = '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" python'
+    _CALLED = "& " + _BARE
 
-    @pytest.mark.parametrize("git_bash", [True, False], ids=["git-bash", "powershell"])
-    def test_windows_host_with_the_shim_render_for_its_shell_is_silent(
-        self, tmp_path, monkeypatch, git_bash
+    @pytest.mark.parametrize("command, git_bash", [
+        (_BARE, True), (_CALLED, False),
+    ], ids=["bare-with-git-bash", "called-without-git-bash"])
+    def test_windows_host_with_a_legacy_shim_form_for_its_shell_is_silent(
+        self, tmp_path, monkeypatch, command, git_bash
     ):
-        """The nt render is the shim (DEF-729), bare where Claude Code finds
-        Git Bash and behind PowerShell's call operator where it does not
-        (DEF-929): the right shape for the host, nothing to say."""
-        from espalier import cli
+        """The bare head where Claude Code finds Git Bash and the called head
+        where it does not (DEF-929) each run in the shell the host gives
+        them: nothing to say."""
         from espalier import doctor as doctor_module
 
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
         monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: self._BASH if git_bash else None)
-        path = self._settings(tmp_path, cli._statusline_command("python", posix=False, git_bash=git_bash))
+        path = self._settings(tmp_path, command)
         assert doctor_module._statusline_fallback_notes(path, tmp_path) == []
 
-    @pytest.mark.parametrize("git_bash", [True, False], ids=["bare-without-git-bash", "called-with-git-bash"])
-    def test_windows_host_whose_shim_render_is_for_the_other_shell_is_told_the_edit(
+    @pytest.mark.parametrize("git_bash", [True, False], ids=["git-bash", "powershell"])
+    def test_windows_host_with_the_dotted_render_is_silent_whatever_the_lookup(
         self, tmp_path, monkeypatch, git_bash
     ):
-        """DEF-929: the render is read against the shell Claude Code will run
-        it in. A bare head with no Git Bash runs under PowerShell, which
-        reads it as an expression; a called head with Git Bash present runs
-        under bash, where a leading `&` is a syntax error. Either way the
-        statusline is blank and so is its missing-interpreter line (both
-        driven, `tests/test_hook_exec_form.py`), so the note names the edit
-        and the fresh render; Git Bash installed or removed after `init`, or
-        a file carried in from another box, is how a tree gets here."""
+        """DEF-3017: the render `init` writes, `. "<shim>" <interp>`, runs in
+        both shells Claude Code picks between (driven,
+        `tests/test_hook_exec_form.py`), so no answer of the Git Bash lookup
+        makes it the other shell's form, and upgrade reads it as current."""
         from espalier import cli
         from espalier import doctor as doctor_module
 
+        self._deploy_shim(tmp_path)
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
-        monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: None if git_bash else self._BASH)
-        render = cli._statusline_command("python", posix=False, git_bash=git_bash)
-        notes = doctor_module._statusline_fallback_notes(self._settings(tmp_path, render), tmp_path)
+        monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: self._BASH if git_bash else None)
+        path = self._settings(tmp_path, cli._statusline_command("python", posix=False))
+        assert doctor_module._statusline_fallback_notes(path, tmp_path) == []
+        assert doctor_module.settings_statusline_shell_mismatch(path, tmp_path) is False
+
+    @staticmethod
+    def _deploy_shim(root, text=None):
+        """The shim at ``root``: the packaged source, or ``text``."""
+        from espalier.cli import _deploy_source_path
+        from espalier.managed_paths import STATUSLINE_SHIM
+
+        dest = root / STATUSLINE_SHIM
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(text.encode("ascii") if text is not None
+                         else _deploy_source_path(STATUSLINE_SHIM).read_bytes())
+
+    def test_a_dotted_line_over_a_shim_that_predates_it_is_named(self, tmp_path, monkeypatch):
+        """Both reviewers (2026-10-31): the dotted line needs the shim's first
+        line, the one Git Bash runs when it sources the file. Over an older
+        shim (a kept hand edit, a checkout at an older commit, a line
+        `merge-settings` added beside a shim nothing refreshed) bash reads
+        `@echo off` as a command and the batch body as a syntax error: blank
+        (driven). Doctor reads the deployed shim's first line, and upgrade
+        the same predicate."""
+        from espalier import cli
+        from espalier import doctor as doctor_module
+
+        self._deploy_shim(tmp_path, "@echo off\nsetlocal\nrem the shim before DEF-3017\n")
+        monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
+        monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: self._BASH)
+        path = self._settings(tmp_path, cli._statusline_command("python", posix=False))
+        notes = doctor_module._statusline_fallback_notes(path, tmp_path)
+        assert len(notes) == 1, notes
+        assert notes[0].isascii(), notes
+        assert "first line" in notes[0] and "-m espalier init ." in notes[0], notes
+        assert doctor_module.settings_statusline_shell_mismatch(path, tmp_path) is True
+
+    @pytest.mark.parametrize("command, git_bash", [
+        (_BARE, False), (_CALLED, True),
+    ], ids=["bare-without-git-bash", "called-with-git-bash"])
+    def test_windows_host_whose_shim_render_is_for_the_other_shell_is_told_the_edit(
+        self, tmp_path, monkeypatch, command, git_bash
+    ):
+        """DEF-929: a legacy form is read against the shell Claude Code will
+        run it in. A bare head with no Git Bash runs under PowerShell, which
+        reads it as an expression; a called head with Git Bash present runs
+        under bash, where a leading `&` is a syntax error. Either way the
+        statusline is blank and so is its missing-interpreter line (both
+        driven, 2026-10-31), so the note names the edit and the fresh render,
+        which runs in either shell (DEF-3017); Git Bash installed or removed
+        after `init`, or a file carried in from another box, is how a tree
+        gets here."""
+        from espalier import doctor as doctor_module
+
+        monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
+        monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: self._BASH if git_bash else None)
+        notes = doctor_module._statusline_fallback_notes(self._settings(tmp_path, command), tmp_path)
         assert len(notes) == 1, notes
         assert notes[0].isascii(), notes
         assert "settings.json.new" in notes[0] and "-m espalier init ." in notes[0], notes
+        assert "either shell" in notes[0], notes
+        # The hand edit is the dot, never the other one-shell form: `& ` on a
+        # bare line was DEF-3017's trap the day Git for Windows arrived.
+        assert "put `& `" not in notes[0] and "delete the leading" not in notes[0], notes
         if git_bash:
-            assert "PowerShell" in notes[0] and "`& `" in notes[0], notes
+            assert "Git Bash" in notes[0] and "replace the leading `&` with a `.`" in notes[0], notes
         else:
-            assert "Git Bash" in notes[0] and "leading `& `" in notes[0], notes
+            assert "PowerShell" in notes[0] and "put `. ` before the command" in notes[0], notes
 
     def test_upgrade_and_doctor_read_one_predicate_for_the_other_shells_form(
         self, tmp_path, monkeypatch
@@ -3768,14 +3828,14 @@ class TestStatuslineFallbackNotes:
         assert "statusline_shell_mismatch(" in inspect.getsource(doctor_module._statusline_fallback_notes)
         assert "settings_statusline_shell_mismatch(" in inspect.getsource(cli.cmd_upgrade)
         monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: None)
-        bare = cli._statusline_command("python", posix=False, git_bash=True)
+        bare = self._BARE
         path = self._settings(tmp_path, bare)
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: False)
         assert doctor_module.settings_statusline_shell_mismatch(path, tmp_path) is False
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
         assert doctor_module.settings_statusline_shell_mismatch(path, tmp_path) is True
-        for command in (bare + " || echo 'x'", "~/.claude/statusline.sh",
-                        cli._statusline_command("python", posix=False, git_bash=False)):
+        for command in (bare + " || echo 'x'", "~/.claude/statusline.sh", self._CALLED,
+                        cli._statusline_command("python", posix=False)):
             other = self._settings(tmp_path, command)
             assert doctor_module.settings_statusline_shell_mismatch(other, tmp_path) is False, command
 
@@ -3789,15 +3849,15 @@ class TestStatuslineFallbackNotes:
         from espalier import doctor as doctor_module
 
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
-        hybrid = cli._statusline_command("python", posix=False, git_bash=True) + " || echo 'x'"
+        hybrid = cli._statusline_command("python", posix=False) + " || echo 'x'"
         notes = doctor_module._statusline_fallback_notes(self._settings(tmp_path, hybrid), tmp_path)
         assert len(notes) == 1 and " || " in notes[0], notes
 
-    @pytest.mark.parametrize("lead", ["", "& ", "&"], ids=["bare", "called", "called-unspaced"])
+    @pytest.mark.parametrize("lead", ["", "& ", "&", ". "], ids=["bare", "called", "called-unspaced", "dotted"])
     def test_a_case_varied_shim_head_reads_as_the_shim(self, tmp_path, monkeypatch, lead):
         """The string runs on Windows, whose filesystem is case-insensitive:
         a hand-edited `STATUSLINE.CMD` head runs the shim and is read as it
-        by doctor and the rewire alike, behind the call operator too."""
+        by doctor and the rewire alike, behind either operator too."""
         from espalier._venv import interpreter_site_token, is_statusline_shim_head
         from espalier import doctor as doctor_module
 
@@ -3805,7 +3865,7 @@ class TestStatuslineFallbackNotes:
         assert is_statusline_shim_head('${CLAUDE_PROJECT_DIR}\\tools\\cc\\STATUSLINE.CMD')
         assert interpreter_site_token(head) == "python"
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
-        monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: None if lead else self._BASH)
+        monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: None if "&" in lead else self._BASH)
         assert doctor_module._statusline_fallback_notes(self._settings(tmp_path, head), tmp_path) == []
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: False)
         notes = doctor_module._statusline_fallback_notes(self._settings(tmp_path, head), tmp_path)
@@ -3826,38 +3886,36 @@ class TestStatuslineFallbackNotes:
         assert len(notes) == 1, notes
         assert "settings.json.new" in notes[0] and "no interpreter-missing fallback" in notes[0]
 
-    @pytest.mark.parametrize("git_bash", [True, False], ids=["bare", "called"])
-    def test_posix_host_with_the_shim_render_names_it(self, tmp_path, monkeypatch, git_bash):
+    @pytest.mark.parametrize("lead", ["", "& ", ". "], ids=["bare", "called", "dotted"])
+    def test_posix_host_with_the_shim_render_names_it(self, tmp_path, monkeypatch, lead):
         """The third direction: a settings.json rendered on Windows and
         carried in by a tracked file (DEF-11). A POSIX shell cannot run a
-        .cmd, so the statusline goes blank on a healthy install -- in either
-        Windows form (DEF-929)."""
-        from espalier import cli
+        .cmd, so the bare and called forms blank the statusline on a healthy
+        install (DEF-929), and the dot form reaches only the shim's line for
+        Git Bash (DEF-3017): the POSIX render is the one to take."""
         from espalier import doctor as doctor_module
 
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: False)
-        path = self._settings(tmp_path, cli._statusline_command("python", posix=False, git_bash=git_bash))
+        path = self._settings(tmp_path, lead + self._BARE)
         notes = doctor_module._statusline_fallback_notes(path, tmp_path)
         assert len(notes) == 1, notes
         assert "tools/cc/statusline.cmd" in notes[0] and "settings.json.new" in notes[0]
 
-    @pytest.mark.parametrize("git_bash", [True, False], ids=["bare", "called"])
+    @pytest.mark.parametrize("lead", ["", "& ", ". "], ids=["bare", "called", "dotted"])
     def test_the_shim_headed_statusline_is_checked_for_its_interpreter_argument(
-        self, tmp_path, monkeypatch, git_bash
+        self, tmp_path, monkeypatch, lead
     ):
         """The resolver check reads argv[1] behind the shim, the same helper
         the rewire reads (DEF-729): a broken interpreter ARGUMENT is warned
         about by name, and the shim path itself is never mistaken for one,
-        nor is PowerShell's call operator before it (DEF-929)."""
-        from espalier import cli
-
+        nor is the operator before it (DEF-929, DEF-3017)."""
         settings = tmp_path / ".claude" / "settings.json"
         settings.parent.mkdir(parents=True)
         settings.write_text(json.dumps({
             "hooks": {"PreToolUse": [{"hooks": [{"command": "python3"}]}]},
             "statusLine": {
                 "type": "command",
-                "command": cli._statusline_command("pythonX", posix=False, git_bash=git_bash),
+                "command": lead + self._BARE.replace(" python", " pythonX"),
             },
         }), encoding="utf-8")
         from espalier import doctor as doctor_module
