@@ -88,8 +88,9 @@ def _is_recognized(var: str) -> bool:
     if var.startswith("ESPALIER_"):
         return True
     # CLAUDE_CODE_GIT_BASH_PATH: Claude Code's variable, read by the engine
-    # too since its Windows statusline render follows Claude Code's Git Bash
-    # lookup (DEF-929), so it has a harness reader to catalog.
+    # too: doctor follows Claude Code's Git Bash lookup to name a Windows
+    # statusline an older install wrote for the other shell (DEF-929,
+    # DEF-3017), so it has a harness reader to catalog.
     return var in {"CLAUDE_PROJECT_DIR", "TMPDIR", "PYTHONPATH", "CLAUDE_CODE_GIT_BASH_PATH"}
 
 

@@ -213,7 +213,14 @@ function armedFor(marker: Marker | undefined, id: string): marker is Marker {
 // Why the clear must wait, or '' when nothing is in flight: the handoff gate's
 // predicate (tools/cc/hooks/stop_gate.py, Gate 5) read from this side, plus
 // HEAD unmoved since the handoff (a commit after it means a handoff is owed
-// again, and that handoff re-arms the marker with the new head). Three
+// again, and that handoff re-arms the marker with the new head; a pull that
+// moved HEAD with nothing to hand off is re-armed at the new head by the ship
+// driver's catch-up, which made it, or by `ship.py arm` after a pull by hand:
+// the worker window air-work sat held 3 h 33 min on 2026-10-31 while its
+// tick's catch-up had moved HEAD and nothing re-armed). The reason names no
+// verb to run: it rides the clear's re-prime brief as what the old window
+// left in flight, and a verb named there would be run in the new window over
+// a consumed marker, arming a fresh one that clears that window again. Three
 // callers: clearable, at the ask and at a compaction, and the clear's
 // SessionStart, which reads it BEFORE the project's settings hooks run beneath
 // it, so everything read here must be the old window's own state as the
@@ -226,7 +233,7 @@ async function inFlight($: Engine, marker: Marker): Promise<string> {
   if (status.out) return 'a tracked edit is in flight'
   const head = await git($, cwd, 'rev-parse', 'HEAD')
   if (!head.ok) return `HEAD could not be read (${head.why})`
-  if (marker.head && head.out !== marker.head) return 'HEAD moved since the handoff (that handoff re-arms the marker)'
+  if (marker.head && head.out !== marker.head) return 'HEAD moved since the handoff (a commit after it owes a handoff, which re-arms the marker; the ship driver\'s catch-up re-arms it after its own pull)'
   try {
     const plan: unknown = JSON.parse(await $.fs.read(`${cwd}/${PLAN}`))
     const p = plan as { status?: unknown; steps?: unknown }

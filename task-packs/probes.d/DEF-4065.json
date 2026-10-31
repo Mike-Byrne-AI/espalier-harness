@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4065",
+ "subject": ".claude/agents/code-reviewer.md",
+ "cmd": "python3 -c \"import subprocess,sys,tempfile,pathlib;d=tempfile.mkdtemp();subprocess.run(['git','init','-q',d],check=True);subprocess.run([sys.executable,'-m','espalier','init',d],capture_output=True,check=True);b=pathlib.Path(d,'.claude/agents/code-reviewer.md').read_text(encoding='utf-8');p=b[b.index('### Phase 1'):b.index('### Phase 2')];f=chr(96)*3;s=p[p.index(f+'bash')+7:];s=s[:s.index(f)];r=subprocess.run(['bash','-c',s],cwd=d,capture_output=True,text=True);print(sum(1 for l in r.stdout.splitlines() if l.strip()=='0'))\"",
+ "open_value": "3",
+ "why_not": null,
+ "row_sha": "750378a1b6ee",
+ "text_sha": "74fccf6a8d73",
+ "verified_2026_10_31": "STILL_OPEN (re-pinned 'False' -> '3' on 2026-10-31: the ratchet test_no_new_probe_is_satisfiable_by_its_own_fixs_paperwork named the text predicate at the lane's first tier, before any push; the probe is re-pointed and the claim stands: the deployed Phase 1 fence run on an init'd temp tree, the class oracle; bare-0 lines counted) [changed: probe, open value, text]"
+}

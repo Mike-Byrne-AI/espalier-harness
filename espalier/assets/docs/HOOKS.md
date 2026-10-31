@@ -394,7 +394,8 @@ asking and every entry in it parses with a numeric pid; otherwise nothing is
 removed and the line says so. While another session is live in this checkout,
 nothing is removed either (it may be working in one of them). The catch-up
 has its own six-second budget, so the pull-request block keeps its eight, and
-the two together stay under twelve of the hook's fifteen; a backlog of
+the two together stay inside the hook's network budget of ten and a half (the
+wall below, less two and a half seconds for the work after the reads); a backlog of
 removals clears over a few sessions. A resume or a compaction never moves the
 tree. The hook has imported its helper modules before the catch-up runs, so
 when the move changes one of them, the rest of the start runs in a fresh
@@ -410,6 +411,27 @@ default in the Espalier-Harness source repository; elsewhere off until
 moving someone's branch unasked is a surprise. `ESPALIER_SESSION_CATCH_UP=0`
 or `1` in the launching shell overrides both. `python tools/cc/checkout_sync.py`
 says what it would do; `--apply` does it now.
+
+**The wall.** Claude Code cancels a SessionStart hook that runs past the
+`timeout` in `settings.json` (fifteen seconds) and keeps none of its output,
+so a start that ran long once lost the whole banner, and the session read as
+one whose hooks had not loaded. The network reads have budgets; the local
+work around them (the zone baseline, the integrity and audit-log reads, the
+banner build) has none, and on the Windows box 13 of 95 starts ran past the
+timeout.
+So a start counts thirteen seconds from the moment the hook's module loads,
+and if it is still running then, it prints a short banner and ends. The
+banner's first line says where it stopped (`SessionStart (short: cut at 13.0 s
+in the zone baseline; ...)`), a `Cut:` line says the hooks are loaded and the
+banner is short, not missing, and the lines already read (`Checkout:`,
+`Open PRs:`, `Mail:`, `Orders:` and the rest) follow; a cut in the catch-up
+adds that a checkout move may still be running, so `git status` comes before
+any edit. The catch-up and the network reads end two and a half seconds before
+the wall, so an ordinary slow start finishes first. A cut leaves one
+`sessionstart_failed_open_wall_cut` record a session, which `/status --log`
+counts with the other fail-open records. Only
+the hook run as a script arms the wall; a test that calls its `main()` in
+process arms none.
 
 **Auto-orient block.** The context output also carries the harness's
 continuity surface -- each section gated on the artifact it describes,
@@ -2425,11 +2447,13 @@ switch into a drive path), so `init` wires the statusline through a
 deployed batch shim, `tools/cc/statusline.cmd`, which runs the script
 with the wired interpreter and prints the same line when that
 interpreter is gone. Claude Code runs that line under Git Bash when it
-finds one and under PowerShell when it does not, and each shell blanks
-the other's spelling, so `init` writes the form the host will run: the
-shim's quoted path where it finds Git Bash as Claude Code does, and
-`& "<shim>" <interpreter>` (PowerShell's call operator) where it finds
-none; `espalier doctor .` names a line written for the other shell.
+finds one and under PowerShell when it does not, and the line starts
+with a dot, `. "<shim>" <interpreter>`, an operator in both: Git Bash
+sources the shim, whose first line is written for it, and PowerShell
+runs it as a batch file, so installing or removing Git for Windows after
+`init` changes nothing. An older install can carry the shim bare (Git
+Bash only) or behind `&` (PowerShell only); `espalier doctor .` names
+one written for the other shell.
 
 Install a Python 3.10+ (or put it on PATH), then run
 `espalier doctor .` — it names the wired interpreter and the exact

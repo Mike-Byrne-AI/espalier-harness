@@ -225,13 +225,18 @@ setting to detect at all.
   the or-operator, so the shim prints the same line, exit 0, and a `.cmd` is
   invocable from Git Bash, the shell this page names when it is installed.
   The PowerShell-only path reads a quoted head as an expression (witnessed
-  2026-09-26, driven again 2026-10-31), so where `espalier._venv.git_bash_path`
-  finds no Git Bash the render is `& "<shim>" <interp>`, PowerShell's call
-  operator, which Git Bash cannot parse. Neither form serves both shells (a
-  `powershell -NoProfile -Command "& '<shim>' <interp>"` head does, at a
-  second PowerShell start on every refresh, driven by the 2026-10-31 review
-  and not adopted), so the render follows the shell this page says will run
-  it, and keeps the bare form wherever a trace of Git Bash is found.
+  2026-09-26, driven again 2026-10-31), and PowerShell's call operator, `&`,
+  is a syntax error to Git Bash, so the head is a dot, `. "<shim>" <interp>`:
+  Git Bash sources the shim, whose first line is a bash command that a
+  colon makes a label to cmd.exe and whose `return` ends the source there,
+  and PowerShell runs the dotted `.cmd` as a batch file. One string serves
+  whichever shell this page says will run it (driven in both, 2026-10-31,
+  LF and CRLF copies of the shim), at no cost per refresh: medians 0.109 s
+  under bash and 0.450 s under PowerShell against 0.113 and 0.446 s for the
+  bare and `&` forms it replaced (N=20 each, interleaved). A
+  `powershell -NoProfile -Command "& '<shim>' <interp>"` head also serves
+  both, at a second PowerShell start on every refresh (0.487 and 0.820 s),
+  and is not adopted.
   <!-- re-excerpt 2026-10-01: unchanged and now better supported. The page's new
        Git Bash backslash paragraph says a backslash-separated path in the
        `command` string "fails without a visible error" when UNQUOTED -- the
@@ -241,11 +246,12 @@ setting to detect at all.
   shell-form, quoted against a space-bearing project dir, POSIX-only for the
   clause, the clause prints the line with exit 0 when the interpreter is
   missing or the placeholder is unexpanded, and the shim carries the same
-  text, forces exit 0 on that branch and uses no label (cmd.exe misreads a
-  label search in an LF-only file).
+  text on its bash line and in its batch body, forces exit 0 on that branch
+  and seeks no label (cmd.exe misreads a label search in an LF-only file).
 - `espalier/doctor.py::_statusline_fallback_notes` — says when the clause
-  disagrees with the host, and when a Windows shim render is the form for
-  the other shell.
+  disagrees with the host, and when a bare or `&` shim line, which an
+  install rendered before the dot can carry, is the form for the other
+  shell.
   <!-- re-excerpt 2026-10-01: newly qualifiable, no code change asserted here.
        The four states it enumerates are all about the STRING vs the host. The
        page now documents a fifth way espalier's statusline goes dark that no
@@ -280,8 +286,9 @@ to its own environment before the lookup, and its settings-env filter names
 `CLAUDE_CODE_GIT_BASH_PATH`. `espalier/_venv.py::git_bash_path` follows the
 lookup with `shutil.which` in place of `where.exe`, and widens it: the
 variable is also read from the settings files, and every `git` on PATH is
-asked, not only the first, because a wrong "none" writes a form bash cannot
-parse while a wrong "found" keeps the line hosts had before.
+asked, not only the first. Since the render became one string for both
+shells, `init` no longer reads it; `doctor` does, to name a bare or `&`
+line an older install carries for the shell this host does not run.
 
 **Observed, not quoted** (a live probe, Claude Code 2.1.263, 2026-09-07): an
 exec-form hook whose `command` is not on PATH produces the transcript notice

@@ -233,7 +233,7 @@ def test_a_reporter_crash_guard_leaves_a_record(hook, event_type, tmp_path, monk
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
     mod = _load(hook)
 
-    def _boom():
+    def _boom(*_a):  # session_start's main() hands _run_main its wall start
         raise RuntimeError("simulated at /secret/path")
 
     monkeypatch.setattr(mod, "_run_main", _boom)

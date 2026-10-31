@@ -255,7 +255,7 @@ def test_main_umbrella_degrades_run_main_crash_to_exit_zero(monkeypatch, capsys,
     ss = _import_session_start()
     monkeypatch.setenv("CLAUDE_PROJECT_DIR", str(tmp_path))
 
-    def _boom():
+    def _boom(*_a):  # main() hands _run_main its wall start
         raise OSError("simulated read-only .espalier-state")
 
     monkeypatch.setattr(ss, "_run_main", _boom)

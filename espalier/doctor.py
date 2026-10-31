@@ -23,6 +23,7 @@ from espalier._venv import (
     interpreter_site_token,
     resolves_only_inside,
     statusline_shim_called,
+    statusline_shim_dotted,
     statusline_shim_end,
     venv_root_of,
 )
@@ -629,10 +630,12 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
     """Info lines about the interpreter-missing fallback in ``statusLine``.
 
     ``cli._statusline_command`` renders ``<interp> "<script>" || echo '...'``
-    on a POSIX host (DEF-508) and ``"<shim>" <interp>`` on Windows, the batch
-    shim ``tools/cc/statusline.cmd`` carrying the same fallback (DEF-729),
-    behind PowerShell's call operator (``& "<shim>" <interp>``) where Claude
-    Code finds no Git Bash and runs the line under PowerShell (DEF-929).
+    on a POSIX host (DEF-508) and ``. "<shim>" <interp>`` on Windows, the
+    batch shim ``tools/cc/statusline.cmd`` carrying the same fallback
+    (DEF-729) behind the dot both of Claude Code's Windows shells have
+    (DEF-3017). Before that it rendered the shim bare where Claude Code
+    found Git Bash and behind PowerShell's call operator (``& "<shim>"
+    <interp>``) where it found none (DEF-929), and an install keeps either.
     The merge adds the key only when it is absent and the rewire swaps the
     interpreter the string names (DEF-798, DEF-810), so the string an install
     carries can disagree with the host it runs on in four ways, and a fifth
@@ -648,15 +651,19 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
       without Git Bash the line cannot parse and the statusline goes blank on
       a healthy install. The remedy is the one-line hand edit.
     * POSIX host, shim head -- rendered on Windows and carried in the same
-      way: a POSIX shell cannot run a ``.cmd``, so the statusline goes blank
-      on a healthy install. A fresh ``init`` renders the POSIX string.
-    * Windows host, a shim render for the other shell -- the bare head where
-      ``_venv.git_bash_path`` finds no Git Bash (PowerShell reads it as an
-      expression), or the called head where it finds one (bash reads a
-      leading ``&`` as a syntax error): Git Bash installed or removed since
-      ``init``, or a file carried in from another box. The statusline is
-      blank and so is its missing-interpreter line, driven in both shells.
-      A fresh ``init`` renders the host's form; the hand edit is the ``& ``.
+      way: a POSIX shell cannot run a ``.cmd``, so the bare and called heads
+      blank the statusline on a healthy install, and the dotted head runs
+      only the shim's first line, written for Git Bash. A fresh ``init``
+      renders the POSIX string.
+    * Windows host, a legacy shim form for the other shell -- the bare head
+      where ``_venv.git_bash_path`` finds no Git Bash (PowerShell reads it
+      as an expression), or the called head where it finds one (bash reads
+      a leading ``&`` as a syntax error): Git Bash installed or removed
+      since ``init``, or a file carried in from another box. The statusline
+      is blank and so is its missing-interpreter line, driven in both
+      shells. A fresh ``init`` renders the dotted head, which runs in
+      either, and the hand edit is that dot. A dotted head is this case
+      only over a shim whose first line is not the one Git Bash runs.
     * Either host, no ``statusLine`` key while ``tools/cc/statusline.py`` is
       deployed -- wired by ``--wire-hooks`` or ``merge-settings`` before the
       merge learned to add the key (DEF-798), or a hand-kept file: the harness
@@ -718,8 +725,10 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
     elif runs_shim:
         return [
             f"statusLine.command runs the Windows shim {STATUSLINE_SHIM}, so it "
-            "was rendered on Windows and carried in: a POSIX shell cannot run it "
-            "and the statusline goes blank on a healthy install. "
+            "was rendered on Windows and carried in: a POSIX shell cannot run a "
+            "batch file, so a bare or `&` head blanks the statusline on a healthy "
+            "install, and a `. ` head runs only the shim's first line, which is "
+            "written for Git Bash. "
             f"`{_remedy_py()} -m espalier init .` renders "
             ".claude/settings.json.new beside your file; take its statusLine line."
         ]
@@ -760,25 +769,46 @@ def statusline_shell_mismatch(command: str, repo_root: Path | None) -> str | Non
     """The note for a Windows shim render whose form is for the other shell
     (DEF-929), or None: Claude Code runs the line under the Git Bash
     ``git_bash_path`` finds, else under PowerShell, and each blanks the
-    other's form. ``doctor``'s note and ``upgrade``'s version-current line
-    both read this one predicate (the DEF-798 rule: two narrators of one
-    tree cannot disagree about it). Asked of a shim-headed command only."""
+    other's form -- the bare head and the called one, which ``init`` wrote
+    before DEF-3017. The dotted head it writes now runs in both, so no
+    lookup makes it the other shell's -- but only over a shim whose first
+    line is the one Git Bash runs when it sources the file: an older shim
+    (a kept hand edit, a checkout or worktree at an older commit, a line
+    ``merge-settings`` added beside a shim nothing refreshed) is a syntax
+    error to bash, blank (driven, 2026-10-31), so a dotted head is read
+    against the deployed shim's first line. ``doctor``'s note and
+    ``upgrade``'s version-current line both read this one predicate (the
+    DEF-798 rule: two narrators of one tree cannot disagree about it).
+    Asked of a shim-headed command only."""
     if statusline_shim_end(command) < 0:
         return None
+    remedy = (
+        f"`{_remedy_py()} -m espalier init .` refreshes the shim and renders "
+        ".claude/settings.json.new beside your file; take its statusLine line, "
+        "which runs in either shell"
+    )
+    if statusline_shim_dotted(command):
+        if repo_root is None or _shim_runs_under_bash(repo_root / STATUSLINE_SHIM):
+            return None
+        return (
+            f"statusLine.command sources {STATUSLINE_SHIM} behind a `. `, which "
+            "Git Bash runs through the shim's first line, but this shim's first "
+            "line is not that one (an older or hand-edited copy), so under Git "
+            "Bash the statusline goes blank, and so does the line that reports "
+            f"a missing interpreter. {remedy}; a hand-edited shim is kept, so "
+            "take the packaged one's first line into it."
+        )
     called = statusline_shim_called(command)
     git_bash = git_bash_path(repo_root) is not None
-    remedy = (
-        f"`{_remedy_py()} -m espalier init .` renders .claude/settings.json.new "
-        "beside your file; take its statusLine line"
-    )
+    hand_edit = "with the shim current, {}, the form both shells run."
     if called and git_bash:
         return (
             "statusLine.command calls the Windows shim through PowerShell's `&`, "
             "the form for a host where Claude Code finds no Git Bash, but Git "
             "Bash is on this host and Claude Code runs the statusline under it, "
             "where a leading `&` is a syntax error: the statusline goes blank, "
-            f"and so does the line that reports a missing interpreter. {remedy}, "
-            "or delete the leading `& `."
+            f"and so does the line that reports a missing interpreter. {remedy}; or, "
+            + hand_edit.format("replace the leading `&` with a `.`")
         )
     if not called and not git_bash:
         return (
@@ -788,9 +818,23 @@ def statusline_shell_mismatch(command: str, repo_root: Path | None) -> str | Non
             "a settings file), so Claude Code runs the statusline under "
             "PowerShell, which reads a quoted head as an expression: the "
             "statusline goes blank, and so does the line that reports a missing "
-            f"interpreter. {remedy}, or put `& ` before the command."
+            f"interpreter. {remedy}; or, "
+            + hand_edit.format("put `. ` before the command")
         )
     return None
+
+
+def _shim_runs_under_bash(shim: Path) -> bool:
+    """Does the deployed statusline shim open with the line Git Bash runs
+    when a dotted head sources it (``:;``, DEF-3017)? A shim that is absent
+    or unreadable reads True: the missing managed file is another check's
+    to name, and this one speaks only about a copy it read."""
+    try:
+        with shim.open("rb") as handle:
+            first = handle.readline(4096)
+    except OSError:
+        return True
+    return first.lstrip(b" \t").startswith(b":;")
 
 
 def _check_python_resolver(
