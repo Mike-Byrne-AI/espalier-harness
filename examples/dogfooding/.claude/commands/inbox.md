@@ -300,11 +300,8 @@ is read on its own, and one that cannot be read says so on its own line:
   two live jobs as the fold counts them (a shelved or stopped job is live
   until released; one open pull request per seat, the next job built while
   the first is in CI), and a seat holding none has no jobs row, so which
-  seats were short was once remembered between ticks (`DEF-5034`; air-work
-  sat idle 03:27Z to 06:38Z on 2026-10-30). `scripts/seat_day_census.py`
-  counts, per worker seat per UTC day, the tick slots of the dispatcher's loop
-  interval (laid from 00:00Z) at which the seat stood under two, on the
-  report, each worker's row and the dispatcher's row.
+  seats were short was once remembered between ticks; the line is where they
+  are read, every tick.
 - **claims** and the ledger's live row count, counted at the base
   branch's remote-tracking ref with the base's own ledger tools and naming the
   commit it read, so a checkout that stops moving still reads what the base
@@ -331,6 +328,16 @@ is read on its own, and one that cannot be read says so on its own line:
   `none among what was read` means something was not read. The ship driver
   prints the same lines for a lane after `open` and `handoff` push. The rule
   stays the same: the second to merge runs catch-up.
+
+<!-- espalier:self-host-only -->
+On this repository the `under two:` tail and its census are `DEF-5034`'s fix:
+air-work sat idle from 03:27Z to 06:38Z on 2026-10-30 while which seats were
+short was remembered between the dispatcher's ticks. The seat-day census
+(`scripts/seat_day_census.py`, self-host only -- not deployed by `init`)
+counts, per worker seat per UTC day, the tick slots of the dispatcher's loop
+interval (laid from 00:00Z) at which the seat stood under two, on the report,
+each worker's row and the dispatcher's row.
+<!-- /espalier:self-host-only -->
 
 If the board and your own account disagree, the board is the one that read
 GitHub just now.
