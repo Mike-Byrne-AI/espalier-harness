@@ -601,11 +601,14 @@ class TestGitBashLookup:
     statusLine an older ``init`` wrote, so a step out of order names a
     working line or stays silent over a blank one."""
 
+    @pytest.mark.contract
     def test_the_copy_is_the_pinned_lookup(self):
         """DEF-3018: the copy's default locations and accepted file names are
         the ones the ``cc-git-bash`` pin quotes, read off the same ``>``
         passages the weekly refresh checks upstream, so a re-excerpt that
-        moves either reds here until the copy follows."""
+        moves either reds here until the copy follows. Marked ``contract``
+        so a re-excerpt pull request, which touches ``docs/external/`` alone
+        and earns the contract tier, runs it."""
         from espalier import _venv
         from espalier.external_diff import quoted_passages
         from espalier.external_pins import parse_pin

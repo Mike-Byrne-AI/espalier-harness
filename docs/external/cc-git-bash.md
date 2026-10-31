@@ -37,8 +37,8 @@ variables in settings files" (env-vars); "Install on native Windows" (setup)
 
 The status line page (the `cc-statusline` pin) says Claude Code runs a status
 line command "through Git Bash when Git Bash is installed, or through
-PowerShell when Git Bash is absent". Which hosts count as installed is the
-lookup quoted here. Until this pin, espalier's copy of it rested on one read of
+PowerShell when Git Bash is absent". Until this pin, espalier's copy of the
+lookup quoted here rested on one read of
 the 2.1.316 binary (that pin's "Observed, not quoted" paragraph), and the weekly
 refresh re-read nothing that stated it. The pages state the lookup for Git Bash
 as a whole: for the Bash tool, and for the error when neither shell is found.
@@ -123,8 +123,10 @@ The env-vars page, "Set variables in settings files" and "Precedence":
 ## What espalier asserts against this excerpt
 
 - `espalier/_venv.py::GIT_BASH_DEFAULT_PATHS` is the page's two default
-  install locations, in its order, each with `bin\bash.exe` under it, and
-  `::GIT_BASH_NAMES` is the four file names the variable accepts.
+  install locations, in its order, each with `bin\bash.exe` under it (the
+  page's step 1 names only the install roots; the `bin\bash.exe` under them
+  is step 2's suffix and the 2.1.316 binary's literal, so no quote binds it),
+  and `::GIT_BASH_NAMES` is the four file names the variable accepts.
   `tests/test_hook_exec_form.py::TestGitBashLookup::test_the_copy_is_the_pinned_lookup`
   reads both off this file's quotes, so a re-excerpt that moves either reds
   that test until the copy follows.
@@ -132,12 +134,15 @@ The env-vars page, "Set variables in settings files" and "Precedence":
   variable, when its file name is one of those four and the path exists (else
   it falls through, as the page says it has since v2.1.219); then the default
   locations; then `bin\bash.exe` in the Git installation of a `git` on PATH.
-  It widens two steps on purpose, as its docstring says: every `git` on PATH
-  is asked, not only the first; and the variable is read from the three
-  settings files above as well as from the process environment, since Claude
-  Code reads those however it was launched. `doctor` reads only whether any
-  step finds a bash, so the settings value outranking the shell's never moves
-  its verdict.
+  It widens on purpose, as its docstring says: every `git` on PATH is asked,
+  not only the first; and the variable is read from the three settings files
+  above as well as from the process environment, since Claude Code reads
+  those however it was launched. A third widening follows from the second:
+  the copy tries each candidate value in turn, where Claude Code applies one
+  (the settings value outranking the shell's), so a usable shell value beside
+  an unusable settings value reads as a path here while Claude Code ignores
+  the variable and auto-detects. `doctor` reads only whether any step finds a
+  bash, so the precedence moves its verdict only on such a host.
 - **Not followed:** the step-2 skip of a `git` the project placed (`DEF-3021`).
   `git_bash_path` asks every `git` on PATH, under the project or not. Who it
   reaches: a host whose only Git with a `bin\bash.exe` sits under the project

@@ -224,9 +224,9 @@ def is_statusline_shim_head(token: str) -> bool:
 
 #: Where Claude Code looks for Git Bash before it asks PATH: the two default
 #: install locations its troubleshoot-install page names, in its order, each
-#: with ``bin\bash.exe`` under it (the 2.1.316 binary holds the same two
-#: literals). ``docs/external/cc-git-bash.md`` pins the page, and
-#: ``TestGitBashLookup`` reads this tuple against it.
+#: with ``bin\bash.exe`` under it (the page names the roots; the suffix is its
+#: step 2's and the 2.1.316 binary's literal). ``docs/external/cc-git-bash.md``
+#: pins the page, and ``TestGitBashLookup`` reads this tuple against it.
 GIT_BASH_DEFAULT_PATHS = (
     r"C:\Program Files\Git\bin\bash.exe",
     r"C:\Program Files (x86)\Git\bin\bash.exe",
@@ -278,9 +278,9 @@ def git_bash_path(repo_root: Path | None = None) -> str | None:
     of :data:`GIT_BASH_NAMES` and the path exists, else the two
     :data:`GIT_BASH_DEFAULT_PATHS`, else ``bin\\bash.exe`` two levels above
     the first ``git`` ``where.exe`` names. The page's step 2 also skips a
-    ``git`` a project placed (in the launch folder, or below it under
-    ``node_modules`` or a virtual-environment folder); this does not
-    (DEF-3021).
+    ``git`` a project placed (in the launch folder, or below it in a path
+    holding ``node_modules`` or a virtual-environment folder, where that
+    folder may sit is left open); this does not (DEF-3021).
 
     ``init`` no longer reads it: its render runs in both shells (DEF-3017).
     ``doctor`` does, to name a bare or ``&`` line an older install carries

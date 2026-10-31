@@ -14,9 +14,8 @@ respective owners:
 
 - docs/external/cc-hook-protocol.md, docs/external/cc-statusline.md,
   docs/external/cc-worktrees.md and docs/external/cc-git-bash.md are
-  excerpts of the Claude Code
-  documentation published at https://code.claude.com/docs, copyright
-  Anthropic, PBC.
+  excerpts of the Claude Code documentation published at
+  https://code.claude.com/docs, copyright Anthropic, PBC.
 
 Each file's frontmatter names its source URL, the section excerpted and
 the date it was fetched. This project grants no licence to the excerpted
