@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -490,6 +491,23 @@ class TestTheModReadsWhatTheDriverWrites:
             "the in-flight read is not awaited before the hand-on: the catch-up beneath reads as a HEAD move")
         assert "inFlight(" not in after, (
             "an in-flight read after the hand-on reads the caught-up checkout, not the old window")
+
+    def test_every_git_read_hands_on_why_it_failed(self, module_text):
+        """DEF-3019 (2026-10-31): the ``git()`` helper kept stdout alone, so
+        win-2's 06:25Z re-prime said 'HEAD could not be read' while HEAD
+        equalled the marker's head, and nothing said why. The kit hands each
+        read a failing value and reads the reason back, but no CI cell installs
+        ``claude``, so the shape is pinned here by text, line comments stripped.
+        Dies to: the helper dropping git's stderr again, and a git read whose
+        reason its caller never reads (a new ``git(`` call included)."""
+        code = "\n".join(line.split("//", 1)[0] for line in module_text.splitlines())
+        start = code.index("async function git(")
+        helper = code[start:code.index("\n}\n", start)]
+        assert ".stderr" in helper, "the git helper drops git's own words again"
+        reads = re.findall(r"const (\w+) = await git\(", code)
+        assert reads, "no git read found: the helper's callers were renamed past this pin"
+        for name in reads:
+            assert f"{name}.why" in code, f"the git read `{name}` drops why it failed"
 
     @pytest.mark.skipif(shutil.which("claude") is None, reason="claude is not on PATH")
     def test_the_engine_accepts_the_manifest_and_the_module(self, seat):

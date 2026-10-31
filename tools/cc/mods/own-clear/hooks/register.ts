@@ -127,12 +127,25 @@ async function noteNow($: Engine, text: string): Promise<void> {
   }
 }
 
-async function git($: Engine, cwd: string, ...argv: string[]): Promise<{ ok: boolean; out: string }> {
+// A git read's output, or why it failed: git's own words (stderr on one line,
+// cut at WHY_CHARS), else its exit code, else the engine's rejection (git could
+// not start, or outran the timeout). Every caller names it (DEF-3019: win-2's
+// 06:25Z re-prime said 'HEAD could not be read' while HEAD equalled the
+// marker's, and nothing said why).
+const WHY_CHARS = 200
+function oneLine(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > WHY_CHARS ? `${flat.slice(0, WHY_CHARS)}...` : flat
+}
+
+async function git($: Engine, cwd: string, ...argv: string[]): Promise<{ ok: boolean; out: string; why: string }> {
   try {
     const r = await $.process.run(['git', ...argv], { cwd, timeoutMs: 10000 })
-    return { ok: r.exitCode === 0, out: r.stdout.trim() }
+    if (r.exitCode === 0) return { ok: true, out: r.stdout.trim(), why: '' }
+    const said = oneLine(r.stderr ?? '')
+    return { ok: false, out: r.stdout.trim(), why: `exit ${r.exitCode}${said ? `: ${said}` : ''}` }
   } catch (err) {
-    return { ok: false, out: String(err) }
+    return { ok: false, out: '', why: `git did not run: ${oneLine(String(err))}` }
   }
 }
 
@@ -144,7 +157,9 @@ async function repoRoot($: Engine): Promise<string> {
   if (root) return root
   const cwd = await $.session.cwd()
   const top = await git($, cwd, 'rev-parse', '--show-toplevel')
-  return (root = top.ok && top.out ? top.out : cwd)
+  if (top.ok && top.out) return (root = top.out)
+  await note($, `the checkout's top could not be read from ${cwd} (${top.why || 'git printed no path'}); the marker is read from there`)
+  return (root = cwd)
 }
 
 async function readMarker($: Engine): Promise<Marker | undefined> {
@@ -204,10 +219,10 @@ function armedFor(marker: Marker | undefined, id: string): marker is Marker {
 async function inFlight($: Engine, marker: Marker): Promise<string> {
   const cwd = await repoRoot($)
   const status = await git($, cwd, 'status', '--porcelain', '--untracked-files=no')
-  if (!status.ok) return `git status could not be read (${status.out || 'no output'})`
+  if (!status.ok) return `git status could not be read (${status.why})`
   if (status.out) return 'a tracked edit is in flight'
   const head = await git($, cwd, 'rev-parse', 'HEAD')
-  if (!head.ok) return 'HEAD could not be read'
+  if (!head.ok) return `HEAD could not be read (${head.why})`
   if (marker.head && head.out !== marker.head) return 'HEAD moved since the handoff (that handoff re-arms the marker)'
   try {
     const plan: unknown = JSON.parse(await $.fs.read(`${cwd}/${PLAN}`))

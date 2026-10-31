@@ -49,13 +49,20 @@ function markerText(fields: Fields): string {
   return JSON.stringify({ state: 'armed', seat: 'box', role: 'worker', brief: 'the seat brief', written_at: 'now', ...fields }) + '\n'
 }
 
-function world(on: any, opts: { id?: string } = {}) {
-  const state = { id: opts.id ?? 'this-session', head: HEAD, headBeneath: '', dirty: false, failWrites: false, refuseClear: false, consumeDuringGit: false }
+// A git read that fails, keyed by its argv: git's exit and stderr, or a deny
+// standing for the engine's rejection (git could not start, or outran its timeout).
+type GitFailure = { exitCode?: number; stderr?: string; deny?: string }
+
+function world(on: any, opts: { id?: string; env?: Record<string, string> } = {}) {
+  const state = {
+    id: opts.id ?? 'this-session', head: HEAD, headBeneath: '', dirty: false, failWrites: false, refuseClear: false,
+    consumeDuringGit: false, gitFails: {} as Record<string, GitFailure>,
+  }
   const files = new Files()
   const seen = { commands: [] as string[], prompts: [] as string[], compactions: 0, status: [] as (string | undefined)[], toasts: [] as string[] }
   const transcript = [{ role: 'user', text: 'Reply with the single word ready.', toolUses: [], handle: 'm-1' }]
   const done = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
-  mock.env(on, { ESPALIER_OWN_CLEAR_ROOT: ROOT })
+  mock.env(on, opts.env ?? { ESPALIER_OWN_CLEAR_ROOT: ROOT })
   on('session.id', () => ({ value: state.id }))
   on('session.cwd', () => ({ value: ROOT }))
   on('session.messages', () => ({ value: transcript }))
@@ -74,7 +81,10 @@ function world(on: any, opts: { id?: string } = {}) {
       // is between its read and its write (the other side of DEF-5032's window).
       files.set(MARKER, markerText({ session_id: state.id, head: state.head, state: 'consumed', new_session_id: 'the-new-session' }))
     }
-    if (argv === 'git status --porcelain --untracked-files=no') return done(state.dirty ? ' M tracked.txt\n' : '')
+    const fail = state.gitFails[argv]
+    if (fail?.deny) return { deny: fail.deny }
+    if (fail) return { value: { ...done('', fail.exitCode ?? 128).value, stderr: fail.stderr ?? '' } }
+    if (argv ==='git status --porcelain --untracked-files=no') return done(state.dirty ? ' M tracked.txt\n' : '')
     if (argv === 'git rev-parse HEAD') return done(`${state.head}\n`)
     if (argv === 'git rev-parse --show-toplevel') return done(`${ROOT}\n`)
     return done('', 1)
@@ -545,4 +555,85 @@ test('a clear the engine took and never ran is told apart from a queued one on t
   expect(w.marker().clear_resolved_at).toBe(new Date(1793066349000).toISOString())
   expect(w.marker().clear_refused).toBeUndefined()
   expect(w.marker().state).toBe('armed')
+})
+
+// Why a git read failed (DEF-3019, 2026-10-31): the helper kept stdout alone,
+// so win-2's 06:25Z re-prime said 'HEAD could not be read' while HEAD equalled
+// the marker's head, and nothing on the brief, the status line or the log said
+// why. Each read hands the world a failing value and reads the reason back.
+test("a HEAD git cannot read holds the clear and names git's own words", async ($, on) => {
+  const w = world(on)
+  w.state.gitFails['git rev-parse HEAD'] = { exitCode: 128, stderr: 'fatal: bad object HEAD\n' }
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN)
+  expect(w.seen.commands).toEqual([])
+  expect(w.seen.status.at(-1)).toContain('HEAD could not be read')
+  expect(w.seen.status.at(-1)).toContain('fatal: bad object HEAD')
+  expect(w.marker().state).toBe('armed')
+})
+
+test("the clear's SessionStart names why HEAD could not be read", async ($, on) => {
+  const w = world(on)
+  await $.classic.SessionStart({ source: 'startup' })
+  w.arm({ session_id: w.id(), head: HEAD })
+  w.state.id = 'the-new-session'
+  w.state.gitFails['git rev-parse HEAD'] = { exitCode: 128, stderr: 'fatal: bad object HEAD' }
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(w.seen.prompts.length).toBe(1)
+  expect(w.seen.prompts[0]).toContain('HEAD could not be read')
+  expect(w.seen.prompts[0]).toContain('fatal: bad object HEAD')
+})
+
+test("a git status git refuses names git's words, not its empty stdout", async ($, on) => {
+  const w = world(on)
+  w.state.gitFails['git status --porcelain --untracked-files=no'] = { exitCode: 128, stderr: 'fatal: index file corrupt' }
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN)
+  expect(w.seen.commands).toEqual([])
+  expect(w.seen.status.at(-1)).toContain('git status could not be read')
+  expect(w.seen.status.at(-1)).toContain('fatal: index file corrupt')
+})
+
+test('a git read that fails with nothing on stderr names its exit code', async ($, on) => {
+  const w = world(on)
+  w.state.gitFails['git rev-parse HEAD'] = { exitCode: 129 }
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN)
+  expect(w.seen.commands).toEqual([])
+  expect(w.seen.status.at(-1)).toContain('HEAD could not be read')
+  expect(w.seen.status.at(-1)).toContain('129')
+})
+
+test('a git read the engine rejects names the rejection', async ($, on) => {
+  const w = world(on)
+  w.state.gitFails['git rev-parse HEAD'] = { deny: 'git outran its 10000 ms' }
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN)
+  expect(w.seen.commands).toEqual([])
+  expect(w.seen.status.at(-1)).toContain('HEAD could not be read')
+  expect(w.seen.status.at(-1)).toContain('git outran its 10000 ms')
+})
+
+test("git's words are one line, bounded, on the status line", async ($, on) => {
+  const w = world(on)
+  w.state.gitFails['git rev-parse HEAD'] = { exitCode: 128, stderr: `warning: one\n\nfatal: two ${'x'.repeat(600)}\n` }
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN)
+  const shown = w.seen.status.at(-1) ?? ''
+  expect(shown).toContain('warning: one fatal: two')
+  expect(shown.includes('\n')).toBe(false)
+  expect(shown.length).toBeLessThan(400)
+})
+
+test("a checkout top git cannot read is named on the log, and the marker is read from the session's folder", async ($, on) => {
+  const LOG = '/logs/own-clear.jsonl'
+  const w = world(on, { env: { ESPALIER_OWN_CLEAR_LOG: LOG } })
+  w.state.gitFails['git rev-parse --show-toplevel'] = {
+    exitCode: 128, stderr: 'fatal: not a git repository (or any of the parent directories): .git',
+  }
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.session.start({ cwd: ROOT } as any)
+  expect(w.files.get(LOG) ?? '').toContain('not a git repository')
+  await $.turn.complete(TURN)
+  expect(w.seen.commands).toEqual(['clear'])
 })
