@@ -3257,12 +3257,13 @@ _RULING = "20261030T120000Z-air-ab12cd"
 
 
 def _ruling_ack(run: str = "900", *, machine: str = "air", ack_id: str = _RULING, text: str | None = None,
-                lane: str = "", kind: str = "ack") -> dict:
+                lane: str = "lane/x", kind: str = "ack") -> dict:
     """A message as the mail channel stores it: by default the dispatcher's
-    gridlock ack ruling a fix-forward on the post-merge run ``run``."""
+    gridlock ack ruling a fix-forward on the post-merge run ``run`` for the
+    fixture's lane, under the fixed head the driver reads the run from."""
     if text is None:
-        text = (f"gridlock: fix forward; the red on post-merge.yml run {run} is pytest's, outside every "
-                "suspect's diff, and reproduces at the last green base")
+        text = (f"gridlock: fix forward run {run}; the red is pytest's, outside every suspect's diff, and "
+                "reproduces at the last green base")
     return {"v": 1, "id": ack_id, "type": kind, "from": machine, "at": "2026-10-30T12:00:00Z",
             "re": {"lane": lane, "classes": [], "paths": [], "ids": []},
             "text": text, "ack": "20261030T110000Z-air-work-0f0f0f"}
@@ -3370,7 +3371,7 @@ class TestARedBaseRuledByTheDispatcher:
             spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
             with pytest.raises(ship.Refused) as stop:
                 ship.open_pr(base_red_ruled=_RULING)
-            assert "does not name run 900" in str(stop.value), (other, str(stop.value))
+            assert f"rules on run {other}, not the base's red run 900" in str(stop.value), (other, str(stop.value))
             assert spawns.mutations == []
 
     def test_with_no_dispatcher_named_any_seats_ack_rules(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
@@ -3445,7 +3446,7 @@ class TestARedBaseRuledByTheDispatcher:
         monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 0)
         assert ship.handoff(base_red_ruled=_RULING) == 0   # the row still reaches the pull request
         out = capsys.readouterr().out
-        assert "does not name run 900" in out and "gh pr merge --disable-auto 7" in out
+        assert "rules on run 800, not the base's red run 900" in out and "gh pr merge --disable-auto 7" in out
 
     def test_main_parses_the_flag_on_open_and_handoff(self, ship, monkeypatch):
         seen: list[tuple[str, dict]] = []
@@ -3457,18 +3458,23 @@ class TestARedBaseRuledByTheDispatcher:
         seen.clear()
         assert ship.main(["open"]) == 0 and seen[0][1]["base_red_ruled"] is None
 
-    def test_an_ack_without_the_gridlock_marker_does_not_rule(self, ship, tmp_path, forget_guard, monkeypatch):
-        """A status or a veto that names the run is not a ruling: the marker is
-        the dispatcher's own (Core Rule 15), the one the census counts. Dies
+    def test_an_ack_without_the_fixed_head_does_not_rule(self, ship, tmp_path, forget_guard, monkeypatch):
+        """A status, a veto or a hold that names the run is not a ruling, under
+        the gridlock: marker or not: the marker carries no direction, so the
+        driver reads the way the ruling went from the fixed head alone. Dies
         to: any dispatcher ack naming the run read as a ruling (the failure-mode
-        review drove 'do NOT fix forward on run 900' through)."""
+        review drove 'do NOT fix forward on run 900' through), or any gridlock:
+        ack naming it (the dispatcher's redirect drove 'gridlock: run 900 is
+        red ...; do NOT fix forward yet' through the marker rule)."""
         _write_guard(tmp_path)
-        for text in ("seen: run 900 is red; every lane holds", "do NOT fix forward on run 900; revert first"):
+        for text in ("seen: run 900 is red; every lane holds", "do NOT fix forward on run 900; revert first",
+                     "gridlock: run 900 is red outside #352's diff; do NOT fix forward yet, every seat holds",
+                     "RULING re f242ff: (a) fix forward on run 900, the operator's word"):
             self._stand_in(ship, monkeypatch, {"air": [_ruling_ack(text=text)]})
             spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
             with pytest.raises(ship.Refused) as stop:
                 ship.open_pr(base_red_ruled=_RULING)
-            assert "does not open with gridlock:" in str(stop.value), str(stop.value)
+            assert "does not open with the head `gridlock: fix forward run <run id>`" in str(stop.value), str(stop.value)
             assert spawns.mutations == []
 
     def test_a_request_with_the_id_is_not_a_ruling(self, ship, tmp_path, forget_guard, monkeypatch):
@@ -3501,7 +3507,7 @@ class TestARedBaseRuledByTheDispatcher:
         with pytest.raises(ship.Refused) as stop:
             ship.open_pr(base_red_ruled=_RULING)
         text = str(stop.value)
-        assert "does not name run 900" in text and "never only through the request it answers" in text
+        assert "does not open with the head" in text and "rules nothing" in text
         assert spawns.mutations == []
 
     def test_a_mail_channel_that_cannot_be_read_refuses_by_name(self, ship, tmp_path, forget_guard, monkeypatch):
@@ -3538,6 +3544,12 @@ class TestARedBaseRuledByTheDispatcher:
         with pytest.raises(ship.Refused) as stop:
             ship.open_pr(base_red_ruled=_RULING)
         assert "rules for lane/the-fix, not this lane (lane/x)" in str(stop.value)
+        assert spawns.mutations == []
+        self._stand_in(ship, monkeypatch, {"air": [_ruling_ack(lane="")]})
+        spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(base_red_ruled=_RULING)
+        assert "names no lane" in str(stop.value) and "--lane" in str(stop.value)
         assert spawns.mutations == []
         self._stand_in(ship, monkeypatch, {"air": [_ruling_ack(lane="lane/x")]})
         spawns = _arm(ship, _open_answers(tmp_path, base_runs=_RED_BASE))
@@ -3578,7 +3590,7 @@ class TestARedBaseRuledByTheDispatcher:
             with pytest.raises(ship.Refused) as stop:
                 ship.open_pr(base_red_ruled=_RULING)
             text = str(stop.value)
-            assert "does not name run 900" in text and f"names run {other} instead" in text, text
+            assert f"rules on run {other}, not the base's red run 900" in text, text
             assert spawns.mutations == []
 
     def test_the_ruling_marker_is_the_census_marker_and_the_brief_names_the_flag(self, ship):
@@ -3587,8 +3599,12 @@ class TestARedBaseRuledByTheDispatcher:
         root = Path(ship.__file__).resolve().parents[2]
         census = (root / "scripts" / "seat_day_census.py").read_text(encoding="utf-8")
         assert f'"gridlock": "{ship.RULING_PREFIX}"' in census
-        brief = (root / "tools" / "cc" / "seat.py").read_text(encoding="utf-8")
-        assert f"the {ship.RULING_PREFIX} ack names the red post-merge run by its id" in brief
+        spec = importlib.util.spec_from_file_location("_seat_for_the_ruling_test", root / "tools" / "cc" / "seat.py")
+        seat = importlib.util.module_from_spec(spec)
+        sys.modules["_seat_for_the_ruling_test"] = seat   # registered before exec (3.14)
+        spec.loader.exec_module(seat)
+        brief = seat.SELF_HOST_GRIDLOCK   # the composed sentence, not the source's line-broken literals
+        assert f"opens with the fixed head {ship.RULING_HEAD}<the red post-merge run's id>" in brief
         assert f"open {ship.BASE_RED_RULED_FLAG} <that ack's full id>" in brief
 
 

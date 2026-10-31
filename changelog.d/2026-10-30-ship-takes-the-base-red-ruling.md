@@ -6,14 +6,19 @@
   redded `main` on 2026-10-29 outside every suspect's diff, and reproduced at
   the last green base) held every seat about eleven hours until a pull request
   was opened by hand, outside the driver. Both verbs now take
-  `--base-red-ruled <ack id>`: the lane lands when an `ack` with that id is on
-  the local mail refs, from the seat `dispatcher` names in `espalier.toml`
-  (any seat where none is named; the ref an ack rides is its sender, never its
-  `from` field), and its text names the red post-merge run by its id, whole;
-  no such ack, one on another seat's ref, one naming another run, a dispatcher
-  setting that cannot be read, or no mail channel beside the driver refuses by
-  name, and a ruling that holds is said at the open and written into the pull
-  request body. The refusal and `preflight`'s note name the flag and the run
+  `--base-red-ruled <ack id>`: the lane lands when an `ack` with that full id
+  is on the local mail refs, from the seat `dispatcher` names in
+  `espalier.toml` (any seat where none is named; the ref an ack rides is its
+  sender, never its `from` field), its text opens with the fixed head
+  `gridlock: fix forward run <id>` (the red post-merge run's id, read from that
+  head alone, since the `gridlock:` marker carries no direction by itself) and
+  its `--lane` names the pushing lane; no such ack, a request with that id, an
+  id of another shape, one on another seat's ref, one under another head, one
+  whose head names another run, one naming no lane or another lane, a
+  dispatcher setting that cannot be read, a channel that cannot be read, or no
+  mail channel beside the driver refuses by name, never a traceback, and a
+  ruling that holds is said at the open with its text's head and written into
+  the pull request body. The refusal and `preflight`'s note name the flag and the run
   id the ack must name; a handoff onto an open pull request names the ruling
   in place of the disarm, and one whose ruling does not hold names both. The
   revert stays the default, and a `revert/` lane needs no flag. Core Rule 15

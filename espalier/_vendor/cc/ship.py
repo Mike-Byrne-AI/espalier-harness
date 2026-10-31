@@ -572,6 +572,13 @@ BASE_RED_RULED_FLAG = "--base-red-ruled"
 #: rule were plain acks no reader counted, and a word read mid-text matched
 #: quotations of it.
 RULING_PREFIX = "gridlock:"
+#: The fixed head a fix-forward ruling opens with, the run id read from it
+#: alone: `gridlock: fix forward run <id>`. The marker carries no direction
+#: (the census rightly counts every gridlock: ack, a hold or a veto among
+#: them), so the driver reads the way the ruling went from these words and
+#: nowhere else in the text (the dispatcher's redirect, 2026-10-31).
+RULING_HEAD = RULING_PREFIX + " fix forward run "
+_RULING_HEAD_RE = re.compile(r"^" + re.escape(RULING_HEAD) + r"([0-9]+)(?![0-9])")
 #: How much of the ruling's text the driver repeats, on the terminal and in
 #: the pull request body: enough to show what was ruled, never the whole.
 RULING_TEXT_CHARS = 160
@@ -594,20 +601,21 @@ def red_base_ruling(root: Path, ack_id: str, run_id: str, *, branch: str = "") -
     counts none, as the fold counts assigns), carried as an ``ack`` on its own
     ref -- the ref is the sender, never the message's ``from``, and the
     dispatcher's own ref is read past a same-id ack elsewhere -- whose text
-    opens with :data:`RULING_PREFIX` and names the red run by its id, whole,
-    in its own text (never through the request it answers: an ack answering
-    a call that lists run ids may rule the other way), so a ruling on an
-    older red lets no newer one through; where the ack's ``re`` names a lane,
-    that lane alone is the fix lane it rules for. ``problem`` says, by name,
-    what does not hold: no channel beside this script, an id of another
-    shape, a dispatcher setting that cannot be used, a channel that cannot be
-    read, no such ack on the local refs (the read is of the refs the last
-    fetch left; `python tools/cc/mail.py inbox` fetches), a request or a note
-    with that id, an ack on another seat's ref, an ack without the marker,
-    an ack naming no run or another run, an ack ruling for another lane;
-    None where the ruling holds. ``sender`` is the ref's machine when the ack
-    was found, else ''; ``text`` the ack's text on one line when found, else
-    ''."""
+    opens with the fixed head :data:`RULING_HEAD` followed by the red run's
+    id, read from that head alone (the gridlock marker carries no direction,
+    so a hold or a veto under it that names the run rules nothing, and a run
+    named only through the request the ack answers is no ruling), so a ruling
+    on an older red lets no newer one through; and whose ``re`` names the fix
+    lane (required: the ruling is for that lane alone, so a hold on every lane
+    is never read as a pass for one). ``problem`` says, by name, what does not
+    hold: no channel beside this script, an id of another shape, a dispatcher
+    setting that cannot be used, a channel that cannot be read, no such ack
+    on the local refs (the read is of the refs the last fetch left; `python
+    tools/cc/mail.py inbox` fetches), a request or a note with that id, an
+    ack on another seat's ref, an ack under another head, an ack whose head
+    names another run, an ack naming no lane or another lane; None where the
+    ruling holds. ``sender`` is the ref's machine when the ack was found, else
+    ''; ``text`` the ack's text on one line when found, else ''."""
     mail = _mail_module()
     if mail is None:
         return "", "tools/cc/mail.py is not beside this script, so no ruling can be read", ""
@@ -636,29 +644,30 @@ def red_base_ruling(root: Path, ack_id: str, run_id: str, *, branch: str = "") -
                 continue
             text = " ".join(str(message.get("text") or "").split())
             head = text[:RULING_TEXT_CHARS]
-            if not text.startswith(RULING_PREFIX):
-                return machine, (f"ack {ack_id} does not open with {RULING_PREFIX} (its text: {head}): a ruling "
-                                 "is the dispatcher's gridlock ack, and an ack naming the run without the "
-                                 "marker rules nothing"), text
-            if not re.search(rf"(?<![0-9]){re.escape(run_id)}(?![0-9])", text):
-                others = re.findall(r"\brun ([0-9]{3,})", text)
-                why = (f"it names run {', '.join(others)} instead, so it ruled on another red" if others else
-                       "a ruling names the run by its id in its own text, never only through the request "
-                       "it answers")
-                return machine, f"ack {ack_id} does not name run {run_id} (its text: {head}): {why}", text
+            ruled = _RULING_HEAD_RE.match(text)
+            if ruled is None:
+                return machine, (f"ack {ack_id} does not open with the head `{RULING_HEAD}<run id>` (its text: "
+                                 f"{head}): a fix-forward ruling opens with those words, and an ack that names "
+                                 "the run under another head (a hold, a veto, a status) rules nothing"), text
+            if ruled.group(1) != run_id:
+                return machine, (f"ack {ack_id} rules on run {ruled.group(1)}, not the base's red run {run_id} "
+                                 f"(its text: {head}): it ruled on another red"), text
             re_ = message.get("re")
             lane = str(re_.get("lane") or "") if isinstance(re_, dict) else ""
-            if lane and branch and lane != branch:
+            if not lane:
+                return machine, (f"ack {ack_id} names no lane (its text: {head}): a fix-forward ruling names the "
+                                 "fix lane with --lane and rules for that lane alone"), text
+            if lane != branch:
                 return machine, f"ack {ack_id} rules for {lane}, not this lane ({branch})", text
             return machine, None, text
     if elsewhere:
         return elsewhere, (f"ack {ack_id} is on {elsewhere}'s ref, and the ruling is the dispatcher's "
                            f"({dispatcher}) to give"), ""
     if other_kind:
-        return "", (f"{ack_id} is a {other_kind}, not an ack: the ruling is the dispatcher's gridlock ack "
-                    "(an operator call's answer, never the call)"), ""
+        return "", (f"{ack_id} is a {other_kind}, not an ack: the ruling is the dispatcher's ack opening "
+                    f"`{RULING_HEAD}<run id>` (an operator call's answer, never the call)"), ""
     return "", (f"no ack {ack_id} on the local mail refs (python tools/cc/mail.py inbox fetches them); the "
-                f"ruling is the dispatcher's {RULING_PREFIX} ack naming the red run by its id"), ""
+                f"ruling is the dispatcher's ack opening `{RULING_HEAD}<run id>`, its --lane this lane"), ""
 
 
 def red_base_verdict(base: str, branch: str, prs: list[dict], cwd: str, *, ruled: str | None = None,
@@ -701,8 +710,8 @@ def red_base_verdict(base: str, branch: str, prs: list[dict], cwd: str, *, ruled
     return (f"{red}. Nothing lands on a red base but the revert (from a revert/ lane, which `open` lets "
             "through), a re-run where the red was a flake, or, where the failing test is outside every "
             "suspect's diff and reproduces at the last green base, the fix landed forward on the "
-            f"dispatcher's ruling: {BASE_RED_RULED_FLAG} <ack id> on `open` or `handoff`, the "
-            f"{RULING_PREFIX} ack naming run {run_id}" + armed_words), None
+            f"dispatcher's ruling: {BASE_RED_RULED_FLAG} <ack id> on `open` or `handoff`, the ack opening "
+            f"`{RULING_HEAD}{run_id}` with --lane {branch}" + armed_words), None
 
 
 def seat_open_prs(root: Path, branch: str, prs: list[dict]) -> tuple[str, list[str]]:
@@ -1849,8 +1858,9 @@ def preflight() -> int:
             _say(f"{base_red} -- this is a revert/ lane, which `open` lets through")
         else:
             _note(f"`open` will refuse this lane: {base_red}. Nothing lands on a red base: revert first, "
-                  f"from a revert/ lane, or land a fix forward the dispatcher ruled by run id (`open "
-                  f"{BASE_RED_RULED_FLAG} <ack id>`, the ack naming run {red_run.get('databaseId')})")
+                  f"from a revert/ lane, or land a fix forward the dispatcher ruled (`open "
+                  f"{BASE_RED_RULED_FLAG} <ack id>`, the ack opening `{RULING_HEAD}{red_run.get('databaseId')}` "
+                  f"with --lane {branch or 'this lane'})")
     on, how = handoff_push_setting(root)
     if on:
         problem = memory_problem(root)

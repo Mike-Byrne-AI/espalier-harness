@@ -139,12 +139,13 @@ suspect's diff, reproduced at the last green base with the moved dependency --
 lands on the dispatcher's ruling: `open --base-red-ruled <ack id>` (and
 `handoff`, the same flag) is let through when an `ack` with that full id is on
 the local mail refs, from the seat `dispatcher` names in `espalier.toml` (any
-seat where none is named), its text opens with `gridlock:` (the dispatcher's
-ruling marker, the one the census counts) and names the red post-merge run by
-its id in its own text, and, where its `--lane` names one, that lane is this
-one; no such ack, a request with that id, one on another seat's ref, one
-without the marker, one naming no run or another run, one ruling for another
-lane, or a dispatcher setting or channel that cannot be read refuses by name.
+seat where none is named), its text opens with the fixed head `gridlock: fix
+forward run <id>` (the red post-merge run's id, read from that head alone: the
+`gridlock:` marker the census counts carries no direction by itself) and its
+`--lane` names this lane; no such ack, a request with that id, one on another
+seat's ref, one under another head, one whose head names another run, one
+naming no lane or another lane, or a dispatcher setting or channel that cannot
+be read refuses by name.
 A ruling that holds is said with its text's head and, by `open` alone, written
 into the pull request body (a `handoff` onto an open pull request says it and
 edits no body). The refusal, and `preflight`'s note, name the flag and the run
