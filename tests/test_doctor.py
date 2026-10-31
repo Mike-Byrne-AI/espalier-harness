@@ -3706,15 +3706,49 @@ class TestStatuslineFallbackNotes:
         assert len(notes) == 1, notes
         assert "PowerShell" in notes[0] and " || " in notes[0]
 
-    def test_windows_host_with_the_shim_render_is_silent(self, tmp_path, monkeypatch):
-        """The nt render is the shim head (DEF-729): the right shape for the
-        host, nothing to say."""
+    _BASH = r"C:\Program Files\Git\bin\bash.exe"
+
+    @pytest.mark.parametrize("git_bash", [True, False], ids=["git-bash", "powershell"])
+    def test_windows_host_with_the_shim_render_for_its_shell_is_silent(
+        self, tmp_path, monkeypatch, git_bash
+    ):
+        """The nt render is the shim (DEF-729), bare where Claude Code finds
+        Git Bash and behind PowerShell's call operator where it does not
+        (DEF-929): the right shape for the host, nothing to say."""
         from espalier import cli
         from espalier import doctor as doctor_module
 
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
-        path = self._settings(tmp_path, cli._statusline_command("python", posix=False))
+        monkeypatch.setattr(doctor_module, "git_bash_path", lambda: self._BASH if git_bash else None)
+        path = self._settings(tmp_path, cli._statusline_command("python", posix=False, git_bash=git_bash))
         assert doctor_module._statusline_fallback_notes(path, tmp_path) == []
+
+    @pytest.mark.parametrize("git_bash", [True, False], ids=["bare-without-git-bash", "called-with-git-bash"])
+    def test_windows_host_whose_shim_render_is_for_the_other_shell_is_told_the_edit(
+        self, tmp_path, monkeypatch, git_bash
+    ):
+        """DEF-929: the render is read against the shell Claude Code will run
+        it in. A bare head with no Git Bash runs under PowerShell, which
+        reads it as an expression; a called head with Git Bash present runs
+        under bash, where a leading `&` is a syntax error. Either way the
+        statusline is blank and so is its missing-interpreter line (both
+        driven, `tests/test_hook_exec_form.py`), so the note names the edit
+        and the fresh render; Git Bash installed or removed after `init`, or
+        a file carried in from another box, is how a tree gets here."""
+        from espalier import cli
+        from espalier import doctor as doctor_module
+
+        monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
+        monkeypatch.setattr(doctor_module, "git_bash_path", lambda: None if git_bash else self._BASH)
+        render = cli._statusline_command("python", posix=False, git_bash=git_bash)
+        notes = doctor_module._statusline_fallback_notes(self._settings(tmp_path, render), tmp_path)
+        assert len(notes) == 1, notes
+        assert notes[0].isascii(), notes
+        assert "settings.json.new" in notes[0] and "-m espalier init ." in notes[0], notes
+        if git_bash:
+            assert "PowerShell" in notes[0] and "`& `" in notes[0], notes
+        else:
+            assert "Git Bash" in notes[0] and "leading `& `" in notes[0], notes
 
     def test_windows_host_with_a_shim_head_that_also_carries_the_clause_gets_the_hand_edit(
         self, tmp_path, monkeypatch
@@ -3726,21 +3760,23 @@ class TestStatuslineFallbackNotes:
         from espalier import doctor as doctor_module
 
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
-        hybrid = cli._statusline_command("python", posix=False) + " || echo 'x'"
+        hybrid = cli._statusline_command("python", posix=False, git_bash=True) + " || echo 'x'"
         notes = doctor_module._statusline_fallback_notes(self._settings(tmp_path, hybrid), tmp_path)
         assert len(notes) == 1 and " || " in notes[0], notes
 
-    def test_a_case_varied_shim_head_reads_as_the_shim(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("lead", ["", "& ", "&"], ids=["bare", "called", "called-unspaced"])
+    def test_a_case_varied_shim_head_reads_as_the_shim(self, tmp_path, monkeypatch, lead):
         """The string runs on Windows, whose filesystem is case-insensitive:
         a hand-edited `STATUSLINE.CMD` head runs the shim and is read as it
-        by doctor and the rewire alike."""
+        by doctor and the rewire alike, behind the call operator too."""
         from espalier._venv import interpreter_site_token, is_statusline_shim_head
         from espalier import doctor as doctor_module
 
-        head = '"${CLAUDE_PROJECT_DIR}\\tools\\cc\\STATUSLINE.CMD" python'
+        head = lead + '"${CLAUDE_PROJECT_DIR}\\tools\\cc\\STATUSLINE.CMD" python'
         assert is_statusline_shim_head('${CLAUDE_PROJECT_DIR}\\tools\\cc\\STATUSLINE.CMD')
         assert interpreter_site_token(head) == "python"
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
+        monkeypatch.setattr(doctor_module, "git_bash_path", lambda: None if lead else self._BASH)
         assert doctor_module._statusline_fallback_notes(self._settings(tmp_path, head), tmp_path) == []
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: False)
         notes = doctor_module._statusline_fallback_notes(self._settings(tmp_path, head), tmp_path)
@@ -3761,32 +3797,38 @@ class TestStatuslineFallbackNotes:
         assert len(notes) == 1, notes
         assert "settings.json.new" in notes[0] and "no interpreter-missing fallback" in notes[0]
 
-    def test_posix_host_with_the_shim_render_names_it(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("git_bash", [True, False], ids=["bare", "called"])
+    def test_posix_host_with_the_shim_render_names_it(self, tmp_path, monkeypatch, git_bash):
         """The third direction: a settings.json rendered on Windows and
         carried in by a tracked file (DEF-11). A POSIX shell cannot run a
-        .cmd, so the statusline goes blank on a healthy install."""
+        .cmd, so the statusline goes blank on a healthy install -- in either
+        Windows form (DEF-929)."""
         from espalier import cli
         from espalier import doctor as doctor_module
 
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: False)
-        path = self._settings(tmp_path, cli._statusline_command("python", posix=False))
+        path = self._settings(tmp_path, cli._statusline_command("python", posix=False, git_bash=git_bash))
         notes = doctor_module._statusline_fallback_notes(path, tmp_path)
         assert len(notes) == 1, notes
         assert "tools/cc/statusline.cmd" in notes[0] and "settings.json.new" in notes[0]
 
+    @pytest.mark.parametrize("git_bash", [True, False], ids=["bare", "called"])
     def test_the_shim_headed_statusline_is_checked_for_its_interpreter_argument(
-        self, tmp_path, monkeypatch
+        self, tmp_path, monkeypatch, git_bash
     ):
         """The resolver check reads argv[1] behind the shim, the same helper
         the rewire reads (DEF-729): a broken interpreter ARGUMENT is warned
-        about by name, and the shim path itself is never mistaken for one."""
+        about by name, and the shim path itself is never mistaken for one,
+        nor is PowerShell's call operator before it (DEF-929)."""
+        from espalier import cli
+
         settings = tmp_path / ".claude" / "settings.json"
         settings.parent.mkdir(parents=True)
         settings.write_text(json.dumps({
             "hooks": {"PreToolUse": [{"hooks": [{"command": "python3"}]}]},
             "statusLine": {
                 "type": "command",
-                "command": '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" pythonX',
+                "command": cli._statusline_command("pythonX", posix=False, git_bash=git_bash),
             },
         }), encoding="utf-8")
         from espalier import doctor as doctor_module
@@ -3797,6 +3839,7 @@ class TestStatuslineFallbackNotes:
         issues = doctor_module._check_python_resolver(tmp_path, settings)
         assert any("pythonX" in i for i in issues), issues
         assert not any("statusline.cmd" in i for i in issues), issues
+        assert not any("'&'" in i or '"&"' in i for i in issues), issues
 
     def test_an_operators_own_statusline_is_not_examined(self, tmp_path, monkeypatch):
         """Only espalier's statusline (naming tools/cc/statusline.py) is ours

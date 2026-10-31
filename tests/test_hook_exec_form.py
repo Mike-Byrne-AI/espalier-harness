@@ -290,10 +290,15 @@ class TestStatusLinePortability:
         from espalier import cli
 
         posix = cli._statusline_command("python", posix=True)
-        windows = cli._statusline_command("python", posix=False)
+        windows = cli._statusline_command("python", posix=False, git_bash=True)
+        called = cli._statusline_command("python", posix=False, git_bash=False)
         plain = 'python "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.py"'
         assert windows == '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" python', windows
-        assert " || " not in windows
+        # DEF-929: where Claude Code finds no Git Bash the line runs under
+        # PowerShell, which reads a quoted head as an expression, so the shim
+        # is called through PowerShell's call operator.
+        assert called == "& " + windows, called
+        assert " || " not in windows and " || " not in called
         assert posix.startswith(plain + " || echo '"), posix
         assert cli.STATUSLINE_FALLBACK_TEXT in posix
         # The text sits inside single quotes in a `sh -c` string: a quote or a
@@ -318,15 +323,21 @@ class TestStatusLinePortability:
     def test_statusline_host_key_is_read_at_render_time(self, monkeypatch):
         """The render consults `os.name`, not a hard-wired `posix=`: a
         refactor that "makes it explicit" ships `||` to Windows PowerShell 5.1
-        with the helper test above still green."""
+        with the helper test above still green. On a Windows key the host's
+        Git Bash is read at render time the same way (DEF-929): a hard-wired
+        form blanks the statusline under the other shell."""
         from espalier import cli
 
         # Through the seam, not `os.name`: pathlib reads `os.name` to pick
         # WindowsPath, which raises UnsupportedOperation on a POSIX box.
         monkeypatch.setattr(cli, "_render_host_is_posix", lambda: False)
+        monkeypatch.setattr(cli, "git_bash_path", lambda: r"C:\Program Files\Git\bin\bash.exe")
         windows = cli._build_settings_json()["statusLine"]["command"]
         assert "||" not in windows
         assert windows.startswith('"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '), windows
+        monkeypatch.setattr(cli, "git_bash_path", lambda: None)
+        called = cli._build_settings_json()["statusLine"]["command"]
+        assert called.startswith('& "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '), called
         monkeypatch.setattr(cli, "_render_host_is_posix", lambda: True)
         assert " || echo '" in cli._build_settings_json()["statusLine"]["command"]
 
@@ -432,6 +443,130 @@ class TestStatusLinePortability:
         )
         assert unexpanded.returncode == 0, unexpanded
         assert unexpanded.stdout.strip() == cli.STATUSLINE_FALLBACK_TEXT, unexpanded
+
+    @pytest.mark.skipif(os.name != "nt", reason="drives the two shells Claude Code picks between on Windows")
+    def test_each_windows_render_runs_in_the_shell_claude_code_picks_for_it(
+        self, initialized_repo
+    ):
+        """DEF-929, driven: Claude Code runs a statusLine under Git Bash when
+        it finds one and under PowerShell when it does not, handing each the
+        string the way 2.1.316 does (read from its binary): `bash -c` with
+        CLAUDE_PROJECT_DIR forward-slashed, and `-Command` with
+        `${CLAUDE_PROJECT_DIR}` rewritten to `${env:CLAUDE_PROJECT_DIR}`. Each
+        render prints the statusline in its own shell and, with the
+        interpreter gone, the fallback line, exit 0 both times; in the other
+        shell it does not run at all, which is the mismatch doctor names."""
+        from espalier import cli
+        from espalier._venv import git_bash_path, interpreter_site_token
+
+        bash = git_bash_path()
+        powershell = shutil.which("powershell") or shutil.which("pwsh")
+        if bash is None or powershell is None:
+            pytest.skip("needs both Git Bash and PowerShell on this host")
+        project = str(initialized_repo)
+        interp = interpreter_site_token(_load_settings(initialized_repo)["statusLine"]["command"])
+
+        def under_bash(command):
+            env = {**os.environ, "CLAUDE_PROJECT_DIR": project.replace("\\", "/")}
+            return subprocess.run([bash, "-c", command], input="{}", capture_output=True,
+                                  text=True, env=env, cwd=project, timeout=30, encoding="utf-8")
+
+        def under_powershell(command):
+            command = command.replace("${CLAUDE_PROJECT_DIR}", "${env:CLAUDE_PROJECT_DIR}")
+            env = {**os.environ, "CLAUDE_PROJECT_DIR": project}
+            return subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", command],
+                                  input="{}", capture_output=True, text=True, env=env, cwd=project,
+                                  timeout=30, encoding="utf-8")
+
+        for git_bash, own, other in ((True, under_bash, under_powershell),
+                                     (False, under_powershell, under_bash)):
+            render = cli._statusline_command(interp, posix=False, git_bash=git_bash)
+            healthy = own(render)
+            assert healthy.returncode == 0 and healthy.stdout.strip(), (render, healthy)
+            assert cli.STATUSLINE_FALLBACK_TEXT not in healthy.stdout, (render, healthy)
+            broken = own(cli._swap_interpreter_token(render, "definitely-not-a-python-qqq"))
+            assert broken.returncode == 0, (render, broken)
+            assert broken.stdout.strip() == cli.STATUSLINE_FALLBACK_TEXT, (render, broken)
+            elsewhere = other(render)
+            assert elsewhere.returncode != 0 or not elsewhere.stdout.strip(), (render, elsewhere)
+
+
+class TestGitBashLookup:
+    """DEF-929: ``_venv.git_bash_path`` finds Git Bash in Claude Code's order
+    (read from the 2.1.316 binary): ``CLAUDE_CODE_GIT_BASH_PATH`` when it
+    names an existing bash or sh, then the two Program Files paths, then
+    ``bin/bash.exe`` two levels above the ``git`` on PATH. Its answer decides
+    which Windows statusLine render ``init`` writes and which one ``doctor``
+    reads as the host's, so a step out of order blanks the line."""
+
+    @staticmethod
+    def _host(monkeypatch, *, defaults=(), git=None, env=None):
+        from espalier import _venv
+
+        if env is None:
+            monkeypatch.delenv("CLAUDE_CODE_GIT_BASH_PATH", raising=False)
+        else:
+            monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(env))
+        monkeypatch.setattr(_venv, "GIT_BASH_DEFAULT_PATHS", tuple(str(p) for p in defaults))
+        monkeypatch.setattr(
+            _venv.shutil, "which",
+            lambda name, *a, **k: (str(git) if git is not None else None) if name == "git" else None,
+        )
+        return _venv
+
+    @staticmethod
+    def _file(path: Path) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"")
+        return path
+
+    def test_nothing_found_reads_none(self, tmp_path, monkeypatch):
+        venv = self._host(monkeypatch, defaults=[tmp_path / "absent" / "bash.exe"])
+        assert venv.git_bash_path() is None
+
+    def test_a_usable_env_path_comes_first(self, tmp_path, monkeypatch):
+        mine = self._file(tmp_path / "mine" / "bash.exe")
+        default = self._file(tmp_path / "pf" / "bash.exe")
+        venv = self._host(monkeypatch, defaults=[default], env=mine)
+        assert venv.git_bash_path() == str(mine)
+
+    @pytest.mark.parametrize("name", ["python.exe", "bash.exe"], ids=["not-a-bash", "missing"])
+    def test_an_env_path_that_is_no_bash_or_is_missing_falls_through(self, tmp_path, monkeypatch, name):
+        env = tmp_path / "elsewhere" / name
+        if name == "python.exe":
+            self._file(env)
+        default = self._file(tmp_path / "pf" / "bash.exe")
+        venv = self._host(monkeypatch, defaults=[default], env=env)
+        assert venv.git_bash_path() == str(default)
+
+    def test_the_program_files_paths_come_before_git_on_path(self, tmp_path, monkeypatch):
+        default = self._file(tmp_path / "pf" / "bash.exe")
+        self._file(tmp_path / "Git" / "bin" / "bash.exe")
+        venv = self._host(monkeypatch, defaults=[tmp_path / "absent" / "bash.exe", default],
+                          git=tmp_path / "Git" / "cmd" / "git.exe")
+        assert venv.git_bash_path() == str(default)
+
+    def test_git_on_path_finds_bash_two_levels_above_it(self, tmp_path, monkeypatch):
+        bash = self._file(tmp_path / "Git" / "bin" / "bash.exe")
+        venv = self._host(monkeypatch, git=tmp_path / "Git" / "cmd" / "git.exe")
+        assert venv.git_bash_path() == str(bash)
+
+    def test_a_git_with_no_bash_beside_it_reads_none(self, tmp_path, monkeypatch):
+        venv = self._host(monkeypatch, git=tmp_path / "usr" / "bin" / "git")
+        assert venv.git_bash_path() is None
+
+    def test_the_lookup_spawns_nothing(self, tmp_path, monkeypatch):
+        """``doctor`` and the ``upgrade`` preview read the render on the
+        healthy path, spawn-free (DEF-715): Claude Code asks ``where.exe``,
+        and this asks PATH directly."""
+        bash = self._file(tmp_path / "Git" / "bin" / "bash.exe")
+        venv = self._host(monkeypatch, git=tmp_path / "Git" / "cmd" / "git.exe")
+
+        def no_spawn(*a, **k):
+            raise AssertionError("the Git Bash lookup spawned a process")
+
+        monkeypatch.setattr(subprocess, "Popen", no_spawn)
+        assert venv.git_bash_path() == str(bash)
 
 
 # ── The wired interpreter must survive the shell that ran `init` ────────────

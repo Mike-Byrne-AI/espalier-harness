@@ -155,16 +155,20 @@ class TestRewireChangesOnlyTheInterpreter:
         assert after.split(" || ", 1)[1] == before.split(" || ", 1)[1], after
         assert after == cli._swap_interpreter_token(before, interpreter_token(after))
 
-    def test_the_windows_shim_render_rewires_its_interpreter_argument(self, tmp_path):
+    @pytest.mark.parametrize("git_bash", [True, False], ids=["bare", "called"])
+    def test_the_windows_shim_render_rewires_its_interpreter_argument(self, tmp_path, git_bash):
         """DEF-729: on Windows the statusLine head is the deployed shim and
         the interpreter is its first argument. The rewire swaps THAT word and
-        leaves the head byte-for-byte; doctor reads the same helper, so the
-        two cannot disagree about which word is the interpreter."""
+        leaves the head byte-for-byte -- PowerShell's call operator before it
+        included, where Claude Code finds no Git Bash (DEF-929); doctor reads
+        the same helper, so the two cannot disagree about which word is the
+        interpreter."""
         old = _stub(tmp_path, "python3", "Python 3.9.6")
         path = _settings(tmp_path, old)
         data = json.loads(path.read_text(encoding="utf-8"))
-        shim_render = cli._statusline_command(old, posix=False)
-        assert shim_render.startswith('"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '), shim_render
+        shim_render = cli._statusline_command(old, posix=False, git_bash=git_bash)
+        head = ("" if git_bash else "& ") + '"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '
+        assert shim_render.startswith(head), shim_render
         data["statusLine"]["command"] = shim_render
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -172,12 +176,13 @@ class TestRewireChangesOnlyTheInterpreter:
         assert result.status == cli.REWIRE_DONE, result
         assert any(w == "statusLine" for w, _, _ in result.changes), result.changes
         after = json.loads(path.read_text(encoding="utf-8"))["statusLine"]["command"]
-        assert after.startswith('"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '), after
+        assert after.startswith(head), after
         assert not after.endswith(" " + old), after
         assert old not in after, after
 
+    @pytest.mark.parametrize("git_bash", [True, False], ids=["bare", "called"])
     @pytest.mark.parametrize("pad", ["  ", " \t", ""], ids=["trailing-spaces", "trailing-tab", "none"])
-    def test_a_hand_edit_with_trailing_whitespace_still_rewires_the_shim_argument(self, tmp_path, pad):
+    def test_a_hand_edit_with_trailing_whitespace_still_rewires_the_shim_argument(self, tmp_path, pad, git_bash):
         """Both reviewers' finding (2026-09-13): the swap's start offset was
         measured on a stripped copy, so trailing whitespace from a hand edit
         put it past the interpreter word and the site was reported as neither
@@ -185,7 +190,7 @@ class TestRewireChangesOnlyTheInterpreter:
         old = _stub(tmp_path, "python3", "Python 3.9.6")
         path = _settings(tmp_path, old)
         data = json.loads(path.read_text(encoding="utf-8"))
-        data["statusLine"]["command"] = " " + cli._statusline_command(old, posix=False) + pad
+        data["statusLine"]["command"] = " " + cli._statusline_command(old, posix=False, git_bash=git_bash) + pad
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
         result = cli.rewire_interpreter_in_settings(path)
@@ -396,21 +401,24 @@ class TestTheLauncherRewiresWithItsFlag:
         path.write_text(json.dumps(doc), encoding="utf-8")
         return path
 
-    def test_a_dead_launcher_is_rewired_to_a_name_and_loses_its_flag(self, tmp_path, monkeypatch):
+    # The shim bare, and behind PowerShell's call operator where Claude Code
+    # finds no Git Bash (DEF-929): the launcher's flag is found past either head.
+    @pytest.mark.parametrize("lead", ["", "& "], ids=["bare-shim", "called-shim"])
+    def test_a_dead_launcher_is_rewired_to_a_name_and_loses_its_flag(self, tmp_path, monkeypatch, lead):
         from tests import _interpreter_hosts as hosts
 
         self._host(tmp_path, monkeypatch, hosts.STORE_PYTHON3)  # python works, no launcher
         path = self._write(tmp_path, [
             {"type": "command", "command": "py", "args": ["-3", self._HOOK]},
             {"type": "command", "command": "py -3.11 tools/cc/hooks/plan_guard.py"},
-        ], status_line=f"{self._SHIM} py -3")
+        ], status_line=f"{lead}{self._SHIM} py -3")
         result = cli.rewire_interpreter_in_settings(path)
         assert result.status == cli.REWIRE_DONE, result
         after = json.loads(path.read_text(encoding="utf-8"))
         exec_entry, shell_entry = after["hooks"]["PreToolUse"][0]["hooks"]
         assert (exec_entry["command"], exec_entry["args"]) == ("python", [self._HOOK]), exec_entry
         assert shell_entry["command"] == "python tools/cc/hooks/plan_guard.py", shell_entry
-        assert after["statusLine"]["command"] == f"{self._SHIM} python", after["statusLine"]
+        assert after["statusLine"]["command"] == f"{lead}{self._SHIM} python", after["statusLine"]
         assert not result.declined, result.declined
 
     def test_a_dead_name_is_rewired_to_the_launcher_with_its_flag(self, tmp_path, monkeypatch):

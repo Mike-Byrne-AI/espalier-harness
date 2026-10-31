@@ -224,8 +224,11 @@ setting to detect at all.
   drive path; `//c` starts an interactive cmd under PowerShell). Batch has
   the or-operator, so the shim prints the same line, exit 0, and a `.cmd` is
   invocable from Git Bash, the shell this page names when it is installed.
-  Whether the PowerShell-only path runs a quoted head is the walk's to
-  witness; the plain render it replaces expanded nothing there either.
+  The PowerShell-only path reads a quoted head as an expression (witnessed
+  2026-09-26, driven again 2026-10-31), so where `espalier._venv.git_bash_path`
+  finds no Git Bash the render is `& "<shim>" <interp>`, PowerShell's call
+  operator, which Git Bash cannot parse: one string cannot serve both shells,
+  and the render follows the shell this page says will run it.
   <!-- re-excerpt 2026-10-01: unchanged and now better supported. The page's new
        Git Bash backslash paragraph says a backslash-separated path in the
        `command` string "fails without a visible error" when UNQUOTED -- the
@@ -238,7 +241,8 @@ setting to detect at all.
   text, forces exit 0 on that branch and uses no label (cmd.exe misreads a
   label search in an LF-only file).
 - `espalier/doctor.py::_statusline_fallback_notes` — says when the clause
-  disagrees with the host.
+  disagrees with the host, and when a Windows shim render is the form for
+  the other shell.
   <!-- re-excerpt 2026-10-01: newly qualifiable, no code change asserted here.
        The four states it enumerates are all about the STRING vs the host. The
        page now documents a fifth way espalier's statusline goes dark that no
@@ -254,6 +258,22 @@ setting to detect at all.
        every invocation and the exit code only on the first. The deployed
        mirror `espalier/assets/docs/TROUBLESHOOTING.md:86` carries the same
        sentence and must move with it. -->
+
+**Observed, not quoted** (the 2.1.316 binary, read 2026-10-31): the page's
+"Git Bash when Git Bash is installed" is a lookup, in this order: a
+`CLAUDE_CODE_GIT_BASH_PATH` whose file name is `bash`, `sh`, `bash.exe` or
+`sh.exe` and which exists (otherwise a warning, and the lookup goes on);
+`C:\Program Files\Git\bin\bash.exe`; `C:\Program Files (x86)\Git\bin\bash.exe`;
+then `bin\bash.exe` two levels above the first `git` that `where.exe` names.
+The statusLine runs through the hook runner, whose default shell is `bash`
+when that lookup finds a path and `powershell` otherwise; under PowerShell
+the runner rewrites `${CLAUDE_PROJECT_DIR}` to `${env:CLAUDE_PROJECT_DIR}` and
+passes the string as `-Command`, and under Git Bash it forward-slashes
+`CLAUDE_PROJECT_DIR`. The statusLine schema in that build is `type`,
+`command`, `padding`, `refreshInterval` and `hideVimModeIndicator`: no
+`shell`, though the no-Git-Bash notice it shows names a `"shell"` setting
+for StatusLine commands too. `espalier/_venv.py::git_bash_path` follows the
+lookup with `shutil.which` in place of `where.exe`.
 
 **Observed, not quoted** (a live probe, Claude Code 2.1.263, 2026-09-07): an
 exec-form hook whose `command` is not on PATH produces the transcript notice

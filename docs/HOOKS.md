@@ -2407,7 +2407,12 @@ PowerShell 5.1 cannot parse `||`, and Git Bash rewrites a `cmd /c`
 switch into a drive path), so `init` wires the statusline through a
 deployed batch shim, `tools/cc/statusline.cmd`, which runs the script
 with the wired interpreter and prints the same line when that
-interpreter is gone.
+interpreter is gone. Claude Code runs that line under Git Bash when it
+finds one and under PowerShell when it does not, and each shell blanks
+the other's spelling, so `init` writes the form the host will run: the
+shim's quoted path where it finds Git Bash as Claude Code does, and
+`& "<shim>" <interpreter>` (PowerShell's call operator) where it finds
+none; `espalier doctor .` names a line written for the other shell.
 
 Install a Python 3.10+ (or put it on PATH), then run
 `espalier doctor .` — it names the wired interpreter and the exact

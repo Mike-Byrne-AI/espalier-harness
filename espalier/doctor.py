@@ -19,10 +19,11 @@ from typing import Any
 
 from espalier import surface_contract
 from espalier._venv import (
+    git_bash_path,
     interpreter_site_token,
     interpreter_token,
-    is_statusline_shim_head,
     resolves_only_inside,
+    statusline_shim_end,
     venv_root_of,
 )
 from espalier._integrity_bridge import load_integrity_module
@@ -629,10 +630,12 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
 
     ``cli._statusline_command`` renders ``<interp> "<script>" || echo '...'``
     on a POSIX host (DEF-508) and ``"<shim>" <interp>`` on Windows, the batch
-    shim ``tools/cc/statusline.cmd`` carrying the same fallback (DEF-729).
+    shim ``tools/cc/statusline.cmd`` carrying the same fallback (DEF-729),
+    behind PowerShell's call operator (``& "<shim>" <interp>``) where Claude
+    Code finds no Git Bash and runs the line under PowerShell (DEF-929).
     The merge adds the key only when it is absent and the rewire swaps the
     interpreter the string names (DEF-798, DEF-810), so the string an install
-    carries can disagree with the host it runs on in three ways, and a fourth
+    carries can disagree with the host it runs on in four ways, and a fifth
     state has no string at all:
 
     * Either host, neither the clause nor the shim -- rendered before the
@@ -647,6 +650,13 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
     * POSIX host, shim head -- rendered on Windows and carried in the same
       way: a POSIX shell cannot run a ``.cmd``, so the statusline goes blank
       on a healthy install. A fresh ``init`` renders the POSIX string.
+    * Windows host, a shim render for the other shell -- the bare head where
+      ``_venv.git_bash_path`` finds no Git Bash (PowerShell reads it as an
+      expression), or the called head where it finds one (bash reads a
+      leading ``&`` as a syntax error): Git Bash installed or removed since
+      ``init``, or a file carried in from another box. The statusline is
+      blank and so is its missing-interpreter line, driven in both shells.
+      A fresh ``init`` renders the host's form; the hand edit is the ``& ``.
     * Either host, no ``statusLine`` key while ``tools/cc/statusline.py`` is
       deployed -- wired by ``--wire-hooks`` or ``merge-settings`` before the
       merge learned to add the key (DEF-798), or a hand-kept file: the harness
@@ -686,13 +696,13 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
     if not isinstance(command, str):
         return []
     runs_script = STATUSLINE_SCRIPT in command.replace("\\", "/")
-    runs_shim = is_statusline_shim_head(interpreter_token(command))
+    runs_shim = statusline_shim_end(command) >= 0
     if not (runs_script or runs_shim):
         return []
     has_clause = " || " in command
     if _host_is_windows():
         if runs_shim and not has_clause:
-            return []
+            return _statusline_shell_notes(command.lstrip().startswith("&"))
         # A shim head that ALSO carries the clause (a half-taken hand edit,
         # a merge of two generations) cannot parse under Windows PowerShell
         # either: the clause note below is the right one.
@@ -722,6 +732,37 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
         f"`{_remedy_py()} -m espalier init .` renders "
         ".claude/settings.json.new beside your file; take its statusLine line."
     ]
+
+
+def _statusline_shell_notes(called: bool) -> list[str]:
+    """The note for a Windows shim render whose form is for the other shell
+    (DEF-929), or none: Claude Code runs the line under the Git Bash
+    ``git_bash_path`` finds, else under PowerShell, and each blanks the
+    other's form."""
+    git_bash = git_bash_path() is not None
+    remedy = (
+        f"`{_remedy_py()} -m espalier init .` renders .claude/settings.json.new "
+        "beside your file; take its statusLine line"
+    )
+    if called and git_bash:
+        return [
+            "statusLine.command calls the Windows shim through PowerShell's `&`, "
+            "the form for a host where Claude Code finds no Git Bash, but it "
+            "finds Git Bash here and runs the statusline under it, where a "
+            "leading `&` is a syntax error: the statusline goes blank, and so "
+            f"does the line that reports a missing interpreter. {remedy}, or "
+            "delete the leading `& `."
+        ]
+    if not called and not git_bash:
+        return [
+            "statusLine.command runs the Windows shim as a bare quoted head, the "
+            "form for a host where Claude Code finds Git Bash, but it finds none "
+            "here and runs the statusline under PowerShell, which reads a quoted "
+            "head as an expression: the statusline goes blank, and so does the "
+            f"line that reports a missing interpreter. {remedy}, or put `& ` "
+            "before the command."
+        ]
+    return []
 
 
 def _check_python_resolver(

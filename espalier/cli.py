@@ -50,15 +50,15 @@ from espalier._rmtree import remove_file
 from espalier._spawn import run_no_stdin
 from espalier._text import os_error_text, pin_utf8_streams, plural, quoted_if_spaced
 from espalier._venv import (
-    after_head_index,
     entry_argv,
     exec_name_has_space,
+    git_bash_path,
     interpreter_site_token,
     interpreter_token,
-    is_statusline_shim_head,
     names_a_python,
     path_without,
     shell_cut_path,
+    statusline_shim_end,
 )
 from espalier.analyze import HARNESS_OUTPUT_PREFIXES, fingerprint_repo
 from espalier.assets import (
@@ -1902,7 +1902,9 @@ STATUSLINE_FALLBACK_TEXT = (
 )
 
 
-def _statusline_command(python_cmd: str, *, posix: bool | None = None) -> str:
+def _statusline_command(
+    python_cmd: str, *, posix: bool | None = None, git_bash: bool | None = None,
+) -> str:
     """The ``statusLine.command`` string for ``python_cmd``.
 
     The placeholder is QUOTED: this string is handed to a shell (Claude Code
@@ -1935,16 +1937,23 @@ def _statusline_command(python_cmd: str, *, posix: bool | None = None) -> str:
     PowerShell, a process blocked on stdin per refresh rather than a blank.
     Batch has the or-operator, so the shim runs the interpreter it is handed
     against ``statusline.py`` beside it and prints the same fallback text,
-    exit 0 either way, and a ``.cmd`` is invocable from Git Bash, the shell
-    Claude Code names for the statusline when it is installed. Under
-    PowerShell without Git Bash a quoted head is an expression, not a
-    command; whether that shell runs the shim is the walk's to witness, and
-    the plain render it replaces expanded nothing there either. ``init``
-    renders settings.json on the host that will run it, so ``os.name`` at
-    render time is the key; ``posix`` overrides it for tests. The file can
-    still travel (a repo that already tracks ``.claude/settings.json``,
-    DEF-11): ``doctor`` flags a ``||`` or a shim head seen on the other host,
-    and a string with neither (an install rendered before they existed:
+    exit 0 either way. Which shell hands it over is Claude Code's choice:
+    Git Bash when its lookup finds one, else PowerShell
+    (:func:`~espalier._venv.git_bash_path`, read from the 2.1.316 binary),
+    and the statusLine schema has no field to pin it. Git Bash runs the
+    bare quoted head, which PowerShell reads as an expression; PowerShell
+    runs ``& "<shim>" <interp>``, whose leading ``&`` bash reads as a syntax
+    error -- so no one string serves both (DEF-929), and the head is bare
+    where the lookup finds Git Bash and called where it does not. Each
+    form printed the statusline in its own shell and, with the interpreter
+    gone, the fallback line, and blanked in the other (driven 2026-10-31,
+    ``tests/test_hook_exec_form.py``). ``init`` renders settings.json on the
+    host that will run it, so ``os.name`` and the lookup at render time are
+    the key; ``posix`` and ``git_bash`` override them for tests. The file
+    can still travel (a repo that already tracks ``.claude/settings.json``,
+    DEF-11), and Git Bash can come or go after ``init``: ``doctor`` flags a
+    ``||`` or a shim head seen on the other host, a shim form for the other
+    shell, and a string with neither (an install rendered before they existed:
     the merge adds ``statusLine`` only when the key is absent and the rewire
     swaps only the interpreter the line names -- DEF-798, DEF-810 -- so an
     older string is kept, and a fresh ``init``'s ``settings.json.new`` is
@@ -1954,7 +1963,10 @@ def _statusline_command(python_cmd: str, *, posix: bool | None = None) -> str:
     if posix is None:
         posix = _render_host_is_posix()
     if not posix:
-        return f'"${{CLAUDE_PROJECT_DIR}}/{STATUSLINE_SHIM}" {python_cmd}'
+        if git_bash is None:
+            git_bash = git_bash_path() is not None
+        shim = f'"${{CLAUDE_PROJECT_DIR}}/{STATUSLINE_SHIM}" {python_cmd}'
+        return shim if git_bash else f"& {shim}"
     return f"{script} || echo '{STATUSLINE_FALLBACK_TEXT}'"
 
 
@@ -8805,15 +8817,17 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
         return command
     start = 0
     old = head
-    if is_statusline_shim_head(head):
-        # The Windows statusline shim is the head and the interpreter is its
-        # first argument (DEF-729): swap THAT word, searching past the head so
-        # a shim path that happens to contain the interpreter's name is safe.
-        # The offset is measured on the unstripped string: trailing
-        # whitespace from a hand edit once put it past the word.
+    shim_end = statusline_shim_end(command)
+    if shim_end >= 0:
+        # The Windows statusline shim is the head, bare or behind PowerShell's
+        # call operator, and the interpreter is its first argument (DEF-729,
+        # DEF-929): swap THAT word, searching past the head so a shim path
+        # that happens to contain the interpreter's name is safe. The offset
+        # is measured on the unstripped string: trailing whitespace from a
+        # hand edit once put it past the word.
         old = interpreter_site_token(command)
-        start = after_head_index(command, head)
-        if not old or start < 0:
+        start = shim_end
+        if not old:
             return command
     idx = command.find(old, start)
     if idx < 0:  # unreachable via the token readers, but never corrupt on a surprise
@@ -8850,9 +8864,7 @@ def _launcher_spelling_of(container: dict, key: str, token: str) -> str:
         # Past the statusline shim head, as the swap searches: a shim path
         # may itself contain the letters of the token.
         text = container[key]
-        first = interpreter_token(text)
-        start = after_head_index(text, first) if is_statusline_shim_head(first) else 0
-        at = text.find(token, max(start, 0))
+        at = text.find(token, max(statusline_shim_end(text), 0))
         rest = text[at + len(token):] if at >= 0 else ""
         if rest[:1] in ("\"", "'"):
             rest = rest[1:]  # the closing quote of a quoted launcher path

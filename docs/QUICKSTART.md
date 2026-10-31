@@ -363,12 +363,17 @@ was denied; restored, it ran).
   reads as tampering; leave your Git configuration alone.
 - **Statusline.** On a Windows host `init` wires the statusline through
   `tools/cc/statusline.cmd`, a batch shim, because Windows PowerShell 5.1 has
-  no `||` for the POSIX fallback. It is driven with Git Bash present; under
-  PowerShell with no Git Bash installed it is known blank (witnessed
-  2026-09-26: that shell reads the quoted shim head as an expression). That is
-  cosmetic while the interpreter resolves — the hooks run in exec form and are
-  unaffected — but with no Git Bash the fallback line that reports a missing
-  interpreter is absent too.
+  no `||` for the POSIX fallback. Claude Code runs the statusline under Git
+  Bash when it finds Git Bash and under PowerShell when it does not, and the
+  two shells need the line spelled differently, so `init` looks where Claude
+  Code looks (`CLAUDE_CODE_GIT_BASH_PATH`, then `C:\Program Files\Git` and
+  `C:\Program Files (x86)\Git`, then the `git` on your `PATH`) and writes the
+  form your shell runs: the shim's quoted path with Git Bash,
+  `& "<shim>" python` without it. Both forms are driven on Windows 11, and
+  each prints the fallback line when the interpreter is missing. Installed or
+  removed Git for Windows since `init`? `python -m espalier doctor .` names
+  the line that no longer matches and the edit; `python -m espalier init .`
+  renders `settings.json.new` beside your file with the line to take.
 - **Writing a Stop-gate relief record.** PowerShell 5.1's `>` and `Out-File`
   write UTF-16 with a byte-order mark, which the gate reads; a file it cannot
   decode (UTF-16 with no mark) is refused with the encoding named.
