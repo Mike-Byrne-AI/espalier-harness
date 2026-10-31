@@ -577,8 +577,9 @@ class TestGitBashLookup:
                                              tmp_path / "Git" / "cmd" / "git.exe"])
         assert venv.git_bash_path() == str(bash)
 
+    @pytest.mark.parametrize("encoding", ["utf-8", "utf-16"], ids=["utf8", "utf16-bom-from-powershell"])
     @pytest.mark.parametrize("where", ["local", "project", "user"])
-    def test_a_settings_env_naming_a_bash_is_read(self, tmp_path, monkeypatch, where):
+    def test_a_settings_env_naming_a_bash_is_read(self, tmp_path, monkeypatch, where, encoding):
         """Claude Code applies each settings file's ``env`` to its own
         environment before the lookup, so a ``CLAUDE_CODE_GIT_BASH_PATH``
         set there (its own notice's remedy for a Git Bash elsewhere) is
@@ -590,7 +591,8 @@ class TestGitBashLookup:
                   "project": repo / ".claude" / "settings.json",
                   "user": home / ".claude" / "settings.json"}[where]
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(json.dumps({"env": {"CLAUDE_CODE_GIT_BASH_PATH": str(mine)}}), encoding="utf-8")
+        # A file PowerShell 5.1's `>` wrote is UTF-16 with a BOM.
+        target.write_bytes(json.dumps({"env": {"CLAUDE_CODE_GIT_BASH_PATH": str(mine)}}).encode(encoding))
         home.mkdir(exist_ok=True)
         venv = self._host(monkeypatch, home=home)
         assert venv.git_bash_path(repo) == str(mine)
@@ -662,9 +664,11 @@ class TestTheShimHeadReader:
         ``espalier/`` calls the two primitives the head reader is built on,
         so a new reader cannot re-derive the head and read the ``&`` as the
         interpreter (the failure-mode review, 2026-10-31)."""
+        from tests._live_tree import checkout_rglob
+
         root = REPO_ROOT / "espalier"
         offenders = [
-            str(path.relative_to(REPO_ROOT)) for path in sorted(root.rglob("*.py"))
+            str(path.relative_to(REPO_ROOT)) for path in sorted(checkout_rglob(root, "*.py"))
             if "_vendor" not in path.parts and path.name != "_venv.py"
             and re.search(r"\b(is_statusline_shim_head|after_head_index)\(",
                           path.read_text(encoding="utf-8"))

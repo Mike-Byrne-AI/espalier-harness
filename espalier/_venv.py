@@ -234,8 +234,11 @@ def _settings_git_bash_paths(repo_root: Path | None) -> list[str]:
     special-cases this variable in its settings-env filter), highest
     precedence first: the project's ``settings.local.json`` and
     ``settings.json``, then the user's. A file that cannot be read or
-    parsed names nothing."""
+    parsed names nothing. Bytes through ``decode_bom``: a file written from
+    Windows PowerShell 5.1 is UTF-16 with a BOM, and an editor's has UTF-8's."""
     import json
+
+    from espalier.surface_contract import decode_bom  # lazy: keep this module stdlib-light
 
     files = [Path.home() / ".claude" / "settings.json"]
     if repo_root is not None:
@@ -244,7 +247,7 @@ def _settings_git_bash_paths(repo_root: Path | None) -> list[str]:
     found: list[str] = []
     for path in files:
         try:
-            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            data = json.loads(decode_bom(path.read_bytes()))
         except (OSError, UnicodeDecodeError, ValueError):
             continue
         env = data.get("env") if isinstance(data, dict) else None
