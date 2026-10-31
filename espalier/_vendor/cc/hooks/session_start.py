@@ -60,24 +60,49 @@ from _freshness_cache import (  # noqa: E402
     _read_state_cache_safe,
 )
 
-# Hard OUTER ceiling on additionalContext bytes (last-resort backstop). The
-# redesigned banner sits ~5.5KB (MEMORY digest + standing-principles index +
-# footgun pointer + GOAL + orientation tail); individual tenants are governed by
-# the per-section _SOFT_BUDGETS above, so this ceiling should never bind. The
-# output is a system-reminder block, not main context window — well-bounded, and
-# the boundary-truncation fallback below still fires if the budget overflows.
-_MAX_CONTEXT_BYTES = 16_000
+# The host's cap on one hook context string (docs/external/cc-hook-protocol.md,
+# the large-payload spill): past 10,000 characters Claude Code saves the text to
+# a file and hands Claude its path and a 2,000-character preview it is not asked
+# to read past. The host counts as JavaScript does, in UTF-16 code units, so an
+# astral character is two (_units).
+_HOST_CONTEXT_CAP_CHARS = 10_000
+# The banner's ceiling in those units: 95 percent of the host cap (DEF-674),
+# counted with _units, never len(). The body is clipped to what the header and
+# tail leave under it, and main() cuts the whole to it as the backstop of last
+# resort; tests/test_session_banner.py holds it under the pin's own number.
+_MAX_CONTEXT_CHARS = 9_500
+# Each per-run header line (the sessions, the pull requests, the mail, the
+# orders, ...) is guaranteed this many characters. They are what a seat acts on
+# first, so they never yield to the body or the blueprint; they share one pool
+# of this times their number instead (ack 20261018T210745Z-air-126ea0): what an
+# absent or short line leaves goes to the lines over it, and only past the pool
+# are the longest cut, by whole rows, never below this (_fit_run_lines).
+_RUN_LINE_MAX_CHARS = 320
+# The rest of the header that varies with the tree, each cut to its cap with a
+# marker (the same ack): the reinject payloads at its top, together, and the
+# Memory: identity line. With the per-run pool, they keep the header and the
+# tail under the ceiling whatever the tree holds.
+_REINJECT_MAX_CHARS = 1_000
+_IDENTITY_LINE_MAX_CHARS = 400
 
-# The blueprint's soft-budget share of the context block. Blueprint continuity
-# is the one CONTENT-not-index tenant, so this is GENEROUS (6KB) -- a normal
-# handoff rides through whole. The outer _MAX_CONTEXT_BYTES backstops the block.
-_MAX_BLUEPRINT_CONTEXT_BYTES = 6_000
+# The blueprint's share at most. Blueprint continuity is the one CONTENT-not-
+# index tenant, and it is on disk too (cc/blueprints, /read-summary), so it
+# yields first: _fit_banner sizes it to what the body leaves, health block
+# included, down to _BLUEPRINT_MIN_CHARS and then to its header line, and only
+# then is the body clipped (ack 20261018T203143Z-air-70c411, option (i), which
+# supersedes the lane's first 1,500-character body floor). A byte budget, as its
+# cutter counts: a character is at least one byte, so it holds the character
+# count as well.
+_MAX_BLUEPRINT_CONTEXT_BYTES = 3_000
+# The compact banner's share for this session's decisions: the pre-lane 6,000,
+# yielding the same way under the same ledger (ack 20261018T210745Z-air-126ea0).
+_COMPACT_BLUEPRINT_MAX_CHARS = 6_000
 
 # Per-section SOFT budgets (bytes). Generous by design: a normal-length goal,
 # blueprint, or digest passes through WHOLE -- the budget only bites genuine
 # bloat, and when it does it FLAGS (visibly) and truncates on a fragment
 # boundary rather than swallowing content silently mid-word. The outer
-# _MAX_CONTEXT_BYTES is the hard ceiling of last resort. Sections absent from
+# _MAX_CONTEXT_CHARS is the hard ceiling of last resort. Sections absent from
 # this map are unbounded at the section level (the outer ceiling still backstops).
 _SOFT_BUDGETS = {
     "blueprint": _MAX_BLUEPRINT_CONTEXT_BYTES,
@@ -101,15 +126,24 @@ _WARNING_LINE_MAX_BYTES = 320
 # run standalone; adding a sibling import risks the copy-subset footgun.
 _MEMORY_FILENAME = "ESPALIER_MEMORY.md"
 
-_SECTION_SOURCE = {
+# The files the banner-health lever may name (_lever): the two tenants that can
+# grow, both on every adopter's tree. The standing index is one summary line and
+# its doc is never seeded, so it is never the lever.
+_LEVER_FILES = {
     "goal": "cc/GOAL.md",
     "memory": _MEMORY_FILENAME,
+}
+_SECTION_SOURCE = {
+    **_LEVER_FILES,
     "standing": "docs/STANDING_PRINCIPLES.md",
 }
 # GOAL is FLAGGED at its 2_000 soft budget but rides through WHOLE up to this
 # ceiling: the goal-proper (At a glance / North star) sits below the perishable
-# Notes head, so a soft-only cut hides exactly the part you want. Sized so the
-# worst-case banner (sum of section caps + margin) stays under _MAX_CONTEXT_BYTES.
+# Notes head, so a soft-only cut hides exactly the part you want. Lowering it
+# is the operator's call, held for the operator (ack 20261018T203143Z-air-70c411,
+# under 11eff4), not a fit decision (DEF-674): when the ceiling still binds over
+# a goal past its soft budget, the banner-health advisory says to shorten
+# cc/GOAL.md rather than this file cutting it.
 _GOAL_HARD_CAP = 4_500
 
 # _truncate_keeping_tail admits the perishable HEAD section partially when whole
@@ -1784,9 +1818,9 @@ def _footgun_pointer(root: Path) -> str:
 
 
 def _standing_principles_index(root: Path) -> str:
-    """Render the TITLES of docs/STANDING_PRINCIPLES.md as a compact always-on
-    index -- the few cross-cutting frames worth holding in context, scannable in
-    one glance (bodies pulled on demand).
+    """Render docs/STANDING_PRINCIPLES.md as one always-on summary line: how
+    many principles there are and where their titles and bodies live (the
+    principles are pulled on demand through /recall).
 
     Unlike the retired 126-heading SHARP wall, this is a compact set of
     always-relevant frames, so the whole index IS the signal. Content-gated:
@@ -1803,11 +1837,127 @@ def _standing_principles_index(root: Path) -> str:
     titles = [title for title, _ in _hook_utils.iter_doc_sections(text)]
     if not titles:
         return ""
+    # One summary line (DEF-674): the titles ran 880 characters on the self-host
+    # tree, room the body under the host's cap spends better on the goal and the
+    # memory digest, so the banner carries the count and where they are.
     return (
-        "\n--- STANDING PRINCIPLES (hold these; bodies in docs/STANDING_PRINCIPLES.md) ---\n"
-        + "\n".join(f"- {t}" for t in titles)
-        + "\n"
+        f"\n--- STANDING PRINCIPLES: {len(titles)} (hold these; titles and bodies in "
+        "docs/STANDING_PRINCIPLES.md; /recall <topic> pulls one) ---\n"
     )
+
+
+def _units(text: str) -> int:
+    """``text``'s length as the host counts it: UTF-16 code units (DEF-674)."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _cut_to_units(text: str, units: int) -> str:
+    """The head of ``text`` within ``units`` UTF-16 code units, never splitting a
+    surrogate pair: main()'s backstop of last resort."""
+    return text.encode("utf-16-le")[: max(0, units) * 2].decode("utf-16-le", errors="ignore")
+
+
+_CONTEXT_CUT_MARKER = "\n[context truncated]"
+
+
+def _fit_to_ceiling(context: str) -> str:
+    """``context`` within ``_MAX_CONTEXT_CHARS`` host units: main()'s backstop of
+    last resort. The builders already fit the ceiling, so this cuts only what a
+    builder's bug let through (DEF-674)."""
+    if _units(context) <= _MAX_CONTEXT_CHARS:
+        return context
+    return _cut_to_units(context, _MAX_CONTEXT_CHARS - _units(_CONTEXT_CUT_MARKER)) + _CONTEXT_CUT_MARKER
+
+
+_RUN_LINE_CUT_MARKER = " [line cut]"
+_MORE_ROW_RE = re.compile(r"^and (\d+) more$")
+
+
+def _cut_text(text: str, limit: int) -> str:
+    """``text`` within ``limit`` units on a word boundary, with
+    ``_RUN_LINE_CUT_MARKER``. The byte cutter under-fills a character budget,
+    never over-fills it."""
+    if _units(text) <= limit:
+        return text
+    return _truncate_on_boundary(text, max(0, limit - _units(_RUN_LINE_CUT_MARKER)), _RUN_LINE_CUT_MARKER)
+
+
+def _cut_rows(value: str, limit: int) -> str:
+    """``value`` within ``limit`` units, cut by whole rows (ack
+    20261018T210745Z-air-126ea0): its first row and its last are kept, and the
+    mail's tail note (whose text it is) with every row after it; the rows
+    between go from the end, counted into one "and N more" row with any count
+    already there, so a count never vanishes. A single row, or kept rows still
+    over ``limit``, is cut on a word boundary with its marker."""
+    if _units(value) <= limit:
+        return value
+    rows = value.split("\n")
+    if len(rows) == 1:
+        return _cut_text(value, limit)
+    more = 0
+    held = _MORE_ROW_RE.match(rows[-1].strip())
+    if held:  # the count is the last row: it stays last, and grows
+        more, rows, start = int(held.group(1)), rows[:-1], len(rows) - 1
+    else:
+        start = next((i for i in range(1, len(rows)) if rows[i].strip().startswith(_MAIL_TAIL)), len(rows) - 1)
+    middle, trailer = rows[1:start], rows[start:]
+    if middle:
+        held = _MORE_ROW_RE.match(middle[-1].strip())
+        if held:
+            more, middle = more + int(held.group(1)), middle[:-1]
+
+    def render() -> str:
+        count = [f"{_PR_INDENT}and {more} more"] if more else []
+        return "\n".join([rows[0], *middle, *count, *trailer])
+
+    while middle and _units(render()) > limit:
+        middle.pop()
+        more += 1
+    out = render()
+    if _units(out) <= limit:
+        return out
+    # The kept rows alone are over: the first row yields its tail, then the whole.
+    room = limit - (_units(out) - _units(rows[0]))
+    if room > _units(_RUN_LINE_CUT_MARKER) + 40:
+        rows[0] = _cut_text(rows[0], room)
+        out = render()
+    return out if _units(out) <= limit else _cut_text(out, limit)
+
+
+def _fit_run_lines(pairs: "list[tuple[str, str]]", cut: "list[str]") -> "list[str]":
+    """The per-run lines' values under one pool of ``_RUN_LINE_MAX_CHARS`` each
+    (ack 20261018T210745Z-air-126ea0): under the pool every line rides whole;
+    past it the longest are cut, by whole rows (_cut_rows), to the one level at
+    which the pool holds, and none below ``_RUN_LINE_MAX_CHARS``. Each cut line
+    is named in ``cut`` with its full size for the banner-health advisory."""
+    sizes = [_units(value) for _, value in pairs]
+    pool = _RUN_LINE_MAX_CHARS * len(pairs)
+    if sum(sizes) <= pool:
+        return [value for _, value in pairs]
+    lo, hi = _RUN_LINE_MAX_CHARS, max(sizes)
+    while lo < hi:  # the highest level at which the pool holds
+        mid = (lo + hi + 1) // 2
+        if sum(min(size, mid) for size in sizes) <= pool:
+            lo = mid
+        else:
+            hi = mid - 1
+    out = []
+    for (label, value), size in zip(pairs, sizes):
+        if size > lo:
+            cut.append(f"{label} {size}")
+            value = _cut_rows(value, lo)
+        out.append(value)
+    return out
+
+
+def _capped(label: str, text: str, limit: int, cut: "list[str]") -> str:
+    """``text`` cut to ``limit`` units on a word boundary with its marker, named
+    in ``cut`` with its full size when it was (the identity line and the
+    reinject payloads, ack 20261018T210745Z-air-126ea0)."""
+    if _units(text) <= limit:
+        return text
+    cut.append(f"{label} {_units(text)}")
+    return _cut_text(text, limit)
 
 
 def _truncate_on_boundary(text: str, budget_bytes: int, marker: str) -> str:
@@ -1956,7 +2106,7 @@ def _bounded(name: str, text: str, flags: "list[str]", hard_cap: "int | None" = 
     section ran over so growth is observable rather than silent.
 
     Sections with no soft budget (or empty text) pass through untouched -- the
-    outer ``_MAX_CONTEXT_BYTES`` ceiling still backstops the whole banner. This
+    outer ``_MAX_CONTEXT_CHARS`` ceiling still backstops the whole banner. This
     is the "generous + honest + flagged" contract: normal-length content rides
     through whole; only genuine bloat is cut, and the cut announces itself.
 
@@ -2045,15 +2195,17 @@ def _drop_whole_entries(text: str, budget: int, entry_re: "re.Pattern[str]", mar
     return _hard_cut(newest, budget, _NEWEST_ENTRY_MARKER)
 
 
-def _bound_blueprint_context(text: str) -> str:
+def _bound_blueprint_context(text: str, budget: "int | None" = None) -> str:
     """Bound the injected cross-session blueprint slice to its budget share by
     dropping WHOLE trailing lines -- never slicing an entry mid-thought (cmd_load
     renders each entry on one line with Next steps ABOVE the decisions, so the
     drop sheds the OLDEST decisions first and keeps the curated handoff). The
     NEWEST decision is NEVER dropped: if header+newest alone is over budget (a
     runaway), it is byte-cut (head kept) so the section is never emitted empty.
-    The outer _MAX_CONTEXT_BYTES backstops the whole banner."""
-    budget = _SOFT_BUDGETS["blueprint"]
+    The outer _MAX_CONTEXT_CHARS backstops the whole banner; ``budget`` lets
+    _build_context shrink the section below its share when the header and tail
+    leave less (DEF-674)."""
+    budget = _SOFT_BUDGETS["blueprint"] if budget is None else budget
     marker = "\n[blueprint context truncated]"
     if len(text.encode("utf-8")) <= budget:
         return text
@@ -2119,7 +2271,7 @@ def _load_blueprint(root: Path, advance_chain: bool) -> str:
         # recent decisions, formatted by cognitive_blueprint.cmd_load) so the
         # next session re-engages instead of re-deriving. Captured BEFORE any
         # `start` below so it reflects the PRIOR node. Bounded to the
-        # blueprint's share; the outer _MAX_CONTEXT_BYTES backstops the block.
+        # blueprint's share; the outer _MAX_CONTEXT_CHARS backstops the block.
         prior_ctx = ""
         if result.returncode == 0 and result.stdout.strip():
             prior_ctx = _bound_blueprint_context(result.stdout.strip())
@@ -3926,6 +4078,110 @@ def _permissions_line(root: Path) -> str:
             "Espalier's hooks still run and still deny")
 
 
+_BLUEPRINT_SLOT = object()
+#: The least the blueprint keeps before it drops to its header line: its
+#: header and the newest decision, cut if need be.
+_BLUEPRINT_MIN_CHARS = 400
+#: The banner-health advisory's lines (DEF-674), read by the tests.
+_HEALTH_HEADER = "--- BANNER HEALTH ---"
+_HEALTH_CUT = "[banner] cut to fit the ceiling, with their full sizes: "
+_HEALTH_YIELD = "[banner] the blueprint yielded to fit the ceiling: "
+_HEALTH_BINDS = "[banner] the ceiling still binds: the body loses "
+_BODY_CUT_MARKER = "\n[banner body truncated -- budget]"
+_BLUEPRINT_HEAD_MARKER = " [cut to its header line to fit the ceiling]"
+#: That header line's own bound: a real one is about 30 characters, and a
+#: blueprint of one runaway line must not ride whole as its "header".
+_BLUEPRINT_HEAD_MAX_CHARS = 120
+_BANNER_MARGIN = 64  # join/newline slack
+
+
+def _blueprint_head(text: str) -> str:
+    """The blueprint's header line alone, marked: what it keeps when even
+    ``_BLUEPRINT_MIN_CHARS`` does not fit (ack 20261018T203143Z-air-70c411)."""
+    body = text.lstrip("\n")
+    return (text[: len(text) - len(body)] + _truncate_on_boundary(body.split("\n", 1)[0], _BLUEPRINT_HEAD_MAX_CHARS, "")
+            + _BLUEPRINT_HEAD_MARKER + ("\n" if text.endswith("\n") else ""))
+
+
+def _lever(tenants: "list[tuple[str, str, int, int | None]]") -> str:
+    """What is left to do when the ceiling still binds: shorten cc/GOAL.md when
+    the goal rides past its soft budget (it alone may, up to its hard cap, the
+    operator's call), else the larger of the goal and the memory digest
+    (_LEVER_FILES). The tenants come here bounded, so no other one is past its
+    own budget."""
+    sizes = {name: (len(text.encode("utf-8")), soft) for name, text, soft, _ in tenants if text}
+    goal, soft = sizes.get("goal", (0, 0))
+    if soft and goal > soft:
+        return (f"shorten {_LEVER_FILES['goal']}, past its {soft}-byte budget "
+                f"(its {_GOAL_HARD_CAP}-byte hard cap is the operator's call)")
+    sourced = [(size, name) for name, (size, _) in sizes.items() if name in _LEVER_FILES]
+    if sourced:
+        size, name = max(sourced)
+        return f"shorten {_LEVER_FILES[name]}, the largest tenant ({size} bytes)"
+    return "no tenant is left to shorten; the header's lines take the room"
+
+
+def _fit_banner(
+    header_parts: list, body_parts: list, tail: str, blueprint: str, share: int,
+    render: "Callable[[str], str]", shrink: "Callable[[str, int], str]",
+    flags: "list[str]", cut: "list[str]", tenants: "list[tuple[str, str, int, int | None]]",
+) -> str:
+    """One banner under ``_MAX_CONTEXT_CHARS`` (DEF-674). ``_BLUEPRINT_SLOT`` in
+    ``header_parts`` or ``body_parts`` takes ``render`` of the blueprint, sized
+    to what the rest leaves with the health block counted: whole up to
+    ``share``, then ``shrink`` down to ``_BLUEPRINT_MIN_CHARS``, then its header
+    line (ack 20261018T203143Z-air-70c411, option (i)). The body, health block
+    first, is clipped only past that, and only a clip names the lever. The
+    block carries every flag; the ledger (``tenants``: name, text, soft budget,
+    hard cap) rides only on a cut, a yield or a clip. Its figures are the
+    banner's own, settled by re-joining until the block stops changing (only
+    their digits move it)."""
+    fixed = (_units("".join(p for p in header_parts if p is not _BLUEPRINT_SLOT))
+             + _units("".join(p for p in body_parts if p is not _BLUEPRINT_SLOT))
+             + _units(tail) + _units(render("")) + _BANNER_MARGIN)
+    whole = not blueprint or blueprint in _BLUEPRINT_FAILURE_STATES
+
+    def sized(room: int) -> str:
+        give = min(share, room)
+        if whole or _units(blueprint) <= give:
+            return blueprint
+        return shrink(blueprint, give) if give >= _BLUEPRINT_MIN_CHARS else _blueprint_head(blueprint)
+
+    def health(bp: str, header: str, body: str, budget: int, loss: int) -> str:
+        lines = list(flags)
+        if cut:
+            lines.append(_HEALTH_CUT + ", ".join(cut))
+        if bp != blueprint:
+            lines.append(f"{_HEALTH_YIELD}{_units(blueprint)} -> {_units(bp)} characters (its share {share}); "
+                         "the rest is in cc/blueprints (/read-summary)")
+        if cut or bp != blueprint or loss:
+            sizes = ", ".join(
+                f"{name} {len(text.encode('utf-8'))}" + (f" of {soft}" if soft else "") + " bytes"
+                + (f" (cap {cap})" if cap else "") for name, text, soft, cap in tenants)
+            lines.append(
+                f"[banner] {_MAX_CONTEXT_CHARS} characters of the host's {_HOST_CONTEXT_CAP_CHARS}: header "
+                f"{_units(header)} (blueprint {_units(bp)} of {share}), body {_units(body)} of {max(0, budget)}, "
+                f"tail {_units(tail)}; {sizes}; headroom {budget - _units(body)}")
+        if loss:
+            lines.append(f"{_HEALTH_BINDS}{loss} characters; {_lever(tenants)}")
+        return f"{_HEALTH_HEADER}\n" + "\n".join(lines) + "\n\n" if lines else ""
+
+    block = ""
+    for _ in range(6):
+        bp = sized(_MAX_CONTEXT_CHARS - fixed - _units(block))
+        slot = render(bp)
+        header = "".join(slot if p is _BLUEPRINT_SLOT else p for p in header_parts)
+        body = block + "".join(slot if p is _BLUEPRINT_SLOT else p for p in body_parts)
+        budget = _MAX_CONTEXT_CHARS - _units(header) - _units(tail) - _BANNER_MARGIN
+        kept = _truncate_on_boundary(body, max(0, budget), _BODY_CUT_MARKER)
+        loss = 0 if kept == body else _units(body) - _units(kept) + _units(_BODY_CUT_MARKER)
+        settled = health(bp, header, body, budget, loss)
+        if settled == block:
+            break
+        block = settled
+    return header + kept + tail
+
+
 #: The own-clear marker under the state directory: ``tools/cc/ship.py`` arms
 #: it as the handoff's last act, the own-clear mod (``tools/cc/mods/own-clear``)
 #: rewrites it with every outcome, ``stop_gate.py`` reads it for Gate 5, and
@@ -4017,6 +4273,12 @@ def _build_compact_context(
     byte-identical. ``self_host`` is kept for call-signature symmetry with
     ``_build_context``; since 2026-10-08 this banner reads no tree identity (the
     standing index gates on its file)."""
+    cut_lines: "list[str]" = []
+    loose, sessions, permissions, own_clear, open_prs, merged_prs, merging, seat, engine, mail, orders, \
+        integrity = _fit_run_lines([
+            ("Loose", loose), ("Sessions", sessions), ("Permissions", permissions), ("Own-clear", own_clear),
+            ("Open PRs", open_prs), ("Merged", merged_prs), ("Merging", merging), ("Seat", seat),
+            ("Engine", engine), ("Mail", mail), ("Orders", orders), ("Integrity", integrity)], cut_lines)
     name = repo_name(root, warn_label="session_start")
     branch = check_branch(root)
     status = _check_dirty(root)
@@ -4063,12 +4325,13 @@ def _build_compact_context(
         *([f"Integrity: {integrity}\n"] if integrity else []),
         _commands_footer(root) + "\n",
     ]
-    for _payload in reversed(_reinject.check("SessionStart", "", {}, root)):
-        header_parts.insert(1, _payload + "\n")
-    header = "".join(header_parts)
+    reinject = _capped("Reinject", "".join(p + "\n" for p in _reinject.check("SessionStart", "", {}, root)),
+                       _REINJECT_MAX_CHARS, cut_lines)
+    if reinject:
+        header_parts.insert(1, reinject if reinject.endswith("\n") else reinject + "\n")
 
     flags: "list[str]" = []
-    body_parts = [
+    body_parts: "list[object]" = [
         "\nYour working context was summarized (the compaction summary is above). "
         "The sections below are the LIVE current state, regenerated now.\n",
     ]
@@ -4076,31 +4339,25 @@ def _build_compact_context(
     for section in (_active_plan_status(root), _recent_commits(root)):
         if section:
             body_parts.append(section)
+    # This session's decisions take the blueprint's slot: at most their own
+    # share, yielding to the rest of the body as the normal banner's does.
     recent = _blueprint_recent(root)
     if recent:
-        bp_budget = _SOFT_BUDGETS["blueprint"]
-        if len(recent.encode("utf-8")) > bp_budget:
-            flags.append(
-                "[banner] blueprint section is large -- "
-                "bounded (oldest whole entries dropped, or newest truncated if it "
-                "alone exceeds budget); pull cc/blueprints for the full record"
-            )
-        body_parts.append(_drop_whole_entries(
-            recent, bp_budget, _BLUEPRINT_ENTRY_RE,
-            "\n[older blueprint entries dropped -- pull cc/blueprints/latest.json]",
-        ))
+        body_parts.append(_BLUEPRINT_SLOT)
     # GOAL: flagged as a session-start SNAPSHOT (its "next" is stale mid-session).
     goal = _goal_section(root)
     if goal:
         goal = goal.replace(_GOAL_HEADER, _GOAL_HEADER_COMPACT)
-        body_parts.append(_bounded("goal", goal, flags, hard_cap=_GOAL_HARD_CAP, keep_tail=True))
+        goal = _bounded("goal", goal, flags, hard_cap=_GOAL_HARD_CAP, keep_tail=True)
+        body_parts.append(goal)
     # Durable layer dropped in compaction: standing + footgun pointer. Each
     # rides its own artifact here exactly as it does in _build_context -- this
     # function carries its own copy of those gates, and an adopter compacting
     # mid-session is precisely when the durable layer needs to survive.
     standing = _standing_principles_index(root)
     if standing:
-        body_parts.append(_bounded("standing", standing, flags))
+        standing = _bounded("standing", standing, flags)
+        body_parts.append(standing)
     fp = _footgun_pointer(root)
     if fp:
         body_parts.append(fp)
@@ -4110,18 +4367,19 @@ def _build_compact_context(
     )
     # The same Warnings block as the normal banner, first in the body.
     body_parts.insert(0, _warnings_section())
-    body = "".join(body_parts)
-    if flags:
-        body = "--- BANNER HEALTH ---\n" + "\n".join(flags) + "\n\n" + body
 
     tail = "".join([
         "\n", _ORIENTATION_COMPACT,
         "\n\n", "(/context-load --mode recover if the Surface line above is DEGRADED.)",
     ])
-    margin = 64
-    budget = _MAX_CONTEXT_BYTES - len(header.encode("utf-8")) - len(tail.encode("utf-8")) - margin
-    body = _truncate_on_boundary(body, max(0, budget), "\n[banner body truncated -- budget]")
-    return header + body + tail
+    return _fit_banner(
+        header_parts, body_parts, tail, recent, _COMPACT_BLUEPRINT_MAX_CHARS, lambda bp: bp,
+        lambda text, budget: _drop_whole_entries(
+            text, budget, _BLUEPRINT_ENTRY_RE,
+            "\n[older blueprint entries dropped -- pull cc/blueprints/latest.json]"),
+        flags, cut_lines,
+        [("goal", goal or "", _SOFT_BUDGETS["goal"], _GOAL_HARD_CAP), ("standing", standing or "",
+         _SOFT_BUDGETS["standing"], None), ("footguns", fp or "", 0, None)])
 
 
 def _build_context(
@@ -4157,10 +4415,18 @@ def _build_context(
         return _build_compact_context(root, self_host, integrity, loose, open_prs, merged_prs, mail, sessions,
                                       permissions, merging, seat=seat, engine=engine, orders=orders,
                                       own_clear=own_clear)
+    cut_lines: "list[str]" = []
+    checkout, worktrees, loose, sessions, permissions, own_clear, open_prs, merged_prs, merging, seat, engine, \
+        mail, orders, integrity = _fit_run_lines([
+            ("Checkout", checkout), ("Worktrees", worktrees), ("Loose", loose), ("Sessions", sessions),
+            ("Permissions", permissions), ("Own-clear", own_clear), ("Open PRs", open_prs),
+            ("Merged", merged_prs), ("Merging", merging), ("Seat", seat), ("Engine", engine), ("Mail", mail),
+            ("Orders", orders), ("Integrity", integrity)],
+            cut_lines)
     name = repo_name(root, warn_label="session_start")
     branch = check_branch(root)
     status = _check_dirty(root)
-    memory = _summarize_memory(root)
+    memory = _capped("Memory", _summarize_memory(root), _IDENTITY_LINE_MAX_CHARS, cut_lines)
     blueprint = _load_blueprint(root, advance_chain)
     surface = surface_status(root, degraded_format="upper")
     # Health self-check: a non-healthy surface CARRIES its recovery action, so a
@@ -4238,7 +4504,7 @@ def _build_context(
         # (_orders_line), from the refs the mail line read. Same contract.
         *([f"Orders:    {orders}\n"] if orders else []),
         f"Memory:    {memory}\n",
-        f"Blueprint: {blueprint}\n",
+        _BLUEPRINT_SLOT,  # filled once the header and tail say what it may take
         f"Surface:   {surface_line}\n",
         # Tamper state, in the channel the session actually reads. Omitted when the
         # caller supplies nothing so the existing shorter-arity callers (tests, and
@@ -4253,9 +4519,11 @@ def _build_context(
     # recall registry -- the parent-session twin of subagent_start's cold
     # orientation. Inserted right after the banner; _clean_state_flags (above)
     # already reset reinject_count this session, so the row fires (n=1).
-    for _payload in reversed(_reinject.check("SessionStart", "", {}, root)):
-        header_parts.insert(1, _payload + "\n")
-    header = "".join(header_parts)
+    # Together under their cap, so a long payload costs itself, not the banner.
+    reinject = _capped("Reinject", "".join(p + "\n" for p in _reinject.check("SessionStart", "", {}, root)),
+                       _REINJECT_MAX_CHARS, cut_lines)
+    if reinject:
+        header_parts.insert(1, reinject if reinject.endswith("\n") else reinject + "\n")
 
     # OPTIONAL body — the high-byte, clippable tenants.
     body_parts = []
@@ -4287,7 +4555,8 @@ def _build_context(
     # carries no dated rows.
     memory_digest = _memory_toc(root)
     if memory_digest:
-        body_parts.append(_bounded("memory", memory_digest, flags))
+        memory_digest = _bounded("memory", memory_digest, flags)
+        body_parts.append(memory_digest)
     # STANDING PRINCIPLES gates on its artifact like the two siblings above:
     # `_standing_principles_index` returns '' when docs/STANDING_PRINCIPLES.md is
     # absent or has no sections. `init` never seeds the file, so an adopter sees
@@ -4296,7 +4565,8 @@ def _build_context(
     # On the self-host tree the section is byte-identical to the gated one.
     standing = _standing_principles_index(root)
     if standing:
-        body_parts.append(_bounded("standing", standing, flags))
+        standing = _bounded("standing", standing, flags)
+        body_parts.append(standing)
     if footgun_pointer:
         body_parts.append(footgun_pointer)
     # When full-mode stop-gate is set, warn the operator if Gate 1 would
@@ -4307,11 +4577,6 @@ def _build_context(
     # Every warning this run kept -- the boot reporters' in _run_main and the
     # builders' above -- first in the body, so it survives the clip.
     body_parts.insert(0, _warnings_section())
-    body = "".join(body_parts)
-    # Surface any bloat flags at the TOP of the body so they survive the outer
-    # clip and are immediately visible -- growth is observable, not silent.
-    if flags:
-        body = "--- BANNER HEALTH ---\n" + "\n".join(flags) + "\n\n" + body
 
     # ALWAYS-ON tail — the orientation block. (The leading "\n" was previously a
     # standalone part between the body and orientation; it rides the tail now so
@@ -4346,14 +4611,16 @@ def _build_context(
     ])
     tail = "".join(tail_parts)
 
-    # Clip the BODY (never the header or tail) against the remaining budget, on a
-    # whitespace boundary via the shared helper. main()'s outer
-    # encoded[:_MAX_CONTEXT_BYTES] stays as a last-resort backstop but is now
-    # unreachable in the worst case.
-    margin = 64  # join/newline slack
-    budget = _MAX_CONTEXT_BYTES - len(header.encode("utf-8")) - len(tail.encode("utf-8")) - margin
-    body = _truncate_on_boundary(body, max(0, budget), "\n[banner body truncated -- budget]")
-    return header + body + tail
+    # The header, the body (its health block first, so it survives the clip --
+    # growth is observable, not silent) and the tail under the ceiling, the
+    # blueprint sized to what the rest leaves (DEF-674). Never the header or the
+    # tail is clipped: the per-run pool and the two caps above bound them.
+    return _fit_banner(
+        header_parts, body_parts, tail, blueprint, _MAX_BLUEPRINT_CONTEXT_BYTES,
+        lambda bp: f"Blueprint: {bp}\n", _bound_blueprint_context, flags, cut_lines,
+        [("goal", goal, _SOFT_BUDGETS["goal"], _GOAL_HARD_CAP),
+         ("memory", memory_digest, _SOFT_BUDGETS["memory"], None),
+         ("standing", standing, _SOFT_BUDGETS["standing"], None), ("footguns", footgun_pointer, 0, None)])
 
 
 def _run_main() -> int:
@@ -4626,9 +4893,7 @@ def _run_main() -> int:
     )
 
     # Enforce size budget — truncate rather than flood context window.
-    encoded = context.encode("utf-8")
-    if len(encoded) > _MAX_CONTEXT_BYTES:
-        context = encoded[:_MAX_CONTEXT_BYTES].decode("utf-8", errors="replace") + "\n[context truncated]"
+    context = _fit_to_ceiling(context)
 
     print(json.dumps({
         "hookSpecificOutput": {
