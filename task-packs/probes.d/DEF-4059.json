@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4059",
+ "subject": "tools/cc/hooks/_zone_watch.py",
+ "cmd": "python3 -c \"import sys,pathlib;sys.path.insert(0,'tools/cc/hooks');import _zone_watch as z;print(z.is_watched(pathlib.Path('.'),'tools/cc/mods/own-clear/.claude-plugin/types/claude-code-mcp/probe.d.ts'))\"",
+ "open_value": "True",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/_protected_zones.py"
+ ],
+ "row_sha": "ffda72e67058",
+ "text_sha": "7582b4f6be07",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}
