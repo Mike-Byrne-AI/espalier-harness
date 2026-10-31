@@ -458,10 +458,7 @@ plan_guard reads this as an open mutation window on source files.
 --- MEMORY (recent sessions -- headlines only; read memory/session-log.d/ for full rows) ---
 - <date> <your last session's headline> ...
 
---- STANDING PRINCIPLES (hold these; bodies in docs/STANDING_PRINCIPLES.md) ---
-- 1. Make it prove it
-- 2. Toolbelt, not security boundary
-...
+--- STANDING PRINCIPLES: <n> (hold these; titles and bodies in docs/STANDING_PRINCIPLES.md; /recall <topic> pulls one) ---
 
 --- FOOTGUNS & FAILURE MODES (pull, don't scan) ---
 docs/SHARP_EDGES.md (concrete footguns) + docs/FAILURE_MODES.md (failure classes)
@@ -501,6 +498,24 @@ renders wherever `docs/STANDING_PRINCIPLES.md` has sections, which `init`
 never seeds, so an adopter sees it from the session after they write the
 file -- the illustrative block above is the self-host banner, whose tree
 has one.)
+
+**The banner fits the host's cap.** Claude Code caps one hook context string
+at 10,000 characters and spills a longer one to a file, handing Claude a
+2,000-character preview it is not asked to read past
+(`docs/external/cc-hook-protocol.md`). The banner is fitted under 9,500,
+counted as the host counts (UTF-16 units). The per-run lines (the sessions,
+the pull requests, the mail, the orders, ...) share one pool of 320 characters
+each: a line rides whole on what the absent and short ones leave, and only past
+the pool are the longest cut, by whole rows (the first and the last kept, the
+mail's tail note too, the rest counted as `and N more`) or, for one row, on a
+word boundary with a ` [line cut]` marker. The reinject payloads are cut to
+1,000 together and the `Memory:` identity line to 400. The blueprint takes what
+the body leaves, health block included, at most 3,000 (6,000 for the compact
+banner's decisions), down to 400 and then to its header line; only then is the
+body clipped. When anything is cut, yielded or clipped, a `BANNER HEALTH` block
+at the top of the body names it, with each tenant against its budget and the
+headroom left, and a clip names its loss and what to shorten: `cc/GOAL.md` when
+the goal is past its soft budget, else the largest tenant's file.
 
 **Every GOAL clause above is conditional.** `cc/GOAL.md` is a local,
 gitignored snapshot: `init` seeds a skeleton when it is absent, `/handoff` step 7

@@ -953,7 +953,10 @@ class TestSeedHistoryOnlyGrows:
 # ─── _standing_principles_index: compact always-on frame index ──────────────
 
 class TestStandingPrinciplesIndex:
-    def test_renders_titles_only_not_bodies(self, tmp_path):
+    def test_renders_one_summary_line_not_titles_or_bodies(self, tmp_path):
+        """One line under its 400-character budget (DEF-674): the titles joined
+        ran 880 characters on the self-host tree, so the banner carries the count
+        and where the titles and bodies are."""
         mod = _load()
         (tmp_path / "docs").mkdir()
         (tmp_path / "docs" / "STANDING_PRINCIPLES.md").write_text(
@@ -963,11 +966,12 @@ class TestStandingPrinciplesIndex:
             encoding="utf-8",
         )
         out = mod._standing_principles_index(tmp_path)
-        assert "STANDING PRINCIPLES" in out
-        assert "- 1. Make it prove it" in out
-        assert "- 2. Toolbelt, not security boundary" in out
-        assert "body of one" not in out, "bodies must not be dumped -- titles only"
-        assert "docs/STANDING_PRINCIPLES.md" in out  # pointer to the bodies
+        assert "STANDING PRINCIPLES: 2 " in out
+        assert out.strip().count("\n") == 0, "the index is one summary line"
+        assert "Make it prove it" not in out, "the titles stay in the doc"
+        assert "body of one" not in out, "bodies must not be dumped"
+        assert "docs/STANDING_PRINCIPLES.md" in out and "/recall" in out  # where they are
+        assert mod._units(out) <= mod._SOFT_BUDGETS["standing"]
 
     def test_absent_doc_yields_empty(self, tmp_path):
         mod = _load()
@@ -987,9 +991,9 @@ class TestStandingPrinciplesIndex:
             encoding="utf-8",
         )
         banner = mod._build_context(tmp_path, False, False)
-        assert "STANDING PRINCIPLES" in banner and "- 1. One writer per file" in banner
+        assert "STANDING PRINCIPLES: 2 " in banner
         compact = mod._build_compact_context(tmp_path, False)
-        assert "STANDING PRINCIPLES" in compact and "- 2. Measure before you tune" in compact
+        assert "STANDING PRINCIPLES: 2 " in compact
 
     def test_index_is_absent_off_self_host_without_the_file(self, tmp_path):
         """The negative half: no file, no section -- on either banner."""
@@ -998,11 +1002,11 @@ class TestStandingPrinciplesIndex:
         assert "STANDING PRINCIPLES" not in mod._build_compact_context(tmp_path, False)
 
     def test_index_surfaces_every_live_principle(self):
-        """Doc-derived, not a hardcoded 9: the index must surface every title the
+        """Doc-derived, not a hardcoded 9: the index must count every title the
         live doc defines, counted by the SAME rule the renderer selects them with
         (a line starting ``"## "``). A 10th principle tracks automatically and a
         benign non-numbered ``## `` heading does NOT false-alarm; the assert reds
-        only when the renderer's output diverges from the doc's heading count -- a
+        only when the renderer's count diverges from the doc's heading count -- a
         dropped or mangled title, the real regression.
         """
         mod = _load()
@@ -1011,10 +1015,11 @@ class TestStandingPrinciplesIndex:
         n_titles = sum(1 for ln in doc.splitlines() if ln.startswith("## "))
         assert n_titles > 0, "doc title shape changed -- no '## ' headings found"
         out = mod._standing_principles_index(repo)
-        rendered = out.count("\n- ")
-        assert rendered == n_titles, (
-            f"index must surface every live principle: doc defines {n_titles}, "
-            f"index rendered {rendered}"
+        m = re.search(r"STANDING PRINCIPLES: (\d+) ", out)
+        assert m, out
+        assert int(m.group(1)) == n_titles, (
+            f"index must count every live principle: doc defines {n_titles}, "
+            f"index counted {m.group(1)}"
         )
 
 
@@ -1092,6 +1097,7 @@ class TestDegradedAndHealth:
 
 # ─── Whole-banner contracts: allowlist, gating, no-dup, lean, flag ──────────
 
+import inspect  # noqa: E402
 import re  # noqa: E402
 
 # Every "--- X ---" section the banner is allowed to emit. A header outside this
@@ -1142,30 +1148,18 @@ class TestBannerContracts:
         assert "Consult ESPALIER_MEMORY.md" in banner
 
     def test_banner_stays_lean(self):
-        """The whole point: the redesigned self-host banner is far under the 16KB
-        outer ceiling (escaping the lost-in-the-middle zone). The bound is the
-        per-section soft-budget COMPOSITION (not a magic number), so it tracks the
-        budgets and a section blowing its budget -- or a new unbounded tenant --
-        still fails. The blueprint continuity is the dominant tenant BY DESIGN
-        (it is CONTENT, not index), so it accumulates toward its 6KB soft cap."""
+        """This checkout's banner fits the ceiling under the host's cap on hook
+        context, counted as the host counts (DEF-674). The per-run lines are the
+        hook's to pass, so this is the core alone; every tenant at its cap with
+        long per-run lines is TestTheBannerFitsTheHostCap's worst case. Whether
+        the body clips here depends on this checkout's goal and blueprint, so
+        what is asserted is that a clip never goes unsaid: the body is cut only
+        with the advisory naming its loss and its lever, and the tail rides."""
         mod = _load()
         banner = mod._build_context(self._repo(), True, False)
-        nbytes = len(banner.encode("utf-8"))
-        assert nbytes <= mod._MAX_CONTEXT_BYTES
-        # Effective-cap sum (bounded sections) + slack for the header/tail/footgun.
-        # GOAL rides to its hard cap (TP-241: the goal-proper must be visible, not
-        # cut under the perishable Notes head), so the bound uses _GOAL_HARD_CAP,
-        # not the goal soft budget.
-        effective = dict(mod._SOFT_BUDGETS)
-        effective["goal"] = mod._GOAL_HARD_CAP
-        lean_ceiling = sum(effective.values()) + 2_500
-        assert nbytes < lean_ceiling, (
-            f"banner is {nbytes}B vs lean ceiling {lean_ceiling}B -- a section blew "
-            f"its cap or an unbounded tenant crept in"
-        )
-        # Still a clear win vs the old 15.9KB bloat (and the ~87K full reads we
-        # dropped). The goal-visible design raised the floor from the old 0.8*MAX.
-        assert nbytes < 0.9 * mod._MAX_CONTEXT_BYTES
+        assert mod._units(banner) <= mod._MAX_CONTEXT_CHARS
+        assert "confirm or redirect" in banner
+        assert ("[banner body truncated -- budget]" in banner) == (mod._HEALTH_BINDS in banner)
 
     def test_orientation_tail_always_present(self):
         mod = _load()
@@ -4280,3 +4274,333 @@ class TestTheGovernanceWiringLine:
         summary = mod._report_integrity_state(tmp_path)
         assert "UNWIRED" not in summary, summary
         assert not [line for line in mod._hook_utils.take_advisories() if "governance wiring" in line]
+
+
+# ─── DEF-674: the banner fits the host's cap on hook context ────────────────
+
+_PROTOCOL_PIN = Path(__file__).resolve().parent.parent / "docs" / "external" / "cc-hook-protocol.md"
+_LONG = "a long run line " * 150  # 2,400 characters, far past the per-run cap
+
+
+def _pinned_host_cap() -> int:
+    """The host's cap on one hook context string, read from the protocol pin's
+    quoted sentence, so the ceiling follows the doc rather than a copy of it."""
+    text = _PROTOCOL_PIN.read_text(encoding="utf-8")
+    m = re.search(r"are capped at ([\d,]+) characters", text)
+    assert m, "the pin no longer quotes the host's cap on hook context strings"
+    return int(m.group(1).replace(",", ""))
+
+
+def _run_line_names(builder) -> "list[str]":
+    """A builder's per-run lines, read from its signature, so a new line joins
+    the worst case without an edit here."""
+    fixed = {"root", "self_host", "advance_chain", "source"}
+    return [p for p in inspect.signature(builder).parameters if p not in fixed]
+
+
+def _all_long(mod) -> "dict[str, str]":
+    return {n: _LONG for n in _run_line_names(mod._build_context)}
+
+
+def _host_units(text: str) -> int:
+    # Counted here, not through the hook's helper, so a hook without the helper
+    # reds on the size rather than on a missing name.
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _worst_case(mod, monkeypatch) -> None:
+    """Every tenant past its cap: the shape the DEF-674 probe renders."""
+    monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+    monkeypatch.setattr(mod, "_goal_section", lambda r: "--- GOAL ---\n" + "goal words " * 900)
+    monkeypatch.setattr(mod, "_memory_toc", lambda r: "--- MEMORY ---\n" + "memory words " * 300)
+    monkeypatch.setattr(mod, "_standing_principles_index",
+                        lambda r: "\n--- STANDING PRINCIPLES ---\n" + "- a principle\n" * 200)
+    monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: "blueprint words " * 800)
+    monkeypatch.setattr(mod, "_blueprint_recent", lambda r: "[1] " + "recent words " * 600)
+
+
+_HANDOFF = "# Session Context\n\n## Next steps\nGOAL pointer\n\n## Recent reasoning\n"
+_BLUEPRINT = _HANDOFF + "\n".join(f"- decision {i} " + "y" * 80 for i in range(30))
+
+
+class TestTheBannerFitsTheHostCap:
+    """DEF-674: past 10,000 characters the host saves a hook's context to a file
+    and hands Claude a 2,000-character preview it is not asked to read past, so
+    the banner is fitted under a ceiling counted as the host counts."""
+
+    def test_the_ceiling_sits_under_95_percent_of_the_pinned_cap(self):
+        mod = _load()
+        cap = _pinned_host_cap()
+        assert mod._HOST_CONTEXT_CAP_CHARS == cap
+        assert mod._MAX_CONTEXT_CHARS <= 0.95 * cap
+
+    @pytest.mark.parametrize("source", ["", "compact"])
+    def test_the_worst_case_banner_fits_under_the_cap(self, tmp_path, monkeypatch, source):
+        mod = _load()
+        _worst_case(mod, monkeypatch)
+        banner = mod._build_context(tmp_path, True, False, source, **_all_long(mod))
+        assert _host_units(banner) <= 0.95 * _pinned_host_cap(), _host_units(banner)
+        assert "confirm or redirect" in banner  # the orientation tail rides whole
+        builder = mod._build_compact_context if source == "compact" else mod._build_context
+        assert banner.count("[line cut]") == len(_run_line_names(builder)), "each run line is cut on its own"
+
+    def test_a_long_line_rides_whole_on_what_the_others_leave(self, tmp_path, monkeypatch):
+        """Pooled shares (ack 20261018T210745Z-air-126ea0): a line over its 320
+        takes the slack of the absent and short ones, so its action at the end
+        survives."""
+        mod = _load()
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+        banner = mod._build_context(tmp_path, False, False, sessions=_LONG, mail="one short mail line")
+        assert f"Sessions:  {_LONG}\n" in banner
+        assert "[line cut]" not in banner and mod._HEALTH_CUT not in banner
+        assert "Mail:      one short mail line\n" in banner
+
+    def test_past_the_pool_the_longest_line_is_cut_and_named(self, tmp_path, monkeypatch):
+        mod = _load()
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+        longest, long = "word " * 1_200, "x " * 300  # 6,000 and 600 characters
+        banner = mod._build_context(tmp_path, False, False, sessions=longest, engine=long)
+        line = next(ln for ln in banner.splitlines() if ln.startswith("Sessions:"))
+        value = line[len("Sessions:"):].lstrip()
+        assert value.endswith("[line cut]")
+        level = mod._RUN_LINE_MAX_CHARS * len(_run_line_names(mod._build_context)) - _host_units(long)
+        assert level - 20 <= _host_units(value) <= level  # cut to what the pool leaves, not to 320
+        assert f"Engine:    {long}\n" in banner, "the shorter line rides whole"
+        assert f"{mod._HEALTH_CUT}Sessions {_host_units(longest)}" in banner
+        assert mod._HEALTH_BINDS not in banner, "a cut that fits names no lever"
+
+    def test_the_pool_cuts_the_longest_first_and_none_below_its_guarantee(self):
+        mod = _load()
+        cap = mod._RUN_LINE_MAX_CHARS
+        n = 13
+        a, b = "a " * 1_500, "b " * 1_000  # 3,000 and 2,000
+        cut: list = []
+        out = mod._fit_run_lines([("A", a), ("B", b)] + [(f"E{i}", "") for i in range(n - 2)], cut)
+        assert out[1] == b and out[0] != a and _host_units(out[0]) <= cap * n - _host_units(b)
+        assert cut == ["A 3000"]
+        lines = [(f"L{i}", "w " * 1_200) for i in range(n - 1)] + [("S", "s" * (cap - 20))]
+        cut = []
+        out = mod._fit_run_lines(lines, cut)
+        assert out[-1] == "s" * (cap - 20), "a line under its guarantee is never cut"
+        assert all(_host_units(v) <= cap for v in out) and len(cut) == n - 1
+        assert sum(_host_units(v) for v in out) <= cap * n
+
+    def test_a_row_cut_keeps_the_first_row_the_mail_tail_and_the_count(self):
+        """Rows whole, the last row kept, and N more: the tail that says whose
+        text the mail is (the 2026-09-01 incident) and the asks never go, and a
+        count already there grows instead of vanishing."""
+        mod = _load()
+        ind = mod._PR_INDENT
+        heads = [f"2026-10-29 05:{10 + i}Z air note: headline {i} " + "z" * 120 for i in range(3)]
+        asks = "1 unanswered ask (requests no ack names), oldest 3 min: /inbox board lists them"
+        mail = mod._render_rows(heads + ["h4", "h5", "h6"]) + f"\n{ind}{mod._MAIL_TAIL}\n{ind}{asks}"
+        assert f"\n{ind}and 3 more\n" in mail
+        out = mod._cut_rows(mail, 400)
+        assert _host_units(out) <= 400
+        assert out.startswith(heads[0]) and f"{ind}and 5 more" in out
+        assert out.endswith(f"\n{ind}{mod._MAIL_TAIL}\n{ind}{asks}")
+        prs = mod._render_rows([f"#{n} lane/pr-{n} -- " + "c" * 100 for n in range(5)])
+        out = mod._cut_rows(prs, 200)
+        assert _host_units(out) <= 200 and out.endswith(f"\n{ind}and 4 more")
+        single = "one row " * 100
+        assert mod._cut_rows(single, 100).endswith(mod._RUN_LINE_CUT_MARKER)
+
+    def test_the_mail_tail_survives_in_the_banner_whole_or_cut(self, tmp_path, monkeypatch):
+        mod = _load()
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+        ind = mod._PR_INDENT
+        heads = [f"2026-10-29 05:{10 + i}Z air note: a realistic headline about lane {i} " + "q" * 90
+                 for i in range(2)]
+        mail = mod._render_rows(heads) + f"\n{ind}{mod._MAIL_TAIL}"
+        banner = mod._build_context(tmp_path, False, False, mail=mail)
+        assert f"Mail:      {mail}\n" in banner, "two headlines and the tail ride whole"
+        lines = _all_long(mod)
+        lines["mail"] = mod._render_rows(heads + heads) + f"\n{ind}{mod._MAIL_TAIL}"
+        banner = mod._build_context(tmp_path, False, False, **lines)
+        assert f"\n{ind}{mod._MAIL_TAIL}\n" in banner, "the tail survives the cut"
+        assert f"{ind}and 3 more" in banner
+
+    @pytest.mark.parametrize("source", ["", "compact"])
+    def test_the_reinject_payloads_and_the_identity_line_are_capped(self, tmp_path, monkeypatch, source):
+        """Code review BLOCKER 1, its own repro: every per-run line at 2,400,
+        one reinject payload of 4,000 and a 40-decision blueprint."""
+        mod = _load()
+        payload = "ORIENT " + "payload words " * 285  # 4,000 characters
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [payload])
+        monkeypatch.setattr(mod, "_summarize_memory", lambda r: "identity words " * 100)
+        bp = _HANDOFF + "\n".join(f"- decision {i} " + "y" * 80 for i in range(40))
+        monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: bp)
+        builder = mod._build_compact_context if source == "compact" else mod._build_context
+        lines = {n: _LONG for n in _run_line_names(builder)}
+        banner = mod._build_context(tmp_path, True, False, source, **lines)
+        assert _host_units(banner) <= mod._MAX_CONTEXT_CHARS
+        assert "confirm or redirect" in banner
+        assert f"Reinject {_host_units(payload) + 1}" in banner
+        top = banner.split("\n", 1)[1]
+        assert top.startswith("ORIENT ") and _host_units(top.split("\nRepo:", 1)[0]) <= mod._REINJECT_MAX_CHARS
+        if source == "compact":
+            return  # the compact banner carries no identity line
+        assert "Memory 1500" in banner
+        memory = next(ln for ln in banner.splitlines() if ln.startswith("Memory:"))
+        assert _host_units(memory[len("Memory:"):].lstrip()) <= mod._IDENTITY_LINE_MAX_CHARS
+
+    def test_the_blueprint_yields_to_long_per_run_lines_and_says_so(self, tmp_path, monkeypatch):
+        mod = _load()
+        # The payloads at their cap, so the header's length, not the temp
+        # directory's name, decides the yield.
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: ["ORIENT " + "w " * 600])
+        assert 2_000 < _host_units(_BLUEPRINT) <= mod._MAX_BLUEPRINT_CONTEXT_BYTES  # whole under its share
+        monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: _BLUEPRINT)
+        banner = mod._build_context(tmp_path, True, False, **_all_long(mod))
+        assert mod._HEALTH_YIELD in banner
+        assert "GOAL pointer" in banner  # the curated handoff survives the yield
+        assert "- decision 29 " not in banner  # the oldest decisions go first
+        assert mod._units(banner) <= mod._MAX_CONTEXT_CHARS
+
+    def test_the_blueprint_rides_whole_when_the_header_leaves_room(self, tmp_path, monkeypatch):
+        mod = _load()
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+        monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: _BLUEPRINT)
+        banner = mod._build_context(tmp_path, True, False)
+        assert _BLUEPRINT in banner
+        assert mod._HEALTH_YIELD not in banner
+
+    def test_the_health_block_names_each_tenant_and_the_headroom(self, tmp_path, monkeypatch):
+        mod = _load()
+        _worst_case(mod, monkeypatch)
+        banner = mod._build_context(tmp_path, True, False, **_all_long(mod))
+        lead = f"[banner] {mod._MAX_CONTEXT_CHARS} characters of the host's {mod._HOST_CONTEXT_CAP_CHARS}: "
+        ledger = next(ln for ln in banner.splitlines() if ln.startswith(lead))
+        for tenant in ("header ", "(blueprint ", "body ", "tail ", "goal ", "memory ", "standing ",
+                       "footguns ", "headroom "):
+            assert tenant in ledger, (tenant, ledger)
+
+    @pytest.mark.parametrize("source", ["", "compact"])
+    def test_a_binding_ceiling_names_cc_goal_when_the_goal_is_past_its_budget(self, tmp_path, monkeypatch, source):
+        mod = _load()
+        _worst_case(mod, monkeypatch)
+        banner = mod._build_context(tmp_path, True, False, source, **_all_long(mod))
+        binds = next(ln for ln in banner.splitlines() if ln.startswith(mod._HEALTH_BINDS))
+        assert "shorten cc/GOAL.md, past its 2000-byte budget" in binds
+        assert "_GOAL_HARD_CAP" not in banner, "an adopter's lever is the file, not a hook constant"
+
+    def test_a_small_goal_is_never_the_lever(self, tmp_path, monkeypatch):
+        """Failure-mode SHOULD 4: the largest tenant's file is named instead."""
+        mod = _load()
+        _worst_case(mod, monkeypatch)
+        monkeypatch.setattr(mod, "_goal_section", lambda r: "--- GOAL ---\nshort goal\n")
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: ["ORIENT " + "w " * 600])
+        banner = mod._build_context(tmp_path, True, False, **_all_long(mod))
+        binds = next(ln for ln in banner.splitlines() if ln.startswith(mod._HEALTH_BINDS))
+        assert "cc/GOAL.md" not in binds and "shorten ESPALIER_MEMORY.md, the largest tenant" in binds
+
+    def test_the_loss_and_headroom_figures_are_the_banners_own(self, tmp_path, monkeypatch):
+        """Code review SHOULD 2 and 3: the figures are read after the block is
+        built and the body cut, so they are what happened."""
+        mod = _load()
+        _worst_case(mod, monkeypatch)
+        calls = []
+        real = mod._truncate_on_boundary
+
+        def spy(text, budget, marker):
+            out = real(text, budget, marker)
+            if marker == mod._BODY_CUT_MARKER:
+                calls.append((text, budget, out))
+            return out
+
+        monkeypatch.setattr(mod, "_truncate_on_boundary", spy)
+        banner = mod._build_context(tmp_path, True, False, **_all_long(mod))
+        text, budget, out = calls[-1]
+        lost = _host_units(text) - (_host_units(out) - _host_units(mod._BODY_CUT_MARKER))
+        assert f"{mod._HEALTH_BINDS}{lost} characters;" in banner
+        assert f"body {_host_units(text)} of {budget}," in banner
+        assert f"headroom {budget - _host_units(text)}\n" in banner
+
+    def test_the_body_outranks_the_blueprint(self, tmp_path, monkeypatch):
+        """Ruling 70c411 (i), failure-mode SHOULD 2: the blueprint is sized to the
+        body's actual size, so a large goal's last section and the memory digest
+        ride whole while the blueprint is still above its minimum."""
+        mod = _load()
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+        monkeypatch.setattr(mod, "_goal_section",
+                            lambda r: "--- GOAL ---\n" + "goal words " * 270 + "\nTHE GOAL'S LAST SECTION\n")
+        monkeypatch.setattr(mod, "_memory_toc", lambda r: "\n--- MEMORY (recent) ---\n" + "row " * 220
+                            + "\nTHE NEWEST ROW\n")
+        bp = _HANDOFF + "\n".join(f"- decision {i} " + "y" * 80 for i in range(40))
+        monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: bp)
+        banner = mod._build_context(tmp_path, True, False, sessions="s " * 300)
+        assert "THE GOAL'S LAST SECTION" in banner and "THE NEWEST ROW" in banner
+        assert "[banner body truncated" not in banner and mod._HEALTH_BINDS not in banner
+        yielded = next(ln for ln in banner.splitlines() if ln.startswith(mod._HEALTH_YIELD))
+        kept = int(re.search(r"-> (\d+) characters", yielded).group(1))
+        assert mod._BLUEPRINT_MIN_CHARS < kept < _host_units(bp)
+
+    @pytest.mark.parametrize("source", ["", "compact"])
+    def test_the_body_clips_only_once_the_blueprint_is_down_to_its_header(self, tmp_path, monkeypatch, source):
+        mod = _load()
+        _worst_case(mod, monkeypatch)
+        monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: _BLUEPRINT)
+        monkeypatch.setattr(mod, "_blueprint_recent", lambda r: "\n--- THIS SESSION'S DECISIONS ---\n"
+                            + "\n".join(f"[{i}] " + "z" * 100 for i in range(50)) + "\n")
+        banner = mod._build_context(tmp_path, True, False, source, **_all_long(mod))
+        assert mod._HEALTH_BINDS in banner and "[banner body truncated" in banner
+        assert mod._BLUEPRINT_HEAD_MARKER in banner, "the blueprint gave all it had first"
+
+    def test_the_compact_decisions_keep_their_own_share(self, tmp_path, monkeypatch):
+        """Failure-mode SHOULD 3: the compact banner's decisions ride whole up to
+        their pre-lane 6,000 (ack 126ea0), not the startup blueprint's 3,000."""
+        mod = _load()
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+        recent = "\n--- THIS SESSION'S DECISIONS ---\n" + "\n".join(f"[{i}] " + "z" * 100 for i in range(45)) + "\n"
+        assert mod._MAX_BLUEPRINT_CONTEXT_BYTES < _host_units(recent) < mod._COMPACT_BLUEPRINT_MAX_CHARS
+        monkeypatch.setattr(mod, "_blueprint_recent", lambda r: recent)
+        banner = mod._build_context(tmp_path, True, False, "compact")
+        assert recent in banner and mod._HEALTH_YIELD not in banner
+        monkeypatch.setattr(mod, "_goal_section", lambda r: "--- GOAL ---\n" + "goal words " * 400)
+        banner = mod._build_context(tmp_path, True, False, "compact", **_all_long(mod))
+        assert f"(its share {mod._COMPACT_BLUEPRINT_MAX_CHARS})" in banner
+        assert _host_units(banner) <= mod._MAX_CONTEXT_CHARS
+
+    def test_a_flag_alone_carries_no_ledger(self, tmp_path, monkeypatch):
+        """Failure-mode ROUGH 6: an older deploy's unavailable blueprint is a flag,
+        not a fit, so the ledger stays out of every session's banner."""
+        mod = _load()
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+        state = sorted(mod._BLUEPRINT_FAILURE_STATES)[0]
+        monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: state)
+        banner = mod._build_context(tmp_path, True, False)
+        assert "[banner] blueprint continuity unavailable" in banner
+        assert f"[banner] {mod._MAX_CONTEXT_CHARS} characters of the host's" not in banner
+
+    def test_the_goal_hard_cap_is_held_for_the_operator(self):
+        """Ack 20261018T203143Z-air-70c411 holds the 4,500 cap for the operator
+        (11eff4): a fit change never lowers it."""
+        assert _load()._GOAL_HARD_CAP == 4_500
+
+    def test_a_banner_that_fits_carries_no_health_block(self, tmp_path, monkeypatch):
+        """The must-not-trip twin: nothing cut, nothing flagged, no block. (A tree
+        with no blueprint system is flagged already, so the twin brings one.)"""
+        mod = _load()
+        monkeypatch.setattr(mod._reinject, "check", lambda *a, **k: [])
+        monkeypatch.setattr(mod, "_load_blueprint", lambda r, a: _HANDOFF)
+        banner = mod._build_context(tmp_path, True, False, sessions="1 other session in this tree")
+        assert mod._HEALTH_HEADER not in banner
+        assert mod._HEALTH_BINDS not in banner
+
+    def test_units_count_as_the_host_does(self):
+        mod = _load()
+        assert mod._units("a\U0001F600") == 3  # an astral character is two units
+        assert mod._units("é") == 1
+        assert mod._cut_to_units("ab\U0001F600c", 3) == "ab"  # never half a pair
+        assert mod._cut_to_units("ab\U0001F600c", 4) == "ab\U0001F600"
+
+    def test_mains_backstop_cuts_to_the_ceiling_in_the_hosts_units(self):
+        mod = _load()
+        assert mod._fit_to_ceiling("x" * 100) == "x" * 100
+        out = mod._fit_to_ceiling("\U0001F600" * 6_000)  # 6,000 characters, 12,000 units
+        marker = "\n[context truncated]"
+        assert out.endswith(marker)
+        assert set(out[: -len(marker)]) == {"\U0001F600"}  # whole pairs only
+        assert mod._MAX_CONTEXT_CHARS - len(marker) - 2 <= _host_units(out) <= mod._MAX_CONTEXT_CHARS
+        assert "context = _fit_to_ceiling(context)" in inspect.getsource(mod._run_main), (
+            "main() must route the banner through the backstop")

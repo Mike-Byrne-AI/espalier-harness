@@ -1323,7 +1323,7 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
     ),
     # 3 row(s), shapes: comprehension, for-assert
     "tests/test_session_banner.py": (
-        10, "f715c6721c6128aa1a21cf43b978f34bd16ab493e7a884f1d4e0ac7d5b260127",
+        11, "8ca76a87fe387df12b7c8021b84fb5b9401a8f5ff54dc7b74fcf87d33fc15243",
         "MIXED_WITH_PRIOR_PASS",
         "NEW 2026-10-26 (+2, the threshold-handoff lane): an all-any over "
         "hu.SESSION_SIDE_SUFFIXES (no suffix ends in `.json`, else the marker readers' "
@@ -1333,6 +1333,13 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "roster is the hooks' own constant, the property holds for everything "
         "present, and the same test pins by name that HANDOFF_ASKED_SUFFIX is in it, "
         "so a suffix dropped from the roster reds there: CORRECT. "
+        "NEW 2026-10-18 (+1, the banner-fit lane): one comprehension over "
+        "_run_line_names(mod._build_context) in _all_long -- each builder's per-run "
+        "lines read from its own signature, every one handed a long value for the "
+        "worst case; a line dropped from the signature cannot render, so the shrink "
+        "misses nothing, and a line added joins the worst case, where "
+        "TestTheBannerFitsTheHostCap's count assert reds if the builder's cap list "
+        "misses it (mutants M19 and M20): CORRECT. "
         "NEW 2026-10-08 (+1, the unwired-gate lane): one for-plain over "
         "self._GATES.items() in TestTheGovernanceWiringLine._tree -- the fixture "
         "builder that lays down the four gate files and wires all but the dropped "

@@ -330,5 +330,5 @@ class TestAgentReportBoundParity:
         assert hook._MAX_AGENT_FRAGMENTS == MAX_AGENT_FRAGMENTS
         assert MAX_AGENT_FRAGMENTS == 2, (
             "two matches the repo's own two-reviewer dispatch; a larger bound "
-            "spends the 6 KB blueprint banner share on agent leads"
+            "spends the 3 KB blueprint banner share on agent leads"
         )

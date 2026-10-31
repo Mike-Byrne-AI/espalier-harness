@@ -134,7 +134,7 @@ The `SessionStart` event fires once at each session *boundary*, carrying a `sour
 
 It is **not** once-per-logical-session: `compact` fires mid-session on *every* context compaction, and `clear`/`resume` fire when the operator resets or resumes. Espalier depends on this distinction — blueprint chain-*advancement* (starting a new node) is gated to `startup`/`clear` in `session_start._should_advance_chain` precisely *because* the event also fires on `compact`; advancing on every compaction would fragment one working session into many shallow nodes. `resume`/`compact` therefore load the chain read-only (bootstrapping only when no blueprint file exists). `post_compact.py` (the PostCompact hook) owns the compaction-specific re-orientation.
 
-If `SessionStart` fired zero times, the auto-orient context would be missing and the session would start cold. The additionalContext payload **is** re-injected on each firing by design (e.g. after every compaction); the size budget (`_MAX_CONTEXT_BYTES`) bounds each injection so re-firing cannot grow the window unboundedly.
+If `SessionStart` fired zero times, the auto-orient context would be missing and the session would start cold. The additionalContext payload **is** re-injected on each firing by design (e.g. after every compaction); the size budget (`_MAX_CONTEXT_CHARS`, under the host's 10,000-character cap on one hook context string) bounds each injection so re-firing cannot grow the window unboundedly.
 
 **Backed by:**
 <!-- canon: tests/test_documented_claims.py::TestNoSessionStartBlocksClaim -->
