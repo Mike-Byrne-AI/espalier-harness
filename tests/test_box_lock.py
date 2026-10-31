@@ -77,16 +77,21 @@ _SLOW_WAITER_S = 3.0
 _SCRATCH_CONFTEST = '''\
 import os, time
 
-slow, path = float(os.environ.get("BOX_PROBE_SLOW_S") or 0), os.environ.get("ESPALIER_BOX_LOCK")
-if slow and path and "PYTEST_XDIST_WORKER" not in os.environ:
-    from tests._box_lock import _primitive
-    lock, deadline = _primitive(), time.monotonic() + slow
-    with open(path, "a+", encoding="utf-8") as fh:
-        while time.monotonic() < deadline:
-            if lock.try_lock_file(fh):
-                lock.unlock_file(fh)
-                break
-            time.sleep(0.05)
+if "PYTEST_XDIST_WORKER" not in os.environ:
+    pid_file = os.environ["BOX_PROBE_STAMP"] + ".pid"
+    with open(pid_file + ".tmp", "w", encoding="utf-8") as out:
+        out.write(str(os.getpid()))
+    os.replace(pid_file + ".tmp", pid_file)
+    slow, path = float(os.environ.get("BOX_PROBE_SLOW_S") or 0), os.environ.get("ESPALIER_BOX_LOCK")
+    if slow and path:
+        from tests._box_lock import _primitive
+        lock, deadline = _primitive(), time.monotonic() + slow
+        with open(path, "a+", encoding="utf-8") as fh:
+            while time.monotonic() < deadline:
+                if lock.try_lock_file(fh):
+                    lock.unlock_file(fh)
+                    break
+                time.sleep(0.05)
 '''
 
 
@@ -149,6 +154,15 @@ def _finish(child: subprocess.Popen, rc: int = 0) -> tuple[str, str]:
 
 def _stamp(tmp_path: Path, name: str) -> float:
     return float((tmp_path / name).read_text(encoding="utf-8"))
+
+
+def _said_pid(path: Path) -> int:
+    """The pid a run wrote for itself (the scratch conftest's ``<stamp>.pid``,
+    a plain holder's ``<tag>.ready``). Under a Windows venv ``Popen.pid`` is the
+    ``python.exe`` redirector's, never the interpreter's whose pid the lock
+    record holds, so a case that compared it red on a lock that works
+    (DEF-2028: the three names the win box's full tier carried)."""
+    return int(path.read_text(encoding="utf-8"))
 
 
 def _holding(tmp_path: Path, tree: Path, lock: Path, stamp: str = "a") -> subprocess.Popen:
@@ -222,8 +236,9 @@ class TestTwoRunsOnOneBox:
         _release(tmp_path, "a")
         out, err = second.finish()
         _finish(first)
-        assert "box lock: waiting on" in err and f"pid {first.pid}" in err, err
-        assert "box lock: waited" in out and f"pid {first.pid}" in out, out
+        holder_pid = _said_pid(tmp_path / "a.pid")
+        assert "box lock: waiting on" in err and f"pid {holder_pid}" in err, err
+        assert "box lock: waited" in out and f"pid {holder_pid}" in out, out
         assert _stamp(tmp_path, "b") >= _stamp(tmp_path, "a.done")
 
     def test_a_finished_holder_leaves_an_empty_record_and_the_next_run_waits_on_nobody(self, tmp_path):
@@ -247,7 +262,8 @@ class TestTwoRunsOnOneBox:
         _finish(first)
         lines = [json.loads(ln) for ln in (tmp_path / "box.lock.log").read_text(encoding="utf-8").splitlines() if ln.strip()]
         assert len(lines) == 1, lines
-        assert lines[0]["holder"]["pid"] == first.pid and lines[0]["waiter"]["pid"] == second.child.pid
+        assert lines[0]["holder"]["pid"] == _said_pid(tmp_path / "a.pid")
+        assert lines[0]["waiter"]["pid"] == _said_pid(tmp_path / "b.pid")
         assert lines[0]["waited_s"] > 0
 
 
@@ -335,8 +351,9 @@ class TestTheInheritedPair:
     @staticmethod
     def _holder(tmp_path: Path, lock: Path, record_pid: int | None, *, tag: str = "h") -> subprocess.Popen:
         """A plain process holding the lock with a record naming ``record_pid``
-        (its own when None), the shape of a parent run's hold; it releases
-        when the test writes ``<tag>.release``."""
+        (its own when None), the shape of a parent run's hold; it says its own
+        pid in ``<tag>.ready``, written whole and renamed into place, and
+        releases when the test writes ``<tag>.release``."""
         code = textwrap.dedent(f"""
             import json, os, sys, time
             from pathlib import Path
@@ -348,7 +365,9 @@ class TestTheInheritedPair:
             fh.write(json.dumps({{"pid": {record_pid if record_pid is not None else 'os.getpid()'}, "seat": "s", "lane": "l",
                                  "started": "2026-10-26T00:00:00Z", "argv": ["pytest"]}}))
             fh.flush()
-            Path({str(tmp_path / (tag + '.ready'))!r}).write_text("1")
+            ready = Path({str(tmp_path / (tag + '.ready'))!r})
+            ready.with_suffix(".tmp").write_text(str(os.getpid()))
+            os.replace(ready.with_suffix(".tmp"), ready)
             release = Path({str(tmp_path / (tag + '.release'))!r})
             deadline = time.monotonic() + 40
             while not release.exists() and time.monotonic() < deadline:
@@ -362,10 +381,11 @@ class TestTheInheritedPair:
     def test_a_child_of_the_live_holder_passes_through(self, tmp_path):
         """A nested run (xdist's workers) inherits the holder's pid and runs
         while its parent holds the box. Mutation: the pass-through dropped (a
-        deadlock on the parent's own hold)."""
+        deadlock on the parent's own hold); the pair named by ``Popen.pid``
+        (a Windows venv's redirector, which no record names)."""
         tree, lock = _scratch(tmp_path), tmp_path / "box.lock"
         holder = self._holder(tmp_path, lock, None)
-        child = _spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp="c", holder=str(holder.pid)))
+        child = _spawn(tmp_path, tree, _child_env(tmp_path, lock, stamp="c", holder=str(_said_pid(tmp_path / "h.ready"))))
         out, err = _finish(child)
         assert holder.poll() is None, "the holder had already released when the child finished"
         assert "box lock: waiting" not in err and "box lock: inside the holder" in out, out
