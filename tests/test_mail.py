@@ -3116,3 +3116,204 @@ class TestTheTreeIsReadBackBeforeAnyPush:
     def test_the_runner_refuses_lines_of_text_on_stdin(self, mail, machines):
         with pytest.raises(mail.Unresolvable, match="re-lines"):
             mail.run(["git", "hash-object", "--stdin"], cwd=str(machines["mac"]), input="a\nb\n")
+
+
+# ── a push that outlives its timeout ─────────────────────────────────────────
+
+def _push_outlives_its_timeout(mail, *, lands: bool, read_back: bool = True,
+                               reads_back: tuple[int, str, str] | None = None, lands_late: bool = False):
+    """The real runner, except that ``git push`` outlives its timeout: with
+    ``lands`` the push reaches origin before the runner gives up (the
+    dispatcher's 14:25Z send, 2026-10-30); with ``lands_late`` it reaches
+    origin right after the read-back that found the tip unchanged (the
+    transport and origin's side outlive the runner's kill: the failure-mode
+    review drove it with a slow pre-receive hook); with ``read_back`` False
+    the ``ls-remote`` after it outlives its timeout too (origin out of reach);
+    ``reads_back`` is what that ``ls-remote`` answers instead of origin."""
+    real = _real_run(mail)
+    timed_out = getattr(mail, "TimedOut", mail.Unresolvable)
+    pushed: dict = {"done": False, "late": False}
+
+    def run(argv, **kw):
+        if argv[:2] == ["git", "push"]:
+            if lands:
+                real(argv, **kw)
+            pushed["done"], pushed["argv"], pushed["kw"] = True, list(argv), dict(kw)
+            raise timed_out("git push took longer than 30s")
+        if argv[:2] == ["git", "ls-remote"] and pushed["done"]:
+            if not read_back:
+                raise timed_out("git ls-remote took longer than 30s")
+            if reads_back is not None:
+                return reads_back
+            answer = real(argv, **kw)
+            if lands_late and not pushed["late"]:
+                pushed["late"] = True
+                real(pushed["argv"], **pushed["kw"])   # origin takes the pack after the read
+            return answer
+        return real(argv, **kw)
+    return run
+
+
+_UNCONFIRMED = "refs/unconfirmed/mail/mac"
+
+
+def _ref_at(repo: Path, ref: str) -> str | None:
+    return _git(repo, "rev-parse", "--verify", "--quiet", ref, check=False).stdout.strip() or None
+
+
+class TestAPushThatOutlivesItsTimeout:
+    """A send whose push timed out landed anyway (air, 2026-10-30 14:25Z: the
+    refusal said nothing was sent, and origin held the assign when it was read
+    back fifteen minutes later; a claim re-sent on that refusal doubles, and an
+    assign re-sent restarts the job's clock). The runner's timeout raised past
+    the rollback, so the ref was neither read back nor put back. Origin's tip
+    is read back before anything is said."""
+
+    def test_a_push_that_landed_after_its_timeout_is_counted_sent_and_said(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        m = _msg(mail, "mac", "claim", "the files", lane="lane/x", paths=["tools/cc/a.py"])
+        said: list[str] = []
+        try:
+            commit = mail.send(mac, m, run=_push_outlives_its_timeout(mail, lands=True), say=said.append)
+        except mail.Unresolvable as refused:
+            pytest.fail(f"the send was refused after a push that landed: {refused}")
+        assert _ref_at(origin, "refs/heads/mail/mac") == commit
+        assert _ref_at(mac, "refs/heads/mail/mac") == commit
+        assert _ref_at(mac, "refs/remotes/origin/mail/mac") == commit
+        assert len(said) == 2 and "took longer than 30s" in said[0] and "landed" in said[0] and commit[:7] in said[0]
+        assert said[1] == f"sent claim {m['id']} as {commit[:7]} on refs/heads/mail/mac"
+        # The next send appends after it: no second writer in sight.
+        second = _msg(mail, "mac", "note", "after")
+        mail.send(mac, second, run=_real_run(mail), say=lambda _s: None)
+        assert [json.loads(ln)["id"] for ln in _origin_file(origin, "mac").splitlines()] == [m["id"], second["id"]]
+
+    def test_a_push_that_timed_out_without_landing_says_so_and_puts_the_ref_back(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        first = mail.send(mac, _msg(mail, "mac", "note", "kept"), run=_real_run(mail), say=lambda _s: None)
+        lost = _msg(mail, "mac", "note", "lost")
+        with pytest.raises(mail.Unresolvable, match=r"took longer than 30s.*unchanged.*had not landed when read"
+                                                     r".*can still land.*remembered") as refused:
+            mail.send(mac, lost, run=_push_outlives_its_timeout(mail, lands=False), say=lambda _s: None)
+        assert "send again" in str(refused.value) and "nothing was sent" not in str(refused.value)
+        assert _ref_at(origin, "refs/heads/mail/mac") == first
+        assert _ref_at(mac, "refs/heads/mail/mac") == first   # put back: the next send is not a second writer
+        assert _ref_at(mac, _UNCONFIRMED) is not None          # remembered until a later write settles it
+        again = mail.send(mac, _msg(mail, "mac", "note", "instead"), run=_real_run(mail), say=lambda _s: None)
+        assert _ref_at(origin, "refs/heads/mail/mac") == again
+        assert [json.loads(ln)["text"] for ln in _origin_file(origin, "mac").splitlines()] == ["kept", "instead"]
+        assert _ref_at(mac, _UNCONFIRMED) is not None          # origin was at its parent when read: it could still land
+        said: list[str] = []
+        mail.send(mac, _msg(mail, "mac", "note", "later"), run=_real_run(mail), say=said.append)
+        assert _ref_at(mac, _UNCONFIRMED) is None              # origin moved past its parent: settled, never
+        assert any("never landed" in line for line in said)
+
+    def test_a_repeated_write_that_lands_byte_for_byte_confirms_the_remembered_commit(self, mail, machines,
+                                                                                      monkeypatch):
+        """The seat sends the refused message again within the same second:
+        the commit it builds is the remembered one byte for byte (same parent,
+        content and clock), and its own push confirms it, so no later write is
+        refused for it (the batch run caught the clock landing on one second)."""
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "2026-10-30T14:25:11Z")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-10-30T14:25:11Z")
+        mac, origin = machines["mac"], machines["origin"]
+        lost = _msg(mail, "mac", "note", "lost")
+        with pytest.raises(mail.Unresolvable, match=r"can still land"):
+            mail.send(mac, lost, run=_push_outlives_its_timeout(mail, lands=False), say=lambda _s: None)
+        remembered = _ref_at(mac, _UNCONFIRMED)
+        again = mail.send(mac, lost, run=_real_run(mail), say=lambda _s: None)
+        assert remembered and again == remembered
+        assert _ref_at(mac, _UNCONFIRMED) is None
+        said: list[str] = []
+        mail.send(mac, _msg(mail, "mac", "note", "later"), run=_real_run(mail), say=said.append)
+        assert len(said) == 1 and said[0].startswith("sent note ")
+        assert [json.loads(ln)["text"] for ln in _origin_file(origin, "mac").splitlines()] == ["lost", "later"]
+
+    def test_a_push_that_landed_after_the_read_back_is_caught_at_the_next_send(self, mail, machines):
+        """Failure-mode review (2026-10-30): the read-back runs milliseconds
+        after the kill, and a slow origin lands the pack after it. The refusal
+        no longer says nothing was sent, and the next send from this checkout
+        is refused once, naming the commit, so the message is not repeated."""
+        mac, origin = machines["mac"], machines["origin"]
+        m = _msg(mail, "mac", "claim", "the files", lane="lane/x", paths=["tools/cc/a.py"])
+        with pytest.raises(mail.Unresolvable, match=r"can still land.*remembered") as refused:
+            mail.send(mac, m, run=_push_outlives_its_timeout(mail, lands=False, lands_late=True),
+                      say=lambda _s: None)
+        assert "nothing was sent" not in str(refused.value)
+        landed = _ref_at(origin, "refs/heads/mail/mac")
+        assert landed and _ref_at(mac, _UNCONFIRMED) == landed and _ref_at(mac, "refs/heads/mail/mac") is None
+        second = _msg(mail, "mac", "note", "after")
+        with pytest.raises(mail.Unresolvable, match=r"landed after all") as caught:
+            mail.send(mac, second, run=_real_run(mail), say=lambda _s: None)
+        assert landed[:7] in str(caught.value) and "not repeated" in str(caught.value)
+        assert [json.loads(ln)["id"] for ln in _origin_file(origin, "mac").splitlines()] == [m["id"]]
+        assert _ref_at(mac, _UNCONFIRMED) is None
+        mail.send(mac, second, run=_real_run(mail), say=lambda _s: None)
+        assert [json.loads(ln)["id"] for ln in _origin_file(origin, "mac").splitlines()] == [m["id"], second["id"]]
+
+    def test_an_unreadable_read_back_names_the_commit_and_the_next_send_adopts_what_landed(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        m = _msg(mail, "mac", "request", "maybe")
+        with pytest.raises(mail.Unresolvable, match=r"may have landed") as refused:
+            mail.send(mac, m, run=_push_outlives_its_timeout(mail, lands=True, read_back=False),
+                      say=lambda _s: None)
+        landed = _ref_at(origin, "refs/heads/mail/mac")
+        assert landed and landed[:7] in str(refused.value) and "remembered" in str(refused.value)
+        assert "nothing was sent" not in str(refused.value)
+        assert _ref_at(mac, "refs/heads/mail/mac") is None   # put back: behind origin's, adopted at the next write
+        assert _ref_at(mac, _UNCONFIRMED) == landed
+        second = _msg(mail, "mac", "note", "after")
+        with pytest.raises(mail.Unresolvable, match=r"landed after all"):
+            mail.send(mac, second, run=_real_run(mail), say=lambda _s: None)
+        mail.send(mac, second, run=_real_run(mail), say=lambda _s: None)
+        assert [json.loads(ln)["id"] for ln in _origin_file(origin, "mac").splitlines()] == [m["id"], second["id"]]
+
+    def test_a_foreign_tip_after_the_timeout_puts_the_ref_back_and_names_the_second_writer(self, mail, machines):
+        """Code review (2026-10-30): the two read-back outcomes no case drove.
+        A tip at neither this commit nor the parent is another writer under
+        the name; the ref goes back and the refusal says so."""
+        mac, origin = machines["mac"], machines["origin"]
+        first = mail.send(mac, _msg(mail, "mac", "note", "kept"), run=_real_run(mail), say=lambda _s: None)
+        foreign = "f0e1d2c3" * 5
+        run = _push_outlives_its_timeout(mail, lands=False, reads_back=(0, f"{foreign}\trefs/heads/mail/mac\n", ""))
+        with pytest.raises(mail.Unresolvable, match=r"at f0e1d2c.*not this send's commit.*one writer per machine"
+                                                     r".*did not land") as refused:
+            mail.send(mac, _msg(mail, "mac", "note", "lost"), run=run, say=lambda _s: None)
+        assert "unchanged" not in str(refused.value)
+        assert _ref_at(mac, "refs/heads/mail/mac") == first
+        assert _ref_at(origin, "refs/heads/mail/mac") == first
+
+    def test_a_ref_gone_after_the_timeout_puts_the_ref_back_and_says_so(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        first = mail.send(mac, _msg(mail, "mac", "note", "kept"), run=_real_run(mail), say=lambda _s: None)
+        run = _push_outlives_its_timeout(mail, lands=False, reads_back=(0, "", ""))
+        with pytest.raises(mail.Unresolvable, match=r"read back gone.*did not land"):
+            mail.send(mac, _msg(mail, "mac", "note", "lost"), run=run, say=lambda _s: None)
+        assert _ref_at(mac, "refs/heads/mail/mac") == first
+        assert _ref_at(origin, "refs/heads/mail/mac") == first
+
+    def test_a_push_git_could_not_run_puts_the_ref_back_and_says_nothing_was_sent(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        real = _real_run(mail)
+
+        def run(argv, **kw):
+            if argv[:2] == ["git", "push"]:
+                raise mail.Unresolvable("could not run git: [Errno 12] Cannot allocate memory")
+            return real(argv, **kw)
+        with pytest.raises(mail.Unresolvable, match=r"could not run git.*nothing was sent"):
+            mail.send(mac, _msg(mail, "mac", "note", "x"), run=run, say=lambda _s: None)
+        assert _ref_at(origin, "refs/heads/mail/mac") is None
+        assert _ref_at(mac, "refs/heads/mail/mac") is None
+        assert _ref_at(mac, _UNCONFIRMED) is None   # nothing left this box, so nothing to settle
+
+    def test_a_park_whose_push_landed_after_its_timeout_is_counted_parked(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        name = "2026-10-30-142511-mac.md"
+        said: list[str] = []
+        try:
+            commit = mail.park(mac, f"{_ROW_DIR}/{name}", _row(name), "origin/main",
+                               run=_push_outlives_its_timeout(mail, lands=True), say=said.append)
+        except mail.Unresolvable as refused:
+            pytest.fail(f"the park was refused after a push that landed: {refused}")
+        assert _ref_at(origin, "refs/heads/records/mac") == commit
+        assert len(said) == 2 and "landed" in said[0]
+        assert said[1] == f"parked {_ROW_DIR}/{name} as {commit[:7]} on refs/heads/records/mac"

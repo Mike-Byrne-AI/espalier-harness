@@ -6292,6 +6292,42 @@ the lanes and the release to run in it. It does not release them itself: a relea
 push to origin, and a claim nobody released usually marks work someone abandoned. A
 worktree removed by hand (`git worktree remove`) still strands its seat's claims.
 
+## A runner's timeout is not a refusal of the action: read the remote back before saying nothing was sent
+
+**What it is:** `tools/cc/record_merge.py::run` gives a spawned program a bounded wait and
+raises a named stop when the program outlives it. The stop says what the runner knows --
+the program did not return in time -- and nothing about what the program did. A `git push`
+that outlives the wait may have landed: the dispatcher's assign at 14:25:11Z on 2026-10-30
+was refused with `git push took longer than 30s`, and origin's ref held it when read back
+at 14:40Z (a GitHub `Internal Server Error` had refused the attempt a minute earlier, which
+was a real refusal, rolled back). Until that day `tools/cc/mail.py::_push_ref` let the
+timeout raise past its rollback, so the refusal read as "nothing was sent" while the local
+ref was neither read back nor put back: a seat that trusted it and sent again doubled the
+message (a re-sent assign restarts its job's clock), and a seat whose push had not landed
+was refused as a second writer under its own name at the next send.
+
+**How you hit it:** writing a verb whose action is not idempotent (a send appends, so a
+re-send is a second message) and treating the runner's timeout like the program's own
+non-zero exit, which is the one outcome the rollback branch below the spawn handles.
+
+**How to avoid it:** after a timeout on the action, read the remote back before saying
+anything, and remember what the read could not settle: an unchanged tip read milliseconds
+after the kill is not the end of it, since the push's transport and origin's side outlive
+the runner (driven with a pre-receive hook that sleeps: the tip moved five seconds after
+the refusal). `_push_ref` does both: origin's tip at the commit means the push landed, and
+the send says so; anything else puts the ref back, keeps the commit under a local
+`refs/unconfirmed/` ref and refuses with the push's fate as read (unchanged: it had not
+landed when read and can still land; a foreign tip or a gone ref: it did not land;
+unreadable: it may have), and the next write from this checkout settles the record --
+landed after all, and that write is refused once, naming the commit, so the message is not
+repeated; never, once origin moved past its parent on another line, and the record is
+dropped. The runner tells the timeout apart as `record_merge.TimedOut`, under
+`Unresolvable` so every existing catch holds. The ship driver's pushes need none of this:
+a re-run re-pushes the same branch head and git answers up to date, and a re-run of the
+release is refused before the tag push because the tag exists locally; its own runner
+(`tools/cc/ship.py::run`) has no `TimedOut`, so a non-idempotent ship verb would need the
+split first.
+
 ## An idle session leaves no trace a file scan can see, so recency cannot say a worktree is free
 
 **What it is:** a Claude Code session that is open but idle writes nothing: no file in its

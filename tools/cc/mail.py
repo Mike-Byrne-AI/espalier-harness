@@ -39,7 +39,12 @@ re-open it):
   cannot reach ``scripts/``): the worktree, HEAD and the live index are never
   touched, the ref moves by compare-and-swap, and the push carries no force,
   so a second checkout writing under the same name is refused, never
-  overwritten;
+  overwritten; a push that outlives its timeout is read back before anything
+  is said, since it may have landed (one did, 2026-10-30: the refusal said
+  nothing was sent, and a re-send would have doubled the message), and what
+  the read-back could not settle is remembered under ``refs/unconfirmed/``
+  and settled at this checkout's next write (an unchanged tip can still land
+  seconds after the refusal);
 * the public origin carries it, so a message is refused when a token of its
   text or a path it names matches the guard's secret-path patterns
   (``hooks/write_guard.py``'s own matcher, loaded by path) -- token friction,
@@ -82,7 +87,7 @@ from typing import Callable
 # deploy set; tests/test_deploy_set_import_closure.py pins the reachability).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _json_safe import decode_text_or_problem, os_error_text  # noqa: E402
-from record_merge import Unresolvable, run  # noqa: E402  the one spawn and the named stop
+from record_merge import TimedOut, Unresolvable, run  # noqa: E402  the one spawn and the named stops
 import _symbols  # noqa: E402  the symbols a lane changes, derived from its diff, carried by claims
 
 #: The git config key that names this box and turns the channel on; per clone
@@ -1732,14 +1737,29 @@ def _commit_blob(root: Path, content: str, parent: str | None, subject: str, *, 
     return _commit_entries(root, {MAIL_FILE: blob}, parent, subject, run=run)
 
 
+def _unconfirmed_ref(ref: str) -> str:
+    """Where a push that outlived its wait leaves the commit it could not
+    confirm: a local ref beside ``ref``, never pushed, read at this checkout's
+    next write and settled there (landed after all, or never)."""
+    return "refs/unconfirmed/" + ref.removeprefix("refs/heads/")
+
+
 def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callable[[str | None], str], *,
-              run: Runner, timeout: float, verb: tuple[str, str]) -> str:
+              run: Runner, timeout: float, verb: tuple[str, str],
+              say: Callable[[str], None] = lambda _line: None) -> str:
     """Move this machine's ``ref`` to the commit ``build(parent)`` makes and push
     it: origin's tip is read fresh and must be what this checkout last saw (a
     local ref behind it is adopted, one ahead of or diverged from it refuses:
     one writer per machine); the ref moves by compare-and-swap, the push carries
     no force, and a push origin refuses is rolled back so the next write starts
-    clean. ``verb`` names the write in a refusal (``("send", "sent")``)."""
+    clean. A push that outlives its timeout is read back before anything is
+    said, since it may have landed (one did, 2026-10-30): origin's tip at the
+    commit counts it as landed, told through ``say``; anything else puts the
+    ref back, keeps the commit under :func:`_unconfirmed_ref` and refuses with
+    the push's fate as read, and the next write from this checkout settles it
+    (landed after all: that write is refused once, naming it; never: the
+    record is dropped). ``verb`` names the write in a refusal
+    (``("send", "sent")``)."""
     noun, past = verb
     out = _git(root, "ls-remote", "--heads", REMOTE, ref, run=run, timeout=timeout)
     remote_tip = out.split()[0] if out else None
@@ -1757,6 +1777,27 @@ def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callab
         parent = remote_tip
     else:
         parent = local_tip
+    unconfirmed_ref = _unconfirmed_ref(ref)
+    unconfirmed = _tip(root, unconfirmed_ref, run=run)
+    if unconfirmed:
+        # A push this checkout refused earlier outlived its wait and was not
+        # on origin when read back; it can land seconds after the refusal (a
+        # slow origin finishes a pack it has received; the failure-mode review
+        # drove it). Settled here, at the next write: landed after all, and
+        # this write is refused once, naming it, so the message is not
+        # repeated; or origin moved past its parent on another line, so it
+        # never can, and the record is dropped.
+        landed_late = remote_tip is not None and (remote_tip == unconfirmed or run(
+            ["git", "merge-base", "--is-ancestor", unconfirmed, remote_tip], cwd=str(root), env=git_env())[0] == 0)
+        if landed_late:
+            _git(root, "update-ref", "-d", unconfirmed_ref, run=run)
+            raise Unresolvable(
+                f"the {noun} refused earlier, whose push outlived its wait, landed after all: {REMOTE}'s {ref} "
+                f"holds {unconfirmed[:7]}. This {noun} was not made, so that one is not repeated: read it "
+                f"(`git log -1 -p {remote_ref}`), then {noun} again if this is a new message")
+        if remote_tip is not None and remote_tip != _tip(root, f"{unconfirmed}^", run=run):
+            _git(root, "update-ref", "-d", unconfirmed_ref, run=run)
+            say(f"the push refused earlier ({unconfirmed[:7]}) never landed: {REMOTE} moved past it")
     commit = build(parent)
     # The net at the push, whatever builder made the commit: one whose tree
     # holds nothing never moves the ref or leaves this box (a Windows send
@@ -1774,19 +1815,78 @@ def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callab
         raise Unresolvable(f"{ref} moved under this {noun} (another write from this checkout, at the same "
                            f"moment); that write stands and nothing was {past} -- {noun} again (a refresh does, "
                            "on the next tick)") from None
-    rc, _out, err = run(["git", "push", "--quiet", REMOTE, f"{ref}:{ref}"], cwd=str(root), timeout=timeout,
-                        env=git_env())
-    if rc != 0:
+
+    def put_back(remember: bool = False) -> str:
         # Back to where this checkout was, so the next write reads origin fresh
-        # instead of refusing forever on a ref only this box has.
-        if local_tip:
-            _git(root, "update-ref", ref, local_tip, commit, run=run)
-        else:
-            _git(root, "update-ref", "-d", ref, commit, run=run)
+        # instead of refusing forever on a ref only this box has; with
+        # ``remember``, the commit is kept under the unconfirmed ref for the
+        # next write to settle. A failure here is a clause on the refusal,
+        # never in its place (failure-mode review).
+        try:
+            if local_tip:
+                _git(root, "update-ref", ref, local_tip, commit, run=run)
+            else:
+                _git(root, "update-ref", "-d", ref, commit, run=run)
+            if remember:
+                _git(root, "update-ref", unconfirmed_ref, commit, run=run)
+        except Unresolvable as stuck:
+            return f" (the ref here could not be put back: {stuck})"
+        return ""
+
+    kept = (f"The ref here is put back and the commit {commit[:7]} remembered: the next {noun} from this "
+            f"checkout refuses once, naming it, if it landed after all")
+    try:
+        rc, _out, err = run(["git", "push", "--quiet", REMOTE, f"{ref}:{ref}"], cwd=str(root), timeout=timeout,
+                            env=git_env())
+    except TimedOut as slow:
+        # The runner gave up on the push, which may still have landed (an
+        # assign did, 2026-10-30, a minute after origin had refused the first
+        # attempt with an Internal Server Error). Origin's tip is read back
+        # before anything is said: a write repeated on a wrong "nothing was
+        # sent" is a second message on the ref. An unchanged tip is not the
+        # end of it (the push's transport and origin's side outlive the
+        # runner's kill), so what was not confirmed is remembered.
+        try:
+            back = _git(root, "ls-remote", "--heads", REMOTE, ref, run=run, timeout=timeout)
+        except Unresolvable as unread:
+            note = put_back(remember=True)
+            raise Unresolvable(
+                f"{slow}, and {REMOTE} could not be read back ({unread}): the {noun} may have landed as "
+                f"{commit[:7]}. {kept}, so {noun} again when ready{note}") from None
+        landed = back.split()[0] if back else None
+        if landed != commit:
+            if landed == remote_tip:
+                where, fate = "unchanged", "the push had not landed when read, and can still land"
+            elif landed:
+                where = (f"at {landed[:7]}, not this {noun}'s commit (another checkout writes under the name "
+                         f"{machine!r}: one writer per machine)")
+                fate = "the push did not land"
+            else:
+                where, fate = "gone (the ref is no longer on origin)", "the push did not land"
+            note = put_back(remember=True)
+            raise Unresolvable(f"{slow}; {REMOTE}'s tip read back {where}: {fate}. {kept} -- {noun} again"
+                               f"{note}") from None
+        say(f"git push took longer than {timeout:.0f}s and landed anyway: {REMOTE}'s tip read back as {commit[:7]}")
+        rc, err = 0, ""
+    except Unresolvable as failed:
+        # git could not run the push at all: nothing left this box.
+        note = put_back()
+        raise Unresolvable(f"{failed}; nothing was {past} -- {noun} again{note}") from None
+    if rc != 0:
+        note = put_back()
         lines = err.strip().splitlines()
         detail = next((ln for ln in lines if ln.startswith("remote:")), lines[-1] if lines else "no detail")
         raise Unresolvable(f"{REMOTE} refused the push ({detail.strip()[:160]}); nothing was {past} -- fetch, "
-                           f"read, and {noun} again")
+                           f"read, and {noun} again{note}")
+    if unconfirmed == commit:
+        # The write refused earlier was made again byte for byte (the same
+        # parent, content and second) and this push confirmed it: the record
+        # is dropped here, where the push landed, so no later write is refused
+        # for it. A ref already gone costs nothing.
+        try:
+            _git(root, "update-ref", "-d", unconfirmed_ref, run=run)
+        except Unresolvable:
+            pass
     # What git does where a fetch refspec covers the ref, done where none does
     # (a single-branch clone): this machine's own mail is read from the
     # remote-tracking ref, so a refresh before the next fetch reads this write
@@ -1835,7 +1935,7 @@ def send(root: Path, message: dict, *, run: Runner = run, say: Callable[[str], N
         return _commit_blob(root, content, parent, subject, run=run)
 
     commit = _push_ref(root, machine, ref, remote_ref_for(machine), build, run=run, timeout=timeout,
-                       verb=("send", "sent"))
+                       verb=("send", "sent"), say=say)
     say(f"sent {message['type']} {message['id']} as {commit[:7]} on {ref}")
     return commit
 
@@ -1889,7 +1989,7 @@ def park(root: Path, path: str, data: bytes | None, base_ref: str, *, from_rev: 
         return _commit_entries(root, entries, parent, f"records({machine}): {parts[-1]}", run=run)
 
     commit = _push_ref(root, machine, ref, remote_records_ref_for(machine), build, run=run, timeout=timeout,
-                       verb=("park", "parked"))
+                       verb=("park", "parked"), say=say)
     say(f"parked {path} as {commit[:7]} on {ref}")
     return commit
 
