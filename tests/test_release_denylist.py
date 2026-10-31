@@ -105,6 +105,7 @@ class TestNoSharedImports:
             )
 
 
+@pytest.mark.contract
 class TestEngineConsumerAllowlist:
     """TP-40: ``release_denylist`` is intentionally a SECOND witness on
     archive cleanliness, kept independent of ``release_noise.py`` /

@@ -505,10 +505,24 @@ red `main`'s revert, are not new work). In a window `seat.py launch` started
 the reset is the seat's own: the launch loads the own-clear mod
 (`tools/cc/mods/own-clear`, `--plugin-dir`; `--no-mod` leaves it out), the
 handoff's last act arms its marker (`.espalier-state/own_clear.json`, keyed by
-the session id), and at the end of the next turn with nothing in flight the
-mod runs the real `/clear`, refuses a compaction meanwhile, and re-primes the
-cleared window with the seat brief less its loop line, since the loop survives
-the clear. A window started without the mod is told it needs a `/clear`.
+the session id) whenever it ran to its end -- the push landed, or a refusal
+the window is done with (the base red, or a step after a landed push), which
+rides the marker with the lane to land first appended to the brief; a refusal
+the window must fix first arms nothing, and a lane opened by hand is armed
+with `ship.py arm` -- and at the end of the next turn with nothing in flight
+the mod runs the real `/clear` (a prompt queued as the turn ended runs first,
+and the clear runs after it), refuses a compaction meanwhile, and re-primes
+the cleared window with the seat brief less its loop line, since the loop
+survives the clear. A window started without the mod is told it needs a
+`/clear`. Every outcome the mod meets goes on the marker -- a clear the engine
+refused (the reason, when, a count), one taken and never run, the turns a
+queued one has waited, the two ids a stale marking compared -- and the launch
+logs the mod by default (an `own_clear.log` beside the marker in the harness's
+state directory, capped; `--no-own-clear-log` leaves it off): the SessionStart banner's `Own-clear:`
+line reads the record for every later session, and the prompt router tells a
+window whose own asked clear was refused to say so in its reply, since its
+ticks run while nobody reads its status line (a dispatcher window re-asked a
+refused clear 41 times over ten hours on 2026-10-30).
 `docs/HOOKS.md`'s router section has the ask's mechanism; the briefs and the
 tick carry the rule; the mod's README has its measured facts.
 
@@ -523,9 +537,16 @@ are snapshots. Two of its lines are about the seats themselves:
   cannot say whether a session elsewhere is running, so ask a quiet seat
   rather than presume it gone.
 - `records:` gives each seat with a checkout here, a live claim or a job its
-  lanes merged since its newest Session Log row on the base: the row a seat
-  owes for the day's lanes, counted the same way the ship driver's row-debt
-  read counts it. A read that fails is unread, never zero.
+  lanes merged since its newest Session Log row -- on the base, parked on its
+  records ref, riding its open pull request, or pruned from the base and read
+  from its history (the line says which): the row a seat owes for the day's
+  lanes, counted the same way the ship driver's row-debt read counts it, and
+  a lane no claim names is the seat its `seat:` label names (the driver
+  stamps it at the open). On a named clone, past a cap of 3 lanes merged on
+  the days after that row, `ship.py open --early` refuses until a row is
+  committed on the lane; a debt that cannot be read (an unnamed clone, or git,
+  gh or the mail channel not answering) is said and `--early` stands. A read
+  that fails is unread, never zero.
 - `asks:` gives every request no ack answers yet, oldest first, with its full
   id and age. The dispatcher answers them, and another seat answers only a
   request about the files it claims; any seat's ack closes a request, so a
@@ -536,7 +557,11 @@ are snapshots. Two of its lines are about the seats themselves:
   dispatcher's question to the operator, counted apart on the header and
   tagged on its row; the ruling is the dispatcher's ack naming the request's
   full id, with the ruling in its text, and an ack from any other seat leaves
-  the call open.
+  the call open. A request whose text opens with `stopped:` is a worker's stop
+  (the tick's STOP clause: what stops it, in its text), counted apart on the
+  header and tagged on its row; its age is what the dispatcher reads first,
+  and any seat's ack naming it closes it, the worker's own included once what
+  stopped it is gone.
 
 `/inbox` has the rest: the channel's verbs, claims and releases, and what each
 board line means.

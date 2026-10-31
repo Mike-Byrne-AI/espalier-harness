@@ -1328,6 +1328,22 @@ HANDOFF_GATE_FLAG = _hook_utils.HANDOFF_GATE_FLAG
 #: One deadline for every git question the gate asks (at most seven reads of
 #: local refs and the index, no network), inside STOP_SAFETY_MARGIN.
 HANDOFF_GATE_DEADLINE_S = 5.0
+#: The own-clear marker under STATE_DIR, as ``tools/cc/ship.py`` names it
+#: (``OWN_CLEAR_MARKER`` there; tests/test_own_clear.py pins the two): the
+#: handoff's last act arms it, with ``head`` the HEAD it ran at.
+OWN_CLEAR_MARKER = "own_clear.json"
+
+
+def _own_clear_armed_at(root: Path, head: str) -> bool:
+    """Whether the own-clear marker is armed for ``head``: the handoff ran to
+    its end at this HEAD and its push was held (DEF-4057), so the lane is the
+    next window's to land and not owed again here. A marker that is missing,
+    unreadable or another head's reads False, and the gate judges as before."""
+    try:
+        marker = json.loads((root / STATE_DIR / OWN_CLEAR_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # fail-open: ok deliberate a missing or torn marker is not armed, and the gate still judges the lane
+        return False
+    return isinstance(marker, dict) and marker.get("state") == "armed" and marker.get("head") == head
 #: The reason quotes the plan's title up to this many characters.
 HANDOFF_GATE_TASK_CHARS = 80
 
@@ -1522,6 +1538,15 @@ def _gate_handoff(root: Path) -> int:
     ahead, branch, upstream, own = found
     _remember_head(flag, head)
     if ahead <= 0:
+        return 0
+    if _own_clear_armed_at(root, head):
+        # The handoff ran to its end for this HEAD and its push was held (the
+        # base red, or a step after a landed push refused; DEF-4057): the
+        # ship driver armed the own-clear with the lane to land first in the
+        # next window's brief, and the mod clears this window at the turn's
+        # end -- the end a block here would withhold, asking for a handoff
+        # that could only write a second row and re-arm (both reviews,
+        # 2026-10-30).
         return 0
     complete, task = _hook_utils.plan_completion(root)
     if complete:

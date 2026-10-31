@@ -7,9 +7,12 @@ import { expect, mock, test } from 'claude-code/testing'
 // status line, with the test's own hooks as the bottom of each chain the mod
 // raises (command.run, prompt.submit, session.compact), recording what the
 // mod asked for. The bottom of classic.SessionStart deletes the marker, so a
-// mod that read it after next(e) would find nothing: that pins the order. The
-// root reaches the mod through ESPALIER_OWN_CLEAR_ROOT, mocked before the
-// plugin loads.
+// mod that read it after next(e) would find nothing, and moves HEAD when a
+// test asks, standing for the checkout catch-up the project's SessionStart
+// hook runs beneath the mod, so a mod that read what the old window left in
+// flight after next(e) would name that move: both pin the order. The root
+// reaches the mod through ESPALIER_OWN_CLEAR_ROOT, mocked before the plugin
+// loads.
 
 const ROOT = '/scratch'
 const MARKER = `${ROOT}/.espalier-state/own_clear.json`
@@ -24,7 +27,7 @@ function markerText(fields: Fields): string {
 }
 
 function world(on: any, opts: { id?: string } = {}) {
-  const state = { id: opts.id ?? 'this-session', dirty: false, failWrites: false, refuseClear: false }
+  const state = { id: opts.id ?? 'this-session', head: HEAD, headBeneath: '', dirty: false, failWrites: false, refuseClear: false, consumeDuringGit: false }
   const files = new Map<string, string>()
   const seen = { commands: [] as string[], prompts: [] as string[], compactions: 0, status: [] as (string | undefined)[], toasts: [] as string[] }
   const transcript = [{ role: 'user', text: 'Reply with the single word ready.', toolUses: [], handle: 'm-1' }]
@@ -43,8 +46,13 @@ function world(on: any, opts: { id?: string } = {}) {
   })
   on('process.run', (_$: any, e: any) => {
     const argv = e.argv.join(' ')
+    if (state.consumeDuringGit && argv.startsWith('git status')) {
+      // The clear's SessionStart consumes the marker while a turn end's handler
+      // is between its read and its write (the other side of DEF-5032's window).
+      files.set(MARKER, markerText({ session_id: state.id, head: state.head, state: 'consumed', new_session_id: 'the-new-session' }))
+    }
     if (argv === 'git status --porcelain --untracked-files=no') return done(state.dirty ? ' M tracked.txt\n' : '')
-    if (argv === 'git rev-parse HEAD') return done(`${HEAD}\n`)
+    if (argv === 'git rev-parse HEAD') return done(`${state.head}\n`)
     if (argv === 'git rev-parse --show-toplevel') return done(`${ROOT}\n`)
     return done('', 1)
   })
@@ -59,7 +67,11 @@ function world(on: any, opts: { id?: string } = {}) {
   on('session.start', (_$: any, e: any) => ({ cwd: e.cwd }))
   on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
   on('classic.SessionStart', () => {
-    files.delete(MARKER) // a sweep beneath the mod: the marker must have been read already
+    // The hooks beneath the mod: a sweep that takes the marker (it must have
+    // been read already) and the checkout catch-up that moves HEAD when a test
+    // asks (what the old window left in flight must have been read already).
+    files.delete(MARKER)
+    if (state.headBeneath) state.head = state.headBeneath
     return {}
   })
   on('command.run', (_$: any, e: any) => {
@@ -141,10 +153,64 @@ test('a subagent turn and an aborted turn clear nothing', async ($, on) => {
   expect(w.seen.commands).toEqual([])
 })
 
-test('the clear runs once per session', async ($, on) => {
+test("a clear asked at a turn's end is named, never asked again, while the session stands", async ($, on) => {
+  // Measured 2026-10-30 on 2.1.314 (the dispatcher seat, 02:08Z): a prompt
+  // queued while the handoff's turn ran (a loop tick) was dequeued 150 ms after
+  // the turn ended, the mod's clear was enqueued behind it, and the engine ran
+  // that clear when the tick's turn ended, two minutes on. A second ask at the
+  // tick turn's end would have cleared the re-primed window, and with two
+  // prompts queued no turn count tells a queued clear from a lost one. So every
+  // later turn's end in the same session names the queued clear, and what the
+  // turn left in flight, and asks nothing.
   const w = world(on)
   w.arm({ session_id: w.id(), head: HEAD })
   await $.turn.complete(TURN)
+  expect(w.seen.commands).toEqual(['clear'])
+  expect(w.marker().clear_asked_at).toBe(new Date(1793066349000).toISOString())
+  await $.turn.complete(TURN)
+  expect(w.seen.commands).toEqual(['clear'])
+  expect(w.seen.status.at(-1)).toContain('queued')
+  w.state.dirty = true
+  await $.turn.complete(TURN)
+  expect(w.seen.commands).toEqual(['clear'])
+  expect(w.seen.status.at(-1)).toContain('a tracked edit is in flight')
+  expect(w.marker().state).toBe('armed')
+})
+
+test('a compaction is let through once two turns have passed since the ask', async ($, on) => {
+  // The compaction's refusal exists so the handoff's summary is not written
+  // twice; held for ever over a clear the engine lost, it would freeze the
+  // window instead. Two turns after the ask the clear is evidently not coming
+  // at this turn's end, and the compaction runs.
+  const w = world(on)
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN)
+  expect((await w.compact($)).skip).toContain('own-clear')
+  await $.turn.complete(TURN)
+  expect((await w.compact($)).skip).toContain('own-clear')
+  await $.turn.complete(TURN)
+  expect((await w.compact($)).skip).toBeUndefined()
+  expect(w.seen.compactions).toBe(1)
+})
+
+test("the clear's SessionStart names what the old window left in flight", async ($, on) => {
+  // A queued clear runs over whatever the turn before it did: the new window
+  // is told, after its brief, before it reads anything else.
+  const w = world(on)
+  await $.classic.SessionStart({ source: 'startup' })
+  w.arm({ session_id: w.id(), head: HEAD })
+  w.state.id = 'the-new-session'
+  w.state.dirty = true
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(w.seen.prompts.length).toBe(1)
+  expect(w.seen.prompts[0]).toContain('the seat brief')
+  expect(w.seen.prompts[0]).toContain('a tracked edit is in flight')
+})
+
+test('a marker that cannot take the ask still clears', async ($, on) => {
+  const w = world(on)
+  w.arm({ session_id: w.id(), head: HEAD })
+  w.state.failWrites = true
   await $.turn.complete(TURN)
   expect(w.seen.commands).toEqual(['clear'])
 })
@@ -164,7 +230,7 @@ test('a refused clear says so on the status line and is tried again at the next 
 test("the clear's SessionStart consumes the marker of the session this process was in and submits its brief", async ($, on) => {
   const w = world(on)
   await $.classic.SessionStart({ source: 'startup' }) // the process learns its session
-  w.arm({ session_id: w.id(), head: 'h' })
+  w.arm({ session_id: w.id(), head: HEAD })
   w.state.id = 'the-new-session'
   await $.classic.SessionStart({ source: 'clear' })
   expect(w.seen.prompts).toEqual(['the seat brief'])
@@ -177,7 +243,7 @@ test("the clear's SessionStart consumes the marker of the session this process w
 test('a marker with no brief re-primes with the generic line', async ($, on) => {
   const w = world(on)
   await $.classic.SessionStart({ source: 'startup' })
-  w.arm({ session_id: w.id(), head: 'h', brief: null })
+  w.arm({ session_id: w.id(), head: HEAD, brief: null })
   w.state.id = 'the-new-session'
   await $.classic.SessionStart({ source: 'clear' })
   expect(w.seen.prompts.length).toBe(1)
@@ -188,7 +254,7 @@ test('a marker with no brief re-primes with the generic line', async ($, on) => 
 test('a marker armed for a session this process was never in is marked stale and re-primes nothing', async ($, on) => {
   const w = world(on)
   await $.classic.SessionStart({ source: 'startup' })
-  w.arm({ session_id: 'someone-else', head: 'h' })
+  w.arm({ session_id: 'someone-else', head: HEAD })
   w.state.id = 'the-new-session'
   await $.classic.SessionStart({ source: 'clear' })
   expect(w.seen.prompts).toEqual([])
@@ -198,10 +264,10 @@ test('a marker armed for a session this process was never in is marked stale and
 
 test('a startup SessionStart, a consumed marker and no marker re-prime nothing', async ($, on) => {
   const w = world(on)
-  w.arm({ session_id: w.id(), head: 'h' })
+  w.arm({ session_id: w.id(), head: HEAD })
   await $.classic.SessionStart({ source: 'startup' })
   expect(w.seen.prompts).toEqual([])
-  w.arm({ session_id: w.id(), head: 'h', state: 'consumed' })
+  w.arm({ session_id: w.id(), head: HEAD, state: 'consumed' })
   await $.classic.SessionStart({ source: 'clear' })
   expect(w.seen.prompts).toEqual([])
   await $.classic.SessionStart({ source: 'clear' })
@@ -211,11 +277,43 @@ test('a startup SessionStart, a consumed marker and no marker re-prime nothing',
 test('a marker that cannot be rewritten still re-primes', async ($, on) => {
   const w = world(on)
   await $.classic.SessionStart({ source: 'startup' })
-  w.arm({ session_id: w.id(), head: 'h' })
+  w.arm({ session_id: w.id(), head: HEAD })
   w.state.id = 'the-new-session'
   w.state.failWrites = true
   await $.classic.SessionStart({ source: 'clear' })
   expect(w.seen.prompts).toEqual(['the seat brief'])
+})
+
+test("a marker whose head moved re-primes with the move named", async ($, on) => {
+  // The old window committed after its handoff (the handoff re-arms on its
+  // own; a hand commit does not): the new window hears it before anything.
+  const w = world(on)
+  await $.classic.SessionStart({ source: 'startup' })
+  w.arm({ session_id: w.id(), head: 'h' })
+  w.state.id = 'the-new-session'
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(w.seen.prompts.length).toBe(1)
+  expect(w.seen.prompts[0]).toContain('HEAD moved since the handoff')
+})
+
+test("the clear's SessionStart reads what the old window left in flight before the hooks beneath move HEAD", async ($, on) => {
+  // The project's SessionStart hook runs inside next(e) and catches the
+  // checkout up (the banner's Checkout: line): a lane branch GitHub deleted
+  // at the merge moves onto the base. Read after next(e), that move named
+  // itself as work left in the old window on every re-prime whose lane had
+  // merged (the dispatcher window 28cea670, 2026-10-30: six tool calls on a
+  // clean tree). The old window's final state is read beside the marker,
+  // before the event is handed on.
+  const w = world(on)
+  await $.classic.SessionStart({ source: 'startup' })
+  w.arm({ session_id: w.id(), head: HEAD })
+  w.state.id = 'the-new-session'
+  w.state.headBeneath = '0f1e2d3c4b5a69788796a5b4c3d2e1f098765432'
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(w.state.head).toBe(w.state.headBeneath) // the stage beneath ran
+  expect(w.seen.prompts.length).toBe(1)
+  expect(w.seen.prompts[0].includes('HEAD moved')).toBe(false)
+  expect(w.marker().state).toBe('consumed')
 })
 
 test('a compaction is refused only while the marker is armed and the clear can run, or is under way', async ($, on) => {
@@ -239,4 +337,177 @@ test('a compaction runs when nothing is armed for this session', async ($, on) =
   w.arm({ session_id: 'someone-else', head: HEAD })
   expect((await w.compact($)).skip).toBeUndefined()
   expect(w.seen.compactions).toBe(1)
+})
+
+// The record (DEF-5031, DEF-5032, 2026-10-30): the mod's log is opt-in and was
+// off on every seat, so a clear the engine refused 41 times over ten hours on
+// the dispatcher window (88a94ba9, 2.1.312) and a re-prime the mod skipped on a
+// worker window (19cab033) left nothing a reader could find but a status line
+// nobody read. Every outcome goes on the marker, which outlives the process;
+// the banner's Own-clear: line reads it. The continuation that records a
+// refusal runs after the hook has answered, so a case waits for it, bounded.
+async function until(pred: () => boolean, tries = 50): Promise<void> {
+  for (let i = 0; i < tries && !pred(); i++) await new Promise(r => setTimeout(r, 5))
+}
+
+test("a refused clear is on the marker's record: the reason, when, and a count that grows", async ($, on) => {
+  const w = world(on)
+  w.state.refuseClear = true
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN)
+  await until(() => w.marker().clear_refusals !== undefined)
+  expect(w.marker().state).toBe('armed')
+  // the engine's own rejection text (under test, the thrown hook reads as no implementation)
+  expect(w.marker().clear_refused).toContain('command.run')
+  expect(w.marker().clear_refusals).toBe(1)
+  expect(w.marker().clear_refused_at).toBe(new Date(1793066349000).toISOString())
+  expect(w.seen.status.at(-1)).toContain('the clear was refused')
+  await $.turn.complete(TURN)
+  await until(() => w.marker().clear_refusals === 2)
+  expect(w.marker().clear_refusals).toBe(2)
+  expect(w.seen.commands).toEqual(['clear', 'clear'])
+})
+
+test('the turns a queued clear has waited are counted on the marker', async ($, on) => {
+  const w = world(on)
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN)
+  expect(w.marker().turns_since_ask).toBeUndefined()
+  await $.turn.complete(TURN)
+  expect(w.marker().turns_since_ask).toBe(1)
+  await $.turn.complete(TURN)
+  expect(w.marker().turns_since_ask).toBe(2)
+  expect(w.seen.commands).toEqual(['clear'])
+})
+
+test("a turn that ends as the queued clear flips the session keeps the asked session as this process's last", async ($, on) => {
+  // DEF-5032: the handoff's turn asked the clear; a loop tick queued as it
+  // ended ran first; the engine dequeued the clear 5 ms after the tick turn's
+  // end, while that turn's turn.complete was still resolving session.id(),
+  // which read the NEW id -- so the clear's SessionStart compared the marker
+  // with the new session, marked it stale and re-primed nothing (the worker
+  // window 19cab033, 19:55Z). Under a pending clear a turn's end moves nothing;
+  // the clear's SessionStart sets the new id itself.
+  const w = world(on)
+  await $.classic.SessionStart({ source: 'startup' })
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN) // the ask; the clear is queued behind the tick
+  expect(w.seen.commands).toEqual(['clear'])
+  w.state.id = 'the-new-session' // the dequeued clear flips the session...
+  await $.turn.complete(TURN) // ...as the tick turn's end resolves its id
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(w.seen.prompts).toEqual(['the seat brief'])
+  expect(w.marker().state).toBe('consumed')
+  expect(w.marker().new_session_id).toBe('the-new-session')
+  expect(w.seen.commands).toEqual(['clear']) // and no second ask
+})
+
+test('a stale marking records the two ids it compared', async ($, on) => {
+  const w = world(on)
+  await $.classic.SessionStart({ source: 'startup' })
+  w.arm({ session_id: 'someone-else', head: HEAD })
+  w.state.id = 'the-new-session'
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(w.marker().state).toBe('stale')
+  expect(w.marker().previous_session_id).toBe('this-session')
+  expect(w.marker().stale_because).toContain('someone-else')
+  expect(w.marker().stale_because).toContain('this-session')
+})
+
+test("a clear that raises session.start keeps the asked session as this process's last", async ($, on) => {
+  // Measured on 2.1.310 a /clear raises no second session.start (the mod's
+  // once-per-process note); should a later engine raise one at the clear, it
+  // would hand the new id to the clear's SessionStart as the last session.
+  const w = world(on)
+  await $.classic.SessionStart({ source: 'startup' })
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN)
+  expect(w.seen.commands).toEqual(['clear'])
+  w.state.id = 'the-new-session'
+  await $.session.start({ cwd: ROOT } as any)
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(w.seen.prompts).toEqual(['the seat brief'])
+  expect(w.marker().state).toBe('consumed')
+})
+
+test("after a reload a marker this checkout's mod asked to clear is still ours; one nobody asked is not", async ($, on) => {
+  // A reload of the module (the engine reloads a plugin whose files changed)
+  // resets its memory: no last session, no pending ask. The marker's own
+  // record of the ask stands in for them; a marker with no ask on it is
+  // another window's and stays stale.
+  const w = world(on)
+  w.arm({ session_id: 'the-asked-session', head: HEAD, clear_asked_at: new Date(1793066349000 - 60_000).toISOString() })
+  w.state.id = 'the-new-session'
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(w.seen.prompts).toEqual(['the seat brief'])
+  expect(w.marker().state).toBe('consumed')
+  w.arm({ session_id: 'another-window', head: HEAD })
+  w.state.id = 'a-third-session'
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(w.seen.prompts).toEqual(['the seat brief'])
+  expect(w.marker().state).toBe('stale')
+  expect(w.marker().stale_because).toContain('another-window')
+})
+
+test('after a reload a marker nobody asked to clear is not ours', async ($, on) => {
+  // The reload arm's negative twin, with no prior event in this module (the
+  // failure-mode review, 2026-10-30: a twin that ran after a prior event had
+  // a last session already known and never exercised the arm's own condition).
+  const w = world(on)
+  w.arm({ session_id: 'another-window', head: HEAD })
+  w.state.id = 'the-new-session'
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(w.seen.prompts).toEqual([])
+  expect(w.marker().state).toBe('stale')
+  expect(w.marker().previous_session_id).toBeNull()
+})
+
+test('after a reload a marker asked to clear more than a day ago is not ours', async ($, on) => {
+  // The arm's bound: a leftover of a window long closed, found by a process
+  // that reloaded before any turn end, is not re-primed into this window.
+  const w = world(on)
+  w.arm({ session_id: 'a-window-long-closed', head: HEAD, clear_asked_at: new Date(1793066349000 - 2 * 86_400_000).toISOString() })
+  w.state.id = 'the-new-session'
+  await $.classic.SessionStart({ source: 'clear' })
+  expect(w.seen.prompts).toEqual([])
+  expect(w.marker().state).toBe('stale')
+})
+
+test("an earlier ask's refusal and wait come off the marker at the next ask; the count stays", async ($, on) => {
+  // A refusal recorded on ask 1 must not read as ask 2's, which the engine
+  // may take (the code review, 2026-10-30: a queued clear reported as refused).
+  const w = world(on)
+  w.state.refuseClear = true
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN)
+  await until(() => w.marker().clear_refusals === 1)
+  w.state.refuseClear = false
+  await $.turn.complete(TURN) // the re-ask, taken this time
+  expect(w.seen.commands).toEqual(['clear', 'clear'])
+  expect(w.marker().clear_refused).toBeUndefined()
+  expect(w.marker().clear_refused_at).toBeUndefined()
+  expect(w.marker().clear_refusals).toBe(1)
+  expect(w.marker().clear_asked_at).toBe(new Date(1793066349000).toISOString())
+})
+
+test("a queued turn's record write never arms again a marker the clear consumed meanwhile", async ($, on) => {
+  const w = world(on)
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN) // the ask
+  w.state.consumeDuringGit = true // the consume lands between this turn end's read and its write
+  await $.turn.complete(TURN)
+  expect(w.marker().state).toBe('consumed')
+  expect(w.marker().turns_since_ask).toBeUndefined()
+})
+
+test('a clear the engine took and never ran is told apart from a queued one on the record', async ($, on) => {
+  const w = world(on)
+  w.arm({ session_id: w.id(), head: HEAD })
+  await $.turn.complete(TURN) // the ask; the test's command.run answers at once
+  await new Promise(r => setTimeout(r, 10)) // the resolution's continuation
+  await $.turn.complete(TURN) // the session still stands: the clear did not run
+  expect(w.marker().turns_since_ask).toBe(1)
+  expect(w.marker().clear_resolved_at).toBe(new Date(1793066349000).toISOString())
+  expect(w.marker().clear_refused).toBeUndefined()
+  expect(w.marker().state).toBe('armed')
 })

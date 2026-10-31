@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -52,6 +53,7 @@ def _git_ls_files() -> list[str]:
     return files
 
 
+@pytest.mark.contract  # a whole-tree sweep: the tree-sweep census names it
 def test_no_tracked_release_noise():
     """No tracked file may match a release-noise pattern."""
     tracked = _git_ls_files()

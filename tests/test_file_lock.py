@@ -447,6 +447,7 @@ def lock_primitive_sites(root: Path) -> set[tuple[str, str]]:
     return found
 
 
+@pytest.mark.contract
 def test_no_shipped_lock_site_reaches_for_fcntl_itself():
     actual = lock_primitive_sites(REPO_ROOT)
     assert actual == set(_LOCK_PRIMITIVE_ALLOWED), (
@@ -458,6 +459,7 @@ def test_no_shipped_lock_site_reaches_for_fcntl_itself():
     )
 
 
+@pytest.mark.contract
 def test_the_census_sees_every_spelling_it_claims(tmp_path):
     # Earn the census's red on each spelling it promises to catch.
     pkg = tmp_path / "tools" / "cc"

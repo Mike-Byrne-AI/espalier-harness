@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+
+import pytest
 from tests._live_tree import checkout_rglob
 
 
@@ -42,6 +44,7 @@ def _is_historical(line: str, prior_line: str) -> bool:
     return "TP-70" in line or "TP-70" in prior_line
 
 
+@pytest.mark.contract
 def test_no_stale_gate_five_references() -> None:
     failures: list[str] = []
     for root in SCAN_ROOTS:

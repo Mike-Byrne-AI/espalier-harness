@@ -882,3 +882,86 @@ class TestContextThreshold:
         assert (tmp_path / ".espalier-state" / "once_context_unreadable").exists()
         second = _run_payload(payload, tmp_path)
         assert "could not be read" not in second.stdout
+
+
+class TestOwnClearRefused:
+    """DEF-5031: the own-clear mod asks the engine for the clear at a turn's
+    end and puts a rejected ask on its marker (the reason, when, a count); the
+    window whose clear it is gets loop ticks and nothing else, so the router
+    tells the model to say so where the operator reads. Fires only on a marker
+    armed for THIS session with a refusal on it, above an active plan; a torn
+    marker says nothing. The banner's Own-clear: line is every other session's
+    reader. Dies to: the advisory on another session's marker or on a clear
+    not yet refused, or a torn marker read as a crash."""
+
+    def _marker(self, root: Path, **fields) -> None:
+        state = root / ".espalier-state"
+        state.mkdir(parents=True, exist_ok=True)
+        base = {"state": "armed", "session_id": "ctx-1", "head": "h" * 40,
+                "clear_asked_at": "2026-10-30T09:09:13.751Z"}
+        (state / "own_clear.json").write_text(json.dumps({**base, **fields}), encoding="utf-8")
+
+    def test_a_refused_clear_of_this_session_is_named_with_its_count_reason_and_the_hand_clear(self, tmp_path):
+        self._marker(tmp_path, clear_refusals=41,
+                     clear_refused="HooksError: the turn was interrupted\nbefore the command ran")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "/inbox board"}, tmp_path)
+        assert res.returncode == 0, res.stderr
+        assert "[HARNESS] own-clear: the clear this window asked the engine for at 2026-10-30T09:09Z" in res.stdout
+        assert "refused 41 time(s)" in res.stdout and "interrupted before the command ran" in res.stdout
+        assert "/clear by hand" in res.stdout and "Take no new job" in res.stdout
+        assert res.stdout.isascii(), res.stdout
+
+    def test_it_fires_above_an_active_plan(self, tmp_path):
+        _write_plan(tmp_path, "in_progress")
+        self._marker(tmp_path, clear_refusals=1, clear_refused="HooksError: x")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "/inbox board"}, tmp_path)
+        assert "own-clear: the clear this window asked" in res.stdout, res.stdout
+
+    def test_a_refusal_followed_by_an_ask_the_engine_took_says_nothing(self, tmp_path):
+        """The mod takes the latest refusal off the marker at a new ask and keeps
+        the count (the code review, 2026-10-30: the advisory would have called a
+        queued clear refused and sent the operator to a second clear)."""
+        self._marker(tmp_path, clear_refusals=2)
+        res = _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path)
+        assert res.returncode == 0 and "own-clear" not in res.stdout, res.stdout
+
+    def test_engine_text_is_folded_to_one_ascii_line(self, tmp_path):
+        self._marker(tmp_path, clear_refusals=1,
+                     clear_refused="HooksError: “the turn” was\r\ninterrupted — twice")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path)
+        assert res.stdout.isascii(), res.stdout
+        assert "?the turn? was interrupted ? twice" in res.stdout, res.stdout
+
+    def test_what_the_mod_wrote_at_the_clear_into_this_session_is_said_once(self, tmp_path):
+        """The SessionStart banner runs beneath the mod's handler and cannot see
+        the marker the mod rewrites at the clear (the failure-mode review,
+        2026-10-30), so the first prompt of the new session hears it: a stale
+        marking (cleared, not re-primed) or a consume after refusals; once."""
+        self._marker(tmp_path, state="stale", new_session_id="ctx-2", previous_session_id="ctx-9",
+                     stale_because="armed for ctx-1; this process's last session was ctx-9")
+        first = _run_payload({"session_id": "ctx-2", "prompt": "Worker tick."}, tmp_path)
+        assert "cleared by the own-clear and not re-primed" in first.stdout, first.stdout
+        assert "armed for ctx-1; this process's last session was ctx-9" in first.stdout
+        assert "seat.py brief" in first.stdout and "start no second one" in first.stdout
+        assert (tmp_path / ".espalier-state" / "sessions" / "ctx-2.own-clear-told").is_file()
+        second = _run_payload({"session_id": "ctx-2", "prompt": "Worker tick."}, tmp_path)
+        assert "not re-primed" not in second.stdout, second.stdout
+        assert "own-clear" not in _run_payload({"session_id": "ctx-3", "prompt": "hi"}, tmp_path).stdout
+        self._marker(tmp_path, state="consumed", new_session_id="ctx-4", clear_refusals=41,
+                     clear_refused="HooksError: x", consumed_at="2026-10-30T19:22:02Z")
+        told = _run_payload({"session_id": "ctx-4", "prompt": "hi"}, tmp_path)
+        assert "re-primed after the engine refused the clear 41 time(s) (latest: HooksError: x)" in told.stdout
+        self._marker(tmp_path, state="consumed", new_session_id="ctx-5", consumed_at="2026-10-30T19:22:02Z")
+        assert "own-clear" not in _run_payload({"session_id": "ctx-5", "prompt": "hi"}, tmp_path).stdout
+
+    def test_another_sessions_marker_a_clear_not_yet_refused_a_consumed_one_and_a_torn_one_say_nothing(
+            self, tmp_path):
+        self._marker(tmp_path, clear_refusals=41, clear_refused="HooksError: x")
+        assert "own-clear" not in _run_payload({"session_id": "ctx-2", "prompt": "hi"}, tmp_path).stdout
+        self._marker(tmp_path)
+        assert "own-clear" not in _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path).stdout
+        self._marker(tmp_path, state="consumed", new_session_id="ctx-1", consumed_at="2026-10-30T09:09:14Z")
+        assert "own-clear" not in _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path).stdout
+        (tmp_path / ".espalier-state" / "own_clear.json").write_text('{"state": "arm', encoding="utf-8")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path)
+        assert res.returncode == 0 and "own-clear" not in res.stdout, res.stdout + res.stderr

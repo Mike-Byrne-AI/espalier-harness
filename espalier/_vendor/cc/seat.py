@@ -564,18 +564,19 @@ def venv_bindir(path: Path) -> Path | None:
 
 
 def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None = None,
-              own_clear: bool = False) -> dict[str, str]:
+              own_clear: bool = False, own_clear_log: str | None = None) -> dict[str, str]:
     """The session's environment: this one minus what a session it may be
     launched from sets in its children (:data:`SESSION_ENV`; the config dir and
     user settings stay) and minus the own-clear's names (:data:`OWN_CLEAR_ENV`:
     a root or a log left exported in the operator's shell would aim every
     seat's mod at one checkout), the maintenance switch only when asked for,
     ``ESPALIER_OWN_CLEAR=1`` only when the own-clear mod rides this launch (so
-    ``ship.py handoff`` can tell whether the window will clear itself), and the
-    seat's own ``.venv`` first on ``PATH`` and named in ``VIRTUAL_ENV`` --
-    or no ``VIRTUAL_ENV`` at all, since the inherited one names another
-    checkout's (read 2026-10-15: a worktree session's named the main
-    checkout's, where a ``uv pip install`` would land)."""
+    ``ship.py handoff`` can tell whether the window will clear itself), the
+    mod's log (``own_clear_log``, :data:`OWN_CLEAR_LOG_KEY`) only beside that
+    flag, and the seat's own ``.venv`` first on ``PATH`` and named in
+    ``VIRTUAL_ENV`` -- or no ``VIRTUAL_ENV`` at all, since the inherited one
+    names another checkout's (read 2026-10-15: a worktree session's named the
+    main checkout's, where a ``uv pip install`` would land)."""
     env = {k: v for k, v in (os.environ if base is None else base).items()
            if k not in SESSION_ENV and k not in OWN_CLEAR_ENV}
     if maintenance:
@@ -584,6 +585,8 @@ def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None 
         env.pop(MAINTENANCE_KEY, None)
     if own_clear:
         env[OWN_CLEAR_KEY] = "1"
+        if own_clear_log:
+            env[OWN_CLEAR_LOG_KEY] = own_clear_log
     # The box lock: the inherited path when the parent named one, else the
     # host's default, so every launched seat on this machine locks one file.
     env.setdefault(BOX_LOCK_KEY, box_lock_default())
@@ -597,15 +600,18 @@ def child_env(target: Target, *, maintenance: bool, base: dict[str, str] | None 
 
 
 def command_line(target: Target, args: list[str], *, maintenance: bool, shell: str | None = None,
-                 own_clear: bool = False) -> str:
+                 own_clear: bool = False, own_clear_log: str | None = None) -> str:
     """The one line that launches the seat by hand: PowerShell (the default on
     Windows) or a POSIX shell, setting what :func:`child_env` sets (the
-    own-clear flag only with ``own_clear``, its other names unset either way).
-    Refused for PowerShell when an argument holds a double quote, which
-    Windows PowerShell 5.1 re-splits a native program's argument at."""
+    own-clear flag only with ``own_clear``, its log only beside that flag, its
+    other names unset either way). Refused for PowerShell when an argument
+    holds a double quote, which Windows PowerShell 5.1 re-splits a native
+    program's argument at."""
     shell = shell or ("powershell" if os.name == "nt" else "posix")
     bindir = venv_bindir(target.path)
-    own_clear_unsets = sorted(OWN_CLEAR_ENV - ({OWN_CLEAR_KEY} if own_clear else set()))
+    log = own_clear_log if own_clear and own_clear_log else None
+    own_clear_unsets = sorted(OWN_CLEAR_ENV - ({OWN_CLEAR_KEY} if own_clear else set())
+                              - ({OWN_CLEAR_LOG_KEY} if log else set()))
     if shell == "powershell":
         bad = [a for a in args if any(ch in a for ch in _PS_DOUBLE)]
         if bad:
@@ -620,6 +626,8 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
         parts += [f"Remove-Item Env:{name} -ErrorAction SilentlyContinue" for name in own_clear_unsets]
         if own_clear:
             parts.append(f"$env:{OWN_CLEAR_KEY} = '1'")
+            if log:
+                parts.append(f"$env:{OWN_CLEAR_LOG_KEY} = {q(log)}")
         if bindir is not None:
             parts.append(f"$env:VIRTUAL_ENV = {q(str(bindir.parent))}")
             parts.append(f"$env:PATH = {q(str(bindir) + ';')} + $env:PATH")
@@ -634,7 +642,8 @@ def command_line(target: Target, args: list[str], *, maintenance: bool, shell: s
     # options at the first assignment and runs `-u` as the program (exit 127,
     # driven 2026-10-26); GNU `env` permutes its arguments and takes either order.
     unsets = ([] if maintenance else [MAINTENANCE_KEY]) + own_clear_unsets
-    assigns = ([f"{MAINTENANCE_KEY}=1"] if maintenance else []) + ([f"{OWN_CLEAR_KEY}=1"] if own_clear else [])
+    assigns = (([f"{MAINTENANCE_KEY}=1"] if maintenance else []) + ([f"{OWN_CLEAR_KEY}=1"] if own_clear else [])
+               + ([f"{OWN_CLEAR_LOG_KEY}={shlex.quote(log)}"] if log else []))
     if bindir is not None:
         assigns += [f"VIRTUAL_ENV={shlex.quote(str(bindir.parent))}", f'PATH={shlex.quote(str(bindir))}:"$PATH"']
     else:
@@ -724,7 +733,10 @@ SELF_HOST_PROCEED = (
     "On a choice the assign does not settle, send {dispatcher} one request with your Task 0 recommendation and "
     "its citation, then proceed on it after {wait} minutes (the dispatcher's tick; the board's asks line shows "
     "your request's age) with no answer; a request with no recommendation keeps the stop, and an ack from "
-    "{dispatcher} beginning redirect: re-aims you at once. STOP and only re-read mail for what the assign "
+    "{dispatcher} beginning redirect: re-aims you at once. STOP, send {dispatcher} one request opening with "
+    "stopped: that names what stops you (an operator call by its id), and only re-read mail until an ack frees "
+    "or re-aims you or what stops you is gone, then ack your own stop saying so (an ack that does not free you: "
+    "send the stop again), for what the assign "
     "authority reserves for the operator (a new pack, a scope change, a release or tag, a revert that is not "
     "the red-main revert, an open operator call on your fork), a platform stop, a refusal you cannot resolve, "
     "or a conflict outside your own files; a row to file is never a stop. A red you cannot fix in two "
@@ -736,16 +748,51 @@ SELF_HOST_PROCEED = (
     "allowance: line names runs at your own model, a named agent runs at its own pin and needs no allowance, "
     "and choosing your own model where a lower one was allowed is never a finding."
 )
+#: Both clauses send one request opening with stopped: at the stop (the
+#: board's asks line counts it apart and the census tallies it; the word's
+#: home is tools/cc/mail.py::STOPPED_PREFIX, which tests/test_seat.py holds
+#: both clauses to): before 2026-10-30 this repository's STOP sent nothing and
+#: the adopter's sent a plain request, so the board showed no stopped seat for
+#: the dispatcher's past-the-hour gridlock read (DEF-5030).
 ADOPTER_PROCEED = (
-    "STOP and send {dispatcher} one request, then only re-read mail until it is answered, on anything not "
-    "green: a red you cannot fix in two attempts, a choice the assign does not settle, a refusal you cannot "
-    "resolve, a conflict outside your own files, anything that is the operator's decision."
+    "STOP and send {dispatcher} one request opening with stopped:, then only re-read mail until it is answered, "
+    "on anything not green: a red you cannot fix in two attempts, a choice the assign does not settle, a "
+    "refusal you cannot resolve, a conflict outside your own files, anything that is the operator's decision."
+)
+#: The one exception to the operator's decisions, this repository's own (the
+#: operator's standing rule, 2026-10-30, after seats held eleven hours on
+#: 10-29 and seven calls sat two and a half hours on 10-30 waiting on
+#: decisions): a gridlock, where no seat can advance its assigned job and the
+#: next step is a decision, is resolved by the dispatcher seat, which has the
+#: context to see every seat and the authority to act; the protocol's Assign
+#: authority paragraph is its home, and a test holds this sentence to it. It
+#: renders right after the operator's sentence, and an adopter's brief
+#: carries nothing in the slot, as with SELF_HOST_FIGURES. The ruling's ack
+#: opens with the marker ``gridlock:`` (DEF-5029, 2026-10-30), in the family
+#: of OPERATOR CALL:, redirect:, shelved: and stopped:, and the seat-day census
+#: counts a ruling by that opening alone and names its id on the dispatcher's
+#: row: the first two rulings under the rule were plain acks no reader counted,
+#: and a word read anywhere in a text counts the brief's and the assigns' own
+#: quotations of it. The same test holds the word to the census's table. A
+#: worker's stop is a request opening with stopped: on the board's asks line
+#: (DEF-5030), so the past-the-hour read is that row's age, and the sentence
+#: says what answers it.
+SELF_HOST_GRIDLOCK = (
+    "A gridlock, where no seat can advance its assigned job and the next step is a decision (a red main no "
+    "revert clears, two lanes in conflict, a ruling a worker waits on past the hour), is yours to resolve, the "
+    "one exception to what you propose to the operator: rule, act and report the ruling as an ack whose text "
+    "opens with gridlock: (its first word; an ack opening with RULING or an address is not counted; one ruling "
+    "per ack) and carries the facts you read, instead of filing an operator call and waiting "
+    "(scripts/seat_day_census.py counts the "
+    "rulings by that opening and your row names them); the operator can reverse it, and a new pack, a scope "
+    "change, a release or tag stay the operator's. A (stopped) row on the asks line past the hour is that "
+    "read: answer it with the ack that frees or re-aims the seat. "
 )
 DISPATCHER_BRIEF = (
     "You are the dispatcher seat {seat} ({protocol}). Orient from the banner{goal}, then run /inbox (mark "
     "read) and /inbox board. Your duties: read the board every {every} minutes (the loop on the next line), "
     "answer every worker request within the hour with facts, {assign}, {red}, write the Landing lines of the "
-    "packs in flight from the seats' merged PR bodies. {figures}Decisions stay the operator's. At the "
+    "packs in flight from the seats' merged PR bodies. {figures}Decisions stay the operator's. {gridlock}At the "
     "operator's word, or when the prompt router's threshold ask says to (a lane in hand finishes through its "
     "own landing first), run /handoff; it writes your row{row_source}; after a threshold handoff take no new "
     "job until the window is cleared (a red main's revert is not a new job). Start the loop on the next line "
@@ -825,9 +872,20 @@ MOD_DIR = Path(__file__).resolve().parent / "mods" / "own-clear"
 #: else: ``ship.py handoff`` arms the own-clear marker only where it is set,
 #: so the line it prints is true of the window it runs in.
 OWN_CLEAR_KEY = "ESPALIER_OWN_CLEAR"
+#: The checkout the mod reads the marker in (a test's or a drive's), and the
+#: file it appends one JSON line per event to -- set for every session the
+#: launcher starts with the mod (:data:`OWN_CLEAR_LOG_DEFAULT` under the
+#: seat's checkout, capped by the mod; ``launch --own-clear-log PATH`` moves
+#: it, ``--no-own-clear-log`` leaves it unset), since the deferred clear of
+#: 2026-10-30 had to be read from the transcript's queue rows for want of the
+#: mod's own record, and the refused clear of the same day (DEF-5031, 41
+#: re-asks over ten hours) left no record of the engine's reason at all.
+OWN_CLEAR_ROOT_KEY = "ESPALIER_OWN_CLEAR_ROOT"
+OWN_CLEAR_LOG_KEY = "ESPALIER_OWN_CLEAR_LOG"
+OWN_CLEAR_LOG_DEFAULT = ".espalier-state/own_clear.log"
 #: The own-clear's names, never inherited by a launched session: the flag
 #: above, and the root and log a drive or a test aims the mod with.
-OWN_CLEAR_ENV = frozenset({OWN_CLEAR_KEY, "ESPALIER_OWN_CLEAR_ROOT", "ESPALIER_OWN_CLEAR_LOG"})
+OWN_CLEAR_ENV = frozenset({OWN_CLEAR_KEY, OWN_CLEAR_ROOT_KEY, OWN_CLEAR_LOG_KEY})
 
 
 def mod_args(mod_dir: Path = MOD_DIR) -> list[str]:
@@ -867,7 +925,8 @@ def compose_brief(root: Path, seat: str, checkout: Path | None = None) -> Brief:
         assign = SELF_HOST_ASSIGN.format(kinds=dispatch_kinds_phrase()) if self_host else ADOPTER_ASSIGN
         figures = SELF_HOST_FIGURES if self_host else ""
         text = DISPATCHER_BRIEF.format(seat=seat, protocol=protocol, goal=goal, assign=assign, red=red,
-                                       figures=figures, every=TICK_MINUTES,
+                                       figures=figures, gridlock=SELF_HOST_GRIDLOCK if self_host else "",
+                                       every=TICK_MINUTES,
                                        row_source=SELF_HOST_ROW_SOURCE if self_host else "")
         return Brief("dispatcher", text + "\n" + DISPATCHER_TICK, DISPATCHER_TICK)
     has_tier_script = (where / TIER_SCRIPT).is_file()
@@ -965,8 +1024,21 @@ def brief_refusal(args: list[str], claude: str | None, root: Path, checkout: Pat
 
 
 def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unchecked: bool,
-               print_only: bool, shell: str | None = None, brief: bool = True, mod: bool = True) -> int:
+               print_only: bool, shell: str | None = None, brief: bool = True, mod: bool = True,
+               own_clear_log: str | None = None, log_off: bool = False) -> int:
+    """``own_clear_log``: None or ``""`` (the switch left out, or given bare),
+    :data:`OWN_CLEAR_LOG_DEFAULT` under the seat's checkout -- the log is on by
+    default since DEF-5031 (a clear the engine refused 41 times over ten hours
+    left no record with it off; the mod caps the file); else the path given.
+    ``log_off`` (``--no-own-clear-log``): no log. Set for the session only
+    when the mod rides (``mod``), since the mod is what writes it."""
     target = resolve(root, seat)
+    # A path given is resolved where the operator typed it (the session's own
+    # directory is the seat's checkout, where a relative file would land as an
+    # untracked one); left out or bare, the seat's own state file.
+    log = None if log_off else (
+        os.path.abspath(os.path.expanduser(own_clear_log)) if own_clear_log
+        else str(target.path / OWN_CLEAR_LOG_DEFAULT))
     claude = None
     if not print_only:
         why = session_refusal()
@@ -1026,16 +1098,19 @@ def cmd_launch(root: Path, seat: str, args: list[str], *, maintenance: bool, unc
             argv += ["--", compose_brief(root, seat, target.path).text]
         except Refused as exc:
             raise Refused(f"{exc}; --no-brief launches without the first message") from None
+    no_log = "; --own-clear-log names nothing without it" if log and own_clear_log is not None else ""
     if loaded:
-        say(f"own-clear mod loaded from {MOD_DIR}: the window clears itself once the handoff lands")
+        say(f"own-clear mod loaded from {MOD_DIR}: the window clears itself once the handoff lands"
+            + (f"; its log: {log}" if log else ""))
     elif mod:
-        say(f"no own-clear mod: nothing at {MOD_DIR}; the window will not clear itself after the handoff")
+        say(f"no own-clear mod: nothing at {MOD_DIR}; the window will not clear itself after the handoff{no_log}")
     else:
-        say("no own-clear mod (--no-mod): the window will not clear itself after the handoff")
+        say(f"no own-clear mod (--no-mod): the window will not clear itself after the handoff{no_log}")
     if print_only:
-        say(command_line(target, argv, maintenance=maintenance, shell=shell, own_clear=bool(loaded)))
+        say(command_line(target, argv, maintenance=maintenance, shell=shell, own_clear=bool(loaded),
+                         own_clear_log=log))
         return 0
-    env = child_env(target, maintenance=maintenance, own_clear=bool(loaded))
+    env = child_env(target, maintenance=maintenance, own_clear=bool(loaded), own_clear_log=log)
     say(f"launching seat {seat} in {target.path}" + (" (maintenance mode)" if maintenance else "")
         + ("" if brief else ", no first message"))
     sys.stdout.flush()
@@ -1191,6 +1266,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="start the session without the composed first message (`brief` prints it)")
     p.add_argument("--no-mod", dest="mod", action="store_false",
                    help="start the session without the own-clear mod (mods/own-clear beside this driver)")
+    p.add_argument("--own-clear-log", nargs="?", const="", metavar="PATH",
+                   help=f"where {OWN_CLEAR_LOG_KEY} points for the session, the file the own-clear mod appends one "
+                        f"JSON line per event to (the default, switch left out or bare: {OWN_CLEAR_LOG_DEFAULT} "
+                        "under the seat's checkout, capped by the mod)")
+    p.add_argument("--no-own-clear-log", dest="log_off", action="store_true",
+                   help="start the session with no own-clear log (the mod then records on its marker alone)")
     p = sub.add_parser("brief", help="print a seat's first message: its role, the reads to start with, its loop")
     p.add_argument("seat")
     p = sub.add_parser("retire", help="release a worktree seat's claims, then remove its worktree")
@@ -1224,7 +1305,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_list(root, as_json=args.json, fetch=not args.no_fetch)
         if args.verb == "launch":
             return cmd_launch(root, args.seat, claude_args, maintenance=args.maintenance, unchecked=args.unchecked,
-                              print_only=args.print_only, shell=args.shell, brief=args.brief, mod=args.mod)
+                              print_only=args.print_only, shell=args.shell, brief=args.brief, mod=args.mod,
+                              own_clear_log=args.own_clear_log, log_off=args.log_off)
         if args.verb == "brief":
             return cmd_brief(root, args.seat)
         return cmd_retire(root, args.seat, dry_run=args.dry_run, fetch=not args.no_fetch,

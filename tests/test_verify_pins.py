@@ -1464,6 +1464,7 @@ class TestThePartitionIsLocationOnly:
     """
 
     @_needs_own_git
+    @pytest.mark.contract
     def test_no_tracked_path_outside_the_declared_roots_is_test_material(self):
         """Derived, so it self-updates as the repo adds files. This would have
         reddened the day the basename clause was written."""

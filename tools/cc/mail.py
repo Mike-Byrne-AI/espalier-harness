@@ -39,7 +39,12 @@ re-open it):
   cannot reach ``scripts/``): the worktree, HEAD and the live index are never
   touched, the ref moves by compare-and-swap, and the push carries no force,
   so a second checkout writing under the same name is refused, never
-  overwritten;
+  overwritten; a push that outlives its timeout is read back before anything
+  is said, since it may have landed (one did, 2026-10-30: the refusal said
+  nothing was sent, and a re-send would have doubled the message), and what
+  the read-back could not settle is remembered under ``refs/unconfirmed/``
+  and settled at this checkout's next write (an unchanged tip can still land
+  seconds after the refusal);
 * the public origin carries it, so a message is refused when a token of its
   text or a path it names matches the guard's secret-path patterns
   (``hooks/write_guard.py``'s own matcher, loaded by path) -- token friction,
@@ -82,7 +87,7 @@ from typing import Callable
 # deploy set; tests/test_deploy_set_import_closure.py pins the reachability).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _json_safe import decode_text_or_problem, os_error_text  # noqa: E402
-from record_merge import Unresolvable, run  # noqa: E402  the one spawn and the named stop
+from record_merge import TimedOut, Unresolvable, run  # noqa: E402  the one spawn and the named stops
 import _symbols  # noqa: E402  the symbols a lane changes, derived from its diff, carried by claims
 
 #: The git config key that names this box and turns the channel on; per clone
@@ -157,6 +162,15 @@ MAX_TEXT = 2000
 #: by the board and the fold; the message shape is unchanged, and an ack from
 #: any other seat leaves the call open (``live_requests``).
 OPERATOR_CALL_PREFIX = "OPERATOR CALL:"
+#: What a worker's stop opens with: a ``request`` the worker sends when it
+#: cannot advance its job (a refusal it cannot resolve, a conflict outside its
+#: own files, a decision reserved for the operator: the worker tick's STOP
+#: clause, ``seat.py``), so the board's ``asks:`` line carries the stop with
+#: its age (the dispatcher's past-the-hour gridlock read) and counts the stops
+#: apart; it closes on any ack naming it, as a plain request does. The sibling
+#: of the operator call, read the same way (``is_stop``); before it a stopped
+#: worker sent nothing and the board showed no stopped seat (``DEF-5030``).
+STOPPED_PREFIX = "stopped:"
 MAX_PATHS = 64
 MAX_CLASSES = 16
 MAX_IDS = 64
@@ -591,17 +605,77 @@ def ever_added(root: Path, revs: list[str], directory: str, *, run: Runner = run
     return added
 
 
+def present_rows(root: Path, revs: list[str], directory: str, *, run: Runner = run,
+                 timeout: float = DEFAULT_TIMEOUT) -> set[str]:
+    """Every path under ``directory`` in the tree of any of ``revs``. Raises
+    ``Unresolvable`` where git cannot answer."""
+    present: set[str] = set()
+    for rev in revs:
+        out = _git(root, "ls-tree", "-r", "--name-only", rev, "--", directory, run=run, timeout=timeout)
+        present.update(ln.strip() for ln in out.splitlines() if ln.strip())
+    return present
+
+
+def pruned_rows(root: Path, revs: list[str], directory: str, trailer: str, *, run: Runner = run,
+                timeout: float = DEFAULT_TIMEOUT) -> set[str]:
+    """Every path under ``directory`` whose NEWEST change in the history of
+    some rev of ``revs`` is a deletion by a commit carrying ``trailer`` (the
+    fold's, ``_record_fragments.FOLD_TRAILER``: the Session Log cap's prune,
+    the one writer that deletes rows on purpose) -- removed for good, never
+    pending again. A deletion by any other commit, the revert of the lane that
+    folded the row, leaves the row lost, not pruned, so ``pending`` lists it
+    once more (DEF-4045: ``ever_added`` saw the revert's victim as added, and
+    the row was neither in the tree nor pending, a Session Log row silently
+    lost). ``--topo-order``: the revert descends from the fold it undoes, so
+    it is read first whatever the two clocks said; ``--full-history`` as
+    ``ever_added`` reads. Raises ``Unresolvable`` where git cannot answer."""
+    key, _sep, value = trailer.partition(": ")
+    pruned: set[str] = set()
+    for rev in revs:
+        seen: set[str] = set()
+        # Unstripped: str.strip() takes the record separator (\x1e) for white
+        # space and would drop the newest commit's record, the prune's.
+        rc, out, err = run(["git", "log", f"--format=%x1e%(trailers:key={key},valueonly)%x1f", "--name-status",
+                            "--no-renames", "--full-history", "--topo-order", rev, "--", directory],
+                           cwd=str(root), timeout=timeout, env=git_env())
+        if rc != 0:
+            raise Unresolvable(f"git log {rev} failed: {(err.strip() or out.strip())[:200]}")
+        for record in out.split("\x1e")[1:]:
+            trailers, _sep2, changes = record.partition("\x1f")
+            by_fold = value in (ln.strip() for ln in trailers.splitlines())
+            for line in changes.splitlines():
+                status, _tab, path = line.partition("\t")
+                path = path.strip()
+                if not path or path in seen:
+                    continue
+                seen.add(path)
+                if status.strip().startswith("D") and by_fold:
+                    pruned.add(path)
+    return pruned
+
+
 def pending(root: Path, directory: str, against: list[str], *, run: Runner = run,
-            timeout: float = DEFAULT_TIMEOUT) -> list[tuple[str, str, str]]:
+            timeout: float = DEFAULT_TIMEOUT, trailer: str = "") -> list[tuple[str, str, str]]:
     """The rows parked on the LOCAL remote-tracking records refs (no network)
-    under ``directory`` that no history in ``against`` ever added:
-    ``(machine, path, remote ref)``, by path. Raises ``Unresolvable`` where git
-    cannot answer."""
+    under ``directory`` that ``against`` does not hold: ``(machine, path,
+    remote ref)``, by path. With ``trailer`` (the fold's,
+    ``_record_fragments.FOLD_TRAILER``), a parked row is pending unless some
+    rev's tree holds it (``present_rows``) or some rev's history pruned it
+    (``pruned_rows``), so a row a revert took off the base is pending again
+    and the next fold brings it back (DEF-4045); a row deleted by hand, with
+    no trailer, comes back the same way while its ref still holds it. Without
+    it, the first rule: a row any history in ``against`` ever added is never
+    pending again (``ever_added``), which a revert's victim passed. Raises
+    ``Unresolvable`` where git cannot answer."""
     out = _git(root, "for-each-ref", "--format=%(refname)", REMOTE_RECORDS_PREFIX, run=run, timeout=timeout)
     refs = sorted(ref for ref in out.split() if ref.startswith(REMOTE_RECORDS_PREFIX))
     if not refs:
         return []
-    seen = ever_added(root, against, directory, run=run, timeout=timeout)
+    if trailer:
+        seen = present_rows(root, against, directory, run=run, timeout=timeout) \
+            | pruned_rows(root, against, directory, trailer, run=run, timeout=timeout)
+    else:
+        seen = ever_added(root, against, directory, run=run, timeout=timeout)
     rows: list[tuple[str, str, str]] = []
     for ref in refs:
         prefix = directory.rstrip("/") + "/"
@@ -757,6 +831,18 @@ def is_operator_call(message: object) -> bool:
     not one, and the prefix is read as spelled."""
     return (isinstance(message, dict) and message.get("type") == "request"
             and str(message.get("text") or "").startswith(OPERATOR_CALL_PREFIX))
+
+
+def is_stop(message: object) -> bool:
+    """Whether ``message`` is a request whose text opens with
+    :data:`STOPPED_PREFIX`, as the driver stores it (stripped on send): a
+    worker's stop, which the board's asks line counts apart with its age.
+    Read as :func:`is_operator_call` reads its prefix: a note, an ack or an
+    assign carrying the word is no stop, a request quoting it mid-text is
+    not one, and the prefix is read as spelled. It closes as a plain request
+    does, on any ack naming it (``live_requests``)."""
+    return (isinstance(message, dict) and message.get("type") == "request"
+            and str(message.get("text") or "").startswith(STOPPED_PREFIX))
 
 
 def _count(value: object) -> int:
@@ -1651,14 +1737,29 @@ def _commit_blob(root: Path, content: str, parent: str | None, subject: str, *, 
     return _commit_entries(root, {MAIL_FILE: blob}, parent, subject, run=run)
 
 
+def _unconfirmed_ref(ref: str) -> str:
+    """Where a push that outlived its wait leaves the commit it could not
+    confirm: a local ref beside ``ref``, never pushed, read at this checkout's
+    next write and settled there (landed after all, or never)."""
+    return "refs/unconfirmed/" + ref.removeprefix("refs/heads/")
+
+
 def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callable[[str | None], str], *,
-              run: Runner, timeout: float, verb: tuple[str, str]) -> str:
+              run: Runner, timeout: float, verb: tuple[str, str],
+              say: Callable[[str], None] = lambda _line: None) -> str:
     """Move this machine's ``ref`` to the commit ``build(parent)`` makes and push
     it: origin's tip is read fresh and must be what this checkout last saw (a
     local ref behind it is adopted, one ahead of or diverged from it refuses:
     one writer per machine); the ref moves by compare-and-swap, the push carries
     no force, and a push origin refuses is rolled back so the next write starts
-    clean. ``verb`` names the write in a refusal (``("send", "sent")``)."""
+    clean. A push that outlives its timeout is read back before anything is
+    said, since it may have landed (one did, 2026-10-30): origin's tip at the
+    commit counts it as landed, told through ``say``; anything else puts the
+    ref back, keeps the commit under :func:`_unconfirmed_ref` and refuses with
+    the push's fate as read, and the next write from this checkout settles it
+    (landed after all: that write is refused once, naming it; never: the
+    record is dropped). ``verb`` names the write in a refusal
+    (``("send", "sent")``)."""
     noun, past = verb
     out = _git(root, "ls-remote", "--heads", REMOTE, ref, run=run, timeout=timeout)
     remote_tip = out.split()[0] if out else None
@@ -1676,6 +1777,27 @@ def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callab
         parent = remote_tip
     else:
         parent = local_tip
+    unconfirmed_ref = _unconfirmed_ref(ref)
+    unconfirmed = _tip(root, unconfirmed_ref, run=run)
+    if unconfirmed:
+        # A push this checkout refused earlier outlived its wait and was not
+        # on origin when read back; it can land seconds after the refusal (a
+        # slow origin finishes a pack it has received; the failure-mode review
+        # drove it). Settled here, at the next write: landed after all, and
+        # this write is refused once, naming it, so the message is not
+        # repeated; or origin moved past its parent on another line, so it
+        # never can, and the record is dropped.
+        landed_late = remote_tip is not None and (remote_tip == unconfirmed or run(
+            ["git", "merge-base", "--is-ancestor", unconfirmed, remote_tip], cwd=str(root), env=git_env())[0] == 0)
+        if landed_late:
+            _git(root, "update-ref", "-d", unconfirmed_ref, run=run)
+            raise Unresolvable(
+                f"the {noun} refused earlier, whose push outlived its wait, landed after all: {REMOTE}'s {ref} "
+                f"holds {unconfirmed[:7]}. This {noun} was not made, so that one is not repeated: read it "
+                f"(`git log -1 -p {remote_ref}`), then {noun} again if this is a new message")
+        if remote_tip is not None and remote_tip != _tip(root, f"{unconfirmed}^", run=run):
+            _git(root, "update-ref", "-d", unconfirmed_ref, run=run)
+            say(f"the push refused earlier ({unconfirmed[:7]}) never landed: {REMOTE} moved past it")
     commit = build(parent)
     # The net at the push, whatever builder made the commit: one whose tree
     # holds nothing never moves the ref or leaves this box (a Windows send
@@ -1693,19 +1815,78 @@ def _push_ref(root: Path, machine: str, ref: str, remote_ref: str, build: Callab
         raise Unresolvable(f"{ref} moved under this {noun} (another write from this checkout, at the same "
                            f"moment); that write stands and nothing was {past} -- {noun} again (a refresh does, "
                            "on the next tick)") from None
-    rc, _out, err = run(["git", "push", "--quiet", REMOTE, f"{ref}:{ref}"], cwd=str(root), timeout=timeout,
-                        env=git_env())
-    if rc != 0:
+
+    def put_back(remember: bool = False) -> str:
         # Back to where this checkout was, so the next write reads origin fresh
-        # instead of refusing forever on a ref only this box has.
-        if local_tip:
-            _git(root, "update-ref", ref, local_tip, commit, run=run)
-        else:
-            _git(root, "update-ref", "-d", ref, commit, run=run)
+        # instead of refusing forever on a ref only this box has; with
+        # ``remember``, the commit is kept under the unconfirmed ref for the
+        # next write to settle. A failure here is a clause on the refusal,
+        # never in its place (failure-mode review).
+        try:
+            if local_tip:
+                _git(root, "update-ref", ref, local_tip, commit, run=run)
+            else:
+                _git(root, "update-ref", "-d", ref, commit, run=run)
+            if remember:
+                _git(root, "update-ref", unconfirmed_ref, commit, run=run)
+        except Unresolvable as stuck:
+            return f" (the ref here could not be put back: {stuck})"
+        return ""
+
+    kept = (f"The ref here is put back and the commit {commit[:7]} remembered: the next {noun} from this "
+            f"checkout refuses once, naming it, if it landed after all")
+    try:
+        rc, _out, err = run(["git", "push", "--quiet", REMOTE, f"{ref}:{ref}"], cwd=str(root), timeout=timeout,
+                            env=git_env())
+    except TimedOut as slow:
+        # The runner gave up on the push, which may still have landed (an
+        # assign did, 2026-10-30, a minute after origin had refused the first
+        # attempt with an Internal Server Error). Origin's tip is read back
+        # before anything is said: a write repeated on a wrong "nothing was
+        # sent" is a second message on the ref. An unchanged tip is not the
+        # end of it (the push's transport and origin's side outlive the
+        # runner's kill), so what was not confirmed is remembered.
+        try:
+            back = _git(root, "ls-remote", "--heads", REMOTE, ref, run=run, timeout=timeout)
+        except Unresolvable as unread:
+            note = put_back(remember=True)
+            raise Unresolvable(
+                f"{slow}, and {REMOTE} could not be read back ({unread}): the {noun} may have landed as "
+                f"{commit[:7]}. {kept}, so {noun} again when ready{note}") from None
+        landed = back.split()[0] if back else None
+        if landed != commit:
+            if landed == remote_tip:
+                where, fate = "unchanged", "the push had not landed when read, and can still land"
+            elif landed:
+                where = (f"at {landed[:7]}, not this {noun}'s commit (another checkout writes under the name "
+                         f"{machine!r}: one writer per machine)")
+                fate = "the push did not land"
+            else:
+                where, fate = "gone (the ref is no longer on origin)", "the push did not land"
+            note = put_back(remember=True)
+            raise Unresolvable(f"{slow}; {REMOTE}'s tip read back {where}: {fate}. {kept} -- {noun} again"
+                               f"{note}") from None
+        say(f"git push took longer than {timeout:.0f}s and landed anyway: {REMOTE}'s tip read back as {commit[:7]}")
+        rc, err = 0, ""
+    except Unresolvable as failed:
+        # git could not run the push at all: nothing left this box.
+        note = put_back()
+        raise Unresolvable(f"{failed}; nothing was {past} -- {noun} again{note}") from None
+    if rc != 0:
+        note = put_back()
         lines = err.strip().splitlines()
         detail = next((ln for ln in lines if ln.startswith("remote:")), lines[-1] if lines else "no detail")
         raise Unresolvable(f"{REMOTE} refused the push ({detail.strip()[:160]}); nothing was {past} -- fetch, "
-                           f"read, and {noun} again")
+                           f"read, and {noun} again{note}")
+    if unconfirmed == commit:
+        # The write refused earlier was made again byte for byte (the same
+        # parent, content and second) and this push confirmed it: the record
+        # is dropped here, where the push landed, so no later write is refused
+        # for it. A ref already gone costs nothing.
+        try:
+            _git(root, "update-ref", "-d", unconfirmed_ref, run=run)
+        except Unresolvable:
+            pass
     # What git does where a fetch refspec covers the ref, done where none does
     # (a single-branch clone): this machine's own mail is read from the
     # remote-tracking ref, so a refresh before the next fetch reads this write
@@ -1754,21 +1935,24 @@ def send(root: Path, message: dict, *, run: Runner = run, say: Callable[[str], N
         return _commit_blob(root, content, parent, subject, run=run)
 
     commit = _push_ref(root, machine, ref, remote_ref_for(machine), build, run=run, timeout=timeout,
-                       verb=("send", "sent"))
+                       verb=("send", "sent"), say=say)
     say(f"sent {message['type']} {message['id']} as {commit[:7]} on {ref}")
     return commit
 
 
 def park(root: Path, path: str, data: bytes | None, base_ref: str, *, from_rev: str | None = None,
-         run: Runner = run, say: Callable[[str], None] = print, timeout: float = DEFAULT_TIMEOUT) -> str:
+         run: Runner = run, say: Callable[[str], None] = print, timeout: float = DEFAULT_TIMEOUT,
+         trailer: str = "") -> str:
     """Leave ``data`` at ``path`` on this machine's records ref and push it: a
     handoff with no open pull request parks its Session Log row here instead of
     opening a pull request for the row alone (``tools/cc/ship.py``), and the
     next lane's push folds it in. ``from_rev`` parks the blob committed at
     ``<from_rev>:<path>`` instead, byte for byte (a working-tree read would
     carry a checkout's CRLF). The ref keeps what is still pending: each park
-    drops the rows ``base_ref``'s history has added (a failed read of that
-    history drops nothing). Refused where this clone names no machine, as a
+    drops the rows ``base_ref``'s tree holds or its history pruned under
+    ``trailer`` (``pending``'s rule; without the trailer, the rows its history
+    ever added), and a failed read of that history drops nothing. Refused
+    where this clone names no machine, as a
     send is; the same compare-and-swap push. Returns the commit id."""
     root = Path(root)
     machine, how = machine_setting(root, run=run)
@@ -1786,7 +1970,15 @@ def park(root: Path, path: str, data: bytes | None, base_ref: str, *, from_rev: 
         if parent:
             entries = _tree_records(root, parent, run=run, timeout=timeout)
             try:
-                folded = ever_added(root, [base_ref], directory, run=run, timeout=timeout)
+                # The pending rule's own drop: with the trailer, a row leaves
+                # the ref once the base's tree holds it or its history pruned
+                # it; a reverted fold's row stays (DEF-4045's writer side, both
+                # reviews of the second lane). Without it, the first rule.
+                if trailer:
+                    folded = present_rows(root, [base_ref], directory, run=run, timeout=timeout) \
+                        | pruned_rows(root, [base_ref], directory, trailer, run=run, timeout=timeout)
+                else:
+                    folded = ever_added(root, [base_ref], directory, run=run, timeout=timeout)
             except Unresolvable:
                 folded = set()   # keep every row: a pending one dropped is a row lost
             entries = {name: blob for name, blob in entries.items() if name not in folded}
@@ -1797,7 +1989,7 @@ def park(root: Path, path: str, data: bytes | None, base_ref: str, *, from_rev: 
         return _commit_entries(root, entries, parent, f"records({machine}): {parts[-1]}", run=run)
 
     commit = _push_ref(root, machine, ref, remote_records_ref_for(machine), build, run=run, timeout=timeout,
-                       verb=("park", "parked"))
+                       verb=("park", "parked"), say=say)
     say(f"parked {path} as {commit[:7]} on {ref}")
     return commit
 

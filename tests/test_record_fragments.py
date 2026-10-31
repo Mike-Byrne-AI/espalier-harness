@@ -520,6 +520,7 @@ class TestFragmentDirectoryNamesHaveOneSource:
         got = {d: classify_release_path(d + "2026-10-10-x.md") for d in _SHIP_DECISIONS}
         assert got == {d: bucket for d, (bucket, _) in _SHIP_DECISIONS.items()}, got
 
+    @pytest.mark.contract
     def test_no_module_outside_the_registry_names_a_directory(self, rf):
         found = _dir_literals(REPO_ROOT)
         known = {"tools/cc/_record_fragments.py", *_FULL_SET_COPIES, *_ONE_DIRECTORY_SITES}
@@ -531,11 +532,13 @@ class TestFragmentDirectoryNamesHaveOneSource:
         stale = {rel: [t for t in tokens if t not in names] for rel, tokens in found.items()}
         assert not any(stale.values()), f"literals naming no directory the loader has: {stale}"
 
+    @pytest.mark.contract
     def test_no_registry_entry_is_stale(self):
         found = _dir_literals(REPO_ROOT)
         stale = [rel for rel in (*_FULL_SET_COPIES, *_ONE_DIRECTORY_SITES) if rel not in found]
         assert not stale, f"registered copies that no longer name a directory: {stale}"
 
+    @pytest.mark.contract
     def test_the_scan_sees_a_planted_copy_and_skips_a_docstring(self, tmp_path):
         _write(tmp_path / "scripts" / "planted.py",
                '"""Reads memory/session-log.d/ in prose."""\nDIRS = ("changelog.d/",)\n')
@@ -580,6 +583,7 @@ def _table_home_prose(root: Path) -> list[str]:
     return out
 
 
+@pytest.mark.contract
 class TestNoDocSendsTheRowToTheMemoryFile:
     """The pointer half of the census. Mutation seen red: a planted
     ``update ESPALIER_MEMORY.md session log`` in a command body."""
@@ -622,6 +626,7 @@ _DECLARED_ONE_FILE_READERS = {
 }
 
 
+@pytest.mark.contract
 class TestEveryReaderTakesBothForms:
     """The class census Wave C adds. A reader that applies a regex to the one
     file does not red when an entry moves to a fragment: it reads less and
@@ -714,6 +719,89 @@ class TestNewestRowDateBySeat:
         # A parked row of the same day as the base's newest is not newer.
         same = ["memory/session-log.d/2026-10-18-200000-win.md"]
         assert rf.newest_row_by_seat(base, same) == {"air": ("2026-10-19", False), "win": ("2026-10-18", False)}
+
+    def test_a_row_the_base_pruned_or_one_riding_an_open_pull_request_is_still_the_seats_newest(self, rf):
+        """#354's prune (2026-10-30) took win's and win-2's newest rows off the
+        base, and the records line read 'win: 24+ merges, no row on
+        origin/main' for a seat that had rowed every lane: the second lane's
+        refusal would have stopped win's first --early push. The names the
+        base's history deleted and the names on the seat's own open pull
+        request count beside the tree and the records refs, and the reader
+        says where the newest sits. Dies to: the pruned or riding names
+        ignored, an older pruned row read over a newer one on the base, or a
+        tie on the date said to be anywhere but the base."""
+        base = ["memory/session-log.d/2026-10-24-163927-air.md"]
+        pruned = ["memory/session-log.d/2026-10-18-165314-win.md", "memory/session-log.d/2026-10-15-073941-win.md",
+                  "memory/session-log.d/2026-10-20-210952-air.md"]
+        riding = ["memory/session-log.d/2026-10-30-070000-air-work.md"]
+        parked = ["memory/session-log.d/2026-10-29-032536-air-work.md"]
+        assert rf.newest_rows(base, parked, pruned=pruned, riding=riding) == {
+            "air": ("2026-10-24", "base"), "air-work": ("2026-10-30", "open"), "win": ("2026-10-18", "pruned")}
+        assert rf.newest_rows(base, parked, pruned=pruned) == {
+            "air": ("2026-10-24", "base"), "air-work": ("2026-10-29", "parked"), "win": ("2026-10-18", "pruned")}
+        assert rf.newest_rows(base, pruned=["memory/session-log.d/2026-10-24-120000-air.md"]) == {
+            "air": ("2026-10-24", "base")}
+        assert rf.newest_rows([], [], pruned=[], riding=[]) == {}
+        assert rf.ROW_PLACES == ("base", "parked", "open", "pruned")
+        # The first lane's shape over the base and the parked rows alone.
+        assert rf.newest_row_by_seat(base, parked) == {"air": ("2026-10-24", False), "air-work": ("2026-10-29", True)}
+
+    def test_the_history_read_of_the_pruned_names_is_one_argv_and_one_parser_both_readers_run(self, rf):
+        """The dispatcher's ruling on the second lane's request (2026-10-30):
+        pruned names come only from commits carrying the fold trailer, read by
+        key; a deletion by any other commit (a revert, a hand prune before
+        2026-10-17) is left out and counts as debt. Dies to: a second spelling
+        of the read in a reader (the two then disagree), the merge
+        simplification left on, or a deletion without the trailer read as a
+        prune (a strip of the output changes nothing: a record is any chunk
+        with the field separator, and the assert below pins that)."""
+        argv = rf.pruned_rows_argv("origin/main")
+        assert argv[0] == "log" and argv[1] == "--format=%x1e%(trailers:key=Espalier-Fold,valueonly)%x1f"
+        assert "--name-only" in argv and "--diff-filter=D" in argv and "--full-history" in argv and "--no-renames" in argv
+        assert argv[-3:] == ["origin/main", "--", rf.SESSION_LOG_DIR + "/"]
+        assert rf.FOLD_TRAILER == "Espalier-Fold: session-log"
+        out = ("\x1esession-log\n\x1f\nmemory/session-log.d/2026-10-18-165314-win.md\n"
+               "memory/session-log.d/2026-10-18-081500-win-2.md\n"
+               "\x1e\x1f\nmemory/session-log.d/2026-10-21-120000-win.md\n"          # a revert: no trailer
+               "\x1esession-log\n\x1f\n"                                              # a merge: no names of its own
+               "\x1esession-log\n\x1f\nmemory/session-log.d/2026-10-15-073941-win.md\n")
+        assert rf.pruned_rows_from(out) == ["memory/session-log.d/2026-10-18-165314-win.md",
+                                            "memory/session-log.d/2026-10-18-081500-win-2.md",
+                                            "memory/session-log.d/2026-10-15-073941-win.md"]
+        assert rf.pruned_rows_from(out.strip()) == rf.pruned_rows_from(out)   # the first record survives a strip
+        assert rf.pruned_rows_from("") == [] and rf.pruned_rows_from("junk with no separator") == []
+        pruned = rf.pruned_rows_from(out)
+        assert rf.newest_rows([], pruned=pruned) == {"win": ("2026-10-18", "pruned"), "win-2": ("2026-10-18", "pruned")}
+
+
+class TestLaneSeat:
+    """DEF-4044: a merged lane no claim names was nobody's, so the row debt
+    read it as zero and the cap was passed by not claiming. The seat stamped
+    on the pull request (a ``seat:<name>`` label, ``ship.py open``) names the
+    lane where the claims do not; a claim still wins where both speak."""
+
+    def test_the_claim_names_the_lane_first_and_the_label_where_no_claim_does(self, rf):
+        labelled = {"headRefName": "lane/u", "labels": [{"name": "python"}, {"name": "seat:win-2"}]}
+        claimed = {"headRefName": "lane/a", "labels": [{"name": "seat:win-2"}]}
+        assert rf.lane_seat(labelled, {"lane/a": "win"}) == "win-2"
+        assert rf.lane_seat(claimed, {"lane/a": "win"}) == "win"
+        assert rf.lane_seat({"headRefName": "lane/x"}, {}) == "" and rf.lane_seat("junk", {}) == ""
+        assert rf.label_seat({"labels": ["seat:air", "bug"]}) == "air"   # a bare name is read too
+        assert rf.label_seat({"labels": [{"name": "seat:"}, {"name": "Seat:air"}]}) == ""   # the prefix alone, or another case
+        assert rf.label_seat({"labels": "seat:air"}) == "" and rf.label_seat("junk") == ""
+        assert rf.SEAT_LABEL_PREFIX == "seat:"
+
+    def test_lanes_since_row_counts_a_labelled_lane_no_claim_names(self, rf):
+        """Dies to: the label ignored (the DEF-4044 escape), or the label read
+        over a claim (a lane another seat claimed moved by a stray label)."""
+        merged = [{"number": 1, "headRefName": "lane/a", "mergedAt": "2026-10-20T12:00:00Z"},
+                  {"number": 2, "headRefName": "lane/u", "mergedAt": "2026-10-20T12:00:00Z",
+                   "labels": [{"name": "seat:win"}]},
+                  {"number": 3, "headRefName": "lane/v", "mergedAt": "2026-10-20T12:00:00Z",
+                   "labels": [{"name": "seat:win"}]}]
+        seat_of = {"lane/a": "win", "lane/v": "air"}
+        assert rf.lanes_since_row(merged, seat_of, "win", "2026-10-18", tz=dt.timezone.utc) == 2
+        assert rf.lanes_since_row(merged, seat_of, "air", "2026-10-18", tz=dt.timezone.utc) == 1
 
 
 class TestLanesSinceRow:

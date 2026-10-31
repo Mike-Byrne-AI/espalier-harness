@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+
+import pytest
 from tests._live_tree import checkout_rglob
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -92,6 +94,7 @@ def _deployed_text_files():
 
 
 class TestDeployedAssetsCarryNoHomePathShape:
+    @pytest.mark.contract
     def test_no_deployed_file_spells_a_home_path(self):
         hits = []
         for path in _deployed_text_files():
@@ -110,6 +113,7 @@ class TestDeployedAssetsCarryNoHomePathShape:
                       "~/.claude/projects", "USERPROFILE", "$env:USERPROFILE", "the USERPROFILE value"):
             assert not HOME_SHAPES.search(inert), inert
 
+    @pytest.mark.contract
     def test_no_deployed_file_quotes_a_self_host_artefact(self):
         hits = []
         for path in _deployed_text_files():
@@ -151,6 +155,7 @@ class TestDeployedAssetsCarryNoHomePathShape:
                       "release/force-push", "release/release-pack", "release/packaging"):
             assert not SELF_HOST_ARTEFACT.search(inert), inert
 
+    @pytest.mark.contract
     def test_the_scan_read_each_deployed_root(self):
         """A missing root makes `rglob` silent; a global floor would let one
         root's count carry a dead one (the failure-mode review drove it).

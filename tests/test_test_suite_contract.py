@@ -4845,3 +4845,100 @@ class TestUnquotedInterpreterHeadDetector:
 
     def test_a_syntax_error_reports_empty_rather_than_raising(self):
         assert _unquoted_interpreter_heads("def (:\n") == []
+
+
+def _summary_hooks(source: str) -> list[ast.FunctionDef]:
+    """Every ``pytest_terminal_summary`` defined in ``source``: a module
+    function or a method, a wrapper or not."""
+    return [node for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef) and node.name == "pytest_terminal_summary"]
+
+
+def _reads_no_summary_before_it_writes(hook: ast.FunctionDef) -> bool:
+    """Whether the hook's body holds an ``if`` on ``no_summary`` whose body is a
+    bare ``return``, placed before any statement that calls anything (a write,
+    or a helper that writes); a wrapper's ``yield`` is not a call."""
+    guard_at = None
+    for index, statement in enumerate(hook.body):
+        names = {getattr(node, "attr", None) for node in ast.walk(statement)} | {
+            node.value for node in ast.walk(statement) if isinstance(node, ast.Constant)}
+        if (isinstance(statement, ast.If) and "no_summary" in names
+                and len(statement.body) == 1 and isinstance(statement.body[0], ast.Return)
+                and statement.body[0].value is None):
+            guard_at = index
+            break
+        if any(isinstance(node, ast.Call) for node in ast.walk(statement)):
+            return False
+    return guard_at is not None
+
+
+def _finish_fallbacks(source: str) -> list[ast.FunctionDef]:
+    """Every ``pytest_sessionfinish`` in ``source`` that fetches the terminal
+    reporter (a ``get_plugin`` call): the finish fallbacks that write where no
+    summary ran."""
+    return [node for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.FunctionDef) and node.name == "pytest_sessionfinish"
+            and any(isinstance(call, ast.Call) and getattr(call.func, "attr", None) == "get_plugin"
+                    for call in ast.walk(node))]
+
+
+def _names_no_summary(fn: ast.FunctionDef) -> bool:
+    return any(getattr(node, "attr", None) == "no_summary"
+               or (isinstance(node, ast.Constant) and node.value == "no_summary") for node in ast.walk(fn))
+
+
+class TestEveryTerminalSummaryHookHonoursNoSummary:
+    """pytest 9.2.0 calls every plugin's ``pytest_terminal_summary`` under
+    ``--no-summary`` and leaves the gating to the plugin (its changelog
+    #14724; 9.1.1 skipped the hook there), and the day the dev extra floated
+    to it four of this suite's hooks wrote where none was asked for
+    (``tests/conftest.py``, ``tests/_never_ran.py``, two in
+    ``tests/_box_lock.py``). Derived, never listed: every such hook defined
+    under ``tests/`` reads ``no_summary`` in an ``if`` that returns, before
+    any statement that calls anything. Dies to: a fifth hook written from the
+    never-ran template without the read, or a refactor that moves a hook's
+    write above it."""
+
+    def test_every_hook_under_tests_reads_no_summary_before_it_writes(self):
+        hooks = [(stem, hook) for stem, source in _all_test_dir_modules() for hook in _summary_hooks(source)]
+        assert len(hooks) >= 4, "the four hooks this contract was written against are not all here"
+        unguarded = [f"tests/{stem}.py:{hook.lineno}" for stem, hook in hooks
+                     if not _reads_no_summary_before_it_writes(hook)]
+        assert unguarded == [], unguarded
+
+    def test_every_session_finish_that_fetches_the_reporter_reads_no_summary(self):
+        """The finish fallbacks that write the summary's lines where no summary
+        ran (DEF-2025) are the only readers on pytest's internal error, on any
+        pytest line: each names ``no_summary``. Derived the same way. Dies to:
+        a fallback whose read is dropped as redundant with its hook's."""
+        fallbacks = [(stem, fn) for stem, source in _all_test_dir_modules() for fn in _finish_fallbacks(source)]
+        assert len(fallbacks) >= 2, "the two fallbacks this contract was written against are not both here"
+        unread = [f"tests/{stem}.py:{fn.lineno}" for stem, fn in fallbacks if not _names_no_summary(fn)]
+        assert unread == [], unread
+        unguarded = ("def pytest_sessionfinish(session, exitstatus):\n    yield\n"
+                     "    tr = session.config.pluginmanager.get_plugin('terminalreporter')\n    tr.write_line('x')\n")
+        assert [fn.lineno for fn in _finish_fallbacks(unguarded)] == [1]
+        assert not _names_no_summary(_finish_fallbacks(unguarded)[0])
+
+    def test_pytests_terminal_reporter_still_exposes_no_summary(self):
+        """Every read above is ``getattr(reporter, "no_summary", False)``: a
+        pytest that renames or drops the property would turn all of them into
+        the default and the hooks would write under the option again, red on
+        main's full tier before any pull request's. The dev extra floats
+        pytest on purpose, so this slice reads the installed one."""
+        import inspect
+
+        from _pytest.terminal import TerminalReporter
+
+        assert isinstance(inspect.getattr_static(TerminalReporter, "no_summary"), property)
+
+    def test_the_reader_dies_to_a_missing_read_and_to_a_write_above_it(self):
+        guarded = ("def pytest_terminal_summary(self, tr, config):\n    yield\n    self.done = True\n"
+                   "    if getattr(tr, 'no_summary', False):\n        return\n    self._write(tr, config)\n")
+        assert _reads_no_summary_before_it_writes(_summary_hooks(guarded)[0])
+        attribute = guarded.replace("getattr(tr, 'no_summary', False)", "tr.no_summary")
+        assert _reads_no_summary_before_it_writes(_summary_hooks(attribute)[0])
+        unread = guarded.replace("    if getattr(tr, 'no_summary', False):\n        return\n", "")
+        assert not _reads_no_summary_before_it_writes(_summary_hooks(unread)[0])
+        written_first = guarded.replace("    self.done = True\n", "    tr.write_line('x')\n")
+        assert not _reads_no_summary_before_it_writes(_summary_hooks(written_first)[0])

@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+
+import pytest
 from tests._live_tree import checkout_rglob
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -66,6 +68,7 @@ def _memory_filename_values(text: str) -> list[str]:
 
 
 class TestMemoryFilenameConstantAgreement:
+    @pytest.mark.contract
     def test_all_per_file_constants_hold_one_value(self) -> None:
         found: list[tuple[str, str]] = []
         for rel in _SCAN_DIRS:

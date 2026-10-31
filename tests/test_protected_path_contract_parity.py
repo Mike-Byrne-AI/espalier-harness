@@ -590,6 +590,7 @@ class TestCIGatedSetIsDerivedNotRestated:
                 "and update the contributor docs to match — do not delete this test."
             )
 
+    @pytest.mark.contract
     def test_every_sentinel_bearing_file_is_byte_current(self):
         """Wherever the block appears — source doc or byte-mirror — it must equal
         what `ci_guard` renders TODAY. Population derived from the sentinel, so a

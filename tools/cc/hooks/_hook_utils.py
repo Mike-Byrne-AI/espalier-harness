@@ -2088,7 +2088,12 @@ ZONE_BASELINE_SUFFIX = ".zones"
 #: to hand off at the context threshold (``at``, ``tokens``; JSON inside, the
 #: suffix outside the marker readers' glob like the others here).
 HANDOFF_ASKED_SUFFIX = ".handoff-asked"
-SESSION_SIDE_SUFFIXES = (ZONE_BASELINE_SUFFIX, ZONE_BASELINE_SUFFIX + ".lock", HANDOFF_ASKED_SUFFIX)
+#: ``task_router``'s flag that the session was told, once, what the own-clear
+#: mod wrote at the clear into it (a stale marking, a consume after refusals;
+#: DEF-5031, DEF-5032). Presence only; swept with the marker like the others.
+OWN_CLEAR_TOLD_SUFFIX = ".own-clear-told"
+SESSION_SIDE_SUFFIXES = (ZONE_BASELINE_SUFFIX, ZONE_BASELINE_SUFFIX + ".lock", HANDOFF_ASKED_SUFFIX,
+                         OWN_CLEAR_TOLD_SUFFIX)
 _SESSION_ID_UNSAFE_RE = re.compile(r"[^A-Za-z0-9_-]")
 _SESSION_MARKER_CWD_MAX_CHARS = 120    # keeps the record under the flag-parity pin's 1 KiB
 

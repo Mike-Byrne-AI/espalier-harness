@@ -657,6 +657,7 @@ def _open_answers(root, *, branch="lane/x", base="main", existing="[]",
         ("git", "diff", "--name-only"): (0, diff, ""),
         _LANE_DIFF: (0, "".join(f"M\t{p}\n" for p in diff.split()), ""),   # a lane with code: no park
         _ROW_FILES: _row_log(),   # no row added by the lane's own commits
+        ("gh", "label", "create"): (0, "", ""),   # the seat label, stamped where the box is named
         ("gh", "pr", "create"): create,
         ("gh", "pr", "merge"): merge,
         ("gh", "pr", "view"): (0, armed, ""),
@@ -716,6 +717,58 @@ class TestOpen:
         assert "body.md" in str(stop.value) and "not UTF-8 text" in str(stop.value)
         assert "re-save it as UTF-8" in str(stop.value)
         assert spawns.count(("git", "push")) == 0 and spawns.count(("gh", "pr", "create")) == 0
+
+    def test_the_pull_request_carries_the_seats_label_where_the_box_is_named(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """DEF-4044: a merged lane no claim names was nobody's, so the Session
+        Log debt read it as zero and the cap was passed by not claiming. The
+        seat:<machine> label rides the create, after the repository's copy of
+        the label is made (gh pr create fails whole on a label the repository
+        lacks); a label that could not be made is a note and the pull request
+        opens without it; an unnamed box asks for none. Dies to: no label; the
+        label passed when its creation failed; the label created before the
+        push (a remote write before the lane is on origin)."""
+        _write_guard(tmp_path)
+        channel = ship._mail_module()
+        monkeypatch.setattr(channel, "machine_setting", lambda root, **kw: ("win", "stubbed"))
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        created = spawns.matching(("gh", "pr", "create"))[0]
+        assert created[created.index("--label") + 1] == "seat:win"
+        labels = spawns.matching(("gh", "label", "create"))
+        assert len(labels) == 1 and labels[0][3] == "seat:win" and "--force" in labels[0]
+        assert spawns.index(("git", "push")) < spawns.index(("gh", "label", "create")) < spawns.index(("gh", "pr", "create"))
+        answers = _open_answers(tmp_path)
+        answers[("gh", "label", "create")] = (1, "", "HTTP 403: Resource not accessible")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert "--label" not in spawns.matching(("gh", "pr", "create"))[0]
+        assert "seat label seat:win could not be created (HTTP 403" in capsys.readouterr().out
+        # A label create that times out raises in the runner: the pull request still opens, without the label.
+        spawns = _arm(ship, _open_answers(tmp_path))
+        real_gh = ship._gh
+
+        def slow_gh(*a, **k):
+            if a[:2] == ("label", "create"):
+                raise ship.Refused("gh label create took longer than 60s")
+            return real_gh(*a, **k)
+
+        monkeypatch.setattr(ship, "_gh", slow_gh)
+        assert ship.open_pr() == 0
+        assert spawns.count(("gh", "pr", "create")) == 1 and "--label" not in spawns.matching(("gh", "pr", "create"))[0]
+        assert "could not be created (gh label create took longer than 60s)" in capsys.readouterr().out
+        monkeypatch.setattr(ship, "_gh", real_gh)
+        monkeypatch.setattr(channel, "machine_setting", lambda root, **kw: (None, "git config espalier.machine is not set"))
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert spawns.count(("gh", "label", "create")) == 0 and "--label" not in spawns.matching(("gh", "pr", "create"))[0]
+        assert "seat name could not be read" not in capsys.readouterr().out   # an unset name stays silent
+        unread = channel.MACHINE_UNREAD
+        monkeypatch.setattr(channel, "machine_setting", lambda root, **kw: (None, f"{unread} (git config took longer than 10s)"))
+        spawns = _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr() == 0
+        assert spawns.count(("gh", "label", "create")) == 0
+        assert "seat name could not be read" in capsys.readouterr().out   # a name read that failed is said
 
 
 # ── handoff_push: the /handoff push is a stated, committed choice ─────────────
@@ -913,19 +966,56 @@ class TestHandoffVerb:
 
 class TestTheHandoffArmsTheOwnClear:
     """The handoff's last act arms the own-clear marker (``arm_own_clear_here``,
-    its own rows in tests/test_own_clear.py): after the push has landed, on
-    the off path once the verb has said its piece, and never on a dry run or
-    a refusal. A marker armed before the push would clear a window whose lane
-    sat unpushed; the own-clear mod (tools/cc/mods/own-clear) reads nothing
-    else. Dies to: an arm before the rebind, an arm on a refused handoff or a
-    failed rebind, or a dry run that arms."""
+    its own rows in tests/test_own_clear.py) whenever the verb ran to its end
+    on a clean tree with the row written: after the push has landed, on the
+    off path once the verb has said its piece, and -- DEF-4057, measured
+    2026-10-29 (win, win-2 and air-work frozen past the threshold for 17.5 h)
+    -- after a refusal the window is done with: the red base (nothing lands
+    on it; the lane stays here, whole) or a step after a landed push (the head
+    wait, the rebind). Those arm with the refusal in the marker (``Held``) and
+    re-raise it. Never on a dry run, and never on a refusal the window must fix
+    first (a dirty tree, a shared checkout, a lane behind its remote): a marker
+    there would clear a window with work in it. The own-clear mod
+    (tools/cc/mods/own-clear) reads nothing else. Dies to: an arm before the
+    rebind, an arm skipped after the red-base refusal, an arm on a dirty tree,
+    or a dry run that arms."""
 
     @staticmethod
     def _armed(ship, monkeypatch) -> list[str]:
         order: list[str] = []
         monkeypatch.setattr(ship, "arm_own_clear_here",
-                            lambda root: order.append("arm") or "own-clear armed (stand-in)")
+                            lambda root, **kw: order.append("arm") or "own-clear armed (stand-in)")
         return order
+
+    @staticmethod
+    def _arm_calls(ship, monkeypatch) -> list[dict]:
+        """The arm stood in by name, recording what the handoff hands it: the
+        ``held`` refusal, or nothing on a landed handoff."""
+        calls: list[dict] = []
+
+        def stand_in(root, **kw):
+            calls.append(dict(kw))
+            return "own-clear armed (stand-in)"
+
+        monkeypatch.setattr(ship, "arm_own_clear_here", stand_in)
+        return calls
+
+    @staticmethod
+    def _red_base() -> str:
+        """The base's newest post-merge run, red: the read `open` refuses on."""
+        return json.dumps([{"databaseId": 900, "status": "completed", "conclusion": "failure",
+                            "headSha": "b" * 40, "url": "https://example/run/900"}])
+
+    def _red_base_answers(self, tmp_path) -> dict:
+        """A lane with its row written and a clean tree, no pull request yet,
+        on a base whose post-merge proof is red."""
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path, base_runs=self._red_base())
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", "")]
+        return answers
 
     def test_the_off_path_arms_once_the_verb_has_said_its_piece(self, ship, tmp_path, monkeypatch, capsys):
         order = self._armed(ship, monkeypatch)
@@ -946,13 +1036,36 @@ class TestTheHandoffArmsTheOwnClear:
         assert ship.handoff() == 0
         assert order == ["rebind after 1 push", "arm"]
 
-    def test_a_rebind_that_fails_arms_nothing(self, ship, tmp_path, monkeypatch):
+    def test_a_push_that_landed_and_a_refused_rebind_arm_with_the_refusal(self, ship, tmp_path, monkeypatch):
+        """The lane is on origin; the rebind after it refused (gh down, a
+        title that did not take). The window is done with the lane: armed,
+        the refusal in the marker, and the next window runs `rebind`."""
+        _toml(tmp_path, "handoff_push = true\n")
+        spawns = _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
+        calls = self._arm_calls(ship, monkeypatch)
+
+        def refused_rebind(dry_run=False):
+            raise ship.Refused("gh pr edit failed: boom")
+
+        monkeypatch.setattr(ship, "rebind", refused_rebind)
+        with pytest.raises(ship.Refused, match="boom"):
+            ship.handoff()
+        assert spawns.count(("git", "push")) == 1
+        assert calls, "the handoff armed nothing after a push that landed"
+        held = calls[0]["held"]
+        assert held.landed is True and "the push landed" in str(held) and "boom" in str(held)
+
+    def test_a_rebind_that_returns_non_zero_after_the_push_arms_and_refuses(self, ship, tmp_path, monkeypatch):
+        """Before DEF-4057 the handoff returned the rebind's code and armed
+        nothing, although the push had landed."""
         _toml(tmp_path, "handoff_push = true\n")
         _arm(ship, TestHandoffVerb._existing_pr_answers(tmp_path))
-        order = self._armed(ship, monkeypatch)
+        calls = self._arm_calls(ship, monkeypatch)
         monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 1)
-        assert ship.handoff() == 1
-        assert order == []
+        with pytest.raises(ship.Refused, match="rebind"):
+            ship.handoff()
+        assert calls, "the handoff armed nothing after a push that landed"
+        assert calls[0]["held"].landed is True
 
     def test_the_opened_pull_request_arms_after_the_open(self, ship, tmp_path, forget_guard, monkeypatch):
         _toml(tmp_path, "handoff_push = true\n")
@@ -1008,6 +1121,95 @@ class TestTheHandoffArmsTheOwnClear:
         assert order == [] and spawns.mutations == []
         out = capsys.readouterr().out
         assert "dry-run" in out and "the own-clear marker would be armed" in out
+
+    def test_a_handoff_refused_on_the_red_base_arms_with_the_refusal_then_refuses(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """DEF-4057's first shape. The row is written and the tree clean; what
+        refused the push is the base, not this window, so the marker is armed
+        with the refusal for the next window to read, and the refusal still
+        stands (the lane stays here, unpushed). Dies to: an arm skipped because
+        the push never ran (the unfixed driver), or a push made on the red
+        base."""
+        spawns = _arm(ship, self._red_base_answers(tmp_path))
+        calls = self._arm_calls(ship, monkeypatch)
+        with pytest.raises(ship.Refused, match="Nothing lands on a red base"):
+            ship.handoff()
+        assert calls, "the handoff armed nothing after the red-base refusal"
+        assert spawns.mutations == []
+        held = calls[0]["held"]
+        assert isinstance(held, ship.Held) and held.landed is False
+        assert "main red after merge" in str(held)
+        assert "own-clear armed" in capsys.readouterr().out
+
+    def test_a_dry_run_on_the_red_base_says_what_it_would_arm_and_arms_nothing(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        spawns = _arm(ship, self._red_base_answers(tmp_path))
+        calls = self._arm_calls(ship, monkeypatch)
+        with pytest.raises(ship.Refused, match="Nothing lands on a red base"):
+            ship.handoff(dry_run=True)
+        assert calls == [] and spawns.mutations == []
+        assert "dry-run: the own-clear marker would be armed" in capsys.readouterr().out
+
+    def test_a_refusal_the_window_must_fix_arms_nothing(self, ship, tmp_path, monkeypatch):
+        """A dirty tree, a lane behind its remote: the handoff is not at its
+        end, and a marker here would clear a window with work in it."""
+        _toml(tmp_path, "handoff_push = true\n")
+        calls = self._arm_calls(ship, monkeypatch)
+        answers = TestHandoffVerb._existing_pr_answers(tmp_path)
+        answers[("git", "status", "--porcelain", "-uno")] = (0, " M tools/cc/ship.py\n", "")
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused, match="dirty"):
+            ship.handoff()
+        answers = TestHandoffVerb._existing_pr_answers(tmp_path)
+        answers[("git", "rev-list", "--count")] = (0, "2\n", "")
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused, match="does not reach"):
+            ship.handoff()
+        assert calls == [] and spawns.mutations == []
+
+    def test_a_red_base_with_no_row_is_the_rows_refusal_and_arms_nothing(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """Both reviews, 2026-10-30: the red-base refusal came before the row
+        question, so a rowless lane on a red base armed and its window cleared
+        with the row unwritten, the tail promising one."""
+        answers = self._red_base_answers(tmp_path)
+        answers[_MEMORY_LOG] = (0, "", "")   # the lane's commits carry no row
+        spawns = _arm(ship, answers)
+        calls = self._arm_calls(ship, monkeypatch)
+        with pytest.raises(ship.Refused, match="Session Log row"):
+            ship.handoff()
+        assert calls == [] and spawns.mutations == []
+
+    def test_a_pull_request_that_fails_to_open_after_the_push_arms_with_the_refusal(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """The push landed and `gh pr create` refused: the lane is on origin,
+        the next window finishes it, and the refusal names what to run."""
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path, create=(1, "", "boom"))
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", "")]
+        spawns = _arm(ship, answers)
+        calls = self._arm_calls(ship, monkeypatch)
+        with pytest.raises(ship.Refused, match="boom"):
+            ship.handoff()
+        assert spawns.count(("git", "push")) == 1
+        assert calls, "the handoff armed nothing after a push that landed"
+        assert calls[0]["held"].landed is True and "the push landed" in str(calls[0]["held"])
+
+    def test_a_rejected_push_arms_nothing(self, ship, tmp_path, forget_guard, monkeypatch):
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path, push=(1, "", "rejected by the remote"))
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", "")]
+        _arm(ship, answers)
+        calls = self._arm_calls(ship, monkeypatch)
+        with pytest.raises(ship.Refused, match="rejected by the remote"):
+            ship.handoff()
+        assert calls == []
 
 
 class TestTheLaneCarriesItsMemoryRowWhenHandoffPushes:
@@ -1089,6 +1291,140 @@ class TestTheLaneCarriesItsMemoryRowWhenHandoffPushes:
         assert ship.preflight() == 0
         out = capsys.readouterr().out
         assert "ESPALIER_MEMORY.md" in out and "--early" in out
+
+
+class TestOpenRefusesOnRowDebt:
+    """TP-703d 1-D, the second lane (2026-10-30): where handoff_push is on and
+    the lane carries no row, --early passes the second-push question but not
+    this one. A seat that has shipped ROW_DEBT_CAP lanes since its newest
+    Session Log row is refused until a row is committed on the lane (which
+    lane_carries_memory_row then reads, and the arm is not asked). The reading
+    is TestSeatRowDebt's; here, what open does with it: the fetches before it,
+    the comparison at the cap, and no verdict never refusing."""
+
+    _READING = {"machine": "win", "count": 3, "since": "2026-10-18", "where": "base",
+                "newest": {"win": ("2026-10-18", "base"), "air": ("2026-10-29", "parked"),
+                           "legacy": ("2026-10-10", "pruned")},
+                "seats": ["air", "win"]}
+
+    def _on(self, ship, tmp_path, monkeypatch, reading, *, records=(True, ""), machine="win"):
+        _toml(tmp_path, "handoff_push = true\n")
+        _write_guard(tmp_path)
+        seen: list = []
+        # Each reading records how many spawns ran before it (the fetches must precede it).
+        monkeypatch.setattr(ship, "_row_debt_reading",
+                            lambda root, base, prs=None: seen.append((root, base, prs, len(ship.RUN.calls))) or reading)
+        monkeypatch.setattr(ship._mail_module(), "fetch_records", lambda root, **kw: records)
+        monkeypatch.setattr(ship._mail_module(), "machine_setting",
+                            lambda root, **kw: (machine, "stubbed") if machine else (None, "git config espalier.machine is not set"))
+        answers = _open_answers(tmp_path)
+        answers[_MEMORY_LOG] = (0, "", "")
+        return seen, answers
+
+    def test_at_the_cap_early_is_refused_naming_the_count_the_date_the_cap_and_the_way_out(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """Dies to: the comparison flipped (> for >=), the refusal passed by
+        --early, a push before the question, or the words without the way out."""
+        seen, answers = self._on(ship, tmp_path, monkeypatch, self._READING)
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr(early="the next lane needs this merge")
+        text = str(stop.value)
+        assert "has 3 lanes merged on the days after" in text and "2026-10-18" in text
+        assert f"the cap is {ship.ROW_DEBT_CAP}" in text and ship.ROW_DEBT_CAP == 3
+        assert "_record_fragments.py new session-log" in text and "--early does not pass" in text
+        assert "seat name, win" in text and "air 2026-10-29" in text   # a renamed seat finds its rows under the old name
+        assert "legacy" not in text   # the first fragments' pseudo-seat has no mail ref and is no seat
+        assert seen and seen[0][:2] == (tmp_path, "main") and isinstance(seen[0][2], list)
+        assert spawns.mutations == []
+        # The base was fetched before the reading (a row merged minutes ago is in the local base).
+        fetched = spawns.index(("git", "fetch", "origin", "main"))
+        assert 0 <= fetched < seen[0][3], (fetched, seen[0][3])
+        pruned = dict(self._READING, where="pruned", since="2026-10-18")
+        seen, answers = self._on(ship, tmp_path, monkeypatch, pruned)
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused, match="pruned from origin/main"):
+            ship.open_pr(early="x")
+
+    def test_under_the_cap_early_ships_and_an_unread_debt_ships_with_a_note(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """Dies to: a None reading refusing (a gh outage would stop every early
+        ship), or a debt one under the cap refused."""
+        under = dict(self._READING, count=2)
+        seen, answers = self._on(ship, tmp_path, monkeypatch, under)
+        spawns = _arm(ship, answers)
+        assert ship.open_pr(early="the next lane needs this merge") == 0
+        assert spawns.count(("git", "push")) == 1 and len(seen) == 1
+        assert "unread" not in capsys.readouterr().out
+        seen, answers = self._on(ship, tmp_path, monkeypatch, None)
+        spawns = _arm(ship, answers)
+        assert ship.open_pr(early="the next lane needs this merge") == 0
+        assert spawns.count(("git", "push")) == 1
+        out = capsys.readouterr().out
+        assert "Session Log debt is unread" in out and "--early is taken as given" in out
+
+    def test_a_fetch_that_fails_or_unread_open_pull_requests_read_as_unread_never_a_refusal(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """The early arm ran before open's base fetch and the fold's records
+        fetch, so a row merged forty minutes ago was not in the local base (the
+        first lane's failure-mode review). A fetch that fails leaves the debt
+        unread: a refusal on a stale base is a refusal on a guess. Dies to: the
+        fetch dropped, or its failure read as fresh refs."""
+        seen, answers = self._on(ship, tmp_path, monkeypatch, self._READING)
+        answers[("git", "fetch", "origin", "main")] = (1, "", "fatal: could not read from remote repository")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr(early="x") == 0
+        out = capsys.readouterr().out
+        assert "origin/main could not be fetched" in out and "--early is taken as given" in out and seen == []
+        assert spawns.count(("git", "push")) == 1
+        seen, answers = self._on(ship, tmp_path, monkeypatch, self._READING, records=(False, "could not reach origin"))
+        _arm(ship, answers)
+        assert ship.open_pr(early="x") == 0
+        assert "records refs could not be fetched (could not reach origin)" in capsys.readouterr().out and seen == []
+        seen, answers = self._on(ship, tmp_path, monkeypatch, self._READING)
+        answers[("gh", "pr", "list", "--state", "open")] = (1, "", "gh: not logged in")
+        _arm(ship, answers)
+        assert ship.open_pr(early="x") == 0
+        assert "open pull requests could not be read" in capsys.readouterr().out and seen == []
+        # A fetch that times out raises in the runner: unread, never a refusal (failure-mode review).
+        seen, answers = self._on(ship, tmp_path, monkeypatch, self._READING)
+        _arm(ship, answers)
+        real_git = ship._git
+        slow: list = []
+
+        def slow_git(*a, **k):   # the arm's fetch, the first of the base, times out; open's own later one is quick
+            if a[:3] == ("fetch", "origin", "main") and not slow:
+                slow.append(a)
+                raise ship.Refused("git fetch took longer than 60s")
+            return real_git(*a, **k)
+
+        monkeypatch.setattr(ship, "_git", slow_git)
+        assert ship.open_pr(early="x") == 0
+        assert "could not be fetched (git fetch took longer than 60s)" in capsys.readouterr().out and seen == []
+        monkeypatch.setattr(ship, "_git", real_git)
+        # An unnamed clone has no seat to read rows for: said by name, never blamed on git or gh.
+        seen, answers = self._on(ship, tmp_path, monkeypatch, self._READING, machine=None)
+        _arm(ship, answers)
+        assert ship.open_pr(early="x") == 0
+        assert "names no machine (git config espalier.machine)" in capsys.readouterr().out and seen == []
+
+    def test_the_question_is_asked_only_where_early_is_needed(self, ship, tmp_path, forget_guard, monkeypatch):
+        """A lane that carries its row, or a repository with handoff_push off,
+        never reads the debt. Dies to: the reading made on every open."""
+        seen, answers = self._on(ship, tmp_path, monkeypatch, self._READING)
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")   # the lane carries its row
+        _arm(ship, answers)
+        assert ship.open_pr() == 0 and seen == []
+        _toml(tmp_path, "")
+        _arm(ship, _open_answers(tmp_path))
+        assert ship.open_pr(early="x") == 0 and seen == []
+
+    def test_the_second_push_message_names_the_cap(self, ship, tmp_path, forget_guard, monkeypatch):
+        seen, answers = self._on(ship, tmp_path, monkeypatch, self._READING)
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert f"past {ship.ROW_DEBT_CAP} lanes" in str(stop.value) and "--early" in str(stop.value) and seen == []
 
 
 class _FakeMail:
@@ -2981,6 +3317,17 @@ class TestOneOpenPullRequestPerSeat:
         assert ship.open_pr() == 0
         assert "already has an open pull request" not in capsys.readouterr().out
 
+    def test_a_pull_request_no_claim_names_is_this_seats_by_its_label(self, ship, tmp_path, monkeypatch):
+        """DEF-4044: the seat label the driver stamps names a lane no claim
+        does, for the one-per-seat advisory as for the records line; a claim
+        still wins. Dies to: the label ignored here (a sister site of the
+        records read), or read over a claim."""
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/z": "air"}))
+        others = [{"number": 41, "headRefName": "lane/y", "autoMergeRequest": None, "labels": [{"name": "seat:win"}]},
+                  {"number": 42, "headRefName": "lane/z", "autoMergeRequest": None, "labels": [{"name": "seat:win"}]},
+                  {"number": 43, "headRefName": "lane/w", "autoMergeRequest": None, "labels": [{"name": "seat:air"}]}]
+        assert ship.seat_open_prs(tmp_path, "lane/x", others) == ("win", ["#41 (lane/y)"])
+
     def test_an_unread_seat_name_is_said_never_read_as_no_seat(self, ship, tmp_path, forget_guard, monkeypatch,
                                                               capsys):
         """A name read that failed (a timeout, a config git cannot parse) is not
@@ -3029,6 +3376,8 @@ class TestSeatRowDebt:
             if pending_error:
                 raise RuntimeError(pending_error)
             assert directory.rstrip("/") == "memory/session-log.d" and against == ["origin/main"], (directory, against)
+            # The fold trailer rides every pending read (DEF-4045): a reader that drops it falls back to the first rule.
+            assert kw.get("trailer") == "Espalier-Fold: session-log", kw
             return [(seat, path, f"refs/remotes/origin/records/{seat}") for path in parked]
         return types.SimpleNamespace(
             machine_setting=lambda root, **kw: (seat, "stubbed"),
@@ -3036,8 +3385,18 @@ class TestSeatRowDebt:
             lane_seats=lambda by_machine: dict(lanes),
             pending=pending)
 
-    def _answers(self, names=_NAMES, merged=_MERGED, tree_rc=0, gh_rc=0):
+    #: The base's history read of the Session Log names its prunes deleted (the loader's one argv).
+    _PRUNED = ("git", "log", "--format=%x1e%(trailers:key=Espalier-Fold,valueonly)%x1f", "--name-only")
+
+    @staticmethod
+    def _pruned_log(*commits: tuple[str, list[str]]) -> str:
+        """The history read's answer: ``(fold trailer value or "", deleted paths)`` per commit, newest first."""
+        return "".join(f"\x1e{value}\n\x1f\n" + "".join(f"{p}\n" for p in paths) for value, paths in commits)
+
+    def _answers(self, names=_NAMES, merged=_MERGED, tree_rc=0, gh_rc=0, pruned="", shallow="false\n"):
         return {("git", "ls-tree"): (tree_rc, names if tree_rc == 0 else "", "fatal: not a tree" if tree_rc else ""),
+                ("git", "rev-parse", "--is-shallow-repository"): (0, shallow, ""),
+                self._PRUNED: (0, pruned, ""),
                 ("gh", "pr", "list"): (gh_rc, merged if gh_rc == 0 else "", "gh: not logged in" if gh_rc else "")}
 
     def test_the_debt_is_the_seats_lanes_merged_after_its_newest_row_on_the_base(self, ship, tmp_path, monkeypatch):
@@ -3046,7 +3405,7 @@ class TestSeatRowDebt:
         _post_merge.read_merged."""
         monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES))
         spawns = _arm(ship, self._answers())
-        assert ship.seat_row_debt(tmp_path, "main") == (2, "2026-10-18", False)
+        assert ship.seat_row_debt(tmp_path, "main") == (2, "2026-10-18", "base")
         tree = spawns.matching(("git", "ls-tree"))
         assert len(tree) == 1 and "origin/main" in tree[0] and ship.SESSION_LOG_DIR in tree[0]
         reads = spawns.matching(("gh", "pr", "list"))
@@ -3054,6 +3413,9 @@ class TestSeatRowDebt:
         assert len(reads) == 1 and "--state" in reads[0] and "merged" in reads[0]
         assert reads[0][reads[0].index("--limit") + 1] == str(fragments.ROW_DEBT_WINDOW)
         assert "headRefName" in reads[0][reads[0].index("--json") + 1]
+        assert "labels" in reads[0][reads[0].index("--json") + 1]
+        pruned = spawns.matching(self._PRUNED)
+        assert len(pruned) == 1 and pruned[0][1:] == fragments.pruned_rows_argv("origin/main")
         assert spawns.mutations == []
 
     def test_a_row_parked_on_the_seats_records_ref_is_its_newest_and_said_so(self, ship, tmp_path, monkeypatch):
@@ -3063,12 +3425,100 @@ class TestSeatRowDebt:
         parked = ["memory/session-log.d/2026-10-19-210000-win.md"]
         monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES, parked=parked))
         _arm(ship, self._answers())
-        assert ship.seat_row_debt(tmp_path, "main") == (1, "2026-10-19", True)
+        assert ship.seat_row_debt(tmp_path, "main") == (1, "2026-10-19", "parked")
 
     def test_a_seat_with_no_row_counts_every_lane_and_says_it_has_none(self, ship, tmp_path, monkeypatch):
         monkeypatch.setattr(ship, "_MAIL", self._channel("win-2", {"lane/a": "win-2", "lane/b": "win-2"}))
         _arm(ship, self._answers())
-        assert ship.seat_row_debt(tmp_path, "main") == (2, "", False)
+        assert ship.seat_row_debt(tmp_path, "main") == (2, "", "")
+
+    def test_a_row_the_base_pruned_is_still_the_seats_newest_and_said_pruned(self, ship, tmp_path, monkeypatch):
+        """#354's prune took win's newest row off origin/main (2026-10-30), and
+        with no row on the base every lane in the window counted: 24+, where
+        the seat had rowed every one. The names the fold's prunes deleted are
+        read from the base's history beside the tree; a row deleted by a commit
+        without the fold trailer (a revert, a hand prune) still counts as debt
+        (the dispatcher's two named mutations, 2026-10-30). A shallow clone's
+        history is cut and reads as unread, never as no pruned rows. Dies to:
+        the history read dropped, an older pruned row read over the base's
+        newest, a deletion without the trailer read as the seat's row, or a
+        cut history read as none."""
+        names = "memory/session-log.d/2026-10-19-053029-air.md\n"
+        pruned = self._pruned_log(
+            ("", ["memory/session-log.d/2026-10-21-120000-win.md"]),                 # a revert: no trailer, no row
+            ("session-log", ["memory/session-log.d/2026-10-18-165314-win.md",
+                             "memory/session-log.d/2026-10-10-120000-air.md"]),
+            ("session-log", ["memory/session-log.d/2026-10-15-073941-win.md"]))
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES))
+        _arm(ship, self._answers(names=names, pruned=pruned))
+        assert ship.seat_row_debt(tmp_path, "main") == (2, "2026-10-18", "pruned")
+        monkeypatch.setattr(ship, "_MAIL", self._channel("air", self._LANES))
+        _arm(ship, self._answers(names=names, pruned=pruned))
+        assert ship.seat_row_debt(tmp_path, "main") == (1, "2026-10-19", "base")
+        answers = self._answers(names=names, pruned=pruned)
+        answers[self._PRUNED] = (128, "", "fatal: bad revision 'origin/main'")
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES))
+        _arm(ship, answers)
+        assert ship.seat_row_debt(tmp_path, "main") is None   # an unread history is unread, never no pruned rows
+        spawns = _arm(ship, self._answers(names=names, pruned="", shallow="true\n"))
+        assert ship.seat_row_debt(tmp_path, "main") is None   # a shallow clone lists no prunes: unread, never none
+        assert spawns.count(self._PRUNED) == 0 and spawns.count(("gh", "pr", "list")) == 0
+
+    def test_a_lane_no_claim_names_counts_by_the_seat_label_on_its_pull_request(self, ship, tmp_path, monkeypatch):
+        """DEF-4044: a merged lane no claim names was nobody's, so the cap was
+        passed by not claiming; the seat:<name> label open stamps names it.
+        Dies to: the label ignored, or read over a claim."""
+        merged = json.loads(self._MERGED) + [
+            {"number": 5, "headRefName": "lane/u", "mergedAt": "2026-10-20T12:00:00Z", "labels": [{"name": "seat:win"}]},
+            {"number": 6, "headRefName": "lane/d", "mergedAt": "2026-10-21T12:00:00Z", "labels": [{"name": "seat:win"}]}]
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES))
+        _arm(ship, self._answers(merged=json.dumps(merged)))
+        assert ship.seat_row_debt(tmp_path, "main") == (3, "2026-10-18", "base")   # lane/d is air's by claim
+
+    def test_a_row_riding_the_seats_own_open_pull_request_is_its_newest(self, ship, tmp_path, monkeypatch):
+        """A row on the seat's other open pull request is written and waits
+        for its merge: neither on the base nor parked (the first lane's
+        failure-mode review). Its head is fetched by object id and read by
+        name; another seat's open pull request is not read. Dies to: the open
+        heads ignored, or a head that could not be fetched read as no rows."""
+        prs = [{"number": 9, "headRefName": "lane/open", "headRefOid": "feedface" * 5, "labels": []},
+               {"number": 10, "headRefName": "lane/theirs", "headRefOid": "0badf00d" * 5, "labels": []}]
+        lanes = dict(self._LANES, **{"lane/open": "win", "lane/theirs": "air"})
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", lanes))
+        answers = self._answers()
+        answers[("git", "fetch", "origin", "feedface" * 5)] = (0, "", "")
+        # The head carries the base's fragments as of its branch point too: air's row there is not win's riding row.
+        answers[("git", "ls-tree", "--name-only", "feedface" * 5)] = (
+            0, "memory/session-log.d/2026-10-21-120000-win.md\nmemory/session-log.d/2026-10-22-120000-air.md\n", "")
+        spawns = _arm(ship, answers)
+        reading = ship._row_debt_reading(tmp_path, "main", prs)
+        assert (reading["count"], reading["since"], reading["where"]) == (0, "2026-10-21", "open")
+        assert reading["newest"].get("air") == ("2026-10-19", "base"), reading["newest"]
+        assert spawns.count(("git", "fetch")) == 1 and "0badf00d" * 5 not in " ".join(spawns.matching(("git", "fetch"))[0])
+        assert spawns.count(("git", "ls-tree", "--name-only", "0badf00d" * 5)) == 0
+        _arm(ship, answers)
+        assert ship.seat_row_debt(tmp_path, "main", prs) == (0, "2026-10-21", "open")
+        answers[("git", "fetch", "origin", "feedface" * 5)] = (1, "", "could not read from remote")
+        _arm(ship, answers)
+        assert ship.seat_row_debt(tmp_path, "main", prs) is None
+
+    def test_an_older_loader_without_the_count_reads_as_unread(self, ship, tmp_path, monkeypatch):
+        """A sibling attribute read outside the guard raised AttributeError on a
+        tree whose kept loader predates it (the first lane's failure-mode
+        review). Dies to: the read outside the guard."""
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES))
+        real = ship._fragments_module()
+
+        class Older:   # today's loader with one name withheld: the count's, read last (the mutants run found the gap)
+            def __getattr__(self, name):
+                if name == "lanes_since_row":
+                    raise AttributeError(name)
+                return getattr(real, name)
+
+        monkeypatch.setattr(ship, "_FRAGMENTS", Older())
+        spawns = _arm(ship, self._answers())
+        assert ship.seat_row_debt(tmp_path, "main") is None
+        assert spawns.count(self._PRUNED) == 1 and spawns.count(("gh", "pr", "list")) == 0
 
     def test_an_unreadable_records_ref_reads_as_unread(self, ship, tmp_path, monkeypatch):
         monkeypatch.setattr(ship, "_MAIL", self._channel("win", self._LANES, pending_error="git for-each-ref failed"))

@@ -29,6 +29,112 @@ from tests._live_tree import checkout_glob, copy_checkout, live_tree_copy_ignore
 REPO_ROOT = Path(__file__).parent.parent
 
 
+def _accept_set_offenders(population: list[Path], owner: Path, this_module: Path) -> list[str]:
+    """The comparisons of the gate status outside its one home, as
+    ``file:line`` rows: the scan behind
+    ``TestGateFailureReason.test_the_accept_set_has_exactly_one_home``, hoisted so a
+    planted module can drive it (its predicates are documented inline)."""
+    import ast
+
+    def _reads_key(node: ast.AST, key: str) -> ast.AST | None:
+        """The receiver of `x.get(key, ...)` or `x[key]`, else None."""
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Attribute) and fn.attr == "get" and node.args:
+                arg = node.args[0]
+                if isinstance(arg, ast.Constant) and arg.value == key:
+                    return fn.value
+        if isinstance(node, ast.Subscript):
+            sl = node.slice
+            if isinstance(sl, ast.Constant) and sl.value == key:
+                return node.value
+        return None
+
+    def _reads_the_status(node: ast.AST, details: set[str]) -> bool:
+        """A read of the gate status under either spelling the report
+        writes it: `x.get("surface_gate_status")` / `x["surface_gate_status"]`,
+        or the same value through `gate_details` -- a `"status"` read whose
+        receiver is a `gate_details` read (`x["gate_details"]["status"]`,
+        `x.get("gate_details", {}).get("status")`) or a name bound from one
+        (`details`, collected per file below). The second spelling was this
+        guard's blind spot until 2026-10-30: the gate writes ONE value to both
+        keys (`self_hosting.py`: `"surface_gate_status": source_gate["status"]`
+        beside `"gate_details": source_gate`), so a fifth accept-set spelled
+        through `gate_details` reddened nothing (driven: a planted
+        `details.get("status") == "pass"` in `espalier/handoff.py` passed)."""
+        if _reads_key(node, "surface_gate_status") is not None:
+            return True
+        receiver = _reads_key(node, "status")
+        if receiver is None:
+            return False
+        return _reads_key(receiver, "gate_details") is not None or (
+            isinstance(receiver, ast.Name) and receiver.id in details
+        )
+
+    # This module is in the population deliberately -- see SCOPE above; the
+    # fork that motivated the widening lived here, not in espalier/.
+    offenders: list[str] = []
+    for path in population:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        # In the owner file the ONE sanctioned comparison lives inside
+        # gate_failure_reason; everything else, including main(), is a
+        # consumer and must route through it.
+        sanctioned: set[int] = set()
+        if path.resolve() == owner:
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.FunctionDef)
+                    and node.name == "gate_failure_reason"
+                ):
+                    sanctioned = set(
+                        range(node.lineno, (node.end_lineno or node.lineno) + 1)
+                    )
+        if path.resolve() == this_module:
+            # In THIS module, a comparison inside an `assert` is a test
+            # pinning one known status for one constructed input -- the job
+            # of a test, not a policy. The fork that motivated widening the
+            # population was an ASSIGNMENT deriving pass/fail from an
+            # arbitrary live status (`expected_rc = 0 if ... == "pass"
+            # else 1`), and that is what must stay caught.
+            #
+            # Calibrated, not assumed: widening without this discriminator
+            # flagged 4 sites (:270, :454, :484, :568), all of them
+            # legitimate expected-value assertions. A class pin that reds on
+            # correct code is one that gets switched off.
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assert):
+                    sanctioned.update(
+                        range(node.lineno, (node.end_lineno or node.lineno) + 1)
+                    )
+        # Names bound from a `gate_details` read (`details =
+        # report.get("gate_details")`): a `"status"` read on one is the
+        # second spelling of the status.
+        details_bound: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and _reads_key(node.value, "gate_details") is not None:
+                details_bound.update(
+                    t.id for t in node.targets if isinstance(t, ast.Name)
+                )
+        bound: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and _reads_the_status(node.value, details_bound):
+                bound.update(
+                    t.id for t in node.targets if isinstance(t, ast.Name)
+                )
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare) or node.lineno in sanctioned:
+                continue
+            for operand in (node.left, *node.comparators):
+                if _reads_the_status(operand, details_bound) or (
+                    isinstance(operand, ast.Name) and operand.id in bound
+                ):
+                    line = f"{path.name}:{node.lineno}: compares the gate status"
+                    if line not in offenders:  # two comparisons on one line, one row
+                        offenders.append(line)
+                    break
+    return offenders
+
+
 class TestRunSelfHostCheck:
     # The live-root calls in this class and TestMainExitCode run on the
     # `initialized_repo_root` fixture (an init'd copy of this tree), never on
@@ -202,82 +308,46 @@ class TestRunSelfHostCheck:
         (`run_cc_surface_gate` emits only pass/fail), but it is the one consumer
         this guard can never cover.
         """
-        import ast
-
-        def _reads_the_status(node: ast.AST) -> bool:
-            """`x.get("surface_gate_status")` or `x["surface_gate_status"]`."""
-            if isinstance(node, ast.Call):
-                fn = node.func
-                if isinstance(fn, ast.Attribute) and fn.attr == "get" and node.args:
-                    arg = node.args[0]
-                    return (
-                        isinstance(arg, ast.Constant)
-                        and arg.value == "surface_gate_status"
-                    )
-            if isinstance(node, ast.Subscript):
-                sl = node.slice
-                return isinstance(sl, ast.Constant) and sl.value == "surface_gate_status"
-            return False
-
         owner = Path(sh.__file__).resolve()
-        # This module is in the population deliberately -- see SCOPE above; the
-        # fork that motivated the widening lived here, not in espalier/.
         population = [*checkout_glob(owner.parent, "*.py"), Path(__file__).resolve()]
-        offenders: list[str] = []
-        for path in population:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
-            # In the owner file the ONE sanctioned comparison lives inside
-            # gate_failure_reason; everything else, including main(), is a
-            # consumer and must route through it.
-            sanctioned: set[int] = set()
-            if path.resolve() == owner:
-                for node in ast.walk(tree):
-                    if (
-                        isinstance(node, ast.FunctionDef)
-                        and node.name == "gate_failure_reason"
-                    ):
-                        sanctioned = set(
-                            range(node.lineno, (node.end_lineno or node.lineno) + 1)
-                        )
-            if path.resolve() == Path(__file__).resolve():
-                # In THIS module, a comparison inside an `assert` is a test
-                # pinning one known status for one constructed input -- the job
-                # of a test, not a policy. The fork that motivated widening the
-                # population was an ASSIGNMENT deriving pass/fail from an
-                # arbitrary live status (`expected_rc = 0 if ... == "pass"
-                # else 1`), and that is what must stay caught.
-                #
-                # Calibrated, not assumed: widening without this discriminator
-                # flagged 4 sites (:270, :454, :484, :568), all of them
-                # legitimate expected-value assertions. A class pin that reds on
-                # correct code is one that gets switched off.
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Assert):
-                        sanctioned.update(
-                            range(node.lineno, (node.end_lineno or node.lineno) + 1)
-                        )
-            bound: set[str] = set()
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Assign) and _reads_the_status(node.value):
-                    bound.update(
-                        t.id for t in node.targets if isinstance(t, ast.Name)
-                    )
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Compare) or node.lineno in sanctioned:
-                    continue
-                for operand in (node.left, *node.comparators):
-                    if _reads_the_status(operand) or (
-                        isinstance(operand, ast.Name) and operand.id in bound
-                    ):
-                        offenders.append(
-                            f"{path.name}:{node.lineno}: compares surface_gate_status"
-                        )
-                        break
+        offenders = _accept_set_offenders(population, owner, Path(__file__).resolve())
         assert not offenders, (
             "a second accept-set for surface_gate_status appeared; route it "
             "through self_hosting.gate_failure_reason instead:\n  "
             + "\n  ".join(offenders)
         )
+
+    def test_the_scan_reds_on_each_spelling_in_a_planted_module(self, tmp_path):
+        """The negative twin: three accept-sets in a planted module, one per
+        spelling the scan must read (the key, the `gate_details` key, a name
+        bound from it), each named by line; a reader that compares nothing
+        stays clean. Without this the live scan proves only that nothing is
+        wrong today, never that the scan can see a fork."""
+        mod = tmp_path / "forked.py"
+        mod.write_text(
+            "def a(report):\n"
+            "    return report.get(\"surface_gate_status\") == \"pass\"\n"
+            "def b(report):\n"
+            "    return report[\"gate_details\"][\"status\"] == \"pass\"\n"
+            "def c(report):\n"
+            "    details = report.get(\"gate_details\", {})\n"
+            "    status = details.get(\"status\")\n"
+            "    return status != \"pass\"\n",
+            encoding="utf-8",
+        )
+        clean = tmp_path / "reader.py"
+        clean.write_text(
+            "def d(report):\n"
+            "    label = str(report.get(\"surface_gate_status\", \"unknown\"))\n"
+            "    return f\"gate: {label}\"\n",
+            encoding="utf-8",
+        )
+        owner = tmp_path / "owner.py"
+        assert _accept_set_offenders([mod, clean], owner, tmp_path / "nope.py") == [
+            "forked.py:2: compares the gate status",
+            "forked.py:4: compares the gate status",
+            "forked.py:8: compares the gate status",
+        ]
 
     def test_surface_gate_status_not_unknown_on_live_repo(self, initialized_repo_root):
         result = run_self_host_check(initialized_repo_root)

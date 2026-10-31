@@ -79,8 +79,10 @@ SESSION_LOG_CAP = 30
 SESSION_LOG_SLACK = 5
 #: How many merged pull requests the Session Log debt readers walk (the
 #: board's ``records:`` line and the ship driver's row-debt read): three days
-#: at the 25 lanes a day measured across four seats, 2026-10-16 to 10-18; the
-#: ship driver's POST_MERGE_ROWS (20) covers under one.
+#: at the 25 lanes a day measured across four seats, 2026-10-16 to 10-18, and
+#: two weeks at late October's pace (read 2026-10-30: the window reached
+#: 10-16 while the oldest surviving fragment was 10-24's); the ship driver's
+#: POST_MERGE_ROWS (20) covers under a day at the first pace.
 ROW_DEBT_WINDOW = 100
 
 #: The trailer on the commits a lane's push makes to fold the parked rows in and
@@ -318,18 +320,154 @@ def newest_row_date_by_seat(names: list[str]) -> dict[str, str]:
     return newest
 
 
+#: Where a seat's newest Session Log row sits, in the order a tie on the date
+#: resolves: on the base's tree (nothing owed), parked on its records ref (the
+#: fold is owed), riding the seat's own open pull request (written, waiting
+#: for its merge), or removed from the base's tree since -- pruned by the cap,
+#: or lost to a revert -- and read from the base's history.
+ROW_PLACES = ("base", "parked", "open", "pruned")
+
+
+def newest_rows(names: list[str], parked: list[str] | tuple[str, ...] = (), *,
+                riding: list[str] | tuple[str, ...] = (),
+                pruned: list[str] | tuple[str, ...] = ()) -> dict[str, tuple[str, str]]:
+    """``{seat: (YYYY-MM-DD, where)}``: each seat's newest Session Log row
+    across the base's tree (``names``), the rows parked on the records refs no
+    push has folded yet (``parked``, as ``mail.pending`` lists them), the rows
+    on the seat's own open pull requests (``riding``) and the names the fold's
+    prunes deleted from the base (``pruned``, as ``pruned_rows_from`` reads
+    them off ``pruned_rows_argv``'s output). A row the cap pruned is still a
+    row the seat wrote: #354's prune took win's and win-2's newest rows off
+    the tree (2026-10-30) and the records line read "24+ merges, no row on
+    origin/main" for a seat that had rowed every lane, the debt the refusal
+    would have stopped it on. ``where`` is one of ``ROW_PLACES``; a tie on the
+    date goes to the earlier place, so a row on the base is never said to be
+    parked, riding or pruned. Read by name alone, never a checkout a seat can
+    edit."""
+    newest: dict[str, tuple[str, str]] = {}
+    for place, rows in zip(ROW_PLACES, (names, parked, riding, pruned)):
+        for seat, date in newest_row_date_by_seat(list(rows)).items():
+            if date > newest.get(seat, ("", ""))[0]:
+                newest[seat] = (date, place)
+    return dict(sorted(newest.items()))
+
+
 def newest_row_by_seat(names: list[str], parked: list[str] | tuple[str, ...] = ()) -> dict[str, tuple[str, bool]]:
-    """``{seat: (YYYY-MM-DD, parked)}``: each seat's newest Session Log row
-    across ``names`` (the base's tree) and ``parked`` (the rows on the records
-    refs no push has folded yet, as ``mail.pending`` lists them), ``parked``
-    True when the newest is only on a ref. A seat that wrote its row and
-    parked it is not in debt, and the readers say the fold is owed; the ship
-    driver's early arm runs before its fold, so without this a seat that did
-    write its row would be refused."""
-    on_base = newest_row_date_by_seat(names)
-    on_ref = newest_row_date_by_seat(list(parked))
-    return {seat: (max(on_base.get(seat, ""), on_ref.get(seat, "")), on_ref.get(seat, "") > on_base.get(seat, ""))
-            for seat in sorted(set(on_base) | set(on_ref))}
+    """``{seat: (YYYY-MM-DD, parked)}``: ``newest_rows`` over the base's tree
+    and the parked rows alone, in the shape the first lane's readers took
+    (``parked`` True when the newest is only on a records ref). A seat that
+    wrote its row and parked it is not in debt, and the readers say the fold
+    is owed; the ship driver's early arm runs before its fold, so without this
+    a seat that did write its row would be refused."""
+    return {seat: (date, where == "parked") for seat, (date, where) in newest_rows(names, parked).items()}
+
+
+def pruned_rows_argv(rev: str, trailer: str = FOLD_TRAILER) -> list[str]:
+    """The ``git`` arguments that list, by name, every Session Log fragment
+    the history of ``rev`` (``origin/<base>``, never HEAD) deleted, each
+    commit's fold trailer (read by key, ``trailer``'s) before its names, for
+    ``pruned_rows_from`` to keep the fold's prunes alone. The one argv behind
+    the board's records line and the ship driver's row-debt read, so the two
+    read the same names. ``--full-history``: a lane that folded a row and
+    pruned it in one push leaves the directory as its merge's first parent had
+    it, and the default simplification drops that side of the merge
+    (``mail.ever_added`` reads the add side the same way). About a hundred
+    names, 72 commits and under a tenth of a second on this repository's
+    history (2026-10-30, two readers)."""
+    key = trailer.partition(": ")[0]
+    return ["log", f"--format=%x1e%(trailers:key={key},valueonly)%x1f", "--name-only", "--no-renames",
+            "--full-history", "--diff-filter=D", rev, "--", SESSION_LOG_DIR + "/"]
+
+
+def pruned_rows_from(out: str, trailer: str = FOLD_TRAILER) -> list[str]:
+    """The Session Log names the fold's prunes deleted, from the output of
+    ``pruned_rows_argv``: the names under a commit whose trailer is
+    ``trailer``'s value, read by key as ``ship.py``'s fold reads its own. A
+    deletion by any other commit is left out: a reverted fold's row is
+    DEF-4045's, pending again and read through the parked rows, and a
+    hand-deleted one (the hand prunes before 2026-10-17 carried no trailer)
+    counts as debt -- an over-count the seat sees, never a hidden one (the
+    dispatcher's ruling on the second lane's request, 2026-10-30). A record
+    is any chunk with the field separator, so a record separator lost at the
+    front (``str.strip`` takes ``\\x1e`` for white space) costs nothing. The
+    mail driver's ``pruned_rows`` is a different read for a different
+    question: each path's newest change, for the pending rule. A shallow
+    clone's history is cut, and both readers read it as unread, never as no
+    pruned names (``SHALLOW_ARGV``)."""
+    value = trailer.partition(": ")[2]
+    names: list[str] = []
+    for record in out.split("\x1e"):
+        trailers, sep, body = record.partition("\x1f")
+        if not sep or value not in (ln.strip() for ln in trailers.splitlines()):
+            continue
+        names += [ln.strip() for ln in body.splitlines() if ln.strip()]
+    return names
+
+
+#: Whether this clone's history is cut (``git rev-parse --is-shallow-repository``
+#: prints ``true``): the pruned-names read then exits 0 with nothing, which
+#: both debt readers must take as unread, never as no pruned rows (the
+#: failure-mode review of the second lane, driven on a shallow scratch clone).
+SHALLOW_ARGV = ["rev-parse", "--is-shallow-repository"]
+
+
+def riding_rows(heads: "Sequence[tuple[str, Sequence[str]]]") -> list[str]:
+    """The Session Log names on open pull requests' heads that are each pull
+    request's own seat's: ``heads`` pairs a head's seat (``lane_seat``, '' for
+    none) with the names ``git ls-tree`` lists on it. A head carries the
+    base's fragments as of its branch point too, so another seat's row there
+    is not riding (#348, branched before the prune, carried win's pruned row
+    and the records line said riding, read live 2026-10-30), and a head no
+    claim or label names rides nothing. The one rule behind both readers."""
+    names: list[str] = []
+    for seat, listed in heads:
+        if not seat:
+            continue
+        for name in listed:
+            text = str(name).strip()
+            m = SESSION_LOG_NAME_RE.match(text.rsplit("/", 1)[-1])
+            if m and m.group(3) == seat:
+                names.append(text)
+    return names
+
+
+#: The label ``ship.py open`` puts on a pull request to say whose lane it is
+#: (``seat:<machine>``). The claims name a lane's seat first (``mail.lane_seats``);
+#: a lane no claim names -- a seat that skipped the claim or claimed under
+#: another spelling, a solo adopter that never claims -- was nobody's, so the
+#: Session Log debt read it as zero and the cap was passed by not claiming
+#: (DEF-4044: 10 of 200 merged pull requests unattributed on 2026-10-23).
+SEAT_LABEL_PREFIX = "seat:"
+
+
+def label_seat(pr: object) -> str:
+    """The seat a pull request's ``seat:<name>`` label names, '' for none. A
+    ``gh pr list --json labels`` row carries ``[{"name": ...}, ...]``; a bare
+    name is read too. The prefix is read as written (``SEAT_LABEL_PREFIX``,
+    lower case), and a label that is the prefix alone names no seat. Any
+    name after the prefix is a seat: a repository whose own labels use the
+    prefix hands those names to the records line (said here, not guarded)."""
+    if not isinstance(pr, dict):
+        return ""
+    labels = pr.get("labels")
+    if not isinstance(labels, list):
+        return ""
+    for label in labels:
+        name = label.get("name") if isinstance(label, dict) else label
+        if isinstance(name, str) and name.startswith(SEAT_LABEL_PREFIX) and len(name) > len(SEAT_LABEL_PREFIX):
+            return name[len(SEAT_LABEL_PREFIX):]
+    return ""
+
+
+def lane_seat(pr: object, seat_of: dict[str, str]) -> str:
+    """Whose lane a merged or open pull request is: the seat whose latest
+    claim or release names its branch (``seat_of``, the board's
+    ``mail.lane_seats``), else the seat its label names (``label_seat``), else
+    ''. The one attribution behind the board's records line and the ship
+    driver's row-debt read, so a lane counts for the same seat in both."""
+    if not isinstance(pr, dict):
+        return ""
+    return seat_of.get(str(pr.get("headRefName") or ""), "") or label_seat(pr)
 
 
 def local_day(stamp: object, tz: _dt.tzinfo | None = None) -> str:
@@ -366,13 +504,14 @@ def window_stops_short(merged: list[object], since: str, window: int, tz: _dt.tz
 def lanes_since_row(merged: list[object], seat_of: dict[str, str], seat: str, newest: str,
                     tz: _dt.tzinfo | None = None) -> int:
     """How many of ``merged`` (``gh pr list --state merged`` rows with
-    ``headRefName`` and ``mergedAt``) are ``seat``'s lanes (``seat_of``, the
-    board's ``mail.lane_seats``) merged on a local day after ``newest``, the
-    seat's newest row date ('' for no row: every dated lane counts). The one
-    count behind the board's ``records:`` line and the ship driver's row-debt
-    read, so the two never disagree."""
+    ``headRefName``, ``mergedAt`` and ``labels``) are ``seat``'s lanes
+    (``lane_seat``: the seat whose claim names the branch, else the seat its
+    label names) merged on a local day after ``newest``, the seat's newest row
+    date ('' for no row: every dated lane counts). The one count behind the
+    board's ``records:`` line and the ship driver's row-debt read, so the two
+    never disagree."""
     return sum(1 for pr in merged if isinstance(pr, dict)
-               and seat_of.get(str(pr.get("headRefName") or "")) == seat
+               and lane_seat(pr, seat_of) == seat
                and local_day(pr.get("mergedAt"), tz) > newest)
 
 

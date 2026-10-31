@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _hook_utils import has_active_plan, hook_cwd, say_crash, say_once, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, atomic_write_text, handoff_context_threshold, handoff_push_on, read_context_from_transcript, sessions_dir, STATE_DIR, COLD_OPEN_FLAG, HANDOFF_ASKED_SUFFIX, ONCE_FLAG_PREFIX, TRANSCRIPT_TAIL_BYTES  # noqa: E402
+from _hook_utils import has_active_plan, hook_cwd, say_crash, say_once, read_stdin_safely, resolve_project_root, safe_session_id, touch_session_marker, window_key, atomic_write_text, handoff_context_threshold, handoff_push_on, read_context_from_transcript, sessions_dir, STATE_DIR, COLD_OPEN_FLAG, HANDOFF_ASKED_SUFFIX, OWN_CLEAR_TOLD_SUFFIX, ONCE_FLAG_PREFIX, TRANSCRIPT_TAIL_BYTES  # noqa: E402
 import _reinject  # noqa: E402  -- the UserPromptSubmit generative recall dispatch
 
 # Keywords that suggest a multi-step task
@@ -113,7 +113,8 @@ _HANDOFF_ASK = (
     "hand and no handoff written since that ask, run /handoff now (it writes your row{push}). "
     "After the handoff take no new job (your own pull request's red or conflict, and a red "
     "main's revert, are not new work), answer a loop tick in one line, and tell the operator "
-    "this window needs a /clear (the loop survives it; start no second one)."
+    "this window needs a /clear (the loop survives it; start no second one), or, after a lane "
+    "opened by hand, run python tools/cc/ship.py arm --why <how>."
 )
 _CONTEXT_UNREADABLE = (
     "[HARNESS] handoff_context_tokens is set, but the context could not be read from this "
@@ -219,6 +220,107 @@ def _context_advisory(root: Path, data: dict) -> str | None:
     push = ", and pushes the lane" if handoff_push_on(root) else ""
     return _HANDOFF_ASK.format(tokens=tokens // 1000, threshold=threshold // 1000, at=at,
                                tokens0=tokens0 // 1000, push=push)
+
+
+# The own-clear's refused clear (DEF-5031, 2026-10-30): the own-clear mod
+# (tools/cc/mods/own-clear) asks the engine for the clear at a turn's end and
+# puts a rejected ask on its marker (the reason, when, a count) and on a status
+# line; the dispatcher window re-asked 41 times over ten hours with nobody
+# reading that line. The window's own ticks still run, so the prompt router
+# tells the model, which says so where the operator reads. 7-bit ASCII, one
+# paragraph, on every prompt while the marker is armed for this session with a
+# refusal on it; the marker's path and fields are the mod's (tests/test_own_clear.py
+# pins them across the language line, beside the banner's reader).
+_OWN_CLEAR_MARKER = "own_clear.json"
+_OWN_CLEAR_REFUSED = (
+    "[HARNESS] own-clear: the clear this window asked the engine for at {asked}Z was refused "
+    "{count} time(s) (latest: {reason}); the mod asks again at each turn's end, and no clear has "
+    "run. Say so in the first line of your reply, so the operator at this terminal sees it: this "
+    "window needs /clear by hand (the loop survives it; start no second one). Take no new job "
+    "meanwhile."
+)
+
+
+#: What the mod wrote at the clear into THIS session, said once on the first
+#: prompt after it: the SessionStart banner runs beneath the mod's handler and
+#: cannot see that write (the failure-mode review, 2026-10-30). The flag
+#: beside the session's marker (``OWN_CLEAR_TOLD_SUFFIX``, swept with it) says
+#: it was said.
+_OWN_CLEAR_STALE = (
+    "[HARNESS] own-clear: this window was cleared by the own-clear and not re-primed: the mod marked its "
+    "marker stale ({because}). No brief was submitted; python tools/cc/seat.py brief <seat> prints it, and a "
+    "loop that was running survived the clear (start no second one)."
+)
+_OWN_CLEAR_REPRIMED = (
+    "[HARNESS] own-clear: this window was re-primed after the engine refused the clear {count} time(s){latest}; "
+    "the record is .espalier-state/own_clear.json."
+)
+
+
+def _plain(text: object, cap: int) -> str:
+    """Engine text folded for the prompt channel: ASCII, one line, at most
+    ``cap`` characters (a Windows console raises on a character outside its
+    code page, and that print is the stuck window's one advisory)."""
+    folded = str(text).encode("ascii", "replace").decode("ascii")
+    folded = "".join(ch if ch.isprintable() else " " for ch in folded)
+    return " ".join(folded.split())[:cap]
+
+
+def _read_own_clear_marker(root: Path) -> dict | None:
+    try:
+        marker = json.loads((root / STATE_DIR / _OWN_CLEAR_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # fail-open: ok deliberate an advisory: a missing marker, or one torn mid-rewrite, says nothing
+        return None
+    return marker if isinstance(marker, dict) else None
+
+
+def _own_clear_advisory(root: Path, sid: str) -> str | None:
+    """DEF-5031: the own-clear marker armed for THIS session with the latest
+    ask refused, or ``None`` (no marker, another session's, no refusal, an ask
+    the engine took since -- the mod takes the refusal off the marker at a new
+    ask -- or a torn file). The banner's ``Own-clear:`` line is the sibling
+    reader for every other session; this one speaks in the window whose clear
+    it is."""
+    marker = _read_own_clear_marker(root)
+    if marker is None or marker.get("state") != "armed" or not sid or marker.get("session_id") != sid:
+        return None
+    count = marker.get("clear_refusals")
+    reason = _plain(marker.get("clear_refused") or "", 160)
+    if not isinstance(count, int) or count <= 0 or not reason:
+        return None
+    asked = str(marker.get("clear_asked_at") or marker.get("clear_refused_at") or "?")[:16]
+    return _OWN_CLEAR_REFUSED.format(asked=asked, count=count, reason=reason)
+
+
+def _own_clear_told_once(root: Path, sid: str) -> str | None:
+    """DEF-5031, DEF-5032: the marker the mod rewrote at the clear into THIS
+    session -- marked stale (cleared, not re-primed: no brief came) or consumed
+    after refusals -- said once, on the first prompt after that write. ``None``
+    for any other marker, a torn one, or a session already told."""
+    if not sid:
+        return None
+    marker = _read_own_clear_marker(root)
+    if marker is None or str(marker.get("new_session_id") or "") != sid:
+        return None
+    state = marker.get("state")
+    count = marker.get("clear_refusals")
+    count = count if isinstance(count, int) and count > 0 else 0
+    if state == "stale":
+        text = _OWN_CLEAR_STALE.format(because=_plain(marker.get("stale_because") or "the ids did not match", 200))
+    elif state == "consumed" and count:
+        reason = _plain(marker.get("clear_refused") or "", 160)
+        text = _OWN_CLEAR_REPRIMED.format(count=count, latest=f" (latest: {reason})" if reason else "")
+    else:
+        return None
+    flag = sessions_dir(root) / f"{sid}{OWN_CLEAR_TOLD_SUFFIX}"
+    try:
+        if flag.exists():
+            return None
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.write_text("told\n", encoding="utf-8")
+    except OSError:  # fail-open: ok deliberate a flag that cannot be written: said on every prompt, never on none
+        pass
+    return text
 
 
 # Decision-shape patterns. The advisory is `print()`-ed to the
@@ -433,6 +535,26 @@ def _run_main() -> int:
         if printed_any:
             print()
         print(ask)
+        printed_any = True
+
+    # A clear this window asked for that the engine refused (DEF-5031) sits
+    # above the active-plan return too: the stuck window's ticks are the only
+    # prompts it gets, and a plan open there changes nothing about the clear.
+    refused = _own_clear_advisory(root, safe_session_id(data.get("session_id")))
+    if refused is not None:
+        if printed_any:
+            print()
+        print(refused)
+        printed_any = True
+
+    # What the mod wrote at the clear into this session (stale: cleared and not
+    # re-primed; consumed after refusals), once: the banner beneath the mod's
+    # handler could not see it (DEF-5031, DEF-5032).
+    told = _own_clear_told_once(root, safe_session_id(data.get("session_id")))
+    if told is not None:
+        if printed_any:
+            print()
+        print(told)
         printed_any = True
 
     if _has_active_plan(root):

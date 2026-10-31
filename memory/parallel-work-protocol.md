@@ -88,9 +88,17 @@ seat's own where the launcher started the window (the own-clear, 2026-10-26):
 `seat.py launch` loads the own-clear mod (`tools/cc/mods/own-clear`, a Claude
 Code plugin of function hooks, through `--plugin-dir`), `ship.py handoff`
 arms its marker last (`.espalier-state/own_clear.json`, the session id from
-`CLAUDE_CODE_SESSION_ID`, HEAD and the re-prime brief), and at the end of the
-next turn with nothing in flight (no tracked edit, no plan in progress, HEAD
-unmoved) the mod runs the real `/clear`, refuses a compaction while that
+`CLAUDE_CODE_SESSION_ID`, HEAD and the re-prime brief) whenever it ran to its
+end: the push landed, or a refusal the window is done with -- the base red,
+the lane whole and unpushed here, or a step after a landed push -- with the
+refusal in the marker and the lane to land first appended to the brief (a
+refusal the window must fix first arms nothing; a lane opened by hand is
+armed with `ship.py arm`; DEF-4057, after three seats sat past the threshold
+for 17.5 h on 2026-10-29 with their handoffs refused on a red base), and at
+the end of the next turn with nothing in flight (no tracked edit, no plan in
+progress, HEAD unmoved) the mod runs the real `/clear` -- after any prompt
+already queued as the turn ended, a loop tick among them, measured
+2026-10-30 -- refuses a compaction while that
 clear is due (never while it waits), and on the clear's SessionStart submits
 the brief with its loop line replaced by the note that a loop started there
 survived the clear, to the window it was armed in alone. In a window the
@@ -255,10 +263,18 @@ launcher did not start the handoff arms nothing and says the window needs a
      names are counted apart, never as a seat's zero)
      (`tools/cc/_record_fragments.py::lanes_since_row`, over the one merged
      read's lane fields, the last 100 merges); the ship driver's
-     `seat_row_debt` counts the same way, and its second lane makes `open
-     --early` refuse at a cap of 3 lanes, naming the count, the last row's
-     date and the way out (the row committed on the lane). A read that fails
-     is unread, never zero: no verdict is never a refusal on a guess.
+     `seat_row_debt` counts the same way, and since 2026-10-30 (the second
+     lane) `open --early` refuses at a cap of 3 lanes, naming the count, the
+     last row's date and where it sits (on the base; parked; riding the
+     seat's own open pull request; pruned from the base and read from its
+     history by the fold trailer, after #354's prune took two seats' newest
+     rows off the tree and the line read `no row` for seats that had rowed
+     every lane) and the way out (the row committed on the lane); a lane no
+     claim names is the seat its `seat:` label names, stamped by the driver
+     at the open, so a lane the driver opened on a named box counts for its
+     seat without a claim (a hand-opened pull request, a label the token
+     could not make, or an unnamed box still needs the claim). A read that
+     fails is unread, never zero: no verdict is never a refusal on a guess.
    - **A row another lane's unmerged edit carries is struck after that lane
      merges (2026-10-20).** A re-pin of a row rode an open pull request while
      the code that closed the row was built on `main`; a strike from the
@@ -317,6 +333,7 @@ launcher did not start the handoff arms nothing and says the window needs a
 | Carries a lighter lane of its own | Run the heaviest lanes, which compete with dispatching |
 | Files the rows nobody is assigned to fix, and the ones its own measurements find | File rows for a job it has assigned: the finding, its probe and its fix are the assignee's one job (rule 8) |
 | Reports counts that name their population, settings quoted from the tool that computes them, and the day's figures from `scripts/seat_day_census.py` | Carry a figure by hand, past a compaction or from memory |
+| Resolves a gridlock (the operator's standing rule, 2026-10-30), the one exception to the first row's operator list: where no seat can advance its assigned job and the next step is a decision (a red `main` no revert clears, two lanes in conflict, a ruling a worker waits on past the hour), it rules, acts and reports the ruling as an `ack` opening with `gridlock:` and carrying the facts it read, instead of filing an operator call and waiting; the operator can reverse it, and the seat-day census names each ruling by id on the dispatcher's row (the paragraph below) | Rule on what stays the operator's, gridlock or not: a new pack, a scope change, a release or tag |
 
 **Assign authority (decided by the operator 2026-10-15, after two days'
 measurement).** The dispatcher assigns, re-sequences and releases jobs on its
@@ -332,7 +349,49 @@ it apart until the dispatcher's `ack` naming the request's full id carries the
 ruling (an ack from any other seat leaves the call open); `cc/GOAL.md` no longer
 carries the calls (it holds the goal, the priorities and what is owed), and the
 ruling lands on origin where every seat reads it instead of in one checkout's
-gitignored file. Each assign is reported at the dispatcher's next tick
+gitignored file. Since 2026-10-30 a gridlock is the dispatcher's to resolve,
+the one exception to the list above, an open operator call on the gridlocked
+seat included (the operator's standing rule, set that day in the dispatcher
+session: "if there is a gridlock, that gridlock is resolved here. The
+dispatcher has the strongest model and the authority, the context to see
+everything and resolve issues"): where no seat can advance its assigned job
+and the next step is a decision (a red `main` no revert clears, two lanes in
+conflict, a ruling a worker waits on past the hour), the dispatcher rules,
+acts and reports the ruling as an `ack` with the facts it read, instead of
+filing an operator call and waiting; the operator can reverse it, and a new
+pack, a scope change, a release or tag stay the operator's. Reconciled with
+the list above (the dispatcher's ruling, 2026-10-30): a new pack, a scope
+change, a release or a tag stay the operator's even inside a gridlock; a
+revert that is not the red-`main` revert and an open operator call become the
+dispatcher's only when they are the next step of a gridlock, a seat's
+assigned job unable to advance past the hour. Item 7's revert still comes
+first: the gridlock is the red that outlives it. Why: seats held
+eleven hours on 2026-10-29 and seven calls sat two and a half hours on
+2026-10-30, each a decision the dispatcher had the context to make. The
+dispatcher brief carries the sentence from
+`tools/cc/seat.py::SELF_HOST_GRIDLOCK`, on this repository only, held to this
+paragraph, the row above and Core Rule 15 by a test
+(`tests/test_seat.py::TestBrief`). The ruling's `ack` opens with `gridlock:`
+(since 2026-10-30, `DEF-5029`), a marker in the family of `OPERATOR CALL:`,
+`redirect:` and `shelved:`, and `scripts/seat_day_census.py` counts a ruling
+by that opening alone and names each ruling's id beside the count on the
+dispatcher's day row, so the falsifier below is read from the record: the
+first two rulings under the rule (`20261030T095503Z-air-d6ef5a`,
+`20261030T113931Z-air-f0a99e`) were plain acks no reader counted, and a word
+read anywhere in a text counts the briefs' and the assigns' own quotations of
+it (on 2026-10-30 the four mentions of `gridlock:` on the refs were all
+quotations); the ack's first word is the marker, so a ruling opening with
+`RULING` or an address is not counted (10 of the dispatcher's 18 acks since
+2026-10-28 open with `RULING`, read 2026-10-30), one ruling per ack, and only
+the dispatcher's acks count: a worker's request opening with the word is a
+question, not a ruling. The figures count from the first dispatcher window
+launched or re-primed from a checkout holding this change (the brief reaches
+a window at its launch and at the re-prime, from that checkout's own
+`seat.py`): a day row already written is a frozen record and is not
+re-derived under the opening rule (Core Rule 13, the dispatcher's condition
+on `20261030T143356Z-air-work-b67559`). The data point that falsifies this: a
+gridlock ruling the operator reverses; two in a week re-opens the rule. Each
+assign is reported at the dispatcher's next tick
 with the job and the reason, so the operator can veto it, and the day's
 assigns go in the Session Log row. Why: the per-assign yes was the queue's
 single point of failure. Measured on 2026-10-14 and 10-15, assign-to-first-claim
@@ -353,7 +412,20 @@ stops, and only re-reads mail, for what the assign authority above reserves
 for the operator (a new pack, a change to an approved pack's scope, a release
 or tag, a revert that is not the red-`main` revert, an open operator call, an
 `OPERATOR CALL:` request on the board's `asks:` line), for a platform safety stop, for a refusal it cannot resolve, and for a
-conflict outside its own files; a finding's row is the seat's own to file
+conflict outside its own files; the stop is said as one `request` whose text
+opens with `stopped:` (its first word; it names what stops the seat, an open
+operator call by its id; no proceeding on it), so the board's `asks:` line
+carries it with its age, the dispatcher's past-the-hour read under the gridlock
+rule, counted apart on the header and tagged `(stopped)`; any `ack` naming it
+closes it, and since a release or the ruling on an operator call names no
+stop, the seat acks its own stop when what stopped it is gone, and sends the
+stop again after an ack that frees nothing (the failure-mode review's
+regression: the first clause waited on an ack the freeing events never send;
+since
+2026-10-30, `DEF-5030`: before it this repository's stop sent nothing and an
+adopter's sent a plain request, so the board showed no stopped seat; the word's
+home is `tools/cc/mail.py::STOPPED_PREFIX`, beside the operator call's, held to
+both ticks and the census by `tests/test_seat.py::TestBrief`); a finding's row is the seat's own to file
 (item 8), never a stop. A red the seat cannot fix in two attempts shelves the
 lane (its claims stay, unless its push already released them; one note
 beginning `shelved:` says what was tried and names any job that lane's push
@@ -363,7 +435,12 @@ names (the third closing rule closes a job at the push its claims cover,
 before CI has run, and no read lists such jobs yet: `DEF-4037`). A redirect after the fact is an ack beginning
 `redirect:`, and the Session Log row counts it as rework; `TP-703f`'s census
 counts both words from the refs, so the falsifier below is read, never
-recalled. The tick has carried the sentence since 2026-10-24
+recalled -- where a text opens with the word, since 2026-10-30 (`DEF-5029`):
+a word read anywhere in a text counted the briefs' and the assigns' own
+quotations of it, 8 of the 9 `redirect:` and 5 of the 5 `shelved:` mentions
+on the refs that day, and the one real redirect written mid-text (item 3 of
+the composite ack `20261026T013626Z-air-447e73`) is not a use of the
+convention as this paragraph states it. The tick has carried the sentence since 2026-10-24
 (`tools/cc/seat.py::SELF_HOST_PROCEED`, on the operator's yes to the call
 `20261024T065923Z-air-b366a4`, amended to this paragraph as it stood that
 day; its wait is rendered from `DISPATCHER_TICK`, never copied; a request
@@ -382,7 +459,7 @@ override after the fact that forces rework, twice in twenty.
 **The model on a dispatch (the operator's rule, 2026-10-25).** A seat passes a
 model below its own on a subagent dispatch only for a kind named on a line
 opening with `allowance:` in the assign for the job in hand, a marker in the
-family of `OPERATOR CALL:`, `redirect:` and `shelved:`. The kinds, rendered
+family of `OPERATOR CALL:`, `redirect:`, `shelved:`, `gridlock:` and `stopped:`. The kinds, rendered
 into the tick and the dispatcher brief from `tools/cc/seat.py::DISPATCH_KINDS`
 and held to this paragraph by a test: `anchors` (the 0-A re-derivation of a
 pack's anchors and figures against HEAD, each tagged verified, probable or
@@ -430,7 +507,10 @@ that is away: a seat with a queue does not need it in real time.
 **The dispatcher's first read is the board's `seats:` and `asks:` lines**
 (`python3 tools/cc/board.py`, `TP-701` Wave A). `asks:` is every request no
 `ack` names, from every seat (the dispatcher's own outgoing ones included: a
-request names no addressee), oldest first with its full id and age; on the
+request names no addressee), oldest first with its full id and age; a request
+opening with `stopped:` is a worker that cannot advance its job (the tick's
+STOP clause), counted apart on the header and tagged `(stopped)` on its row,
+its age the past-the-hour read of the gridlock rule (`DEF-5030`); on the
 dispatcher seat the banner's `Mail:` line carries the count and the oldest
 age. A request that went moot is closed with an ack naming its full id and
 saying so, or it stays on the line. `seats:` is each seat name's last mail

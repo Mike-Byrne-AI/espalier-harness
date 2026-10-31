@@ -564,6 +564,7 @@ def _iter_guarded_py():
 
 
 class TestNoJsonFailOpenInGoverningCode:
+    @pytest.mark.contract
     def test_no_unguarded_json_dict_deref(self):
         offenders: list[str] = []
         for path in _iter_guarded_py():

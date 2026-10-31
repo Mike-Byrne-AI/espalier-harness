@@ -364,7 +364,8 @@ unread); a row lost to a revert of the lane that folded it, which `ever_added` s
 added, so it is never pending again (`DEF-4045`). Filed beside them from the same review:
 `DEF-4043` (the banner's `Mail:` line counts the asks without the operator calls apart, a hook
 file) and `DEF-4046` (the census reads rows from the working-tree glob, so parked rows are
-missed).
+missed). Handled in the second lane (2026-10-30), each with a named test except the records-lane
+item, which was measured and built nothing; the record is Landing's second-lane entry.
 Refuted if a seat's lanes are mostly records lanes carrying other seats' folded rows: the fold's
 commits carry `FOLD_TRAILER` and `lane_carries_memory_row` already excludes them, and 1-B counts
 merged pull requests, not rows, so a records lane counts as a lane; Task 0 item 3 decides whether
@@ -598,7 +599,7 @@ read these as the author's guess, not a schedule.
 | Total | 5 to 7 h | 2.5 h | expect the measured overrun |
 
 ## Landing
-- State: DRAFT (the first lane landed; the pack stays open for the second lane, 1-D)
+- State: LANDED
 - The first lane landed 2026-10-24 (local), single-seat, on `lane/the-records-say-what-happened`:
   sub-task 1's readers (1-A to 1-C), sub-task 2 and sub-task 4, with the review batch above.
 - Commits: the first lane's one commit (its pull request names it; the handoff's Session Log
@@ -670,8 +671,61 @@ read these as the author's guess, not a schedule.
   and the fold include the dispatcher's own requests; item 6: the dispatcher's row prints every
   field but the day's live jobs, which its JSON carries, so the field is added here. The cap stays
   at 3.
-- The 1-D window: 1-C on `main` at the first lane's merge (2026-10-24, its pull request's
-  merge stamp is the date); the refusal switched on at (date), no sooner than three days of
-  board lines after it, in the second lane, which also handles the list under 1-D.
+- The second lane landed 2026-10-30 (local), seat `air-work`, on
+  `lane/the-early-arm-refuses-on-row-debt` (assign e4f2eb): 1-D's refusal at the cap of 3, and
+  the list under 1-D handled -- the base and the records refs fetched before the reading; a row
+  riding the seat's own open pull request read from its fetched head; a renamed worktree seat told
+  the seat name read and the other seats' newest rows; lanes no claim names attributed by the
+  `seat:<name>` label `open` stamps (`DEF-4044` struck, at every site a branch is turned into a
+  seat: the two readers, the board's open-PR tags, the one-per-seat advisory, the census);
+  records lanes measured, none fold-only among the last 100 merges on `main` at 0020da9 (15
+  carried a fold beside other work), so nothing built; every sibling read under the guard (an
+  older kept loader's `AttributeError` reads as unread); a reverted fold's row pending again at
+  the fold and at the park (`DEF-4045` struck) -- plus the pruned-newest-row edge the assign
+  named: #354's prune took win's and win-2's newest rows off the tree and the line read `24+
+  merges, no row`; on the dispatcher's ruling (request 6b94e5, ack 19efca: option (c) with three
+  conditions) the readers take a seat's newest row from the base's history too, the fold's
+  trailered prunes alone, through one loader call, and say `pruned` beside such a date; a shallow
+  clone's cut history reads as unread, never as no pruned rows.
+- Commits (the second lane): one on the lane; its pull request names it, and the Session Log row
+  names the pull request.
+- Suite (the second lane): the full tier, `python3 scripts/proof_tier.py --run --tier full --base
+  origin/main`, twice. At the lane's first commit (ead1b0d3): mypy clean (28 files), ruff clean,
+  the parallel leg 25174 passed and 3 failed, all this lane's own (two pack ids on a shipping
+  surface, the provenance census; two name readers that took an unread name for none, the
+  name-reader contract), the serial leg 2134 passed. After the fix (f50d41e9, the words and the
+  readers unpacking the reason against `MACHINE_UNREAD`): mypy clean, ruff clean, the parallel leg
+  25177 passed / 100 skipped / 3 xfailed in 26:40, the serial leg 2134 passed / 9 skipped in 3:53,
+  `proof: PASS`. The syncs clean (vendor 60, Claude mirrors 74, asset docs 18); the integrity
+  manifest refreshed and verified.
+- Earn-the-red (the second lane, 2026-10-30): the new and changed tests run at the base 0020da9
+  in a scratch clone with the lane's test files laid over it, 31 failed / 21 passed; the three
+  strike guards red by assertion there (`(2, '2026-10-18', False) == (3, '2026-10-18', 'base')`,
+  `1 == 2`, `(0, 0) == (1, 0)`) and green at the head. The mutants agent (Sonnet, under the
+  assign's allowance) drove 36 named mutants on its own clone: 32 killed, one equivalent (the
+  prefix-alone label reads '' either way), one expected survivor (`--topo-order` on a repository
+  whose clock order already agrees), one mis-applied then killed on re-run, one real gap (the
+  older-loader test's stand-in lacked every new name, so the read failed before the line the test
+  named) closed in the fix batch.
+- Red-team (the second lane, both reviewers at once on a frozen snapshot clone, read code then
+  failure-mode): the code-reviewer REQUEST CHANGES, 0 block / 3 warn / 4 nit (the park still
+  dropped a reverted row by the ever-added rule; a vacuous order assertion; the trailer unpinned at
+  the callers; the riding read wider on the board than in the driver; the none-line dropping the
+  unread note); the failure-mode-reviewer REQUEST CHANGES, 0 regressions / 7 gaps / 12 rough
+  edges (the park; a label create that times out stopping the open as Held; a shallow clone's
+  empty history read as no pruned rows; the fold's TypeError beside an older mail driver; the
+  unnamed box blamed on git; a base fetch timeout refusing; the records line's `no claim names`
+  words; the loader docstring's false strip reason; the refusal's `shipped` words). One fix
+  batch landed every gap and warning and those rough edges, with a named test each; left as said
+  in docstrings: the label's `--force` resetting colour and description at each open, an
+  adopter's own `seat:` labels read as seats, a hand-deleted row coming back while its ref holds
+  it; the trailer pinned at the two readers' stubs and not at the landing check's real-git test;
+  the pass criterion's `unreadable gh` sentence resolved by the dispatcher's condition 2 (an
+  unread debt never refuses). A second round was not needed: the batch re-ran the seven touched
+  test files (871 passed) and the live board read.
+- The 1-D window: 1-C on `main` at the first lane's merge (#334, 2026-10-24 07:51Z); the refusal
+  switched on 2026-10-30 (local), six days of board lines later, in the second lane. The cap
+  stays at 3. The pack stays in `task-packs/` beside its landed siblings (`TP-703a`, `c`, `e`,
+  `f`, `g`, `i`, `j`), the children's convention since 2026-10-20.
 - Date: 2026-10-18 (authored, local); corrected 2026-10-23 at 0-A; the first lane landed
-  2026-10-24
+  2026-10-24; the second lane landed 2026-10-30

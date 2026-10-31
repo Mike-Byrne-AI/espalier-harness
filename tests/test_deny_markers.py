@@ -75,13 +75,6 @@ _EXEMPT_FRAGMENTS: tuple[str, ...] = (
     "Name a program that is on PATH",
 )
 
-# Call sites whose reason text is produced at RUNTIME by a function, so no
-# static walk can read it. Keyed by the PRODUCING SYMBOL rather than by
-# file:line — a line number rots on the next edit above it, and this contract
-# exists because stale declarations go quiet. Each entry names the template
-# the producer renders, which `test_every_reachable_reason_has_a_marker`
-# then covers on the site's behalf. `test_no_dead_producer_exemptions`
-# deletes an entry that has stopped being needed.
 # Declared constants that are FRAGMENTS composed into another reason, never a
 # standalone denial. They reach the agent only as part of a larger text that is
 # itself covered, so requiring a marker for the fragment alone would force a
@@ -117,30 +110,6 @@ _NOT_STANDALONE_REASONS: dict[str, str] = {
     "GATE_COMMAND_TIMEOUT_DO_TOML": "the Do line of the timeout reason for the declared command",
     "GATE_COMMAND_TIMEOUT_DO_FINGERPRINT": "the Do line of the timeout reason for the detected command",
     "GATE_COMMAND_SPAWN_REMEDY_SHELL_SYNTAX": "the shell-syntax remedy, interpolated into the spawn-failed reason",
-}
-
-_RUNTIME_PRODUCERS: dict[str, str] = {
-    # The two dangerous-tier wrappers deny what a same-module reason function
-    # returns (DEF-637: `_bash_dangerous_reason` / `_ps_dangerous_reason`,
-    # split out so each shell's tier can hand the other a nested program).
-    # Each renders the record's own message or the `format_dangerous_*`
-    # fallback, plus the declared constants (`CATASTROPHIC_RM`, ...), which
-    # are covered as declared reasons. Keyed by the bare name `_dotted`
-    # derives for a same-module call.
-    "_bash_dangerous_reason": "DANGEROUS_BASH_PLAIN",
-    "_ps_dangerous_reason": "DANGEROUS_PS_PLAIN",
-    # The speed-bump template lives OUTSIDE _denial_reasons.py, which is the
-    # whole reason a single-module canon would be wrong here. The site reads
-    # its reason out of the ``(checkpoint id, reason)`` pair ``check_fired``
-    # returns (the id feeds the audit record); ``_producer_of`` follows that
-    # unpack back to the call.
-    "_speedbump.check_fired": "_speedbump._REASON_TEMPLATE",
-    # The zone deny on a full-template channel (Write / Edit / NotebookEdit,
-    # PowerShell) renders the template the ZONE picks (2026-09-30): the harness
-    # pair, or one of the three adopter-zone templates for a path espalier.toml
-    # names -- each a declared reason covered on its own. Registered against
-    # the harness template; the site binds the call to a name and denies it.
-    "_zone_reason": "PROTECTED_ZONE_WRITE",
 }
 
 
@@ -441,36 +410,210 @@ def _producer_of(assigns: list[tuple[ast.Assign, bool]], arg: ast.AST, _hops: in
     return None
 
 
+# -- Runtime reason producers, derived from the producer's own body (DEF-750) --
+#
+# A site whose reason is produced at RUNTIME by a function
+# (``reason = _zone_reason(...); deny(reason)``) is unreadable to the static
+# walk above, which records the PRODUCER's symbol instead (`_dotted`,
+# `_producer_of`). Until DEF-750 a hand-kept dict mapped each producer name to
+# the one template it rendered. Keyed by name, so a rename or a split of a
+# producer re-keyed it and redded the tier on a name that had moved, and the
+# maintainer's only repair was editing the map, again on the next rename.
+# Measured at the change: two of its four entries named DICTS
+# (`DANGEROUS_BASH_PLAIN`, `DANGEROUS_PS_PLAIN`, the fallback's ``{what}``),
+# which no string lookup finds, so they covered nothing; the zone entry named
+# one of the seven templates `_zone_reason` renders; only the speed-bump entry
+# added a text no other path covers. The templates are now read out of the
+# producer's own return flow, so a new, renamed or split producer is covered
+# with no edit here, and one that renders no declared template reds by name.
+
+_NESTED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def _tree_of(path: Path, trees: dict[Path, ast.Module]) -> ast.Module:
+    if path not in trees:
+        trees[path] = ast.parse(path.read_text(encoding="utf-8"))
+    return trees[path]
+
+
+def _module_function(tree: ast.Module, name: str) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    """The module-level function ``name`` of ``tree``, or None."""
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return node
+    return None
+
+
+def _own_nodes(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.AST]:
+    """Every node of ``fn``'s body, not descending into a nested def, lambda
+    or class: a return there is another function's."""
+    out: list[ast.AST] = []
+    stack: list[ast.AST] = [n for n in fn.body if not isinstance(n, _NESTED_SCOPES)]
+    while stack:
+        node = stack.pop()
+        out.append(node)
+        stack.extend(c for c in ast.iter_child_nodes(node) if not isinstance(c, _NESTED_SCOPES))
+    return out
+
+
+def _producer_function(
+    hook: Path, producer: str, trees: dict[Path, ast.Module]
+) -> tuple[Path, ast.FunctionDef | ast.AsyncFunctionDef] | None:
+    """``(module path, function)`` for a producer symbol as `_dotted` and
+    `_producer_of` name it -- a bare name is a function of the denying hook's
+    own module, ``module.func`` one of ``HOOKS_DIR / module.py`` -- or None
+    when no module-level function of that name is there to read (the
+    ``<unknown>`` and ``<not under the function body>`` rows included)."""
+    module, _, name = producer.rpartition(".")
+    path = HOOKS_DIR / f"{module}.py" if module else hook
+    if not path.is_file():
+        return None
+    fn = _module_function(_tree_of(path, trees), name)
+    return None if fn is None else (path, fn)
+
+
+def _producer_templates(
+    hook: Path, producer: str, trees: dict[Path, ast.Module] | None = None
+) -> dict[str, str] | None:
+    """The declared templates a runtime producer renders, as
+    ``{"module.NAME": text}``; None when the producer is no function this walk
+    can read (`test_no_deny_site_is_silently_unreadable` names that site).
+
+    Reads the producer's RETURN FLOW. A returned expression is followed through
+    ``X.format(...)`` (to ``X``), ``a or b``, ``a if c else b``, a tuple
+    (``check_fired`` returns ``(id, reason)``), ``a + b``, a local name (to
+    every value the function binds to it), and a call to a module-level
+    function -- same-module by bare name, or ``mod.func`` of a hook module --
+    whose own return flow is read in turn. It collects module-level string
+    constants: a bare name of the module being read (``_REASON_TEMPLATE`` in
+    ``_speedbump.py``), or ``mod.NAME`` of a hook module
+    (``_denial_reasons.CATASTROPHIC_RM``).
+
+    Not every name the body mentions: a body walk reaches ``_flag_name`` from
+    ``check_fired`` and collects ``_FLAG_PREFIX = "speedbump_"``, a state-file
+    prefix that reaches no agent, and ``_zone_hint`` from ``_zone_reason``,
+    whose text is a ``{hint}`` interpolated into the template. Format
+    ARGUMENTS are fragments for the same reason, so a dict such as
+    ``DANGEROUS_BASH_PLAIN`` (the fallback's ``{what}``) is never collected:
+    the fallback template that carries it is. A returned literal is not a
+    declared template and is not collected either; a producer that renders
+    only literals reds in
+    `test_every_runtime_producer_renders_a_declared_template`.
+
+    Terminates on the visited set (each function is read once, so the
+    cross-shell recursion, Bash tier to PowerShell tier and back, stops where
+    it closes). There is no hop cap: with the visited set it could only drop a
+    template silently. The deepest chain today is four calls
+    (``_bash_dangerous_reason`` to ``format_dangerous_ps``).
+    """
+    trees = {} if trees is None else trees
+    start = _producer_function(hook, producer, trees)
+    if start is None:
+        return None
+    found: dict[str, str] = {}
+    visited: set[tuple[Path, str]] = set()
+    work = [start]
+    while work:
+        path, fn = work.pop()
+        if (path, fn.name) in visited:
+            continue
+        visited.add((path, fn.name))
+        tree = _tree_of(path, trees)
+        consts = _module_constants(tree)
+        own = _own_nodes(fn)
+        binds: dict[str, list[ast.AST]] = {}
+        for node in own:
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    if isinstance(target, ast.Name):
+                        binds.setdefault(target.id, []).append(node.value)
+        todo: list[ast.AST] = [n.value for n in own if isinstance(n, ast.Return) and n.value is not None]
+        followed: set[str] = set()
+        while todo:
+            expr = todo.pop()
+            if isinstance(expr, ast.Name):
+                if expr.id in binds:
+                    if expr.id not in followed:
+                        followed.add(expr.id)
+                        todo.extend(binds[expr.id])
+                elif expr.id in consts:
+                    found[f"{path.stem}.{expr.id}"] = consts[expr.id]
+            elif isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name):
+                other = HOOKS_DIR / f"{expr.value.id}.py"
+                if other.is_file():
+                    text = _module_constants(_tree_of(other, trees)).get(expr.attr)
+                    if text is not None:
+                        found[f"{expr.value.id}.{expr.attr}"] = text
+            elif isinstance(expr, ast.Call):
+                func = expr.func
+                if isinstance(func, ast.Attribute) and func.attr == "format":
+                    todo.append(func.value)
+                elif isinstance(func, ast.Name):
+                    callee = _module_function(tree, func.id)
+                    if callee is not None:
+                        work.append((path, callee))
+                elif isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+                    other = HOOKS_DIR / f"{func.value.id}.py"
+                    callee = _module_function(_tree_of(other, trees), func.attr) if other.is_file() else None
+                    if callee is not None:
+                        work.append((other, callee))
+            elif isinstance(expr, ast.BoolOp):
+                todo.extend(expr.values)
+            elif isinstance(expr, ast.IfExp):
+                todo.extend((expr.body, expr.orelse))
+            elif isinstance(expr, (ast.Tuple, ast.List)):
+                todo.extend(expr.elts)
+            elif isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+                todo.extend((expr.left, expr.right))
+    return found
+
+
+def _unreadable_producer_sites() -> list[str]:
+    """Unresolved sites whose producer is no function the walk can read."""
+    trees: dict[Path, ast.Module] = {}
+    return [
+        f"{p.name}:{ln} (producer: {producer})"
+        for p, ln, producer in _collect_deny_sites()[1]
+        if _producer_function(p, producer, trees) is None
+    ]
+
+
+def _producers_rendering_nothing() -> list[str]:
+    """Unresolved sites whose producer reads, but renders no declared template."""
+    trees: dict[Path, ast.Module] = {}
+    return [
+        f"{p.name}:{ln} ({producer})"
+        for p, ln, producer in _collect_deny_sites()[1]
+        if _producer_templates(p, producer, trees) == {}
+    ]
+
+
 def _reachable_reason_texts() -> list[tuple[str, str]]:
     """Every text that can reach an agent, as ``(origin, text)``.
 
-    The union of the two independent derivations plus the declared template
-    behind each runtime producer — so a reason is covered no matter which of
-    the three paths it takes to the agent.
+    The union of the two independent derivations plus every declared template
+    a runtime producer renders (`_producer_templates`, one row per producer
+    and template) -- so a reason is covered no matter which of the three
+    paths it takes to the agent.
     """
+    resolved, unresolved = _collect_deny_sites()
     out: list[tuple[str, str]] = []
-    for path, lineno, text in _collect_deny_sites()[0]:
+    for path, lineno, text in resolved:
         out.append((f"{path.name}:{lineno}", text))
     for name, text in _DECLARED_REASONS().items():
         if name in _NOT_STANDALONE_REASONS:
             continue
         out.append((f"_denial_reasons.{name}", text))
-    for producer, template in _RUNTIME_PRODUCERS.items():
-        text = _DECLARED_REASONS().get(template.rsplit(".", 1)[-1])
-        if text is None:
-            text = _speedbump_template() if "speedbump" in template else None
-        if text:
-            out.append((f"{producer} -> {template}", text))
+    trees: dict[Path, ast.Module] = {}
+    seen: set[tuple[Path, str]] = set()
+    for hook, _lineno, producer in unresolved:
+        for template, text in sorted((_producer_templates(hook, producer, trees) or {}).items()):
+            origin = f"{producer} -> {template}"
+            if (hook, origin) not in seen:
+                seen.add((hook, origin))
+                out.append((origin, text))
     return out
-
-
-def _speedbump_template() -> str | None:
-    path = HOOKS_DIR / "_speedbump.py"
-    if not path.exists():
-        return None
-    return _module_constants(
-        ast.parse(path.read_text(encoding="utf-8"))
-    ).get("_REASON_TEMPLATE")
 
 
 def _is_covered(reason_text: str) -> bool:
@@ -513,21 +656,25 @@ def test_no_deny_site_is_silently_unreadable():
     success over the 19 it could not parse. Any argument shape the resolver
     does not understand now reds by name, so the population can only ever be
     narrowed on purpose and in the open.
+
+    A site whose reason a named producer renders is read through that
+    producer (`_producer_templates`, DEF-750); what reds here is a site whose
+    producer is no module-level function the walk can find -- a runtime
+    attribute (``entry.message``), a call into a module that is not a hook, a
+    nested function, or no producer at all (``<unknown>``).
     """
-    _, unresolved = _collect_deny_sites()
-    orphans = [
-        f"{p.name}:{ln} (producer: {producer})"
-        for p, ln, producer in unresolved
-        if producer not in _RUNTIME_PRODUCERS
-    ]
+    orphans = _unreadable_producer_sites()
     assert not orphans, (
         "deny/block/_audit_deny call sites whose reason this contract cannot "
-        "read, and which are not declared runtime producers:\n  "
+        "read, and whose producer is no module-level hook function the "
+        "producer walk can read:\n  "
         + "\n  ".join(orphans)
-        + "\n\nEither teach `_resolve_text` the shape, or add the producing "
-        "symbol to `_RUNTIME_PRODUCERS` WITH the template it renders. Do NOT "
-        "widen the resolver to return a partial string — a half-read reason "
-        "matches a marker by accident and puts this contract back to sleep."
+        + "\n\nEither teach `_resolve_text` the shape, or bind the reason from "
+        "a named module-level producer (``reason = _x_reason(...); "
+        "deny(reason)``) that renders a declared template; `_producer_templates` "
+        "reads its return flow. Do NOT widen the resolver to return a partial "
+        "string -- a half-read reason matches a marker by accident and puts "
+        "this contract back to sleep."
     )
 
 
@@ -582,15 +729,32 @@ def test_no_dead_markers():
     )
 
 
-def test_no_dead_producer_exemptions():
-    """Self-expiry: a runtime-producer entry whose site is now readable."""
-    _, unresolved = _collect_deny_sites()
-    live = {producer for _, _, producer in unresolved}
-    stale = sorted(set(_RUNTIME_PRODUCERS) - live)
-    assert not stale, (
-        f"{len(stale)} `_RUNTIME_PRODUCERS` entries no longer match any "
-        f"unreadable call site: {stale}. Delete them — an exemption that "
-        "outlives its reason is how an allowlist grows without review."
+def test_every_runtime_producer_renders_a_declared_template():
+    """The floor under the derived producer population (DEF-750).
+
+    The hand-kept producer map this replaces needed a self-expiry test (an
+    entry outliving its site); a population read off the live sites holds no
+    dead entry, so that test went with the map. What a derivation CAN do is
+    narrow silently: a producer whose walk finds no declared template adds
+    nothing to the marker arm while its site still denies. That reds here, by
+    site and producer. A producer that loses ONE template of several passes
+    here: a template declared in a reason module stays covered by the
+    declared pass on its own, and the speed-bump template, the one text only
+    this walk reaches today, also reds `test_no_dead_markers` (its
+    "Speed-bump" marker matches no other text; measured by inlining it). The
+    residual silent case is a module-local template of a non-reason module,
+    dropped from a producer that still renders another.
+    """
+    empty = _producers_rendering_nothing()
+    assert not empty, (
+        "runtime reason producers whose return flow renders no declared "
+        "template, so the marker contract covers nothing on their sites' "
+        "behalf:\n  "
+        + "\n  ".join(empty)
+        + "\n\nRender the reason from a module-level string constant (a "
+        "`_denial_reasons.py` template, or one of the producer's own module) "
+        "or teach `_producer_templates` the return shape. A literal built "
+        "inline is no declared template."
     )
 
 
@@ -844,3 +1008,94 @@ def test_the_same_unreadable_producer_in_two_arms_is_one_unresolved_row(monkeypa
     resolved, unresolved = _deny_sites_of(monkeypatch, tmp_path, src)
     assert resolved == []
     assert [(ln, producer) for _p, ln, producer in unresolved] == [(8, "mk.make")]
+
+
+# -- DEF-750: a runtime producer's templates come from its own return flow --
+
+_SYNTHETIC_REASONS = (
+    "_OPERATOR_FACING_TEMPLATES = ()\n"
+    "PROBE_TEMPLATE = 'Probe blocked: {cmd}. What to do: the probe thing'\n"
+)
+
+_NEW_PRODUCER = (
+    "import _denial_reasons\n"
+    "_LOCAL_TEMPLATE = 'Local probe blocked: {cmd}'\n"
+    "def deny(reason):\n"
+    "    return 0\n"
+    "def PRODUCER(cmd, flag):\n"
+    "    if flag:\n"
+    "        return _denial_reasons.PROBE_TEMPLATE.format(cmd=cmd)\n"
+    "    text = _local_text(cmd)\n"
+    "    return text\n"
+    "def _local_text(cmd):\n"
+    "    return _LOCAL_TEMPLATE.format(cmd=cmd)\n"
+    "def _run_main(cmd, flag):\n"
+    "    reason = PRODUCER(cmd, flag)\n"
+    "    return deny(reason)\n"
+)
+
+
+def _producer_sites_of(monkeypatch, tmp_path: Path, src: str):
+    """`_deny_sites_of` with a reason module beside the synthetic hook: it
+    declares itself one (``_OPERATOR_FACING_TEMPLATES``), as the live ones do."""
+    (tmp_path / "_denial_reasons.py").write_text(_SYNTHETIC_REASONS, encoding="utf-8")
+    return _deny_sites_of(monkeypatch, tmp_path, src)
+
+
+@pytest.mark.parametrize("producer", ["_probe_reason", "_probe_reason_renamed"])
+def test_a_new_runtime_producer_is_covered_with_no_roster_edit(monkeypatch, tmp_path, producer):
+    # The class's acceptance criterion: a producer nobody registered, under
+    # any name (the row's "who" is the maintainer whose rename re-keyed the
+    # hand-kept map), is read through its return flow -- a declared template
+    # of the reason module, and a same-module template reached through a
+    # local name and a callee -- and both reach the marker arm's population.
+    resolved, unresolved = _producer_sites_of(
+        monkeypatch, tmp_path, _NEW_PRODUCER.replace("PRODUCER", producer)
+    )
+    assert resolved == []
+    assert [(ln, name) for _p, ln, name in unresolved] == [(14, producer)]
+    assert _producer_templates(tmp_path / "synthetic.py", producer) == {
+        "_denial_reasons.PROBE_TEMPLATE": "Probe blocked: {cmd}. What to do: the probe thing",
+        "synthetic._LOCAL_TEMPLATE": "Local probe blocked: {cmd}",
+    }
+    reachable = dict(_reachable_reason_texts())
+    assert reachable[f"{producer} -> synthetic._LOCAL_TEMPLATE"] == "Local probe blocked: {cmd}"
+    assert f"{producer} -> _denial_reasons.PROBE_TEMPLATE" in reachable
+    assert _unreadable_producer_sites() == []
+    assert _producers_rendering_nothing() == []
+
+
+def test_a_producer_rendering_no_declared_template_is_named(monkeypatch, tmp_path):
+    # The floor's own red: a producer that builds its reason inline reads
+    # fine but renders no declared template, so it would add nothing to the
+    # marker arm while its site still denies.
+    src = (
+        "def deny(reason):\n"
+        "    return 0\n"
+        "def _probe_reason(cmd):\n"
+        "    return 'Probe inline: ' + cmd\n"
+        "def _run_main(cmd):\n"
+        "    return deny(_probe_reason(cmd))\n"
+    )
+    _resolved, unresolved = _producer_sites_of(monkeypatch, tmp_path, src)
+    assert [(ln, name) for _p, ln, name in unresolved] == [(6, "_probe_reason")]
+    assert _producer_templates(tmp_path / "synthetic.py", "_probe_reason") == {}
+    assert _producers_rendering_nothing() == ["synthetic.py:6 (_probe_reason)"]
+    assert _unreadable_producer_sites() == []
+
+
+def test_a_producer_the_walk_cannot_find_is_named_as_unreadable(monkeypatch, tmp_path):
+    # A producer in a module that is not a hook has no body to read: the
+    # site reds as unreadable by name, never as a covered one.
+    src = (
+        "def deny(reason):\n"
+        "    return 0\n"
+        "def _run_main():\n"
+        "    x = mk.make()\n"
+        "    return deny(x)\n"
+    )
+    _resolved, unresolved = _producer_sites_of(monkeypatch, tmp_path, src)
+    assert [(ln, name) for _p, ln, name in unresolved] == [(5, "mk.make")]
+    assert _producer_templates(tmp_path / "synthetic.py", "mk.make") is None
+    assert _unreadable_producer_sites() == ["synthetic.py:5 (producer: mk.make)"]
+    assert _producers_rendering_nothing() == []
