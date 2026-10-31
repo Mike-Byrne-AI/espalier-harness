@@ -61,8 +61,9 @@ Verbs (each stands alone and derives what it needs from git and gh):
     arm [--why ...]      the same arm by hand, for a lane opened by hand
                          (gh pr create ran no verb): a clean tree, a lane on
                          origin; over a marker already armed for this session
-                         it re-arms at HEAD when HEAD moved (a pull by hand),
-                         the brief kept, and refuses otherwise
+                         it re-arms at HEAD when a pull by hand moved it (no
+                         commit of the lane's own in the move), the brief
+                         kept, and refuses otherwise
 
 Stdlib-only (``tools/cc/`` runs standalone, zero espalier imports); the guard
 it asks about (``tools/cc/ci_guard.py``, an install-ci artifact) is loaded by
@@ -1545,15 +1546,22 @@ def _lane_not_on_origin(root: Path) -> str | None:
     return None
 
 
-def _own_clear_marker(root: Path) -> dict | None:
-    """The marker's record when it is armed for this shell's session, else
-    None: a missing or unreadable marker, another session's, or one the mod
-    has consumed or marked stale."""
+def _read_own_clear(root: Path) -> dict | None:
+    """The marker's record as it is on disk, whatever its state and session;
+    None for a missing or unreadable one."""
     try:
         marker = json.loads((root / STATE_DIR / OWN_CLEAR_MARKER).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if (isinstance(marker, dict) and marker.get("state") == "armed"
+    return marker if isinstance(marker, dict) else None
+
+
+def _own_clear_marker(root: Path) -> dict | None:
+    """The marker's record when it is armed for this shell's session, else
+    None: a missing or unreadable marker, another session's, or one the mod
+    has consumed or marked stale."""
+    marker = _read_own_clear(root)
+    if (marker is not None and marker.get("state") == "armed"
             and marker.get("session_id") == os.environ.get(SESSION_ID_ENV, "").strip()):
         return marker
     return None
@@ -1566,46 +1574,118 @@ def _armed_for_this_session(root: Path) -> str | None:
     return None if marker is None else str(marker.get("written_at") or "earlier")
 
 
-def rearm_own_clear_after_move(root: Path, *, by: str) -> str | None:
+def rearm_own_clear_after_move(root: Path, *, by: str, moved_from: str | None = None,
+                               refusal: str | None = None, why: str | None = None) -> str | None:
     """After a verb moved HEAD under a marker armed for this session with
-    nothing left to hand off -- the catch-up's pull of the server's merge,
-    its own record merge once pushed, or a pull by hand the ``arm`` verb is
-    run after -- rewrite the marker's ``head`` to HEAD with every other field
-    kept (the brief, how the handoff ended, and the record the mod writes: a
-    refusal's count is what the banner's Own-clear: line and the prompt
-    router read) and the move on the record (``rearmed_from``,
-    ``rearmed_by``, ``rearmed_at``); the line that says so, or None when no
-    marker is armed for this session or its head is HEAD already. The mod
-    holds the clear on ``HEAD moved since the handoff``, and a handoff
-    re-arms only over a commit: a pull leaves nothing to hand off, so the
-    hold stood until a re-arm by hand (air-work's window sat held for 3 h 33
-    min on 2026-10-31 after its tick's catch-up)."""
-    marker = _own_clear_marker(root)
-    if marker is None:
-        return None
+    nothing left to hand off, rewrite the marker's ``head`` to HEAD with every
+    other field kept (the brief, how the handoff ended, and the record the
+    mod writes: a refusal's count is what the banner's Own-clear: line and
+    the prompt router read) and the move on the record (``rearmed_from``,
+    ``rearmed_by``, ``rearmed_at``, and ``rearmed_why`` from ``why``). The
+    callers: the catch-up after its pull of the server's merge or its own
+    record merge once pushed, with ``moved_from`` the HEAD it started from --
+    the marker must have been armed there, else a commit after the handoff
+    moved HEAD first, that handoff (which re-arms) is owed, and the marker
+    stays (the review's case: a re-arm over it would clear the window with no
+    row for the commit); and ``arm`` after a pull by hand, which tests the
+    move itself first (:func:`_lanes_own_commits_in`). A refusal a step after
+    the move raised rides the brief (``refusal``), so the window the mod
+    clears hands it on instead of clearing over it. The line that says so;
+    None when no marker is armed for this session or its head is HEAD
+    already; a marker armed for another session at ``moved_from`` is a line
+    naming it, since only its window can re-arm it. HEAD is read before the
+    marker, so nothing runs between the marker's read and its write. The mod
+    holds the clear on ``HEAD moved since the handoff``, and a pull leaves
+    nothing to hand off: until this the hold stood until a re-arm by hand
+    (air-work's window sat held for 3 h 33 min on 2026-10-31 after its tick's
+    catch-up)."""
     head = head_sha()
-    before = str(marker.get("head") or "")
-    if before == head:
+    raw = _read_own_clear(root)
+    if raw is None or raw.get("state") != "armed":
         return None
-    marker.update({"head": head, "rearmed_from": before or None, "rearmed_by": by,
+    was = str(raw.get("head") or "")
+    if was == head:
+        return None
+    if raw.get("session_id") != os.environ.get(SESSION_ID_ENV, "").strip():
+        if moved_from is not None and was == moved_from:
+            return (f"the own-clear marker armed for session {str(raw.get('session_id') or '?')[:8]} at {was[:7]} "
+                    "was not re-armed (this shell is not its session): python tools/cc/ship.py arm, run in that "
+                    f"window, re-arms it at {head[:7]}")
+        return None
+    if moved_from is not None and was != moved_from:
+        return (f"the own-clear marker stays armed at {was[:7] or '?'}: HEAD had moved from it before this {by} "
+                "(a commit after the handoff owes one, and that handoff re-arms the marker; the mod holds the "
+                "clear until it runs)")
+    marker = dict(raw)
+    marker.update({"head": head, "rearmed_from": was or None, "rearmed_by": by,
                    "rearmed_at": datetime.now(timezone.utc).isoformat()})
+    if why:
+        marker["rearmed_why"] = why
+    tails = []
+    if refusal:
+        tails.append(f"own-clear: after the {by} moved HEAD a step refused: {_brief_text(refusal)}. The move "
+                     "landed; python tools/cc/ship.py status says what is on origin, then the verb the refusal "
+                     "names.")
+    if by == "arm" and marker.get("landed") is False:
+        tails.append("own-clear: re-armed by hand after the lane reached origin; the tail above predates it: "
+                     "python tools/cc/ship.py status says what is on origin.")
+    if tails:
+        marker["brief"] = "\n\n".join([marker.get("brief") or GENERIC_BRIEF, *tails])
     _write_own_clear(root, marker)
-    return (f"own-clear re-armed at {head[:7]} ({by} moved HEAD from {before[:7] or '?'}; the marker's brief and "
-            "record are kept): the mod clears this window at the turn's end")
+    return (f"own-clear re-armed at {head[:7]}: HEAD moved from {was[:7] or '?'} ({by}); the marker's brief and "
+            f"record are kept{'; the refusal rides its brief' if refusal else ''}; the mod clears this window at "
+            "the turn's end")
 
 
-def _rearm_own_clear_or_note(root: Path, *, by: str) -> None:
+def _rearm_own_clear_or_note(root: Path, *, by: str, moved_from: str | None = None,
+                             refusal: str | None = None) -> None:
     """The re-arm after a move that landed, said; a marker that cannot be
     rewritten, or a HEAD git cannot name, is a note with the by-hand verb,
     never a refusal of the verb whose move is already made."""
     try:
-        line = rearm_own_clear_after_move(root, by=by)
+        line = rearm_own_clear_after_move(root, by=by, moved_from=moved_from, refusal=refusal)
     except (OSError, Refused) as exc:
         _note(f"the own-clear marker was not re-armed after the move ({os_error_text(exc)}): the mod holds "
               "the clear on HEAD moved; run python tools/cc/ship.py arm")
         return
     if line:
         _say(line)
+
+
+def _base_ref_offline(root: Path) -> str | None:
+    """``origin/<default branch>`` as this checkout holds it, with no network
+    and no gh: the remote's HEAD symref, else origin/main, else origin/master;
+    None when none is here."""
+    rc, out, _ = _git("symbolic-ref", "-q", "refs/remotes/origin/HEAD", cwd=str(root))
+    if rc == 0 and out.strip().startswith("refs/remotes/"):
+        return out.strip()[len("refs/remotes/"):]
+    for name in ("origin/main", "origin/master"):
+        rc, _, _ = _git("rev-parse", "-q", "--verify", f"refs/remotes/{name}", cwd=str(root))
+        if rc == 0:
+            return name
+    return None
+
+
+def _lanes_own_commits_in(root: Path, was: str, head: str) -> str | None:
+    """Why the move from ``was`` to ``head`` is not a pull alone, or None when
+    it is: a non-merge commit there that the base (``origin/<default
+    branch>``, as last fetched) does not hold is the lane's own -- a commit
+    after the handoff, pushed by hand, which owes a handoff (the review's
+    case: a re-arm over it would clear the window with no row for it). The
+    server's merge of the base is a merge commit and the base's own commits
+    are on its ref, so a pull leaves the list empty; a base ref that is not
+    here, or a read that fails, is said and keeps the refusal."""
+    base = _base_ref_offline(root)
+    if base is None:
+        return "no origin/<default branch> ref is here to tell a pull from a commit"
+    rc, out, err = _git("rev-list", "--no-merges", head, f"^{was}", f"^{base}", cwd=str(root))
+    if rc != 0:
+        return f"the commits between the marker's head and HEAD could not be read ({err.strip()[:120]})"
+    own = out.split()
+    if own:
+        return (f"{len(own)} commit{'s' if len(own) != 1 else ''} of this lane's own since the marker's head "
+                f"({own[0][:7]}{', ...' if len(own) > 1 else ''}): a handoff is owed, and it re-arms the marker")
+    return None
 
 
 def _refusals_on_marker(root: Path) -> int:
@@ -1629,10 +1709,13 @@ def arm(why: str | None = None, dry_run: bool = False) -> int:
     should not promise one); a lane that is not on origin refuses and names
     the verbs that land it (:func:`_lane_not_on_origin`); a marker already
     armed for this session is kept, since a second arm would drop what the
-    first one's brief says -- unless HEAD moved under it (a pull by hand,
-    with the lane on origin): then the marker follows HEAD with its brief
-    kept (:func:`rearm_own_clear_after_move`), the hold the mod names on a
-    moved head cleared. ``why`` rides the marker's ``outcome``."""
+    first one's brief says -- unless a pull by hand moved HEAD under it with
+    the lane on origin and no commit of the lane's own in the move
+    (:func:`_lanes_own_commits_in`): then the marker follows HEAD with its
+    brief kept (:func:`rearm_own_clear_after_move`), the hold the mod names
+    on a moved head cleared; a commit of the lane's own keeps the refusal,
+    since the handoff it owes re-arms the marker. ``why`` rides the marker's
+    ``outcome`` on a fresh arm and ``rearmed_why`` on a re-arm."""
     root = repo_root()
     why_not = _own_clear_gate()
     if why_not:
@@ -1652,18 +1735,23 @@ def arm(why: str | None = None, dry_run: bool = False) -> int:
         head = head_sha()
         before = str(marker.get("head") or "")
         if before != head:
+            own = _lanes_own_commits_in(root, before, head) if before else None
+            if own:
+                raise Refused(f"nothing re-armed: the own-clear marker is armed at {before[:7]}, and HEAD "
+                              f"{head[:7]} holds {own}; run /handoff (a second arm would drop what the first "
+                              "one's brief says)")
             if dry_run:
                 _say(f"dry-run: the marker armed for this session ({armed}) would be re-armed at {head[:7]} "
-                     f"(HEAD moved from {before[:7] or '?'}; its brief kept)" + (f" ({why})" if why else ""))
+                     f"(HEAD moved from {before[:7] or '?'} by a pull; its brief kept)" + (f" ({why})" if why else ""))
                 return 0
             try:
-                line = rearm_own_clear_after_move(root, by="arm")
+                line = rearm_own_clear_after_move(root, by="arm", why=why)
             except OSError as exc:
                 raise Refused(f"the marker could not be rewritten: {os_error_text(exc)}") from None
             if line is None:
                 _say("nothing re-armed: the marker is no longer armed for this session")
                 return 0
-            _say(line + (f" (by hand: {why})" if why else "") + refused_tail)
+            _say(line + refused_tail)
             return 0
         tail = (refused_tail + ", and a second arm would drop what the first one's brief says" if refused else
                 ": the mod clears this window at the turn's end, and a second arm would drop what the first one's "
@@ -2411,13 +2499,17 @@ def catch_up() -> int:
     update-branch``, then a pull) when GitHub reads it clean, here (the
     record merge, then a push) when it reads CONFLICTING; then re-bind.
     Either way HEAD moves with nothing new to hand off, so a marker the
-    handoff armed for this session is re-armed at the new head once the move
-    landed (:func:`rearm_own_clear_after_move`): the own-clear mod holds the
-    clear on a moved head, and the hold stood until a re-arm by hand."""
+    handoff armed for this session at the HEAD this verb started from is
+    re-armed at the new head once the move landed and the re-bind ran or
+    refused (:func:`_rebind_then_rearm_own_clear`): the own-clear mod holds
+    the clear on a moved head, and the hold stood until a re-arm by hand; a
+    marker armed at an older head means a commit after the handoff moved HEAD
+    first, and that handoff, which re-arms, is owed."""
     root = repo_root()
     _refuse_a_shared_checkout(root)   # both paths below change this checkout's lane and push or pull it
     _wiring_note(root)
     branch = current_branch()
+    before = head_sha()   # the HEAD this verb starts from: the own-clear's re-arm follows the move only from here
     pr = _require_open_pr(branch)
     number = str(pr["number"])
     mergeable, state = _known_mergeable(branch, pr)
@@ -2441,9 +2533,7 @@ def catch_up() -> int:
         rc, _, err = _git("push", "origin", branch, cwd=str(root))
         if rc != 0:
             raise Refused(f"git push failed after the merge: {err.strip()[:200]}")
-        _rearm_own_clear_or_note(root, by="catch-up")   # the push landed: HEAD moved at the merge, nothing is ahead
-        _wait_for_pr_head(branch, head_sha())
-        return rebind()
+        return _rebind_then_rearm_own_clear(root, branch, before, await_head=True)
     was = str(pr.get("headRefOid", ""))
     rc, out, err = _gh("pr", "update-branch", number, cwd=str(root))
     if rc != 0:
@@ -2468,8 +2558,24 @@ def catch_up() -> int:
     rc, _, err = _git("pull", "--ff-only", "origin", branch, cwd=str(root))
     if rc != 0:
         raise Refused(f"cannot fast-forward {branch}: an unpushed commit here ({err.strip()}); push it, then run catch-up again")
-    _rearm_own_clear_or_note(root, by="catch-up")   # the pull moved HEAD onto origin's tip: nothing is ahead
-    return rebind()
+    return _rebind_then_rearm_own_clear(root, branch, before, await_head=False)
+
+
+def _rebind_then_rearm_own_clear(root: Path, branch: str, moved_from: str, *, await_head: bool) -> int:
+    """After a catch-up moved HEAD: the pull request's head awaited where this
+    checkout pushed it, the re-bind, then the own-clear's re-arm
+    (:func:`rearm_own_clear_after_move`) whether the re-bind ran or refused --
+    the move landed either way, and a refusal rides the marker's brief, so
+    the window the mod clears hands it on instead of clearing over it."""
+    try:
+        if await_head:
+            _wait_for_pr_head(branch, head_sha())
+        rc = rebind()
+    except Refused as exc:
+        _rearm_own_clear_or_note(root, by="catch-up", moved_from=moved_from, refusal=str(exc))
+        raise
+    _rearm_own_clear_or_note(root, by="catch-up", moved_from=moved_from)
+    return rc
 
 
 #: A required cell ends red for one of two reasons: its tests (or a person)

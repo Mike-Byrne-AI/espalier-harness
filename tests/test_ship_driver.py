@@ -2343,13 +2343,18 @@ class TestCatchUpConflict:
     def test_the_local_merge_re_arms_the_own_clear_marker_at_the_new_head(
             self, ship, tmp_path, monkeypatch, capsys):
         """The record merge moves HEAD as surely as the server path's pull
-        does, and the marker armed for this session follows it once the push
-        landed (the server path is driven on real git in
-        tests/test_own_clear.py); a marker another session armed is left."""
+        does, and the marker armed for this session at the head the verb
+        started from follows it once the push landed and the re-bind ran (the
+        server path, the commit-after-the-handoff twin and the refusal after
+        the move are driven on real git in tests/test_own_clear.py); a marker
+        another session armed is left. HEAD reads OLD_HEAD once, at the verb's
+        start, then HEAD: the merge moved it."""
         _bind_clock(ship, monkeypatch)
         monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-here")
         ship.arm_own_clear(tmp_path, session_id="s-here", head=OLD_HEAD, seat="box", role="worker", brief="b")
-        spawns = _arm(ship, self._answers(tmp_path))
+        answers = self._answers(tmp_path)
+        answers[("git", "rev-parse", "HEAD")] = [(0, f"{OLD_HEAD}\n", ""), (0, f"{HEAD}\n", "")]
+        spawns = _arm(ship, answers)
         _stub_resolver(ship, monkeypatch, spawns)
         assert ship.catch_up() == 0
         marker = json.loads((tmp_path / ".espalier-state" / "own_clear.json").read_text(encoding="utf-8"))
@@ -2357,14 +2362,18 @@ class TestCatchUpConflict:
         assert marker["rearmed_from"] == OLD_HEAD and marker["rearmed_by"] == "catch-up"
         assert marker["state"] == "armed" and marker["brief"] == "b"
         assert spawns.count(("git", "push")) == 1
+        assert spawns.index(("gh", "pr", "edit")) < len(spawns.calls), "the re-bind ran before the re-arm"
         assert f"own-clear re-armed at {SHORT}" in capsys.readouterr().out
 
         ship.arm_own_clear(tmp_path, session_id="s-elsewhere", head=OLD_HEAD, seat="box", role="worker", brief="b")
-        spawns = _arm(ship, self._answers(tmp_path))
+        answers = self._answers(tmp_path)
+        answers[("git", "rev-parse", "HEAD")] = [(0, f"{OLD_HEAD}\n", ""), (0, f"{HEAD}\n", "")]
+        spawns = _arm(ship, answers)
         _stub_resolver(ship, monkeypatch, spawns)
         assert ship.catch_up() == 0
         marker = json.loads((tmp_path / ".espalier-state" / "own_clear.json").read_text(encoding="utf-8"))
         assert marker["head"] == OLD_HEAD and "rearmed_by" not in marker
+        assert "armed for session s-elsewh" in capsys.readouterr().out
 
 
 # ── status ───────────────────────────────────────────────────────────────────

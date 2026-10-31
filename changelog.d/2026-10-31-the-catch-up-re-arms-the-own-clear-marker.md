@@ -8,8 +8,13 @@
   off, so no handoff came and the window sat at its threshold until a re-arm
   by hand (a worker window, 2026-10-31: 3 h 33 min with its next job
   assigned). `tools/cc/ship.py catch-up` now re-arms the marker at the new
-  head on both of its paths once the move landed, with the brief, how the
+  head on both of its paths once the move landed and the re-bind ran or
+  refused (a refusal rides the marker's brief), with the brief, how the
   handoff ended and the record the mod wrote kept and the move on the record
-  (`rearmed_from`, `rearmed_by`, `rearmed_at`); `ship.py arm` re-arms the
-  same way over a marker whose head moved with the lane on origin, instead
-  of refusing; the mod's hold text names both verbs.
+  (`rearmed_from`, `rearmed_by`, `rearmed_at`) -- only from the head the
+  verb started at: a marker armed at an older head means a commit after the
+  handoff moved HEAD first, and the hold stands for the handoff it owes.
+  `ship.py arm` re-arms the same way after a pull by hand moved HEAD with
+  the lane on origin and no commit of the lane's own in the move, instead of
+  refusing; the mod's hold text names the catch-up as the re-armer and no
+  verb to run, since that string rides the clear's re-prime brief.

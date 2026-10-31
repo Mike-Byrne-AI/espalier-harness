@@ -355,8 +355,14 @@ Six shapes to recognise:
   (`gh pr update-branch`, GitHub CLI 2.53 or newer), waits for the head to
   move (the reply lands before the merge does), pulls fast-forward only
   (refuses on an unpushed commit: push it, run it again), proves HEAD is the
-  pull request's head, then re-binds. If the server answers that nothing was
-  behind, the hold is something else: read the checks.
+  pull request's head, then re-binds. Either way, once the move landed and
+  the re-bind ran or refused, an own-clear marker the handoff armed for this
+  session at the head the verb started from is re-armed at the new head, its
+  brief and record kept (the mod holds the clear on a moved head, and a pull
+  leaves nothing to hand off); a marker armed at an older head stays, since
+  a commit after the handoff moved HEAD first and that handoff, which
+  re-arms, is owed. If the server answers that nothing was behind, the hold
+  is something else: read the checks.
 - **The base moved near the lane since its CI ran** (`status` prints `<base>
   moved N merge(s) since #n's CI tested it ..., near its files`) -- with the
   up-to-date rule off, a pull request merges on the CI that tested it with the
