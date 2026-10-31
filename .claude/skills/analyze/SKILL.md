@@ -39,6 +39,13 @@ Inspect locally — these are not agent work:
 echo "=== Large directories (claudeignore candidates) ==="
 du -sh */ 2>/dev/null | sort -rh | head -10
 
+# Both censuses below read the repository's own source: never the harness's
+# deployed tools/cc/, the test tree or a dependency tree. CENSUS says which ran.
+CENSUS=
+# <!-- espalier:self-host-only -->
+# This repository's engine, espalier/, with its enforcement layer in the TODO
+# census; init strips this block from every other tree.
+CENSUS=harness
 echo "=== Test coverage gaps ==="
 for f in espalier/*.py; do
   mod=$(basename "$f" .py)
@@ -53,6 +60,34 @@ done
 
 echo "=== TODOs/FIXMEs ==="
 grep -rn "TODO\|FIXME\|HACK" espalier/ tools/ --include="*.py" 2>/dev/null | grep -v __pycache__ | head -15
+# <!-- /espalier:self-host-only -->
+if [ -z "$CENSUS" ]; then
+  # The repository's own Python modules against its test tree, by file name:
+  # every module through find (a glob a zsh host cannot expand aborts the
+  # command), outside the test tree, the layer the harness deployed (tools/cc/
+  # and .claude/), the dependency trees and the build and cache directories.
+  TDIR=; for d in tests test; do [ -d "$d" ] && { TDIR=$d; break; }; done
+  MODS=$(find . -type f -name "*.py" ! -name "__init__.py" ! -name "conftest.py" ! -name "setup.py" ! -name "test_*.py" ! -name "*_test.py" \
+    ! -path "*/tests/*" ! -path "*/test/*" ! -path "*/tools/cc/*" ! -path "*/.claude/*" ! -path "*/.git/*" ! -path "*/__pycache__/*" \
+    ! -path "*/node_modules/*" ! -path "*/bower_components/*" ! -path "*/jspm_packages/*" ! -path "*/.yarn/*" ! -path "*/.pnpm-store/*" \
+    ! -path "*/.venv/*" ! -path "*/venv/*" ! -path "*/vendor/*" ! -path "*/third_party/*" ! -path "*/build/*" ! -path "*/dist/*" ! -path "*/target/*" \
+    ! -path "*/coverage/*" ! -path "*/htmlcov/*" ! -path "*/.next/*" ! -path "*/.mypy_cache/*" ! -path "*/.pytest_cache/*" ! -path "*/.ruff_cache/*" \
+    2>/dev/null | sort)
+  echo "=== Test coverage gaps ==="
+  [ -n "$MODS" ] || echo "  (no Python modules outside the test tree)"
+  printf '%s\n' "$MODS" | while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    mod=$(basename "$f" .py)
+    if [ -n "$TDIR" ] && find "$TDIR" \( -name "test_${mod}.py" -o -name "test_${mod}s.py" -o -name "test_${mod}_*.py" -o -name "${mod}_test.py" \) 2>/dev/null | grep -q .; then
+      echo "  ✓ ${f#./}"
+    else
+      echo "  ✗ ${f#./} — no tests"
+    fi
+  done
+  echo "=== TODOs/FIXMEs ==="
+  grep -rn "TODO\|FIXME\|HACK" . --include="*.py" 2>/dev/null \
+    | grep -v -E '(^|/)(tools/cc|\.claude|\.git|__pycache__|node_modules|bower_components|jspm_packages|\.yarn|\.pnpm-store|\.venv|venv|vendor|third_party|build|dist|target|coverage|htmlcov|\.next|\.mypy_cache|\.pytest_cache|\.ruff_cache)/' | head -15
+fi
 ```
 
 ## Step 4 — Drift diff
