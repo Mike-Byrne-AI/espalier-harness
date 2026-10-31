@@ -20,6 +20,29 @@ const PLAN = `${ROOT}/cc/execution_plan.json`
 const HEAD = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678'
 const TURN = { answer: 'done', durationMs: 1, isAborted: false, turnId: 't-1', reason: 'answer' as const }
 
+// The engine hands an fs.* hook the path as it resolved it on the host: on
+// Windows the mod's '/scratch/...' arrives as 'C:\scratch\...' (2.1.311 to
+// 2.1.314, measured 2026-10-31). So the world's files are one store that keys
+// every path one way, separators read as '/' and a leading drive letter
+// dropped, and the test's literals and the engine's spellings meet in it; on
+// a POSIX host the key is the path.
+const key = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:(?=\/)/, '')
+
+class Files extends Map<string, string> {
+  override get(path: string) {
+    return super.get(key(path))
+  }
+  override set(path: string, text: string) {
+    return super.set(key(path), text)
+  }
+  override has(path: string) {
+    return super.has(key(path))
+  }
+  override delete(path: string) {
+    return super.delete(key(path))
+  }
+}
+
 type Fields = Record<string, unknown>
 
 function markerText(fields: Fields): string {
@@ -28,7 +51,7 @@ function markerText(fields: Fields): string {
 
 function world(on: any, opts: { id?: string } = {}) {
   const state = { id: opts.id ?? 'this-session', head: HEAD, headBeneath: '', dirty: false, failWrites: false, refuseClear: false, consumeDuringGit: false }
-  const files = new Map<string, string>()
+  const files = new Files()
   const seen = { commands: [] as string[], prompts: [] as string[], compactions: 0, status: [] as (string | undefined)[], toasts: [] as string[] }
   const transcript = [{ role: 'user', text: 'Reply with the single word ready.', toolUses: [], handle: 'm-1' }]
   const done = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
