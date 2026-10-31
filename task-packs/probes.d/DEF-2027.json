@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2027",
+ "subject": "tests/test_box_lock.py",
+ "cmd": "python3 -c \"import ast; t = ast.parse(open('tests/test_box_lock.py', encoding='utf-8').read()); print(sum(1 for f in ast.walk(t) if isinstance(f, ast.FunctionDef) and f.name.startswith('test_') for n in ast.walk(f) if isinstance(n, ast.Call) and getattr(n.func, 'attr', None) == 'sleep' and getattr(getattr(n.func, 'value', None), 'id', None) == 'time'))\"",
+ "open_value": "5",
+ "why_not": null,
+ "row_sha": "e1eb34f33fec",
+ "text_sha": "142436f03ccb",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}
