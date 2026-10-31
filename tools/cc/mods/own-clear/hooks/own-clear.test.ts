@@ -24,8 +24,8 @@ const TURN = { answer: 'done', durationMs: 1, isAborted: false, turnId: 't-1', r
 // Windows the mod's '/scratch/...' arrives as 'C:\scratch\...' (2.1.311 to
 // 2.1.314, measured 2026-10-31). So the world's files are one store that keys
 // every path one way, separators read as '/' and a leading drive letter
-// dropped, and the test's literals and the engine's spellings meet in it; on
-// a POSIX host the key is the path.
+// dropped, and the test's literals and the engine's spellings meet in it; a
+// POSIX literal keys as itself.
 const key = (path: string) => path.replace(/\\/g, '/').replace(/^[A-Za-z]:(?=\/)/, '')
 
 class Files extends Map<string, string> {
@@ -115,6 +115,18 @@ function world(on: any, opts: { id?: string } = {}) {
   const compact = ($: any) => $.session.compact({ trigger: 'manual', messages: transcript } as any)
   return { state, files, seen, arm, marker, compact, id: () => state.id }
 }
+
+// Host-independent, so a POSIX seat reds on a store that stops keying too
+// (the cases below red on Windows alone).
+test('the world keys the engine spelling and the test literal as one file', async () => {
+  const f = new Files()
+  f.set('/scratch/a/b.json', 'x')
+  expect(f.get('C:\\scratch\\a\\b.json')).toBe('x')
+  expect(f.has('D:/scratch/a/b.json')).toBe(true)
+  expect(f.has('/scratch/a/c.json')).toBe(false)
+  expect(f.delete('C:\\scratch\\a\\b.json')).toBe(true)
+  expect(f.has('/scratch/a/b.json')).toBe(false)
+})
 
 test('an armed marker for this session clears at the end of the turn', async ($, on) => {
   const w = world(on)
