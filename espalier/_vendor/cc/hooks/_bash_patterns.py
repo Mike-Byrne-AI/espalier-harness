@@ -2013,6 +2013,94 @@ def _posix_shell_c_bodies(command: str, scan: str) -> Iterator[str]:
         yield _bash_word_text(command[m.start("word"):m.end("word")])
 
 
+# The carriers of a quoted program on the Bash tool (DEF-1131): a builtin or
+# a program that hands its operand words to a shell as a program, where the
+# body readers above read a shell's own `-c` word only. `eval` joins its
+# words with blanks and runs them; `watch` joins the words after its
+# switches and runs them under `sh -c` (under `-x`, directly: the same
+# words); `script` and `su` run the value of `-c` / `--command`. The opener
+# is found on the scan, so a carrier named inside a quoted string (`echo
+# "eval ..."`) is a mention and opens nothing. `eval` is a builtin, which
+# bash matches case-sensitively; the three binaries are spelled case-blind
+# with an optional `.exe`, as every binary arm is (DEF-1161), and the
+# reader dispatches on `_verb_key` of the head.
+_CARRIER_HEAD_RE = re.compile(
+    _CMD_POS + r"(?P<head>eval|(?i:watch|script|su)" + _EXE_SUFFIX + r")"
+    + _QUOTED_VERB_TAIL + r"(?=[ \t])"
+)
+#: The `watch` switches whose value is the next word (procps-ng).
+_WATCH_VALUE_SWITCHES = frozenset({"-n", "--interval", "-q", "--equexit"})
+#: A short cluster that ends in the `-c` of `script` / `su` (`-qc`, `-lc`).
+_CARRIER_C_CLUSTER_RE = re.compile(r"-[A-Za-z]{0,8}c")
+#: The words read past a carrier's head: one simple command, bounded.
+_CARRIER_WORDS_MAX = 256
+
+
+def _carrier_words(command: str, i: int) -> tuple[list[str], int]:
+    """The quote-removed words of the simple command from ``i`` to its end
+    (a separator, grouping or redirect character, a comment, or the end of
+    the text), each read by the one bash-word reader, `_read_shell_word`,
+    and the offset the read stopped at. A redirect ends the read: words
+    after one are a declared miss."""
+    words: list[str] = []
+    n = len(command)
+    while len(words) < _CARRIER_WORDS_MAX:
+        while i < n and command[i] in " \t":
+            i += 1
+        if i >= n or command[i] in ";|&\n\r<>(){}`#":
+            break
+        text, j = _read_shell_word(command, i)
+        if j <= i:
+            break
+        words.append(text)
+        i = j
+    return words, i
+
+
+def _carrier_command_value(words: list[str]) -> str:
+    """The program `script` / `su` runs: the word after `-c`, a short
+    cluster ending in it, or `--command`; glued as `--command=...`."""
+    for k, word in enumerate(words):
+        if word.startswith("--command="):
+            return word[len("--command="):]
+        if word == "--command" or _CARRIER_C_CLUSTER_RE.fullmatch(word):
+            return words[k + 1] if k + 1 < len(words) else ""
+    return ""
+
+
+def _carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
+    """Yield the program each carrier on the Bash tool hands to a shell
+    (DEF-1131): opener on ``scan``, words from the raw ``command`` at the
+    same offsets, the length guard of the readers above. The yielded text
+    is what the shell receives, so the consumer runs its own masker on it:
+    the secret leg reads it with the Bash roster one level down. The
+    nested-launch scan does not read it (it reads every quoted word
+    quote-blind, which holds more carriers than this roster names:
+    `write_guard._statement_launches_claude`, DEF-1044)."""
+    if len(scan) != len(command):
+        scan = command
+    # A carrier among the words already read (`eval eval ...`) is read one
+    # level down, with that program, not again here.
+    read_to = 0
+    for m in _CARRIER_HEAD_RE.finditer(scan):
+        if m.start() < read_to:
+            continue
+        head = _verb_key(m.group("head"))
+        words, used = _carrier_words(command[m.end():], 0)
+        read_to = m.end() + used
+        if head == "eval":
+            program = " ".join(words)
+        elif head == "watch":
+            k = 0
+            while k < len(words) and words[k].startswith("-"):
+                k += 2 if words[k] in _WATCH_VALUE_SWITCHES else 1
+            program = " ".join(words[k:])
+        else:
+            program = _carrier_command_value(words)
+        if program:
+            yield program
+
+
 # Inner write-target patterns per language. Each captures a quoted literal
 # write path out of an interpreter -e/-c body. ReDoS safety: the path capture
 # must be a greedy, quote-AND-whitespace-excluding class closed directly by the
@@ -9906,6 +9994,153 @@ def _ps_shell_program_bodies(command: str, scan: str) -> Iterator[str]:
             yield command[m.start("sq"):m.end("sq")].replace("''", "'")
         else:
             yield _ps_unescape_program(command[m.start("dq"):m.end("dq")])
+
+
+def _ps_literal_text(command: str, m: "re.Match[str]") -> str:
+    """The text of the `_PS_PROGRAM_STRING` literal ``m`` matched, read
+    from the raw ``command`` and unescaped by the literal's own kind (the
+    reason is `_ps_shell_program_bodies`'s comment)."""
+    if m.group("sq") is not None:
+        return command[m.start("sq"):m.end("sq")].replace("''", "'")
+    return _ps_unescape_program(command[m.start("dq"):m.end("dq")])
+
+
+# The PowerShell carriers of a quoted program (DEF-1131): the re-parsing
+# openers' one roster (`_PS_REPARSE_OPENER_WORDS`, `_PS_SCRIPTBLOCK_CREATE`)
+# read for the program each one runs. `Invoke-Expression` / `iex` runs its
+# string, `pwsh` / `powershell` the value of `-Command`, `cmd` what follows
+# `/c` or `/k`, `[scriptblock]::Create` its argument, and a subexpression
+# `$(...)`, in an expandable string or as an argument, its own. The operand is a
+# string literal, bare or in parentheses: such a string is data until a
+# carrier runs it, and is read where it runs. A variable an earlier
+# assignment bound to one (`$c = '...'; iex $c`) is that literal by the time
+# the reader opens, since its caller derives the pair from the text the
+# PowerShell legs' one pre-pass (`_expand_simple_ps_var_assignments`) has
+# inlined, with that pre-pass's declared limits. `cmd`
+# and `pwsh` also take the bare rest of the statement. `Invoke-Command` and
+# `Start-Process` are on the roster and yield nothing here: the first takes
+# a script block, whose statements the leg's cut already reads, and the
+# second an argument list, a declared miss. Also not read here: a string
+# piped into a carrier (`'...' | iex`), one joined with `+`, the colon-bound
+# `-Command:'...'`, a glued `cmd /c"..."`, and the words after a quoted
+# program (`cmd /c "type" .env` reads `type` alone); the secret leg's old
+# split refuses the first two whenever the statement opens with the string.
+_PS_CARRIER_RE = re.compile(
+    r"(?:" + _PS_CMD_POS + _PS_EXE_PREFIX + r"(?P<head>" + _PS_REPARSE_OPENER_WORDS + r")"
+    + _QUOTED_VERB_TAIL + r"(?=[ \t(]|$)|(?P<create>" + _PS_SCRIPTBLOCK_CREATE + r"))",
+    re.IGNORECASE,
+)
+#: `pwsh`'s and `Invoke-Expression`'s `-Command` (any prefix), whole-word,
+#: and `cmd`'s switch whose remainder is the program.
+_SHELL_COMMAND_SWITCH_RE = re.compile(_SHELL_COMMAND_SWITCH)
+_CMD_PROGRAM_SWITCH_RE = re.compile(r"[/-][ck]", re.IGNORECASE)
+#: The switch words read past a `pwsh` or `cmd` head before its program.
+_PS_CARRIER_SWITCHES_MAX = 64
+#: A subexpression's opener: its program runs wherever it stands, inside an
+#: expandable string or not. The masker blanks the `(` of one inside a
+#: single-quoted string, which is a mention.
+_PS_SUBEXPRESSION_RE = re.compile(r"\$\(")
+
+
+def ps_paren_closers(scan: str) -> dict[int, int]:
+    """Each live `(` of ``scan`` -> the offset of the `)` that closes it, or
+    the end of the text where none does: one pass, counting the parentheses
+    the masker left live (it blanks the ones inside a single-quoted
+    string)."""
+    closers: dict[int, int] = {}
+    opened: list[int] = []
+    for j, c in enumerate(scan):
+        if c == "(":
+            opened.append(j)
+        elif c == ")" and opened:
+            closers[opened.pop()] = j
+    for j in opened:
+        closers[j] = len(scan)
+    return closers
+
+
+def _ps_carrier_operand(command: str, scan: str, i: int, bare: bool) -> tuple[str, int]:
+    """The program text of the operand at ``i`` and the offset past it: a
+    literal (an opening parenthesis skipped), or -- where ``bare`` -- the
+    rest of the statement as typed."""
+    n = len(scan)
+    while i < n and scan[i] in " \t(":
+        i += 1
+    lit = _PS_PROGRAM_STRING_RE.match(scan, i)
+    if lit:
+        return _ps_literal_text(command, lit), lit.end()
+    if not bare:
+        return "", i
+    end = i
+    while end < n and scan[end] not in ";|\n\r)}":
+        end += 1
+    return command[i:end].strip(), end
+
+
+def _ps_switch_operand_at(scan: str, i: int, switch: "re.Pattern[str]") -> int:
+    """The offset past the first word after ``i`` that ``switch`` matches
+    whole, within the statement's switch words; -1 when there is none."""
+    n = len(scan)
+    for _ in range(_PS_CARRIER_SWITCHES_MAX):
+        while i < n and scan[i] in " \t":
+            i += 1
+        if i >= n or scan[i] in ";|\n\r)}'\"":
+            return -1
+        end = i
+        while end < n and scan[end] not in " \t;|\n\r)}":
+            end += 1
+        if switch.fullmatch(scan, i, end):
+            return end
+        i = end
+    return -1
+
+
+def _ps_carrier_program_bodies(command: str, scan: str) -> Iterator[str]:
+    """Yield the program each carrier on the PowerShell leg runs (DEF-1131):
+    opener on ``scan``, operand from the raw ``command`` at the same
+    offsets, the length guard of the readers above. The caller derives the
+    pair from the text the literal-binding pre-pass has inlined
+    (`_expand_simple_ps_var_assignments`, then `powershell_scan_pair`), so a
+    bound variable is a literal here. The yielded text is a PowerShell
+    program (`cmd`'s too: its read verbs `type` and `more` are PowerShell's
+    names for the same reads), so the consumer reads it with the PowerShell
+    grammar one level down."""
+    if len(scan) != len(command):
+        scan = command
+    # A carrier inside an operand already yielded is read one level down,
+    # with that program; reading it here too would re-read nested text once
+    # per level it sits under.
+    read_to = 0
+    for m in _PS_CARRIER_RE.finditer(scan):
+        if m.start() < read_to:
+            continue
+        program, end = "", m.end()
+        if m.group("create") is not None:
+            program, end = _ps_carrier_operand(command, scan, m.end(), bare=False)
+        else:
+            head = m.group("head").lower()
+            head = head[:-4] if head.endswith(".exe") else head
+            if head in ("invoke-expression", "iex"):
+                at = _ps_switch_operand_at(scan, m.end(), _SHELL_COMMAND_SWITCH_RE)
+                program, end = _ps_carrier_operand(
+                    command, scan, m.end() if at < 0 else at, bare=False)
+            elif head in ("pwsh", "powershell", "cmd"):
+                switch = _CMD_PROGRAM_SWITCH_RE if head == "cmd" else _SHELL_COMMAND_SWITCH_RE
+                at = _ps_switch_operand_at(scan, m.end(), switch)
+                if at >= 0:
+                    program, end = _ps_carrier_operand(command, scan, at, bare=True)
+        if program:
+            read_to = end
+            yield program
+    closers = ps_paren_closers(scan)
+    read_to = 0
+    for m in _PS_SUBEXPRESSION_RE.finditer(scan):
+        if m.start() < read_to:
+            continue
+        read_to = closers[m.end() - 1]
+        program = command[m.end():read_to]
+        if program.strip():
+            yield program
 
 
 def _ps_stdin_program_bodies(command: str, scan: str) -> Iterator[tuple[str, str]]:

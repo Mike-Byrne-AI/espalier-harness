@@ -382,6 +382,25 @@ shipping surface such as the changelog (the §C10 lane's one blocker).
     (written by the hook the sibling shipped, which this checkout ran while on
     the sibling's branch) as undocumented: a lane with no commits of its own
     fast-forwards onto `origin/main` before its tier.
+32. **A new guard regex or body reader in `_bash_patterns.py` joins three
+    censuses at once (2026-10-31).** The carrier-reader lane's targeted
+    classes, its mutant driver and ten write-guard files ran green; its
+    first full tier redded three tests none of them load:
+    `tests/test_bash_inert_syntax_mask.py` (every `def _*_program_bodies`
+    helper must match its opener with `.finditer(scan)` and slice its body
+    with a literal `command[`, read off the source: a body read through a
+    helper call fails it, and so did extracting a sibling's inline slice
+    into a function), `tests/test_write_guard.py::TestBinaryVerbSpellingIsUniform`
+    (every `_CMD_POS` arm in the quoted-verb roster is either walked
+    case-blind with `.exe` or declared case-sensitive with its own row; a
+    binary head spelled lowercase-only is the defect it names), and
+    `tests/test_speedbump_irreversible.py::TestCommandPositionClassClose`
+    (every module regex is anchored or carries a reason in
+    `_UNANCHORED_BY_DESIGN`; a flag or switch matcher needs the entry). Run
+    those three files before the tier. Separately, `ledger_row.py repin
+    --text-file` wrote a row whose text held a literal ` | ` as five cells
+    and refused nothing (a second row's same split was refused only through
+    its tag-cell vocabulary): count the cells after any repin (item 7).
 
 Related: [[recall-keys-on-the-hazard-not-the-task]] (why the task text never
 recalls these) · [[calibrate-an-enforcement-contract-against-the-live-population]]

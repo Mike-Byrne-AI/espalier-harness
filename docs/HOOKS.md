@@ -1555,7 +1555,17 @@ read verb names the path in the same statement, on Bash (`cat`, `head`,
 with its own statement grammar and roster; the two rosters are pinned to
 each other class for class, and a program handed to the other shell
 (`powershell -Command "Get-Content .env"` on Bash, `sh -c 'cat .env'` on
-PowerShell) is read with that shell's roster. A grep-shaped search of the
+PowerShell) is read with that shell's roster. A program a carrier runs out
+of a string is read as a program too: Bash `eval`, `watch`, `script -c` and
+`su -c`; PowerShell `Invoke-Expression` / `iex`, `pwsh -Command`, `cmd /c`,
+`[scriptblock]::Create` and a `$(...)` subexpression, including a string
+bound to a variable earlier in the same command (`$c = 'gc .env';
+iex $c`). A carrier named inside quotes is data. Not read as a program: a
+`Start-Process` argument list, the colon-bound `-Command:'...'`, a glued
+`cmd /c"..."`, and the words after a quoted program (`cmd /c "type" .env`).
+A PowerShell statement that opens with a quoted string is still read as
+the command its first word names (`$hint = 'gc .env'` is refused), which is
+also what refuses a string piped into `iex`. A grep-shaped search of the
 file is not a read verb on either shell, and a mention inside a string or
 comment is inert.
 This is the hook-layer replacement for the `Read()` deny rules `init` no
