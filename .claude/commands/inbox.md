@@ -479,22 +479,27 @@ opening with anything else is a plain ask no reader counts apart.
 
 <!-- espalier:self-host-only -->
 A gridlock ruling (Core Rule 15, this repository's own rule) is the
-dispatcher's `ack` whose text opens with `gridlock:` (its first word; one
-ruling per ack), the marker in the family of `OPERATOR CALL:`, `redirect:`,
-`shelved:` and `stopped:`; a `(stopped)` row past the hour on the `asks:` line
-is the gridlock's read, answered by the ack that frees or re-aims the seat:
+dispatcher's `ack` whose text opens with `gridlock:` (its first word, so a
+seat's name goes after it; one ruling per message), or a note opening the same
+way where no request waits on the ruling, the marker in the family of
+`OPERATOR CALL:`, `redirect:`, `shelved:` and `stopped:`; a `(stopped)` row
+past the hour on the `asks:` line is the gridlock's read, answered by the ack
+that frees or re-aims the seat:
 
 ```bash
 python tools/cc/mail.py send --type ack --ack <request id> --text "gridlock: <the ruling, the facts you read>"
+python tools/cc/mail.py send --type note --text "gridlock: <the ruling, the facts you read>"
 ```
 
 The seat-day census counts a ruling by that opening on the dispatcher's acks
-alone and names its id on the dispatcher's day row, so a mention of the word
-mid-text, or a worker's request opening with it, is never a ruling. A ruling
-that fixes a red base forward opens with the fixed head `gridlock: fix forward
-run <id>` (the red post-merge run's id) and names the fix lane with `--lane`:
-the ship driver lands that lane on it (`open --base-red-ruled <ack id>`) and
-the board's base-branch line prints it in place of the revert (Step 2c).
+and notes alone and names its id on the dispatcher's day row, so a mention of
+the word mid-text, or a worker's message opening with it, is never a ruling. A
+ruling that fixes a red base forward is always an ack (where no request waits
+on it, `--ack` names the held seat's last message): it opens with the fixed
+head `gridlock: fix forward run <id>` (the red post-merge run's id) and names
+the fix lane with `--lane`: the ship driver lands that lane on it
+(`open --base-red-ruled <ack id>`) and the board's base-branch line prints it
+in place of the revert (Step 2c).
 <!-- /espalier:self-host-only -->
 
 ## Step 5: A shipped lane releases its own claims

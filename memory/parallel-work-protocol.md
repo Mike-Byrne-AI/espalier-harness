@@ -352,7 +352,7 @@ launcher did not start the handoff arms nothing and says the window needs a
 | Carries a lighter lane of its own | Run the heaviest lanes, which compete with dispatching |
 | Files the rows nobody is assigned to fix, and the ones its own measurements find | File rows for a job it has assigned: the finding, its probe and its fix are the assignee's one job (rule 8) |
 | Reports counts that name their population, settings quoted from the tool that computes them, and the day's figures from `scripts/seat_day_census.py` | Carry a figure by hand, past a compaction or from memory |
-| Resolves a gridlock (the operator's standing rule, 2026-10-30), the one exception to the first row's operator list: where no seat can advance its assigned job and the next step is a decision (a red `main` no revert clears, two lanes in conflict, a ruling a worker waits on past the hour), it rules, acts and reports the ruling as an `ack` opening with `gridlock:` and carrying the facts it read, instead of filing an operator call and waiting; the operator can reverse it, and the seat-day census names each ruling by id on the dispatcher's row (the paragraph below) | Rule on what stays the operator's, gridlock or not: a new pack, a scope change, a release or tag |
+| Resolves a gridlock (the operator's standing rule, 2026-10-30), the one exception to the first row's operator list: where no seat can advance its assigned job and the next step is a decision (a red `main` no revert clears, two lanes in conflict, a ruling a worker waits on past the hour), it rules, acts and reports the ruling as an `ack` opening with `gridlock:` and carrying the facts it read (or as a note opening the same way where no request waits on the ruling), instead of filing an operator call and waiting; the operator can reverse it, and the seat-day census names each ruling by id on the dispatcher's row (the paragraph below) | Rule on what stays the operator's, gridlock or not: a new pack, a scope change, a release or tag |
 
 **Assign authority (decided by the operator 2026-10-15, after two days'
 measurement).** The dispatcher assigns, re-sequences and releases jobs on its
@@ -376,7 +376,8 @@ dispatcher has the strongest model and the authority, the context to see
 everything and resolve issues"): where no seat can advance its assigned job
 and the next step is a decision (a red `main` no revert clears, two lanes in
 conflict, a ruling a worker waits on past the hour), the dispatcher rules,
-acts and reports the ruling as an `ack` with the facts it read, instead of
+acts and reports the ruling as an `ack` with the facts it read (or as a note
+opening the same way where no request waits on the ruling), instead of
 filing an operator call and waiting; the operator can reverse it, and a new
 pack, a scope change, a release or tag stay the operator's. Reconciled with
 the list above (the dispatcher's ruling, 2026-10-30): a new pack, a scope
@@ -391,7 +392,11 @@ dispatcher brief carries the sentence from
 `tools/cc/seat.py::SELF_HOST_GRIDLOCK`, on this repository only, held to this
 paragraph, the row above and Core Rule 15 by a test
 (`tests/test_seat.py::TestBrief`). The ruling's `ack` opens with `gridlock:`
-(since 2026-10-30, `DEF-5029`), a marker in the family of `OPERATOR CALL:`,
+(since 2026-10-30, `DEF-5029`), or a note opening the same way where no
+request waits on the ruling (since 2026-10-31, `DEF-4060`: note
+`20261031T105813Z-air-c80653`, which re-armed a held window no seat had asked
+about, was the first of that day's three rulings and the one the census left
+out), a marker in the family of `OPERATOR CALL:`,
 `redirect:` and `shelved:`, and `scripts/seat_day_census.py` counts a ruling
 by that opening alone and names each ruling's id beside the count on the
 dispatcher's day row, so the falsifier below is read from the record: the
@@ -401,10 +406,16 @@ read anywhere in a text counts the briefs' and the assigns' own quotations of
 it (on 2026-10-30 the four mentions of `gridlock:` on the refs were all
 quotations); the ack's first word is the marker, so a ruling opening with
 `RULING` or an address is not counted (10 of the dispatcher's 18 acks since
-2026-10-28 open with `RULING`, read 2026-10-30), one ruling per ack, and only
-the dispatcher's acks count: a worker's request opening with the word is a
-question, not a ruling. The figures count from the first dispatcher window
-launched or re-primed from a checkout holding this change (the brief reaches
+2026-10-28 open with `RULING`, read 2026-10-30, and 37 of its 46 notes from
+2026-10-25 to 10-31 open with a seat's name, so the name goes after the
+marker), one ruling per message, and only the dispatcher's acks and notes
+count: a worker's request opening with the word is a question, not a ruling.
+A stopped worker's request waits on the ruling, so it gets the ack that frees
+it, and the fix-forward ruling is always an ack (item 7: the ship driver reads
+its `--lane` from an ack alone); `--ack` takes any message id, so one no
+request waits on names the held seat's last message. The figures count from
+the first dispatcher window launched or re-primed from a checkout holding this
+change (the brief reaches
 a window at its launch and at the re-prime, from that checkout's own
 `seat.py`): a day row already written is a frozen record and is not
 re-derived under the opening rule (Core Rule 13, the dispatcher's condition

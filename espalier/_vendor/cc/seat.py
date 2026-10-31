@@ -773,7 +773,18 @@ ADOPTER_PROCEED = (
 #: counts a ruling by that opening alone and names its id on the dispatcher's
 #: row: the first two rulings under the rule were plain acks no reader counted,
 #: and a word read anywhere in a text counts the brief's and the assigns' own
-#: quotations of it. The same test holds the word to the census's table. A
+#: quotations of it. A gridlock no request waits on may be ruled by a note
+#: opening the same way, and the census counts the dispatcher's notes beside
+#: its acks (DEF-4060, 2026-10-31: note 20261031T105813Z-air-c80653 re-armed
+#: air-work's held window, the first of the day's three rulings and the one the
+#: row left out). The word is the message's first: 37 of the dispatcher's 46
+#: notes from 2026-10-25 to 10-31 opened with a seat's name, which the census
+#: reads as no ruling, so the name goes after the marker. A stopped worker's
+#: request waits on the ruling, so it gets the ack that frees it, and the
+#: fix-forward ruling is always an ack, since the ship driver reads its --lane
+#: from an ack alone; --ack takes any message id, so one no request waits on
+#: names the held seat's last message. The same test holds the word to the
+#: census's table. A
 #: worker's stop is a request opening with stopped: on the board's asks line
 #: (DEF-5030), so the past-the-hour read is that row's age, and the sentence
 #: says what answers it.
@@ -781,13 +792,15 @@ SELF_HOST_GRIDLOCK = (
     "A gridlock, where no seat can advance its assigned job and the next step is a decision (a red main no "
     "revert clears, two lanes in conflict, a ruling a worker waits on past the hour), is yours to resolve, the "
     "one exception to what you propose to the operator: rule, act and report the ruling as an ack whose text "
-    "opens with gridlock: (its first word; an ack opening with RULING or an address is not counted; one ruling "
-    "per ack) and carries the facts you read, instead of filing an operator call and waiting "
+    "opens with gridlock: (its first word, so a message opening with RULING or an address is not counted and a "
+    "seat's name goes after it; one ruling per message) and carries the facts you read, or as a note opening "
+    "the same way where no request waits on the ruling, instead of filing an operator call and waiting "
     "(scripts/seat_day_census.py counts the "
     "rulings by that opening and your row names them); the operator can reverse it, and a new pack, a scope "
     "change, a release or tag stay the operator's. A (stopped) row on the asks line past the hour is that "
     "read: answer it with the ack that frees or re-aims the seat. A red main no revert clears is ruled the "
-    "same way: the ack's text opens with the fixed head gridlock: fix forward run <the red post-merge run's "
+    "same way, always by an ack (where no request waits on it, --ack names the held seat's last message): the "
+    "ack's text opens with the fixed head gridlock: fix forward run <the red post-merge run's "
     "id> and its --lane names the fix lane (a renamed lane gets a second ack); the seat lands it with python "
     "tools/cc/ship.py open --base-red-ruled <that ack's full id> (handoff takes the same flag), and the "
     "revert stays the default. "
