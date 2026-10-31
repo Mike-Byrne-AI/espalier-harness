@@ -282,7 +282,20 @@ is read on its own, and one that cannot be read says so on its own line:
   on its row; its age is what the dispatcher reads first, and any seat's ack
   naming it closes it. The dispatcher seat also gets the count and the oldest age on the
   banner's `Mail:` line.
-- **jobs**, **claims** and the ledger's live row count, counted at the base
+- **jobs:** the dispatcher's live assignments, one row per job with its seat,
+  its lane, classes and ids, its stamp and the assign's id (the one a release
+  names). The section ends with `under two: <seat> (<n>), ...`: each seat
+  holding fewer than two live jobs with its count, over the seats the `seats:`
+  line names (its quiet fold left out) and the jobs' seats, the dispatcher
+  apart, and the line names that population (`of 3 seats (the seats line
+  names 4, the jobs 3, the dispatcher air apart)`), or `none of N seats` when
+  every one holds two or more. The dispatcher keeps each worker at two (one
+  open pull request per seat, the next job built while the first is in CI),
+  and a seat holding none has no jobs row, so which seats were short was once
+  remembered between ticks (`DEF-5034`; air-work sat idle 03:27Z to 06:38Z on
+  2026-10-30). `scripts/seat_day_census.py` counts, per seat per UTC day, the
+  ticks of the dispatcher's cadence at which a seat stood under two.
+- **claims** and the ledger's live row count, counted at the base
   branch's remote-tracking ref with the base's own ledger tools and naming the
   commit it read, so a checkout that stops moving still reads what the base
   holds. The line says `as last fetched` when the fetch failed or `--no-fetch`

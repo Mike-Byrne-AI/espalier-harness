@@ -1411,6 +1411,34 @@ def _job(re_: dict) -> str:
     return ", ".join(p for p in parts if p) or "?"
 
 
+def under_two(assignments: list[dict], seats: list[str], dispatcher: str = "") -> tuple[list[tuple[str, int]], dict]:
+    """The seats holding fewer than two live jobs, each with its count, and
+    the population counted over: ``seats`` (the names the ``seats:`` line
+    prints, its quiet fold left out -- a seat with no mail in SEAT_QUIET_DAYS,
+    no live session here and nothing live is not one to give a job) together
+    with every seat a live job names, the dispatcher apart (it gives jobs and
+    is given none; its own lanes are not assigns). The dispatcher keeps each
+    worker at two (Core Rule 15: one open pull request per seat, the next job
+    built while the first is in CI), and a seat holding none has no jobs row,
+    so before this tail which seats were short was remembered between ticks:
+    air-work sat idle from 03:27Z to 06:38Z on 2026-10-30 (DEF-5034).
+    ``scripts/seat_day_census.py`` counts the ticks a seat stood under two
+    from the same fold. Computed where it renders, never stored on the board
+    (TestSectionCounts' rule)."""
+    named = {s for s in seats if s}
+    counts: dict[str, int] = dict.fromkeys(named, 0)
+    jobbed: set[str] = set()
+    for a in assignments:
+        seat = str((a.get("re") or {}).get(mail.ASSIGN_SEAT_KEY) or "")
+        if seat:
+            jobbed.add(seat)
+            counts[seat] = counts.get(seat, 0) + 1
+    if dispatcher:
+        counts.pop(dispatcher, None)
+    short = [(s, counts[s]) for s in sorted(counts) if counts[s] < 2]
+    return short, {"size": len(counts), "seats_line": len(named), "jobs": len(jobbed), "dispatcher": dispatcher}
+
+
 def render(board: dict) -> str:
     lines = [f"board -- read live {board.get('read_at')}" + (f" by {board['seat']}" if board.get("seat") else "")]
     lines.append(f"merging:  {board.get('merging') or 'unread (no branch-protection answer)'}")
@@ -1498,6 +1526,16 @@ def render(board: dict) -> str:
             re_ = a.get("re") or {}
             lines.append((head + f"{len(jobs)} live: " if i == 0 else "          ")
                          + f"{re_.get('seat')}: {_job(re_)} (since {a.get('at')}; assign {a.get('id')})")
+    if not board.get("mail_unread") and disp.get("name") != mail.DISPATCHER_UNUSABLE:
+        # The section's tail (DEF-5034): each seat under two live jobs with its
+        # count, over the seats shown above and the jobs' seats, so the short
+        # seats are read here every tick, never remembered between them.
+        named = [str(row.get("name") or "") for row in rows if not any(row is q for q in quiet)]
+        short, who = under_two(jobs, named, str(disp.get("name") or ""))
+        of = (f"of {who['size']} seat{'s' if who['size'] != 1 else ''} (the seats line names {who['seats_line']}, "
+              f"the jobs {who['jobs']}" + (f", the dispatcher {who['dispatcher']} apart)" if who["dispatcher"] else ")"))
+        lines.append("          under two: " + (", ".join(f"{s} ({n})" for s, n in short) + ", " + of if short
+                                               else "none " + of))
     asks = board.get("asks") or []
     if board.get("mail_unread"):
         lines.append(f"asks:     unread (the mail could not be read: {board['mail_unread']})")
