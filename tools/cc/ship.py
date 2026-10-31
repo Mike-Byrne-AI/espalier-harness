@@ -25,7 +25,10 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          record files resolved by shape (record_merge.py), so
                          the pull request is born mergeable and the merge
                          rides the one push. Refuses while the base's
-                         post-merge proof is red (a revert/ lane excepted),
+                         post-merge proof is red (a revert/ lane excepted,
+                         and --base-red-ruled <ack id> lets a lane through on
+                         the dispatcher's ack naming the red run: a red no
+                         revert can clear is fixed forward on that ruling),
                          and notes this seat's other open pull request
     rebind               after an exceptional second push: re-bind the title
                          to the pull request's head, forcing a fresh run
@@ -499,15 +502,17 @@ def post_merge_reds(cwd: str | None = None) -> list[str]:
     return _post_merge.lines(_post_merge.transitions(merged), oldest=_post_merge.oldest_merge(merged))
 
 
-def base_red_after_merge(base: str, cwd: str | None = None) -> str | None:
-    """A line when the base branch's latest post-merge run on a push reached a red
-    verdict -- the post-merge proof of the merged combination, which no pull
-    request's rollup carries. Without the up-to-date rule, two lanes each green
-    on its own base can red together, and this run is where that shows. A run
-    still going, cancelled (by hand: no newer push cancels one), stale, skipped
-    or neutral is no verdict, and the read walks back past it through the
-    board's window to the newest run that reached one; a green there proves a
-    superset of any older red."""
+def base_red_run(base: str, cwd: str | None = None) -> dict | None:
+    """The base branch's newest post-merge run on a push that reached a
+    verdict, when that verdict is red: its row (``databaseId``, ``headSha``,
+    ``conclusion``, ``url``), else None -- a green there, no verdict in the
+    window, or a read gh could not make. The post-merge proof is of the merged
+    combination, which no pull request's rollup carries: without the
+    up-to-date rule, two lanes each green on its own base can red together,
+    and this run is where that shows. A run still going, cancelled (by hand:
+    no newer push cancels one), stale, skipped or neutral is no verdict, and
+    the read walks back past it through the board's window to the newest run
+    that reached one; a green there proves a superset of any older red."""
     runs = _gh_json("run", "list", "--workflow", POST_MERGE_WORKFLOW, "--branch", base, "--event", "push",
                     "--limit", str(POST_MERGE_RUN_WINDOW), "--json", "databaseId,status,conclusion,headSha,url",
                     cwd=cwd)
@@ -521,10 +526,23 @@ def base_red_after_merge(base: str, cwd: str | None = None) -> str | None:
             return None
         if conclusion not in POST_MERGE_RED:
             continue  # cancelled, stale, skipped, neutral, action required: no verdict
-        return (f"{base} red after merge: {POST_MERGE_WORKFLOW} run {run_.get('databaseId')} on "
-                f"{str(run_.get('headSha') or '')[:7]} concluded {conclusion.lower()} "
-                f"({run_.get('url')}); read it before landing another lane on top")
+        return run_
     return None
+
+
+def _red_base_words(base: str, run_: dict) -> str:
+    """The one line that names a red base -- the run, the merge it proved, its
+    verdict and its URL -- which the refusals, the notes and the ruling open with."""
+    return (f"{base} red after merge: {POST_MERGE_WORKFLOW} run {run_.get('databaseId')} on "
+            f"{str(run_.get('headSha') or '')[:7]} concluded {str(run_.get('conclusion') or '').lower()} "
+            f"({run_.get('url')}); read it before landing another lane on top")
+
+
+def base_red_after_merge(base: str, cwd: str | None = None) -> str | None:
+    """:func:`base_red_run`'s row as the line :func:`_red_base_words` prints,
+    or None where the base is not red."""
+    run_ = base_red_run(base, cwd=cwd)
+    return None if run_ is None else _red_base_words(base, run_)
 
 
 def _open_prs(cwd: str) -> list[dict] | None:
@@ -541,21 +559,159 @@ def _open_prs(cwd: str) -> list[dict] | None:
     return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else None
 
 
-def red_base_refusal(base: str, branch: str, prs: list[dict], cwd: str) -> str | None:
-    """Why `open` must not arm this lane now, or None. Nothing lands on a red
-    base: the revert goes first, so a `revert/` lane is let through, and the
-    pull requests whose armed auto-merge would land on the red base are named
-    with the command that disarms each."""
+#: The flag that lands a lane on a red base by the dispatcher's ruling, on
+#: `open` and `handoff` alike; the refusal names it, with the run id the
+#: ruling must name.
+BASE_RED_RULED_FLAG = "--base-red-ruled"
+#: What the ruling's ack opens with: the dispatcher's gridlock marker (root
+#: CLAUDE.md Core Rule 15; a red main no revert clears is the first gridlock
+#: the dispatcher's brief names, tools/cc/seat.py), the one the seat-day
+#: census counts a ruling by (scripts/seat_day_census.py, MARKERS; a test
+#: holds the two equal). An ack that names the run without it -- a status, a
+#: veto, a quotation -- rules nothing: the first rulings under the gridlock
+#: rule were plain acks no reader counted, and a word read mid-text matched
+#: quotations of it.
+RULING_PREFIX = "gridlock:"
+#: The fixed head a fix-forward ruling opens with, the run id read from it
+#: alone: `gridlock: fix forward run <id>`. The marker carries no direction
+#: (the census rightly counts every gridlock: ack, a hold or a veto among
+#: them), so the driver reads the way the ruling went from these words and
+#: nowhere else in the text (the dispatcher's redirect, 2026-10-31).
+RULING_HEAD = RULING_PREFIX + " fix forward run "
+_RULING_HEAD_RE = re.compile(r"^" + re.escape(RULING_HEAD) + r"([0-9]+)(?![0-9])")
+#: How much of the ruling's text the driver repeats, on the terminal and in
+#: the pull request body: enough to show what was ruled, never the whole.
+RULING_TEXT_CHARS = 160
+#: A message id as the channel mints them (<stamp>-<machine>-<6 hex>): the
+#: shape the flag takes, so a 6-character tail or a request's id is told the
+#: shape instead of being sent to fetch.
+_MESSAGE_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[a-z0-9][a-z0-9-]*-[0-9a-f]{6}$")
+
+
+def red_base_ruling(root: Path, ack_id: str, run_id: str, *, branch: str = "") -> tuple[str, str | None, str]:
+    """``(sender, problem, text)``: whether the ack ``ack_id`` on the mail
+    channel's local refs rules the red post-merge run ``run_id`` a
+    fix-forward. A red whose failing test is outside every suspect's diff and
+    reproduces at the last green base with the moved dependency has no merge
+    to revert, so the revert that is the default clears nothing (pytest
+    9.2.0, 2026-10-29: every seat held about eleven hours, and the fix landed
+    by a hand-opened pull request). The ruling is the dispatcher's
+    (``dispatcher`` in espalier.toml; where none is named any seat's ack
+    counts, a lone operator's default; a setting that is there but unusable
+    counts none, as the fold counts assigns), carried as an ``ack`` on its own
+    ref -- the ref is the sender, never the message's ``from``, and the
+    dispatcher's own ref is read past a same-id ack elsewhere -- whose text
+    opens with the fixed head :data:`RULING_HEAD` followed by the red run's
+    id, read from that head alone (the gridlock marker carries no direction,
+    so a hold or a veto under it that names the run rules nothing, and a run
+    named only through the request the ack answers is no ruling), so a ruling
+    on an older red lets no newer one through; and whose ``re`` names the fix
+    lane (required: the ruling is for that lane alone, so a hold on every lane
+    is never read as a pass for one). ``problem`` says, by name, what does not
+    hold: no channel beside this script, an id of another shape, a dispatcher
+    setting that cannot be used, a channel that cannot be read, no such ack
+    on the local refs (the read is of the refs the last fetch left; `python
+    tools/cc/mail.py inbox` fetches), a request or a note with that id, an
+    ack on another seat's ref, an ack under another head, an ack whose head
+    names another run, an ack naming no lane or another lane; None where the
+    ruling holds. ``sender`` is the ref's machine when the ack was found, else
+    ''; ``text`` the ack's text on one line when found, else ''."""
+    mail = _mail_module()
+    if mail is None:
+        return "", "tools/cc/mail.py is not beside this script, so no ruling can be read", ""
+    if not _MESSAGE_ID_RE.match(ack_id):
+        return "", (f"{ack_id} is not a message id: a ruling is named by its full id as /inbox prints it "
+                    "(<stamp>-<machine>-<6 hex>)"), ""
+    try:
+        dispatcher, how = mail.dispatcher_setting(root)
+        if dispatcher == mail.DISPATCHER_UNUSABLE:
+            return "", f"the dispatcher setting cannot be used ({how}), so no ruling counts", ""
+        by_machine, _skipped = mail.read_mail(root)
+    except Exception as exc:  # noqa: BLE001 -- a channel that cannot be read rules nothing, said by name, never a traceback
+        return "", f"the mail channel could not be read ({os_error_text(exc)}), so no ruling counts", ""
+    elsewhere = ""
+    other_kind = ""
+    for machine, messages in sorted(by_machine.items()):
+        for message in messages:
+            if not isinstance(message, dict) or str(message.get("id") or "") != ack_id:
+                continue
+            kind = str(message.get("type") or "")
+            if kind != "ack":
+                other_kind = other_kind or (kind or "a message of no type")
+                continue
+            if dispatcher and machine != dispatcher:
+                elsewhere = elsewhere or machine   # the dispatcher's own ref may still carry the ruling
+                continue
+            text = " ".join(str(message.get("text") or "").split())
+            head = text[:RULING_TEXT_CHARS]
+            ruled = _RULING_HEAD_RE.match(text)
+            if ruled is None:
+                return machine, (f"ack {ack_id} does not open with the head `{RULING_HEAD}<run id>` (its text: "
+                                 f"{head}): a fix-forward ruling opens with those words, and an ack that names "
+                                 "the run under another head (a hold, a veto, a status) rules nothing"), text
+            if ruled.group(1) != run_id:
+                return machine, (f"ack {ack_id} rules on run {ruled.group(1)}, not the base's red run {run_id} "
+                                 f"(its text: {head}): it ruled on another red"), text
+            re_ = message.get("re")
+            lane = str(re_.get("lane") or "") if isinstance(re_, dict) else ""
+            if not lane:
+                return machine, (f"ack {ack_id} names no lane (its text: {head}): a fix-forward ruling names the "
+                                 "fix lane with --lane and rules for that lane alone"), text
+            if lane != branch:
+                return machine, f"ack {ack_id} rules for {lane}, not this lane ({branch})", text
+            return machine, None, text
+    if elsewhere:
+        return elsewhere, (f"ack {ack_id} is on {elsewhere}'s ref, and the ruling is the dispatcher's "
+                           f"({dispatcher}) to give"), ""
+    if other_kind:
+        return "", (f"{ack_id} is a {other_kind}, not an ack: the ruling is the dispatcher's ack opening "
+                    f"`{RULING_HEAD}<run id>` (an operator call's answer, never the call)"), ""
+    return "", (f"no ack {ack_id} on the local mail refs (python tools/cc/mail.py inbox fetches them); the "
+                f"ruling is the dispatcher's ack opening `{RULING_HEAD}<run id>`, its --lane this lane"), ""
+
+
+def red_base_verdict(base: str, branch: str, prs: list[dict], cwd: str, *, ruled: str | None = None,
+                     root: Path | None = None) -> tuple[str | None, str | None]:
+    """``(refusal, ruling)``: why `open` must not arm this lane now, or the
+    line that says the dispatcher's ruling ``ruled`` (an ack id, given as
+    :data:`BASE_RED_RULED_FLAG`) lets it land on the red base, with the
+    ruling's text head. Both None on a base that does not read red (a flag
+    given there is noted as not needed) and on a `revert/` lane, which the
+    revert-first rule lets through without a flag (one given is noted as not
+    read). Nothing else lands on a red base: the refusal names the revert,
+    the re-run that clears a flake, the ruling with the rule that earns it
+    and the run id the ack must name, and each pull request whose armed
+    auto-merge would land on the red base with the command that disarms it;
+    with the flag given and the ruling not holding, it says why first."""
     if branch.startswith("revert/"):
-        return None
-    red = base_red_after_merge(base, cwd=cwd)
-    if not red:
-        return None
+        if ruled:
+            _note(f"a revert/ lane needs no ruling, so {BASE_RED_RULED_FLAG} {ruled} was not read")
+        return None, None
+    run_ = base_red_run(base, cwd=cwd)
+    if run_ is None:
+        if ruled:
+            _note(f"the base reads as not red (green, no verdict in the window, or gh could not say), so "
+                  f"{BASE_RED_RULED_FLAG} {ruled} was not needed")
+        return None, None
+    red = _red_base_words(base, run_)
+    run_id = str(run_.get("databaseId"))
     armed = [str(r.get("number")) for r in prs if r.get("autoMergeRequest") and str(r.get("headRefName")) != branch]
-    return (f"{red}. Nothing lands on a red base: revert the merge that turned it red first, from a revert/ "
-            "lane (`open` lets one through), or re-run the post-merge run if it was a flake"
-            + ("; armed now, and landing on the red base unless disarmed: "
-               + ", ".join(f"#{n} (gh pr merge --disable-auto {n})" for n in armed) if armed else ""))
+    armed_words = (("; armed now, and landing on the red base unless disarmed: "
+                    + ", ".join(f"#{n} (gh pr merge --disable-auto {n})" for n in armed)) if armed else "")
+    if ruled:
+        sender, problem, text = red_base_ruling(root if root is not None else Path(cwd), ruled, run_id,
+                                                branch=branch)
+        if problem is None:
+            return None, (f"{red} -- let through by the dispatcher's ruling {ruled} ({sender}'s gridlock ack "
+                          f"naming run {run_id}: {text[:RULING_TEXT_CHARS]})")
+        return (f"{red}. {BASE_RED_RULED_FLAG} {ruled}: {problem}. Nothing lands on a red base but the revert "
+                "(from a revert/ lane, which `open` lets through), a re-run where the red was a flake, or a "
+                "ruling that holds" + armed_words), None
+    return (f"{red}. Nothing lands on a red base but the revert (from a revert/ lane, which `open` lets "
+            "through), a re-run where the red was a flake, or, where the failing test is outside every "
+            "suspect's diff and reproduces at the last green base, the fix landed forward on the "
+            f"dispatcher's ruling: {BASE_RED_RULED_FLAG} <ack id> on `open` or `handoff`, the ack opening "
+            f"`{RULING_HEAD}{run_id}` with --lane {branch}" + armed_words), None
 
 
 def seat_open_prs(root: Path, branch: str, prs: list[dict]) -> tuple[str, list[str]]:
@@ -1691,8 +1847,9 @@ def preflight() -> int:
             _say(f"conflicts with origin/{base}: `open` merges the base in first, {'; '.join(how)}")
     for line in post_merge_reds(cwd=str(root)):
         _say(line)
-    base_red = base_red_after_merge(base, cwd=str(root))
-    if base_red:
+    red_run = base_red_run(base, cwd=str(root))
+    if red_run is not None:
+        base_red = _red_base_words(base, red_run)
         try:
             branch = current_branch()
         except Refused:
@@ -1701,7 +1858,9 @@ def preflight() -> int:
             _say(f"{base_red} -- this is a revert/ lane, which `open` lets through")
         else:
             _note(f"`open` will refuse this lane: {base_red}. Nothing lands on a red base: revert first, "
-                  "from a revert/ lane")
+                  f"from a revert/ lane, or land a fix forward the dispatcher ruled (`open "
+                  f"{BASE_RED_RULED_FLAG} <ack id>`, the ack opening `{RULING_HEAD}{red_run.get('databaseId')}` "
+                  f"with --lane {branch or 'this lane'})")
     on, how = handoff_push_setting(root)
     if on:
         problem = memory_problem(root)
@@ -1755,7 +1914,7 @@ def _remote_has_commits_we_lack(branch: str, cwd: str) -> int:
 
 
 def open_pr(title: str | None = None, body_file: str | None = None, dry_run: bool = False,
-            early: str | None = None) -> int:
+            early: str | None = None, base_red_ruled: str | None = None) -> int:
     root = repo_root()
     base = default_branch()
     branch = current_branch()
@@ -1787,11 +1946,14 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     else:
         early_reason = ""
     prs = prs or []
-    refusal = red_base_refusal(base, branch, prs, str(root))
+    refusal, ruling = red_base_verdict(base, branch, prs, str(root), ruled=base_red_ruled, root=root)
     if refusal:
         # The lane is whole and stays here: the handoff arms the own-clear on
-        # this one (the next window lands the lane once the base is green).
+        # this one (the next window lands the lane once the base is green, or
+        # once the dispatcher's ruling names the red run).
         raise Held(refusal, landed=False)
+    if ruling:
+        _say(ruling)
     seat, mine = seat_open_prs(root, branch, prs)
     if mine:
         _note(f"this seat ({seat}) already has an open pull request: {', '.join(mine)}. One open pull request "
@@ -1830,6 +1992,10 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         # On the record, not only on a terminal: an --early that became a reflex
         # is visible in every pull request it shipped.
         body = body.rstrip("\n") + f"\n\nShipped before the handoff: {early_reason}\n"
+    if ruling:
+        # The same record for a lane landed on a red base: the ruling that let
+        # it through, and the run it named, in every pull request it shipped.
+        body = body.rstrip("\n") + f"\n\nLanded on a red base by ruling: {ruling}\n"
     # The merge-first step, then the fold, then the marker's sha: a merge or a
     # fold commit moves HEAD, and a marker bound to the old head is the stall
     # rebind exists to clear. The fold is the Session Log cap's one writer.
@@ -2017,7 +2183,8 @@ def _wait_for_pr_head(branch: str, sha: str) -> None:
         time.sleep(POLL_SECONDS)
 
 
-def handoff(title: str | None = None, body_file: str | None = None, dry_run: bool = False) -> int:
+def handoff(title: str | None = None, body_file: str | None = None, dry_run: bool = False,
+            base_red_ruled: str | None = None) -> int:
     """/handoff's one push step, then the own-clear's arm. The push
     (:func:`_handoff_push`) runs only when espalier.toml sets ``handoff_push =
     true``, else the commit stays local and the verb says how to push it. Once
@@ -2036,7 +2203,7 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     stops it is said, with the by-hand reset. A dry run says what it would
     arm."""
     try:
-        rc = _handoff_push(title, body_file, dry_run)
+        rc = _handoff_push(title, body_file, dry_run, base_red_ruled)
     except Held as whole:
         if dry_run:
             _say("dry-run: the own-clear marker would be armed for this session with this refusal in its brief")
@@ -2063,12 +2230,16 @@ def _arm_or_say(*, held: Held | None = None) -> None:
               "so it needs a /clear by hand")
 
 
-def _handoff_push(title: str | None, body_file: str | None, dry_run: bool) -> int:
+def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
+                  base_red_ruled: str | None = None) -> int:
     """The push half of :func:`handoff`. Off: the handoff's commit stays local
     and this says how to push it and how to opt in -- and, when a pull request
     is already open for the branch, that it will merge WITHOUT this commit. On:
     the lane is opened as a pull request, or, when one is already open, this
-    commit is pushed onto it and the marker re-bound to the new head."""
+    commit is pushed onto it and the marker re-bound to the new head.
+    ``base_red_ruled`` (an ack id) is the dispatcher's ruling that lets the
+    lane land on a red base: handed to `open`, which judges it; on a push onto
+    an open pull request, read here, where the base's red is a note."""
     root = repo_root()
     on, how = handoff_push_setting(root)
     if not on:
@@ -2109,7 +2280,7 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool) -> in
         pr = pr_for_branch(current_branch(), "open")
     branch = current_branch()
     if pr is None:
-        return open_pr(title=title, body_file=body_file, dry_run=dry_run)
+        return open_pr(title=title, body_file=body_file, dry_run=dry_run, base_red_ruled=base_red_ruled)
     behind = _remote_has_commits_we_lack(branch, str(root))
     if behind:
         raise Refused(f"origin/{branch} has {behind} commit(s) this HEAD does not reach: merge them in "
@@ -2123,12 +2294,27 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool) -> in
     _git("fetch", "origin", base, "--quiet", cwd=str(root))
     _merge_base_first(root, base, dry_run=dry_run)
     _fold_session_log(root, base, dry_run=dry_run)
-    base_red = base_red_after_merge(base, cwd=str(root))
-    if base_red and pr.get("autoMergeRequest") and not branch.startswith("revert/"):
+    red_run = base_red_run(base, cwd=str(root))
+    if red_run is not None and pr.get("autoMergeRequest") and not branch.startswith("revert/"):
         # Not a refusal: the handoff's row must reach the pull request. Its
-        # auto-merge was armed before the base went red, and lands on it.
-        _note(f"{base_red}. #{pr.get('number')}'s auto-merge is armed and lands on the red base once this "
-              f"push is green: gh pr merge --disable-auto {pr.get('number')} until the revert merges")
+        # auto-merge was armed before the base went red, and lands on it -- by
+        # the dispatcher's ruling where one is given and holds, else named with
+        # the disarm.
+        base_red = _red_base_words(base, red_run)
+        number = pr.get("number")
+        disarm = (f"#{number}'s auto-merge is armed and lands on the red base once this push is green: "
+                  f"gh pr merge --disable-auto {number} until the revert merges")
+        if base_red_ruled:
+            sender, problem, text = red_base_ruling(root, base_red_ruled, str(red_run.get("databaseId")),
+                                                    branch=branch)
+            if problem is None:
+                _say(f"{base_red} -- #{number} lands on it by the dispatcher's ruling {base_red_ruled} "
+                     f"({sender}'s gridlock ack naming run {red_run.get('databaseId')}: "
+                     f"{text[:RULING_TEXT_CHARS]})")
+            else:
+                _note(f"{base_red}. {BASE_RED_RULED_FLAG} {base_red_ruled}: {problem}. {disarm}")
+        else:
+            _note(f"{base_red}. {disarm}")
     if dry_run:
         _say(f"dry-run: git push origin {branch}; then rebind the marker to the new head")
         return 0
@@ -2565,6 +2751,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_open.add_argument("--dry-run", action="store_true")
     p_open.add_argument("--early", metavar="REASON",
                         help="ship before the handoff where handoff_push is on, saying why")
+    p_open.add_argument(BASE_RED_RULED_FLAG, metavar="ACK_ID", dest="base_red_ruled",
+                        help="land on a red base by the dispatcher's ruling: the ack with this id, on the "
+                             "mail channel, names the red post-merge run")
     p_rebind = sub.add_parser("rebind", help="re-bind the title marker to the pull request's head")
     p_rebind.add_argument("--dry-run", action="store_true")
     sub.add_parser("catch-up", help="merge the base in (on the server when clean; locally, record files "
@@ -2582,6 +2771,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_hand.add_argument("--title", help="the pull request title (default: the head commit's subject)")
     p_hand.add_argument("--body-file", help="the pull request body (default: the commit subjects)")
     p_hand.add_argument("--dry-run", action="store_true")
+    p_hand.add_argument(BASE_RED_RULED_FLAG, metavar="ACK_ID", dest="base_red_ruled",
+                        help="land on a red base by the dispatcher's ruling, as `open` takes it")
     p_arm = sub.add_parser("arm", help="arm the own-clear marker for this session by hand: after a lane opened "
                                        "by hand (gh pr create), or a handoff whose arm did not run")
     p_arm.add_argument("--why", help="why it is armed by hand (recorded in the marker)")
@@ -2598,7 +2789,7 @@ def main(argv: list[str] | None = None) -> int:
             return lane()
         if args.verb == "open":
             return open_pr(title=args.title, body_file=args.body_file, dry_run=args.dry_run,
-                           early=args.early)
+                           early=args.early, base_red_ruled=args.base_red_ruled)
         if args.verb == "rebind":
             return rebind(dry_run=args.dry_run)
         if args.verb == "catch-up":
@@ -2612,7 +2803,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.verb == "fold":
             return fold(dry_run=args.dry_run)
         if args.verb == "handoff":
-            return handoff(title=args.title, body_file=args.body_file, dry_run=args.dry_run)
+            return handoff(title=args.title, body_file=args.body_file, dry_run=args.dry_run,
+                           base_red_ruled=args.base_red_ruled)
         if args.verb == "arm":
             return arm(why=args.why, dry_run=args.dry_run)
     except Refused as stop:
