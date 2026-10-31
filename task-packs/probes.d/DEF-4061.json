@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4061",
+ "subject": "tools/cc/hooks/_bash_patterns.py",
+ "cmd": "python3 -c \"import json,os,subprocess,sys;S=[(\\\"Bash\\\",\\\"watch -dn 5 cat .env\\\"),(\\\"Bash\\\",\\\"script -q /dev/null cat .env\\\"),(\\\"Bash\\\",\\\"su -c'cat .env'\\\"),(\\\"Bash\\\",\\\"builtin eval 'cat .env'\\\"),(\\\"PowerShell\\\",\\\"iex -Command:'gc .env'\\\")];E={k:v for k,v in os.environ.items() if k!=\\\"ESPALIER_MAINTENANCE_MODE\\\"};print(sum(\\\"deny\\\" not in subprocess.run([sys.executable,\\\"tools/cc/hooks/write_guard.py\\\"],input=json.dumps({\\\"session_id\\\":\\\"probe\\\",\\\"hook_event_name\\\":\\\"PreToolUse\\\",\\\"tool_name\\\":t,\\\"tool_input\\\":{\\\"command\\\":c}}),capture_output=True,text=True,env=E,timeout=60).stdout for t,c in S))\"",
+ "open_value": "5",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/write_guard.py"
+ ],
+ "row_sha": "f6eb4f0a7412",
+ "text_sha": "280a7d191da4",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}
