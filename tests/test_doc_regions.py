@@ -39,9 +39,11 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
+from tests._live_tree import checkout_glob
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -99,7 +101,6 @@ def _tracked_text_files() -> list[str]:
     rather than at each caller, so a future test added to this module inherits
     the guard instead of re-earning it.
     """
-    import subprocess
 
     try:
         completed = subprocess.run(
@@ -353,6 +354,104 @@ class TestRequiredGitignoreProperties:
         assert lines[0] == "```" and lines[-1] == "```"
 
 
+class TestLocalOnlySkipsDerivation:
+    """``tests/README.md``'s ``local-only-skips`` region (DEF-486).
+
+    The README's trap paragraph named four modules by hand while nine were
+    gated on a path a CI checkout never has, so the reader took the four for
+    the population. The list is now derived from the skip reasons, the string
+    the README says carries the distinction, and the property that matters is
+    the class's acceptance criterion: a module that says so in a skip reason
+    joins with no edit anywhere else, and one that does not stays out. Driven
+    on a planted tree, because the live population is not a test's to grow.
+    """
+
+    _GATED = ('import pytest\n\n\n@pytest.mark.skipif(True, reason="cc/x.json is gitignored")\n'
+              "def test_a():\n    pass\n")
+
+    @staticmethod
+    def _plant(root: Path, modules: dict[str, str]) -> None:
+        (root / "tests").mkdir(parents=True, exist_ok=True)
+        for name, body in modules.items():
+            (root / "tests" / name).write_text(body, encoding="utf-8")
+
+    def test_a_module_saying_gitignored_joins_and_a_module_that_does_not_stays_out(self, tmp_path):
+        from tests._local_only_skips import local_only_skip_modules
+
+        self._plant(tmp_path, {
+            "test_gated.py": self._GATED,
+            "test_other_skip.py": ('import pytest\n\n\n@pytest.mark.skipif(True, reason="needs the network")\n'
+                                   "def test_a():\n    pass\n"),
+            "test_no_skip.py": "def test_a():\n    pass\n",
+        })
+        assert set(local_only_skip_modules(tmp_path)) == {"tests/test_gated.py"}
+
+    def test_every_static_reason_form_is_read_and_nothing_else_is(self, tmp_path):
+        from tests._local_only_skips import local_only_skip_modules
+
+        self._plant(tmp_path, {
+            "test_positional.py": 'import pytest\n\n\ndef test_a():\n    pytest.skip("state is local-only here")\n',
+            "test_mark_skip.py": 'import pytest\n\n\n@pytest.mark.skip("Local only: the archive")\ndef test_a():\n    pass\n',
+            "test_fstring.py": ('import pytest\n\n\ndef test_a(p="x"):\n'
+                                '    pytest.skip(f"{p} is git-ignored and absent")\n'),
+            "test_concat.py": ('import pytest\n\n\ndef test_a():\n'
+                               '    pytest.skip(reason="the folder is " + "gitignored")\n'),
+            "test_named.py": ('import pytest\n\n_WHY = "ignored by git on a fresh clone"\n'
+                              "pytestmark = pytest.mark.skipif(True, reason=_WHY)\n"),
+            "test_importorskip.py": ('import pytest\n\n'
+                                     'mod = pytest.importorskip("x", reason="the copy is gitignored")\n'),
+            # skipif's positional arguments are conditions, never the reason.
+            "test_condition.py": ('import pytest\n\n\n@pytest.mark.skipif("\'gitignored\' in \'x\'", '
+                                  'reason="needs rg")\ndef test_a():\n    pass\n'),
+            # The word in a comment or an ordinary string is not a skip reason.
+            "test_prose.py": '# this folder is gitignored\nNOTE = "gitignored"\n\n\ndef test_a():\n    assert NOTE\n',
+        })
+        assert set(local_only_skip_modules(tmp_path)) == {
+            "tests/test_positional.py", "tests/test_mark_skip.py", "tests/test_fstring.py",
+            "tests/test_concat.py", "tests/test_named.py", "tests/test_importorskip.py",
+        }
+
+    def test_the_region_picks_up_a_planted_module_with_no_edit(self, tmp_path, monkeypatch):
+        """The acceptance criterion through the generator's own renderer."""
+        self._plant(tmp_path, {"test_zz_planted.py": self._GATED, "test_no_skip.py": "def test_a():\n    pass\n"})
+        monkeypatch.setattr(GEN, "_ROOT", tmp_path)
+        assert GEN.render_local_only_skips() == ("- `tests/test_zz_planted.py`", 1)
+
+    def test_every_skip_reason_naming_an_ignored_path_says_so(self):
+        """The README's rule, enforced: a module whose skip reason names a path
+        git ignores is gated on local-only state, and must say so (the word is
+        what the derivation reads). Found two on 2026-10-30 that did not
+        (`task-packs/Done/`, `cc/GOAL_OWED.json`) and a third at review
+        (`.espalier-state/`); without this the regex is the only floor."""
+        from tests._git_oracle import require_is_gitignored
+        from tests._local_only_skips import local_only_skip_modules, skip_reasons
+        token = re.compile(r"(?<![\w/])(?:\.?[\w.-]+/)+[\w.-]*|(?<![\w/])\.[\w-]+(?:/[\w.-]*)*")
+        named: dict[str, set[str]] = {}
+        for path in checkout_glob(REPO / "tests", "test_*.py"):
+            for reason in skip_reasons(path.read_text(encoding="utf-8")):
+                for tok in token.findall(reason):
+                    named.setdefault(tok.rstrip("/"), set()).add(f"tests/{path.name}")
+        if not named:
+            return
+        ignored = {tok for tok in named if require_is_gitignored(REPO, tok)}
+        derived = set(local_only_skip_modules(REPO))
+        silent = sorted({m for tok in ignored for m in named[tok] if m not in derived})
+        assert not silent, (
+            "skip reasons name a gitignored path without saying so; add '(gitignored)' "
+            "or 'local-only' to the reason so the module joins the derived list:\n  "
+            + "\n  ".join(silent)
+        )
+
+    def test_the_live_block_names_one_existing_test_module_per_line_in_ascii(self):
+        block, population = GEN.render_local_only_skips()
+        lines = block.split("\n")
+        assert len(lines) == population, f"{population} derived, {len(lines)} lines rendered"
+        named = [re.fullmatch(r"- `(tests/test_\w+\.py)`", line) for line in lines]
+        assert all(named), f"a line is not one module path: {lines}"
+        assert all((REPO / m.group(1)).is_file() for m in named if m), lines
+        assert block.isascii(), "rendered text is 7-bit ASCII"
+
+
 # ── the census §14 promised and nobody built ─────────────────────────────
 
 
@@ -393,6 +492,7 @@ class TestEveryGeneratedRegionHasAGenerator:
                     return True
         return False
 
+    @pytest.mark.contract  # a whole-tree sweep: the tree-sweep census names it
     def test_the_scan_finds_the_known_regions(self):
         """Vacuity guard: a regex that matches nothing would pass everything."""
         found = [
@@ -406,6 +506,7 @@ class TestEveryGeneratedRegionHasAGenerator:
             "pinned to the registrations so it cannot."
         )
 
+    @pytest.mark.contract  # a whole-tree sweep: the tree-sweep census names it
     def test_every_marker_pair_is_registered_or_a_mirror(self):
         orphans: list[str] = []
         for rel in _tracked_text_files():

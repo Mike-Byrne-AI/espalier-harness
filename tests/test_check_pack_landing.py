@@ -245,6 +245,7 @@ def test_incomplete_landings_ignores_non_landed_and_non_packs(tmp_path: Path):
     not (REPO_ROOT / "task-packs" / "Done").is_dir(),
     reason="self-host only: task-packs/Done/ is gitignored -- absent in a fresh clone",
 )
+@pytest.mark.contract
 def test_live_done_tree_has_no_unstamped_packs():
     # The standing proof the population fix + the three record repairs landed:
     # with non-packs and ROADMAPs out of the population, the advisory reaches
@@ -323,6 +324,7 @@ _MAX_INCOMPLETE_LANDINGS = 3
     not (REPO_ROOT / "task-packs" / "Done").is_dir(),
     reason="self-host only: task-packs/Done/ is gitignored -- absent in a fresh clone",
 )
+@pytest.mark.contract
 def test_roadmap_packs_in_done_do_not_grow():
     roadmaps = check_pack_landing.roadmap_packs()
     assert len(roadmaps) <= _MAX_ROADMAP_IN_DONE, (
@@ -337,6 +339,7 @@ def test_roadmap_packs_in_done_do_not_grow():
     not (REPO_ROOT / "task-packs" / "Done").is_dir(),
     reason="self-host only: task-packs/Done/ is gitignored -- absent in a fresh clone",
 )
+@pytest.mark.contract
 def test_incomplete_landing_stanzas_do_not_grow():
     incomplete = check_pack_landing.incomplete_landings()
     assert len(incomplete) <= _MAX_INCOMPLETE_LANDINGS, (
@@ -352,6 +355,7 @@ def test_incomplete_landing_stanzas_do_not_grow():
     not (REPO_ROOT / "task-packs" / "Done").is_dir(),
     reason="self-host only: task-packs/Done/ is gitignored -- absent in a fresh clone",
 )
+@pytest.mark.contract
 def test_the_advisory_ratchets_are_not_vacuous():
     # A ceiling passes trivially when the thing it counts reaches zero -- and it
     # reads that collapse as success. Both advisories are non-empty TODAY, so the

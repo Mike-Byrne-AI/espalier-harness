@@ -635,6 +635,7 @@ class TestFusedOverlay:
         # a recorded choice, not a surprise.
         assert "tools/review_agent_audit.py" in rels
 
+    @pytest.mark.contract
     def test_overlay_mirror_matches_fusion_manifest(self):
         """Derived, not hand-listed twice, in BOTH directions and at the
         manifest's granularity: every .py-bearing HARNESS_INCLUDE entry is

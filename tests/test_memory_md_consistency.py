@@ -153,6 +153,7 @@ class TestSessionLogDatesAreSane:
             "the sort key."
         )
 
+    @pytest.mark.contract
     def test_every_session_log_fragment_is_one_row_dated_as_named(self) -> None:
         """The fragments on the tree, whoever wrote them: a fragment name, one
         dated row, the row dated as the name, and no more of them than the
@@ -214,6 +215,7 @@ def _fragment_problems(root: Path, rf) -> list[str]:
     return problems
 
 
+@pytest.mark.contract
 class TestTheFragmentBoundIsTheMergedTrees:
     """Review of #179: the cap was asserted on the merged tree but pruned per
     checkout, so seats handing off together turned ``main`` red on a diff that

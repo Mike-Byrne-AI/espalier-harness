@@ -522,6 +522,8 @@ _GENERATED_DOC_REGIONS: tuple[tuple[str, str, str], ...] = (
      "espalier/managed_inventory.py + espalier/cli.py::INIT_TOOL_SCRIPTS"),
     ("docs/QUICKSTART.md", "required-gitignore",
      "espalier/cli.py::REQUIRED_GITIGNORE"),
+    ("tests/README.md", "local-only-skips",
+     "tests/_local_only_skips.py::local_only_skip_modules"),
 )
 _HARNESS_GUARD_ASSET_TAIL = "espalier/assets/github/workflows/harness-guard.yml"
 _HARNESS_GUARD_ROOT_TAIL = ".github/workflows/harness-guard.yml"

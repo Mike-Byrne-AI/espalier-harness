@@ -40,7 +40,12 @@ print a Python 3 version, try the other interpreter name, then the launcher's
   and a marker re-bound), or, where the lane merges before the session ends,
   a row the handoff parks on the seat's records ref for the next lane's push
   to fold in (no pull request for the row alone). A row a fold brought in is
-  another session's and does not count as this lane's.
+  another session's and does not count as this lane's. Past 3 lanes shipped
+  since this seat's newest Session Log row (on the base, parked, riding its
+  open pull request, or pruned and read from the base's history), `open
+  --early` is refused too, naming the count and the date: write the row on
+  the lane and the question is not asked. A debt that cannot be read (git,
+  gh or the mail channel did not answer) is said and never refuses.
 - **Off:** `/handoff` commits its row and pushes nothing, and `/ship` is how a
   lane leaves the machine, whenever you choose.
 
@@ -48,13 +53,24 @@ print a Python 3 version, try the other interpreter name, then the launcher's
 push (the `lane` and `open` steps below, or a push and a re-bind onto a pull
 request already open) or says why it did not -- including, when the setting is
 off and a pull request is open, that it will merge without the handoff's commit.
-Whichever way it went, the verb then arms the own-clear marker for this session
-(`.espalier-state/own_clear.json`): in a window `seat.py launch` started, the
-own-clear mod (`tools/cc/mods/own-clear`) clears it at the turn's end and
-re-primes it from the seat brief:
+Whichever way it went -- the push landed, or a refusal this window is done with
+(the base red: the lane stays here, whole; or a step after a landed push
+refused), with that refusal in the marker and the lane to land first in the
+brief; never a refusal this window must fix first (a dirty tree, a lane behind
+its remote), which arms nothing -- the verb then arms the own-clear marker for
+this session (`.espalier-state/own_clear.json`): in a window `seat.py launch`
+started, the own-clear mod (`tools/cc/mods/own-clear`) clears it at the turn's
+end and re-primes it from the seat brief:
 
 ```bash
 python tools/cc/ship.py handoff
+```
+
+A lane opened by hand (`gh pr create` outside the driver) ran no verb and armed
+nothing; the same arm, by hand, on a clean tracked tree:
+
+```bash
+python tools/cc/ship.py arm --why "<how the lane was opened>"
 ```
 
 ## Step 0: What is there to ship?
@@ -76,7 +92,8 @@ this checkout (Step 2). Where
 `handoff_push` is on, notes when this lane's commits carry no Session Log row
 (no new file under `memory/session-log.d/` and no change to
 `ESPALIER_MEMORY.md`): the handoff has not run for it, and `open` will refuse
-it without `--early "<reason>"`. Prints the merge verdict against the base:
+it without `--early "<reason>"` (and with it, past 3 lanes shipped since this
+seat's newest row). Prints the merge verdict against the base:
 clean; conflicts only on the record files (`ESPALIER_MEMORY.md`,
 `task-packs/FORWARD_LEDGER.md`, and `task-packs/LEDGER_PROBES.json` where a
 tree still keeps one), which `open` merges in first and resolves by shape; or

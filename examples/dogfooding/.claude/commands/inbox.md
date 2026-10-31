@@ -248,15 +248,19 @@ is read on its own, and one that cannot be read says so on its own line:
   while any local reading is unread; run outside a session, it names every
   registry it read.
 - **records:** for each seat with a checkout here, a live claim or a job, its
-  lanes merged since its newest Session Log row on the base (`win: 9 merges
-  since its last row (2026-10-15)`; `no row on origin/main` where it has
-  none): the row a seat owes for the day's lanes, counted over the last 100
-  merges in the reading box's local day (a seat in another zone can differ by
-  a lane at the day's edge; a count the read stopped short of is a floor
-  and says `the last 100 read`), the same way the ship driver's row-debt
-  read counts it. A seat with a lane merged in the window is listed even
-  with nothing live (the end-of-day seat that owes its row), and lanes no
-  claim names are counted apart on a last line, never as a seat's zero.
+  lanes merged since its newest Session Log row (`win: 9 merges since its
+  last row (2026-10-15)`; `no row on origin/main` where it has none; `parked
+  until the next fold`, `riding its open pull request` or `pruned from
+  origin/main since` beside a date the base's tree does not hold): the row a
+  seat owes for the day's lanes, counted over the last 100 merges in the
+  reading box's local day (a seat in another zone can differ by a lane at
+  the day's edge; a count the read stopped short of is a floor and says `the
+  last 100 read`), the same way the ship driver's row-debt read counts it,
+  and past a cap of 3 the driver's `open --early` refuses. A seat with a lane
+  merged in the window is listed even with nothing live (the end-of-day seat
+  that owes its row), and lanes no claim or `seat:` label names (the driver
+  stamps the label at the open) are counted apart on a last line, never as a
+  seat's zero.
   An unnamed clone says so instead. The row goes through
   `python tools/cc/_record_fragments.py new session-log`; where the handoff's
   lane already merged, the row parks on the seat's records ref and the
@@ -271,9 +275,34 @@ is read on its own, and one that cannot be read says so on its own line:
   those apart (`asks:     3 open, 2 operator calls ...`), and the ruling is
   the dispatcher's `ack` naming the request's full id, with the ruling in its
   text, so it lands on origin where every seat reads it; an ack from any
-  other seat leaves the call open, and the row says `(operator call)`. The dispatcher seat also gets the count and the oldest age on the
+  other seat leaves the call open, and the row says `(operator call)`. A
+  request whose text opens with `stopped:` is a worker's stop (the tick's STOP
+  clause: what stops it, in its text), counted apart on the header
+  (`asks:     3 open, 1 stopped, 1 operator call ...`) and tagged `(stopped)`
+  on its row; its age is what the dispatcher reads first, and any seat's ack
+  naming it closes it. The dispatcher seat also gets the count and the oldest age on the
   banner's `Mail:` line.
-- **jobs**, **claims** and the ledger's live row count, counted at the base
+- **jobs:** the dispatcher's live assignments, one row per job with its seat,
+  its lane, classes and ids, its stamp and the assign's id (the one a release
+  names). The section ends with `under two: <seat> (<n>, last mail <age>),
+  ...`: each seat holding fewer than two live jobs with its count and its last
+  mail's age (`no mail` for a seat a job alone names; a live job keeps a dark
+  seat on the line, so read the age before giving it a job), over the seats
+  the `seats:` line names (its quiet fold left out; while the registry or a
+  seat's name is unread nothing folds, so every named row counts, and a
+  checkout with no seat name is not a seat) and the jobs' seats, the
+  dispatcher apart where `espalier.toml` names one (unnamed, every seat
+  counts, the operator's own box included), and the line names that
+  population (`of 3 seats (the seats line names 4, the jobs 3, the dispatcher
+  air apart)`); `none of N seats` when every one holds two or more, `no worker
+  seat named` when the population is empty; no line while the mail is unread
+  or the dispatcher setting is unusable. The dispatcher keeps each worker at
+  two live jobs as the fold counts them (a shelved or stopped job is live
+  until released; one open pull request per seat, the next job built while
+  the first is in CI), and a seat holding none has no jobs row, so which
+  seats were short was once remembered between ticks; the line is where they
+  are read, every tick.
+- **claims** and the ledger's live row count, counted at the base
   branch's remote-tracking ref with the base's own ledger tools and naming the
   commit it read, so a checkout that stops moving still reads what the base
   holds. The line says `as last fetched` when the fetch failed or `--no-fetch`
@@ -299,6 +328,16 @@ is read on its own, and one that cannot be read says so on its own line:
   `none among what was read` means something was not read. The ship driver
   prints the same lines for a lane after `open` and `handoff` push. The rule
   stays the same: the second to merge runs catch-up.
+
+<!-- espalier:self-host-only -->
+On this repository the `under two:` tail and its census are `DEF-5034`'s fix:
+air-work sat idle from 03:27Z to 06:38Z on 2026-10-30 while which seats were
+short was remembered between the dispatcher's ticks. The seat-day census
+(`scripts/seat_day_census.py`, self-host only -- not deployed by `init`)
+counts, per worker seat per UTC day, the tick slots of the dispatcher's loop
+interval (laid from 00:00Z) at which the seat stood under two, on the report,
+each worker's row and the dispatcher's row.
+<!-- /espalier:self-host-only -->
 
 If the board and your own account disagree, the board is the one that read
 GitHub just now.
@@ -363,11 +402,17 @@ The driver builds the commit under a scratch index from the message alone
 (the worktree, HEAD and the live index are never touched), moves this
 machine's ref by compare-and-swap and pushes without force; origin's tip for
 the ref is read fresh and a local ref not behind it refuses (one writer per
-machine). The public origin carries the channel, so a message is refused when
-a token of its text or a path it names reads to the guard as a secret-bearing
-path (`tools/cc/hooks/write_guard.py`'s own patterns) -- token friction, not a
-security boundary. `--dry-run` prints the line that would be sent and touches
-nothing.
+machine). A push that outlives its wait is read back before anything is said:
+origin's tip at the commit means it landed, and the send says so; anything
+else puts the ref back, keeps the commit on a local `refs/unconfirmed/` ref and
+refuses with what was read (an unchanged tip can still land seconds later),
+and the next send from this checkout refuses once, naming the commit, if it
+landed after all, or drops the record once origin moved past it. The public
+origin carries the channel, so a message is
+refused when a token of its text or a path it names reads to the guard as a
+secret-bearing path (`tools/cc/hooks/write_guard.py`'s own patterns) -- token
+friction, not a security boundary. `--dry-run` prints the line that would be
+sent and touches nothing.
 
 ## Step 4: What to do with a request
 
@@ -385,6 +430,31 @@ recommendation), so the board's `asks:` line lists it for every seat with its
 age and counts it apart; the ruling comes back as the dispatcher's `ack`
 naming the request's full id, with the ruling in its text. A worker's ack does
 not close one.
+
+A worker's own stop goes out the same way: one request whose text opens with
+`stopped:`, naming what stops it (a refusal it cannot resolve, a conflict
+outside the files it claims, a decision only the operator makes), sent at the
+stop so the board's `asks:` line carries it with its age; the ack that re-aims
+or frees the seat closes it, and so does the seat's own ack once what stopped
+it is gone (a release, or the ruling on an operator call, names no stop); an
+ack that frees nothing is answered by sending the stop again, and a stop
+opening with anything else is a plain ask no reader counts apart.
+
+<!-- espalier:self-host-only -->
+A gridlock ruling (Core Rule 15, this repository's own rule) is the
+dispatcher's `ack` whose text opens with `gridlock:` (its first word; one
+ruling per ack), the marker in the family of `OPERATOR CALL:`, `redirect:`,
+`shelved:` and `stopped:`; a `(stopped)` row past the hour on the `asks:` line
+is the gridlock's read, answered by the ack that frees or re-aims the seat:
+
+```bash
+python tools/cc/mail.py send --type ack --ack <request id> --text "gridlock: <the ruling, the facts you read>"
+```
+
+The seat-day census counts a ruling by that opening on the dispatcher's acks
+alone and names its id on the dispatcher's day row, so a mention of the word
+mid-text, or a worker's request opening with it, is never a ruling.
+<!-- /espalier:self-host-only -->
 
 ## Step 5: A shipped lane releases its own claims
 

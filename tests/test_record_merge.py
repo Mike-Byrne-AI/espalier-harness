@@ -1704,3 +1704,18 @@ class TestMergeBases:
         assert fake.calls == [["git", "merge-base", "--all", "HEAD", "MERGE_HEAD"]]
         fake = _Fake({("git", "merge-base"): (128, "", "fatal: not a git repository")})
         assert rm._merge_bases(fake, tmp_path) == []
+
+
+class TestTheRunnersStops:
+    def test_a_program_that_outlives_its_timeout_is_a_timed_out_stop(self, rm, monkeypatch):
+        """The mail driver reads origin back after a push that outlived its
+        timeout (one landed anyway, 2026-10-30), so the runner tells a timeout
+        apart from its other stops, under the class every caller catches."""
+        def never_returns(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+
+        monkeypatch.setattr(rm, "run_bounded", never_returns)
+        timed_out = getattr(rm, "TimedOut", None)
+        assert timed_out is not None and issubclass(timed_out, rm.Unresolvable), "no TimedOut stop on the runner"
+        with pytest.raises(timed_out, match=r"git push took longer than 2s"):
+            rm.run(["git", "push", "origin", "x"], timeout=2)

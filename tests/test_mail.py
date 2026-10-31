@@ -1103,6 +1103,37 @@ class TestOperatorCalls:
             True, True, False, False, False, False]
         assert mail.is_operator_call({"type": "request"}) is False and mail.is_operator_call("junk") is False
 
+    def test_a_stop_is_a_request_opening_with_its_own_prefix_and_closes_on_any_ack(self, mail):
+        """DEF-5030 (2026-10-30): a worker that stops (a refusal it cannot
+        resolve, a conflict outside its files, a decision reserved for the
+        operator) sends one request opening with ``stopped:``, the sibling of
+        the operator call, so the board's asks line carries the stop with its
+        age (the dispatcher's past-the-hour gridlock read). Read as the
+        operator call is: a request alone, at the text's opening, as spelled;
+        a note, an ack or an assign carrying the word is no stop, nor a
+        request quoting it mid-text, nor an operator call that nests it. It
+        closes on any ack naming it (the plain rule: the dispatcher's ruling,
+        or the seat whose files the conflict is in), never on its sender's
+        alone. Dies to: the prefix read on a note, mid-text or in another
+        case; or the operator-call closing rule applied to a stop."""
+        t = datetime(2026, 10, 30, 15, 0, 0, tzinfo=timezone.utc)
+        assert mail.STOPPED_PREFIX == "stopped:"
+        stop = mail.new_message("win", "request", f"{mail.STOPPED_PREFIX} a conflict outside my files, docs/HOOKS.md",
+                                lane="lane/a", now=t)
+        padded = mail.new_message("win", "request", f"  {mail.STOPPED_PREFIX} the guard refuses the edit", now=t)
+        plain = mail.new_message("win", "request", "which base?", lane="lane/a", now=t)
+        note = mail.new_message("win-2", "note", f"{mail.STOPPED_PREFIX} not a request", now=t)
+        upper = mail.new_message("win-2", "request", "STOPPED: not the prefix", now=t)
+        quoted = mail.new_message("air", "assign", f"a request opening with {mail.STOPPED_PREFIX} is a stop", seat="win",
+                                  lane="lane/a", now=t)
+        call = mail.new_message("air", "request", f"{mail.OPERATOR_CALL_PREFIX} {mail.STOPPED_PREFIX} nested", now=t)
+        assert [mail.is_stop(m) for m in (stop, padded, plain, note, upper, quoted, call)] == [
+            True, True, False, False, False, False, False]
+        assert mail.is_stop({"type": "request"}) is False and mail.is_stop("junk") is False
+        # Any seat's ack closes a stop: here the seat holding the files it names.
+        freed = mail.new_message("win-2", "ack", "released docs/HOOKS.md", ack=stop["id"], now=t.replace(minute=5))
+        assert mail.live_requests({"win": [stop], "win-2": [freed]}, now=t.replace(minute=9)) == []
+
     def test_only_the_askers_own_ack_closes_an_operator_call(self, mail):
         """Any seat's ack closed any request, and inbox.md tells a worker to
         close a moot ask, so a worker could clear the operator's question from
@@ -2603,8 +2634,11 @@ def _row(name: str) -> bytes:
     return f"| {name[:10]} | {name[18:-3]} | the row of {name} |\n".encode("ascii")
 
 
-def _main_rows(machines, tmp_path, *add: str, prune: tuple[str, ...] = ()) -> None:
-    """Land rows on main, and prune some, the way a merged lane does."""
+def _main_rows(machines, tmp_path, *add: str, prune: tuple[str, ...] = (), trailer: str = "") -> None:
+    """Land rows on main, and prune some, the way a merged lane does: a prune
+    carries the fold's trailer (``trailer``, the loader's ``FOLD_TRAILER``), as
+    the ship driver's prune commit does, since a deletion without it reads as
+    a loss (DEF-4045)."""
     keeper = tmp_path / "keeper"
     if not keeper.exists():
         _git(tmp_path, "clone", "--quiet", str(machines["origin"]), str(keeper))
@@ -2617,7 +2651,7 @@ def _main_rows(machines, tmp_path, *add: str, prune: tuple[str, ...] = ()) -> No
     for name in prune:
         (keeper / _ROW_DIR / name).unlink()
     _git(keeper, "add", "-A", "--", _ROW_DIR)
-    _git(keeper, "commit", "--quiet", "-m", "rows")
+    _git(keeper, "commit", "--quiet", "-m", "rows" + (f"\n\n{trailer}\n" if prune and trailer else ""))
     _git(keeper, "push", "--quiet", "origin", "main")
 
 
@@ -2670,20 +2704,121 @@ class TestTheRecordsRef:
         _park(mail, mac, third)
         assert _ref_rows(origin, "mac") == [f"{_ROW_DIR}/{second}", f"{_ROW_DIR}/{third}"]
 
-    def test_pending_is_what_no_branch_has_ever_added(self, mail, machines, tmp_path):
+    def test_pending_is_what_no_branch_has_ever_added(self, mail, fragments, machines, tmp_path):
         """Dies to: pending read as on a ref but not in the tree, which brings a
-        row the prune archived back on every fold."""
+        row the prune archived back on every fold. Both rules: the first (no
+        trailer: a row ever added is never pending again) and the second
+        lane's (the trailer: a row the fold pruned is never pending again)."""
         mac, win = machines["mac"], machines["win"]
         folded, waiting = "2026-10-16-010101-mac.md", "2026-10-16-020101-mac.md"
         _park(mail, mac, folded)
         _park(mail, mac, waiting)
         _main_rows(machines, tmp_path, folded)
-        _main_rows(machines, tmp_path, prune=(folded,))
+        _main_rows(machines, tmp_path, prune=(folded,), trailer=fragments.FOLD_TRAILER)
         ok, problem = mail.fetch_records(win, run=_real_run(mail))
         assert ok, problem
         _git(win, "fetch", "--quiet", "origin")
         got = mail.pending(win, _ROW_DIR, ["origin/main", "HEAD"], run=_real_run(mail))
         assert [(m, p) for m, p, _ref in got] == [("mac", f"{_ROW_DIR}/{waiting}")]
+        got = mail.pending(win, _ROW_DIR, ["origin/main", "HEAD"], run=_real_run(mail), trailer=fragments.FOLD_TRAILER)
+        assert [(m, p) for m, p, _ref in got] == [("mac", f"{_ROW_DIR}/{waiting}")]
+
+    def test_a_row_a_revert_took_off_the_base_is_pending_again(self, mail, fragments, machines, tmp_path):
+        """DEF-4045: a row folded by a lane that is later reverted is deleted
+        by the revert, but its add stays in history, so ``pending`` (which
+        read 'no history ever added it') never listed it again and the row
+        was lost for good. A deletion by a commit WITHOUT the fold trailer is
+        a loss and the row is pending once more; the prune's deletion carries
+        the trailer and stays final. Dies to: the ever-added rule alone, or
+        every deletion read as a loss (the pruned row then re-folds forever)."""
+        mac, win = machines["mac"], machines["win"]
+        folded, pruned = "2026-10-16-010101-mac.md", "2026-10-16-020101-mac.md"
+        _park(mail, mac, folded)
+        _park(mail, mac, pruned)
+        _main_rows(machines, tmp_path, folded)
+        _main_rows(machines, tmp_path, pruned)
+        _main_rows(machines, tmp_path, prune=(pruned,), trailer=fragments.FOLD_TRAILER)
+        keeper = tmp_path / "keeper"
+        fold_sha = _git(keeper, "log", "--format=%H", "-1", "--diff-filter=A", "--",
+                        f"{_ROW_DIR}/{folded}").stdout.strip()
+        _git(keeper, "revert", "--no-edit", fold_sha)
+        _git(keeper, "push", "--quiet", "origin", "main")
+        ok, problem = mail.fetch_records(win, run=_real_run(mail))
+        assert ok, problem
+        _git(win, "fetch", "--quiet", "origin")
+        got = mail.pending(win, _ROW_DIR, ["origin/main", "HEAD"], run=_real_run(mail), trailer=fragments.FOLD_TRAILER)
+        assert [(m, p) for m, p, _ref in got] == [("mac", f"{_ROW_DIR}/{folded}")]
+        assert mail.pruned_rows(win, ["origin/main"], _ROW_DIR, fragments.FOLD_TRAILER, run=_real_run(mail)) == {
+            f"{_ROW_DIR}/{pruned}"}
+        assert mail.present_rows(win, ["origin/main"], _ROW_DIR, run=_real_run(mail)) == set()
+
+    def test_the_next_fold_brings_a_reverted_row_back_and_leaves_a_pruned_one_out(
+        self, mail, ship_driver, fragments, machines, tmp_path
+    ):
+        """DEF-4045 at its one writer: the lane's push folds the row a revert
+        took off the base back in (one fold, no prune), and a row the cap
+        pruned stays out. Dies to: the fold reading the parked rows by the
+        ever-added rule (the reverted row never comes back), or every deletion
+        read as a loss (the pruned row re-folds)."""
+        mac, win = machines["mac"], machines["win"]
+        folded, pruned = "2026-10-16-010101-mac.md", "2026-10-16-020101-mac.md"
+        _park(mail, mac, folded)
+        _park(mail, mac, pruned)
+        _main_rows(machines, tmp_path, folded)
+        _main_rows(machines, tmp_path, pruned)
+        _main_rows(machines, tmp_path, prune=(pruned,), trailer=fragments.FOLD_TRAILER)
+        keeper = tmp_path / "keeper"
+        fold_sha = _git(keeper, "log", "--format=%H", "-1", "--diff-filter=A", "--",
+                        f"{_ROW_DIR}/{folded}").stdout.strip()
+        _git(keeper, "revert", "--no-edit", fold_sha)
+        _git(keeper, "push", "--quiet", "origin", "main")
+        self._lane(win)
+        assert ship_driver._fold_session_log(win, "main", keep=30, slack=5) == (1, 0)
+        assert sorted(p.name for p in (win / _ROW_DIR).iterdir()) == [folded]
+        assert ship_driver._fold_session_log(win, "main", keep=30, slack=5) == (0, 0)
+
+    def test_a_park_keeps_a_row_a_revert_took_off_the_base(self, mail, fragments, machines, tmp_path):
+        """DEF-4045 at the records ref's writer (both reviews of the second
+        lane): a park dropped every row the base's history ever added, so a
+        reverted fold's row, pending again, left the ref at the seat's next
+        park and was lost for good. With the trailer the park drops by the
+        pending rule. Dies to: the park's drop left as ever_added."""
+        mac, origin = machines["mac"], machines["origin"]
+        folded, later = "2026-10-16-010101-mac.md", "2026-10-16-020101-mac.md"
+        _park(mail, mac, folded)
+        _main_rows(machines, tmp_path, folded)
+        keeper = tmp_path / "keeper"
+        fold_sha = _git(keeper, "log", "--format=%H", "-1", "--diff-filter=A", "--",
+                        f"{_ROW_DIR}/{folded}").stdout.strip()
+        _git(keeper, "revert", "--no-edit", fold_sha)
+        _git(keeper, "push", "--quiet", "origin", "main")
+        _git(mac, "fetch", "--quiet", "origin")
+        mail.park(mac, f"{_ROW_DIR}/{later}", _row(later), "origin/main", run=_real_run(mail),
+                  say=lambda _s: None, trailer=fragments.FOLD_TRAILER)
+        assert _ref_rows(origin, "mac") == [f"{_ROW_DIR}/{folded}", f"{_ROW_DIR}/{later}"]
+
+    def test_the_fold_beside_an_older_channel_is_skipped_never_a_refusal(self, mail, ship_driver, machines, monkeypatch,
+                                                                         capsys):
+        """A kept, older tools/cc/mail.py has no trailer argument on pending;
+        the fold's call then raised TypeError out of open, before the push
+        (failure-mode review). Dies to: the TypeError escaping the fold."""
+        win = machines["win"]
+        self._lane(win)
+
+        class Older:
+            Unresolvable = mail.Unresolvable
+
+            @staticmethod
+            def fetch_records(root, **kw):
+                return True, ""
+
+            @staticmethod
+            def pending(root, directory, against):
+                return []
+
+        monkeypatch.setattr(ship_driver, "_MAIL", Older())
+        assert ship_driver._fold_session_log(win, "main", keep=30, slack=5) == (0, 0)
+        assert "predates the fold-trailer read" in capsys.readouterr().out
 
     def test_an_unnamed_clone_parks_nothing(self, mail, machines, tmp_path):
         nameless = tmp_path / "nameless"
@@ -2981,3 +3116,204 @@ class TestTheTreeIsReadBackBeforeAnyPush:
     def test_the_runner_refuses_lines_of_text_on_stdin(self, mail, machines):
         with pytest.raises(mail.Unresolvable, match="re-lines"):
             mail.run(["git", "hash-object", "--stdin"], cwd=str(machines["mac"]), input="a\nb\n")
+
+
+# ── a push that outlives its timeout ─────────────────────────────────────────
+
+def _push_outlives_its_timeout(mail, *, lands: bool, read_back: bool = True,
+                               reads_back: tuple[int, str, str] | None = None, lands_late: bool = False):
+    """The real runner, except that ``git push`` outlives its timeout: with
+    ``lands`` the push reaches origin before the runner gives up (the
+    dispatcher's 14:25Z send, 2026-10-30); with ``lands_late`` it reaches
+    origin right after the read-back that found the tip unchanged (the
+    transport and origin's side outlive the runner's kill: the failure-mode
+    review drove it with a slow pre-receive hook); with ``read_back`` False
+    the ``ls-remote`` after it outlives its timeout too (origin out of reach);
+    ``reads_back`` is what that ``ls-remote`` answers instead of origin."""
+    real = _real_run(mail)
+    timed_out = getattr(mail, "TimedOut", mail.Unresolvable)
+    pushed: dict = {"done": False, "late": False}
+
+    def run(argv, **kw):
+        if argv[:2] == ["git", "push"]:
+            if lands:
+                real(argv, **kw)
+            pushed["done"], pushed["argv"], pushed["kw"] = True, list(argv), dict(kw)
+            raise timed_out("git push took longer than 30s")
+        if argv[:2] == ["git", "ls-remote"] and pushed["done"]:
+            if not read_back:
+                raise timed_out("git ls-remote took longer than 30s")
+            if reads_back is not None:
+                return reads_back
+            answer = real(argv, **kw)
+            if lands_late and not pushed["late"]:
+                pushed["late"] = True
+                real(pushed["argv"], **pushed["kw"])   # origin takes the pack after the read
+            return answer
+        return real(argv, **kw)
+    return run
+
+
+_UNCONFIRMED = "refs/unconfirmed/mail/mac"
+
+
+def _ref_at(repo: Path, ref: str) -> str | None:
+    return _git(repo, "rev-parse", "--verify", "--quiet", ref, check=False).stdout.strip() or None
+
+
+class TestAPushThatOutlivesItsTimeout:
+    """A send whose push timed out landed anyway (air, 2026-10-30 14:25Z: the
+    refusal said nothing was sent, and origin held the assign when it was read
+    back fifteen minutes later; a claim re-sent on that refusal doubles, and an
+    assign re-sent restarts the job's clock). The runner's timeout raised past
+    the rollback, so the ref was neither read back nor put back. Origin's tip
+    is read back before anything is said."""
+
+    def test_a_push_that_landed_after_its_timeout_is_counted_sent_and_said(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        m = _msg(mail, "mac", "claim", "the files", lane="lane/x", paths=["tools/cc/a.py"])
+        said: list[str] = []
+        try:
+            commit = mail.send(mac, m, run=_push_outlives_its_timeout(mail, lands=True), say=said.append)
+        except mail.Unresolvable as refused:
+            pytest.fail(f"the send was refused after a push that landed: {refused}")
+        assert _ref_at(origin, "refs/heads/mail/mac") == commit
+        assert _ref_at(mac, "refs/heads/mail/mac") == commit
+        assert _ref_at(mac, "refs/remotes/origin/mail/mac") == commit
+        assert len(said) == 2 and "took longer than 30s" in said[0] and "landed" in said[0] and commit[:7] in said[0]
+        assert said[1] == f"sent claim {m['id']} as {commit[:7]} on refs/heads/mail/mac"
+        # The next send appends after it: no second writer in sight.
+        second = _msg(mail, "mac", "note", "after")
+        mail.send(mac, second, run=_real_run(mail), say=lambda _s: None)
+        assert [json.loads(ln)["id"] for ln in _origin_file(origin, "mac").splitlines()] == [m["id"], second["id"]]
+
+    def test_a_push_that_timed_out_without_landing_says_so_and_puts_the_ref_back(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        first = mail.send(mac, _msg(mail, "mac", "note", "kept"), run=_real_run(mail), say=lambda _s: None)
+        lost = _msg(mail, "mac", "note", "lost")
+        with pytest.raises(mail.Unresolvable, match=r"took longer than 30s.*unchanged.*had not landed when read"
+                                                     r".*can still land.*remembered") as refused:
+            mail.send(mac, lost, run=_push_outlives_its_timeout(mail, lands=False), say=lambda _s: None)
+        assert "send again" in str(refused.value) and "nothing was sent" not in str(refused.value)
+        assert _ref_at(origin, "refs/heads/mail/mac") == first
+        assert _ref_at(mac, "refs/heads/mail/mac") == first   # put back: the next send is not a second writer
+        assert _ref_at(mac, _UNCONFIRMED) is not None          # remembered until a later write settles it
+        again = mail.send(mac, _msg(mail, "mac", "note", "instead"), run=_real_run(mail), say=lambda _s: None)
+        assert _ref_at(origin, "refs/heads/mail/mac") == again
+        assert [json.loads(ln)["text"] for ln in _origin_file(origin, "mac").splitlines()] == ["kept", "instead"]
+        assert _ref_at(mac, _UNCONFIRMED) is not None          # origin was at its parent when read: it could still land
+        said: list[str] = []
+        mail.send(mac, _msg(mail, "mac", "note", "later"), run=_real_run(mail), say=said.append)
+        assert _ref_at(mac, _UNCONFIRMED) is None              # origin moved past its parent: settled, never
+        assert any("never landed" in line for line in said)
+
+    def test_a_repeated_write_that_lands_byte_for_byte_confirms_the_remembered_commit(self, mail, machines,
+                                                                                      monkeypatch):
+        """The seat sends the refused message again within the same second:
+        the commit it builds is the remembered one byte for byte (same parent,
+        content and clock), and its own push confirms it, so no later write is
+        refused for it (the batch run caught the clock landing on one second)."""
+        monkeypatch.setenv("GIT_AUTHOR_DATE", "2026-10-30T14:25:11Z")
+        monkeypatch.setenv("GIT_COMMITTER_DATE", "2026-10-30T14:25:11Z")
+        mac, origin = machines["mac"], machines["origin"]
+        lost = _msg(mail, "mac", "note", "lost")
+        with pytest.raises(mail.Unresolvable, match=r"can still land"):
+            mail.send(mac, lost, run=_push_outlives_its_timeout(mail, lands=False), say=lambda _s: None)
+        remembered = _ref_at(mac, _UNCONFIRMED)
+        again = mail.send(mac, lost, run=_real_run(mail), say=lambda _s: None)
+        assert remembered and again == remembered
+        assert _ref_at(mac, _UNCONFIRMED) is None
+        said: list[str] = []
+        mail.send(mac, _msg(mail, "mac", "note", "later"), run=_real_run(mail), say=said.append)
+        assert len(said) == 1 and said[0].startswith("sent note ")
+        assert [json.loads(ln)["text"] for ln in _origin_file(origin, "mac").splitlines()] == ["lost", "later"]
+
+    def test_a_push_that_landed_after_the_read_back_is_caught_at_the_next_send(self, mail, machines):
+        """Failure-mode review (2026-10-30): the read-back runs milliseconds
+        after the kill, and a slow origin lands the pack after it. The refusal
+        no longer says nothing was sent, and the next send from this checkout
+        is refused once, naming the commit, so the message is not repeated."""
+        mac, origin = machines["mac"], machines["origin"]
+        m = _msg(mail, "mac", "claim", "the files", lane="lane/x", paths=["tools/cc/a.py"])
+        with pytest.raises(mail.Unresolvable, match=r"can still land.*remembered") as refused:
+            mail.send(mac, m, run=_push_outlives_its_timeout(mail, lands=False, lands_late=True),
+                      say=lambda _s: None)
+        assert "nothing was sent" not in str(refused.value)
+        landed = _ref_at(origin, "refs/heads/mail/mac")
+        assert landed and _ref_at(mac, _UNCONFIRMED) == landed and _ref_at(mac, "refs/heads/mail/mac") is None
+        second = _msg(mail, "mac", "note", "after")
+        with pytest.raises(mail.Unresolvable, match=r"landed after all") as caught:
+            mail.send(mac, second, run=_real_run(mail), say=lambda _s: None)
+        assert landed[:7] in str(caught.value) and "not repeated" in str(caught.value)
+        assert [json.loads(ln)["id"] for ln in _origin_file(origin, "mac").splitlines()] == [m["id"]]
+        assert _ref_at(mac, _UNCONFIRMED) is None
+        mail.send(mac, second, run=_real_run(mail), say=lambda _s: None)
+        assert [json.loads(ln)["id"] for ln in _origin_file(origin, "mac").splitlines()] == [m["id"], second["id"]]
+
+    def test_an_unreadable_read_back_names_the_commit_and_the_next_send_adopts_what_landed(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        m = _msg(mail, "mac", "request", "maybe")
+        with pytest.raises(mail.Unresolvable, match=r"may have landed") as refused:
+            mail.send(mac, m, run=_push_outlives_its_timeout(mail, lands=True, read_back=False),
+                      say=lambda _s: None)
+        landed = _ref_at(origin, "refs/heads/mail/mac")
+        assert landed and landed[:7] in str(refused.value) and "remembered" in str(refused.value)
+        assert "nothing was sent" not in str(refused.value)
+        assert _ref_at(mac, "refs/heads/mail/mac") is None   # put back: behind origin's, adopted at the next write
+        assert _ref_at(mac, _UNCONFIRMED) == landed
+        second = _msg(mail, "mac", "note", "after")
+        with pytest.raises(mail.Unresolvable, match=r"landed after all"):
+            mail.send(mac, second, run=_real_run(mail), say=lambda _s: None)
+        mail.send(mac, second, run=_real_run(mail), say=lambda _s: None)
+        assert [json.loads(ln)["id"] for ln in _origin_file(origin, "mac").splitlines()] == [m["id"], second["id"]]
+
+    def test_a_foreign_tip_after_the_timeout_puts_the_ref_back_and_names_the_second_writer(self, mail, machines):
+        """Code review (2026-10-30): the two read-back outcomes no case drove.
+        A tip at neither this commit nor the parent is another writer under
+        the name; the ref goes back and the refusal says so."""
+        mac, origin = machines["mac"], machines["origin"]
+        first = mail.send(mac, _msg(mail, "mac", "note", "kept"), run=_real_run(mail), say=lambda _s: None)
+        foreign = "f0e1d2c3" * 5
+        run = _push_outlives_its_timeout(mail, lands=False, reads_back=(0, f"{foreign}\trefs/heads/mail/mac\n", ""))
+        with pytest.raises(mail.Unresolvable, match=r"at f0e1d2c.*not this send's commit.*one writer per machine"
+                                                     r".*did not land") as refused:
+            mail.send(mac, _msg(mail, "mac", "note", "lost"), run=run, say=lambda _s: None)
+        assert "unchanged" not in str(refused.value)
+        assert _ref_at(mac, "refs/heads/mail/mac") == first
+        assert _ref_at(origin, "refs/heads/mail/mac") == first
+
+    def test_a_ref_gone_after_the_timeout_puts_the_ref_back_and_says_so(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        first = mail.send(mac, _msg(mail, "mac", "note", "kept"), run=_real_run(mail), say=lambda _s: None)
+        run = _push_outlives_its_timeout(mail, lands=False, reads_back=(0, "", ""))
+        with pytest.raises(mail.Unresolvable, match=r"read back gone.*did not land"):
+            mail.send(mac, _msg(mail, "mac", "note", "lost"), run=run, say=lambda _s: None)
+        assert _ref_at(mac, "refs/heads/mail/mac") == first
+        assert _ref_at(origin, "refs/heads/mail/mac") == first
+
+    def test_a_push_git_could_not_run_puts_the_ref_back_and_says_nothing_was_sent(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        real = _real_run(mail)
+
+        def run(argv, **kw):
+            if argv[:2] == ["git", "push"]:
+                raise mail.Unresolvable("could not run git: [Errno 12] Cannot allocate memory")
+            return real(argv, **kw)
+        with pytest.raises(mail.Unresolvable, match=r"could not run git.*nothing was sent"):
+            mail.send(mac, _msg(mail, "mac", "note", "x"), run=run, say=lambda _s: None)
+        assert _ref_at(origin, "refs/heads/mail/mac") is None
+        assert _ref_at(mac, "refs/heads/mail/mac") is None
+        assert _ref_at(mac, _UNCONFIRMED) is None   # nothing left this box, so nothing to settle
+
+    def test_a_park_whose_push_landed_after_its_timeout_is_counted_parked(self, mail, machines):
+        mac, origin = machines["mac"], machines["origin"]
+        name = "2026-10-30-142511-mac.md"
+        said: list[str] = []
+        try:
+            commit = mail.park(mac, f"{_ROW_DIR}/{name}", _row(name), "origin/main",
+                               run=_push_outlives_its_timeout(mail, lands=True), say=said.append)
+        except mail.Unresolvable as refused:
+            pytest.fail(f"the park was refused after a push that landed: {refused}")
+        assert _ref_at(origin, "refs/heads/records/mac") == commit
+        assert len(said) == 2 and "landed" in said[0]
+        assert said[1] == f"parked {_ROW_DIR}/{name} as {commit[:7]} on refs/heads/records/mac"

@@ -201,6 +201,7 @@ def _scan(
 class TestNoInternalCodenames:
     """Tracked files must not leak internal project codenames."""
 
+    @pytest.mark.contract  # a whole-tree sweep: the tree-sweep census names it
     def test_no_morrison_codename_in_tracked_files(self):
         tracked = _tracked_files()
         assert tracked, "git ls-files returned no paths — repo state is suspicious"
@@ -273,6 +274,7 @@ class TestNoMachineLocalPaths:
     kind, so this guard is the first line for them, not the last.)
     """
 
+    @pytest.mark.contract  # a whole-tree sweep: the tree-sweep census names it
     def test_no_machine_local_path_in_tracked_files(self):
         tracked = _tracked_files()
         assert tracked, "git ls-files returned no paths — repo state is suspicious"

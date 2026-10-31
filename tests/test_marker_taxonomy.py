@@ -168,14 +168,22 @@ def _module_pytestmark_has_contract(tree: ast.Module) -> bool:
     return False
 
 
-def _unmarked_doc_readers(paths, primary_marker) -> list[str]:
-    """Every test function whose verdict reads repository documentation -- a
-    tree-wide markdown sweep or a named repo doc, directly or through a
-    module-level helper or constant it uses (transitively, within the module)
-    -- that the contract tier does not select: its file's primary marker is not
-    ``contract`` and neither the module's ``pytestmark``, its class nor the
-    function carries ``pytest.mark.contract``."""
-    found = []
+def _unmarked_reachers(paths, primary_marker, seeds) -> dict[str, frozenset[str]]:
+    """The graph both censuses in this module ask: every test function a seed
+    reaches -- directly or through a module-level helper or constant it uses
+    (transitively, within the module) -- that the contract tier does not
+    select: its file's primary marker is not ``contract`` and neither the
+    module's ``pytestmark``, its class nor the function carries
+    ``pytest.mark.contract``.
+
+    ``seeds(path, src)`` returns one module's ``{flag: predicate(span, seg)}``,
+    where ``span`` is a node's line range (its decorators included) and ``seg``
+    its source text. Each flag propagates on its own and the result maps each
+    reached test to the flags that reached it, so a census can ask for one
+    flag or for two together. One implementation for both censuses: a second
+    copy of the propagation would agree with this one the day it was written
+    and drift after."""
+    found: dict[str, frozenset[str]] = {}
     for path in paths:
         src = path.read_text(encoding="utf-8")
         try:
@@ -184,6 +192,7 @@ def _unmarked_doc_readers(paths, primary_marker) -> list[str]:
             continue
         if primary_marker(path.stem) == "contract" or _module_pytestmark_has_contract(tree):
             continue
+        predicates = seeds(path, src)
         table = {}
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -194,9 +203,13 @@ def _unmarked_doc_readers(paths, primary_marker) -> list[str]:
                         table[f"{node.name}.{sub.name}"] = (sub, node)
         lines = src.splitlines()
 
-        def _reads_docs(node) -> bool:
-            seg = "\n".join(lines[node.lineno - 1:node.end_lineno])
-            return bool(_DOC_SWEEP.search(seg) or _NAMED_DOC.search(seg))
+        def _flags(node) -> set[str]:
+            # A decorator is part of the test: a population swept inside
+            # `@pytest.mark.parametrize(...)` is read before the body runs.
+            first = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", ())])
+            span = range(first, node.end_lineno + 1)
+            seg = "\n".join(lines[first - 1:node.end_lineno])
+            return {flag for flag, hit in predicates.items() if hit(span, seg)}
 
         # Module-level constants are nodes of the same graph, keyed `=NAME`: a
         # population a test is parametrized over (`ROUTERS: tuple = _discover()`)
@@ -221,33 +234,43 @@ def _unmarked_doc_readers(paths, primary_marker) -> list[str]:
         # worklist over that index, linear in the module (a re-walk per pass
         # was quadratic and took a minute over the suite).
         used_by: dict[str, list[str]] = {}
-        reads = {}
+        reads: dict[str, set[str]] = {}
         for q, (n, _) in table.items():
             body = n.value if q.startswith("=") else n
             names = {x.id for x in ast.walk(body) if isinstance(x, ast.Name)}
             names |= {x.attr for x in ast.walk(body) if isinstance(x, ast.Attribute)}
-            reads[q] = _reads_docs(n)
+            reads[q] = _flags(n)
             for name in names:
                 used_by.setdefault(name, []).append(q)
-        work = [q for q, flag in reads.items() if flag]
+        work = [(q, flag) for q, flags in reads.items() for flag in flags]
         while work:
-            other = work.pop()
+            other, flag = work.pop()
             cls = _cls(other)
             for q in used_by.get(_leaf(other), ()):
-                if reads[q]:
+                if flag in reads[q]:
                     continue
                 # A module-level helper or constant reaches every user; a method
                 # only its own class.
                 if cls is None or _cls(q) == cls:
-                    reads[q] = True
-                    work.append(q)
+                    reads[q].add(flag)
+                    work.append((q, flag))
         for q, (n, cls_node) in table.items():
             if q.startswith("=") or not reads[q] or not n.name.startswith("test"):
                 continue
             if _marks_contract(n.decorator_list) or (cls_node and _marks_contract(cls_node.decorator_list)):
                 continue
-            found.append(f"{path.name}::{q.replace('.', '::')}")
+            found[f"{path.name}::{q.replace('.', '::')}"] = frozenset(reads[q])
     return found
+
+
+def _unmarked_doc_readers(paths, primary_marker) -> list[str]:
+    """Every test function whose verdict reads repository documentation -- a
+    tree-wide markdown sweep or a named repo doc -- that the contract tier does
+    not select (the graph is :func:`_unmarked_reachers`)."""
+    def seeds(_path, _src):
+        return {"doc": lambda _span, seg: bool(_DOC_SWEEP.search(seg) or _NAMED_DOC.search(seg))}
+
+    return list(_unmarked_reachers(paths, primary_marker, seeds))
 
 
 @pytest.mark.contract
@@ -363,4 +386,238 @@ class TestDocReadersRunInTheContractTier:
         )
         assert _unmarked_doc_readers([mod], lambda stem: "unit") == [
             "test_routers_like.py::test_router_is_short"
+        ]
+
+    def test_a_doc_read_in_a_decorator_reaches_its_test(self, tmp_path):
+        """A decorator is part of the test it decorates. The shape the first cut
+        missed: four ratchets over `task-packs/Done/` read the packs through a
+        script's functions, and only their `skipif` names the directory; their
+        non-vacuity sibling, which globs it in its body, was already marked
+        (found by the tree-wide census's shared graph, 2026-10-30)."""
+        mod = tmp_path / "test_done_ratchet_like.py"
+        mod.write_text(
+            "import pytest\n"
+            "from pathlib import Path\n"
+            "REPO_ROOT = Path(__file__).parent\n"
+            "@pytest.mark.skipif(not (REPO_ROOT / \"task-packs\" / \"Done\").is_dir(), reason=\"self-host\")\n"
+            "def test_done_packs_do_not_grow():\n"
+            "    assert True\n",
+            encoding="utf-8",
+        )
+        assert _unmarked_doc_readers([mod], lambda stem: "unit") == [
+            "test_done_ratchet_like.py::test_done_packs_do_not_grow"
+        ]
+
+
+# --- tree-wide sweeps run in the tier a tests-only change earns ---------------
+
+#: The listings over git's view of the checkout: the live-tree helpers and the
+#: git oracle's tracked set. `tests/_live_tree_census.py` roots each call.
+_TREE_LISTINGS = LISTING_HELPERS + ("require_tracked_paths", "list_tracked_or_walked_files")
+
+#: A raw `git ls-files` run at the repository root whose pathspecs name no
+#: directory: git's `*` crosses `/`, so `"*.py"` is the whole tree, as is none.
+_ROOT_LS_FILES = re.compile(
+    r"[\"']-C[\"']\s*,\s*(?:str\(\s*)?(?:_?REPO_ROOT|_?REPO|_?ROOT|repo_root)\b\s*\)?\s*,\s*[\"']ls-files[\"']"
+    r"(?:\s*,\s*(?:[\"'][^\"'/\n]*[\"']|\*\w+))*\s*\]"
+    r"|[\"']ls-files[\"'](?:\s*,\s*(?:[\"'][^\"'/\n]*[\"']|\*\w+))*\s*\]\s*,\s*cwd\s*=\s*(?:str\(\s*)?(?:_?REPO_ROOT|_?REPO|_?ROOT|repo_root)\b(?!\s*/)"
+)
+
+#: The whole-parser shape, in two halves that must both reach a test: an
+#: enumeration of a parser's subcommands -- `_choices_actions`, or `.choices`
+#: read whole (its items, values or keys; wrapped in a collection, `len` or a
+#: join; a loop's iterable; returned) -- and the real parser built. One verb's
+#: `.choices["x"]`, `"x" in .choices` or a truthiness test enumerates nothing,
+#: and most CLI tests call `build_parser().parse_args([...])` to drive ONE verb.
+_PARSER_ENUMERATION = re.compile(
+    r"_choices_actions\b"
+    r"|\.choices\s*\.\s*(?:items|values|keys)\s*\("
+    r"|\b(?:set|frozenset|sorted|list|tuple|len|join)\(\s*[\w.()]*\.choices\s*\)"
+    r"|\bfor\s+[\w, ()]+?\s+in\s+[\w.()]*\.choices\s*[:\])]"
+    r"|\breturn\s+[\w.()]*\.choices\s*$",
+    re.MULTILINE,
+)
+_REAL_PARSER = re.compile(r"\bbuild_parser\(")
+
+
+def _tree_sweep_lines(path, src) -> set[int]:
+    """The lines of one module's enumerations of the checkout at its root: a
+    listing or a raw walk that `tests/_live_tree_census.py` resolves to the
+    repository root itself or to a root computed at the top (`REPO_ROOT / sub`
+    over several roots, a parameter some caller passes the root). A fixed
+    subdirectory (`REPO_ROOT / "espalier"`) is not the tree, and a `tmp_path`
+    walk resolves to no root at all. A walk marked `# live-tree: ok` is not a
+    sweep either: by that marker's own terms it sees past git on purpose -- a
+    mutation guard comparing two snapshots, a reader of what git ignores --
+    so no commit moves its verdict (the wheel build's litter check, the
+    isolation manifest, a case-only existence check and a probe's input check
+    were 24 of the first cut's 75 hits, 2026-10-30)."""
+    from tests._live_tree_census import COMPUTED, sites_in
+
+    return {
+        site.line for site in sites_in(src, path.name, listings=_TREE_LISTINGS)
+        if (site.root == "" or site.root.split("/")[0] == COMPUTED) and not site.marked
+    }
+
+
+def _unmarked_tree_sweepers(paths, primary_marker) -> list[str]:
+    """Every test function whose verdict reads the whole tree or the whole CLI
+    parser -- an enumeration of the checkout at its root, a raw root
+    `git ls-files`, or the real parser's subcommands enumerated -- that the
+    contract tier does not select (the graph is :func:`_unmarked_reachers`)."""
+    def seeds(path, src):
+        sweeps = _tree_sweep_lines(path, src)
+        return {
+            "tree": lambda span, seg: not sweeps.isdisjoint(span) or bool(_ROOT_LS_FILES.search(seg)),
+            "parser-enumeration": lambda _span, seg: bool(_PARSER_ENUMERATION.search(seg)),
+            "real-parser": lambda _span, seg: bool(_REAL_PARSER.search(seg)),
+        }
+
+    return [
+        test for test, flags in _unmarked_reachers(paths, primary_marker, seeds).items()
+        if "tree" in flags or {"parser-enumeration", "real-parser"} <= flags
+    ]
+
+
+@pytest.mark.contract
+class TestTreeWideSweepsRunInTheContractTier:
+    """The contract slice is the tree-wide truth (`scripts/proof_tier.py`): a
+    change to `tests/`, `scripts/`, `.claude/` or the docs earns it alone, and
+    it is what a maintainer runs as the tree-wide proof before a cut. A test
+    whose verdict enumerates the whole tree reds on an edit anywhere in it, so
+    outside the slice it never runs on the change that breaks it: the change
+    merges green and `main` is red for the next lane that earns the full tier.
+    DEF-751 named two (`TestArgparseErrorCuration` derives its hidden-verb set
+    from the whole CLI parser; `TestEngineConsumerAllowlist` reads every
+    importer of the second release witness across four roots), and
+    `pytest --collect-only -m contract` over their files collected nothing.
+    The sibling of the doc-reader census above, on the same graph.
+
+    Heuristic by construction: a sweep rooted through another module's helper
+    is not followed, and the parser's two halves must meet in one module; a
+    hit is a test that enumerates the tree or the parser and must be marked
+    `contract`."""
+
+    @pytest.mark.timeout(300)  # timeout-exempt: one AST pass over tests/, 9.4 s serial on the Air and slower on a loaded CI cell; a tree-wide contract, not a slow test by kind (TestCensusHealth's precedent)
+    def test_every_tree_wide_sweep_is_in_the_contract_tier(self):
+        from tests.conftest import _primary_marker
+
+        missing = _unmarked_tree_sweepers(sorted(checkout_glob(TESTS_DIR, "test_*.py")), _primary_marker)
+        assert not missing, (
+            "tests that enumerate the whole tree or the whole CLI parser but run "
+            "outside the contract tier (add @pytest.mark.contract):\n  " + "\n  ".join(missing)
+        )
+
+    def test_the_gate_reds_on_an_unmarked_sweep_and_clears_on_a_marked_one(self, tmp_path):
+        sweeper = (
+            "import pytest\n"
+            "from pathlib import Path\n"
+            "from tests._live_tree import checkout_rglob\n"
+            "REPO_ROOT = Path(__file__).resolve().parent.parent\n"
+            "def _modules():\n"
+            "    for name in (\"espalier\", \"scripts\", \"tests\"):\n"
+            "        root = REPO_ROOT / name\n"
+            "        yield from checkout_rglob(root, \"*.py\")\n"
+            "def test_no_module_imports_the_witness():\n"
+            "    assert list(_modules())\n"
+        )
+        bare = tmp_path / "test_bare_sweeper.py"
+        bare.write_text(sweeper, encoding="utf-8")
+        marked = tmp_path / "test_marked_sweeper.py"
+        marked.write_text(
+            sweeper.replace("def test_no_module", "@pytest.mark.contract\ndef test_no_module"),
+            encoding="utf-8",
+        )
+        unit = lambda stem: "unit"  # noqa: E731
+        assert _unmarked_tree_sweepers([bare], unit) == ["test_bare_sweeper.py::test_no_module_imports_the_witness"]
+        assert _unmarked_tree_sweepers([marked], unit) == []
+        assert _unmarked_tree_sweepers([bare], lambda stem: "contract") == []
+
+    @pytest.mark.parametrize("sweep", [
+        'checkout_files()',
+        'checkout_rglob(REPO_ROOT, "*.py")',
+        'require_tracked_paths(REPO_ROOT, minimum=100)',
+        'REPO_ROOT.rglob("*.py")',
+        'subprocess.run(["git", "ls-files"], cwd=REPO_ROOT)',
+        'subprocess.run(["git", "-C", str(REPO_ROOT), "ls-files", "*.py"])',
+        'subprocess.run(["git", "ls-files", *GLOBS], cwd=REPO_ROOT)',
+        'list_tracked_or_walked_files(REPO_ROOT)',
+    ], ids=["checkout-files", "routed-rglob", "tracked-set", "raw-rglob", "ls-files-cwd", "ls-files-dash-c",
+            "ls-files-starred", "tracked-or-walked"])
+    def test_a_sweep_of_the_root_is_tree_wide_in_each_spelling(self, sweep, tmp_path):
+        """Every spelling the suite enumerates the checkout with, rooted at the
+        root; the same calls rooted at a fixed subdirectory or at `tmp_path`
+        are not the tree."""
+        body = (
+            "import subprocess\n"
+            "from pathlib import Path\n"
+            "from tests._live_tree import checkout_files, checkout_rglob\n"
+            "from tests._git_oracle import require_tracked_paths\n"
+            "from espalier.repo_mode import list_tracked_or_walked_files\n"
+            "REPO_ROOT = Path(__file__).resolve().parent.parent\n"
+            "GLOBS = ('*.md',)\n"
+            "def test_sweeps():\n"
+            f"    assert {sweep}\n"
+        )
+        mod = tmp_path / "test_tree_sweeper.py"
+        mod.write_text(body, encoding="utf-8")
+        unit = lambda stem: "unit"  # noqa: E731
+        assert _unmarked_tree_sweepers([mod], unit) == ["test_tree_sweeper.py::test_sweeps"]
+        rooted = sweep.replace("checkout_files()", "checkout_files(REPO_ROOT)")
+        narrowings = [rooted.replace("REPO_ROOT", other, 1) for other in ('(REPO_ROOT / "espalier")', "tmp_path")]
+        if "ls-files" in sweep:
+            narrowings.append(sweep.replace('"ls-files"', '"ls-files", "espalier/"'))
+        for narrowed in narrowings:
+            mod.write_text(body.replace(sweep, narrowed).replace("def test_sweeps():", "def test_sweeps(tmp_path):"),
+                           encoding="utf-8")
+            assert _unmarked_tree_sweepers([mod], unit) == [], narrowed
+        if "ls-files" not in sweep:
+            # A walk marked `# live-tree: ok` sees past git on purpose (a
+            # mutation guard), so it is not a sweep of the tree's content.
+            mod.write_text(body.replace("    assert", "    # live-tree: ok -- a mutation guard\n    assert"),
+                           encoding="utf-8")
+            assert _unmarked_tree_sweepers([mod], unit) == [], "marked"
+
+    def test_a_sweep_in_a_decorator_reaches_its_test(self, tmp_path):
+        """A population swept inside `@pytest.mark.parametrize(...)` is read
+        before the body runs, and it is the test's own sweep."""
+        mod = tmp_path / "test_param_sweeper.py"
+        mod.write_text(
+            "import pytest\n"
+            "from pathlib import Path\n"
+            "from tests._live_tree import checkout_rglob\n"
+            "REPO_ROOT = Path(__file__).resolve().parent.parent\n"
+            "@pytest.mark.parametrize(\"py\", sorted(checkout_rglob(REPO_ROOT, \"*.py\")))\n"
+            "def test_each_module_parses(py):\n"
+            "    assert py\n",
+            encoding="utf-8",
+        )
+        assert _unmarked_tree_sweepers([mod], lambda stem: "unit") == [
+            "test_param_sweeper.py::test_each_module_parses"
+        ]
+
+    def test_the_parser_shape_needs_the_real_parser_and_an_enumeration(self, tmp_path):
+        """The whole parser is its subcommands enumerated on `build_parser()`,
+        through a helper in either half; one verb's lookup is not a sweep, and
+        neither is an enumeration of a hand-built parser."""
+        mod = tmp_path / "test_parser_like.py"
+        mod.write_text(
+            "import argparse\n"
+            "from espalier.cli import build_parser\n"
+            "def _verbs(parser):\n"
+            "    top = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))\n"
+            "    return set(top.choices)\n"
+            "def test_every_verb_has_help():\n"
+            "    assert _verbs(build_parser())\n"
+            "def test_one_verb_parses():\n"
+            "    sub = next(a for a in build_parser()._actions if isinstance(a, argparse._SubParsersAction))\n"
+            "    assert sub.choices and sub.choices[\"audit\"] and \"init\" in sub.choices\n"
+            "def test_a_hand_built_parser_lists_its_verbs():\n"
+            "    p = argparse.ArgumentParser()\n"
+            "    p.add_subparsers().add_parser(\"x\")\n"
+            "    assert _verbs(p)\n",
+            encoding="utf-8",
+        )
+        assert _unmarked_tree_sweepers([mod], lambda stem: "unit") == [
+            "test_parser_like.py::test_every_verb_has_help"
         ]

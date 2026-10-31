@@ -382,8 +382,10 @@ class TestLaunch:
         monkeypatch.chdir(clone)
         assert seat.main(["launch", "box", "--print", "--", "--model", "o p"]) == 0
         assert no_claude == []
-        # The first message spans two lines inside its quotes; claude's line is its first.
-        out = next(line for line in capsys.readouterr().out.splitlines() if "claude" in line)
+        # The first message spans two lines inside its quotes; claude's line is its first:
+        # the one holding `claude` as a word. A bare substring took the "own-clear mod
+        # loaded from <MOD_DIR>" notice on any checkout under .claude/worktrees/ (#351).
+        out = next(line for line in capsys.readouterr().out.splitlines() if " claude " in line)
         assert "'o p'" in out and "You are seat box" in out
         assert seat.split_claude_args(["launch", "x", "--", "--print"]) == (["launch", "x"], ["--print"])
 
@@ -550,7 +552,10 @@ class TestLaunch:
 #: row is never a stop; the shelved: note names the job the push closed, the
 #: push having released the claims; a shelved lane is not re-fixed each tick;
 #: the refresh command spelled like the tick's other commands, with no bare
-#: interpreter). The self-host render must reproduce it byte for byte; its 15
+#: interpreter); and since 2026-10-30 the STOP sends one request opening with
+#: stopped: (DEF-5030, the fix shape the seat named under the ruling d6ef5a
+#: that minted the row: a stopped worker sent nothing, so the board showed no
+#: stopped seat). The self-host render must reproduce it byte for byte; its 15
 #: minutes is DISPATCHER_TICK's interval, rendered, never copied.
 _OPERATOR_TICK = (
     "/loop 10m Worker tick. Run /inbox (mark read) and /inbox board and read live state. Act only on what is "
@@ -566,10 +571,13 @@ _OPERATOR_TICK = (
     "choice the assign does not settle, send air one request with your Task 0 recommendation and its citation, "
     "then proceed on it after 15 minutes (the dispatcher's tick; the board's asks line shows your request's "
     "age) with no answer; a request with no recommendation keeps the stop, and an ack from air beginning "
-    "redirect: re-aims you at once. STOP and only re-read mail for what the assign authority reserves for the "
-    "operator (a new pack, a scope change, a release or tag, a revert that is not the red-main revert, an open "
-    "operator call on your fork), a platform stop, a refusal you cannot resolve, or a conflict outside your own "
-    "files; a row to file is never a stop. A red you cannot fix in two attempts: shelve the lane (one note "
+    "redirect: re-aims you at once. STOP, send air one request opening with stopped: that names what stops you "
+    "(an operator call by its id), and only re-read mail until an ack frees or re-aims you or what stops you is "
+    "gone, then ack your own stop saying so (an ack that does not free you: send the stop again), for what the "
+    "assign authority reserves for the operator (a new pack, a scope change, a release or tag, a revert that is "
+    "not the red-main revert, an open operator call on your fork), a platform stop, a refusal you cannot resolve, "
+    "or a conflict outside your own files; a row to file is never a stop. A red you cannot fix in two attempts: "
+    "shelve the lane (one note "
     "beginning shelved: says what was tried and names any job your push closed; a shelved lane waits for the "
     "dispatcher, not your next tick), take your next assigned job (after the threshold ask: hand off instead). "
     "Pass a model below your own on a subagent "
@@ -692,10 +700,159 @@ class TestBrief:
         _dispatcher(clone, '"box"')
         _holds(clone, "memory/parallel-work-protocol.md")
         dispatcher = seat.compose_brief(clone, "box", clone).text.split("\n")[0]
-        assert ("Decisions stay the operator's. At the operator's word, or when the prompt router's threshold ask "
-                "says to (a lane in hand finishes through its own landing first), run /handoff; it writes your "
-                "row, derived from the mail and the merges; after a threshold handoff take no new job until the "
-                "window is cleared (a red main's revert is not a new job). Start the loop") in dispatcher, dispatcher
+        assert ("Decisions stay the operator's. " + seat.SELF_HOST_GRIDLOCK + "At the operator's word, or when the "
+                "prompt router's threshold ask says to (a lane in hand finishes through its own landing first), run "
+                "/handoff; it writes your row, derived from the mail and the merges; after a threshold handoff take "
+                "no new job until the window is cleared (a red main's revert is not a new job). Start the loop") in dispatcher, dispatcher
+
+    def test_this_repositorys_dispatcher_resolves_a_gridlock_and_an_adopters_brief_is_unchanged(self, seat, clone):
+        """The operator's standing rule (2026-10-30): a gridlock -- no seat can
+        advance its assigned job and the next step is a decision -- is resolved
+        by the dispatcher seat, which rules, acts and reports the ruling as an
+        ack, instead of filing an operator call and waiting; the operator can
+        reverse it. It names this repository's operator, so it rides the
+        self-host slot right after 'Decisions stay the operator's.' and an
+        adopter's brief is what it was. The sentence is held to its homes by
+        its two lists (the gridlock shapes, and what stays the operator's):
+        the protocol's Assign authority paragraph and dispatcher row, and Core
+        Rule 15, each read with its line wrapping collapsed. Dies to: the
+        sentence rendered for every tree, left out of this repository's,
+        rendered twice, placed anywhere but after the operator's sentence, or
+        either list drifting between the brief and any of the three homes."""
+        _dispatcher(clone, '"box"')
+        _holds(clone, "docs/WORKFLOW.md")
+        adopter = seat.compose_brief(clone, "box", clone).text
+        assert "gridlock" not in adopter, adopter
+        assert "merged PR bodies. Decisions stay the operator's. At the operator's word" in adopter
+        _holds(clone, "memory/parallel-work-protocol.md")
+        own = seat.compose_brief(clone, "box", clone).text
+        assert ("Decisions stay the operator's. A gridlock, where no seat can advance its assigned job and the "
+                "next step is a decision (a red main no revert clears, two lanes in conflict, a ruling a worker "
+                "waits on past the hour), is yours to resolve, the one exception to what you propose to the "
+                "operator: rule, act and report the ruling as an ack whose text opens with gridlock: (its first "
+                "word; an ack opening with RULING or an address is not counted; one ruling per ack) and carries "
+                "the facts you read, "
+                "instead of filing an operator call and waiting (scripts/seat_day_census.py counts the rulings "
+                "by that opening and your row names them); the operator can reverse it, and a new pack, a scope "
+                "change, a release or tag stay the operator's. A (stopped) row on the asks line past the hour is "
+                "that read: answer it with the ack that frees or re-aims the seat. At the operator's word") in own, own
+        assert own.count(seat.SELF_HOST_GRIDLOCK) == 1, own
+        shapes = "a red main no revert clears, two lanes in conflict, a ruling a worker waits on past the hour"
+        kept = "a new pack, a scope change, a release or tag stay the operator's"
+        assert shapes in seat.SELF_HOST_GRIDLOCK and kept in seat.SELF_HOST_GRIDLOCK
+        prose_shapes = shapes.replace("red main", "red `main`")
+        root = Path(__file__).resolve().parents[1]
+        protocol = (root / "memory" / "parallel-work-protocol.md").read_text(encoding="utf-8")
+        start = protocol.index("**Assign authority")
+        paragraph = " ".join(protocol[start:protocol.index("\n\n", start)].split())
+        assert "a gridlock is the dispatcher's to resolve" in paragraph and "SELF_HOST_GRIDLOCK" in paragraph
+        assert prose_shapes in paragraph and kept in paragraph, paragraph
+        assert "the operator can reverse it" in paragraph, paragraph
+        assert "falsifies this: a gridlock ruling the operator reverses" in paragraph, paragraph
+        row = next((line for line in protocol.splitlines() if line.startswith("| Resolves a gridlock")), "")
+        assert prose_shapes in row and "the operator can reverse it" in row, row
+        rule = next(line for line in (root / "CLAUDE.md").read_text(encoding="utf-8").splitlines()
+                    if line.startswith("15. **Parallel work"))
+        assert "is resolved by the dispatcher seat" in rule and kept in rule, rule
+
+    def test_a_stop_is_a_request_opening_with_the_marker_the_board_counts(self, seat):
+        """DEF-5030 (2026-10-30): a worker that stopped sent nothing (the
+        self-host STOP clause said only re-read mail; the adopter's sent a
+        plain request the board could not tell from a question), so the
+        board showed no stopped seat for the dispatcher's past-the-hour
+        gridlock read. Both clauses send one request opening with
+        ``stopped:``, the word's one home ``tools/cc/mail.py::STOPPED_PREFIX``
+        beside the operator call's, which the board's asks line counts apart
+        and the census table carries; the record homes carry the same word:
+        the protocol's seat's-side paragraph and the dispatcher's first-read
+        paragraph, the inbox body's asks bullet and the workflow guide's.
+        Dies to: a clause that stops without the send, the marker spelled
+        apart from the constant in a clause or the census table, or a record
+        home that names the stop without the word."""
+        root = Path(__file__).resolve().parents[1]
+        marker = seat.mail.STOPPED_PREFIX
+        assert marker == "stopped:"
+        # The resume rule (the failure-mode review): a release or the ruling on an operator
+        # call names no stop, so the seat acks its own stop when the cause is gone, and an
+        # interim ack that frees nothing is answered by sending the stop again.
+        assert (f"STOP, send {{dispatcher}} one request opening with {marker} that names what stops you (an operator "
+                "call by its id), and only re-read mail until an ack frees or re-aims you or what stops you is gone, "
+                "then ack your own stop saying so (an ack that does not free you: send the stop again), for what the "
+                "assign authority reserves for the operator") in seat.SELF_HOST_PROCEED
+        assert (f"STOP and send {{dispatcher}} one request opening with {marker}, then only re-read mail until it is "
+                "answered, on anything not green") in seat.ADOPTER_PROCEED
+        # The dispatcher's side: the stop row past the hour is the gridlock read.
+        assert ("A (stopped) row on the asks line past the hour is that read: answer it with the ack that frees or "
+                "re-aims the seat") in seat.SELF_HOST_GRIDLOCK
+        census_path = root / "scripts" / "seat_day_census.py"
+        if not census_path.is_file():  # pragma: no cover - adopter tree
+            pytest.skip("scripts/seat_day_census.py is self-host dev tooling")
+        spec = importlib.util.spec_from_file_location("census_for_the_stop", census_path)
+        census = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = census
+        spec.loader.exec_module(census)
+        assert census.MARKERS["stopped"] == marker
+        protocol = " ".join((root / "memory" / "parallel-work-protocol.md").read_text(encoding="utf-8").split())
+        assert f"one `request` whose text opens with `{marker}`" in protocol, "the seat's-side paragraph"
+        assert "the seat acks its own stop when what stopped it is gone" in protocol, "the resume rule"
+        assert f"a request opening with `{marker}`" in protocol, "the dispatcher's first-read paragraph"
+        for rel in (".claude/commands/inbox.md", "docs/WORKFLOW.md"):
+            body = " ".join((root / rel).read_text(encoding="utf-8").split())
+            assert f"A request whose text opens with `{marker}` is a worker's stop" in body, rel
+        inbox = " ".join((root / ".claude" / "commands" / "inbox.md").read_text(encoding="utf-8").split())
+        assert "a `(stopped)` row past the hour on the `asks:` line is the gridlock's read" in inbox
+
+    def test_the_gridlock_ruling_opens_with_the_marker_the_census_counts(self, seat):
+        """DEF-5029 (2026-10-30): the ruling's ack opens with ``gridlock:``, a
+        marker in the family of OPERATOR CALL:, redirect:, shelved: and stopped:, and
+        scripts/seat_day_census.py counts a ruling by that opening alone and
+        names its id on the dispatcher's row (the first two rulings under the
+        rule were plain acks no reader counted; a word read anywhere in a text
+        counts the briefs' and the assigns' own quotations of it). The word
+        has one home, the census's MARKERS table, and the brief's sentences
+        are held to it: the dispatcher's ruling clause and the worker tick's
+        redirect: and shelved: clauses. Its record homes carry the same word:
+        the protocol's Assign authority paragraph and dispatcher row, Core
+        Rule 15 and the inbox body's ruling paragraph. Dies to: the brief
+        saying the ack carries the facts with no marker, the marker spelled
+        apart from the table in any clause, or a record home that names the
+        ruling without the word."""
+        root = Path(__file__).resolve().parents[1]
+        census_path = root / "scripts" / "seat_day_census.py"
+        if not census_path.is_file():  # pragma: no cover - adopter tree
+            pytest.skip("scripts/seat_day_census.py is self-host dev tooling")
+        spec = importlib.util.spec_from_file_location("census_for_the_brief", census_path)
+        census = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = census
+        spec.loader.exec_module(census)
+        marker = census.MARKERS["gridlock"]
+        assert marker == "gridlock:"
+        assert (f"rule, act and report the ruling as an ack whose text opens with {marker} (its first word; an "
+                "ack opening with RULING or an address is not counted; one ruling per ack) and carries the facts "
+                "you read, instead "
+                "of filing an operator call and waiting (scripts/seat_day_census.py counts the rulings by that "
+                "opening and your row names them); the operator can reverse it") in seat.SELF_HOST_GRIDLOCK
+        assert f"an ack from {{dispatcher}} beginning {census.MARKERS['redirect']} re-aims" in seat.SELF_HOST_PROCEED
+        assert f"one note beginning {census.MARKERS['shelved']} says" in seat.SELF_HOST_PROCEED
+        protocol = (root / "memory" / "parallel-work-protocol.md").read_text(encoding="utf-8")
+        start = protocol.index("**Assign authority")
+        paragraph = " ".join(protocol[start:protocol.index("\n\n", start)].split())
+        assert f"The ruling's `ack` opens with `{marker}`" in paragraph, paragraph
+        assert "names each ruling's id" in paragraph, paragraph
+        row = next((line for line in protocol.splitlines() if line.startswith("| Resolves a gridlock")), "")
+        assert f"an `ack` opening with `{marker}`" in row, row
+        rule = next(line for line in (root / "CLAUDE.md").read_text(encoding="utf-8").splitlines()
+                    if line.startswith("15. **Parallel work"))
+        assert f"as an ack opening with `{marker}`" in rule, rule
+        raw = (root / ".claude" / "commands" / "inbox.md").read_text(encoding="utf-8")
+        inbox = " ".join(raw.split())
+        assert f"whose text opens with `{marker}`" in inbox
+        assert "seat-day census counts a ruling by that opening on the dispatcher's acks alone" in inbox
+        assert f'--text "{marker} <the ruling, the facts you read>"' in inbox
+        # The rule renders on this repository alone (the brief's slot is empty elsewhere), so the
+        # inbox body says it inside a self-host block that the asset deploy strips.
+        from espalier.surface_hygiene import strip_self_host_blocks
+        assert marker not in strip_self_host_blocks(raw) and "Core Rule 15" not in strip_self_host_blocks(raw)
 
     def test_on_an_adopter_checkout_the_handoff_clauses_name_the_row_alone(self, seat, clone):
         """The push onto the lane and the row derived by the seat census are this
@@ -800,7 +957,9 @@ class TestBrief:
         assert "no own-clear mod" in capsys.readouterr().out
         assert seat.main(["launch", "box-feat", "--print", "--shell", "posix"]) == 0
         line = capsys.readouterr().out
-        assert f"--plugin-dir {seat.MOD_DIR}" in line and "ESPALIER_OWN_CLEAR=1" in line
+        # The spelling the shell reads: shlex quotes a path with a backslash (a Windows
+        # seat's D:\...) or a space, and leaves a plain POSIX path bare.
+        assert f"--plugin-dir {seat.shlex.quote(str(seat.MOD_DIR))}" in line and "ESPALIER_OWN_CLEAR=1" in line
         assert seat.main(["launch", "box-feat", "--no-mod", "--print", "--shell", "posix"]) == 0
         line = capsys.readouterr().out
         assert "--plugin-dir" not in line and "-u ESPALIER_OWN_CLEAR " in line
@@ -845,7 +1004,7 @@ class TestBrief:
         _holds(clone, "docs/WORKFLOW.md")
         adopter = seat.compose_brief(clone, "box", clone).text
         assert "seat_day_census" not in adopter and "names its population" not in adopter
-        # Up to the operator's sentence only: TP-703g inserts its clause after it.
+        # Up to the operator's sentence only: the gridlock slot and the handoff clause sit after it.
         assert "merged PR bodies. Decisions stay the operator's." in adopter
         _holds(clone, "memory/parallel-work-protocol.md")
         own = seat.compose_brief(clone, "box", clone).text
@@ -930,7 +1089,8 @@ class TestBrief:
         feat = _worktree(clone, "feat", name="box-feat")
         _holds(feat, "docs/WORKFLOW.md")
         loop = seat.compose_brief(clone, "box-feat", feat).loop
-        assert "STOP and send ops one request, then only re-read mail until it is answered, on anything not green" in loop
+        assert ("STOP and send ops one request opening with stopped:, then only re-read mail until it is answered, on "
+                "anything not green") in loop
         assert "proceed on it" not in loop and "Task 0" not in loop and "shelve" not in loop
         assert "run mail.py refresh once" in loop and "{" not in loop
         assert loop.isascii() and '"' not in loop and "%" not in loop
@@ -1202,6 +1362,23 @@ class TestTheLauncherSetsTheBoxLock:
         assert env["ESPALIER_BOX_LOCK"] == "/elsewhere/box.lock"
         assert seat.BOX_LOCK_KEY == "ESPALIER_BOX_LOCK" and seat.BOX_LOCK_NAME == "espalier-box.lock"
 
+    def test_the_posix_line_spells_the_mod_directory_as_the_shell_reads_it(self, seat, tmp_path):
+        """A mod directory the shell must quote -- a Windows seat's ``D:\\...``
+        (windows-latest red from #351, where the unquoted substring was
+        asserted) or a path with a space -- rides the posix print line quoted,
+        and the line's reader gets the one argument back. Dies to: an argument
+        joined bare, or an expectation spelled as the path alone."""
+        import shlex
+        mod_dir = tmp_path / "mods" / "own clear"
+        (mod_dir / ".claude-plugin").mkdir(parents=True)
+        (mod_dir / ".claude-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+        target = seat.Target("box-x", tmp_path, True, False)
+        sh = seat.command_line(target, seat.mod_args(mod_dir), maintenance=False, shell="posix", own_clear=True)
+        quoted = shlex.quote(str(mod_dir))
+        assert quoted != str(mod_dir), quoted   # the case the Windows cell hits: a path shlex must quote
+        assert f"--plugin-dir {quoted}" in sh and f"--plugin-dir {mod_dir}" not in sh, sh
+        assert shlex.split(sh.split(" claude ", 1)[1]) == ["--plugin-dir", str(mod_dir)]
+
     def test_both_shells_lines_carry_the_path_before_claude(self, seat, tmp_path):
         import shlex
         import tempfile
@@ -1214,3 +1391,102 @@ class TestTheLauncherSetsTheBoxLock:
         ps = seat.command_line(target, [], maintenance=False, shell="powershell")
         assert f"if (-not $env:ESPALIER_BOX_LOCK) {{ $env:ESPALIER_BOX_LOCK = '{default}' }}" in ps, ps
         assert ps.index("ESPALIER_BOX_LOCK") < ps.index("claude")
+
+
+class TestTheLogSwitch:
+    """``launch --own-clear-log [PATH]`` (DEF-4057's lane, 2026-10-30): the mod
+    appends one JSON line per event to the file ``ESPALIER_OWN_CLEAR_LOG``
+    names, and the launcher strips that name from every session it starts, so
+    the deferred clear of 2026-10-30 was read from the transcript's queue rows
+    instead of the mod's own record. The switch sets the name for the session,
+    after the unsets on both printed lines, only when the mod rides; bare, it
+    names ``.espalier-state/own_clear.log`` under the seat's checkout -- and
+    since DEF-5031 (a clear the engine refused 41 times over ten hours, with
+    the log off on every seat) that is the default with the switch left out,
+    ``--no-own-clear-log`` the way to a session with no log. Dies to: the name
+    set with no mod to write it, a log left exported in the launcher's shell
+    riding in, a plain launch with no log, or an assignment rendered before an
+    unset on the POSIX line (BSD env stops reading options at the first
+    assignment)."""
+
+    def test_the_childs_environment_carries_the_log_only_with_the_mod(self, seat, tmp_path):
+        target = seat.Target("box-x", tmp_path, True, False)
+        base = {"PATH": "/bin", "ESPALIER_OWN_CLEAR_LOG": "/left/exported.log"}
+        env = seat.child_env(target, maintenance=False, base=base, own_clear=True, own_clear_log="/x/own_clear.log")
+        assert env["ESPALIER_OWN_CLEAR_LOG"] == "/x/own_clear.log" and env["ESPALIER_OWN_CLEAR"] == "1"
+        without_mod = seat.child_env(target, maintenance=False, base=base, own_clear=False, own_clear_log="/x/o.log")
+        assert "ESPALIER_OWN_CLEAR_LOG" not in without_mod
+        assert "ESPALIER_OWN_CLEAR_LOG" not in seat.child_env(target, maintenance=False, base=base, own_clear=True)
+
+    def test_both_shells_lines_set_the_log_after_the_unsets(self, seat, tmp_path):
+        import shlex
+        target = seat.Target("box-x", tmp_path, True, False)
+        log = str(tmp_path / "state dir" / "own_clear.log")
+        sh = seat.command_line(target, [], maintenance=False, shell="posix", own_clear=True, own_clear_log=log)
+        assert f"ESPALIER_OWN_CLEAR=1 ESPALIER_OWN_CLEAR_LOG={shlex.quote(log)}" in sh, sh
+        assert "-u ESPALIER_OWN_CLEAR_LOG" not in sh and "-u ESPALIER_OWN_CLEAR_ROOT" in sh
+        words = sh.split(" env ", 1)[1].split(" claude", 1)[0].split()
+        first = next(i for i, w in enumerate(words) if "=" in w)
+        assert not [w for w in words[first:] if w.startswith("-")], words
+        ps = seat.command_line(target, [], maintenance=False, shell="powershell", own_clear=True, own_clear_log=log)
+        assert f"$env:ESPALIER_OWN_CLEAR_LOG = '{log}'" in ps and "Remove-Item Env:ESPALIER_OWN_CLEAR_LOG" not in ps
+        assert "Remove-Item Env:ESPALIER_OWN_CLEAR_ROOT" in ps
+        plain = seat.command_line(target, [], maintenance=False, shell="posix", own_clear=True)
+        assert "ESPALIER_OWN_CLEAR_LOG=" not in plain and "-u ESPALIER_OWN_CLEAR_LOG" in plain
+
+    def test_launch_takes_the_switch_bare_as_the_seats_state_file_and_says_so(self, seat, clone, registry, no_claude,
+                                                                             monkeypatch, capsys):
+        _dispatcher(clone, '"air"')
+        feat = _worktree(clone, "feat", name="box-feat")
+        monkeypatch.chdir(clone)
+        monkeypatch.setenv("ESPALIER_OWN_CLEAR_LOG", "/left/exported.log")   # never inherited, switch or not
+        expected = str(feat / ".espalier-state" / "own_clear.log")
+        assert seat.main(["launch", "box-feat", "--own-clear-log", "--", "--model", "x"]) == 0
+        env = no_claude[-1]["env"]
+        assert env["ESPALIER_OWN_CLEAR_LOG"] == expected and env["ESPALIER_OWN_CLEAR"] == "1"
+        assert expected in capsys.readouterr().out
+        assert seat.main(["launch", "box-feat", "--own-clear-log", str(feat / "elsewhere.log"), "--", "--model", "x"]) == 0
+        assert no_claude[-1]["env"]["ESPALIER_OWN_CLEAR_LOG"] == str(feat / "elsewhere.log")
+        capsys.readouterr()
+        assert seat.main(["launch", "box-feat", "--no-mod", "--own-clear-log", "--", "--model", "x"]) == 0
+        assert "ESPALIER_OWN_CLEAR_LOG" not in no_claude[-1]["env"]
+        assert "names nothing without it" in capsys.readouterr().out
+        # The default (DEF-5031): the switch left out is the bare switch; the
+        # no-mod launch with no switch typed is not told about a switch.
+        assert seat.main(["launch", "box-feat", "--", "--model", "x"]) == 0
+        assert no_claude[-1]["env"]["ESPALIER_OWN_CLEAR_LOG"] == expected
+        assert expected in capsys.readouterr().out
+        assert seat.main(["launch", "box-feat", "--no-mod", "--", "--model", "x"]) == 0
+        assert "ESPALIER_OWN_CLEAR_LOG" not in no_claude[-1]["env"]
+        assert "names nothing without it" not in capsys.readouterr().out
+        assert seat.main(["launch", "box-feat", "--own-clear-log", "--print", "--shell", "posix"]) == 0
+        assert f"ESPALIER_OWN_CLEAR_LOG={seat.shlex.quote(expected)}" in capsys.readouterr().out
+
+    def test_no_own_clear_log_starts_the_session_with_no_log(self, seat, clone, registry, no_claude, monkeypatch,
+                                                              capsys):
+        """The one way to a session the mod does not log (DEF-5031 turned the
+        default on): the name is unset on both printed lines as before, and the
+        launch line says the mod rides without a log."""
+        _dispatcher(clone, '"air"')
+        _worktree(clone, "feat", name="box-feat")
+        monkeypatch.chdir(clone)
+        monkeypatch.setenv("ESPALIER_OWN_CLEAR_LOG", "/left/exported.log")
+        assert seat.main(["launch", "box-feat", "--no-own-clear-log", "--", "--model", "x"]) == 0
+        env = no_claude[-1]["env"]
+        assert "ESPALIER_OWN_CLEAR_LOG" not in env and env["ESPALIER_OWN_CLEAR"] == "1"
+        out = capsys.readouterr().out
+        assert "own-clear mod loaded" in out and "its log:" not in out
+        assert seat.main(["launch", "box-feat", "--no-own-clear-log", "--print", "--shell", "posix"]) == 0
+        line = capsys.readouterr().out
+        assert "-u ESPALIER_OWN_CLEAR_LOG" in line and "ESPALIER_OWN_CLEAR_LOG=" not in line
+
+    def test_a_relative_log_path_is_resolved_where_the_operator_typed_it(self, seat, clone, registry, no_claude,
+                                                                          monkeypatch):
+        """The session's own directory is the seat's checkout, so a relative
+        path handed through would land there as an untracked file (the
+        failure-mode review); it is resolved where the operator typed it."""
+        _dispatcher(clone, '"air"')
+        _worktree(clone, "feat", name="box-feat")
+        monkeypatch.chdir(clone)
+        assert seat.main(["launch", "box-feat", "--own-clear-log", "logs/oc.log", "--", "--model", "x"]) == 0
+        assert no_claude[-1]["env"]["ESPALIER_OWN_CLEAR_LOG"] == os.path.abspath("logs/oc.log")

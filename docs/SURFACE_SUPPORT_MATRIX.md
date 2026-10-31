@@ -91,10 +91,12 @@ needs to change category, or reveal a new surface that needs adding.
 
 ## Anti-overclaiming rule
 
-Public docs (README, QUICKSTART, CHEAT-SHEET) must not assert coverage
-of any surface marked `deferred` or `unsupported`. The test
+Public docs (every doc `espalier/surface_contract.py::get_public_doc_relpaths`
+names) must not assert coverage of any surface marked `deferred` or
+`unsupported`. The test
 `tests/test_surface_support_matrix.py::TestPublicDocsNoOverclaim`
-enforces this.
+enforces this over all of them but this file, which quotes the forbidden
+phrases below as examples and so is the one left out of the scan.
 
 Acceptable language for unsupported/deferred surfaces:
 

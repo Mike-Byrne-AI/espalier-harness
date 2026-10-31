@@ -616,6 +616,11 @@ class TestShippedRootsDoNotImportTests:
             "the benchmark's BC-034 verifier loads the corpus-ref resolver by path inside a try, and the "
             "sdist ships that one tests/ file beside the benchmark by name; the wheel ships neither",
             "include tests/_corpus_ref_resolver.py"),
+        ("scripts/generate_doc_regions.py", "tests._local_only_skips"): (
+            "the region generator renders tests/README.md's local-only skip list from the test tree's "
+            "own reader of its skip reasons (the population IS the test tree, so the derivation lives "
+            "beside it); the generator is self-host only and ships in neither the sdist nor the wheel, "
+            "and tests/README.md has no adopter copy", None),
     }
 
     @staticmethod

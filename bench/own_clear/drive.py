@@ -19,7 +19,8 @@ oracle:
    as a UserPromptSubmit in the new session and runs to its Stop.
 
 Exit 0 when every step is seen, 1 otherwise, with the logs kept under the
-output directory (``reports/own-clear-drive-<stamp>/`` by default, gitignored).
+output directory (``reports/own-clear-drive-<stamp>/`` by default, gitignored);
+2, before anything is written, on a host with no pty.
 Interactive only: in ``claude -p`` the process exits right after the clear, so
 the re-prime never runs there (measured 2026-10-26). POSIX (pty); the Windows
 seats are driven by hand.
@@ -29,19 +30,28 @@ Usage: python bench/own_clear/drive.py [--mod DIR] [--out DIR] [--model NAME]
 from __future__ import annotations
 
 import argparse
-import fcntl
 import importlib.util
 import json
 import os
-import pty
 import select
 import signal
 import struct
 import sys
-import termios
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+# The pty is POSIX. The module still loads on Windows -- the bounded-spawn
+# census (tests/test_contracts.py::TestEveryTimedSpawnOutsideToolsCcIsBounded)
+# imports every file outside the engine that routes a spawn, to read which
+# run_bounded it bound, and a bare `import fcntl` here was its windows-latest
+# red from #351 -- and main() refuses by name before it writes anything.
+try:
+    import fcntl
+    import pty
+    import termios
+except ImportError:   # Windows: no pty; the Windows seats are driven by hand
+    fcntl = pty = termios = None   # type: ignore[assignment]
 
 REPO = Path(__file__).resolve().parents[2]
 MOD = REPO / "tools" / "cc" / "mods" / "own-clear"
@@ -211,6 +221,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=None, help="where the throwaway and the logs go")
     parser.add_argument("--model", default="haiku")
     args = parser.parse_args(argv)
+    if pty is None:
+        print("own-clear drive: POSIX only (it forks a pty), and this host has none; the Windows seats "
+              "are driven by hand (the docstring's sequence)", file=sys.stderr)
+        return 2
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = args.out or (REPO / "reports" / f"own-clear-drive-{stamp}")
     out.mkdir(parents=True, exist_ok=True)

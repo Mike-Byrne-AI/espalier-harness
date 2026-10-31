@@ -119,6 +119,7 @@ class TestNestedRepoSkip:
         engine = {str(p).replace("\\", "/") for p in safe_rglob(Path(outer), "*.py")}
         assert not any("/vendored/" in p for p in engine)
 
+    @pytest.mark.contract
     def test_every_os_walk_scanner_is_behaviorally_covered(self):
         """Completeness pin — the anti-whack-a-mole half the presence-gate in
         ``test_nested_repo_skip.py`` cannot give. That gate proves the marker NAME

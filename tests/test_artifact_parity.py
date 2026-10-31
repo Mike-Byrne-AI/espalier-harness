@@ -599,6 +599,7 @@ class TestTheSkipSetDropsOnlyWhatNoArtifactShips:
         assert unpinned == [], unpinned
         assert all("/" in path and not path.endswith("/") for path in BUILD_TREE_SKIP_PATHS)
 
+    @pytest.mark.contract
     def test_no_tracked_path_carries_a_skip_name_or_lies_under_a_skip_path(self):
         from espalier.artifact_parity import (
             BUILD_TREE_SKIP_NAMES, BUILD_TREE_SKIP_PATHS, BUILD_TREE_SKIP_SUFFIX,

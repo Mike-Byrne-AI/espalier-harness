@@ -152,6 +152,7 @@ def _untypable_windows_arms(source: str) -> list[int]:
     return sorted(bad)
 
 
+@pytest.mark.contract
 def test_every_windows_only_arm_in_the_gate_scope_holds_nothing_to_type():
     cfg = _mypy_config()
     assert cfg.get("platform") == "linux", "this pin exists because of the platform pin"

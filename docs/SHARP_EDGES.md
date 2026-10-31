@@ -6292,6 +6292,42 @@ the lanes and the release to run in it. It does not release them itself: a relea
 push to origin, and a claim nobody released usually marks work someone abandoned. A
 worktree removed by hand (`git worktree remove`) still strands its seat's claims.
 
+## A runner's timeout is not a refusal of the action: read the remote back before saying nothing was sent
+
+**What it is:** `tools/cc/record_merge.py::run` gives a spawned program a bounded wait and
+raises a named stop when the program outlives it. The stop says what the runner knows --
+the program did not return in time -- and nothing about what the program did. A `git push`
+that outlives the wait may have landed: the dispatcher's assign at 14:25:11Z on 2026-10-30
+was refused with `git push took longer than 30s`, and origin's ref held it when read back
+at 14:40Z (a GitHub `Internal Server Error` had refused the attempt a minute earlier, which
+was a real refusal, rolled back). Until that day `tools/cc/mail.py::_push_ref` let the
+timeout raise past its rollback, so the refusal read as "nothing was sent" while the local
+ref was neither read back nor put back: a seat that trusted it and sent again doubled the
+message (a re-sent assign restarts its job's clock), and a seat whose push had not landed
+was refused as a second writer under its own name at the next send.
+
+**How you hit it:** writing a verb whose action is not idempotent (a send appends, so a
+re-send is a second message) and treating the runner's timeout like the program's own
+non-zero exit, which is the one outcome the rollback branch below the spawn handles.
+
+**How to avoid it:** after a timeout on the action, read the remote back before saying
+anything, and remember what the read could not settle: an unchanged tip read milliseconds
+after the kill is not the end of it, since the push's transport and origin's side outlive
+the runner (driven with a pre-receive hook that sleeps: the tip moved five seconds after
+the refusal). `_push_ref` does both: origin's tip at the commit means the push landed, and
+the send says so; anything else puts the ref back, keeps the commit under a local
+`refs/unconfirmed/` ref and refuses with the push's fate as read (unchanged: it had not
+landed when read and can still land; a foreign tip or a gone ref: it did not land;
+unreadable: it may have), and the next write from this checkout settles the record --
+landed after all, and that write is refused once, naming the commit, so the message is not
+repeated; never, once origin moved past its parent on another line, and the record is
+dropped. The runner tells the timeout apart as `record_merge.TimedOut`, under
+`Unresolvable` so every existing catch holds. The ship driver's pushes need none of this:
+a re-run re-pushes the same branch head and git answers up to date, and a re-run of the
+release is refused before the tag push because the tag exists locally; its own runner
+(`tools/cc/ship.py::run`) has no `TimedOut`, so a non-idempotent ship verb would need the
+split first.
+
 ## An idle session leaves no trace a file scan can see, so recency cannot say a worktree is free
 
 **What it is:** a Claude Code session that is open but idle writes nothing: no file in its
@@ -6427,12 +6463,25 @@ the classic PreCompact fires; and a non-awaited `$.prompt.submit` from a
 later. `$.prompt.submit('/clear')` is refused by a host check. In `claude -p` the process
 exits right after the clear, so the re-prime is interactive-only.
 
-**How you hit it:** two ways. Reaching for a settings hook, a skill or a command body to
+**How you hit it:** four ways. Reaching for a settings hook, a skill or a command body to
 reset a window after the handoff: nothing there can, and a PreCompact block only leaves the
 window full. Or, in a mod, reading state on `classic.SessionStart` AFTER `next(e)`: the
 chain is managed hooks, then the hooks modules, then the project's settings hooks as core,
 so a settings hook beneath (`session_start.py`'s sweep of `.espalier-state/`) runs inside
-that `next(e)` and can take the file before the mod reads it. Two smaller edges from the
+that `next(e)` and can take the file before the mod reads it, and its checkout catch-up (the
+banner's `Checkout:` line) moves a checkout whose lane merged onto the base there, so an
+in-flight read after the hand-on named that move as work left in the old window on every
+such re-prime (DEF-5028, 2026-10-30: six tool calls on a clean tree). Or arming the marker only
+after a push that landed: a handoff refused on a red base, a push whose follow-up refused,
+or a lane opened by hand then leaves the window with no marker, and the threshold ask fires
+on every prompt until someone types `/clear` (DEF-4057: win, win-2 and air-work sat so for
+17.5 h on 2026-10-29, about twenty silent ticks each). Or asking the clear again at the
+next turn's end because the session id has not changed: the engine queues a clear issued
+while a prompt is already queued (a loop tick that fired as the turn ended) and runs it
+after that prompt's turn (measured 2026-10-30 from the transcript's `queue-operation`
+rows: the tick dequeued 150 ms after the turn's end, the clear enqueued 57 ms behind it and
+dequeued when the tick's turn ended), so a retry there clears the window that clear just
+re-primed. Two smaller edges from the
 same lane: `$.env.get` must name its variable literally (the engine lists what a module
 reads; a constant fails `claude plugin validate`), and a continuation a hook did not await
 must never reject (a log write after a test's environment had ended surfaced as an
@@ -6441,14 +6490,31 @@ unhandled rejection that failed the file).
 **How to avoid it:** the reset after the handoff is the own-clear mod
 (`tools/cc/mods/own-clear`), loaded by `seat.py launch` through `--plugin-dir` (which also
 exports `ESPALIER_OWN_CLEAR=1`, the handoff's gate: any other window is told it needs a
-`/clear` by hand), armed by `ship.py handoff` through `.espalier-state/own_clear.json`, keyed
-by the session id and re-primed only in the window it was armed in; it reads the marker
-first and hands the event on second, and refuses a compaction only while the clear is due.
-Measure a mod from hook payloads on disk (a settings-hook log in a throwaway repository),
-never from the screen, and run `claude plugin validate` before a drive.
+`/clear` by hand), armed by `ship.py handoff` through `.espalier-state/own_clear.json`
+whenever the handoff ran to its end -- the push landed, or a refusal the window is done
+with (the base red, the lane whole and unpushed here; a step after a landed push), with the
+refusal in the marker (`landed`, `outcome`) and the lane to land first appended to the brief;
+a refusal the window must fix first arms nothing; `ship.py arm --why ...` arms by hand after
+a hand-open -- keyed by the session id and re-primed only in the process that armed it (the
+session it was last in, the one it asked to clear, or, after a reload reset the module, a
+marker whose own ask is under a day old); it
+reads the marker, and what the old window left in flight, first and hands the event on
+second, refuses a compaction only while the clear is due, writes `clear_asked_at` into the
+marker at the ask (read back by the banner's `Own-clear:` line, the prompt router and the
+mod's own reload arm, with every later outcome beside it: a refusal's text, time and count,
+the turns a queued clear has waited, the ids a stale marking compared), never asks again while the session stands (two prompts
+queued ahead would make a second ask a second clear, over the window the first re-primes),
+names the queued clear and what each later turn
+left in flight on the status line, lets a compaction through once two turns have passed since
+the ask, and on the clear's SessionStart tells the new window what the old one left in
+flight. The Stop hook's handoff gate (Gate 5) lets a Stop through over a marker armed at HEAD,
+since the handoff ran and a block would only ask for a second row. Measure a mod from hook
+payloads on disk (a settings-hook log in a throwaway repository, or the transcript's queue
+rows), never from the screen, and run `claude plugin validate` before a drive.
 
-**Backed by:** `tools/cc/mods/own-clear/hooks/own-clear.test.ts` (thirteen cases against
-the engine, `claude plugin test`), `bench/own_clear/drive.py` (a pty-driven session with the
+**Backed by:** `tools/cc/mods/own-clear/hooks/own-clear.test.ts` (the cases against the
+engine, `claude plugin test`, which `tests/test_own_clear.py` runs wherever `claude` is on
+PATH with the count derived from the kit file), `bench/own_clear/drive.py` (a pty-driven session with the
 real marker writer: PASS 2026-10-26 in 27 s) and `reports/own-clear-probe-2026-10-26/` on
 the Air (the probe mod, its logs and the pty driver). `tools/cc/mods/own-clear/README.md`
 has the measured facts.

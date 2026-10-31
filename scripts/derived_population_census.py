@@ -698,6 +698,16 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "rows assert on doctor's warning, info and step lines naming that entry, "
         "never on the population, so an empty one fails them rather than passing.",
     ),
+    "tests/test_scan_telemetry.py": (
+        2, "ab227f04480b0982fa5ecf812767fca2bed5b77fbd1377ed72ce56319bbe323c",
+        "CORRECT_BY_PROPERTY",
+        "NEW 2026-10-30 (the C37 lane): _counts builds one telemetry row per scanner of "
+        "cli.SCAN_TELEMETRY_KEYS (test input, not a verdict), and _package_modules lists the "
+        "scanners package directory, the independent population the two maps are held EQUAL to "
+        "(both ways) in TestScannerRosterIsDerivedFromThePackage; the shrinking side is floored by "
+        "n == len(_SCANNERS) >= 11 (dated) and by the equality against the package listing, which "
+        "a dropped map entry reds by name.",
+    ),
     "tests/test_symbol_census.py": (
         2, "9499586d33ba6491ae8b4c1806e68438918e71f9857bff2a90c30e48e9b79238",
         "CORRECT_BY_PROPERTY",
@@ -1565,8 +1575,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "per-row verdicts differ within this file; see the ledger row for DEF-600",
     ),
     "tests/test_surface_support_matrix.py": (
-        1, "8ae56d475e01210d4884e8b48c2c1c5bfbff17850b5c9ef9513ca95330a1a6bc",
+        2, "f2b0df562e6ec1eb4ed979d29c18bf13dd0ef36977a80d9ccd143dcf71ad492d",
         "CORRECT_BY_PROPERTY",
+        "REVISED 2026-10-30 (the C37 lane, on the dispatcher's ruling): the second row is "
+        "_overclaim_scan_population, the two overclaim scans' PUBLIC_DOCS derived from the engine's "
+        "one roster (get_public_doc_relpaths) less the matrix doc; deriving IS the property (a doc "
+        "that joins the roster joins the scans), and the narrowing side is floored by name: "
+        "test_the_population_is_the_public_roster_less_the_rule holds the derivation both ways, reds "
+        "a dead exclusion and keeps the three front-door docs inside it. The first row, as adjudicated: "
         "tests/test_doc_maintenance_classes.py:117 pins set(AUDITED_INTERNAL_DOCS) == {'docs/RELEASE_C...",
     ),
     "tests/test_troubleshooting_enumerations.py": (

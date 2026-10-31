@@ -12092,6 +12092,39 @@ def cmd_provenance(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Every scanner ``cmd_scan`` drives, by its module name under
+#: ``espalier.scanners``, mapped to the key its count is written under in
+#: ``scan_summary.json`` (two display keys diverge from the module name:
+#: godfiles -> large_files, perf_smells -> perf_hotspots). Each scanned run
+#: appends one telemetry row per entry, the history the credibility budget and
+#: its wallpaper report read, so a scanner missing here writes no row and never
+#: earns a verdict. With ``SCANNERS_NOT_DRIVEN_BY_SCAN`` beside it, it names
+#: every public module of the package, and the summary's count keys are exactly
+#: its values (both pinned in ``tests/test_scan_telemetry.py``).
+SCAN_TELEMETRY_KEYS: dict[str, str] = {
+    "exceptions": "exceptions", "prints": "prints",
+    "godfiles": "large_files", "perf_smells": "perf_hotspots",
+    "test_loosening": "test_loosening",
+    "convergence_theater": "convergence_theater",
+    "subprocess_contracts": "subprocess_contracts",
+    "filesystem_contracts": "filesystem_contracts",
+    "magic_depth": "magic_depth", "retired_vocab": "retired_vocab",
+    "encoding_contracts": "encoding_contracts",
+}
+#: The public modules of ``espalier.scanners`` that ``cmd_scan`` does not drive,
+#: each mapped to what drives it instead, as ``(kind, name)``: a ``"verb"``, a
+#: top-level subcommand of ``build_parser()``, or, for a self-host scanner no
+#: verb runs, a ``"test"``, the repo-relative test file that does. Neither is a
+#: code-quality scan of the tree: freshness reports a documentation fragment's
+#: drift since its pin, and canon_verifier checks the harness's own load-bearing
+#: claims against their canons. A new module in the package belongs in this map
+#: or in ``SCAN_TELEMETRY_KEYS``, and each driver named here must import the
+#: module it is recorded against (both pinned in
+#: ``tests/test_scan_telemetry.py``).
+SCANNERS_NOT_DRIVEN_BY_SCAN: dict[str, tuple[str, str]] = {
+    "canon_verifier": ("test", "tests/test_canon_verifier_contract.py"),
+    "freshness": ("verb", "freshness"),
+}
 #: The scanners that run only on the Espalier-Harness source tree and stand
 #: down on any other, by their ``scan_summary.json`` and telemetry keys. All
 #: four police that tree's own registries and vocabulary. encoding_contracts
@@ -12202,7 +12235,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
     # of walking a whole adopter root, third-party code included. Gate them to
     # the self-host repo: on an adopter repo emit an EMPTY report so every
     # downstream key/telemetry row/report file stays present (the summary +
-    # scan_telemetry contracts pin all 11), while the repo-walk is skipped.
+    # scan_telemetry contracts pin every SCAN_TELEMETRY_KEYS entry), while the
+    # repo-walk is skipped.
     # Mechanical replacement for the fragile manual FINISH_UP step-2
     # registry-empty. The empty report is a placeholder, not a clean result,
     # and every record of the run says so: the report carries `ran: false` and
@@ -12334,8 +12368,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
         )
     # Append per-scanner telemetry history (fires + exemptions) BEFORE the
     # point-in-time scan_summary.json write. `fires` come from the `summary`
-    # dict already built above (display keys diverge from scanner names:
-    # godfiles->large_files, perf_smells->perf_hotspots); `exemptions` come from
+    # dict already built above, read through SCAN_TELEMETRY_KEYS (display keys
+    # diverge from scanner names: godfiles->large_files,
+    # perf_smells->perf_hotspots); `exemptions` come from
     # count_pragmas on the 3 pragma scanners (each walks its OWN divergent
     # scope), 0 otherwise. History lands in an espalier-owned reports/ artifact,
     # never the hook audit log (import-direction boundary).
@@ -12346,16 +12381,6 @@ def cmd_scan(args: argparse.Namespace) -> int:
         from espalier.scanners import magic_depth as _md
         from espalier.scanners import subprocess_contracts as _sc
         from espalier.scanners import encoding_contracts as _ec
-        _FIRES_KEY = {
-            "exceptions": "exceptions", "prints": "prints",
-            "godfiles": "large_files", "perf_smells": "perf_hotspots",
-            "test_loosening": "test_loosening",
-            "convergence_theater": "convergence_theater",
-            "subprocess_contracts": "subprocess_contracts",
-            "filesystem_contracts": "filesystem_contracts",
-            "magic_depth": "magic_depth", "retired_vocab": "retired_vocab",
-            "encoding_contracts": "encoding_contracts",
-        }
         exemptions = {  # each count_pragmas walks its OWN scope
             "convergence_theater": _ct.count_pragmas(repo_root),
             "magic_depth": _md.count_pragmas(repo_root),
@@ -12374,7 +12399,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         counts = {
             scanner: {"fires": summary[skey], "exemptions": exemptions.get(scanner, 0),
                       "ran": scanner not in stood_down}
-            for scanner, skey in _FIRES_KEY.items()
+            for scanner, skey in SCAN_TELEMETRY_KEYS.items()
         }
         scan_telemetry.append_run(reports_dir, run_ts, counts)
         # Persist the honored-pragma corpus (the labeled false-positive-budget

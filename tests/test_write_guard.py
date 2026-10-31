@@ -604,6 +604,7 @@ class TestPowerShellQuotedVerbBehindTheCallOperator:
     _FIXTURES: dict[str, tuple[str, str] | None] = {
         "_PS_PATH_FLAG_RE": ("Set-Content", "Set-Content -Path tools/cc/hooks/x.py -Value x"),
         "_PS_POSITIONAL_RE": ("Out-File", "Out-File tools/cc/hooks/x.py"),
+        "_PS_FILE_VERB_PATH_FLAG_RE": ("Out-File", "Out-File -Fi tools/cc/hooks/x.py"),
         "_PS_COPY_MOVE_DEST_RE": ("Copy-Item", "Copy-Item a -Destination tools/cc/hooks/x.py"),
         "_PS_COPY_MOVE_POSITIONAL_RE": ("Move-Item", "Move-Item a tools/cc/hooks/x.py"),
         # the remove/relocate operand class (§C52); the archive arm is the
@@ -6125,6 +6126,240 @@ class TestPowerShellWriteVerbs:
         assert_hook_denied(result)
 
 
+class TestPowerShellWriteSpellingsTheHostBinds:
+    """DEF-4029: the write arm read the write verbs by name alone, a path flag
+    in three exact spellings, a list by its first element and a value's
+    parentheses as a statement boundary, so spellings Windows PowerShell 5.1
+    binds wrote a hook file or the settings file with no deny. Every row in
+    ``_LANDED`` landed its file on 5.1 (driven with ``-NoProfile
+    -NonInteractive -Command`` in a scratch root, 2026-10-18) and read allow on
+    main at 2ea92f57; the relocation row moved the hook out of its zone."""
+
+    _LANDED = [
+        ("sc-alias", "sc tools/cc/hooks/x.py x"),
+        ("ac-alias", "ac tools/cc/hooks/x.py x"),
+        ("clc-alias", "clc tools/cc/hooks/x.py"),
+        ("tee-alias", "'x' | tee tools/cc/hooks/x.py"),
+        ("ni-alias", "ni tools/cc/hooks/y.py -Value x"),
+        ("new-item-positional", "New-Item tools/cc/hooks/y.py -Value x"),
+        ("glued-list-flag", "Set-Content -Value x -Path other.txt,tools/cc/hooks/x.py"),
+        ("glued-list-positional", "Set-Content other.txt,tools/cc/hooks/x.py x"),
+        ("glued-list-add-content", "Add-Content -Value x -Path other.txt,tools/cc/hooks/x.py"),
+        ("spaced-list-flag", "Set-Content -Value x -Path other.txt, tools/cc/hooks/x.py"),
+        ("colon-path", "Set-Content -Value x -Path:.claude/settings.json"),
+        ("colon-path-add-content", "Add-Content -Value x -Path:.claude/settings.json"),
+        ("colon-filepath-out-file", "'x' | Out-File -FilePath:.claude/settings.json"),
+        ("colon-literalpath", "Set-Content -Value x -LiteralPath:.claude/settings.json"),
+        ("colon-quoted", "Set-Content -Value x -Path:'.claude/settings.json'"),
+        ("colon-filepath-tee-object", "'x' | Tee-Object -FilePath:tools/cc/hooks/x.py"),
+        ("prefix-pat", "Set-Content -Value x -Pat .claude/settings.json"),
+        ("alias-pspath", "Set-Content -Value x -PSPath .claude/settings.json"),
+        ("prefix-filep", "'x' | Out-File -FileP .claude/settings.json"),
+        ("pipe-in-parens", "Set-Content -Value (1..3 | % {$_}) -Path .claude/settings.json"),
+        ("pipe-in-array-subexpression", "Set-Content -Value @(1..3 | % {$_}) -Path .claude/settings.json"),
+        ("pipe-in-subexpression", "Set-Content -Value $(1..3 | % {$_}) -Path .claude/settings.json"),
+        ("pipe-in-parens-copy-destination",
+         "Copy-Item -Path (Get-ChildItem other.txt | % {$_.FullName}) -Destination tools/cc/hooks/x.py"),
+        ("glued-list-move-source", "Move-Item -Path other.txt,tools/cc/hooks/x.py -Destination elsewhere/"),
+    ]
+
+    #: The parameters of the six write verbs that begin with the letters their
+    #: path parameters begin with, and their aliases, read from each verb's
+    #: ``(Get-Command).Parameters`` on Windows PowerShell 5.1.26100 (the rest
+    #: share no prefix with a path parameter).
+    _PARAMS_51 = {
+        "Set-Content": {"Path": [], "PassThru": [], "PipelineVariable": ["pv"],
+                        "LiteralPath": ["PSPath"], "Filter": [], "Force": []},
+        "Add-Content": {"Path": [], "PassThru": [], "PipelineVariable": ["pv"],
+                        "LiteralPath": ["PSPath"], "Filter": [], "Force": []},
+        "Clear-Content": {"Path": [], "PipelineVariable": ["pv"], "LiteralPath": ["PSPath"],
+                          "Filter": [], "Force": []},
+        "Out-File": {"FilePath": [], "LiteralPath": ["PSPath"], "Force": [], "PipelineVariable": ["pv"]},
+        "Tee-Object": {"FilePath": [], "LiteralPath": ["PSPath"], "PipelineVariable": ["pv"]},
+        "New-Item": {"Path": [], "Force": [], "PipelineVariable": ["pv"]},
+    }
+    _PATH_PARAMS = {"Path", "FilePath", "LiteralPath"}
+
+    @pytest.fixture
+    def root(self, tmp_path, monkeypatch):
+        return _zone_tree(tmp_path, monkeypatch, None, (), ())
+
+    @staticmethod
+    def _reason(root: Path, command: str) -> str:
+        wg = _import_write_guard()
+        return _zone_deny_reason(wg.check_powershell_for_protected_mutations, command, root, root)
+
+    @pytest.mark.parametrize("command", [c for _, c in _LANDED], ids=[i for i, _ in _LANDED])
+    def test_each_spelling_that_landed_its_file_is_denied(self, root, command):
+        assert self._reason(root, command), command
+
+    @pytest.mark.parametrize("command", [
+        "Set-Content -Value (Get-Date) -Path .claude/settings.json",
+        "Set-Content -PassThru -Path .claude/settings.json -Value x",
+        "'x' | Tee-Object -PipelineVariable v -FilePath .claude/settings.json",
+        "Set-Content -Filter *.txt -Path .claude/settings.json -Value x",
+        "(Get-Date; Set-Content -Path tools/cc/hooks/x.py -Value x)",
+        "& { 1 | Set-Content -Path tools/cc/hooks/x.py }",
+        "Set-Content -Value (Get-Content -Path other.txt) -Path .claude/settings.json",
+        "Set-Content -Value (Get-ChildItem -File | % {$_.Name}) -Path .claude/settings.json",
+        "& { Set-Content -Value (1..3 | % {$_}) -Path:.claude/settings.json }",
+        "Set-Content -Value 'x'-Path .claude/settings.json",
+        "Set-Content -Value (Get-Date)-Path .claude/settings.json",
+        "Set-Content -Value x -Path .claude/settings.json",
+        "Set-Content -Value a-Path .claude/settings.json",
+    ])
+    def test_a_flag_or_a_group_before_the_path_never_hides_it(self, root, command):
+        """A parameter that is not a path (`-PassThru`, `-PipelineVariable`,
+        `-Filter`) is never read as one, a write inside a group is read where
+        it stands, and a flag inside the value's group (a read's own path flag,
+        a listing's file switch) is not the verb's own. A flag glued to a
+        closing quote or paren, or after a no-break space, starts a parameter
+        as 5.1 tokenizes it; the last row is one word with its value, read by
+        the full name as before DEF-4029 (the code review's regression rows,
+        each denied on main at 64eb0066)."""
+        assert self._reason(root, command), command
+
+    @pytest.mark.parametrize("command", [
+        "'x' | Out-File -Fi .claude/settings.json",
+        "'x' | Out-File -Fil:.claude/settings.json",
+        "'x' | Tee-Object -F tools/cc/hooks/x.py",
+        "'x' | tee -Fi tools/cc/hooks/x.py",
+        "Copy-Item -Path other.txt,settings.json -Destination .claude/",
+        "Copy-Item -Destination .claude/ -Path other.txt,settings.json",
+        "Copy-Item other.txt,settings.json .claude/",
+        "Copy-Item -Destination .claude/ -PSPath settings.json",
+        "Move-Item -Destination elsewhere/ -PSPath tools/cc/hooks/x.py",
+    ])
+    def test_a_verb_specific_prefix_and_a_source_list_are_read(self, root, command):
+        """`-F`, `-Fi` and `-Fil` bind `FilePath` on Out-File and Tee-Object
+        alone (`-Filter` and `-Force` elsewhere; 5.1.26100's metadata), and a
+        copy's or move's sources are read element by element, by `-PSPath`
+        too, wherever the flag sits (the DEF-4029 reviews)."""
+        assert self._reason(root, command), command
+
+    @pytest.mark.parametrize("command", [
+        "sc.exe query Spooler",
+        "sc.exe tools/cc/hooks/x.py x",
+        "Clear-Content x.txt | Get-Item -Path .claude/settings.json",
+        "Set-Content -Value (Get-Date) out.txt | Get-Item -Path .claude/settings.json",
+        "Set-Content -Value x -Path other.txt; Get-Content -Path .claude/settings.json",
+        "Set-Content -Value x -Path other.txt,notes.txt",
+        "Set-Content -Value 'a,tools/cc/hooks/x.py' -Path other.txt",
+        'Set-Content -Value x -Path "other.txt,tools/cc/hooks/x.py"',
+        "Get-Content -Path .claude/settings.json | ForEach-Object { $_ } | Out-File other.txt",
+        "try { Add-Content log.txt x; Get-Content -Path .claude/settings.json } catch { }",
+        "try {\n  Add-Content log.txt x\n  Get-Content -Path .claude/settings.json\n} catch { }",
+        "(Add-Content log.txt x; Get-Item -Path .claude/settings.json)",
+    ])
+    def test_what_writes_no_protected_file_stays_allowed(self, root, command):
+        """The service tool by its full name, a separator outside any group,
+        a comma inside quotes and a value are never read as a protected
+        write, and a write in a block or a group never borrows the path flag
+        of the command after it, in its block or in the next group (the
+        DEF-4029 reviews: each read allow on main and denied on the first
+        grouping twin)."""
+        assert self._reason(root, command) == "", command
+
+    def test_a_list_is_read_element_by_element(self):
+        bp = _bash_patterns_module()
+        assert bp._candidate_paths_from_powershell(
+            "Set-Content -Value x -Path other.txt, tools/cc/hooks/x.py") == ["other.txt", "tools/cc/hooks/x.py"]
+        moved = bp.iter_ps_removed_or_relocated_operands(
+            "Move-Item -Path other.txt,tools/cc/hooks/x.py -Destination elsewhere/")
+        assert ("move", "tools/cc/hooks/x.py") in moved, moved
+        assert not [p for _e, p in moved if "," in p], moved
+
+    @pytest.mark.parametrize("command,effect", [
+        ("Remove-Item -Path other.txt,tools/cc/hooks/x.py", "delete"),
+        ("Move-Item other.txt,tools/cc/hooks/x.py elsewhere/", "move"),
+        ("Move-Item -Destination elsewhere/ -Path other.txt,tools/cc/hooks/x.py", "move"),
+    ])
+    def test_every_relocation_form_splits_a_list(self, command, effect):
+        """The named-target reader (the row's probe spelling), the positional
+        move source and the source flag after the destination each read a
+        comma list element by element (the failure-mode review: an AST pin
+        stayed green with the split result thrown away)."""
+        out = _bash_patterns_module().iter_ps_removed_or_relocated_operands(command)
+        assert (effect, "tools/cc/hooks/x.py") in out, out
+        assert not [p for _e, p in out if "," in p], out
+
+    def test_the_list_reader_splits_at_commas_outside_quotes(self):
+        bp = _bash_patterns_module()
+        assert bp._ps_list_targets("a,b") == ["a", "b"]
+        assert bp._ps_list_targets("a,") == ["a"]
+        assert bp._ps_list_targets('"a,b"') == ["a,b"]
+        assert bp._ps_list_targets("'a',\"b\"") == ["a", "b"]
+
+    def test_a_level_view_keeps_its_own_level_and_closes_each_group(self):
+        bp = _bash_patterns_module()
+        scan = "Set-Content -Value (1..3 | % {$_}) -Path x | Out-Null; & { a; b }"
+        depths = bp._ps_group_depths(scan)
+        top = bp._ps_level_view(scan, depths, 0)
+        assert len(top) == len(scan)
+        assert top.count("|") == 1 and top.count(";") == 1 and "-Path x" in top, top
+        inner = bp._ps_level_view(scan, depths, 1)
+        assert len(inner) == len(scan)
+        assert "1..3 | %" in inner and "{ a; b ;" in inner and "-Path" not in inner, inner
+        assert bp._ps_group_depths(")) a | b") == [0] * 8
+
+    def test_the_path_flag_reads_exactly_the_spellings_the_host_binds_to_a_path(self):
+        """Derived, not listed: a prefix of a path parameter's name or alias is
+        read as a path flag exactly when, on every write verb, it binds a path
+        parameter, binds nothing, or is ambiguous (PowerShell's binding error),
+        and binds a path parameter on one verb at least. Read either way wrong,
+        a prefix hides the path after it (`-Fil` is `-Filter`) or misses one
+        (`-Pat`)."""
+        bp = _bash_patterns_module()
+
+        def binds(params: dict[str, list[str]], prefix: str) -> set[str]:
+            exact = {k for k, al in params.items() if prefix in [n.lower() for n in [k, *al]]}
+            return exact or {k for k, al in params.items() if any(n.lower().startswith(prefix) for n in [k, *al])}
+
+        def safe(verbs: list[str], prefix: str) -> bool:
+            bound = [binds(self._PARAMS_51[v], prefix) for v in verbs]
+            return (all(len(b) != 1 or b <= self._PATH_PARAMS for b in bound)
+                    and any(len(b) == 1 and b <= self._PATH_PARAMS for b in bound))
+
+        def reads(pattern: str, prefix: str) -> bool:
+            return re.fullmatch(pattern, f"-{prefix} ", re.IGNORECASE) is not None
+
+        candidates = {name[:i].lower() for name in ("Path", "FilePath", "LiteralPath", "PSPath")
+                      for i in range(1, len(name) + 1)}
+        file_verbs = ["Out-File", "Tee-Object"]
+        for prefix in sorted(candidates):
+            on_all = safe(list(self._PARAMS_51), prefix)
+            assert reads(bp._PS_WRITE_PATH_FLAG, prefix) == on_all, prefix
+            # Out-File and Tee-Object read their own prefixes beside the shared ones
+            assert (reads(bp._PS_WRITE_PATH_FLAG, prefix) or reads(bp._PS_FILE_VERB_PATH_FLAG, prefix)) \
+                == (on_all or safe(file_verbs, prefix)), prefix
+
+    def test_the_parameter_table_is_the_hosts_own(self):
+        """`_PARAMS_51` is read from Windows PowerShell 5.1 itself where one is
+        on the host (the Windows cells), so a build that adds a parameter or an
+        alias sharing a path parameter's first letter reds here instead of
+        leaving the derived prefixes above stale (the failure-mode review)."""
+        import shutil
+        shell = shutil.which("powershell")
+        if shell is None:
+            pytest.skip("no Windows PowerShell on this host")
+        verbs = ",".join(f"'{v}'" for v in self._PARAMS_51)
+        script = ("if ($PSVersionTable.PSVersion.Major -ne 5) { 'not 5.1'; exit }; "
+                  f"foreach ($v in {verbs}) {{ foreach ($p in (Get-Command $v).Parameters.Values) {{ "
+                  "'{0} {1} {2}' -f $v, $p.Name, ($p.Aliases -join ',') } }")
+        out = subprocess.run([shell, "-NoProfile", "-NonInteractive", "-Command", script],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=50).stdout
+        if out.strip() == "not 5.1":
+            pytest.skip("the powershell on this host is not 5.1")
+        live: dict[str, dict[str, list[str]]] = {v: {} for v in self._PARAMS_51}
+        for line in out.splitlines():
+            verb, name, *aliases = (line.split(" ") + [""])[:3]
+            names = [name, *[a for a in aliases[0].split(",") if a]] if aliases else [name]
+            if verb in live and any(n[:1].lower() in "pfl" for n in names):
+                live[verb][name] = names[1:]
+        assert live == self._PARAMS_51, out
+
+
 class TestMaintenanceModeBypass:
     """ESPALIER_MAINTENANCE_MODE=1 in env bypasses the protected-zone check.
 
@@ -10582,6 +10817,7 @@ class TestQuotedTargetSurvivesTheRoot:
         # ── PowerShell ──
         "_PS_PATH_FLAG_RE": ("PowerShell", f'Set-Content -Path "{_TARGET}" -Value x'),
         "_PS_POSITIONAL_RE": ("PowerShell", f'Set-Content "{_TARGET}" x'),
+        "_PS_FILE_VERB_PATH_FLAG_RE": ("PowerShell", f'Out-File -Fi "{_TARGET}"'),
         "_PS_COPY_MOVE_DEST_RE": ("PowerShell", f'Copy-Item x -Destination "{_TARGET}"'),
         "_PS_COPY_MOVE_POSITIONAL_RE": ("PowerShell", f'Copy-Item x "{_TARGET}"'),
         "_PS_PERMISSION_RE": ("PowerShell", f'attrib +R "{_TARGET}"'),
@@ -11838,13 +12074,10 @@ class TestAWrapperCloserDoesNotHideAnExactProtectedFile:
                 "paths.append(_ps_unquote(raw_operand(raw, m, keep_quotes=True, powershell=True)))",
             ]),
             "iter_ps_removed_or_relocated_operands": sorted([
-                # the positional move source: the destination always follows it
-                "out.append(('move', _ps_unquote(raw_span(raw, m, 2))))",
                 # the find-family roots: `_find_delete_roots` has cut them
+                # (the positional move source and the sources before the
+                # destination flag moved to `_ps_list_targets`, which cuts)
                 "out.extend(((effect, _ps_unquote(p)) for p in roots))",
-                # the sources before the destination flag: the flag follows them
-                "sources = [_ps_unquote(t) for t in _ps_removal_target_tokens(pre, "
-                "tokens=_ps_operand_tokens(pre), unknown_takes_value=False)]",
             ]),
         }
         found: dict[str, list[str]] = {}
@@ -12238,6 +12471,7 @@ class TestEverySpanReadDecidesTheQuotedOperandCut:
     _PS_MASKED_FUNCTIONS = frozenset({
         "_ps_find_sweeps", "_ps_pipeline_reading", "_ps_pipeline_sweeps",
         "_candidate_paths_from_powershell", "iter_ps_removed_or_relocated_operands",
+        "_ps_path_flag_operands",
     })
 
     @staticmethod

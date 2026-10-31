@@ -27,8 +27,9 @@ to the recorded digest. So the first time they edit one word, they are frozen
 holding a generated block that says *do not hand-edit* -- which they cannot
 regenerate, because an adopter tree has no ``scripts/``. ``docs/TROUBLESHOOTING.md``
 and ``docs/WORKFLOW.md`` are exactly that shape and are fixed by prose plus a
-contract test instead. ``README.md`` and ``docs/QUICKSTART.md`` are self-host
-only, with zero downstream copies, which is what makes them eligible.
+contract test instead. ``README.md``, ``docs/QUICKSTART.md`` and
+``tests/README.md`` are self-host only, with zero downstream copies, which is
+what makes them eligible.
 
 Marker naming is a live hazard
 ------------------------------
@@ -64,6 +65,15 @@ if str(_ROOT) not in sys.path:
 from espalier import cli  # noqa: E402
 from espalier import managed_inventory  # noqa: E402
 from espalier.surface_hygiene import SPECIFIC_ID_RE  # noqa: E402
+# The local-only skip list is derived from the test tree, so its reader lives
+# beside the population it reads; this generator is self-host only and ships
+# nowhere (tests/test_contracts.py sanctions the import with that reason). An
+# adopter checkout or an export has no tests/: the renderer then refuses by
+# name instead of writing an empty region.
+try:
+    from tests._local_only_skips import local_only_skip_modules  # noqa: E402
+except ImportError:  # fail-open: ok reporter -- the renderer raises by name below
+    local_only_skip_modules = None  # type: ignore[assignment]
 
 _SCRIPT = "scripts/generate_doc_regions.py"
 
@@ -224,6 +234,24 @@ def render_required_gitignore() -> tuple[str, int]:
     return f"```\n{body}\n```", len(entries)
 
 
+def render_local_only_skips() -> tuple[str, int]:
+    """The test modules that run locally and skip in CI, for ``tests/README.md``.
+
+    Module paths only, never the reasons: a reason is free text that may carry
+    an f-string's placeholders, a non-ASCII dash or a pack id, and the module
+    path is what the reader needs to find it. A module joins by saying, in a
+    skip reason, that its gate is gitignored or local-only -- the README's own
+    rule -- so a new one appears here with no edit to this script.
+    """
+    if local_only_skip_modules is None:
+        raise RuntimeError(
+            "tests/_local_only_skips.py is not importable from this checkout: the "
+            "local-only-skips region is rendered on the self-host tree only"
+        )
+    modules = sorted(local_only_skip_modules(_ROOT))
+    return "\n".join(f"- `{rel}`" for rel in modules), len(modules)
+
+
 # ── regions ──────────────────────────────────────────────────────────────
 
 
@@ -302,6 +330,13 @@ REGIONS: tuple[Region, ...] = (
         source="espalier/cli.py::REQUIRED_GITIGNORE",
         render=render_required_gitignore,
         floor=8,
+    ),
+    Region(
+        name="local-only-skips",
+        target="tests/README.md",
+        source="tests/_local_only_skips.py::local_only_skip_modules",
+        render=render_local_only_skips,
+        floor=5,
     ),
 )
 
