@@ -139,7 +139,8 @@ its start, and the board's `overlaps:` section is the oracle, not this paragraph
    call before the second and third). `DEF-5024`'s contract test on the required cells; a slim
    Windows leg on `main` after each merge, in a workflow of its own (the base-run readers read a
    run's conclusion, so a flaky job inside the proof would red `main`), sized by a dispatched
-   portability run first; and
+   portability run first (measured 2:16 and 3:59 on 2026-10-29 and 10-30; the leg and its board
+   line landed 2026-10-31 on the dispatcher's word, `lane/windows-main-leg`); and
    `DEF-2025`'s rows counted per platform with the row re-opened (as non-strict expected failures
    on the runners, the operator's 2026-10-19 kind). Needs `TP-703a`'s reader so its own verdicts
    are read.

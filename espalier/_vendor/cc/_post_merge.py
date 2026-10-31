@@ -25,6 +25,12 @@ and its own words (a Windows red sat in GitHub's record for six hours on
   Replayed at an instant (``at``), a run that started after it is dropped
   and one that finished after it reads as still running.
 * ``lines`` and ``board_lines`` are the words, 7-bit ASCII.
+* ``base_run_verdict`` and ``base_run_lines`` are the base-run rule and its
+  words: the newest verdict among a workflow's push runs on the base (the
+  advisory Windows leg, ``WINDOWS_WORKFLOW``), walked back on a red to the
+  streak's first red and the green before it. A push run attaches to the
+  merge commit and appears in no pull request's rollup, so the board's
+  ``checks:`` line reads the leg through these, apart from the merges.
 
 Standard library only, zero ``espalier`` imports: the hook loads this by
 path under a private alias; the driver and the board import it as a sibling.
@@ -52,6 +58,17 @@ MERGED_FIELDS = "number,mergedAt,statusCheckRollup"
 #: labels (the ``seat:<name>`` label ``ship.py open`` stamps, which names a
 #: lane's seat where no claim does, DEF-4044), never a hundred rollups.
 LANE_FIELDS = "number,mergedAt,headRefName,labels"
+#: The conclusions a completed workflow run concludes as a red verdict.
+#: Everything else a completed run can conclude -- cancelled (by hand, or on a
+#: repository whose workflow cancels an older run at a newer push), stale,
+#: skipped by a job-level ``if``, neutral, action required -- is no verdict,
+#: so a skipped run never reads as a red base. The board's ``_RED`` is this set.
+RUN_RED = frozenset({"FAILURE", "TIMED_OUT", "STARTUP_FAILURE"})
+#: The advisory Windows leg on the base: the serial test files on
+#: windows-latest after each push to it, where the repository runs a workflow
+#: of that name (Espalier's own does; ``init`` installs none, and the board
+#: prints nothing for a repository without it).
+WINDOWS_WORKFLOW = "post-merge-windows.yml"
 
 Gh = Callable[[list[str]], object]
 
@@ -390,12 +407,17 @@ def lines(checks: dict[str, dict], *, oldest: int | None = None) -> list[str]:
 
 
 def board_lines(checks: dict[str, dict], *, window: int, oldest: int | None = None,
-                new: set[str] | frozenset[str] = frozenset()) -> list[str]:
+                new: set[str] | frozenset[str] = frozenset(), base_run: dict | None = None,
+                workflow: str = WINDOWS_WORKFLOW, base: str = "main") -> list[str]:
     """The board's ``checks:`` entries: one per red check name, with the merge
     it went red on, the leg's finish and what stands beside it (``new:`` ahead
     of one this read printed for the first time); one per check that reached
-    no verdict on every merge read; one line saying none when nothing is red.
-    Pull-request legs, not required checks: the board prints, never reverts."""
+    no verdict on every merge read; one line saying none when nothing is red;
+    then the base-run workflow's lines (``base_run_lines`` over ``base_run``,
+    the state ``base_run_verdict`` built, or ``{"unread": reason}``), after the
+    pull-request legs, with the none line kept off when that run is red.
+    Pull-request legs and the advisory leg, not required checks: the board
+    prints, never reverts."""
     out: list[str] = []
     for c in reds(checks):
         since = c["since"] or {}
@@ -415,9 +437,104 @@ def board_lines(checks: dict[str, dict], *, window: int, oldest: int | None = No
     for c in never_judged(checks):
         kinds = sorted({n["conclusion"] for n in c["no_verdict"]})
         out.append(ascii_(f"{c['name']}: no verdict on every merge read ({', '.join(kinds)})"))
-    if not out:
+    base_red = isinstance(base_run, dict) and base_run.get("verdict") == "red"
+    if not out and not base_red:
         out.append(f"none red among the last {window} merges")
+    out.extend(base_run_lines(base_run, workflow=workflow, base=base))
     return out
+
+
+def base_run_verdict(runs: object) -> dict:
+    """The newest verdict among a workflow's runs on the base, from a parsed
+    ``gh run list`` listing (newest first; a row that is not a dict is
+    skipped, and anything but a list reads as no runs): ``{"verdict":
+    "green"|"red"|"none", "sha", "run", "url", "running", "since",
+    "green_sha", "no_verdict", "read"}``. A run not completed is going
+    (``running`` when it is newer than the verdict); ``SUCCESS`` is green,
+    ``RUN_RED`` red, and cancelled, stale, skipped or neutral is no verdict,
+    walked past (its kinds in ``no_verdict`` while no verdict is reached). On
+    a red the walk goes on, past runs going or without a verdict, to the
+    streak's first red (``since``: the oldest red before the green that ends
+    the walk, with its run id and url) and that green (``green_sha``, empty
+    when none is in the listing): "red since" names where the streak began,
+    never the newest red alone. ``read`` counts the completed rows read."""
+    out: dict = {"verdict": "none", "sha": "", "run": "", "url": "", "running": False,
+                 "since": None, "green_sha": "", "no_verdict": [], "read": 0}
+    if not isinstance(runs, list):
+        return out
+    for row in runs:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("status") or "").lower() != "completed":
+            if out["verdict"] == "none":
+                out["running"] = True
+            continue
+        out["read"] += 1
+        conclusion = str(row.get("conclusion") or "").upper()
+        here = {"sha": str(row.get("headSha") or ""), "run": str(row.get("databaseId") or ""),
+                "url": str(row.get("url") or "")}
+        if conclusion == "SUCCESS":
+            if out["verdict"] == "none":
+                out.update(verdict="green", **here)
+            else:
+                out["green_sha"] = here["sha"]
+            break
+        if conclusion in RUN_RED:
+            if out["verdict"] == "none":
+                out.update(verdict="red", **here)
+            out["since"] = here
+            continue
+        if out["verdict"] == "none":
+            out["no_verdict"].append(conclusion.lower() or "no conclusion")
+    return out
+
+
+def base_run_lines(state: dict | None, *, workflow: str = WINDOWS_WORKFLOW, base: str = "main") -> list[str]:
+    """The board's ``checks:`` entries for a base-run workflow, in the
+    pull-request legs' shape with the base and the word advisory in the name
+    (never ``<base>:``, the revert rule's own label): on a red, ``<name>
+    (<base>, advisory): red since <sha> (run <id>)`` (the streak's first
+    red), then `` (no green among the runs read)`` when none is in the
+    listing, ``, still red on <sha> (run <id>)`` when the newest red is a
+    later run, ``, green on <sha>`` naming the green before the streak, and
+    ``; a newer run is going``; on a green under newer completed runs that
+    reached no verdict, one line naming them (a hang the job's bound cuts may
+    conclude cancelled on every push, and a walk that only skipped such runs
+    would hide them all behind one old green); on no verdict among every
+    completed run read, one line naming the kinds; on a failed read
+    (``{"unread": reason}``), one line saying so. A plain green, absent (a
+    repository without the workflow), no completed run and no state render
+    nothing: the deployed board is silent where the leg is not. ``name`` is
+    the workflow's file name without its extension."""
+    if not isinstance(state, dict):
+        return []
+    name = workflow[:-4] if workflow.endswith(".yml") else workflow
+    label = f"{name} ({base}, advisory)"
+    if state.get("unread"):
+        return [ascii_(f"{label}: unread ({state['unread']})")]
+    verdict = state.get("verdict")
+    kinds = sorted(set(state.get("no_verdict") or []))
+    going = "; a newer run is going" if state.get("running") else ""
+    if verdict == "red":
+        since = state.get("since") or {}
+        first_sha, first_run = str(since.get("sha") or state.get("sha") or ""), since.get("run") or state.get("run")
+        text = f"{label}: red since {first_sha[:7]} (run {first_run})"
+        if not state.get("green_sha"):
+            text += " (no green among the runs read)"
+        if str(state.get("run") or "") != str(first_run or ""):
+            text += f", still red on {str(state.get('sha') or '')[:7]} (run {state.get('run')})"
+        if state.get("green_sha"):
+            text += f", green on {str(state['green_sha'])[:7]}"
+        return [ascii_(text + going)]
+    if verdict == "green" and kinds:
+        n = len(state.get("no_verdict") or [])
+        return [ascii_(f"{label}: no verdict on the newest {n} run{'' if n == 1 else 's'} ({', '.join(kinds)}), "
+                       f"green on {str(state.get('sha') or '')[:7]} before {'it' if n == 1 else 'them'}{going}")]
+    if verdict == "none" and kinds:
+        read = int(state.get("read") or 0)
+        return [ascii_(f"{label}: no verdict on every run read ({', '.join(kinds)}; {read} run"
+                       f"{'' if read == 1 else 's'}){'; a run is going' if state.get('running') else ''}")]
+    return []
 
 
 def summary(checks: dict[str, dict]) -> dict[str, Any]:

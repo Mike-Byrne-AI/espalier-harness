@@ -51,6 +51,13 @@ def _gh(answers: dict[str, object]):
     def run(argv, **kw):
         calls.append(list(argv))
         key = " ".join(argv[1:3]) if argv[1] != "api" else ("api compare" if "/compare/" in argv[2] else argv[2])
+        if key == "run list" and "--workflow" in argv and argv[argv.index("--workflow") + 1] != "post-merge.yml":
+            # The advisory Windows leg's read, keyed by its workflow; a fixture
+            # that gives none reads no runs, so the proof's listing is never
+            # mistaken for the leg's and every older row stays honest.
+            key = f"run list {argv[argv.index('--workflow') + 1]}"
+            if key not in answers:
+                return 0, "[]", ""
         if key == "pr list" and "merged" in argv:
             # The checks: line's read; a fixture that gives none reads no merges,
             # so the open-PR answer is never mistaken for the merged listing.
@@ -381,6 +388,19 @@ class TestPostMergeVerdict:
         assert "main:     post-merge proof green on aaaaaaa; a newer run is going" in text
         assert not [c for c in run.calls if c[1] == "api"], "a green base asks for no suspects"
 
+    def test_a_missing_workflow_is_read_by_its_stem_through_the_runners_cut(self, board):
+        """gh's generic 404 ends with the workflow's URL, and the board's runner
+        keeps 120 characters of the text, which can end inside the extension
+        (this repository's own URL does). Dies to: the full file name required,
+        so the cut text reads as a failed read and prints `unread` on every
+        checkout holding a workflow the default branch does not yet."""
+        cut = ("gh run list answered rc=1 with no JSON: HTTP 404: Not Found (https://api.github.com/repos/"
+               "Mike-Byrne-AI/espalier-harness/actions/workflows/post-merge-windows.ym")
+        assert board.workflow_absent(cut, "post-merge-windows.yml")
+        assert not board.workflow_absent(cut, "portability.yml")
+        assert not board.workflow_absent("gh run list answered rc=1 with no JSON: HTTP 403: Forbidden",
+                                         "post-merge-windows.yml")
+
     def test_a_repository_without_the_post_merge_proof_says_so(self, board, monkeypatch, tmp_path):
         """`gh run list --workflow` on a workflow the repository does not have,
         recorded 2026-10-09: rc=1 and "HTTP 404: workflow <name> not found on
@@ -450,6 +470,97 @@ class TestChecksLine:
         text = board.render(board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": rows,
                                                               "run list": _GREEN_RUNS})))
         assert "checks:   none red among the last 2 merges" in text
+
+    @staticmethod
+    def _all_green_rollups() -> list[dict]:
+        return [_with_leg(_with_leg(pr, "portability (windows-latest)", conclusion="SUCCESS"),
+                          "portability (macos-latest)", conclusion="SUCCESS") for pr in _merged_rollups()]
+
+    @staticmethod
+    def _leg_in_checkout(root: Path) -> None:
+        """The checkout holds the leg's workflow file: the one case the board
+        spawns the leg's read (an adopter tree never does)."""
+        (root / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
+        (root / ".github" / "workflows" / "post-merge-windows.yml").write_text("name: leg\n", encoding="utf-8")
+
+    def test_the_windows_leg_red_is_named_on_the_checks_line_never_the_main_line(self, board, monkeypatch, tmp_path):
+        """The advisory Windows leg (post-merge-windows.yml) runs on a push to
+        the base, so its run appears in no pull request's rollup, and it must
+        never trip the main: line's revert. Dies to: the leg's listing unread,
+        its red on the main line, the none line printed above it, or the
+        proof's own verdict moved by it."""
+        _stub_channel(monkeypatch, board)
+        windows = [dict(_run("completed", "failure", "d" * 40), databaseId=9),
+                   dict(_run("completed", "failure", "c" * 40), databaseId=8),
+                   dict(_run("completed", "success", "b" * 40), databaseId=7)]
+        self._leg_in_checkout(tmp_path)
+        run = _gh({"pr list": [], "pr list merged": self._all_green_rollups(), "run list": _GREEN_RUNS,
+                   "run list post-merge-windows.yml": windows})
+        collected = board.collect(tmp_path, run_=run)
+        text = board.render(collected)
+        assert "main:     post-merge proof green on aaaaaaa" in text
+        assert ("checks:   post-merge-windows (main, advisory): red since ccccccc (run 8), still red on ddddddd (run 9), "
+                "green on bbbbbbb") in text
+        assert "none red among" not in text
+        assert collected["post_merge_checks"]["windows"]["verdict"] == "red"
+        reads = [c for c in run.calls if c[1:3] == ["run", "list"]]
+        assert [c[c.index("--workflow") + 1] for c in reads] == ["post-merge.yml", "post-merge-windows.yml"]
+        assert all(c[c.index("--event") + 1] == "push" and c[c.index("--branch") + 1] == "main" for c in reads)
+
+    def test_a_green_absent_or_empty_windows_leg_prints_nothing(self, board, monkeypatch, tmp_path):
+        """Dies to: a line for a leg that is not red. The deployed board runs on
+        adopter trees without the workflow (gh answers 404, the state the
+        proof's own read names `absent`), and here before the leg's first run."""
+        _stub_channel(monkeypatch, board)
+        absent = board.Unresolvable(
+            "gh run list answered rc=1 with no JSON: HTTP 404: workflow post-merge-windows.yml not found on the "
+            "default branch (https://api.github.com/repos/o/r/actions/workflows/post-merge-windows.yml)")
+        self._leg_in_checkout(tmp_path)
+        for answer, verdict in ((_GREEN_RUNS, "green"), (absent, "absent"), ([], "none")):
+            collected = board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": self._all_green_rollups(),
+                                                          "run list": _GREEN_RUNS,
+                                                          "run list post-merge-windows.yml": answer}))
+            text = board.render(collected)
+            assert "checks:   none red among the last 2 merges" in text and "post-merge-windows" not in text
+            assert collected["post_merge_checks"]["windows"]["verdict"] == verdict
+        # No workflow file in the checkout: no spawn and no line, whatever gh
+        # would have answered (the adopter tree's shape, and this one before
+        # the leg lands); a 403 or a timeout there printed `unread` once.
+        import shutil
+        shutil.rmtree(tmp_path / ".github")
+        run = _gh({"pr list": [], "pr list merged": self._all_green_rollups(), "run list": _GREEN_RUNS,
+                   "run list post-merge-windows.yml": board.Unresolvable("gh run list answered rc=1 with no JSON: HTTP 403")})
+        collected = board.collect(tmp_path, run_=run)
+        assert collected["post_merge_checks"]["windows"] == {"verdict": "absent"}
+        assert not [c for c in run.calls if c[1:3] == ["run", "list"] and "post-merge-windows.yml" in c]
+        assert "post-merge-windows" not in board.render(collected)
+
+    def test_a_failed_windows_read_is_the_legs_own_line_never_the_sections_unread(self, board, monkeypatch, tmp_path):
+        """Dies to: the leg's failed read taking the whole checks: section down,
+        so the merges' reds go unread for a gh hiccup on the second call."""
+        _stub_channel(monkeypatch, board)
+        self._leg_in_checkout(tmp_path)
+        failed = board.Unresolvable("gh run list took longer than 15s")
+        collected = board.collect(tmp_path, run_=_gh({"pr list": [], "pr list merged": _merged_rollups(),
+                                                      "run list": _GREEN_RUNS,
+                                                      "run list post-merge-windows.yml": failed}))
+        text = board.render(collected)
+        assert "portability (windows-latest): red since #313" in text
+        assert "          post-merge-windows (main, advisory): unread (gh run list took longer than 15s)" in text
+        assert "checks:   unread" not in text
+
+    def test_the_leg_is_read_on_the_base_branch_the_board_reads(self, board, monkeypatch, tmp_path):
+        """Dies to: the base dropped from the leg's read or its words (every
+        other board test stubs the base to main)."""
+        _stub_channel(monkeypatch, board)
+        monkeypatch.setattr(board._merge_rules, "base_branch", lambda root, deadline=None: "trunk")
+        self._leg_in_checkout(tmp_path)
+        run = _gh({"pr list": [], "pr list merged": self._all_green_rollups(), "run list": _GREEN_RUNS,
+                   "run list post-merge-windows.yml": [dict(_run("completed", "failure", "d" * 40), databaseId=9)]})
+        text = board.render(board.collect(tmp_path, run_=run))
+        assert "checks:   post-merge-windows (trunk, advisory): red since ddddddd (run 9) (no green among the runs read)" in text
+        (read,) = [c for c in run.calls if c[1:3] == ["run", "list"] and "post-merge-windows.yml" in c]
+        assert read[read.index("--branch") + 1] == "trunk"
 
     def test_a_first_mention_is_logged_once_and_a_failed_append_is_a_note(self, board, monkeypatch, tmp_path):
         """The roadmap's red-to-first-mention figure is derived from this log.
@@ -1622,6 +1733,7 @@ class TestDerivedNotRestated:
         ship = _load("ship", "ship_for_board_test")
         assert board.POST_MERGE_WORKFLOW == ship.POST_MERGE_WORKFLOW
         assert board._RED == ship.POST_MERGE_RED
+        assert board._RED is board._post_merge.RUN_RED, "the board's red set is the one home's object, not a copy"
 
 
 #: The placement rule a current claim is stamped with: the mapper's own

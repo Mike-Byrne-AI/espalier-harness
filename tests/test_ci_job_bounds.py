@@ -211,3 +211,66 @@ class TestThePostMergeProofRunsEveryTip:
             job_id for job_id, job in (workflow.get("jobs") or {}).items() if "concurrency" in job
         ]
         assert not grouped, f"post-merge.yml sets a concurrency group on: {grouped}"
+
+
+class TestThePostMergeWindowsLegKeepsItsContracts:
+    """The advisory Windows leg on main (post-merge-windows.yml, the serial
+    files on windows-latest after each push): its contracts were prose in the
+    header until the lane's failure-mode review, so a tidy-up could have
+    undone one silently. Each test pins one."""
+
+    @staticmethod
+    def _leg() -> tuple[dict, dict]:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("post_merge_for_job_bounds", REPO_ROOT / "tools" / "cc" / "_post_merge.py")
+        pm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pm)
+        workflow = _workflows()[pm.WINDOWS_WORKFLOW]
+        (job,) = workflow["jobs"].values()
+        return workflow, job
+
+    def test_the_file_the_board_reads_exists_and_runs_on_a_push_to_main(self):
+        """Dies to: the file renamed or deleted (the board's absent state is
+        silent on purpose, so nothing else would say), or its trigger moved."""
+        workflow, job = self._leg()
+        on = workflow.get("on", workflow.get(True))   # a bare `on:` parses as the boolean key
+        assert on["push"]["branches"] == ["main"] and "workflow_dispatch" in on, on
+        assert "windows" in str(job["runs-on"]).lower()
+        assert "--leg serial" in "\n".join(str(s.get("run", "")) for s in job["steps"])
+
+    def test_no_job_or_step_continues_on_error(self):
+        """Dies to: `continue-on-error: true` (every run would conclude success
+        and the board would be silent forever)."""
+        _workflow, job = self._leg()
+        assert "continue-on-error" not in job
+        assert not [s for s in job["steps"] if "continue-on-error" in s]
+
+    def test_the_proof_keeps_no_windows_job(self):
+        """Dies to: the leg folded into post-merge.yml, whose readers read a
+        run's conclusion, so a Windows flake there would ask for a revert."""
+        proof = _workflows()["post-merge.yml"]
+        on_windows = [job_id for job_id, job in proof["jobs"].items()
+                      if "windows" in (str(job.get("runs-on", "")) + str((job.get("strategy") or {}).get("matrix") or {})).lower()]
+        assert not on_windows, on_windows
+
+    def test_its_per_test_ceiling_is_the_portability_legs(self):
+        """Dies to: the two literal homes of the windows-latest ceiling
+        drifting apart (portability's export and this step's env)."""
+        _workflow, job = self._leg()
+        (step,) = [s for s in job["steps"] if "--leg serial" in str(s.get("run", ""))]
+        match = re.search(r'export PYTEST_TIMEOUT=(\d+)\n', _portability_test_step())
+        assert match and str(step["env"]["PYTEST_TIMEOUT"]) == match.group(1), (step.get("env"), match and match.group(1))
+        assert step.get("shell") == "bash"
+
+    def test_its_bound_outlasts_the_serial_files_longest_mark(self):
+        """The test-serial cell's rule, applied to this job: a bound at or under
+        a serial file's own mark kills the job with no test named where the
+        mark would have failed it by name. Dies to: the bound cut back to twice
+        the measured run (ten), under the PowerShell gate's 900 s mark."""
+        from tests.test_test_suite_contract import _declared_timeout_sites
+
+        _workflow, job = self._leg()
+        worst = max(seconds for rel in _serial_files()
+                    for _label, seconds, _slow in _declared_timeout_sites((REPO_ROOT / rel).read_text(encoding="utf-8")))
+        assert worst < float("inf") and job["timeout-minutes"] * 60 >= worst + 600, (job["timeout-minutes"], worst)

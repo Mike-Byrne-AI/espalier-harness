@@ -2,8 +2,12 @@
 
 ## Status
 
-- Version target: self-host. Every file this pack touches is this repository's own
-  (`tests/`, `.github/workflows/`, `scripts/`); nothing deploys through `espalier init`.
+- Version target: self-host for W1 and W3, whose files are this repository's own (`tests/`,
+  `.github/workflows/`, `scripts/`). W2-B edits two deployed files, `tools/cc/_post_merge.py`
+  and `tools/cc/board.py` (`espalier/managed_paths.py` deploys both), and one deployed command
+  body, `.claude/commands/inbox.md`, so W2 syncs the vendored and `.claude` mirrors and
+  refreshes the integrity manifest (corrected at W2's 0-A, 2026-10-31; the first text said
+  nothing deploys).
 - Type: test-suite contract plus CI workflow. Three waves, each its own lane and pull request,
   because two of them wait on a decision the third does not.
 - **Kind: PACK.** `lane/tests-each-sigalrm-arming-function-guards-itself` (W1, the name the ship
@@ -107,17 +111,21 @@ missed.
    would turn `main` red and fire the revert-first rule on every flake. The sibling workflow is
    advisory, and it needs a reader of its own: a push run attaches to the merge commit and never
    appears in a merged pull request's `statusCheckRollup`, so `TP-703a`'s rollup read cannot see
-   it. W2 gives `tools/cc/_post_merge.py` (`TP-703a`'s module, which must exist first) a second
-   base-workflow reader in the shape of `tools/cc/board.py::read_post_merge`: one
-   bounded `gh run list --workflow post-merge-windows.yml --branch main --event push --limit N
-   --json databaseId,status,conclusion,headSha,url` call, the same no-verdict rule (cancelled,
-   stale, skipped and neutral read no verdict, and the read walks back to the newest run that
-   reached one), rendered on the board's `checks:` line as `main: post-merge-windows red since
-   <sha> (run <id>)`, with its own budget and its own test. The leg runs with the same
-   `PYTEST_TIMEOUT=180` the portability leg sets on Windows and a `timeout-minutes` twice the
-   measured duration. Its
+   it. W2 gives `tools/cc/_post_merge.py` (`TP-703a`'s module, landed) the rule and the words of
+   a second base-workflow read, as pure functions over the parsed run listing (the module has no
+   `gh`, no window and no `Unresolvable`: `base_run_verdict`, `base_run_lines`), and
+   `tools/cc/board.py::read_post_merge_checks` the one bounded `gh run list --workflow
+   post-merge-windows.yml --branch main --event push --limit N --json
+   databaseId,status,conclusion,headSha,url` call under its own try/except, beside the section's
+   merged read; the same no-verdict rule as `read_post_merge` (cancelled, stale, skipped and
+   neutral read no verdict, and the read walks back to the newest run that reached one), then on
+   a red back to the streak's first red and the green before it, rendered on the board's
+   `checks:` line as `post-merge-windows (main, advisory): red since <sha> (run <id>)`, with its own budget
+   and its own tests; a repository without the workflow renders nothing. The leg runs with the
+   same `PYTEST_TIMEOUT=180` the portability leg sets on Windows, under `shell: bash`, and a
+   `timeout-minutes` of 25 (the serial files' longest own timeout mark plus ten minutes). Its
    pytest line is the serial leg `scripts/proof_tier.py` prints (`python3 scripts/proof_tier.py
-   --tier full --leg serial`), never a copied file list.
+   --tier full --leg serial`), never a copied file list. (Corrected at W2's 0-A, 2026-10-31.)
 3. **W3 (`lane/tests-macos-race-rows-run-as-expected-failures`)**: a roster in
    `tests/conftest.py`, `PLATFORM_EXPECTED_FAILURES`, each entry a node id or a class's node-id
    prefix, a platform key, the row id, the reason and the date. The platform key maps to a pure
@@ -159,9 +167,10 @@ missed.
   expected failure, counted, dated and still run, is honest; a fix is not in this pack's reach.
 - **The `TP-703h` registry.** W3's roster is one tuple in one file by design, so the registry
   can take it whole.
-- **A reader of the new leg outside `TP-703a`'s module.** The base-run read lands in that module
-  (Scope (in) item 2, 2-B) beside its rollup read; the banner and the ship preflight take the
-  module's lines as `TP-703a` wires them, unchanged here.
+- **A reader of the new leg outside `TP-703a`'s module.** The base-run rule and its words land
+  in that module (Scope (in) item 2, 2-B) beside its rollup rule, and the one `gh` call in
+  `tools/cc/board.py`, where the module's other readers' calls are; the banner and the ship
+  preflight take the module's lines as `TP-703a` wires them, unchanged here.
 - **The `DEF-5023` walker budget** and `DEF-2025`'s per-worker report file (`DEF-2023`): their
   own rows.
 
@@ -199,7 +208,10 @@ Added at W3's 0-A (2026-10-19), from the pack-artifact review.
   that says the work landed here; the landed record is not edited. Added at W1's 0-A.
 - **W2's own 0-A**: `tools/cc/board.py` and `tools/cc/_post_merge.py` are deployed
   (`espalier/managed_paths.py`), so the Status line's "nothing deploys through `espalier init`"
-  does not hold for W2-B. Pre-flagged at W1's 0-A, not corrected there.
+  did not hold for W2-B. Pre-flagged at W1's 0-A, not corrected there; corrected at W2's 0-A
+  (2026-10-31), the Status line now says which files deploy. The deployed `board.py` runs on
+  adopter trees with no `post-merge-windows.yml`, and on this repository between W2's merge and
+  its first push run, so the reader's absent state renders nothing (2-B).
 - **`TP-703c`** edits `tests/conftest.py`'s `pytest_configure`, a hunk disjoint from the
   collection hook W3 changes.
 - Sequential single-seat lanes make each of these a catch-up, never a conflict; the board's
@@ -252,11 +264,24 @@ function's own body before the first arm; item 3, the only open pull request is 
 4. *Oracle:* the required cells' queue time over one day: per `test.yml` run (`gh run list
    --workflow test.yml --limit 50 --json databaseId,createdAt`), the `startedAt` of its `test (3.x)`
    jobs from `gh run view <id> --json jobs` minus the run's `createdAt`; the median and the worst. *Refuting result for a concurrency group:* the advisory leg's self-overlap
-   (a run of 66 to 172.9 minutes on every merge, about 25 a day) does not move that queue time,
-   measured again after the leg's first day. *Exit:* the choice is written from the figure, never
+   does not move that queue time. *Exit:* the choice is written from the figure, never
    copied from `post-merge.yml` (its "no concurrency group" reason bounds revert suspects for a
    blocking proof and does not apply here): a group with `cancel-in-progress` only if the overlap
-   is measured to delay the required cells, else none; the header says which and why.
+   is measured to delay the required cells, else none; the header says which and why. *Corrected
+   at W2's 0-A:* the first text's premise (a run of 66 to 172.9 minutes on every merge) was the
+   old full leg; the serial leg measured 2:16 and 3:59, so a self-overlap needs two merges within
+   about four minutes, and the re-measure "after the leg's first day" is a post-merge follow-up,
+   not a build step.
+
+*Read 2026-10-30 and re-read 2026-10-31 at W2's start (`main` at f333e8c9, then 70bc9778):*
+item 1, two dispatched runs of the serial files on `windows-latest`, 40402314684 (the job
+3 min 59 s, 21:12:04 to 21:16:03Z) and 40828944655 (2 min 16 s, 06:23:51 to 06:26:07Z), both
+`success`, both `workflow_dispatch`; the one `bash` datum for `proof_tier.py`'s own serial leg is
+win's Git Bash run of that line (note f03c27: 171 s, exit 0, 1274 passed, 870 skipped). Item 2,
+`read_post_merge` (`board.py`) and `base_red_after_merge` (`ship.py`) both read `conclusion`, so
+the leg stays a sibling workflow. Item 3, both runs green. Item 4, the required cells' queue over
+240 jobs (2026-10-18 to 10-29): median 0.2 min, worst 1.7; no concurrency group, and the header
+says so. Not refuted: build. `gh workflow list --all` showed no `post-merge-windows` workflow.
 
 **W3-0 (the counted expected failure).**
 1. *Oracle:* the operator's word on re-opening `DEF-2025` (a successor row). *Refuting result:*
@@ -423,29 +448,83 @@ coordination), and the closing text says the deferred work landed here, without 
 **2-A `.github/workflows/post-merge-windows.yml`.** `on: push: branches: [main]` and
 `workflow_dispatch`; `permissions: contents: read`; the concurrency choice W2-0 item 4 measured
 (a group with `cancel-in-progress` only where the leg's self-overlap delayed the required cells,
-else none), never the reason `post-merge.yml` gives, which bounds revert suspects for a blocking
-proof and does not apply here; one job on `windows-latest`, `timeout-minutes` at twice
-W2-0's measured duration, rounded up to ten; checkout with full history as `post-merge.yml`
-does; Python 3.12; `pip install -e .[dev]`; `PYTEST_TIMEOUT=180` as the portability leg sets on
-Windows; the step runs `python scripts/proof_tier.py --run --tier full --leg serial`, so the file
-list has one home. The header says in its first lines that it is advisory, that it is a separate
-workflow because the proof's readers read a run's conclusion, which concurrency choice the
-queue-time figure decided, and that `tools/cc/_post_merge.py`'s base-run read reads it. *Refuted if:* `proof_tier.py --run --leg serial` cannot run under `bash` on the Windows
-runner (the portability step runs `bash` on every runner; `scripts/proof_tier.py` is Python and
-spawns `pytest` by name; W2-0 item 1's dispatch is the measurement of both).
+else none: none, on the 0.2-minute median), never the reason `post-merge.yml` gives, which bounds
+revert suspects for a blocking proof and does not apply here; one job on `windows-latest`,
+`timeout-minutes` 25: the serial files' longest own timeout mark (900 s, the PowerShell gate's;
+a mark outranks the ceiling) plus the ten minutes `tests/test_ci_job_bounds.py` gives the
+test-serial cell on top of its worst mark (twice the measured 3:59 would round to ten and cut that
+mark with no test named; corrected at the review round from fifteen); a shallow checkout with the
+same pinned action versions as `post-merge.yml` (the measured runs were shallow, and no serial
+file reads history or tags); Python 3.12; `pip
+install -e .[dev]`; `shell: bash` as the portability step runs on every runner (the Windows
+default is PowerShell) and `PYTEST_TIMEOUT: "180"` as an `env:` key of the step (the portability
+leg exports it under `RUNNER_OS` because its one step runs on three hosts; this job runs on one);
+the step runs `python scripts/proof_tier.py --run --tier full --leg serial`, so the file list has
+one home, and that line runs under xdist at one worker, where a ceiling crossing names its test
+and the controller replaces the worker (`scripts/proof_tier.py`'s own note), so the portability
+step's no-summary guard is not copied. The header says in its first lines that it is advisory,
+that it is a separate workflow because the proof's readers read a run's conclusion, which
+concurrency choice the queue-time figure decided, and that `tools/cc/board.py` reads it through
+`tools/cc/_post_merge.py`'s base-run rule. On this repository `.github/workflows/` is CI-gated
+(`tools/cc/ci_guard.py`), so the pull request's title carries the approval marker, which
+`ship.py open` binds at creation (the workflow file earns it; the two `tools/cc/` modules are
+runtime-protected and earn none, and this record must not name the marker beside them). The runner proof is a dispatch of the workflow on the
+pushed lane where GitHub takes one for a workflow not yet on the default branch, else the first
+push run after the merge, read and recorded in Landing after it. *Corrected at W2's 0-A
+(2026-10-31):* the shell, the `env:` key, the floor, the pins, the guard, the marker line and
+the runner proof were unnamed. *Refuted if:* `proof_tier.py --run --leg serial` cannot run under
+`bash` on the Windows runner (the portability step runs `bash` on every runner;
+`scripts/proof_tier.py` is Python and spawns `pytest` by name; W2-0 item 1's dispatch measured
+the pytest line under the runner's `bash`, and win's Git Bash run measured `proof_tier.py`'s
+serial leg itself).
 
-**2-B The reader.** A second base-workflow reader in `tools/cc/_post_merge.py`, in the shape of
-`tools/cc/board.py::read_post_merge`: one bounded `gh run list --workflow post-merge-windows.yml
---branch main --event push --limit N --json databaseId,status,conclusion,headSha,url` call (`N`
-the module's window), the newest completed run with a verdict decides, and cancelled, stale,
-skipped or neutral runs read no verdict and are walked past, as `read_post_merge` does; the
-module renders `main: post-merge-windows red since <sha> (run <id>)` among its `checks:` lines,
-and `none` when the newest verdict is green. Its test runs on a frozen run listing (a red newest,
-a cancelled newest over an older red, a green newest) and `tests/test_board.py` gains the rendered
-line; the read has its own budget inside the board's section read, and a failed `gh` call is its
-own `unread` clause, never the board's. *Refuted if:* `TP-703a` has not merged (W2 waits on it;
-the board's open-PR list is the read), or its module takes no second workflow name (then the
-reader is a sibling function in the same module, added here).
+**2-B The reader.** The rule in `tools/cc/_post_merge.py`, as pure functions, since the module
+has no `gh`, no window and no `Unresolvable` (those are `board.py`'s): `base_run_verdict(runs)`
+walks a parsed `gh run list` listing newest first, a run that is not completed read as going
+(`running` when it is newer than the verdict), `SUCCESS` green, `RUN_RED` (`FAILURE`,
+`TIMED_OUT`, `STARTUP_FAILURE`; `board._RED` becomes an alias of it, so the board's pin against
+`ship.POST_MERGE_RED` still holds and the set has one home short of the driver's) red, and
+cancelled, stale, skipped or neutral walked past as no verdict, as `read_post_merge` does; on a
+red it walks on to the streak's first red and the green before it, since "red since" must name
+where the streak began, not the newest red. `base_run_lines(state, workflow=..., base=...)`
+renders the words: `post-merge-windows (main, advisory): red since <sha> (run <id>)`, then `, still red on
+<sha> (run <id>)` when the newest red is a later run, or ` (no green among the runs read)` when
+none is in the listing, then `; a newer run is going`; a plain green newest renders nothing (the
+`none red` line stands), and completed runs without a verdict newer than a green are named above
+it rather than hidden (a hang the job's bound cuts may conclude cancelled on every push; added at
+the review round); every completed run without a verdict renders `post-merge-windows (main,
+advisory): no verdict on every run read (<kinds>)`; no completed run, and a repository without the workflow
+(`absent`), render nothing, so the deployed board is silent on an adopter tree and on this one
+until the first push run completes; a failed read renders `post-merge-windows (main, advisory): unread
+(<reason>)`. `board_lines` takes the base-run state and prints its lines after the pull-request
+legs, with the `none red among the last N merges` line kept off when the base run is red. The
+one `gh` call is `tools/cc/board.py::read_base_runs`, made only where the checkout holds the
+workflow file (an adopter tree, and this one before the leg lands, spawn nothing and read
+`absent`: added at the review round, since any failure but the 404 printed a line for a leg the
+tree never had), named by `read_post_merge_checks` beside the section's merged read, under its own
+try/except (a not-found text naming the workflow is the
+`absent` state, the same rule `read_post_merge` applies to its own, moved to a helper both
+share; any other `Unresolvable` is the leg's own `unread` state, never the section's), with the
+board's `GH_TIMEOUT` as its budget. The rule's tests run on frozen listings in
+`tests/test_post_merge.py::TestTheBaseRunVerdict` (a red newest; a cancelled newest over an
+older red; a green newest; a streak walked back to its first red; no green in the window; a
+newer run going; every run without a verdict; an empty listing; a row that is not a dict) and
+`TestTheBaseRunWords` holds the lines; `tests/test_board.py::TestChecksLine` gains the rendered line on
+a red listing with the `main:` line unchanged, the silent cases (green, absent, empty), and the
+failed read as its own line with the section still rendered, through the `_gh` stand-in keyed by
+the `--workflow` value (the proof's own workflow keeps its key; another workflow answers `[]`
+unless the test names it, so every older test stays honest). `.claude/commands/inbox.md`'s
+`checks:` bullet gains one adopter-valid sentence in the base bullet's form ("where the
+repository runs a workflow named ..."), then `scripts/sync_claude_mirrors.py`;
+`scripts/sync_vendor_cc.py` after both module edits, then `espalier integrity refresh .`.
+The leg's red is not written to the transitions log, which is keyed by merge (a follow-up,
+named in Landing); a dispatched run of the workflow carries `workflow_dispatch` and never clears
+the line: the next push run does. The line's shape, the file check and the no-verdict-above-green
+line were the review round's (both reviewers, REQUEST CHANGES, one fix batch).
+*Corrected at W2's 0-A (2026-10-31):* the first text put the `gh` call, the window and the
+`unread` clause in the module, which has none of them; the `absent` state and the streak's first
+red were unnamed; the test classes were unnamed. *Refuted if:* `TP-703a` has not merged (it has:
+`State: LANDED`, read at W2's 0-A).
 
 **2-C `DEF-977`'s text** gains one sentence at its tail naming the advisory leg and the measured
 duration, by `python3 tools/cc/ledger_row.py repin DEF-977 --reason ...`; the row stays open,
@@ -552,9 +631,14 @@ it at each wave's start and accept the collision gap by name.
   race fails as `NestedControllerRaceLost`)
 - `tests/test_doc_test_citations.py::_SCAN_GLOBS` and
   `tests/test_doc_source_citations.py::_swept_docs` (W3, 3-F: the changelog's fragments swept)
-- `tools/cc/_post_merge.py` (W2-B: a second base-workflow reader beside its pull-request rollup
-  read; the module is `TP-703a`'s)
-- `tools/cc/board.py::collect` (W2-B: the base-run read joins the `checks:` section's read)
+- `tools/cc/_post_merge.py::board_lines` (W2-B: takes the base-run state and keeps the `none
+  red` line off when that run is red; the module is `TP-703a`'s)
+- `tools/cc/board.py::collect` (W2-B: passes the base branch to the `checks:` section's read)
+- `tools/cc/board.py::read_post_merge_checks` (W2-B: the base-run read joins the `checks:`
+  section's read, under its own try/except)
+- `tools/cc/board.py::read_post_merge` (W2-B: its not-found test moves to a helper both base
+  reads share; its verdict is unchanged)
+- `tools/cc/board.py::_RED` (W2-B: an alias of the module's `RUN_RED`)
 
 ### Renamed
 - None.
@@ -574,6 +658,15 @@ it at each wave's start and accept the collision gap by name.
 - `tests/conftest.py::report_platform_expected_failures`
 - `tests/_nested_race.py`
 - `.github/workflows/post-merge-windows.yml`
+- `tools/cc/_post_merge.py::RUN_RED`
+- `tools/cc/_post_merge.py::WINDOWS_WORKFLOW`
+- `tools/cc/_post_merge.py::base_run_verdict`
+- `tools/cc/_post_merge.py::base_run_lines`
+- `tools/cc/board.py::read_base_runs`
+- `tools/cc/board.py::workflow_absent`
+- `tests/test_post_merge.py::TestTheBaseRunVerdict`
+- `tests/test_post_merge.py::TestTheBaseRunWords`
+- `tests/test_ci_job_bounds.py::TestThePostMergeWindowsLegKeepsItsContracts`
 
 ### Removed-paths
 - None.
@@ -604,12 +697,19 @@ over live and struck rows (re-run it; the rows below are the ones a wave's mecha
   `test_no_engine_or_hook_module_arms_sigalrm` is weakened and no floor lowered; `DEF-5024`'s
   probe prints True before the strike (recorded in Landing) and the row is struck.
 - W2: the measured duration of the dispatched serial run on `windows-latest` is in this file's
-  Landing before the workflow exists; the workflow's `timeout-minutes` is at least twice it; a
-  push to `main` runs it and `tools/cc/board.py` names its red on the `checks:` line through
-  2-B's base-run read (the frozen listing's three cases pass, a push run appearing in no merged
-  pull request's rollup) and never on the `main:` line; `tools/cc/board.py::read_post_merge`'s
-  verdict is unchanged by any run of it; the concurrency choice in the header names the queue-time
-  figure that decided it.
+  Landing before the workflow exists; the workflow's `timeout-minutes` is at least twice it and
+  outlasts the serial files' longest own timeout mark by ten minutes, and the leg's contracts
+  are pinned in `tests/test_ci_job_bounds.py` (the file, the push trigger, no
+  `continue-on-error`, no Windows job in `post-merge.yml`, the ceiling equal to the portability
+  leg's, the bound); `tools/cc/board.py` names the leg's red on the `checks:` line through 2-B's
+  rule (the frozen listings' cases pass, a push run appearing in no merged pull request's rollup)
+  and never on the `main:` line, and prints nothing for it on a green leg, an absent workflow or
+  an empty listing; `tools/cc/board.py::read_post_merge`'s verdict is unchanged by any run of it
+  (its tests pass unchanged); the concurrency choice in the header names the queue-time figure
+  that decided it; the pull request's title carries the approval marker. A push to `main`
+  running the workflow, and the board naming a live red, are manual smokes (a green tree has no
+  red to show): the first push run after the merge is read and recorded in Landing, and the
+  `checks:` line is read on the next board tick.
 - W3: before the pull request opens, the dispatched macOS run (3-E) reads the six marked, each
   reason carrying the successor row's id, the roster line printed, and nothing else in the file
   failed; a loss is shown absorbed by 3-E's end-to-end drive and replay, and live on the pull
@@ -640,12 +740,14 @@ over live and struck rows (re-run it; the rows below are the ones a wave's mecha
 `tests/test_doc_test_citations.py` and `tests/test_doc_source_citations.py` (W3, 3-F);
 `task-packs/TP-703-multi-seat-discipline.md` and `task-packs/TP-703h-host-expectations-have-one-registry.md`
 (W3: the decision recorded, and a pointer where the registry's text predates it);
-`tools/cc/_post_merge.py` and its vendored twin by `scripts/sync_vendor_cc.py` (W2-B);
-`tests/test_post_merge.py` (W2-B); `tools/cc/board.py` and `tests/test_board.py` (W2-B, the
-rendered line); `task-packs/ledger.d/DEF-5024.md` (struck by the verb, W1); `docs/CONVENTIONS.md` (W1: the
+`tools/cc/_post_merge.py` and `tools/cc/board.py`, each with its vendored twin by
+`scripts/sync_vendor_cc.py` (W2-B); `tests/test_post_merge.py` (W2-B); `tests/test_board.py`
+(W2-B, the rendered line); `.claude/commands/inbox.md` and its two mirrors by
+`scripts/sync_claude_mirrors.py` (W2-B, the `checks:` bullet's sentence); the integrity manifest
+(W2-B, refreshed, per-install); `task-packs/ledger.d/DEF-5024.md` (struck by the verb, W1); `docs/CONVENTIONS.md` (W1: the
 wait-budget bullet names the read-coverage rule and the delete clause); `tests/README.md` and one
 docstring of `tests/test_redos.py` (W1: the thread-method sentence, and the pointer to the gate);
-`task-packs/TP-703-multi-seat-discipline.md`'s Children line (W1);
+`task-packs/TP-703-multi-seat-discipline.md`'s Children line (W1, W2);
 `task-packs/ledger.d/DEF-977.md` (repinned by the verb, W2); two new row files under
 `task-packs/ledger.d/` and their probe files under `task-packs/probes.d/` (W3, by the verb:
 `DEF-4032`, `DEF-2025`'s successor, on the operator's word; `DEF-4033`, the completed-child
@@ -694,12 +796,12 @@ read these as the author's guess, not a schedule.
 | Wave | Build | Red-team and tier | Notes |
 |---|---|---|---|
 | W1 | 3 to 4 h (re-estimated at its 0-A) | 1 h plus the contract slice, two reviewers and the archive probe | a hoist, a detector, the delete clause at unit level, two calibration classes, a strike |
-| W2 | 1 h after a 1 to 2 h dispatched run | 1 h plus the full tier | a workflow and one reader line; the operator's call first |
+| W2 | about 2 h after a 1 to 2 h dispatched run (re-estimated at its 0-A from 1 h) | 1 h plus the full tier | a workflow, a reader with four frozen cases, the board line, tests in two files, two mirrors, a repin; the operator's call first |
 | W3 | 1.5 to 2 h | 0.5 h plus the full tier and a dispatched macOS run | a roster, a hook change, contract tests, a row by the verb |
 | Total | 5.5 to 7 h | 2.5 h | expect the measured overrun |
 
 ## Landing
-- State: DRAFT
+- State: LANDED
 - Commits:
 - Suite:
 - Earn-the-red: per wave, against the mutation its Implementation names; W1's red on
@@ -710,8 +812,10 @@ read these as the author's guess, not a schedule.
   the queue-time read before any concurrency choice); checklist item 1 acknowledged. The executor still runs the reviewers each diff earns.
 - Reach: see Reach; `DEF-5024` closes at W1; `DEF-977` stays open; `DEF-2025`'s successor only
   on the operator's word
-- W2-0 measured duration of the serial files on `windows-latest`: not yet run (the analysis's
-  "about ten minutes" is unmeasured)
+- W2-0 measured duration of the serial files on `windows-latest`: 3 min 59 s (run 40402314684,
+  2026-10-29) and 2 min 16 s (run 40828944655, 2026-10-30), both dispatched through
+  `portability.yml`'s selection input, both green; the analysis's "about ten minutes" was
+  unmeasured and high
 - Corrected 2026-10-19 before any assign (the dispatcher's lane
   `lane/packs-the-tp-703-children-corrected-before-wave`): the macOS red is one mechanism over
   six node ids, not one test; Motivation, W3 and W3-0 item 2 carry the measurement and the
@@ -719,8 +823,52 @@ read these as the author's guess, not a schedule.
 - Corrected 2026-10-25 (the dispatcher, after `TP-703j` landed as #340): 1-E's "the strike verb
   never runs it" held when W1 struck `DEF-5024` on 2026-10-20 and is false since; the step's text
   stands as the record of what ran, with the dated note beside it
+- W2 landed 2026-10-31, single-seat (air-work, under the dispatcher's assign by lane, on the
+  operator's call read through the dispatcher after the measured leg), on `lane/windows-main-leg`;
+  with W1 and W3 landed the pack is LANDED and stays in `task-packs/` until the roadmap lands, as
+  `TP-703a` does:
+  - Commits: the lane's commit (its pull request names it).
+  - Task 0: W2-0's four items, read above (both dispatched runs green at 3:59 and 2:16; both
+    base-run readers read `conclusion`; the queue median 0.2 min): build.
+  - 0-A (2026-10-31, `main` at f333e8c9): code-reviewer, Pack-artifact review checklist v2,
+    REQUEST CHANGES (0 BLOCK, 10 WARN, 5 NIT), folded before any code (the reader as pure
+    functions, `read_post_merge_checks` named, the `absent` state, the streak's first red, the
+    shell and the `env:` key, the floor, the mirrors, the marker line, the realism of the live
+    red); fence check 0 fences (prose shapes); 0-B, 0-C and 0-D accepted with written reasons.
+  - Earn-the-red: 11 named mutants on the first build on a snapshot clone, each killed by its
+    named test (one first written as an equivalent mutant, `frozenset` of a frozenset, re-run as a
+    literal copy and killed); 15 of 15 after the review round (the checkout's file check, the
+    no-verdict-above-green line, the stem match on the cut 404 text and the base read among them).
+  - Red-team: code-reviewer REQUEST CHANGES (0 BLOCK, 3 WARN, 6 NIT) and failure-mode-reviewer
+    REQUEST CHANGES (0 REGRESSION, 5 GAP, 8 ROUGH-EDGE), both on a snapshot clone with its own
+    venv; one fix batch: the bound at 25 (the serial files' 900 s mark plus ten, where fifteen
+    sat at the PowerShell gate's own mark and under five worker restarts), the read made only
+    where the checkout holds the workflow file (any failure but the 404 printed a line on every
+    adopter board), the stem match on gh's cut 404 text, the line in the legs' shape with the base
+    and `advisory` in its name (never `main:`, the revert rule's label), newer no-verdict runs
+    named above a green (a hang the bound cuts may conclude cancelled on every push), the
+    completed-only count, the no-green wording, the base-branch board test, the shallow checkout
+    and the measured-as wording, the leg's contract tests, the inbox and pack folds. Named here
+    as follow-ups for the dispatcher, not built: the leg's red into the transitions log (keyed by
+    merge); what GitHub concludes for a job cut by `timeout-minutes` (one dispatched run with a
+    short bound, after the merge: a `cancelled` there is read as no verdict by both base-run
+    readers); the ship driver's literal red set and the parity test's hand list of sets
+    (`ship.py` is the next job's file); the queue re-measure after the leg's first day, whose
+    thresholds the header pre-registers.
+  - Suite (`scripts/proof_tier.py --run`, the full tier on the uncommitted lane, after the last
+    code edit): mypy and ruff clean; the parallel leg 25,362 passed, 101 skipped, 3 xfailed,
+    1 failed in 26:33 (this record's own text, which spelled the approval marker beside the two
+    runtime-only module names; corrected after the run, and
+    `tests/test_protected_path_contract_parity.py` re-run green); the serial leg 2,135 passed,
+    9 skipped in 4:33.
+  - Runner proof: the first push run after the merge, read and recorded by the session that reads
+    it (`gh run list --workflow post-merge-windows.yml --branch main --event push --limit 1`), and
+    the board's `checks:` line on the next tick; a dispatch of the workflow on the pushed lane was
+    not attempted (a workflow not yet on the default branch).
+  - Reach: `DEF-977` repinned (a tail sentence naming the leg and its measured minutes); it stays
+    open, since its probe counts Windows jobs that gate a merge.
 - W3 landed 2026-10-19, single-seat, on `lane/tests-macos-race-rows-run-as-expected-failures`;
-  the pack stays DRAFT while W1 and W2 are open:
+  the pack stayed DRAFT while W1 and W2 were open:
   - Commits: the lane's commit (its pull request names it).
   - Task 0: item 1 the operator's word, yes, with the kind changed to a non-strict expected
     failure; item 2 the anchor red on 8 of the last ten completed macOS legs, the four `crashed`
