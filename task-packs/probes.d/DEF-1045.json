@@ -4,8 +4,9 @@
  "cmd": "python -c 'import subprocess,sys,json,os,tempfile;T=tempfile.TemporaryDirectory();e={k:v for k,v in os.environ.items() if not k.startswith((\"CLAUDE_\",\"ESPALIER_\"))};e[\"CLAUDE_PROJECT_DIR\"]=T.name;h=lambda p:\"rc\"+str(p.returncode) if p.returncode else (\"deny\" if p.stdout.strip() else \"allow\");r=lambda c:h(subprocess.run([sys.executable,\"tools/cc/hooks/write_guard.py\"],input=json.dumps({\"tool_name\":\"PowerShell\",\"tool_input\":{\"command\":c}}),capture_output=True,text=True,env=e));q=chr(34);a=chr(39);d=chr(36);print(\"assign_sq=\"+r(d+\"hint = \"+a+\"gc .env\"+a)+\" assign_dq=\"+r(d+\"msg = \"+q+\"type .env to see the values\"+q)+\" paren=\"+r(\"Write-Host (\"+q+\"type .env\"+q+\")\"))'",
  "open_value": "assign_sq=deny assign_dq=deny paren=deny",
  "why_not": null,
- "row_sha": "a35361f2646d",
- "text_sha": "15bb69297787",
+ "row_sha": "6bf57edde10b",
+ "text_sha": "7c453c20e92f",
  "verified_2026_10_01": "OPEN (filed 2026-10-01; probe driven at filing)",
- "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: fix shape re-pinned on a measurement: the filed head fold lets a string a later statement or carrier runs through; the relief waits on DEF-1131; probe and value unchanged)"
+ "verified_2026_10_05": "STILL_OPEN (re-pinned value unchanged on 2026-10-05: fix shape re-pinned on a measurement: the filed head fold lets a string a later statement or carrier runs through; the relief waits on DEF-1131; probe and value unchanged)",
+ "verified_2026_10_31": "STILL_OPEN (re-pinned value unchanged on 2026-10-31: fix shape re-pinned on a measurement: the carrier reader landed with the old split kept; without it, piped, joined, scope-qualified and oversize forms main refuses were allowed; probe and value unchanged) [changed: text]"
 }

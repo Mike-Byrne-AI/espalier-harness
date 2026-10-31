@@ -428,14 +428,18 @@ def _statement_launches_claude(segment: str) -> bool:
     tests/test_write_guard_env_prefix_polarity.py::test_powershell_target_spellings_share_the_bash_normaliser,
     so forking a PowerShell copy reds instead of silently diverging.
 
-    ⚠ QUOTE-BLIND ON PURPOSE, until a carrier reader exists (DEF-1044,
-    waiting on DEF-1131). Reading every quoted word fragment by fragment is
-    what refuses `VAR=1 pytest "work/Claude Code/tests"`, and also what
-    refuses `VAR=1 eval "claude -p x"`, `script -qc`, `watch`, `su -c`,
-    `pwsh -Command` and `Invoke-Expression` carrying a launch: swapping in
-    the secret legs' `_quote_aware_words` here, even with the shell-body
-    re-reads, allowed all six (measured 2026-10-05). They are pinned as
-    must-deny rows in the polarity test file.
+    ⚠ QUOTE-BLIND ON PURPOSE (DEF-1044). Reading every quoted word fragment by
+    fragment is what refuses `VAR=1 pytest "work/Claude Code/tests"`, and
+    also what refuses every quoted launch whatever carries it. The secret
+    legs' `_quote_aware_words` here, with the shell-body re-reads, allowed
+    `eval`, `script -qc`, `watch`, `su -c`, `pwsh -Command` and
+    `Invoke-Expression` carrying a launch (measured 2026-10-05); with the
+    carrier reader (DEF-1131) re-read as well it still allowed `env -S`,
+    `flock -c`, `runuser -c`, `parallel`, `npx -c`, `cmd //c`, a string piped
+    into `iex` and `Start-Process -ArgumentList` carrying one, and each
+    `$env:` tail's re-read made a repeated prefix quadratic (measured
+    2026-10-31). The carried launches are must-deny rows in the polarity
+    test file.
     """
     for raw in _TOKEN_SPLIT_RE.split(segment):
         if _normalise_target_token(raw) == _CLAUDE_BASENAME:
@@ -1006,9 +1010,24 @@ _PS_STATEMENT_BOUNDARY_RE = re.compile(r"[;\n\r(){}&|=]+")
 #: `gc(".env")`, `Get-Content @(".env")`, `$(".env")`), all ordinary
 #: PowerShell that reads the file; as a statement boundary it severed the
 #: operand from its head (review, driven ALLOWING). Replaced by a blank
-#: before the cut; a `(` after a blank, `=` or `|` is still a boundary, so
-#: `Invoke-Expression (Get-Content .env)` keeps its inner head.
+#: before the cut, and so is the `)` that closes it (`_ps_blank_argument_parens`):
+#: it closes the argument, not a statement, and as a boundary it cut
+#: `"$(Get-Location)\.env"` at the subexpression's end (DEF-1131). A `(`
+#: after a blank, `=` or `|` is still a boundary, so `Invoke-Expression
+#: (Get-Content .env)` keeps its inner head.
 _PS_GLUED_PAREN_RE = re.compile(r"(?<=[\w@$])\(")
+
+
+def _ps_blank_argument_parens(scan: str) -> str:
+    """``scan`` with each glued `(` (`_PS_GLUED_PAREN_RE`) and its closing
+    `)` blanked, the same length."""
+    out = list(scan)
+    closers = _bash_patterns.ps_paren_closers(scan)
+    for m in _PS_GLUED_PAREN_RE.finditer(scan):
+        out[m.start()] = " "
+        if closers[m.start()] < len(scan):
+            out[closers[m.start()]] = " "
+    return "".join(out)
 #: Operands split on blanks AND commas: `Get-Content a.txt,.env` is an array
 #: of two paths to PowerShell and one token to a blank splitter. Outside
 #: quotes only, through `_quote_aware_words` (§C66).
@@ -1229,6 +1248,10 @@ def _secret_read_targets_one(command: str, _depth: int = 0) -> list[str]:
         # statement's verb and nothing past it; the read sits in the program.
         for program in _bash_patterns._posix_shell_c_bodies(command, scan):
             out.extend(_secret_read_targets(program, _depth + 1))
+        # A carrier's program (DEF-1131): `eval`, `script -c`, `watch` and
+        # `su -c` run their operand as a program the roster sees as one word.
+        for program in _bash_patterns._carrier_program_bodies(command, scan):
+            out.extend(_secret_read_targets(program, _depth + 1))
     # The operands a verb relocates, archives, aliases or reads by an
     # interpreter literal (§C52, DEF-796): the same slip as `cp`, spelled
     # differently. Read once at the top level; the reader descends nested
@@ -1289,9 +1312,11 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     `return`/`throw` before it are skipped. A statement that OPENS with a
     quoted string the old split cuts apart keeps the old split, so
     `$hint = 'gc .env'` is still read as `gc` and refused: whether that
-    string is harmless depends on whether the command later runs it
-    (`$c = 'gc .env'; Invoke-Expression $c`, `iex ("gc .env")`), which only
-    a carrier reader can tell (`DEF-1045`, waiting on `DEF-1131`). A
+    string is harmless depends on whether the command later runs it, and the
+    carrier reader below (DEF-1131) reads a string only where a carrier takes
+    it as an operand, not one piped into `iex`, joined with `+` or bound by
+    a form the pre-pass declines, all of which the old split refuses
+    (`DEF-1045`, measured 2026-10-31). A
     switch's colon-bound value (`-Path:.env`) is an operand; a bare `#` or a
     redirect ends the operands; a `(` glued to the head or to `@`/`$` opens
     an argument (`_PS_GLUED_PAREN_RE`), a free-standing one a statement.
@@ -1299,7 +1324,7 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     not a separator, and a word boundary cannot be masked inside a string,
     so it stays out of the cut set.
     """
-    scan = _PS_GLUED_PAREN_RE.sub(" ", _bash_patterns.powershell_scan_text(command))
+    scan = _ps_blank_argument_parens(_bash_patterns.powershell_scan_text(command))
     out: list[str] = []
     aware = not _a_boundary_sits_in_a_quote(scan, _PS_STATEMENT_BOUNDARY_RE)
     for statement in _PS_STATEMENT_BOUNDARY_RE.split(scan):
@@ -1334,9 +1359,19 @@ def _ps_secret_read_targets(command: str, _depth: int = 0) -> list[str]:
     # A bash program behind `bash -c` / `sh -c` (DEF-637): read with the bash
     # roster and statement grammar, one level down.
     if _depth < _bash_patterns._PS_STDIN_MAX_DEPTH:
-        raw, pair = _bash_patterns.powershell_scan_pair(command)
+        # Both readers take one pair, derived from the text the literal-binding
+        # pre-pass has inlined (DEF-801's sequencing: the pre-pass runs before
+        # a pair exists), so `$c = '.env'; bash -c "cat $c"` and
+        # `$c = '.env'; iex "gc $c"` each read the bound path.
+        raw, pair = _bash_patterns.powershell_scan_pair(
+            _bash_patterns._expand_simple_ps_var_assignments(command))
         for program in _bash_patterns._ps_shell_program_bodies(raw, pair):
             out.extend(_secret_read_targets(program, _depth + 1))
+        # A carrier's program (DEF-1131): `Invoke-Expression`, `pwsh
+        # -Command`, `cmd /c` and `[scriptblock]::Create` run a string, and
+        # a string is read where a carrier runs it, not where it is written.
+        for program in _bash_patterns._ps_carrier_program_bodies(raw, pair):
+            out.extend(_ps_secret_read_targets(program, _depth + 1))
     # The PowerShell twin of the Bash leg's effect read (§C52, DEF-796).
     if _depth == 0:
         for effect, path in _bash_patterns.iter_ps_removed_or_relocated_operands(command):

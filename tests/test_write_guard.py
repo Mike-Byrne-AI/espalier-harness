@@ -359,6 +359,10 @@ class TestQuotedVerbTailIsUniform:
         "_TAIL_LOOP_REMOVE_RE": None,
         "_FOR_WORDS_REMOVE_RE": None,
         "_SHELL_DASH_C_RE": ("sh", "sh -c 'rm tools/cc/hooks/x.py'"),
+        # the quoted-program carriers (DEF-1131) feed the secret leg and the
+        # nested-launch scan, not a zone deny; the quoted verb is proven where
+        # their tier is (TestQuotedProgramsAreReadAsPrograms's quoted-head row)
+        "_CARRIER_HEAD_RE": None,
         "_TAR_CREATE_RE": None,
         "_ZIP_RE": None,
         "_DD_IF_RE": None,
@@ -475,6 +479,9 @@ class TestBinaryVerbSpellingIsUniform:
         "_ZIP_RE": ("zip", "zip out.zip notes"),
         "_DD_IF_RE": ("dd", "dd if=notes of=out"),
         "_RM_SEGMENT_RE": ("rm", "rm -rf notes"),
+        # the secret leg's carrier opener (DEF-1131): its binary heads; its
+        # builtin head, `eval`, is pinned case-sensitive in the test below
+        "_CARRIER_HEAD_RE": ("watch", "watch 'cat notes'"),
     }
 
     @staticmethod
@@ -518,6 +525,11 @@ class TestBinaryVerbSpellingIsUniform:
                  "_TAIL_LOOP_REMOVE_RE": "WHILE read f; do rm $f; done",
                  "_FOR_WORDS_REMOVE_RE": "FOR f in a b; do rm $f; done"}[arm]
         assert getattr(bp, arm).search(upper) is None, (arm, upper)
+
+    def test_the_carrier_opener_reads_eval_case_sensitively(self):
+        bp = _bash_patterns_module()
+        assert bp._CARRIER_HEAD_RE.search("eval 'cat notes'")
+        assert bp._CARRIER_HEAD_RE.search("EVAL 'cat notes'") is None   # bash runs no EVAL
 
     def test_mkdir_stays_case_sensitive(self):
         bp = _bash_patterns_module()
@@ -9925,9 +9937,9 @@ class TestSecretPathAccess:
         ("Bash", "ssh host 'cd app; cat .env' 'echo a; echo b'", None),
         ("Bash", 'ssh host "cd app; cat .env" "x; y"', None),
         ("Bash", 'eval "true;cat .env" "x;y"', None),
-        # a string a later statement runs is a read until a carrier reader
-        # can tell (DEF-1045, DEF-1131): a statement opening with a quoted
-        # string keeps the old split
+        # a string a later statement runs: refused by the old split a
+        # statement opening with a quoted string keeps (DEF-1045), and read
+        # where it runs by the carrier reader (DEF-1131) as well
         ("PowerShell", "$c = 'Get-Content .env'; Invoke-Expression $c", None),
         ("PowerShell", "$c = 'gc .env'; & ([scriptblock]::Create($c))", None),
         ("PowerShell", "$cmd = 'type .env'; cmd /c $cmd", None),
@@ -9947,10 +9959,11 @@ class TestSecretPathAccess:
 
     # DECLARED LIMITS of the class's first landing, pinned so a change to them
     # is a decision. Still refused: a statement opening with a quoted string
-    # (DEF-1045, waiting on DEF-1131), and a spaced path whose comment holds an
-    # apostrophe (the quote never closes). Still allowed: the quoted-path head
-    # the gate keeps on the old split, and an input redirect, which no leg
-    # reads as a source (filed as DEF-1132).
+    # (DEF-1045: the carrier reader, DEF-1131, does not read a string piped
+    # into `iex` or joined with `+`, which the old split refuses), and a
+    # spaced path whose comment holds an apostrophe (the quote never closes).
+    # Still allowed: the quoted-path head the gate keeps on the old split, and
+    # an input redirect, which no leg reads as a source (filed as DEF-1132).
     @pytest.mark.parametrize("tool, command", [
         ("PowerShell", "$hint = 'gc .env'"),
         ("PowerShell", '$msg = "type .env to see the values"'),
@@ -10007,6 +10020,97 @@ class TestSecretPathAccess:
     # before adjudicating a new derived population, and it did. Two copies of
     # one assertion is how the two drift apart, which is the defect, not the
     # guard. This comment is the pointer; do not re-add the duplicate.
+
+
+class TestQuotedProgramsAreReadAsPrograms:
+    """DEF-1131: a carrier runs a program out of a quoted string -- Bash
+    ``eval``, ``script -c``, ``watch`` and ``su -c``; PowerShell
+    ``Invoke-Expression`` / ``iex``, ``pwsh`` / ``powershell -Command``, a
+    ``[scriptblock]::Create`` it calls, ``cmd /c`` and a ``$(...)``
+    subexpression -- and the secret legs read that program as a program,
+    while a quoted string no carrier runs is data. Until this reader the
+    legs reached a quoted program through four body readers only, so the
+    carriers below read a dotenv the Read tool's rule would refuse. RED on
+    main e9f0872f and again on 70bc9778: the carrier rows allowed. The two
+    reliefs that waited on this reader stay open (DEF-1044, DEF-1045): each
+    needs carriers this roster does not name read first."""
+
+    @pytest.mark.parametrize("tool, command", [
+        ("Bash", 'eval "cat .env"'),
+        ("Bash", "eval 'cat .env'"),
+        ("Bash", "eval cat .env"),
+        ("Bash", 'script -qc "cat .env" /dev/null'),
+        ("Bash", "script -c 'cat .env'"),
+        ("Bash", 'watch "cat .env"'),
+        ("Bash", "watch -n1 'cat .env'"),
+        ("Bash", "watch -n 2 'cat .env'"),
+        ("Bash", 'su -c "cat .env" me'),
+        ("Bash", "su - me -c 'cat .env'"),
+        ("Bash", "su --command='cat .env' me"),
+        # the quoted-head row: a quoted carrier verb runs as the bare one does
+        ("Bash", '"eval" "cat .env"'),
+        # a binary head in another spelling dispatches as the plain one
+        ("Bash", "WATCH 'cat .env'"),
+        ("Bash", "script.exe -c 'cat .env'"),
+        ("PowerShell", 'iex "Get-Content .env"'),
+        ("PowerShell", "Invoke-Expression 'gc .env'"),
+        ("PowerShell", 'Invoke-Expression -Command "type .env"'),
+        ("PowerShell", 'pwsh -Command "Get-Content .env"'),
+        ("PowerShell", "powershell -Command 'gc .env'"),
+        ("PowerShell", 'pwsh -c "gc .env"'),
+        # a shell's program unquoted: the rest of the statement as typed
+        # (allowed on main 70bc9778, all four)
+        ("PowerShell", "cmd /c type .env"),
+        ("PowerShell", "cmd.exe /c more .env"),
+        ("PowerShell", "pwsh -Command gc .env"),
+        ("PowerShell", "powershell -Command Get-Content .env"),
+        # a subexpression is a carrier too, in an expandable string or as an
+        # argument, and its closer ends the argument, not the statement
+        ("PowerShell", 'Get-Content "$(Get-Location)\\.env"'),
+        ("PowerShell", 'Write-Host "$(Get-Content .env)"'),
+        ("PowerShell", "Write-Host $(gc .env)"),
+    ])
+    def test_a_carriers_program_is_read(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        # A string a later statement runs is read where it runs: the four
+        # twins DEF-1045 held refused by the old split, now by the reader.
+        ("PowerShell", "$c = 'Get-Content .env'; Invoke-Expression $c"),
+        ("PowerShell", "$c = 'gc .env'; & ([scriptblock]::Create($c))"),
+        ("PowerShell", "$cmd = 'type .env'; cmd /c $cmd"),
+        ("PowerShell", 'Invoke-Expression ("gc .env")'),
+        ("PowerShell", '$h = "gc .env"; iex $h'),
+        # both readers take the same pre-passed pair, so a bound path reaches
+        # the program it is interpolated into (allowed on main 70bc9778, all
+        # three: the binding never reached `bash -c` or `iex`)
+        ("PowerShell", "$c = '.env'; bash -c \"cat $c\""),
+        ("PowerShell", "$p = '.env'; bash -c \"head -n 1 $p\""),
+        ("PowerShell", "$c = '.env'; iex \"gc $c\""),
+    ])
+    def test_a_string_a_carrier_runs_later_is_read(self, tool, command, tmp_path):
+        assert_hook_denied(run_guard_tool(tool, {"command": command}, tmp_path),
+                           contains_reason="Secret-path access blocked")
+
+    @pytest.mark.parametrize("tool, command", [
+        # a quoted mention of a carrier is data, on both tools
+        ("Bash", 'echo "eval cat .env"'),
+        ("Bash", "echo 'watch cat .env'"),
+        ("Bash", 'echo "su -c cat .env"'),
+        ("PowerShell", "Write-Host 'iex \"gc .env\"'"),
+        ("PowerShell", "Write-Host 'Invoke-Expression gc .env'"),
+        # a carrier at a statement start inside the quotes is still data: the
+        # opener is found on the masked text, which blanks the string
+        ("Bash", "echo 'x; eval \"cat .env\"'"),
+        ("Bash", "printf '%s\\n' 'cd w && eval \"cat .env\"'"),
+        ("PowerShell", "Write-Host 'x; iex \"gc .env\"'"),
+        ("PowerShell", "Write-Output 'a; Invoke-Expression \"type .env\"'"),
+        # a subexpression inside a single-quoted string is text
+        ("PowerShell", "Write-Host 'see $(gc .env)'"),
+    ])
+    def test_a_string_no_carrier_runs_is_a_mention(self, tool, command, tmp_path):
+        assert_hook_allowed(run_guard_tool(tool, {"command": command}, tmp_path))
 
 
 class TestPowerShellCopyMove:
@@ -10785,6 +10889,8 @@ class TestQuotedTargetSurvivesTheRoot:
         "_GIT_HEAD_RE": "nested program: the bash -c row drives the shell-out reader",
         # not protected-zone deny arms: a directory made, the delete tiers
         "_MKDIR_RE": "makes no content; credits a directory the chain reads (DEF-509)",
+        "_CARRIER_HEAD_RE": "the secret leg's carrier opener (DEF-1131); "
+                            "no zone deny reads it",
         "_RM_SEGMENT_RE": "the safety tier's reader (recursion flags, catastrophic operands); "
                           "the zone's delete arm is _DESTROY_RE (§C52)",
         # ── the remove/relocate operand class (§C52): the zone-deny arms carry
@@ -10840,6 +10946,8 @@ class TestQuotedTargetSurvivesTheRoot:
         "_PS_BASH_DASH_C_RE": ("PowerShell", f"bash -c \"echo x > '{_TARGET}'\""),
         "_PS_INTERP_STDIN_RE": ("PowerShell", f"@'\nopen('{_TARGET}','w')\n'@ | python -"),
         "_PS_LINK_LOCATION_RE": "the symlink leg's capture: _PS_NEW_ITEM_RE's fixture drives it",
+        "_PS_CARRIER_RE": "the secret leg's carrier opener (DEF-1131); "
+                          "no zone deny reads it",
         "_PS_RECURSIVE_FORCE_RE": "the speed bump's recursive-force test; the zone's delete arm "
                                   "is _PS_REMOVE_ITEM_RE (§C52)",
         "_PS_REMOVE_ITEM_RE": ("PowerShell", f'Remove-Item "{_TARGET}"'),

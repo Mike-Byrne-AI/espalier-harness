@@ -2613,6 +2613,23 @@ class TestCommandPositionClassClose:
     # `_COMMAND_VERBS` survives as a SECOND OPINION that must not shrink, never
     # again as the filter.
     _UNANCHORED_BY_DESIGN: dict[str, str] = {
+        # ── DEF-1131: the carrier readers' inner matchers -- the anchored
+        # openers `_CARRIER_HEAD_RE` and `_PS_CARRIER_RE` select the carrier ──
+        "_bash_patterns._CARRIER_C_CLUSTER_RE":
+            "FLAG -- a short cluster ending in `-c` (`-qc`), fullmatched against one "
+            "word an anchored `_CARRIER_HEAD_RE` match read (DEF-1131).",
+        "_bash_patterns._CMD_PROGRAM_SWITCH_RE":
+            "FLAG -- `cmd`'s `/c` or `/k`, fullmatched against one switch word past "
+            "an anchored `_PS_CARRIER_RE` head (DEF-1131).",
+        "_bash_patterns._SHELL_COMMAND_SWITCH_RE":
+            "FLAG -- the `-Command` prefix of `pwsh` and `Invoke-Expression`, "
+            "fullmatched against one switch word past an anchored `_PS_CARRIER_RE` "
+            "head (DEF-1131).",
+        "_bash_patterns._PS_SUBEXPRESSION_RE":
+            "SYNTAX TOKEN -- the `$(` of a subexpression, found on the masked scan "
+            "(the masker blanks one inside a single-quoted string); its program "
+            "runs wherever it stands, so it has no command position to anchor on "
+            "(DEF-1131).",
         # ── DEF-1039: the write-nothing redirects CP-COMPACT sets aside ──
         "_speedbump._INERT_REDIRECT_RE":
             "SYNTAX TOKEN -- matches an fd duplication, a closed fd or a null-sink / "
