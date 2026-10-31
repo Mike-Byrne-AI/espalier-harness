@@ -1323,6 +1323,12 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # stub linters and runners first on PATH: which command a fence
             # runs is a subprocess fact.
             "test_node_adopter_defaults",
+            # The init'd Python adopter tree with a TODO, a vendored TODO and
+            # two dependency trees planted, then the four deployed first-contact
+            # fences (analyze, test-writer, the advisor's dead-config pass,
+            # repo-analyst) under a real bash: what a census prints is a
+            # subprocess fact.
+            "test_first_contact_diagnostics",
             # The timeout backstop: whether a swallowed or re-blocked ceiling
             # ends its test is a fact about a real pytest child under the
             # signal method.
@@ -1668,6 +1674,9 @@ _SLOW_FILES: set[str] = {
     # `init` on a Node tree and a Python one, then the deployed /preflight
     # fences under a real bash, a few interpreter starts each.
     "test_node_adopter_defaults",
+    # `init` on the Python adopter tree, then four deployed fences under a real
+    # bash on it and on this checkout (a whole-tree find, twice).
+    "test_first_contact_diagnostics",
     # Spawns real `git` against short-lived repos under tmp_path to prove the
     # bare-`checkout <path>` arm and the pre-discard snapshot round-trip.
     "test_speedbump_discard_snapshot",

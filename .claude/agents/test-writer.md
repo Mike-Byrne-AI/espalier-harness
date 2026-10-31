@@ -44,14 +44,43 @@ echo "=== Fixture usage ==="
 grep "def test_.*tmp_path" "${TDIR:-.}" -rn --include="*.py" 2>/dev/null | head -10
 cat "${TDIR:-.}"/conftest.py 2>/dev/null || echo "no conftest.py"
 
-echo "=== Coverage gaps (example: Espalier-Harness's espalier/ tree) ==="
-# Adapt the source-tree glob to your project's primary code directory.
+# The coverage census reads the repository's own source: never the harness's
+# deployed tools/cc/, the test tree or a dependency tree. CENSUS says which ran.
+CENSUS=
+# <!-- espalier:self-host-only -->
+# This repository's engine, espalier/; init strips this block from every other tree.
+CENSUS=harness
+echo "=== Coverage gaps ==="
 for f in espalier/*.py; do
   mod=$(basename "$f" .py)
   [ "$mod" = "__init__" ] && continue
   [ "$mod" = "_compat" ] && continue
   test -f "tests/test_${mod}.py" && echo "  ✓ $mod" || echo "  ✗ $mod — NO TESTS"
 done
+# <!-- /espalier:self-host-only -->
+if [ -z "$CENSUS" ]; then
+  # The repository's own Python modules against its test tree, by file name:
+  # every module through find (a glob a zsh host cannot expand aborts the
+  # command), outside the test tree, the layer the harness deployed (tools/cc/
+  # and .claude/), the dependency trees and the build and cache directories.
+  MODS=$(find . -type f -name "*.py" ! -name "__init__.py" ! -name "conftest.py" ! -name "setup.py" ! -name "test_*.py" ! -name "*_test.py" \
+    ! -path "*/tests/*" ! -path "*/test/*" ! -path "*/__tests__/*" ! -path "*/spec/*" ! -path "*/tools/cc/*" ! -path "*/.claude/*" ! -path "*/.git/*" ! -path "*/__pycache__/*" \
+    ! -path "*/node_modules/*" ! -path "*/bower_components/*" ! -path "*/jspm_packages/*" ! -path "*/.yarn/*" ! -path "*/.pnpm-store/*" \
+    ! -path "*/.venv/*" ! -path "*/venv/*" ! -path "*/vendor/*" ! -path "*/third_party/*" ! -path "*/build/*" ! -path "*/dist/*" ! -path "*/target/*" \
+    ! -path "*/coverage/*" ! -path "*/htmlcov/*" ! -path "*/.next/*" ! -path "*/.mypy_cache/*" ! -path "*/.pytest_cache/*" ! -path "*/.ruff_cache/*" \
+    2>/dev/null | sort)
+  echo "=== Coverage gaps ==="
+  [ -n "$MODS" ] || echo "  (no Python modules outside the test tree)"
+  printf '%s\n' "$MODS" | while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    mod=$(basename "$f" .py)
+    if [ -n "$TDIR" ] && find "$TDIR" \( -name "test_${mod}.py" -o -name "test_${mod}s.py" -o -name "test_${mod}_*.py" -o -name "${mod}_test.py" \) 2>/dev/null | grep -q .; then
+      echo "  ✓ ${f#./}"
+    else
+      echo "  ✗ ${f#./} — NO TESTS"
+    fi
+  done
+fi
 
 echo "=== Current test count ==="
 grep -rn "def test_" "${TDIR:-.}" --include="*.py" 2>/dev/null | wc -l
@@ -296,10 +325,13 @@ In these cases: report what you found, what's blocking you, and what the develop
 When deciding which tests to add first:
 
 1. **Modules with zero coverage** (see discovery output above)
-2. **Hook scripts** — each hook needs: allow path, block path, advisory path, empty stdin
-3. **Core analysis functions** — `fingerprint_repo()`, `managed_paths_from_plan()`
-4. **Error handling** — missing files, malformed JSON, subprocess timeouts
-5. **Edge cases** — empty repos, Windows path separators, zero-byte files
+2. **Entry points** — what a user of the repository reaches first
+3. **Error handling** — missing files, malformed input, subprocess timeouts
+4. **Edge cases** — empty inputs, Windows path separators, zero-byte files
+<!-- espalier:self-host-only -->
+5. **Hook scripts** (this repository's) — each hook needs: allow path, block path, advisory path, empty stdin
+6. **Core analysis functions** (this repository's) — `fingerprint_repo()`, `managed_paths_from_plan()`
+<!-- /espalier:self-host-only -->
 
 ## Adapting me to YOUR test patterns
 

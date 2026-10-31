@@ -152,7 +152,10 @@ counting as ownership (leading newlines are never stripped before the search,
 so "line 1" means line 1). Leading ASCII
 whitespace (space, tab) is tolerated. ``tools/cc/sister_site_probe.py``
 carries an inline mirror of this pattern (tools/cc has zero espalier
-imports); ``tests/test_sister_site_probe_unit.py`` pins the two equal.
+imports); ``tests/test_sister_site_probe_unit.py`` pins the two equal. The
+harness-config-advisor agent's dead-config pass (a deployed fence, which
+imports nothing) carries a third, with ``has_managed_marker``'s window;
+``tests/test_first_contact_diagnostics.py`` pins its verdicts to this one's.
 
 The ``re.ASCII`` flag is load-bearing: without it, ``\\s`` and ``\\b``
 take Unicode semantics, which would let zero-width-space (U+200B) or
