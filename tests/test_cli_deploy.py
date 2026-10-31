@@ -3724,8 +3724,9 @@ class TestWorkflowBodyDeploy:
 class TestWindowsShimDeploy:
     """DEF-729: the statusline shim is the one deployed non-.py file. It goes
     through the same five-state classifier as the scripts, with the batch
-    marker on line 2 (a ``#`` line is a command to cmd.exe, and a line before
-    ``@echo off`` is echoed to stdout, the statusline's channel)."""
+    marker on the line after ``@echo off`` (a ``#`` line is a command to
+    cmd.exe, and a command line before ``@echo off`` is echoed to stdout, the
+    statusline's channel) and never on line 1, which is bash's (DEF-3017)."""
 
     @staticmethod
     def _source_and_dest(tmp_path: Path):
@@ -3734,15 +3735,16 @@ class TestWindowsShimDeploy:
 
         return _deploy_source_path(STATUSLINE_SHIM), tmp_path / STATUSLINE_SHIM
 
-    def test_created_with_the_batch_marker_on_line_two(self, tmp_path):
+    def test_created_with_the_batch_marker_after_the_echo_off(self, tmp_path):
         from espalier.cli import _deploy_managed_py
         from espalier.managed_markers import MARKER_BATCH_COMMENT, file_carries_marker
 
         source, dest = self._source_and_dest(tmp_path)
         assert _deploy_managed_py(source, dest) == "created"
         lines = dest.read_text(encoding="utf-8").split("\n")
-        assert lines[0].strip().lower() == "@echo off", lines[0]
-        assert lines[1] == MARKER_BATCH_COMMENT, lines[1]
+        assert lines[0].startswith(":;"), "line 1 stays bash's: a source reads no further"
+        assert lines[1].strip().lower() == "@echo off", lines[1]
+        assert lines[2] == MARKER_BATCH_COMMENT, lines[2]
         assert file_carries_marker(dest), "cleanup would refuse to delete an unmarked shim"
         assert "espalier: statusline did not run" in dest.read_text(encoding="utf-8")
 

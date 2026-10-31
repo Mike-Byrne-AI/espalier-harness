@@ -52,7 +52,6 @@ from espalier._text import os_error_text, pin_utf8_streams, plural, quoted_if_sp
 from espalier._venv import (
     entry_argv,
     exec_name_has_space,
-    git_bash_path,
     interpreter_site_token,
     interpreter_token,
     names_a_python,
@@ -1902,10 +1901,7 @@ STATUSLINE_FALLBACK_TEXT = (
 )
 
 
-def _statusline_command(
-    python_cmd: str, *, posix: bool | None = None, git_bash: bool | None = None,
-    repo_root: Path | None = None,
-) -> str:
+def _statusline_command(python_cmd: str, *, posix: bool | None = None) -> str:
     """The ``statusLine.command`` string for ``python_cmd``.
 
     The placeholder is QUOTED: this string is handed to a shell (Claude Code
@@ -1939,37 +1935,36 @@ def _statusline_command(
     Batch has the or-operator, so the shim runs the interpreter it is handed
     against ``statusline.py`` beside it and prints the same fallback text,
     exit 0 either way. Which shell hands it over is Claude Code's choice:
-    Git Bash when its lookup finds one, else PowerShell
-    (:func:`~espalier._venv.git_bash_path`, read from the 2.1.316 binary;
-    ``repo_root`` adds the tree's settings files to it), and the statusLine
-    schema has no field to pin it. Git Bash runs the bare quoted head, which
-    PowerShell reads as an expression; PowerShell runs ``& "<shim>"
-    <interp>``, whose leading ``&`` bash reads as a syntax error -- so
-    neither serves both shells without a second PowerShell start per
-    refresh (DEF-929), and the head is bare where the lookup finds a trace
-    of Git Bash and called only where it finds none. Each
-    form printed the statusline in its own shell and, with the interpreter
-    gone, the fallback line, and blanked in the other (driven 2026-10-31,
-    ``tests/test_hook_exec_form.py``). ``init`` renders settings.json on the
-    host that will run it, so ``os.name`` and the lookup at render time are
-    the key; ``posix`` and ``git_bash`` override them for tests. The file
-    can still travel (a repo that already tracks ``.claude/settings.json``,
-    DEF-11), and Git Bash can come or go after ``init``: ``doctor`` flags a
-    ``||`` or a shim head seen on the other host, a shim form for the other
-    shell, and a string with neither (an install rendered before they existed:
-    the merge adds ``statusLine`` only when the key is absent and the rewire
-    swaps only the interpreter the line names -- DEF-798, DEF-810 -- so an
-    older string is kept, and a fresh ``init``'s ``settings.json.new`` is
-    where the current render can be read).
+    Git Bash when its lookup finds one, else PowerShell (read from the
+    2.1.316 binary), and the statusLine schema has no field to pin it. Git
+    Bash runs a bare quoted head, which PowerShell reads as an expression,
+    and PowerShell's ``&`` is a syntax error to bash (DEF-929), so the head
+    is the dot, an operator in both: bash sources the shim, whose first line
+    is for bash alone and returns before the batch body, and PowerShell runs
+    it as a batch file (DEF-3017). One string for both shells, so Git Bash
+    installed or removed after ``init`` changes nothing, at no cost per
+    refresh: the dot form's medians were 0.109 s under bash and 0.450 s
+    under PowerShell against 0.113 and 0.446 s for the two forms it
+    replaced (N=20 each, interleaved, win-2 2026-10-31; a PowerShell
+    wrapper added 0.37 s to every refresh in both shells). It printed the
+    statusline in both shells and, with the interpreter gone, the fallback
+    line (driven, ``tests/test_hook_exec_form.py``). ``init`` renders
+    settings.json on the host that will run it, so ``os.name`` at render
+    time is the key; ``posix`` overrides it for tests. The file can still
+    travel (a repo that already tracks ``.claude/settings.json``, DEF-11):
+    ``doctor`` flags a ``||`` or a shim head seen on the other host, a bare
+    or called head for the shell the host does not run, and a string with
+    neither (an install rendered before they existed: the merge adds
+    ``statusLine`` only when the key is absent and the rewire swaps only the
+    interpreter the line names -- DEF-798, DEF-810 -- so an older string is
+    kept, and a fresh ``init``'s ``settings.json.new`` is where the current
+    render can be read).
     """
     script = f'{python_cmd} "${{CLAUDE_PROJECT_DIR}}/{STATUSLINE_SCRIPT}"'
     if posix is None:
         posix = _render_host_is_posix()
     if not posix:
-        if git_bash is None:
-            git_bash = git_bash_path(repo_root) is not None
-        shim = f'"${{CLAUDE_PROJECT_DIR}}/{STATUSLINE_SHIM}" {python_cmd}'
-        return shim if git_bash else f"& {shim}"
+        return f'. "${{CLAUDE_PROJECT_DIR}}/{STATUSLINE_SHIM}" {python_cmd}'
     return f"{script} || echo '{STATUSLINE_FALLBACK_TEXT}'"
 
 
@@ -2096,7 +2091,7 @@ def _build_settings_json(
         # keep the string they have until a re-`init`.
         "statusLine": {
             "type": "command",
-            "command": _statusline_command(python_cmd, repo_root=repo_root),
+            "command": _statusline_command(python_cmd),
         },
         "hooks": {
             "SessionStart": [{
@@ -4288,10 +4283,18 @@ def deploy_harness(
         elif action == "skipped_user_file":
             skipped_user_files.append(rel_path)
             skipped.append(f"{rel_path} (user file preserved)")
+            # A batch file's marker is its own form, after the echo-off: a
+            # `#` line is a command to cmd.exe.
+            from espalier.managed_markers import MARKER_BATCH_COMMENT, MARKER_HASH_COMMENT
+
+            marker = (
+                f"{MARKER_BATCH_COMMENT}, on the line after @echo off"
+                if rel_path.endswith(".cmd") else MARKER_HASH_COMMENT
+            )
             print(
                 f"[WARN] hook drift: {rel_path} differs from packaged "
                 f"version; preserving user edit. Add a managed marker "
-                f"line (# espalier:managed) to opt back into automatic "
+                f"line ({marker}) to opt back into automatic "
                 f"updates on next init.",
                 file=sys.stderr,
             )
@@ -8822,9 +8825,9 @@ def _swap_interpreter_token(command: str, new_name: str) -> str:
     old = head
     shim_end = statusline_shim_end(command)
     if shim_end >= 0:
-        # The Windows statusline shim is the head, bare or behind PowerShell's
-        # call operator, and the interpreter is its first argument (DEF-729,
-        # DEF-929): swap THAT word, searching past the head so a shim path
+        # The Windows statusline shim is the head, bare or behind the dot or
+        # PowerShell's call operator, and the interpreter is its first argument
+        # (DEF-729, DEF-929, DEF-3017): swap THAT word, searching past the head so a shim path
         # that happens to contain the interpreter's name is safe. The offset
         # is measured on the unstripped string: trailing whitespace from a
         # hand edit once put it past the word.
@@ -11188,7 +11191,7 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             if no_statusline:
                 file_states.append("has no statusLine")
             if shell_mismatch:
-                file_states.append("has a statusLine written for the other Windows shell "
+                file_states.append("has a statusLine one of the Windows shells cannot run "
                                    "(`doctor` names it)")
             states = (["the hook tree above is not armed"] if disarmed else []) + (
                 ["your .claude/settings.json " + _and_list(file_states)] if file_states else [])
