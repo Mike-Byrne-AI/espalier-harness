@@ -556,7 +556,11 @@ reachability analysis. Both gates run before any sub-task executes.
     not the plan. Three carve-outs, each said in one line before stopping: the
     operator asked to hold the push; this pack's lane ships together with
     another lane this session is still building; or more of this lane's work
-    is still to come this session (the next pack of a chain).
+    is still to come this session (the next pack of a chain). A fourth only
+    where the gate says its read of this seat's other open pull requests could
+    not be made: a read made in this turn naming one open, by number (where
+    the gate can read, it holds the lane itself, one open pull request per
+    seat, and asks again once that one merges).
 
 ## Stop conditions — when to ask before continuing
 

@@ -231,6 +231,12 @@ _ALLOWED_FLAGS = {
                           # judged, so it speaks once per commit; session_start
                           # seeds it with HEAD on a new session and keeps it
                           # across a compaction (_hook_utils.HANDOFF_GATE_FLAG)
+    "handoff_gate_hold",  # stop_gate Gate 5 (DEF-4058): the HEAD the gate holds
+                          # while this seat has another pull request open, with
+                          # the read's stamps and the rows; task_router says it
+                          # on every prompt; a new session keeps it while it
+                          # names HEAD (the flag's seed stands aside) and clears
+                          # it when stale (_hook_utils.HANDOFF_GATE_HOLD)
     # The own-clear marker (the own-clear lane, 2026-10-26): tools/cc/ship.py
     # arms it as the handoff's last act ({state, session_id, head, seat, role,
     # brief, landed, outcome, written_at}, tools/cc/ship.py::arm_own_clear;

@@ -2324,8 +2324,19 @@ def _seed_handoff_gate_flag(root: Path, state_dir: Path) -> None:
     block at the first Stop into a cold context that may also have forgotten an
     operator's hold. Not called on a compaction or a resume, which keep the
     flag with the counters. A git that cannot answer leaves no flag, and the
-    gate then speaks once about whatever HEAD holds."""
+    gate then speaks once about whatever HEAD holds.
+
+    The gate's hold (``_hook_utils.HANDOFF_GATE_HOLD``, DEF-4058) is the one
+    state the seed stands aside for: a HEAD the gate held behind another of
+    this seat's pull requests is a mechanical hold, not a forgotten
+    operator's, so a new session keeps the hold and writes no flag -- the gate
+    then judges the lane again (the hold stands inside its interval, lifts
+    once that pull request merges, and the block returns). Seeded, the gate
+    would never look at that HEAD again (the failure-mode review of
+    2026-10-31 reproduced the silence). A hold naming another HEAD is stale
+    and goes with the seed."""
     flag = state_dir / _hook_utils.HANDOFF_GATE_FLAG
+    hold = state_dir / _hook_utils.HANDOFF_GATE_HOLD
     try:
         result = _hook_utils.run_bounded(  # spawn: ok a reporter: a git that cannot answer leaves no flag, and the gate speaks once
             ["git", "rev-parse", "HEAD"], cwd=str(root), capture_output=True, text=True,
@@ -2336,12 +2347,27 @@ def _seed_handoff_gate_flag(root: Path, state_dir: Path) -> None:
     except (OSError, subprocess.TimeoutExpired, ValueError):  # strict decode: a structured answer (DEF-821)
         head = ""
     try:
-        if head:
+        if head and _hold_names(hold, head):
+            flag.unlink(missing_ok=True)
+        elif head:
+            hold.unlink(missing_ok=True)
             atomic_write_text(flag, head)
         else:
+            hold.unlink(missing_ok=True)
             flag.unlink(missing_ok=True)
     except OSError:  # fail-open: ok deliberate -- an unwritable state dir costs one block at the first Stop, never the banner
         pass
+
+
+def _hold_names(hold: Path, head: str) -> bool:
+    """Whether the gate's hold file names ``head`` (its ``head`` field: the
+    gate's own reader reads the same shape). A missing or torn file names
+    nothing."""
+    try:
+        record = json.loads(hold.read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # fail-open: ok deliberate -- no hold, or one torn mid-rewrite, names no HEAD, and the seed proceeds
+        return False
+    return isinstance(record, dict) and record.get("head") == head
 
 
 def _clean_state_flags(root: Path, source: str = "") -> None:
