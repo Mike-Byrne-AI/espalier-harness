@@ -220,6 +220,87 @@ def is_statusline_shim_head(token: str) -> bool:
     return token.replace("\\", "/").lower().endswith(STATUSLINE_SHIM)
 
 
+#: Where Claude Code looks for Git Bash before it asks PATH: the two literals
+#: in its lookup (read from the 2.1.316 binary), drive letter and all.
+GIT_BASH_DEFAULT_PATHS = (
+    r"C:\Program Files\Git\bin\bash.exe",
+    r"C:\Program Files (x86)\Git\bin\bash.exe",
+)
+
+
+def _settings_git_bash_paths(repo_root: Path | None) -> list[str]:
+    """``env.CLAUDE_CODE_GIT_BASH_PATH`` from the settings files Claude Code
+    applies to its own environment before its lookup (the 2.1.316 binary
+    special-cases this variable in its settings-env filter), highest
+    precedence first: the project's ``settings.local.json`` and
+    ``settings.json``, then the user's. A file that cannot be read or
+    parsed names nothing. Bytes through ``decode_bom``: a file written from
+    Windows PowerShell 5.1 is UTF-16 with a BOM, and an editor's has UTF-8's."""
+    import json
+
+    from espalier.surface_contract import decode_bom  # lazy: keep this module stdlib-light
+
+    files = [Path.home() / ".claude" / "settings.json"]
+    if repo_root is not None:
+        files[:0] = [repo_root / ".claude" / "settings.local.json",
+                     repo_root / ".claude" / "settings.json"]
+    found: list[str] = []
+    for path in files:
+        try:
+            data = json.loads(decode_bom(path.read_bytes()))
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        env = data.get("env") if isinstance(data, dict) else None
+        value = env.get("CLAUDE_CODE_GIT_BASH_PATH") if isinstance(env, dict) else None
+        if isinstance(value, str) and value:
+            found.append(value)
+    return found
+
+
+def git_bash_path(repo_root: Path | None = None) -> str | None:
+    """A Git Bash Claude Code can find on this host, or None.
+
+    On Windows Claude Code runs a shell-form command -- the statusLine
+    among them -- under Git Bash when its lookup finds one and under
+    PowerShell when it does not, and the statusLine schema has no field to
+    pin either (DEF-929). Its lookup, in order (read from the 2.1.316
+    binary): ``CLAUDE_CODE_GIT_BASH_PATH`` when its file name is ``bash``,
+    ``sh``, ``bash.exe`` or ``sh.exe`` and the path exists, else the two
+    :data:`GIT_BASH_DEFAULT_PATHS`, else ``bin\\bash.exe`` two levels above
+    the first ``git`` ``where.exe`` names.
+
+    Followed in that order and WIDENED, because the two wrong answers cost
+    differently: a None where Claude Code finds Git Bash renders the
+    PowerShell form, which bash cannot parse, on a host whose bare line
+    worked before; a path where it finds none leaves the bare line those
+    hosts always had. So the variable is also read from the settings files
+    Claude Code applies to its environment (``repo_root``'s and the
+    user's), and every ``git`` on PATH is asked, not the first: a Git Bash
+    terminal puts ``mingw64\\bin`` first, and a Claude Code launched from
+    the Start menu reads ``cmd`` first. ``shutil.which`` in place of
+    ``where.exe``, so nothing is spawned and ``doctor`` reads it on the
+    healthy path (DEF-715). A variable set only in the shell that launches
+    Claude Code is still unseen from any other shell.
+    """
+    names = ("bash.exe", "sh.exe", "bash", "sh")
+    env = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
+    for value in ([env] if env else []) + _settings_git_bash_paths(repo_root):
+        name = value.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        if name in names and os.path.exists(value):
+            return value
+    for path in GIT_BASH_DEFAULT_PATHS:
+        if os.path.exists(path):
+            return path
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        git = shutil.which("git", path=entry) if entry else None
+        if git:
+            # Lexical, as Claude Code's path.win32 join is: `<git>\..\..\bin`.
+            bash = os.path.normpath(os.path.join(git, "..", "..", "bin", "bash.exe"))
+            if os.path.exists(bash):
+                return bash
+    return None
+
+
 def after_head_index(command: str, head: str) -> int:
     """The index in ``command`` (unstripped) just past its leading ``head``
     token and the quote that closed it; ``-1`` when ``head`` is not there.
@@ -241,25 +322,50 @@ def after_head_index(command: str, head: str) -> int:
     return end
 
 
-def rest_after_token(command: str, token: str) -> str:
-    """``command`` after its leading ``token`` and the quote that closed it."""
-    end = after_head_index(command or "", token)
-    if end < 0:
-        return ""
-    return command[end:].strip()
+def statusline_shim_end(command: str) -> int:
+    """The index in ``command`` (unstripped) just past its Windows statusline
+    shim head and the quote that closed it, PowerShell's call operator before
+    the head included; ``-1`` when the shim is not the head.
+
+    ``init`` renders the shim bare where Claude Code will find Git Bash and as
+    ``& "<shim>" <interpreter>`` where it will run the line under PowerShell,
+    which reads a quoted head as an expression (DEF-929). Every reader of the
+    head asks here -- :func:`interpreter_site_token`, the rewire's swap and its
+    launcher-flag read, ``doctor``'s fallback notes -- so none reads the ``&``
+    as the interpreter, and none decides "shim-headed" by a copy of its own.
+    """
+    text = command or ""
+    body = text.lstrip()
+    if body[:1] == "&":
+        body = body[1:].lstrip()
+    head = interpreter_token(body)
+    if not is_statusline_shim_head(head):
+        return -1
+    end = after_head_index(body, head)
+    return -1 if end < 0 else len(text) - len(body) + end
+
+
+def statusline_shim_called(command: str) -> bool:
+    """Is ``command`` headed by the Windows statusline shim behind
+    PowerShell's call operator -- the form ``init`` renders where Claude
+    Code finds no Git Bash (DEF-929)? Read beside
+    :func:`statusline_shim_end`, so the two forms are told apart in one
+    place."""
+    return statusline_shim_end(command) >= 0 and (command or "").lstrip()[:1] == "&"
 
 
 def interpreter_site_token(command: str) -> str:
     """The interpreter a settings.json command string runs.
 
-    argv[0] for every hook entry and for a POSIX statusLine; argv[1] when
-    argv[0] is the Windows statusline shim. BOTH readers of a statusLine --
+    argv[0] for every hook entry and for a POSIX statusLine; the word after
+    the Windows statusline shim when the shim is the head, bare or called
+    (:func:`statusline_shim_end`). BOTH readers of a statusLine --
     ``doctor``'s resolver check and ``cli.rewire_interpreter_in_settings``
     -- take the token from here, so they cannot disagree about which word is
     the interpreter (the disagreement DEF-620 measured on the legacy shell
     form, one level over).
     """
-    head = interpreter_token(command)
-    if not is_statusline_shim_head(head):
-        return head
-    return interpreter_token(rest_after_token(command, head))
+    end = statusline_shim_end(command)
+    if end < 0:
+        return interpreter_token(command)
+    return interpreter_token(command[end:])

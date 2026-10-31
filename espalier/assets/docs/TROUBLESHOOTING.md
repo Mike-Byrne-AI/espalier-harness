@@ -116,7 +116,12 @@ the fallback (installs rendered before it keep their statusline:
 absent, and `--rewire-interpreter` swaps only the interpreter the line
 names), or it was rendered on the other kind of host and carried in by a
 tracked `settings.json` — a `||` clause cannot parse under Windows
-PowerShell 5.1, and a POSIX shell cannot run the `.cmd` shim. `espalier
+PowerShell 5.1, and a POSIX shell cannot run the `.cmd` shim. On Windows
+it can also be written for the other shell: Claude Code runs the line
+under Git Bash when it finds Git Bash and under PowerShell when it does
+not, PowerShell needs the shim behind its `&` call operator and Git Bash
+cannot parse one, so installing or removing Git for Windows after `init`
+leaves the line in the wrong form. `espalier
 doctor .` says which, and a fresh `espalier init .` renders
 `settings.json.new` beside your file when the render differs — take its
 `statusLine` line. If there is **no statusline at all** on a wired
