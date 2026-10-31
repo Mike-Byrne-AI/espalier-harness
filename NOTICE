@@ -12,8 +12,9 @@ third party, for the sole purpose of verifying this project's claims
 against its named source. The excerpts remain the property of their
 respective owners:
 
-- docs/external/cc-hook-protocol.md, docs/external/cc-statusline.md and
-  docs/external/cc-worktrees.md are excerpts of the Claude Code
+- docs/external/cc-hook-protocol.md, docs/external/cc-statusline.md,
+  docs/external/cc-worktrees.md and docs/external/cc-git-bash.md are
+  excerpts of the Claude Code
   documentation published at https://code.claude.com/docs, copyright
   Anthropic, PBC.
 

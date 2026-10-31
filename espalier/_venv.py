@@ -222,12 +222,19 @@ def is_statusline_shim_head(token: str) -> bool:
     return token.replace("\\", "/").lower().endswith(STATUSLINE_SHIM)
 
 
-#: Where Claude Code looks for Git Bash before it asks PATH: the two literals
-#: in its lookup (read from the 2.1.316 binary), drive letter and all.
+#: Where Claude Code looks for Git Bash before it asks PATH: the two default
+#: install locations its troubleshoot-install page names, in its order, each
+#: with ``bin\bash.exe`` under it (the 2.1.316 binary holds the same two
+#: literals). ``docs/external/cc-git-bash.md`` pins the page, and
+#: ``TestGitBashLookup`` reads this tuple against it.
 GIT_BASH_DEFAULT_PATHS = (
     r"C:\Program Files\Git\bin\bash.exe",
     r"C:\Program Files (x86)\Git\bin\bash.exe",
 )
+
+#: The file names Claude Code accepts in ``CLAUDE_CODE_GIT_BASH_PATH``; any
+#: other name is ignored as if the variable were unset (the same page).
+GIT_BASH_NAMES = ("bash.exe", "sh.exe", "bash", "sh")
 
 
 def _settings_git_bash_paths(repo_root: Path | None) -> list[str]:
@@ -265,11 +272,15 @@ def git_bash_path(repo_root: Path | None = None) -> str | None:
     On Windows Claude Code runs a shell-form command -- the statusLine
     among them -- under Git Bash when its lookup finds one and under
     PowerShell when it does not, and the statusLine schema has no field to
-    pin either (DEF-929). Its lookup, in order (read from the 2.1.316
-    binary): ``CLAUDE_CODE_GIT_BASH_PATH`` when its file name is ``bash``,
-    ``sh``, ``bash.exe`` or ``sh.exe`` and the path exists, else the two
+    pin either (DEF-929). Its lookup, in order (its troubleshoot-install
+    page, pinned in ``docs/external/cc-git-bash.md``; the 2.1.316 binary
+    reads the same): ``CLAUDE_CODE_GIT_BASH_PATH`` when its file name is one
+    of :data:`GIT_BASH_NAMES` and the path exists, else the two
     :data:`GIT_BASH_DEFAULT_PATHS`, else ``bin\\bash.exe`` two levels above
-    the first ``git`` ``where.exe`` names.
+    the first ``git`` ``where.exe`` names. The page's step 2 also skips a
+    ``git`` a project placed (in the launch folder, or below it under
+    ``node_modules`` or a virtual-environment folder); this does not
+    (DEF-3021).
 
     ``init`` no longer reads it: its render runs in both shells (DEF-3017).
     ``doctor`` does, to name a bare or ``&`` line an older install carries
@@ -286,11 +297,10 @@ def git_bash_path(repo_root: Path | None = None) -> str | None:
     healthy path (DEF-715). A variable set only in the shell that launches
     Claude Code is still unseen from any other shell.
     """
-    names = ("bash.exe", "sh.exe", "bash", "sh")
     env = os.environ.get("CLAUDE_CODE_GIT_BASH_PATH")
     for value in ([env] if env else []) + _settings_git_bash_paths(repo_root):
         name = value.replace("\\", "/").rsplit("/", 1)[-1].lower()
-        if name in names and os.path.exists(value):
+        if name in GIT_BASH_NAMES and os.path.exists(value):
             return value
     for path in GIT_BASH_DEFAULT_PATHS:
         if os.path.exists(path):

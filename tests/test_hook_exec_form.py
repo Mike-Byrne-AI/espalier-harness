@@ -593,11 +593,30 @@ class TestStatusLinePortability:
 
 class TestGitBashLookup:
     """DEF-929: ``_venv.git_bash_path`` finds Git Bash in Claude Code's order
-    (read from the 2.1.316 binary): ``CLAUDE_CODE_GIT_BASH_PATH`` when it
+    (its troubleshoot-install page, pinned in ``docs/external/cc-git-bash.md``;
+    the 2.1.316 binary reads the same): ``CLAUDE_CODE_GIT_BASH_PATH`` when it
     names an existing bash or sh, then the two Program Files paths, then
     ``bin/bash.exe`` two levels above the ``git`` on PATH. Its answer decides
-    which Windows statusLine render ``init`` writes and which one ``doctor``
-    reads as the host's, so a step out of order blanks the line."""
+    which shell ``doctor`` reads as the host's when it judges a bare or ``&``
+    statusLine an older ``init`` wrote, so a step out of order names a
+    working line or stays silent over a blank one."""
+
+    def test_the_copy_is_the_pinned_lookup(self):
+        """DEF-3018: the copy's default locations and accepted file names are
+        the ones the ``cc-git-bash`` pin quotes, read off the same ``>``
+        passages the weekly refresh checks upstream, so a re-excerpt that
+        moves either reds here until the copy follows."""
+        from espalier import _venv
+        from espalier.external_diff import quoted_passages
+        from espalier.external_pins import parse_pin
+
+        pin = parse_pin(REPO_ROOT / "docs" / "external" / "cc-git-bash.md")
+        quoted = " ".join(p.text for p in quoted_passages(pin))
+        locations = re.search(r"The default install locations `([^`]+)` and `([^`]+)`", quoted)
+        names = re.search(r"accepts only a file named `([^`]+)`, `([^`]+)`, `([^`]+)`, or `([^`]+)`;", quoted)
+        assert locations and names, "the pin's quotes no longer read as the lookup's defaults and names: re-read the copy against them"
+        assert _venv.GIT_BASH_DEFAULT_PATHS == tuple(loc + "\\bin\\bash.exe" for loc in locations.groups())
+        assert sorted(_venv.GIT_BASH_NAMES) == sorted(names.groups())
 
     @staticmethod
     def _host(monkeypatch, *, defaults=(), git=None, env=None, gits=None, home=None):
