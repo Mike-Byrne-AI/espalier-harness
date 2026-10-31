@@ -1400,10 +1400,14 @@ class TestTheLogSwitch:
     the deferred clear of 2026-10-30 was read from the transcript's queue rows
     instead of the mod's own record. The switch sets the name for the session,
     after the unsets on both printed lines, only when the mod rides; bare, it
-    names ``.espalier-state/own_clear.log`` under the seat's checkout. Dies
-    to: the name set with no mod to write it, a log left exported in the
-    launcher's shell riding in, or an assignment rendered before an unset on
-    the POSIX line (BSD env stops reading options at the first assignment)."""
+    names ``.espalier-state/own_clear.log`` under the seat's checkout -- and
+    since DEF-5031 (a clear the engine refused 41 times over ten hours, with
+    the log off on every seat) that is the default with the switch left out,
+    ``--no-own-clear-log`` the way to a session with no log. Dies to: the name
+    set with no mod to write it, a log left exported in the launcher's shell
+    riding in, a plain launch with no log, or an assignment rendered before an
+    unset on the POSIX line (BSD env stops reading options at the first
+    assignment)."""
 
     def test_the_childs_environment_carries_the_log_only_with_the_mod(self, seat, tmp_path):
         target = seat.Target("box-x", tmp_path, True, False)
@@ -1447,11 +1451,34 @@ class TestTheLogSwitch:
         assert seat.main(["launch", "box-feat", "--no-mod", "--own-clear-log", "--", "--model", "x"]) == 0
         assert "ESPALIER_OWN_CLEAR_LOG" not in no_claude[-1]["env"]
         assert "names nothing without it" in capsys.readouterr().out
+        # The default (DEF-5031): the switch left out is the bare switch; the
+        # no-mod launch with no switch typed is not told about a switch.
         assert seat.main(["launch", "box-feat", "--", "--model", "x"]) == 0
+        assert no_claude[-1]["env"]["ESPALIER_OWN_CLEAR_LOG"] == expected
+        assert expected in capsys.readouterr().out
+        assert seat.main(["launch", "box-feat", "--no-mod", "--", "--model", "x"]) == 0
         assert "ESPALIER_OWN_CLEAR_LOG" not in no_claude[-1]["env"]
-        capsys.readouterr()
+        assert "names nothing without it" not in capsys.readouterr().out
         assert seat.main(["launch", "box-feat", "--own-clear-log", "--print", "--shell", "posix"]) == 0
         assert f"ESPALIER_OWN_CLEAR_LOG={seat.shlex.quote(expected)}" in capsys.readouterr().out
+
+    def test_no_own_clear_log_starts_the_session_with_no_log(self, seat, clone, registry, no_claude, monkeypatch,
+                                                              capsys):
+        """The one way to a session the mod does not log (DEF-5031 turned the
+        default on): the name is unset on both printed lines as before, and the
+        launch line says the mod rides without a log."""
+        _dispatcher(clone, '"air"')
+        _worktree(clone, "feat", name="box-feat")
+        monkeypatch.chdir(clone)
+        monkeypatch.setenv("ESPALIER_OWN_CLEAR_LOG", "/left/exported.log")
+        assert seat.main(["launch", "box-feat", "--no-own-clear-log", "--", "--model", "x"]) == 0
+        env = no_claude[-1]["env"]
+        assert "ESPALIER_OWN_CLEAR_LOG" not in env and env["ESPALIER_OWN_CLEAR"] == "1"
+        out = capsys.readouterr().out
+        assert "own-clear mod loaded" in out and "its log:" not in out
+        assert seat.main(["launch", "box-feat", "--no-own-clear-log", "--print", "--shell", "posix"]) == 0
+        line = capsys.readouterr().out
+        assert "-u ESPALIER_OWN_CLEAR_LOG" in line and "ESPALIER_OWN_CLEAR_LOG=" not in line
 
     def test_a_relative_log_path_is_resolved_where_the_operator_typed_it(self, seat, clone, registry, no_claude,
                                                                           monkeypatch):

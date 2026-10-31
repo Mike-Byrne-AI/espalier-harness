@@ -296,9 +296,18 @@ class TestTheByHandArm:
         _with_origin(repo)
         ship.arm_own_clear_here(repo, held=ship.Held("main red after merge", landed=False))
         before = _marker(repo)
-        with pytest.raises(ship.Refused, match="already armed"):
+        with pytest.raises(ship.Refused, match="already armed") as plain:
             ship.arm(why="again")
         assert _marker(repo) == before
+        assert "clears this window at the turn's end" in str(plain.value) and "refused" not in str(plain.value)
+        # The mod's record of a refused clear (DEF-5031): the refusal says so and
+        # sends the operator to the hand clear, not a second arm.
+        path = repo / ".espalier-state" / "own_clear.json"
+        path.write_text(json.dumps({**before, "clear_refusals": 41, "clear_refused": "HooksError: x"}), encoding="utf-8")
+        with pytest.raises(ship.Refused, match="already armed") as refused:
+            ship.arm(why="again")
+        assert "refused its clear 41 time(s)" in str(refused.value) and "/clear by hand" in str(refused.value)
+        assert "clears this window at the turn's end" not in str(refused.value)
 
     def test_a_dirty_tracked_tree_is_refused_and_nothing_is_armed(self, ship, repo, monkeypatch):
         monkeypatch.chdir(repo)
@@ -354,6 +363,74 @@ class TestModArgs:
     def test_this_repository_ships_the_mod_beside_the_driver(self, seat):
         assert seat.MOD_DIR == TOOLS_CC / "mods" / "own-clear"
         assert seat.mod_args() == ["--plugin-dir", str(seat.MOD_DIR)]
+
+
+class TestTheRecordTheModWritesIsWhatTheHooksRead:
+    """DEF-5031, DEF-5032 (2026-10-30): the marker's record crosses the language
+    line twice -- the mod (TypeScript) writes it, the banner's ``Own-clear:``
+    line (``session_start.py``) and the router's advisory (``task_router.py``)
+    read it. The field names are pinned here on all three sides, and the two
+    fixes' shapes are pinned by text in the module, since no Python test drives
+    the mod's hooks (the kit does, ``claude plugin test``). Dies to: a field
+    renamed on one side, the refusal record dropped or written with the state
+    moved off ``armed``, or the ``lastId`` guard loosened back to the
+    unconditional write that took the new session's id under a pending clear."""
+
+    #: What the mod writes beyond the arm's own fields; the readers below read a subset.
+    FIELDS = ("clear_asked_at", "clear_refused", "clear_refusals", "clear_refused_at", "clear_resolved_at",
+              "turns_since_ask", "previous_session_id", "stale_because")
+
+    def test_every_field_the_hooks_read_is_one_the_mod_writes(self, module_text):
+        banner = (TOOLS_CC / "hooks" / "session_start.py").read_text(encoding="utf-8")
+        router = (TOOLS_CC / "hooks" / "task_router.py").read_text(encoding="utf-8")
+        for field in self.FIELDS:
+            assert field in module_text, f"the mod no longer writes {field}"
+        for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_resolved_at", "turns_since_ask",
+                     "stale_because"):
+            assert f'"{name}"' in banner, f"the banner no longer reads {name}"
+        for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_refused_at"):
+            assert f'"{name}"' in router, f"the router no longer reads {name}"
+        assert 'OWN_CLEAR_MARKER = "own_clear.json"' in banner
+        assert '_OWN_CLEAR_MARKER = "own_clear.json"' in router
+
+    def test_a_refusal_is_recorded_with_the_state_left_armed(self, module_text):
+        """DEF-5031's guard: the rejected ask's continuation writes the reason,
+        the count and the time onto the armed marker, and never its state (Gate
+        5, the handoff's refusal of a second arm and the mod's own retry all
+        read ``armed``)."""
+        assert "clear_refused: reason" in module_text, "the refusal is not recorded on the marker"
+        # The rejection handler is the second argument of the one then(), so a
+        # throw in the fulfilment handler is never read as a refusal.
+        start = module_text.index("}, async err => {")
+        rejected = module_text[start:module_text.index("return next(e)", start)]
+        assert "clear_refusals: count" in rejected and "clear_refused_at" in rejected
+        assert "state:" not in rejected
+        assert ".catch(" not in module_text[module_text.rindex("$.command", 0, start):start]
+
+    def test_a_pending_clear_holds_the_last_session(self, module_text):
+        """DEF-5032's guard: a turn's end writes ``lastId`` only outside a
+        pending clear or for the asked session; the clear's SessionStart reads
+        its last session before the marker (three engine round-trips a turn's
+        end could land inside) and takes the marker as its own for the asked
+        session, or, with no last session known, by the marker's own ask."""
+        assert "if (clearedFor === undefined || id === clearedFor) lastId = id" in module_text, (
+            "the turn end writes lastId unconditionally: a queued clear's flip is taken as the last session")
+        start = module_text.index("on('classic.SessionStart'")
+        handler = module_text[start:module_text.find("\n  on('", start + 1)]
+        assert handler.index("const before = lastId") < handler.index("await readMarker($)")
+        assert "marker.session_id === asked" in handler
+        assert "recentAsk(marker, now)" in handler, "the reload arm no longer reads the marker's own ask, bounded"
+
+    def test_a_session_start_under_a_pending_clear_keeps_the_asked_session(self, module_text):
+        """The third defense, pinned alone (the failure-mode review drove the
+        kit with each of the three removed and found the others covering):
+        ``session.start`` resets the module's memory only outside a pending
+        clear, so an engine that raised it at a clear would not hand the new id
+        to the clear's SessionStart as this process's last."""
+        start = module_text.index("on('session.start'")
+        handler = module_text[start:module_text.find("\n  on('", start + 1)]
+        assert "if (clearedFor === undefined) {" in handler, "session.start resets lastId under a pending clear"
+        assert handler.index("if (clearedFor === undefined) {") < handler.index("lastId = id")
 
 
 class TestTheModReadsWhatTheDriverWrites:
