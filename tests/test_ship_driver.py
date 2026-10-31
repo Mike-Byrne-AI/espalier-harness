@@ -3596,7 +3596,7 @@ class TestARedBaseRuledByTheDispatcher:
     def test_the_ruling_marker_is_the_census_marker_and_the_brief_names_the_flag(self, ship):
         """One word across the driver, the census's table and the dispatcher's
         brief; and the brief tells the dispatcher to name the run and the flag."""
-        root = Path(ship.__file__).resolve().parents[2]
+        root = Path(__file__).resolve().parents[1]
         census = (root / "scripts" / "seat_day_census.py").read_text(encoding="utf-8")
         assert f'"gridlock": "{ship.RULING_PREFIX}"' in census
         spec = importlib.util.spec_from_file_location("_seat_for_the_ruling_test", root / "tools" / "cc" / "seat.py")

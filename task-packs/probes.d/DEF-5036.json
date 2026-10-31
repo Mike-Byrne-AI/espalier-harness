@@ -1,10 +1,11 @@
 {
  "id": "DEF-5036",
  "subject": "tools/cc/board.py",
- "cmd": "python -c \"import re; print(len(re.findall(r'base-red-ruled', open('tools/cc/board.py', encoding='utf-8').read())))\"",
+ "cmd": "python -c \"import ast; m=ast.parse(open('tools/cc/board.py', encoding='utf-8').read()); names={n.attr for n in ast.walk(m) if isinstance(n, ast.Attribute)} | {n.id for n in ast.walk(m) if isinstance(n, ast.Name)}; print(int(any('ruling' in x.lower() for x in names)))\"",
  "open_value": "0",
  "why_not": null,
- "row_sha": "7e6f21e78b25",
- "text_sha": "79c746ab3b10",
- "verified_2026_10_30": "OPEN (filed 2026-10-30; probe driven at filing)"
+ "row_sha": "3aef340bff87",
+ "text_sha": "e05e5fab9013",
+ "verified_2026_10_30": "OPEN (filed 2026-10-30; probe driven at filing)",
+ "verified_2026_10_31": "STILL_OPEN (re-pinned value unchanged on 2026-10-31: the filing's probe counted the flag's name in its own subject file, the trap shape tests/test_check_ledger_probes.py ratchets (closed by the fix's own paperwork); re-pointed at an AST predicate the fix must satisfy: board.py names a ruling reader) [changed: probe, text]"
 }
