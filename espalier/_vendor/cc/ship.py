@@ -36,7 +36,9 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          server when GitHub reads the lane clean, locally with
                          the record files resolved by shape when it reads it
                          CONFLICTING (the server honours no merge driver) --
-                         then pull or push, and re-bind
+                         then pull or push, re-arm the own-clear marker at the
+                         new head (HEAD moved with nothing to hand off, and the
+                         mod holds the clear on a moved head), and re-bind
     status               the pull request's state, merge state, required reds,
                          and apart from them the cells a lost runner ended;
                          with the up-to-date rule off, whether the base moved
@@ -58,7 +60,9 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          lane to land first rides the brief
     arm [--why ...]      the same arm by hand, for a lane opened by hand
                          (gh pr create ran no verb): a clean tree, a lane on
-                         origin, no marker already armed for this session
+                         origin; over a marker already armed for this session
+                         it re-arms at HEAD when HEAD moved (a pull by hand),
+                         the brief kept, and refuses otherwise
 
 Stdlib-only (``tools/cc/`` runs standalone, zero espalier imports); the guard
 it asks about (``tools/cc/ci_guard.py``, an install-ci artifact) is loaded by
@@ -1353,6 +1357,25 @@ def _seat_module():
     return _SEAT
 
 
+def _write_own_clear(root: Path, marker: dict) -> None:
+    """The marker written whole and renamed into place: ASCII JSON ending in
+    a newline, so the mod reads it with nothing beyond a JSON parse. The
+    hooks' atomic writer (a tempfile beside the target, then os.replace),
+    loaded by path as the wiring note's reader is: a mod reads the marker at
+    a turn's end and must never see a torn one. A tree whose hooks utilities
+    are not beside this script (a fixture copying a subset) writes it plain."""
+    state_dir = root / STATE_DIR
+    state_dir.mkdir(parents=True, exist_ok=True)
+    target = state_dir / OWN_CLEAR_MARKER
+    text = json.dumps(marker, ensure_ascii=True, indent=2) + "\n"
+    loader = getattr(_paths, "hooks_module", None)
+    writer = getattr(loader("_hook_utils"), "atomic_write_text", None) if loader else None
+    if writer is not None:
+        writer(target, text)
+    else:
+        target.write_text(text, encoding="utf-8")
+
+
 def arm_own_clear(root: Path, *, session_id: str, head: str, seat: str | None, role: str | None,
                   brief: str | None, landed: bool = True, outcome: str | None = None) -> str:
     """Write the marker for ``session_id`` (state ``armed``) whole, rename it
@@ -1364,25 +1387,12 @@ def arm_own_clear(root: Path, *, session_id: str, head: str, seat: str | None, r
     for a step that refused after the push landed; True and the reason for an
     arm by hand. The mod reads neither: the brief carries what the next window
     must do, and the marker on disk outlives the window that printed it."""
-    state_dir = root / STATE_DIR
-    state_dir.mkdir(parents=True, exist_ok=True)
     marker = {
         "state": "armed", "session_id": session_id, "head": head, "seat": seat, "role": role,
         "brief": brief, "landed": landed, "outcome": outcome,
         "written_at": datetime.now(timezone.utc).isoformat(),
     }
-    target = state_dir / OWN_CLEAR_MARKER
-    text = json.dumps(marker, ensure_ascii=True, indent=2) + "\n"
-    # The hooks' atomic writer (a tempfile beside the target, then os.replace),
-    # loaded by path as the wiring note's reader is: a mod reads the marker at
-    # a turn's end and must never see a torn one. A tree whose hooks utilities
-    # are not beside this script (a fixture copying a subset) writes it plain.
-    loader = getattr(_paths, "hooks_module", None)
-    writer = getattr(loader("_hook_utils"), "atomic_write_text", None) if loader else None
-    if writer is not None:
-        writer(target, text)
-    else:
-        target.write_text(text, encoding="utf-8")
+    _write_own_clear(root, marker)
     who = f"seat {seat}, {role}" if seat and role else "no seat name, no brief"
     return (f"own-clear armed for session {session_id} ({who}): in a window seat.py launch started, the "
             "own-clear mod clears it at this turn's end and re-primes it")
@@ -1535,17 +1545,67 @@ def _lane_not_on_origin(root: Path) -> str | None:
     return None
 
 
-def _armed_for_this_session(root: Path) -> str | None:
-    """When the marker is armed for this shell's session, its ``written_at``
-    (or ``earlier``); else None, a missing or unreadable marker included."""
+def _own_clear_marker(root: Path) -> dict | None:
+    """The marker's record when it is armed for this shell's session, else
+    None: a missing or unreadable marker, another session's, or one the mod
+    has consumed or marked stale."""
     try:
         marker = json.loads((root / STATE_DIR / OWN_CLEAR_MARKER).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if (isinstance(marker, dict) and marker.get("state") == "armed"
             and marker.get("session_id") == os.environ.get(SESSION_ID_ENV, "").strip()):
-        return str(marker.get("written_at") or "earlier")
+        return marker
     return None
+
+
+def _armed_for_this_session(root: Path) -> str | None:
+    """When the marker is armed for this shell's session, its ``written_at``
+    (or ``earlier``); else None, a missing or unreadable marker included."""
+    marker = _own_clear_marker(root)
+    return None if marker is None else str(marker.get("written_at") or "earlier")
+
+
+def rearm_own_clear_after_move(root: Path, *, by: str) -> str | None:
+    """After a verb moved HEAD under a marker armed for this session with
+    nothing left to hand off -- the catch-up's pull of the server's merge,
+    its own record merge once pushed, or a pull by hand the ``arm`` verb is
+    run after -- rewrite the marker's ``head`` to HEAD with every other field
+    kept (the brief, how the handoff ended, and the record the mod writes: a
+    refusal's count is what the banner's Own-clear: line and the prompt
+    router read) and the move on the record (``rearmed_from``,
+    ``rearmed_by``, ``rearmed_at``); the line that says so, or None when no
+    marker is armed for this session or its head is HEAD already. The mod
+    holds the clear on ``HEAD moved since the handoff``, and a handoff
+    re-arms only over a commit: a pull leaves nothing to hand off, so the
+    hold stood until a re-arm by hand (air-work's window sat held for 3 h 33
+    min on 2026-10-31 after its tick's catch-up)."""
+    marker = _own_clear_marker(root)
+    if marker is None:
+        return None
+    head = head_sha()
+    before = str(marker.get("head") or "")
+    if before == head:
+        return None
+    marker.update({"head": head, "rearmed_from": before or None, "rearmed_by": by,
+                   "rearmed_at": datetime.now(timezone.utc).isoformat()})
+    _write_own_clear(root, marker)
+    return (f"own-clear re-armed at {head[:7]} ({by} moved HEAD from {before[:7] or '?'}; the marker's brief and "
+            "record are kept): the mod clears this window at the turn's end")
+
+
+def _rearm_own_clear_or_note(root: Path, *, by: str) -> None:
+    """The re-arm after a move that landed, said; a marker that cannot be
+    rewritten, or a HEAD git cannot name, is a note with the by-hand verb,
+    never a refusal of the verb whose move is already made."""
+    try:
+        line = rearm_own_clear_after_move(root, by=by)
+    except (OSError, Refused) as exc:
+        _note(f"the own-clear marker was not re-armed after the move ({os_error_text(exc)}): the mod holds "
+              "the clear on HEAD moved; run python tools/cc/ship.py arm")
+        return
+    if line:
+        _say(line)
 
 
 def _refusals_on_marker(root: Path) -> int:
@@ -1569,7 +1629,10 @@ def arm(why: str | None = None, dry_run: bool = False) -> int:
     should not promise one); a lane that is not on origin refuses and names
     the verbs that land it (:func:`_lane_not_on_origin`); a marker already
     armed for this session is kept, since a second arm would drop what the
-    first one's brief says. ``why`` rides the marker's ``outcome``."""
+    first one's brief says -- unless HEAD moved under it (a pull by hand,
+    with the lane on origin): then the marker follows HEAD with its brief
+    kept (:func:`rearm_own_clear_after_move`), the hold the mod names on a
+    moved head cleared. ``why`` rides the marker's ``outcome``."""
     root = repo_root()
     why_not = _own_clear_gate()
     if why_not:
@@ -1583,8 +1646,26 @@ def arm(why: str | None = None, dry_run: bool = False) -> int:
     armed = _armed_for_this_session(root)
     if armed:
         refused = _refusals_on_marker(root)
-        tail = (f"; the engine has refused its clear {refused} time(s) (the marker's record): this window "
-                "needs /clear by hand, and a second arm would drop what the first one's brief says" if refused else
+        refused_tail = (f"; the engine has refused its clear {refused} time(s) (the marker's record): this window "
+                        "needs /clear by hand" if refused else "")
+        marker = _own_clear_marker(root) or {}
+        head = head_sha()
+        before = str(marker.get("head") or "")
+        if before != head:
+            if dry_run:
+                _say(f"dry-run: the marker armed for this session ({armed}) would be re-armed at {head[:7]} "
+                     f"(HEAD moved from {before[:7] or '?'}; its brief kept)" + (f" ({why})" if why else ""))
+                return 0
+            try:
+                line = rearm_own_clear_after_move(root, by="arm")
+            except OSError as exc:
+                raise Refused(f"the marker could not be rewritten: {os_error_text(exc)}") from None
+            if line is None:
+                _say("nothing re-armed: the marker is no longer armed for this session")
+                return 0
+            _say(line + (f" (by hand: {why})" if why else "") + refused_tail)
+            return 0
+        tail = (refused_tail + ", and a second arm would drop what the first one's brief says" if refused else
                 ": the mod clears this window at the turn's end, and a second arm would drop what the first one's "
                 "brief says")
         raise Refused(f"the own-clear marker is already armed for this session ({armed}){tail}")
@@ -2326,6 +2407,13 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
 
 
 def catch_up() -> int:
+    """Bring the lane level with its base: on the server (``gh pr
+    update-branch``, then a pull) when GitHub reads it clean, here (the
+    record merge, then a push) when it reads CONFLICTING; then re-bind.
+    Either way HEAD moves with nothing new to hand off, so a marker the
+    handoff armed for this session is re-armed at the new head once the move
+    landed (:func:`rearm_own_clear_after_move`): the own-clear mod holds the
+    clear on a moved head, and the hold stood until a re-arm by hand."""
     root = repo_root()
     _refuse_a_shared_checkout(root)   # both paths below change this checkout's lane and push or pull it
     _wiring_note(root)
@@ -2353,6 +2441,7 @@ def catch_up() -> int:
         rc, _, err = _git("push", "origin", branch, cwd=str(root))
         if rc != 0:
             raise Refused(f"git push failed after the merge: {err.strip()[:200]}")
+        _rearm_own_clear_or_note(root, by="catch-up")   # the push landed: HEAD moved at the merge, nothing is ahead
         _wait_for_pr_head(branch, head_sha())
         return rebind()
     was = str(pr.get("headRefOid", ""))
@@ -2379,6 +2468,7 @@ def catch_up() -> int:
     rc, _, err = _git("pull", "--ff-only", "origin", branch, cwd=str(root))
     if rc != 0:
         raise Refused(f"cannot fast-forward {branch}: an unpushed commit here ({err.strip()}); push it, then run catch-up again")
+    _rearm_own_clear_or_note(root, by="catch-up")   # the pull moved HEAD onto origin's tip: nothing is ahead
     return rebind()
 
 
@@ -2741,7 +2831,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_rebind = sub.add_parser("rebind", help="re-bind the title marker to the pull request's head")
     p_rebind.add_argument("--dry-run", action="store_true")
     sub.add_parser("catch-up", help="merge the base in (on the server when clean; locally, record files "
-                                    "resolved by shape, when GitHub reads the lane CONFLICTING), re-bind")
+                                    "resolved by shape, when GitHub reads the lane CONFLICTING), re-arm the "
+                                    "own-clear marker at the new head, re-bind")
     sub.add_parser("status", help="state, merge state, required reds (a lost runner's apart), auto-merge")
     p_rerun = sub.add_parser("rerun", help="re-run once the required cells a lost runner ended")
     p_rerun.add_argument("--dry-run", action="store_true")
@@ -2758,7 +2849,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_hand.add_argument(BASE_RED_RULED_FLAG, metavar="ACK_ID", dest="base_red_ruled",
                         help="land on a red base by the dispatcher's ruling, as `open` takes it")
     p_arm = sub.add_parser("arm", help="arm the own-clear marker for this session by hand: after a lane opened "
-                                       "by hand (gh pr create), or a handoff whose arm did not run")
+                                       "by hand (gh pr create), a handoff whose arm did not run, or a pull by "
+                                       "hand that moved HEAD under the armed marker (re-armed at HEAD)")
     p_arm.add_argument("--why", help="why it is armed by hand (recorded in the marker)")
     p_arm.add_argument("--dry-run", action="store_true")
     return parser

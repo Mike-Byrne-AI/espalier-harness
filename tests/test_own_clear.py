@@ -344,6 +344,138 @@ class TestTheByHandArm:
         assert args.verb == "arm" and args.why == "x" and args.dry_run
 
 
+def _lane_behind_its_remote(repo: Path, branch: str = "lane/x") -> tuple[str, str]:
+    """A lane pushed to a bare origin with its upstream set, then moved one
+    commit ahead THERE and reset here: what the catch-up's pull finds after
+    ``gh pr update-branch`` merged the base on the server. ``(HEAD here,
+    origin's tip)``."""
+    _with_origin(repo)
+    _git(repo, "switch", "--quiet", "-c", branch)
+    _git(repo, "push", "--quiet", "-u", "origin", branch)
+    here = _git(repo, "rev-parse", "HEAD")
+    (repo / "README.md").write_bytes(b"the base merged in\n")
+    _git(repo, "commit", "--quiet", "-am", "merge the base in")
+    _git(repo, "push", "--quiet", "origin", branch)
+    tip = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "reset", "--quiet", "--hard", here)
+    return here, tip
+
+
+class _GhBehind:
+    """``ship._gh`` for one catch-up on the server path: the one pull request
+    reads BEHIND at ``head`` until ``update-branch`` ran, then at ``tip``; any
+    other gh spawn is a test that stopped describing the verb."""
+
+    def __init__(self, branch: str, head: str, tip: str) -> None:
+        self.branch, self.head, self.tip = branch, head, tip
+        self.updated = False
+        self.calls: list[tuple[str, ...]] = []
+
+    def __call__(self, *args: str, cwd=None, timeout=None):
+        self.calls.append(args)
+        if args[:2] == ("pr", "list"):
+            assert self.branch in args
+            row = {"number": 7, "title": "feat: a thing", "url": "https://example.invalid/pull/7",
+                   "state": "OPEN", "headRefOid": self.tip if self.updated else self.head,
+                   "baseRefName": "main", "mergeStateStatus": "BLOCKED" if self.updated else "BEHIND",
+                   "mergeable": "MERGEABLE", "autoMergeRequest": None, "mergeCommit": None}
+            return 0, json.dumps([row]), ""
+        if args[:2] == ("pr", "update-branch"):
+            self.updated = True
+            return 0, "", ""
+        raise AssertionError("unplanned gh spawn: " + " ".join(args))
+
+
+class TestTheCatchUpReArmsTheMarker:
+    """The handoff arms the marker at HEAD; the worker tick's ``catch-up``
+    then pulls the server's merge of the base (or merges it here and pushes),
+    HEAD moves, and the mod holds the clear on ``HEAD moved since the
+    handoff`` -- a hold whose text promised a re-arm only a handoff makes,
+    while nothing was ahead to hand off (air-work's window, 2026-10-31: armed
+    07:12Z, pulled 07:25Z, re-armed by hand 10:58Z). REAL GIT for the pull: a
+    bare origin one commit ahead, gh answered in-process; the conflict path
+    is driven on the spawn table in ``tests/test_ship_driver.py``. Dies to: a
+    catch-up that moves HEAD and leaves the marker's head behind; a re-arm
+    that drops the brief, how the handoff ended or the record the mod wrote;
+    a re-arm over another session's marker, a consumed one or an unmoved
+    head; an ``arm`` that still refuses over a marker whose head moved."""
+
+    @staticmethod
+    def _stand_in(ship, monkeypatch, gh) -> None:
+        monkeypatch.setattr(ship, "_gh", gh)
+        monkeypatch.setattr(ship, "rebind", lambda dry_run=False: 0)
+        monkeypatch.setattr(ship, "_refuse_a_shared_checkout", lambda root: None)
+        monkeypatch.setattr(ship, "_wiring_note", lambda root: None)
+
+    def test_the_pulled_head_re_arms_the_marker_with_its_record_kept(self, ship, repo, monkeypatch, capsys):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        here, tip = _lane_behind_its_remote(repo)
+        ship.arm_own_clear(repo, session_id="s-here", head=here, seat="box", role="worker", brief="the brief",
+                           landed=True, outcome=None)
+        path = repo / ".espalier-state" / "own_clear.json"
+        path.write_text(json.dumps({**_marker(repo), "clear_asked_at": "2026-10-31T07:20:00+00:00",
+                                    "clear_refusals": 1, "clear_refused": "a Stop stands"}), encoding="utf-8")
+        self._stand_in(ship, monkeypatch, _GhBehind("lane/x", here, tip))
+        assert ship.catch_up() == 0
+        assert _git(repo, "rev-parse", "HEAD") == tip, "the pull did not move HEAD: the drive proves nothing"
+        marker = _marker(repo)
+        assert marker["head"] == tip, "the catch-up moved HEAD and left the marker armed at the old head"
+        assert marker["state"] == "armed" and marker["session_id"] == "s-here"
+        assert marker["seat"] == "box" and marker["role"] == "worker" and marker["brief"] == "the brief"
+        assert marker["landed"] is True and marker["outcome"] is None
+        assert marker["clear_asked_at"] == "2026-10-31T07:20:00+00:00" and marker["clear_refusals"] == 1
+        assert marker["clear_refused"] == "a Stop stands"
+        assert marker["rearmed_from"] == here and marker["rearmed_by"] == "catch-up"
+        assert marker["rearmed_at"].endswith("+00:00")
+        out = capsys.readouterr().out
+        assert f"own-clear re-armed at {tip[:7]}" in out and f"catch-up moved HEAD from {here[:7]}" in out
+
+    def test_nothing_is_re_armed_over_another_sessions_marker_a_consumed_one_or_an_unmoved_head(
+            self, ship, repo, monkeypatch):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        head = _git(repo, "rev-parse", "HEAD")
+        assert ship.rearm_own_clear_after_move(repo, by="catch-up") is None, "no marker"
+        ship.arm_own_clear(repo, session_id="s-elsewhere", head="0" * 40, seat=None, role=None, brief=None)
+        assert ship.rearm_own_clear_after_move(repo, by="catch-up") is None, "another session's marker"
+        assert _marker(repo)["head"] == "0" * 40
+        ship.arm_own_clear(repo, session_id="s-here", head=head, seat=None, role=None, brief=None)
+        before = _marker(repo)
+        assert ship.rearm_own_clear_after_move(repo, by="catch-up") is None, "an unmoved head"
+        assert _marker(repo) == before
+        path = repo / ".espalier-state" / "own_clear.json"
+        path.write_text(json.dumps({**before, "state": "consumed", "head": "0" * 40}), encoding="utf-8")
+        assert ship.rearm_own_clear_after_move(repo, by="catch-up") is None, "a consumed marker"
+        assert _marker(repo)["head"] == "0" * 40
+
+    def test_the_arm_verb_re_arms_a_moved_marker_instead_of_refusing(self, ship, repo, monkeypatch, capsys):
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        _with_origin(repo)
+        assert ship.arm(why="hand-opened") == 0
+        path = repo / ".espalier-state" / "own_clear.json"
+        path.write_text(json.dumps({**_marker(repo), "clear_asked_at": "2026-10-31T07:20:00+00:00"}),
+                        encoding="utf-8")
+        armed_at = _marker(repo)
+        # A pull by hand: HEAD moves onto a commit origin holds, nothing ahead.
+        (repo / "README.md").write_bytes(b"pulled\n")
+        _git(repo, "commit", "--quiet", "-am", "the base, pulled")
+        _git(repo, "push", "--quiet", "origin", "main")
+        moved = _git(repo, "rev-parse", "HEAD")
+        assert ship.arm(dry_run=True) == 0
+        assert _marker(repo) == armed_at
+        assert f"would be re-armed at {moved[:7]}" in capsys.readouterr().out
+        assert ship.arm(why="pulled by hand") == 0
+        marker = _marker(repo)
+        assert marker["head"] == moved and marker["rearmed_from"] == armed_at["head"] and marker["rearmed_by"] == "arm"
+        assert marker["brief"] == armed_at["brief"] and marker["outcome"] == "armed by hand: hand-opened"
+        assert marker["clear_asked_at"] == "2026-10-31T07:20:00+00:00"
+        assert f"own-clear re-armed at {moved[:7]}" in capsys.readouterr().out
+        with pytest.raises(ship.Refused, match="already armed"):
+            ship.arm(why="again")
+
+
 class TestModArgs:
     """What `seat.py launch` puts first in claude's arguments: `--plugin-dir`
     for the own-clear mod beside the driver, when its manifest is there. Dies
@@ -465,6 +597,17 @@ class TestTheModReadsWhatTheDriverWrites:
         for name in ("ESPALIER_OWN_CLEAR_ROOT", "ESPALIER_OWN_CLEAR_LOG"):
             assert f"$.env.get('{name}')" in module_text
             assert name in seat.OWN_CLEAR_ENV
+
+    def test_the_hold_on_a_moved_head_names_the_verbs_that_re_arm_it(self, ship, module_text):
+        """The hold's text promised a re-arm only a handoff makes while the
+        driver's catch-up moved HEAD with nothing to hand off (air-work's
+        window, 2026-10-31): the text names the two verbs that re-arm at the
+        new head, and each of them calls the re-arm."""
+        import inspect
+        line = next(ln for ln in module_text.splitlines() if "return 'HEAD moved since the handoff" in ln)
+        assert "catch-up" in line and "ship.py arm" in line, line
+        for verb in (ship.catch_up, ship.arm):
+            assert "rearm_own_clear" in inspect.getsource(verb), verb.__name__
 
     def test_the_in_flight_read_precedes_the_hand_on_of_the_clears_session_start(self, module_text):
         """The project's SessionStart hook runs inside the mod's ``next(e)`` and
