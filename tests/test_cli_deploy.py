@@ -5476,6 +5476,40 @@ class TestSelfHostBlocksStripAtDeploy:
         assert "proof_tier" not in text and "self-host-only" not in text, text
         assert has_managed_marker(text)
 
+    def test_a_census_body_off_this_tree_takes_the_walk_render(self, tmp_path):
+        """The repo-analyst's three ``own`` definitions prune every path the
+        harness writes on an adopter's copy, and the self-host redefinition is
+        gone (DEF-4066)."""
+        from espalier.cli import _asset_transform
+        from espalier.harness_config import own_walk_prunes
+        from espalier.managed_inventory import census_prune_paths
+        rel = ".claude/agents/repo-analyst.md"
+        rendered = _asset_transform(rel, [], tmp_path)((REPO_ROOT / rel).read_text(encoding="utf-8"))
+        line = 'own() { walk "$@" ' + own_walk_prunes(census_prune_paths(tmp_path)) + '; }'
+        assert rendered.count(line) == 3 and 'own() { walk "$@"; }' not in rendered, rendered
+        assert '! -path "./espalier"' not in rendered  # a plain tree's own espalier/ is not pruned
+
+    def test_a_fusion_renders_the_walk_once_its_marker_is_down(self, tmp_path):
+        """Init rendered the bodies it deployed before the overlay brought the
+        engine in, and the overlay renders none: the pass after the marker
+        renders every census body for the fusion (the review's finding)."""
+        from espalier import fuse
+        from espalier.cli import _asset_transform
+        from espalier.harness_config import own_walk_prunes
+        from espalier.managed_inventory import census_prune_paths
+        rel = ".claude/agents/repo-analyst.md"
+        dst = tmp_path / rel
+        dst.parent.mkdir(parents=True)
+        dst.write_text(_asset_transform(rel, [], tmp_path)((REPO_ROOT / rel).read_text(encoding="utf-8")),
+                       encoding="utf-8")
+        assert '! -path "./espalier"' not in dst.read_text(encoding="utf-8")
+        assert fuse._seed_fusion_marker(tmp_path) is True
+        assert fuse._render_census_walks(tmp_path) == [rel]
+        text = dst.read_text(encoding="utf-8")
+        line = 'own() { walk "$@" ' + own_walk_prunes(census_prune_paths(tmp_path)) + '; }'
+        assert text.count(line) == 3 and '! -path "./espalier" ! -path "./espalier/*"' in line, text
+        assert fuse._render_census_walks(tmp_path) == []  # a second pass changes nothing
+
     def test_every_workflow_an_adopter_receives_is_a_valid_function_body(self, tmp_path):
         """The strip removes whole lines from a .js workflow, so a fence around a
         code line would leave the adopter's copy unparseable while the source

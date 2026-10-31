@@ -290,7 +290,7 @@ def _seed_espalier_toml(out: Path) -> bool:
 # source repo has the engine and no marker. CI's hashFiles reads the COMMITTED
 # file, so the marker must be tracked (it deliberately sits outside the
 # gitignored .espalier/ runtime dir).
-_FUSION_MARKER = ".espalier-fusion"
+_FUSION_MARKER = fusion_manifest.FUSION_MARKER
 _FUSION_MARKER_BODY = """\
 # This directory is an Espalier *fusion*: a host repo with the Espalier harness
 # overlaid at its root (built by `espalier fuse`). It is NOT the Espalier source
@@ -511,7 +511,9 @@ def _mark_overlaid_md(dst: Path) -> None:
     """Insert the `espalier:managed` marker into an overlaid .claude .md body
     (idempotent: apply_marker_to_md returns the content unchanged if marked),
     with its self-host blocks stripped as ``init`` strips them off the harness's
-    own tree, so a fusion built with init off ships the body init would."""
+    own tree, so a fusion built with init off ships the body init would. The
+    census walk is rendered once the overlay is done
+    (:func:`_render_census_walks`)."""
     from espalier import managed_markers
     from espalier.surface_hygiene import strip_self_host_blocks
     original = dst.read_text(encoding="utf-8")
@@ -522,6 +524,33 @@ def _mark_overlaid_md(dst: Path) -> None:
         marked = managed_markers.apply_marker_to_md(text)
     if marked != original:
         atomic_write_text(dst, marked)
+
+
+def _render_census_walks(out: Path) -> list[str]:
+    """Render every deployed census body's ``own`` walk for the fusion at
+    ``out``, once its marker is down: ``init`` rendered the bodies it deployed
+    before the overlay brought the engine in, and the overlay renders none, so
+    without this pass a fused tree's census counts the vendored engine as the
+    adopter's (DEF-4066). The roster is the one ``upgrade`` renders on the same
+    tree (``managed_inventory.census_prune_paths``), so the two agree. Returns
+    the rewritten bodies, repo-relative."""
+    from espalier._safe_walk import visible
+    from espalier.harness_config import render_own_walk
+    from espalier.managed_inventory import census_prune_paths
+
+    paths = census_prune_paths(out)
+    rewritten: list[str] = []
+    for kind, pattern in surface_contract.CLAUDE_KIND_GLOBS.items():
+        base = out / ".claude" / kind
+        if not base.is_dir():
+            continue
+        for body_path in visible(base.glob(pattern), base):  # espalier:safe-walk-ok the fusion's own deployed bodies, one kind directory
+            text = body_path.read_text(encoding="utf-8")
+            rendered = render_own_walk(text, paths)
+            if rendered != text:
+                atomic_write_text(body_path, rendered)
+                rewritten.append(body_path.relative_to(out).as_posix())
+    return rewritten
 
 
 def plan_fusion(host: Path, out: Path) -> dict:
@@ -751,6 +780,9 @@ def fuse_repos(host: Path, out: Path, *, preserve_history: bool = True,
         #     harness-guard.yml's self-host CI jobs gate OFF here —
         #     a fusion overlays espalier/ but is not the source repo.
         report["fusion_marker"] = _seed_fusion_marker(out)
+        # 4c'. with the marker down, render the census bodies' walk for the
+        #     fusion (init rendered the ones it deployed before the overlay).
+        report["census_walks_rendered"] = _render_census_walks(out)
 
         # 4d. seed a near-empty docs/SHARP_EDGES.md folder-router.
         #     The overlay skips espalier's monolith (RESEED_SKIP), but the

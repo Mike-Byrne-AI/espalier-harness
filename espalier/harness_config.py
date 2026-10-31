@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
 from espalier import _stack_table, hook_contract, surface_contract
@@ -576,6 +577,55 @@ def render_agent_tools(body: str, rules: tuple[str, ...] | list[str]) -> str:
     new_line = line.group(1) + ", ".join(existing + added) + line.group(3)
     inner = fm.group(2)[:line.start()] + new_line + fm.group(2)[line.end():]
     return fm.group(1) + inner + fm.group(3) + body[fm.end():]
+
+
+#: The deployed ``own`` definition of a census fence (the repo-analyst's
+#: three, the code-reviewer's two): ``walk`` minus a run of ``! -path`` prunes,
+#: one line, a shell function the fence defines for itself. The source bodies
+#: carry a two-root fallback in this shape; the self-host block's
+#: redefinition (``own() { walk "$@"; }``) is not this shape, and the strip
+#: that runs before this render removes it anyway.
+_OWN_WALK_LINE = re.compile(r'^own\(\) \{ walk "\$@"(?: ! -path "[^"\r\n]*")+; \}(\r?)$', re.M)
+
+
+#: A character a double-quoted ``find -path`` test would read as shell syntax
+#: or as a glob of its own; a roster path carries none.
+_UNQUOTABLE = re.compile(r'["$`\\?\[\]]')
+#: The one glob shape a roster path takes: every file of one suffix under a
+#: directory, at any depth (``-path``'s ``*`` crosses ``/``).
+_SUFFIX_GLOB = re.compile(r"[^*]+/\*\.\w+")
+
+
+def own_walk_prunes(paths: Iterable[str]) -> str:
+    """The ``find`` tests that keep ``paths`` out of a walk rooted at ``.``:
+    a directory (trailing ``/``) as itself and everything under it, a file as
+    itself, a ``dir/*.ext`` glob as every such file under the directory; each
+    anchored at the root, so an adopter's own ``pkg/.claude/`` or
+    ``pkg/docs/HOOKS.md`` stays theirs (the source bodies' fallback prunes
+    its two roots at any depth). A path with a quote, a dollar, a backtick,
+    a backslash or any other glob raises ``ValueError``."""
+    tests: list[str] = []
+    for rel in paths:
+        if _UNQUOTABLE.search(rel) or ("*" in rel and not _SUFFIX_GLOB.fullmatch(rel)):
+            raise ValueError(f"not a path a find test can carry: {rel!r}")
+        if rel.endswith("/"):
+            root = "./" + rel.rstrip("/")
+            tests.append(f'! -path "{root}" ! -path "{root}/*"')
+        else:
+            tests.append(f'! -path "./{rel}"')
+    return " ".join(tests)
+
+
+def render_own_walk(body: str, paths: Iterable[str]) -> str:
+    """``body`` with each deployed ``own`` definition pruning ``paths`` (the
+    tree's ``managed_inventory.census_prune_paths``), and nothing else
+    changed. A body without the definition is returned as it is; a rendered
+    body renders again to the line ``paths`` gives, so a re-render after
+    ``fuse`` brings the engine in replaces the first."""
+    prunes = own_walk_prunes(paths)
+    if not prunes:
+        return body
+    return _OWN_WALK_LINE.sub(lambda m: 'own() { walk "$@" ' + prunes + '; }' + m.group(1), body)
 
 
 def build_harness_config(fp: RepoFingerprint, config: HarnessConfig | None = None) -> BuildPlan:
