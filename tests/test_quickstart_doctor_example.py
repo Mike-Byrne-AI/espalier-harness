@@ -262,6 +262,11 @@ class TestBannerSamplesMatchTheDrivenHook:
         shutil.copytree(adopter_tree, copy, symlinks=True)
         env = {k: v for k, v in os.environ.items() if k != "ESPALIER_MAINTENANCE_MODE"}
         env["CLAUDE_PROJECT_DIR"] = str(copy)
+        # An audit store of its own: this class fixture is set up before the
+        # suite's per-test isolation, so the child read the user's store, and on
+        # a box with thousands of logs the start crossed the hook's 13 s wall
+        # in the audit prune (DEF-3015's cut named the phase; DEF-2029).
+        env["ESPALIER_AUDIT_DIR"] = str(tmp_path_factory.mktemp("audit"))
         result = subprocess.run(
             [sys.executable, str(copy / "tools" / "cc" / "hooks" / "session_start.py")],
             cwd=str(copy),
