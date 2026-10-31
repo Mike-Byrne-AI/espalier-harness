@@ -12,7 +12,7 @@ mirrors:
   - https://code.claude.com/docs/en/worktrees
 quote_sources:
   - https://code.claude.com/docs/en/hooks.md
-fetched: 2026-10-10
+fetched: 2026-10-31
 section: "Ask Claude to create a worktree (the 'Hook paths don't follow the worktree' note); Clean up worktrees; Clean up subagent and background-session worktrees; Replace worktree creation with a hook; Non-git version control"
 section_anchor: "clean-up-subagent-and-background-session-worktrees"
 content_hash: ""
@@ -29,7 +29,7 @@ purpose: |
 # Claude Code Worktrees — Pinned Excerpt
 
 **Source:** https://code.claude.com/docs/en/worktrees (fetched as the `.md` twin)
-**Fetched:** 2026-10-10
+**Fetched:** 2026-10-31
 **Section:** "Ask Claude to create a worktree" (the "Hook paths don't follow
 the worktree" note), "Clean up worktrees", "Clean up subagent and
 background-session worktrees", "Replace worktree creation with a hook",
@@ -57,6 +57,16 @@ background-session worktrees", "Replace worktree creation with a hook",
      carried as a raw page diff; the hook events' own contract is quoted in
      cc-hook-protocol.md. -->
 
+<!-- re-excerpt 2026-10-31, against the page fetched that day (the 2026-10-26
+     refresh found 2 of 15 quotes off; by this day, 3).
+     No quoted sentence changed its words. Both pages now print the "cwd
+     follows Claude" note as a `> [!NOTE]` callout, so a `>` stands between
+     its two bullets on the page and the quote check, which reads that `>` as
+     text, could not find the bullets as one run: each is now its own
+     paragraph here, word for word. One sentence left the page: "Before
+     v2.1.210, a lock left by a killed session stayed in place until you ran
+     `git worktree unlock`." Every quoted passage stands on both pages. -->
+
 ---
 
 ## The hook's `cwd` follows Claude into the worktree; `CLAUDE_PROJECT_DIR` stays put
@@ -71,6 +81,7 @@ The worktrees page (in the `<Note>` under "Ask Claude to create a worktree"):
 >   where the session started, so a hook command such as
 >   `${CLAUDE_PROJECT_DIR}/.claude/hooks/check-style.sh` still runs the script
 >   in the main checkout.
+>
 > * **`cwd` follows Claude**: the `cwd` field in the hook's input JSON is the
 >   worktree root, and it moves again when Claude runs `cd`. Read it when a
 >   hook needs the worktree path.
@@ -88,6 +99,7 @@ rule under "Reference scripts by path":
 >   where the session started, so a command such as
 >   `${CLAUDE_PROJECT_DIR}/.claude/hooks/check-style.sh` still runs the script
 >   in the main checkout.
+>
 > * **`cwd` follows Claude**: the `cwd` field in the hook's input JSON is the
 >   worktree root after Claude enters a worktree, and the new directory after
 >   Claude runs `cd`. Read it when a hook needs to know which directory Claude
@@ -128,8 +140,7 @@ very worktree the session is running in unless it reads `cwd`.
 > The sweep also releases a lock Claude Code set for a session whose process
 > has exited, so a killed background session doesn't leave its worktree
 > permanently locked. The sweep never releases a lock you set yourself with
-> `git worktree lock`. Before v2.1.210, a lock left by a killed session stayed
-> in place until you ran `git worktree unlock`.
+> `git worktree lock`.
 
 From "Clean up worktrees" (the sentences that used to carry their own
 "Use worktrees with -p" heading):

@@ -21,8 +21,8 @@ redirect_note: |
   origin; the docs.claude.com URL is retained below only as the redirect entry.
 mirrors:
   - https://docs.claude.com/en/docs/claude-code/hooks
-fetched: 2026-10-16
-section: "Hook input and output — Exit code output (Exit code 0, Exit code 2, Other exit codes, Timeouts, Block the action when a hook fails), JSON output, Decision control; Command hook fields — Exec form and shell form; the WorktreeCreate and WorktreeRemove events"
+fetched: 2026-10-31
+section: "Hook input and output — Exit code output (Exit code 0, Exit code 2, Other exit codes, Timeouts, Block the action when a hook fails, Failed hooks on Windows without Git Bash), JSON output, Decision control; Command hook fields — Exec form and shell form; the WorktreeCreate and WorktreeRemove events"
 section_anchor: "hook-input-and-output"
 content_hash: ""
 refresh_policy: weekly
@@ -35,7 +35,7 @@ purpose: |
 # Claude Code Hook Protocol — Pinned Excerpt
 
 **Source:** https://code.claude.com/docs/en/hooks.md (formerly docs.claude.com/en/docs/claude-code/hooks, now a 301)
-**Fetched:** 2026-10-16
+**Fetched:** 2026-10-31
 **Section:** "Hook input and output" — "Exit code output", "JSON output", "Decision control", plus the per-event rows espalier wires, "Exec form and shell form" and the two worktree events
 **Purpose:** Verification target for Espalier-Harness's hook implementations and any espalier doc claim that mentions hook exit codes, stdout, stderr, or the structured JSON schema.
 
@@ -47,8 +47,10 @@ the opposite: JSON on stdout is read on **every** exit code, and an exit-2
 hook's JSON is still read, though it cannot override the block. The
 channel-XOR rule survives only as **advice**, a `<Note>`. The 2026-10-10 page
 rewrote "Exit code output" again, as a reword around a three-outcome model and
-a stdout-by-exit-code table, and added `onFailure: "block"`; every quote below
-is that page's. Read "Channel and exit code semantics" before trusting any
+a stdout-by-exit-code table, and added `onFailure: "block"`. The 2026-10-31
+page keeps that model and qualifies each failure outcome with the hooks whose
+failure blocks the action; every quote below stands on that page. Read
+"Channel and exit code semantics" before trusting any
 in-repo sentence about exit 2 and stdout. (Written as prose, not a
 blockquote: in a pin every `>` line is an upstream quote.)
 
@@ -58,9 +60,9 @@ blockquote: in a pin every `>` line is an upstream quote.)
 
 Upstream, verbatim (the opening of "Exit code output"):
 
-> Your hook's exit code tells Claude Code whether to continue with the action
-> that triggered the hook, such as a tool call or a prompt. A run that finishes
-> has one of three outcomes:
+> When your hook's run finishes, Claude Code uses its exit code to decide
+> whether to continue with the action that triggered it, such as a tool call or
+> a prompt:
 >
 > * **Success**: your hook exits 0. Claude Code applies any JSON output fields
 >   your hook printed, and the action goes ahead unless those fields block or
@@ -70,19 +72,19 @@ Upstream, verbatim (the opening of "Exit code output"):
 >   Code stops the action.
 > * **Non-blocking error**: your hook exits with any other code, or fails in
 >   some other way, such as not starting or printing invalid JSON. The action
->   goes ahead, and on events such as `PreToolUse` you see a
->   `<hook name> hook error` notice in the transcript. If you want a failed
->   hook to block the action, set `onFailure: "block"`.
+>   goes ahead, except for hooks whose failure blocks the action, for example a
+>   hook with `onFailure` set to `"block"`. On events such as `PreToolUse`, you
+>   see a `<hook name> hook error` notice in the transcript.
 >
-> What your hook prints to stdout can change the outcome. For example, if a
-> `PreToolUse` hook exits 1 but prints JSON that passes validation, the run is
-> a success and the JSON fields decide what happens.
+> What your hook prints to stdout can change the outcome. For example, when a
+> `PreToolUse` hook exits 1 but prints JSON that passes validation, that JSON
+> can still decide what happens.
 
 The outcome by stdout and exit code (verbatim, the page's table):
 
 > | Stdout | Exit 0 | Exit 2 | Any other exit code |
 > | :- | :- | :- | :- |
-> | JSON object that passes schema validation | Success. The fields apply | Blocking error. Claude Code still reads the fields, but they can't override the block | Success. Claude Code ignores the exit code, and the fields alone decide. With `onFailure: "block"`, this counts as a failure |
+> | JSON object that passes schema validation | Success. The fields apply | Blocking error. Claude Code still reads the fields, but they can't override the block | Success. Claude Code ignores the exit code, and the fields alone decide. For hooks whose failure blocks the action, the run counts as a failure instead |
 > | JSON that can't be parsed or fails schema validation | Non-blocking error. The notice carries the parse or validation message | Blocking error. Your stderr is the reason | Non-blocking error. The notice carries the parse or validation message |
 > | Plain text, or nothing | Success | Blocking error. Your stderr is the reason | Non-blocking error. The notice carries the first line of your stderr |
 
@@ -108,30 +110,33 @@ exit 2, so the missing-file downgrade does not reach it.
 > For most events, Claude Code writes stdout to the debug log and doesn't show
 > it in the transcript. The exceptions are `UserPromptSubmit`,
 > `UserPromptExpansion`, `SessionStart`, and `PostModelSwitch`, where Claude
-> Code adds plain-text stdout as context that Claude can see and act on.
+> Code adds plain-text stdout as context that Claude can see and act on. On
+> those events, Claude Code doesn't add stdout it failed to parse.
 
 Whether stdout is read as JSON or as plain text is a **syntactic** test, not a
-channel declaration (verbatim):
+channel declaration. The 2026-10-31 page states it under "Exit code 0"
+(verbatim):
 
-> For a hook that isn't async, Claude Code parses your stdout as JSON output
-> when the whole output is one JSON object with nothing around it but
-> whitespace, and otherwise as plain text or a parse failure:
+> When your hook exits 0 but prints JSON that can't be parsed or fails schema
+> validation, the action goes ahead unless the hook is one whose failure blocks
+> the action. Instead of a success with your fields applied, the run is a
+> non-blocking error.
 >
-> * **One JSON object, on one line or several**: parsed as JSON output.
+> To fix your output, use the parse or validation message that the
+> `<hook name> hook error` notice carries. For a hook that isn't async, your
+> stdout counts as JSON output only when you print one JSON object, on one line
+> or several, with nothing around it but whitespace. Claude Code reads any other
+> stdout as plain text or a parse failure:
+>
 > * **Output that doesn't start with `{`, or that starts with `{` and doesn't
 >   end with `}`**: plain text. A JSON array and a quoted JSON string are plain
 >   text by this rule.
 > * **Two or more lines that each parse as JSON on their own, the first
 >   starting with `{` and the last ending with `}`**: plain text when no line is
->   a JSON output object that sets a field, and a parse failure when one is.
+>   a JSON output object that sets a field. When one line is, the output is a
+>   parse failure, so print that object with nothing else on stdout.
 > * **Anything else that starts with `{` and ends with `}` but isn't valid
 >   JSON**: a parse failure.
->
-> When Claude Code tries to parse your stdout as JSON and can't, or the parsed
-> object fails schema validation, the run is a non-blocking error. The
-> `<hook name> hook error` notice carries the parse or validation message. On
-> the events that add plain-text stdout as context, Claude Code doesn't add
-> stdout it failed to parse.
 
 **Exit-0 stderr never reaches Claude** (verbatim — the sentence to quote
 whenever an espalier doc claims a hook's stderr is visible):
@@ -162,30 +167,33 @@ whenever an espalier doc claims a hook's stderr is visible):
 >   uses your stderr as the blocking reason and records the validation failure
 >   in the debug log.
 
-**Any other exit code** (verbatim):
+**Any other exit code** (verbatim, "Other exit codes"):
 
-> When your hook exits with a code other than 0 or 2 and prints plain text or
-> nothing to stdout, the run is a non-blocking error. You see a
-> `<hook name> hook error` notice in the transcript with
-> `Failed with non-blocking status code:` and the first line of your hook's
-> stderr. […]
+> A `<hook name> hook error` notice with `Failed with non-blocking status code:`
+> means your hook's exit code wasn't 0 or 2 and its stdout was plain text or
+> empty. Unless the hook is one whose failure blocks the action, this is a
+> non-blocking error, so your hook didn't stop the action.
 >
-> A hook that can't start is a non-blocking error too. In shell form, when the
-> script path doesn't exist or isn't executable, the shell exits with a code
-> like 127 and the notice carries the interpreter's message, for example
-> `Failed with non-blocking status code: /bin/sh: /path/to/hook.sh: No such
-> file or directory`. When you set up a policy hook, watch for this notice on
-> its first run, because a mistyped path in `settings.json` means the hook
-> never runs. To block the action instead, set `onFailure: "block"`.
+> If the path is wrong, correct it where the hook is configured. In shell form,
+> when the script path doesn't exist or isn't executable, the shell exits with
+> a code like 127 and the notice carries the interpreter's message. Unless the
+> hook is one whose failure blocks the action, a hook that can't start is a
+> non-blocking error too.
+>
+> When you set up a policy hook, watch for this notice on its first run,
+> because a mistyped path in `settings.json` means the hook never runs. To
+> block the action when the hook can't start, set `onFailure: "block"`.
 
-The page's `<Warning>` (verbatim):
+The page's warning (verbatim):
 
-> Without valid JSON on stdout, Claude Code treats exit code 1 as a
-> non-blocking error, even though 1 is the conventional Unix failure code. If
-> your hook is meant to enforce a policy, use `exit 2`.
+> Exit code 1 without valid JSON output is a non-blocking error unless the hook
+> is one whose failure blocks the action, even though 1 is the conventional Unix
+> failure code. If your hook is meant to enforce a policy, use `exit 2`.
 
 So a hook that means to deny but returns 1 **with no stdout JSON** (e.g. an
-uncaught exception, or a naive `sys.exit(1)`) still **fails open** — the action
+uncaught exception, or a naive `sys.exit(1)`) still **fails open** (no
+espalier hook is one whose failure blocks the action: see "Block the action
+when a hook fails" below) — the action
 proceeds, and the `Failed with non-blocking status code:` notice is the tell.
 This is the behaviour espalier's per-hook `BaseException` umbrellas exist for;
 it is unchanged. Exit 1 is not *categorically* fail-open: exit 1 plus a
@@ -195,24 +203,27 @@ schema-valid deny object is honoured, the JSON alone deciding.
 
 > Apart from a command hook you run with `async: true`, Claude Code cancels a
 > `command`, `http`, or `mcp_tool` hook that reaches its `timeout`, discarding
-> the hook's output, so on most events a timed-out hook renders no decision.
+> the hook's output, so on most events a timed-out hook renders no decision. On
+> `PreModelSwitch`, a hook canceled at its timeout blocks the model switch.
 >
-> On `PreModelSwitch`, a hook canceled at its timeout blocks the model switch.
-> On `PreToolUse`, the two hook families differ:
->
-> * A timed-out `command`, `http`, or `mcp_tool` hook doesn't block the tool
->   call. The call continues through the normal permission flow, so don't
->   count on a stalled hook to act as a gate. To block the call when a
->   `command` or `http` hook times out, set `onFailure: "block"`.
-> * An Agent SDK callback hook that exceeds its timeout blocks the tool call.
+> On `PreToolUse`, a timed-out `command`, `http`, or `mcp_tool` hook doesn't
+> block the tool call, except for hooks whose failure blocks the action. The
+> call continues through the normal permission flow, so don't count on a
+> stalled hook to act as a gate. To block the call when a `command` or `http`
+> hook times out, set `onFailure: "block"`. An Agent SDK callback hook that
+> exceeds its timeout blocks the tool call.
 
 ## Block the action when a hook fails (new 2026-10-10, not wired)
 
 > On most events, when a hook fails or times out, Claude Code still carries
-> out the action, so a policy hook with a wrong path or a crashing script lets
-> everything through. To block the action instead, set
-> `"onFailure": "block"` on a `command` or `http` hook. The default value is
-> `"continue"`. Requires Claude Code v2.1.295 or later.
+> out the action. A policy hook with a wrong path or a crashing script then
+> lets everything through. To block the action instead, set
+> `"onFailure": "block"` on a `command` or `http` hook. Requires Claude Code
+> v2.1.295 or later.
+
+> On Windows without Git Bash, a shell-form `PreToolUse` or
+> `PermissionRequest` command hook that fails with `onFailure` unset can
+> instead block the tool call.
 
 > Each of these counts as a failure:
 >
@@ -239,11 +250,23 @@ schema-valid deny object is honoured, the JSON alone deciding.
 > * **Background command hooks**: command hooks that set `async` or
 >   `asyncRewake`
 
+From "Failed hooks on Windows without Git Bash", the fix for a hook that runs
+one program (verbatim):
+
+> * **The hook runs one `.exe`, not a `.cmd` or `.bat` file**: put the program
+>   in `command` and its arguments in `args` to use exec form, and add
+>   `"onFailure": "block"`. Claude Code then starts the program with no shell.
+>   Without `"onFailure": "block"`, the call can go ahead when the program
+>   fails, is missing, or times out
+
 **Not asserted:** espalier's wiring sets no `onFailure`, so every gate keeps
-the default `"continue"`: a guard that cannot start, crashes past its
-umbrella, or times out lets the call through. Setting it would also make a
-broken guard block every tool call, which is a design decision, not a refresh
-(raised with the dispatcher 2026-10-10).
+the default: a guard that cannot start, crashes past its umbrella, or times
+out lets the call through. The one case where an unset field blocks is a
+shell-form hook on Windows without Git Bash, and espalier wires every hook in
+exec form (`command` plus `args`, as "Exec form and shell form" below reads
+it), which the fix above says goes ahead on a failure. Setting it would also
+make a broken guard block every tool call, which is a design decision, not a
+refresh (raised with the dispatcher 2026-10-10).
 
 A timed-out espalier `command` guard therefore **fails open** on `PreToolUse`:
 the call goes ahead, and the most the operator sees is a non-blocking
@@ -437,8 +460,6 @@ The 2026-07-20 pin's four values are now **five** (verbatim):
 > | `clear` | `/clear` |
 > | `compact` | Auto or manual compaction |
 > | `fork` | A new session forked from an existing one: `--fork-session` with `--resume` or `--continue`, the `/fork` background copy, `/branch`, or a conversation you move to the background |
->
-> Before v2.1.214, forked sessions reported source `"resume"`.
 
 So `SessionStart` is **not** once-per-logical-session: `compact` re-fires it on
 every compaction. A hook that mutates per-session state (e.g. advancing a
@@ -728,10 +749,9 @@ Its output, and what fails it:
 >   whatever your JSON says.
 
 > Claude Code refuses an absolute path that contains `.` or `..` segments, and
-> any path that passes through a symlink below the repository root, because a
-> symlink committed to the repository could redirect the worktree outside it.
-> […] Before v2.1.216, worktree creation followed the hook's path without this
-> screening.
+> any path that passes through a symlink below the repository root. The error
+> names the rejected component. A symlink committed to the repository could
+> redirect the worktree outside it.
 
 ### `WorktreeRemove` fires only for a worktree the hook created
 
@@ -891,3 +911,20 @@ read this pin, never a candidate; the forward ledger carries that row. -->
      SessionStart's tree change that is never killed at its wait
      (`tools/cc/checkout_sync.py::spawn`), writes to temporary files, not to
      the hook's output. -->
+
+<!-- re-excerpt 2026-10-31, against the page fetched that day (the 2026-10-26
+     refresh found 8 of 56 quotes off; by this day, 9).
+     Upstream reworded "Exit code output" again without changing its
+     contract: each failure outcome now carries "except for hooks whose
+     failure blocks the action", the stdout-syntax rule moved under "Exit code
+     0" (its "one JSON object" bullet folded into the lead sentence), "Other
+     exit codes" opens on the notice, "Timeouts" lost its bullets, the
+     `onFailure` section no longer names `"continue"` as the default, and the
+     version notes for the `fork` source (v2.1.214) and the worktree path
+     screening (v2.1.216) left the page. New: "Failed hooks on Windows without
+     Git Bash", where an unset `onFailure` blocks a failing shell-form
+     PreToolUse hook; quoted under "Block the action when a hook fails", with
+     why espalier's exec-form wiring is outside it. The page's Markdown twin
+     now prints `<Note>` and `<Warning>` as `> [!NOTE]` and `> [!WARNING]`
+     callouts; this pin's prose keeps the component names. Every quoted
+     passage stands on that page. -->
