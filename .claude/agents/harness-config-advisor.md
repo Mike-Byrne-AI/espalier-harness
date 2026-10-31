@@ -115,7 +115,7 @@ for _stream in (sys.stdout, sys.stderr):
 root = Path(".")
 issues = []
 
-# 1. Hook scripts — do target files exist?
+# 1. Hook scripts -- do target files exist?
 settings_path = root / ".claude" / "settings.json"
 if settings_path.exists():
     data = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -127,9 +127,9 @@ if settings_path.exists():
                 if m:
                     script = root.resolve() / re.sub(r"^.*?PROJECT_DIR}?/", "", m.group(1))
                     if not script.exists():
-                        issues.append(f"DEAD HOOK: {event} → {script.name} not found at {script}")
+                        issues.append(f"DEAD HOOK: {event} -> {script.name} not found at {script}")
 
-# 2. Commands, agents and skills — a source path a body cites must exist.
+# 2. Commands, agents and skills -- a source path a body cites must exist.
 #    The prefixes are the harness's own layout. A body the harness deployed
 #    carries its managed marker and cites that layout, so it is the harness's
 #    to check: the pass skips it and says how many bodies it read and how
@@ -147,7 +147,7 @@ SOURCE_REF_RE = re.compile(
 MANAGED_RE = re.compile(r"(?m)^[ \t]*(?:#|<!--|::)[ \t]*espalier:managed\b", re.ASCII)
 
 def is_managed(content):
-    content = content.lstrip("﻿")
+    content = content.lstrip("\ufeff")
     end = content.find("\n---\n", 3) if content.startswith("---\n") else -1
     window = 600 if end < 0 else max(600, end + 5 + 200)
     return MANAGED_RE.search(content[:window]) is not None
@@ -178,7 +178,7 @@ print(f"Source citations: {checked} of {checked + skipped} bodies under .claude/
 if issues:
     print(f"DEAD CONFIG ({len(issues)} issues):")
     for i in issues:
-        print(f"  ⚠ {i}")
+        print(f"  ! {i}")
 else:
     print("Dead-config pass: CLEAN")
 EOF
@@ -387,3 +387,18 @@ Net result: {N} agents, {N} commands
 ```
 
 Label claims: FACT (observed), INFERENCE (from fingerprint/evidence), SPECULATION (needs confirmation).
+
+## Adapting me to YOUR repo
+
+The dead-config pass above is calibrated to Espalier-Harness's own layout:
+its source prefixes are the harness's (the engine's own package directory and
+`tools/cc/`), a body carrying the managed marker is the harness's to check and
+is skipped, and a citation under a root your tree does not have is read as the
+harness's too. On your repository the pass reads your own bodies' citations of
+those roots and nothing else; if your source lives under other roots, add them
+to `SOURCE_PREFIXES`, and if a census or a catalog entry above names a file
+your tree lacks, treat it as the harness's example, not a gap. Edit this file
+directly; the agent re-reads its body on each invocation. While the file keeps
+its `espalier:managed` marker line, the next `python -m espalier upgrade .
+--execute` or re-run `init` replaces your edit with the packaged body: delete
+that line to keep your edit, and the file stops receiving upstream fixes.

@@ -329,3 +329,18 @@ SPECULATION (needs developer confirmation).
 If significant drift is detected, a fingerprint update is recommended:
 run `python -m espalier fingerprint .` to save the new baseline. Do not run this automatically
 from inside the analysis — present it as a recommendation for the developer to approve.
+
+## Adapting me to YOUR repo
+
+Every census above walks `own`: your files, minus the dependency, build and
+cache directories `walk` prunes and minus the layer the harness deployed
+(`tools/cc/` and `.claude/`), so the counts describe your code and not the
+harness's. A repository whose own source lives under one of those directories
+is undercounted: widen `own` in every fence that defines it (a fence is one
+shell, so each carries its own copy). The probes, the framework list and the
+report's fields are the generic ones; replace them with what your stack needs.
+Edit this file directly; the agent re-reads its body on each invocation. While
+the file keeps its `espalier:managed` marker line, the next `python -m espalier
+upgrade . --execute` or re-run `init` replaces your edit with the packaged
+body: delete that line to keep your edit, and the file stops receiving
+upstream fixes.

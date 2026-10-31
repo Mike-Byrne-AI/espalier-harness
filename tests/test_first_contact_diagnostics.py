@@ -52,6 +52,7 @@ from pathlib import Path
 import pytest
 
 from _adopter_tree import build_adopter_tree
+from _live_tree import checkout_rglob
 from espalier import analyze
 from espalier.managed_markers import has_managed_marker
 
@@ -430,7 +431,7 @@ class TestTheSizeCensusCountsTheAdoptersFiles:
         stays in the count."""
         arch = _bash(REPO_ROOT, _fence_after(_read(REPO_ROOT / REPO_ANALYST), "### 3. ARCHITECTURE ANALYSIS"))
         total = int(re.findall(r"(\d+)\s+total", _section(arch, "Size"))[-1])
-        vendored = _lines(list((REPO_ROOT / "tools" / "cc").rglob("*.py")))
+        vendored = _lines(list(checkout_rglob(REPO_ROOT / "tools" / "cc", "*.py")))
         assert total >= vendored, (total, vendored)
         assert "./tools/cc/hooks" in _section(arch, "Directory structure")
 
