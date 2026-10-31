@@ -157,7 +157,11 @@ editor); both are gitignored. The types directory ignores itself (its own
 `.gitignore` is a bare `*`), and the post-shell protected-file check prunes a
 directory that does, so the type declarations the engine rewrites at a launch
 report nothing; the `tsconfig.json` beside the mod is written once, at the
-mod's first load in a checkout, and that one appearance reports once.
+mod's first load in a checkout, and that one appearance reports once. The
+root `.gitignore` also names a `.claude-plugin/test-tmp/`, which the kit did
+not write on 2.1.314 (a run left nothing beside the mod); a directory that
+appears there without a `.gitignore` of its own reports like any other file,
+since a root `.gitignore` entry exempts nothing.
 
 The engine hands an `fs.*` hook the path as it resolved it on the host: on
 Windows the kit's `/scratch/...` arrives as `C:\scratch\...`. So the kit's

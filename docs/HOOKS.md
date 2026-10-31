@@ -1844,9 +1844,12 @@ new state as the next one to compare with.
   (the stack's `node_modules` and its siblings, `__pycache__`, `.mypy_cache`,
   a virtualenv, and your `dependency_dirs`), a directory that ignores itself
   (its own `.gitignore` one bare `*`, the form pytest, ruff, mypy, uv, `venv`
-  and Claude Code's plugin loader write into what they generate; read below a
-  watched directory's top only, never at it, and a `.gitignore` holding
-  anything else is a rule set that skips nothing), and editor and OS clutter
+  since Python 3.13 and Claude Code's plugin loader write into what they
+  generate; read below a watched directory's top only, never at it; a
+  `.gitignore` holding anything else, and a root `.gitignore` entry naming
+  the directory, skip nothing; and a declaration that lands during a session
+  retires nothing the session's snapshot already holds, so it is reported as
+  the added file it is), and editor and OS clutter
   (swap and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its
   size and modification time and never read by the hook: when git is asked
   about it (below), git hashes it through the checkout's own filters, up to

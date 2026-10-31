@@ -202,6 +202,7 @@ class TestTheWatchedSet:
         generated = [r for r in snap if r.startswith(("tools/cc/mods/m/.claude-plugin/types/", "tools/cc/.tool_cache/"))]
         assert generated == [], generated
         assert zw.is_watched(tree, "tools/cc/mods/m/hooks/register.ts")
+        assert not zw.is_watched(tree, "tools/cc/mods/m/.claude-plugin/types/tsconfig.json")  # a direct child
         assert not zw.is_watched(tree, "tools/cc/mods/m/.claude-plugin/types/claude-code/index.d.ts")
         assert not zw.is_watched(tree, "tools/cc/mods/m/.claude-plugin/types/claude-code-mcp/probe.d.ts")
         assert not zw.is_watched(tree, "tools/cc/.tool_cache/v1/x.json")
@@ -212,7 +213,8 @@ class TestTheWatchedSet:
         b"",                              # nothing declared
         b"# only a comment\n",
         b"\\*\n",                         # a literal asterisk, escaped
-        b"*\n" + b"# padding\n" * 600,    # past the read limit: a rule set, whatever its first line
+        b" *\n",                          # indented: git reads the space as the pattern's
+        b"*\n" + b"#" * 8192,             # past the read limit (the twin test holds its boundary): a rule set, whatever its first line
     ])
     def test_a_gitignore_that_is_not_the_bare_star_prunes_nothing(self, tree: Path, rules: bytes) -> None:
         """A rule set under a zone is a rule set, and the files beside it stay
@@ -237,16 +239,33 @@ class TestTheWatchedSet:
         assert _HOOK in snap and "tools/cc/.gitignore" in snap and "vault/f.txt" in snap
         assert zw.is_watched(tree, _HOOK) and zw.is_watched(tree, "vault/f.txt")
 
-    def test_a_self_ignore_written_under_the_hooks_mid_session_reads_as_the_hooks_removed(self, tree: Path) -> None:
-        """The one way the rule could hide a zone -- a bare `*` dropped into
-        tools/cc/hooks/ by a shell call -- is loud by construction: the next
-        check finds every hook gone from the watched set and reports each as
-        removed. Mutation: carry a pruned directory's prior entries forward."""
+    def test_a_self_ignore_written_under_the_hooks_mid_session_retires_nothing(self, tree: Path) -> None:
+        """A bare `*` dropped into tools/cc/hooks/ by a shell call (a venv made
+        inside a source directory writes one, 3.13 on) is the added file it is:
+        the hooks the baseline holds stay watched, the declaration is reported,
+        and a later edit to a hook still reports (the review's finding: the
+        first cut reported the hooks as removed, then watched them no more).
+        Mutation: prune a declared directory whatever the baseline holds."""
         assert zw.take_baseline(tree, "s-1")
         (tree / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
         text = _context(_post(tree, "Bash", _FORMATTER))
-        assert f"removed {_HOOK}" in text and f"removed {_OTHER}" in text, text
-        assert "Stop and tell the operator" in text
+        assert "added tools/cc/hooks/.gitignore" in text and "removed" not in text, text
+        baseline = zw.read_baseline(zw.baseline_path(tree, "s-1"))["files"]
+        assert _HOOK in baseline and _OTHER in baseline
+        _bump(tree / _HOOK, "print('edited under the declaration')\n")
+        assert f"changed {_HOOK}" in _context(_post(tree, "Bash", _FORMATTER))
+        assert zw.is_watched(tree, _HOOK, baseline) and not zw.is_watched(tree, _HOOK)
+
+    def test_a_self_ignore_written_mid_session_in_a_checkout_is_an_untracked_file(self, repo: Path) -> None:
+        """The same drop in a git checkout, where the hooks sit at HEAD: the
+        declaration is untracked, so git vouches for nothing, and the hooks
+        stay watched rather than reading as removed files still at HEAD.
+        Mutation: the same prune; here the hooks would report as removed."""
+        assert zw.take_baseline(repo, "s-1")
+        (repo / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+        text = _context(_post(repo, "Bash", _FORMATTER))
+        assert "added tools/cc/hooks/.gitignore" in text and "removed" not in text, text
+        assert _HOOK in zw.read_baseline(zw.baseline_path(repo, "s-1"))["files"]
 
     def test_a_large_file_is_identified_by_its_stat_and_never_read(self, tree: Path, monkeypatch) -> None:
         """A model or data file must not cost a hook its timeout. Mutation:
