@@ -118,12 +118,12 @@ POST_MERGE_ROWS = 20
 _CHECK_GREEN = _post_merge.CHECK_GREEN
 _CHECK_RUNNING = _post_merge.CHECK_RUNNING
 _NO_VERDICT = _post_merge.NO_VERDICT
-#: The conclusions that make a post-merge run on the base RED. Every other
-#: completed conclusion (cancelled, stale, skipped by a job-level `if`, neutral,
-#: action required) is no verdict, so a skipped run never reads as a red base
-#: that asks a seat to revert a merge. board.py holds the same set as `_RED`
-#: (tests/test_board.py pins the two equal).
-POST_MERGE_RED = frozenset({"FAILURE", "TIMED_OUT", "STARTUP_FAILURE"})
+#: The conclusions that make a post-merge run on the base RED, from the same
+#: home (the board's `_RED` reads it too). Every other completed conclusion
+#: (cancelled, stale, skipped by a job-level `if`, neutral, action required) is
+#: no verdict, so a skipped run never reads as a red base that asks a seat to
+#: revert a merge.
+_RUN_RED = _post_merge.RUN_RED
 #: The workflow that proves the merged combination on the base branch after each
 #: push (`.github/workflows/post-merge.yml`); a repository without it reads no runs.
 POST_MERGE_WORKFLOW = "post-merge.yml"
@@ -524,7 +524,7 @@ def base_red_run(base: str, cwd: str | None = None) -> dict | None:
         conclusion = str(run_.get("conclusion") or "").upper()
         if conclusion == "SUCCESS":
             return None
-        if conclusion not in POST_MERGE_RED:
+        if conclusion not in _RUN_RED:
             continue  # cancelled, stale, skipped, neutral, action required: no verdict
         return run_
     return None
@@ -563,54 +563,39 @@ def _open_prs(cwd: str) -> list[dict] | None:
 #: `open` and `handoff` alike; the refusal names it, with the run id the
 #: ruling must name.
 BASE_RED_RULED_FLAG = "--base-red-ruled"
-#: What the ruling's ack opens with: the dispatcher's gridlock marker (root
-#: CLAUDE.md Core Rule 15; a red main no revert clears is the first gridlock
-#: the dispatcher's brief names, tools/cc/seat.py), the one the seat-day
-#: census counts a ruling by (scripts/seat_day_census.py, MARKERS; a test
-#: holds the two equal). An ack that names the run without it -- a status, a
-#: veto, a quotation -- rules nothing: the first rulings under the gridlock
-#: rule were plain acks no reader counted, and a word read mid-text matched
-#: quotations of it.
+#: The ruling's words are the mail channel's (tools/cc/mail.py: the gridlock
+#: marker the seat-day census counts a ruling by, root CLAUDE.md Core Rule 15;
+#: the fixed head a fix-forward ruling opens with, the run id read from it
+#: alone since the marker carries no direction; and how much of its text a
+#: reader repeats), and so is the reader (``fix_forward_ruling``), so this
+#: driver and the board's red line agree on what rules. The three words stay
+#: here as literals because the channel is loaded on first use, never at
+#: import, and the refusal names the head on a tree where no ruling was given
+#: (tests/test_ship_driver.py holds each equal to the channel's; the census's
+#: table and the dispatcher's brief are held to the marker the same way).
 RULING_PREFIX = "gridlock:"
-#: The fixed head a fix-forward ruling opens with, the run id read from it
-#: alone: `gridlock: fix forward run <id>`. The marker carries no direction
-#: (the census rightly counts every gridlock: ack, a hold or a veto among
-#: them), so the driver reads the way the ruling went from these words and
-#: nowhere else in the text (the dispatcher's redirect, 2026-10-31).
 RULING_HEAD = RULING_PREFIX + " fix forward run "
-_RULING_HEAD_RE = re.compile(r"^" + re.escape(RULING_HEAD) + r"([0-9]+)(?![0-9])")
-#: How much of the ruling's text the driver repeats, on the terminal and in
-#: the pull request body: enough to show what was ruled, never the whole.
 RULING_TEXT_CHARS = 160
-#: A message id as the channel mints them (<stamp>-<machine>-<6 hex>): the
-#: shape the flag takes, so a 6-character tail or a request's id is told the
-#: shape instead of being sent to fetch.
-_MESSAGE_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z-[a-z0-9][a-z0-9-]*-[0-9a-f]{6}$")
 
 
 def red_base_ruling(root: Path, ack_id: str, run_id: str, *, branch: str = "") -> tuple[str, str | None, str]:
     """``(sender, problem, text)``: whether the ack ``ack_id`` on the mail
     channel's local refs rules the red post-merge run ``run_id`` a
-    fix-forward. A red whose failing test is outside every suspect's diff and
-    reproduces at the last green base with the moved dependency has no merge
-    to revert, so the revert that is the default clears nothing (pytest
-    9.2.0, 2026-10-29: every seat held about eleven hours, and the fix landed
-    by a hand-opened pull request). The ruling is the dispatcher's
-    (``dispatcher`` in espalier.toml; where none is named any seat's ack
-    counts, a lone operator's default; a setting that is there but unusable
-    counts none, as the fold counts assigns), carried as an ``ack`` on its own
-    ref -- the ref is the sender, never the message's ``from``, and the
-    dispatcher's own ref is read past a same-id ack elsewhere -- whose text
-    opens with the fixed head :data:`RULING_HEAD` followed by the red run's
-    id, read from that head alone (the gridlock marker carries no direction,
-    so a hold or a veto under it that names the run rules nothing, and a run
-    named only through the request the ack answers is no ruling), so a ruling
-    on an older red lets no newer one through; and whose ``re`` names the fix
-    lane (required: the ruling is for that lane alone, so a hold on every lane
-    is never read as a pass for one). ``problem`` says, by name, what does not
-    hold: no channel beside this script, an id of another shape, a dispatcher
-    setting that cannot be used, a channel that cannot be read, no such ack
-    on the local refs (the read is of the refs the last fetch left; `python
+    fix-forward for this lane. A red whose failing test is outside every
+    suspect's diff and reproduces at the last green base with the moved
+    dependency has no merge to revert, so the revert that is the default
+    clears nothing (pytest 9.2.0, 2026-10-29: every seat held about eleven
+    hours, and the fix landed by a hand-opened pull request). The rule is the
+    channel's ``fix_forward_ruling``, the one reader the board's red line
+    reads too: the dispatcher's ack on its own ref (``dispatcher`` in
+    espalier.toml; any seat's where none is named; the ref is the sender,
+    never the message's ``from``), opening with the fixed head
+    :data:`RULING_HEAD` and the red run's id, naming the fix lane, which must
+    be this one. This driver reads the channel for it, and ``problem`` says,
+    by name, what does not hold: no channel beside this script, a dispatcher
+    setting that cannot be used, a channel that cannot be read, and each
+    refusal the reader names -- an id of another shape, no such ack on the
+    local refs (the read is of the refs the last fetch left; `python
     tools/cc/mail.py inbox` fetches), a request or a note with that id, an
     ack on another seat's ref, an ack under another head, an ack whose head
     names another run, an ack naming no lane or another lane; None where the
@@ -619,7 +604,13 @@ def red_base_ruling(root: Path, ack_id: str, run_id: str, *, branch: str = "") -
     mail = _mail_module()
     if mail is None:
         return "", "tools/cc/mail.py is not beside this script, so no ruling can be read", ""
-    if not _MESSAGE_ID_RE.match(ack_id):
+    reader = getattr(mail, "fix_forward_ruling", None)
+    id_shape = getattr(mail, "MESSAGE_ID_RE", None)
+    if reader is None or id_shape is None:
+        # An upgrade keeps an adopter's edited mail.py beside the new driver.
+        return "", ("tools/cc/mail.py beside this script predates the ruling reader (upgrade it), so no ruling "
+                    "can be read"), ""
+    if not id_shape.match(ack_id):   # the shape first, before any read of the channel
         return "", (f"{ack_id} is not a message id: a ruling is named by its full id as /inbox prints it "
                     "(<stamp>-<machine>-<6 hex>)"), ""
     try:
@@ -629,45 +620,37 @@ def red_base_ruling(root: Path, ack_id: str, run_id: str, *, branch: str = "") -
         by_machine, _skipped = mail.read_mail(root)
     except Exception as exc:  # noqa: BLE001 -- a channel that cannot be read rules nothing, said by name, never a traceback
         return "", f"the mail channel could not be read ({os_error_text(exc)}), so no ruling counts", ""
-    elsewhere = ""
-    other_kind = ""
-    for machine, messages in sorted(by_machine.items()):
-        for message in messages:
-            if not isinstance(message, dict) or str(message.get("id") or "") != ack_id:
-                continue
-            kind = str(message.get("type") or "")
-            if kind != "ack":
-                other_kind = other_kind or (kind or "a message of no type")
-                continue
-            if dispatcher and machine != dispatcher:
-                elsewhere = elsewhere or machine   # the dispatcher's own ref may still carry the ruling
-                continue
-            text = " ".join(str(message.get("text") or "").split())
-            head = text[:RULING_TEXT_CHARS]
-            ruled = _RULING_HEAD_RE.match(text)
-            if ruled is None:
-                return machine, (f"ack {ack_id} does not open with the head `{RULING_HEAD}<run id>` (its text: "
-                                 f"{head}): a fix-forward ruling opens with those words, and an ack that names "
-                                 "the run under another head (a hold, a veto, a status) rules nothing"), text
-            if ruled.group(1) != run_id:
-                return machine, (f"ack {ack_id} rules on run {ruled.group(1)}, not the base's red run {run_id} "
-                                 f"(its text: {head}): it ruled on another red"), text
-            re_ = message.get("re")
-            lane = str(re_.get("lane") or "") if isinstance(re_, dict) else ""
-            if not lane:
-                return machine, (f"ack {ack_id} names no lane (its text: {head}): a fix-forward ruling names the "
-                                 "fix lane with --lane and rules for that lane alone"), text
-            if lane != branch:
-                return machine, f"ack {ack_id} rules for {lane}, not this lane ({branch})", text
-            return machine, None, text
-    if elsewhere:
-        return elsewhere, (f"ack {ack_id} is on {elsewhere}'s ref, and the ruling is the dispatcher's "
-                           f"({dispatcher}) to give"), ""
-    if other_kind:
-        return "", (f"{ack_id} is a {other_kind}, not an ack: the ruling is the dispatcher's ack opening "
-                    f"`{RULING_HEAD}<run id>` (an operator call's answer, never the call)"), ""
-    return "", (f"no ack {ack_id} on the local mail refs (python tools/cc/mail.py inbox fetches them); the "
-                f"ruling is the dispatcher's ack opening `{RULING_HEAD}<run id>`, its --lane this lane"), ""
+    return reader(by_machine, dispatcher, ack_id, run_id, branch=branch)
+
+
+def _revert_lane_ruling_note(base: str, cwd: str, root: Path | None) -> None:
+    """A `revert/` lane is let through with no ruling; where the base's red
+    run was ruled a fix-forward, say so, since the revert then undoes a merge
+    the ruling found blameless (the board's line says the same, and a seat
+    acting on an older read of it claims the lane anyway). Advisory: a tree
+    without the reader, a base that does not read red and a channel that
+    cannot be read each say nothing or why, and the revert goes on."""
+    mail = _mail_module()
+    reader = getattr(mail, "fix_forward_rulings", None) if mail is not None else None
+    if reader is None:
+        return
+    run_ = base_red_run(base, cwd=cwd)
+    if run_ is None:
+        return
+    where = root if root is not None else Path(cwd)
+    try:
+        dispatcher, _how = mail.dispatcher_setting(where)
+        by_machine, _skipped = mail.read_mail(where)
+        rulings = reader(by_machine, dispatcher, str(run_.get("databaseId")))
+    except Exception as exc:  # noqa: BLE001 -- the note is advisory: a channel that cannot be read says so, never a traceback
+        _note(f"the base's red run was not checked for a ruling (the mail channel could not be read: "
+              f"{os_error_text(exc)})")
+        return
+    if rulings:
+        last = rulings[-1]
+        _note(f"the base's red run {run_.get('databaseId')} was ruled a fix-forward by {last.get('id')} for "
+              f"{last.get('lane')}: this revert undoes a merge that ruling found blameless, and is let through "
+              "as a revert/ lane is; make sure it is the dispatcher's call")
 
 
 def red_base_verdict(base: str, branch: str, prs: list[dict], cwd: str, *, ruled: str | None = None,
@@ -686,6 +669,7 @@ def red_base_verdict(base: str, branch: str, prs: list[dict], cwd: str, *, ruled
     if branch.startswith("revert/"):
         if ruled:
             _note(f"a revert/ lane needs no ruling, so {BASE_RED_RULED_FLAG} {ruled} was not read")
+        _revert_lane_ruling_note(base, cwd, root)
         return None, None
     run_ = base_red_run(base, cwd=cwd)
     if run_ is None:

@@ -185,8 +185,29 @@ is read on its own, and one that cannot be read says so on its own line:
   than one when a run between them is red or still going: the board prints the
   revert only when exactly one pull request merged in between, names the
   suspects otherwise, and lists the pull requests whose armed auto-merge would
-  land on the red base.
-  Revert first, diagnose second.
+  land on the red base. Revert first, diagnose second -- unless the dispatcher
+  has ruled the red run a fix-forward: its `ack` on its own ref (any seat's
+  where `espalier.toml` names no dispatcher) whose text opens with the fixed
+  head the `/ship` body spells out (the ruling's marker, then `fix forward
+  run <id>`: the red post-merge run's id, read from that head alone) and
+  whose `--lane` names the fix lane, the one rule the ship driver's
+  `open --base-red-ruled <ack id>` lands that lane on. The line then prints
+  the ruling in place of the revert and of the suspects' advice, whatever the
+  suspects (`ruled a fix-forward by <ack id> for <lane> (...): land the fix
+  with ship.py open --base-red-ruled <ack id> on that lane (handoff takes the
+  same flag), and revert nothing`), and its JSON carries it under
+  `post_merge.ruling` (every ruling on the run under `rulings`, the earlier
+  ones named on the line beside the newest). The ruling is for its lane
+  alone: another lane's armed auto-merge still gets the disarm command, and
+  where a newer red run supersedes the ruled one the suspects return with the
+  older run's ruling named beside them, since it covers the run it names and
+  the merge it found blameless is not among them. An ack under another head
+  (a hold, a veto), one ruling on another run, one naming no lane and one on
+  another seat's ref rule nothing, and the revert stands; where the mail
+  could not be read, or the dispatcher setting cannot be used, the line says
+  no ruling was looked for beside the default, never the default alone, and
+  where the fetch failed or was skipped it says the ruling was read from the
+  refs as last fetched.
 - **checks:** each check whose owned verdict over the last 20 merged pull
   requests is red, with the merge it went red on, the leg's finish and what
   stands beside it (`portability (windows-latest): red since #313 (merged
@@ -469,7 +490,11 @@ python tools/cc/mail.py send --type ack --ack <request id> --text "gridlock: <th
 
 The seat-day census counts a ruling by that opening on the dispatcher's acks
 alone and names its id on the dispatcher's day row, so a mention of the word
-mid-text, or a worker's request opening with it, is never a ruling.
+mid-text, or a worker's request opening with it, is never a ruling. A ruling
+that fixes a red base forward opens with the fixed head `gridlock: fix forward
+run <id>` (the red post-merge run's id) and names the fix lane with `--lane`:
+the ship driver lands that lane on it (`open --base-red-ruled <ack id>`) and
+the board's base-branch line prints it in place of the revert (Step 2c).
 <!-- /espalier:self-host-only -->
 
 ## Step 5: A shipped lane releases its own claims

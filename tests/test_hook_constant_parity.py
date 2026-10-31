@@ -345,12 +345,14 @@ class TestTheCheckStateSetsHaveOneHome:
     on their literals; since the post-merge verdict module they live once, in
     tools/cc/_post_merge.py, which the driver and the board import and the
     banner loads by path. This pin keeps it so: the hook defines none of the
-    four names, the driver's four are attribute reads of the module, and the
-    module's four are the frozenset literals. Parsed from source, never
-    executed. Dies to: a literal returning to the hook or the driver (a third
-    copy nobody compares), or a set renamed in the module alone."""
+    five names, the driver's five are attribute reads of the module, and the
+    module's five are the frozenset literals (the run-red set joined last: the
+    driver kept a literal of it for a month after the module took the other
+    four, pinned equal to the board's copy and never to the home). Parsed from
+    source, never executed. Dies to: a literal returning to the hook or the
+    driver (a third copy nobody compares), or a set renamed in the module alone."""
 
-    _SETS = ("_CHECK_GREEN", "_CHECK_RUNNING", "_NO_VERDICT", "_RED_BUCKETS")
+    _SETS = ("_CHECK_GREEN", "_CHECK_RUNNING", "_NO_VERDICT", "_RED_BUCKETS", "_RUN_RED")
 
     @staticmethod
     def _assignments(path, names):

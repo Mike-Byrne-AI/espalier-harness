@@ -821,7 +821,10 @@ GOAL_NOTES = "cc/GOAL.md"
 #: The phrases that differ where the checkout holds this repository's own
 #: protocol (its first home above) from an adopter's: the review procedure
 #: (a snapshot clone is defined here only) and a red base (reverting first is
-#: this repository's rule; an adopter's dispatcher proposes it).
+#: this repository's rule, and where no revert clears it the fix-forward
+#: ruling SELF_HOST_GRIDLOCK spells out, so the standing duty never offers the
+#: revert alone after the dispatcher ruled otherwise; an adopter's dispatcher
+#: proposes the revert).
 #: The review a lane runs is the one its diff earns (air, 2026-10-16, the
 #: operator's yes): on this repository the tier script prints it on its
 #: `review:` line (none, code-reviewer or both, /implement-task step 6's rule
@@ -829,7 +832,8 @@ GOAL_NOTES = "cc/GOAL.md"
 #: does not earn is not a skipped step.
 SELF_HOST_REVIEW = "red-team the reviewers scripts/proof_tier.py --base origin/{base} names, on a snapshot clone"
 ADOPTER_REVIEW = "the reviewers the diff earns, dispatched at once with your edits frozen, per /implement-task step 6"
-SELF_HOST_RED = "revert first on a red {base}"
+SELF_HOST_RED = ("revert first on a red {base}, or where no revert clears it rule a fix-forward by run id and lane "
+                 "(below)")
 ADOPTER_RED = "propose the revert to the operator on a red {base}"
 #: The dispatcher's assign authority: this repository's operator decided it
 #: on 2026-10-15 (the protocol's Assign authority paragraph is its home); an

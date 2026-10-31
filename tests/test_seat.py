@@ -657,6 +657,23 @@ class TestBrief:
         assert "a worker under the operator (espalier.toml names no dispatcher)" in brief.text
         assert "note from the operator;" in brief.loop and "send the operator one request" in brief.loop
 
+    def test_the_red_duty_names_the_fix_forward_ruling_beside_the_revert(self, seat, clone):
+        """After the dispatcher ruled a red base a fix-forward, its own brief's
+        red duty still read `revert first on a red main` and nothing else, so
+        the standing duty contradicted the ruling it had just given (the
+        failure-mode review of the ruling lane). The duty names the ruling
+        beside the revert, which stays the default, and points at the gridlock
+        sentence below it, which names the head and the flag; an adopter's
+        duty is unchanged (it proposes the revert and carries no gridlock
+        sentence). Dies to: the duty offering the revert alone."""
+        _dispatcher(clone, '"box"')
+        _holds(clone, "memory/parallel-work-protocol.md")
+        first = seat.compose_brief(clone, "box", clone).text.split("\n")[0]
+        duty = "revert first on a red main, or where no revert clears it rule a fix-forward by run id and lane (below)"
+        assert duty in first and first.index(duty) < first.index(seat.SELF_HOST_GRIDLOCK)
+        assert "gridlock: fix forward run <the red post-merge run's id>" in first[first.index(duty):]
+        assert "fix-forward" not in seat.ADOPTER_RED and "fix forward" not in seat.ADOPTER_RED
+
     def test_the_dispatcher_seat_gets_the_board_loop_and_its_duties(self, seat, clone):
         _dispatcher(clone, '"box"')
         _holds(clone, "memory/parallel-work-protocol.md")
