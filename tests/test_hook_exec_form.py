@@ -331,11 +331,11 @@ class TestStatusLinePortability:
         # Through the seam, not `os.name`: pathlib reads `os.name` to pick
         # WindowsPath, which raises UnsupportedOperation on a POSIX box.
         monkeypatch.setattr(cli, "_render_host_is_posix", lambda: False)
-        monkeypatch.setattr(cli, "git_bash_path", lambda: r"C:\Program Files\Git\bin\bash.exe")
+        monkeypatch.setattr(cli, "git_bash_path", lambda *_: r"C:\Program Files\Git\bin\bash.exe")
         windows = cli._build_settings_json()["statusLine"]["command"]
         assert "||" not in windows
         assert windows.startswith('"${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '), windows
-        monkeypatch.setattr(cli, "git_bash_path", lambda: None)
+        monkeypatch.setattr(cli, "git_bash_path", lambda *_: None)
         called = cli._build_settings_json()["statusLine"]["command"]
         assert called.startswith('& "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd" '), called
         monkeypatch.setattr(cli, "_render_host_is_posix", lambda: True)
@@ -500,7 +500,10 @@ class TestGitBashLookup:
     reads as the host's, so a step out of order blanks the line."""
 
     @staticmethod
-    def _host(monkeypatch, *, defaults=(), git=None, env=None):
+    def _host(monkeypatch, *, defaults=(), git=None, env=None, gits=None, home=None):
+        """A host with only what the case names: no user settings (``home``
+        is an empty directory unless given), and a PATH of one entry per
+        ``git`` (``gits``, in PATH order; ``git`` is the one-entry case)."""
         from espalier import _venv
 
         if env is None:
@@ -508,9 +511,17 @@ class TestGitBashLookup:
         else:
             monkeypatch.setenv("CLAUDE_CODE_GIT_BASH_PATH", str(env))
         monkeypatch.setattr(_venv, "GIT_BASH_DEFAULT_PATHS", tuple(str(p) for p in defaults))
+        if home is not None:
+            monkeypatch.setattr(_venv.Path, "home", classmethod(lambda cls: Path(home)))
+        else:
+            monkeypatch.setattr(_venv.Path, "home", classmethod(lambda cls: Path(os.devnull) / "no-home"))
+        found = [str(g) for g in (gits if gits is not None else ([git] if git is not None else []))]
+        entries = [f"entry{i}" for i in range(len(found))] or ["empty"]
+        monkeypatch.setenv("PATH", os.pathsep.join(entries))
+        by_entry = dict(zip(entries, found))
         monkeypatch.setattr(
             _venv.shutil, "which",
-            lambda name, *a, **k: (str(git) if git is not None else None) if name == "git" else None,
+            lambda name, mode=None, path=None: by_entry.get(path) if name == "git" else None,
         )
         return _venv
 
@@ -555,6 +566,44 @@ class TestGitBashLookup:
         venv = self._host(monkeypatch, git=tmp_path / "usr" / "bin" / "git")
         assert venv.git_bash_path() is None
 
+    def test_every_git_on_path_is_asked_not_only_the_first(self, tmp_path, monkeypatch):
+        """Both reviewers (2026-10-31): a Git Bash terminal puts
+        ``mingw64\\bin`` first, where two levels up holds no ``bin\\bash.exe``,
+        while a Claude Code launched from the Start menu reads ``cmd`` first
+        and finds it. Asking the first ``git`` alone rendered the PowerShell
+        form on a host whose bare line worked: the wider read keeps it."""
+        bash = self._file(tmp_path / "Git" / "bin" / "bash.exe")
+        venv = self._host(monkeypatch, gits=[tmp_path / "Git" / "mingw64" / "bin" / "git.exe",
+                                             tmp_path / "Git" / "cmd" / "git.exe"])
+        assert venv.git_bash_path() == str(bash)
+
+    @pytest.mark.parametrize("where", ["local", "project", "user"])
+    def test_a_settings_env_naming_a_bash_is_read(self, tmp_path, monkeypatch, where):
+        """Claude Code applies each settings file's ``env`` to its own
+        environment before the lookup, so a ``CLAUDE_CODE_GIT_BASH_PATH``
+        set there (its own notice's remedy for a Git Bash elsewhere) is
+        Claude Code's answer; unread, ``init`` wrote the form bash cannot
+        parse (both reviewers, 2026-10-31)."""
+        mine = self._file(tmp_path / "portable" / "bin" / "bash.exe")
+        repo, home = tmp_path / "repo", tmp_path / "home"
+        target = {"local": repo / ".claude" / "settings.local.json",
+                  "project": repo / ".claude" / "settings.json",
+                  "user": home / ".claude" / "settings.json"}[where]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({"env": {"CLAUDE_CODE_GIT_BASH_PATH": str(mine)}}), encoding="utf-8")
+        home.mkdir(exist_ok=True)
+        venv = self._host(monkeypatch, home=home)
+        assert venv.git_bash_path(repo) == str(mine)
+        if where != "user":
+            assert venv.git_bash_path() is None, "a tree's settings are read only with its root"
+
+    def test_an_unreadable_settings_file_names_nothing(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        (home / ".claude").mkdir(parents=True)
+        (home / ".claude" / "settings.json").write_text("{not json", encoding="utf-8")
+        venv = self._host(monkeypatch, home=home)
+        assert venv.git_bash_path(tmp_path / "no-repo") is None
+
     def test_the_lookup_spawns_nothing(self, tmp_path, monkeypatch):
         """``doctor`` and the ``upgrade`` preview read the render on the
         healthy path, spawn-free (DEF-715): Claude Code asks ``where.exe``,
@@ -567,6 +616,60 @@ class TestGitBashLookup:
 
         monkeypatch.setattr(subprocess, "Popen", no_spawn)
         assert venv.git_bash_path() == str(bash)
+
+
+class TestTheShimHeadReader:
+    """``_venv.statusline_shim_end`` and ``statusline_shim_called`` are the one
+    place a reader asks whether a command is headed by the Windows shim, bare
+    or behind PowerShell's ``&`` (DEF-929)."""
+
+    _SHIM = "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.cmd"
+
+    @pytest.mark.parametrize("command, rest, called", [
+        (f'"{_SHIM}" python', " python", False),
+        (f'& "{_SHIM}" python', " python", True),
+        (f'&"{_SHIM}" py -3', " py -3", True),
+        (f"  &\t'{_SHIM}' python  ", " python  ", True),
+        (f'"{_SHIM.upper()}" python', " python", False),
+        (f'{_SHIM} python', " python", False),
+        ("", None, False),
+        ("&", None, False),
+        ("& &", None, False),
+        ('python "${CLAUDE_PROJECT_DIR}/tools/cc/statusline.py"', None, False),
+        (f'python "{_SHIM}"', None, False),
+    ])
+    def test_the_head_and_its_form_are_read_on_the_string_itself(self, command, rest, called):
+        from espalier._venv import statusline_shim_called, statusline_shim_end
+
+        end = statusline_shim_end(command)
+        assert (None if end < 0 else command[end:]) == rest, (command, end)
+        assert statusline_shim_called(command) is called, command
+
+    @pytest.mark.parametrize("lead", ["", "& "], ids=["bare", "called"])
+    def test_a_shim_path_holding_the_interpreters_name_swaps_only_the_argument(self, lead):
+        """The swap and the launcher-flag read search past the head: a shim
+        under a directory named like the interpreter must keep its path
+        (the code reviewer's two surviving offset mutants, 2026-10-31)."""
+        from espalier import cli
+
+        head = f'{lead}"C:/python/tools/cc/statusline.cmd"'
+        assert cli._swap_interpreter_token(f"{head} python", "py") == f"{head} py"
+        flagged = {"command": f'{lead}"C:/py/tools/cc/statusline.cmd" py -3'}
+        assert cli._launcher_spelling_of(flagged, "command", "py") == "py -3"
+
+    def test_no_engine_module_reads_the_shim_head_by_a_copy_of_its_own(self):
+        """The single-reader rule, held: outside ``_venv.py`` nothing under
+        ``espalier/`` calls the two primitives the head reader is built on,
+        so a new reader cannot re-derive the head and read the ``&`` as the
+        interpreter (the failure-mode review, 2026-10-31)."""
+        root = REPO_ROOT / "espalier"
+        offenders = [
+            str(path.relative_to(REPO_ROOT)) for path in sorted(root.rglob("*.py"))
+            if "_vendor" not in path.parts and path.name != "_venv.py"
+            and re.search(r"\b(is_statusline_shim_head|after_head_index)\(",
+                          path.read_text(encoding="utf-8"))
+        ]
+        assert offenders == [], offenders
 
 
 # ── The wired interpreter must survive the shell that ran `init` ────────────

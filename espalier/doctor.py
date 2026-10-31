@@ -21,8 +21,8 @@ from espalier import surface_contract
 from espalier._venv import (
     git_bash_path,
     interpreter_site_token,
-    interpreter_token,
     resolves_only_inside,
+    statusline_shim_called,
     statusline_shim_end,
     venv_root_of,
 )
@@ -702,7 +702,8 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
     has_clause = " || " in command
     if _host_is_windows():
         if runs_shim and not has_clause:
-            return _statusline_shell_notes(command.lstrip().startswith("&"))
+            note = statusline_shell_mismatch(command, repo_root)
+            return [note] if note else []
         # A shim head that ALSO carries the clause (a half-taken hand edit,
         # a merge of two generations) cannot parse under Windows PowerShell
         # either: the clause note below is the right one.
@@ -734,35 +735,62 @@ def _statusline_fallback_notes(settings_path: Path, repo_root: Path) -> list[str
     ]
 
 
-def _statusline_shell_notes(called: bool) -> list[str]:
+def settings_statusline_shell_mismatch(settings_path: Path, repo_root: Path) -> bool:
+    """True when, on this Windows host, ``settings.json``'s statusLine is a
+    shim render for the other shell (:func:`statusline_shell_mismatch`):
+    ``upgrade``'s version-current line reads this, ``doctor``'s note the
+    predicate under it, so a tree upgrade calls current is never one doctor
+    calls blank (DEF-929, the DEF-798 rule). A file that cannot be read, a
+    statusLine of the operator's own and one carrying the POSIX clause (its
+    own note) read False."""
+    if not _host_is_windows():
+        return False
+    try:
+        settings = json.loads(surface_contract.decode_bom(settings_path.read_bytes()))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return False
+    status_line = settings.get("statusLine") if isinstance(settings, dict) else None
+    command = status_line.get("command") if isinstance(status_line, dict) else None
+    if not isinstance(command, str) or " || " in command:
+        return False
+    return statusline_shell_mismatch(command, repo_root) is not None
+
+
+def statusline_shell_mismatch(command: str, repo_root: Path | None) -> str | None:
     """The note for a Windows shim render whose form is for the other shell
-    (DEF-929), or none: Claude Code runs the line under the Git Bash
+    (DEF-929), or None: Claude Code runs the line under the Git Bash
     ``git_bash_path`` finds, else under PowerShell, and each blanks the
-    other's form."""
-    git_bash = git_bash_path() is not None
+    other's form. ``doctor``'s note and ``upgrade``'s version-current line
+    both read this one predicate (the DEF-798 rule: two narrators of one
+    tree cannot disagree about it). Asked of a shim-headed command only."""
+    if statusline_shim_end(command) < 0:
+        return None
+    called = statusline_shim_called(command)
+    git_bash = git_bash_path(repo_root) is not None
     remedy = (
         f"`{_remedy_py()} -m espalier init .` renders .claude/settings.json.new "
         "beside your file; take its statusLine line"
     )
     if called and git_bash:
-        return [
+        return (
             "statusLine.command calls the Windows shim through PowerShell's `&`, "
-            "the form for a host where Claude Code finds no Git Bash, but it "
-            "finds Git Bash here and runs the statusline under it, where a "
-            "leading `&` is a syntax error: the statusline goes blank, and so "
-            f"does the line that reports a missing interpreter. {remedy}, or "
-            "delete the leading `& `."
-        ]
+            "the form for a host where Claude Code finds no Git Bash, but Git "
+            "Bash is on this host and Claude Code runs the statusline under it, "
+            "where a leading `&` is a syntax error: the statusline goes blank, "
+            f"and so does the line that reports a missing interpreter. {remedy}, "
+            "or delete the leading `& `."
+        )
     if not called and not git_bash:
-        return [
+        return (
             "statusLine.command runs the Windows shim as a bare quoted head, the "
-            "form for a host where Claude Code finds Git Bash, but it finds none "
-            "here and runs the statusline under PowerShell, which reads a quoted "
-            "head as an expression: the statusline goes blank, and so does the "
-            f"line that reports a missing interpreter. {remedy}, or put `& ` "
-            "before the command."
-        ]
-    return []
+            "form for a host where Claude Code finds Git Bash, but no Git Bash "
+            "is on this host (nor named by CLAUDE_CODE_GIT_BASH_PATH here or in "
+            "a settings file), so Claude Code runs the statusline under "
+            "PowerShell, which reads a quoted head as an expression: the "
+            "statusline goes blank, and so does the line that reports a missing "
+            f"interpreter. {remedy}, or put `& ` before the command."
+        )
+    return None
 
 
 def _check_python_resolver(

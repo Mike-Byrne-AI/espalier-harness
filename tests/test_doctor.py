@@ -3719,7 +3719,7 @@ class TestStatuslineFallbackNotes:
         from espalier import doctor as doctor_module
 
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
-        monkeypatch.setattr(doctor_module, "git_bash_path", lambda: self._BASH if git_bash else None)
+        monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: self._BASH if git_bash else None)
         path = self._settings(tmp_path, cli._statusline_command("python", posix=False, git_bash=git_bash))
         assert doctor_module._statusline_fallback_notes(path, tmp_path) == []
 
@@ -3739,7 +3739,7 @@ class TestStatuslineFallbackNotes:
         from espalier import doctor as doctor_module
 
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
-        monkeypatch.setattr(doctor_module, "git_bash_path", lambda: None if git_bash else self._BASH)
+        monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: None if git_bash else self._BASH)
         render = cli._statusline_command("python", posix=False, git_bash=git_bash)
         notes = doctor_module._statusline_fallback_notes(self._settings(tmp_path, render), tmp_path)
         assert len(notes) == 1, notes
@@ -3749,6 +3749,35 @@ class TestStatuslineFallbackNotes:
             assert "PowerShell" in notes[0] and "`& `" in notes[0], notes
         else:
             assert "Git Bash" in notes[0] and "leading `& `" in notes[0], notes
+
+    def test_upgrade_and_doctor_read_one_predicate_for_the_other_shells_form(
+        self, tmp_path, monkeypatch
+    ):
+        """The failure-mode review (2026-10-31): an install rendered bare on a
+        host with no Git Bash -- this row's own users -- was told "harness is
+        current; nothing to do" by upgrade, which never rewrites the file,
+        while doctor called the line blank. Both now read
+        `statusline_shell_mismatch` (the DEF-798 rule), and the settings-file
+        reader is false off Windows, for a clause-carrying line (its own
+        note), and for a line of the operator's own."""
+        import inspect
+
+        from espalier import cli
+        from espalier import doctor as doctor_module
+
+        assert "statusline_shell_mismatch(" in inspect.getsource(doctor_module._statusline_fallback_notes)
+        assert "settings_statusline_shell_mismatch(" in inspect.getsource(cli.cmd_upgrade)
+        monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: None)
+        bare = cli._statusline_command("python", posix=False, git_bash=True)
+        path = self._settings(tmp_path, bare)
+        monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: False)
+        assert doctor_module.settings_statusline_shell_mismatch(path, tmp_path) is False
+        monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
+        assert doctor_module.settings_statusline_shell_mismatch(path, tmp_path) is True
+        for command in (bare + " || echo 'x'", "~/.claude/statusline.sh",
+                        cli._statusline_command("python", posix=False, git_bash=False)):
+            other = self._settings(tmp_path, command)
+            assert doctor_module.settings_statusline_shell_mismatch(other, tmp_path) is False, command
 
     def test_windows_host_with_a_shim_head_that_also_carries_the_clause_gets_the_hand_edit(
         self, tmp_path, monkeypatch
@@ -3776,7 +3805,7 @@ class TestStatuslineFallbackNotes:
         assert is_statusline_shim_head('${CLAUDE_PROJECT_DIR}\\tools\\cc\\STATUSLINE.CMD')
         assert interpreter_site_token(head) == "python"
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: True)
-        monkeypatch.setattr(doctor_module, "git_bash_path", lambda: None if lead else self._BASH)
+        monkeypatch.setattr(doctor_module, "git_bash_path", lambda *_: None if lead else self._BASH)
         assert doctor_module._statusline_fallback_notes(self._settings(tmp_path, head), tmp_path) == []
         monkeypatch.setattr(doctor_module, "_host_is_windows", lambda: False)
         notes = doctor_module._statusline_fallback_notes(self._settings(tmp_path, head), tmp_path)

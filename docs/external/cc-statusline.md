@@ -227,8 +227,11 @@ setting to detect at all.
   The PowerShell-only path reads a quoted head as an expression (witnessed
   2026-09-26, driven again 2026-10-31), so where `espalier._venv.git_bash_path`
   finds no Git Bash the render is `& "<shim>" <interp>`, PowerShell's call
-  operator, which Git Bash cannot parse: one string cannot serve both shells,
-  and the render follows the shell this page says will run it.
+  operator, which Git Bash cannot parse. Neither form serves both shells (a
+  `powershell -NoProfile -Command "& '<shim>' <interp>"` head does, at a
+  second PowerShell start on every refresh, driven by the 2026-10-31 review
+  and not adopted), so the render follows the shell this page says will run
+  it, and keeps the bare form wherever a trace of Git Bash is found.
   <!-- re-excerpt 2026-10-01: unchanged and now better supported. The page's new
        Git Bash backslash paragraph says a backslash-separated path in the
        `command` string "fails without a visible error" when UNQUOTED -- the
@@ -272,8 +275,13 @@ passes the string as `-Command`, and under Git Bash it forward-slashes
 `CLAUDE_PROJECT_DIR`. The statusLine schema in that build is `type`,
 `command`, `padding`, `refreshInterval` and `hideVimModeIndicator`: no
 `shell`, though the no-Git-Bash notice it shows names a `"shell"` setting
-for StatusLine commands too. `espalier/_venv.py::git_bash_path` follows the
-lookup with `shutil.which` in place of `where.exe`.
+for StatusLine commands too; Claude Code applies each settings file's `env`
+to its own environment before the lookup, and its settings-env filter names
+`CLAUDE_CODE_GIT_BASH_PATH`. `espalier/_venv.py::git_bash_path` follows the
+lookup with `shutil.which` in place of `where.exe`, and widens it: the
+variable is also read from the settings files, and every `git` on PATH is
+asked, not only the first, because a wrong "none" writes a form bash cannot
+parse while a wrong "found" keeps the line hosts had before.
 
 **Observed, not quoted** (a live probe, Claude Code 2.1.263, 2026-09-07): an
 exec-form hook whose `command` is not on PATH produces the transcript notice

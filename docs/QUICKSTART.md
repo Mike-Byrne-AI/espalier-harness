@@ -366,10 +366,11 @@ was denied; restored, it ran).
   no `||` for the POSIX fallback. Claude Code runs the statusline under Git
   Bash when it finds Git Bash and under PowerShell when it does not, and the
   two shells need the line spelled differently, so `init` looks where Claude
-  Code looks (`CLAUDE_CODE_GIT_BASH_PATH`, then `C:\Program Files\Git` and
-  `C:\Program Files (x86)\Git`, then the `git` on your `PATH`) and writes the
-  form your shell runs: the shim's quoted path with Git Bash,
-  `& "<shim>" python` without it. Both forms are driven on Windows 11, and
+  Code looks (`CLAUDE_CODE_GIT_BASH_PATH`, in your environment or a settings
+  file's `env`, then `C:\Program Files\Git` and `C:\Program Files (x86)\Git`,
+  then each `git` on your `PATH`) and writes the form your shell runs: the
+  shim's quoted path wherever it finds Git Bash, `& "<shim>" python` only
+  where it finds none. Both forms are driven on Windows 11, and
   each prints the fallback line when the interpreter is missing. Installed or
   removed Git for Windows since `init`? `python -m espalier doctor .` names
   the line that no longer matches and the edit; `python -m espalier init .`

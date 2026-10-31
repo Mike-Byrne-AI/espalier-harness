@@ -1904,6 +1904,7 @@ STATUSLINE_FALLBACK_TEXT = (
 
 def _statusline_command(
     python_cmd: str, *, posix: bool | None = None, git_bash: bool | None = None,
+    repo_root: Path | None = None,
 ) -> str:
     """The ``statusLine.command`` string for ``python_cmd``.
 
@@ -1939,12 +1940,14 @@ def _statusline_command(
     against ``statusline.py`` beside it and prints the same fallback text,
     exit 0 either way. Which shell hands it over is Claude Code's choice:
     Git Bash when its lookup finds one, else PowerShell
-    (:func:`~espalier._venv.git_bash_path`, read from the 2.1.316 binary),
-    and the statusLine schema has no field to pin it. Git Bash runs the
-    bare quoted head, which PowerShell reads as an expression; PowerShell
-    runs ``& "<shim>" <interp>``, whose leading ``&`` bash reads as a syntax
-    error -- so no one string serves both (DEF-929), and the head is bare
-    where the lookup finds Git Bash and called where it does not. Each
+    (:func:`~espalier._venv.git_bash_path`, read from the 2.1.316 binary;
+    ``repo_root`` adds the tree's settings files to it), and the statusLine
+    schema has no field to pin it. Git Bash runs the bare quoted head, which
+    PowerShell reads as an expression; PowerShell runs ``& "<shim>"
+    <interp>``, whose leading ``&`` bash reads as a syntax error -- so
+    neither serves both shells without a second PowerShell start per
+    refresh (DEF-929), and the head is bare where the lookup finds a trace
+    of Git Bash and called only where it finds none. Each
     form printed the statusline in its own shell and, with the interpreter
     gone, the fallback line, and blanked in the other (driven 2026-10-31,
     ``tests/test_hook_exec_form.py``). ``init`` renders settings.json on the
@@ -1964,7 +1967,7 @@ def _statusline_command(
         posix = _render_host_is_posix()
     if not posix:
         if git_bash is None:
-            git_bash = git_bash_path() is not None
+            git_bash = git_bash_path(repo_root) is not None
         shim = f'"${{CLAUDE_PROJECT_DIR}}/{STATUSLINE_SHIM}" {python_cmd}'
         return shim if git_bash else f"& {shim}"
     return f"{script} || echo '{STATUSLINE_FALLBACK_TEXT}'"
@@ -2093,7 +2096,7 @@ def _build_settings_json(
         # keep the string they have until a re-`init`.
         "statusLine": {
             "type": "command",
-            "command": _statusline_command(python_cmd),
+            "command": _statusline_command(python_cmd, repo_root=repo_root),
         },
         "hooks": {
             "SessionStart": [{
@@ -11108,6 +11111,14 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                 no_statusline = _doctor.espalier_statusline_missing(
                     repo_root / ".claude" / "settings.json", repo_root,
                 )
+            # And for a Windows statusLine written for the other shell
+            # (DEF-929): blank on this host, which doctor names with the same
+            # predicate; upgrade never rewrites the file, so it says so here.
+            shell_mismatch = os.path.isfile(repo_root / ".claude" / "settings.json") and (
+                _doctor.settings_statusline_shell_mismatch(
+                    repo_root / ".claude" / "settings.json", repo_root,
+                )
+            )
             # And the same rule once more for the wiring itself (DEF-618, driven):
             # a version-current tree with an `echo`-neutered or shell-form gate
             # was told "nothing to do". The enforcement claim decides; the
@@ -11176,6 +11187,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                                    "(the WARN above says why)")
             if no_statusline:
                 file_states.append("has no statusLine")
+            if shell_mismatch:
+                file_states.append("has a statusLine written for the other Windows shell "
+                                   "(`doctor` names it)")
             states = (["the hook tree above is not armed"] if disarmed else []) + (
                 ["your .claude/settings.json " + _and_list(file_states)] if file_states else [])
             if states:
@@ -11188,6 +11202,10 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
                     remedy = (f" -- `{_remedy_py()} -m espalier merge-settings .` adds "
                               "espalier's statusLine, on request, and never touches one "
                               "of yours (set the key to null to keep the statusline off)")
+                elif shell_mismatch:
+                    remedy = (f" -- `{_remedy_py()} -m espalier init .` renders "
+                              ".claude/settings.json.new beside it with the statusLine "
+                              "line to take")
                 else:
                     remedy = ""
                 print(f"[upgrade] harness is current ({__version__}); "
