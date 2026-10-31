@@ -814,6 +814,9 @@ _NOT_A_PLAIN_OPERAND = (
     'python run.py "claude -p x"',
     'python -c "claude"',
     'python -m runner "claude -p x"',
+    # `-c` ends python's options, so the `-m pytest` after it is an argument
+    # (the dispatcher's ruling on the gate, 2026-10-31)
+    'python3 -c "import os; os.system(\'claude -p x\')" -m pytest',
     f'X="$(claude -p x)" pytest "{_SPACED_TESTS}"',
     f'ls "{_SPACED_TESTS}"',
 )
@@ -829,6 +832,8 @@ _PS_NOT_A_PLAIN_OPERAND = (
     'pytest "claude"',
     f'pytest "{_SPACED_TESTS}" | Invoke-Expression "claude -p x"',
     f'pytest "{_SPACED_TESTS}"; claude -p x',
+    # the variable reaches every later statement, so each is judged
+    'pytest "tests"; Invoke-Expression "claude -p x"',
     f'pytest "{_SPACED_TESTS}"; ls "{_SPACED_TESTS}"',
     'pytest "$(claude -p x)"',
     f'pytest (Get-Item "{_SPACED_TESTS}")',
@@ -849,6 +854,49 @@ def test_powershell_a_launch_in_the_value_keeps_the_deny():
     value itself runs before any of them, and keeps the quote-blind deny."""
     command = f'$env:{STOP}=$(claude -p x); pytest "{_SPACED_TESTS}"'
     assert _denies(wg.check_powershell, command), command
+
+
+def _gates_off(monkeypatch):
+    monkeypatch.setattr(wg, "_a_test_run_holds_no_launch", lambda *_a: False)
+    monkeypatch.setattr(wg, "_ps_quoted_mentions", lambda *_a: frozenset())
+
+
+def _guard_denies(attempt: dict, root) -> bool:
+    """The three checks the two gates sit in, in-process: the Bash and
+    PowerShell dangerous-pattern tiers and the secret-read leg."""
+    tool, tool_input = attempt["tool_name"], attempt["tool_input"]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = wg.check_secret_path_access(tool, tool_input, root)
+        if tool == "Bash":
+            rc = rc or wg.check_bash_dangerous_patterns(tool_input)
+        elif tool == "PowerShell":
+            rc = rc or wg.check_powershell(tool_input)
+    return bool(rc) or '"deny"' in buf.getvalue()
+
+
+def test_the_two_gates_newly_allow_nothing_in_the_bypass_corpus(monkeypatch, tmp_path):
+    """The differential the DEF-1044 row asked for: every in-scope attempt of
+    the harness-prefix and secret-read bypass classes (BC-028, BC-028b,
+    BC-053, BC-054), judged with both gates and with both stubbed off. A
+    command either gate newly allows is named in the failure."""
+    import json
+    from pathlib import Path
+
+    corpus = Path(__file__).resolve().parent.parent / "bench" / "corpus"
+    attempts = []
+    for name in ("BC-028-", "BC-028b-", "BC-053-", "BC-054-"):
+        (path,) = corpus.glob(f"{name}*.json")
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        attempts += [a for a in doc["canonical_attempts"]
+                     if a.get("tool_name") in ("Bash", "PowerShell")]
+    assert len(attempts) >= 30, len(attempts)
+    with_gates = [_guard_denies(a, tmp_path) for a in attempts]
+    _gates_off(monkeypatch)
+    without = [_guard_denies(a, tmp_path) for a in attempts]
+    newly_allowed = [a["attempt_id"] for a, on, off in zip(attempts, with_gates, without)
+                     if off and not on]
+    assert not newly_allowed, f"the gates newly allow: {newly_allowed}"
 
 
 def _quote_aware_reads(monkeypatch, fn, command):
