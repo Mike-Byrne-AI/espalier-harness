@@ -108,11 +108,10 @@ def _run_hook(repo_root: Path, rel_path: str) -> subprocess.CompletedProcess:
     })
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = str(repo_root)
-    # Conftest autouse sets ESPALIER_AUDIT_DIR to its own tmp_path/audit;
-    # without popping it, the hook subprocess writes audit entries to the
-    # conftest fixture's dir instead of fresh_repo. Documented pitfall in
-    # docs/CONVENTIONS.md ("subprocess env hygiene").
-    env.pop("ESPALIER_AUDIT_DIR", None)
+    # The copy keeps conftest's per-test ESPALIER_AUDIT_DIR, so the hook's
+    # audit rows land in the test's store: the store is per user, not per
+    # repo, and with it popped they went to the operator's home store
+    # (DEF-3022). No test here reads them.
     return subprocess.run(
         [sys.executable, str(HOOK_PATH)],
         input=payload,

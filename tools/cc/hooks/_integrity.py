@@ -1519,9 +1519,33 @@ def _validate_audit_override(p: Path) -> str | None:
 
 # Cap the prune iteration so an attacker spamming the audit dir
 # with empty log files can't slow session_start to a crawl. Above the
-# cap, process the lexicographically-first N and warn; that keeps
+# cap, process the oldest-named N (_audit_log_order) and warn; that keeps
 # legitimate older entries visible to pruning under flood conditions.
 _MAX_PRUNE_SCAN = 5000
+
+# The date ``audit_path`` writes into a log's name, ``<slug>-<YYYYMMDD>.log``.
+_AUDIT_LOG_DATE_RE = re.compile(r"-(\d{8})\.log$")
+
+
+def _audit_log_order(f: Path) -> tuple[str, str]:
+    """The prune's scan order: the name's date, oldest first, a name with
+    none before every dated one; then the name. A sort by name alone orders
+    by repository slug, so a bounded scan would read the same first slugs
+    every start and never reach an old log late in the alphabet."""
+    found = _AUDIT_LOG_DATE_RE.search(f.name)
+    return (found.group(1) if found else "", f.name)
+
+
+def _named_before(f: Path, cutoff: float) -> bool:
+    """Whether ``f``'s name dates it before ``cutoff`` (a POSIX time): a
+    log's entries start on its name's day, so one named inside the window
+    holds nothing to demote unless it was renamed. A name with no date, or
+    one that does not parse, may hold anything and counts as before."""
+    day = _audit_log_order(f)[0]
+    try:
+        return not day or datetime.strptime(day, "%Y%m%d").replace(tzinfo=timezone.utc).timestamp() < cutoff
+    except ValueError:  # fail-open: ok text-fallback -- an unparseable name date may hold anything, so it counts
+        return True
 
 # Forced twin of _blueprint_limits.BLUEPRINT_COLD_DIR_NAME. A literal, not a
 # sibling import: hooks run standalone and a script copied without its deps
@@ -1530,10 +1554,12 @@ _MAX_PRUNE_SCAN = 5000
 _COLD_DIR_NAME = "_cold"
 
 
-def _prune_old_audit_logs(max_age_days: int = 30) -> int:
+def _prune_old_audit_logs(max_age_days: int = 30, *, deadline: float | None = None,
+                          on_stop: Callable[[int, int], object] | None = None) -> int:
     """Demote .log files in _audit_dir() older than max_age_days into ``_cold/``.
 
-    Returns the count demoted. Best-effort; never raises. Capped at
+    Returns the count demoted. Best-effort; never raises (an ``on_stop`` that
+    raises costs its notice, never the count). Capped at
     ``_MAX_PRUNE_SCAN`` files per call so a flood of spam log files
     can't slow session_start indefinitely.
 
@@ -1543,6 +1569,15 @@ def _prune_old_audit_logs(max_age_days: int = 30) -> int:
     then. Demotion makes the irreversible half reversible; whether the cold
     store is worth backing up is a separate question and does not have to be
     answered before this stops destroying.
+
+    The scan reads the oldest name date first (:func:`_audit_log_order`),
+    the first line's timestamp still the authority. ``deadline`` (a
+    ``time.monotonic()`` reading) stops it before the next read; ``on_stop``
+    is then called with how many unread logs are named before the window
+    (:func:`_named_before`, those past the cap among them) and the window's
+    days, and not at all when none is. On the Windows box
+    5,000 first-line reads took 11.7 s, and SessionStart's banner was cut at
+    its 13 s wall inside this scan (DEF-3022).
     """
     import time
     try:
@@ -1552,7 +1587,7 @@ def _prune_old_audit_logs(max_age_days: int = 30) -> int:
     if not base.exists():
         return 0
     cutoff = time.time() - (max_age_days * 86400)
-    all_logs = sorted(base.glob("*.log"))
+    all_logs = sorted(base.glob("*.log"), key=_audit_log_order)
     if len(all_logs) > _MAX_PRUNE_SCAN:
         # voice: debug-log housekeeping: the rest of the old logs wait for the next session's prune
         print(
@@ -1566,7 +1601,16 @@ def _prune_old_audit_logs(max_age_days: int = 30) -> int:
         scan_files = all_logs
     deleted = 0
     cold = base / _COLD_DIR_NAME
-    for f in scan_files:
+    for at, f in enumerate(scan_files):
+        if deadline is not None and time.monotonic() >= deadline:
+            # Over every log, not the capped slice: one past the cap is unread too.
+            old_left = sum(1 for g in all_logs[at:] if _named_before(g, cutoff))
+            if old_left and on_stop is not None:
+                try:
+                    on_stop(old_left, max_age_days)
+                except Exception:  # noqa: BLE001, S110 -- a notice that raises costs the notice, never the count
+                    pass
+            break
         try:
             age_ts = _parse_first_log_timestamp(f)
             if age_ts is None:

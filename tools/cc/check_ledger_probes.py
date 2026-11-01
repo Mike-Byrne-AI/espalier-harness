@@ -42,14 +42,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
 import contextlib
+import functools
 import hashlib
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -559,8 +563,23 @@ def _outside_the_launching_session() -> dict[str, str]:
     every session -- where probes are run -- it raised, printed nothing and
     graded UNRESOLVED (2026-10-05). A probe answers about the tree, never
     about the terminal; ``tests/conftest.py::_isolate_claude_code_session``
-    is the suite's twin of this strip."""
-    return {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    is the suite's twin of this strip. For the same reason a probe's harness
+    audit records go to a store of this run's (:func:`_probe_audit_dir`), never
+    the operator's: a probe that drives a hook site in process wrote its record
+    into the home store under its temp tree's slug (DEF-3022)."""
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    env["ESPALIER_AUDIT_DIR"] = _probe_audit_dir()
+    return env
+
+
+@functools.lru_cache(maxsize=1)
+def _probe_audit_dir() -> str:
+    """One audit store a checker run, under the temp root, where the hooks'
+    ``_integrity._audit_dir`` accepts an ``ESPALIER_AUDIT_DIR`` override;
+    removed when the run exits, so a run leaves no folder behind."""
+    store = tempfile.mkdtemp(prefix="espalier-probe-audit-")
+    atexit.register(shutil.rmtree, store, ignore_errors=True)
+    return store
 
 
 def run_probe(probe: dict) -> tuple[str, str]:

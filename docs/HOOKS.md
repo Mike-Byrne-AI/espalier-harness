@@ -2638,7 +2638,9 @@ line per event, serialized under a file lock.
 ```
 
 Override the directory with `ESPALIER_AUDIT_DIR`; logs older than 30 days are
-pruned automatically. The log is a **visibility layer, not a security
+moved into its `_cold/` folder at SessionStart, the oldest date in a log's name
+first, for at most a second of each start (a NOTES line says how many old logs
+a stop left; the next start goes on). The log is a **visibility layer, not a security
 boundary** — a write failure is swallowed so it can never make a hook raise,
 and nothing downstream depends on it. The **denial** records below carry
 `details` that are metadata-only — the tool/channel, the repo-relative path,

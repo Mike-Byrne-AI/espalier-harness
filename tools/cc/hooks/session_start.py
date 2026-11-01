@@ -3364,6 +3364,11 @@ _TAIL_RESERVE_SECONDS = 2.5
 # budget, the wall less the tail, which both the catch-up's deadline and the
 # pull-request deadline are clipped to when the start has spent the room.
 _CATCH_UP_BUDGET_SECONDS = 6.0
+# The audit store's prune: at most this long at a start, and never past the
+# hook's own budget below, so the network reads after it keep their room. It
+# reads the oldest name date first, so each start goes on where the old logs
+# are (5,000 first-line reads took 11.7 s on the Windows box: DEF-3022).
+_PRUNE_BUDGET_SECONDS = 1.0
 _HOOK_BUDGET_SECONDS = _WALL_SECONDS - _TAIL_RESERVE_SECONDS
 # A cut's record gets this long to land, and the cut as long again for the
 # state-write lock, before the process ends without either. Its type is in the
@@ -3977,6 +3982,26 @@ def _warn_if_stop_gate_override_unresolved(root: Path) -> None:
         "program on the PATH of the shell that launches Claude Code, or its full path, "
         "where the variable is set; it takes effect at the next launch."
     )
+
+
+def _prune_audit_logs_inside_the_wall(hook_start: float, budget: float = _HOOK_BUDGET_SECONDS) -> None:
+    """The boot table's prune, bounded: `_integrity._prune_old_audit_logs`
+    with a deadline `_PRUNE_BUDGET_SECONDS` from now, clipped to the hook's
+    budget (``budget`` after ``hook_start``: `_handoff_budget`'s, the smaller
+    one on a handed-off fresh start), and a NOTES line naming the bound that
+    stopped it when it stopped with logs named before the window still
+    unread. A stop among logs named inside the window is silent: they hold
+    nothing to demote unless renamed."""
+    own = time.monotonic() + _PRUNE_BUDGET_SECONDS
+    clip = hook_start + budget
+    bound = f"its {_PRUNE_BUDGET_SECONDS:g} s bound" if own <= clip else "the hook's budget for the reads after it"
+
+    def stopped(left: int, days: int) -> None:
+        _hook_utils.advise(
+            f"[INFO] the audit log prune stopped at {bound} with {left} "
+            f"log{'s' if left != 1 else ''} named before its {days}-day window unread; the next start goes on"
+        )
+    _integrity._prune_old_audit_logs(deadline=min(own, clip), on_stop=stopped)
 
 
 def _warn_if_maintenance_mode_active() -> None:
@@ -5079,7 +5104,8 @@ def _run_main(wall_start: float | None = None) -> int:
 
     _boot_warnings = [
         (lambda: _report_freshness(root), "session_start: freshness banner failed"),
-        (_integrity._prune_old_audit_logs, "session_start: audit log pruning failed"),
+        (lambda: _prune_audit_logs_inside_the_wall(hook_start, _handoff_budget(handoff)),
+         "session_start: audit log pruning failed"),
         (_warn_if_maintenance_mode_active, "session_start: maintenance-mode banner failed"),
         (lambda: _warn_if_load_bearing_tool_missing(self_host), "session_start: external-tool banner failed"),
         (lambda: _warn_if_hook_interpreter_unresolved(root), "session_start: hook-interpreter banner failed"),
