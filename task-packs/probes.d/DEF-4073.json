@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4073",
+ "subject": "tools/cc/hooks/_zone_watch.py",
+ "cmd": "python3 -c \"import sys,subprocess,tempfile,pathlib as P;sys.path.insert(0,'tools/cc/hooks');import _zone_watch as z;r=P.Path(tempfile.mkdtemp());d=r/'tools/cc/hooks';d.mkdir(parents=True);(d/'x.py').write_text('x=1\\n');g=['git','-C',str(r),'-c','user.name=p','-c','user.email=p@p'];subprocess.run(g+['init','-q'],check=True);subprocess.run(g+['add','-A'],check=True);subprocess.run(g+['commit','-qm','x'],check=True);(d/'.gitignore').write_text('*\\n');z.take_baseline(r,'probe');print(sum(k.startswith('tools/cc/hooks/') for k in z.read_baseline(z.baseline_path(r,'probe'))['files']))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "283fba029dda",
+ "text_sha": "c9f83033b916",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)"
+}
