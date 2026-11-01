@@ -520,7 +520,8 @@ def tracked_paths(repo_root: Path) -> set[str] | None:
     the contract.
 
     ``None`` when there is no index to ask, and the caller falls back to
-    walking the working tree, with only the release-noise patterns between an
+    walking the working tree, with only the release-noise patterns, and the
+    prune of a directory that declares itself generated (DEF-4072), between an
     untracked file and the archive. Two shapes return it, and they differ:
     a root that is not a repository at all (a plain directory, the release
     matrix's extracted archive) has no index to miss -- the tree walk is the
