@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2034",
+ "subject": "tests/test_box_lock.py",
+ "cmd": "python -c 'import ast,glob,sys; C=[(s,m,n) for p in sorted(glob.glob(\"tests/test_*.py\")) for s in [open(p,encoding=\"utf-8\").read()] if \"TestTheCensusOfPytestSpawners\" in s for m in [ast.parse(s)] for n in ast.walk(m) if isinstance(n,ast.ClassDef) and n.name==\"TestTheCensusOfPytestSpawners\"]; sys.exit(2) if len(C)!=1 else None; s,m,n=C[0]; roots=any(isinstance(x,(ast.Tuple,ast.List,ast.Set)) and {\"tests\",\"bench\"}<={getattr(e,\"value\",None) for e in x.elts} for x in ast.walk(m)); print(int(roots)+int(\"LOCK_KEY\" not in ast.get_source_segment(s,n)))'",
+ "open_value": "2",
+ "why_not": null,
+ "row_sha": "2f6dff7f6d9c",
+ "text_sha": "b73dbf7a29c6",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}
