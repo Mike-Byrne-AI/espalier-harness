@@ -1,13 +1,13 @@
 {
  "id": "DEF-2039",
- "subject": "tools/cc/mods/own-clear/hooks/register.ts",
- "cmd": "python3 -c 'm=open(\"tools/cc/mods/own-clear/hooks/register.ts\",encoding=\"utf-8\").read();r=open(\"tools/cc/hooks/task_router.py\",encoding=\"utf-8\").read();print(int(\"clear_held: why\" not in m or \"_OWN_CLEAR_HOLD_VERBS\" not in r))'",
+ "subject": "tools/cc/hooks/task_router.py",
+ "cmd": "python3 -c 'import sys,json,tempfile,pathlib;sys.path.insert(0,\"tools/cc/hooks\");import task_router as t;d=pathlib.Path(tempfile.mkdtemp());s=d/t.STATE_DIR;s.mkdir(parents=True);(s/\"own_clear.json\").write_text(json.dumps({\"state\":\"armed\",\"session_id\":\"s\",\"clear_held\":\"a plan is in progress\",\"clear_held_since\":\"x\",\"clear_held_turns\":1}),encoding=\"utf-8\");a=t._own_clear_advisory(d,\"s\");print(int(not a or \"held\" not in a))'",
  "open_value": "1",
  "why_not": null,
  "inputs": [
-  "tools/cc/hooks/task_router.py"
+  "tools/cc/hooks/_hook_utils.py"
  ],
- "row_sha": "a59839b3e5ed",
- "text_sha": "c2ee47264f65",
- "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing here and in the export of HEAD 569565767046)"
+ "row_sha": "0fe3d3b951ba",
+ "text_sha": "e3d6058706c5",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged; subject 'tools/cc/mods/own-clear/hooks/register.ts' -> 'tools/cc/hooks/task_router.py'; inputs ['tools/cc/hooks/task_router.py'] -> ['tools/cc/hooks/_hook_utils.py'] on 2026-11-01: re-aimed before the strike: the filed probe counted vocabulary in its own subject, which the probe-shape ratchet refuses; this one drives the router over a held marker) [changed: probe, text, subject, inputs]"
 }
