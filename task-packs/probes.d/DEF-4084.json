@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4084",
+ "subject": "tools/cc/hooks/_zone_watch.py",
+ "cmd": "python3 -c \"import sys,io,subprocess,tempfile,pathlib as P;sys.path.insert(0,'tools/cc/hooks');import _zone_watch as z,_hook_utils as u;r=P.Path(tempfile.mkdtemp());subprocess.run(['git','init','-q',str(r)],check=True);(r/'espalier.toml').write_text('protected_paths = [\\\"zone/\\\"]\\n');g=r/'zone'/'gen';g.mkdir(parents=True);(g/'.gitignore').write_text('*\\n');(g/'k.txt').write_text('k\\n');u.spawn_checked=lambda *a,**k:(_ for _ in ()).throw(subprocess.TimeoutExpired('git',2));e=io.StringIO();sys.stderr=e;F=z.snapshot(r);sys.stderr=sys.__stderr__;d=r/u.STATE_DIR;print('kept=%s once=%d said=%s'%('zone/gen/k.txt' in F,len(list(d.glob(u.ONCE_FLAG_PREFIX+'*'))) if d.is_dir() else 0,bool(e.getvalue().strip())))\"",
+ "open_value": "kept=False once=0 said=False",
+ "why_not": null,
+ "row_sha": "222a5acf79ae",
+ "text_sha": "c98925ebf1bb",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned 'tracked=0 flags=0 said=False' -> 'kept=False once=0 said=False' on 2026-11-01: the failure-mode review before the open: win's item 5 dropped (the 13 s wall cut is the design, DEF-3015, and prints a Cut: line; the walk's own 3 s budget is unclipped too); the borrowed 2.6 s figure replaced (it timed a walk before tracked_dirs existed); the twin taken out of the fix (zone_writes 165-167: a failed read there is the loud side); the fix shape and the probe follow the module's convention (the reader returns None, the walk speaks once)) [changed: probe, open value, text]"
+}
