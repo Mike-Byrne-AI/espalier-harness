@@ -12,9 +12,10 @@ name: CI
 # protection; the SessionStart banner prints it. The `tier` job below
 # decides how much of the suite a PR earns; the required `test (3.x)` cells
 # then run exactly that minus its serial leg, their required `test-serial (3.x)`
-# twins run that leg beside them (the wall-clock-budget files, alone on their
-# own runner, took 8 to 14 minutes of every cell in series until 2026-09-30),
-# and a changed test file always rides along, whatever the tier.
+# twins run that leg beside them (the files scripts/proof_tier.py::SERIAL_FILES
+# names, alone on their own runner; in series with the parallel run the leg
+# took 8 to 14 minutes of every cell until 2026-09-30), and a changed test
+# file always rides along, whatever the tier.
 on:
   pull_request:
     branches: [main]
@@ -50,8 +51,9 @@ jobs:
   # earns the contract slice (minutes); a recall-corpus change earns that slice
   # plus the recall engine's own files; a runtime or workflow change earns the
   # full tier -- the parallel recipe the local `proof_tier.py --run` uses, with
-  # the three wall-clock-budget files serial. The rule has one home (the script,
-  # pinned by tests/test_proof_tier.py); this job only asks it.
+  # the files scripts/proof_tier.py::SERIAL_FILES names kept off its pool and
+  # run at one worker (the `test-serial` cells below). The rule has one home
+  # (the script, pinned by tests/test_proof_tier.py); this job only asks it.
   #
   # This job NEVER fails and never answers cheaper than the truth: a script
   # error, a shallow history, a dispatch with no PR base -- every one of those
@@ -145,9 +147,10 @@ jobs:
         # contract = the tree-wide contracts; recall = those plus the recall
         # engine's files; every tier opens with `ruff check .` below the type
         # gate where there is one; full = mypy on the hooks, ruff, then `pytest -n auto`
-        # with the wall-clock-budget files left out. `--leg parallel` is every line
-        # but the serial one (the whole tier on the cheaper tiers); the serial
-        # line runs in the `test-serial` twin below, on its own runner. The
+        # with the serial files (proof_tier.py::SERIAL_FILES) left out.
+        # `--leg parallel` is every line but the serial one (the whole tier on
+        # the cheaper tiers); the serial line runs in the `test-serial` twin
+        # below, on its own runner. The
         # `heavy_e2e` stages (tests/conftest.py::_HEAVY_E2E_TESTS) run in no
         # cell here: every pytest line deselects them (the cheaper tiers' own-tests
         # line included), and their one CI home is
@@ -169,11 +172,11 @@ jobs:
         # false-fires here.
         run: espalier doctor . --skip-self-host
 
-  # The serial leg of the tier -- the wall-clock-budget and timeout-near files
-  # (scripts/proof_tier.py::SERIAL_FILES) -- on its own runner, beside the
-  # parallel leg instead of after it. Those files false-fail under CPU
-  # oversubscription, which is why they never join the `-n auto` run; alone on
-  # a runner they run at their serial duration. Five required cells, the same
+  # The serial leg of the tier -- the files scripts/proof_tier.py::SERIAL_FILES
+  # names (the lists it joins say why each file is there) -- on its own runner,
+  # beside the parallel leg instead of after it. Those files false-fail under
+  # CPU oversubscription, which is why they never join the `-n auto` run; alone
+  # on a runner they run at their serial duration. Five required cells, the same
   # literal matrix as `test` and for the same reasons: branch protection
   # matches check-run names, and a cell that never reports parks the PR. On the
   # cheaper tiers the leg has nothing to run and says so in the receipt (exit
