@@ -1326,6 +1326,110 @@ class TestFixForwardRulings:
             assert (problem or "").isascii()
         assert json.dumps(ruled, sort_keys=True) == before
 
+    # DEF-4074: only an ack opening with the head rules, so the send refuses
+    # any other type that opens with it, on the dry run and the live send
+    # alike, before the channel is touched.
+    _NON_ACKS = (("note", ()), ("request", ("--lane", "lane/x")), ("claim", ("--lane", "lane/x")),
+                 ("release", ("--lane", "lane/x")), ("assign", ("--seat", "win", "--lane", "lane/x")))
+
+    _ASK = "20261101T000000Z-air-work-abcdef"
+
+    def _send(self, mail, monkeypatch, tmp_path, *args: str, machine: str = "air") -> int:
+        monkeypatch.setattr(mail, "machine_setting",
+                            lambda root, **kw: (machine, f"git config espalier.machine = {machine}"))
+        monkeypatch.setattr(mail, "send", lambda *a, **k: pytest.fail("the message reached the channel"))
+        return mail.main(["--root", str(tmp_path), "send", *args])
+
+    @pytest.mark.parametrize("live", [False, True], ids=["dry-run", "live"])
+    @pytest.mark.parametrize("type_, extra", _NON_ACKS, ids=[t for t, _ in _NON_ACKS])
+    def test_a_ruling_sent_as_any_type_but_an_ack_is_refused_at_the_send(self, mail, monkeypatch, tmp_path, capsys,
+                                                                         type_, extra, live):
+        """The held seat on a red base waits on a ruling only an ack carries;
+        sent as a note it lands, rules nothing, and the sender is told
+        nothing (the probe's dry run printed it and exited 0, 2026-10-31).
+        Dies to: the refusal missing for one type, on one of the two paths,
+        or naming no shape to take."""
+        text = "gridlock: fix forward run 41239423797; pytest's red, outside every suspect's diff"
+        argv = ["--type", type_, *extra, "--text", text, *([] if live else ["--dry-run"])]
+        assert self._send(mail, monkeypatch, tmp_path, *argv) == 1
+        err = capsys.readouterr().err
+        assert f"{'an' if type_ == 'assign' else 'a'} {type_} that opens with `{mail.RULING_HEAD}" in err, err
+        assert "--type ack --ack <the held seat's last message> --lane <the fix lane>" in err and err.isascii(), err
+        assert "the asks: line of /inbox board" in err, err
+
+    def test_the_head_is_read_as_the_readers_read_it(self, mail, monkeypatch, tmp_path, capsys):
+        """Folded whitespace reads as the head to the readers (``ruling_text``),
+        so it is refused too. Dies to: a second spelling of the head here."""
+        assert self._send(mail, monkeypatch, tmp_path, "--type", "note", "--text",
+                          "  gridlock:   fix forward run 900", "--dry-run") == 1
+        assert "--type ack" in capsys.readouterr().err
+
+    def test_the_ack_and_a_plain_gridlock_note_still_send(self, mail, monkeypatch, tmp_path, capsys):
+        """A ruling's own ack passes; a `gridlock:` note under any other head
+        (a ruling no request waits on) and a note naming the head mid-text
+        pass too. Dies to: the refusal matching the marker alone, or the
+        head anywhere in the text."""
+        sent = [
+            ("--type", "ack", "--ack", "20261101T000000Z-air-work-abcdef", "--lane", "lane/x",
+             "--text", "gridlock: fix forward run 900; pytest's red"),
+            ("--type", "note", "--text", "gridlock: the merge queue holds until 03:00Z"),
+            ("--type", "note", "--text", "re gridlock: fix forward run 900 (air's ruling above)"),
+        ]
+        for argv in sent:
+            assert self._send(mail, monkeypatch, tmp_path, *argv, "--dry-run") == 0, argv
+            assert capsys.readouterr().out.lstrip().startswith("{")
+
+    @pytest.mark.parametrize("argv, names", [
+        (("--lane", "lane/x", "--text", "gridlock: fix forward run <4123>; pytest's red"), "in digits right after it"),
+        (("--lane", "lane/x", "--text", "gridlock: fix forward run #4123"), "in digits right after it"),
+        (("--lane", "lane/x", "--text", "gridlock: fix forward run abc"), "in digits right after it"),
+        (("--text", "gridlock: fix forward run 4123; pytest's red"), "add --lane <the fix lane>"),
+    ], ids=["angle-brackets", "hash", "letters", "no-lane"])
+    def test_an_ack_under_the_head_that_would_rule_nothing_is_refused(self, mail, monkeypatch, tmp_path, capsys,
+                                                                      argv, names):
+        """An ack under the head rules only with the red run's id in digits
+        right after it and the fix lane named (``fix_forward_rulings``);
+        short of either it sends, rules nothing, and the held seat learns
+        so only at ``ship.py open --base-red-ruled`` (both reviews of the
+        lane, 2026-11-01). Dies to: either check missing, or missing on one
+        of the two paths."""
+        for live in (False, True):
+            assert self._send(mail, monkeypatch, tmp_path, "--type", "ack", "--ack", self._ASK, *argv,
+                              *([] if live else ["--dry-run"])) == 1, (argv, live)
+            err = capsys.readouterr().err
+            assert names in err and "would rule nothing" in err and err.isascii(), err
+
+    @pytest.mark.parametrize("type_, extra", [("ack", ("--ack", _ASK, "--lane", "lane/x")), ("note", ())],
+                             ids=["ack", "note"])
+    def test_a_seat_other_than_the_named_dispatcher_is_told_only_the_dispatcher_rules(
+            self, mail, monkeypatch, tmp_path, capsys, type_, extra):
+        """Under a named dispatcher only its ref's acks rule, so a worker's
+        ack under the head rules nothing, and a worker's note is told to
+        send the dispatcher a request rather than an ack it cannot make
+        count. The dispatcher's own ack still sends. Dies to: the sender
+        left unread, or a worker told to send the ruling itself."""
+        (tmp_path / "espalier.toml").write_bytes(b'dispatcher = "air"\n')
+        text = "gridlock: fix forward run 4123; pytest's red"
+        for live in (False, True):
+            assert self._send(mail, monkeypatch, tmp_path, "--type", type_, *extra, "--text", text,
+                              *([] if live else ["--dry-run"]), machine="win") == 1, live
+            err = capsys.readouterr().err
+            assert "only the dispatcher (air) rules a fix-forward" in err and "--type request" in err, err
+            assert "--type ack" not in err and err.isascii(), err
+        assert self._send(mail, monkeypatch, tmp_path, "--type", "ack", "--ack", self._ASK, "--lane", "lane/x",
+                          "--text", text, "--dry-run") == 0
+        assert capsys.readouterr().out.lstrip().startswith("{")
+
+    def test_an_unusable_dispatcher_setting_refuses_the_ruling(self, mail, monkeypatch, tmp_path, capsys):
+        """A dispatcher setting the readers cannot use counts no ack
+        (``DISPATCHER_UNUSABLE``), so a ruling sent under it rules nothing.
+        Dies to: the fail-closed setting read as no dispatcher at the send."""
+        (tmp_path / "espalier.toml").write_bytes(b'[team]\ndispatcher = "air"\n')
+        assert self._send(mail, monkeypatch, tmp_path, "--type", "ack", "--ack", self._ASK, "--lane", "lane/x",
+                          "--text", "gridlock: fix forward run 4123", "--dry-run") == 1
+        err = capsys.readouterr().err
+        assert "fix the dispatcher setting first" in err and "would rule nothing" in err, err
+
 
 class TestTextFile:
     """TP-701 Wave A-4: ``send --text-file`` takes the body from a file, so a

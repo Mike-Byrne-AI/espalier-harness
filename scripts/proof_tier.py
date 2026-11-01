@@ -274,6 +274,9 @@ _PYTEST: tuple[str, ...] = ("pytest", "-q")
 #: runs at ``-n auto``.
 _PARALLEL: tuple[str, ...] = ("-n", "auto")
 _ONE_WORKER: tuple[str, ...] = ("-n", "1")
+#: ``own_tests`` leaves a contract-classified file off the own line because
+#: this line runs every row of it (DEF-4089): a ``-k`` or a narrower ``-m``
+#: here would leave those rows run nowhere on the cheaper tiers.
 _CONTRACT_ARGV: tuple[str, ...] = ("pytest", "-n", "auto", "-m", "contract", "-q")
 #: The heavy end-to-end stages (tests/conftest.py::_HEAVY_E2E_TESTS) leave the
 #: per-pull-request tier: the stage-one smoke alone ran 848 s on one xdist
@@ -676,6 +679,102 @@ def path_readers(changed, root: Path = _ROOT) -> tuple[str, ...]:
     return tuple(dict.fromkeys(t for rel in wanted for t in found[rel]))
 
 
+#: Where the suite keeps its primary-marker rules, and their name there.
+_CONFTEST = "tests/conftest.py"
+_RULES_NAME = "_MARKER_RULES"
+_Rules = tuple[tuple[tuple[str, ...], str], ...]
+#: ``(text, rules)`` per conftest read, keyed by its path, as ``_NAMES_CACHE``.
+_RULES_CACHE: dict[str, tuple[str, _Rules | None]] = {}
+
+
+def _marker_rules(root: Path) -> _Rules | None:
+    """``_MARKER_RULES`` of ``root``'s conftest as ``((patterns, marker), ...)``,
+    read from its literal by ``ast`` (nothing of it runs): the CI tier job
+    composes the own line under ``--quiet`` too, with no pytest installed, and
+    the conftest imports pytest. None where there is no conftest, it does not
+    parse, or the name is not bound once, to a literal list of that shape, and
+    never changed after (a second binding, an augmented one, a method call on
+    it or an item set): the conftest's value would be one this cannot read."""
+    path = root / _CONFTEST
+    read = _read_module(path)
+    if read is None:
+        return None
+    text, data = read
+    hit = _RULES_CACHE.get(str(path))
+    if hit is not None and hit[0] == text:
+        return hit[1]
+    rules: _Rules | None = None
+    try:
+        tree = ast.parse(data)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        tree = ast.Module(body=[], type_ignores=[])
+    stores = sum(1 for node in ast.walk(tree)
+                 if isinstance(node, ast.Name) and node.id == _RULES_NAME and not isinstance(node.ctx, ast.Load))
+    touched = any(isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.value, ast.Name)
+                  and node.value.id == _RULES_NAME for node in ast.walk(tree))
+    for stmt in tree.body if stores == 1 and not touched else ():
+        if isinstance(stmt, ast.AnnAssign):
+            targets, value = [stmt.target], stmt.value
+        elif isinstance(stmt, ast.Assign):
+            targets, value = stmt.targets, stmt.value
+        else:
+            continue
+        if value is None or not any(isinstance(t, ast.Name) and t.id == _RULES_NAME for t in targets):
+            continue
+        try:
+            literal = ast.literal_eval(value)
+        except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+            break
+        if isinstance(literal, (list, tuple)) and all(
+                isinstance(rule, (list, tuple)) and len(rule) == 2 and isinstance(rule[1], str)
+                and isinstance(rule[0], (list, tuple)) and all(isinstance(p, str) for p in rule[0])
+                for rule in literal):
+            rules = tuple((tuple(patterns), marker) for patterns, marker in literal)
+        break
+    _RULES_CACHE[str(path)] = (text, rules)
+    return rules
+
+
+def primary_marker(stem: str, rules: _Rules) -> str:
+    """The marker of the first rule with a pattern that is ``stem`` or a prefix
+    of it before an ``_``, else ``unit``: the walk of
+    ``tests/conftest.py::_primary_marker`` over the rules ``_marker_rules``
+    reads, pinned to that function over every test module in
+    tests/test_proof_tier.py."""
+    for patterns, marker in rules:
+        if any(stem == p or stem.startswith(p + "_") for p in patterns):
+            return marker
+    return "unit"
+
+
+#: The most test files one changed body may bring to the own line: the live
+#: maximum when it was set (2026-11-01: the reflect skill's body, 10 once the
+#: contract-classified files left the line, 14 before; its 14 ran 8382 tests
+#: in 302 s on four workers). Pinned over every tracked body in
+#: tests/test_proof_tier.py and printed beside each changed body's count, so a
+#: census list added to a heavy test file, which grows every body's line and
+#: the five required cells that run it, is a decision made here rather than a
+#: cost nobody saw (DEF-4089). It bounds files, not their cost: a light reader
+#: swapped for a heavy one passes it. A doc or a top-level file has no ceiling.
+OWN_LINE_CEILING = 10
+#: What to do past it, said by the receipt and the pin alike.
+OWN_LINE_REMEDY = ("raise OWN_LINE_CEILING in the diff that grows the line, saying why, or "
+                   "reclassify the reader; never build its path at run time, which hides it "
+                   "from the reader map and lands its reds on main (DEF-5040)")
+
+
+def body_line_sizes(changed, root: Path = _ROOT) -> dict[str, int]:
+    """``{body: n}`` for each changed agent, command or skill body: how many
+    test files it brings to the own line on its own (``own_tests``), the count
+    the receipt prints beside ``OWN_LINE_CEILING``."""
+    sizes: dict[str, int] = {}
+    for rel in changed:
+        rel = _norm_name(rel)
+        if is_body(rel) and rel not in sizes:
+            sizes[rel] = len(own_tests([rel], root))
+    return sizes
+
+
 def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     """``tests/test_<stem>.py`` for every changed ``scripts/<stem>.py`` that has
     one, and every changed ``tests/test_*.py`` itself (a test-only diff earned
@@ -693,7 +792,12 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     the roster is hand-kept and pinned to that file's walk (DEF-4067: a
     body-only diff ran none of the tests written for the bodies). Every test
     file that names a changed path, short of writing it into a tree it built,
-    follows (``path_readers``, derived)."""
+    follows (``path_readers``, derived). A file the conftest classifies
+    ``contract`` is left off, whichever way it came: the contract line, which
+    both cheaper tiers carry, has run every row of it, and the own line ran it
+    again whole (DEF-4089: 16 of the 56 files the tracked bodies brought).
+    A serial file among them runs there at ``-n auto`` alone. The rules are
+    read by ``_marker_rules``; where they cannot be read nothing is left off."""
     out: list[str] = []
     for rel in changed:
         rel = rel.replace("\\", "/")
@@ -707,7 +811,26 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
         if is_body(rel):
             out.extend(t for t in BODY_TEST_FILES if (root / t).is_file() and t not in out)
     out.extend(t for t in path_readers(changed, root) if t not in out)
-    return tuple(out)
+    rules = _marker_rules(root)
+    if rules is None:
+        return tuple(out)
+    return tuple(t for t in out if primary_marker(Path(t).stem, rules) != "contract")
+
+
+def _runs_whole(argv: tuple[str, ...]) -> bool:
+    """``pytest`` with nothing but ``-q``, ``-n auto`` and test file paths: a
+    line that runs every row of each file it names."""
+    if argv[:1] != ("pytest",):
+        return False
+    rest, i = argv[1:], 0
+    while i < len(rest):
+        if rest[i] == "-q" or (rest[i].startswith("tests/") and rest[i].endswith(".py")):
+            i += 1
+        elif rest[i:i + 2] == ("-n", "auto"):
+            i += 2
+        else:
+            return False
+    return True
 
 
 def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = False,
@@ -721,6 +844,11 @@ def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = Fals
     ``FULL_COMMANDS`` stays the four lines the receipts count."""
     argvs = _TIER_ARGVS[which]
     own = () if which == "full" else own_tests(changed, root)
+    # a file a bare pytest line of the tier names runs there whole (the recall
+    # slice): the own line would run it twice (DEF-4089); a line with any
+    # selection on it (-m, -k, a node id) is not one
+    whole = {token for argv in argvs if _runs_whole(argv) for token in argv[1:]}
+    own = tuple(rel for rel in own if rel not in whole)
     own_parallel = tuple(rel for rel in own if rel not in SERIAL_FILES)
     own_serial = tuple(rel for rel in own if rel in SERIAL_FILES)
     lines = (argvs
@@ -1615,6 +1743,8 @@ def main(argv: list[str] | None = None) -> int:
             # named so a lane run before its commit is not read as clean.
             pending, fresh = changed_paths(root)
             outside = sorted(set(pending + fresh))
+    # Not on --quiet, and not on the full tier, which runs no own line.
+    sizes = {} if args.quiet or which == "full" else body_line_sizes(changed + untracked, root)
     result = {
         "tier": which,
         "earned_tier": earned,
@@ -1630,6 +1760,8 @@ def main(argv: list[str] | None = None) -> int:
         "heavy": args.heavy,
         "leg": args.leg,
         "commands": list(commands(which, changed + untracked, root, heavy=args.heavy, leg=args.leg)),
+        "own_line_ceiling": OWN_LINE_CEILING,
+        "own_line_by_body": sizes,
     }
     if args.quiet:
         print(which)
@@ -1660,6 +1792,10 @@ def main(argv: list[str] | None = None) -> int:
         if outside:
             print(f"note: {len(outside)} uncommitted path(s) are outside the --base diff, so neither "
                   "line read them: " + ", ".join(outside))
+        if sizes:
+            print(f"own line per body (ceiling {OWN_LINE_CEILING}): " + ", ".join(
+                f"{rel} {n}" + (f" (past the ceiling: {OWN_LINE_REMEDY})" if n > OWN_LINE_CEILING else "")
+                for rel, n in sizes.items()))
         for line in result["commands"]:
             print("run: " + line)
         if len(result["commands"]) > 1:
