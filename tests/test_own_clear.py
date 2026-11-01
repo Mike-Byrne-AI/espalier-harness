@@ -226,6 +226,25 @@ class TestArmOwnClearHere:
         assert tail.isascii() and '"' not in tail and "%" not in tail
         assert "with the refusal in its brief" in line and "lands the lane first" in line
 
+    def test_a_lane_held_behind_the_seats_other_pull_request_says_what_it_waits_for(
+            self, ship, repo, monkeypatch):
+        """DEF-5038: the one-per-seat hold is not the red base's, so the next
+        window is told to open once that pull request merges, never once the
+        base is green. Dies to: one tail for every unlanded hold."""
+        monkeypatch.chdir(repo)
+        _in_a_mod_window(monkeypatch)
+        held = ship.Held("this seat (box) already has an open pull request: #41 (lane/y)", landed=False,
+                         waits_for="#41 merges or closes")
+        ship.arm_own_clear_here(repo, held=held)
+        brief = _marker(repo)["brief"]
+        assert "The push was held" in brief and "ship.py open once #41 merges or closes" in brief
+        assert "stay on this branch" in brief   # a new branch drops the gate's hold on the lane
+        assert "once the base is green" not in brief and brief.isascii()
+        red = ship.Held("main red after merge", landed=False)
+        assert red.waits_for == ""
+        ship.arm_own_clear_here(repo, held=red)
+        assert "ship.py open once the base is green" in _marker(repo)["brief"]
+
     def test_a_push_that_landed_then_refused_says_so_in_the_brief(self, ship, repo, monkeypatch):
         monkeypatch.chdir(repo)
         _in_a_mod_window(monkeypatch)

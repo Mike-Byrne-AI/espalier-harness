@@ -385,6 +385,7 @@ def _preflight_answers(root, *, dirty="", untracked="", commits="abc1234 feat: a
         ("gh", "pr", "list", "--state"): (0, merged, ""),   # no author filter: every seat pushes as one account
         ("gh", "run", "list", "--workflow", "post-merge.yml"): (0, base_runs, ""),
         _ROW_FILES: _row_log(),   # no row added by the lane's own commits
+        _LANE_DIFF: (0, "M\ttools/cc/ship.py\n", ""),   # the shape read: a code lane, nothing deleted
     })
     return answers
 
@@ -908,6 +909,7 @@ class TestHandoffVerb:
             ("git", "rev-list", "--count"): (0, "0\n", ""),
             ("git", "rev-parse", "HEAD"): (0, f"{HEAD}\n", ""),
             ("git", "push"): (0, "", ""),
+            _LANE_DIFF: (0, "M\ttools/cc/ship.py\n", ""),   # the shape read: a code lane, nothing deleted
         })
         return answers
 
@@ -3770,9 +3772,12 @@ class TestTheRedBaseReadsTheBoardsWindow:
 
 
 class TestOneOpenPullRequestPerSeat:
-    """`open` notes the seat's other open pull request, by the seat whose
-    latest claim or release names each lane: every seat may push as one
-    GitHub account, so the author cannot tell them apart."""
+    """`open` holds a lane while this seat has another pull request open, by
+    the seat whose latest claim or release names each lane: every seat may push
+    as one GitHub account, so the author cannot tell them apart. DEF-5038: the
+    Stop hook's handoff gate held a finished second lane (DEF-4058), and any
+    forced handoff -- the threshold ask, the operator's end-of-day /handoff --
+    ran `open`, which only noted the first and opened the second beside it."""
 
     @staticmethod
     def _channel(seat: str, lanes: dict[str, str]):
@@ -3784,16 +3789,159 @@ class TestOneOpenPullRequestPerSeat:
 
     _OTHERS = json.dumps([{"number": 41, "headRefName": "lane/y", "autoMergeRequest": {"x": 1}},
                           {"number": 42, "headRefName": "lane/z", "autoMergeRequest": {"x": 1}}])
+    #: The lane's upstream, as the Stop hook's handoff gate reads it.
+    _UPSTREAM = ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    _NO_UPSTREAM = (128, "", "fatal: no upstream configured for branch 'lane/x'\n")
 
-    def test_open_names_this_seats_other_open_pull_request(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+    def _held_answers(self, ship, tmp_path, monkeypatch, upstream=_NO_UPSTREAM, branch="lane/x") -> dict:
         _write_guard(tmp_path)
-        monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/y": "win", "lane/z": "air", "lane/x": "win"}))
-        spawns = _arm(ship, _open_answers(tmp_path, open_prs=self._OTHERS))
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/y": "win", "lane/z": "air", branch: "win"}))
+        answers = _open_answers(tmp_path, open_prs=self._OTHERS, branch=branch)
+        answers[self._UPSTREAM] = upstream
+        return answers
+
+    def test_open_holds_a_lane_never_pushed_while_this_seats_other_one_is_open(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """Dies to: the note alone (the unfixed driver opens #43 beside #41),
+        or a hold that pushes first."""
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch))
+        with pytest.raises(ship.Held) as stop:
+            ship.open_pr()
+        held = stop.value
+        assert held.landed is False and held.waits_for == "#41 merges or closes"
+        text = str(held)
+        assert "this seat (win) already has an open pull request: #41 (lane/y)" in text
+        assert "opened once #41 merges or closes" in text and "#42" not in text
+        assert "git push -u origin HEAD" in text   # the named way past a wrong attribution
+        assert text.isascii()
+        assert spawns.mutations == []   # nothing pushed, nothing created
+        # Held before the base is fetched, merged in or folded: nothing of the
+        # lane's shape moves under a hold.
+        assert spawns.count(("git", "fetch", "origin", "main")) == 0
+        assert spawns.count(("git", "merge-tree")) == 0
+
+    def test_the_hold_writes_the_stop_gates_own_hold_record(self, ship, tmp_path, forget_guard, monkeypatch):
+        """The failure-mode review, 2026-11-01: a handoff held here arms the
+        own-clear at this HEAD, so the gate wrote no hold, and the next
+        SessionStart seeded its flag past the lane: nothing asked for it once
+        the window was cleared. Dies to: the hold left to the brief alone."""
+        _arm(ship, self._held_answers(ship, tmp_path, monkeypatch))
+        with pytest.raises(ship.Held):
+            ship.open_pr()
+        gate = ship._paths.hooks_module("stop_gate")
+        hold = gate._hold_read(tmp_path)
+        assert hold is not None and hold["head"] == HEAD and hold["branch"] == "lane/x"
+        assert hold["prs"] == ["#41 (lane/y)"] and hold["seat"] == "win"
+        seed = ship._paths.hooks_module("session_start")
+        assert seed._hold_names(tmp_path / gate.STATE_DIR / gate.HANDOFF_GATE_HOLD, HEAD)
+
+    def test_a_dry_run_holds_and_writes_no_record(self, ship, tmp_path, forget_guard, monkeypatch):
+        _arm(ship, self._held_answers(ship, tmp_path, monkeypatch))
+        with pytest.raises(ship.Held):
+            ship.open_pr(dry_run=True)
+        assert ship._paths.hooks_module("stop_gate")._hold_read(tmp_path) is None
+
+    def test_two_of_this_seats_pull_requests_open_name_both(self, ship, tmp_path, forget_guard, monkeypatch):
+        answers = self._held_answers(ship, tmp_path, monkeypatch)
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/y": "win", "lane/z": "win"}))
+        _arm(ship, answers)
+        with pytest.raises(ship.Held) as stop:
+            ship.open_pr()
+        assert stop.value.waits_for == "#41, #42 merge or close"
+
+    def test_a_red_base_refuses_before_the_hold(self, ship, tmp_path, forget_guard, monkeypatch):
+        """The red base's refusal names the revert and the disarms; the hold
+        would hide them. Dies to: the hold read before the base."""
+        answers = self._held_answers(ship, tmp_path, monkeypatch)
+        answers[("gh", "run", "list", "--workflow", "post-merge.yml")] = (0, _RED_BASE, "")
+        _arm(ship, answers)
+        with pytest.raises(ship.Held) as stop:
+            ship.open_pr()
+        assert "Nothing lands on a red base" in str(stop.value) and stop.value.waits_for == ""
+
+    def test_a_lane_with_no_row_refuses_before_the_hold(self, ship, tmp_path, forget_guard, monkeypatch):
+        """The row is the window's to write first: the hold promises the next
+        window a row written. Dies to: the hold read before the row."""
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = self._held_answers(ship, tmp_path, monkeypatch)
+        answers[_MEMORY_LOG] = (0, "", "")
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert not isinstance(stop.value, ship.Held)
+
+    def test_a_lane_tracking_the_base_is_not_its_own_upstream_and_is_held(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """A branch started from origin/main tracks origin/main by git's
+        default: an upstream, but not the lane's own, so the push would open a
+        pull request (the gate's rule, stop_gate._unpushed_commits)."""
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch, upstream=(0, "origin/main\n", "")))
+        with pytest.raises(ship.Held):
+            ship.open_pr()
+        assert spawns.mutations == []
+
+    def test_a_lane_with_an_upstream_of_its_own_opens_beside_with_the_note(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """Its push already landed once (a create that refused after it): the
+        row's shape holds only a lane that was never pushed."""
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch, upstream=(0, "origin/lane/x\n", "")))
         assert ship.open_pr() == 0
         out = capsys.readouterr().out
         assert "this seat (win) already has an open pull request: #41 (lane/y)" in out
         assert "#42" not in out
-        assert spawns.count(("gh", "pr", "create")) == 1   # an advisory: the lane still opens
+        assert spawns.count(("gh", "pr", "create")) == 1
+
+    def test_a_revert_lane_is_never_held(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """Core Rule 15: the revert lands first. Dies to: the hold read before
+        the branch's prefix."""
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch, branch="revert/abc1234"))
+        assert ship.open_pr() == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        assert spawns.count(self._UPSTREAM) == 0
+        out = capsys.readouterr().out
+        assert "#41 (lane/y)" in out and "lands first" in out
+
+    def test_a_lane_the_dispatchers_ruling_lets_onto_a_red_base_is_never_held(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """The fix the ruling names clears the red that holds this seat's other
+        pull request (its armed auto-merge waits on the base), so holding the
+        fix behind it is a deadlock."""
+        monkeypatch.setattr(ship, "red_base_verdict", lambda *a, **kw: (None, "main red -- let through by ruling X"))
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch))
+        assert ship.open_pr() == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        assert "lands first" in capsys.readouterr().out
+
+    def test_an_unread_open_pull_request_list_is_said_and_the_lane_opens(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """Never a hold on a guess, never silence: before this the check was
+        skipped without a word when gh could not list."""
+        _write_guard(tmp_path)
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/y": "win"}))
+        answers = _open_answers(tmp_path)
+        answers[("gh", "pr", "list", "--state", "open")] = (1, "", "HTTP 502\n")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        out = capsys.readouterr().out
+        assert "open pull requests could not be read" in out and "were not checked" in out
+
+    def test_a_handoff_on_the_held_lane_arms_the_own_clear_with_the_hold(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """The forced handoff the row names: its row written, the tree clean,
+        no pull request for the lane; the marker carries the hold and the lane
+        stays here. Dies to: the handoff opening the second pull request."""
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = self._held_answers(ship, tmp_path, monkeypatch)
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", "")]
+        spawns = _arm(ship, answers)
+        calls = TestTheHandoffArmsTheOwnClear._arm_calls(ship, monkeypatch)
+        with pytest.raises(ship.Held, match="opened once #41 merges or closes"):
+            ship.handoff()
+        assert spawns.mutations == []
+        assert calls and calls[0]["held"].landed is False and calls[0]["held"].waits_for == "#41 merges or closes"
 
     def test_another_seats_pull_requests_say_nothing(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
         _write_guard(tmp_path)
@@ -4206,3 +4354,238 @@ class TestTheCheckoutWiringNote:
         assert ship.catch_up() == 0
         assert capsys.readouterr().out.count(_NOTE_TELL) == 1
         assert spawns.count(("git", "pull")) == 1
+
+
+# ── the lane's shape: a deletion it never made is refused before the push ────
+
+#: The deletions' commits, read only where the lane's diff holds a ``D``: each
+#: commit's subject beside the paths it deleted.
+_DELETIONS_LOG = ("git", "log", "--format=%x1e%s")
+#: A struck row's file at the lane's head, read for each deleted probe.
+_ROW_AT_HEAD = ("git", "show")
+_PRUNE = "chore(records): prune the Session Log to its cap of 30"
+_OLD_ROW = "memory/session-log.d/2026-10-01-010101-air.md"
+_PROBE = "task-packs/probes.d/DEF-4064.json"
+_STRUCK = "<!-- class: C0 -->\n| ~~`DEF-4064`~~ | tools/cc/ship.py | closed |\n"
+
+
+def _deletions(*commits: tuple[str, list[str]]) -> tuple[int, str, str]:
+    """The deletions read's answer, as git prints it: the subject, a blank
+    line, the paths, per commit."""
+    return 0, "".join(f"\x1e{subject}\n\n" + "".join(f"{p}\n" for p in paths) for subject, paths in commits), ""
+
+
+def _status(*entries: tuple[str, str]) -> tuple[int, str, str]:
+    return 0, "".join(f"{s}\t{p}\n" for s, p in entries), ""
+
+
+class TestALaneHeadCarryingDeletionsItNeverMadeIsRefused:
+    """DEF-4064. On 2026-10-31 #380's branch was re-parented onto main's tip
+    carrying its chain's old trees: 17 deletions against its merge base (four
+    ledger rows, six Session Log rows, a changelog fragment) and three merges'
+    code reverted, and the driver pushed and opened it like any other lane; a
+    green run would have merged the deletions. ``preflight`` and ``open`` (and
+    the handoff's push onto an open pull request) now read the diff's shape:
+    every deletion is named, and the push is refused on one the driver did not
+    make itself unless ``--allow-deletions <why>`` says why. The driver makes
+    two: the Session Log prune (its commit subject) and a struck row's probe
+    (the strike drops it). Measured on the 200 merges before the fix: 128
+    carried a deletion, 115 a deletion the prune did not make (nearly all a
+    struck row's probe), and none since #260 one that both let-throughs miss."""
+
+    def _lane(self, tmp_path, *entries, deletions=(), struck: str | None = _STRUCK) -> dict:
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[_LANE_DIFF] = _status(*entries)
+        answers[_DELETIONS_LOG] = _deletions(*deletions)
+        answers[_ROW_AT_HEAD] = (0, struck, "") if struck is not None else (128, "", "fatal: path not in HEAD")
+        return answers
+
+    def test_open_refuses_a_deletion_the_driver_did_not_make_and_pushes_nothing(
+            self, ship, tmp_path, forget_guard):
+        """The #380 shape: a ledger row and a fragment another lane filed, gone
+        from the head. Dies to: no shape read (the push goes ahead)."""
+        gone = ["task-packs/ledger.d/DEF-4058.md", "changelog.d/2026-10-31-the-board-reads-the-ruling.md"]
+        answers = self._lane(tmp_path, ("M", "tools/cc/ship.py"), *(("D", p) for p in gone),
+                             deletions=[("feat: the lane", gone)])
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        text = str(stop.value)
+        assert not isinstance(stop.value, ship.Held)   # the window's to fix: a handoff arms nothing on it
+        assert all(p in text for p in gone) and "--allow-deletions" in text and text.isascii()
+        assert spawns.count(("git", "push")) == 0 and spawns.count(("gh", "pr", "create")) == 0
+
+    def test_the_drivers_own_prune_and_a_struck_rows_probe_pass(self, ship, tmp_path, forget_guard, capsys):
+        """Dies to: a check that refuses every D (it would refuse the driver's
+        own fold, and 115 of the last 200 merges, nearly all for the strike's
+        probe)."""
+        answers = self._lane(tmp_path, ("M", "tools/cc/ship.py"), ("M", "task-packs/ledger.d/DEF-4064.md"),
+                             ("D", _OLD_ROW), ("D", _PROBE),
+                             deletions=[(_PRUNE, [_OLD_ROW]), ("fix(ship): the lane", [_PROBE])])
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert spawns.count(("git", "push")) == 1
+        [show] = spawns.matching(_ROW_AT_HEAD)
+        assert show[-1] == "HEAD:task-packs/ledger.d/DEF-4064.md", show
+        out = capsys.readouterr().out
+        assert "2 M, 2 D" in out and "2 the driver's own" in out
+
+    def test_a_session_log_row_deleted_under_another_subject_is_refused(self, ship, tmp_path, forget_guard):
+        """#380 deleted six Session Log rows in the re-parented commit, not in a
+        prune: dies to a let-through keyed on the directory alone."""
+        answers = self._lane(tmp_path, ("D", _OLD_ROW), deletions=[("fix(hooks): the lane", [_OLD_ROW])])
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert _OLD_ROW in str(stop.value)
+
+    def test_the_prune_subject_lets_through_the_session_log_alone(self, ship, tmp_path, forget_guard):
+        """Dies to: a let-through keyed on the subject alone."""
+        other = "docs/HOOKS.md"
+        answers = self._lane(tmp_path, ("D", other), deletions=[(_PRUNE, [other])])
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert other in str(stop.value)
+
+    def test_a_probe_whose_row_is_open_or_gone_at_the_head_is_refused(self, ship, tmp_path, forget_guard):
+        """Dies to: every deleted probe let through, struck or not."""
+        open_row = "<!-- class: C0 -->\n| `DEF-4064` | tools/cc/ship.py | open |\n"
+        answers = self._lane(tmp_path, ("D", _PROBE), deletions=[("fix: the lane", [_PROBE])], struck=open_row)
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert _PROBE in str(stop.value)
+        answers = self._lane(tmp_path, ("D", _PROBE), deletions=[("fix: the lane", [_PROBE])], struck=None)
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused):
+            ship.open_pr()
+
+    def test_allow_deletions_names_why_and_rides_the_body(self, ship, tmp_path, forget_guard):
+        """A lane that deletes on purpose (#215 retired LEDGER_PROBES.json) says
+        why, and the why is on the record. A blank reason is no reason."""
+        gone = "task-packs/LEDGER_PROBES.json"
+        answers = self._lane(tmp_path, ("D", gone), deletions=[("refactor: probes as files", [gone])])
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused):
+            ship.open_pr(allow_deletions="  ")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr(allow_deletions="the roster moved to probes.d") == 0
+        assert spawns.count(("git", "push")) == 1
+        [body] = spawns.body_texts
+        assert "Deletions allowed: the roster moved to probes.d" in body and gone in body
+
+    def test_a_revert_lane_goes_through_with_its_deletions_named(self, ship, tmp_path, forget_guard, capsys):
+        """Both reviews: a revert removes what the reverted merge added (the
+        last five merges' reverts would each delete 2 to 21 files), and it is
+        the path a red base waits on; the red-base refusal lets revert/ lanes
+        through, and so does this one, naming the deletions in the body.
+        Dies to: a revert/ lane refused like any other."""
+        gone = ["task-packs/ledger.d/DEF-4058.md", "changelog.d/2026-10-31-x.md"]
+        answers = self._lane(tmp_path, *(("D", p) for p in gone), deletions=[('Revert "Merge pull request #387"', gone)])
+        answers[("git", "branch", "--show-current")] = (0, "revert/pr-387\n", "")
+        answers[_list_key("revert/pr-387")] = [(0, "[]", ""), _rows(_pr())]
+        answers[("git", "fetch", "origin", "revert/pr-387")] = (0, "", "")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert spawns.count(("git", "push")) == 1
+        [body] = spawns.body_texts
+        assert "Deletions of a revert: " + ", ".join(gone) in body
+        assert "a revert/ lane: its 2 deletion(s) go through" in capsys.readouterr().out
+
+    def test_a_dry_run_rehearses_the_refusal(self, ship, tmp_path, forget_guard):
+        answers = self._lane(tmp_path, ("D", "docs/HOOKS.md"), deletions=[("feat", ["docs/HOOKS.md"])])
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused):
+            ship.open_pr(dry_run=True)
+        assert spawns.mutations == []
+
+    def test_preflight_counts_the_shape_and_says_what_open_will_refuse(self, ship, tmp_path, capsys):
+        """The preflight prints the count so a handoff sees it before the push."""
+        answers = _preflight_answers(tmp_path)
+        answers[_LANE_DIFF] = _status(("A", "tests/test_x.py"), ("M", "tools/cc/ship.py"), ("D", "docs/HOOKS.md"))
+        answers[_DELETIONS_LOG] = _deletions(("feat: the lane", ["docs/HOOKS.md"]))
+        _arm(ship, answers)
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert "1 A, 1 M, 1 D" in out
+        assert "`open` will refuse this lane" in out and "docs/HOOKS.md" in out and "--allow-deletions" in out
+
+    def test_the_handoffs_push_onto_an_open_pull_request_refuses_one_too(self, ship, tmp_path, monkeypatch):
+        """The sibling push: a handoff onto an open pull request pushes the lane
+        as `open` does. Dies to: a read in open alone."""
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = TestHandoffVerb._existing_pr_answers(tmp_path)
+        answers[_LANE_DIFF] = _status(("D", "docs/HOOKS.md"))
+        answers[_DELETIONS_LOG] = _deletions(("feat", ["docs/HOOKS.md"]))
+        spawns = _arm(ship, answers)
+        monkeypatch.setattr(ship, "rebind", lambda **_kw: 0)
+        with pytest.raises(ship.Refused) as stop:
+            ship.handoff()
+        assert not isinstance(stop.value, ship.Held) and "docs/HOOKS.md" in str(stop.value)
+        assert spawns.count(("git", "push")) == 0
+        spawns = _arm(ship, answers)
+        assert ship.handoff(allow_deletions="the doc moved") == 0
+        assert spawns.count(("git", "push")) == 1
+
+    def test_the_prune_writer_and_the_reader_share_one_subject(self):
+        """The let-through is the fold's subject read back: a reworded commit
+        would make every later push refuse the driver's own prune. Dies to: a
+        second literal of the subject, or the writer not built from it."""
+        tree = ast.parse(SHIP.read_text(encoding="utf-8"))
+        literals = [n for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                    and "prune the Session Log to its cap" in n.value]
+        assert len(literals) == 1, [n.lineno for n in literals]
+        [fold] = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_fold_session_log"]
+        assert any(isinstance(n, ast.Name) and n.id == "PRUNE_SUBJECT" for n in ast.walk(fold))
+
+
+class TestTheModifiedPathsNoClaimNames:
+    """DEF-4064's second half: a revert the lane never made reads as modified
+    paths its claims never named (#380's tree put mail.py, board.py, seat.py and
+    ship.py back to an older main). Named, never refused: claims are often
+    narrower than a lane (on the 57 claimed lanes before this, 20 modified a
+    path no claim of theirs named, mostly tests and mirrors)."""
+
+    @staticmethod
+    def _mail(*messages: dict) -> dict:
+        by_machine: dict[str, list[dict]] = {}
+        for m in messages:
+            by_machine.setdefault(m["from"], []).append(m)
+        return by_machine
+
+    @staticmethod
+    def _claim(machine="win", lane="lane/x", paths=(), ids=(), cid="c1") -> dict:
+        return {"v": 1, "id": cid, "type": "claim", "from": machine, "at": "2026-11-01T00:00:00Z",
+                "re": {"lane": lane, "paths": list(paths), "ids": list(ids), "classes": []}, "text": ""}
+
+    def test_paths_ids_twins_and_directories_count_and_a_release_does_not_unname(self, ship):
+        channel = ship._mail_module()
+        release = {"v": 1, "id": "r1", "type": "release", "from": "win", "at": "2026-11-01T01:00:00Z",
+                   "re": {"lane": "lane/x"}, "text": "", "ack": ""}
+        by_machine = self._mail(
+            self._claim(paths=["tools/cc/ship.py", "changelog.d/"], ids=["DEF-4064"]), release,
+            self._claim(machine="air", paths=["tools/cc/mail.py"], cid="c2"),     # another seat's claim names none of this lane's
+            self._claim(lane="lane/y", paths=["tools/cc/board.py"], cid="c3"))   # nor this seat's claim on another lane
+        modified = ["tools/cc/ship.py", "espalier/_vendor/cc/ship.py", "changelog.d/2026-11-01-x.md",
+                    "task-packs/ledger.d/DEF-4064.md", "tools/cc/mail.py", "tools/cc/board.py"]
+        assert channel.unclaimed_paths(by_machine, "win", "lane/x", modified) == ["tools/cc/mail.py",
+                                                                                   "tools/cc/board.py"]
+        assert channel.unclaimed_paths(by_machine, "win", "lane/z", modified) is None   # no claim on the lane
+
+    def test_preflight_names_the_unclaimed_and_says_where_no_claim_was_sent(self, ship, tmp_path, monkeypatch,
+                                                                           capsys):
+        channel = ship._mail_module()
+        by_machine = self._mail(self._claim(paths=["tools/cc/ship.py"]))
+        monkeypatch.setattr(ship, "seat_name", lambda root, **kw: ("win", ""))
+        monkeypatch.setattr(channel, "read_mail", lambda root, **kw: (by_machine, {}))
+        answers = _preflight_answers(tmp_path)
+        answers[_LANE_DIFF] = _status(("M", "tools/cc/ship.py"), ("M", "tools/cc/mail.py"))
+        _arm(ship, answers)
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert "1 modified path(s) no claim of win's on lane/x names" in out and "tools/cc/mail.py" in out
+        by_machine.clear()
+        assert ship.preflight() == 0
+        assert "no claim of win's names lane/x" in capsys.readouterr().out

@@ -54,8 +54,9 @@ push (the `lane` and `open` steps below, or a push and a re-bind onto a pull
 request already open) or says why it did not -- including, when the setting is
 off and a pull request is open, that it will merge without the handoff's commit.
 Whichever way it went -- the push landed, or a refusal this window is done with
-(the base red: the lane stays here, whole; or a step after a landed push
-refused), with that refusal in the marker and the lane to land first in the
+(the base red, or this seat's other pull request open: the lane stays here,
+whole; or a step after a landed push refused), with that refusal in the marker
+and the lane to land first in the
 brief; never a refusal this window must fix first (a dirty tree, a lane behind
 its remote), which arms nothing -- the verb then arms the own-clear marker for
 this session (`.espalier-state/own_clear.json`): in a window `seat.py launch`
@@ -81,7 +82,11 @@ python tools/cc/ship.py preflight
 
 Refuses a dirty tracked tree (`/commit` first: ship moves commits, never a dirty
 tree) and an empty range. Lists untracked files as a note only: they do not
-ship and do not block. Prints one line per recently merged pull request whose
+ship and do not block. Prints the lane's shape against the base -- how many
+files it adds, modifies and deletes, the deletions the driver made itself, and,
+where this box is a named seat, the modified paths no claim it sent on the lane
+names -- and notes that `open` will refuse a deletion the driver did not make
+(Step 2). Prints one line per recently merged pull request whose
 latest run of a check is red -- a check that is not required finishes after
 auto-merge has landed the lane and reports to nobody otherwise (the SessionStart
 banner's `Merged:` rule, the same states) -- so read that log
@@ -151,9 +156,22 @@ be read refuses by name.
 A ruling that holds is said with its text's head and, by `open` alone, written
 into the pull request body (a `handoff` onto an open pull request says it and
 edits no body). The refusal, and `preflight`'s note, name the flag and the run
-id the ack must name. It notes, without refusing, when this seat
-already has another open pull request (by the seat whose latest claim or
-release names its lane: every seat may push as one GitHub account).
+id the ack must name.
+
+Holds the lane, unpushed, while this seat already has another open pull request
+(by the seat whose latest claim or release names its lane: every seat may push
+as one GitHub account) and the lane has no upstream of its own (never pushed,
+or tracking the base it was started from -- the Stop hook's handoff gate reads
+it the same way): one open pull request per seat. Nothing is pushed; the hold
+names the pull request, and `open` run again once it merges or closes opens
+the lane (nothing runs it for you). The Stop hook's hold for the lane is
+written with it, and a `handoff` held here arms the own-clear with the hold, as
+on a red base, the brief saying to stay on the branch until then. A `revert/`
+lane, and a lane the dispatcher's ruling lets onto a red base, open beside it
+with a note (the red's clearing lands first), as does a lane whose push
+already landed once -- the way past a hold that names another seat's pull
+request, which the hold names: `git push -u origin HEAD`, then `open`; where gh
+cannot list the open pull requests, the check is skipped and said.
 
 Refuses, before anything moves, when two or more live sessions work in this
 checkout -- Claude Code's own session registry places them, the session running
@@ -209,6 +227,27 @@ python tools/cc/ship.py fold
 
 Until 2026-10-16 every lane pruned to the exact cap in its own tree, a prune
 commit per lane carrying a row, and two lanes merged to 31.
+
+Then the shape of what is pushed, read after the merge and the fold have moved
+the head: `git diff --name-status origin/<base>...HEAD`, counted and printed. A
+deletion refuses the push, the lane still unpushed, unless the driver made it
+-- a Session Log row a commit of this lane deleted under the fold's prune
+subject (`chore(records): prune the Session Log to its cap of <n>`), or a probe
+under `task-packs/probes.d/` whose row the head holds struck (the strike drops a
+closed row's probe) -- or `--allow-deletions "<why>"` says why, which the pull
+request's body records; a deletion a merge commit made is never the driver's,
+and a rename reads as a deletion here (the read passes `--no-renames`: a
+similar file the lane added would otherwise hide one). A `revert/` lane goes
+through with its deletions named in the body, as the red-base refusal lets it
+through: a revert removes what the reverted merge added. `handoff` takes the
+same flag, and its push onto an open pull request reads the same shape, so a
+lane opened with the flag passes it again there. Modified paths no claim this seat sent on the lane names (live or
+released: a claim's paths, its symbols' files, the row and probe of an id it
+carries) are named and never refused, since claims are often narrower than a
+lane; a revert the lane never made reads there. On 2026-10-31 a lane re-parented
+onto the base's tip with an older tree carried 17 deletions of other lanes'
+rows and three merges' code reverted, and was pushed like any other; its red CI
+was the only symptom.
 
 Then, in order: the diff against the base asked of the harness guard
 (`tools/cc/ci_guard.py`, loaded from the tree when it is there -- a tree
@@ -388,7 +427,9 @@ the lane: it never re-runs or catches up anything itself.
 
 Precondition: the lane carried the release fold -- the version surfaces, the
 changelog fold, the freshness re-pin (on the Espalier-Harness source tree, the
-release checklist's steps 1 to 3). Wait for the merge; stay on the lane branch,
+release checklist's steps 1 to 3); the fold's removal of the changelog
+fragments is pushed with `open --allow-deletions "the release fold"` (Step 2).
+Wait for the merge; stay on the lane branch,
 since the pull request is named from it:
 
 ```bash

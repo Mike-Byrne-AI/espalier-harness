@@ -289,6 +289,11 @@ variable is also read from the settings files, and every `git` on PATH is
 asked, not only the first. Since the render became one string for both
 shells, `init` no longer reads it; `doctor` does, to name a bare or `&`
 line an older install carries for the shell this host does not run.
+Claude Code's troubleshoot-install page states the same order and the same
+file-name check, and one rule this read did not see: step 2 skips a `git` a
+project placed. The `cc-git-bash` pin quotes it, so the weekly refresh
+re-reads the order; what stays observed here is that the status line's shell
+follows that lookup.
 
 **Observed, not quoted** (a live probe, Claude Code 2.1.263, 2026-09-07): an
 exec-form hook whose `command` is not on PATH produces the transcript notice

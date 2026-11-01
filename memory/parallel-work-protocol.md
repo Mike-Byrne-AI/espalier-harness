@@ -89,8 +89,9 @@ seat's own where the launcher started the window (the own-clear, 2026-10-26):
 Code plugin of function hooks, through `--plugin-dir`), `ship.py handoff`
 arms its marker last (`.espalier-state/own_clear.json`, the session id from
 `CLAUDE_CODE_SESSION_ID`, HEAD and the re-prime brief) whenever it ran to its
-end: the push landed, or a refusal the window is done with -- the base red,
-the lane whole and unpushed here, or a step after a landed push -- with the
+end: the push landed, or a refusal the window is done with -- the base red, or
+this seat's other pull request open, the lane whole and unpushed here; or a
+step after a landed push -- with the
 refusal in the marker and the lane to land first appended to the brief (a
 refusal the window must fix first arms nothing; a lane opened by hand is
 armed with `ship.py arm`; DEF-4057, after three seats sat past the threshold
@@ -146,12 +147,17 @@ launcher did not start the handoff arms nothing and says the window needs a
    `/inbox board`, or `python tools/cc/board.py`.
 4. **One open pull request per seat. It caps pull requests, not work.** When
    a lane ships, start the seat's next job at once on a new branch from
-   `origin/main`, and open its pull request when the first merges (`ship.py
-   open` notes a second open one; it does not refuse; and the Stop hook's
-   handoff gate holds a finished second lane while the first is open instead
-   of asking for its handoff, re-checking every five minutes, and asks once
-   the first merges -- until 2026-10-31 it told the seat to hand off at once,
-   against this item, DEF-4058). Fewer open pull
+   `origin/main`, and open its pull request when the first merges (the Stop
+   hook's handoff gate holds a finished second lane while the first is open
+   instead of asking for its handoff, re-checking every five minutes, and asks
+   once the first merges -- until 2026-10-31 it told the seat to hand off at
+   once, against this item, DEF-4058; and `ship.py open`, so a forced handoff,
+   holds a second lane never pushed, pushing nothing and writing the gate's
+   hold for it, the own-clear's brief saying to stay on that branch and run
+   `open` again once the first merges or closes -- until 2026-10-31 it only
+   noted the first and opened the second beside it, DEF-5038; a `revert/` lane
+   and a lane a fix-forward ruling names are never held, and a lane pushed by
+   hand opens beside it, noted). Fewer open pull
    requests, fewer pairs to conflict, and the seat never idles on its own CI.
    A job waits only on a named file overlap with another seat's open lane.
    Measured 2026-10-11 over the 40 merges #144 to #184 (76 hours): open to

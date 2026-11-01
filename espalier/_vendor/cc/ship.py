@@ -160,15 +160,19 @@ class Held(Refused):
     is whole -- its row written, its tracked tree clean (both refused before
     this) -- and the window is done with it. ``landed`` says where it waits:
     False, held here because the base is red (nothing lands on a red base;
-    the push never ran); True, on origin, the push landed and a step after
-    it refused (the head wait, the rebind, the pull request's creation or
-    arming). Any other refusal is the window's to fix first, and arms nothing
+    the push never ran) or because this seat's other pull request is open
+    (one open pull request per seat, DEF-5038); True, on origin, the push
+    landed and a step after it refused (the head wait, the rebind, the pull
+    request's creation or arming). ``waits_for`` names what a lane held here
+    opens after, where that is not the base going green ('#41 merges').
+    Any other refusal is the window's to fix first, and arms nothing
     (DEF-4057: three seats sat past the threshold for 17.5 h on 2026-10-29,
     their handoffs refused on a red base and no marker to clear them)."""
 
-    def __init__(self, message: str, *, landed: bool) -> None:
+    def __init__(self, message: str, *, landed: bool, waits_for: str = "") -> None:
         super().__init__(message)
         self.landed = landed
+        self.waits_for = waits_for
 
 
 # ---------------------------------------------------------------- spawning --
@@ -365,6 +369,161 @@ def bind(title: str, sha: str) -> str:
     return f"{stripped} {MARKER}@{sha[:7]}"
 
 
+# ------------------------------------------------------------ the lane's shape --
+
+#: How many paths a shape line lists before it counts the rest.
+SHAPE_LISTED = 8
+#: The statuses a shape line counts first, in this order; any other after.
+_SHAPE_ORDER = "AMD"
+
+
+def lane_shape(root: Path, base: str) -> dict:
+    """The lane's diff with ``origin/<base>`` read for its shape, not only its
+    paths (DEF-4064: #380's head, re-parented onto the base's tip with an
+    older tree, carried 17 deletions and three merges' code reverted, and was
+    pushed like any other lane). ``{"counts": {status: n}, "deleted": [...],
+    "driver": [...], "modified": [...]}``: ``deleted`` is every deletion the
+    driver did not make itself, ``driver`` the ones it did (:func:`_driver_deletions`),
+    ``modified`` every modified path. The read is the three-dot diff the pull
+    request shows; a read that fails is a refusal, as the marker's is."""
+    rc, out, err = _git("diff", "--name-status", "--no-renames", f"origin/{base}...HEAD", cwd=str(root))
+    if rc != 0:
+        raise Refused(f"git diff --name-status against origin/{base} failed: {err.strip()[:200]}")
+    counts: dict[str, int] = {}
+    deleted: list[str] = []
+    modified: list[str] = []
+    for line in out.splitlines():
+        status, _tab, path = line.partition("\t")
+        status, path = status.strip()[:1], path.strip().replace("\\", "/")
+        if not status or not path:
+            continue
+        counts[status] = counts.get(status, 0) + 1
+        if status == "D":
+            deleted.append(path)
+        elif status == "M":
+            modified.append(path)
+    driver = _driver_deletions(root, base, deleted) if deleted else set()
+    return {"counts": counts, "deleted": [p for p in deleted if p not in driver],
+            "driver": [p for p in deleted if p in driver], "modified": modified}
+
+
+def _driver_deletions(root: Path, base: str, deleted: list[str]) -> set[str]:
+    """Which of ``deleted`` the driver made itself: a Session Log row a commit
+    of this lane deleted under :data:`PRUNE_SUBJECT` (the fold's cap, which
+    ``open`` and ``handoff`` commit before the push), and a probe whose row the
+    head holds struck (``ledger_row.py strike`` drops a closed row's probe: 115
+    of the 200 merges before this carried one). Any other deletion, one a
+    merge made among them (``git log`` lists no merge's paths), is the lane's
+    to name with ``--allow-deletions``."""
+    rc, out, err = _git("log", "--format=%x1e%s", "--name-only", "--no-renames", "--diff-filter=D",
+                        f"origin/{base}..HEAD", cwd=str(root))
+    if rc != 0:
+        _note(f"the deletions' commits could not be read ({err.strip()[:200]}): the driver's own Session Log "
+              "prune is not told apart from the lane's deletions")
+    pruned: set[str] = set()
+    for block in out.split("\x1e") if rc == 0 else []:
+        subject, _nl, names = block.partition("\n")
+        if subject.startswith(PRUNE_SUBJECT):
+            pruned |= {n.strip().replace("\\", "/") for n in names.splitlines()
+                       if n.strip().replace("\\", "/").startswith(SESSION_LOG_DIR)}
+    ours = {p for p in deleted if p in pruned}
+    fragments = _fragments_module()
+    probes, rows = getattr(fragments, "PROBES_DIR", ""), getattr(fragments, "LEDGER_DIR", "")
+    if not probes or not rows:
+        return ours
+    for path in deleted:
+        folder, _slash, name = path.rpartition("/")
+        if folder != probes or not name.endswith(".json"):
+            continue
+        rid = name[:-len(".json")]
+        rc, row, _ = _git("show", f"HEAD:{rows}/{rid}.md", cwd=str(root))
+        if rc == 0 and re.search(_STRUCK_ROW_RE.format(id=re.escape(rid)), row, re.M):
+            ours.add(path)
+    return ours
+
+
+def _listed(paths: list[str]) -> str:
+    shown = ", ".join(paths[:SHAPE_LISTED])
+    return shown + (f" and {len(paths) - SHAPE_LISTED} more" if len(paths) > SHAPE_LISTED else "")
+
+
+def _unclaimed_modified(root: Path, modified: list[str]) -> tuple[str, str, list[str] | None]:
+    """``(seat, lane, unclaimed)``: the modified paths no claim this seat sent
+    on the lane names (``mail.unclaimed_paths``), None where it sent none;
+    ``("", "", None)`` where nothing is compared (an unnamed box, no channel, a
+    channel that predates the read, a detached HEAD, mail git could not read),
+    the reason said where there is one."""
+    mail = _mail_module()
+    reader = getattr(mail, "unclaimed_paths", None) if mail is not None else None
+    if reader is None or not modified:
+        return "", "", None
+    seat, problem = seat_name(root)
+    if not seat:
+        if problem:
+            _note(f"the lane's modified paths are not compared against its claims: {problem}")
+        return "", "", None
+    try:
+        lane = current_branch()
+        by_machine, _skipped = mail.read_mail(root)
+        unclaimed = reader(by_machine, seat, lane, modified)
+    except Refused:
+        return "", "", None
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: an advisory read never stops a push
+        _note(f"the lane's claims could not be read ({os_error_text(exc)}): its modified paths are not compared")
+        return "", "", None
+    return seat, lane, unclaimed
+
+
+def say_lane_shape(root: Path, base: str, shape: dict) -> None:
+    """The shape's lines: the counts, the driver's own deletions, and the
+    modified paths no claim of this seat's on the lane names. The deletions
+    the driver did not make are each caller's to say (a note in ``preflight``,
+    the refusal in ``open``)."""
+    counts = shape["counts"]
+    order = [s for s in _SHAPE_ORDER if s in counts] + sorted(s for s in counts if s not in _SHAPE_ORDER)
+    driver = shape["driver"]
+    _say(f"the lane's diff with origin/{base}: " + (", ".join(f"{counts[s]} {s}" for s in order) or "empty")
+         + (f" ({len(driver)} the driver's own: the Session Log prune, a struck row's probe)" if driver else ""))
+    seat, lane, unclaimed = _unclaimed_modified(root, shape["modified"])
+    if not seat:
+        return
+    if unclaimed is None:
+        _say(f"no claim of {seat}'s names {lane}, so its {len(shape['modified'])} modified path(s) are not "
+             "compared against one")
+    elif unclaimed:
+        _note(f"{len(unclaimed)} modified path(s) no claim of {seat}'s on {lane} names (a revert the lane "
+              f"never made reads here; read `git diff origin/{base}...HEAD -- <path>`): {_listed(unclaimed)}")
+
+
+def _deletions_refusal(shape: dict, base: str) -> str:
+    deleted = shape["deleted"]
+    return (f"the lane deletes {len(deleted)} file(s) against origin/{base} that no step of the driver deleted: "
+            f"{_listed(deleted)}. A head moved onto a newer base with an older tree deletes what other lanes "
+            f"added since: read `git diff --name-status origin/{base}...HEAD`, and where the deletions are the "
+            f"lane's own (a removed file, a rename, which reads as a deletion here, a release's fold of the "
+            f"changelog fragments), ship with {ALLOW_DELETIONS_FLAG} <why>")
+
+
+def refuse_unmade_deletions(shape: dict, base: str, allow: str | None, branch: str = "") -> str:
+    """The push's refusal on a deletion the driver did not make, unless
+    ``allow`` (``--allow-deletions``) says why; the line the pull request's
+    body records where it does, '' where nothing was deleted. A ``revert/``
+    lane is let through with the deletions named, as the red-base refusal lets
+    it through: a revert removes what the reverted merge added by
+    construction, and it is the path a red base waits on."""
+    deleted = shape["deleted"]
+    if not deleted:
+        return ""
+    why = (allow or "").strip()
+    if not why and branch.startswith("revert/"):
+        _note(f"a revert/ lane: its {len(deleted)} deletion(s) go through ({_listed(deleted)})")
+        return f"Deletions of a revert: {', '.join(deleted)}"
+    if not why:
+        raise Refused(_deletions_refusal(shape, base))
+    _note(f"shipping {len(deleted)} deletion(s) the driver did not make ({why}): {_listed(deleted)}")
+    return f"Deletions allowed: {why} ({', '.join(deleted)})"
+
+
 # ------------------------------------------------------------------- verbs --
 
 def memory_problem(root: Path) -> str:
@@ -431,6 +590,14 @@ def handoff_push_setting(root: Path) -> tuple[bool, str]:
 #: Where a handoff writes its row since the Session Log became one file per
 #: row (``_record_fragments.SESSION_LOG_DIR``; pinned with the other copies).
 SESSION_LOG_DIR = "memory/session-log.d/"
+#: The subject the driver's own Session Log prune commits under
+#: (:func:`_fold_session_log`, the cap after it), read back by
+#: :func:`lane_shape`, which lets the prune's deletions through by it: a check
+#: that refused every deletion would refuse the driver itself (DEF-4064).
+PRUNE_SUBJECT = "chore(records): prune the Session Log to its cap of"
+#: A row's file holding it struck: the strike drops a closed row's probe, so
+#: a deleted probe whose row reads so at the head is the strike's (DEF-4064).
+_STRUCK_ROW_RE = r"^\|\s*~~`{id}`~~"
 
 
 def lane_carries_memory_row(base: str, root: Path) -> bool | None:
@@ -576,6 +743,9 @@ def _open_prs(cwd: str) -> list[dict] | None:
 #: `open` and `handoff` alike; the refusal names it, with the run id the
 #: ruling must name.
 BASE_RED_RULED_FLAG = "--base-red-ruled"
+#: The flag that pushes a lane deleting files the driver did not delete, on
+#: `open` and `handoff` alike, with the reason the pull request's body records.
+ALLOW_DELETIONS_FLAG = "--allow-deletions"
 #: The ruling's words are the mail channel's (tools/cc/mail.py: the gridlock
 #: marker the seat-day census counts a ruling by, root CLAUDE.md Core Rule 15;
 #: the fixed head a fix-forward ruling opens with, the run id read from it
@@ -1255,8 +1425,7 @@ def _fold_session_log(root: Path, base: str, *, keep: int | None = None, slack: 
         pruned = len(left)
         if pruned and not failed:
             for argv in (("add", "-A", "--", directory),
-                         ("commit", "--quiet", "-m",
-                          f"chore(records): prune the Session Log to its cap of {cap}\n\n{trailer}\n",
+                         ("commit", "--quiet", "-m", f"{PRUNE_SUBJECT} {cap}\n\n{trailer}\n",
                           "--", directory)):
                 rc, _out, err = _git(*argv, cwd=str(root))
                 if rc != 0:
@@ -1495,16 +1664,25 @@ def _land_first_tail(held: Held, branch: str) -> str:
     it. The row is written and the tree clean (the handoff refused before
     this otherwise), so the next window's first job is the lane, not a new
     one."""
-    what = "The push landed and a step after it refused" if held.landed else "The push was refused"
+    if held.landed:
+        what = "The push landed and a step after it refused"
+    else:
+        what = "The push was held" if held.waits_for else "The push was refused"
     lane = _brief_text(branch)
     where = (f"The lane {lane} is on origin" if held.landed
              else f"The lane {lane} is committed in this checkout and unpushed")
+    waits = _brief_text(held.waits_for) if held.waits_for else "the base is green"
+    # A lane held behind the seat's other pull request is opened before a new
+    # job is begun: a new branch drops the Stop hook's hold on this one, the
+    # one mechanical reminder left after the clear (DEF-5038).
+    branch_note = (" (stay on this branch until then: a new branch drops the Stop hook's hold on it, which "
+                   "asks for the lane once that pull request is gone)") if held.waits_for else ""
     return (f"\n\n{LAND_FIRST} {what}: {_brief_text(str(held))}\n"
             f"{where}, its row written and the tree clean; the window that handed off is done with it, and "
             "this one lands it before any new job: python tools/cc/ship.py status says what is on origin; "
-            "with no pull request yet, python tools/cc/ship.py open once the base is green (the board, "
-            "/inbox board, says when); after a push that landed, python tools/cc/ship.py rebind, or the "
-            "command the refusal above names (auto-merge that did not arm is armed by hand).")
+            f"with no pull request yet, python tools/cc/ship.py open once {waits} (the board, "
+            f"/inbox board, says when){branch_note}; after a push that landed, python tools/cc/ship.py rebind, "
+            "or the command the refusal above names (auto-merge that did not arm is armed by hand).")
 
 
 #: The mod's own first line for a window with no role brief (register.ts
@@ -2000,6 +2178,20 @@ def preflight() -> int:
     _say(f"{len(commits)} commit(s) ahead of origin/{base}:")
     for ln in commits:
         _say(f"  {ln}")
+    # The shape before the push, so /ship sees a deletion before `open`
+    # refuses it (DEF-4064); /handoff runs no preflight and meets the refusal.
+    try:
+        shape = lane_shape(root, base)
+    except Refused as exc:
+        _note(f"{exc}: `open` will refuse this lane on the same read")
+    else:
+        say_lane_shape(root, base, shape)
+        try:
+            lane_name = current_branch()
+        except Refused:
+            lane_name = ""
+        if shape["deleted"] and not lane_name.startswith("revert/"):
+            _note(f"`open` will refuse this lane: {_deletions_refusal(shape, base)}")
     names = record_merge.probe_conflicts(root, f"origin/{base}", run=RUN)
     driven = record_merge.attribute_merged_paths(root, f"origin/{base}", run=RUN)
     if names is None and not driven:
@@ -2079,6 +2271,36 @@ def lane() -> int:
     return 0
 
 
+def _hold_for_the_gate(root: Path, base: str, branch: str, seat: str, mine: list[str]) -> None:
+    """The Stop hook's handoff-gate hold for HEAD, written through the gate's
+    own writer (``stop_gate._hold_write``, the record's one format owner):
+    a handoff held here arms the own-clear at this HEAD, so the gate passes it
+    and writes no hold of its own, and the next SessionStart keeps only a
+    hold naming HEAD -- without this one it seeds the flag past the lane, and
+    no hook asks for it once the window is cleared (the failure-mode review,
+    2026-11-01). A tree whose hooks are not beside this script says so."""
+    loader = getattr(_paths, "hooks_module", None)
+    gate = loader("stop_gate") if loader else None
+    writer = getattr(gate, "_hold_write", None) if gate is not None else None
+    if writer is None:
+        _note("the Stop hook's hold for this lane was not written (tools/cc/hooks/stop_gate.py is not beside "
+              "this script), so after a clear only the own-clear's brief names it")
+        return
+    rc, out, _ = _git("rev-list", "--count", f"origin/{base}..HEAD", cwd=str(root))
+    ahead = int(out.strip()) if rc == 0 and out.strip().isdigit() else 0
+    writer(root, head_sha(), branch, seat, list(mine), ahead)
+
+
+def _has_own_upstream(root: Path, branch: str) -> bool:
+    """Whether ``branch`` tracks its own remote branch (``origin/<branch>``: a
+    lane already pushed), the rule the Stop hook's handoff gate reads
+    (``stop_gate._unpushed_commits``). A branch started from ``origin/main``
+    tracks origin/main by git's default autoSetupMerge, an upstream that is not
+    its own; no upstream at all, or one git cannot name, reads False."""
+    rc, upstream, _ = _git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", cwd=str(root))
+    return rc == 0 and upstream.strip().endswith("/" + branch)
+
+
 def _remote_has_commits_we_lack(branch: str, cwd: str) -> int:
     """Commits on origin/<branch> that HEAD does not reach: a push would be
     rejected, and the only way past is a merge -- never a rebase or a force,
@@ -2094,7 +2316,8 @@ def _remote_has_commits_we_lack(branch: str, cwd: str) -> int:
 
 
 def open_pr(title: str | None = None, body_file: str | None = None, dry_run: bool = False,
-            early: str | None = None, base_red_ruled: str | None = None) -> int:
+            early: str | None = None, base_red_ruled: str | None = None,
+            allow_deletions: str | None = None) -> int:
     root = repo_root()
     base = default_branch()
     branch = current_branch()
@@ -2125,6 +2348,7 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         _note(f"shipping before the handoff ({early_reason}): its row will be a second push on this lane")
     else:
         early_reason = ""
+    prs_unread = prs is None
     prs = prs or []
     refusal, ruling = red_base_verdict(base, branch, prs, str(root), ruled=base_red_ruled, root=root)
     if refusal:
@@ -2135,9 +2359,28 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     if ruling:
         _say(ruling)
     seat, mine = seat_open_prs(root, branch, prs)
-    if mine:
-        _note(f"this seat ({seat}) already has an open pull request: {', '.join(mine)}. One open pull request "
-              "per seat keeps a seat's lanes off each other's base; this one opens beside it")
+    others = f"this seat ({seat}) already has an open pull request: {', '.join(mine)}"
+    # A red base's clearing (a revert, the ruled fix) lands first, Core Rule 15.
+    clearing = branch.startswith("revert/") or bool(ruling)
+    if mine and not clearing and not _has_own_upstream(root, branch):
+        # One open pull request per seat, as the Stop hook holds it (DEF-5038).
+        numbers = ", ".join(entry.split(" ", 1)[0] for entry in mine)
+        waits = numbers + (" merges or closes" if len(mine) == 1 else " merge or close")
+        if not dry_run:
+            _hold_for_the_gate(root, base, branch, seat, mine)
+        raise Held(f"{others}. One open pull request per seat: the lane is held here, committed and unpushed, "
+                   f"and is opened once {waits} (python tools/cc/ship.py open then). Where {numbers} is not this "
+                   "seat's (/inbox board names whose it is), or the lane must land beside it, push it by hand "
+                   "(git push -u origin HEAD) and `open` opens it beside, noted", landed=False, waits_for=waits)
+    if prs_unread:
+        _note("the open pull requests could not be read (gh pr list), so this seat's other open pull requests "
+              "were not checked (one open pull request per seat); the lane opens")
+    elif mine and clearing:
+        first = "a revert/ lane" if branch.startswith("revert/") else "the fix the ruling names"
+        _note(f"{others}. This lane opens beside it: {first} lands first")
+    elif mine:
+        _note(f"{others}. This lane's push already landed once, so it opens beside it; one open pull "
+              "request per seat keeps a seat's lanes off each other's base")
     _wiring_note(root)
     # The base is fetched here, before the merge-first question and the guard
     # question below (both read origin/<base> and neither needs the remote
@@ -2181,6 +2424,14 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     # rebind exists to clear. The fold is the Session Log cap's one writer.
     _merge_base_first(root, base, dry_run=dry_run)
     _fold_session_log(root, base, dry_run=dry_run)
+    # The shape of what is pushed, after the merge and the fold have moved the
+    # head: a deletion the driver did not make refuses the push unless
+    # --allow-deletions says why, and the why rides the body (DEF-4064).
+    shape = lane_shape(root, base)
+    say_lane_shape(root, base, shape)
+    allowed = refuse_unmade_deletions(shape, base, allow_deletions, branch)
+    if allowed:
+        body = body.rstrip("\n") + f"\n\n{allowed}\n"
     sha = head_sha()
     # The guard question is asked BEFORE the push: the diff against the fetched
     # base needs nothing on the remote, so a diff that fails or lists nothing
@@ -2364,15 +2615,16 @@ def _wait_for_pr_head(branch: str, sha: str) -> None:
 
 
 def handoff(title: str | None = None, body_file: str | None = None, dry_run: bool = False,
-            base_red_ruled: str | None = None) -> int:
+            base_red_ruled: str | None = None, allow_deletions: str | None = None) -> int:
     """/handoff's one push step, then the own-clear's arm. The push
     (:func:`_handoff_push`) runs only when espalier.toml sets ``handoff_push =
     true``, else the commit stays local and the verb says how to push it. Once
     that step has run to its end -- the off path said (its commit stays local
     by design and the window is done with it), the row parked, the pull
     request opened or the push re-bound, or a refusal the window is done with
-    (:class:`Held`: the base is red and the lane stays here whole, or the push
-    landed and a step after it refused) -- the own-clear marker is armed for
+    (:class:`Held`: the base is red, or this seat's other pull request is open,
+    and the lane stays here whole; or the push landed and a step after it
+    refused) -- the own-clear marker is armed for
     this session (:func:`arm_own_clear_here`), last; a held refusal rides the
     marker, the lane to land first rides the brief, and the refusal is
     re-raised (exit 1 still). A refusal the window must fix first -- a dirty
@@ -2383,7 +2635,7 @@ def handoff(title: str | None = None, body_file: str | None = None, dry_run: boo
     stops it is said, with the by-hand reset. A dry run says what it would
     arm."""
     try:
-        rc = _handoff_push(title, body_file, dry_run, base_red_ruled)
+        rc = _handoff_push(title, body_file, dry_run, base_red_ruled, allow_deletions)
     except Held as whole:
         if dry_run:
             _say("dry-run: the own-clear marker would be armed for this session with this refusal in its brief")
@@ -2411,7 +2663,7 @@ def _arm_or_say(*, held: Held | None = None) -> None:
 
 
 def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
-                  base_red_ruled: str | None = None) -> int:
+                  base_red_ruled: str | None = None, allow_deletions: str | None = None) -> int:
     """The push half of :func:`handoff`. Off: the handoff's commit stays local
     and this says how to push it and how to opt in -- and, when a pull request
     is already open for the branch, that it will merge WITHOUT this commit. On:
@@ -2419,7 +2671,9 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
     commit is pushed onto it and the marker re-bound to the new head.
     ``base_red_ruled`` (an ack id) is the dispatcher's ruling that lets the
     lane land on a red base: handed to `open`, which judges it; on a push onto
-    an open pull request, read here, where the base's red is a note."""
+    an open pull request, read here, where the base's red is a note.
+    ``allow_deletions`` is `open`'s ``--allow-deletions``, judged on either
+    push (DEF-4064)."""
     root = repo_root()
     on, how = handoff_push_setting(root)
     if not on:
@@ -2460,7 +2714,8 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
         pr = pr_for_branch(current_branch(), "open")
     branch = current_branch()
     if pr is None:
-        return open_pr(title=title, body_file=body_file, dry_run=dry_run, base_red_ruled=base_red_ruled)
+        return open_pr(title=title, body_file=body_file, dry_run=dry_run, base_red_ruled=base_red_ruled,
+                       allow_deletions=allow_deletions)
     behind = _remote_has_commits_we_lack(branch, str(root))
     if behind:
         raise Refused(f"origin/{branch} has {behind} commit(s) this HEAD does not reach: merge them in "
@@ -2474,6 +2729,11 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
     _git("fetch", "origin", base, "--quiet", cwd=str(root))
     _merge_base_first(root, base, dry_run=dry_run)
     _fold_session_log(root, base, dry_run=dry_run)
+    # The same shape read as `open`'s, on the push onto the open pull request;
+    # an allowed deletion is said here (the body was written at the open).
+    shape = lane_shape(root, base)
+    say_lane_shape(root, base, shape)
+    refuse_unmade_deletions(shape, base, allow_deletions, branch)
     red_run = base_red_run(base, cwd=str(root))
     if red_run is not None and pr.get("autoMergeRequest") and not branch.startswith("revert/"):
         # Not a refusal: the handoff's row must reach the pull request. Its
@@ -2956,6 +3216,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_open.add_argument(BASE_RED_RULED_FLAG, metavar="ACK_ID", dest="base_red_ruled",
                         help="land on a red base by the dispatcher's ruling: the ack with this id, on the "
                              "mail channel, names the red post-merge run")
+    p_open.add_argument(ALLOW_DELETIONS_FLAG, metavar="WHY", dest="allow_deletions",
+                        help="push a lane that deletes files the driver did not delete, saying why (the "
+                             "pull request's body records it)")
     p_rebind = sub.add_parser("rebind", help="re-bind the title marker to the pull request's head")
     p_rebind.add_argument("--dry-run", action="store_true")
     sub.add_parser("catch-up", help="merge the base in (on the server when clean; locally, record files "
@@ -2976,6 +3239,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_hand.add_argument("--dry-run", action="store_true")
     p_hand.add_argument(BASE_RED_RULED_FLAG, metavar="ACK_ID", dest="base_red_ruled",
                         help="land on a red base by the dispatcher's ruling, as `open` takes it")
+    p_hand.add_argument(ALLOW_DELETIONS_FLAG, metavar="WHY", dest="allow_deletions",
+                        help="push deletions the driver did not make, saying why, as `open` takes it")
     p_arm = sub.add_parser("arm", help="arm the own-clear marker for this session by hand: after a lane opened "
                                        "by hand (gh pr create), a handoff whose arm did not run, or a pull by "
                                        "hand that moved HEAD under the armed marker (re-armed at HEAD)")
@@ -2993,7 +3258,8 @@ def main(argv: list[str] | None = None) -> int:
             return lane()
         if args.verb == "open":
             return open_pr(title=args.title, body_file=args.body_file, dry_run=args.dry_run,
-                           early=args.early, base_red_ruled=args.base_red_ruled)
+                           early=args.early, base_red_ruled=args.base_red_ruled,
+                           allow_deletions=args.allow_deletions)
         if args.verb == "rebind":
             return rebind(dry_run=args.dry_run)
         if args.verb == "catch-up":
@@ -3008,7 +3274,7 @@ def main(argv: list[str] | None = None) -> int:
             return fold(dry_run=args.dry_run)
         if args.verb == "handoff":
             return handoff(title=args.title, body_file=args.body_file, dry_run=args.dry_run,
-                           base_red_ruled=args.base_red_ruled)
+                           base_red_ruled=args.base_red_ruled, allow_deletions=args.allow_deletions)
         if args.verb == "arm":
             return arm(why=args.why, dry_run=args.dry_run)
     except Refused as stop:

@@ -21,7 +21,7 @@ from typing import Any
 from espalier import surface_contract
 from espalier._safe_walk import is_own_git_repo, safe_rglob, visible
 from espalier.release_noise import SECRET_FILES
-from espalier.release_pack import ReleasePackSummary, _is_pruned_from_walk, create_release_zip
+from espalier.release_pack import ReleasePackSummary, _is_pruned_from_walk, _tree_walk, create_release_zip
 from espalier.scan_composition import REPORT_FILES
 from espalier._spawn import run_no_stdin
 from espalier._text import os_error_text
@@ -457,8 +457,8 @@ def _find_transient_noise(repo_root: Path) -> list[str]:
     Classified by ``surface_contract.is_transient``, the predicate the archive
     builder rejects with (the sibling ``_find_internal_leaks`` already routes
     through ``is_internal_release_leak``), and walked under the builder's own
-    ``_is_pruned_from_walk`` prune, so this half cannot name a path the
-    archive half never enumerates. It did: a leftover release-matrix workspace
+    ``_is_pruned_from_walk`` prune, so this half cannot name a path that prune
+    hides from the archive half. It did: a leftover release-matrix workspace
     under ``dist/final-release-matrix/`` was pruned silently by the packer and
     warned about here one ``__pycache__`` at a time, from a hand-kept set of
     four directory names the contract had long outgrown. A transient DIRECTORY
@@ -469,6 +469,10 @@ def _find_transient_noise(repo_root: Path) -> list[str]:
     arm keys on a basename, and a directory asked with a trailing slash has
     none, so a ``Downloads copy/`` tree is not named here (the archive half
     never asks a directory question either, so the two do not diverge).
+    The archive's fallback walk also leaves out a directory that declares
+    itself generated (``release_pack._tree_walk``); this walk does not, since
+    a cache that declares itself so (pytest's, ruff's, mypy's) is the noise
+    this half exists to name.
 
     The scanner report files under ``reports/`` are local-only, not transient,
     in the contract's vocabulary; they stay on the list by name because a
@@ -516,7 +520,9 @@ def _find_internal_leaks(repo_root: Path) -> list[str]:
     Uses `surface_contract.is_internal_release_leak` so pre_release and
     release_pack can never disagree about what counts as private material --
     and enumerates what release_pack enumerates: the git index, with the
-    working-tree walk only for a root that has no index. A leak is a file the
+    archive's own working-tree walk (``release_pack._tree_walk``, which leaves
+    out a directory that declares itself generated) only for a root that has
+    no index. A leak is a file the
     ARCHIVE would carry; once the archive became the index, an untracked
     `docs/internal/scratch.md` could not reach it, yet this scan still walked
     the tree and turned it into a hard `/preflight` failure (the failing half
@@ -535,7 +541,7 @@ def _find_internal_leaks(repo_root: Path) -> list[str]:
     leaks: list[str] = []
     tracked = surface_contract.tracked_paths(repo_root)
     candidates = (
-        safe_rglob(repo_root) if tracked is None  # symlink-safe; skips embedded git repos
+        _tree_walk(repo_root) if tracked is None  # the archive's own fallback walk (DEF-4072)
         else (repo_root / rel for rel in sorted(tracked))
     )
     for path in candidates:
