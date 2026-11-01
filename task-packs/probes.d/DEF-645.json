@@ -1,12 +1,16 @@
 {
  "id": "DEF-645",
  "subject": "scripts/run_pack_chain.sh",
- "cmd": "python3 -c \"import re;fs=['scripts/run_pack_chain.sh'];print(sum(len(re.findall(r'verify_dispatch_sentinel',open(f,encoding='utf-8',errors='replace').read(),0)) for f in fs))\"",
- "open_value": "2",
+ "cmd": "python -c 'import re,sys; s=open(\"scripts/run_pack_chain.sh\",encoding=\"utf-8\",errors=\"replace\").read().splitlines(); c=sum(1 for l in s if re.search(r\"\\bverify_dispatch_sentinel\\b\",l) and not re.match(r\"\\s*(function\\s+)?verify_dispatch_sentinel\\s*\\(\\)\",l) and not l.lstrip().startswith(\"#\")); I=[l for l in open(\"task-packs/FORWARD_LEDGER.md\",encoding=\"utf-8\").read().splitlines() if l.startswith(\"| `INV-25`\")]; sys.exit(2) if len(I)!=1 else print(c, \"dispatch\" in I[0].lower())'",
+ "open_value": "1 False",
  "why_not": null,
- "row_sha": "e7ad1dd44a13",
+ "row_sha": "008dd9f772b3",
  "note": "Filed 2026-09-02 from the unledgered-owed sweep; probe driven before filing.",
- "text_sha": "a32b75e19fe0",
+ "text_sha": "68ea7111492d",
  "verified_2026_09_08": "STILL_OPEN (re-pinned value unchanged on 2026-09-08: re-tagged MAINTAINER 2026-09-08: scripts/run_pack_chain.sh is self-host only (the row says so))",
- "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "inputs": [
+  "task-packs/FORWARD_LEDGER.md"
+ ],
+ "verified_2026_11_01": "STILL_OPEN (re-pinned '2' -> '1 False'; inputs None -> ['task-packs/FORWARD_LEDGER.md'] on 2026-11-01: d7fe4a (air): STALE_CLAIM re-derived. The row's text changed after the probe was pinned (the TP-700 sentence) and its claim did not move: one call at scripts/run_pack_chain.sh:689 (the row's :688), INV-25 still enumerating three behaviors, section 7's fourth bullet still naming the mid-run residual. The old probe counted every mention of the name, so the recorded-decline half of the fix shape could never move it; it now prints the call sites outside the definition and whether INV-25 names dispatch, '1 False' while open; receipt: in a scratch archive of HEAD, a second sentinel call moves it to '2 False' and an INV-25 naming dispatch to '1 True') [changed: row moved before, probe, open value, inputs]"
 }
