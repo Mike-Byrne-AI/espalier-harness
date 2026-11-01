@@ -209,6 +209,134 @@ class TestPruneOldAuditLogs:
         assert isinstance(result, int)
 
 
+class TestThePruneIsBoundedInsideTheWall:
+    """DEF-3022: SessionStart's prune read the first line of up to
+    ``_MAX_PRUNE_SCAN`` logs with no bound of its own, and on the Windows box
+    (5,695 logs in the home store) 5,000 such reads took 11.7 s, so the banner
+    was cut at its 13 s wall inside the prune. The scan reads the oldest
+    name date first (``<slug>-<YYYYMMDD>.log``, a name with none before
+    every dated one), stops at its deadline, and tells the caller how many
+    logs dated past the window it left unread."""
+
+    _OLD = "20240101"
+
+    @staticmethod
+    def _store(monkeypatch, tmp_path, names, *, age_days=40):
+        import time
+        from datetime import datetime, timezone
+        integ = _load_integrity_module()
+        audit_dir = tmp_path / "audit"
+        audit_dir.mkdir(exist_ok=True)
+        monkeypatch.setenv("ESPALIER_AUDIT_DIR", str(audit_dir))
+        stamp = datetime.fromtimestamp(time.time() - age_days * 86400, timezone.utc).isoformat()
+        for name in names:
+            (audit_dir / name).write_bytes((json.dumps({"timestamp": stamp}) + "\n").encode("utf-8"))
+        return integ, audit_dir
+
+    @staticmethod
+    def _slow_reads(monkeypatch, integ, seconds, order=None):
+        import time
+        real = integ._parse_first_log_timestamp
+
+        def slow(f):
+            time.sleep(seconds)
+            if order is not None:
+                order.append(f.name)
+            return real(f)
+        monkeypatch.setattr(integ, "_parse_first_log_timestamp", slow)
+
+    def test_the_scan_stops_at_its_deadline_and_counts_the_old_logs_left(self, monkeypatch, tmp_path):
+        """Dies to: no deadline, a deadline the loop never reads, or a stop
+        that says nothing of the old logs it left."""
+        import inspect
+        import time
+        integ, audit_dir = self._store(monkeypatch, tmp_path, [f"s{n:03d}-{self._OLD}.log" for n in range(300)])
+        assert "deadline" in inspect.signature(integ._prune_old_audit_logs).parameters
+        self._slow_reads(monkeypatch, integ, 0.01)
+        left: list[int] = []
+        start = time.monotonic()
+        demoted = integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() + 0.3, on_stop=left.append)
+        assert time.monotonic() - start < 1.5, "the scan ran past its deadline"
+        assert 0 < demoted < 300 and left == [300 - demoted], (demoted, left)
+        assert len(list((audit_dir / "_cold").glob("*.log"))) == demoted
+
+    def test_the_oldest_name_date_is_read_first(self, monkeypatch, tmp_path):
+        """A sort by name orders by repository slug, so a time bound on it
+        reads the same first slugs every start and never reaches an old log
+        late in the alphabet. Dies to: the scan's order left by name."""
+        names = ["a-20261031.log", "m-20250101.log", "z-20240101.log", "nodate.log"]
+        integ, _ = self._store(monkeypatch, tmp_path, names)
+        order: list[str] = []
+        self._slow_reads(monkeypatch, integ, 0, order)
+        integ._prune_old_audit_logs(max_age_days=30)
+        assert order == ["nodate.log", "z-20240101.log", "m-20250101.log", "a-20261031.log"], order
+
+    def test_logs_dated_inside_the_window_left_unread_say_nothing(self, monkeypatch, tmp_path):
+        """Logs named inside the window hold nothing to demote unless renamed,
+        so a stop among them is silent: else a store of recent logs past the
+        bound would say so on every start. Dies to: every stop reported."""
+        import time
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y%m%d")
+        integ, _ = self._store(monkeypatch, tmp_path, [f"s{n:03d}-{today}.log" for n in range(100)], age_days=0)
+        self._slow_reads(monkeypatch, integ, 0.01)
+        left: list[int] = []
+        assert integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() + 0.1, on_stop=left.append) == 0
+        assert left == [], left
+
+    def test_session_start_bounds_the_prune_and_says_when_it_stopped_early(self, monkeypatch, tmp_path):
+        """The hook passes the prune a deadline inside its own budget (the
+        wall less the tail the network reads keep) and names a stop that left
+        old logs unread. Dies to: the bare call in the boot table, a deadline
+        past the hook's budget, or a stop the banner never hears of."""
+        import importlib.util
+        import time
+        spec = importlib.util.spec_from_file_location("_prune_wall_session_start", HOOKS_DIR / "session_start.py")
+        ss = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = ss
+        spec.loader.exec_module(ss)
+        assert hasattr(ss, "_prune_audit_logs_inside_the_wall"), "the boot table calls the prune with no deadline"
+        seen: dict = {}
+
+        def fake(max_age_days=30, *, deadline=None, on_stop=None):
+            seen["deadline"] = deadline
+            on_stop(7)
+            return 3
+        said: list[str] = []
+        monkeypatch.setattr(ss._integrity, "_prune_old_audit_logs", fake)
+        monkeypatch.setattr(ss._hook_utils, "advise", lambda line, **kw: said.append(line))
+        hook_start = time.monotonic() - 12.0
+        ss._prune_audit_logs_inside_the_wall(hook_start)
+        assert seen["deadline"] <= hook_start + ss._HOOK_BUDGET_SECONDS, seen
+        assert len(said) == 1 and said[0].startswith("[INFO]") and "7" in said[0] and said[0].isascii(), said
+        now = time.monotonic()
+        ss._prune_audit_logs_inside_the_wall(now)
+        assert now < seen["deadline"] <= time.monotonic() + ss._PRUNE_BUDGET_SECONDS, seen
+
+
+def test_a_test_that_drops_the_harness_env_keeps_its_audit_store():
+    """DEF-3022: conftest's ``_isolate_audit_dir`` points each test at a store
+    of its own, and an env built from ``os.environ`` that drops every
+    ``ESPALIER_*`` name drops that too, so the child it spawns writes, and its
+    SessionStart prune reads, the operator's home store (5,695 logs on the
+    Windows box, 40-odd test slugs a day). Dies to: a new such env that does
+    not keep ``ESPALIER_AUDIT_DIR``."""
+    import ast
+    from tests._live_tree import checkout_glob
+
+    dropping = []
+    for path in checkout_glob(REPO_ROOT / "tests", "test_*.py"):
+        text = path.read_text(encoding="utf-8")
+        if 'startswith("ESPALIER_")' not in text:
+            continue
+        for node in ast.walk(ast.parse(text)):
+            segment = ast.get_source_segment(text, node) if isinstance(node, ast.DictComp) else None
+            if segment and "os.environ" in segment and 'startswith("ESPALIER_")' in segment \
+                    and "ESPALIER_AUDIT_DIR" not in segment:
+                dropping.append(f"{path.name}:{node.lineno}")
+    assert dropping == [], dropping
+
+
 class TestAuditDirOverrideValidation:
     """TP-44: ESPALIER_AUDIT_DIR must reject symlinks and paths that
     resolve outside the user's safe roots (home, tempdir). Without the

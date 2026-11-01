@@ -1,0 +1,10 @@
+{
+ "id": "DEF-3022",
+ "subject": "tools/cc/hooks/_integrity.py",
+ "cmd": "python3 -c \"import os,sys,time,tempfile,pathlib;sys.path.insert(0,'tools/cc/hooks');d=tempfile.mkdtemp();os.environ['ESPALIER_AUDIT_DIR']=d;[pathlib.Path(d,'s%03d-20240101.log'%n).write_text('{}') for n in range(300)];import _integrity as i;r=i._parse_first_log_timestamp;i._parse_first_log_timestamp=lambda f:(time.sleep(0.01),r(f))[1];t=time.monotonic();exec('try:\\n i._prune_old_audit_logs(deadline=time.monotonic()+0.5)\\nexcept TypeError:\\n i._prune_old_audit_logs()');print(time.monotonic()-t>2.0)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "e1675b82c53b",
+ "text_sha": "f7b52d1bdda5",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

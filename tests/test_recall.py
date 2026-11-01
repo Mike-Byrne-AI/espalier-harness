@@ -4046,7 +4046,8 @@ def test_an_init_generated_claude_md_is_not_the_adopters_own_until_they_edit_it(
     (tree / "README.md").write_text("# app\n", encoding="utf-8")
     (tree / "pyproject.toml").write_text('[project]\nname = "app"\n', encoding="utf-8")
     (tree / ".git").mkdir()
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ESPALIER_") and k != "CLAUDE_PROJECT_DIR"}
+    env = {k: v for k, v in os.environ.items()
+           if (not k.startswith("ESPALIER_") or k == "ESPALIER_AUDIT_DIR") and k != "CLAUDE_PROJECT_DIR"}
     run = subprocess.run([sys.executable, "-m", "espalier", "init", str(tree)], capture_output=True, text=True,
                          encoding="utf-8", errors="replace", env=env)
     assert run.returncode == 0, run.stdout + run.stderr
