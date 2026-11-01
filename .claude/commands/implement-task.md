@@ -172,6 +172,9 @@ For one bounded change, one main proof path, or a small localized edit.
    # changed file adds every test file that names its path in a string literal
    # or a path join, unless the test only writes that file into a tree it
    # builds (read from the test files; a file the tested code reads is not seen);
+   # a file another line of the tier already runs whole (a contract-classified
+   # one, the recall slice) is left off, and each changed body's count prints
+   # beside a pinned ceiling;
    # a changed file among the serial files rides a second line, at one worker
    if [ -f scripts/proof_tier.py ]; then   # Espalier-Harness tree: its tier script
      python scripts/proof_tier.py --run   # Espalier-Harness tree: the tier the diff earns, one receipt
