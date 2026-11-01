@@ -1,12 +1,16 @@
 {
  "id": "DEF-548",
  "subject": "espalier/claim_extractor.py",
- "cmd": "python3 -c \"import pathlib; ps=[p for p in pathlib.Path('espalier').rglob('*.py') if '_vendor' not in str(p) and p.name != 'claim_extractor.py']; print(sum(1 for p in ps if 'RECORD_SURFACES' in p.read_text(encoding='utf-8',errors='replace')))\"",
- "open_value": "1",
+ "cmd": "python -c 'import ast,sys; L=[(\"espalier/claim_extractor.py\",\"FROZEN_RECORD_DOCS\"),(\"tests/test_doc_source_citations.py\",\"_RECORD_SURFACE_DOCS\")]; S={f:open(f,encoding=\"utf-8\").read() for f,_ in L}; N=lambda x: [getattr(t,\"id\",None) for t in (x.targets if isinstance(x,ast.Assign) else [x.target])]; D=[[x for x in ast.parse(S[f]).body if isinstance(x,(ast.Assign,ast.AnnAssign)) and v in N(x)] for f,v in L]; sys.exit(2) if any(len(d)!=1 for d in D) else print(sum(\"RECORD_SURFACES\" not in ast.get_source_segment(S[f],d[0]) for (f,_),d in zip(L,D)))'",
+ "open_value": "2",
  "why_not": null,
  "verified_2026_08_20": "STILL_OPEN",
  "row_sha": "88bc120ec1b2",
  "verified_2026_09_08": "STILL_OPEN (re-pinned '0' -> '1' on 2026-09-08: 0 -> 1 on 2026-09-08 (§C12): espalier/reflect_protocol.py now derives its residue-exempt set from the canon (RECORD_SURFACES minus docs/FAILURE_MODES.md), a fourth consumer; the hook half carries a hand-kept twin of that set pinned to the canon by TestReflectTwinParity, which is the cross-boundary shape, not a seventh disagreeing list. The six lists the row names still disagree; still open)",
  "text_sha": "78d920f5b587",
- "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "inputs": [
+  "tests/test_doc_source_citations.py"
+ ],
+ "verified_2026_11_01": "STILL_OPEN (re-pinned '1' -> '2'; inputs None -> ['tests/test_doc_source_citations.py'] on 2026-11-01: d7fe4a (air): the old probe's 1 -> 2 is espalier/reflection.py naming AGING_RECORD_SURFACES (1a585228, 2026-10-24), a derived consumer matched as a substring, not a fix; FROZEN_RECORD_DOCS (3 entries) and tests/test_doc_source_citations.py::_RECORD_SURFACE_DOCS (2) are still typed by hand, so the claim stands. The old probe skipped claim_extractor.py and never read tests/, so neither list's fix could move it: re-aimed at the two lists' own definitions, the count of them whose assignment does not name RECORD_SURFACES (2 today, 0 once both derive from the canon; exit 2 when either definition is not found once); receipt: in a scratch archive of HEAD, FROZEN_RECORD_DOCS derived from the canon moves it 2 -> 1) [changed: probe, open value, inputs]"
 }

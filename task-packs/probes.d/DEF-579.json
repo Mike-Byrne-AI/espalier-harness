@@ -1,11 +1,12 @@
 {
  "id": "DEF-579",
  "subject": "tests/test_test_suite_contract.py",
- "cmd": "python3 -c \"import ast; s=open('tests/test_test_suite_contract.py').read(); f=[n for n in ast.walk(ast.parse(s)) if getattr(n,'name',None)=='_eacces_unsafe_probes_in_denial_blocks'][0]; src=ast.get_source_segment(s,f); print('TESTS_DIR.glob' in src and 'espalier' not in src)\"",
+ "cmd": "python -c 'import ast,sys; s=open(\"tests/test_test_suite_contract.py\",encoding=\"utf-8\").read(); F=[n for n in ast.parse(s).body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and (\"eacces\" in n.name.lower() or \"_EACCES_UNSAFE_PROBES\" in ast.get_source_segment(s,n))]; src=\"\".join(ast.get_source_segment(s,f) for f in F); sys.exit(2) if not F else print(\"TESTS_DIR\" in src and not any(r in src.lower() for r in (\"espalier\",\"tools/cc\",\"tools_cc\")))'",
  "open_value": "True",
  "why_not": null,
  "verified_2026_08_20": "STILL_OPEN",
  "row_sha": "067778bf0d81",
  "text_sha": "63fd5f8f97c5",
- "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)"
+ "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: d7fe4a (air): the guard still walks tests/ alone; 6db10e7a (2026-10-15) respelled TESTS_DIR.glob(\"*.py\") as checkout_glob(TESTS_DIR, \"*.py\"), which the old probe's literal missed. Re-aimed at the EACCES guard family (the module-level functions named for it or reading _EACCES_UNSAFE_PROBES): True while they name TESTS_DIR and no product root, so a product-code arm in a new helper moves it too; receipt: in a scratch archive of HEAD, a product-code arm in an EACCES-named helper, or in one reading _EACCES_UNSAFE_PROBES, moves it True -> False) [changed: probe]"
 }

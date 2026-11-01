@@ -3695,6 +3695,10 @@ def _cut_banner(phase: str, elapsed: float) -> dict:
         lines.append(" " * 11 + _CUT_CAVEATS[phase])
     lines += [f"{label + ':':<11}{value}" for label, value in list(_SO_FAR.items()) if value]
     warnings = _hook_utils.take_advisories()
+    # A line the zone walk said before the cut (DEF-2031): its flag is written,
+    # so no later start or shell call says it this session.
+    zone = sys.modules.get("_zone_watch")
+    warnings += [f"[WARN] espalier: {line}" for line in getattr(zone, "take_notices", list)()]
     if warnings:
         lines += ["", "--- WARNINGS ---", *warnings]
     return {"hookSpecificOutput": {
@@ -5040,11 +5044,18 @@ def _run_main(wall_start: float | None = None) -> int:
     # made while the session was closed is reported as this session's. A
     # compaction continues the same process: it keeps a usable baseline, with
     # what the session knows and what the operator was told. Imported here so
-    # a broken helper costs this line, never the banner.
+    # a broken helper costs this line, never the banner. What the walk said
+    # once this session (a git read that failed) is the banner's to render:
+    # the helper only queues it (DEF-2031).
     _phase("zone baseline", Checkout=checkout_line, Worktrees=worktrees_line)
     try:
         import _zone_watch  # noqa: E402
-        if sid and not _zone_watch.take_baseline(root, sid, keep_valid=source == "compact"):
+        try:
+            taken = not sid or _zone_watch.take_baseline(root, sid, keep_valid=source == "compact")
+        finally:  # rendered even when the walk raised after saying it; an older kept helper has no queue
+            for line in getattr(_zone_watch, "take_notices", list)():
+                _hook_utils.advise_warn(line)
+        if not taken:
             raise OSError("the zone baseline could not be written; the first shell call is taken as it, unchecked")
     except Exception as e:  # noqa: BLE001 — best-effort; never lose the banner
         _late_load_failed("session_start: zone baseline failed", e)
