@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5047",
+ "subject": "tools/cc/ledger_row.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the reading depends on where the box's interpreter imports espalier from (an editable install of a checkout, a wheel, or none), which differs between seats and CI cells, so no one open value holds; the fix's test, a pytest-collecting probe driven at a base export, is the oracle",
+ "row_sha": "269a7989c4be",
+ "text_sha": "9d3d35f822df",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

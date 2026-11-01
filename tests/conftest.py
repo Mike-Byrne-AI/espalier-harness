@@ -183,9 +183,20 @@ def _isolate_claude_code_session():
     ``_isolate_forced_colour`` gives: ``test_adopter_lifecycle_diagnostics.walked``
     is module-scoped and spawns its uninstall before any function-scoped
     fixture runs (the failure-mode review of the DEF-1060 lane found the
-    function-scoped first draft missed it)."""
+    function-scoped first draft missed it). The window's identity and its
+    own-clear mod go with it: a seat's window exports the session id, its
+    pid and ``ESPALIER_OWN_CLEAR=1``, and the ship driver's own-clear verbs
+    stand down without the mod, so a test modelling a mod window that left
+    the variable to the launching shell passed in a seat's tier and failed
+    on CI (#414's ``test (3.11)`` cell, 2026-11-01); a test of either sets
+    what it models."""
     with pytest.MonkeyPatch.context() as mp:
+        # Spelled alone: tests/test_check_ledger_probes.py pins this literal
+        # against the ledger probe runner's strip, its twin.
         mp.delenv("CLAUDECODE", raising=False)
+        for name in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ESPALIER_OWN_CLEAR",
+                     "ESPALIER_OWN_CLEAR_ROOT", "ESPALIER_OWN_CLEAR_LOG"):
+            mp.delenv(name, raising=False)
         yield
 
 
