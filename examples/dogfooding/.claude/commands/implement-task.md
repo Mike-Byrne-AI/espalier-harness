@@ -168,9 +168,10 @@ For one bounded change, one main proof path, or a small localized edit.
    # when that file exists (derived from the diff -- a script's tests are
    # integration-classified, so the contract slice alone never collected them),
    # a changed agent, command or skill body adds the test file written for
-   # the bodies (a hand-kept roster, pinned to that file's walk), and a changed
-   # file under `.claude/` or its deploy copy adds every test file that names
-   # its path in a string literal or a path join (read from the test files);
+   # the bodies (a hand-kept roster, pinned to that file's walk), and any
+   # changed file adds every test file that names its path in a string literal
+   # or a path join, unless the test only writes that file into a tree it
+   # builds (read from the test files; a file the tested code reads is not seen);
    # a changed file among the serial files rides a second line, at one worker
    if [ -f scripts/proof_tier.py ]; then   # Espalier-Harness tree: its tier script
      python scripts/proof_tier.py --run   # Espalier-Harness tree: the tier the diff earns, one receipt

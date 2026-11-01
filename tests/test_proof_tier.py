@@ -400,7 +400,7 @@ class TestTheFullRecipe:
         )
         assert not any(c.startswith("mypy") for c in pt.RECALL_COMMANDS)
 
-    def test_a_changed_scripts_own_test_file_rides_along_on_the_cheaper_tiers(self, pt):
+    def test_a_changed_scripts_own_test_file_rides_along_on_the_cheaper_tiers(self, pt, tmp_path):
         """`tests/test_ledger_row.py` is integration-classified, so the contract
         tier collected none of the rows written for the row tool's 2026-09-20
         fix (failure-mode pass; DEF-775's shape one directory over). Derived
@@ -408,20 +408,25 @@ class TestTheFullRecipe:
         `tests/test_<stem>.py` when it exists, on the two cheaper tiers; the
         full tier already runs it, so nothing is appended there. Earn-the-red:
         the function did not exist before this test. Since 2026-09-25 a changed
-        test file rides along the same way (the last assertion below)."""
-        changed = ["scripts/ledger_row.py", "scripts/no_such_script.py", "docs/X.md", "tests/test_x.py",
-                   "scripts/ledger_row.py"]
-        assert pt.own_tests(changed, REPO_ROOT) == ("tests/test_ledger_row.py",)
-        assert pt.commands("contract", changed, REPO_ROOT) == (
+        test file rides along the same way. Pinned on a scratch tree whose test
+        files name no path: in this checkout the files that name a changed path
+        ride behind the own file (``path_readers``, DEF-5042), this module among
+        them, since it names each path it asks about."""
+        assert pt.own_tests(["scripts/ledger_row.py"], REPO_ROOT)[0] == "tests/test_ledger_row.py"
+        r = _repo(tmp_path)
+        (r / "tests" / "test_s.py").write_text("def test_s():\n    pass\n", encoding="utf-8")
+        changed = ["scripts/s.py", "scripts/no_such_script.py", "docs/X.md", "tests/test_x.py", "scripts/s.py"]
+        assert pt.own_tests(changed, r) == ("tests/test_s.py", "tests/test_x.py")
+        assert pt.commands("contract", changed, r) == (
             "ruff check .", "pytest -n auto -m contract -q",
-            "pytest -q -n auto -m 'not heavy_e2e' tests/test_ledger_row.py")
-        assert pt.commands("recall", changed, REPO_ROOT) == (
-            *pt.RECALL_COMMANDS, "pytest -q -n auto -m 'not heavy_e2e' tests/test_ledger_row.py")
-        assert pt.commands("full", changed, REPO_ROOT) == pt.FULL_COMMANDS
+            "pytest -q -n auto -m 'not heavy_e2e' tests/test_s.py tests/test_x.py")
+        assert pt.commands("recall", changed, r) == (
+            *pt.RECALL_COMMANDS, "pytest -q -n auto -m 'not heavy_e2e' tests/test_s.py tests/test_x.py")
+        assert pt.commands("full", changed, r) == pt.FULL_COMMANDS
         # the tier-only spelling the bodies cite: the lint line, then the slice
         assert pt.commands("contract") == ("ruff check .", "pytest -n auto -m contract -q")
-        assert pt.own_tests(["scripts/nested/x.py", "tests/nested/test_y.py"], REPO_ROOT) == ()
-        assert pt.own_tests(["tests/test_proof_tier.py"], REPO_ROOT) == ("tests/test_proof_tier.py",)
+        assert pt.own_tests(["scripts/nested/x.py", "tests/nested/test_y.py"], r) == ()
+        assert pt.own_tests(["tests/test_s.py"], r) == ("tests/test_s.py",)
 
     def test_a_changed_body_brings_the_tests_that_drive_the_bodies(self, pt):
         """DEF-4067: a diff that edits only an agent, command or skill body
@@ -433,7 +438,7 @@ class TestTheFullRecipe:
         that file builds, now brings the file on the two cheaper tiers; a path
         beside a body (a skill's other file, a nested agent, a workflow, the
         dogfooding mirror the file never opens) does not bring it. The test
-        files that name a changed path ride behind it (``body_readers``,
+        files that name a changed path ride behind it (``path_readers``,
         DEF-5040), so each row reads the roster's file, not the whole line."""
         diagnostics = "tests/test_first_contact_diagnostics.py"
         for body in (".claude/agents/repo-analyst.md", ".claude/commands/handoff.md",
@@ -445,12 +450,14 @@ class TestTheFullRecipe:
                        "examples/dogfooding/.claude/agents/repo-analyst.md", "docs/.claude/agents/x.md",
                        ".claude/skills/SKILL.md", ".claude/skills/a/b/SKILL.md", ".claude/skills//SKILL.md",
                        ".claude/agents//x.md"):
-            assert diagnostics not in pt.own_tests([beside], REPO_ROOT), beside
-            if not beside.startswith(pt.BODY_ROOTS):  # outside the roots the map reads nothing
-                assert pt.own_tests([beside], REPO_ROOT) == (), beside
+            # beside a body the roster does not come: the line is the path's own
+            # readers alone (the dogfooding mirror's tail is the source body's
+            # path, so the files that name that path come by name)
+            assert not pt.is_body(beside), beside
+            assert pt.own_tests([beside], REPO_ROOT) == pt.path_readers([beside], REPO_ROOT), beside
         changed = [".claude/agents/repo-analyst.md", "espalier/assets/claude/agents/repo-analyst.md",
                    "scripts/ledger_row.py", diagnostics]
-        readers = pt.body_readers(changed, REPO_ROOT)
+        readers = pt.path_readers(changed, REPO_ROOT)
         assert pt.own_tests(changed, REPO_ROOT) == tuple(
             dict.fromkeys((diagnostics, "tests/test_ledger_row.py", *readers)))
         own = pt.own_tests([".claude/agents/repo-analyst.md"], REPO_ROOT)
@@ -526,12 +533,12 @@ class TestTheFullRecipe:
         now rides the cheaper tiers' own line, read from the test files: a
         literal, a join from the repository root, and a join on a tree
         ``espalier init`` built (the preflight reader). Earn-the-red: none
-        of the five came back before ``body_readers`` existed."""
+        of the five came back before ``path_readers`` existed."""
         for body, reader in self._ONE_BODY_READERS:
             assert reader in pt.own_tests([body], REPO_ROOT), (
                 f"{reader} no longer names {body} by a shape _module_names reads -- "
                 f"teach it the new shape rather than drop the pair")
-            assert reader in pt.body_readers([body], REPO_ROOT), body
+            assert reader in pt.path_readers([body], REPO_ROOT), body
             line = pt.tier_argvs("contract", [body], REPO_ROOT)[-1]
             assert reader in line and "contract" not in line, line
             assert pt.commands("full", [body], REPO_ROOT) == pt.FULL_COMMANDS
@@ -540,9 +547,10 @@ class TestTheFullRecipe:
         """The shapes ``_module_names`` reads, on a scratch tree, each beside
         the near miss that must not count: prose that mentions the path, a
         longer path, a bare file name, a name built at run time, a module
-        below ``tests/`` or a helper, a module that does not parse. A path
-        outside ``BODY_ROOTS`` brings nothing (the domain: request 4ccfb9),
-        and a path under them that is not a body is looked up as it is."""
+        below ``tests/`` or a helper, a module that does not parse. Every
+        changed path is looked up as it is, a body or not, a doc or a note
+        outside ``BODY_ROOTS`` included (DEF-5042; DEF-5040's map read those
+        roots alone, request 4ccfb9)."""
         tests = tmp_path / "tests"
         (tests / "sub").mkdir(parents=True)
         reads = {
@@ -574,19 +582,94 @@ class TestTheFullRecipe:
         # PowerShell 5.1's Set-Content -Encoding UTF8 writes a BOM; Python imports it
         (tests / "test_bom.py").write_bytes(b'\xef\xbb\xbfX = ".claude/commands/x.md"\n')
         body = ".claude/commands/x.md"
-        assert pt.body_readers([body], tmp_path) == tuple(
+        assert pt.path_readers([body], tmp_path) == tuple(
             f"tests/{n}" for n in ("test_bom.py", "test_helper_reader.py", "test_join.py", "test_joinpath.py",
                                    "test_literal.py", "test_os_join.py", "test_path_args.py",
                                    "test_path_call.py", "test_suffix.py", "test_windows.py"))
-        assert pt.body_readers([".claude\\commands\\x.md"], tmp_path) == pt.body_readers([body], tmp_path)
+        assert pt.path_readers([".claude\\commands\\x.md"], tmp_path) == pt.path_readers([body], tmp_path)
         # a join from a directory variable may hold either tree, so it reads both
-        assert pt.body_readers(["espalier/assets/claude/commands/x.md"], tmp_path) == (
+        assert pt.path_readers(["espalier/assets/claude/commands/x.md"], tmp_path) == (
             "tests/test_asset.py", "tests/test_suffix.py")
         assert not pt.is_body(".claude/skills/a/notes.md")
-        assert pt.body_readers([".claude/skills/a/notes.md"], tmp_path) == ("tests/test_notes.py",)
-        assert pt.body_readers(["docs/x.md"], tmp_path) == ()
-        assert pt.own_tests(["docs/x.md"], tmp_path) == ()
-        assert pt.body_readers([body], tmp_path / "no-such-root") == ()
+        assert pt.path_readers([".claude/skills/a/notes.md"], tmp_path) == ("tests/test_notes.py",)
+        assert pt.path_readers(["docs/x.md"], tmp_path) == ("tests/test_literal.py",)
+        assert pt.own_tests(["docs/x.md"], tmp_path) == ("tests/test_literal.py",)
+        assert pt.path_readers(["docs/y.md"], tmp_path) == ("tests/test_helper_other.py",)
+        assert pt.path_readers([body], tmp_path / "no-such-root") == ()
+
+    @pytest.mark.parametrize("rel", [".claude/commands/x.md", "docs/x.md"])
+    def test_a_file_a_test_only_writes_into_a_tree_is_not_read(self, pt, tmp_path, rel):
+        """DEF-5042: keyed on every changed path, one ``README.md`` edit brought
+        86 non-contract files, many of them only putting a file of that name
+        into a tree they built. A join a module only writes to names nothing
+        (``_written_joins``); each write shape sits beside the near miss that
+        must still count: the same join read, a join on a scratch tree read
+        back (``espalier init`` copies this checkout's files into it), a name
+        written and then read, passed on or bound for another function to
+        load (one bound twice and only ever written is a write), a copy's
+        source, an ``os.path.join`` whose ``replace`` is the string's, and the
+        module naming the path again elsewhere. Earn-the-red: on the body path
+        every write shape came back before the discriminator; on the doc path
+        nothing did, the map reading ``BODY_ROOTS`` alone."""
+        parts = rel.split("/")
+        join, args, lit = " / ".join(f'"{p}"' for p in parts), ", ".join(f'"{p}"' for p in parts), f'"{rel}"'
+        writes = {
+            "test_write_text.py": f"(tmp_path / {join}).write_text('x')\n",
+            "test_unlink.py": f"def t(tree):\n    (tree / {lit}).unlink()\n",
+            "test_bound_write.py": f"def t(tmp_path):\n    p = tmp_path / {join}\n    p.parent.mkdir()\n"
+                                  "    p.write_bytes(b'')\n",
+            "test_open_write.py": f"open(tmp / {join}, 'w')\nopen(tmp / {join}, mode='a')\n",
+            "test_path_open_write.py": f"(tree / {join}).open('w')\n",
+            "test_copy_dest.py": f"import shutil\nshutil.copy(src, tree / {join})\n",
+            "test_os_join_write.py": f"import os\nopen(os.path.join(tree, {args}), 'wb')\n",
+            "test_touch_chmod.py": f"Path(tree, {args}).touch()\n(tree / {join}).chmod(0o444)\n",
+            "test_bound_twice.py": f"def t(a, b):\n    p = a / {join}\n    p = b / {join}\n    p.write_text('x')\n",
+        }
+        reads = {
+            "test_read_text.py": f"(ROOT / {join}).read_text()\n",
+            "test_scratch_read.py": f"def t(tmp_path):\n    (tmp_path / {join}).read_text()\n",
+            "test_written_then_read.py": f"def t(tmp_path):\n    p = tmp_path / {join}\n    p.write_text('x')\n"
+                                        "    assert p.read_text()\n",
+            "test_passed_on.py": f"def t(tree):\n    p = tree / {join}\n    p.write_text('x')\n    check(p)\n",
+            "test_global.py": f"def setup():\n    global DOC\n    DOC = ROOT / {join}\n\ndef t():\n    DOC.read_text()\n",
+            "test_global_written.py": f"def setup():\n    global DOC\n    DOC = ROOT / {join}\n    DOC.touch()\n"
+                                      "\ndef t():\n    DOC.read_text()\n",
+            "test_copy_source.py": f"import shutil\nshutil.copy(ROOT / {join}, tree / {join})\n",
+            "test_open_read.py": f"open(ROOT / {join})\n",
+            "test_open_read_plus.py": f"open(ROOT / {join}, 'r+')\n",
+            "test_str_replace.py": f"import os\nos.path.join(ROOT, {args}).replace('\\\\', '/')\n",
+            "test_tuple.py": f"for rel in ({lit},):\n    (ROOT / rel).read_text()\n",
+            "test_named_again.py": f"(tmp_path / {join}).write_text('x')\nWANT = {lit}\n",
+        }
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        for name, text in {**writes, **reads}.items():
+            compile(text, name, "exec")
+            (tests / name).write_text(text, encoding="utf-8")
+        assert pt.path_readers([rel], tmp_path) == tuple(f"tests/{n}" for n in sorted(reads))
+
+    #: The readers DEF-5042's row names: a doc and a memory note whose phrases
+    #: tests/test_mail.py asserts, read through a tuple joined onto the root.
+    _DOC_READERS: tuple[tuple[str, str], ...] = (
+        ("docs/WORKFLOW.md", "tests/test_mail.py"),
+        ("memory/parallel-work-protocol.md", "tests/test_mail.py"),
+    )
+
+    def test_a_changed_doc_brings_every_test_file_that_reads_it(self, pt):
+        """DEF-5042: a diff that edits only docs/WORKFLOW.md (the contract
+        tier) or memory/parallel-work-protocol.md (the recall tier) ran no row
+        of tests/test_mail.py, which asserts phrases in each, so a red there
+        arrived on ``main`` after the merge. Each now rides its tier's own
+        line. Earn-the-red: neither came back while the map read
+        ``BODY_ROOTS`` alone (the row's probe, 0 at filing)."""
+        for doc, reader in self._DOC_READERS:
+            assert reader in pt.own_tests([doc], REPO_ROOT), (
+                f"{reader} no longer names {doc} by a shape _module_names reads -- "
+                f"teach it the new shape rather than drop the pair")
+            which = pt.tier([doc])
+            assert which in ("contract", "recall"), (doc, which)
+            lines = pt.tier_argvs(which, [doc], REPO_ROOT)
+            assert any(reader in line and "contract" not in line for line in lines), lines
 
     def test_a_test_module_edited_after_the_first_read_is_read_again(self, pt, tmp_path):
         """The names are cached per module (the pins above ask once per body),
@@ -605,7 +688,7 @@ class TestTheFullRecipe:
         for text, want in ((unnamed, ()), (named, ("tests/test_late.py",)), (unnamed, ())):
             module.write_text(text, encoding="utf-8")
             os.utime(module, ns=(tick, tick))
-            assert pt.body_readers([body], tmp_path) == want, text
+            assert pt.path_readers([body], tmp_path) == want, text
 
     def test_a_reader_among_the_serial_files_rides_the_one_worker_line(self, pt, tmp_path):
         """A reader that is one of ``SERIAL_FILES`` keeps its measured placement
@@ -1620,15 +1703,20 @@ class TestTheLegsAndTheHeavyLane:
         filter, so a docs-plus-test pull request would have run the 848 s
         smoke in five required cells. Every pytest line filters; ``--heavy``
         strips every line. A changed serial file rides on its own line at one
-        worker, the rest at ``-n auto`` (DEF-2017)."""
+        worker, the rest at ``-n auto`` (DEF-2017). The files that name a
+        changed path ride with them (``path_readers``; this module names both)."""
         changed = ["tests/test_final_release_matrix.py", "tests/test_powershell_reachability_differential.py"]
+        own = pt.own_tests(changed, REPO_ROOT)
+        parallel = tuple(rel for rel in own if rel not in pt.SERIAL_FILES)
+        serial = tuple(rel for rel in own if rel in pt.SERIAL_FILES)
+        assert parallel[0] == changed[0] and serial[0] == changed[1], own
         for which in ("contract", "recall"):
             own_parallel, own_serial = pt.tier_argvs(which, changed, REPO_ROOT)[-2:]
-            assert own_parallel == pt._PYTEST + pt._PARALLEL + pt._NOT_HEAVY + (changed[0],), (which, own_parallel)
-            assert own_serial == pt._PYTEST + pt._ONE_WORKER + pt._NOT_HEAVY + (changed[1],), (which, own_serial)
+            assert own_parallel == pt._PYTEST + pt._PARALLEL + pt._NOT_HEAVY + parallel, (which, own_parallel)
+            assert own_serial == pt._PYTEST + pt._ONE_WORKER + pt._NOT_HEAVY + serial, (which, own_serial)
             heavy_own = pt.tier_argvs(which, changed, REPO_ROOT, heavy=True)[-2:]
             assert "heavy_e2e" not in " ".join(heavy_own[0] + heavy_own[1])
-            assert (heavy_own[0][-1], heavy_own[1][-1]) == tuple(changed)
+            assert (heavy_own[0][-len(parallel):], heavy_own[1][-len(serial):]) == (parallel, serial)
             assert pt.tier_argvs(which, changed, REPO_ROOT, leg="serial") == ()
             assert pt.tier_argvs(which, changed, REPO_ROOT, leg="parallel")[-2:] == (own_parallel, own_serial)
 
@@ -2086,13 +2174,18 @@ class TestWhatAHookOrAGateReads:
         assert "note: 1 uncommitted path(s) are outside the --base diff" in out
         assert "tools/cc/hooks/h.py" in out
 
-    def test_a_staged_rename_reads_as_its_new_path(self, pt, tmp_path):
+    def test_a_staged_rename_reads_as_both_its_paths(self, pt, tmp_path):
         """Under `-z` a rename's original path is a field of its own after the
-        new one; it is skipped, as the `old -> new` form's left side was."""
+        new one, and it counts too: the rename deletes it, and the `--base`
+        diff (`--no-renames`) reads the same change as a delete beside an add.
+        Read as the new path alone, a hook moved out of tools/cc/ earned the
+        contract tier locally and a renamed doc's readers stayed off the line
+        (failure-mode review, DEF-5042)."""
         r = _repo(tmp_path)
-        subprocess.run(_git(r) + ["mv", "tools/cc/hooks/h.py", "tools/cc/hooks/renamed.py"],
-                       check=True, capture_output=True)
-        assert pt.changed_paths(r) == (["tools/cc/hooks/renamed.py"], [])
+        subprocess.run(_git(r) + ["mv", "tools/cc/hooks/h.py", "scripts/h.py"], check=True, capture_output=True)
+        changed, untracked = pt.changed_paths(r)
+        assert (changed, untracked) == (["tools/cc/hooks/h.py", "scripts/h.py"], [])   # git's old -> new
+        assert pt.tier(changed) == "full"
 
     @pytest.mark.parametrize("name", ["my hook.py", "né.py"])
     def test_a_changed_path_is_read_as_written(self, pt, tmp_path, name):

@@ -380,6 +380,16 @@ _PATH_TYPES: frozenset[str] = frozenset({"Path", "PurePath", "PurePosixPath", "P
 _NAME_MAX = 255
 #: The ``os.path`` spellings whose ``join`` builds a path from its arguments.
 _PATH_MODULES: frozenset[str] = frozenset({"os.path", "path", "posixpath", "ntpath"})
+#: The ``Path`` methods that write, move or remove the path they are called
+#: on: a join that is their receiver names a file the test puts into a tree,
+#: and the text this checkout holds under that name is not read there
+#: (DEF-5042). ``replace`` is left out: on an ``os.path.join`` it is
+#: ``str.replace``, a separator swap before a read.
+_WRITE_METHODS: frozenset[str] = frozenset({"write_text", "write_bytes", "touch", "mkdir", "unlink", "rmdir",
+                                            "rename", "symlink_to", "hardlink_to", "chmod"})
+#: The calls whose second positional argument is the path they write.
+_COPY_CALLS: frozenset[str] = frozenset({"shutil.copy", "shutil.copy2", "shutil.copyfile", "shutil.copytree",
+                                         "shutil.move"})
 
 
 class _Module(NamedTuple):
@@ -444,14 +454,92 @@ def _literal(node: ast.AST) -> str | None:
     return None
 
 
+def _is_join(node: ast.AST) -> bool:
+    return (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)) or (
+        isinstance(node, ast.Call) and _call_join(node) is not None)
+
+
+def _writes_mode(call: ast.Call, at: int) -> bool:
+    """Whether an ``open`` call's mode, at position ``at`` or by keyword,
+    writes without reading first (``w``, ``a`` or ``x``; ``r+`` reads)."""
+    mode = call.args[at] if len(call.args) > at else next(
+        (kw.value for kw in call.keywords if kw.arg == "mode"), None)
+    return isinstance(mode, ast.Constant) and isinstance(mode.value, str) and any(c in mode.value for c in "wax")
+
+
+def _is_written(node: ast.AST, parent: dict[int, ast.AST]) -> bool:
+    """Whether ``node`` is used as a path a write is made to: the receiver of
+    one of ``_WRITE_METHODS`` (``.parent.mkdir`` included: the tree the write
+    goes into), of ``.open`` in a mode that writes, the first argument of
+    ``open`` in one, or the second of one of ``_COPY_CALLS``."""
+    up = parent.get(id(node))
+    if isinstance(up, ast.Attribute) and up.value is node:
+        above = parent.get(id(up))
+        if up.attr == "parent":
+            return isinstance(above, ast.Attribute) and above.attr == "mkdir"
+        if up.attr == "open":
+            return isinstance(above, ast.Call) and above.func is up and _writes_mode(above, 0)
+        return up.attr in _WRITE_METHODS
+    if isinstance(up, ast.Call) and any(arg is node for arg in up.args):
+        name = _dotted_name(up.func)
+        if name in ("open", "io.open"):
+            return up.args[0] is node and _writes_mode(up, 1)
+        if name in _COPY_CALLS:
+            return len(up.args) > 1 and up.args[1] is node
+    return False
+
+
+def _written_joins(tree: ast.AST) -> set[int]:
+    """The ids of every node inside a join a module only writes to
+    (``_is_written``): the join itself, or each join a function binds to a
+    name by a plain assignment, every load of that name in the function a
+    write. A name loaded any other way (read, passed on, returned), or shared
+    with another function (``global``, ``nonlocal``), keeps its joins; so does
+    a join on a scratch tree the test's own text reads back, since ``espalier
+    init`` copies this checkout's files into the tree (DEF-5042). A read the
+    code under test makes from that tree is spelled nowhere, so it is not
+    seen either way (``path_readers``)."""
+    parent = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    out: set[int] = set()
+    for node in ast.walk(tree):
+        if _is_join(node) and _is_written(node, parent):
+            out.update(id(n) for n in ast.walk(node))
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        stores: dict[str, list[ast.Name]] = {}
+        loads: dict[str, list[ast.Name]] = {}
+        shared: set[str] = set()   # global or nonlocal: loaded in another function too
+        for node in ast.walk(func):
+            if isinstance(node, ast.Name):
+                (loads if isinstance(node.ctx, ast.Load) else stores).setdefault(node.id, []).append(node)
+            elif isinstance(node, (ast.Global, ast.Nonlocal)):
+                shared.update(node.names)
+        for name, bound in stores.items():
+            uses = loads.get(name)
+            if name in shared or not uses or not all(_is_written(use, parent) for use in uses):
+                continue
+            for store in bound:
+                assign = parent.get(id(store))
+                if (isinstance(assign, ast.Assign) and len(assign.targets) == 1 and assign.targets[0] is store
+                        and _is_join(assign.value)):
+                    out.update(id(n) for n in ast.walk(assign.value))
+    return out
+
+
 def _module_names(tree: ast.AST) -> set[str]:
     """Every path a test module names: each one-line string constant, and the
     string constants that end each ``/`` join (``REPO_ROOT / ".claude" /
     "commands" / "inbox.md"`` names ``.claude/commands/inbox.md``; the operand
     before them is dropped, so a tree ``espalier init`` built names the
-    deployed path, which is the source's own)."""
+    deployed path, which is the source's own), outside the joins the module
+    only writes to (``_written_joins``: a file a test puts into a tree it
+    built is not one it reads)."""
+    written = _written_joins(tree)
     names: set[str] = set()
     for node in ast.walk(tree):
+        if id(node) in written:
+            continue
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             names.add(node.value)
         elif isinstance(node, ast.Call):
@@ -528,23 +616,32 @@ def _names_path(names: AbstractSet[str], rel: str) -> bool:
     return any("/".join(parts[i:]) in names for i in range(1, len(parts) - 1))
 
 
-def body_readers(changed, root: Path = _ROOT) -> tuple[str, ...]:
-    """Every top-level ``tests/test_*.py`` that names a changed path under
-    ``BODY_ROOTS`` (``_module_names``), in the order the paths came. A body is
-    not a script, so its tests cannot be read from its name, and the files that
-    read one named body are integration-classified: a body-only diff earned the
-    contract tier, whose ``-m contract`` deselected every row of the five
-    DEF-4067's census found, and their reds arrived on ``main`` (DEF-5040).
-    Derived from the test files at each call, never kept. Every changed path
-    under the roots is looked up as it is, not only a ``BODY_KINDS`` body, so
-    the asset copy's own readers come with it. What this cannot read: a name
-    built at run time (an f-string, a glob, a file name held in a variable),
-    which is the walk ``BODY_TEST_FILES`` keeps by hand. A path constant a
-    module imports by name from a ``tests/_*.py`` helper counts as its own."""
+def path_readers(changed, root: Path = _ROOT) -> tuple[str, ...]:
+    """Every top-level ``tests/test_*.py`` that names a changed path
+    (``_module_names``), in the order the paths came. A body, a doc or a
+    memory note is not a script, so its tests cannot be read from its name,
+    and the files that read one are integration-classified: a diff that edited
+    only such a file earned a cheaper tier, whose ``-m contract`` deselected
+    every row of them, and their reds arrived on ``main`` (DEF-5040 for the
+    bodies, DEF-5042 for the rest: tests/test_mail.py reads docs/WORKFLOW.md).
+    Every changed path is looked up as it is, so the asset copy's own readers
+    come with it. A file a test only writes into a tree it builds is not a
+    read (``_written_joins``): that is what narrows ``README.md``, which half
+    the suite puts into a scratch tree. Derived from the test files at each
+    call, never kept. What this cannot read: a name built at run time (an
+    f-string, a glob, a file name held in a variable), which for the bodies
+    is the walk ``BODY_TEST_FILES`` keeps by hand; and a file the code under
+    test reads (a check run on the repository root, ``git``, an ``init``-built
+    tree the engine reads back), which no name in the test spells (DEF-5043).
+    The contract slice's own doc-reader census
+    (tests/test_marker_taxonomy.py::TestDocReadersRunInTheContractTier) is the
+    other mechanism for the same reds, by test function rather than file. A
+    path constant a module imports by name from a ``tests/_*.py`` helper
+    counts as its own."""
     wanted: list[str] = []
     for rel in changed:
         rel = _norm_name(rel)
-        if rel.startswith(BODY_ROOTS) and rel not in wanted:
+        if rel and rel not in wanted:
             wanted.append(rel)
     tests_dir = root / "tests"
     if not wanted or not tests_dir.is_dir():
@@ -595,8 +692,8 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     enumerated, not derived: a body's tests cannot be read from its name, so
     the roster is hand-kept and pinned to that file's walk (DEF-4067: a
     body-only diff ran none of the tests written for the bodies). Every test
-    file that names a changed path under the body roots follows
-    (``body_readers``, derived)."""
+    file that names a changed path, short of writing it into a tree it built,
+    follows (``path_readers``, derived)."""
     out: list[str] = []
     for rel in changed:
         rel = rel.replace("\\", "/")
@@ -609,14 +706,14 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
                 out.append(rel)
         if is_body(rel):
             out.extend(t for t in BODY_TEST_FILES if (root / t).is_file() and t not in out)
-    out.extend(t for t in body_readers(changed, root) if t not in out)
+    out.extend(t for t in path_readers(changed, root) if t not in out)
     return tuple(out)
 
 
 def tier_argvs(which: str, changed=(), root: Path = _ROOT, *, heavy: bool = False,
                leg: str = "both") -> tuple[tuple[str, ...], ...]:
     """The argv list a tier runs for THIS diff: the tier's own commands, then
-    one line for the changed scripts' own test files on the two cheaper tiers.
+    one line for the diff's own test files (``own_tests``) on the two cheaper tiers.
     ``KeyError`` on a tier nobody wired -- never a silent fall-through to the
     cheaper tier. ``heavy`` puts the heavy end-to-end stages back on both lines
     (the clean-checkout cell and the gate's first leg); ``leg`` selects by
@@ -783,6 +880,10 @@ def changed_paths(root: Path) -> tuple[list[str], list[str]]:
             continue
         code, path = entry[:2], entry[3:]
         if "R" in code or "C" in code:
+            if "R" in code and i < len(fields) and fields[i]:
+                # a rename deletes its original: that path's tier and readers
+                # count, as the --base diff's delete-plus-add reads it
+                changed.append(fields[i])
             i += 1
         if code == "??":
             untracked.append(path)
