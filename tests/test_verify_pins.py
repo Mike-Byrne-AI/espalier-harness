@@ -270,9 +270,9 @@ _needs_history = pytest.mark.skipif(
     reason=(
         f"{_HISTORY if _HISTORY != 'missing' else 'a full checkout missing a control'}: "
         "the control commits and their parents are not here, so no real prior artifact "
-        "can be restored. Every full clone of this repository has them; CI's `test` job "
-        "checks out with fetch-depth: 0 and runs these, and the shallow `clean-checkout` "
-        "job skips them by design."
+        "can be restored. Every full clone of this repository has them; CI's `test-serial` "
+        "job (this file is on the serial leg) checks out with fetch-depth: 0 and runs these, "
+        "and the shallow `clean-checkout` job and post-merge Windows leg skip them by design."
     ),
 )
 

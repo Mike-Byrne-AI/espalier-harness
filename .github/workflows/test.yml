@@ -184,9 +184,10 @@ jobs:
     runs-on: ubuntu-latest
     # DEF-1178: above the measured worst case, 7.0 min (18 runs to 2026-10-16),
     # and ten minutes above the largest per-test timeout in the serial files
-    # (900 s), so a slow test is failed by its own mark, by name, before the job
+    # (1800 s, tests/test_verify_pins.py's module mark since DEF-2036 placed it
+    # there), so a slow test is failed by its own mark, by name, before the job
     # is killed with none named (tests/test_ci_job_bounds.py derives the floor).
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:

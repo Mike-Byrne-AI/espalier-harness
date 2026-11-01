@@ -1767,17 +1767,25 @@ class TestTheWallClockRule:
 # pytest command -- `-m pytest`, a bare `pytest` head, or `-c` with a program
 # that calls `pytest.main`, a constant or a `dedent` of one -- spelled in the
 # call, through a name bound in the function or the module, through `+` or a
-# starred name. A launching function in a file on no serial list reds until
-# it is placed: a child that runs this repo's rows for long, or rows that keep
-# a budget (a hook judgment, a timed bound), joins `NESTED_RUN_SERIAL_FILES`
-# (and `SERIAL_CONTRACT_FILES` when its file holds a contract row); one that
-# only collects, runs a tree the test planted, or runs a few in-process rows
-# for seconds is enrolled below with what it runs and its time alone. Not
-# read: a pytest reached through a script (`scripts/verify_pins.py` is one,
-# DEF-2036), `os.system`, a shell string, a wrapper head (`bash -c`, `uv
-# run`), an f-string program, an argv a helper returns or takes as a
-# parameter, one held on a class attribute or imported, and one grown by `+=`
-# or `.extend`. An enrolment covers its function whole: a second launch
+# starred name. One script hop is read too (DEF-2036): a launch whose argv's
+# head, or the word after the interpreter, is a path ending `scripts/<name>.py`
+# (a constant, a `/` chain, an `os.path.join`, a `str()` of one) counts when
+# that script launches a pytest child as this rule reads it, so
+# `tests/test_verify_pins.py`'s run of `scripts/verify_pins.py` is a launch,
+# and so is a run of a script whose pytest leg is off by default (the reading
+# is of the script, not of the flags handed it). A launching function in a
+# file on no serial list reds until it is placed: a child that runs this
+# repo's rows for long, or rows that keep a budget (a hook judgment, a timed
+# bound), joins `NESTED_RUN_SERIAL_FILES` (and `SERIAL_CONTRACT_FILES` when
+# its file holds a contract row); one that only collects, runs a tree the
+# test planted, or runs a few in-process rows for seconds is enrolled below
+# with what it runs and its time alone. Not read: a second hop (a script that
+# reaches pytest through another script, as `scripts/fresh_clone_gate.py`
+# does), a script launched as `-m scripts.<name>` or past interpreter flags,
+# `os.system`, a shell string, a wrapper head (`bash -c`, `uv run`), an
+# f-string program, an argv a helper returns or takes as a parameter, one
+# held on a class attribute, a dict or imported, and one grown by `+=` or
+# `.extend`. An enrolment covers its function whole: a second launch
 # written into it, or a new caller handing an enrolled helper `-n auto`, reads
 # green. A launch in a `tests/_*.py` helper is judged where it is written, so
 # place it by the files that call it, never by enrolling the helper for them.
@@ -1789,7 +1797,8 @@ _NAMED_LAUNCHERS = frozenset({"run_bounded"})
 #: The launches the scan finds at the pin, the serial files' included; the
 #: floor the scan must clear before its verdict is read, as the wall-clock
 #: rule's (a scan that finds a handful is broken, not looking at clean files).
-_NESTED_LAUNCHES_AT_PIN = 14  # 2026-11-01: 11 enrolled below, the cited-pin run, the axis registry's two
+_NESTED_LAUNCHES_AT_PIN = 18  # 2026-11-01: 12 enrolled below, the cited-pin run, the axis registry's two,
+#                               and verify_pins's three through the script hop (DEF-2036)
 _NESTED_LAUNCH_FLOOR = _NESTED_LAUNCHES_AT_PIN // 2
 #: The launches whose child rides the parallel leg, EXACT: ``file::qualname``
 #: -> what the child runs and how long its row took alone. An unenrolled launch
@@ -1800,6 +1809,10 @@ _PARALLEL_NESTED_RUNS: dict[str, str] = {
         "a --collect-only child per node id the bench results cite; 1.2 s",
     "tests/test_box_lock.py::_spawn":
         "a planted one-file suite under the box lock's plugin; up to 6.0 s a row",
+    "tests/test_demo_end_to_end.py::test_demo_beat3_release_check_runs":
+        "scripts/release_check.py through the script hop, its pytest leg off (ESPALIER_RELEASE_CHECK_WITH_TESTS "
+        "is the release job's alone, and the slice that job runs strips it): no pytest child; 11.0 to 11.6 s, "
+        "three runs beside another seat's tier",
     "tests/test_golden_examples.py::test_golden_examples_pass_under_bare_pytest":
         "the golden examples under a bare pytest, a few one-assert files; under 0.5 s",
     "tests/test_marker_parity.py::TestFullTreeFragmentsResolve::test_every_fragment_collects_at_least_one_real_nodeid":
@@ -1866,27 +1879,60 @@ def _word(node: ast.expr, names: dict[str, list[ast.expr]]) -> str | None:
     return None
 
 
-def _is_pytest_argv(node: ast.expr | None, names: dict[str, list[ast.expr]], depth: int = 0) -> bool:
+def _path_word(node: ast.expr, names: dict[str, list[ast.expr]], depth: int = 0) -> str | None:
+    """``node`` as a path string as far as its last parts are constants: a
+    ``/`` chain, an ``os.path.join``, a ``str()`` of either, through a name
+    bound to one (``REPO_ROOT / "scripts" / "x.py"`` reads ``/scripts/x.py``)."""
+    if depth > 8:
+        return None
+    if isinstance(node, ast.Call) and len(node.args) == 1 and getattr(node.func, "id", None) == "str":
+        return _path_word(node.args[0], names, depth + 1)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        right = _path_word(node.right, names, depth + 1)
+        return None if right is None else f"{_path_word(node.left, names, depth + 1) or ''}/{right}"
+    if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "join" and len(node.args) > 1:
+        parts = [_path_word(a, names, depth + 1) for a in node.args]
+        return None if parts[-1] is None else "/".join(p or "" for p in parts)
+    if isinstance(node, ast.Name):
+        for value in names.get(node.id, ()):
+            word = _path_word(value, names, depth + 1)
+            if word is not None:
+                return word
+        return None
+    return _word(node, {})
+
+
+#: A script path's tail, ``scripts/<name>.py``, as ``_path_word`` reads it.
+_SCRIPT_TAIL = re.compile(r"(?:^|/)(scripts/\w+\.py)$")
+
+
+def _is_pytest_argv(node: ast.expr | None, names: dict[str, list[ast.expr]], depth: int = 0,
+                    hops: frozenset[str] = frozenset()) -> bool:
     if node is None or depth > 8:
         return False
     if isinstance(node, ast.Name):
-        return any(_is_pytest_argv(value, names, depth + 1) for value in names.get(node.id, ()))
+        return any(_is_pytest_argv(value, names, depth + 1, hops) for value in names.get(node.id, ()))
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _is_pytest_argv(node.left, names, depth + 1) or _is_pytest_argv(node.right, names, depth + 1)
+        return (_is_pytest_argv(node.left, names, depth + 1, hops)
+                or _is_pytest_argv(node.right, names, depth + 1, hops))
     if not isinstance(node, (ast.List, ast.Tuple)):
         return False
-    if any(isinstance(e, ast.Starred) and _is_pytest_argv(e.value, names, depth + 1) for e in node.elts):
+    if any(isinstance(e, ast.Starred) and _is_pytest_argv(e.value, names, depth + 1, hops) for e in node.elts):
         return True
     words = [_word(e, names) for e in node.elts]
     pairs = list(zip(words, words[1:]))
+    # The script hop: the argv's head, or the word after the interpreter.
+    heads = (_SCRIPT_TAIL.search(_path_word(e, names) or "") for e in node.elts[:2])
     return (words[:1] == ["pytest"] or ("-m", "pytest") in pairs
-            or any(a == "-c" and b is not None and "pytest.main(" in b for a, b in pairs))
+            or any(a == "-c" and b is not None and "pytest.main(" in b for a, b in pairs)
+            or any(m is not None and m.group(1) in hops for m in heads))
 
 
-def nested_pytest_launches(text: str) -> set[str]:
+def nested_pytest_launches(text: str, hops: frozenset[str] = frozenset()) -> set[str]:
     """The functions in ``text`` that launch a pytest child, each by its
     qualified name (``Class::function``; ``<module>`` for a launch at module
-    level)."""
+    level). ``hops`` are the ``scripts/<name>.py`` paths whose own launches
+    read as one, so a launch of one of them reads as one too."""
     tree = ast.parse(text)
     modules, bare = {"subprocess"}, set()
     for node in ast.walk(tree):
@@ -1915,7 +1961,7 @@ def nested_pytest_launches(text: str) -> set[str]:
             if isinstance(child, ast.Call) and launches(child):
                 argv = child.args[0] if child.args else next(
                     (k.value for k in child.keywords if k.arg == "args"), None)
-                if _is_pytest_argv(argv, names):
+                if _is_pytest_argv(argv, names, hops=hops):
                     found.add("::".join(qual) or "<module>")
             visit(child, qual, names)
 
@@ -1928,19 +1974,29 @@ class TestTheNestedRunRule:
     lands, not found by a red leg; with the detector's must-trip and
     must-not-trip rows (`docs/STANDING_PRINCIPLES.md` §7)."""
 
-    # Every launch spells the constant `pytest` or `pytest.main(` in a string.
+    # Every launch spells the constant `pytest` or `pytest.main(` in a string,
+    # or, through the script hop, names `scripts` (``_live`` reads both).
     _PREFILTER = re.compile(r"""["']pytest["']|pytest\.main\(""")
+
+    @classmethod
+    def _hops(cls) -> frozenset[str]:
+        """The ``scripts/<name>.py`` files that launch a pytest child as the
+        rule reads them, read without a hop set of their own: one hop."""
+        return frozenset(
+            f"scripts/{path.name}" for path in checkout_glob(REPO_ROOT / "scripts", "*.py")
+            if cls._PREFILTER.search(text := path.read_text(encoding="utf-8")) and nested_pytest_launches(text))
 
     @classmethod
     def _live(cls) -> dict[str, set[str]]:
         """``{file: its launching functions}`` over every module under tests/,
         helpers included (a launch hoisted into a ``tests/_*.py`` helper runs
-        wherever its callers do)."""
+        wherever its callers do), a launch of a script in ``_hops`` counted."""
+        hops = cls._hops()
         out: dict[str, set[str]] = {}
         for path in checkout_glob(REPO_ROOT / "tests", "*.py"):
             text = path.read_text(encoding="utf-8")
-            if cls._PREFILTER.search(text):
-                found = nested_pytest_launches(text)
+            if cls._PREFILTER.search(text) or "scripts" in text:
+                found = nested_pytest_launches(text, hops)
                 if found:
                     out[f"tests/{path.name}"] = found
         return out
@@ -1953,6 +2009,8 @@ class TestTheNestedRunRule:
         assert "test_every_cited_pin_runs_and_passes_on_this_host" in live.get(
             "tests/test_declared_limits_contract.py", set()), live
         assert "outcomes" in live.get("tests/test_axis_registry.py", set()), live
+        assert "scripts/verify_pins.py" in self._hops(), self._hops()
+        assert "_run" in live.get("tests/test_verify_pins.py", set()), live   # through the script hop (DEF-2036)
         count = sum(map(len, live.values()))
         assert _NESTED_LAUNCH_FLOOR <= count <= 2 * _NESTED_LAUNCHES_AT_PIN, (
             f"{count} launches against a pin of {_NESTED_LAUNCHES_AT_PIN}: under half is a broken "
@@ -2032,6 +2090,42 @@ class TestTheNestedRunRule:
     ])
     def test_the_detector_stays_quiet_on(self, label, source):
         assert nested_pytest_launches(source) == set(), label
+
+    _HOP = frozenset({"scripts/hop.py"})
+    _ROOTED = "import os, subprocess, sys\nfrom pathlib import Path\nROOT = Path(__file__).parent\n"
+
+    @pytest.mark.parametrize("label, source, expect", [
+        ("a script held as a path chain, launched through str()",
+         _ROOTED + "_SCRIPT = ROOT / 'scripts' / 'hop.py'\ndef _run():\n"
+         "    subprocess.run([sys.executable, str(_SCRIPT), '--json'])\n", {"_run"}),
+        ("a script spelled as a constant at the argv's head",
+         _ROOTED + "def test_x():\n    subprocess.run(['scripts/hop.py', '-q'])\n", {"test_x"}),
+        ("a script joined by os.path.join",
+         _ROOTED + "class TestA:\n    def test_y(self):\n"
+         "        subprocess.run([sys.executable, os.path.join(ROOT, 'scripts', 'hop.py')])\n", {"TestA::test_y"}),
+        ("a scripts directory bound to a name, joined in the function",
+         _ROOTED + "SCRIPTS = ROOT / 'scripts'\ndef test_z():\n    script = SCRIPTS / 'hop.py'\n"
+         "    subprocess.run([sys.executable, str(script)])\n", {"test_z"}),
+    ])
+    def test_the_detector_reads_one_script_hop(self, label, source, expect):
+        """DEF-2036: a launch of a script whose own launches the rule reads is
+        a launch of a pytest child."""
+        assert nested_pytest_launches(source, self._HOP) == expect, label
+
+    @pytest.mark.parametrize("label, source, hops", [
+        ("a script the hop set does not hold",
+         _ROOTED + "def test_x():\n    subprocess.run([sys.executable, str(ROOT / 'scripts' / 'other.py')])\n", _HOP),
+        ("a hop script's path read, never launched",
+         _ROOTED + "_SCRIPT = ROOT / 'scripts' / 'hop.py'\ndef test_x():\n    text = _SCRIPT.read_text()\n"
+         "    subprocess.run(['git', 'log'])\n", _HOP),
+        ("a hop script named as data past the program and its verb",
+         _ROOTED + "def test_x():\n    subprocess.run(['git', 'add', 'scripts/hop.py'])\n", _HOP),
+        ("a hop script launched with no hop set, as the scripts are scanned",
+         _ROOTED + "def test_x():\n    subprocess.run([sys.executable, str(ROOT / 'scripts' / 'hop.py')])\n",
+         frozenset()),
+    ])
+    def test_the_hop_stays_quiet_on(self, label, source, hops):
+        assert nested_pytest_launches(source, hops) == set(), label
 
 
 class TestRun:
