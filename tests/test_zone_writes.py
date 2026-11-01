@@ -67,6 +67,14 @@ def _bump(path: Path, data: bytes) -> None:
     os.utime(path, ns=(later, later))
 
 
+def _commit(tree: Path) -> None:
+    """The tree as a git repository with everything in it committed."""
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "tree"]):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "-c", "core.autocrlf=false", *args],
+                       cwd=str(tree), check=True, capture_output=True, timeout=30)
+
+
 def _record(tree: Path, writer: str) -> dict:
     path = tree / ".espalier-state" / "zone_writes" / ze.record_name(writer)
     return json.loads(path.read_text(encoding="utf-8"))
@@ -213,6 +221,29 @@ class TestTheTwinsAgree:
         (watched / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
         assert _HOOK in ze._stats(watched, before) and _HOOK not in ze._stats(watched)
         assert _HOOK in zw.snapshot(watched, baseline) and _HOOK not in zw.snapshot(watched)
+
+    def test_a_declaration_older_than_the_run_keeps_tracked_files_on_both_sides(self, tree: Path) -> None:
+        """DEF-4073 on the engine's side: a bare `*` already in tools/cc/hooks/
+        over committed hooks is walked by the recorder's before-stats as by the
+        hook's fresh baseline, so a writer's rewrite there is recorded, never
+        read by the hook as a slip; an untracked declared directory prunes on
+        both sides, from one tracked set. Mutation: take the before-stats with
+        no tracked set."""
+        _commit(tree)
+        (tree / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+        types = tree / "tools" / "cc" / "mods" / "m" / ".claude-plugin" / "types"
+        types.mkdir(parents=True)
+        (types / ".gitignore").write_bytes(b"*\n")
+        (types / "index.d.ts").write_bytes(b"export {};\n")
+        for side in (ze._stats(tree), zw.snapshot(tree)):
+            assert _HOOK in side and not [r for r in side if "/types/" in r], sorted(side)
+        for tops in (["tools/cc/"], [":!tools/"]):  # the second a name, never git's exclusion
+            assert ze._tracked_dirs(tree, tops) == zw.tracked_dirs(tree, tops), tops
+        assert ze._tracked_dirs(tree, [":!tools/"]) == frozenset()
+        assert zw.take_baseline(tree, "s-1")
+        with ze.recorded(tree, "espalier upgrade"):
+            _bump(tree / _HOOK, b"print('upgraded under an older declaration')\n")
+        assert _HOOK in _record(tree, "espalier upgrade")["files"]
 
     def test_a_large_file_has_the_same_identity_on_both_sides(self, tmp_path: Path) -> None:
         big = tmp_path / "weights.bin"

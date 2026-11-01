@@ -22,9 +22,11 @@ Dependency, cache and tool directories are pruned during the walk, so is a
 directory that declares itself generated (its own ``.gitignore`` one bare
 ``*``, the form pytest, ruff, mypy, uv, venv since 3.13 and Claude Code's
 plugin loader write into what they generate; read below a watched top, never
-at it, and never over a file the session's baseline already holds, so a
+at it, never over a file the session's baseline already holds, so a
 declaration that lands mid-session retires nothing and is reported as the
-added file it is), and editor and OS clutter is skipped by name.
+added file it is, and at a fresh baseline never over a file git tracks, so
+one already there when the session starts retires nothing git holds), and
+editor and OS clutter is skipped by name.
 
 Shared helper: it returns data and speaks to no one. post_write_check renders
 what it finds (a shared helper never collects advisories; tests/test_failopen_voice.py).
@@ -171,11 +173,13 @@ def is_clutter(name: str) -> bool:
 #: Code writes one into the type declarations beside a mod it loads
 #: (``.claude-plugin/types/``, rewritten at a launch). Such a directory is
 #: pruned wherever it sits below a watched top, unless the session's baseline
-#: already holds a file under it: a declaration retires nothing the session
-#: watches, so one that lands mid-session (a venv made inside a source
-#: directory) is reported as the added file it is and the directory stays
-#: watched. The top itself is never read this way, since a zone is watched
-#: whatever sits at its root. Twin of ``espalier.zone_writes.SELF_IGNORE_FILE``.
+#: already holds a file under it, or at a fresh baseline git tracks one: a
+#: declaration retires nothing the session watches, so one that lands
+#: mid-session (a venv made inside a source directory) is reported as the
+#: added file it is and the directory stays watched, and one that was there
+#: before the session over committed files is too (DEF-4073). The top itself
+#: is never read this way, since a zone is watched whatever sits at its root.
+#: Twin of ``espalier.zone_writes.SELF_IGNORE_FILE``.
 SELF_IGNORE_FILE = ".gitignore"
 #: Longer than this, a ``.gitignore`` is a rule set, never the one-line declaration.
 SELF_IGNORE_READ_LIMIT = 4096
@@ -204,14 +208,16 @@ def is_self_ignoring(directory: Path) -> bool:
     return [line for line in lines if line and not line.startswith("#")] == ["*"]
 
 
-def self_ignoring_ancestor(root: Path, rel: str, prefix: str) -> str | None:
+def self_ignoring_ancestor(root: Path, rel: str, prefix: str,
+                           prior: dict[str, Entry] | None = None) -> str | None:
     """The first directory below the watched top ``prefix`` on the way to
-    ``rel`` (its parent included) that ignores itself -- the one the walk
-    prunes -- else None."""
+    ``rel`` (its parent included) that ignores itself and that ``prior``, the
+    session's baseline, holds no file under -- the one the walk prunes --
+    else None."""
     current = prefix.rstrip("/")
     for part in rel[len(prefix):].split("/")[:-1]:
         current = f"{current}/{part}" if current else part
-        if is_self_ignoring(root / current):
+        if is_self_ignoring(root / current) and not _holds_under(prior or {}, current):
             return current
     return None
 
@@ -222,20 +228,54 @@ def _holds_under(files: dict[str, Entry], base: str) -> bool:
     return any(rel.startswith(head) for rel in files)
 
 
+#: How long a fresh walk's one ``git ls-files`` may take; past it the
+#: declared directories prune as they would with no git.
+TRACKED_READ_TIMEOUT_S = 2.0
+
+
+def tracked_dirs(root: Path, prefixes: list[str]) -> frozenset[str]:
+    """Every directory that holds a path git tracks under ``prefixes`` (for
+    ``a/b/c.py``, ``a/b`` and ``a``), from one ``git ls-files -z`` of the
+    root's own index, its pathspecs read literally. Empty where the root
+    keeps no git of its own (a parent repository's index is never asked) or
+    git cannot answer: the declared directories then prune as before. Twin
+    of ``espalier.zone_writes._tracked_dirs``."""
+    import subprocess
+
+    if _hook_utils._git_dir_of(root) is None:
+        return frozenset()
+    try:
+        result = _hook_utils.spawn_checked(
+            ["git", "--literal-pathspecs", "ls-files", "-z", "--", *prefixes], root=root,
+            stdin=subprocess.DEVNULL, capture_output=True, timeout=TRACKED_READ_TIMEOUT_S, cwd=str(root),
+        )
+    except (subprocess.SubprocessError, OSError):  # fail-open: ok deliberate -- git could not answer in time: the declared directories prune as they did before git was asked, and the integrity manifest still names a hook's drift
+        return frozenset()
+    if isinstance(result, _hook_utils.SpawnFailure) or result.returncode != 0:
+        return frozenset()
+    dirs: set[str] = set()
+    for raw in result.stdout.split(b"\0"):
+        rel = os.fsdecode(raw)
+        while "/" in rel:
+            rel = rel.rsplit("/", 1)[0]
+            if rel in dirs:
+                break  # its ancestors are in already
+            dirs.add(rel)
+    return frozenset(dirs)
+
+
 def is_watched(root: Path, rel: str, prior: dict[str, Entry] | None = None) -> bool:
     """Whether the repo-relative posix path ``rel`` is in the watched set.
-    ``prior`` is the session's baseline where the caller holds one: a file it
-    names stays watched whatever declaration has since appeared above it, as
-    the walk keeps it."""
+    ``prior`` is the session's baseline where the caller holds one: a
+    declared directory it holds a file under stays watched, the file and its
+    new neighbours alike, as the walk keeps it."""
     if rel in watched_files():
         return True
     parts = rel.split("/")
     pruned = pruned_dir_names(root)
     if any(part in pruned for part in parts[:-1]) or is_clutter(parts[-1]):
         return False
-    if prior and rel in prior:
-        return any(rel.startswith(prefix) for prefix in watched_prefixes(root))
-    return any(rel.startswith(prefix) and self_ignoring_ancestor(root, rel, prefix) is None
+    return any(rel.startswith(prefix) and self_ignoring_ancestor(root, rel, prefix, prior) is None
                for prefix in watched_prefixes(root))
 
 
@@ -268,12 +308,18 @@ def snapshot(root: Path, prior: dict[str, Entry] | None = None,
     digest without a read, so a call that changed nothing costs one stat pass;
     a file whose prior modification time fell within RACY_WINDOW_NS of
     ``prior_taken_ns`` is hashed again regardless. A file that vanishes
-    between the listing and the stat is absent, as it is on disk. Raises
+    between the listing and the stat is absent, as it is on disk. With no
+    ``prior`` (a fresh baseline) a declared directory holding a path git
+    tracks is walked, never pruned: git's index is read once, at the first
+    declaration the walk meets, and its time is not the walk's. Raises
     WatchSetTooLarge past WALK_FILE_BUDGET files or WALK_TIME_BUDGET_S."""
+    fresh = prior is None
     prior = prior or {}
     racy_from = None if prior_taken_ns is None else prior_taken_ns - RACY_WINDOW_NS
     deadline = time.monotonic() + WALK_TIME_BUDGET_S
     pruned = pruned_dir_names(root)
+    prefixes = watched_prefixes(root)
+    tracked: frozenset[str] | None = None
     out: dict[str, Entry] = {}
 
     def take(rel: str, full: str) -> None:
@@ -292,7 +338,7 @@ def snapshot(root: Path, prior: dict[str, Entry] | None = None,
             return
         out[rel] = [st.st_size, st.st_mtime_ns, content_digest(Path(full), st)]
 
-    for prefix in watched_prefixes(root):
+    for prefix in prefixes:
         top = root / prefix
         # os.walk reports a missing or unreadable directory to no one (its
         # onerror is None), which is the answer here: nothing to watch.
@@ -300,13 +346,19 @@ def snapshot(root: Path, prior: dict[str, Entry] | None = None,
         for dirpath, dirnames, filenames in os.walk(top):
             base = Path(dirpath).relative_to(root).as_posix()
             if not at_top and is_self_ignoring(Path(dirpath)) and not _holds_under(prior, base):
-                # Generated by its own declaration, below the top, with
-                # nothing of it in the baseline: nothing in it is meant to be
-                # git's, so nothing in it is a slip. Over files the baseline
-                # holds, the declaration is the added file it is (the module
-                # docstring), and the directory stays walked.
-                dirnames[:] = []
-                continue
+                if fresh and tracked is None:
+                    began = time.monotonic()
+                    tracked = tracked_dirs(root, prefixes)
+                    deadline += time.monotonic() - began
+                if tracked is None or base not in tracked:
+                    # Generated by its own declaration, below the top, with
+                    # nothing of it in the baseline (nor, at a fresh walk, in
+                    # git's index): nothing in it is meant to be git's, so
+                    # nothing in it is a slip. Over files the baseline holds
+                    # or git tracks, the declaration is the added file it is
+                    # (the module docstring), and the directory stays walked.
+                    dirnames[:] = []
+                    continue
             at_top = False
             dirnames[:] = sorted(d for d in dirnames if d not in pruned)
             for name in sorted(filenames):

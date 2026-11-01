@@ -1869,9 +1869,12 @@ new state as the next one to compare with.
   since Python 3.13 and Claude Code's plugin loader write into what they
   generate; read below a watched directory's top only, never at it; a
   `.gitignore` holding anything else, and a root `.gitignore` entry naming
-  the directory, skip nothing; and a declaration that lands during a session
+  the directory, skip nothing; a declaration that lands during a session
   retires nothing the session's snapshot already holds, so it is reported as
-  the added file it is), and editor and OS clutter
+  the added file it is; and one already there when the session starts
+  retires nothing git tracks, since the session's first snapshot asks git's
+  index once and walks a declared directory holding a tracked file), and
+  editor and OS clutter
   (swap and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its
   size and modification time and never read by the hook: when git is asked
   about it (below), git hashes it through the checkout's own filters, up to
