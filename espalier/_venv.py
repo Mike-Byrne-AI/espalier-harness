@@ -241,6 +241,7 @@ GIT_BASH_NAMES = ("bash.exe", "sh.exe", "bash", "sh")
 #: virtual-environment folders. The page quotes three (``TestGitBashLookup``
 #: reads them against the pin); the set is the installed 2.1.316 binary's,
 #: read 2026-11-01 (DEF-3021).
+# stack-table: ok purpose-scoped -- Claude Code's own skip list, copied from its binary; deriving it from the stack table would make the copy drift from Claude Code's rule
 GIT_SKIPPED_FOLDERS = frozenset({
     "node_modules", ".venv", "venv", "env", ".env", "virtualenv",
     ".tox", ".nox", ".direnv", "__pypackages__",
