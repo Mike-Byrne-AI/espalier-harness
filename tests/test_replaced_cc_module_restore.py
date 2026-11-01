@@ -12,6 +12,7 @@ first left would split across xdist workers.
 # pytest-marker: default-unit  (drives one conftest fixture in-process; no subprocess, no tree write)
 from __future__ import annotations
 
+import os
 import sys
 import types
 from pathlib import Path
@@ -63,10 +64,67 @@ class TestAReplacedToolsCcModuleIsPutBack:
         after = _drive(lambda: sys.modules.pop("_maintenance_mode"))
         assert after["_maintenance_mode"] is live
 
+    def test_a_module_first_imported_beside_a_replacement_is_dropped(self) -> None:
+        """A tools/cc module a test first imported while ``_hook_utils`` was
+        swapped out may have bound the swap; it goes, so the next import binds
+        the original. Mutation: leave every added entry."""
+        name = "_restore_fixture_probe_beside"
+
+        def swap_and_add() -> None:
+            sys.modules["_hook_utils"] = types.ModuleType("_hook_utils")
+            mod = types.ModuleType(name)
+            mod.__file__ = str(HOOKS_DIR / f"{name}.py")
+            sys.modules[name] = mod
+
+        live = sys.modules["_hook_utils"]
+        try:
+            after = _drive(swap_and_add)
+            assert after["_hook_utils"] is live
+            assert name not in sys.modules
+        finally:
+            sys.modules.pop(name, None)
+
+    def test_the_once_flag_guard_reads_before_the_put_back(self) -> None:
+        """``_no_live_once_flags`` attributes a leaked flag by the once-set of
+        the ``_hook_utils`` the test left, so it tears down before the restore
+        does: it requests it. Mutation: drop the request (pytest's name order
+        then tears the restore down first)."""
+        import inspect
+
+        guard = conftest._no_live_once_flags.__wrapped__
+        assert "_restore_replaced_tools_cc_modules" in inspect.signature(guard).parameters
+
+    def test_the_restore_wraps_every_test(self, request) -> None:
+        """The fixture pytest applies, not only the body the drives above
+        call: it is in this test's closure without being asked for. Mutation:
+        drop ``autouse``, or rename it."""
+        assert "_restore_replaced_tools_cc_modules" in request.fixturenames
+
+    def test_a_tools_cc_module_under_an_alias_is_left(self) -> None:
+        """Collection holds tools/cc files under aliases too
+        (``_zone_watch_a1``); a test that swaps one of those is not the
+        bare-name case. Mutation: drop the name-equals-file test."""
+        alias = "_restore_fixture_probe_alias"
+        first = types.ModuleType(alias)
+        first.__file__ = str(HOOKS_DIR / "_hook_utils.py")
+        second = types.ModuleType(alias)
+        sys.modules[alias] = first
+        try:
+            _drive(lambda: sys.modules.__setitem__(alias, second))
+            assert sys.modules[alias] is second
+        finally:
+            sys.modules.pop(alias, None)
+
+    def test_a_path_in_another_case_is_the_same_module_on_windows(self) -> None:
+        """Mutation: compare the paths without folding their case."""
+        mod = types.ModuleType("_hook_utils")
+        mod.__file__ = str(HOOKS_DIR / "_hook_utils.py").upper()
+        assert conftest._is_tools_cc_bare("_hook_utils", mod) is (os.name == "nt")
+
     def test_a_module_the_test_added_is_left(self) -> None:
-        """An entry with no copy before the test is the test's to keep: a
-        lazy first import under a bare name stays imported. Mutation: put the
-        whole copy back."""
+        """An entry with no copy before the test is the test's to keep when
+        nothing was put back: a lazy first import under a bare name stays
+        imported. Mutation: put the whole copy back."""
         name = "_restore_fixture_probe_added"
 
         def add() -> None:

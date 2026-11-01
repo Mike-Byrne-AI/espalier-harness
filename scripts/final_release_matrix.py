@@ -1100,7 +1100,9 @@ def stage_surface_matrix() -> StageResult:
 
     rc, out = _run(
         [
-            sys.executable, "-m", "pytest", "-q",
+            # --color=no for pytest_failure_tail, which reads a FAILED line by
+            # its first word (release_check's tests_pass says why).
+            sys.executable, "-m", "pytest", "-q", "--color=no",
             "tests/test_surface_support_matrix.py",
             "tests/test_agent_frontmatter_contract.py",
         ],

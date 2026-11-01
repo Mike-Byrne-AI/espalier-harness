@@ -195,13 +195,17 @@ def check_cli_entrypoint(repo_root: Path = REPO_ROOT) -> CheckResult:
 
 def pytest_failure_tail(output: str) -> list[str]:
     """The lines of a red pytest child's output a one-line detail keeps: each
-    ``FAILED`` or ``ERROR`` line's node id, then the count line. On a CI runner
-    pytest's short summary keeps a failure's whole message, so a diff lands
-    below the ``FAILED`` line and the last three lines named no test in the
-    gate's reds of #405 and #409 (DEF-2033). Output with neither line keeps its
-    last three."""
+    ``FAILED`` or ``ERROR`` line's node id in the last short test summary, then
+    the count line. On a CI runner pytest's short summary keeps a failure's
+    whole message, so a diff lands below the ``FAILED`` line and the last three
+    lines named no test in the gate's reds of #405 and #409 (DEF-2033). Only
+    the summary is read: a captured log's ``ERROR`` record, or a nested child's
+    ``FAILED`` line in a test's captured output, sits above it. Output naming
+    no test keeps its last three lines."""
     lines = output.strip().splitlines()
-    named = [ln.split(" - ", 1)[0] for ln in lines if ln.startswith(("FAILED ", "ERROR "))]
+    banners = [i for i, ln in enumerate(lines) if "short test summary info" in ln]
+    summary = lines[banners[-1] + 1:] if banners else []
+    named = [ln.split(" - ", 1)[0] for ln in summary if ln.startswith(("FAILED ", "ERROR "))]
     return named + lines[-1:] if named else lines[-3:]
 
 
@@ -228,7 +232,10 @@ def check_tests_pass(repo_root: Path = REPO_ROOT) -> CheckResult:
     leg_t0 = _now()
     try:
         result = run_bounded(
-            [sys.executable, "-m", "pytest", "-m", "not slow", "-q"],
+            # --color=no: a FAILED line under a forced colour (FORCE_COLOR from
+            # the launching shell) opens with an escape, and pytest_failure_tail
+            # reads it by its first word.
+            [sys.executable, "-m", "pytest", "-m", "not slow", "-q", "--color=no"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=NOT_SLOW_LEG_BOUND_S, cwd=str(repo_root),
             env=child_env,

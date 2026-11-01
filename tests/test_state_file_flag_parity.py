@@ -413,7 +413,11 @@ def test_session_marker_shape_synthetic(tmp_path: Path) -> None:
 def test_the_loader_leaves_the_bare_names_alone() -> None:
     """The loader's copy is its own: ``sys.modules`` keeps the ``_hook_utils``
     and ``subagent_stop`` other files bound at collection, so this file can no
-    longer orphan them (DEF-2032). Mutation: register under the bare name."""
+    longer orphan them (DEF-2032). Mutation: register under the bare name.
+    ``_hook_utils`` is imported first, so a run of this test alone does not
+    read ``subagent_stop``'s own first import of it as the loader's."""
+    _load_hook_module("_hook_utils")  # puts the hooks dir on sys.path
+    importlib.import_module("_hook_utils")
     held = {name: sys.modules.get(name) for name in ("_hook_utils", "subagent_stop")}
     for name in held:
         _load_hook_module(name)

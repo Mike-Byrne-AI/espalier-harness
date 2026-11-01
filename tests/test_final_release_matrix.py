@@ -764,7 +764,8 @@ def test_stage_six_names_the_failing_test_above_its_diff(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "OUTPUT_ROOT", tmp_path / "out")
     (tmp_path / "out").mkdir()
     node = "tests/test_surface_support_matrix.py::TestRows::test_every_row_is_read"
-    out = f"FAILED {node} - AssertionError: assert [] == [\n  - [\n  -     'a',\n  - ]\n1 failed, 9 passed in 1.0s\n"
+    out = ("=== short test summary info ===\n"
+           f"FAILED {node} - AssertionError: assert [] == [\n  - [\n  -     'a',\n  - ]\n1 failed, 9 passed in 1.0s\n")
     monkeypatch.setattr(mod, "_run", lambda cmd, **kw: (1, out))
     result = mod.stage_surface_matrix()
     assert result.status == "FAIL", result

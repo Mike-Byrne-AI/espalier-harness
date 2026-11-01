@@ -901,15 +901,30 @@ class TestARedLegNamesItsTest:
         monkeypatch.setattr(release_check.subprocess, "run", lambda cmd, **kwargs: _Red())
         result = release_check.check_tests_pass(REPO_ROOT)
         assert result.status == "FAIL", result
-        assert result.detail.startswith(f"rc=1; FAILED {self._NODE} / 1 failed"), result
+        assert result.detail == f"rc=1; FAILED {self._NODE} / {self._COUNT}"[:200], result
 
     def test_each_failed_and_error_line_is_kept_by_its_node_id_then_the_count(self):
         """The message after `` - `` is dropped, so a node id fits the
         200-character detail. Mutation: keep the whole line, or only FAILED."""
-        out = ("FAILED tests/a.py::t - AssertionError: x\n  - y\n"
+        out = ("=== short test summary info ===\n"
+               "FAILED tests/a.py::t - AssertionError: x\n  - y\n"
                "ERROR tests/b.py::u - RuntimeError: z\n2 failed, 1 error in 1.0s\n")
         assert release_check.pytest_failure_tail(out) == [
             "FAILED tests/a.py::t", "ERROR tests/b.py::u", "2 failed, 1 error in 1.0s"]
+
+    def test_lines_above_the_summary_are_not_read_as_its_tests(self):
+        """A captured log's ERROR record and a nested child's FAILED line in a
+        test's captured output sit above the short summary. Mutation: read
+        every line of the output."""
+        out = ("----- Captured log call -----\n"
+               "ERROR    hookrun:test_shapes.py:4 the child said no\n"
+               "----- Captured stdout call -----\n"
+               "FAILED tests/test_inner.py::test_inner_one - AssertionError\n"
+               "=== short test summary info ===\n"
+               "FAILED tests/test_outer.py::test_outer - AssertionError: x\n"
+               "1 failed, 4 passed in 2.0s\n")
+        assert release_check.pytest_failure_tail(out) == [
+            "FAILED tests/test_outer.py::test_outer", "1 failed, 4 passed in 2.0s"]
 
     def test_output_naming_no_test_keeps_its_last_three_lines(self):
         """A collection crash or an internal error prints no FAILED line; its
