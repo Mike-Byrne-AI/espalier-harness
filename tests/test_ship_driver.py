@@ -385,6 +385,7 @@ def _preflight_answers(root, *, dirty="", untracked="", commits="abc1234 feat: a
         ("gh", "pr", "list", "--state"): (0, merged, ""),   # no author filter: every seat pushes as one account
         ("gh", "run", "list", "--workflow", "post-merge.yml"): (0, base_runs, ""),
         _ROW_FILES: _row_log(),   # no row added by the lane's own commits
+        _LANE_DIFF: (0, "M\ttools/cc/ship.py\n", ""),   # the shape read: a code lane, nothing deleted
     })
     return answers
 
@@ -908,6 +909,7 @@ class TestHandoffVerb:
             ("git", "rev-list", "--count"): (0, "0\n", ""),
             ("git", "rev-parse", "HEAD"): (0, f"{HEAD}\n", ""),
             ("git", "push"): (0, "", ""),
+            _LANE_DIFF: (0, "M\ttools/cc/ship.py\n", ""),   # the shape read: a code lane, nothing deleted
         })
         return answers
 
@@ -4206,3 +4208,238 @@ class TestTheCheckoutWiringNote:
         assert ship.catch_up() == 0
         assert capsys.readouterr().out.count(_NOTE_TELL) == 1
         assert spawns.count(("git", "pull")) == 1
+
+
+# ── the lane's shape: a deletion it never made is refused before the push ────
+
+#: The deletions' commits, read only where the lane's diff holds a ``D``: each
+#: commit's subject beside the paths it deleted.
+_DELETIONS_LOG = ("git", "log", "--format=%x1e%s")
+#: A struck row's file at the lane's head, read for each deleted probe.
+_ROW_AT_HEAD = ("git", "show")
+_PRUNE = "chore(records): prune the Session Log to its cap of 30"
+_OLD_ROW = "memory/session-log.d/2026-10-01-010101-air.md"
+_PROBE = "task-packs/probes.d/DEF-4064.json"
+_STRUCK = "<!-- class: C0 -->\n| ~~`DEF-4064`~~ | tools/cc/ship.py | closed |\n"
+
+
+def _deletions(*commits: tuple[str, list[str]]) -> tuple[int, str, str]:
+    """The deletions read's answer, as git prints it: the subject, a blank
+    line, the paths, per commit."""
+    return 0, "".join(f"\x1e{subject}\n\n" + "".join(f"{p}\n" for p in paths) for subject, paths in commits), ""
+
+
+def _status(*entries: tuple[str, str]) -> tuple[int, str, str]:
+    return 0, "".join(f"{s}\t{p}\n" for s, p in entries), ""
+
+
+class TestALaneHeadCarryingDeletionsItNeverMadeIsRefused:
+    """DEF-4064. On 2026-10-31 #380's branch was re-parented onto main's tip
+    carrying its chain's old trees: 17 deletions against its merge base (four
+    ledger rows, six Session Log rows, a changelog fragment) and three merges'
+    code reverted, and the driver pushed and opened it like any other lane; a
+    green run would have merged the deletions. ``preflight`` and ``open`` (and
+    the handoff's push onto an open pull request) now read the diff's shape:
+    every deletion is named, and the push is refused on one the driver did not
+    make itself unless ``--allow-deletions <why>`` says why. The driver makes
+    two: the Session Log prune (its commit subject) and a struck row's probe
+    (the strike drops it). Measured on the 200 merges before the fix: 128
+    carried a deletion, 115 a deletion the prune did not make (nearly all a
+    struck row's probe), and none since #260 one that both let-throughs miss."""
+
+    def _lane(self, tmp_path, *entries, deletions=(), struck: str | None = _STRUCK) -> dict:
+        _write_guard(tmp_path)
+        answers = _open_answers(tmp_path)
+        answers[_LANE_DIFF] = _status(*entries)
+        answers[_DELETIONS_LOG] = _deletions(*deletions)
+        answers[_ROW_AT_HEAD] = (0, struck, "") if struck is not None else (128, "", "fatal: path not in HEAD")
+        return answers
+
+    def test_open_refuses_a_deletion_the_driver_did_not_make_and_pushes_nothing(
+            self, ship, tmp_path, forget_guard):
+        """The #380 shape: a ledger row and a fragment another lane filed, gone
+        from the head. Dies to: no shape read (the push goes ahead)."""
+        gone = ["task-packs/ledger.d/DEF-4058.md", "changelog.d/2026-10-31-the-board-reads-the-ruling.md"]
+        answers = self._lane(tmp_path, ("M", "tools/cc/ship.py"), *(("D", p) for p in gone),
+                             deletions=[("feat: the lane", gone)])
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        text = str(stop.value)
+        assert not isinstance(stop.value, ship.Held)   # the window's to fix: a handoff arms nothing on it
+        assert all(p in text for p in gone) and "--allow-deletions" in text and text.isascii()
+        assert spawns.count(("git", "push")) == 0 and spawns.count(("gh", "pr", "create")) == 0
+
+    def test_the_drivers_own_prune_and_a_struck_rows_probe_pass(self, ship, tmp_path, forget_guard, capsys):
+        """Dies to: a check that refuses every D (it would refuse the driver's
+        own fold, and 115 of the last 200 merges, nearly all for the strike's
+        probe)."""
+        answers = self._lane(tmp_path, ("M", "tools/cc/ship.py"), ("M", "task-packs/ledger.d/DEF-4064.md"),
+                             ("D", _OLD_ROW), ("D", _PROBE),
+                             deletions=[(_PRUNE, [_OLD_ROW]), ("fix(ship): the lane", [_PROBE])])
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert spawns.count(("git", "push")) == 1
+        [show] = spawns.matching(_ROW_AT_HEAD)
+        assert show[-1] == "HEAD:task-packs/ledger.d/DEF-4064.md", show
+        out = capsys.readouterr().out
+        assert "2 M, 2 D" in out and "2 the driver's own" in out
+
+    def test_a_session_log_row_deleted_under_another_subject_is_refused(self, ship, tmp_path, forget_guard):
+        """#380 deleted six Session Log rows in the re-parented commit, not in a
+        prune: dies to a let-through keyed on the directory alone."""
+        answers = self._lane(tmp_path, ("D", _OLD_ROW), deletions=[("fix(hooks): the lane", [_OLD_ROW])])
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert _OLD_ROW in str(stop.value)
+
+    def test_the_prune_subject_lets_through_the_session_log_alone(self, ship, tmp_path, forget_guard):
+        """Dies to: a let-through keyed on the subject alone."""
+        other = "docs/HOOKS.md"
+        answers = self._lane(tmp_path, ("D", other), deletions=[(_PRUNE, [other])])
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert other in str(stop.value)
+
+    def test_a_probe_whose_row_is_open_or_gone_at_the_head_is_refused(self, ship, tmp_path, forget_guard):
+        """Dies to: every deleted probe let through, struck or not."""
+        open_row = "<!-- class: C0 -->\n| `DEF-4064` | tools/cc/ship.py | open |\n"
+        answers = self._lane(tmp_path, ("D", _PROBE), deletions=[("fix: the lane", [_PROBE])], struck=open_row)
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert _PROBE in str(stop.value)
+        answers = self._lane(tmp_path, ("D", _PROBE), deletions=[("fix: the lane", [_PROBE])], struck=None)
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused):
+            ship.open_pr()
+
+    def test_allow_deletions_names_why_and_rides_the_body(self, ship, tmp_path, forget_guard):
+        """A lane that deletes on purpose (#215 retired LEDGER_PROBES.json) says
+        why, and the why is on the record. A blank reason is no reason."""
+        gone = "task-packs/LEDGER_PROBES.json"
+        answers = self._lane(tmp_path, ("D", gone), deletions=[("refactor: probes as files", [gone])])
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused):
+            ship.open_pr(allow_deletions="  ")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr(allow_deletions="the roster moved to probes.d") == 0
+        assert spawns.count(("git", "push")) == 1
+        [body] = spawns.body_texts
+        assert "Deletions allowed: the roster moved to probes.d" in body and gone in body
+
+    def test_a_revert_lane_goes_through_with_its_deletions_named(self, ship, tmp_path, forget_guard, capsys):
+        """Both reviews: a revert removes what the reverted merge added (the
+        last five merges' reverts would each delete 2 to 21 files), and it is
+        the path a red base waits on; the red-base refusal lets revert/ lanes
+        through, and so does this one, naming the deletions in the body.
+        Dies to: a revert/ lane refused like any other."""
+        gone = ["task-packs/ledger.d/DEF-4058.md", "changelog.d/2026-10-31-x.md"]
+        answers = self._lane(tmp_path, *(("D", p) for p in gone), deletions=[('Revert "Merge pull request #387"', gone)])
+        answers[("git", "branch", "--show-current")] = (0, "revert/pr-387\n", "")
+        answers[_list_key("revert/pr-387")] = [(0, "[]", ""), _rows(_pr())]
+        answers[("git", "fetch", "origin", "revert/pr-387")] = (0, "", "")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert spawns.count(("git", "push")) == 1
+        [body] = spawns.body_texts
+        assert "Deletions of a revert: " + ", ".join(gone) in body
+        assert "a revert/ lane: its 2 deletion(s) go through" in capsys.readouterr().out
+
+    def test_a_dry_run_rehearses_the_refusal(self, ship, tmp_path, forget_guard):
+        answers = self._lane(tmp_path, ("D", "docs/HOOKS.md"), deletions=[("feat", ["docs/HOOKS.md"])])
+        spawns = _arm(ship, answers)
+        with pytest.raises(ship.Refused):
+            ship.open_pr(dry_run=True)
+        assert spawns.mutations == []
+
+    def test_preflight_counts_the_shape_and_says_what_open_will_refuse(self, ship, tmp_path, capsys):
+        """The preflight prints the count so a handoff sees it before the push."""
+        answers = _preflight_answers(tmp_path)
+        answers[_LANE_DIFF] = _status(("A", "tests/test_x.py"), ("M", "tools/cc/ship.py"), ("D", "docs/HOOKS.md"))
+        answers[_DELETIONS_LOG] = _deletions(("feat: the lane", ["docs/HOOKS.md"]))
+        _arm(ship, answers)
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert "1 A, 1 M, 1 D" in out
+        assert "`open` will refuse this lane" in out and "docs/HOOKS.md" in out and "--allow-deletions" in out
+
+    def test_the_handoffs_push_onto_an_open_pull_request_refuses_one_too(self, ship, tmp_path, monkeypatch):
+        """The sibling push: a handoff onto an open pull request pushes the lane
+        as `open` does. Dies to: a read in open alone."""
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = TestHandoffVerb._existing_pr_answers(tmp_path)
+        answers[_LANE_DIFF] = _status(("D", "docs/HOOKS.md"))
+        answers[_DELETIONS_LOG] = _deletions(("feat", ["docs/HOOKS.md"]))
+        spawns = _arm(ship, answers)
+        monkeypatch.setattr(ship, "rebind", lambda **_kw: 0)
+        with pytest.raises(ship.Refused) as stop:
+            ship.handoff()
+        assert not isinstance(stop.value, ship.Held) and "docs/HOOKS.md" in str(stop.value)
+        assert spawns.count(("git", "push")) == 0
+        spawns = _arm(ship, answers)
+        assert ship.handoff(allow_deletions="the doc moved") == 0
+        assert spawns.count(("git", "push")) == 1
+
+    def test_the_prune_writer_and_the_reader_share_one_subject(self):
+        """The let-through is the fold's subject read back: a reworded commit
+        would make every later push refuse the driver's own prune. Dies to: a
+        second literal of the subject, or the writer not built from it."""
+        tree = ast.parse(SHIP.read_text(encoding="utf-8"))
+        literals = [n for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)
+                    and "prune the Session Log to its cap" in n.value]
+        assert len(literals) == 1, [n.lineno for n in literals]
+        [fold] = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_fold_session_log"]
+        assert any(isinstance(n, ast.Name) and n.id == "PRUNE_SUBJECT" for n in ast.walk(fold))
+
+
+class TestTheModifiedPathsNoClaimNames:
+    """DEF-4064's second half: a revert the lane never made reads as modified
+    paths its claims never named (#380's tree put mail.py, board.py, seat.py and
+    ship.py back to an older main). Named, never refused: claims are often
+    narrower than a lane (on the 57 claimed lanes before this, 20 modified a
+    path no claim of theirs named, mostly tests and mirrors)."""
+
+    @staticmethod
+    def _mail(*messages: dict) -> dict:
+        by_machine: dict[str, list[dict]] = {}
+        for m in messages:
+            by_machine.setdefault(m["from"], []).append(m)
+        return by_machine
+
+    @staticmethod
+    def _claim(machine="win", lane="lane/x", paths=(), ids=(), cid="c1") -> dict:
+        return {"v": 1, "id": cid, "type": "claim", "from": machine, "at": "2026-11-01T00:00:00Z",
+                "re": {"lane": lane, "paths": list(paths), "ids": list(ids), "classes": []}, "text": ""}
+
+    def test_paths_ids_twins_and_directories_count_and_a_release_does_not_unname(self, ship):
+        channel = ship._mail_module()
+        release = {"v": 1, "id": "r1", "type": "release", "from": "win", "at": "2026-11-01T01:00:00Z",
+                   "re": {"lane": "lane/x"}, "text": "", "ack": ""}
+        by_machine = self._mail(
+            self._claim(paths=["tools/cc/ship.py", "changelog.d/"], ids=["DEF-4064"]), release,
+            self._claim(machine="air", paths=["tools/cc/mail.py"], cid="c2"),     # another seat's claim names none of this lane's
+            self._claim(lane="lane/y", paths=["tools/cc/board.py"], cid="c3"))   # nor this seat's claim on another lane
+        modified = ["tools/cc/ship.py", "espalier/_vendor/cc/ship.py", "changelog.d/2026-11-01-x.md",
+                    "task-packs/ledger.d/DEF-4064.md", "tools/cc/mail.py", "tools/cc/board.py"]
+        assert channel.unclaimed_paths(by_machine, "win", "lane/x", modified) == ["tools/cc/mail.py",
+                                                                                   "tools/cc/board.py"]
+        assert channel.unclaimed_paths(by_machine, "win", "lane/z", modified) is None   # no claim on the lane
+
+    def test_preflight_names_the_unclaimed_and_says_where_no_claim_was_sent(self, ship, tmp_path, monkeypatch,
+                                                                           capsys):
+        channel = ship._mail_module()
+        by_machine = self._mail(self._claim(paths=["tools/cc/ship.py"]))
+        monkeypatch.setattr(ship, "seat_name", lambda root, **kw: ("win", ""))
+        monkeypatch.setattr(channel, "read_mail", lambda root, **kw: (by_machine, {}))
+        answers = _preflight_answers(tmp_path)
+        answers[_LANE_DIFF] = _status(("M", "tools/cc/ship.py"), ("M", "tools/cc/mail.py"))
+        _arm(ship, answers)
+        assert ship.preflight() == 0
+        out = capsys.readouterr().out
+        assert "1 modified path(s) no claim of win's on lane/x names" in out and "tools/cc/mail.py" in out
+        by_machine.clear()
+        assert ship.preflight() == 0
+        assert "no claim of win's names lane/x" in capsys.readouterr().out

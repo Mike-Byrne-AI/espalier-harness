@@ -991,7 +991,9 @@ in this tree (2026-09-26); the archive's workflows still carry them.
    — fold that text, merging same-name subsections (one `### Added` per
    section; `test_no_duplicate_categories_per_release` reds otherwise), and
    `git rm` each folded `changelog.d/*.md` in the fold commit, or the
-   emptiness tripwire below still counts them. `[Unreleased]` is large at
+   emptiness tripwire below still counts them. Those removals are deletions
+   the ship driver did not make, so the release lane's push names them:
+   `python tools/cc/ship.py open --allow-deletions "the release fold"`. `[Unreleased]` is large at
    cut time — it accumulates every dev bullet between releases — so fold it
    in two pieces.
    (The in-file `## [0.6.6-folded-from-unreleased]` block that once modelled

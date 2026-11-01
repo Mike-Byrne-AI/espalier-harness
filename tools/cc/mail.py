@@ -1598,6 +1598,32 @@ def own_live_claims(by_machine: dict[str, list[dict]], machine: str, lane: str) 
             if c.get("from") == machine and (c.get("re") or {}).get("lane") == lane]
 
 
+def unclaimed_paths(by_machine: dict[str, list[dict]], machine: str, lane: str,
+                    paths: list[str]) -> list[str] | None:
+    """Of ``paths`` (a lane's modified files), those no claim ``machine`` sent
+    on ``lane`` names, in their order; None where it sent none. Every claim
+    counts, live or released: a push releases them, and the lane's next push
+    (a handoff's row) is read against the same intent. A claim names a path it
+    holds whole, at or over it, a file one of its symbols is in (``claim_view``'s
+    read, the vendored twin folded onto its source on both sides), and a record
+    file named for a row id it carries (the row and its probe). The ship driver
+    prints what is left: a revert the lane never made reads here (DEF-4064)."""
+    claims = [m for m in by_machine.get(machine, [])
+              if m.get("type") == "claim" and (m.get("re") or {}).get("lane") == lane]
+    if not claims:
+        return None
+    named: set[str] = set()
+    ids: set[str] = set()
+    for claim in claims:
+        re_ = claim.get("re") or {}
+        syms, _more, whole, _unplaced = claim_view(re_)
+        named |= {p.rstrip("/") for p in whole} | {s.split("::", 1)[0] for s in syms}
+        ids |= set(_str_list(re_.get("ids")))
+    fold = _symbols.canonical
+    return [p for p in paths
+            if not (any(fold(p) == n or fold(p).startswith(n + "/") for n in named) or Path(p).stem in ids)]
+
+
 def _ship_default_base(remedy: str = "name the base (--symbols-from <base>)") -> str:
     """The base a lane is read against when none is named: the default branch
     on origin, as the ship driver reads it (``ship.default_branch``, loaded by
