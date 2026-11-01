@@ -2629,10 +2629,10 @@ _DECIDED_NOTES = (
 )
 #: An Actions job's link as `gh pr checks --json link` gives it: run, then job.
 _JOB_LINK_RE = re.compile(r"/actions/runs/(\d+)/job/(\d+)(?![0-9])")
-#: The buckets of `gh pr checks` that hold a merge: a cancelled required cell
-#: holds it as surely as a failed one. An alias of the one home's set
-#: (tools/cc/_post_merge.py), never a copy.
-_RED_BUCKETS = _post_merge.RED_BUCKETS
+#: The required-check read's fields: the home's (tools/cc/_post_merge.py,
+#: whose ``read_required`` splits the buckets), and each cell's link, which
+#: names the job a red cell ran as.
+_REQUIRED_FIELDS = _post_merge.REQUIRED_FIELDS + ",link"
 #: A finished job's conclusions that hold nothing, in the REST spelling.
 _JOB_GREEN = frozenset(s.lower() for s in _CHECK_GREEN)
 
@@ -2718,26 +2718,21 @@ def _read_required(number: str, cwd: str, merge_state: str = "") -> _Reading | N
     a decided or unread red, another lost run that is held, or a lane behind
     or in conflict with its base, where catch-up re-runs every cell anyway."""
     try:
-        rows = _gh_json("pr", "checks", number, "--required", "--json", "name,bucket,link", cwd=cwd)
+        required = _post_merge.read_required(number, lambda args: _gh_json(*args, cwd=cwd), fields=_REQUIRED_FIELDS)
     except Refused:
         return None
-    if not isinstance(rows, list):
+    if required is None:
         return None
     reading = _Reading()
+    reading.pending.extend(str(row.get("name") or "?") for row in required["running"])
     by_run: dict[str, list[tuple[str, str]]] = {}
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
+    for row in required["red"]:
         name = str(row.get("name") or "?")
-        bucket = str(row.get("bucket") or "").lower()
-        if bucket == "pending":
-            reading.pending.append(name)
-        elif bucket in _RED_BUCKETS:
-            m = _JOB_LINK_RE.search(str(row.get("link") or ""))
-            if m is None:
-                reading.decided.append(name)  # not an Actions job: nothing here re-runs it
-            else:
-                by_run.setdefault(m.group(1), []).append((name, m.group(2)))
+        m = _JOB_LINK_RE.search(str(row.get("link") or ""))
+        if m is None:
+            reading.decided.append(name)  # not an Actions job: nothing here re-runs it
+        else:
+            by_run.setdefault(m.group(1), []).append((name, m.group(2)))
     for run_id, cells in sorted(by_run.items()):
         try:
             view = _gh_json("run", "view", run_id, "--json", "attempt,status,jobs", cwd=cwd)

@@ -67,6 +67,9 @@ def _gh(answers: dict[str, object]):
         if key not in answers:
             raise AssertionError(f"unexpected call {argv}")
         answer = answers[key]
+        if key == "pr checks" and isinstance(answer, dict):
+            # The required-check read of a blocked row: one answer per number.
+            answer = answer.get(argv[3], AssertionError(f"unexpected call {argv}"))
         if isinstance(answer, Exception):
             raise answer
         return 0, json.dumps(answer), ""
@@ -220,9 +223,114 @@ class TestOpenPullRequests:
         _stub_channel(monkeypatch, board, {"win-2": [claim, release]})
         prs = [{"number": 9, "headRefName": "lane/shipped", "mergeStateStatus": "BLOCKED",
                 "isDraft": False, "autoMergeRequest": {"x": 1}}]
-        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": prs, "run list": _GREEN_RUNS})))
+        text = board.render(board.collect(tmp_path, run_=_gh({"pr list": prs, "run list": _GREEN_RUNS,
+                                                              "pr checks": {"9": []}})))
         assert "#9 lane/shipped [win-2]: blocked" in text
         assert "claims:   none live" in text
+
+    # The required-check read of a BLOCKED row (DEF-4063). The board said
+    # `blocked: a required check or a review holds it` for #380 at 17:05Z and
+    # 17:30Z on 2026-10-31 while every tier cell ran on the rebuilt head and
+    # none was red, and the dispatcher ran `gh pr checks` by hand to tell.
+    _REQUIRED_ARGV = ["gh", "pr", "checks", "7", "--required", "--json", "name,bucket"]
+
+    @staticmethod
+    def _blocked(number: int = 7, armed: bool = True) -> dict:
+        return {"number": number, "headRefName": f"lane/{number}", "mergeStateStatus": "BLOCKED",
+                "isDraft": False, "autoMergeRequest": {"x": 1} if armed else None}
+
+    def test_a_blocked_row_names_the_required_red(self, board, monkeypatch, tmp_path):
+        """A required red holds the merge whatever still runs beside it, so it
+        is named, cancelled cells with the failed (a job no runner picked up
+        reads `cancel`), and a passing or skipped one is not. Dies to: the
+        one fixed phrase kept, the read never made, or `cancel` left out."""
+        _stub_channel(monkeypatch, board)
+        checks = [{"name": "test (3.12)", "bucket": "fail"}, {"name": "guard", "bucket": "pass"},
+                  {"name": "test-serial (3.10)", "bucket": "cancel"}, {"name": "test (3.13)", "bucket": "pending"},
+                  {"name": "docs", "bucket": "skipping"}]
+        run = _gh({"pr list": [self._blocked()], "run list": _GREEN_RUNS, "pr checks": {"7": checks}})
+        text = board.render(board.collect(tmp_path, run_=run, now=_NOW))
+        assert ("#7 lane/7 [no seat's claim names this branch]: blocked: required checks red "
+                "(test (3.12), test-serial (3.10)); auto-merge armed") in text, text
+        assert [c for c in run.calls if c[1:3] == ["pr", "checks"]] == [self._REQUIRED_ARGV]
+
+    def test_a_blocked_row_with_no_red_waits_on_the_cells_still_running(self, board, monkeypatch, tmp_path):
+        """#380 at 17:30Z on 2026-10-31: nine required cells running, none red.
+        The words are the banner's (`waiting on N running`), not a second
+        phrase. Dies to: the running cells read as a hold of their own, or
+        counted from every check rather than the required ones."""
+        _stub_channel(monkeypatch, board)
+        checks = ([{"name": f"test (3.{n})", "bucket": "pending"} for n in range(10, 15)]
+                  + [{"name": f"test-serial (3.{n})", "bucket": "pending"} for n in range(10, 14)]
+                  + [{"name": "guard", "bucket": "pass"}, {"name": "lint", "bucket": "pass"}])
+        run = _gh({"pr list": [self._blocked()], "run list": _GREEN_RUNS, "pr checks": {"7": checks}})
+        text = board.render(board.collect(tmp_path, run_=run, now=_NOW))
+        assert "#7 lane/7 [no seat's claim names this branch]: blocked: waiting on 9 running; auto-merge armed" \
+               in text, text
+
+    def test_a_blocked_row_with_nothing_red_or_running_names_a_review(self, board, monkeypatch, tmp_path):
+        """Every required check passed and GitHub still holds it: a review, or
+        a required check that has not reported. Dies to: `waiting on 0
+        running`, or the old phrase kept for this case."""
+        _stub_channel(monkeypatch, board)
+        checks = [{"name": "guard", "bucket": "pass"}, {"name": "lint", "bucket": "pass"}]
+        run = _gh({"pr list": [self._blocked(armed=False)], "run list": _GREEN_RUNS, "pr checks": {"7": checks}})
+        text = board.render(board.collect(tmp_path, run_=run, now=_NOW))
+        assert ("#7 lane/7 [no seat's claim names this branch]: blocked: no required check is red or running, "
+                "so a review or a required check that has not reported holds it; auto-merge not armed") in text, text
+
+    def test_a_blocked_row_whose_read_fails_names_the_command(self, board, monkeypatch, tmp_path):
+        """A repository with no required checks answers rc=1 with no JSON, and
+        `gh` can be offline: neither is a green, and the row names the read
+        that answers. Dies to: an unread read printed as nothing holding it,
+        or the failure costing the whole open-PRs line."""
+        _stub_channel(monkeypatch, board)
+        failed = board.Unresolvable("gh pr checks answered rc=1 with no JSON: no required checks reported")
+        run = _gh({"pr list": [self._blocked(), self._blocked(8)], "run list": _GREEN_RUNS,
+                   "pr checks": {"7": failed, "8": [{"name": "guard", "bucket": "fail"}]}})
+        text = board.render(board.collect(tmp_path, run_=run, now=_NOW))
+        assert ("#7 lane/7 [no seat's claim names this branch]: blocked: its required checks were not read "
+                "(gh pr checks answered rc=1 with no JSON: no required checks reported): gh pr checks 7 --required; "
+                "auto-merge armed") in text, text
+        assert "#8 lane/8 [no seat's claim names this branch]: blocked: required check red (guard)" in text, text
+
+    def test_only_a_blocked_row_spends_the_read(self, board, monkeypatch, tmp_path):
+        """Dies to: the read made for a row GitHub does not report as blocked
+        (a draft included): only a blocked row needs it."""
+        _stub_channel(monkeypatch, board)
+        prs = [dict(self._blocked(7), mergeStateStatus=s) for s in ("CLEAN", "DIRTY", "BEHIND", "UNSTABLE")]
+        prs = [dict(pr, number=n, headRefName=f"lane/{n}") for n, pr in enumerate(prs, 1)]
+        prs.append(dict(self._blocked(9), isDraft=True))
+        run = _gh({"pr list": prs, "run list": _GREEN_RUNS})
+        board.render(board.collect(tmp_path, run_=run, now=_NOW))
+        assert not [c for c in run.calls if c[1:3] == ["pr", "checks"]], run.calls
+
+    def test_the_reads_stop_at_their_row_cap_and_their_budget(self, board, tmp_path):
+        """The reads are bounded like the banner's: a cap on the rows read and
+        a budget of seconds for them all, each read's timeout what is left of
+        it, and a row past either says it was not read and why. Dies to: an
+        unbounded walk of thirty blocked rows at fifteen seconds each."""
+        cap = board.REQUIRED_READ_ROWS
+        prs = [self._blocked(n) for n in range(1, cap + 3)]
+        timeouts: list[float] = []
+
+        def run(argv, **kw):
+            timeouts.append(kw["timeout"])
+            return 1, json.dumps([{"name": "guard", "bucket": "fail"}]), ""
+
+        board.read_required_section(tmp_path, prs, run_=run, clock=lambda: 0.0)
+        assert len(timeouts) == cap and all(0 < t <= board.GH_TIMEOUT for t in timeouts)
+        assert all(pr["required"] == {"red": ["guard"], "running": []} for pr in prs[:cap])
+        assert all("first" in pr["required"]["unread"] for pr in prs[cap:]), prs[cap:]
+        # The budget: a clock past it before the third read stops the walk there.
+        ticks = iter([0.0, 0.0, 1.0, board.REQUIRED_BUDGET_SECONDS + 1] + [board.REQUIRED_BUDGET_SECONDS + 1] * cap)
+        prs = [self._blocked(n) for n in range(1, 5)]
+        timeouts.clear()
+        board.read_required_section(tmp_path, prs, run_=run, clock=lambda: next(ticks))
+        assert len(timeouts) == 2 and timeouts[1] <= board.REQUIRED_BUDGET_SECONDS - 1.0
+        assert all("budget" in pr["required"]["unread"] for pr in prs[2:]), prs[2:]
+        line = board._pr_line(dict(prs[3], seat=""))
+        assert "blocked: its required checks were not read (" in line and "gh pr checks 4 --required" in line
 
 
 class TestStaleBaseSection:
@@ -282,7 +390,7 @@ class TestStaleBaseSection:
         monkeypatch.setattr(board, "read_stale_section", section)
         prs = [{"number": 7, "headRefName": "lane/a", "mergeStateStatus": "BLOCKED", "isDraft": False,
                 "autoMergeRequest": {"x": 1}, "files": [{"path": "a.py"}]}]
-        collected = board.collect(tmp_path, run_=_gh({"pr list": prs, "run list": _GREEN_RUNS}))
+        collected = board.collect(tmp_path, run_=_gh({"pr list": prs, "run list": _GREEN_RUNS, "pr checks": {"7": []}}))
         assert "files" not in collected["open_prs"][0]   # read for the check, not carried in the JSON
         lines = board.render(collected).splitlines()
         at = next(i for i, ln in enumerate(lines) if "#7 lane/a" in ln)
@@ -2336,7 +2444,7 @@ class TestOverlapsSection:
         calls: list = []
         pr = {"number": 7, "headRefName": "lane/x", "headRefOid": H1, "mergeStateStatus": "BLOCKED",
               "isDraft": False, "autoMergeRequest": None, "files": [{"path": "a.py"}]}
-        gh = _gh({"pr list": [pr], "run list": _GREEN_RUNS})
+        gh = _gh({"pr list": [pr], "run list": _GREEN_RUNS, "pr checks": {"7": []}})
 
         def run(argv, **kw):
             calls.append(list(argv))
