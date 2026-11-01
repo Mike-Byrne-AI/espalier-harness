@@ -54,7 +54,9 @@ Verbs (each stands alone and derives what it needs from git and gh):
                          last, once the step has run to its end -- landed, or
                          refused by a red base or after a landed push -- arms
                          the own-clear marker for this session
-                         (.espalier-state/own_clear.json), which the own-clear
+                         (.espalier-state/own_clear.json in the checkout the
+                         session was started in, at its HEAD, where the mod
+                         reads it), which the own-clear
                          mod a seat.py launch loads reads to clear and re-prime
                          the window; a held refusal rides the marker and the
                          lane to land first rides the brief
@@ -287,8 +289,8 @@ def current_branch() -> str:
     return name
 
 
-def head_sha() -> str:
-    rc, out, _ = _git("rev-parse", "HEAD")
+def head_sha(cwd: Path | None = None) -> str:
+    rc, out, _ = _git("rev-parse", "HEAD", cwd=str(cwd) if cwd is not None else None)
     sha = out.strip()
     if rc != 0 or not sha:
         raise Refused("git could not name HEAD")
@@ -1642,6 +1644,106 @@ def _own_clear_gate() -> str | None:
     return None
 
 
+#: Where a drive or a test points the mod at a marker (``register.ts::repoRoot``
+#: reads it first); read first here too, so the two never disagree.
+OWN_CLEAR_ROOT_ENV = "ESPALIER_OWN_CLEAR_ROOT"
+
+
+def _same_checkout(a: Path, b: Path) -> bool:
+    try:
+        return os.path.normcase(str(a.resolve())) == os.path.normcase(str(b.resolve()))
+    except OSError:
+        return os.path.normcase(str(a)) == os.path.normcase(str(b))
+
+
+def _git_common_dir(checkout: Path) -> Path | None:
+    rc, out, _ = _git("rev-parse", "--git-common-dir", cwd=str(checkout))
+    return (checkout / out.strip()) if rc == 0 and out.strip() else None
+
+
+def own_clear_checkout(root: Path) -> tuple[Path, str | None]:
+    """``(the checkout the session's own-clear mod reads the marker in, a note
+    or None)``. The mod (``register.ts::repoRoot``) reads
+    :data:`OWN_CLEAR_ROOT_ENV`, else the top of the directory the session was
+    started in, and holds the clear while that checkout's HEAD is not the
+    marker's ``head``; this verb runs in ``root``, which is another checkout
+    when a session hands off a lane from a linked worktree of its clone
+    (DEF-5046: the dispatcher's window sat uncleared after #402's handoff from
+    one). So: the variable, else this session's entry in Claude Code's
+    session registry (``checkout_sync.live_sessions``, matched by
+    ``caller_entry``: the exported id, then the exported window pid, then
+    the nearest registered ancestor, so a registry still carrying the id
+    from before a clear places the window by its pid), its directory's top,
+    when that is a checkout of this clone; else ``root``, with the note
+    saying why where the registry could not place the session or placed it
+    outside this clone. A test process run inside a live seat has that
+    seat as an ancestor: the same-clone rule is what keeps a scratch
+    repository's case off the live checkout."""
+    given = os.environ.get(OWN_CLEAR_ROOT_ENV, "").strip()
+    if given:
+        return Path(given), None
+    fallback = "so it is armed in this checkout; a window started in another needs /clear by hand"
+    try:
+        sync = _sync_module()
+        sessions = sync.live_sessions() if sync is not None else None
+        entry = sync.caller_entry(sessions, os.environ.get(SESSION_ID_ENV, "").strip()) \
+            if sessions is not None else None
+    except Exception as exc:  # noqa: BLE001 -- fail-open with voice: the note rides the arm's line
+        return root, f"the session registry could not be read ({os_error_text(exc)}), {fallback}"
+    if sync is None:
+        return root, f"tools/cc/checkout_sync.py is not beside this script, {fallback}"
+    if sessions is None:
+        return root, f"Claude Code's session registry could not be read in full, {fallback}"
+    if entry is None:
+        return root, f"Claude Code's session registry does not list this session, {fallback}"
+    started = Path(str(entry.get("cwd")))
+    try:
+        rc, out, _ = _git("rev-parse", "--show-toplevel", cwd=str(started))
+        top = Path(out.strip()) if rc == 0 and out.strip() else None
+        if top is None or _same_checkout(top, root):
+            mine = theirs = None
+        else:
+            mine, theirs = _git_common_dir(root), _git_common_dir(top)
+    except Refused as exc:   # the directory is gone, or git would not start there
+        return root, f"the checkout this session was started in ({started}) could not be read ({exc}), {fallback}"
+    if top is None:
+        return root, f"the directory this session was started in ({started}) is in no git checkout, {fallback}"
+    if _same_checkout(top, root):
+        return root, None
+    if mine is None or theirs is None or not _same_checkout(mine, theirs):
+        return root, f"this session was started in {top}, which is not a checkout of this clone, {fallback}"
+    return top, None
+
+
+def _window_checkout_holds(where: Path) -> str | None:
+    """Why the session's own checkout ``where`` must not be armed from
+    another checkout, or None: commits no remote holds (a lane of its own,
+    unpushed: the Stop hook's handoff gate reads a marker armed at that HEAD
+    as the lane handed off, and the mod, which never counts unpushed
+    commits, would clear past it), a tracked edit, or a plan in progress
+    (the mod holds the clear on either, so a line promising one would be
+    false). The handoff and ``arm`` read it the same way."""
+    rc, out, _ = _git("rev-list", "--count", "HEAD", "--not", "--remotes", cwd=str(where))
+    if rc != 0 or not out.strip().isdigit():
+        return "its unpushed commits could not be counted"
+    ahead = int(out.strip())
+    if ahead:
+        return (f"it holds {ahead} commit{'s' if ahead != 1 else ''} no remote has, a lane of its own that a "
+                "marker there would clear past (hand that lane off first)")
+    rc, out, _ = _git("status", "--porcelain", "-uno", cwd=str(where))
+    if rc != 0:
+        return "its tree could not be read (git status failed there)"
+    if out.strip():
+        return "it has a tracked edit, and the mod holds the clear on it"
+    try:
+        plan = json.loads((where / "cc" / "execution_plan.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):  # fail-open: ok deliberate -- no plan file, or one that does not parse: the mod reads that as nothing in progress too
+        return None
+    if isinstance(plan, dict) and plan.get("status") == "in_progress" and plan.get("steps"):
+        return "a plan is in progress there, and the mod holds the clear on it"
+    return None
+
+
 #: The first words of the brief's tail after a handoff that did not land: the
 #: re-primed window lands the lane before any new job (DEF-4057).
 LAND_FIRST = "THE HANDOFF DID NOT LAND THIS LANE."
@@ -1658,25 +1760,37 @@ def _brief_text(text: str) -> str:
     return folded.replace('"', "'").replace("%", " pct")
 
 
-def _land_first_tail(held: Held, branch: str) -> str:
+def _land_first_tail(held: Held, branch: str, lane_checkout: Path | None = None) -> str:
     """What the re-primed window reads after its role brief when the handoff
     did not land: the refusal, where the lane waits, and the verbs that land
     it. The row is written and the tree clean (the handoff refused before
     this otherwise), so the next window's first job is the lane, not a new
-    one."""
+    one. ``lane_checkout`` is the lane's checkout when it is not the one the
+    window was started in (DEF-5046): the tail names it, since the verbs run
+    there."""
     if held.landed:
         what = "The push landed and a step after it refused"
     else:
         what = "The push was held" if held.waits_for else "The push was refused"
     lane = _brief_text(branch)
-    where = (f"The lane {lane} is on origin" if held.landed
-             else f"The lane {lane} is committed in this checkout and unpushed")
+    if lane_checkout is None:
+        where = (f"The lane {lane} is on origin" if held.landed
+                 else f"The lane {lane} is committed in this checkout and unpushed")
+    else:
+        spot = _brief_text(str(lane_checkout))
+        where = (f"The lane {lane} is on origin, its checkout {spot}" if held.landed
+                 else f"The lane {lane} is committed in {spot} and unpushed") + " (run the verbs below there)"
     waits = _brief_text(held.waits_for) if held.waits_for else "the base is green"
     # A lane held behind the seat's other pull request is opened before a new
     # job is begun: a new branch drops the Stop hook's hold on this one, the
     # one mechanical reminder left after the clear (DEF-5038).
     branch_note = (" (stay on this branch until then: a new branch drops the Stop hook's hold on it, which "
                    "asks for the lane once that pull request is gone)") if held.waits_for else ""
+    if held.waits_for and lane_checkout is not None:
+        # The Stop hook's hold is written in the lane's checkout, and this
+        # window's hooks read their own: nothing there asks for the lane.
+        branch_note = (f" (no hook in this window watches {_brief_text(str(lane_checkout))}: this brief is the "
+                       "one reminder of the lane)")
     return (f"\n\n{LAND_FIRST} {what}: {_brief_text(str(held))}\n"
             f"{where}, its row written and the tree clean; the window that handed off is done with it, and "
             "this one lands it before any new job: python tools/cc/ship.py status says what is on origin; "
@@ -1706,7 +1820,16 @@ def arm_own_clear_here(root: Path, *, held: Held | None = None, by_hand: str | N
     if why_not:
         return why_not
     session_id = os.environ[SESSION_ID_ENV].strip()
-    seat, role, role_brief, how = _reprime_brief(root)
+    # The window's facts (where its mod reads, its HEAD, its seat's brief) are
+    # the session's checkout's; the lane's (its branch, the refusal) are root's.
+    where, unplaced = own_clear_checkout(root)
+    elsewhere = not _same_checkout(where, root)
+    if elsewhere:
+        hold = _window_checkout_holds(where)
+        if hold:
+            return (f"own-clear not armed: {where}, the checkout this session's mod reads, {hold}; this window "
+                    "needs a /clear by hand once that is settled, or python tools/cc/ship.py arm then")
+    seat, role, role_brief, how = _reprime_brief(where)
     brief, landed, outcome = role_brief, True, None
     if held is not None:
         landed, outcome = held.landed, str(held)
@@ -1714,11 +1837,15 @@ def arm_own_clear_here(root: Path, *, held: Held | None = None, by_hand: str | N
             branch = current_branch()
         except Refused:
             branch = "(its branch could not be read)"
-        brief = (role_brief or GENERIC_BRIEF) + _land_first_tail(held, branch)
+        brief = (role_brief or GENERIC_BRIEF) + _land_first_tail(held, branch, lane_checkout=root if elsewhere else None)
     elif by_hand:
         outcome = f"armed by hand: {by_hand}"
-    line = arm_own_clear(root, session_id=session_id, head=head_sha(), seat=seat, role=role, brief=brief,
+    line = arm_own_clear(where, session_id=session_id, head=head_sha(where), seat=seat, role=role, brief=brief,
                          landed=landed, outcome=outcome)
+    if elsewhere:
+        line += f" (armed in {where}, where this session's mod reads it, at its HEAD; the lane is in {root})"
+    elif unplaced:
+        line += f" ({unplaced})"
     if held is not None:
         line += ("; with the refusal in its brief: this window is done with the lane, and the next window "
                  "lands the lane first")
@@ -1803,9 +1930,16 @@ def rearm_own_clear_after_move(root: Path, *, by: str, moved_from: str | None = 
     holds the clear on ``HEAD moved since the handoff``, and a pull leaves
     nothing to hand off: until this the hold stood until a re-arm by hand
     (air-work's window sat held for 3 h 33 min on 2026-10-31 after its tick's
-    catch-up)."""
-    head = head_sha()
-    raw = _read_own_clear(root)
+    catch-up). The marker and the HEAD it follows are the session's checkout's
+    (:func:`own_clear_checkout`): a move in another checkout of the clone, the
+    lane's worktree, leaves that HEAD where it was, so nothing is re-armed."""
+    if _own_clear_gate():
+        return None   # no mod in this window, so this session armed nothing to follow
+    where, _unplaced = own_clear_checkout(root)   # the first arm said an unplaced session; a re-arm follows it
+    if moved_from is not None and not _same_checkout(where, root):
+        return None   # the move was the lane's checkout's; the window's HEAD, which the marker follows, is not
+    head = head_sha(where)
+    raw = _read_own_clear(where)
     if raw is None or raw.get("state") != "armed":
         return None
     was = str(raw.get("head") or "")
@@ -1836,7 +1970,7 @@ def rearm_own_clear_after_move(root: Path, *, by: str, moved_from: str | None = 
                      "python tools/cc/ship.py status says what is on origin.")
     if tails:
         marker["brief"] = "\n\n".join([marker.get("brief") or GENERIC_BRIEF, *tails])
-    _write_own_clear(root, marker)
+    _write_own_clear(where, marker)
     return (f"own-clear re-armed at {head[:7]}: HEAD moved from {was[:7] or '?'} ({by}); the marker's brief and "
             f"record are kept{'; the refusal rides its brief' if refusal else ''}; the mod clears this window at "
             "the turn's end")
@@ -1931,16 +2065,22 @@ def arm(why: str | None = None, dry_run: bool = False) -> int:
         raise Refused(f"nothing armed: {off}. The handoff arms on its own end, held or landed: run /handoff, or "
                       "python tools/cc/ship.py open for a lane with no pull request; `arm` is for a lane already "
                       "on origin (opened by hand)")
-    armed = _armed_for_this_session(root)
+    # The marker, and the tree and HEAD the mod holds the clear on, are the
+    # session's checkout's (DEF-5046); the lane read above is root's.
+    where, _unplaced = own_clear_checkout(root)
+    hold = None if _same_checkout(where, root) else _window_checkout_holds(where)
+    if hold:
+        raise Refused(f"nothing armed: {where}, the checkout this session's mod reads, {hold}: settle it there first")
+    armed = _armed_for_this_session(where)
     if armed:
-        refused = _refusals_on_marker(root)
+        refused = _refusals_on_marker(where)
         refused_tail = (f"; the engine has refused its clear {refused} time(s) (the marker's record): this window "
                         "needs /clear by hand" if refused else "")
-        marker = _own_clear_marker(root) or {}
-        head = head_sha()
+        marker = _own_clear_marker(where) or {}
+        head = head_sha(where)
         before = str(marker.get("head") or "")
         if before != head:
-            own = _lanes_own_commits_in(root, before, head) if before else None
+            own = _lanes_own_commits_in(where, before, head) if before else None
             if own:
                 raise Refused(f"nothing re-armed: the own-clear marker is armed at {before[:7]}, and HEAD "
                               f"{head[:7]} holds {own}; run /handoff (a second arm would drop what the first "
