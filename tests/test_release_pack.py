@@ -45,6 +45,16 @@ def _build(repo: Path, out: Path):
     return create_release_zip(repo, out)
 
 
+def _load_script_builder(module_name: str):
+    """Load scripts/build_release_archive.py by file path (it is not a package)."""
+    import importlib.util
+    candidate = REPO_ROOT / "scripts" / "build_release_archive.py"
+    spec = importlib.util.spec_from_file_location(module_name, candidate)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class TestCreateReleaseZip:
     def test_creates_valid_zip(self, harness_repo):
         """create_release_zip produces a non-empty zip file."""
@@ -954,12 +964,7 @@ class TestBothArchiveBuildersEnumerateTheIndex:
     """
 
     def _load_script_builder(self):
-        import importlib.util
-        candidate = Path(__file__).resolve().parents[1] / "scripts" / "build_release_archive.py"
-        spec = importlib.util.spec_from_file_location("_bra_index_pin", candidate)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
+        return _load_script_builder("_bra_index_pin")
 
     def test_both_builders_route_through_the_shared_helper(self):
         """Structural pin: neither builder may grow its own copy of the query."""
@@ -1054,12 +1059,7 @@ class TestBothTreeWalksPruneADeclaredDirectory:
     TYPES = "tools/cc/mods/m/.claude-plugin/types"
 
     def _load_script_builder(self):
-        import importlib.util
-        candidate = Path(__file__).resolve().parents[1] / "scripts" / "build_release_archive.py"
-        spec = importlib.util.spec_from_file_location("_bra_declared_dir", candidate)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
+        return _load_script_builder("_bra_declared_dir")
 
     def _tree(self, tmp_path: Path, declaration: bytes = b"*\n") -> Path:
         """A plain directory (no ``.git``, so no index) holding the shipped
@@ -1126,3 +1126,38 @@ class TestBothTreeWalksPruneADeclaredDirectory:
         (root / ".gitignore").write_bytes(b"*\n")
         members = self._members(builder, root, tmp_path)
         assert {"README.md", "espalier/__init__.py"} <= members
+
+    @pytest.mark.parametrize("builder", ["script", "pack"])
+    def test_a_declaration_below_a_rule_set_is_pruned_alone(self, tmp_path, builder):
+        """A rule-set directory is walked, and a declared one inside it is
+        still pruned: the question is asked at every depth, not at one."""
+        root = self._tree(tmp_path)
+        outer = root / "tools" / "cc" / "mods" / "m"
+        (outer / ".gitignore").write_bytes(b"*.log\n")
+        (outer / "mod.py").write_text("x = 1\n", encoding="utf-8")
+        members = self._members(builder, root, tmp_path)
+        assert "tools/cc/mods/m/mod.py" in members
+        assert not any(m.startswith(self.TYPES + "/") for m in members), sorted(members)
+
+    def test_the_pack_report_names_nothing_under_the_declaration(self, tmp_path):
+        """The prune is the enumeration's, as the index branch's is: a file
+        under the declaration is neither shipped nor reported as skipped."""
+        root = self._tree(tmp_path)
+        summary = create_release_zip(root, tmp_path / "pack.zip")
+        assert summary.enumeration == "tree"
+        assert not any(e.startswith(self.TYPES) for e in summary.skipped_entries)
+
+    def test_the_leak_scan_walks_what_the_archive_walks(self, tmp_path):
+        """``pre_release._find_internal_leaks`` is the failing half of the
+        gate, and it enumerates what the archive enumerates: an
+        internal-classified file under a declaration the archive never carries
+        is no leak, while one beside it is, on both sides."""
+        from espalier import pre_release
+        root = self._tree(tmp_path)
+        hidden = f"{self.TYPES}/TASK_PACK_X.md"
+        (root / hidden).write_text("internal\n", encoding="utf-8")
+        (root / "TASK_PACK_SAMPLE.md").write_text("internal\n", encoding="utf-8")
+        assert surface_contract.is_internal_release_leak(hidden)
+        summary = create_release_zip(root, tmp_path / "pack.zip")
+        leaks = pre_release._find_internal_leaks(root)
+        assert set(leaks) == set(summary.skipped_internal) == {"TASK_PACK_SAMPLE.md"}

@@ -10,8 +10,9 @@ forbidden path is about to be included.
 Behavior contract:
 
   1. Builds from the current repo root, enumerating its git index (a root
-     with no index falls back to a working-tree walk, said on stderr, that
-     prunes a directory declaring itself generated, as the index would).
+     with no index falls back to a working-tree walk, and says so on stderr;
+     the walk leaves out a directory declaring itself generated, as an index
+     normally does).
   2. Refuses to run outside the repo root (checks pyproject.toml + espalier/).
   3. Creates dist/espalier-harness-<version>-release.zip.
   4. Excludes every path classified non-public by
@@ -80,8 +81,10 @@ def _walk_repo(root: Path) -> Iterable[Path]:
 
     The no-index FALLBACK enumeration; ``build_release_archive`` ships from the
     git index when the root has one. A directory below the root that declares
-    itself generated is pruned with everything in it, as an index never holds
-    it (``espalier.release_pack.create_release_zip``'s fallback is the twin).
+    itself generated is pruned with everything in it, since an index holds
+    nothing there but a file force-added or tracked before the declaration, a
+    case no walk can tell apart (``espalier.release_pack._tree_walk`` is the
+    twin).
     """
     pruned_dirs = {
         p.rstrip("/") for p in surface_contract.get_release_excluded_prefixes()
@@ -111,10 +114,11 @@ def _walk_repo(root: Path) -> Iterable[Path]:
                     continue
                 # A directory whose own `.gitignore` is one bare `*` declares
                 # itself generated (the plugin loader writes the own-clear
-                # mod's `.claude-plugin/types/` so): git never holds what is in
-                # it, so the index enumeration never ships it and neither does
-                # this walk. The zone watch's predicate, so the two read one
-                # declaration; the root is never asked (DEF-4072).
+                # mod's `.claude-plugin/types/` so): git holds nothing in it
+                # unless a file was force-added, so the index enumeration
+                # ships nothing from it and neither does this walk. The zone
+                # watch's predicate, so the two read one declaration; the root
+                # is never asked (DEF-4072).
                 if is_self_ignoring(entry):
                     continue
                 yield from _scan(entry)
