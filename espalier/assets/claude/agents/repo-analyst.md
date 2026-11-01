@@ -23,10 +23,11 @@ files; you're producing the structural understanding the harness configures agai
 reads that line as tool names, so a command pattern there would narrow
 nothing. What the shell may run is bounded by the project's permission rules
 in `.claude/settings.json` (they apply to subagents too) and by the harness's
-hooks, which refuse a write into the harness's own files and a few destructive
-shapes; nothing there stops a `git stash`, a `git checkout` or a `sed -i` on
-the project's own source. This agent reviews and changes nothing: run only the
-read-only commands this body shows.
+hooks, which refuse a write into the harness's own files and the paths
+`protected_paths` names, and pause once before a discard of uncommitted work;
+nothing there stops a `git stash` or a `sed -i` on the project's own source.
+This agent reviews and changes nothing: run only the read-only commands this
+body shows.
 
 ## Analysis Protocol
 
@@ -252,14 +253,18 @@ fi
 echo "=== When was fingerprint last updated ==="
 # The fingerprint records the commit it was taken at (head_sha); reports/ is
 # gitignored, so the file has no history of its own to read.
-fp_sha=$(python -c "
+PY=; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 8))' >/dev/null 2>&1 && { PY=$c; break; }; done
+fp_sha=
+[ -n "$PY" ] && fp_sha=$($PY -c "
 import json
 try:
     print(json.load(open('reports/repo_fingerprint.json', encoding='utf-8')).get('head_sha', ''))
 except (OSError, ValueError, AttributeError):
     pass
 " 2>/dev/null)
-if [ -n "$fp_sha" ] && git cat-file -e "$fp_sha^{commit}" 2>/dev/null; then
+if [ -z "$PY" ]; then
+  echo "  baseline NOT READ: no Python 3 answered to python3, python or py -3"
+elif [ -n "$fp_sha" ] && git cat-file -e "$fp_sha^{commit}" 2>/dev/null; then
   git log -1 --format="  taken at $fp_sha (%ar): %s" "$fp_sha"
 else
   fp_sha=

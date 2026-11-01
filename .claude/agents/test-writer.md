@@ -22,11 +22,12 @@ invent new patterns — you replicate what's already in `tests/`.
 reads that line as tool names, so a command pattern there would narrow
 nothing. What the shell may run is bounded by the project's permission rules
 in `.claude/settings.json` (they apply to subagents too) and by the harness's
-hooks, which refuse a write into the harness's own files and a few destructive
-shapes; nothing there stops a `git stash`, a `git checkout` or a `sed -i` on
-the project's own source. This agent writes its test files through Write; its
-shell runs the tests and reads the tree, and a temporary break made to earn a
-red is reverted before it reports.
+hooks, which refuse a write into the harness's own files and the paths
+`protected_paths` names, and pause once before a discard of uncommitted work;
+nothing there stops a `git stash` or a `sed -i` on the project's own source.
+This agent writes its test files through Write; its shell runs the tests and
+reads the tree, and the temporary break that earns a red (step 8) is made
+through Write too, never `sed -i`, and reverted before it reports.
 
 ## Test Pattern Discovery
 

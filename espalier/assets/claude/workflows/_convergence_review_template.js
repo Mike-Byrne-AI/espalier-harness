@@ -82,7 +82,7 @@ else if (args && typeof args === 'object') { A = args }
 if (!A || typeof A !== 'object' || Array.isArray(A)) { A = {}; argsUnparsed = true }
 if (argsUnparsed) log('convergence-review: args did not resolve to an object; running the default smoke lens, which appends no ledger row unless ledgerPath is given')
 // The default smoke lens appends to the convergence ledger only where the caller named it.
-const SMOKE_LENS = !A.finders
+const SMOKE_LENS = !(Array.isArray(A.finders) && A.finders.length)
 const LEDGER_NAMED = typeof A.ledgerPath === 'string' && A.ledgerPath.trim() !== ''
 const CORPUS_PATH = A.corpusPath || 'reports/convergence-review-findings.md'
 const LEDGER_PATH = A.ledgerPath || 'memory/CONVERGENCE_LEDGER.md'

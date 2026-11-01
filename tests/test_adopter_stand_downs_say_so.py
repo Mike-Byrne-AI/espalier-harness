@@ -237,16 +237,19 @@ class TestTheAdvisorReadsTheScriptWhereInitWritesIt:
             "PreToolUse": [{"command": 'python3 "${CLAUDE_PROJECT_DIR}/hooks/quoted_gone.py"'}],
             "Stop": [{"command": "python3 hooks/bare_gone.py --strict"}],
             "SessionStart": [{"command": "bash hooks/here.sh"}],
+            # the quoting Claude Code's docs use: the variable is one shell word with the path
+            "PostToolUse": [{"command": 'python3 "$CLAUDE_PROJECT_DIR"/hooks/quoted_here.py'}],
         })
         (tree / "hooks").mkdir()
         (tree / "hooks" / "here.sh").write_text("exit 0\n", encoding="utf-8")
+        (tree / "hooks" / "quoted_here.py").write_text("x = 1\n", encoding="utf-8")
         dead = _advisor(tree, _heredoc_after(_read(adopter / ADVISOR), DEAD_CONFIG))
         assert dead.returncode == 0, dead.stderr[-800:]
-        assert "Hook scripts: 3 of 3 hooks checked" in dead.stdout, dead.stdout
+        assert "Hook scripts: 4 of 4 hooks checked" in dead.stdout, dead.stdout
         assert "DEAD CONFIG (2 issues):" in dead.stdout, dead.stdout
         assert "DEAD HOOK: PreToolUse -> quoted_gone.py not found at" in dead.stdout, dead.stdout
         assert "DEAD HOOK: Stop -> bare_gone.py not found at" in dead.stdout, dead.stdout
-        assert "here.sh" not in dead.stdout, dead.stdout
+        assert "here.sh" not in dead.stdout and "quoted_here" not in dead.stdout, dead.stdout
 
     def test_a_tree_without_settings_says_no_wiring_was_checked(self, adopter, tmp_path):
         tree = tmp_path / "tree"
@@ -392,6 +395,23 @@ class TestTheDriftBaselineIsTheCommitTheFingerprintWasTakenAt:
         proc = _run(tree, _fence_after(_read(adopter / DOCS_MAINTAINER), FRESHNESS), pybin, shell)
         section = proc.stdout.split("=== Docs changed since last fingerprint ===", 1)[1]
         assert section.split() == ["GUIDE.md"], (section, proc.stderr)
+
+    def test_a_host_whose_python_is_python3_alone_reads_the_baseline(
+        self, adopter, committed_since, tmp_path,
+    ):
+        """The probes find an interpreter as the bodies' resolver does: a
+        ``python`` that answers nothing (stock macOS ships ``python3`` alone)
+        leaves the baseline read, never reported missing."""
+        tree, taken = committed_since
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        for name, body in (("python", "exit 127\n"), ("python3", f'exec "{sys.executable}" "$@"\n')):
+            (bin_dir / name).write_text("#!/bin/sh\n" + body, encoding="utf-8")
+            (bin_dir / name).chmod(0o755)
+        drift = _run(tree, _fence_after(_read(adopter / REPO_ANALYST), DRIFT), bin_dir).stdout
+        assert f"  Comparing against the commit the fingerprint was taken at: {taken}" in drift, drift
+        docs = _run(tree, _fence_after(_read(adopter / DOCS_MAINTAINER), FRESHNESS), bin_dir).stdout
+        assert docs.split("=== Docs changed since last fingerprint ===", 1)[1].split() == ["GUIDE.md"], docs
 
     @pytest.mark.parametrize("recorded", ["", "0" * 40], ids=["none-recorded", "not-in-this-clone"])
     def test_without_a_baseline_both_say_so(self, adopter, committed_since, pybin, recorded):

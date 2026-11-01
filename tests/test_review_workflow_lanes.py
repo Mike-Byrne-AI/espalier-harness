@@ -312,6 +312,12 @@ class TestConvergenceTemplateLanes:
         assert "convergence-critic" not in _labels(out), _labels(out)
         assert (result.get("convergence") or {}).get("rowAppended") is False, result
 
+    def test_an_empty_finders_list_is_the_smoke_lens(self):
+        out = _drive(CONVERGENCE, args={"finders": []})
+        result = _ran(out)
+        assert "convergence-critic" not in _labels(out), _labels(out)
+        assert (result.get("convergence") or {}).get("rowAppended") is False, result
+
     def test_the_smoke_lens_with_a_named_ledger_runs_the_critic(self):
         out = _drive(CONVERGENCE, args={"smoke": True, "ledgerPath": "scratch/convergence-ledger.md"})
         _ran(out)

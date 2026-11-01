@@ -73,7 +73,7 @@ if (typeof args === 'string') {
 } else if (args !== undefined && args !== null) { A = args }
 if (!argsRefusal) {
   if (!A || typeof A !== 'object' || Array.isArray(A)) {
-    argsRefusal = `args resolved to ${Array.isArray(A) ? 'an array' : typeof A}, not an object; pass { "targets": [...] } or { "finders": [...] }`
+    argsRefusal = `args resolved to ${A === null ? 'null' : Array.isArray(A) ? 'an array' : typeof A}, not an object; pass { "targets": [...] } or { "finders": [...] }`
   } else {
     const unknown = Object.keys(A).filter(k => !KNOWN_ARGS.includes(k))
     if (unknown.length) {

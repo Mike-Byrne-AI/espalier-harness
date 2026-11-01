@@ -19,10 +19,11 @@ problems, and how to match configuration to workflow.
 reads that line as tool names, so a command pattern there would narrow
 nothing. What the shell may run is bounded by the project's permission rules
 in `.claude/settings.json` (they apply to subagents too) and by the harness's
-hooks, which refuse a write into the harness's own files and a few destructive
-shapes; nothing there stops a `git stash`, a `git checkout` or a `sed -i` on
-the project's own source. This agent reviews and changes nothing: run only the
-read-only commands this body shows.
+hooks, which refuse a write into the harness's own files and the paths
+`protected_paths` names, and pause once before a discard of uncommitted work;
+nothing there stops a `git stash` or a `sed -i` on the project's own source.
+This agent reviews and changes nothing: run only the read-only commands this
+body shows.
 
 ## Phase 1: Current Setup Inventory
 
@@ -61,6 +62,9 @@ import re
 # The script files a hook runs. init writes exec form: the interpreter alone in
 # command and the script in args[]. A legacy shell-form hook names its script
 # inside command, quoted or bare. Both are read, as /smoke's hook check does.
+import os
+import shlex
+
 SCRIPT_SUFFIXES = (".py", ".sh", ".bash", ".js", ".mjs", ".cjs", ".ts", ".ps1")
 SCRIPT_IN_COMMAND = re.compile(r"""["']([^"']+)["']|(\S+)""")
 
@@ -68,13 +72,16 @@ def hook_scripts(h):
     words = [a for a in (h.get("args") or []) if isinstance(a, str)]
     cmd = h.get("command") or ""
     if isinstance(cmd, str):
-        words += [q or b for q, b in SCRIPT_IN_COMMAND.findall(cmd)]
+        try:  # shell words, so a quoted variable joins the path after it
+            words += shlex.split(cmd.replace("\\", "/"))
+        except ValueError:
+            words += [q or b for q, b in SCRIPT_IN_COMMAND.findall(cmd)]
     return [w for w in words if w.lower().endswith(SCRIPT_SUFFIXES)]
 
 def resolve_script(path):
     # strip the project-dir prefix by its tail: the variable's spelling may be rewritten by the loader in this body
-    tail = re.sub(r"^.*?PROJECT_DIR}?/", "", path)
-    return Path(tail).expanduser() if tail.startswith("~") else root.resolve() / tail
+    tail = os.path.expanduser(os.path.expandvars(re.sub(r"^.*?PROJECT_DIR}?/", "", path)))
+    return Path(tail) if Path(tail).is_absolute() else root.resolve() / tail
 
 def describe(h):
     words = [str(h.get("command") or "")] + [str(a) for a in (h.get("args") or [])]
@@ -144,6 +151,9 @@ issues = []
 # The script files a hook runs. init writes exec form: the interpreter alone in
 # command and the script in args[]. A legacy shell-form hook names its script
 # inside command, quoted or bare. Both are read, as /smoke's hook check does.
+import os
+import shlex
+
 SCRIPT_SUFFIXES = (".py", ".sh", ".bash", ".js", ".mjs", ".cjs", ".ts", ".ps1")
 SCRIPT_IN_COMMAND = re.compile(r"""["']([^"']+)["']|(\S+)""")
 
@@ -151,13 +161,16 @@ def hook_scripts(h):
     words = [a for a in (h.get("args") or []) if isinstance(a, str)]
     cmd = h.get("command") or ""
     if isinstance(cmd, str):
-        words += [q or b for q, b in SCRIPT_IN_COMMAND.findall(cmd)]
+        try:  # shell words, so a quoted variable joins the path after it
+            words += shlex.split(cmd.replace("\\", "/"))
+        except ValueError:
+            words += [q or b for q, b in SCRIPT_IN_COMMAND.findall(cmd)]
     return [w for w in words if w.lower().endswith(SCRIPT_SUFFIXES)]
 
 def resolve_script(path):
     # strip the project-dir prefix by its tail: the variable's spelling may be rewritten by the loader in this body
-    tail = re.sub(r"^.*?PROJECT_DIR}?/", "", path)
-    return Path(tail).expanduser() if tail.startswith("~") else root.resolve() / tail
+    tail = os.path.expanduser(os.path.expandvars(re.sub(r"^.*?PROJECT_DIR}?/", "", path)))
+    return Path(tail) if Path(tail).is_absolute() else root.resolve() / tail
 
 def describe(h):
     words = [str(h.get("command") or "")] + [str(a) for a in (h.get("args") or [])]

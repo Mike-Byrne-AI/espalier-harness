@@ -4939,7 +4939,8 @@ verified-green suite can go red minutes later with no visible cause (a real
 2026-06-23 instance flipped 25 `fuse` tests via an A/B stash experiment that
 left staged deletions un-staged). Rule: spawn mutate-capable or concurrent
 agents with `isolation: worktree`; keep review/audit agents read-only
-(Explore, or Bash scoped to status/diff/log/show); re-verify `git status`
+(Explore, or an agent whose tools line names no Bash: a command pattern on a
+tools line narrows nothing); re-verify `git status`
 and re-run gates after any git-capable agent returns. See
 `docs/FAILURE_MODES.md` §16.1.
 
