@@ -95,6 +95,9 @@ from release_check import OPT_IN_ENV_FLAGS as _RELEASE_CHECK_OPT_INS  # noqa: E4
 # for the reason the flag set above is imported -- one home.
 from release_check import NOT_SLOW_LEG_BOUND_S as _SMOKE_BOUND_S  # noqa: E402
 from release_check import NOT_SLOW_LEG_MEASURED_S as _SMOKE_MEASURED_S  # noqa: E402
+# What a red pytest child's one-line reason keeps (its FAILED lines' node ids,
+# then the count): stage 06's, the same rule as the gate's tests_pass.
+from release_check import pytest_failure_tail  # noqa: E402
 
 
 @dataclass
@@ -1097,7 +1100,9 @@ def stage_surface_matrix() -> StageResult:
 
     rc, out = _run(
         [
-            sys.executable, "-m", "pytest", "-q",
+            # --color=no for pytest_failure_tail, which reads a FAILED line by
+            # its first word (release_check's tests_pass says why).
+            sys.executable, "-m", "pytest", "-q", "--color=no",
             "tests/test_surface_support_matrix.py",
             "tests/test_agent_frontmatter_contract.py",
         ],
@@ -1106,7 +1111,7 @@ def stage_surface_matrix() -> StageResult:
     )
     log_parts.append(out)
     if rc != 0:
-        tail = out.strip().splitlines()[-3:]
+        tail = pytest_failure_tail(out)
         return fail(f"matrix tests rc={rc}; {' / '.join(tail)}"[:200])
     summary = next(
         (ln for ln in reversed(out.splitlines()) if "passed" in ln),
