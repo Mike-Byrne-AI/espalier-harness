@@ -504,6 +504,7 @@ def test_the_census_reads_each_shape_that_drops_the_store(shape, drops):
     assert bool(_audit_store_drops(shape)) is drops, _audit_store_drops(shape)
 
 
+@pytest.mark.contract
 def test_a_child_env_the_suite_or_a_bench_builds_keeps_an_audit_store():
     """DEF-3022: conftest's ``_isolate_audit_dir`` points each test at a store
     of its own, and an env built from ``os.environ`` that drops every
