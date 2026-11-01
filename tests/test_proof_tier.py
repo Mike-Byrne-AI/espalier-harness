@@ -143,18 +143,19 @@ class TestTheBoundary:
         assert "recall corpus changed: memory/n.md" in out
         for line in pt.RECALL_COMMANDS:
             assert "run: " + line in out
-        # The tier's first two lines are byte-identical to the contract tier's
-        # two; the nudge is what stops a partial paste reading as the tier.
-        assert "all 3 lines are the tier" in out
+        # The tier opens with the contract tier's lines, byte for byte; the
+        # nudge is what stops a partial paste reading as the tier.
+        assert f"all {len(pt.RECALL_COMMANDS)} lines are the tier" in out
 
-    def test_a_docs_change_prints_the_two_line_nudge(self, pt, tmp_path, capsys):
+    def test_a_docs_change_prints_the_nudge_naming_every_line(self, pt, tmp_path, capsys):
         """The contract tier was one line and printed no nudge; with the lint
-        line it is two, and a paste of the pytest line alone would skip the
-        lint, so the nudge names both."""
+        line it was two, and three since its serial files' contract rows left
+        for a line of their own (DEF-5044): a paste of one pytest line alone
+        would skip the rest, so the nudge names them all."""
         r = _repo(tmp_path)
         (r / "docs" / "X.md").write_text("y\n", encoding="utf-8")
         pt.main(["--root", str(r)])
-        assert "all 2 lines are the tier" in capsys.readouterr().out
+        assert f"all {len(pt.CONTRACT_COMMANDS)} lines are the tier" in capsys.readouterr().out
 
     def test_the_one_line_serial_leg_prints_no_nudge(self, pt, tmp_path, capsys):
         """The negative the lint line retired from the contract tier, kept on
@@ -352,6 +353,16 @@ class TestTheFullRecipe:
         assert "ruff check ." in pt.commands("full", leg="parallel")
         assert "ruff check ." not in pt.commands("full", leg="serial")
 
+    def test_the_module_docstring_counts_each_tiers_commands(self, pt):
+        """The docstring says how many commands each tier runs, and the contract
+        tier's count went stale the day a line joined it (DEF-5044): read
+        against the tier table here, not kept by hand twice."""
+        words = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
+        doc = " ".join((pt.__doc__ or "").split())
+        m = re.search(r"The full tier is (\w+) commands, the recall tier (\w+) and the contract tier (\w+)", doc)
+        assert m, "the module docstring no longer counts each tier's commands"
+        assert [words.get(w) for w in m.groups()] == [len(pt.tier_argvs(t)) for t in ("full", "recall", "contract")]
+
     def test_the_parallel_line_leaves_out_exactly_the_files_the_serial_line_runs(self, pt):
         parallel, serial = [c for c in pt.FULL_COMMANDS if c.startswith("pytest ")]
         assert " -n auto " in parallel and " -n 1 " in serial
@@ -366,11 +377,13 @@ class TestTheFullRecipe:
         with no summary and no test named; under xdist the test fails by name and
         the run reports the rest. Every pytest line of every tier, the own-tests
         lines included, carries ``-n``: one worker for a line of serial files
-        only, ``-n auto`` for every other."""
+        only, ``-n auto`` for every other. A line that names no file collects
+        the tree, so its file tokens say nothing about the serial files it
+        runs: ``TestNoParallelLineCollectsASerialFile`` drives that (DEF-5044)."""
         changed = ["tests/test_final_release_matrix.py", "tests/test_hooks.py"]
         lines = [argv for which in pt.TIERS for argv in pt.tier_argvs(which, changed, REPO_ROOT)
                  if argv[0] == "pytest"]
-        assert len(lines) >= 7, lines   # full's two, then contract and recall with two own lines each
+        assert len(lines) >= 11, lines   # full's two; contract's two and recall's three, each with two own lines
         for argv in lines:
             assert "-n" in argv, argv
             workers = argv[argv.index("-n") + 1]
@@ -389,18 +402,26 @@ class TestTheFullRecipe:
         for rel in pt.TIMEOUT_NEAR_SERIAL_FILES:
             assert Path(rel).stem in _SLOW_FILES, rel
 
-    def test_the_contract_tier_is_the_lint_then_one_serial_command(self, pt):
-        """A bare ``-m contract``: the own line leaves contract-classified files
-        off because this line runs every row of them (DEF-4089), so a ``-k`` or
-        a narrower ``-m`` added here changes what the cheaper tiers run."""
-        assert pt.commands("contract") == ("ruff check .", "pytest -n auto -m contract -q")
+    def test_the_contract_tier_is_the_lint_then_the_two_contract_lines(self, pt):
+        """A bare ``-m contract`` over the tree less the serial files it would
+        collect a row of, then those at one worker (DEF-5044): the own line
+        leaves contract-classified files off because these lines run every row
+        of them (DEF-4089), so a ``-k`` or a narrower ``-m`` added here changes
+        what the cheaper tiers run."""
+        held = pt.SERIAL_CONTRACT_FILES
+        assert held, "no serial file holds a contract row: the second line goes, and this pin says so"
+        assert pt.commands("contract") == (
+            "ruff check .",
+            "pytest -n auto -m contract -q " + " ".join(f"--ignore={rel}" for rel in held),
+            "pytest -n 1 -m contract -q " + " ".join(held),
+        )
 
     def test_the_recall_tier_is_the_contract_slice_then_the_recall_files(self, pt):
         """The slice line is bare, so its files leave the own line (DEF-4089,
         ``_runs_whole``); a selection added to it puts them back there."""
         assert pt.commands("recall") == (
             "ruff check .",
-            "pytest -n auto -m contract -q",
+            *pt.commands("contract")[1:],
             "pytest -q -n auto " + " ".join(pt.RECALL_SLICE_FILES),
         )
         assert not any(c.startswith("mypy") for c in pt.RECALL_COMMANDS)
@@ -423,13 +444,14 @@ class TestTheFullRecipe:
         changed = ["scripts/s.py", "scripts/no_such_script.py", "docs/X.md", "tests/test_x.py", "scripts/s.py"]
         assert pt.own_tests(changed, r) == ("tests/test_s.py", "tests/test_x.py")
         assert pt.commands("contract", changed, r) == (
-            "ruff check .", "pytest -n auto -m contract -q",
+            *pt.CONTRACT_COMMANDS,
             "pytest -q -n auto -m 'not heavy_e2e' tests/test_s.py tests/test_x.py")
         assert pt.commands("recall", changed, r) == (
             *pt.RECALL_COMMANDS, "pytest -q -n auto -m 'not heavy_e2e' tests/test_s.py tests/test_x.py")
         assert pt.commands("full", changed, r) == pt.FULL_COMMANDS
         # the tier-only spelling the bodies cite: the lint line, then the slice
-        assert pt.commands("contract") == ("ruff check .", "pytest -n auto -m contract -q")
+        # (its lines are pinned in test_the_contract_tier_is_the_lint_then_the_two_contract_lines)
+        assert pt.commands("contract") == pt.CONTRACT_COMMANDS
         assert pt.own_tests(["scripts/nested/x.py", "tests/nested/test_y.py"], r) == ()
         assert pt.own_tests(["tests/test_s.py"], r) == ("tests/test_s.py",)
 
@@ -469,7 +491,7 @@ class TestTheFullRecipe:
         own = pt.own_tests([".claude/agents/repo-analyst.md"], REPO_ROOT)
         assert own[0] == diagnostics and not set(own) & set(pt.SERIAL_FILES), own
         assert pt.commands("contract", [".claude/agents/repo-analyst.md"], REPO_ROOT) == (
-            "ruff check .", "pytest -n auto -m contract -q",
+            *pt.CONTRACT_COMMANDS,
             shlex.join(("pytest", "-q", *pt._PARALLEL, *pt._NOT_HEAVY, *own)))
         assert pt.commands("full", [".claude/agents/repo-analyst.md"], REPO_ROOT) == pt.FULL_COMMANDS
 
@@ -721,7 +743,7 @@ class TestTheFullRecipe:
         out = capsys.readouterr().out
         assert out.startswith("contract")
         assert "run: pytest -q -n auto -m 'not heavy_e2e' tests/test_s.py" in out
-        assert "all 3 lines are the tier" in out
+        assert f"all {len(pt.CONTRACT_COMMANDS) + 1} lines are the tier" in out
         # and the argv list --run would execute carries the same line
         changed, untracked = pt.changed_paths(r)
         assert pt.tier_argvs("contract", changed + untracked, r)[-1] == ("pytest", "-q", "-n", "auto", "-m", "not heavy_e2e", "tests/test_s.py")
@@ -756,6 +778,75 @@ def _scratch_suite(root: Path, conftest: str | None = _SCRATCH_RULES) -> None:
         (tests / name).write_text('X = "docs/x.md"\n', encoding="utf-8")
     if conftest is not None:
         (tests / "conftest.py").write_text(conftest, encoding="utf-8")
+
+
+class TestNoParallelLineCollectsASerialFile:
+    """A line that names no test file collects the tree (or the directories
+    it names), so its marker selection, not its file tokens, decides which
+    serial files ride the ``-n auto`` pool: the contract line both cheaper
+    tiers carry ran every row of the cited-pin run there, past the file-token
+    pin (``test_every_pytest_line_runs_under_xdist``), until it left them out
+    (DEF-5044). Driven by collection, never read from the classifier rules: a
+    row can carry a marker its file's rule does not give it."""
+
+    @staticmethod
+    def _collected(marks: tuple[str, ...], serial_files: tuple[str, ...]) -> set[str]:
+        """The members of ``serial_files`` the selection ``marks`` collects a
+        row of. Exit 5 is a selection that kept no row; any other non-zero
+        exit, or an exit 0 that printed no row, is a collection that broke,
+        whose missing rows would read as absent (both reviews, DEF-5044)."""
+        argv = [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
+                *marks, *serial_files]
+        proc = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8")
+        rows = {row.split("::", 1)[0] for row in proc.stdout.splitlines() if "::" in row}
+        assert proc.returncode in (0, 5) and (rows or proc.returncode == 5), (
+            proc.returncode, (proc.stdout + proc.stderr)[-600:])
+        return rows & set(serial_files)
+
+    @classmethod
+    def _on_the_pool(cls, argv: tuple[str, ...], serial_files: tuple[str, ...]) -> set[str]:
+        """The serial files an ``-n auto`` line that names no test file runs on
+        the pool: those under the directories it names (the tree when it names
+        none) that its selection collects a row of and it does not ignore. A
+        line that names a file is the file-token pin's."""
+        if argv[0] != "pytest" or argv[argv.index("-n") + 1] != "auto":
+            return set()
+        paths = [tok for tok in argv[1:] if tok.startswith("tests")]
+        if any(tok.endswith(".py") or "::" in tok for tok in paths):
+            return set()
+        under = tuple(rel for rel in serial_files
+                      if not paths or any(rel.startswith(tok.rstrip("/") + "/") for tok in paths))
+        if not under:
+            return set()
+        marks = tuple(tok for i in range(len(argv) - 1) if argv[i] == "-m" for tok in argv[i:i + 2])
+        ignored = {tok[len("--ignore="):] for tok in argv if tok.startswith("--ignore=")}
+        return cls._collected(marks, under) - ignored
+
+    def test_no_parallel_line_that_names_no_file_collects_a_serial_file(self, pt):
+        lines = {argv for which in pt.TIERS for argv in pt.tier_argvs(which)}
+        for argv in lines:
+            assert not self._on_the_pool(argv, pt.SERIAL_FILES), shlex.join(argv)
+
+    def test_the_check_sees_the_bare_contract_line_and_a_directory_line(self, pt):
+        """The negative twin: the contract line as it stood before DEF-5044,
+        and the same selection naming the tests directory (which a file-token
+        filter reads as a file), both put the cited-pin run on the pool."""
+        bare = ("pytest", "-n", "auto", "-m", "contract", "-q")
+        cited = set(pt.NESTED_RUN_SERIAL_FILES)
+        assert self._on_the_pool(bare, pt.SERIAL_FILES) >= cited
+        assert self._on_the_pool(bare + ("tests/",), pt.SERIAL_FILES) >= cited
+        assert not self._on_the_pool(bare + tuple(f"--ignore={rel}" for rel in cited), pt.SERIAL_FILES) & cited
+
+    def test_the_one_worker_contract_line_runs_exactly_the_serial_files_with_a_contract_row(self, pt):
+        """Both ways: a serial file with a contract row that is not listed rides
+        the pool (the pin above); a listed file with none leaves the one-worker
+        line collecting nothing, which pytest exits 5 on in every cell. The line
+        is there exactly while the list holds a file."""
+        listed = pt.SERIAL_CONTRACT_FILES
+        assert len(set(listed)) == len(listed) and set(listed) <= set(pt.SERIAL_FILES), listed
+        assert self._collected(("-m", "contract"), pt.SERIAL_FILES) == set(listed)
+        for which in ("contract", "recall"):
+            assert (pt._CONTRACT_SERIAL_ARGV in pt.tier_argvs(which)) == bool(listed), which
 
 
 class TestTheOwnLineSkipsWhatTheTierRan:
@@ -1737,17 +1828,18 @@ class TestRun:
         (`--tier full` on a docs diff) is pinned separately."""
         r = _repo(tmp_path)
         (r / "tools" / "cc" / "hooks" / "h.py").write_text("y\n", encoding="utf-8")
-        self._fake_run(monkeypatch, pt, [0, 0])
+        n = len(pt.CONTRACT_COMMANDS)
+        self._fake_run(monkeypatch, pt, [0] * n)
         assert pt.main(["--root", str(r), "--tier", "contract", "--run"]) == 0
         out = capsys.readouterr().out
         assert "contract (forced; the diff earned full)" in out
         assert "forced: ran the contract tier; the diff earned full" in out
-        assert out.index("2 of 2 command(s) ran") < out.index("forced: ran the contract tier")
+        assert out.index(f"{n} of {n} command(s) ran") < out.index("forced: ran the contract tier")
 
     def test_an_earned_run_carries_no_forced_note(self, pt, monkeypatch, tmp_path, capsys):
         r = _repo(tmp_path)
         (r / "docs" / "X.md").write_text("y\n", encoding="utf-8")
-        self._fake_run(monkeypatch, pt, [0, 0])
+        self._fake_run(monkeypatch, pt, [0] * len(pt.CONTRACT_COMMANDS))
         assert pt.main(["--root", str(r), "--run"]) == 0
         assert "forced" not in capsys.readouterr().out
 

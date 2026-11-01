@@ -159,8 +159,9 @@ For one bounded change, one main proof path, or a small localized edit.
    # then those files at one xdist worker; the two pytest lines took about six
    # and a half minutes, measured twice), recall is the lint line, the contract
    # slice, then the recall engine's test files (the recall files about three and
-   # a half minutes on top of the slice), contract is two (the lint line, then
-   # the tree-wide contracts at `-n auto`; about six minutes on four workers);
+   # a half minutes on top of the slice), contract is three (the lint line, the
+   # tree-wide contracts at `-n auto`, then the serial files' contract rows at
+   # one worker; about six minutes on four workers);
    # every pytest line runs under xdist, so a ceiling crossing names its test
    # (up to xdist's four restarts per worker);
    # on the two cheaper tiers a changed

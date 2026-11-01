@@ -1,0 +1,14 @@
+{
+ "id": "DEF-5044",
+ "subject": "scripts/proof_tier.py",
+ "cmd": "python3 -c \"import sys,subprocess as s;sys.path.insert(0,'scripts');import proof_tier as p;S=p.SERIAL_FILES;L=[a for a in p.tier_argvs('contract') if a[0]=='pytest' and a[a.index('-n')+1]=='auto' and not any(t[:1]!='-' and (t.endswith('.py') or '::' in t) for t in a)];L or sys.exit(2);R=lambda r:{l.split('::')[0] for l in r.stdout.splitlines() if '::' in l};H=lambda a:((r:=s.run([sys.executable,'-m','pytest','--collect-only','-q','-p','no:cacheprovider',*[t for i in range(len(a)-1) if a[i]=='-m' for t in a[i:i+2]],*S],capture_output=True,text=True,encoding='utf-8')).returncode in(0,5) and (R(r) or r.returncode==5) or sys.exit(2)) and (R(r)&set(S))-{t[9:] for t in a if t.startswith('--ignore=')};print(len(set().union(*map(H,L))))\"",
+ "open_value": "1",
+ "why_not": null,
+ "inputs": [
+  "tests/conftest.py",
+  "tests/test_declared_limits_contract.py"
+ ],
+ "row_sha": "1993e7619afc",
+ "text_sha": "5474576aa17f",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: both reviews: the census now collects only the six serial files with each line's selection (under a second, against a whole-tree collection near the 30 s bound) and exits 2 on a collection that broke or a tier with no such line, where the first form printed its fixed value over nothing; it still reads 1 at the base and 0 once the line leaves them out) [changed: probe]"
+}
