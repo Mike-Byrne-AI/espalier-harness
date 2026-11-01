@@ -37,16 +37,16 @@ permissions:
 jobs:
   serial-leg:
     runs-on: windows-latest
-    # The serial files' longest own timeout mark (900 s, the PowerShell gate's
-    # test_the_gate_completes_against_head; a mark outranks the ceiling below)
-    # plus the ten minutes tests/test_ci_job_bounds.py gives the test-serial
-    # cell on top of its worst mark. Twice the measured 3:59 would round to
-    # ten and cut that mark with no test named, and five xdist worker restarts
-    # at the ceiling below are fifteen.
-    timeout-minutes: 25
+    # The serial files' longest own timeout mark (1800 s, the module mark of
+    # tests/test_verify_pins.py, a serial file since DEF-2036; a mark outranks
+    # the ceiling below) plus the ten minutes tests/test_ci_job_bounds.py gives the
+    # test-serial cell on top of its worst mark: the floor that contract derives,
+    # so a slow test is failed by its own mark, by name, before the job is killed.
+    timeout-minutes: 40
     steps:
-      # A shallow checkout, as the measured portability runs made it: no
-      # serial file reads past commits or release tags.
+      # A shallow checkout, as the measured portability runs made it: the one
+      # serial file that reads past commits, tests/test_verify_pins.py, skips
+      # those rows on a shallow tree by its own guard and runs the rest.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
       - name: Set up Python
