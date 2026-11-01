@@ -1555,10 +1555,11 @@ _COLD_DIR_NAME = "_cold"
 
 
 def _prune_old_audit_logs(max_age_days: int = 30, *, deadline: float | None = None,
-                          on_stop: Callable[[int], object] | None = None) -> int:
+                          on_stop: Callable[[int, int], object] | None = None) -> int:
     """Demote .log files in _audit_dir() older than max_age_days into ``_cold/``.
 
-    Returns the count demoted. Best-effort; never raises. Capped at
+    Returns the count demoted. Best-effort; never raises (an ``on_stop`` that
+    raises costs its notice, never the count). Capped at
     ``_MAX_PRUNE_SCAN`` files per call so a flood of spam log files
     can't slow session_start indefinitely.
 
@@ -1573,7 +1574,8 @@ def _prune_old_audit_logs(max_age_days: int = 30, *, deadline: float | None = No
     the first line's timestamp still the authority. ``deadline`` (a
     ``time.monotonic()`` reading) stops it before the next read; ``on_stop``
     is then called with how many unread logs are named before the window
-    (:func:`_named_before`), and not at all when none is. On the Windows box
+    (:func:`_named_before`, those past the cap among them) and the window's
+    days, and not at all when none is. On the Windows box
     5,000 first-line reads took 11.7 s, and SessionStart's banner was cut at
     its 13 s wall inside this scan (DEF-3022).
     """
@@ -1601,9 +1603,13 @@ def _prune_old_audit_logs(max_age_days: int = 30, *, deadline: float | None = No
     cold = base / _COLD_DIR_NAME
     for at, f in enumerate(scan_files):
         if deadline is not None and time.monotonic() >= deadline:
-            old_left = sum(1 for g in scan_files[at:] if _named_before(g, cutoff))
+            # Over every log, not the capped slice: one past the cap is unread too.
+            old_left = sum(1 for g in all_logs[at:] if _named_before(g, cutoff))
             if old_left and on_stop is not None:
-                on_stop(old_left)
+                try:
+                    on_stop(old_left, max_age_days)
+                except Exception:  # noqa: BLE001, S110 -- a notice that raises costs the notice, never the count
+                    pass
             break
         try:
             age_ts = _parse_first_log_timestamp(f)

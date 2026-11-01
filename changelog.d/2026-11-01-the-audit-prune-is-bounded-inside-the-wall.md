@@ -7,9 +7,11 @@
   banner was cut at its 13 s wall inside the prune, and nothing after it ran.
   The prune now reads the oldest name date first (`<slug>-<YYYYMMDD>.log`),
   stops at a 1.0 s bound inside the hook's own budget, and adds a NOTES line
-  when it stopped with logs named before the window still unread; the next
-  start goes on. The ledger probe checker (`tools/cc/check_ledger_probes.py`)
-  handed every probe the launching shell's audit store, so a probe that
-  drove a hook wrote its record into your home store under a temporary
-  tree's name; each run's probes now share a temporary store of their own.
-  (`DEF-3022`)
+  when it stopped with logs named before the window still unread, naming the
+  bound that stopped it; the next start goes on. The ledger probe checker
+  (`tools/cc/check_ledger_probes.py`) handed every probe the launching
+  shell's audit store, so a probe that drove a hook wrote its record into
+  your home store under a temporary tree's name; each run's probes now share
+  a temporary store of their own, removed when the run exits. The end-to-end
+  bench runner gives each scenario run an audit store beside its work
+  directory, where its hooks had written your home store. (`DEF-3022`)

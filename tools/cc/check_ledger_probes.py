@@ -42,6 +42,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import atexit
 import contextlib
 import functools
 import hashlib
@@ -49,6 +50,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -573,8 +575,11 @@ def _outside_the_launching_session() -> dict[str, str]:
 @functools.lru_cache(maxsize=1)
 def _probe_audit_dir() -> str:
     """One audit store a checker run, under the temp root, where the hooks'
-    ``_integrity._audit_dir`` accepts an ``ESPALIER_AUDIT_DIR`` override."""
-    return tempfile.mkdtemp(prefix="espalier-probe-audit-")
+    ``_integrity._audit_dir`` accepts an ``ESPALIER_AUDIT_DIR`` override;
+    removed when the run exits, so a run leaves no folder behind."""
+    store = tempfile.mkdtemp(prefix="espalier-probe-audit-")
+    atexit.register(shutil.rmtree, store, ignore_errors=True)
+    return store
 
 
 def run_probe(probe: dict) -> tuple[str, str]:

@@ -1904,7 +1904,8 @@ class TestInitRunsWithItsStdinHandleClosed:
             "sys.argv = ['espalier', 'init', sys.argv[1]]\n"
             "runpy.run_module('espalier', run_name='__main__', alter_sys=True)\n"
         )
-        env = {k: v for k, v in os.environ.items() if not k.startswith(("CLAUDE", "ESPALIER"))}
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(("CLAUDE", "ESPALIER")) or k == "ESPALIER_AUDIT_DIR"}
         proc = subprocess.run([sys.executable, "-c", driver, str(repo)], cwd=str(repo), env=env,
                               stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=45)  # about 4 s measured on Windows; under the 60 s ceiling

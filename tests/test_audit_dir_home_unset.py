@@ -253,11 +253,12 @@ class TestThePruneIsBoundedInsideTheWall:
         integ, audit_dir = self._store(monkeypatch, tmp_path, [f"s{n:03d}-{self._OLD}.log" for n in range(300)])
         assert "deadline" in inspect.signature(integ._prune_old_audit_logs).parameters
         self._slow_reads(monkeypatch, integ, 0.01)
-        left: list[int] = []
+        left: list[tuple[int, int]] = []
         start = time.monotonic()
-        demoted = integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() + 0.3, on_stop=left.append)
+        demoted = integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() + 0.3,
+                                              on_stop=lambda n, days: left.append((n, days)))
         assert time.monotonic() - start < 1.5, "the scan ran past its deadline"
-        assert 0 < demoted < 300 and left == [300 - demoted], (demoted, left)
+        assert 0 < demoted < 300 and left == [(300 - demoted, 30)], (demoted, left)
         assert len(list((audit_dir / "_cold").glob("*.log"))) == demoted
 
     def test_the_oldest_name_date_is_read_first(self, monkeypatch, tmp_path):
@@ -280,27 +281,59 @@ class TestThePruneIsBoundedInsideTheWall:
         today = datetime.now(timezone.utc).strftime("%Y%m%d")
         integ, _ = self._store(monkeypatch, tmp_path, [f"s{n:03d}-{today}.log" for n in range(100)], age_days=0)
         self._slow_reads(monkeypatch, integ, 0.01)
-        left: list[int] = []
-        assert integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() + 0.1, on_stop=left.append) == 0
+        left: list[tuple[int, int]] = []
+        assert integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() + 0.1,
+                                           on_stop=lambda n, days: left.append((n, days))) == 0
         assert left == [], left
+
+    def test_a_stop_counts_the_old_logs_past_the_cap_and_a_raising_notice_costs_only_itself(self, monkeypatch,
+                                                                                            tmp_path):
+        """Dies to: the count read over the capped slice (an old log past
+        ``_MAX_PRUNE_SCAN`` is unread too), or an ``on_stop`` that raises out
+        of a prune documented as never raising."""
+        import time
+        integ, _ = self._store(monkeypatch, tmp_path, [f"s{n:03d}-{self._OLD}.log" for n in range(10)])
+        monkeypatch.setattr(integ, "_MAX_PRUNE_SCAN", 5)
+        left: list[tuple[int, int]] = []
+
+        def notice(n, days):
+            left.append((n, days))
+            raise RuntimeError("a notice that fails")
+        assert integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() - 1, on_stop=notice) == 0
+        assert left == [(10, 30)], left
+
+    def test_the_name_date_the_scan_reads_is_the_one_audit_path_writes(self, monkeypatch, tmp_path):
+        """The scan's order and the stop's count read the date ``audit_path``
+        writes into a log's name: one format, two homes. Dies to:
+        ``audit_path`` writing another date shape (``%Y-%m-%d``: the order
+        falls back to the slug and today's log counts as old)."""
+        import time
+        from datetime import datetime, timezone
+        integ, _ = self._store(monkeypatch, tmp_path, [])
+        named = integ.audit_path(tmp_path / "repo", datetime(2024, 1, 1, tzinfo=timezone.utc)).name
+        found = integ._AUDIT_LOG_DATE_RE.search(named)
+        assert found is not None and found.group(1) == "20240101", named
+        assert not integ._named_before(integ.audit_path(tmp_path / "repo"), time.time() - 30 * 86400)
 
     def test_session_start_bounds_the_prune_and_says_when_it_stopped_early(self, monkeypatch, tmp_path):
         """The hook passes the prune a deadline inside its own budget (the
-        wall less the tail the network reads keep) and names a stop that left
-        old logs unread. Dies to: the bare call in the boot table, a deadline
-        past the hook's budget, or a stop the banner never hears of."""
+        wall less the tail the network reads keep, or the smaller budget a
+        handed-off fresh start was given) and names a stop that left old logs
+        unread, with the bound that stopped it. Dies to: a deadline past the
+        hook's budget or past a fresh start's, a stop the banner never hears
+        of, or its own bound blamed for a stop the hook's budget made. (The
+        boot table's call is the census below's.)"""
         import importlib.util
         import time
         spec = importlib.util.spec_from_file_location("_prune_wall_session_start", HOOKS_DIR / "session_start.py")
         ss = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = ss
+        monkeypatch.setitem(sys.modules, spec.name, ss)
         spec.loader.exec_module(ss)
-        assert hasattr(ss, "_prune_audit_logs_inside_the_wall"), "the boot table calls the prune with no deadline"
         seen: dict = {}
 
         def fake(max_age_days=30, *, deadline=None, on_stop=None):
             seen["deadline"] = deadline
-            on_stop(7)
+            on_stop(7, 30)
             return 3
         said: list[str] = []
         monkeypatch.setattr(ss._integrity, "_prune_old_audit_logs", fake)
@@ -308,32 +341,184 @@ class TestThePruneIsBoundedInsideTheWall:
         hook_start = time.monotonic() - 12.0
         ss._prune_audit_logs_inside_the_wall(hook_start)
         assert seen["deadline"] <= hook_start + ss._HOOK_BUDGET_SECONDS, seen
-        assert len(said) == 1 and said[0].startswith("[INFO]") and "7" in said[0] and said[0].isascii(), said
+        assert len(said) == 1 and said[0].startswith("[INFO]") and said[0].isascii(), said
+        assert "with 7 logs named before its 30-day window" in said[0] and "the hook's budget" in said[0], said
         now = time.monotonic()
         ss._prune_audit_logs_inside_the_wall(now)
         assert now < seen["deadline"] <= time.monotonic() + ss._PRUNE_BUDGET_SECONDS, seen
+        assert "at its 1 s bound" in said[-1], said
+        ss._prune_audit_logs_inside_the_wall(now, 0.25)
+        assert seen["deadline"] <= now + 0.25, seen
 
 
-def test_a_test_that_drops_the_harness_env_keeps_its_audit_store():
+def test_every_prune_call_outside_its_module_is_bounded():
+    """DEF-3022 (the failure-mode review): the boot table's bare
+    ``_integrity._prune_old_audit_logs`` restored beside a still-defined
+    bounded helper kept every row above green. Dies to: a call under
+    ``tools/cc/`` with no ``deadline=``, or the function handed on as a bare
+    value (a table entry, a callback) for a caller to run unbounded."""
+    import ast
+    from tests._live_tree import checkout_glob
+
+    name = "_prune_old_audit_logs"
+    calls, unbounded = [], []
+    for path in checkout_glob(REPO_ROOT / "tools" / "cc", "**/*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        called = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and getattr(node.func, "attr", getattr(node.func, "id", None)) == name:
+                called.add(id(node.func))
+                calls.append(f"{path.name}:{node.lineno}")
+                if not any(kw.arg == "deadline" for kw in node.keywords):
+                    unbounded.append(f"{path.name}:{node.lineno} (no deadline=)")
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load) \
+                    and getattr(node, "attr", getattr(node, "id", None)) == name and id(node) not in called:
+                unbounded.append(f"{path.name}:{node.lineno} (a bare value)")
+    assert calls and unbounded == [], (calls, unbounded)
+
+
+#: What a site's scope may store in place of the suite's audit store: a store
+#: of its own, or a home of the child's own (the store then sits under it).
+_STORE_KEYS = frozenset({"ESPALIER_AUDIT_DIR", "HOME", "USERPROFILE"})
+
+
+def _audit_store_drops(text: str) -> list[int]:
+    """The lines where ``text`` builds a child's env without the suite's audit
+    store and stores none of its own: a comprehension whose ``startswith``
+    filter names a prefix of ``ESPALIER_AUDIT_DIR`` (a string or a tuple, any
+    quoting), or a ``pop``/``del`` of the name. A dict comprehension inside a
+    function keeps the store when its filter, run on the name itself, selects
+    it; one at module level never does, since it is built at import, before
+    conftest's per-test value exists. Any site passes whose function (the
+    module, for a module-level one) stores one of ``_STORE_KEYS`` as a
+    subscript, a dict key or a keyword. A filter that reads another name is
+    not run, and its site counts as dropping. Not read: a loop of ``if``
+    statements popping by prefix, a prefix held in a named constant, and a
+    child script inside a string."""
+    import ast
+
+    tree = ast.parse(text)
+    parent: dict[int, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parent[id(child)] = node
+
+    def ancestors(node):
+        while id(node) in parent:
+            node = parent[id(node)]
+            yield node
+
+    def scope(node):
+        return next((a for a in ancestors(node)
+                     if isinstance(a, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))), tree)
+
+    def stores(where) -> bool:
+        for n in ast.walk(where):
+            if isinstance(n, ast.Subscript) and isinstance(n.ctx, ast.Store) \
+                    and isinstance(n.slice, ast.Constant) and n.slice.value in _STORE_KEYS:
+                return True
+            if isinstance(n, ast.Dict) and any(isinstance(k, ast.Constant) and k.value in _STORE_KEYS
+                                               for k in n.keys):
+                return True
+            if isinstance(n, ast.keyword) and n.arg in _STORE_KEYS:
+                return True
+        return False
+
+    def names_the_store(call) -> bool:
+        if getattr(call.func, "attr", None) != "startswith" or not call.args:
+            return False
+        arg = call.args[0]
+        # A prefix of the store's name at least as long as ESPALIER (spelled
+        # so: a startswith call here would be a site this census reads).
+        return any(isinstance(p, ast.Constant) and isinstance(p.value, str) and len(p.value) >= len("ESPALIER")
+                   and "ESPALIER_AUDIT_DIR".startswith(p.value)
+                   for p in (arg.elts if isinstance(arg, ast.Tuple) else [arg]))
+
+    def filter_keeps(comp) -> bool:
+        if len(comp.generators) != 1:
+            return False
+        gen = comp.generators[0]
+        name = ast.Constant("ESPALIER_AUDIT_DIR")
+        items = isinstance(gen.iter, ast.Call) and getattr(gen.iter.func, "attr", None) == "items"
+        item = ast.Tuple([name, ast.Constant("x")], ast.Load()) if items else name
+        run = ast.Expression(ast.ListComp(ast.Constant(1), [
+            ast.comprehension(gen.target, ast.List([item], ast.Load()), gen.ifs, 0)]))
+        try:
+            return bool(eval(compile(ast.fix_missing_locations(run), "<filter>", "eval"), {"__builtins__": {}}))
+        except Exception:  # a filter that reads another name is not run: the site counts as dropping
+            return False
+
+    comps = (ast.DictComp, ast.ListComp, ast.SetComp, ast.GeneratorExp)
+    found = set()
+    for node in ast.walk(tree):
+        if any(isinstance(a, ast.Assert) for a in ancestors(node)):
+            continue
+        if isinstance(node, ast.Call) and names_the_store(node):
+            comp = next((a for a in ancestors(node) if isinstance(a, comps)), None)
+            if comp is None:
+                continue  # one name tested, not an env built by a filter
+            where = scope(comp)
+            if isinstance(comp, ast.DictComp) and where is not tree and filter_keeps(comp):
+                continue
+            if not stores(where):
+                found.add(comp.lineno)
+        elif isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "pop" and node.args \
+                and isinstance(node.args[0], ast.Constant) and node.args[0].value == "ESPALIER_AUDIT_DIR":
+            if not stores(scope(node)):
+                found.add(node.lineno)
+        elif isinstance(node, ast.Delete):
+            if any(isinstance(t, ast.Subscript) and isinstance(t.slice, ast.Constant)
+                   and t.slice.value == "ESPALIER_AUDIT_DIR" for t in node.targets) and not stores(scope(node)):
+                found.add(node.lineno)
+    return sorted(found)
+
+
+@pytest.mark.parametrize("shape, drops", [
+    ('def f():\n    return {k: v for k, v in os.environ.items() if not k.startswith("ESPALIER_")}\n', True),
+    ("def f():\n    return {k: v for k, v in os.environ.items() if not k.startswith(('CLAUDE', 'ESPALIER'))}\n", True),
+    ('def f():\n    return {k: v for k, v in os.environ.items()\n'
+     '            if not k.startswith("ESPALIER") and k != "ESPALIER_AUDIT_DIR"}\n', True),
+    ('def f():\n    env = dict(os.environ)\n    del env["ESPALIER_AUDIT_DIR"]\n    return env\n', True),
+    ('def f():\n    env = os.environ.copy()\n    env.pop("ESPALIER_AUDIT_DIR", None)\n    return env\n', True),
+    ('_ENV = {k: v for k, v in os.environ.items()\n'
+     '        if not k.startswith("ESPALIER_") or k == "ESPALIER_AUDIT_DIR"}\n', True),
+    ('def f():\n    env = os.environ.copy()\n    for k in [k for k in env if k.startswith("ESPALIER_")]:\n'
+     '        env.pop(k)\n    return env\n', True),
+    ('def f():\n    return {k: v for k, v in os.environ.items()\n'
+     '            if not k.startswith("ESPALIER_") or k == "ESPALIER_AUDIT_DIR"}\n', False),
+    ('def f(tree):\n    env = {k: v for k, v in os.environ.items() if not k.startswith(("ESPALIER_", "CLAUDE_"))}\n'
+     '    env["ESPALIER_AUDIT_DIR"] = str(tree / ".audit")\n    return env\n', False),
+    ('def f(home):\n    env = os.environ.copy()\n    env.pop("ESPALIER_AUDIT_DIR", None)\n'
+     '    env["HOME"] = str(home)\n    return env\n', False),
+    ('def f(**kw):\n    env = {k: v for k, v in os.environ.items() if not k.startswith("ESPALIER_")}\n'
+     '    env.update(ESPALIER_AUDIT_DIR=os.environ["ESPALIER_AUDIT_DIR"], **kw)\n    return env\n', False),
+    ('def f():\n    return {k: v for k, v in os.environ.items() if not k.startswith("ESPALIER_BOX_LOCK")}\n', False),
+], ids=["literal", "tuple-single-quoted", "inverted-mention", "dict-then-del", "pop", "module-level-keep",
+        "loop-of-pops", "keep-clause", "own-store", "own-home", "keyword-store", "other-prefix"])
+def test_the_census_reads_each_shape_that_drops_the_store(shape, drops):
+    """The census below, on the shapes the failure-mode review drove past
+    its literal first form. Dies to: a shape read the wrong way round."""
+    assert bool(_audit_store_drops(shape)) is drops, _audit_store_drops(shape)
+
+
+def test_a_child_env_the_suite_or_a_bench_builds_keeps_an_audit_store():
     """DEF-3022: conftest's ``_isolate_audit_dir`` points each test at a store
     of its own, and an env built from ``os.environ`` that drops every
     ``ESPALIER_*`` name drops that too, so the child it spawns writes, and its
     SessionStart prune reads, the operator's home store (5,695 logs on the
-    Windows box, 40-odd test slugs a day). Dies to: a new such env that does
-    not keep ``ESPALIER_AUDIT_DIR``."""
-    import ast
+    Windows box, 40-odd test slugs a day; a lifecycle deny wrote
+    ``<slug>-20261101.log`` there). Dies to: a new such env under ``tests/``
+    or ``bench/`` that keeps no store (:func:`_audit_store_drops`)."""
     from tests._live_tree import checkout_glob
 
     dropping = []
-    for path in checkout_glob(REPO_ROOT / "tests", "test_*.py"):
-        text = path.read_text(encoding="utf-8")
-        if 'startswith("ESPALIER_")' not in text:
-            continue
-        for node in ast.walk(ast.parse(text)):
-            segment = ast.get_source_segment(text, node) if isinstance(node, ast.DictComp) else None
-            if segment and "os.environ" in segment and 'startswith("ESPALIER_")' in segment \
-                    and "ESPALIER_AUDIT_DIR" not in segment:
-                dropping.append(f"{path.name}:{node.lineno}")
+    for top in ("tests", "bench"):
+        for path in checkout_glob(REPO_ROOT / top, "**/*.py"):
+            text = path.read_text(encoding="utf-8")
+            if "ESPALIER" in text and ("startswith" in text or "ESPALIER_AUDIT_DIR" in text):
+                dropping += [f"{top}/{path.relative_to(REPO_ROOT / top).as_posix()}:{line}"
+                             for line in _audit_store_drops(text)]
     assert dropping == [], dropping
 
 
@@ -526,9 +711,10 @@ class TestPruneTimestampSemantics:
 
 class TestPruneIterationCap:
     """TP-44: cap iteration so an attacker spamming the audit dir with
-    empty .log files can't slow session_start indefinitely. Cap is
-    enforced via sorted-first-N processing — deterministic order so the
-    operator sees consistent pruning under flood."""
+    empty .log files can't slow session_start indefinitely. Above the cap
+    the oldest-named N are read (by the date in each name, DEF-3022's
+    ``_audit_log_order``), a deterministic order, so each start goes on
+    where the old logs are."""
 
     def test_prune_caps_iteration_count(self, monkeypatch, tmp_path, capsys):
         integ = _load_integrity_module()
