@@ -604,9 +604,12 @@ class TestTheBaseline:
         assert zw.read_baseline(zw.baseline_path(tree, "s-1"))["known"] == {}
 
 
-def _session_start(tree: Path, source: str, sid: str = "s-1") -> None:
-    result = _run(tree, "session_start.py", {"hook_event_name": "SessionStart", "source": source, "session_id": sid})
+def _session_start(tree: Path, source: str, sid: str = "s-1", **kw) -> str:
+    """session_start over ``tree``; its banner (the additionalContext)."""
+    result = _run(tree, "session_start.py", {"hook_event_name": "SessionStart", "source": source, "session_id": sid},
+                  **kw)
     assert result.returncode == 0, result.stderr
+    return _context(json.loads(result.stdout)) if result.stdout.strip() else ""
 
 
 class TestSessionStartTakesTheBaseline:
@@ -626,6 +629,88 @@ class TestSessionStartTakesTheBaseline:
         assert _HOOK in zw.read_baseline(zw.baseline_path(tree, "s-1"))["known"]
         _session_start(tree, "startup")
         assert zw.read_baseline(zw.baseline_path(tree, "s-1"))["known"] == {}
+
+
+def _refusing_git(tree: Path) -> dict:
+    """A tree whose git refuses it, as safe.directory's dubious ownership
+    does (exit 128): an empty ``.git`` the walk takes for the checkout's own
+    and git reads as no repository, its search fenced at the tree's parent;
+    and the hooks directory declared generated, so a fresh walk asks git.
+    The env the hooks run under."""
+    (tree / ".git").mkdir()
+    (tree / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+    return {"GIT_CEILING_DIRECTORIES": str(tree.parent)}
+
+
+class TestAFailedTrackedReadReachesClaude:
+    """DEF-2031: the once-a-session line DEF-4084 gave a failed tracked read
+    reached ``/status --log`` and the debug log only. The hook that ran the
+    fresh walk renders it where Claude and the operator read it -- the
+    SessionStart banner, or the notice of a shell call that took the
+    baseline -- naming the cause and the directory, once a session for each
+    cause. Driven through the real hooks over a tree whose git refuses it."""
+
+    def test_the_banner_names_the_cause_and_the_directory(self, tree: Path) -> None:
+        """Mutations: queue nothing; render the queue in neither hook; drop
+        the directory from the line."""
+        text = _session_start(tree, "startup", extra_env=_refusing_git(tree))
+        assert "git ls-files exited 128" in text and "tools/cc/hooks/" in text, text
+
+    def test_a_shell_call_that_took_the_baseline_names_it(self, tree: Path) -> None:
+        """Mutation: render the queue in session_start alone."""
+        text = _context(_post(tree, "Bash", _NO_OP, extra_env=_refusing_git(tree)))
+        assert "had no zone baseline" in text, text
+        assert "git ls-files exited 128" in text and "tools/cc/hooks/" in text, text
+
+    def test_a_line_the_banner_said_is_not_said_again(self, tree: Path) -> None:
+        """The first shell call after a lost baseline walks fresh and meets
+        the same refusal the banner already named. Mutation: queue the line
+        on every failed walk, whether or not say_once spoke."""
+        env = _refusing_git(tree)
+        assert "git ls-files exited 128" in _session_start(tree, "startup", extra_env=env)
+        zw.baseline_path(tree, "s-1").unlink()
+        text = _context(_post(tree, "Bash", _NO_OP, extra_env=env))
+        assert "had no zone baseline" in text and "git ls-files" not in text, text
+        assert _audit_types(tree).count("zone_watch_failed_open_tracked_read") == 1
+
+    def test_the_walk_queues_the_line_once_and_a_take_empties_it(self, repo: Path, monkeypatch) -> None:
+        """Mutations: queue on every failed walk; leave the queue full after
+        a take; queue the line where say_once stayed silent."""
+        monkeypatch.setattr(hu, "_SAID_THIS_PROCESS", set())
+        (repo / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+        monkeypatch.setattr(zw._hook_utils, "spawn_checked",
+                            lambda argv, **kw: subprocess.CompletedProcess(argv, 128, b"", b""))
+        zw.take_notices()  # a line an earlier in-process walk left is not this test's
+        zw.snapshot(repo)
+        zw.snapshot(repo)
+        notices = zw.take_notices()
+        assert len(notices) == 1 and "exited 128" in notices[0] and "tools/cc/hooks/" in notices[0], notices
+        assert zw.take_notices() == []
+
+    def test_every_hook_that_walks_takes_the_queue(self) -> None:
+        """A hook that runs a fresh walk (take_baseline, after_shell_call) and
+        never takes the queue loses the line for the session: say_once wrote
+        the flag. Derived from the hooks' own calls, so a third walking hook
+        is read. Mutation: drop the take in either hook."""
+        import ast
+
+        from tests._live_tree import checkout_glob
+
+        walkers, missing = [], []
+        for f in sorted(checkout_glob(HOOKS_DIR, "*.py")):
+            if f.name == "_zone_watch.py":
+                continue
+            for fn in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+                if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                words = {n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)}
+                words |= {n.value for n in ast.walk(fn) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
+                if words & {"take_baseline", "after_shell_call"}:
+                    walkers.append(f"{f.name}::{fn.name}")
+                    if "take_notices" not in words:
+                        missing.append(f"{f.name}::{fn.name}")
+        assert {w.split("::")[0] for w in walkers} >= {"session_start.py", "post_write_check.py"}, walkers
+        assert not missing, f"{missing} run a fresh zone walk and never take its queue"
 
 
 class TestTheAfterCheck:
