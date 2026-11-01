@@ -1394,6 +1394,11 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # repo-analyst) under a real bash: what a census prints is a
             # subprocess fact.
             "test_first_contact_diagnostics",
+            # The same init'd adopter tree, then the deployed bodies that stand
+            # down or skip a check (the advisor's hook programs among them) run
+            # verbatim on it and on scratch wirings: what a body says when its
+            # input is missing is a subprocess fact.
+            "test_adopter_stand_downs_say_so",
             # The timeout backstop: whether a swallowed or re-blocked ceiling
             # ends its test is a fact about a real pytest child under the
             # signal method.
@@ -1743,6 +1748,9 @@ _SLOW_FILES: set[str] = {
     # `init` on the Python adopter tree, then four deployed fences under a real
     # bash on it and on this checkout (a whole-tree find, twice).
     "test_first_contact_diagnostics",
+    # `init` on the Python adopter tree, then the deployed stand-down programs
+    # on it and on scratch trees, an interpreter start each.
+    "test_adopter_stand_downs_say_so",
     # Spawns real `git` against short-lived repos under tmp_path to prove the
     # bare-`checkout <path>` arm and the pre-discard snapshot round-trip.
     "test_speedbump_discard_snapshot",

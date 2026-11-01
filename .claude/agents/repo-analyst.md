@@ -6,7 +6,7 @@ description: >
   detection (fingerprint exists). Checks language, frameworks, architecture,
   test patterns, CI/CD, and workflow. The foundation for harness update
   decisions. Runs in its own context window.
-tools: Read, Grep, Glob, Bash(python *), Bash(find *), Bash(wc *)
+tools: Read, Grep, Glob, Bash
 model: opus
 ---
 
@@ -18,6 +18,15 @@ understood this, and does the harness still match reality?" You're not catalogin
 files; you're producing the structural understanding the harness configures against.
 
 **Working directory:** `.` (project root)
+
+**Bash scope.** `Bash` on the tools line above is the whole tool: Claude Code
+reads that line as tool names, so a command pattern there would narrow
+nothing. What the shell may run is bounded by the project's permission rules
+in `.claude/settings.json` (they apply to subagents too) and by the harness's
+hooks, which refuse a write into the harness's own files and a few destructive
+shapes; nothing there stops a `git stash`, a `git checkout` or a `sed -i` on
+the project's own source. This agent reviews and changes nothing: run only the
+read-only commands this body shows.
 
 ## Analysis Protocol
 
@@ -241,22 +250,31 @@ else
 fi
 
 echo "=== When was fingerprint last updated ==="
-git log --format="%ar %s" -- reports/repo_fingerprint.json 2>/dev/null | head -3
+# The fingerprint records the commit it was taken at (head_sha); reports/ is
+# gitignored, so the file has no history of its own to read.
+fp_sha=$(python -c "
+import json
+try:
+    print(json.load(open('reports/repo_fingerprint.json', encoding='utf-8')).get('head_sha', ''))
+except (OSError, ValueError, AttributeError):
+    pass
+" 2>/dev/null)
+if [ -n "$fp_sha" ] && git cat-file -e "$fp_sha^{commit}" 2>/dev/null; then
+  git log -1 --format="  taken at $fp_sha (%ar): %s" "$fp_sha"
+else
+  fp_sha=
+  echo "  no baseline: the saved fingerprint records no commit this clone holds (taken outside git, before its first commit, or by an older release); run espalier fingerprint . to record one"
+fi
 
 echo "=== Uncommitted changes ==="
 git status --short 2>/dev/null | head -20
 
 echo "=== Changed files since fingerprint was last saved ==="
-last_fp=$(git log --format="%H" -- reports/repo_fingerprint.json 2>/dev/null | head -1)
-if [ -n "$last_fp" ]; then
-  echo "  Comparing against fingerprint commit: $last_fp"
-  git diff --name-only "$last_fp" HEAD 2>/dev/null | grep "\.py$\|\.js$\|\.ts$\|\.go$\|\.rs$" | head -20
+if [ -n "$fp_sha" ]; then
+  echo "  Comparing against the commit the fingerprint was taken at: $fp_sha"
+  git diff --name-only "$fp_sha" HEAD 2>/dev/null | grep -E '\.(py|js|ts|go|rs)$' | head -20
 else
-  echo "  No fingerprint commit found — showing recent commits instead"
-  commit_count=$(git rev-list --count HEAD 2>/dev/null || echo "0")
-  window=$([ "$commit_count" -ge 5 ] && echo "HEAD~5" || echo "$(git rev-list --max-parents=0 HEAD 2>/dev/null)")
-  git diff --name-only "$window" HEAD 2>/dev/null | grep "\.py$\|\.js$\|\.ts$" | head -20
-  echo "  [Note: window is $window — may not represent all changes since last analysis]"
+  echo "  NOT EVALUATED: no baseline commit (above), so no list of changes since the last analysis; a recent-commits window would not be one"
 fi
 
 echo "=== ESPALIER_MEMORY.md drift check ==="

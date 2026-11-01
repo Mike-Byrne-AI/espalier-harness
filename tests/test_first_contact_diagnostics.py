@@ -676,7 +676,9 @@ class TestTheDeadConfigPassReadsTheAdoptersBodies:
         them to do) is not then told the harness's own citations are dead."""
         tree = tmp_path / "tree"
         shutil.copytree(adopter / ".claude", tree / ".claude")
-        (tree / "tools" / "cc").mkdir(parents=True)
+        # The deployed tools/ whole: the citation root, and the hook scripts
+        # the copied settings wire (the pass reads them from args[]).
+        shutil.copytree(adopter / "tools", tree / "tools")
         smoke = tree / ".claude" / "commands" / "smoke.md"
         unmarked = "\n".join(
             line for line in _read(smoke).splitlines() if "espalier:managed" not in line

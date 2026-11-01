@@ -5,7 +5,7 @@ description: >
   architectural consistency. Flags layer boundary violations, circular
   dependencies, hook exit code errors, and isolation-layer violations.
   Runs in its own context.
-tools: Read, Grep, Glob, Bash(python *), Bash(git *)
+tools: Read, Grep, Glob, Bash
 model: opus
 ---
 
@@ -22,6 +22,15 @@ protocols, isolation rules, public APIs).
 > verdict as a release gate — it is one signal among several.
 
 **Working directory:** `.` (project root)
+
+**Bash scope.** `Bash` on the tools line above is the whole tool: Claude Code
+reads that line as tool names, so a command pattern there would narrow
+nothing. What the shell may run is bounded by the project's permission rules
+in `.claude/settings.json` (they apply to subagents too) and by the harness's
+hooks, which refuse a write into the harness's own files and a few destructive
+shapes; nothing there stops a `git stash`, a `git checkout` or a `sed -i` on
+the project's own source. This agent reviews and changes nothing: run only the
+read-only commands this body shows.
 
 ## Orient first — identify the layer model
 
@@ -156,11 +165,14 @@ not the specific method.
 The Analysis Protocol below is generic — the step framework applies to
 any layered codebase. The **bash examples within each step are
 Espalier-Harness's own** (paths like `tools/cc/`, `espalier/scanners/`,
-`tools/cc/hooks/`). Each example is wrapped in a presence-check pattern
-(`[ -d X ] && audit || echo "NOT PRESENT — Espalier-specific rule does
-not apply; check YOUR layer model"`) so absent paths produce a
-diagnostic instead of crashing. See "Adapting me to YOUR architecture"
-below for how to substitute your project's paths and rules.
+`tools/cc/hooks/`). Each example sits in a block the harness keeps for
+its own repository and `init` strips from every other tree, so it is
+keyed on which repository this is, never on a directory being present:
+every adopter holds a deployed copy of `tools/cc/`, and an installed
+`espalier` imports anywhere. Where the block is gone, the step prints
+what it skipped and why, and Steps 5 and 6 read YOUR top-level packages.
+See "Adapting me to YOUR architecture" below for how to substitute your
+project's paths and rules.
 
 ## Analysis Protocol
 
@@ -179,13 +191,17 @@ Example (the harness's own — `tools/cc/` must have zero `espalier`
 imports):
 
 ```bash
+CHECK=
+# <!-- espalier:self-host-only -->
+# On this repository tools/cc/ is a layer of its own source and never imports
+# the engine; init strips this block from every other tree, where tools/cc/ is
+# the harness's deployed copy and the rule is not the adopter's.
+CHECK=harness
 # LEAD (grep may miss aliased imports or matches in strings/comments — confirm any hits by reading the file)
-if [ -d tools/cc/ ]; then
-  grep -rn "from espalier\|import espalier" tools/cc/ --include="*.py" 2>/dev/null | \
-    grep -v __pycache__ || echo "  CLEAN"
-else
-  echo "  tools/cc/ NOT PRESENT — Espalier-specific isolation rule does not apply; check YOUR layer model"
-fi
+grep -rn "from espalier\|import espalier" tools/cc/ --include="*.py" 2>/dev/null | \
+  grep -v __pycache__ || echo "  CLEAN"
+# <!-- /espalier:self-host-only -->
+[ -n "$CHECK" ] || echo "  SKIPPED: the example is the harness's own rule (its tools/cc/ never imports its engine), and tools/cc/ here is the harness's deployed copy, not a layer of yours. Name YOUR layers and the direction between them, then grep each lower layer for an import of a higher one."
 ```
 
 Replace `espalier` and `tools/cc/` with your project's layer paths.
@@ -197,23 +213,26 @@ If a layer is stdlib-only, scan it for non-stdlib imports.
 Example (the harness's `espalier/scanners/` is stdlib-only):
 
 ```bash
-if [ -d espalier/scanners/ ]; then
-  echo "=== Scanner dependencies (must be stdlib only) ==="
-  for f in espalier/scanners/*.py; do
-    echo "--- $(basename $f) ---"
-    grep "^import\|^from" "$f" 2>/dev/null | grep -v "^from __future__" | head -10
-  done
+CHECK=
+# <!-- espalier:self-host-only -->
+# On this repository the scanners are stdlib-only; init strips this block from
+# every other tree, which holds no scanners of the harness's.
+CHECK=harness
+echo "=== Scanner dependencies (must be stdlib only) ==="
+for f in espalier/scanners/*.py; do
+  echo "--- $(basename $f) ---"
+  grep "^import\|^from" "$f" 2>/dev/null | grep -v "^from __future__" | head -10
+done
 
-  echo "=== Non-stdlib imports in scanners (should be empty) ==="
-  STDLIB="os|re|sys|ast|json|math|pathlib|typing|collections|itertools|functools|dataclasses|abc|io|copy|hashlib|textwrap|string|enum|contextlib|warnings"
-  for f in espalier/scanners/*.py; do
-    grep "^import\|^from" "$f" 2>/dev/null | \
-      grep -v "^from __future__\|$STDLIB" | \
-      grep -v "^$" && echo "  ⚠ [LEAD] non-stdlib import candidate in $(basename $f) — confirm by reading file"
-  done
-else
-  echo "  espalier/scanners/ NOT PRESENT — Espalier-specific stdlib-only rule does not apply; check YOUR layer model"
-fi
+echo "=== Non-stdlib imports in scanners (should be empty) ==="
+STDLIB="os|re|sys|ast|json|math|pathlib|typing|collections|itertools|functools|dataclasses|abc|io|copy|hashlib|textwrap|string|enum|contextlib|warnings"
+for f in espalier/scanners/*.py; do
+  grep "^import\|^from" "$f" 2>/dev/null | \
+    grep -v "^from __future__\|$STDLIB" | \
+    grep -v "^$" && echo "  ⚠ [LEAD] non-stdlib import candidate in $(basename $f) — confirm by reading file"
+done
+# <!-- /espalier:self-host-only -->
+[ -n "$CHECK" ] || echo "  SKIPPED: the example is the harness's own rule for its scanners, which this tree does not hold. If a layer of yours may import only the standard library, list its imports the way the example does."
 ```
 
 Substitute your stdlib-only layer for `espalier/scanners/`.
@@ -221,17 +240,20 @@ Substitute your stdlib-only layer for `espalier/scanners/`.
 ### Step 4 — Check hook exit codes (Claude Code projects)
 
 ```bash
-if [ -d tools/cc/hooks/ ]; then
-  # LEAD — grep-based; the rule is "no exit 1 in governance paths"
-  grep -rn "return 1\b\|sys\.exit(1)\b" tools/cc/hooks/ --include="*.py" 2>/dev/null | \
-    grep -v "__pycache__" && echo "  ⚠ found exit-1 in hooks" || echo "  CLEAN"
+CHECK=
+# <!-- espalier:self-host-only -->
+# On this repository tools/cc/hooks/ is its own source; init strips this block
+# from every other tree, where it is the harness's deployed copy.
+CHECK=harness
+# LEAD — grep-based; the rule is "no exit 1 in governance paths"
+grep -rn "return 1\b\|sys\.exit(1)\b" tools/cc/hooks/ --include="*.py" 2>/dev/null | \
+  grep -v "__pycache__" && echo "  ⚠ found exit-1 in hooks" || echo "  CLEAN"
 
-  echo "=== Hook stdout usage (block JSON goes to stdout, advisory to stderr) ==="
-  grep -rn "^print\|    print" tools/cc/hooks/ --include="*.py" 2>/dev/null | \
-    grep -v "file=sys.stderr\|__pycache__" | head -10
-else
-  echo "  tools/cc/hooks/ NOT PRESENT — Espalier-specific hook-protocol audit skipped; check YOUR project's hook directory"
-fi
+echo "=== Hook stdout usage (block JSON goes to stdout, advisory to stderr) ==="
+grep -rn "^print\|    print" tools/cc/hooks/ --include="*.py" 2>/dev/null | \
+  grep -v "file=sys.stderr\|__pycache__" | head -10
+# <!-- /espalier:self-host-only -->
+[ -n "$CHECK" ] || echo "  SKIPPED: tools/cc/hooks/ here is the harness's deployed copy, write-protected and audited where it is built (a 'return 1' there can be an internal sentinel its main() turns into exit 0). YOUR hooks are the scripts .claude/settings.json wires outside tools/cc/: run the two greps on those."
 ```
 
 Substitute your project's hook directory for `tools/cc/hooks/`. CI-only
@@ -243,20 +265,44 @@ see the note in "Hook exit code contract" above.
 Smoke check via top-level import:
 
 ```bash
-# Espalier-Harness's own root package is `espalier`. Substitute YOUR
-# top-level importable package below.
+CHECK=
+# <!-- espalier:self-host-only -->
+# On this repository the root package is the engine, espalier; init strips
+# this block from every other tree, where an installed espalier is the
+# harness's package and the check below imports the adopter's own.
+CHECK=harness
 python -c "
 import sys
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 sys.path.insert(0, '.')
 try:
-    import espalier  # ← YOUR root package
-    print('  No circular imports detected (smoke check only)')
-except ModuleNotFoundError as e:
-    print(f'  root package not importable here — substitute YOUR package: {e}')
+    import espalier
+    print('  espalier: No circular imports detected (smoke check only)')
 except ImportError as e:
-    print(f'  CIRCULAR: {e}')
+    print(f'  espalier: CIRCULAR or broken import: {e}')
 "
+# <!-- /espalier:self-host-only -->
+if [ -z "$CHECK" ]; then
+  python -c "
+import importlib, sys
+from pathlib import Path
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+# YOUR top-level packages: a folder holding __init__.py at the root or under
+# src/, the test tree and dot-folders left out.
+found = sorted({p.parent.name for r in (Path('.'), Path('src')) if r.is_dir()
+                for p in r.glob('*/__init__.py')
+                if p.parent.name not in ('tests', 'test') and not p.parent.name.startswith('.')})
+if not found:
+    print('  NOT APPLICABLE: no top-level Python package here (a folder holding __init__.py at the root or under src/)')
+sys.path[:0] = ['.', 'src']
+for name in found:
+    try:
+        importlib.import_module(name)
+        print(f'  {name}: No circular imports detected (smoke check only)')
+    except ImportError as e:
+        print(f'  {name}: CIRCULAR or broken import: {e}')
+"
+fi
 ```
 
 Catches direct cycles but not transitive cycles across 3+ modules.
@@ -264,16 +310,37 @@ Catches direct cycles but not transitive cycles across 3+ modules.
 ### Step 6 — Structural health snapshot
 
 ```bash
-echo "=== Layer sizes (Espalier defaults — substitute YOUR engine/enforcement roots) ==="
-[ -d espalier/ ] && echo "  espalier/ (engine): $(find espalier/ -name '*.py' 2>/dev/null | wc -l) files" \
-  || echo "  espalier/ NOT PRESENT — name YOUR engine layer here"
-[ -d tools/cc/ ] && echo "  tools/cc/ (enforcement): $(find tools/cc/ -name '*.py' 2>/dev/null | wc -l) files" \
-  || echo "  tools/cc/ NOT PRESENT — name YOUR enforcement layer here"
+echo "=== Layer sizes ==="
+CHECK=
+# <!-- espalier:self-host-only -->
+# On this repository the engine and the enforcement scripts are its layers;
+# init strips this block from every other tree, where tools/cc/ is the
+# harness's deployed copy and the sizes below are the adopter's packages.
+CHECK=harness
+echo "  espalier/ (engine): $(find espalier/ -name '*.py' 2>/dev/null | wc -l) files"
+echo "  tools/cc/ (enforcement): $(find tools/cc/ -name '*.py' 2>/dev/null | wc -l) files"
+# <!-- /espalier:self-host-only -->
+if [ -z "$CHECK" ]; then
+  # YOUR top-level packages, found as Step 5 finds them (find, never a glob a
+  # zsh host aborts on); tools/cc/ and .claude/ are the harness's and left out.
+  PKGS=$(find . src -mindepth 2 -maxdepth 2 -name __init__.py ! -path "./.*" ! -path "./tests/*" ! -path "./test/*" ! -path "src/tests/*" ! -path "src/test/*" 2>/dev/null | sed -e 's|^\./||' -e 's|/__init__\.py$||' | sort -u)
+  if [ -n "$PKGS" ]; then
+    printf '%s\n' "$PKGS" | while IFS= read -r pkg; do
+      echo "  $pkg/: $(find "$pkg" -name '*.py' 2>/dev/null | wc -l | tr -d ' ') files"
+    done
+  else
+    echo "  no top-level Python package here (a folder holding __init__.py at the root or under src/): name YOUR layers by hand"
+  fi
+fi
 echo "  .claude/agents/: $(find .claude/agents/ -name '*.md' 2>/dev/null | wc -l) agents"
 echo "  .claude/commands/: $(find .claude/commands/ -name '*.md' 2>/dev/null | wc -l) commands"
 
 echo "=== Recent layer-crossing changes ==="
-git diff --name-only HEAD~3 HEAD 2>/dev/null | head -20
+if git rev-parse -q --verify HEAD~3 >/dev/null 2>&1; then
+  git diff --name-only HEAD~3 HEAD | head -20
+else
+  echo "  fewer than four commits (or no git): no three-commit window to read"
+fi
 ```
 
 ## Review Protocol
