@@ -779,6 +779,15 @@ class TestSayOnce:
         assert err.count("[write_guard] integrity scan failed") == 1, err
         assert (tmp_path / hu.STATE_DIR / "once_integrity-scan").is_file()
 
+    def test_it_answers_whether_it_spoke(self, tmp_path, monkeypatch):
+        """A caller that carries the line further (a hook's banner) carries it
+        when the record was written, never twice. Mutation: answer None."""
+        hu = self._fresh(monkeypatch)
+        assert hu.say_once(tmp_path, "k-answer", "zone_watch", "x", "m") is True
+        assert hu.say_once(tmp_path, "k-answer", "zone_watch", "x", "m") is False
+        monkeypatch.setattr(hu, "_SAID_THIS_PROCESS", set())  # a later hook process: the flag answers
+        assert hu.say_once(tmp_path, "k-answer", "zone_watch", "x", "m") is False
+
     def test_a_flag_from_an_earlier_process_keeps_it_silent(self, tmp_path, monkeypatch, capsys):
         hu = self._fresh(monkeypatch)
         (tmp_path / hu.STATE_DIR).mkdir()
