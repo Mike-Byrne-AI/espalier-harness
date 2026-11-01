@@ -1,0 +1,13 @@
+{
+ "id": "DEF-5042",
+ "subject": "scripts/proof_tier.py",
+ "cmd": "python3 -c \"import sys;sys.path.insert(0,'scripts');import proof_tier as p;pairs=[('docs/WORKFLOW.md','tests/test_mail.py'),('memory/parallel-work-protocol.md','tests/test_mail.py')];print(sum(t in p.own_tests([b]) for b,t in pairs))\"",
+ "open_value": "0",
+ "why_not": null,
+ "inputs": [
+  "tests/test_mail.py"
+ ],
+ "row_sha": "e329fcea90a3",
+ "text_sha": "7822c61352f3",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

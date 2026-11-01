@@ -102,6 +102,7 @@ missing ref) -- the CI tier job reads that as ``full``, never as cheaper.
 from __future__ import annotations
 
 import argparse
+import ast
 import fnmatch
 import json
 import re
@@ -356,6 +357,129 @@ def is_body(rel: str) -> bool:
     return False
 
 
+#: The type names a ``/`` join can start from with a literal (``Path(".claude")
+#: / "commands"``): the one-argument call reads as its argument.
+_PATH_TYPES: frozenset[str] = frozenset({"Path", "PurePath", "PurePosixPath", "PureWindowsPath"})
+#: A string longer than this, or on more than one line, is prose, never a path.
+_NAME_MAX = 255
+#: ``(text, names)`` per test module parsed, keyed by its path: the pins ask
+#: once per body, and a module whose text is unchanged is not parsed again.
+#: Keyed on the text, not the mtime: two writes inside one clock tick of a
+#: coarse filesystem clock keep one mtime, and the second would read stale.
+_NAMES_CACHE: dict[str, tuple[str, frozenset[str]]] = {}
+
+
+def _norm_name(text: str) -> str:
+    text = text.replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text.strip("/")
+
+
+def _literal(node: ast.AST) -> str | None:
+    """A string constant, or a one-argument ``Path``-type call on one."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords:
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+        if name in _PATH_TYPES:
+            return _literal(node.args[0])
+    return None
+
+
+def _module_names(tree: ast.AST) -> set[str]:
+    """Every path a test module names: each one-line string constant, and the
+    string constants that end each ``/`` join (``REPO_ROOT / ".claude" /
+    "commands" / "inbox.md"`` names ``.claude/commands/inbox.md``; the operand
+    before them is dropped, so a tree ``espalier init`` built names the
+    deployed path, which is the source's own)."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            names.add(node.value)
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            parts: list[str] = []
+            left: ast.AST = node
+            while isinstance(left, ast.BinOp) and isinstance(left.op, ast.Div):
+                right = _literal(left.right)
+                if right is None:
+                    break
+                parts.append(right)
+                left = left.left
+            else:
+                head = _literal(left)
+                if head is not None:
+                    parts.append(head)
+            if parts:
+                names.add("/".join(reversed(parts)))
+    return {_norm_name(n) for n in names if n and "\n" not in n and len(n) <= _NAME_MAX}
+
+
+def _test_names(path: Path, text: str) -> frozenset[str]:
+    """``_module_names`` of one test module's ``text``, parsed once per text.
+    A module that does not parse names nothing: the suite's own collection
+    reports it."""
+    key = str(path)
+    hit = _NAMES_CACHE.get(key)
+    if hit is not None and hit[0] == text:
+        return hit[1]
+    try:
+        names = frozenset(_module_names(ast.parse(text)))
+    except (SyntaxError, ValueError):
+        names = frozenset()
+    _NAMES_CACHE[key] = (text, names)
+    return names
+
+
+def _names_path(names: frozenset[str], rel: str) -> bool:
+    """``rel`` itself, or a suffix of it two segments or longer (a join from a
+    directory variable: ``claude_dir / "commands" / "inbox.md"``); a bare file
+    name matches only a top-level path."""
+    if rel in names:
+        return True
+    parts = rel.split("/")
+    return any("/".join(parts[i:]) in names for i in range(1, len(parts) - 1))
+
+
+def body_readers(changed, root: Path = _ROOT) -> tuple[str, ...]:
+    """Every top-level ``tests/test_*.py`` that names a changed path under
+    ``BODY_ROOTS`` (``_module_names``), in the order the paths came. A body is
+    not a script, so its tests cannot be read from its name, and the files that
+    read one named body are integration-classified: a body-only diff earned the
+    contract tier, whose ``-m contract`` deselected every row of the five
+    DEF-4067's census found, and their reds arrived on ``main`` (DEF-5040).
+    Derived from the test files at each call, never kept. Every changed path
+    under the roots is looked up as it is, not only a ``BODY_KINDS`` body, so
+    the asset copy's own readers come with it. What this cannot read: a name
+    built at run time (an f-string, a glob, a file name held in a variable),
+    which is the walk ``BODY_TEST_FILES`` keeps by hand."""
+    wanted: list[str] = []
+    for rel in changed:
+        rel = _norm_name(rel)
+        if rel.startswith(BODY_ROOTS) and rel not in wanted:
+            wanted.append(rel)
+    tests_dir = root / "tests"
+    if not wanted or not tests_dir.is_dir():
+        return ()
+    found: dict[str, list[str]] = {rel: [] for rel in wanted}
+    for path in sorted(tests_dir.glob("test_*.py")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        # a literal or a join that names the path spells its file name: only
+        # a module whose text holds one is parsed
+        named = [rel for rel in wanted if rel.rsplit("/", 1)[-1] in text]
+        if not named:
+            continue
+        names = _test_names(path, text)
+        for rel in named:
+            if _names_path(names, rel):
+                found[rel].append(f"tests/{path.name}")
+    return tuple(dict.fromkeys(t for rel in wanted for t in found[rel]))
+
+
 def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     """``tests/test_<stem>.py`` for every changed ``scripts/<stem>.py`` that has
     one, and every changed ``tests/test_*.py`` itself (a test-only diff earned
@@ -371,7 +495,9 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     agent, command or skill body brings ``BODY_TEST_FILES``, which is
     enumerated, not derived: a body's tests cannot be read from its name, so
     the roster is hand-kept and pinned to that file's walk (DEF-4067: a
-    body-only diff ran none of the tests written for the bodies)."""
+    body-only diff ran none of the tests written for the bodies). Every test
+    file that names a changed path under the body roots follows
+    (``body_readers``, derived)."""
     out: list[str] = []
     for rel in changed:
         rel = rel.replace("\\", "/")
@@ -384,6 +510,7 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
                 out.append(rel)
         if is_body(rel):
             out.extend(t for t in BODY_TEST_FILES if (root / t).is_file() and t not in out)
+    out.extend(t for t in body_readers(changed, root) if t not in out)
     return tuple(out)
 
 

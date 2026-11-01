@@ -423,24 +423,31 @@ class TestTheFullRecipe:
         or in the deploy source ``espalier init`` copies into the adopter tree
         that file builds, now brings the file on the two cheaper tiers; a path
         beside a body (a skill's other file, a nested agent, a workflow, the
-        dogfooding mirror the file never opens) brings nothing."""
+        dogfooding mirror the file never opens) does not bring it. The test
+        files that name a changed path ride behind it (``body_readers``,
+        DEF-5040), so each row reads the roster's file, not the whole line."""
         diagnostics = "tests/test_first_contact_diagnostics.py"
         for body in (".claude/agents/repo-analyst.md", ".claude/commands/handoff.md",
                      ".claude/skills/analyze/SKILL.md", "espalier/assets/claude/agents/repo-analyst.md",
                      ".claude\\agents\\code-reviewer.md"):
-            assert pt.own_tests([body], REPO_ROOT) == (diagnostics,), body
+            assert pt.own_tests([body], REPO_ROOT)[0] == diagnostics, body
         for beside in (".claude/skills/analyze/notes.md", ".claude/agents/nested/x.md",
                        ".claude/workflows/fanout-audit.js", ".claude/CLAUDE.md", ".claude/settings.json",
                        "examples/dogfooding/.claude/agents/repo-analyst.md", "docs/.claude/agents/x.md",
                        ".claude/skills/SKILL.md", ".claude/skills/a/b/SKILL.md", ".claude/skills//SKILL.md",
                        ".claude/agents//x.md"):
-            assert pt.own_tests([beside], REPO_ROOT) == (), beside
+            assert pt.own_tests([beside], REPO_ROOT) == pt.body_readers([beside], REPO_ROOT), beside
+            assert diagnostics not in pt.body_readers([beside], REPO_ROOT), beside
         changed = [".claude/agents/repo-analyst.md", "espalier/assets/claude/agents/repo-analyst.md",
                    "scripts/ledger_row.py", diagnostics]
-        assert pt.own_tests(changed, REPO_ROOT) == (diagnostics, "tests/test_ledger_row.py")
+        readers = pt.body_readers(changed, REPO_ROOT)
+        assert pt.own_tests(changed, REPO_ROOT) == tuple(
+            dict.fromkeys((diagnostics, "tests/test_ledger_row.py", *readers)))
+        own = pt.own_tests([".claude/agents/repo-analyst.md"], REPO_ROOT)
+        assert own[0] == diagnostics and not set(own) & set(pt.SERIAL_FILES), own
         assert pt.commands("contract", [".claude/agents/repo-analyst.md"], REPO_ROOT) == (
             "ruff check .", "pytest -n auto -m contract -q",
-            f"pytest -q -n auto -m 'not heavy_e2e' {diagnostics}")
+            shlex.join(("pytest", "-q", *pt._PARALLEL, *pt._NOT_HEAVY, *own)))
         assert pt.commands("full", [".claude/agents/repo-analyst.md"], REPO_ROOT) == pt.FULL_COMMANDS
 
     def test_the_body_roster_is_the_walk_the_diagnostics_read(self, pt):
@@ -466,10 +473,10 @@ class TestTheFullRecipe:
         fenced = {body for body, _fence in fcd._walk_fences(REPO_ROOT)}
         assert fenced and fenced <= set(walked), fenced - set(walked)
         for body in walked:
-            assert pt.own_tests([body], REPO_ROOT) == (rel,), body
+            assert pt.own_tests([body], REPO_ROOT)[0] == rel, body
             twin = "espalier/assets/claude/" + body[len(".claude/"):]
             assert (REPO_ROOT / twin).is_file(), twin
-            assert pt.own_tests([twin], REPO_ROOT) == (rel,), twin
+            assert pt.own_tests([twin], REPO_ROOT)[0] == rel, twin
 
     def test_the_contract_tiers_body_line_collects_the_diagnostics(self, pt):
         """Driven, not read: the line a body-only diff adds to the contract tier
@@ -477,7 +484,7 @@ class TestTheFullRecipe:
         ``-m contract`` line collects none of them (the gap DEF-4067 names)."""
         rel = "tests/test_first_contact_diagnostics.py"
         line = pt.tier_argvs("contract", [".claude/agents/repo-analyst.md"], REPO_ROOT)[-1]
-        assert line[-1] == rel and "contract" not in line
+        assert rel in line and "contract" not in line
         marks = line[line.index("-m"):line.index("-m") + 2]
 
         def collected(extra: tuple[str, ...]) -> int:
@@ -489,6 +496,92 @@ class TestTheFullRecipe:
         assert every, "the diagnostics module collected no row at all"
         assert collected(marks) == every
         assert collected(pt._CONTRACT_ARGV[pt._CONTRACT_ARGV.index("-m"):][:2]) == 0
+
+    #: The five readers DEF-4067's census found, each reading one named body
+    #: by a literal or a join the contract tier never collected (DEF-5040).
+    _ONE_BODY_READERS: tuple[tuple[str, str], ...] = (
+        (".claude/commands/inbox.md", "tests/test_mail.py"),
+        (".claude/skills/hook-authoring/SKILL.md", "tests/test_hook_authoring_skill_parity.py"),
+        (".claude/skills/reflect/SKILL.md", "tests/test_reflect_memory_candidates.py"),
+        (".claude/commands/smoke.md", "tests/test_adopter_lifecycle_diagnostics.py"),
+        (".claude/commands/preflight.md", "tests/test_node_adopter_defaults.py"),
+    )
+
+    def test_a_changed_body_brings_every_test_file_that_names_it(self, pt):
+        """DEF-5040: a diff that edits one body earned the contract tier, whose
+        ``-m contract`` deselected every row of the five files that read that
+        body's text, so their reds arrived on ``main`` after the merge. Each
+        now rides the cheaper tiers' own line, read from the test files: a
+        literal, a join from the repository root, and a join on a tree
+        ``espalier init`` built (the preflight reader). Earn-the-red: none
+        of the five came back before ``body_readers`` existed."""
+        for body, reader in self._ONE_BODY_READERS:
+            assert reader in pt.own_tests([body], REPO_ROOT), (
+                f"{reader} no longer names {body} by a shape _module_names reads -- "
+                f"teach it the new shape rather than drop the pair")
+            assert reader in pt.body_readers([body], REPO_ROOT), body
+            line = pt.tier_argvs("contract", [body], REPO_ROOT)[-1]
+            assert reader in line and "contract" not in line, line
+            assert pt.commands("full", [body], REPO_ROOT) == pt.FULL_COMMANDS
+
+    def test_a_name_is_a_literal_or_the_end_of_a_join(self, pt, tmp_path):
+        """The shapes ``_module_names`` reads, on a scratch tree, each beside
+        the near miss that must not count: prose that mentions the path, a
+        longer path, a bare file name, a name built at run time, a module
+        below ``tests/`` or a helper, a module that does not parse. A path
+        outside ``BODY_ROOTS`` brings nothing (the domain: request 4ccfb9),
+        and a path under them that is not a body is looked up as it is."""
+        tests = tmp_path / "tests"
+        (tests / "sub").mkdir(parents=True)
+        reads = {
+            "test_literal.py": 'X = ".claude/commands/x.md"\nD = "docs/x.md"\n',
+            "test_join.py": 'P = ROOT / ".claude" / "commands" / "x.md"\n',
+            "test_path_call.py": 'from pathlib import Path\nP = Path(".claude") / "commands" / "x.md"\n',
+            "test_suffix.py": 'P = claude_dir / "commands" / "x.md"\n',
+            "test_windows.py": 'X = ".claude\\\\commands\\\\x.md"\n',
+            "test_asset.py": 'X = "espalier/assets/claude/commands/x.md"\n',
+            "test_notes.py": 'X = ".claude/skills/a/notes.md"\n',
+        }
+        misses = {
+            "test_prose.py": '"""Edit .claude/commands/x.md first."""\nM = "see .claude/commands/x.md"\n',
+            "test_longer.py": 'X = ".claude/commands/x.md.bak"\n',
+            "test_bare.py": 'X = "x.md"\n',
+            "test_fstring.py": 'X = f".claude/commands/{name}"\n',
+            "test_broken.py": 'X = ".claude/commands/x.md"\ndef (\n',
+            "sub/test_nested.py": 'X = ".claude/commands/x.md"\n',
+            "_helper.py": 'X = ".claude/commands/x.md"\n',
+        }
+        for name, text in {**reads, **misses}.items():
+            (tests / name).write_text(text, encoding="utf-8")
+        body = ".claude/commands/x.md"
+        assert pt.body_readers([body], tmp_path) == tuple(
+            f"tests/{n}" for n in ("test_join.py", "test_literal.py", "test_path_call.py",
+                                   "test_suffix.py", "test_windows.py"))
+        assert pt.body_readers([".claude\\commands\\x.md"], tmp_path) == pt.body_readers([body], tmp_path)
+        # a join from a directory variable may hold either tree, so it reads both
+        assert pt.body_readers(["espalier/assets/claude/commands/x.md"], tmp_path) == (
+            "tests/test_asset.py", "tests/test_suffix.py")
+        assert not pt.is_body(".claude/skills/a/notes.md")
+        assert pt.body_readers([".claude/skills/a/notes.md"], tmp_path) == ("tests/test_notes.py",)
+        assert pt.body_readers(["docs/x.md"], tmp_path) == ()
+        assert pt.own_tests(["docs/x.md"], tmp_path) == ()
+        assert pt.body_readers([body], tmp_path / "no-such-root") == ()
+
+    def test_a_test_module_edited_after_the_first_read_is_read_again(self, pt, tmp_path):
+        """The names are cached per module (the pins above ask once per body),
+        keyed on its text: the second and third writes below keep the size, and
+        on a coarse filesystem clock the mtime too, so a cache keyed on either
+        would answer from the first read."""
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        module = tests / "test_late.py"
+        module.write_text('X = "x.md"\n', encoding="utf-8")
+        body = ".claude/commands/x.md"
+        assert pt.body_readers([body], tmp_path) == ()
+        module.write_text('X = ".claude/commands/x.md"\n', encoding="utf-8")
+        assert pt.body_readers([body], tmp_path) == ("tests/test_late.py",)
+        module.write_text('X = ".claude/commands/y.md"\n', encoding="utf-8")
+        assert pt.body_readers([body], tmp_path) == ()
 
     def test_a_changed_script_in_a_real_tree_prints_and_runs_its_own_test_line(self, pt, tmp_path, capsys):
         """The receipt path, not only `commands()`: `main` must hand the diff to
