@@ -155,8 +155,8 @@ For one bounded change, one main proof path, or a small localized edit.
    ```bash
    # Espalier-Harness tree: ONE command runs the tier the diff earns and prints
    # a receipt naming every command it ran -- full is four (the hook type gate,
-   # the lint line, xdist across the cores with the five serial files left out,
-   # then those five at one xdist worker; the two pytest lines took about six
+   # the lint line, xdist across the cores with the serial files left out,
+   # then those files at one xdist worker; the two pytest lines took about six
    # and a half minutes, measured twice), recall is the lint line, the contract
    # slice, then the recall engine's test files (the recall files about three and
    # a half minutes on top of the slice), contract is two (the lint line, then
@@ -172,7 +172,7 @@ For one bounded change, one main proof path, or a small localized edit.
    # changed file adds every test file that names its path in a string literal
    # or a path join, unless the test only writes that file into a tree it
    # builds (read from the test files; a file the tested code reads is not seen);
-   # a changed file among the five serial files rides a second line, at one worker
+   # a changed file among the serial files rides a second line, at one worker
    if [ -f scripts/proof_tier.py ]; then   # Espalier-Harness tree: its tier script
      python scripts/proof_tier.py --run   # Espalier-Harness tree: the tier the diff earns, one receipt
    else

@@ -48,6 +48,7 @@ Stem is classified ``contract`` in ``tests/conftest.py::_MARKER_RULES``.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import re
 import subprocess
 import sys
@@ -302,6 +303,23 @@ def _cited_ids() -> list[str]:
         for _s, ids in rows
         for path, symbols in ids
     })
+
+
+def test_the_nested_run_has_the_runner_to_itself():
+    """DEF-4062: the run below spawns the write guard through the hook for
+    rows whose judgment writes a speed bump's state, which
+    ``tests/_hook_spawn.py`` never retries on a miss, and runs rows of a
+    file the full tier keeps off the parallel load. Beside that load on
+    windows-latest one judgment outran the guard's budget (run 41217045122),
+    so this file runs on the serial leg, where the nested run is alone."""
+    spec = importlib.util.spec_from_file_location("proof_tier", REPO_ROOT / "scripts" / "proof_tier.py")
+    pt = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pt)
+    rel = Path(__file__).resolve().relative_to(REPO_ROOT).as_posix()
+    carried = sorted({cid.split("::", 1)[0] for cid in _cited_ids()} & set(pt.SERIAL_FILES))
+    assert rel in pt.SERIAL_FILES, (
+        f"{rel} is not in scripts/proof_tier.py's SERIAL_FILES, so its nested run shares the "
+        f"runner with the parallel leg; it runs rows of the serial files {carried}")
 
 
 @pytest.mark.slow

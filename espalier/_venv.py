@@ -236,6 +236,66 @@ GIT_BASH_DEFAULT_PATHS = (
 #: other name is ignored as if the variable were unset (the same page).
 GIT_BASH_NAMES = ("bash.exe", "sh.exe", "bash", "sh")
 
+#: The folders that make a ``git`` below the launch folder one the project
+#: placed, which Claude Code's step 2 skips: ``node_modules`` and the
+#: virtual-environment folders. The page quotes three (``TestGitBashLookup``
+#: reads them against the pin); the set is the installed 2.1.316 binary's,
+#: read 2026-11-01 (DEF-3021).
+# stack-table: ok purpose-scoped -- Claude Code's own skip list, copied from its binary; deriving it from the stack table would make the copy drift from Claude Code's rule
+GIT_SKIPPED_FOLDERS = frozenset({
+    "node_modules", ".venv", "venv", "env", ".env", "virtualenv",
+    ".tox", ".nox", ".direnv", "__pypackages__",
+})
+
+
+def _placed_by_project(git: str, launch: Path) -> bool:
+    """Does Claude Code's step 2 skip ``git`` as one a project placed, with
+    ``launch`` as its launch folder (DEF-3021)? The installed 2.1.316
+    binary's predicate, which its ``where.exe`` walk applies to each answer,
+    the launch folder being its working folder when it first looks (normally
+    the one it was launched from): the folder holding ``git`` is the launch
+    folder; or is below it with one of :data:`GIT_SKIPPED_FOLDERS` anywhere
+    in its path, above the launch folder too (the page's own
+    ``C:\\dev\\env\\myproject\\Git`` example); or is in a WindowsApps alias
+    folder (``AppData\\Local\\Microsoft\\WindowsApps`` under the home folder,
+    or ``Microsoft\\WindowsApps`` under ``%LOCALAPPDATA%``) that sits at or
+    below the launch folder. Asked of the paths as spelled, then of their
+    real paths, case-insensitively, as Windows compares them; as in the
+    binary, a launch folder whose real path cannot be read skips nothing
+    more, and a ``git`` folder whose real path cannot be read is skipped."""
+    local = os.environ.get("LOCALAPPDATA", "").strip()
+    aliases = [os.path.join(str(Path.home()), "AppData", "Local", "Microsoft", "WindowsApps")]
+    if local:
+        aliases.append(os.path.join(local, "Microsoft", "WindowsApps"))
+
+    def spelled(path: str) -> str:
+        return path.replace("\\", "/").rstrip("/").lower()
+
+    def at_or_below(path: str, root: str) -> bool:
+        return path == root or path.startswith(root + "/")
+
+    def placed(folder: str, root: str, alias_dirs: list[str]) -> bool:
+        folder, root = spelled(folder), spelled(root)
+        if folder == root:
+            return True
+        if folder.startswith(root + "/") and not GIT_SKIPPED_FOLDERS.isdisjoint(folder.split("/")):
+            return True
+        return any(at_or_below(alias, root) and at_or_below(folder, alias)
+                   for alias in map(spelled, alias_dirs))
+
+    folder = os.path.dirname(os.path.abspath(git))
+    if placed(folder, os.path.abspath(str(launch)), [os.path.abspath(a) for a in aliases]):
+        return True
+    try:
+        real_root = os.path.realpath(str(launch), strict=True)
+    except OSError:
+        return False
+    try:
+        real_folder = os.path.realpath(folder, strict=True)
+    except OSError:
+        return True
+    return placed(real_folder, real_root, [os.path.realpath(a) for a in aliases])
+
 
 def _settings_git_bash_paths(repo_root: Path | None) -> list[str]:
     """``env.CLAUDE_CODE_GIT_BASH_PATH`` from the settings files Claude Code
@@ -277,10 +337,14 @@ def git_bash_path(repo_root: Path | None = None) -> str | None:
     reads the same): ``CLAUDE_CODE_GIT_BASH_PATH`` when its file name is one
     of :data:`GIT_BASH_NAMES` and the path exists, else the two
     :data:`GIT_BASH_DEFAULT_PATHS`, else ``bin\\bash.exe`` two levels above
-    the first ``git`` ``where.exe`` names. The page's step 2 also skips a
-    ``git`` a project placed (in the launch folder, or below it in a path
-    holding ``node_modules`` or a virtual-environment folder, where that
-    folder may sit is left open); this does not (DEF-3021).
+    the first ``git`` ``where.exe`` names that a project did not place. That
+    skip (:func:`_placed_by_project`, DEF-3021) is judged against
+    ``repo_root``, since ``doctor`` runs from the repository root where
+    Claude Code judges against its working folder (normally the one it was
+    launched from); with no ``repo_root`` nothing is skipped. Over a bare
+    head a skip errs toward None, the cheap wrong answer below; over an
+    ``&`` head None is the silent one, reached only where Claude Code looks
+    from a folder deeper than ``repo_root``.
 
     ``init`` no longer reads it: its render runs in both shells (DEF-3017).
     ``doctor`` does, to name a bare or ``&`` line an older install carries
@@ -307,7 +371,7 @@ def git_bash_path(repo_root: Path | None = None) -> str | None:
             return path
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         git = shutil.which("git", path=entry) if entry else None
-        if git:
+        if git and not (repo_root is not None and _placed_by_project(git, repo_root)):
             # Lexical, as Claude Code's path.win32 join is: `<git>\..\..\bin`.
             bash = os.path.normpath(os.path.join(git, "..", "..", "bin", "bash.exe"))
             if os.path.exists(bash):

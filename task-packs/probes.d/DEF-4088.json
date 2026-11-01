@@ -1,0 +1,10 @@
+{
+ "id": "DEF-4088",
+ "subject": "tools/cc/hooks/_zone_watch.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "the probe's output differs by platform: on a case-sensitive, non-normalizing filesystem neither spelling edge can be laid (an NFD name stays NFD in the index, a case-only rename is a different directory), so no one open value holds across the matrix; the fix's test, skipped where the filesystem does not fold or normalize, is the oracle",
+ "row_sha": "812139c376c7",
+ "text_sha": "96f8b14ec170",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

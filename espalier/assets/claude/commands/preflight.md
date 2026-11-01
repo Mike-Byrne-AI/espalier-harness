@@ -78,8 +78,8 @@ path), and leaves the full suite to the handoff's preflight; a diff
 on the shipped runtime, and every handoff, runs the full suite: on the
 Espalier-Harness tree, one command,
 its `proof_tier.py --run --tier full`, which runs the four lines
-(the hook type gate, the lint line, xdist across the cores with the five
-serial files left out, then those five at one xdist worker: 6:31 and 6:12 for the two
+(the hook type gate, the lint line, xdist across the cores with the
+serial files left out, then those files at one xdist worker: 6:31 and 6:12 for the two
 pytest lines on the two clean runs that form was gated on, against about
 nineteen minutes serial) and prints a receipt naming each;
 a live-tree race, if one ever shows, is a loud error -- rerun the failing file

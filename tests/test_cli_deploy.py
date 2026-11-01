@@ -5432,6 +5432,46 @@ _ACROSS_FENCES = (
     "```\n"
 )
 
+#: A workflow body's prompt text sits in JavaScript template literals and its
+#: markers ride behind ``//``. Each body below crosses a literal's edge, so the
+#: strip would leave a literal open (the adopter's copy no longer parses) or
+#: join two into one (it parses, with the wrong text) (DEF-5041). The pair is
+#: the opener's line and the closer's.
+_JS_OPEN, _JS_CLOSE = "// <!-- espalier:self-host-only -->", "// <!-- /espalier:self-host-only -->"
+_JS_ACROSS_LITERALS = {
+    "out-of-a-literal": (f"const p = `\n{_JS_OPEN}\nx\n`;\n{_JS_CLOSE}\nexport const meta = p;\n", (2, 5)),
+    "into-a-literal": (f"{_JS_OPEN}\nconst p = `\n{_JS_CLOSE}\nx`;\n", (1, 3)),
+    "across-two-literals": (f"const p = `\n{_JS_OPEN}\na`;\nconst q = `\n{_JS_CLOSE}\nb`;\n", (2, 5)),
+    "out-of-a-substitution": (f"const p = `head ${{f(\n{_JS_OPEN}\n)}} tail\n{_JS_CLOSE}\n`;\n", (2, 4)),
+}
+
+
+#: For each line of the body at argv[1], 1 where the body still parses with a
+#: ``#!!!`` line inserted before it -- the line starts in a template literal's
+#: text or a block comment, where the insert is text -- else 0.
+_NODE_FRAME_ORACLE = (
+    "const fs=require('fs');"
+    "const lines=fs.readFileSync(process.argv[1],'utf8').split('\\n');"
+    "const F=Object.getPrototypeOf(async function(){}).constructor;"
+    "const out=[];"
+    "for(let i=0;i<lines.length;i++){"
+    "const t=lines.slice(0,i).concat(['#!!!'],lines.slice(i)).join('\\n').replace(/^export /mg,'');"
+    "try{new F(t);out.push(1)}catch(e){out.push(0)}}"
+    "process.stdout.write(out.join(''));"
+)
+
+
+def _node_or_skip() -> str:
+    """node's path; without it a skip, but a failure on a GitHub runner, whose
+    images carry node: a skip there is a contract slice that read nothing."""
+    import shutil
+    node = shutil.which("node")
+    if node:
+        return node
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        pytest.fail("node is not on this runner's PATH; the workflow render went unparsed")
+    pytest.skip("node not installed")
+
 
 class TestSelfHostBlocksStripAtDeploy:
     """A ``.claude`` body fences this repository's own procedure between the
@@ -5470,6 +5510,97 @@ class TestSelfHostBlocksStripAtDeploy:
         from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
         with pytest.raises(ValueError, match="from line 3 to line 8 opens and closes in different code fences"):
             _strip_self_host_blocks(_ACROSS_FENCES, source="x.md")
+
+    @pytest.mark.parametrize("name", sorted(_JS_ACROSS_LITERALS))
+    def test_a_workflow_block_whose_ends_sit_in_two_literal_frames_is_refused(self, name):
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        body, (first, last) = _JS_ACROSS_LITERALS[name]
+        with pytest.raises(ValueError, match=(
+            rf"^\.claude/workflows/x\.js: the self-host block from line {first} to line {last} "
+            "opens and closes in different template literals")):
+            _strip_self_host_blocks(body, source=".claude/workflows/x.js")
+
+    def test_a_workflow_block_inside_one_literal_or_around_whole_ones_goes(self):
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        body = (f"const p = `\nkeep 1\n{_JS_OPEN}\nself\n{_JS_CLOSE}\nkeep 2`;\n"
+                f"{_JS_OPEN}\nconst q = `a ${{`b`}}\nc`;\n{_JS_CLOSE}\nexport const meta = p;\n")
+        assert _strip_self_host_blocks(body, source=".claude/workflows/x.js") == (
+            "const p = `\nkeep 1\nkeep 2`;\nexport const meta = p;\n")
+
+    def test_a_markdown_body_is_not_read_as_javascript(self):
+        """An inline code span opens no literal: the JS reader is the .js body's alone."""
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        body = "Run `x\n<!-- espalier:self-host-only -->\nself\n<!-- /espalier:self-host-only -->\ny` it.\n"
+        assert _strip_self_host_blocks(body, source="x.md") == "Run `x\ny` it.\n"
+
+    @pytest.mark.parametrize("lines, frames", [
+        # A regex literal's class holds a backtick and both quotes: read as code it
+        # opened a literal that ran to the end of the body.
+        (["const s = x.replace(/[`\"']/g, '')", "const p = `", "t", "`;"],
+         [(), (), (("t", 1),), (("t", 1),)]),
+        # A slash after a closing paren divides; read as a regex it swallowed the
+        # string and the backtick after it.
+        (["const a = (b) / 2; const c = '/'; const d = `", "x", "`;"],
+         [(), (("t", 1),), (("t", 1),)]),
+        (["const q = `head ${", "  [1].map(x => `", "  ${x}", "  `)", "} tail", "`;"],
+         [(), (("t", 1), ("s", 2)), (("t", 1), ("s", 2), ("t", 3)), (("t", 1), ("s", 2), ("t", 3)),
+          (("t", 1), ("s", 2)), (("t", 1),)]),
+        (["const r = `a \\` still", "b \\${not}", "`; /* `", "*/ const s = '`';"],
+         [(), (("t", 1),), (("t", 1),), (("c", 2),)]),
+        # An object's braces inside a substitution: its closing brace ends the
+        # object, not the substitution, so the backtick after it opens a literal.
+        (["const o = `${ {a: 1}.a + `in` }", "after", "`;"],
+         [(), (("t", 1),), (("t", 1),)]),
+        (["function f() { return /`/.test(s) ? `", "x", "` : 0 }"],
+         [(), (("t", 1),), (("t", 1),)]),
+        # After a dot a keyword's spelling is a property name, and a slash divides.
+        (["const n = counts.new / 2; const c = '/'; const d = `", "x", "`;"],
+         [(), (("t", 1),), (("t", 1),)]),
+        # A backslash ends the line before any closing slash: no regex, one frame
+        # tuple per line (the scan once skipped the newline, review).
+        (["x = /a\\", "b/ + 1;", "y"],
+         [(), (), ()]),
+    ], ids=["regex-class-with-a-backtick", "division-after-a-paren", "nested-substitution",
+            "escapes-and-a-comment", "an-object-in-a-substitution", "a-keyword-before-a-regex",
+            "a-property-named-like-a-keyword", "a-backslash-ending-a-regex-line"])
+    def test_the_literal_reader_places_each_line_in_its_frames(self, lines, frames):
+        from espalier.surface_hygiene import template_literals
+        assert template_literals(lines) == (frames, None)
+
+    def test_the_literal_reader_names_the_line_of_a_literal_never_closed(self):
+        from espalier.surface_hygiene import template_literals
+        assert template_literals(["a;", "const p = `", "x"])[1] == 2
+
+    @pytest.mark.contract
+    def test_the_literal_reader_agrees_with_node_on_every_workflow_line(self):
+        """The strip and the source gate share the reader, so they never disagree
+        with each other; node is the outside check. A body edit the reader
+        misreads reds here, before a gate refuses a sound body or passes a
+        crossing one (review)."""
+        from espalier.cli import _packaged_md_assets
+        from espalier.surface_hygiene import template_literals
+        node = _node_or_skip()
+        workflows = [src for rel, src in _packaged_md_assets(REPO_ROOT) if rel.endswith(".js")]
+        assert len(workflows) >= 3, workflows
+        wrong: list[str] = []
+        for src in workflows:
+            lines = src.read_text(encoding="utf-8").split("\n")
+            r = subprocess.run([node, "-e", _NODE_FRAME_ORACLE, str(src)], capture_output=True, text=True,
+                               timeout=45, encoding="utf-8")
+            assert r.returncode == 0 and len(r.stdout) == len(lines), (src.name, r.stderr[-400:])
+            frames = template_literals(lines)[0]
+            wrong += [f"{src.name}:{n}" for n, (says, at) in enumerate(zip(r.stdout, frames), 1)
+                      if (says == "1") != (bool(at) and at[-1][0] in "tc")]
+        assert not wrong, f"the reader and node place these lines apart: {wrong[:10]}"
+
+    @pytest.mark.parametrize("ci, outcome", [("true", pytest.fail.Exception), ("", pytest.skip.Exception)],
+                             ids=["on-a-runner", "elsewhere"])
+    def test_a_missing_node_fails_on_a_runner_and_skips_elsewhere(self, ci, outcome, monkeypatch):
+        import shutil
+        monkeypatch.setattr(shutil, "which", lambda name: None)
+        monkeypatch.setenv("GITHUB_ACTIONS", ci)
+        with pytest.raises(outcome):
+            _node_or_skip()
 
     @pytest.mark.parametrize("body", [
         "a\n<!-- espalier:self-host-only -->\n```bash\nx\n<!-- /espalier:self-host-only -->\n```\n",
@@ -5542,6 +5673,22 @@ class TestSelfHostBlocksStripAtDeploy:
         with pytest.raises(ValueError, match=r"^\.claude/commands/x\.md: the self-host block from line 3 "):
             _mark_overlaid_md(dst, ".claude/commands/x.md")
 
+    def test_the_deploy_and_the_fusion_refuse_a_workflow_block_across_a_literal(self, tmp_path):
+        """The two paths a workflow body ships by read its literals with the one
+        predicate the strip holds (DEF-5041)."""
+        from espalier.cli import _asset_transform
+        from espalier.fuse import _mark_overlaid_md
+        rel = ".claude/workflows/x.js"
+        body = _JS_ACROSS_LITERALS["out-of-a-literal"][0]
+        why = r"^\.claude/workflows/x\.js: the self-host block from line 2 to line 5 opens and closes in different template literals"
+        with pytest.raises(ValueError, match=why):
+            _asset_transform(rel, [], tmp_path)(body)
+        dst = tmp_path / "x.js"
+        dst.write_bytes(body.encode("utf-8"))
+        with pytest.raises(ValueError, match=why):
+            _mark_overlaid_md(dst, rel)
+        assert dst.read_bytes() == body.encode("utf-8")
+
     def test_a_census_body_off_this_tree_takes_the_walk_render(self, tmp_path):
         """The repo-analyst's three ``own`` definitions prune every path the
         harness writes on an adopter's copy, and the self-host redefinition is
@@ -5576,16 +5723,17 @@ class TestSelfHostBlocksStripAtDeploy:
         assert text.count(line) == 3 and '! -path "./espalier" ! -path "./espalier/*"' in line, text
         assert fuse._render_census_walks(tmp_path) == []  # a second pass changes nothing
 
+    @pytest.mark.contract
     def test_every_workflow_an_adopter_receives_is_a_valid_function_body(self, tmp_path):
         """The strip removes whole lines from a .js workflow, so a fence around a
         code line would leave the adopter's copy unparseable while the source
         parses -- the silently absent slash command (review). The oracle
-        tests/test_finding_ledger.py runs over the source, run over the render."""
-        import shutil
+        tests/test_finding_ledger.py runs over the source, run over the render.
+        In the contract slice, so a lane that edits a workflow body alone reads
+        the render, and never skipped on a runner: GitHub's images carry node,
+        and a skip there would be a clean slice that read nothing (DEF-5041)."""
         from espalier.cli import _asset_transform, _packaged_md_assets
-        node = shutil.which("node")
-        if not node:
-            pytest.skip("node not installed")
+        node = _node_or_skip()
         probe = (
             "const fs=require('fs');"
             "const src=fs.readFileSync(process.argv[1],'utf8').replace(/^export /mg,'');"
