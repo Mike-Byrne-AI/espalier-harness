@@ -160,15 +160,19 @@ class Held(Refused):
     is whole -- its row written, its tracked tree clean (both refused before
     this) -- and the window is done with it. ``landed`` says where it waits:
     False, held here because the base is red (nothing lands on a red base;
-    the push never ran); True, on origin, the push landed and a step after
-    it refused (the head wait, the rebind, the pull request's creation or
-    arming). Any other refusal is the window's to fix first, and arms nothing
+    the push never ran) or because this seat's other pull request is open
+    (one open pull request per seat, DEF-5038); True, on origin, the push
+    landed and a step after it refused (the head wait, the rebind, the pull
+    request's creation or arming). ``waits_for`` names what a lane held here
+    opens after, where that is not the base going green ('#41 merges').
+    Any other refusal is the window's to fix first, and arms nothing
     (DEF-4057: three seats sat past the threshold for 17.5 h on 2026-10-29,
     their handoffs refused on a red base and no marker to clear them)."""
 
-    def __init__(self, message: str, *, landed: bool) -> None:
+    def __init__(self, message: str, *, landed: bool, waits_for: str = "") -> None:
         super().__init__(message)
         self.landed = landed
+        self.waits_for = waits_for
 
 
 # ---------------------------------------------------------------- spawning --
@@ -1495,14 +1499,18 @@ def _land_first_tail(held: Held, branch: str) -> str:
     it. The row is written and the tree clean (the handoff refused before
     this otherwise), so the next window's first job is the lane, not a new
     one."""
-    what = "The push landed and a step after it refused" if held.landed else "The push was refused"
+    if held.landed:
+        what = "The push landed and a step after it refused"
+    else:
+        what = "The push was held" if held.waits_for else "The push was refused"
     lane = _brief_text(branch)
     where = (f"The lane {lane} is on origin" if held.landed
              else f"The lane {lane} is committed in this checkout and unpushed")
+    waits = _brief_text(held.waits_for) if held.waits_for else "the base is green"
     return (f"\n\n{LAND_FIRST} {what}: {_brief_text(str(held))}\n"
             f"{where}, its row written and the tree clean; the window that handed off is done with it, and "
             "this one lands it before any new job: python tools/cc/ship.py status says what is on origin; "
-            "with no pull request yet, python tools/cc/ship.py open once the base is green (the board, "
+            f"with no pull request yet, python tools/cc/ship.py open once {waits} (the board, "
             "/inbox board, says when); after a push that landed, python tools/cc/ship.py rebind, or the "
             "command the refusal above names (auto-merge that did not arm is armed by hand).")
 
@@ -2079,6 +2087,16 @@ def lane() -> int:
     return 0
 
 
+def _has_own_upstream(root: Path, branch: str) -> bool:
+    """Whether ``branch`` tracks its own remote branch (``origin/<branch>``: a
+    lane already pushed), the rule the Stop hook's handoff gate reads
+    (``stop_gate._unpushed_commits``). A branch started from ``origin/main``
+    tracks origin/main by git's default autoSetupMerge, an upstream that is not
+    its own; no upstream at all, or one git cannot name, reads False."""
+    rc, upstream, _ = _git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}", cwd=str(root))
+    return rc == 0 and upstream.strip().endswith("/" + branch)
+
+
 def _remote_has_commits_we_lack(branch: str, cwd: str) -> int:
     """Commits on origin/<branch> that HEAD does not reach: a push would be
     rejected, and the only way past is a merge -- never a rebase or a force,
@@ -2125,6 +2143,7 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
         _note(f"shipping before the handoff ({early_reason}): its row will be a second push on this lane")
     else:
         early_reason = ""
+    prs_unread = prs is None
     prs = prs or []
     refusal, ruling = red_base_verdict(base, branch, prs, str(root), ruled=base_red_ruled, root=root)
     if refusal:
@@ -2135,9 +2154,27 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     if ruling:
         _say(ruling)
     seat, mine = seat_open_prs(root, branch, prs)
-    if mine:
-        _note(f"this seat ({seat}) already has an open pull request: {', '.join(mine)}. One open pull request "
-              "per seat keeps a seat's lanes off each other's base; this one opens beside it")
+    others = f"this seat ({seat}) already has an open pull request: {', '.join(mine)}"
+    # The red base's clearing lands first (Core Rule 15): the revert, or the
+    # fix the ruling names, never waits behind the seat's other pull request,
+    # whose armed auto-merge the red base itself holds.
+    clearing = branch.startswith("revert/") or bool(ruling)
+    if mine and not clearing and not _has_own_upstream(root, branch):
+        # One open pull request per seat (memory/parallel-work-protocol.md item
+        # 4): the Stop hook's handoff gate holds this lane, and a forced handoff
+        # runs this verb, so the hold is here too (DEF-5038). The lane is whole
+        # and stays here, as on a red base.
+        waits = ", ".join(entry.split(" ", 1)[0] for entry in mine) + (" merges" if len(mine) == 1 else " merge")
+        raise Held(f"{others}. One open pull request per seat: the lane is held here, committed and unpushed, "
+                   f"and opens once {waits} (python tools/cc/ship.py open then)", landed=False, waits_for=waits)
+    if prs_unread:
+        _note("the open pull requests could not be read (gh pr list), so this seat's other open pull requests "
+              "were not checked (one open pull request per seat); the lane opens")
+    elif mine and clearing:
+        _note(f"{others}. This lane opens beside it: the red base's clearing lands first")
+    elif mine:
+        _note(f"{others}. This lane's push already landed once, so it opens beside it; one open pull "
+              "request per seat keeps a seat's lanes off each other's base")
     _wiring_note(root)
     # The base is fetched here, before the merge-first question and the guard
     # question below (both read origin/<base> and neither needs the remote

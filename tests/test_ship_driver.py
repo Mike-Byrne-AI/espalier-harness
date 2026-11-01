@@ -3770,9 +3770,12 @@ class TestTheRedBaseReadsTheBoardsWindow:
 
 
 class TestOneOpenPullRequestPerSeat:
-    """`open` notes the seat's other open pull request, by the seat whose
-    latest claim or release names each lane: every seat may push as one
-    GitHub account, so the author cannot tell them apart."""
+    """`open` holds a lane while this seat has another pull request open, by
+    the seat whose latest claim or release names each lane: every seat may push
+    as one GitHub account, so the author cannot tell them apart. DEF-5038: the
+    Stop hook's handoff gate held a finished second lane (DEF-4058), and any
+    forced handoff -- the threshold ask, the operator's end-of-day /handoff --
+    ran `open`, which only noted the first and opened the second beside it."""
 
     @staticmethod
     def _channel(seat: str, lanes: dict[str, str]):
@@ -3784,16 +3787,104 @@ class TestOneOpenPullRequestPerSeat:
 
     _OTHERS = json.dumps([{"number": 41, "headRefName": "lane/y", "autoMergeRequest": {"x": 1}},
                           {"number": 42, "headRefName": "lane/z", "autoMergeRequest": {"x": 1}}])
+    #: The lane's upstream, as the Stop hook's handoff gate reads it.
+    _UPSTREAM = ("git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+    _NO_UPSTREAM = (128, "", "fatal: no upstream configured for branch 'lane/x'\n")
 
-    def test_open_names_this_seats_other_open_pull_request(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+    def _held_answers(self, ship, tmp_path, monkeypatch, upstream=_NO_UPSTREAM, branch="lane/x") -> dict:
         _write_guard(tmp_path)
-        monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/y": "win", "lane/z": "air", "lane/x": "win"}))
-        spawns = _arm(ship, _open_answers(tmp_path, open_prs=self._OTHERS))
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/y": "win", "lane/z": "air", branch: "win"}))
+        answers = _open_answers(tmp_path, open_prs=self._OTHERS, branch=branch)
+        answers[self._UPSTREAM] = upstream
+        return answers
+
+    def test_open_holds_a_lane_never_pushed_while_this_seats_other_one_is_open(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """Dies to: the note alone (the unfixed driver opens #43 beside #41),
+        or a hold that pushes first."""
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch))
+        with pytest.raises(ship.Held) as stop:
+            ship.open_pr()
+        held = stop.value
+        assert held.landed is False and held.waits_for == "#41 merges"
+        text = str(held)
+        assert "this seat (win) already has an open pull request: #41 (lane/y)" in text
+        assert "opens once #41 merges" in text and "#42" not in text
+        assert text.isascii()
+        assert spawns.mutations == []   # nothing pushed, nothing created
+
+    def test_a_lane_tracking_the_base_is_not_its_own_upstream_and_is_held(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """A branch started from origin/main tracks origin/main by git's
+        default: an upstream, but not the lane's own, so the push would open a
+        pull request (the gate's rule, stop_gate._unpushed_commits)."""
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch, upstream=(0, "origin/main\n", "")))
+        with pytest.raises(ship.Held):
+            ship.open_pr()
+        assert spawns.mutations == []
+
+    def test_a_lane_with_an_upstream_of_its_own_opens_beside_with_the_note(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """Its push already landed once (a create that refused after it): the
+        row's shape holds only a lane that was never pushed."""
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch, upstream=(0, "origin/lane/x\n", "")))
         assert ship.open_pr() == 0
         out = capsys.readouterr().out
         assert "this seat (win) already has an open pull request: #41 (lane/y)" in out
         assert "#42" not in out
-        assert spawns.count(("gh", "pr", "create")) == 1   # an advisory: the lane still opens
+        assert spawns.count(("gh", "pr", "create")) == 1
+
+    def test_a_revert_lane_is_never_held(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """Core Rule 15: the revert lands first. Dies to: the hold read before
+        the branch's prefix."""
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch, branch="revert/abc1234"))
+        assert ship.open_pr() == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        assert spawns.count(self._UPSTREAM) == 0
+        out = capsys.readouterr().out
+        assert "#41 (lane/y)" in out and "lands first" in out
+
+    def test_a_lane_the_dispatchers_ruling_lets_onto_a_red_base_is_never_held(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """The fix the ruling names clears the red that holds this seat's other
+        pull request (its armed auto-merge waits on the base), so holding the
+        fix behind it is a deadlock."""
+        monkeypatch.setattr(ship, "red_base_verdict", lambda *a, **kw: (None, "main red -- let through by ruling X"))
+        spawns = _arm(ship, self._held_answers(ship, tmp_path, monkeypatch))
+        assert ship.open_pr() == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        assert "lands first" in capsys.readouterr().out
+
+    def test_an_unread_open_pull_request_list_is_said_and_the_lane_opens(
+            self, ship, tmp_path, forget_guard, monkeypatch, capsys):
+        """Never a hold on a guess, never silence: before this the check was
+        skipped without a word when gh could not list."""
+        _write_guard(tmp_path)
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/y": "win"}))
+        answers = _open_answers(tmp_path)
+        answers[("gh", "pr", "list", "--state", "open")] = (1, "", "HTTP 502\n")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert spawns.count(("gh", "pr", "create")) == 1
+        out = capsys.readouterr().out
+        assert "open pull requests could not be read" in out and "were not checked" in out
+
+    def test_a_handoff_on_the_held_lane_arms_the_own_clear_with_the_hold(
+            self, ship, tmp_path, forget_guard, monkeypatch):
+        """The forced handoff the row names: its row written, the tree clean,
+        no pull request for the lane; the marker carries the hold and the lane
+        stays here. Dies to: the handoff opening the second pull request."""
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = self._held_answers(ship, tmp_path, monkeypatch)
+        answers[("git", "status", "--porcelain", "-uno")] = (0, "", "")
+        answers[_MEMORY_LOG] = (0, "abc1234\n", "")
+        answers[_list_key()] = [(0, "[]", ""), (0, "[]", "")]
+        spawns = _arm(ship, answers)
+        calls = TestTheHandoffArmsTheOwnClear._arm_calls(ship, monkeypatch)
+        with pytest.raises(ship.Held, match="opens once #41 merges"):
+            ship.handoff()
+        assert spawns.mutations == []
+        assert calls and calls[0]["held"].landed is False and calls[0]["held"].waits_for == "#41 merges"
 
     def test_another_seats_pull_requests_say_nothing(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
         _write_guard(tmp_path)
