@@ -1,0 +1,13 @@
+{
+ "id": "DEF-4081",
+ "subject": "tools/cc/ship.py",
+ "cmd": "python3 -c \"import ast;M={'endswith','startswith','split','rsplit','partition','rpartition','removeprefix','removesuffix'};S=lambda p:sum(1 for f in ast.walk(ast.parse(open(p,encoding='utf-8').read())) if isinstance(f,ast.FunctionDef) and any(isinstance(c,ast.Constant) and c.value=='@{u}' for c in ast.walk(f)) and any(isinstance(c,ast.Call) and getattr(c.func,'attr','') in M for c in ast.walk(f)));print(S('tools/cc/ship.py')+S('tools/cc/hooks/stop_gate.py'))\"",
+ "open_value": "2",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/stop_gate.py"
+ ],
+ "row_sha": "6de9cb1f965d",
+ "text_sha": "f131d44be0b4",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: the failure-mode review before the open: the oracle's reason corrected (ship.py is outside sister_site_probe's scope, and it keys on names); the third @{u} reader named and rowed apart as DEF-4086; the probe replaced: the first struck after a one-token respelling (an f-string read 1 with both homes standing), this one counts bodies that read '@{u}' and call a split or compare method) [changed: probe, text]"
+}
