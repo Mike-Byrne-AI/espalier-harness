@@ -4330,6 +4330,24 @@ class TestALaneHeadCarryingDeletionsItNeverMadeIsRefused:
         [body] = spawns.body_texts
         assert "Deletions allowed: the roster moved to probes.d" in body and gone in body
 
+    def test_a_revert_lane_goes_through_with_its_deletions_named(self, ship, tmp_path, forget_guard, capsys):
+        """Both reviews: a revert removes what the reverted merge added (the
+        last five merges' reverts would each delete 2 to 21 files), and it is
+        the path a red base waits on; the red-base refusal lets revert/ lanes
+        through, and so does this one, naming the deletions in the body.
+        Dies to: a revert/ lane refused like any other."""
+        gone = ["task-packs/ledger.d/DEF-4058.md", "changelog.d/2026-10-31-x.md"]
+        answers = self._lane(tmp_path, *(("D", p) for p in gone), deletions=[('Revert "Merge pull request #387"', gone)])
+        answers[("git", "branch", "--show-current")] = (0, "revert/pr-387\n", "")
+        answers[_list_key("revert/pr-387")] = [(0, "[]", ""), _rows(_pr())]
+        answers[("git", "fetch", "origin", "revert/pr-387")] = (0, "", "")
+        spawns = _arm(ship, answers)
+        assert ship.open_pr() == 0
+        assert spawns.count(("git", "push")) == 1
+        [body] = spawns.body_texts
+        assert "Deletions of a revert: " + ", ".join(gone) in body
+        assert "a revert/ lane: its 2 deletion(s) go through" in capsys.readouterr().out
+
     def test_a_dry_run_rehearses_the_refusal(self, ship, tmp_path, forget_guard):
         answers = self._lane(tmp_path, ("D", "docs/HOOKS.md"), deletions=[("feat", ["docs/HOOKS.md"])])
         spawns = _arm(ship, answers)

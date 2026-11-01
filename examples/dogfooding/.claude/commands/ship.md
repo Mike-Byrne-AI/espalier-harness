@@ -221,9 +221,13 @@ deletion refuses the push, the lane still unpushed, unless the driver made it
 subject (`chore(records): prune the Session Log to its cap of <n>`), or a probe
 under `task-packs/probes.d/` whose row the head holds struck (the strike drops a
 closed row's probe) -- or `--allow-deletions "<why>"` says why, which the pull
-request's body records; a deletion a merge commit made is never the driver's.
-`handoff` takes the same flag, and its push onto an open pull request reads the
-same shape. Modified paths no claim this seat sent on the lane names (live or
+request's body records; a deletion a merge commit made is never the driver's,
+and a rename reads as a deletion here (the read passes `--no-renames`: a
+similar file the lane added would otherwise hide one). A `revert/` lane goes
+through with its deletions named in the body, as the red-base refusal lets it
+through: a revert removes what the reverted merge added. `handoff` takes the
+same flag, and its push onto an open pull request reads the same shape, so a
+lane opened with the flag passes it again there. Modified paths no claim this seat sent on the lane names (live or
 released: a claim's paths, its symbols' files, the row and probe of an id it
 carries) are named and never refused, since claims are often narrower than a
 lane; a revert the lane never made reads there. On 2026-10-31 a lane re-parented
@@ -409,7 +413,9 @@ the lane: it never re-runs or catches up anything itself.
 
 Precondition: the lane carried the release fold -- the version surfaces, the
 changelog fold, the freshness re-pin (on the Espalier-Harness source tree, the
-release checklist's steps 1 to 3). Wait for the merge; stay on the lane branch,
+release checklist's steps 1 to 3); the fold's removal of the changelog
+fragments is pushed with `open --allow-deletions "the release fold"` (Step 2).
+Wait for the merge; stay on the lane branch,
 since the pull request is named from it:
 
 ```bash

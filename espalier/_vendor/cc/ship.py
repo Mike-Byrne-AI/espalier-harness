@@ -411,8 +411,11 @@ def _driver_deletions(root: Path, base: str, deleted: list[str]) -> set[str]:
     of the 200 merges before this carried one). Any other deletion, one a
     merge made among them (``git log`` lists no merge's paths), is the lane's
     to name with ``--allow-deletions``."""
-    rc, out, _ = _git("log", "--format=%x1e%s", "--name-only", "--no-renames", "--diff-filter=D",
-                      f"origin/{base}..HEAD", cwd=str(root))
+    rc, out, err = _git("log", "--format=%x1e%s", "--name-only", "--no-renames", "--diff-filter=D",
+                        f"origin/{base}..HEAD", cwd=str(root))
+    if rc != 0:
+        _note(f"the deletions' commits could not be read ({err.strip()[:200]}): the driver's own Session Log "
+              "prune is not told apart from the lane's deletions")
     pruned: set[str] = set()
     for block in out.split("\x1e") if rc == 0 else []:
         subject, _nl, names = block.partition("\n")
@@ -458,12 +461,13 @@ def _unclaimed_modified(root: Path, modified: list[str]) -> tuple[str, str, list
     try:
         lane = current_branch()
         by_machine, _skipped = mail.read_mail(root)
+        unclaimed = reader(by_machine, seat, lane, modified)
     except Refused:
         return "", "", None
     except Exception as exc:  # noqa: BLE001 -- fail-open with voice: an advisory read never stops a push
         _note(f"the lane's claims could not be read ({os_error_text(exc)}): its modified paths are not compared")
         return "", "", None
-    return seat, lane, reader(by_machine, seat, lane, modified)
+    return seat, lane, unclaimed
 
 
 def say_lane_shape(root: Path, base: str, shape: dict) -> None:
@@ -490,19 +494,26 @@ def say_lane_shape(root: Path, base: str, shape: dict) -> None:
 def _deletions_refusal(shape: dict, base: str) -> str:
     deleted = shape["deleted"]
     return (f"the lane deletes {len(deleted)} file(s) against origin/{base} that no step of the driver deleted: "
-            f"{_listed(deleted)}. A head re-parented onto a newer base with an older tree deletes the other seats' "
-            f"work (#380, 2026-10-31): read `git diff --name-status origin/{base}...HEAD`, and where the deletions "
-            f"are the lane's own, ship with {ALLOW_DELETIONS_FLAG} <why>")
+            f"{_listed(deleted)}. A head moved onto a newer base with an older tree deletes what other lanes "
+            f"added since: read `git diff --name-status origin/{base}...HEAD`, and where the deletions are the "
+            f"lane's own (a removed file, a rename, which reads as a deletion here, a release's fold of the "
+            f"changelog fragments), ship with {ALLOW_DELETIONS_FLAG} <why>")
 
 
-def refuse_unmade_deletions(shape: dict, base: str, allow: str | None) -> str:
+def refuse_unmade_deletions(shape: dict, base: str, allow: str | None, branch: str = "") -> str:
     """The push's refusal on a deletion the driver did not make, unless
     ``allow`` (``--allow-deletions``) says why; the line the pull request's
-    body records where it does, '' where nothing was deleted."""
+    body records where it does, '' where nothing was deleted. A ``revert/``
+    lane is let through with the deletions named, as the red-base refusal lets
+    it through: a revert removes what the reverted merge added by
+    construction, and it is the path a red base waits on."""
     deleted = shape["deleted"]
     if not deleted:
         return ""
     why = (allow or "").strip()
+    if not why and branch.startswith("revert/"):
+        _note(f"a revert/ lane: its {len(deleted)} deletion(s) go through ({_listed(deleted)})")
+        return f"Deletions of a revert: {', '.join(deleted)}"
     if not why:
         raise Refused(_deletions_refusal(shape, base))
     _note(f"shipping {len(deleted)} deletion(s) the driver did not make ({why}): {_listed(deleted)}")
@@ -2154,15 +2165,19 @@ def preflight() -> int:
     _say(f"{len(commits)} commit(s) ahead of origin/{base}:")
     for ln in commits:
         _say(f"  {ln}")
-    # The shape before the push, so a handoff sees a deletion before it is
-    # refused at the push (DEF-4064).
+    # The shape before the push, so /ship sees a deletion before `open`
+    # refuses it (DEF-4064); /handoff runs no preflight and meets the refusal.
     try:
         shape = lane_shape(root, base)
     except Refused as exc:
         _note(f"{exc}: `open` will refuse this lane on the same read")
     else:
         say_lane_shape(root, base, shape)
-        if shape["deleted"]:
+        try:
+            lane_name = current_branch()
+        except Refused:
+            lane_name = ""
+        if shape["deleted"] and not lane_name.startswith("revert/"):
             _note(f"`open` will refuse this lane: {_deletions_refusal(shape, base)}")
     names = record_merge.probe_conflicts(root, f"origin/{base}", run=RUN)
     driven = record_merge.attribute_merged_paths(root, f"origin/{base}", run=RUN)
@@ -2351,7 +2366,7 @@ def open_pr(title: str | None = None, body_file: str | None = None, dry_run: boo
     # --allow-deletions says why, and the why rides the body (DEF-4064).
     shape = lane_shape(root, base)
     say_lane_shape(root, base, shape)
-    allowed = refuse_unmade_deletions(shape, base, allow_deletions)
+    allowed = refuse_unmade_deletions(shape, base, allow_deletions, branch)
     if allowed:
         body = body.rstrip("\n") + f"\n\n{allowed}\n"
     sha = head_sha()
@@ -2654,7 +2669,7 @@ def _handoff_push(title: str | None, body_file: str | None, dry_run: bool,
     # an allowed deletion is said here (the body was written at the open).
     shape = lane_shape(root, base)
     say_lane_shape(root, base, shape)
-    refuse_unmade_deletions(shape, base, allow_deletions)
+    refuse_unmade_deletions(shape, base, allow_deletions, branch)
     red_run = base_red_run(base, cwd=str(root))
     if red_run is not None and pr.get("autoMergeRequest") and not branch.startswith("revert/"):
         # Not a refusal: the handoff's row must reach the pull request. Its
