@@ -506,7 +506,8 @@ the reset is the seat's own: the launch loads the own-clear mod
 (`tools/cc/mods/own-clear`, `--plugin-dir`; `--no-mod` leaves it out), the
 handoff's last act arms its marker (`.espalier-state/own_clear.json`, keyed by
 the session id) whenever it ran to its end -- the push landed, or a refusal
-the window is done with (the base red, or a step after a landed push), which
+the window is done with (the base red, this seat's other pull request open, or
+a step after a landed push), which
 rides the marker with the lane to land first appended to the brief; a refusal
 the window must fix first arms nothing, and a lane opened by hand is armed
 with `ship.py arm` -- and at the end of the next turn with nothing in flight

@@ -19,7 +19,8 @@ says the window needs a `/clear` by hand.
    (`seat.py::reprime_text`: the role brief with its loop line replaced, since
    the interval loop survives a `/clear`), `landed` and `outcome` (how the
    handoff ended, DEF-4057: a push that landed, or a refusal the window is
-   done with -- the base red and the lane whole here, or a step after a landed
+   done with -- the base red or this seat's other pull request open, and the
+   lane whole here, or a step after a landed
    push -- whose text rides `outcome` while the lane to land first is appended
    to `brief`, so the next window lands it before any new job) and
    `written_at`. The handoff arms on every end it ran to; a refusal the

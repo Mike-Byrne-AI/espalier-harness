@@ -666,7 +666,11 @@ python tools/cc/ship.py handoff
   request merges without it. On a red base the verb refuses as `open` does, a
   `revert/` lane excepted; where the dispatcher ruled the red a fix-forward,
   `handoff --base-red-ruled <ack id>` lands the lane on that ruling (`/ship`
-  step 2). Either way, when the lane would conflict with its
+  step 2). While this seat has another pull request open, a lane never pushed
+  is held as `open` holds it (one open pull request per seat): it stays here,
+  whole, the Stop hook's hold is written for it, and the own-clear's brief
+  says to stay on the branch and run `open` once that one merges or closes.
+  Either way, when the lane would conflict with its
   base (two machines' handoffs collide on this very row), the base is merged in
   first with the record files resolved by shape (`/ship` step 2), so the push
   leaves the pull request mergeable and the merge commit rides it. Once the
