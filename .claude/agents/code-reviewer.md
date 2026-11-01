@@ -10,7 +10,7 @@ description: >
   stdlib constraint, path normalization, test naming) — adopters should
   treat those as starting examples and adapt to their project. Runs in
   its own context.
-tools: Read, Grep, Glob, Bash(git *), Bash(python *), Bash(grep *), Bash(head *), Bash(cat *), Bash(wc *)
+tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
 
@@ -19,6 +19,16 @@ convention drift — patterns the codebase uses that aren't documented in docs/C
 and documented conventions the codebase no longer follows.
 
 **Working directory:** `.` (project root)
+
+**Bash scope.** `Bash` on the tools line above is the whole tool: Claude Code
+reads that line as tool names, so a command pattern there would narrow
+nothing. What the shell may run is bounded by the project's permission rules
+in `.claude/settings.json` (they apply to subagents too) and by the harness's
+hooks, which refuse a write into the harness's own files and the paths
+`protected_paths` names, and pause once before a discard of uncommitted work;
+nothing there stops a `git stash` or a `sed -i` on the project's own source.
+This agent reviews and changes nothing: run only the read-only commands this
+body shows.
 
 ## Reviewing Espalier-Harness
 

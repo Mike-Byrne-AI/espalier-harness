@@ -507,9 +507,11 @@ def _build_hooks(fp: RepoFingerprint, repo_root: Path | None = None) -> list[Hoo
 
 #: The shipped agents whose ``tools:`` line carries the repository's own test
 #: runner, rendered at deploy: the reviewer verifies a finding by running the
-#: tests, and the test-writer runs the tests it wrote. Their packaged lines
-#: name ``python`` and ``pytest`` only, so on a Node repository neither could
-#: run ``npm test`` (DEF-963).
+#: tests, and the test-writer runs the tests it wrote. Their packaged lines once
+#: named ``python`` and ``pytest`` only, so on a Node repository neither could
+#: run ``npm test`` (DEF-963). Since every packaged line names plain ``Bash``
+#: (a command pattern on a tools line narrows nothing, DEF-1107), the render
+#: adds nothing to a packaged body; it still narrows a line an adopter kept.
 RUNNER_AGENT_PATHS: frozenset[str] = frozenset({
     ".claude/agents/code-reviewer.md",
     ".claude/agents/test-writer.md",

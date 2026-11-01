@@ -267,28 +267,33 @@ class TestTheRunnerAgentsRunTheRepositorysTests:
     @pytest.mark.parametrize("stack", STACKS)
     def test_the_deployed_tools_line_carries_the_runner(self, trees, stack):
         """The reviewer and the test-writer shipped with `python` and
-        `pytest` only, so on a Node tree neither could run `npm test`."""
+        `pytest` only, so on a Node tree neither could run `npm test`. Their
+        lines now grant the whole Bash tool (a command pattern on a tools line
+        narrows nothing), which reaches every stack's runner, so the deploy's
+        runner render adds nothing and no manager-wide pattern appears."""
         from espalier.cli import preview_managed_surface
+        from espalier.harness_config import _rule_is_covered, agent_runner_rules
 
         tree = trees(stack)
         tools = {
-            name: re.search(r"^tools:(.*)$", (tree / ".claude" / "agents" / f"{name}.md")
-                            .read_text(encoding="utf-8"), re.M).group(1)
+            name: [t.strip() for t in re.search(
+                r"^tools:(.*)$", (tree / ".claude" / "agents" / f"{name}.md")
+                .read_text(encoding="utf-8"), re.M).group(1).split(",")]
             for name in ("code-reviewer", "test-writer")
         }
         if _is_node(stack):
-            test = _NODE_COMMANDS[stack]["test"]
-            for name, line in tools.items():
-                assert f"Bash({test} *)" in line, (name, line)
-                assert not any(f"Bash({m} *)" in line for m in _MANAGERS), (name, line)
+            commands = [_NODE_COMMANDS[stack]["test"]]
         elif stack == "python":
-            assert "Bash(pytest -q *)" in tools["code-reviewer"], tools
-            assert "Bash(pytest *)" in tools["test-writer"], tools
+            commands = ["pytest -q"]
         else:
-            verb = _RUNNER_VERB[stack]
-            for name, line in tools.items():
-                assert f"Bash({verb} *)" in line, (name, line)
-                assert not any(f"Bash({m} *)" in line for m in _MANAGERS), (name, line)
+            commands = [_RUNNER_VERB[stack]]
+        rules = agent_runner_rules(commands)
+        assert rules, stack
+        for name, line in tools.items():
+            assert "Bash" in line, (name, line)
+            assert not [t for t in line if t.startswith("Bash(")], (name, line)
+            for rule in rules:
+                assert _rule_is_covered(rule, line), (name, rule, line)
         # The upgrade preview renders the same body, so a current tree is current.
         surface = preview_managed_surface(tree, goal_snapshot=True)
         stale = [p for p in surface["updated_managed"] if p.startswith(".claude/agents/")]

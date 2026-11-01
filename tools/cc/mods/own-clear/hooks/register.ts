@@ -16,7 +16,9 @@ import type { EngineInterface, Register } from 'claude-code'
 //     (measured 2026-10-26 on 2.1.310: Stop, SessionEnd reason=clear,
 //     SessionStart source=clear with a new session id, the window alive);
 //     anything in flight keeps the marker armed and names the wait on the
-//     status line; a clear the engine refuses says so there and on the marker
+//     status line and on the marker (why, since when, how many turn ends:
+//     the record the prompt router tells the held window from, with the verb
+//     that resolves it, DEF-2039); a clear the engine refuses says so there and on the marker
 //     (the reason, when, a count: the record the banner's Own-clear: line
 //     reads, DEF-5031) and is tried again at the next turn's end; a turn's
 //     end under a pending clear never moves the session this process was last
@@ -83,6 +85,11 @@ type Marker = {
   clear_refusals?: number // how many asks the engine rejected
   clear_refused_at?: string
   turns_since_ask?: number // main-loop turn ends since the ask with the clear still queued
+  // The hold (DEF-2039): what inFlight named at the latest held turn end, when
+  // the hold began, and the turn ends it has held; taken off at the ask.
+  clear_held?: string
+  clear_held_since?: string
+  clear_held_turns?: number
   consumed_at?: string
   new_session_id?: string
   previous_session_id?: string | null // at a stale marking: the session this process was last in
@@ -318,6 +325,17 @@ export const register: Register = on => {
     if (!marker) return next(e)
     if (why) {
       $.ui.status(`own-clear: armed, waiting: ${why}`)
+      // On the record: the dispatcher window sat held on a moved HEAD for 9 h
+      // and 36 loop ticks with this status line read by nobody, and its
+      // consumed marker read as a clear never asked (DEF-2039, 2026-11-01).
+      // The start and the count are read from the marker, so a reload keeps
+      // them; the latest cause is named. The prompt router tells the held
+      // window the verb (this text names none: it rides the re-prime brief).
+      const since = typeof marker.clear_held_since === 'string' && marker.clear_held_since
+        ? marker.clear_held_since
+        : new Date(await $.clock.now()).toISOString()
+      const turns = (typeof marker.clear_held_turns === 'number' ? marker.clear_held_turns : 0) + 1
+      await record($, id, { clear_held: why, clear_held_since: since, clear_held_turns: turns }, 'the hold')
       await note($, `turn.complete: armed for ${id}, waiting: ${why}`)
       return next(e)
     }
@@ -333,10 +351,11 @@ export const register: Register = on => {
       // is what outlives this process when a clear never comes), and an
       // earlier ask's fields taken off it (JSON drops an undefined field): a
       // refusal recorded on ask 1 must not read as ask 2's, which the engine
-      // may take. The count stays, cumulative.
+      // may take. The count stays, cumulative. A hold ends at the ask.
       await writeMarker($, {
         ...marker, clear_asked_at: new Date(await $.clock.now()).toISOString(),
         clear_refused: undefined, clear_refused_at: undefined, clear_resolved_at: undefined, turns_since_ask: undefined,
+        clear_held: undefined, clear_held_since: undefined, clear_held_turns: undefined,
       })
     } catch (err) {
       await note($, `the marker could not take the ask (${String(err)}); clearing anyway`)
@@ -388,6 +407,9 @@ export const register: Register = on => {
               await writeMarker($, {
                 ...current, clear_refused: reason, clear_refusals: count,
                 clear_refused_at: new Date(await $.clock.now()).toISOString(),
+                // A hold the ask's own write failed to take off is older than
+                // this refusal (DEF-2039's review): never left to be said over it.
+                clear_held: undefined, clear_held_since: undefined, clear_held_turns: undefined,
               })
             }
           } catch (e2) {

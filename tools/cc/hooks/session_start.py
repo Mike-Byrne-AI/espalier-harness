@@ -4547,9 +4547,10 @@ def _plain_line(text: object, cap: int) -> str:
 
 def _own_clear_line(root: Path, sid: str, source: str = "") -> str:
     """The ``Own-clear:`` line: the marker's record, when it holds one a reader
-    should see -- armed for a session other than this one (a window waiting on
-    a clear the engine refused, took and never ran, or was never asked for; or
-    a window since closed), consumed into this session after refusals, or
+    should see -- armed for a session other than this one (a window whose
+    clear the mod holds on something in flight, named with since when and the
+    turn ends, DEF-2039; or one waiting on a clear the engine refused, took and
+    never ran, or was never asked for; or a window since closed), consumed into this session after refusals, or
     marked stale at the clear into this session (cleared, not re-primed: the
     brief was never submitted). Empty for a clean consume, this window's own
     pending clear (the mod's status line has it), the clear's own SessionStart
@@ -4575,13 +4576,25 @@ def _own_clear_line(root: Path, sid: str, source: str = "") -> str:
     taken = str(marker.get("clear_resolved_at") or "")[:16]
     turns = marker.get("turns_since_ask")
     turns = turns if isinstance(turns, int) else 0
+    # The hold (DEF-2039): what the mod's in-flight read named at the latest
+    # held turn end; the mod takes it off at the ask, so beside a refusal it is
+    # the newer of the two.
+    held = _plain_line(marker.get("clear_held") or "", 160)
+    held_turns = marker.get("clear_held_turns")
+    held_turns = held_turns if isinstance(held_turns, int) and held_turns > 0 else "?"
+    held_since = str(marker.get("clear_held_since") or "?")[:16]
     new = str(marker.get("new_session_id") or "")
     if state == "armed":
         if marker.get("session_id") == sid or source == "clear":
             return ""
         head = (f"marker armed for session {owner} (not this one), written "
                 f"{str(marker.get('written_at') or '?')[:16]}Z")
-        if refused and refusals:
+        if held:
+            earlier = f" (the engine refused an earlier ask {refusals} time(s))" if refusals else ""
+            tail = (f"; its clear has been held since {held_since}Z over "
+                    f"{held_turns} turn end(s): {held}{earlier}; the prompt router tells that window what "
+                    "resolves it, and /clear by hand there ends it too")
+        elif refused and refusals:
             tail = (f"; its clear, asked {asked}Z, was refused {refusals} time(s) by the engine (latest: {refused}); "
                     "that window needs /clear by hand")
         elif taken:

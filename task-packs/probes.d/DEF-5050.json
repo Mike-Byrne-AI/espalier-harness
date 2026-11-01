@@ -1,0 +1,10 @@
+{
+ "id": "DEF-5050",
+ "subject": "espalier/finding_ledger.py",
+ "cmd": null,
+ "open_value": null,
+ "why_not": "The fix adds run counts to a record the engine writes; the open state is a missing field on a row written at run time, which no static read of the module can tell from a field written under another name, and the oracle is a node-driven workflow run feeding the real ledger, written with the fix.",
+ "row_sha": "7dc6911be45a",
+ "text_sha": "bd0ef6c8817a",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}

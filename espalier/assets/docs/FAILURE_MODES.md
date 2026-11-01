@@ -8218,8 +8218,14 @@ verified green suite was true when run and false minutes later — caught
 only by re-running the suite after the agent returned.
 
 **Mitigation.** (1) Spawn mutate-capable / concurrent agents with
-`isolation: worktree`. (2) Prefer read-only agents (Explore; Bash scoped
-to non-mutating verbs like status/diff/log/show) for review/audit. (3)
+`isolation: worktree`. (2) Prefer read-only agents for review/audit
+(Explore, or an agent whose tools line names no Bash). A command pattern
+on a subagent's tools line (`Bash(git status *)`) does not narrow its
+shell: the field takes tool names, and the pattern reads as the whole
+Bash tool. To keep a review agent off a mutating verb, deny the verb with
+a `permissions.deny` rule in `.claude/settings.json`, which applies to
+the main session and to subagents alike; the harness's own hooks refuse
+writes into its protected zones and nothing more. (3)
 After a git-capable agent returns, re-verify `git status` + `git diff
 --cached` and re-run the relevant gate before trusting a pre-agent green.
 Dual of "agent output is a claim to verify": output is a claim; a

@@ -115,10 +115,12 @@ discipline applies in spirit, not just to that directory.
   Pinned by `tests/test_skill_delegation_parity.py::TestNoBodyNamesTheSubagentTool`
   (bodies) and `tests/test_denial_reason_actionability.py::TestAgentDispatchIsSpelledOneWay`
   (gate messages).
-- **Agent isolation.** Spawn a mutate-capable agent (Write / Edit / `Bash(git *)`
-  or any file-writing Bash) with `isolation: worktree` when it runs concurrently
+- **Agent isolation.** Spawn a mutate-capable agent (Write / Edit / Bash) with
+  `isolation: worktree` when it runs concurrently
   with other work or when its side-effects must not touch your live tree. Keep
-  review/audit agents read-only (Explore, or Bash scoped to status/diff/log/show)
+  review/audit agents read-only (Explore, or an agent whose tools line names no
+  Bash; a `Bash(git status *)` pattern on a tools line narrows nothing, and a
+  verb is kept off by a `permissions.deny` rule, which binds the main session too)
   — do NOT worktree-wrap them; worktrees cost ~200-500ms + disk each and read-only
   lanes need the live diff. After any git-capable agent returns, re-verify
   `git status` / `git diff --cached` and re-run the relevant gate before trusting

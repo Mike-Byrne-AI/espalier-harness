@@ -102,7 +102,10 @@ def _first_word(line: str) -> str | None:
 
 
 def _bash_pattern_covers(declared_tools: list[str], command: str) -> bool:
-    """Return True if the command is covered by a declared Bash(...) pattern."""
+    """Return True if the command is covered by a declared Bash grant: the
+    plain tool covers every command, a Bash(...) pattern its prefix."""
+    if "Bash" in declared_tools:
+        return True
     for tool in declared_tools:
         m = re.match(r"^Bash\((.+)\)$", tool)
         if not m:

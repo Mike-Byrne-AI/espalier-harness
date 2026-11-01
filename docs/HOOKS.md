@@ -88,9 +88,10 @@ settings file.
 The own-clear marker (`.espalier-state/own_clear.json`, written by the handoff
 and rewritten by the own-clear mod with every outcome) gets an `Own-clear:`
 line when its record is one a reader should see: armed for a session other
-than this one (a window elsewhere whose clear the engine refused, with the
-count and the engine's reason, took and never ran, or never asked; or a
-window since closed), consumed into this session after refusals, or marked
+than this one (a window elsewhere whose clear the mod holds on something in
+flight, with the hold, since when and the turn ends it has held; whose clear
+the engine refused, with the count and the engine's reason, took and never
+ran, or never asked; or a window since closed), consumed into this session after refusals, or marked
 stale at the clear into this session (cleared, not re-primed: no brief was
 submitted, and the line names the two ids the mod compared). A clean consume,
 this window's own pending clear (the mod's status line has it), no marker or
@@ -677,13 +678,33 @@ it, every prompt gets one ASCII paragraph, above an active plan too:
 asks again at each turn's end, and no clear has run. Say so in the first line
 of your reply, so the operator at this terminal sees it: this window needs
 /clear by hand (the loop survives it; start no second one). Take no new job
-meanwhile.
+meanwhile (your own pull request's red or conflict, and a red main's revert,
+are not new work).
 ```
 
 Another session's marker, a clear not yet refused, an ask the engine took
 since (the mod takes the latest refusal off the marker at a new ask), a
 consumed marker and a torn one say nothing. The SessionStart banner's
 `Own-clear:` line is every other session's reader of the same record.
+
+**A held own-clear.** The mod holds the clear while something is in flight
+(a tracked edit, HEAD moved since the handoff, a plan in progress, or a git
+read that failed) and puts the hold on the marker: `clear_held` (the cause,
+the latest), `clear_held_since` and `clear_held_turns`, all three taken off at
+the ask (the dispatcher window sat held on a moved HEAD for 9 h and 36 loop
+ticks on 2026-11-01 with the hold on its status line alone). While
+the marker is armed for this session with a hold on it, every prompt gets one
+ASCII paragraph, above an active plan too, naming the hold and the verb that
+resolves its cause, matched exactly on the cause's words before any
+parenthesis (a cause with no verb gets none): commit the edit and run
+`/handoff` when this window made it, else leave it to the operator (`git
+stash` keeps it and lets the clear run); `python tools/cc/ship.py arm`
+after a pull, `/handoff` after a commit of the lane's own; finish the plan or
+`python tools/cc/execution_plan.py reset`; git's own words for a failed read.
+A `/clear` by hand ends it too. The verbs live here, never in the mod's text,
+which rides the clear's re-prime brief: a verb named there would run in the
+new window over a consumed marker. A hold beside a refusal is the newer (the
+ask takes a hold off), so the hold is said, with the refusals named after it.
 
 **What the mod wrote at the clear into this session, once.** The banner at the
 clear's own SessionStart runs beneath the mod's handler and cannot see the
