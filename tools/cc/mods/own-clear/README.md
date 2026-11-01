@@ -13,7 +13,12 @@ says the window needs a `/clear` by hand.
 ## The three pieces
 
 1. **The marker.** The handoff's last act (`tools/cc/ship.py::arm_own_clear_here`)
-   writes `.espalier-state/own_clear.json`: `state` (`armed`), `session_id`
+   writes `.espalier-state/own_clear.json` in the checkout the mod reads it in
+   (`ship.py::own_clear_checkout`, the mod's own order: `ESPALIER_OWN_CLEAR_ROOT`,
+   else the checkout the session was started in, from Claude Code's session
+   registry, so a lane handed off from a linked worktree of the clone arms the
+   session's own checkout, DEF-5046; a session the registry cannot place is
+   armed where the verb runs, and the line says so): `state` (`armed`), `session_id`
    (the id Claude Code exports to its tool shells as `CLAUDE_CODE_SESSION_ID`,
    which tracks the session across a clear), `head`, `seat`, `role`, `brief`
    (`seat.py::reprime_text`: the role brief with its loop line replaced, since

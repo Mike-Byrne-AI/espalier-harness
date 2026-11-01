@@ -2353,6 +2353,7 @@ class TestCatchUpConflict:
         start, then HEAD: the merge moved it."""
         _bind_clock(ship, monkeypatch)
         monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s-here")
+        monkeypatch.setenv(ship.OWN_CLEAR_ENV, "1")   # a window the launcher started with the mod
         ship.arm_own_clear(tmp_path, session_id="s-here", head=OLD_HEAD, seat="box", role="worker", brief="b")
         answers = self._answers(tmp_path)
         answers[("git", "rev-parse", "HEAD")] = [(0, f"{OLD_HEAD}\n", ""), (0, f"{HEAD}\n", "")]

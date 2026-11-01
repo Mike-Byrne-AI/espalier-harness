@@ -42,7 +42,10 @@ _HARNESS_TOKENS = (
 
 
 def _hook_env(tree: Path) -> dict[str, str]:
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ESPALIER_")}
+    # The harness's own settings are dropped, the test's audit store is not
+    # (conftest's _isolate_audit_dir): without it the hook writes, and its
+    # prune reads, the home store (DEF-3022).
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ESPALIER_") or k == "ESPALIER_AUDIT_DIR"}
     env["CLAUDE_PROJECT_DIR"] = str(tree)
     env.pop("FORCE_COLOR", None)
     return env

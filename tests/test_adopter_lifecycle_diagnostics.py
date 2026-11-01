@@ -96,6 +96,16 @@ pytestmark = pytest.mark.timeout(300)
 _ENV = {k: v for k, v in os.environ.items() if not k.startswith(("ESPALIER", "CLAUDE"))}
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _children_audit_store(tmp_path_factory):
+    """The children's audit store, one for the module: ``_ENV`` is built at
+    import, before conftest's per-test ``ESPALIER_AUDIT_DIR`` exists, so a
+    hook child wrote the operator's home store (a deny there wrote
+    ``<slug>-20261101.log``; DEF-3022). Module-scoped and autouse, so it is in
+    place before the walk fixtures spawn anything."""
+    _ENV["ESPALIER_AUDIT_DIR"] = str(tmp_path_factory.mktemp("lifecycle-audit"))
+
+
 def _espalier(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, "-m", "espalier.cli", *args],
