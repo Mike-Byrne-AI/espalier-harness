@@ -289,7 +289,7 @@ _PYTEST: tuple[str, ...] = ("pytest", "-q")
 #: saying so (failure-mode review, 2026-10-16), so the suite's own summary
 #: counts the tests that never ran (``tests/_never_ran.py``, DEF-2020). The
 #: serial files keep one worker (their placement was measured: wall-clock
-#: budgets, timeout-near gates and the cited-pin run, kept off parallel load); every other line
+#: budgets, timeout-near gates and the nested runs, kept off parallel load); every other line
 #: runs at ``-n auto``.
 _PARALLEL: tuple[str, ...] = ("-n", "auto")
 _ONE_WORKER: tuple[str, ...] = ("-n", "1")

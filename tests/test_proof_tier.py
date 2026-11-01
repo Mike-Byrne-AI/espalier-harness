@@ -832,7 +832,7 @@ class TestNoParallelLineCollectsASerialFile:
         and the same selection naming the tests directory (which a file-token
         filter reads as a file), both put the cited-pin run on the pool."""
         bare = ("pytest", "-n", "auto", "-m", "contract", "-q")
-        cited = set(pt.NESTED_RUN_SERIAL_FILES)
+        cited = set(pt.SERIAL_CONTRACT_FILES)   # a nested-run file with no contract row is not on this line
         assert self._on_the_pool(bare, pt.SERIAL_FILES) >= cited
         assert self._on_the_pool(bare + ("tests/",), pt.SERIAL_FILES) >= cited
         assert not self._on_the_pool(bare + tuple(f"--ignore={rel}" for rel in cited), pt.SERIAL_FILES) & cited
@@ -1761,21 +1761,31 @@ class TestTheWallClockRule:
 # the parallel leg that session runs beside the `-n auto` pool. The cited-pin
 # run's child redded a windows-latest leg there (DEF-4062) and moved to
 # `NESTED_RUN_SERIAL_FILES`; nothing caught the next one, and the axis
-# registry's run of its proving nodes (65 s alone on the Windows seat) rode the
-# pool until this rule. So every launch under tests/ is read by the AST: a
-# `subprocess` launcher whose argv is a pytest command -- `-m pytest`, a bare
-# `pytest` head, or `-c` with a program that calls `pytest.main` -- spelled in
-# the call, through a name bound in the function or the module, through `+` or
-# a starred name. A launching function in a file on no serial list reds until
+# registry's run of its proving nodes (64 s alone on the Windows seat,
+# 2026-11-01) rode the pool until this rule. So every launch under tests/ is
+# read by the AST: a `subprocess` launcher or `run_bounded` whose argv is a
+# pytest command -- `-m pytest`, a bare `pytest` head, or `-c` with a program
+# that calls `pytest.main`, a constant or a `dedent` of one -- spelled in the
+# call, through a name bound in the function or the module, through `+` or a
+# starred name. A launching function in a file on no serial list reds until
 # it is placed: a child that runs this repo's rows for long, or rows that keep
 # a budget (a hook judgment, a timed bound), joins `NESTED_RUN_SERIAL_FILES`
 # (and `SERIAL_CONTRACT_FILES` when its file holds a contract row); one that
 # only collects, runs a tree the test planted, or runs a few in-process rows
 # for seconds is enrolled below with what it runs and its time alone. Not
-# read: a pytest reached through a script (`proof_tier.py --run`,
-# `archive_probe.py`), `os.system`, and an argv a helper call returns.
+# read: a pytest reached through a script (`scripts/verify_pins.py` is one,
+# DEF-2036), `os.system`, a shell string, a wrapper head (`bash -c`, `uv
+# run`), an f-string program, an argv a helper returns or takes as a
+# parameter, one held on a class attribute or imported, and one grown by `+=`
+# or `.extend`. An enrolment covers its function whole: a second launch
+# written into it, or a new caller handing an enrolled helper `-n auto`, reads
+# green. A launch in a `tests/_*.py` helper is judged where it is written, so
+# place it by the files that call it, never by enrolling the helper for them.
 
 _LAUNCHERS = frozenset({"run", "Popen", "call", "check_call", "check_output"})
+#: Launchers read by name wherever they come from (``tools/cc/_json_safe.py``'s
+#: bounded spawn, which takes the argv first).
+_NAMED_LAUNCHERS = frozenset({"run_bounded"})
 #: The launches the scan finds at the pin, the serial files' included; the
 #: floor the scan must clear before its verdict is read, as the wall-clock
 #: rule's (a scan that finds a handful is broken, not looking at clean files).
@@ -1793,7 +1803,8 @@ _PARALLEL_NESTED_RUNS: dict[str, str] = {
     "tests/test_golden_examples.py::test_golden_examples_pass_under_bare_pytest":
         "the golden examples under a bare pytest, a few one-assert files; under 0.5 s",
     "tests/test_marker_parity.py::TestFullTreeFragmentsResolve::test_every_fragment_collects_at_least_one_real_nodeid":
-        "one --collect-only of the whole tests/ tree, no row run; 29 s, under its own 300 s bound",
+        "one --collect-only of the whole tests/ tree, no row run; 29 s, under its own 300 s bound; the one "
+        "enrolled row marked past the 60 s ceiling (360 s), kept here because no test body runs",
     "tests/test_proof_tier.py::TestNoParallelLineCollectsASerialFile::_collected":
         "a --collect-only of the serial files under a tier line's selection; up to 5.5 s a row",
     "tests/test_proof_tier.py::TestTheFullRecipe::test_the_contract_tiers_body_line_collects_the_diagnostics::collected":
@@ -1801,11 +1812,12 @@ _PARALLEL_NESTED_RUNS: dict[str, str] = {
     "tests/test_proof_tier.py::TestTheLegsAndTheHeavyLane::test_neither_line_collects_a_heavy_stage_without_heavy::collected":
         "a --collect-only of one file under a selection; 1.9 s",
     "tests/test_timeout_backstop.py::_drive":
-        "a planted one-file suite under --timeout=1; POSIX only (SIGALRM), so not timed on the Windows seat",
+        "a planted one-file suite under --timeout=1; POSIX only (SIGALRM), untimed",
     "tests/test_write_guard.py::TestGitBashDrivePrefix::_inner_session":
-        "a planted two-test probe under the floor's construction refusal; POSIX only",
+        "a planted two-test probe under the floor's construction refusal; POSIX only, untimed",
     "tests/test_write_guard.py::TestGitBashDrivePrefix::test_the_rows_the_floor_cannot_drive_are_exactly_the_skipped_ones":
-        "this file's 13 emulated path rows, in process, no hook spawned; 1.9 s driven by hand (the row runs on 3.12+)",
+        "this file's 13 emulated path rows, in process, no hook spawned; the row runs on POSIX at 3.12+, "
+        "and its child took 1.9 s driven by hand on the Windows seat",
     "tests/test_xdist_never_ran.py::_drive":
         "a planted one-file suite under xdist with a crash or a ceiling planted; up to 7.2 s a row",
 }
@@ -1824,14 +1836,33 @@ def _bindings(nodes: Iterable[ast.AST]) -> dict[str, list[ast.expr]]:
     return out
 
 
+def _module_bindings(tree: ast.Module) -> dict[str, list[ast.expr]]:
+    """``_bindings`` over the statements no function or class body holds, so
+    a name bound under a module-level ``if`` or ``try`` is read too."""
+    stack: list[ast.AST] = list(tree.body)
+    nodes: list[ast.AST] = []
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        nodes.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return _bindings(nodes)
+
+
 def _word(node: ast.expr, names: dict[str, list[ast.expr]]) -> str | None:
-    """``node`` as a string constant, through a name bound to one."""
+    """``node`` as a string constant, through a name bound to one and through
+    a ``dedent`` of one."""
+    if (isinstance(node, ast.Call) and node.args
+            and (getattr(node.func, "id", None) == "dedent" or getattr(node.func, "attr", None) == "dedent")):
+        return _word(node.args[0], names)
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
     if isinstance(node, ast.Name):
         for value in names.get(node.id, ()):
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                return value.value
+            word = _word(value, {})
+            if word is not None:
+                return word
     return None
 
 
@@ -1869,7 +1900,8 @@ def nested_pytest_launches(text: str) -> set[str]:
         f = call.func
         return ((isinstance(f, ast.Attribute) and f.attr in _LAUNCHERS
                  and isinstance(f.value, ast.Name) and f.value.id in modules)
-                or (isinstance(f, ast.Name) and f.id in bare))
+                or (isinstance(f, ast.Name) and f.id in bare)
+                or getattr(f, "id", getattr(f, "attr", None)) in _NAMED_LAUNCHERS)
 
     def visit(node: ast.AST, qual: tuple[str, ...], names: dict[str, list[ast.expr]]) -> None:
         for child in ast.iter_child_nodes(node):
@@ -1887,7 +1919,7 @@ def nested_pytest_launches(text: str) -> set[str]:
                     found.add("::".join(qual) or "<module>")
             visit(child, qual, names)
 
-    visit(tree, (), _bindings(tree.body))
+    visit(tree, (), _module_bindings(tree))
     return found
 
 
@@ -1930,6 +1962,7 @@ class TestTheNestedRunRule:
         """The guard: a new launch in a file on no serial list reds here
         until it is placed (the section comment says where)."""
         live = self._live()
+        assert sum(map(len, live.values())) >= _NESTED_LAUNCH_FLOOR, live   # an empty scan is not a pass
         unplaced = sorted(f"{rel}::{fn}" for rel, fns in live.items() if rel not in pt.SERIAL_FILES
                           for fn in fns if f"{rel}::{fn}" not in _PARALLEL_NESTED_RUNS)
         assert not unplaced, (
@@ -1971,6 +2004,16 @@ class TestTheNestedRunRule:
          {"test_w"}),
         ("a launch at module level", "import subprocess, sys\nsubprocess.run([sys.executable, '-m', 'pytest'])\n",
          {"<module>"}),
+        ("an argv bound under a module-level if",
+         "import subprocess, sys\nif sys.platform:\n    ARGV = [sys.executable, '-m', 'pytest']\n"
+         "def test_v():\n    subprocess.run(ARGV)\n", {"test_v"}),
+        ("the bounded spawn",
+         "import sys\ndef test_u(primitive):\n    primitive.run_bounded([sys.executable, '-m', 'pytest'], timeout=9)\n",
+         {"test_u"}),
+        ("a -c program built with dedent",
+         "import subprocess, sys, textwrap\ndef test_t():\n"
+         "    prog = textwrap.dedent('''\\n    import pytest\\n    pytest.main([])\\n    ''')\n"
+         "    subprocess.run([sys.executable, '-c', prog])\n", {"test_t"}),
     ])
     def test_the_detector_reads(self, label, source, expect):
         assert nested_pytest_launches(source) == expect, label
