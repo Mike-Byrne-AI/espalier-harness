@@ -81,7 +81,11 @@ python tools/cc/ship.py preflight
 
 Refuses a dirty tracked tree (`/commit` first: ship moves commits, never a dirty
 tree) and an empty range. Lists untracked files as a note only: they do not
-ship and do not block. Prints one line per recently merged pull request whose
+ship and do not block. Prints the lane's shape against the base -- how many
+files it adds, modifies and deletes, the deletions the driver made itself, and,
+where this box is a named seat, the modified paths no claim it sent on the lane
+names -- and notes that `open` will refuse a deletion the driver did not make
+(Step 2). Prints one line per recently merged pull request whose
 latest run of a check is red -- a check that is not required finishes after
 auto-merge has landed the lane and reports to nobody otherwise (the SessionStart
 banner's `Merged:` rule, the same states) -- so read that log
@@ -209,6 +213,23 @@ python tools/cc/ship.py fold
 
 Until 2026-10-16 every lane pruned to the exact cap in its own tree, a prune
 commit per lane carrying a row, and two lanes merged to 31.
+
+Then the shape of what is pushed, read after the merge and the fold have moved
+the head: `git diff --name-status origin/<base>...HEAD`, counted and printed. A
+deletion refuses the push, the lane still unpushed, unless the driver made it
+-- a Session Log row a commit of this lane deleted under the fold's prune
+subject (`chore(records): prune the Session Log to its cap of <n>`), or a probe
+under `task-packs/probes.d/` whose row the head holds struck (the strike drops a
+closed row's probe) -- or `--allow-deletions "<why>"` says why, which the pull
+request's body records; a deletion a merge commit made is never the driver's.
+`handoff` takes the same flag, and its push onto an open pull request reads the
+same shape. Modified paths no claim this seat sent on the lane names (live or
+released: a claim's paths, its symbols' files, the row and probe of an id it
+carries) are named and never refused, since claims are often narrower than a
+lane; a revert the lane never made reads there. On 2026-10-31 a lane re-parented
+onto the base's tip with an older tree carried 17 deletions of other lanes'
+rows and three merges' code reverted, and was pushed like any other; its red CI
+was the only symptom.
 
 Then, in order: the diff against the base asked of the harness guard
 (`tools/cc/ci_guard.py`, loaded from the tree when it is there -- a tree

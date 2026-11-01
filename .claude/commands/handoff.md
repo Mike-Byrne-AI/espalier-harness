@@ -676,7 +676,11 @@ python tools/cc/ship.py handoff
   either push, the verb folds: the rows other seats parked come into the lane
   and, once the fragments run past the cap's slack, they are pruned back to
   the cap, in commits of their own, so the marker binds the head that is
-  pushed.
+  pushed. Then either push reads the lane's shape as `open` does (`/ship`
+  step 2): a deletion the driver did not make (its own prune, a struck row's
+  probe) refuses the push, the lane unpushed and no own-clear armed, until it
+  is read and, where it is the lane's own, `handoff --allow-deletions "<why>"`
+  says why.
   **A lane that already merged** (no open pull request, and nothing in its diff
   with the base but Session Log rows it added) opens no pull request for the
   row alone: the verb parks the committed row on this seat's records ref
