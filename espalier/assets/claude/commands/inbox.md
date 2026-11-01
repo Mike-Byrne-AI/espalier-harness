@@ -499,7 +499,8 @@ on it, `--ack` names the held seat's last message): it opens with the fixed
 head `gridlock: fix forward run <id>` (the red post-merge run's id) and names
 the fix lane with `--lane`: the ship driver lands that lane on it
 (`open --base-red-ruled <ack id>`) and the board's base-branch line prints it
-in place of the revert (Step 2c).
+in place of the revert (Step 2c). The send refuses any other type whose text
+opens with that head, on `--dry-run` alike, since only the ack would rule.
 <!-- /espalier:self-host-only -->
 
 ## Step 5: A shipped lane releases its own claims

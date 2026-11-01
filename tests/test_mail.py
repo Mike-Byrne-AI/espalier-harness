@@ -1326,6 +1326,55 @@ class TestFixForwardRulings:
             assert (problem or "").isascii()
         assert json.dumps(ruled, sort_keys=True) == before
 
+    # DEF-4074: only an ack opening with the head rules, so the send refuses
+    # any other type that opens with it, on the dry run and the live send
+    # alike, before the channel is touched.
+    _NON_ACKS = (("note", ()), ("request", ("--lane", "lane/x")), ("claim", ("--lane", "lane/x")),
+                 ("release", ("--lane", "lane/x")), ("assign", ("--seat", "win", "--lane", "lane/x")))
+
+    def _send(self, mail, monkeypatch, tmp_path, *args: str) -> int:
+        monkeypatch.setattr(mail, "machine_setting", lambda root, **kw: ("air", "git config espalier.machine = air"))
+        monkeypatch.setattr(mail, "send", lambda *a, **k: pytest.fail("the message reached the channel"))
+        return mail.main(["--root", str(tmp_path), "send", *args])
+
+    @pytest.mark.parametrize("live", [False, True], ids=["dry-run", "live"])
+    @pytest.mark.parametrize("type_, extra", _NON_ACKS, ids=[t for t, _ in _NON_ACKS])
+    def test_a_ruling_sent_as_any_type_but_an_ack_is_refused_at_the_send(self, mail, monkeypatch, tmp_path, capsys,
+                                                                         type_, extra, live):
+        """The held seat on a red base waits on a ruling only an ack carries;
+        sent as a note it lands, rules nothing, and the sender is told
+        nothing (the probe's dry run printed it and exited 0, 2026-10-31).
+        Dies to: the refusal missing for one type, on one of the two paths,
+        or naming no shape to take."""
+        text = "gridlock: fix forward run 41239423797; pytest's red, outside every suspect's diff"
+        argv = ["--type", type_, *extra, "--text", text, *([] if live else ["--dry-run"])]
+        assert self._send(mail, monkeypatch, tmp_path, *argv) == 1
+        err = capsys.readouterr().err
+        assert f"{'an' if type_ == 'assign' else 'a'} {type_} that opens with `{mail.RULING_HEAD}" in err, err
+        assert "--type ack --ack <the held seat's last message>" in err and err.isascii(), err
+
+    def test_the_head_is_read_as_the_readers_read_it(self, mail, monkeypatch, tmp_path, capsys):
+        """Folded whitespace reads as the head to the readers (``ruling_text``),
+        so it is refused too. Dies to: a second spelling of the head here."""
+        assert self._send(mail, monkeypatch, tmp_path, "--type", "note", "--text",
+                          "  gridlock:   fix forward run 900", "--dry-run") == 1
+        assert "--type ack" in capsys.readouterr().err
+
+    def test_the_ack_and_a_plain_gridlock_note_still_send(self, mail, monkeypatch, tmp_path, capsys):
+        """A ruling's own ack passes; a `gridlock:` note under any other head
+        (a ruling no request waits on) and a note naming the head mid-text
+        pass too. Dies to: the refusal matching the marker alone, or the
+        head anywhere in the text."""
+        sent = [
+            ("--type", "ack", "--ack", "20261101T000000Z-air-work-abcdef", "--lane", "lane/x",
+             "--text", "gridlock: fix forward run 900; pytest's red"),
+            ("--type", "note", "--text", "gridlock: the merge queue holds until 03:00Z"),
+            ("--type", "note", "--text", "re gridlock: fix forward run 900 (air's ruling above)"),
+        ]
+        for argv in sent:
+            assert self._send(mail, monkeypatch, tmp_path, *argv, "--dry-run") == 0, argv
+            assert capsys.readouterr().out.lstrip().startswith("{")
+
 
 class TestTextFile:
     """TP-701 Wave A-4: ``send --text-file`` takes the body from a file, so a

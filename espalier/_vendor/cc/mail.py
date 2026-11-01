@@ -875,6 +875,22 @@ def ruling_text(message: dict) -> str:
     return " ".join(str(message.get("text") or "").split())
 
 
+def ruling_type_refusal(message: dict) -> str | None:
+    """Why a message must not be sent as it stands: a type other than ack
+    whose text opens with :data:`RULING_HEAD`, read as the readers read it
+    (``ruling_text``). Only an ack under that head rules
+    (``fix_forward_rulings``), so a note, request, claim, release or assign
+    under it would land on the channel and rule nothing while the held seat
+    waits on it (DEF-4074). None for an ack, and for a ``gridlock:`` text
+    under any other head, a ruling no request waits on."""
+    type_ = str(message.get("type") or "")
+    if type_ == "ack" or not ruling_text(message).startswith(RULING_HEAD):
+        return None
+    return (f"{'an' if type_ == 'assign' else 'a'} {type_} that opens with `{RULING_HEAD}<run id>` rules "
+            f"nothing: only an ack under that head is a fix-forward ruling. Send it as --type ack --ack <the "
+            f"held seat's last message> --lane <the fix lane>, or open the text with another head")
+
+
 def ruling_run(message: object) -> str:
     """The red post-merge run id ``message`` rules a fix-forward on: the digits
     after :data:`RULING_HEAD` at the text's opening, read from that head alone
@@ -2410,6 +2426,9 @@ def main(argv: list[str] | None = None) -> int:
             message = new_message(machine, args.type, text, lane=args.lane, classes=classes,
                                   paths=paths, ids=ids, ack=args.ack, seat=args.seat, symbols=symbols,
                                   symbols_rule=rule)
+            refusal = ruling_type_refusal(message)
+            if refusal:
+                raise Unresolvable(refusal)
             if args.type == "assign":
                 refusal = assign_refusal(root, machine)
                 if refusal:
