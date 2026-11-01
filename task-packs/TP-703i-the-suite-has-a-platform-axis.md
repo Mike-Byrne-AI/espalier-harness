@@ -159,8 +159,13 @@ Windows and has no list of what the suite sees for it.
 - **A `--platform-axis` selection in `scripts/proof_tier.py`.** The proving nodes are ordinary
   tests in files every tier already runs; a flag would be a second selection rule beside the
   tier's, and `TIERS` is one home. Re-raised only if the budget line fails.
-- **A PowerShell 5.1 alias host.** `DEF-4029`'s lane (shelved after a platform safety stop;
-  resumes on `win`); a stand-in for the 5.1 alias table is that lane's to build if it wants one.
+- **A PowerShell 5.1 alias host.** `DEF-4029`'s lane (#366, `f3f9c916`, struck 2026-11-01)
+  built no stand-in: the write verbs' aliases are written out in
+  `tools/cc/hooks/_bash_patterns.py` from `Get-Alias -Definition` on 5.1.26100 (`sc`, `ac`,
+  `clc`, `tee`, `ni`; re-read on `win`'s 5.1.26100.9711 at the strike, the same five), and the
+  verbs' parameter table is re-read from the host wherever Windows PowerShell 5.1 is on it
+  (`tests/test_write_guard.py::TestPowerShellWriteSpellingsTheHostBinds::test_the_parameter_table_is_the_hosts_own`,
+  skipped elsewhere).
 - **A git-version stand-in.** The Air is that host; `TP-703h` registers the expectation.
 - **Turning capability skips into stand-ins.** A `skipif` on POSIX symlinks or an `sh` stub is
   a premise that does not hold on the other host, not a behaviour to simulate.
