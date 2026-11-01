@@ -68,11 +68,19 @@ says the window needs a `/clear` by hand.
    `clear_refused_at`, the state staying `armed`; each later turn's end under a
    queued clear writes `turns_since_ask` and, once the engine has answered the
    ask with the session still standing, `clear_resolved_at`, so a clear taken
-   and never run reads apart from a queued one and a refused one. The
-   SessionStart banner's `Own-clear:` line (`tools/cc/hooks/session_start.py`)
-   reads the record for every other session, and the prompt router
-   (`tools/cc/hooks/task_router.py`) tells the window whose own asked clear was
-   refused to say so in its reply.
+   and never run reads apart from a queued one and a refused one. A held turn's
+   end writes the hold: `clear_held` (what was in flight, the latest),
+   `clear_held_since` (when the hold began) and `clear_held_turns` (the turn
+   ends it has held), read from the marker so a reload keeps them and taken off
+   at the ask (DEF-2039, 2026-11-01: the dispatcher window sat held on a moved
+   HEAD for 9 h and 36 loop ticks, and its consumed marker read as a clear
+   never asked). The SessionStart banner's `Own-clear:` line
+   (`tools/cc/hooks/session_start.py`) reads the record for every other
+   session, and the prompt router (`tools/cc/hooks/task_router.py`) tells the
+   window whose own clear is held the verb that resolves the hold, and the
+   window whose own asked clear was refused to say so in its reply. The hold's
+   text names no verb: it rides the re-prime brief, where a verb would run in
+   the new window over a consumed marker; the router keeps the verbs.
 3. **The re-prime.** On the clear's SessionStart (`classic.SessionStart`,
    `source: 'clear'`) the mod reads the marker, and what the old window left
    in flight against the marker's head, before handing the event on (the
