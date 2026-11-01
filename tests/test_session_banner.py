@@ -3623,15 +3623,19 @@ class TestMailLine:
         2026-10-05: eight plus four of fifteen left three seconds for the rest
         of the hook). Every `*_BLOCK_BUDGET_SECONDS` the module declares is
         read from the module, the ceiling from the canonical wiring, and the
-        mail caps must fit inside the block they share."""
+        mail's share (read first, DEF-5051) must hold a fetch and a read at
+        their caps and still fit inside the block it is carved from."""
         from espalier.harness_config import CANONICAL_HOOK_WIRING
         mod = _load()
         budgets = {k: v for k, v in vars(mod).items() if k.endswith("_BLOCK_BUDGET_SECONDS")}
         assert budgets, "no block budget declared"
         ceiling = CANONICAL_HOOK_WIRING["session_start.py"]["timeout"]
         assert sum(budgets.values()) <= ceiling - 5, (budgets, ceiling)  # five seconds for everything unbudgeted
-        assert mod._MAIL_FETCH_CAP_SECONDS + mod._MAIL_READ_CAP_SECONDS <= mod._PR_BLOCK_BUDGET_SECONDS
-        assert "_MAIL_BLOCK_BUDGET_SECONDS" not in budgets  # the mail line shares the pull-request block's deadline
+        assert mod._MAIL_FETCH_CAP_SECONDS + mod._MAIL_READ_CAP_SECONDS <= mod._MAIL_SHARE_SECONDS
+        # The pull-request block keeps what is left, over its measured worst
+        # (2.85 s, the Air, 12 runs, 2026-11-01): a larger fetch cap moves the share.
+        assert mod._PR_BLOCK_BUDGET_SECONDS - mod._MAIL_SHARE_SECONDS >= 3.0
+        assert "_MAIL_BLOCK_BUDGET_SECONDS" not in budgets  # the share is carved from the block, never added beside it
 
 
 # ─── DEF-643: a fresh session names the plan an earlier one left open ───────
