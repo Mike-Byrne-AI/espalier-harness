@@ -640,12 +640,14 @@ _SAID_THIS_PROCESS: set[str] = set()
 ONCE_FLAG_PREFIX = "once_"   # session_start._clean_state_flags globs the family
 
 
-def say_once(root: Path, key: str, hook: str, event_type: str, message: str, **details: object) -> None:
+def say_once(root: Path, key: str, hook: str, event_type: str, message: str, **details: object) -> bool:
     """Speak about a fail-open once per session: a stderr line every time it
     would fire is noise, silence is the defect this exists to end. Writes one
     audit record (so ``/status --log`` counts it) and one stderr line, then a
     flag ``once_<key>`` under STATE_DIR; a later call with the same key in the
-    same session does nothing. NEVER RAISES: every step sits in its own
+    same session does nothing. Answers whether this call spoke, so a caller
+    that carries the line further (a hook's banner) carries it once too.
+    NEVER RAISES: every step sits in its own
     try/except, because this runs inside blocking hooks whose umbrella turns a
     raise into a crash-deny (``Path.exists`` propagates EACCES on an unreadable
     state dir below 3.14). When the flag cannot be written (a read-only state
@@ -654,7 +656,7 @@ def say_once(root: Path, key: str, hook: str, event_type: str, message: str, **d
     payload's text."""
     key = re.sub(r"[^A-Za-z0-9._-]", "_", str(key)) or "unnamed"
     if key in _SAID_THIS_PROCESS:
-        return
+        return False
     _SAID_THIS_PROCESS.add(key)
     flag: Path | None
     try:
@@ -662,7 +664,7 @@ def say_once(root: Path, key: str, hook: str, event_type: str, message: str, **d
         # not raise here -- this line sat outside every try until the 2-A review.
         flag = (root if isinstance(root, Path) else Path(str(root))) / STATE_DIR / (ONCE_FLAG_PREFIX + key)
         if flag.exists():
-            return
+            return False
     # fail-open: ok deliberate -- an unusable root or an unreadable state dir: the in-process set keeps it to once per process, and the line below still prints
     except Exception:  # noqa: BLE001, S110 -- an unusable root or an unreadable state dir: the in-process set keeps it to once per process
         flag = None
@@ -686,6 +688,7 @@ def say_once(root: Path, key: str, hook: str, event_type: str, message: str, **d
             atomic_write_text(flag, "")
     except Exception:  # noqa: BLE001, S110 -- a read-only state dir: once per process, not per session
         pass
+    return True
 
 
 def say_crash(hook: str, event_type: str, exc: BaseException, consequence: str) -> None:

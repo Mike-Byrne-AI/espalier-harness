@@ -88,8 +88,10 @@ python -m pytest -m "not slow"
 # three times in one run that day, from writers since closed (DEF-1138 on
 # 2026-10-06, DEF-973 on 2026-10-14), so the slice runs at `-n auto` since
 # 2026-10-16 (DEF-2017): 5,113 passed in 5:47 on four workers on the Windows
-# host, and two more halves at `-n 3` green in a review's clone.
-python -m pytest -n auto -m contract
+# host, and two more halves at `-n 3` green in a review's clone. The serial
+# files' contract rows run after it at one worker (DEF-5044), so run the tier,
+# not the bare line, which puts the cited-pin run beside the pool:
+python scripts/proof_tier.py --run --tier contract
 
 # release confidence:
 python -m pytest -m "contract or release or security"

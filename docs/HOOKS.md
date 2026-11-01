@@ -1890,9 +1890,12 @@ new state as the next one to compare with.
   `espalier.toml` during the session, until the next session's snapshot;
   where git cannot answer (past 2 s, a git that cannot start, a refusal
   such as `safe.directory`'s exit 128) it prunes as before too, and the
-  walk says so once a session for each cause, as a
+  walk says so once for each cause until the next startup or clear (a
+  resumed session is not told again), as a
   `zone_watch_failed_open_tracked_read` record `/status --log` counts, the
-  cause in its `details`), and editor and OS clutter
+  cause in its `details`, and as a warning naming the cause and the
+  directory, in the SessionStart banner or in the notice of the shell call
+  that took the baseline), and editor and OS clutter
   (swap and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its
   size and modification time and never read by the hook: when git is asked
   about it (below), git hashes it through the checkout's own filters, up to

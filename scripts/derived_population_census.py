@@ -239,8 +239,14 @@ ADJUDICATED: dict[str, tuple[int, str, str, str]] = {
         "NEW 2026-09-27 (the fourth .claude kind): the two landing parametrize lists and the two per-kind glob comprehensions read surface_contract.CLAUDE_KIND_GLOBS / CLAUDE_SURFACE_KINDS. Deriving IS the property: a hand-named triple here left the deployed workflow bodies unchecked, the defect the kinds owner exists to end; worth having (every kind lands and no orphan lands), blind only to a kind the owner drops, which the count pins one file over catch.",
     ),
     "tests/test_cli_deploy.py": (
-        33, "f89550597aa1ec80d5b90b19c0c18b5b41f49591268144946f8fbb3ef92790a9",
+        34, "84838e4444b1dd1b295cbdc7cf0c693ef710f80b26482d00888ce3ef910bc9a6",
         "MIXED",
+        "GREW 33 -> 34 on 2026-11-01 (the export-drive lane, DEF-5045): "
+        "TestLedgerSeed::test_a_tree_that_has_a_commit_gets_every_onboarding_row_filed "
+        "compares init's outcome with a list built from `_ONBOARDING_ROWS`, as the fresh-tree "
+        "test beside it does; worth having (a row the verb refuses on a repository with a "
+        "commit reds by id), blind only to a row the roster drops, which the roster's own "
+        "count beside it pins. "
         "GREW 29 -> 33 on 2026-10-18 (the engine-stdin lane, DEF-928): "
         "TestAFailedFingerprintTakesTheSeedDocsWithIt reads `get_seed_docs()` to find the "
         "seed docs a failed init left behind and the directories it made; the roster "

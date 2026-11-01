@@ -68,7 +68,8 @@ untracked one. On the Espalier-Harness tree the suite has three tiers, and
 its `proof_tier.py` computes which one a diff earns (the same
 boundary `/implement-task` step 7 and `/implement-pack` step 6 cite): a diff
 that touched no file under `tools/cc/` and no `.py` under `espalier/` outside
-its byte-mirrors runs `pytest -n auto -m contract -q` here (the tree-wide truth
+its byte-mirrors runs the `-m contract` slice here, at `-n auto` with the serial
+files' contract rows after it at one worker (the tree-wide truth
 tests; 164 s serially when last measured, and the five contracts that
 caught that day's batch are all in it), then the recall engine's own test
 files as well when it touched a file the pull-recall corpus reads (`memory/`,
