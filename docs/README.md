@@ -68,3 +68,4 @@ shipped artifacts. `tests/test_git_archive_parity.py` and
 | [external/cc-hook-protocol.md](external/cc-hook-protocol.md) | Anthropic | Claude Code hook protocol specification (pinned copy) |
 | [external/cc-statusline.md](external/cc-statusline.md) | Anthropic | Claude Code status line contract (pinned excerpt) |
 | [external/cc-worktrees.md](external/cc-worktrees.md) | Anthropic | Claude Code worktrees: hook `cwd` follows Claude, `CLAUDE_PROJECT_DIR` stays put, the worktree lock (pinned excerpt) |
+| [external/cc-git-bash.md](external/cc-git-bash.md) | Anthropic | Claude Code on Windows: where it looks for Git Bash, in order, and the `CLAUDE_CODE_GIT_BASH_PATH` override (pinned excerpt) |
