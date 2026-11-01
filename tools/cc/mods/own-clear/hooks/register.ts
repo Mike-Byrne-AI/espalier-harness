@@ -407,6 +407,9 @@ export const register: Register = on => {
               await writeMarker($, {
                 ...current, clear_refused: reason, clear_refusals: count,
                 clear_refused_at: new Date(await $.clock.now()).toISOString(),
+                // A hold the ask's own write failed to take off is older than
+                // this refusal (DEF-2039's review): never left to be said over it.
+                clear_held: undefined, clear_held_since: undefined, clear_held_turns: undefined,
               })
             }
           } catch (e2) {

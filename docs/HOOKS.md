@@ -675,7 +675,8 @@ it, every prompt gets one ASCII paragraph, above an active plan too:
 asks again at each turn's end, and no clear has run. Say so in the first line
 of your reply, so the operator at this terminal sees it: this window needs
 /clear by hand (the loop survives it; start no second one). Take no new job
-meanwhile.
+meanwhile (your own pull request's red or conflict, and a red main's revert,
+are not new work).
 ```
 
 Another session's marker, a clear not yet refused, an ask the engine took
@@ -691,7 +692,10 @@ the ask (the dispatcher window sat held on a moved HEAD for 9 h and 36 loop
 ticks on 2026-11-01 with the hold on its status line alone). While
 the marker is armed for this session with a hold on it, every prompt gets one
 ASCII paragraph, above an active plan too, naming the hold and the verb that
-resolves its cause: commit or restore the edit; `python tools/cc/ship.py arm`
+resolves its cause, matched exactly on the cause's words before any
+parenthesis (a cause with no verb gets none): commit the edit and run
+`/handoff` when this window made it, else leave it to the operator (`git
+stash` keeps it and lets the clear run); `python tools/cc/ship.py arm`
 after a pull, `/handoff` after a commit of the lane's own; finish the plan or
 `python tools/cc/execution_plan.py reset`; git's own words for a failed read.
 A `/clear` by hand ends it too. The verbs live here, never in the mod's text,

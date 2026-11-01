@@ -836,6 +836,9 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
         start = module_text.index("}, async err => {")
         rejected = module_text[start:module_text.index("return next(e)", start)]
         assert "clear_refusals: count" in rejected and "clear_refused_at" in rejected
+        # A hold the ask's own write failed to take off is older than this
+        # refusal (DEF-2039's review drove it): the refusal takes it off.
+        assert "clear_held: undefined, clear_held_since: undefined, clear_held_turns: undefined" in rejected
         assert "state:" not in rejected
         assert ".catch(" not in module_text[module_text.rindex("$.command", 0, start):start]
 
@@ -864,8 +867,15 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
         code = "\n".join(line.split("//", 1)[0] for line in code.splitlines())
         start = code.index("async function inFlight(")
         body = code[start:code.index("\n}\n", start)]
-        causes = [m.group(2).split("${", 1)[0] for m in re.finditer(r"return ([`'])((?:\\.|(?!\1).)*)\1", body)]
-        causes = [c.replace("\\'", "'") for c in causes if c]
+        literals = [m.group(2).split("${", 1)[0].replace("\\'", "'")
+                    for m in re.finditer(r"return ([`'])((?:\\.|(?!\1).)*)\1", body)]
+        # Every return is a string literal this pin reads, and only `return ''`
+        # has no words of its own (the failure-mode review drove a new cause
+        # from a helper, a double-quoted string and a `${...}` opening: each
+        # passed the first cut of this pin unread).
+        assert len(re.findall(r"\breturn\b", body)) == len(literals), "an inFlight return this pin cannot read"
+        assert literals.count("") == 1, f"a return whose words this pin cannot read: {literals}"
+        causes = [c.split(" (", 1)[0].strip() for c in literals if c]
         assert len(causes) >= 4, f"inFlight's returns were not read: {causes}"
         router = ast.parse((TOOLS_CC / "hooks" / "task_router.py").read_text(encoding="utf-8"))
         table = next((node.value for node in router.body if isinstance(node, (ast.Assign, ast.AnnAssign))
@@ -873,10 +883,11 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
                                                                  else node.target)), None)
         assert table is not None, "task_router.py no longer keeps _OWN_CLEAR_HOLD_VERBS"
         keys = [key for key, _verb in ast.literal_eval(table)]
+        # Matched as the router matches: exactly, on the words before " (".
         for cause in causes:
-            assert any(cause.startswith(key) for key in keys), f"no verb in the router for the hold {cause!r}"
+            assert cause in keys, f"no verb in the router for the hold {cause!r}"
         for key in keys:
-            assert any(cause.startswith(key) for cause in causes), f"the router's key {key!r} names no hold"
+            assert key in causes, f"the router's key {key!r} names no hold"
 
     def test_a_pending_clear_holds_the_last_session(self, module_text):
         """DEF-5032's guard: a turn's end writes ``lastId`` only outside a

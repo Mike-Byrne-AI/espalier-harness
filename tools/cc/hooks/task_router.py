@@ -237,7 +237,7 @@ _OWN_CLEAR_REFUSED = (
     "{count} time(s) (latest: {reason}); the mod asks again at each turn's end, and no clear has "
     "run. Say so in the first line of your reply, so the operator at this terminal sees it: this "
     "window needs /clear by hand (the loop survives it; start no second one). Take no new job "
-    "meanwhile."
+    "meanwhile (your own pull request's red or conflict, and a red main's revert, are not new work)."
 )
 
 # The own-clear's held clear (DEF-2039, 2026-11-01): the mod holds the clear
@@ -253,12 +253,17 @@ _OWN_CLEAR_HELD = (
     "[HARNESS] own-clear: the clear this window's handoff armed has been held since {since}Z over "
     "{turns} turn end(s): {why}{earlier}. No clear runs while it holds. {verb} A /clear by hand ends it "
     "too (the mod re-primes the window and names what was left in flight). Say so in the first line of "
-    "your reply, so the operator at this terminal sees it, and take no new job meanwhile."
+    "your reply, so the operator at this terminal sees it, and take no new job meanwhile (your own pull "
+    "request's red or conflict, and a red main's revert, are not new work)."
 )
+#: A cause matches its key exactly on the text before its first " (" (a
+#: cause the mod adds later, say an edit in another checkout, falls to the
+#: fallback rather than to a verb written for another cause).
 _OWN_CLEAR_HOLD_VERBS = (
     ("a tracked edit is in flight",
-     "What resolves it: commit the edit (a commit after the handoff owes /handoff, which re-arms the marker) "
-     "or restore it (git status --short names it; git restore <path>)."),
+     "What resolves it: if this window made the edit since the handoff, commit it and run /handoff, which "
+     "re-arms the marker; otherwise say so and leave it to the operator (git status --short "
+     "--untracked-files=no names it; git stash keeps it and lets the clear run)."),
     ("HEAD moved since the handoff",
      "What resolves it: after a pull with nothing to hand off, python tools/cc/ship.py arm re-arms the marker "
      "at HEAD; after a commit of the lane's own, /handoff re-arms it (arm refuses over one and says so)."),
@@ -322,7 +327,8 @@ def _own_clear_advisory(root: Path, sid: str) -> str | None:
     count = marker.get("clear_refusals")
     held = _plain(marker.get("clear_held") or "", 200)
     if held:
-        verb = next((text for key, text in _OWN_CLEAR_HOLD_VERBS if held.startswith(key)), _OWN_CLEAR_HOLD_FALLBACK)
+        cause = held.split(" (", 1)[0].strip()
+        verb = next((text for key, text in _OWN_CLEAR_HOLD_VERBS if cause == key), _OWN_CLEAR_HOLD_FALLBACK)
         turns = marker.get("clear_held_turns")
         earlier = (f" (the engine refused an earlier ask {count} time(s))"
                    if isinstance(count, int) and count > 0 else "")

@@ -909,6 +909,7 @@ class TestOwnClearRefused:
         assert "[HARNESS] own-clear: the clear this window asked the engine for at 2026-10-30T09:09Z" in res.stdout
         assert "refused 41 time(s)" in res.stdout and "interrupted before the command ran" in res.stdout
         assert "/clear by hand" in res.stdout and "Take no new job" in res.stdout
+        assert "a red main's revert, are not new work" in res.stdout, res.stdout
         assert res.stdout.isascii(), res.stdout
 
     def test_it_fires_above_an_active_plan(self, tmp_path):
@@ -986,7 +987,7 @@ class TestOwnClearHeld:
         (state / "own_clear.json").write_text(json.dumps({**base, **fields}), encoding="utf-8")
 
     @pytest.mark.parametrize("why, verb", [
-        ("a tracked edit is in flight", "git restore"),
+        ("a tracked edit is in flight", "leave it to the operator (git status --short --untracked-files=no"),
         ("HEAD moved since the handoff (a commit after it owes a handoff, which re-arms the marker; the ship "
          "driver's catch-up re-arms it after its own pull)", "python tools/cc/ship.py arm"),
         ("a plan is in progress", "python tools/cc/execution_plan.py reset"),
@@ -1001,7 +1002,17 @@ class TestOwnClearHeld:
                 "2026-11-01T09:23Z over 36 turn end(s): " + why.split(" (")[0]) in res.stdout, res.stdout
         assert verb in res.stdout, res.stdout
         assert "/clear by hand" in res.stdout and "first line of your reply" in res.stdout
+        assert "a red main's revert, are not new work" in res.stdout, res.stdout
         assert res.stdout.isascii(), res.stdout
+
+    def test_a_cause_the_router_has_no_verb_for_gets_the_fallback_not_a_neighbours_verb(self, tmp_path):
+        """A cause the mod adds later that opens with an existing one's words
+        (an edit in another checkout) must not take that cause's verb (the
+        failure-mode review: the first cut matched by prefix)."""
+        self._marker(tmp_path, clear_held="a tracked edit is in flight in the lane checkout")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path)
+        assert "has been held since" in res.stdout and "git stash" not in res.stdout, res.stdout
+        assert "The mod reads again at each turn's end." in res.stdout, res.stdout
 
     def test_it_fires_above_an_active_plan(self, tmp_path):
         _write_plan(tmp_path, "in_progress")
