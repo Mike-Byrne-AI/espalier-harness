@@ -190,6 +190,140 @@ def code_fences(lines: Iterable[str]) -> tuple[list[int | None], int | None]:
     return out, (opened if fence is not None else None)
 
 
+#: The words after which a slash opens a regular expression, not a division.
+_REGEX_AFTER_WORDS = frozenset((
+    "return", "typeof", "instanceof", "in", "of", "new", "delete", "void",
+    "throw", "case", "do", "else", "yield", "await",
+))
+
+
+def template_literals(lines: Iterable[str]) -> tuple[list[tuple[tuple[str, int], ...]], int | None]:
+    """``(frames of each line, unclosed)`` for a JavaScript body: for each line,
+    the frames open where it starts, outermost first, each ``(kind, ordinal)``
+    with kind ``t`` a template literal's text, ``s`` a substitution in one and
+    ``c`` a block comment, the ordinal counting every frame opened from 1; and
+    the line that opened a frame the text never closes, or None. A marker line
+    opens and closes nothing, so two of them in one frame tuple bound lines
+    whose removal leaves every literal as it was.
+
+    Strings, line comments and regular expressions are read past, so a quote
+    or a backtick inside one opens nothing: a slash opens a regular expression
+    where a value cannot end before it (after an operator, an opening bracket
+    or one of :data:`_REGEX_AFTER_WORDS`), and one with no closing slash on its
+    line is read as a division. Two shapes it misreads, for the gate to catch
+    on a shipped body: a regex opening a statement after ``)`` or ``}`` (read
+    as a division) and a string continued past its line by a backslash (read
+    as ended there); ``tests/test_cli_deploy.py`` holds the reader to node on
+    every line of every packaged workflow. Brackets other than a
+    substitution's braces are the parser's: a block that strips cleanly here
+    can still break the syntax, and the parse of the adopter's render is the
+    check for that."""
+    text = "\n".join(lines)
+    out: list[tuple[tuple[str, int], ...]] = [()]
+    frames: list[list] = []  # [kind, ordinal, open braces, opening line]
+    count, line, i, n = 0, 1, 0, len(text)
+    regex_ok = True
+    while i < n:
+        ch = text[i]
+        if ch == "\n":
+            line += 1
+            out.append(tuple((f[0], f[1]) for f in frames))
+            i += 1
+            continue
+        top = frames[-1][0] if frames else None
+        if top == "c":
+            if text.startswith("*/", i):
+                frames.pop()
+                i += 2
+            else:
+                i += 1
+            continue
+        if top == "t":
+            if ch == "\\":
+                i += 1 if text[i + 1:i + 2] == "\n" else 2
+            elif ch == "`":
+                frames.pop()
+                regex_ok = False
+                i += 1
+            elif text.startswith("${", i):
+                count += 1
+                frames.append(["s", count, 0, line])
+                regex_ok = True
+                i += 2
+            else:
+                i += 1
+            continue
+        if ch in " \t\r":
+            i += 1
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+        elif text.startswith("/*", i):
+            count += 1
+            frames.append(["c", count, 0, line])
+            i += 2
+        elif ch in "'\"":
+            j = i + 1
+            while j < n and text[j] not in (ch, "\n"):
+                j += 2 if text[j] == "\\" and text[j + 1:j + 2] != "\n" else 1
+            i = j + 1 if j < n and text[j] == ch else j
+            regex_ok = False
+        elif ch == "`":
+            count += 1
+            frames.append(["t", count, 0, line])
+            i += 1
+        elif ch == "/" and regex_ok and (end := _regex_end(text, i)) is not None:
+            i, regex_ok = end, False
+        elif ch.isalnum() or ch in "_$":
+            j = i
+            while j < n and (text[j].isalnum() or text[j] in "_$"):
+                j += 1
+            # After a dot the word is a property name (``counts.new / 2``), never a keyword.
+            k = i - 1
+            while k >= 0 and text[k] in " \t":
+                k -= 1
+            regex_ok = text[i:j] in _REGEX_AFTER_WORDS and (k < 0 or text[k] != ".")
+            i = j
+        else:
+            if top == "s" and ch == "{":
+                frames[-1][2] += 1
+            elif top == "s" and ch == "}":
+                if not frames[-1][2]:
+                    frames.pop()
+                    regex_ok = False
+                    i += 1
+                    continue
+                frames[-1][2] -= 1
+            regex_ok = ch not in ")]}"
+            i += 1
+    return out, (frames[0][3] if frames else None)
+
+
+def _regex_end(text: str, start: int) -> int | None:
+    """Where the regular expression whose slash is at ``start`` ends, its flags
+    read, or None when no slash outside a character class closes it on its line
+    (a backslash before the line's end escapes nothing a regex may hold)."""
+    j, in_class, n = start + 1, False, len(text)
+    while j < n and text[j] != "\n":
+        c = text[j]
+        if c == "\\":
+            if text[j + 1:j + 2] == "\n":
+                return None
+            j += 2
+            continue
+        if c == "/" and not in_class:
+            j += 1
+            while j < n and (text[j].isalnum() or text[j] in "_$"):
+                j += 1
+            return j
+        if c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        j += 1
+    return None
+
+
 def strip_self_host_blocks(body: str, *, source: str) -> str:
     """``body`` as ``init`` writes it off this repository: its self-host blocks gone.
 
@@ -202,12 +336,19 @@ def strip_self_host_blocks(body: str, *, source: str) -> str:
     error as the verb's refusal. A marker with no partner strips nothing and
     is the source gate's to refuse. Lines are counted as the block pattern
     reads them, on ``\\n`` alone.
+
+    A ``.js`` body (``source``'s suffix: a workflow) is JavaScript, its prompt
+    text in template literals, so its two ends must also sit in one frame of
+    :func:`template_literals`: stripped across a literal's edge, the block
+    leaves the literal open and the adopter's copy does not parse, or joins two
+    literals into one that parses with the wrong text.
     """
     blocks = list(SELF_HOST_BLOCK_RE.finditer(body))
     if not blocks:
         return body
     lines = body.split("\n")
     fences = code_fences(lines)[0]
+    literals = template_literals(lines)[0] if source.endswith(".js") else None
     for m in blocks:
         first = body.count("\n", 0, m.start())
         last = body.count("\n", 0, max(m.start(), m.end() - 1))
@@ -223,6 +364,13 @@ def strip_self_host_blocks(body: str, *, source: str) -> str:
                 f"{source}: the self-host block from line {first + 1} to line {last + 1} "
                 "opens and closes in different code fences; the strip would take the "
                 "text between them. Close the block in the fence it opens in."
+            )
+        if literals is not None and literals[first] != literals[last]:
+            raise ValueError(
+                f"{source}: the self-host block from line {first + 1} to line {last + 1} "
+                "opens and closes in different template literals, substitutions or "
+                "comments; the strip would leave one open or join two. Close the block "
+                "in the literal it opens in."
             )
     return SELF_HOST_BLOCK_RE.sub("", body)
 
