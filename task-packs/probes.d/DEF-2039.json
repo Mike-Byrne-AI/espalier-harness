@@ -1,0 +1,13 @@
+{
+ "id": "DEF-2039",
+ "subject": "tools/cc/mods/own-clear/hooks/register.ts",
+ "cmd": "python3 -c 'm=open(\"tools/cc/mods/own-clear/hooks/register.ts\",encoding=\"utf-8\").read();r=open(\"tools/cc/hooks/task_router.py\",encoding=\"utf-8\").read();print(int(\"clear_held: why\" not in m or \"_OWN_CLEAR_HOLD_VERBS\" not in r))'",
+ "open_value": "1",
+ "why_not": null,
+ "inputs": [
+  "tools/cc/hooks/task_router.py"
+ ],
+ "row_sha": "a59839b3e5ed",
+ "text_sha": "c2ee47264f65",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing here and in the export of HEAD 569565767046)"
+}
