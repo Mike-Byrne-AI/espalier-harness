@@ -886,7 +886,8 @@ class TestBrief:
         # The rule renders on this repository alone (the brief's slot is empty elsewhere), so the
         # inbox body says it inside a self-host block that the asset deploy strips.
         from espalier.surface_hygiene import strip_self_host_blocks
-        assert marker not in strip_self_host_blocks(raw) and "Core Rule 15" not in strip_self_host_blocks(raw)
+        stripped = strip_self_host_blocks(raw, source=".claude/commands/inbox.md")
+        assert marker not in stripped and "Core Rule 15" not in stripped
 
     def test_on_an_adopter_checkout_the_handoff_clauses_name_the_row_alone(self, seat, clone):
         """The push onto the lane and the row derived by the seat census are this

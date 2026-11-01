@@ -5416,6 +5416,22 @@ _FENCED = (
     "keep 3\n"
 )
 
+#: A block opened in one shell fence and closed in the next. Stripped whole, it
+#: took the first fence's tail, the prose between and the second fence's head,
+#: and the two fence lines left re-paired into one block (DEF-4068).
+_ACROSS_FENCES = (
+    "x\n"
+    "```bash\n"
+    "# <!-- espalier:self-host-only -->\n"
+    "a\n"
+    "```\n"
+    "prose\n"
+    "```bash\n"
+    "# <!-- /espalier:self-host-only -->\n"
+    "b\n"
+    "```\n"
+)
+
 
 class TestSelfHostBlocksStripAtDeploy:
     """A ``.claude`` body fences this repository's own procedure between the
@@ -5425,12 +5441,12 @@ class TestSelfHostBlocksStripAtDeploy:
 
     def test_the_strip_takes_each_block_with_its_marker_lines(self):
         from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
-        assert _strip_self_host_blocks(_FENCED) == "---\nname: x\n---\nkeep 1\nkeep 2\nkeep 3\n"
+        assert _strip_self_host_blocks(_FENCED, source="x.md") == "---\nname: x\n---\nkeep 1\nkeep 2\nkeep 3\n"
 
     def test_an_unclosed_block_strips_nothing(self):
         from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
         body = "a\n<!-- espalier:self-host-only -->\nb\n"
-        assert _strip_self_host_blocks(body) == body
+        assert _strip_self_host_blocks(body, source="x.md") == body
 
     def test_a_stray_opener_above_a_block_takes_nothing_with_it(self):
         """A stray opener must not pair with the NEXT block's closer and take the
@@ -5438,17 +5454,60 @@ class TestSelfHostBlocksStripAtDeploy:
         from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
         body = ("a\n<!-- espalier:self-host-only -->\nKEEP\nmid\n"
                 "<!-- espalier:self-host-only -->\nx\n<!-- /espalier:self-host-only -->\nafter\n")
-        assert _strip_self_host_blocks(body) == "a\n<!-- espalier:self-host-only -->\nKEEP\nmid\nafter\n"
+        assert _strip_self_host_blocks(body, source="x.md") == "a\n<!-- espalier:self-host-only -->\nKEEP\nmid\nafter\n"
 
     def test_a_block_at_the_end_of_a_body_without_a_newline_goes(self):
         from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
         body = "a\n<!-- espalier:self-host-only -->\nb\n<!-- /espalier:self-host-only -->"
-        assert _strip_self_host_blocks(body) == "a\n"
+        assert _strip_self_host_blocks(body, source="x.md") == "a\n"
 
     def test_the_strip_is_idempotent(self):
         from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
-        once = _strip_self_host_blocks(_FENCED)
-        assert _strip_self_host_blocks(once) == once
+        once = _strip_self_host_blocks(_FENCED, source="x.md")
+        assert _strip_self_host_blocks(once, source="x.md") == once
+
+    def test_a_block_whose_ends_sit_in_two_code_fences_is_refused_with_its_lines(self):
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        with pytest.raises(ValueError, match="from line 3 to line 8 opens and closes in different code fences"):
+            _strip_self_host_blocks(_ACROSS_FENCES, source="x.md")
+
+    @pytest.mark.parametrize("body", [
+        "a\n<!-- espalier:self-host-only -->\n```bash\nx\n<!-- /espalier:self-host-only -->\n```\n",
+        "```bash\n# <!-- espalier:self-host-only -->\nx\n```\n<!-- /espalier:self-host-only -->\nb\n",
+    ], ids=["prose-into-a-fence", "a-fence-into-prose"])
+    def test_a_block_with_one_end_in_a_code_fence_is_refused(self, body):
+        """Stripped whole, either one leaves an unpaired fence line behind, and
+        every line below it renders as code."""
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        with pytest.raises(ValueError, match="different code fences"):
+            _strip_self_host_blocks(body, source="x.md")
+
+    def test_a_block_inside_one_code_fence_or_around_a_whole_one_goes(self):
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        body = ("```bash\nkeep 1\n# <!-- espalier:self-host-only -->\nx\n# <!-- /espalier:self-host-only -->\n```\n"
+                "<!-- espalier:self-host-only -->\n~~~\ny\n~~~\n<!-- /espalier:self-host-only -->\nkeep 2\n")
+        assert _strip_self_host_blocks(body, source="x.md") == "```bash\nkeep 1\n```\nkeep 2\n"
+
+    def test_a_block_across_two_list_item_fences_is_refused(self):
+        """A list item's fence sits four or more spaces deep, past the fence
+        grammar's three; the strip reads it all the same (review)."""
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        body = ("1. a\n\n    ```bash\n    # <!-- espalier:self-host-only -->\n    x\n    ```\n\n   prose\n\n"
+                "    ```bash\n    # <!-- /espalier:self-host-only -->\n    y\n    ```\n")
+        with pytest.raises(ValueError, match="from line 4 to line 11 opens and closes in different code fences"):
+            _strip_self_host_blocks(body, source="x.md")
+
+    @pytest.mark.parametrize("body, line", [
+        ("```bash <!-- espalier:self-host-only -->\nx\n<!-- /espalier:self-host-only -->\n```\n", 1),
+        ("a\n1. Run your tests. <!-- espalier:self-host-only -->\nx\n<!-- /espalier:self-host-only -->\n", 2),
+        ("<!-- espalier:self-host-only -->\nx\n<!-- /espalier:self-host-only --> then this\n", 3),
+    ], ids=["on-a-fence-line", "after-text", "before-text"])
+    def test_a_marker_sharing_its_line_with_text_is_refused(self, body, line):
+        """The strip takes a marker's whole line, so the text beside it went too:
+        on a fence line, the fence, and every line below it read as code (review)."""
+        from espalier.surface_hygiene import strip_self_host_blocks as _strip_self_host_blocks
+        with pytest.raises(ValueError, match=f"^x.md: the self-host marker on line {line} shares its line"):
+            _strip_self_host_blocks(body, source="x.md")
 
     def test_off_this_tree_a_body_is_stripped_and_on_it_none_is(self, tmp_path):
         from espalier.cli import _asset_transform
@@ -5471,10 +5530,17 @@ class TestSelfHostBlocksStripAtDeploy:
         from espalier.managed_markers import has_managed_marker
         dst = tmp_path / "x.md"
         dst.write_bytes(_FENCED.encode("utf-8"))
-        _mark_overlaid_md(dst)
+        _mark_overlaid_md(dst, ".claude/commands/x.md")
         text = dst.read_text(encoding="utf-8")
         assert "proof_tier" not in text and "self-host-only" not in text, text
         assert has_managed_marker(text)
+
+    def test_a_fusion_refuses_a_cross_fence_body_naming_it(self, tmp_path):
+        from espalier.fuse import _mark_overlaid_md
+        dst = tmp_path / "x.md"
+        dst.write_bytes(_ACROSS_FENCES.encode("utf-8"))
+        with pytest.raises(ValueError, match=r"^\.claude/commands/x\.md: the self-host block from line 3 "):
+            _mark_overlaid_md(dst, ".claude/commands/x.md")
 
     def test_a_census_body_off_this_tree_takes_the_walk_render(self, tmp_path):
         """The repo-analyst's three ``own`` definitions prune every path the
@@ -5553,6 +5619,52 @@ class TestSelfHostBlocksStripAtDeploy:
         assert _deploy_asset_md(
             src, dest, dry_run=True, transform=_asset_transform(rel, ["pytest -q"], tree),
         ) == "skipped_no_drift"
+
+    def test_the_deploy_loop_refuses_a_cross_fence_body_naming_it(self, tmp_path):
+        """The deploy loop renders a body before it writes it, so a body the strip
+        refuses never lands, and the error names the body and its lines."""
+        from espalier.cli import _asset_transform, _deploy_asset_md
+        src = tmp_path / "src" / "x.md"
+        src.parent.mkdir()
+        src.write_bytes(_ACROSS_FENCES.encode("utf-8"))
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        rel = ".claude/commands/x.md"
+        dest = tree / rel
+        with pytest.raises(ValueError, match=r"^\.claude/commands/x\.md: the self-host block from line 3 to line 8 "):
+            _deploy_asset_md(src, dest, transform=_asset_transform(rel, [], tree))
+        assert not dest.exists()
+
+    @pytest.mark.parametrize("verb", ["init", "upgrade"])
+    def test_the_verb_refuses_before_its_first_write(self, verb, tmp_path, monkeypatch, capsys):
+        """``init`` and ``upgrade`` render every packaged body beside the stamp
+        check, so a refused body leaves the tree as it was: the ``REFUSED:
+        nothing was written`` convention, not hooks and wiring without the rest
+        (the deploy loop's own render stopped ``init`` 90 files in: review)."""
+        from espalier import cli
+        bad = tmp_path / "bad.md"
+        bad.write_bytes(_ACROSS_FENCES.encode("utf-8"))
+        real = cli._packaged_md_assets
+        monkeypatch.setattr(cli, "_packaged_md_assets",
+                            lambda root: [*real(root), (".claude/commands/bad.md", bad)])
+        tree = tmp_path / "tree"
+        tree.mkdir()
+        (tree / "app.py").write_text("print(1)\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q"], cwd=tree, check=True)
+
+        def files() -> list[str]:
+            return sorted(p.relative_to(tree).as_posix() for p in tree.rglob("*")
+                          if p.relative_to(tree).parts[0] != ".git")
+
+        before = files()
+        monkeypatch.chdir(tree)
+        argv = ["espalier", verb, str(tree)] + (["--execute"] if verb == "upgrade" else ["--no-write-gitignore"])
+        monkeypatch.setattr(sys, "argv", argv)
+        assert cli.main() == 2
+        err = capsys.readouterr().err
+        assert f"[{verb}] REFUSED: nothing was written." in err, err
+        assert ".claude/commands/bad.md: the self-host block from line 3 to line 8" in err, err
+        assert files() == before
 
 
 # ── DEF-988: /implement-pack retires a pack into the tree's own folder ────────

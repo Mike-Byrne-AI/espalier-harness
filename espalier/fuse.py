@@ -507,17 +507,17 @@ def _is_managed_md(rel: str) -> bool:
     return False
 
 
-def _mark_overlaid_md(dst: Path) -> None:
+def _mark_overlaid_md(dst: Path, rel: str) -> None:
     """Insert the `espalier:managed` marker into an overlaid .claude .md body
     (idempotent: apply_marker_to_md returns the content unchanged if marked),
     with its self-host blocks stripped as ``init`` strips them off the harness's
-    own tree, so a fusion built with init off ships the body init would. The
-    census walk is rendered once the overlay is done
-    (:func:`_render_census_walks`)."""
+    own tree, so a fusion built with init off ships the body init would, and
+    refuses the body ``init`` refuses, naming ``rel``. The census walk is
+    rendered once the overlay is done (:func:`_render_census_walks`)."""
     from espalier import managed_markers
     from espalier.surface_hygiene import strip_self_host_blocks
     original = dst.read_text(encoding="utf-8")
-    text = strip_self_host_blocks(original)
+    text = strip_self_host_blocks(original, source=rel)
     if dst.suffix == ".js":
         marked = managed_markers.apply_marker_to_js(text)
     else:
@@ -756,7 +756,7 @@ def fuse_repos(host: Path, out: Path, *, preserve_history: bool = True,
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src / rel, dst)
             if _is_managed_md(rel):
-                _mark_overlaid_md(dst)  # keep the uninstall contract
+                _mark_overlaid_md(dst, rel)  # keep the uninstall contract
             overlaid += 1
             overlaid_rels.append(rel)
         report["harness_overlaid"] = overlaid

@@ -514,7 +514,7 @@ def _asset_transform(
 
     renders: list[Callable[[str], str]] = []
     if surface_contract.off_self_host(repo_root):
-        renders.append(strip_self_host_blocks)
+        renders.append(lambda body: strip_self_host_blocks(body, source=rel))
         renders.append(render_walk)
     if rel in RUNNER_AGENT_PATHS:
         rules = agent_runner_rules(test_commands)
@@ -7743,7 +7743,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     refused = _refuse_newer_deployment(
         repo_root, _read_deployed_version(repo_root), "init",
         goal_snapshot=config.goal_snapshot,
-    )
+    ) or _refuse_unstrippable_body(repo_root, "init")
     if refused is not None:
         return refused
 
@@ -10622,6 +10622,26 @@ def _refuse_newer_deployment(
     return 2
 
 
+def _refuse_unstrippable_body(repo_root: Path, verb: str) -> "int | None":
+    """Exit 2 before any write when a packaged ``.claude`` body cannot be
+    rendered for ``repo_root``, else ``None``: the self-host strip refuses a
+    block it would take the adopter's text with
+    (``surface_hygiene.strip_self_host_blocks``), naming the body and its lines.
+    Run beside the stamp check, so the refusal leaves the tree as it was, where
+    the deploy loop's own render would stop it half-written. The renders are
+    pure; the strip comes first in each, so no test command is needed."""
+    try:
+        for rel, src in _packaged_md_assets(_espalier_root()):
+            transform = _asset_transform(rel, [], repo_root)
+            if transform is not None:
+                transform(src.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        print(f"[{verb}] REFUSED: nothing was written. A body this espalier release "
+              f"ships cannot be rendered for this tree: {exc}", file=sys.stderr)
+        return 2
+    return None
+
+
 def _plan_restore_command(repo_root: Path) -> "str | None":
     """The command that restores a missing saved plan and does what
     ``upgrade --execute`` would, or ``None`` on Espalier's own source tree.
@@ -10845,6 +10865,9 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
             repo_root, deployed_version, "upgrade",
             goal_snapshot=_load_config(repo_root, args).goal_snapshot,
         ) or 2
+    refused = _refuse_unstrippable_body(repo_root, "upgrade")
+    if refused is not None:
+        return refused
     execute = getattr(args, "execute", False)
     # The saved plan is gitignored, so every clone of a committed install
     # lacks it, and the deploy's two plan-reading cc/ docs would re-render
