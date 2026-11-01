@@ -1,0 +1,14 @@
+{
+ "id": "DEF-2035",
+ "subject": "tests/test_proof_tier.py",
+ "cmd": "python3 -c 'import ast,sys,glob;sys.path.insert(0,\"scripts\");import proof_tier as p;S=set(p.SERIAL_FILES);M=ast.parse(open(\"tests/test_proof_tier.py\",encoding=\"utf-8\").read()).body;E={k.split(\"::\")[0] for n in M if isinstance(n,ast.AnnAssign) and getattr(n.target,\"id\",\"\")==\"_PARALLEL_NESTED_RUNS\" for k in ast.literal_eval(n.value)};B=lambda t:{a.targets[0].id:a.value for a in ast.walk(t) if isinstance(a,ast.Assign) and isinstance(a.targets[0],ast.Name)};C=lambda e,N:(lambda v:v.value if isinstance(v,ast.Constant) and isinstance(v.value,str) else None)(N.get(e.id,e) if isinstance(e,ast.Name) else e);A=lambda x,N,d=0:d<6 and (A(N[x.id],N,d+1) if isinstance(x,ast.Name) and x.id in N else (A(x.left,N,d+1) or A(x.right,N,d+1)) if isinstance(x,ast.BinOp) else isinstance(x,(ast.List,ast.Tuple)) and (any(isinstance(e,ast.Starred) and A(e.value,N,d+1) for e in x.elts) or (lambda w:w[:1]==[\"pytest\"] or (\"-m\",\"pytest\") in list(zip(w,w[1:])) or any(a==\"-c\" and b and \"pytest.main(\" in b for a,b in zip(w,w[1:])))([C(e,N) for e in x.elts])));L=lambda t,N:any(isinstance(c,ast.Call) and isinstance(c.func,ast.Attribute) and c.func.attr in (\"run\",\"Popen\",\"call\",\"check_call\",\"check_output\") and getattr(c.func.value,\"id\",\"\")==\"subprocess\" and A((c.args or [None])[0],N) for c in ast.walk(t));F=[f.replace(\"\\\\\",\"/\") for f in sorted(glob.glob(\"tests/*.py\"))];O=[f for f in F if f not in S and f not in E and (lambda t:L(t,B(t)))(ast.parse(open(f,encoding=\"utf-8\").read()))];print(len(O))'",
+ "open_value": "9",
+ "why_not": null,
+ "inputs": [
+  "scripts/proof_tier.py",
+  "tests/test_axis_registry.py"
+ ],
+ "row_sha": "5815093174cc",
+ "text_sha": "9dd1d972b3db",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing here and in the export of HEAD 3bf03bc88f2f)"
+}

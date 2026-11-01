@@ -209,9 +209,15 @@ TIMEOUT_NEAR_SERIAL_FILES: tuple[str, ...] = (
 #: covered: the same rows in their own modules (354 state-writing rows on the
 #: parallel leg, the census of 2026-11-01). The contract and recall tiers run
 #: its rows on a contract line of their own at one worker
-#: (``SERIAL_CONTRACT_FILES``, DEF-5044).
+#: (``SERIAL_CONTRACT_FILES``, DEF-5044). The axis registry's run of its
+#: proving nodes: one child over six session tests that init a tree and
+#: launch four deployed hooks per stack, 64 s alone on the Windows seat
+#: (2026-11-01), placed by the nested-run rule in tests/test_proof_tier.py,
+#: which reds on a launch of a pytest child that no serial list holds and no
+#: enrolment clears (DEF-2035).
 NESTED_RUN_SERIAL_FILES: tuple[str, ...] = (
     "tests/test_declared_limits_contract.py",
+    "tests/test_axis_registry.py",
 )
 
 #: Everything the parallel leg leaves out and the serial leg runs.
@@ -226,7 +232,7 @@ SERIAL_FILES: tuple[str, ...] = WALL_CLOCK_SERIAL_FILES + TIMEOUT_NEAR_SERIAL_FI
 #: collection in tests/test_proof_tier.py: a serial file with a contract row
 #: that is not listed rides the pool, and a listed file with none leaves the
 #: second line collecting nothing, which pytest exits 5 on.
-SERIAL_CONTRACT_FILES: tuple[str, ...] = ("tests/test_declared_limits_contract.py",)
+SERIAL_CONTRACT_FILES: tuple[str, ...] = ("tests/test_declared_limits_contract.py", "tests/test_axis_registry.py")
 
 #: The recall engine's own tests: the calibration pins, the eval instrument and
 #: the pasted-table contracts. They score the corpus the tree holds, so a change

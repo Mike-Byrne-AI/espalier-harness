@@ -410,8 +410,8 @@ pytest tests/test_fingerprint.py tests/test_hooks.py tests/test_scanners.py test
 # engine's own tests, for a change under memory/ or a recall-indexed doc) and its lines.
 mypy tools/cc/hooks/
 ruff check .
-pytest -q -n auto -m 'not heavy_e2e' --ignore=tests/test_redos.py --ignore=tests/test_speedbump_irreversible.py --ignore=tests/test_hooks.py --ignore=tests/test_guard_metamorphic.py --ignore=tests/test_powershell_reachability_differential.py --ignore=tests/test_declared_limits_contract.py
-pytest -q -n 1 -m 'not heavy_e2e' tests/test_redos.py tests/test_speedbump_irreversible.py tests/test_hooks.py tests/test_guard_metamorphic.py tests/test_powershell_reachability_differential.py tests/test_declared_limits_contract.py
+pytest -q -n auto -m 'not heavy_e2e' --ignore=tests/test_redos.py --ignore=tests/test_speedbump_irreversible.py --ignore=tests/test_hooks.py --ignore=tests/test_guard_metamorphic.py --ignore=tests/test_powershell_reachability_differential.py --ignore=tests/test_declared_limits_contract.py --ignore=tests/test_axis_registry.py
+pytest -q -n 1 -m 'not heavy_e2e' tests/test_redos.py tests/test_speedbump_irreversible.py tests/test_hooks.py tests/test_guard_metamorphic.py tests/test_powershell_reachability_differential.py tests/test_declared_limits_contract.py tests/test_axis_registry.py
 
 # The release gate (pre-tag ladder, Tier 3 step 0): the full tier in a fresh clone of
 # HEAD, once per interpreter, each under its own venv -- alone on the box, ~25 min a leg.
