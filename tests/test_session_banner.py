@@ -1802,9 +1802,9 @@ class TestLooseProcessLine:
         assert [pid for pid, _, _ in rows] == [4242, 4301, 5100]
         assert [stem for _, stem, _ in rows] == ["python", "yes", "python3"]
 
-    def test_line_carries_pids_the_disclaimer_and_the_kill_paste(self):
+    def test_line_carries_pids_the_disclaimer_and_the_kill_paste(self, tmp_path):
         mod = _load()
-        line = mod._loose_processes_line(_PS_TABLE)
+        line = mod._loose_processes_line(tmp_path, _PS_TABLE)
         assert "PID 4242 python 2685:01.10 CPU" in line
         assert "reporter only" in line and "nothing was killed" in line
         # PPID 1 is the fact; orphanhood is the inference. The line must say a
@@ -1826,22 +1826,23 @@ class TestLooseProcessLine:
         assert mod._is_loose_stem("pythonw") and mod._is_loose_stem("yes")
         assert not mod._is_loose_stem("yesterday-sync") and not mod._is_loose_stem("node")
 
-    def test_a_non_ascii_stem_is_folded_before_it_reaches_the_banner(self):
+    def test_a_non_ascii_stem_is_folded_before_it_reaches_the_banner(self, tmp_path):
         mod = _load()
         table = "  PID  PPID      TIME COMM\n 7777     1  20:00.00 /opt/café/bin/python3\n"
-        line = mod._loose_processes_line(table)
+        line = mod._loose_processes_line(tmp_path, table)
         assert "PID 7777 python3" in line and line.isascii()
 
-    def test_nothing_qualifies_means_no_line(self):
+    def test_nothing_qualifies_means_no_line(self, tmp_path):
         mod = _load()
-        assert mod._loose_processes_line("  PID  PPID      TIME COMM\n") == ""
-        assert mod._loose_processes_line("") == ""
+        assert mod._loose_processes_line(tmp_path, "  PID  PPID      TIME COMM\n") == ""
+        assert mod._loose_processes_line(tmp_path, "") == ""
 
-    def test_windows_reads_no_table(self, monkeypatch):
+    def test_windows_reads_no_table(self, monkeypatch, tmp_path):
         mod = _load()
         monkeypatch.setattr(mod.os, "name", "nt")
         assert mod._read_process_table() == ""
-        assert mod._loose_processes_line() == ""
+        assert mod._read_process_cwds([os.getpid()]) == {}
+        assert mod._loose_processes_line(tmp_path) == ""
 
     @pytest.mark.skipif(os.name != "posix", reason="`ps -axo` is the POSIX arm")
     def test_live_process_table_has_the_four_columns(self):
@@ -1864,6 +1865,197 @@ class TestLooseProcessLine:
         assert fresh.index("Status:") < fresh.index("Loose:") < fresh.index("Memory:")
         compact = mod._build_context(tmp_path, False, False, "compact", loose=given)
         assert f"Loose:     {given}\n" in compact
+
+
+_LOOSE_TABLE = (
+    "  PID  PPID      TIME COMM\n"
+    " 4242     1  20:00.00 python3\n"
+    " 4301     1  20:00.00 python3\n"
+    " 5100     1  20:00.00 python3\n"
+    " 5200     1  20:00.00 yes\n"
+)
+
+
+def _clone_with_worktrees(tmp_path):
+    """A clone whose main checkout holds one worktree (the seats' layout,
+    `.claude/worktrees/work`) and has a second beside it; all three resolved,
+    as git's registry and `lsof` spell them."""
+    main = tmp_path / "main"
+    main.mkdir()
+    git = lambda *a: subprocess.run(["git", *a], cwd=str(main), check=True,  # noqa: E731
+                                    capture_output=True, env=_git_env())
+    git("init", "-q")
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base")
+    git("worktree", "add", "-q", str(main / ".claude" / "worktrees" / "work"))
+    git("worktree", "add", "-q", str(tmp_path / "beside"))
+    # The folders the tests' pids run in: a cwd that is not a folder reads as deleted.
+    for sub in (main / "src", main / ".claude" / "worktrees" / "work" / "tests", tmp_path / "beside" / "x",
+                tmp_path / "elsewhere"):
+        sub.mkdir(parents=True, exist_ok=True)
+    return main.resolve(), (main / ".claude" / "worktrees" / "work").resolve(), (tmp_path / "beside").resolve()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="the Loose: line is the POSIX arm")
+class TestLooseProcessCheckout:
+    """DEF-4070: seats on one box share one process table, and a run another
+    seat detached on purpose (`nohup ... & disown`, the proof tier) is PPID 1
+    at full CPU like any orphan. The line names the checkout of this clone
+    each pid runs from, and leaves another checkout's pid out of its
+    one-paste kill; a pid in this checkout, outside every checkout, or whose
+    cwd was not read stays in it. Real git builds the registry the labels are
+    read from; the readers are driven on both arms, and live once."""
+
+    @pytest.mark.skipif(not __import__("shutil").which("git"), reason="git builds the worktree registry")
+    def test_each_pid_names_its_checkout_and_another_checkouts_leave_the_paste(self, tmp_path):
+        mod = _load()
+        main, work, beside = _clone_with_worktrees(tmp_path)
+        cwds = {4242: f"{main}/src", 4301: f"{work}/tests", 5100: str(beside), 5200: str(tmp_path / "elsewhere")}
+        try:
+            line = mod._loose_processes_line(main, _LOOSE_TABLE, cwds)
+        except TypeError as exc:
+            pytest.fail(f"the Loose line takes no checkout and no cwds, so it cannot say whose run a pid is: {exc}")
+        assert "PID 4242 python3 20:00.00 CPU (cwd in this checkout, the main checkout)" in line, line
+        # The worktree is the deepest checkout holding the cwd, not the main
+        # checkout whose folder holds the worktree.
+        assert "PID 4301 python3 20:00.00 CPU (cwd in .claude/worktrees/work, another checkout of this clone)" in line
+        assert f"PID 5100 python3 20:00.00 CPU (cwd in {beside.as_posix()}, another checkout of this clone)" in line
+        assert "PID 5200 yes 20:00.00 CPU (cwd outside this clone's checkouts)" in line
+        assert "Left out of the paste: 4301 5100 -- run in another checkout of this clone: ask the session" in line
+        assert line.endswith("Check before you paste: kill 4242 5200"), line
+        assert line.isascii()
+
+    @pytest.mark.skipif(not __import__("shutil").which("git"), reason="git builds the worktree registry")
+    def test_from_a_worktree_the_main_checkout_is_named_as_the_board_names_it(self, tmp_path):
+        mod = _load()
+        main, work, beside = _clone_with_worktrees(tmp_path)
+        cwds = {4242: f"{main}/src", 4301: f"{work}/tests", 5100: f"{beside}/x"}
+        line = mod._loose_processes_line(work, _LOOSE_TABLE, cwds)
+        assert "PID 4242 python3 20:00.00 CPU (cwd in the main checkout, another checkout of this clone)" in line
+        assert "PID 4301 python3 20:00.00 CPU (cwd in this checkout, .claude/worktrees/work)" in line
+        assert f"PID 5100 python3 20:00.00 CPU (cwd in {beside.as_posix()}, another checkout of this clone)" in line
+        assert "PID 5200 yes 20:00.00 CPU (cwd unread)" in line
+        assert line.endswith("kill 4301 5200"), line
+
+    @pytest.mark.skipif(not __import__("shutil").which("git"), reason="git builds the worktree registry")
+    def test_every_pid_in_another_checkout_leaves_nothing_to_paste(self, tmp_path):
+        mod = _load()
+        main, work, _ = _clone_with_worktrees(tmp_path)
+        table = "  PID  PPID      TIME COMM\n 4301     1  20:00.00 python3\n"
+        line = mod._loose_processes_line(main, table, {4301: str(work)})
+        assert "Left out of the paste: 4301" in line
+        assert "kill 4301" not in line and "Check before you paste" not in line
+        assert line.endswith("Nothing to paste."), line
+
+    @pytest.mark.skipif(not __import__("shutil").which("git"), reason="git builds the worktree registry")
+    def test_an_unread_or_deleted_cwd_stays_in_the_paste(self, tmp_path):
+        """Linux spells a removed folder's link `<path> (deleted)`; macOS
+        `lsof` prints the old path unmarked (measured). Read as a path, a
+        removed worktree under the main checkout would be named as the main
+        checkout's, and left out of the paste of every other worktree's seat."""
+        mod = _load()
+        main, work, _ = _clone_with_worktrees(tmp_path)
+        table = ("  PID  PPID      TIME COMM\n 4242     1  20:00.00 python3\n 4301     1  20:00.00 python3\n"
+                 " 5100     1  20:00.00 python3\n")
+        gone = main / ".claude" / "worktrees" / "removed"   # never created: the folder a reaped worktree left
+        line = mod._loose_processes_line(work, table, {4301: f"{work} (deleted)", 5100: f"{gone}/tests"})
+        assert "PID 4242 python3 20:00.00 CPU (cwd unread)" in line
+        assert "PID 4301 python3 20:00.00 CPU (cwd deleted)" in line
+        assert "PID 5100 python3 20:00.00 CPU (cwd deleted)" in line
+        assert "Left out" not in line and line.endswith("kill 4242 4301 5100"), line
+
+    @pytest.mark.skipif(not __import__("shutil").which("git"), reason="git builds the worktree registry")
+    def test_a_non_ascii_checkout_path_is_folded_before_it_reaches_the_banner(self, tmp_path):
+        mod = _load()
+        main, _, _ = _clone_with_worktrees(tmp_path)
+        subprocess.run(["git", "worktree", "add", "-q", str(tmp_path / "café")], cwd=str(main), check=True,
+                       capture_output=True, env=_git_env())
+        table = "  PID  PPID      TIME COMM\n 4242     1  20:00.00 python3\n"
+        line = mod._loose_processes_line(main, table, {4242: str((tmp_path / 'café').resolve())})
+        assert "another checkout of this clone" in line and "Left out of the paste: 4242" in line, line
+        assert line.isascii(), line
+
+    def test_the_live_line_reads_cwds_only_for_the_rows_it_names(self, monkeypatch, tmp_path):
+        mod = _load()
+        asked = []
+        monkeypatch.setattr(mod, "_read_process_cwds", lambda pids: asked.append(list(pids)) or {})
+        monkeypatch.setattr(mod, "_read_process_table", lambda: "  PID  PPID      TIME COMM\n")
+        assert mod._loose_processes_line(tmp_path) == "" and asked == [], "no row: no cwd read"
+        monkeypatch.setattr(mod, "_read_process_table", lambda: _LOOSE_TABLE)
+        assert "(cwd unread)" in mod._loose_processes_line(tmp_path)
+        assert asked == [[4242, 4301, 5100, 5200]]
+        asked.clear()
+        mod._loose_processes_line(tmp_path, _LOOSE_TABLE)
+        assert asked == [], "a call given a table reads no live cwd: a fixture pid can be a live one"
+
+    def test_the_lsof_arm_reads_its_output_whatever_the_exit_code(self, monkeypatch, tmp_path):
+        mod = _load()
+        monkeypatch.setattr(mod, "_PROC_ROOT", tmp_path / "no-proc")
+        monkeypatch.setattr(mod.shutil, "which", lambda name, path=None: "/usr/sbin/lsof")
+        seen = []
+
+        def lsof(argv, **kw):
+            seen.append((argv, kw.get("timeout")))
+            # Exit 1: one listed pid could not be read (pid 1 is root's); the
+            # rest still print, measured on macOS.
+            return subprocess.CompletedProcess(argv, 1, "p71609\nfcwd\nn/a/b c\np72404\nfcwd\nn/c\nwarning\n", "")
+
+        monkeypatch.setattr(mod._hook_utils, "run_bounded", lsof)
+        assert mod._read_process_cwds([71609, 72404, 1]) == {71609: "/a/b c", 72404: "/c"}
+        assert mod._parse_lsof_cwds("p\u00b2\nn/x\np7\nn/y\n") == {7: "/y"}, "a non-ASCII digit is no pid"
+        assert seen == [(["/usr/sbin/lsof", "-w", "-a", "-d", "cwd", "-p", "71609,72404,1", "-Fn"],
+                         mod._LOOSE_CWD_SECONDS)]
+        seen.clear()
+        assert mod._read_process_cwds([]) == {} and seen == [], "no pid: no spawn"
+        mod._read_process_cwds(list(range(100, 100 + mod._LOOSE_CWD_PID_CAP + 8)))
+        assert seen[0][0][6].split(",") == [str(p) for p in range(100, 100 + mod._LOOSE_CWD_PID_CAP)]
+
+    def test_the_lsof_arm_reads_nothing_when_lsof_cannot_answer(self, monkeypatch, tmp_path):
+        mod = _load()
+        monkeypatch.setattr(mod, "_PROC_ROOT", tmp_path / "no-proc")
+
+        def hung(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+
+        monkeypatch.setattr(mod.shutil, "which", lambda name, path=None: "/usr/sbin/lsof")
+        monkeypatch.setattr(mod._hook_utils, "run_bounded", hung)
+        assert mod._read_process_cwds([4242]) == {}
+        monkeypatch.setattr(mod.shutil, "which", lambda name, path=None: None)
+        monkeypatch.setattr(mod._hook_utils, "run_bounded", lambda *a, **k: pytest.fail("spawned with no lsof"))
+        assert mod._read_process_cwds([4242]) == {}
+
+    def test_lsof_is_never_taken_from_the_checkout(self, monkeypatch, tmp_path):
+        """An empty or relative PATH entry is the hook's cwd, the checkout: a
+        file named `lsof` there would run at every session start."""
+        from tests._stubs import write_stub
+        mod = _load()
+        planted = write_stub(tmp_path / "lsof", "#!/bin/sh\nexit 0\n")
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(mod, "_LSOF_FALLBACK_DIRS", ())
+        for path in ("", ":/nonexistent", ".", "relative/bin"):
+            monkeypatch.setenv("PATH", path)
+            assert mod._lsof_path() is None, path
+        monkeypatch.setenv("PATH", f":{tmp_path}")
+        assert mod._lsof_path() == str(planted), "an absolute entry still answers"
+
+    def test_the_proc_arm_reads_each_cwd_link_with_no_spawn(self, monkeypatch, tmp_path):
+        mod = _load()
+        proc = tmp_path / "proc"
+        (proc / "self").mkdir(parents=True)
+        os.symlink(str(tmp_path), proc / "self" / "cwd")
+        (proc / "4242").mkdir()
+        os.symlink("/a/b (deleted)", proc / "4242" / "cwd")
+        (proc / "4301").mkdir()   # no cwd link to read: another user's process, or gone
+        monkeypatch.setattr(mod, "_PROC_ROOT", proc)
+        monkeypatch.setattr(mod._hook_utils, "run_bounded", lambda *a, **k: pytest.fail("the /proc arm spawned"))
+        assert mod._read_process_cwds([4242, 4301]) == {4242: "/a/b (deleted)"}
+
+    def test_the_live_reader_finds_this_process_cwd(self):
+        """The one live drive: whichever arm this host takes reads a real pid."""
+        mod = _load()
+        got = mod._read_process_cwds([os.getpid()])
+        if not got and not (mod._PROC_ROOT / "self" / "cwd").exists() and not mod._lsof_path():
+            pytest.skip("this host has neither /proc cwd links nor lsof")
+        assert os.path.realpath(got[os.getpid()]) == os.path.realpath(os.getcwd())
 
 
 # ─── the /ship lane: the banner names the operator's open and unpulled PRs ──
