@@ -192,7 +192,9 @@ instruction in the repo toward exactly that outcome.
   reads the file on disk. Every scaffold routes `args.model` to every `agent()` call;
   pass it on every launch, because the agents inherit the session model otherwise.
   `args.smoke: true` bounds the open-ended lanes so a wiring check stays under ten
-  agents; without it the corpus-blind lane reviews the host repository for real.
+  agents, and skips the convergence-critic and its ledger row unless `ledgerPath`
+  is passed too; without it the corpus-blind lane reviews the host repository for
+  real.
 - **Worked example:** `_oss_convergence_round4.js` (a dated round script, in the
   archive `Mike-Byrne-AI/espalier_harness_dev_private` since the 2026-09-25 seed) — 16
   least-attacked-surface dimensions, a general adversarial refute, and a one-hop

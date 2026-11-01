@@ -985,6 +985,10 @@ _MARKER_RULES: list[tuple[tuple[str, ...], str]] = [
             # TP-287 — scope-breaker + convergence-critic stage-presence contract
             # over committed .claude/workflows/*.js scaffolds (also full_tree below).
             "test_convergence_workflow_stages",
+            # Drives the three review workflows under node with stubbed agent,
+            # parallel and pipeline: which lanes count as not run is the
+            # scaffold's own return value.
+            "test_review_workflow_lanes",
             # the launch conventions every committed scaffold shares: one model per
             # run (args.model through opts()), the finder-time refuter-field strip,
             # the lane-identity stamp (sibling of the stage-presence contract above).
