@@ -110,7 +110,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import AbstractSet, Callable, Iterable, NamedTuple
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -362,11 +362,24 @@ def is_body(rel: str) -> bool:
 _PATH_TYPES: frozenset[str] = frozenset({"Path", "PurePath", "PurePosixPath", "PureWindowsPath"})
 #: A string longer than this, or on more than one line, is prose, never a path.
 _NAME_MAX = 255
-#: ``(text, names)`` per test module parsed, keyed by its path: the pins ask
-#: once per body, and a module whose text is unchanged is not parsed again.
-#: Keyed on the text, not the mtime: two writes inside one clock tick of a
-#: coarse filesystem clock keep one mtime, and the second would read stale.
-_NAMES_CACHE: dict[str, tuple[str, frozenset[str]]] = {}
+#: The ``os.path`` spellings whose ``join`` builds a path from its arguments.
+_PATH_MODULES: frozenset[str] = frozenset({"os.path", "path", "posixpath", "ntpath"})
+
+
+class _Module(NamedTuple):
+    """What one parsed test module or helper names (``_parsed``)."""
+    names: frozenset[str]
+    #: ``(module, name)`` for each ``from <...>.<module> import <name>``
+    imports: frozenset[tuple[str, str]]
+    #: each module-level ``NAME = <value>`` whose value names a path
+    constants: dict[str, frozenset[str]]
+
+
+#: ``(text, module)`` per file parsed, keyed by its path: the pins ask once per
+#: body, and a file whose text is unchanged is not parsed again. Keyed on the
+#: text, not the mtime: two writes inside one tick of a coarse filesystem clock
+#: keep one mtime, and the second would read stale.
+_NAMES_CACHE: dict[str, tuple[str, _Module]] = {}
 
 
 def _norm_name(text: str) -> str:
@@ -374,6 +387,33 @@ def _norm_name(text: str) -> str:
     while text.startswith("./"):
         text = text[2:]
     return text.strip("/")
+
+
+def _dotted_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return f"{_dotted_name(node.value)}.{node.attr}"
+    return ""
+
+
+def _call_join(node: ast.Call) -> str | None:
+    """The string constants that end a path-building call's arguments:
+    ``Path(ROOT, ".claude", "commands")``, ``root.joinpath(".claude", ...)``,
+    ``os.path.join(ROOT, ".claude", ...)``; the operands before them drop, as
+    in a ``/`` join."""
+    func = node.func
+    name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ""
+    joins = name in _PATH_TYPES or name == "joinpath" or (
+        name == "join" and isinstance(func, ast.Attribute) and _dotted_name(func.value) in _PATH_MODULES)
+    if not joins or node.keywords:
+        return None
+    parts: list[str] = []
+    for arg in reversed(node.args):
+        if not (isinstance(arg, ast.Constant) and isinstance(arg.value, str)):
+            break
+        parts.append(arg.value)
+    return "/".join(reversed(parts)) if parts else None
 
 
 def _literal(node: ast.AST) -> str | None:
@@ -398,6 +438,10 @@ def _module_names(tree: ast.AST) -> set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             names.add(node.value)
+        elif isinstance(node, ast.Call):
+            joined = _call_join(node)
+            if joined:
+                names.add(joined)
         elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
             parts: list[str] = []
             left: ast.AST = node
@@ -408,7 +452,7 @@ def _module_names(tree: ast.AST) -> set[str]:
                 parts.append(right)
                 left = left.left
             else:
-                head = _literal(left)
+                head = _literal(left) or (_call_join(left) if isinstance(left, ast.Call) else None)
                 if head is not None:
                     parts.append(head)
             if parts:
@@ -416,23 +460,49 @@ def _module_names(tree: ast.AST) -> set[str]:
     return {_norm_name(n) for n in names if n and "\n" not in n and len(n) <= _NAME_MAX}
 
 
-def _test_names(path: Path, text: str) -> frozenset[str]:
-    """``_module_names`` of one test module's ``text``, parsed once per text.
-    A module that does not parse names nothing: the suite's own collection
-    reports it."""
+def _read_module(path: Path) -> tuple[str, bytes] | None:
+    """A file's text and bytes; a BOM is read past, as Python's import does."""
+    try:
+        data = path.read_bytes()
+        return data.decode("utf-8-sig"), data
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _parsed(path: Path, text: str, data: bytes) -> _Module:
+    """``_module_names`` of one file, its ``from ... import`` names and its
+    module-level path constants, parsed once per text (from the bytes, so a
+    BOM parses). A file that does not parse names nothing: the suite's own
+    collection reports it."""
     key = str(path)
     hit = _NAMES_CACHE.get(key)
     if hit is not None and hit[0] == text:
         return hit[1]
     try:
-        names = frozenset(_module_names(ast.parse(text)))
+        tree = ast.parse(data)
     except (SyntaxError, ValueError):
-        names = frozenset()
-    _NAMES_CACHE[key] = (text, names)
-    return names
+        module = _Module(frozenset(), frozenset(), {})
+    else:
+        imports = frozenset((node.module.rsplit(".", 1)[-1], alias.name) for node in ast.walk(tree)
+                            if isinstance(node, ast.ImportFrom) and node.module for alias in node.names)
+        constants: dict[str, frozenset[str]] = {}
+        for stmt in tree.body:
+            if isinstance(stmt, ast.Assign):
+                targets, value = stmt.targets, stmt.value
+            elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+                targets, value = [stmt.target], stmt.value
+            else:
+                continue
+            named = frozenset(_module_names(value))
+            for target in targets:
+                if isinstance(target, ast.Name) and named:
+                    constants[target.id] = named
+        module = _Module(frozenset(_module_names(tree)), imports, constants)
+    _NAMES_CACHE[key] = (text, module)
+    return module
 
 
-def _names_path(names: frozenset[str], rel: str) -> bool:
+def _names_path(names: AbstractSet[str], rel: str) -> bool:
     """``rel`` itself, or a suffix of it two segments or longer (a join from a
     directory variable: ``claude_dir / "commands" / "inbox.md"``); a bare file
     name matches only a top-level path."""
@@ -453,7 +523,8 @@ def body_readers(changed, root: Path = _ROOT) -> tuple[str, ...]:
     under the roots is looked up as it is, not only a ``BODY_KINDS`` body, so
     the asset copy's own readers come with it. What this cannot read: a name
     built at run time (an f-string, a glob, a file name held in a variable),
-    which is the walk ``BODY_TEST_FILES`` keeps by hand."""
+    which is the walk ``BODY_TEST_FILES`` keeps by hand. A path constant a
+    module imports by name from a ``tests/_*.py`` helper counts as its own."""
     wanted: list[str] = []
     for rel in changed:
         rel = _norm_name(rel)
@@ -462,18 +533,30 @@ def body_readers(changed, root: Path = _ROOT) -> tuple[str, ...]:
     tests_dir = root / "tests"
     if not wanted or not tests_dir.is_dir():
         return ()
+    # a literal or a join that names the path spells its file name: only a
+    # module whose text holds one, or names a helper that does, is parsed
+    bases = {rel.rsplit("/", 1)[-1] for rel in wanted}
+    helpers: dict[str, dict[str, frozenset[str]]] = {}
+    for path in sorted(tests_dir.glob("_*.py")):
+        read = _read_module(path)
+        if read is not None and any(base in read[0] for base in bases):
+            constants = _parsed(path, *read).constants
+            if constants:
+                helpers[path.stem] = constants
     found: dict[str, list[str]] = {rel: [] for rel in wanted}
     for path in sorted(tests_dir.glob("test_*.py")):
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        read = _read_module(path)
+        if read is None:
             continue
-        # a literal or a join that names the path spells its file name: only
-        # a module whose text holds one is parsed
-        named = [rel for rel in wanted if rel.rsplit("/", 1)[-1] in text]
+        text, data = read
+        via = [stem for stem in helpers if stem in text]
+        named = wanted if via else [rel for rel in wanted if rel.rsplit("/", 1)[-1] in text]
         if not named:
             continue
-        names = _test_names(path, text)
+        module = _parsed(path, text, data)
+        names = set(module.names)
+        for stem, name in module.imports:
+            names |= helpers.get(stem, {}).get(name, frozenset())
         for rel in named:
             if _names_path(names, rel):
                 found[rel].append(f"tests/{path.name}")

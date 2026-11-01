@@ -170,7 +170,7 @@ For one bounded change, one main proof path, or a small localized edit.
    # a changed agent, command or skill body adds the test file written for
    # the bodies (a hand-kept roster, pinned to that file's walk), and a changed
    # file under `.claude/` or its deploy copy adds every test file that names
-   # its path (read from the test files, so a body's own readers come with it);
+   # its path in a string literal or a path join (read from the test files);
    # a changed file among the five serial files rides a second line, at one worker
    if [ -f scripts/proof_tier.py ]; then   # Espalier-Harness tree: its tier script
      python scripts/proof_tier.py --run   # Espalier-Harness tree: the tier the diff earns, one receipt

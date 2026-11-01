@@ -15,6 +15,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -436,8 +437,9 @@ class TestTheFullRecipe:
                        "examples/dogfooding/.claude/agents/repo-analyst.md", "docs/.claude/agents/x.md",
                        ".claude/skills/SKILL.md", ".claude/skills/a/b/SKILL.md", ".claude/skills//SKILL.md",
                        ".claude/agents//x.md"):
-            assert pt.own_tests([beside], REPO_ROOT) == pt.body_readers([beside], REPO_ROOT), beside
-            assert diagnostics not in pt.body_readers([beside], REPO_ROOT), beside
+            assert diagnostics not in pt.own_tests([beside], REPO_ROOT), beside
+            if not beside.startswith(pt.BODY_ROOTS):  # outside the roots the map reads nothing
+                assert pt.own_tests([beside], REPO_ROOT) == (), beside
         changed = [".claude/agents/repo-analyst.md", "espalier/assets/claude/agents/repo-analyst.md",
                    "scripts/ledger_row.py", diagnostics]
         readers = pt.body_readers(changed, REPO_ROOT)
@@ -505,6 +507,8 @@ class TestTheFullRecipe:
         (".claude/skills/reflect/SKILL.md", "tests/test_reflect_memory_candidates.py"),
         (".claude/commands/smoke.md", "tests/test_adopter_lifecycle_diagnostics.py"),
         (".claude/commands/preflight.md", "tests/test_node_adopter_defaults.py"),
+        # the failure-mode review's: a path constant imported from a helper
+        (".claude/commands/recall.md", "tests/test_recall_pasted_counts.py"),
     )
 
     def test_a_changed_body_brings_every_test_file_that_names_it(self, pt):
@@ -541,6 +545,12 @@ class TestTheFullRecipe:
             "test_windows.py": 'X = ".claude\\\\commands\\\\x.md"\n',
             "test_asset.py": 'X = "espalier/assets/claude/commands/x.md"\n',
             "test_notes.py": 'X = ".claude/skills/a/notes.md"\n',
+            "test_path_args.py": 'P = Path(ROOT, ".claude", "commands", "x.md")\n',
+            "test_joinpath.py": 'P = ROOT.joinpath(".claude", "commands", "x.md")\n',
+            "test_os_join.py": 'import os\nP = os.path.join(ROOT, ".claude", "commands", "x.md")\n',
+            "test_helper_reader.py": 'from tests._paths import BODY\n',
+            "test_helper_other.py": 'from tests._paths import OTHER\n',
+            "_paths.py": 'BODY = ROOT / ".claude" / "commands" / "x.md"\nOTHER = "docs/y.md"\n',
         }
         misses = {
             "test_prose.py": '"""Edit .claude/commands/x.md first."""\nM = "see .claude/commands/x.md"\n',
@@ -553,10 +563,13 @@ class TestTheFullRecipe:
         }
         for name, text in {**reads, **misses}.items():
             (tests / name).write_text(text, encoding="utf-8")
+        # PowerShell 5.1's Set-Content -Encoding UTF8 writes a BOM; Python imports it
+        (tests / "test_bom.py").write_bytes(b'\xef\xbb\xbfX = ".claude/commands/x.md"\n')
         body = ".claude/commands/x.md"
         assert pt.body_readers([body], tmp_path) == tuple(
-            f"tests/{n}" for n in ("test_join.py", "test_literal.py", "test_path_call.py",
-                                   "test_suffix.py", "test_windows.py"))
+            f"tests/{n}" for n in ("test_bom.py", "test_helper_reader.py", "test_join.py", "test_joinpath.py",
+                                   "test_literal.py", "test_os_join.py", "test_path_args.py",
+                                   "test_path_call.py", "test_suffix.py", "test_windows.py"))
         assert pt.body_readers([".claude\\commands\\x.md"], tmp_path) == pt.body_readers([body], tmp_path)
         # a join from a directory variable may hold either tree, so it reads both
         assert pt.body_readers(["espalier/assets/claude/commands/x.md"], tmp_path) == (
@@ -569,19 +582,32 @@ class TestTheFullRecipe:
 
     def test_a_test_module_edited_after_the_first_read_is_read_again(self, pt, tmp_path):
         """The names are cached per module (the pins above ask once per body),
-        keyed on its text: the second and third writes below keep the size, and
-        on a coarse filesystem clock the mtime too, so a cache keyed on either
-        would answer from the first read."""
+        keyed on its text: the three writes below keep one size and one mtime
+        (a coarse filesystem clock gives two quick writes the same tick), and
+        each holds the file name, so each is parsed; a cache keyed on size and
+        mtime would answer every ask from the first read."""
         tests = tmp_path / "tests"
         tests.mkdir()
         module = tests / "test_late.py"
-        module.write_text('X = "x.md"\n', encoding="utf-8")
         body = ".claude/commands/x.md"
-        assert pt.body_readers([body], tmp_path) == ()
-        module.write_text('X = ".claude/commands/x.md"\n', encoding="utf-8")
-        assert pt.body_readers([body], tmp_path) == ("tests/test_late.py",)
-        module.write_text('X = ".claude/commands/y.md"\n', encoding="utf-8")
-        assert pt.body_readers([body], tmp_path) == ()
+        unnamed = 'X = "x.md"; Y = ".claude/commands/q.md"\n'
+        named = 'X = "q.md"; Y = ".claude/commands/x.md"\n'
+        assert len(unnamed) == len(named)
+        tick = 1_700_000_000_000_000_000
+        for text, want in ((unnamed, ()), (named, ("tests/test_late.py",)), (unnamed, ())):
+            module.write_text(text, encoding="utf-8")
+            os.utime(module, ns=(tick, tick))
+            assert pt.body_readers([body], tmp_path) == want, text
+
+    def test_a_reader_among_the_serial_files_rides_the_one_worker_line(self, pt, tmp_path):
+        """A reader that is one of ``SERIAL_FILES`` keeps its measured placement
+        on a cheaper tier: the one-worker line, never the parallel one."""
+        serial = pt.WALL_CLOCK_SERIAL_FILES[0]
+        (tmp_path / "tests").mkdir()
+        (tmp_path / serial).write_text('X = ".claude/commands/x.md"\n', encoding="utf-8")
+        lines = pt.tier_argvs("contract", [".claude/commands/x.md"], tmp_path)
+        assert lines[-1] == pt._PYTEST + pt._ONE_WORKER + pt._NOT_HEAVY + (serial,), lines
+        assert not any(serial in line for line in lines[:-1]), lines
 
     def test_a_changed_script_in_a_real_tree_prints_and_runs_its_own_test_line(self, pt, tmp_path, capsys):
         """The receipt path, not only `commands()`: `main` must hand the diff to
