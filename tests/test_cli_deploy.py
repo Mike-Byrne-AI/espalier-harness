@@ -2584,6 +2584,28 @@ class TestLedgerSeed:
         assert f"STILL_OPEN         {opened}" in out
         assert f"NO_ORACLE          {len(_ONBOARDING_ROWS) - opened}" in out
 
+    def test_a_tree_that_has_a_commit_gets_every_onboarding_row_filed(self, tmp_path):
+        """The deployed verb drives a row's probe again in the export of HEAD,
+        where the ledger ``init`` has just written is not committed: the
+        subject reads UNRESOLVED there, a note and never a refusal (a review
+        drove the refusal on 2026-11-01: three rows failed on any repository
+        with a commit). The fixture above makes ``.git`` an empty folder, which
+        takes the verb's not-a-checkout note instead. Mutation: an unreadable
+        export refused."""
+        from espalier.cli import _ONBOARDING_ROWS
+        from tests._git_oracle import _git_env
+
+        env = _git_env()
+        for argv in (["init", "-q"], *(["config", k, v] for k, v in (
+                *NO_BACKGROUND_GIT, ("user.email", "t@example.com"), ("user.name", "t"),
+                ("commit.gpgsign", "false")))):
+            subprocess.run(["git", *argv], cwd=tmp_path, env=env, check=True, capture_output=True)
+        (tmp_path / "README.md").write_text("x\n", encoding="utf-8")
+        for argv in (["add", "README.md"], ["commit", "-q", "-m", "one"]):
+            subprocess.run(["git", *argv], cwd=tmp_path, env=env, check=True, capture_output=True)
+        outcome = self._install(tmp_path)
+        assert outcome == {"filed": [r["id"] for r in _ONBOARDING_ROWS], "satisfied": [], "failed": []}
+
     def test_an_opted_in_tree_gets_its_rows_as_files_and_is_told_so(self, tmp_path):
         """``ledger_fragments = true`` before the first install: the deployed
         verb writes a row file and a probe file per row, the seed file stays

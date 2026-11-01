@@ -2579,3 +2579,163 @@ class TestAStrikeReadsTheBaseAndTheHead:
         r = _two_commit_repo(tmp_path, head_fixed=False)
         assert lr.main(_repo_args(r, "--dry-run", "strike", "DEF-1", "--text-file", str(r["closing"]))) == 2
         assert "reads its open value '1' at the head too" in capsys.readouterr().err
+
+
+#: A probe that reads the checkout alone: ``.git`` is there and not in the
+#: export. Read without asking git, so a temp folder that sits inside some
+#: other repository cannot answer for the export.
+_DOT_GIT_PROBE_CMD = "python -c \"import os; print(os.path.exists('.git'))\""
+
+
+class TestAFilingDrivesTheProbeWhereAStrikeWill:
+    """``DEF-5045``. ``file`` drove a new row's probe in the checkout alone,
+    which holds ``.git``, while ``strike`` drives it at the base in
+    ``_base_tree``'s export, which does not; so a probe that read the tree
+    through git filed cleanly and could be struck only with ``--no-base``
+    (``DEF-4074``'s was). ``file``, and ``repin`` where it changes the probe,
+    now drive it in the export of HEAD too and refuse a probe whose two
+    readings disagree, ``--no-base`` the named way past. Each test names the
+    mutation it dies to; a refusal writes neither file."""
+
+    def _file(self, lr, r, tmp_path, *extra, pre=(), probe_cmd=_DOT_GIT_PROBE_CMD, open_value="True"):
+        body = tmp_path / "body.md"
+        body.write_text("**A probe read where the row is filed.**", encoding="utf-8")
+        return lr.main(_repo_args(r, *pre, "file", "DEF-3", "--section", "C1", "--after", "DEF-2",
+                                  "--anchor", "pkg/mod.py::answer", "--text-file", str(body),
+                                  "--severity", "minor", "--probe-cmd", probe_cmd,
+                                  "--open-value", open_value, "--subject", "pkg/mod.py", *extra))
+
+    @staticmethod
+    def _entry(r, rid: str) -> dict:
+        return next(p for p in json.loads(r["probes"].read_text(encoding="utf-8"))["probes"] if p["id"] == rid)
+
+    def test_a_probe_that_reads_the_checkout_alone_is_refused_naming_both_readings(self, lr, tmp_path, capsys):
+        """Mutation: the export drive removed, so the row files here and its
+        strike refuses at the base after the fix is done."""
+        r = _two_commit_repo(tmp_path)
+        before = _files(r)
+        assert self._file(lr, r, tmp_path) == 2
+        err = capsys.readouterr().err
+        assert "reads its open value 'True' in this checkout and prints another value" in err
+        assert f"in the export of HEAD {r['head'][:12]} (prints 'False'" in err
+        assert "--no-base" in err and "nothing filed" in err
+        # espalier/cli.py reads a filing whose stderr holds the verdict's word as satisfied
+        assert "STRIKE_CANDIDATE" not in err
+        assert _files(r) == before
+
+    def test_the_dry_run_drives_the_export_and_shows_the_refusal(self, lr, tmp_path, capsys):
+        """Mutation: the export drive skipped under --dry-run."""
+        r = _two_commit_repo(tmp_path)
+        assert self._file(lr, r, tmp_path, pre=("--dry-run",)) == 2
+        assert "in the export of HEAD" in capsys.readouterr().err
+
+    def test_no_base_files_it_says_so_and_the_stamp_records_it(self, lr, tmp_path, capsys):
+        """Mutation: --no-base ignored (the refusal stands), or honoured with
+        nothing said and nothing recorded for the strike to read."""
+        r = _two_commit_repo(tmp_path)
+        assert self._file(lr, r, tmp_path, "--no-base") == 0
+        assert "not driven in the export of HEAD (--no-base)" in capsys.readouterr().err
+        assert self._entry(r, "DEF-3")["verified_2026_10_25"] == (
+            "OPEN (filed 2026-10-25; probe driven at filing here; the export of HEAD not driven: --no-base)")
+
+    def test_a_probe_that_reads_the_tree_files_and_the_stamp_names_both_trees(self, lr, tmp_path, capsys):
+        """Mutation: a refusal where the two readings agree."""
+        r = _two_commit_repo(tmp_path)
+        assert self._file(lr, r, tmp_path, probe_cmd=_PROBE_CMD, open_value="2") == 0
+        assert "nothing filed" not in capsys.readouterr().err
+        assert self._entry(r, "DEF-3")["verified_2026_10_25"] == (
+            f"OPEN (filed 2026-10-25; probe driven at filing here and in the export of HEAD {r['head'][:12]})")
+
+    def test_an_input_only_the_working_tree_holds_is_a_note_and_files(self, lr, tmp_path, capsys):
+        """The export holds committed files only: a declared input this
+        checkout alone carries reads UNRESOLVED there, which the strike's base
+        drive notes and never refuses by default, so the filing notes it too
+        (refusing it stopped ``init`` filing its onboarding rows). Mutation: an
+        undrivable export refused, or passed with nothing said or recorded."""
+        r = _two_commit_repo(tmp_path)
+        (r["repo"] / "local.txt").write_text("held here alone", encoding="utf-8")
+        assert self._file(lr, r, tmp_path, "--inputs", "local.txt", probe_cmd=_PROBE_CMD, open_value="2") == 0
+        err = capsys.readouterr().err
+        assert "and UNRESOLVED in the export of HEAD" in err and "input missing: local.txt" in err
+        assert "a later strike passes with --no-base" in err
+        assert self._entry(r, "DEF-3")["verified_2026_10_25"] == (
+            f"OPEN (filed 2026-10-25; probe driven at filing here; UNRESOLVED in the export of HEAD "
+            f"{r['head'][:12]})")
+
+    def test_a_root_that_is_not_its_own_checkout_is_one_note_and_files(self, lr, tree, capsys):
+        """Mutation: a root with no HEAD to export refused, or passed in silence."""
+        assert lr.main(_args(tree, "--root", str(tree["ledger"].parents[1]),
+                             "file", "DEF-3", "--section", "C1", "--after", "DEF-2",
+                             "--anchor", "new/site.py::fn", "--text-file", str(tree["body"]),
+                             "--severity", "minor", "--probe-cmd", "echo open=True",
+                             "--open-value", "open=True", "--subject", "body.md")) == 0
+        assert "not driven in the export of HEAD" in capsys.readouterr().err
+        entry = next(p for p in json.loads(tree["probes"].read_text(encoding="utf-8"))["probes"] if p["id"] == "DEF-3")
+        assert entry["verified_2026_09_06"].startswith(
+            "OPEN (filed 2026-09-06; probe driven at filing here; the export of HEAD not driven: ")
+
+    def test_a_repin_to_a_probe_that_reads_the_checkout_alone_is_refused_and_no_base_passes(
+            self, lr, tmp_path, capsys):
+        """``repin`` writes a probe a strike will drive, as ``file`` does.
+        Mutation: the repin's export drive removed, or --no-base not honoured."""
+        r = _two_commit_repo(tmp_path)
+        before = _files(r)
+        argv = ("repin", "DEF-1", "--probe-cmd", _DOT_GIT_PROBE_CMD, "--open-value", "True", "--reason", "re-aimed")
+        assert lr.main(_repo_args(r, *argv)) == 2
+        err = capsys.readouterr().err
+        assert "in the export of HEAD" in err and "nothing re-pinned" in err
+        assert _files(r) == before
+        assert lr.main(_repo_args(r, *argv, "--no-base")) == 0
+        assert "not driven in the export of HEAD (--no-base)" in capsys.readouterr().err
+
+    def test_a_repin_that_leaves_the_probe_alone_does_not_drive_the_export(self, lr, tmp_path, capsys):
+        """A re-grade of a row whose probe already reads the checkout alone
+        changes nothing a strike will drive. Mutation: every repin drives the
+        export, so a severity change is refused over a probe it did not touch."""
+        r = _two_commit_repo(tmp_path, probe_cmd=_DOT_GIT_PROBE_CMD, open_value="True")
+        assert lr.main(_repo_args(r, "repin", "DEF-1", "--severity", "nit", "--reason", "re-graded")) == 0
+        assert "export of HEAD" not in capsys.readouterr().err
+
+    def test_a_head_that_cannot_be_exported_refuses_naming_no_base(self, lr, tmp_path, monkeypatch, capsys):
+        """Mutation: a failed export read as agreement, so the filing passes on
+        one reading."""
+        r = _two_commit_repo(tmp_path)
+
+        def broken(*_a, **_k):
+            raise lr.BaseUnavailable("git read-tree exited 128")
+        monkeypatch.setattr(lr, "_base_tree", broken)
+        assert self._file(lr, r, tmp_path, probe_cmd=_PROBE_CMD, open_value="2") == 2
+        err = capsys.readouterr().err
+        assert "could not be exported" in err and "git read-tree exited 128" in err and "--no-base" in err
+
+    def test_the_filing_and_the_strike_read_the_export_through_one_drive(self, lr, tmp_path, monkeypatch):
+        """Mutation: either verb drives its export some other way, so a change
+        to how the strike reads its base leaves the filing's reading behind."""
+        r = _two_commit_repo(tmp_path)
+        seen: list[list[str]] = []
+        real = lr._drive_in_export
+
+        def spy(tree, probes):
+            seen.append(sorted(probes))
+            return real(tree, probes)
+        monkeypatch.setattr(lr, "_drive_in_export", spy)
+        assert self._file(lr, r, tmp_path, probe_cmd=_PROBE_CMD, open_value="2") == 0
+        lr.main(_repo_args(r, "strike", "DEF-1", "--text-file", str(r["closing"])))
+        assert seen == [["probe"], ["DEF-1"]]
+
+    @pytest.mark.parametrize("flag", [("--subject", "pkg/mod.py"), ("--inputs", "pkg/__init__.py")])
+    def test_a_repin_that_names_only_a_subject_or_inputs_drives_the_export(self, lr, tmp_path, capsys, flag):
+        """Mutation: the repin's gate reads the command and the value alone."""
+        r = _two_commit_repo(tmp_path, probe_cmd=_DOT_GIT_PROBE_CMD, open_value="True")
+        assert lr.main(_repo_args(r, "repin", "DEF-1", *flag, "--reason", "re-anchored")) == 2
+        assert "prints another value in the export of HEAD" in capsys.readouterr().err
+
+    def test_no_base_beside_why_not_is_refused_by_name(self, lr, tree, capsys):
+        """Mutation: the flag accepted on a row that drives nothing."""
+        with pytest.raises(SystemExit):
+            lr.main(_args(tree, "--root", str(tree["ledger"].parents[1]),
+                          "file", "DEF-3", "--section", "C1", "--after", "DEF-2",
+                          "--anchor", "new/site.py::fn", "--text-file", str(tree["body"]),
+                          "--severity", "minor", "--subject", "body.md",
+                          "--why-not", "no local oracle", "--no-base"))
+        assert "--no-base skips a drive" in capsys.readouterr().err
