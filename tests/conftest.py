@@ -191,7 +191,10 @@ def _isolate_claude_code_session():
     on CI (#414's ``test (3.11)`` cell, 2026-11-01); a test of either sets
     what it models."""
     with pytest.MonkeyPatch.context() as mp:
-        for name in ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ESPALIER_OWN_CLEAR",
+        # Spelled alone: tests/test_check_ledger_probes.py pins this literal
+        # against the ledger probe runner's strip, its twin.
+        mp.delenv("CLAUDECODE", raising=False)
+        for name in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "ESPALIER_OWN_CLEAR",
                      "ESPALIER_OWN_CLEAR_ROOT", "ESPALIER_OWN_CLEAR_LOG"):
             mp.delenv(name, raising=False)
         yield
