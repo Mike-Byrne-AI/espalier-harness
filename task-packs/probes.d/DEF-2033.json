@@ -1,0 +1,10 @@
+{
+ "id": "DEF-2033",
+ "subject": "scripts/release_check.py",
+ "cmd": "python3 -c \"import sys,os,subprocess;sys.path.insert(0,'scripts');import release_check as r;os.environ['ESPALIER_RELEASE_CHECK_WITH_TESTS']='1';o='FAILED tests/t.py::T::test_x - AssertionError: assert [] == [\\n  \\n  - [\\n  -     a,\\n  -     exited 128,\\n  - ]\\n1 failed, 2 passed in 1.0s\\n';r.run_bounded=lambda *a,**k:subprocess.CompletedProcess(a[0],1,o,'');print('named=%d'%('test_x' in r.check_tests_pass().detail))\"",
+ "open_value": "named=0",
+ "why_not": null,
+ "row_sha": "b890a06631d6",
+ "text_sha": "60fd90557934",
+ "verified_2026_11_01": "OPEN (filed 2026-11-01; probe driven at filing)"
+}
