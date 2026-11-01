@@ -174,7 +174,10 @@ def _tracked_dirs(root: Path, prefixes: list[str]) -> frozenset[str]:
     holding a ``.git`` of its own, its pathspecs read literally; a
     directory's own ``.gitignore`` does not hold it, and a name in bytes the
     filesystem spells otherwise is kept undecoded; empty where the root has no
-    ``.git`` or git cannot answer, so the declared directories prune as before."""
+    ``.git`` or git cannot answer, so the declared directories prune as before.
+    The hook's read answers a fault with None and its walk says so; this one
+    keeps the empty set, the loud side (above), and ``_stats`` reads None as
+    a read not yet made, so a None here would re-read at every declaration."""
     import subprocess
 
     from espalier._safe_walk import is_own_git_repo

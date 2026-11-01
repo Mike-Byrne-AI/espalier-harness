@@ -1885,14 +1885,14 @@ new state as the next one to compare with.
   retires nothing git tracks, since the session's first snapshot asks git's
   index once and walks a declared directory holding a tracked file other
   than its own `.gitignore`: where the checkout has no git of its own, such
-  a directory prunes as before; where git cannot answer (past 2 s, a git
-  that cannot start, a refusal such as `safe.directory`'s exit 128) it
-  prunes as before too, and the walk says so once a session
-  (`zone_watch_failed_open_tracked_read`, counted by `/status --log`, the
-  cause in its `details`); and so does one holding files that only a
-  nested checkout's own git tracks, or
-  one under a protected path added to `espalier.toml` during the session,
-  until the next session's snapshot), and editor and OS clutter
+  a directory prunes as before, and so does one holding files that only a
+  nested checkout's own git tracks, or one under a protected path added to
+  `espalier.toml` during the session, until the next session's snapshot;
+  where git cannot answer (past 2 s, a git that cannot start, a refusal
+  such as `safe.directory`'s exit 128) it prunes as before too, and the
+  walk says so once a session for each cause, as a
+  `zone_watch_failed_open_tracked_read` record `/status --log` counts, the
+  cause in its `details`), and editor and OS clutter
   (swap and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its
   size and modification time and never read by the hook: when git is asked
   about it (below), git hashes it through the checkout's own filters, up to
