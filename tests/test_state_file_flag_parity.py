@@ -35,12 +35,15 @@ def _load_hook_module(name: str):
     Hooks import siblings (``import _hook_utils``) that resolve via the hooks dir
     on ``sys.path``; load through ``spec_from_file_location`` (never a plain
     import) so espalier is never dragged into their zero-import graph.
+    Registered under an alias, never the bare name: a fresh ``_hook_utils``
+    under its own name replaced the one other files bound at collection
+    (DEF-2032).
     """
     if str(_HOOKS_DIR) not in sys.path:
         sys.path.insert(0, str(_HOOKS_DIR))
-    spec = importlib.util.spec_from_file_location(name, _HOOKS_DIR / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(f"{name}_flag_parity", _HOOKS_DIR / f"{name}.py")
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -405,3 +408,13 @@ def test_session_marker_shape_synthetic(tmp_path: Path) -> None:
     assert set(record) == {"session_id", "started", "pid", "window", "cwd", "source"}
     assert record["window"] is False   # no registry named pid 1 here: a fallback key
     assert record["session_id"] == "sid-1" and record["source"] == "startup"
+
+
+def test_the_loader_leaves_the_bare_names_alone() -> None:
+    """The loader's copy is its own: ``sys.modules`` keeps the ``_hook_utils``
+    and ``subagent_stop`` other files bound at collection, so this file can no
+    longer orphan them (DEF-2032). Mutation: register under the bare name."""
+    held = {name: sys.modules.get(name) for name in ("_hook_utils", "subagent_stop")}
+    for name in held:
+        _load_hook_module(name)
+    assert {name: sys.modules.get(name) for name in held} == held

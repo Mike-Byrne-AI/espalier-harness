@@ -48,6 +48,51 @@ def pytest_configure(config):
     _box_lock.pytest_configure(config)
 
 
+#: Where the modules the restore below keeps live: a ``tools/cc`` module held in
+#: ``sys.modules`` under its bare name, the name its siblings import it by.
+_TOOLS_CC_PREFIX = str(REPO_ROOT / "tools" / "cc").replace("\\", "/") + "/"
+
+
+def _replaced_tools_cc_entries(before: dict) -> dict:
+    """The entries of ``before`` (a copy of ``sys.modules``) that are a
+    ``tools/cc`` module under its own bare name and that ``sys.modules`` now
+    holds as another object, or not at all."""
+    replaced = {}
+    for name, mod in before.items():
+        if sys.modules.get(name) is mod:
+            continue
+        path = (getattr(mod, "__file__", None) or "").replace("\\", "/")
+        if path.startswith(_TOOLS_CC_PREFIX) and path.endswith(f"/{name}.py"):
+            replaced[name] = mod
+    return replaced
+
+
+@pytest.fixture(autouse=True)
+def _restore_replaced_tools_cc_modules():
+    """Put back, after each test, every ``tools/cc`` module the test replaced
+    or removed under its bare name (DEF-2032). A module loaded at collection
+    binds its siblings by that name (``_zone_watch`` binds ``_hook_utils``), and
+    the memo clears below reach ``sys.modules.get("_hook_utils")``; a loader
+    that registers a fresh copy at test time left every later test clearing
+    the copy while the collection-time module kept its once-set, so the
+    release gate's serial leg redded ``test_zone_watch`` after
+    ``test_state_file_flag_parity`` on every run. Compared by identity; an
+    entry the test added is left, and so is a module from anywhere else.
+    pytest sets a conftest's autouse fixtures up in name order, so the copy is
+    taken after the other autouse fixtures and before the test's own, and the
+    put-back runs before the other autouse teardowns (a ``monkeypatch`` undo
+    after it puts back the same object). A replacement made while collecting,
+    or by a module- or class-scoped fixture, is outside the copy. Censuses at
+    705f7dd: none while collecting, and over the 28 files with a module- or
+    class-scoped loader, only the ``lr`` fixtures of ``test_ledger_row`` and
+    ``test_ledger_fragments``, where ``ledger_row`` loads
+    ``generate_ledger_regions``, ``check_ledger_probes`` and ``_pack_scope``
+    under their own names; nothing here clears a memo of those three."""
+    before = dict(sys.modules)
+    yield
+    sys.modules.update(_replaced_tools_cc_entries(before))
+
+
 @pytest.fixture(autouse=True)
 def _reset_speedbump_snapshot_record():
     """`_speedbump._last_snapshot` is the per-process record the two snapshot

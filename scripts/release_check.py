@@ -193,6 +193,18 @@ def check_cli_entrypoint(repo_root: Path = REPO_ROOT) -> CheckResult:
     return CheckResult("cli_entrypoint", "PASS", result.stdout.strip())
 
 
+def pytest_failure_tail(output: str) -> list[str]:
+    """The lines of a red pytest child's output a one-line detail keeps: each
+    ``FAILED`` or ``ERROR`` line's node id, then the count line. On a CI runner
+    pytest's short summary keeps a failure's whole message, so a diff lands
+    below the ``FAILED`` line and the last three lines named no test in the
+    gate's reds of #405 and #409 (DEF-2033). Output with neither line keeps its
+    last three."""
+    lines = output.strip().splitlines()
+    named = [ln.split(" - ", 1)[0] for ln in lines if ln.startswith(("FAILED ", "ERROR "))]
+    return named + lines[-1:] if named else lines[-3:]
+
+
 def check_tests_pass(repo_root: Path = REPO_ROOT) -> CheckResult:
     """`pytest -m "not slow"` returns 0. Skipped unless explicitly opted in.
 
@@ -233,7 +245,7 @@ def check_tests_pass(repo_root: Path = REPO_ROOT) -> CheckResult:
         )
     leg_s = _now() - leg_t0
     if result.returncode != 0:
-        tail = (result.stdout + result.stderr).strip().splitlines()[-3:]
+        tail = pytest_failure_tail(result.stdout + result.stderr)
         return CheckResult(
             "tests_pass", "FAIL", f"rc={result.returncode}; {' / '.join(tail)}"[:200],
         )

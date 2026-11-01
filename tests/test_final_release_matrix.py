@@ -755,6 +755,22 @@ def test_stage_one_reports_a_timed_out_leg_as_a_bound_not_a_red(tmp_path, monkey
     assert mod.stage_source_checkout().reason == "pytest failed; see log"
 
 
+def test_stage_six_names_the_failing_test_above_its_diff(tmp_path, monkeypatch):
+    """Stage 06's one-line reason keeps the gate's rule (``release_check.
+    pytest_failure_tail``, DEF-2033): the FAILED line's node id and the count,
+    not the last three lines of a diff a CI runner prints below it. RED with
+    the stage keeping ``splitlines()[-3:]``."""
+    mod = _import_matrix_module()
+    monkeypatch.setattr(mod, "OUTPUT_ROOT", tmp_path / "out")
+    (tmp_path / "out").mkdir()
+    node = "tests/test_surface_support_matrix.py::TestRows::test_every_row_is_read"
+    out = f"FAILED {node} - AssertionError: assert [] == [\n  - [\n  -     'a',\n  - ]\n1 failed, 9 passed in 1.0s\n"
+    monkeypatch.setattr(mod, "_run", lambda cmd, **kw: (1, out))
+    result = mod.stage_surface_matrix()
+    assert result.status == "FAIL", result
+    assert result.reason == f"matrix tests rc=1; FAILED {node} / 1 failed, 9 passed in 1.0s", result.reason
+
+
 def test_stage_one_notes_a_passing_leg_that_outgrew_the_recorded_measurement(tmp_path, monkeypatch):
     """The ratchet on the recorded figure: a leg that PASSES but took longer
     than ``_SMOKE_MEASURED_S`` carries a NOTE in the stage's report ``details``
