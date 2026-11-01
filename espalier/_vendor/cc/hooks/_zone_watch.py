@@ -235,11 +235,15 @@ TRACKED_READ_TIMEOUT_S = 2.0
 
 def tracked_dirs(root: Path, prefixes: list[str]) -> frozenset[str]:
     """Every directory that holds a path git tracks under ``prefixes`` (for
-    ``a/b/c.py``, ``a/b`` and ``a``), from one ``git ls-files -z`` of the
-    root's own index, its pathspecs read literally. Empty where the root
-    keeps no git of its own (a parent repository's index is never asked) or
-    git cannot answer: the declared directories then prune as before. Twin
-    of ``espalier.zone_writes._tracked_dirs``."""
+    ``a/b/c.py``, ``a/b`` and ``a``), from one ``git ls-files -z`` run at a
+    root holding a ``.git`` of its own, its pathspecs read literally. A
+    directory's own ``.gitignore`` does not hold it (a placeholder
+    declaration committed with ``git add -f`` keeps its directory generated),
+    and a name git prints in bytes the filesystem spells otherwise is kept
+    undecoded, holding nothing the walk meets. Empty where the root has no
+    ``.git`` or git cannot answer: the declared directories then prune as
+    before (docs/HOOKS.md names it). Twin of
+    ``espalier.zone_writes._tracked_dirs``."""
     import subprocess
 
     if _hook_utils._git_dir_of(root) is None:
@@ -249,13 +253,15 @@ def tracked_dirs(root: Path, prefixes: list[str]) -> frozenset[str]:
             ["git", "--literal-pathspecs", "ls-files", "-z", "--", *prefixes], root=root,
             stdin=subprocess.DEVNULL, capture_output=True, timeout=TRACKED_READ_TIMEOUT_S, cwd=str(root),
         )
-    except (subprocess.SubprocessError, OSError):  # fail-open: ok deliberate -- git could not answer in time: the declared directories prune as they did before git was asked, and the integrity manifest still names a hook's drift
+    except (subprocess.SubprocessError, OSError):  # fail-open: ok deliberate -- git could not answer in time: the declared directories prune as they did before git was asked (docs/HOOKS.md names the fallback); a harness hook's drift still shows in the integrity manifest
         return frozenset()
     if isinstance(result, _hook_utils.SpawnFailure) or result.returncode != 0:
         return frozenset()
     dirs: set[str] = set()
     for raw in result.stdout.split(b"\0"):
-        rel = os.fsdecode(raw)
+        rel = raw.decode("utf-8", "surrogateescape")
+        if rel.rsplit("/", 1)[-1] == SELF_IGNORE_FILE:
+            rel = rel.rsplit("/", 1)[0] if "/" in rel else ""  # its directory's ancestors only
         while "/" in rel:
             rel = rel.rsplit("/", 1)[0]
             if rel in dirs:
@@ -268,7 +274,9 @@ def is_watched(root: Path, rel: str, prior: dict[str, Entry] | None = None) -> b
     """Whether the repo-relative posix path ``rel`` is in the watched set.
     ``prior`` is the session's baseline where the caller holds one: a
     declared directory it holds a file under stays watched, the file and its
-    new neighbours alike, as the walk keeps it."""
+    new neighbours alike, as the walk keeps it. Git is never asked here:
+    without a baseline a declared directory answers unwatched, whatever git
+    tracks in it (the walk's fresh baseline is what holds those)."""
     if rel in watched_files():
         return True
     parts = rel.split("/")

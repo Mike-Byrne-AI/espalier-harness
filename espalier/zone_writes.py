@@ -115,7 +115,8 @@ def is_clutter(name: str) -> bool:
 #: ``_zone_watch.SELF_IGNORE_FILE`` / ``SELF_IGNORE_READ_LIMIT``: a directory
 #: whose own ``.gitignore`` is one bare ``*`` declares itself generated (what
 #: pytest, ruff, mypy, uv, venv and Claude Code's plugin loader write into what
-#: they make) and is pruned below a watched top, on both sides.
+#: they make) and is pruned below a watched top, on both sides, unless the
+#: run's before-stats hold a file under it or, at a fresh walk, git tracks one.
 SELF_IGNORE_FILE = ".gitignore"
 SELF_IGNORE_READ_LIMIT = 4096
 
@@ -169,9 +170,11 @@ TRACKED_READ_TIMEOUT_S = 30
 
 def _tracked_dirs(root: Path, prefixes: list[str]) -> frozenset[str]:
     """``_zone_watch.tracked_dirs``: every directory holding a path git
-    tracks under ``prefixes``, from one ``git ls-files -z`` of the root's own
-    index, its pathspecs read literally; empty where the root keeps no git of
-    its own or git cannot answer, so the declared directories prune as before."""
+    tracks under ``prefixes``, from one ``git ls-files -z`` run at a root
+    holding a ``.git`` of its own, its pathspecs read literally; a
+    directory's own ``.gitignore`` does not hold it, and a name in bytes the
+    filesystem spells otherwise is kept undecoded; empty where the root has no
+    ``.git`` or git cannot answer, so the declared directories prune as before."""
     import subprocess
 
     from espalier._safe_walk import is_own_git_repo
@@ -188,7 +191,9 @@ def _tracked_dirs(root: Path, prefixes: list[str]) -> frozenset[str]:
         return frozenset()
     dirs: set[str] = set()
     for raw in result.stdout.split(b"\0"):
-        rel = os.fsdecode(raw)
+        rel = raw.decode("utf-8", "surrogateescape")
+        if rel.rsplit("/", 1)[-1] == SELF_IGNORE_FILE:
+            rel = rel.rsplit("/", 1)[0] if "/" in rel else ""  # its directory's ancestors only
         while "/" in rel:
             rel = rel.rsplit("/", 1)[0]
             if rel in dirs:

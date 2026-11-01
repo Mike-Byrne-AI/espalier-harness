@@ -345,7 +345,10 @@ class TestADeclarationOlderThanTheSession:
         hooks = repo / "tools" / "cc" / "hooks"
         (hooks / "sub").mkdir()
         (hooks / "sub" / "a.py").write_bytes(b"a\n")
-        _git_ok(repo, "add", "tools")
+        (repo / "espalier.toml").write_text('protected_paths = ["vault/"]\n', encoding="utf-8")
+        (repo / "vault" / "gen").mkdir(parents=True)
+        (repo / "vault" / "gen" / "k.txt").write_bytes(b"k\n")
+        _git_ok(repo, "add", "tools", "vault")
         _git_ok(repo, "commit", "-q", "-m", "sub")
         (repo / "tools" / "cc" / "gen").mkdir()
         (repo / "tools" / "cc" / "gen" / "out.json").write_bytes(b"{}\n")
@@ -358,14 +361,43 @@ class TestADeclarationOlderThanTheSession:
 
         monkeypatch.setattr(zw._hook_utils, "spawn_checked", counting)
         assert "tools/cc/hooks/sub/a.py" in zw.snapshot(repo) and calls == []
-        for declared in (hooks, hooks / "sub", repo / "tools" / "cc" / "gen"):
+        for declared in (hooks, hooks / "sub", repo / "tools" / "cc" / "gen", repo / "vault" / "gen"):
             (declared / ".gitignore").write_bytes(b"*\n")
         fresh = zw.snapshot(repo)
-        assert {_HOOK, "tools/cc/hooks/sub/a.py"} <= set(fresh), sorted(fresh)
+        assert {_HOOK, "tools/cc/hooks/sub/a.py", "vault/gen/k.txt"} <= set(fresh), sorted(fresh)
         assert "tools/cc/gen/out.json" not in fresh
-        assert len(calls) == 1 and "ls-files" in calls[0], calls
-        zw.snapshot(repo, fresh)
+        assert len(calls) == 1 and "ls-files" in calls[0], calls  # one read for both tops
+        assert "tools/cc/gen/out.json" not in zw.snapshot(repo, fresh)
         assert len(calls) == 1, calls
+
+    def test_a_placeholder_declaration_alone_keeps_the_directory_generated(self, repo: Path) -> None:
+        """A generated directory whose only tracked file is its own bare `*`,
+        committed with `git add -f` to keep the directory in git, stays
+        pruned: a rebuild there is no slip (the review's regression).
+        Mutation: count a directory's own .gitignore as holding it."""
+        gen = repo / "tools" / "cc" / "gen"
+        gen.mkdir()
+        (gen / ".gitignore").write_bytes(b"*\n")
+        _git_ok(repo, "add", "-f", "tools/cc/gen/.gitignore")
+        _git_ok(repo, "commit", "-q", "-m", "placeholder")
+        (gen / "out.json").write_bytes(b"{}\n")
+        snap = zw.snapshot(repo)
+        assert _HOOK in snap and not [r for r in snap if r.startswith("tools/cc/gen/")], sorted(snap)
+        assert "tools/cc/gen" not in zw.tracked_dirs(repo, ["tools/cc/"])
+
+    def test_an_index_name_in_other_bytes_is_read_without_raising(self, repo: Path) -> None:
+        """A name git prints in bytes that are not UTF-8 (a latin-1 name
+        committed elsewhere) is kept undecoded: the read neither raises (on
+        Windows os.fsdecode is strict) nor loses the paths beside it.
+        Mutation: decode with os.fsdecode."""
+        g = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        sha = subprocess.run(g + ["hash-object", "-w", "--stdin"], cwd=str(repo), input=b"x\n",
+                             capture_output=True, check=True, timeout=30).stdout.strip()
+        subprocess.run(g + ["update-index", "--index-info"], cwd=str(repo),
+                       input=b"100644 " + sha + b"\ttools/cc/odd/caf\xe9.py\n",
+                       capture_output=True, check=True, timeout=30)
+        dirs = zw.tracked_dirs(repo, ["tools/cc/"])
+        assert {"tools/cc/hooks", "tools/cc/odd"} <= dirs, sorted(dirs)
 
     def test_git_that_cannot_answer_keeps_the_prune(self, repo: Path, monkeypatch) -> None:
         """A read that times out, or a git that cannot start, is no tracked

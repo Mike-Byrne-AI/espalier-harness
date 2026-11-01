@@ -1873,8 +1873,12 @@ new state as the next one to compare with.
   retires nothing the session's snapshot already holds, so it is reported as
   the added file it is; and one already there when the session starts
   retires nothing git tracks, since the session's first snapshot asks git's
-  index once and walks a declared directory holding a tracked file), and
-  editor and OS clutter
+  index once and walks a declared directory holding a tracked file other
+  than its own `.gitignore`: where the checkout has no git of its own, or
+  git cannot answer within 2 s, such a directory prunes as before, and so
+  does one holding files that only a nested checkout's own git tracks, or
+  one under a protected path added to `espalier.toml` during the session,
+  until the next session's snapshot), and editor and OS clutter
   (swap and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its
   size and modification time and never read by the hook: when git is asked
   about it (below), git hashes it through the checkout's own filters, up to
