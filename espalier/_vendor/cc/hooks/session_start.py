@@ -825,7 +825,8 @@ def _read_merged_prs(root: Path, deadline: float | None = None) -> str:
 def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> list[str] | None:
     """The names of the REQUIRED checks that are red on pull request ``number``
     (failed or cancelled: either holds the merge),
-    from one `gh pr checks <n> --required --json name,bucket` read, made only
+    from the one `gh pr checks <n> --required` read (``read_required`` in
+    tools/cc/_post_merge.py, the board's and the ship driver's too), made only
     when the tally already has a red (the listing carries no is-required flag,
     and a pull request has merged with three advisory legs red). `gh pr
     checks` exits 1 when a check has failed and 8 while one is pending -- the
@@ -836,28 +837,27 @@ def _gh_pr_required_reds(root: Path, number: int, deadline: float | None) -> lis
     timeout = _seconds_left(deadline, _PR_CHECKS_CAP_SECONDS)
     if timeout <= 0.2:
         return None
-    try:
+    post_merge = _load_post_merge()
+    if post_merge is None:  # fail-open: ok deliberate -- the read and its buckets live in the module; without it the tail says the required reds could not be read, and the block's gate has voiced the absence
+        return None
+
+    def gh(args: list[str]) -> object:
         result = _hook_utils.run_bounded(  # spawn: ok a reporter: a gh that cannot run costs the required-red name in one tail, never the line; a missing gh is named by the load-bearing-tool warning
-            ["gh", "pr", "checks", str(number), "--required", "--json", "name,bucket"],
+            ["gh", *args],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=timeout, cwd=str(root),
         )
+        return json.loads(result.stdout or "")  # json-dict-safe: ok a LIST of rows; read_required isinstance-checks the answer and each row
+
+    try:
+        reading = post_merge.read_required(number, gh)
     except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- a reporter that cannot run gh says so in the tail (could not read which reds are required); a missing gh is named by the load-bearing-tool warning
         return None
-    try:
-        rows = json.loads(result.stdout or "")
     except ValueError:  # fail-open: ok deliberate -- unparseable output is named in the tail (could not read which reds are required), never read as no required red
         return None
-    if not isinstance(rows, list):
+    if reading is None:  # fail-open: ok deliberate -- an answer that is not a list is named in the tail (could not read which reds are required), never read as no required red
         return None
-    post_merge = _load_post_merge()
-    if post_merge is None:  # fail-open: ok deliberate -- the buckets live in the module; without it the tail says the required reds could not be read, and the block's gate has voiced the absence
-        return None
-    return sorted(
-        _ascii(str(row.get("name") or "?"))
-        for row in rows
-        if isinstance(row, dict) and str(row.get("bucket") or "").lower() in post_merge.RED_BUCKETS
-    )
+    return sorted(_ascii(str(row.get("name") or "?")) for row in reading["red"])
 
 
 # The base branch's merge rules: the read and the rendering live in
@@ -1438,6 +1438,9 @@ def _pr_summary(pr: dict, required_red: list[str] | None = None) -> str:
                     f"({_check_names(required_red)}); tools/cc/ship.py status tells a test red "
                     f"(fix, push, re-bind) from a lost runner (rerun)")
         elif running:
+            # _post_merge.waiting_on's words, which the board's blocked row
+            # prints (DEF-4063); kept literal here so the row renders without
+            # the module, and pinned equal in tests/test_post_merge.py.
             tail = f"auto-merge armed; waiting on {running} running"
         elif red and required_red is None:
             tail = (f"auto-merge armed but held ({merge_state.lower()}); could not "

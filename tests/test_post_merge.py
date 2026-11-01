@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._live_tree import checkout_rglob
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE = REPO_ROOT / "tools" / "cc" / "_post_merge.py"
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "post_merge"
@@ -301,6 +303,88 @@ class TestReadMerged:
         assert set(pm.LANE_FIELDS.split(",")) == {"number", "mergedAt", "headRefName", "labels"}
         pm.read_merged(".", 2, gh=gh)
         assert calls[-1][-1] == pm.MERGED_FIELDS and "statusCheckRollup" in pm.MERGED_FIELDS
+
+
+class TestTheRequiredRead:
+    """The one ``gh pr checks <n> --required`` read the board's blocked row,
+    the ship driver's ``status`` and the banner's ``Open PRs:`` line make
+    (DEF-4063: the board alone made none, and printed one fixed phrase for
+    every blocked pull request)."""
+
+    def test_the_read_asks_once_and_splits_red_running_and_the_rest(self, pm):
+        """Dies to: `cancel` read as anything but red (a job no runner picked
+        up holds a merge as a failure does), `pending` as anything but
+        running, or the caller's field list dropped (the driver adds `link`)."""
+        calls: list[list[str]] = []
+        answer = [{"name": "a", "bucket": "fail"}, {"name": "b", "bucket": "CANCEL"},
+                  {"name": "c", "bucket": "pending"}, {"name": "d", "bucket": "pass"},
+                  {"name": "e", "bucket": "skipping"}, "junk", None]
+
+        def gh(args):
+            calls.append(list(args))
+            return answer
+
+        reading = pm.read_required(27, gh)
+        assert calls == [["pr", "checks", "27", "--required", "--json", pm.REQUIRED_FIELDS]]
+        assert pm.REQUIRED_FIELDS == "name,bucket"
+        assert [r["name"] for r in reading["red"]] == ["a", "b"]
+        assert [r["name"] for r in reading["running"]] == ["c"]
+        assert [r["name"] for r in reading["rows"]] == ["a", "b", "c", "d", "e"]
+        pm.read_required("27", gh, fields="name,bucket,link")
+        assert calls[-1][-1] == "name,bucket,link"
+
+    def test_an_answer_that_is_not_a_list_is_unread_and_a_refusal_is_the_callers(self, pm):
+        """A repository with no required checks answers rc=1 with no JSON:
+        "could not read", never green. Dies to: None read as no red, or the
+        caller's own refusal swallowed (the driver must say why)."""
+        assert pm.read_required(1, lambda args: None) is None
+        assert pm.read_required(1, lambda args: {"message": "Not Found"}) is None
+
+        def refuse(args):
+            raise RuntimeError("gh is offline")
+
+        with pytest.raises(RuntimeError, match="offline"):
+            pm.read_required(1, refuse)
+
+    def test_held_by_names_the_red_else_the_running_else_a_review(self, pm):
+        """The words of a blocked row: the banner's `waiting on N running`, at
+        most three names then a count, ASCII. Dies to: a second phrase for
+        the running case, a red outranked by a running sibling, or a non-ASCII
+        check name reaching operator text."""
+        assert pm.waiting_on(9) == "waiting on 9 running"
+        assert pm.held_by(["guard"], ["x"]) == "required check red (guard)"
+        assert pm.held_by(["a", "b", "c", "d", "e"], []) == "required checks red (a, b, c, and 2 more)"
+        assert pm.held_by([], ["x", "y"]) == pm.waiting_on(2)
+        assert pm.held_by([], []) == ("no required check is red or running, so a review or a required check "
+                                      "that has not reported holds it")
+        assert pm.held_by(["portabilité"], []).isascii()
+
+    def test_the_banner_waits_in_the_same_words(self, pm):
+        """The banner keeps its running tail literal so the row renders
+        without this module; the board prints ``waiting_on``. Dies to: the
+        two phrases drifting apart."""
+        hook = _load(REPO_ROOT / "tools" / "cc" / "hooks" / "session_start.py", "session_start_words_under_test")
+        row = {"number": 7, "headRefName": "lane/7", "baseRefName": "main", "mergeStateStatus": "BLOCKED",
+               "autoMergeRequest": {"x": 1}, "statusCheckRollup": [
+                   {"__typename": "CheckRun", "name": f"t{n}", "status": "IN_PROGRESS", "conclusion": None}
+                   for n in range(3)]}
+        assert hook._pr_summary(row, None).endswith(f"; auto-merge armed; {pm.waiting_on(3)}")
+
+    def test_no_reader_spells_the_required_read_outside_this_module(self):
+        """The three readers once each spelled their own `gh pr checks
+        --required` argv, as a list or as call arguments. Dies to: a second
+        one written beside a reader instead of a call to ``read_required``.
+        An f-string telling the operator which command to run is words, not
+        a read: its text is never the bare flag, and is not counted."""
+        import ast
+
+        spelled = sorted({
+            path.relative_to(REPO_ROOT).as_posix()
+            for path in checkout_rglob(REPO_ROOT / "tools" / "cc", "*.py")
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            if isinstance(node, ast.Constant) and node.value == "--required"
+        })
+        assert spelled == ["tools/cc/_post_merge.py"], spelled
 
 
 def _run_row(status: str, conclusion: str | None, sha: str, run_id: int) -> dict:
