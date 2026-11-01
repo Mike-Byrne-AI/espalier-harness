@@ -291,7 +291,10 @@ shells, `init` no longer reads it; `doctor` does, to name a bare or `&`
 line an older install carries for the shell this host does not run.
 Claude Code's troubleshoot-install page states the same order and the same
 file-name check, and one rule this read did not see: step 2 skips a `git` a
-project placed. The `cc-git-bash` pin quotes it, so the weekly refresh
+project placed. A second read of the same binary (2026-11-01) found it
+inside the `where.exe` walk, which asks it of each answer in turn, and
+`git_bash_path` follows it (`DEF-3021`; the rule is in the `cc-git-bash`
+pin's asserts). The `cc-git-bash` pin quotes the rule, so the weekly refresh
 re-reads the order; what stays observed here is that the status line's shell
 follows that lookup.
 

@@ -813,9 +813,11 @@ def statusline_shell_mismatch(command: str, repo_root: Path | None) -> str | Non
     if not called and not git_bash:
         return (
             "statusLine.command runs the Windows shim as a bare quoted head, the "
-            "form for a host where Claude Code finds Git Bash, but no Git Bash "
-            "is on this host (nor named by CLAUDE_CODE_GIT_BASH_PATH here or in "
-            "a settings file), so Claude Code runs the statusline under "
+            "form for a host where Claude Code finds Git Bash, but it finds "
+            "none on this host (none is named by CLAUDE_CODE_GIT_BASH_PATH here "
+            "or in a settings file, and it skips a `git` this repository placed, "
+            "in its root or under node_modules or a virtual-environment "
+            "folder), so Claude Code runs the statusline under "
             "PowerShell, which reads a quoted head as an expression: the "
             "statusline goes blank, and so does the line that reports a missing "
             f"interpreter. {remedy}; or, "

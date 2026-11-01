@@ -133,7 +133,8 @@ The env-vars page, "Set variables in settings files" and "Precedence":
 - `espalier/_venv.py::git_bash_path` follows the documented order: the
   variable, when its file name is one of those four and the path exists (else
   it falls through, as the page says it has since v2.1.219); then the default
-  locations; then `bin\bash.exe` in the Git installation of a `git` on PATH.
+  locations; then `bin\bash.exe` in the Git installation of a `git` on PATH
+  that the project did not place (the next bullet).
   It widens on purpose, as its docstring says: every `git` on PATH is asked,
   not only the first; and the variable is read from the three settings files
   above as well as from the process environment, since Claude Code reads
@@ -143,16 +144,25 @@ The env-vars page, "Set variables in settings files" and "Precedence":
   an unusable settings value reads as a path here while Claude Code ignores
   the variable and auto-detects. `doctor` reads only whether any step finds a
   bash, so the precedence moves its verdict only on such a host.
-- **Not followed:** the step-2 skip of a `git` the project placed (`DEF-3021`).
-  `git_bash_path` asks every `git` on PATH, under the project or not. Who it
-  reaches: a host whose only Git with a `bin\bash.exe` sits under the project
-  in such a folder, carrying a bare statusLine an older `init` wrote: Claude
-  Code skips that `git` and runs the line under PowerShell, which blanks it,
-  and `doctor` finds the bash and says nothing. The wording leaves open
-  whether the virtual-environment folder must sit below the launch folder
-  (the page's own example has `env` above it), and `doctor` runs from the
-  repository root, not from the folder Claude Code was launched from; the
-  row's fix reads the installed binary first.
+- `git_bash_path` follows the step-2 skip of a `git` the project placed
+  (`DEF-3021`), judged against `repo_root`: `doctor` runs from the repository
+  root, where Claude Code judges against the folder it was launched from, and
+  with no root nothing is skipped. The quote leaves open where the
+  virtual-environment folder may sit; the installed 2.1.316 binary, read
+  2026-11-01, settles it. Its `where.exe` walk asks one predicate of each
+  answer and skips a `git` whose folder is the launch folder; or is below it
+  with `node_modules` or a virtual-environment folder anywhere in its path,
+  above the launch folder too, as the page's own `env` example has it (the
+  binary's set: `node_modules`, `.venv`, `venv`, `env`, `.env`, `virtualenv`,
+  `.tox`, `.nox`, `.direnv`, `__pypackages__`); or is in a WindowsApps alias
+  folder (`AppData\Local\Microsoft\WindowsApps` under the home folder or under
+  `%LOCALAPPDATA%`) that sits at or below the launch folder. Each is asked of
+  the paths as spelled and then of their real paths, case-insensitively.
+  `espalier/_venv.py::GIT_SKIPPED_FOLDERS` is that set, and
+  `tests/test_hook_exec_form.py::TestGitBashLookup::test_the_skipped_folders_hold_the_pinned_ones`
+  reads the three folders the quote names against it. The rest of the set and
+  the WindowsApps rule are the binary's, observed, not quoted. A skip moves
+  the copy toward None, the cheaper of its two wrong answers.
 - **Not asserted:** a `CLAUDE_CODE_GIT_BASH_PATH` set in managed settings.
   espalier reads no managed settings file, so such a value is unseen and the
   copy can read None where Claude Code finds Git Bash: `doctor` then names a
