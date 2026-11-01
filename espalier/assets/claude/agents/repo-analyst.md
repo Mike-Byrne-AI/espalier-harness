@@ -105,9 +105,9 @@ try:
     for k in sorted(deps.keys()):
         print(f'  {k}: {deps[k]}')
 except json.JSONDecodeError as e:
-    print(f'JS_DEPS_PARSE_FAILED: invalid JSON — {e}')
+    print(f'JS_DEPS_PARSE_FAILED: invalid JSON -- {e}')
 except OSError as e:
-    print(f'JS_DEPS_PARSE_FAILED: file error — {e}')
+    print(f'JS_DEPS_PARSE_FAILED: file error -- {e}')
 " 2>/dev/null | head -20
 
 echo "=== Database ==="

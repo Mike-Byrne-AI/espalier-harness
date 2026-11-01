@@ -56,7 +56,7 @@ skills_dir = root / ".claude" / "skills"
 skills = sorted(p.name for p in skills_dir.iterdir() if p.is_dir() and (p / "SKILL.md").exists()) if skills_dir.exists() else []
 print(f"Skills ({len(skills)}): {skills}")
 
-# Hooks — parsed from settings.json with path validation
+# Hooks -- parsed from settings.json with path validation
 import re
 
 # The script files a hook runs. init writes exec form: the interpreter alone in
@@ -118,7 +118,7 @@ if fp_path.exists():
     sigs = [s["name"] for s in fp.get("signals", [])]
     print(f"  Signals: {sigs}")
 else:
-    print("\nNo fingerprint — run /analyze first")
+    print("\nNo fingerprint -- run /analyze first")
 EOF
 ```
 

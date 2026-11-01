@@ -147,7 +147,17 @@ def _heredoc_after(body: str, heading: str) -> str:
 
 
 def _advisor(tree: Path, program: str) -> subprocess.CompletedProcess:
-    """One of the advisor's programs, from ``tree``'s root, UTF-8 mode off."""
+    """One of the advisor's programs, from ``tree``'s root, UTF-8 mode off.
+
+    Phase 1's fence shows two spellings: a comment's
+    ``python -c "$(cat <<'EOF' ... EOF)"`` above the ``python - <<'EOF'`` it
+    runs. The drive takes ``-c``, the stricter: a host whose locale is not
+    UTF-8 cannot decode a non-ASCII byte of a command line (CI's 3.12 cell,
+    #418), while stdin is read as UTF-8 source. macOS decodes the command line
+    as UTF-8 whatever the locale, so the run below passes there; the assertion
+    reds on every host."""
+    stray = sorted({c for c in program if not c.isascii()})
+    assert not stray, f"an advisor program holds non-ASCII {stray}: a non-UTF-8 host cannot decode it from python -c"
     env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
     env.update(PYTHONIOENCODING="utf-8", LC_ALL="C", PYTHONCOERCECLOCALE="0")
     return subprocess.run(
