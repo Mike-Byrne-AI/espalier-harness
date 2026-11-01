@@ -247,18 +247,20 @@ class TestThePruneIsBoundedInsideTheWall:
 
     def test_the_scan_stops_at_its_deadline_and_counts_the_old_logs_left(self, monkeypatch, tmp_path):
         """Dies to: no deadline, a deadline the loop never reads, or a stop
-        that says nothing of the old logs it left."""
+        that says nothing of the old logs it left. The bound is a count, not a
+        clock: each read sleeps at least 10 ms, so a scan that stops at a
+        0.3 s deadline has read at most 31 logs on any host, however slow
+        (a wall-clock ceiling would false-fail a loaded parallel run)."""
         import inspect
         import time
         integ, audit_dir = self._store(monkeypatch, tmp_path, [f"s{n:03d}-{self._OLD}.log" for n in range(300)])
         assert "deadline" in inspect.signature(integ._prune_old_audit_logs).parameters
         self._slow_reads(monkeypatch, integ, 0.01)
         left: list[tuple[int, int]] = []
-        start = time.monotonic()
         demoted = integ._prune_old_audit_logs(max_age_days=30, deadline=time.monotonic() + 0.3,
                                               on_stop=lambda n, days: left.append((n, days)))
-        assert time.monotonic() - start < 1.5, "the scan ran past its deadline"
-        assert 0 < demoted < 300 and left == [(300 - demoted, 30)], (demoted, left)
+        assert 0 < demoted <= 31, f"the scan ran past its deadline: {demoted} logs read"
+        assert left == [(300 - demoted, 30)], (demoted, left)
         assert len(list((audit_dir / "_cold").glob("*.log"))) == demoted
 
     def test_the_oldest_name_date_is_read_first(self, monkeypatch, tmp_path):
