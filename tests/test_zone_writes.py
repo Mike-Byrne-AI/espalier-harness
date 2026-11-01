@@ -67,6 +67,18 @@ def _bump(path: Path, data: bytes) -> None:
     os.utime(path, ns=(later, later))
 
 
+def _git(tree: Path, *args: str, stdin: bytes | None = None) -> bytes:
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                           "-c", "core.autocrlf=false", *args],
+                          cwd=str(tree), input=stdin, check=True, capture_output=True, timeout=30).stdout
+
+
+def _commit(tree: Path) -> None:
+    """The tree as a git repository with everything in it committed."""
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "tree"]):
+        _git(tree, *args)
+
+
 def _record(tree: Path, writer: str) -> dict:
     path = tree / ".espalier-state" / "zone_writes" / ze.record_name(writer)
     return json.loads(path.read_text(encoding="utf-8"))
@@ -213,6 +225,66 @@ class TestTheTwinsAgree:
         (watched / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
         assert _HOOK in ze._stats(watched, before) and _HOOK not in ze._stats(watched)
         assert _HOOK in zw.snapshot(watched, baseline) and _HOOK not in zw.snapshot(watched)
+
+    def test_a_declaration_older_than_the_run_keeps_tracked_files_on_both_sides(self, tree: Path) -> None:
+        """DEF-4073 on the engine's side: a bare `*` already in tools/cc/hooks/
+        over committed hooks is walked by the recorder's before-stats as by the
+        hook's fresh baseline, so a writer's rewrite there is recorded, never
+        read by the hook as a slip; an untracked declared directory prunes on
+        both sides, from one tracked set. Mutation: take the before-stats with
+        no tracked set."""
+        _commit(tree)
+        (tree / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+        types = tree / "tools" / "cc" / "mods" / "m" / ".claude-plugin" / "types"
+        types.mkdir(parents=True)
+        (types / ".gitignore").write_bytes(b"*\n")
+        (types / "index.d.ts").write_bytes(b"export {};\n")
+        for side in (ze._stats(tree), zw.snapshot(tree)):
+            assert _HOOK in side and not [r for r in side if "/types/" in r], sorted(side)
+        for tops in (["tools/cc/"], [":!tools/"]):  # the second a name, never git's exclusion
+            assert ze._tracked_dirs(tree, tops) == zw.tracked_dirs(tree, tops), tops
+        assert ze._tracked_dirs(tree, [":!tools/"]) == frozenset()
+        assert zw.take_baseline(tree, "s-1")
+        with ze.recorded(tree, "espalier upgrade"):
+            _bump(tree / _HOOK, b"print('upgraded under an older declaration')\n")
+        assert _HOOK in _record(tree, "espalier upgrade")["files"]
+
+    def test_the_recorder_asks_once_reads_any_name_and_keeps_a_placeholder_generated(
+            self, tree: Path, monkeypatch) -> None:
+        """The engine's side of the review's rows: one `ls-files` for a run
+        (the before-stats; the after-stats walk over them), a name in bytes
+        that are not UTF-8 read without raising (the run's bracket must never
+        raise), and a directory whose only tracked file is its own bare `*`
+        pruned. Mutations: ask on the after-stats too; decode with
+        os.fsdecode; count a directory's own .gitignore."""
+        from espalier import _spawn
+
+        _commit(tree)
+        gen = tree / "tools" / "cc" / "gen"
+        gen.mkdir()
+        (gen / ".gitignore").write_bytes(b"*\n")
+        _git(tree, "add", "-f", "tools/cc/gen/.gitignore")
+        _git(tree, "commit", "-q", "-m", "placeholder")
+        (gen / "out.json").write_bytes(b"{}\n")
+        sha = _git(tree, "hash-object", "-w", "--stdin", stdin=b"x\n").strip()
+        _git(tree, "update-index", "--index-info", stdin=b"100644 " + sha + b"\ttools/cc/odd/caf\xe9.py\n")
+        (tree / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+        dirs = ze._tracked_dirs(tree, ["tools/cc/"])
+        assert {"tools/cc/hooks", "tools/cc/odd"} <= dirs and "tools/cc/gen" not in dirs, sorted(dirs)
+        assert not [r for r in ze._stats(tree) if r.startswith("tools/cc/gen/")]
+        calls: list[list[str]] = []
+        real = _spawn.run_no_stdin
+
+        def counting(args, **kw):
+            calls.append([str(a) for a in args])
+            return real(args, **kw)
+
+        monkeypatch.setattr(_spawn, "run_no_stdin", counting)
+        assert zw.take_baseline(tree, "s-1")
+        with ze.recorded(tree, "espalier upgrade"):
+            _bump(tree / _HOOK, b"print('upgraded')\n")
+        assert len([c for c in calls if "ls-files" in c]) == 1, calls
+        assert _HOOK in _record(tree, "espalier upgrade")["files"]
 
     def test_a_large_file_has_the_same_identity_on_both_sides(self, tmp_path: Path) -> None:
         big = tmp_path / "weights.bin"
