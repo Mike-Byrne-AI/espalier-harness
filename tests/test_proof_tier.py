@@ -1768,9 +1768,11 @@ class TestTheWallClockRule:
 # that calls `pytest.main`, a constant or a `dedent` of one -- spelled in the
 # call, through a name bound in the function or the module, through `+` or a
 # starred name. One script hop is read too (DEF-2036): a launch whose argv's
-# head, or the word after the interpreter, is a path ending `scripts/<name>.py`
-# (a constant, a `/` chain, an `os.path.join`, a `str()` of one) counts when
-# that script launches a pytest child as this rule reads it, so
+# head, or the word after an interpreter, is a path ending `scripts/<name>.py`
+# (a constant, a `/` chain, `Path(...)`, `.joinpath`, an `os.path.join`, a
+# `str()` of one) counts when that script launches a pytest child as this
+# rule reads it (the scripts that spell pytest in a launch it cannot read are
+# declared in `_SCRIPTS_THE_HOP_CANNOT_READ`, exact both ways), so
 # `tests/test_verify_pins.py`'s run of `scripts/verify_pins.py` is a launch,
 # and so is a run of a script whose pytest leg is off by default (the reading
 # is of the script, not of the flags handed it). A launching function in a
@@ -1781,11 +1783,13 @@ class TestTheWallClockRule:
 # test planted, or runs a few in-process rows for seconds is enrolled below
 # with what it runs and its time alone. Not read: a second hop (a script that
 # reaches pytest through another script, as `scripts/fresh_clone_gate.py`
-# does), a script launched as `-m scripts.<name>` or past interpreter flags,
-# `os.system`, a shell string, a wrapper head (`bash -c`, `uv run`), an
-# f-string program, an argv a helper returns or takes as a parameter, one
-# held on a class attribute, a dict or imported, and one grown by `+=` or
-# `.extend`. An enrolment covers its function whole: a second launch
+# does), a hop script imported and its launching function called in process,
+# a script launched as `-m scripts.<name>`, past interpreter flags or through
+# `.as_posix()` / `os.fspath`, `os.system`, a shell string, a wrapper head
+# (`bash -c`, `uv run`), an f-string program, an argv a helper returns or
+# takes as a parameter, one held on a class attribute, a dict or imported,
+# and one grown by `+=` or `.extend`; a launch the rule cannot see is placed
+# by hand, by the same measure. An enrolment covers its function whole: a second launch
 # written into it, or a new caller handing an enrolled helper `-n auto`, reads
 # green. A launch in a `tests/_*.py` helper is judged where it is written, so
 # place it by the files that call it, never by enrolling the helper for them.
@@ -1810,8 +1814,8 @@ _PARALLEL_NESTED_RUNS: dict[str, str] = {
     "tests/test_box_lock.py::_spawn":
         "a planted one-file suite under the box lock's plugin; up to 6.0 s a row",
     "tests/test_demo_end_to_end.py::test_demo_beat3_release_check_runs":
-        "scripts/release_check.py through the script hop, its pytest leg off (ESPALIER_RELEASE_CHECK_WITH_TESTS "
-        "is the release job's alone, and the slice that job runs strips it): no pytest child; 11.0 to 11.6 s, "
+        "scripts/release_check.py through the script hop, its pytest leg off (the test strips "
+        "ESPALIER_RELEASE_CHECK_WITH_TESTS from the child's environment): no pytest child; 11.0 to 11.6 s, "
         "three runs beside another seat's tier",
     "tests/test_golden_examples.py::test_golden_examples_pass_under_bare_pytest":
         "the golden examples under a bare pytest, a few one-assert files; under 0.5 s",
@@ -1833,6 +1837,16 @@ _PARALLEL_NESTED_RUNS: dict[str, str] = {
         "and its child took 1.9 s driven by hand on the Windows seat",
     "tests/test_xdist_never_ran.py::_drive":
         "a planted one-file suite under xdist with a crash or a ceiling planted; up to 7.2 s a row",
+}
+#: The scripts that spell pytest in a launch the rule cannot read, EXACT, each
+#: with why: a test's launch of one of them is not seen by the hop, so it is
+#: placed by hand (DEF-2036). One that turns readable leaves this dict for the
+#: hop set; a hop script refactored out of the rule's reading lands here, never
+#: silently out of the scan.
+_SCRIPTS_THE_HOP_CANNOT_READ: dict[str, str] = {
+    "scripts/final_release_matrix.py": "its suite runs go through a local `_run(argv, ...)` helper",
+    "scripts/fresh_clone_gate.py": "a second hop: it runs scripts/proof_tier.py --run in a clone",
+    "scripts/host_check.py": "its pytest argv is held in a step dict",
 }
 
 
@@ -1890,8 +1904,12 @@ def _path_word(node: ast.expr, names: dict[str, list[ast.expr]], depth: int = 0)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
         right = _path_word(node.right, names, depth + 1)
         return None if right is None else f"{_path_word(node.left, names, depth + 1) or ''}/{right}"
-    if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "join" and len(node.args) > 1:
+    if isinstance(node, ast.Call) and node.args and (
+            getattr(node.func, "id", getattr(node.func, "attr", None)) in {"Path", "PurePath", "joinpath"}
+            or (getattr(node.func, "attr", None) == "join" and len(node.args) > 1)):
         parts = [_path_word(a, names, depth + 1) for a in node.args]
+        if getattr(node.func, "attr", None) == "joinpath":   # the receiver is the path's head
+            parts.insert(0, _path_word(node.func.value, names, depth + 1))
         return None if parts[-1] is None else "/".join(p or "" for p in parts)
     if isinstance(node, ast.Name):
         for value in names.get(node.id, ()):
@@ -1921,8 +1939,11 @@ def _is_pytest_argv(node: ast.expr | None, names: dict[str, list[ast.expr]], dep
         return True
     words = [_word(e, names) for e in node.elts]
     pairs = list(zip(words, words[1:]))
-    # The script hop: the argv's head, or the word after the interpreter.
-    heads = (_SCRIPT_TAIL.search(_path_word(e, names) or "") for e in node.elts[:2])
+    # The script hop: the argv's head, or the word after an interpreter (a
+    # non-constant head such as `sys.executable`, or a constant `python...`).
+    head = words[0] if words else ""
+    lead = node.elts[:2] if head is None or head.startswith(("python", "py")) else node.elts[:1]
+    heads = (_SCRIPT_TAIL.search(_path_word(e, names) or "") for e in lead)
     return (words[:1] == ["pytest"] or ("-m", "pytest") in pairs
             or any(a == "-c" and b is not None and "pytest.main(" in b for a, b in pairs)
             or any(m is not None and m.group(1) in hops for m in heads))
@@ -1975,7 +1996,7 @@ class TestTheNestedRunRule:
     must-not-trip rows (`docs/STANDING_PRINCIPLES.md` §7)."""
 
     # Every launch spells the constant `pytest` or `pytest.main(` in a string,
-    # or, through the script hop, names `scripts` (``_live`` reads both).
+    # or, through the script hop, names a hop script's file (``_live`` reads both).
     _PREFILTER = re.compile(r"""["']pytest["']|pytest\.main\(""")
 
     @classmethod
@@ -1992,10 +2013,11 @@ class TestTheNestedRunRule:
         helpers included (a launch hoisted into a ``tests/_*.py`` helper runs
         wherever its callers do), a launch of a script in ``_hops`` counted."""
         hops = cls._hops()
+        stems = tuple(hop.split("/")[-1] for hop in hops)
         out: dict[str, set[str]] = {}
         for path in checkout_glob(REPO_ROOT / "tests", "*.py"):
             text = path.read_text(encoding="utf-8")
-            if cls._PREFILTER.search(text) or "scripts" in text:
+            if cls._PREFILTER.search(text) or any(stem in text for stem in stems):
                 found = nested_pytest_launches(text, hops)
                 if found:
                     out[f"tests/{path.name}"] = found
@@ -2106,6 +2128,14 @@ class TestTheNestedRunRule:
         ("a scripts directory bound to a name, joined in the function",
          _ROOTED + "SCRIPTS = ROOT / 'scripts'\ndef test_z():\n    script = SCRIPTS / 'hop.py'\n"
          "    subprocess.run([sys.executable, str(script)])\n", {"test_z"}),
+        ("a relative Path chain",
+         _ROOTED + "def test_p():\n    subprocess.run([sys.executable, str(Path('scripts') / 'hop.py')])\n",
+         {"test_p"}),
+        ("a Path of one constant",
+         _ROOTED + "def test_q():\n    subprocess.run([sys.executable, Path('scripts/hop.py')])\n", {"test_q"}),
+        ("a joinpath on the root",
+         _ROOTED + "def test_r():\n    subprocess.run([sys.executable, ROOT.joinpath('scripts', 'hop.py')])\n",
+         {"test_r"}),
     ])
     def test_the_detector_reads_one_script_hop(self, label, source, expect):
         """DEF-2036: a launch of a script whose own launches the rule reads is
@@ -2120,12 +2150,24 @@ class TestTheNestedRunRule:
          "    subprocess.run(['git', 'log'])\n", _HOP),
         ("a hop script named as data past the program and its verb",
          _ROOTED + "def test_x():\n    subprocess.run(['git', 'add', 'scripts/hop.py'])\n", _HOP),
+        ("a hop script as the second word after a program that is not an interpreter",
+         _ROOTED + "def test_x():\n    subprocess.run(['git', 'scripts/hop.py'])\n", _HOP),
         ("a hop script launched with no hop set, as the scripts are scanned",
          _ROOTED + "def test_x():\n    subprocess.run([sys.executable, str(ROOT / 'scripts' / 'hop.py')])\n",
          frozenset()),
     ])
     def test_the_hop_stays_quiet_on(self, label, source, hops):
         assert nested_pytest_launches(source, hops) == set(), label
+
+    def test_every_script_that_spells_pytest_is_a_hop_or_declared(self):
+        """The hop set cannot shrink unseen: a script that spells pytest is
+        either one the rule reads as launching it or declared unreadable with
+        why, and a declared one that turns readable is struck."""
+        spelled = {f"scripts/{p.name}" for p in checkout_glob(REPO_ROOT / "scripts", "*.py")
+                   if self._PREFILTER.search(p.read_text(encoding="utf-8"))}
+        assert spelled - self._hops() == set(_SCRIPTS_THE_HOP_CANNOT_READ), (
+            sorted(spelled - self._hops()), sorted(_SCRIPTS_THE_HOP_CANNOT_READ))
+        assert all(why.strip() for why in _SCRIPTS_THE_HOP_CANNOT_READ.values())
 
 
 class TestRun:

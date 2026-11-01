@@ -37,9 +37,9 @@ permissions:
 jobs:
   serial-leg:
     runs-on: windows-latest
-    # The serial files' longest own timeout mark (1800 s, tests/test_verify_pins.py's
-    # module mark since DEF-2036 placed it there; a mark outranks the ceiling
-    # below) plus the ten minutes tests/test_ci_job_bounds.py gives the
+    # The serial files' longest own timeout mark (1800 s, the module mark of
+    # tests/test_verify_pins.py, a serial file since DEF-2036; a mark outranks
+    # the ceiling below) plus the ten minutes tests/test_ci_job_bounds.py gives the
     # test-serial cell on top of its worst mark. Twice the measured 3:59 would
     # round to ten and cut that mark with no test named, and five xdist worker
     # restarts at the ceiling below are fifteen.
