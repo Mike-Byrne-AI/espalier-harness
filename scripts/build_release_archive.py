@@ -10,7 +10,8 @@ forbidden path is about to be included.
 Behavior contract:
 
   1. Builds from the current repo root, enumerating its git index (a root
-     with no index falls back to a working-tree walk, said on stderr).
+     with no index falls back to a working-tree walk, said on stderr, that
+     prunes a directory declaring itself generated, as the index would).
   2. Refuses to run outside the repo root (checks pyproject.toml + espalier/).
   3. Creates dist/espalier-harness-<version>-release.zip.
   4. Excludes every path classified non-public by
@@ -44,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from espalier import surface_contract  # noqa: E402
 from espalier._safe_walk import has_git_entry  # noqa: E402
 from espalier.version_surfaces import VERSION_SURFACES, read_surface_version  # noqa: E402
+from espalier.zone_writes import is_self_ignoring  # noqa: E402
 
 # Marker-based repo-root heuristic for the release build — intentionally SEPARATE from
 # the tools/cc hook repo-root walk-up (env `CLAUDE_PROJECT_DIR` → ascend → cwd). Different
@@ -77,7 +79,9 @@ def _walk_repo(root: Path) -> Iterable[Path]:
     """Yield every regular file under `root`, skipping pruned directories early.
 
     The no-index FALLBACK enumeration; ``build_release_archive`` ships from the
-    git index when the root has one.
+    git index when the root has one. A directory below the root that declares
+    itself generated is pruned with everything in it, as an index never holds
+    it (``espalier.release_pack.create_release_zip``'s fallback is the twin).
     """
     pruned_dirs = {
         p.rstrip("/") for p in surface_contract.get_release_excluded_prefixes()
@@ -104,6 +108,14 @@ def _walk_repo(root: Path) -> Iterable[Path]:
                 # foreign tree, where the own-repo test says no and descends
                 # (DEF-673's shape, per _safe_walk).
                 if has_git_entry(entry):
+                    continue
+                # A directory whose own `.gitignore` is one bare `*` declares
+                # itself generated (the plugin loader writes the own-clear
+                # mod's `.claude-plugin/types/` so): git never holds what is in
+                # it, so the index enumeration never ships it and neither does
+                # this walk. The zone watch's predicate, so the two read one
+                # declaration; the root is never asked (DEF-4072).
+                if is_self_ignoring(entry):
                     continue
                 yield from _scan(entry)
             elif entry.is_file():

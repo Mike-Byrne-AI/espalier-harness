@@ -6,6 +6,7 @@ Classification of "what ships publicly" is delegated to `surface_contract`.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
@@ -13,6 +14,7 @@ from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 from espalier import surface_contract
 from espalier._atomic_io import _TEMPFILE_OPEN_FLAGS
 from espalier._safe_walk import safe_rglob
+from espalier.zone_writes import is_self_ignoring
 
 
 @dataclass(frozen=True)
@@ -152,6 +154,27 @@ def _is_pruned_from_walk(rel: str) -> bool:
     return rel.startswith("dist/final-release-matrix/")
 
 
+def _tree_walk(repo_root: Path) -> Iterator[Path]:
+    """The no-index fallback's enumeration: what ``safe_rglob`` yields, less a
+    directory below the root that declares itself generated (its own
+    ``.gitignore`` one bare ``*``, the zone watch's predicate) and everything
+    in it, since an index never holds it (DEF-4072; the plugin loader writes
+    the own-clear mod's ``.claude-plugin/types/`` so, and its files classify
+    public). An enumeration prune, the index's stand-in: unlike
+    ``_is_pruned_from_walk`` it drops payload, as the index branch does.
+    ``safe_rglob`` walks top-down, so a declared directory is met before
+    anything in it; ``scripts/build_release_archive.py::_walk_repo`` is the
+    twin."""
+    declared: set[Path] = set()
+    for path in safe_rglob(repo_root):
+        if any(parent in declared for parent in path.parents):
+            continue
+        if path.is_dir() and not path.is_symlink() and is_self_ignoring(path):
+            declared.add(path)
+            continue
+        yield path
+
+
 def create_release_zip(repo_root: Path, output_zip: Path) -> ReleasePackSummary:
     """Create a clean release zip.
 
@@ -189,14 +212,15 @@ def create_release_zip(repo_root: Path, output_zip: Path) -> ReleasePackSummary:
     # helper says so on stderr -- and there safe_rglob is symlink-safe AND
     # (default skip_nested_repos=True) prunes embedded git repos, so a foreign
     # nested repo's files never enter the zip even when they classify as
-    # public. A nested repo never reaches the index branch at all: a submodule
+    # public; `_tree_walk` prunes a directory that declares itself generated
+    # the same way. A nested repo never reaches the index branch at all: a submodule
     # is a gitlink entry that `is_file()` rejects, and a plain nested clone is
     # untracked.
     tracked = surface_contract.tracked_paths(repo_root)
     # Both branches order by the posix string, so the archive and the report
     # come out byte-stable whichever enumeration answered.
     candidates = (
-        sorted(safe_rglob(repo_root), key=Path.as_posix) if tracked is None
+        sorted(_tree_walk(repo_root), key=Path.as_posix) if tracked is None
         else [repo_root / rel for rel in sorted(tracked)]
     )
     for path in candidates:
