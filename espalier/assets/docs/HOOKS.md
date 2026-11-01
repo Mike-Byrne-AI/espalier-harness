@@ -107,11 +107,21 @@ process reparented to PID 1 is a `python*` or `yes` command with ten or more
 CPU-minutes -- the orphan a fan-out or background probe leaves when its shell
 parent dies, invisible to a memory reading -- the header carries, after
 `Status:`, a `Loose:` line naming each by PID and CPU time with a one-paste
-`kill` (`Loose:     PID 4242 python 2685:01.10 CPU -- parent is PID 1: a
-fan-out's orphan, a run you detached on purpose (nohup ... & disown, e.g. the
-proof tier), or any process in a container; reporter only, nothing was killed.
-Check before you paste: kill 4242`); the sample below omits it because it is
-conditional, and Windows reports nothing. On every platform it writes this
+`kill` (`Loose:     PID 4242 python 2685:01.10 CPU (cwd in this checkout, the
+main checkout) -- parent is PID 1: a fan-out's orphan, a run you detached on
+purpose (nohup ... & disown, e.g. the proof tier), or any process in a
+container; reporter only, nothing was killed. Check before you paste: kill
+4242`). Each PID carries the checkout of this clone its working directory is
+in, read only when the line names one (the `/proc/<pid>/cwd` link on Linux, one
+`lsof` elsewhere, capped at two seconds): this checkout or another, by the
+main checkout or a worktree's path, or `cwd outside this clone's checkouts`,
+`cwd deleted` or `cwd unread`. Seats on one box share one process table, so a
+PID whose working directory is in another checkout of this clone is that
+checkout's run: the line names it and leaves it out of the paste (`Left out of
+the paste: 5100 -- run in another checkout of this clone: ask the session
+working there; with none there, read its parents first.`), and says `Nothing
+to paste.` when that leaves none. The sample below omits the line because it
+is conditional, and Windows reports nothing. On every platform it writes this
 session's marker under `.espalier-state/sessions/<session_id>.json` (the
 payload's `session_id`, sanitised to `[A-Za-z0-9_-]` before it names a file;
 `task_router.py` touches it on every prompt as a heartbeat) and, when another
@@ -1869,9 +1879,16 @@ new state as the next one to compare with.
   since Python 3.13 and Claude Code's plugin loader write into what they
   generate; read below a watched directory's top only, never at it; a
   `.gitignore` holding anything else, and a root `.gitignore` entry naming
-  the directory, skip nothing; and a declaration that lands during a session
+  the directory, skip nothing; a declaration that lands during a session
   retires nothing the session's snapshot already holds, so it is reported as
-  the added file it is), and editor and OS clutter
+  the added file it is; and one already there when the session starts
+  retires nothing git tracks, since the session's first snapshot asks git's
+  index once and walks a declared directory holding a tracked file other
+  than its own `.gitignore`: where the checkout has no git of its own, or
+  git cannot answer within 2 s, such a directory prunes as before, and so
+  does one holding files that only a nested checkout's own git tracks, or
+  one under a protected path added to `espalier.toml` during the session,
+  until the next session's snapshot), and editor and OS clutter
   (swap and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its
   size and modification time and never read by the hook: when git is asked
   about it (below), git hashes it through the checkout's own filters, up to

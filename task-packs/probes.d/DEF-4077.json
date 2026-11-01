@@ -1,0 +1,11 @@
+{
+ "id": "DEF-4077",
+ "subject": "tests/_box_lock.py",
+ "cmd": "python3 -c \"import sys,os,subprocess,datetime as d;sys.path.insert(0,'tests');import _box_lock as b;s=subprocess.run(['git','config','espalier.machine'],capture_output=True,text=True).stdout.strip() or 'air';t=(d.datetime.now(d.timezone.utc)-d.timedelta(minutes=61)).strftime('%Y-%m-%dT%H:%M:%SZ');l=b.waiting_line({'pid':os.getpid(),'started':t,'seat':s,'lane':'lane/x','argv':['pytest']},waited_s=0);print(('kill -9' in l) or ('taskkill' in l))\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "aa4960e372b9",
+ "text_sha": "77c33c6c9087",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: second read: the line does open with the holder's seat and lane (lines 197, 200), so that claim is dropped; the over-read start stamp (build_record 252 before acquire 390) is added as a cause and its restamp to the fix shape; the probe now reads a live seat's record (this checkout's name, its own pid) so the fix flips it; one reader named with DEF-4078 and DEF-4079; dates to the local day) [changed: probe, text]"
+}

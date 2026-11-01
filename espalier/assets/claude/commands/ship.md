@@ -54,8 +54,9 @@ push (the `lane` and `open` steps below, or a push and a re-bind onto a pull
 request already open) or says why it did not -- including, when the setting is
 off and a pull request is open, that it will merge without the handoff's commit.
 Whichever way it went -- the push landed, or a refusal this window is done with
-(the base red: the lane stays here, whole; or a step after a landed push
-refused), with that refusal in the marker and the lane to land first in the
+(the base red, or this seat's other pull request open: the lane stays here,
+whole; or a step after a landed push refused), with that refusal in the marker
+and the lane to land first in the
 brief; never a refusal this window must fix first (a dirty tree, a lane behind
 its remote), which arms nothing -- the verb then arms the own-clear marker for
 this session (`.espalier-state/own_clear.json`): in a window `seat.py launch`
@@ -155,9 +156,22 @@ be read refuses by name.
 A ruling that holds is said with its text's head and, by `open` alone, written
 into the pull request body (a `handoff` onto an open pull request says it and
 edits no body). The refusal, and `preflight`'s note, name the flag and the run
-id the ack must name. It notes, without refusing, when this seat
-already has another open pull request (by the seat whose latest claim or
-release names its lane: every seat may push as one GitHub account).
+id the ack must name.
+
+Holds the lane, unpushed, while this seat already has another open pull request
+(by the seat whose latest claim or release names its lane: every seat may push
+as one GitHub account) and the lane has no upstream of its own (never pushed,
+or tracking the base it was started from -- the Stop hook's handoff gate reads
+it the same way): one open pull request per seat. Nothing is pushed; the hold
+names the pull request, and `open` run again once it merges or closes opens
+the lane (nothing runs it for you). The Stop hook's hold for the lane is
+written with it, and a `handoff` held here arms the own-clear with the hold, as
+on a red base, the brief saying to stay on the branch until then. A `revert/`
+lane, and a lane the dispatcher's ruling lets onto a red base, open beside it
+with a note (the red's clearing lands first), as does a lane whose push
+already landed once -- the way past a hold that names another seat's pull
+request, which the hold names: `git push -u origin HEAD`, then `open`; where gh
+cannot list the open pull requests, the check is skipped and said.
 
 Refuses, before anything moves, when two or more live sessions work in this
 checkout -- Claude Code's own session registry places them, the session running

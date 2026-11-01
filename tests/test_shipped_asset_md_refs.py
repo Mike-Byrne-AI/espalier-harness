@@ -179,7 +179,7 @@ def test_shipped_asset_bodies_execute_no_undeployed_script() -> None:
             # A .claude body reaches an adopter with its self-host blocks
             # stripped (cli._asset_transform); the sibling gate reads the
             # driven tree, so it sees the same body this reads.
-            text = strip_self_host_blocks(text)
+            text = strip_self_host_blocks(text, source=rel)
         for ref in exec_refs(text):
             if ref.file in deployed or ref.guarded:
                 continue

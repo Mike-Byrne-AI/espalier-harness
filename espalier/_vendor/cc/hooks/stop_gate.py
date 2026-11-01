@@ -1868,8 +1868,9 @@ def _gate_handoff(root: Path) -> int:
     ahead, branch, upstream, own = found
     if ahead <= 0 or _own_clear_armed_at(root, head):
         # Nothing owed at this HEAD; or the handoff ran to its end for it and
-        # its push was held (the base red, or a step after a landed push
-        # refused; DEF-4057): the ship driver armed the own-clear with the
+        # its push was held (the base red, this seat's other pull request open,
+        # or a step after a landed push refused; DEF-4057, DEF-5038 -- that
+        # driver hold writes this gate's hold too): the ship driver armed the own-clear with the
         # lane to land first in the next window's brief, and the mod clears
         # this window at the turn's end -- the end a block here would
         # withhold, asking for a handoff that could only write a second row

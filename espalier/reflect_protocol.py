@@ -315,7 +315,9 @@ def _next_fence_state(line: str, fence: str | None) -> str | None:
     grammar: a block opened by a run of one character closes only on a run of
     the SAME character at least as long, alone on its line. Shared limit: an
     opener is not checked for a backtick in its info string, which CommonMark
-    says makes it no fence at all."""
+    says makes it no fence at all. Read at deploy too: ``surface_hygiene.code_fences``
+    places a self-host block's ends with it, and ``init`` refuses a body by
+    that placement, so an edit here can change which bodies deploy."""
     m = _FENCE_RE.match(line)
     if not m:
         return fence

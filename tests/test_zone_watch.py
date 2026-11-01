@@ -267,6 +267,21 @@ class TestTheWatchedSet:
         assert "added tools/cc/hooks/.gitignore" in text and "removed" not in text, text
         assert _HOOK in zw.read_baseline(zw.baseline_path(repo, "s-1"))["files"]
 
+    def test_a_file_tool_write_under_a_held_declaration_is_refreshed(self, tree: Path) -> None:
+        """The refresh reads the walk's predicate: a declared directory the
+        baseline holds files under is still walked, so a file a file tool adds
+        there is watched, refreshed, and the next shell call is quiet.
+        Mutation: is_watched prunes a declared ancestor whatever the baseline
+        holds (the walk keeps it; the new file then reports as added)."""
+        assert zw.take_baseline(tree, "s-1")
+        (tree / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+        _post(tree, "Bash", _FORMATTER)  # the declaration reports, as the row above holds
+        new = tree / "tools" / "cc" / "hooks" / "new_hook.py"
+        _bump(new, "print('written by a file tool')\n")
+        _post(tree, "Write", {"file_path": str(new)})
+        assert "tools/cc/hooks/new_hook.py" in zw.read_baseline(zw.baseline_path(tree, "s-1"))["files"]
+        assert _context(_post(tree, "Bash", _NO_OP)) == ""
+
     def test_a_large_file_is_identified_by_its_stat_and_never_read(self, tree: Path, monkeypatch) -> None:
         """A model or data file must not cost a hook its timeout. Mutation:
         hash every file whatever its size."""
@@ -289,6 +304,151 @@ class TestTheWatchedSet:
         assert zw.take_baseline(tree, "s-1")
         result = zw.after_shell_call(tree, "s-1")
         assert result is not None and result["status"] == "off"
+
+
+class TestADeclarationOlderThanTheSession:
+    """DEF-4073: a bare `*` already in a watched directory when the session
+    starts (dropped between sessions: a venv made inside a source directory, a
+    tool's cache, a `*` to silence git) is never honoured over what git
+    tracks. A fresh walk reads the index once, at the first declaration it
+    meets, and walks a declared directory holding a tracked path."""
+
+    def test_a_declaration_there_before_the_session_keeps_the_tracked_files_watched(self, repo: Path) -> None:
+        """The committed hooks are in the fresh baseline beside the
+        declaration, and a later edit to one reports. Mutation: hand the fresh
+        walk no tracked set (the prune the baseline used to take)."""
+        (repo / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+        assert zw.take_baseline(repo, "s-1")
+        baseline = zw.read_baseline(zw.baseline_path(repo, "s-1"))["files"]
+        assert {_HOOK, _OTHER, "tools/cc/hooks/.gitignore"} <= set(baseline), sorted(baseline)
+        _bump(repo / _HOOK, "print('edited under a declaration older than the session')\n")
+        assert f"changed {_HOOK}" in _context(_post(repo, "Bash", _FORMATTER))
+
+    def test_a_declared_directory_git_tracks_nothing_in_is_pruned_in_a_checkout(self, repo: Path) -> None:
+        """The mod's loader-written types/ in a checkout: nothing in it is
+        tracked, so the fresh walk prunes it as before. Mutation: walk every
+        declared directory in a checkout."""
+        types = repo / "tools" / "cc" / "mods" / "m" / ".claude-plugin" / "types"
+        types.mkdir(parents=True)
+        (types / ".gitignore").write_bytes(b"*\n")
+        (types / "tsconfig.json").write_bytes(b"{}\n")
+        snap = zw.snapshot(repo)
+        assert _HOOK in snap and not [r for r in snap if "/types/" in r], sorted(snap)
+
+    def test_a_fresh_walk_asks_git_once_and_a_walk_over_a_baseline_never(self, repo: Path, monkeypatch) -> None:
+        """Two declared directories each holding a tracked file, and an
+        untracked one beside them: one `git ls-files` for the fresh walk
+        (SessionStart cuts at 13 s), none for a walk that meets no
+        declaration, none for a walk over a baseline (every shell call's),
+        which still meets the untracked one. Mutations: one read per
+        directory; a read on every walk."""
+        hooks = repo / "tools" / "cc" / "hooks"
+        (hooks / "sub").mkdir()
+        (hooks / "sub" / "a.py").write_bytes(b"a\n")
+        (repo / "espalier.toml").write_text('protected_paths = ["vault/"]\n', encoding="utf-8")
+        (repo / "vault" / "gen").mkdir(parents=True)
+        (repo / "vault" / "gen" / "k.txt").write_bytes(b"k\n")
+        _git_ok(repo, "add", "tools", "vault")
+        _git_ok(repo, "commit", "-q", "-m", "sub")
+        (repo / "tools" / "cc" / "gen").mkdir()
+        (repo / "tools" / "cc" / "gen" / "out.json").write_bytes(b"{}\n")
+        calls: list[list[str]] = []
+        real = zw._hook_utils.spawn_checked
+
+        def counting(argv, **kw):
+            calls.append([str(a) for a in argv])
+            return real(argv, **kw)
+
+        monkeypatch.setattr(zw._hook_utils, "spawn_checked", counting)
+        assert "tools/cc/hooks/sub/a.py" in zw.snapshot(repo) and calls == []
+        for declared in (hooks, hooks / "sub", repo / "tools" / "cc" / "gen", repo / "vault" / "gen"):
+            (declared / ".gitignore").write_bytes(b"*\n")
+        fresh = zw.snapshot(repo)
+        assert {_HOOK, "tools/cc/hooks/sub/a.py", "vault/gen/k.txt"} <= set(fresh), sorted(fresh)
+        assert "tools/cc/gen/out.json" not in fresh
+        assert len(calls) == 1 and "ls-files" in calls[0], calls  # one read for both tops
+        assert "tools/cc/gen/out.json" not in zw.snapshot(repo, fresh)
+        assert len(calls) == 1, calls
+
+    def test_a_placeholder_declaration_alone_keeps_the_directory_generated(self, repo: Path) -> None:
+        """A generated directory whose only tracked file is its own bare `*`,
+        committed with `git add -f` to keep the directory in git, stays
+        pruned: a rebuild there is no slip (the review's regression).
+        Mutation: count a directory's own .gitignore as holding it."""
+        gen = repo / "tools" / "cc" / "gen"
+        gen.mkdir()
+        (gen / ".gitignore").write_bytes(b"*\n")
+        _git_ok(repo, "add", "-f", "tools/cc/gen/.gitignore")
+        _git_ok(repo, "commit", "-q", "-m", "placeholder")
+        (gen / "out.json").write_bytes(b"{}\n")
+        snap = zw.snapshot(repo)
+        assert _HOOK in snap and not [r for r in snap if r.startswith("tools/cc/gen/")], sorted(snap)
+        assert "tools/cc/gen" not in zw.tracked_dirs(repo, ["tools/cc/"])
+
+    def test_an_index_name_in_other_bytes_is_read_without_raising(self, repo: Path) -> None:
+        """A name git prints in bytes that are not UTF-8 (a latin-1 name
+        committed elsewhere) is kept undecoded: the read neither raises (on
+        Windows os.fsdecode is strict) nor loses the paths beside it.
+        Mutation: decode with os.fsdecode."""
+        g = ["git", "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+        sha = subprocess.run(g + ["hash-object", "-w", "--stdin"], cwd=str(repo), input=b"x\n",
+                             capture_output=True, check=True, timeout=30).stdout.strip()
+        subprocess.run(g + ["update-index", "--index-info"], cwd=str(repo),
+                       input=b"100644 " + sha + b"\ttools/cc/odd/caf\xe9.py\n",
+                       capture_output=True, check=True, timeout=30)
+        dirs = zw.tracked_dirs(repo, ["tools/cc/"])
+        assert {"tools/cc/hooks", "tools/cc/odd"} <= dirs, sorted(dirs)
+
+    def test_git_that_cannot_answer_keeps_the_prune(self, repo: Path, monkeypatch) -> None:
+        """A read that times out, or a git that cannot start, is no tracked
+        set: the declared directory prunes as it did before git was asked, and
+        the walk neither raises nor turns the check off. Mutation: let the
+        read's failure out of the walk."""
+        (repo / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+
+        def times_out(argv, **kw):
+            raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+
+        monkeypatch.setattr(zw._hook_utils, "spawn_checked", times_out)
+        assert _HOOK not in zw.snapshot(repo)
+        monkeypatch.setattr(zw._hook_utils, "spawn_checked",
+                            lambda argv, **kw: zw._hook_utils.SpawnFailure(tuple(argv), "Unresolved", None))
+        assert _HOOK not in zw.snapshot(repo)
+
+    def test_the_git_read_sits_outside_the_walk_budget(self, repo: Path, monkeypatch) -> None:
+        """A slow index read must not turn the check off for the session.
+        Mutation: count the read against WALK_TIME_BUDGET_S."""
+        (repo / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+        real = zw.tracked_dirs
+
+        def slow(*args, **kwargs):
+            time.sleep(0.6)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(zw, "tracked_dirs", slow)
+        monkeypatch.setattr(zw, "WALK_TIME_BUDGET_S", 0.5)
+        assert _HOOK in zw.snapshot(repo)
+
+    def test_a_tree_with_no_git_of_its_own_never_asks(self, tree: Path, monkeypatch) -> None:
+        """No repository, nothing tracked: the declaration prunes as before,
+        and no git is spawned. Mutation: ask git on every tree."""
+        (tree / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
+        monkeypatch.setattr(zw._hook_utils, "spawn_checked", lambda *a, **k: pytest.fail("git was asked"))
+        assert _HOOK not in zw.snapshot(tree)
+
+    def test_the_tracked_set_names_every_ancestor_and_reads_a_top_as_a_name(self, repo: Path) -> None:
+        """Each directory above a tracked path under the tops asked, and
+        nothing outside them; a top spelled like git's pathspec magic (a
+        `:`-led directory name is legal off Windows) is read as the name it
+        is, never as an exclusion. Mutation: drop --literal-pathspecs (`:!x/`
+        then lists everything outside x/)."""
+        (repo / "vault" / "x" / "deep").mkdir(parents=True)
+        (repo / "vault" / "x" / "deep" / "g.txt").write_bytes(b"x\n")
+        _git_ok(repo, "add", "vault")
+        _git_ok(repo, "commit", "-q", "-m", "vault")
+        assert zw.tracked_dirs(repo, ["vault/"]) == {"vault", "vault/x", "vault/x/deep"}
+        assert {"tools", "tools/cc", "tools/cc/hooks"} <= zw.tracked_dirs(repo, ["tools/cc/"])
+        assert zw.tracked_dirs(repo, [":!tools/"]) == frozenset()
 
 
 class TestTheSnapshotAndDiff:
