@@ -214,10 +214,16 @@ TIMEOUT_NEAR_SERIAL_FILES: tuple[str, ...] = (
 #: launch four deployed hooks per stack, 64 s alone on the Windows seat
 #: (2026-11-01), placed by the nested-run rule in tests/test_proof_tier.py,
 #: which reds on a launch of a pytest child that no serial list holds and no
-#: enrolment clears (DEF-2035).
+#: enrolment clears (DEF-2035). The verify-pins controls: each clones this
+#: repository at a fixed commit and runs a pytest child twice over its rows,
+#: reached through ``scripts/verify_pins.py`` (the rule's script hop,
+#: DEF-2036); the file took 495.7 s at one worker on the Windows seat
+#: (2026-11-01), 65 s of it waiting on the box lock and the rest beside another
+#: seat's four-worker tier, its slowest row 175 s.
 NESTED_RUN_SERIAL_FILES: tuple[str, ...] = (
     "tests/test_declared_limits_contract.py",
     "tests/test_axis_registry.py",
+    "tests/test_verify_pins.py",
 )
 
 #: Everything the parallel leg leaves out and the serial leg runs.
@@ -232,7 +238,9 @@ SERIAL_FILES: tuple[str, ...] = WALL_CLOCK_SERIAL_FILES + TIMEOUT_NEAR_SERIAL_FI
 #: collection in tests/test_proof_tier.py: a serial file with a contract row
 #: that is not listed rides the pool, and a listed file with none leaves the
 #: second line collecting nothing, which pytest exits 5 on.
-SERIAL_CONTRACT_FILES: tuple[str, ...] = ("tests/test_declared_limits_contract.py", "tests/test_axis_registry.py")
+SERIAL_CONTRACT_FILES: tuple[str, ...] = (
+    "tests/test_declared_limits_contract.py", "tests/test_axis_registry.py", "tests/test_verify_pins.py",
+)
 
 #: The recall engine's own tests: the calibration pins, the eval instrument and
 #: the pasted-table contracts. They score the corpus the tree holds, so a change

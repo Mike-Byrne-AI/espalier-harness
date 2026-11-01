@@ -261,7 +261,11 @@ def _bash(tree: Path, fence: str) -> str:
 def _advisor(tree: Path, program: str) -> subprocess.CompletedProcess:
     """The dead-config pass as the probe drives it: UTF-8 mode off, the C
     locale, so a read that leans on the locale fails here before it fails on a
-    default-code-page Windows host."""
+    default-code-page Windows host. The drive passes the program through
+    ``-c``, so it must be ASCII (``tests/test_adopter_stand_downs_say_so.py``'s
+    twin says why)."""
+    stray = sorted({c for c in program if not c.isascii()})
+    assert not stray, f"an advisor program holds non-ASCII {stray}: a non-UTF-8 host cannot decode it from python -c"
     env = {k: v for k, v in os.environ.items() if k != "PYTHONUTF8"}
     env.update(PYTHONIOENCODING="utf-8", LC_ALL="C", PYTHONCOERCECLOCALE="0")
     return subprocess.run(
@@ -676,7 +680,9 @@ class TestTheDeadConfigPassReadsTheAdoptersBodies:
         them to do) is not then told the harness's own citations are dead."""
         tree = tmp_path / "tree"
         shutil.copytree(adopter / ".claude", tree / ".claude")
-        (tree / "tools" / "cc").mkdir(parents=True)
+        # The deployed tools/ whole: the citation root, and the hook scripts
+        # the copied settings wire (the pass reads them from args[]).
+        shutil.copytree(adopter / "tools", tree / "tools")
         smoke = tree / ".claude" / "commands" / "smoke.md"
         unmarked = "\n".join(
             line for line in _read(smoke).splitlines() if "espalier:managed" not in line
