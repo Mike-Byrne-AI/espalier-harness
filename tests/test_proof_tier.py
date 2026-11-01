@@ -318,9 +318,16 @@ class TestTheFullRecipe:
     ``SERIAL_FILES`` joins); every member must exist, none is listed twice,
     and the two lines must agree on them."""
 
-    def test_every_wall_clock_file_exists(self, pt):
+    def test_every_serial_file_exists(self, pt):
         for rel in pt.SERIAL_FILES:
             assert (REPO_ROOT / rel).is_file(), rel
+
+    def test_every_serial_list_joins_serial_files(self, pt):
+        """A reason's list that never joins ``SERIAL_FILES`` keeps its files on
+        the parallel leg while every line-level pin reads green."""
+        lists = [name for name in vars(pt) if name.endswith("_SERIAL_FILES")]
+        assert len(lists) >= 3, lists
+        assert set(pt.SERIAL_FILES) == {rel for name in lists for rel in getattr(pt, name)}, lists
 
     def test_the_full_tier_runs_the_hook_type_gate_first_and_the_contract_tier_never(self, pt):
         """The near-strict mypy gate lived only in CI from 2026-07-23 and went red

@@ -71,7 +71,8 @@ Measured on 2026-09-06, two lanes, one operator, an 8 GB machine:
    engine or hook change, or the handoff's preflight → the full suite, as
    `python scripts/proof_tier.py --run` (`--tier full` at the handoff): one
    command, two halves -- `-n auto` with the serial files left out (then
-   three wall-clock-budget files, five since), then those at one xdist worker
+   three wall-clock-budget files; `scripts/proof_tier.py::SERIAL_FILES` is the
+   list now), then those at one xdist worker
    (serially until DEF-2017, 2026-10-16) -- and one receipt naming both (6:31
    and 6:12 on the two clean runs `tests/README.md` pre-registered as the
    count the flip needed, against about nineteen minutes serial; the default

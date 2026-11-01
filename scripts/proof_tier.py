@@ -197,18 +197,21 @@ TIMEOUT_NEAR_SERIAL_FILES: tuple[str, ...] = (
     "tests/test_powershell_reachability_differential.py",
 )
 
-#: The files whose test runs other files' rows in one nested pytest child. The
-#: cited-pin run carries four rows of ``tests/test_speedbump_irreversible.py``
+#: The cited-pin run: one nested pytest child over the docs' cited rows. On
+#: 2026-11-01 it carried four rows of ``tests/test_speedbump_irreversible.py``
 #: (a wall-clock file above) and 39 write-guard rows whose hook judgment writes
-#: a speed bump's state, which ``tests/_hook_spawn.py`` never retries on a miss
-#: (DEF-2014's carve-out). Beside the parallel leg on windows-latest one such
-#: judgment outran the guard's 3.5 s budget and redded the leg (run
-#: 41217045122, 2026-10-31, DEF-4062); on the serial leg the child has the
-#: runner to itself (74 s alone on the Windows seat, 2026-11-01). Same one-home
-#: rule as the two lists above.
+#: a speed bump's state, which ``tests/_hook_spawn.py`` does not retry after a
+#: miss that left state (DEF-2014's carve-out). Beside the parallel leg on
+#: windows-latest one such judgment outran the guard's 3.5 s budget and redded
+#: the leg (run 41217045122, 2026-10-31, DEF-4062); on the full tier's serial
+#: leg the child has the runner to itself (74 s alone on the Windows seat). Not
+#: covered: the same rows in their own modules (354 state-writing rows on the
+#: parallel leg, the census of 2026-11-01), and the contract and recall tiers,
+#: whose ``-m contract`` line still collects this file under ``-n auto``.
 NESTED_RUN_SERIAL_FILES: tuple[str, ...] = (
     "tests/test_declared_limits_contract.py",
 )
+
 #: Everything the parallel leg leaves out and the serial leg runs.
 SERIAL_FILES: tuple[str, ...] = WALL_CLOCK_SERIAL_FILES + TIMEOUT_NEAR_SERIAL_FILES + NESTED_RUN_SERIAL_FILES
 
@@ -267,7 +270,7 @@ _PYTEST: tuple[str, ...] = ("pytest", "-q")
 #: saying so (failure-mode review, 2026-10-16), so the suite's own summary
 #: counts the tests that never ran (``tests/_never_ran.py``, DEF-2020). The
 #: serial files keep one worker (their placement was measured: wall-clock
-#: budgets and timeout-near gates, kept off parallel load); every other line
+#: budgets, timeout-near gates and the cited-pin run, kept off parallel load); every other line
 #: runs at ``-n auto``.
 _PARALLEL: tuple[str, ...] = ("-n", "auto")
 _ONE_WORKER: tuple[str, ...] = ("-n", "1")
