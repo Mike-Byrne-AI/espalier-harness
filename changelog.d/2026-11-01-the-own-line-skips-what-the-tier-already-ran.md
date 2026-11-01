@@ -11,6 +11,8 @@
   literal, never imported, because the CI tier job composes the line with no
   pytest installed; where the rules cannot be read nothing is left off. The
   reflect skill's line went from 14 files (8382 tests, 302 s on four workers)
-  to 10. Each changed body's count now prints beside `OWN_LINE_CEILING` (10,
+  to 10 (7636 tests, 307 s): the files it drops were fast, and the line's time
+  is `tests/test_write_guard.py`'s, which the skip does not touch. Each changed
+  body's count now prints beside `OWN_LINE_CEILING` (10,
   the live maximum), which a test pins over every tracked body, so a test file
   that starts naming the bodies grows the line by a decision.
