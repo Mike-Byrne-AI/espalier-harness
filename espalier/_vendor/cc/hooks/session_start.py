@@ -508,24 +508,142 @@ def _read_process_table() -> str:
     return result.stdout if result.returncode == 0 else ""
 
 
-def _loose_processes_line(table: str | None = None) -> str:
-    """The banner's `Loose:` value -- PIDs, stems, CPU time and the one-paste
-    kill -- or '' when nothing qualifies. ``table`` is for tests; production
-    reads the live process table."""
+# The checkout each named pid runs from (DEF-4070). Seats on one box share one
+# process table, and a run another seat detached on purpose is PPID 1 at full
+# CPU like any orphan: on 2026-10-31 one seat killed another's tier, read from
+# the table as a stray of its own. So the line names the checkout of this clone
+# holding each pid's working directory and leaves another checkout's pid out of
+# the one-paste kill. One bounded read, made only when the line names a pid:
+# the `/proc/<pid>/cwd` links where the host has them (no spawn), else one
+# `lsof` for every named pid (10 ms measured on macOS; it exits 1 when any
+# listed pid cannot be read and still prints the rest, so its output is read
+# whatever the exit code).
+_PROC_ROOT = Path("/proc")
+_LOOSE_CWD_PID_CAP = 32
+_LOOSE_CWD_SECONDS = 2.0
+# `lsof` sits in an sbin directory on macOS, which a hook's PATH can leave out.
+_LSOF_FALLBACK_DIRS = ("/usr/sbin", "/usr/bin", "/sbin")
+
+
+def _lsof_path() -> str | None:
+    """`lsof` from the absolute PATH entries and the fallbacks alone: an empty
+    or relative entry is the hook's cwd, the checkout, where a file named
+    `lsof` would otherwise run."""
+    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep) if os.path.isabs(d)]
+    found = shutil.which("lsof", path=os.pathsep.join([*dirs, *_LSOF_FALLBACK_DIRS]))
+    return found if found is not None and os.path.isabs(found) else None
+
+
+def _parse_lsof_cwds(text: str) -> dict[int, str]:
+    """``{pid: cwd}`` from `lsof -Fn` output (``p<pid>``, ``fcwd``, ``n<path>``
+    lines); a line of any other shape is skipped."""
+    found: dict[int, str] = {}
+    pid: int | None = None
+    for line in text.splitlines():
+        if line[:1] == "p" and line[1:].isascii() and line[1:].isdigit():
+            pid = int(line[1:])
+        elif line[:1] == "n" and pid is not None and pid not in found:
+            found[pid] = line[1:]
+    return found
+
+
+def _read_process_cwds(pids: list[int]) -> dict[int, str]:
+    """The working directory of each of the first `_LOOSE_CWD_PID_CAP` pids
+    that can be read: its `/proc` link where the host has them, else one
+    `lsof` under `_LOOSE_CWD_SECONDS`. A pid missing from the result was not
+    read (gone, another user's, or no reader on this host); {} on Windows."""
+    pids = pids[:_LOOSE_CWD_PID_CAP]
+    if not pids or os.name != "posix":
+        return {}
+    if (_PROC_ROOT / "self" / "cwd").exists():
+        found: dict[int, str] = {}
+        for pid in pids:
+            try:
+                found[pid] = os.readlink(_PROC_ROOT / str(pid) / "cwd")
+            except OSError:  # fail-open: ok deliberate -- a cwd link that cannot be read (gone, another user's) leaves that pid's cwd unread, and the Loose: line says so
+                continue
+        return found
+    lsof = _lsof_path()
+    if lsof is None:
+        return {}
+    try:
+        result = _hook_utils.run_bounded(  # spawn: ok a reporter: an lsof that cannot run leaves the cwds unread, and the Loose: line says so per pid
+            [lsof, "-w", "-a", "-d", "cwd", "-p", ",".join(str(pid) for pid in pids), "-Fn"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=_LOOSE_CWD_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError):  # fail-open: ok deliberate -- an lsof that cannot run leaves every cwd unread, and the Loose: line says so per pid
+        return {}
+    return _parse_lsof_cwds(result.stdout or "")
+
+
+def _pid_checkout(cwd: str, root: Path) -> tuple[str, bool]:
+    """The clause a pid's working directory earns on the line, and whether it
+    is in ANOTHER checkout of this clone: the deepest checkout holding it
+    (`_hook_utils.containing_checkout`, git's registry read off the disk),
+    spelled as the board spells one -- the main checkout, a worktree's path
+    under the main checkout's folder, or its own path -- and named for this
+    checkout too, so the line still reads right copied into another window."""
+    # Linux marks a removed folder's link; macOS `lsof` prints its old path
+    # unmarked (measured), which would read as the main checkout around it.
+    if cwd.endswith(" (deleted)") or not os.path.isdir(cwd):
+        return "cwd deleted", False
+    hit = _hook_utils.containing_checkout(cwd.replace("\\", "/"), root)
+    if hit is None:
+        return "cwd outside this clone's checkouts", False
+    base = Path(hit[0])
+    main = next((c for c in (root, *_hook_utils.sibling_checkouts(root)) if (c / ".git").is_dir()), None)
+    if main is not None and (base / ".git").is_dir():
+        where = "the main checkout"
+    else:
+        try:
+            where = base.resolve().relative_to(main.resolve()).as_posix() if main is not None else base.as_posix()
+        except (OSError, ValueError):   # a worktree outside the main checkout's folder: its own path
+            where = base.as_posix()
+    if not _hook_utils.is_sibling_checkout(root, base):
+        return f"cwd in this checkout, {where}", False
+    return f"cwd in {where}, another checkout of this clone", True
+
+
+def _loose_processes_line(root: Path, table: str | None = None, cwds: dict[int, str] | None = None) -> str:
+    """The banner's `Loose:` value -- PIDs, stems, CPU time, the checkout of
+    this clone each one's cwd is in, and the one-paste kill -- or '' when nothing
+    qualifies. ``table`` and ``cwds`` are for tests: production reads the live
+    process table and, only when a row qualifies, the named pids' working
+    directories; a call given a table reads no live cwd (a fixture's pid can
+    be a live process's)."""
+    live = table is None
     rows = _loose_processes(_read_process_table() if table is None else table)
     if not rows:
         return ""
-    named = ", ".join(f"PID {pid} {stem} {cpu} CPU" for pid, stem, cpu in rows)
-    pids = " ".join(str(pid) for pid, _, _ in rows)
+    if cwds is None:
+        cwds = _read_process_cwds([pid for pid, _, _ in rows]) if live else {}
+    named: list[str] = []
+    paste: list[str] = []
+    left: list[str] = []
+    for pid, stem, cpu in rows:
+        cwd = cwds.get(pid)
+        clause, elsewhere = ("cwd unread", False) if cwd is None else _pid_checkout(cwd, root)
+        named.append(f"PID {pid} {stem} {cpu} CPU ({clause})")
+        (left if elsewhere else paste).append(str(pid))
+    # ASCII-folded like the stem: a checkout's path lands in operator-facing text.
+    text = ", ".join(named).encode("ascii", "replace").decode("ascii")
     # PPID 1 is a fact; "orphan" is an inference. A run you detached on
     # purpose (`nohup ... & disown` -- the proof tier itself), a launchd or
     # systemd service, and every process in a container look identical here,
     # so the line names the fact and tells the reader to check before pasting.
+    # A pid in another checkout of this clone is that checkout's run, so the
+    # paste never carries it (the reader can still see it named above); the
+    # session there may be gone, so the sentence never presumes one.
+    left_out = (
+        f" Left out of the paste: {' '.join(left)} -- run in another checkout of this "
+        f"clone: ask the session working there; with none there, read its parents first."
+    ) if left else ""
+    kill = f" Check before you paste: kill {' '.join(paste)}" if paste else " Nothing to paste."
     return (
-        f"{named} -- parent is PID 1: a fan-out's orphan, a run you detached on "
+        f"{text} -- parent is PID 1: a fan-out's orphan, a run you detached on "
         f"purpose (nohup ... & disown, e.g. the proof tier), or any process in a "
-        f"container; reporter only, nothing was killed. Check before you paste: "
-        f"kill {pids}"
+        f"container; reporter only, nothing was killed.{left_out}{kill}"
     )
 
 
@@ -4967,7 +5085,7 @@ def _run_main(wall_start: float | None = None) -> int:
     # failed spawn costs the line, never the banner.
     _phase("loose-process scan", Integrity=integrity_line)
     try:
-        loose_line = _loose_processes_line()
+        loose_line = _loose_processes_line(root)
     except Exception as e:  # noqa: BLE001 — bounded warn, never block session
         _late_load_failed("session_start: loose-process scan failed", e)
         loose_line = ""
