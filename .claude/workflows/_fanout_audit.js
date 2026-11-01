@@ -1,6 +1,6 @@
 export const meta = {
   name: 'fanout-audit',
-  description: 'Reusable fan-out audit/review scaffold: finders emit FINDING_SCHEMA, refuters cull, survivors persist to a corpus, and ONLY a compact FindingsSummary + survivors-slim + corpus path return to the main window — never the N verbose rationales that bloat it. Default with no args: the task-packs/ landing audit.',
+  description: 'Reusable fan-out audit/review scaffold: finders emit FINDING_SCHEMA, refuters cull, survivors persist to a corpus, and ONLY a compact FindingsSummary + survivors-slim + corpus path return to the main window — never the N verbose rationales that bloat it. Args: an object carrying finders or targets; an args value it cannot use (a string that is not JSON, such as a bare pack path; a non-object; an unknown key) launches no agent and says why. With no args it is a dry run: it counts the task-packs/ landing-audit targets and the agent budget, and runs the audit only with confirm: true. More finders than maxFinders (default 25) refuses unless maxFinders is raised. Every lane that did not run is returned by name, never folded in as an empty result.',
   phases: [
     { title: 'Discover' },
     { title: 'Find' },
@@ -34,9 +34,14 @@ export const meta = {
 //     knownCategories: ["landed","owed-residual","ledger-gap"],
 //     corpusPath:      "reports/audit-findings.md",
 //     refute:          true,                        // default true
-//     model:           "sonnet" }                   // applied to EVERY agent call (default: inherit the session model)
-// With NO args it discovers task-packs/**/TP-*.md and runs the landing audit —
-// the exact incident that motivated this scaffold (this scaffold's own earn-the-red).
+//     model:           "sonnet",                    // applied to EVERY agent call (default: inherit the session model)
+//     confirm:         true,                        // run the no-args landing audit instead of its dry run
+//     maxFinders:      25 }                         // the finder cap; raise it to run a wider audit
+// With NO args (or an object carrying neither finders nor targets) it discovers
+// task-packs/**/TP-*.md, logs how many packs it found and the agents a run would
+// launch, and stops: the landing audit runs only with `confirm: true`. An args value
+// this scaffold cannot use launches no agent and says why, so a mistyped call never
+// widens into the whole-tree audit. More finders than the cap refuse the same way.
 //
 // SCHEMA NOTE: FINDING_SCHEMA lives in the engine's fan_out_findings module (the SoT).
 // The JS sandbox cannot import it, so the shape below is an inlined copy (the
@@ -47,13 +52,49 @@ export const meta = {
 
 // `args` NORMALIZATION — sister-sited from _convergence_review_template.js (2026-09-26):
 // some hosts forward the Workflow `args` value to the script global as a JSON-ENCODED
-// STRING rather than a parsed object; reading `args.finders` off a string yields
-// undefined, so every caller parameter binds to its default and the run silently
-// becomes the default landing audit. Accept BOTH shapes; no-args still yields {} ->
-// the defaults below.
+// STRING rather than a parsed object. Accept BOTH shapes, and REFUSE what is neither:
+// a string that does not parse (a plain pack path is the likely one), a JSON value that
+// is not an object, or an object carrying a key this scaffold does not read (`target`
+// for `targets`). Each once fell through to {} and so to the widest run there is, a
+// recursive audit of every pack with one finder per hit; now it launches no agent.
+const KNOWN_ARGS = ['finders', 'targets', 'knownCategories', 'corpusPath', 'refute', 'model', 'confirm', 'maxFinders']
+// A bound on an accidental wide run, not a measured budget: each finder spawns one
+// refuter per candidate it returns, so the finder count is the run's multiplier.
+const DEFAULT_MAX_FINDERS = 25
 let A = {}
-if (typeof args === 'string') { try { A = args.trim() ? JSON.parse(args) : {} } catch (e) { A = {} } }
-else if (args && typeof args === 'object') { A = args }
+let argsRefusal = null
+if (typeof args === 'string') {
+  if (args.trim()) {
+    try { A = JSON.parse(args) } catch (e) {
+      A = null
+      argsRefusal = `args is a string that does not parse as JSON (${JSON.stringify(args.slice(0, 80))}); pass an object such as { "targets": ["<pack path>"] }`
+    }
+  }
+} else if (args !== undefined && args !== null) { A = args }
+if (!argsRefusal) {
+  if (!A || typeof A !== 'object' || Array.isArray(A)) {
+    argsRefusal = `args resolved to ${Array.isArray(A) ? 'an array' : typeof A}, not an object; pass { "targets": [...] } or { "finders": [...] }`
+  } else {
+    const unknown = Object.keys(A).filter(k => !KNOWN_ARGS.includes(k))
+    if (unknown.length) {
+      argsRefusal = `args carries key(s) this scaffold does not read: ${unknown.join(', ')}; it reads ${KNOWN_ARGS.join(', ')}`
+    } else if (A.finders !== undefined && !(Array.isArray(A.finders) && A.finders.length &&
+        A.finders.every(f => f && typeof f === 'object' && typeof f.prompt === 'string' && f.prompt.trim()))) {
+      argsRefusal = 'finders must be a non-empty array of { id, label, prompt } objects, each carrying a prompt'
+    } else if (A.targets !== undefined && !(Array.isArray(A.targets) && A.targets.length &&
+        A.targets.every(t => typeof t === 'string' && t.trim()))) {
+      argsRefusal = 'targets must be a non-empty array of pack paths'
+    } else if (A.maxFinders !== undefined && !(Number.isInteger(A.maxFinders) && A.maxFinders > 0)) {
+      argsRefusal = 'maxFinders must be a positive integer'
+    }
+  }
+}
+if (argsRefusal) {
+  log(`fanout-audit: refused, no agent launched -- ${argsRefusal}`)
+  return { refused: argsRefusal, agentsLaunched: 0 }
+}
+const MAX_FINDERS = A.maxFinders || DEFAULT_MAX_FINDERS
+const CONFIRMED = A.confirm === true
 
 const CORPUS_PATH = A.corpusPath || 'reports/audit-findings.md'
 const INPUT_PATH = 'reports/.fanout_audit_input.json' // gitignored scratch (reports/)
@@ -74,6 +115,18 @@ const stripRefuterFields = (x) => {
   const { corrected_category, corrected_confidence, externally_verified, ...rest } = x
   return rest
 }
+// LANES THAT DID NOT RUN. Under the Workflow API a skipped agent, or one that dies on
+// a terminal error, resolves to null, and parallel() and pipeline() turn a thrown lane
+// into null. Each such lane is recorded here by its label and returned, never folded
+// into an empty result: a lane that found nothing and a lane that never ran must not
+// read the same. A refuter that did not run leaves its finding `unattempted`.
+const lanesNotRun = []
+const refutersNotRun = []
+const notRun = (phaseName, lane) => { lanesNotRun.push({ phase: phaseName, lane }) }
+const notRunByPhase = () => lanesNotRun.reduce((acc, x) => {
+  (acc[x.phase] = acc[x.phase] || []).push(x.lane)
+  return acc
+}, {})
 
 // Inlined FINDING_SCHEMA v2 (SoT: the engine's fan_out_findings.FINDING_SCHEMA).
 // Enums are verbatim: confidence ("high","med","low"), severity
@@ -187,6 +240,7 @@ function packId(pack) {
 // auto-discovered task-packs (the default landing audit).
 
 phase('Discover')
+const DEFAULT_RUN = !A.finders && !A.targets
 let finders = A.finders || null
 if (!finders) {
   let targets = A.targets || null
@@ -199,25 +253,54 @@ if (!finders) {
         schema: { type: 'object', additionalProperties: false, required: ['paths'],
           properties: { paths: { type: 'array', items: { type: 'string' } } } },
       }),
-    )
-    targets = (disco && disco.paths) || []
+    ).catch(() => null)
+    if (disco == null) {
+      notRun('Discover', 'discover:packs')
+      log('fanout-audit: the discover lane did not run (skipped, errored, or died on an error); no finder launched')
+      return { findersRun: 0, findersLaunched: 0, lanesNotRun: notRunByPhase(), agentsLaunched: 1 }
+    }
+    targets = disco.paths || []
   }
   finders = targets.map(p => ({ id: packId(p), label: `audit:${packId(p)}`, prompt: auditFinderPrompt(p) }))
+}
+const finderLabel = (f, i) => f.label || f.id || `finder#${i}`
+// The no-args landing audit is a DRY RUN unless the caller confirms it: the host's
+// approval prompt fires before the targets resolve, and an auto, bypass or headless
+// run does not ask again, so the count is said here and the run stops.
+if (DEFAULT_RUN && !CONFIRMED) {
+  log(`fanout-audit: DRY RUN -- discovered ${finders.length} pack(s); a run would launch ${finders.length} finder(s), ` +
+      `${REFUTE ? 'one refuter per candidate they return' : 'no refuter (refute is off)'} and 1 persist agent. ` +
+      `Pass { "confirm": true } to run it` +
+      (finders.length > MAX_FINDERS ? ` with { "maxFinders": ${finders.length} } to lift the finder cap of ${MAX_FINDERS}.` : '.'))
+  return {
+    dryRun: true, discovered: finders.length, finderCap: MAX_FINDERS,
+    wouldLaunch: { finders: finders.length, refuters: REFUTE ? 'one per candidate' : 0, persist: 1 },
+    agentsLaunched: 1,
+  }
+}
+if (finders.length > MAX_FINDERS) {
+  const why = `${finders.length} finder(s) exceed the cap of ${MAX_FINDERS}; pass { "maxFinders": ${finders.length} } to run them all`
+  log(`fanout-audit: refused, no finder launched -- ${why}`)
+  return { refused: why, findersLaunched: 0, agentsLaunched: DEFAULT_RUN ? 1 : 0 }
 }
 log(`fanout-audit: ${finders.length} finder(s); corpus=${CORPUS_PATH}; refute=${REFUTE}; model=${MODEL || 'inherited'}`)
 
 // --- Phase 2 — FIND --------------------------------------------------------
 // Each finder returns {findings:[FINDING_SCHEMA...]} to the runtime. A finder
-// that errors drops to [] (filtered), never to the chat.
+// that resolved null or threw is a lane that did not run: parallel() hands back
+// null at its index, and it is recorded by label, never read as an empty result.
 
 phase('Find')
-const finderResults = await parallel(finders.map(f => () =>
-  agent(f.prompt, opts({ label: f.label, phase: 'Find', schema: FINDINGS }))
-    .then(r => ((r && r.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: f.id, _finder: f.id })))
-    .catch(() => [])
+const finderResults = await parallel(finders.map((f, i) => () =>
+  agent(f.prompt, opts({ label: finderLabel(f, i), phase: 'Find', schema: FINDINGS }))
+    .then(r => (r == null ? null
+      : (r.findings || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: f.id, _finder: f.id }))))
 ))
+finders.forEach((f, i) => { if (finderResults[i] == null) notRun('Find', finderLabel(f, i)) })
+const findersRun = finders.length - lanesNotRun.filter(x => x.phase === 'Find').length
 const found = finderResults.filter(Boolean).flat()
-log(`fanout-audit: ${found.length} candidate finding(s) from ${finders.length} finder(s)`)
+log(`fanout-audit: ${found.length} candidate finding(s) from ${findersRun} of ${finders.length} finder(s)` +
+    (findersRun < finders.length ? `; did not run: ${notRunByPhase().Find.join(', ')}` : ''))
 
 // --- Phase 3 — REFUTE ------------------------------------------------------
 // Adversarially verify each candidate; merge the verdict into the finding.
@@ -231,8 +314,14 @@ if (REFUTE && found.length) {
     agent(auditRefutePrompt(f), opts({
       label: `refute:${f._finder || 'x'}#${i}`, phase: 'Refute', schema: REFUTE_RESULT,
     }))
-      .then(v => ({ ...f, ...(v || {}) }))
+      .then(v => (v == null
+        ? { ...f, refutation_outcome: 'unattempted', refutation_reason: 'refuter returned nothing (skipped, or died on an error)' }
+        : { ...f, ...v }))
       .catch(() => ({ ...f, refutation_outcome: 'unattempted', refutation_reason: 'refuter errored' }))
+      .then(r => {
+        if (r.refutation_outcome === 'unattempted') refutersNotRun.push(`refute:${f._finder || 'x'}#${i}`)
+        return r
+      })
   ))
 }
 // Strip EVERY private `_*` tag before the schema-validated persist, not `_finder`
@@ -252,6 +341,16 @@ log(`fanout-audit: ${survivorCount} survivor(s) of ${findings.length} after refu
 // turns any transcription corruption into a LOUD failure (not silent drift).
 
 phase('Persist')
+// No finder ran: there is no round to record. A zero-total summary row would read in
+// the per-run ledger as a clean round, which it was not.
+if (findersRun === 0) {
+  log('fanout-audit: no finder lane ran; nothing persisted')
+  return {
+    findersRun: 0, findersLaunched: finders.length, lanesNotRun: notRunByPhase(),
+    refutersNotRun, candidates: 0, appended: 0, persistError: null, persistWarnings: [],
+    corpusPath: CORPUS_PATH, survivors: [],
+  }
+}
 // ALL caller-suppliable values (findings, knownCategories, corpusPath) travel
 // through the JSON input file the persist agent writes with the Write tool — they
 // are NEVER interpolated into the shell command. So a category or corpus path
@@ -320,7 +419,7 @@ const persistPrompt =
   `no interpreter that imports espalier answered on this host: report that ` +
   `line as the persist error, never as an empty result.`
 
-const persistResult = await agent(persistPrompt, opts({
+const persistRaw = await agent(persistPrompt, opts({
   label: 'persist:corpus', phase: 'Persist',
   schema: {
     type: 'object', additionalProperties: true,
@@ -339,11 +438,16 @@ const persistResult = await agent(persistPrompt, opts({
       survivors_slim: { type: 'array', items: { type: 'object', additionalProperties: true } },
     },
   },
-})).catch(() => ({ total: findings.length, appended: 0, persist_error: 'persist agent errored (fail-open)', corpus_path: CORPUS_PATH, survivors_slim: [] }))
+})).catch(() => null)
+if (persistRaw == null) notRun('Persist', 'persist:corpus')
+const persistResult = persistRaw || { total: findings.length, appended: 0, persist_error: 'the persist agent did not run (skipped, errored, or died on an error; fail-open): nothing was persisted', corpus_path: CORPUS_PATH, survivors_slim: [] }
 
 // The ONLY thing the main window reads: scalars + survivors-slim + corpus path.
 return {
-  findersRun: finders.length,
+  findersRun,
+  findersLaunched: finders.length,
+  lanesNotRun: notRunByPhase(),
+  refutersNotRun,
   candidates: found.length,
   summary: {
     total: persistResult.total,
