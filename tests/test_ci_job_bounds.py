@@ -171,7 +171,7 @@ class TestThePortabilityCellRunsTheLocalTiersLegs:
 
     def test_the_serial_files_leave_the_parallel_leg_and_make_up_the_serial_one(self):
         """The derivation is pinned below; this pins its use, so a hurried edit
-        that drops `$ignores` from the parallel line (the five files then run
+        that drops `$ignores` from the parallel line (the serial files then run
         under load, the macOS test_redos red DEF-979 cites, and again serially)
         or narrows the serial line reds here."""
         body = _portability_test_step()

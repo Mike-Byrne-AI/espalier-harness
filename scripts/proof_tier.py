@@ -26,8 +26,8 @@ leaves it out since 2026-10-01, which is how it stopped crashing them);
 ``git add -u <file>`` stages the deletion and the population is honest again.
 
 The full tier's command lines are the hook type gate, the lint line, then the
-parallel recipe: ``pytest -n auto`` with the five serial files left out, then
-those five at one xdist worker (``-n 1`` since DEF-2017: on a thread-method
+parallel recipe: ``pytest -n auto`` with the serial files left out, then
+those files at one xdist worker (``-n 1`` since DEF-2017: on a thread-method
 host a ceiling crossing then names its test). The pytest pair is
 the local default since 2026-09-06, after the two clean full runs
 ``tests/README.md`` pre-registered as the count the flip needed (6:31 and 6:12
@@ -196,8 +196,24 @@ TIMEOUT_NEAR_SERIAL_FILES: tuple[str, ...] = (
     "tests/test_guard_metamorphic.py",
     "tests/test_powershell_reachability_differential.py",
 )
+
+#: The cited-pin run: one nested pytest child over the docs' cited rows. On
+#: 2026-11-01 it carried four rows of ``tests/test_speedbump_irreversible.py``
+#: (a wall-clock file above) and 39 write-guard rows whose hook judgment writes
+#: a speed bump's state, which ``tests/_hook_spawn.py`` does not retry after a
+#: miss that left state (DEF-2014's carve-out). Beside the parallel leg on
+#: windows-latest one such judgment outran the guard's 3.5 s budget and redded
+#: the leg (run 41217045122, 2026-10-31, DEF-4062); on the full tier's serial
+#: leg the child has the runner to itself (74 s alone on the Windows seat). Not
+#: covered: the same rows in their own modules (354 state-writing rows on the
+#: parallel leg, the census of 2026-11-01), and the contract and recall tiers,
+#: whose ``-m contract`` line still collects this file under ``-n auto``.
+NESTED_RUN_SERIAL_FILES: tuple[str, ...] = (
+    "tests/test_declared_limits_contract.py",
+)
+
 #: Everything the parallel leg leaves out and the serial leg runs.
-SERIAL_FILES: tuple[str, ...] = WALL_CLOCK_SERIAL_FILES + TIMEOUT_NEAR_SERIAL_FILES
+SERIAL_FILES: tuple[str, ...] = WALL_CLOCK_SERIAL_FILES + TIMEOUT_NEAR_SERIAL_FILES + NESTED_RUN_SERIAL_FILES
 
 #: The recall engine's own tests: the calibration pins, the eval instrument and
 #: the pasted-table contracts. They score the corpus the tree holds, so a change
@@ -254,7 +270,7 @@ _PYTEST: tuple[str, ...] = ("pytest", "-q")
 #: saying so (failure-mode review, 2026-10-16), so the suite's own summary
 #: counts the tests that never ran (``tests/_never_ran.py``, DEF-2020). The
 #: serial files keep one worker (their placement was measured: wall-clock
-#: budgets and timeout-near gates, kept off parallel load); every other line
+#: budgets, timeout-near gates and the cited-pin run, kept off parallel load); every other line
 #: runs at ``-n auto``.
 _PARALLEL: tuple[str, ...] = ("-n", "auto")
 _ONE_WORKER: tuple[str, ...] = ("-n", "1")
