@@ -1884,9 +1884,13 @@ new state as the next one to compare with.
   the added file it is; and one already there when the session starts
   retires nothing git tracks, since the session's first snapshot asks git's
   index once and walks a declared directory holding a tracked file other
-  than its own `.gitignore`: where the checkout has no git of its own, or
-  git cannot answer within 2 s, such a directory prunes as before, and so
-  does one holding files that only a nested checkout's own git tracks, or
+  than its own `.gitignore`: where the checkout has no git of its own, such
+  a directory prunes as before; where git cannot answer (past 2 s, a git
+  that cannot start, a refusal such as `safe.directory`'s exit 128) it
+  prunes as before too, and the walk says so once a session
+  (`zone_watch_failed_open_tracked_read`, counted by `/status --log`, the
+  cause in its `details`); and so does one holding files that only a
+  nested checkout's own git tracks, or
   one under a protected path added to `espalier.toml` during the session,
   until the next session's snapshot), and editor and OS clutter
   (swap and backup files, `.DS_Store`). A file of 4 MiB or more is identified by its

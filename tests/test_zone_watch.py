@@ -112,8 +112,14 @@ _NO_OP = {"command": "git status"}
 
 
 def _audit(tree: Path) -> list[dict]:
+    return _audit_at(tree / ".audit")
+
+
+def _audit_at(folder: Path) -> list[dict]:
+    """The records under an audit folder: a hook run's (``_run`` keeps it in
+    the tree), or an in-process call's (conftest's ESPALIER_AUDIT_DIR)."""
     rows = []
-    for log in (tree / ".audit").glob("*.log"):
+    for log in folder.glob("*.log"):
         rows += [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line.strip()]
     return rows
 
@@ -399,21 +405,52 @@ class TestADeclarationOlderThanTheSession:
         dirs = zw.tracked_dirs(repo, ["tools/cc/"])
         assert {"tools/cc/hooks", "tools/cc/odd"} <= dirs, sorted(dirs)
 
-    def test_git_that_cannot_answer_keeps_the_prune(self, repo: Path, monkeypatch) -> None:
-        """A read that times out, or a git that cannot start, is no tracked
-        set: the declared directory prunes as it did before git was asked, and
-        the walk neither raises nor turns the check off. Mutation: let the
-        read's failure out of the walk."""
+    @pytest.mark.parametrize("fault, cause", [
+        ("timeout", "timed out past 2 s"),
+        ("unstarted", "could not start (Unresolved)"),
+        ("refused", "exited 128"),
+    ])
+    def test_git_that_cannot_answer_keeps_the_prune_and_says_so_once(self, repo: Path, monkeypatch, capsys,
+                                                                    fault: str, cause: str) -> None:
+        """DEF-4084: a read that times out, a git that cannot start, or one
+        that refuses the tree (exit 128: safe.directory's dubious ownership)
+        is no tracked set: the declared directory prunes as it did before git
+        was asked, the walk neither raises nor turns the check off, and it
+        says so once a session, the cause named: one record `/status --log`
+        counts, one stderr line, one flag. Mutations: return the empty set
+        unsaid (the defect); let the read's failure out of the walk; say it
+        on every walk."""
         (repo / "tools" / "cc" / "hooks" / ".gitignore").write_bytes(b"*\n")
 
-        def times_out(argv, **kw):
-            raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+        def fails(argv, **kw):
+            if fault == "timeout":
+                raise subprocess.TimeoutExpired(argv, kw.get("timeout"))
+            if fault == "unstarted":
+                return zw._hook_utils.SpawnFailure(tuple(argv), "Unresolved", None)
+            return subprocess.CompletedProcess(argv, 128, b"", b"fatal: detected dubious ownership\n")
 
-        monkeypatch.setattr(zw._hook_utils, "spawn_checked", times_out)
+        monkeypatch.setattr(zw._hook_utils, "spawn_checked", fails)
         assert _HOOK not in zw.snapshot(repo)
-        monkeypatch.setattr(zw._hook_utils, "spawn_checked",
-                            lambda argv, **kw: zw._hook_utils.SpawnFailure(tuple(argv), "Unresolved", None))
         assert _HOOK not in zw.snapshot(repo)
+        said = [r for r in _audit_at(Path(os.environ["ESPALIER_AUDIT_DIR"]))
+                if r.get("event_type") == "zone_watch_failed_open_tracked_read"]
+        assert len(said) == 1 and said[0]["details"]["cause"] == cause, said
+        assert zw._integrity.is_fail_open_event(said[0]["event_type"])
+        assert (repo / hu.STATE_DIR / (hu.ONCE_FLAG_PREFIX + "zone-tracked-read")).is_file()
+        assert capsys.readouterr().err.count(f"git ls-files {cause}") == 1
+
+    def test_a_clean_read_with_nothing_tracked_says_nothing(self, repo: Path) -> None:
+        """The answer a failed read gave before DEF-4084, given cleanly (a
+        declared directory git tracks nothing in), prunes and records
+        nothing. Mutation: say it whenever the tracked set is empty."""
+        gen = repo / "tools" / "cc" / "gen"
+        gen.mkdir()
+        (gen / ".gitignore").write_bytes(b"*\n")
+        (gen / "out.json").write_bytes(b"{}\n")
+        assert zw.tracked_dirs(repo, ["tools/cc/gen/"]) == frozenset()
+        assert not [r for r in zw.snapshot(repo) if r.startswith("tools/cc/gen/")]
+        assert not [r for r in _audit_at(Path(os.environ["ESPALIER_AUDIT_DIR"]))
+                    if r.get("event_type") == "zone_watch_failed_open_tracked_read"]
 
     def test_the_git_read_sits_outside_the_walk_budget(self, repo: Path, monkeypatch) -> None:
         """A slow index read must not turn the check off for the session.

@@ -229,11 +229,11 @@ def _holds_under(files: dict[str, Entry], base: str) -> bool:
 
 
 #: How long a fresh walk's one ``git ls-files`` may take; past it the
-#: declared directories prune as they would with no git.
+#: declared directories prune as they would with no git, and the walk says so.
 TRACKED_READ_TIMEOUT_S = 2.0
 
 
-def tracked_dirs(root: Path, prefixes: list[str]) -> frozenset[str]:
+def tracked_dirs(root: Path, prefixes: list[str], why: list[str] | None = None) -> frozenset[str] | None:
     """Every directory that holds a path git tracks under ``prefixes`` (for
     ``a/b/c.py``, ``a/b`` and ``a``), from one ``git ls-files -z`` run at a
     root holding a ``.git`` of its own, its pathspecs read literally. A
@@ -241,8 +241,10 @@ def tracked_dirs(root: Path, prefixes: list[str]) -> frozenset[str]:
     declaration committed with ``git add -f`` keeps its directory generated),
     and a name git prints in bytes the filesystem spells otherwise is kept
     undecoded, holding nothing the walk meets. Empty where the root has no
-    ``.git`` or git cannot answer: the declared directories then prune as
-    before (docs/HOOKS.md names it). Twin of
+    ``.git`` (nothing is tracked); None where git cannot answer (past
+    TRACKED_READ_TIMEOUT_S, not started, a non-zero exit), the cause appended
+    to ``why`` when one is given: the declared directories then prune as
+    before and the caller says so (docs/HOOKS.md names it). Twin of
     ``espalier.zone_writes._tracked_dirs``."""
     import subprocess
 
@@ -253,10 +255,22 @@ def tracked_dirs(root: Path, prefixes: list[str]) -> frozenset[str]:
             ["git", "--literal-pathspecs", "ls-files", "-z", "--", *prefixes], root=root,
             stdin=subprocess.DEVNULL, capture_output=True, timeout=TRACKED_READ_TIMEOUT_S, cwd=str(root),
         )
-    except (subprocess.SubprocessError, OSError):  # fail-open: ok deliberate -- git could not answer in time: the declared directories prune as they did before git was asked (docs/HOOKS.md names the fallback); a harness hook's drift still shows in the integrity manifest
-        return frozenset()
-    if isinstance(result, _hook_utils.SpawnFailure) or result.returncode != 0:
-        return frozenset()
+    except subprocess.TimeoutExpired:  # fail-open: ok deliberate -- None makes the walk prune as before git was asked and say so once
+        if why is not None:
+            why.append(f"timed out past {TRACKED_READ_TIMEOUT_S:g} s")
+        return None
+    except (subprocess.SubprocessError, OSError) as exc:  # fail-open: ok deliberate -- None makes the walk prune as before git was asked and say so once
+        if why is not None:
+            why.append(f"could not run ({type(exc).__name__})")
+        return None
+    if isinstance(result, _hook_utils.SpawnFailure):
+        if why is not None:
+            why.append(f"could not start ({result.error})")
+        return None
+    if result.returncode != 0:
+        if why is not None:
+            why.append(f"exited {result.returncode}")
+        return None
     dirs: set[str] = set()
     for raw in result.stdout.split(b"\0"):
         rel = raw.decode("utf-8", "surrogateescape")
@@ -319,7 +333,9 @@ def snapshot(root: Path, prior: dict[str, Entry] | None = None,
     between the listing and the stat is absent, as it is on disk. With no
     ``prior`` (a fresh baseline) a declared directory holding a path git
     tracks is walked, never pruned: git's index is read once, at the first
-    declaration the walk meets, and its time is not the walk's. Raises
+    declaration the walk meets, and its time is not the walk's; a read git
+    cannot answer prunes as before and is said once a session
+    (``zone_watch_failed_open_tracked_read``). Raises
     WatchSetTooLarge past WALK_FILE_BUDGET files or WALK_TIME_BUDGET_S."""
     fresh = prior is None
     prior = prior or {}
@@ -328,6 +344,7 @@ def snapshot(root: Path, prior: dict[str, Entry] | None = None,
     pruned = pruned_dir_names(root)
     prefixes = watched_prefixes(root)
     tracked: frozenset[str] | None = None
+    asked = False
     out: dict[str, Entry] = {}
 
     def take(rel: str, full: str) -> None:
@@ -354,10 +371,21 @@ def snapshot(root: Path, prior: dict[str, Entry] | None = None,
         for dirpath, dirnames, filenames in os.walk(top):
             base = Path(dirpath).relative_to(root).as_posix()
             if not at_top and is_self_ignoring(Path(dirpath)) and not _holds_under(prior, base):
-                if fresh and tracked is None:
+                if fresh and not asked:
+                    asked = True
                     began = time.monotonic()
-                    tracked = tracked_dirs(root, prefixes)
+                    why: list[str] = []
+                    tracked = tracked_dirs(root, prefixes, why)
                     deadline += time.monotonic() - began
+                    if tracked is None:
+                        cause = why[0] if why else "could not answer"
+                        _hook_utils.say_once(
+                            root, "zone-tracked-read", "zone_watch", "zone_watch_failed_open_tracked_read",
+                            f"protected-file check: git ls-files {cause}, so this session's baseline prunes "
+                            "every self-ignoring directory under a protected path, files git tracks in it "
+                            "included, until the next session's baseline",
+                            cause=cause,
+                        )
                 if tracked is None or base not in tracked:
                     # Generated by its own declaration, below the top, with
                     # nothing of it in the baseline (nor, at a fresh walk, in
