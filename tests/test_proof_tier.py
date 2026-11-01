@@ -22,7 +22,7 @@ import subprocess
 import sys
 import types
 from pathlib import Path
-from typing import NamedTuple
+from typing import Iterable, NamedTuple
 
 import pytest
 from tests._live_tree import checkout_glob
@@ -832,7 +832,7 @@ class TestNoParallelLineCollectsASerialFile:
         and the same selection naming the tests directory (which a file-token
         filter reads as a file), both put the cited-pin run on the pool."""
         bare = ("pytest", "-n", "auto", "-m", "contract", "-q")
-        cited = set(pt.NESTED_RUN_SERIAL_FILES)
+        cited = set(pt.SERIAL_CONTRACT_FILES)   # a nested-run file with no contract row is not on this line
         assert self._on_the_pool(bare, pt.SERIAL_FILES) >= cited
         assert self._on_the_pool(bare + ("tests/",), pt.SERIAL_FILES) >= cited
         assert not self._on_the_pool(bare + tuple(f"--ignore={rel}" for rel in cited), pt.SERIAL_FILES) & cited
@@ -1753,6 +1753,285 @@ class TestTheWallClockRule:
     def test_the_rule_stays_quiet_on(self, label, extra):
         reading = self._read(self._GREEN + extra)
         assert reading.problems == [], (label, reading.problems)
+
+
+# ── the nested-run rule (DEF-2035) ────────────────────────────────────────────
+#
+# A test that launches a pytest child puts a second session on the box, and on
+# the parallel leg that session runs beside the `-n auto` pool. The cited-pin
+# run's child redded a windows-latest leg there (DEF-4062) and moved to
+# `NESTED_RUN_SERIAL_FILES`; nothing caught the next one, and the axis
+# registry's run of its proving nodes (64 s alone on the Windows seat,
+# 2026-11-01) rode the pool until this rule. So every launch under tests/ is
+# read by the AST: a `subprocess` launcher or `run_bounded` whose argv is a
+# pytest command -- `-m pytest`, a bare `pytest` head, or `-c` with a program
+# that calls `pytest.main`, a constant or a `dedent` of one -- spelled in the
+# call, through a name bound in the function or the module, through `+` or a
+# starred name. A launching function in a file on no serial list reds until
+# it is placed: a child that runs this repo's rows for long, or rows that keep
+# a budget (a hook judgment, a timed bound), joins `NESTED_RUN_SERIAL_FILES`
+# (and `SERIAL_CONTRACT_FILES` when its file holds a contract row); one that
+# only collects, runs a tree the test planted, or runs a few in-process rows
+# for seconds is enrolled below with what it runs and its time alone. Not
+# read: a pytest reached through a script (`scripts/verify_pins.py` is one,
+# DEF-2036), `os.system`, a shell string, a wrapper head (`bash -c`, `uv
+# run`), an f-string program, an argv a helper returns or takes as a
+# parameter, one held on a class attribute or imported, and one grown by `+=`
+# or `.extend`. An enrolment covers its function whole: a second launch
+# written into it, or a new caller handing an enrolled helper `-n auto`, reads
+# green. A launch in a `tests/_*.py` helper is judged where it is written, so
+# place it by the files that call it, never by enrolling the helper for them.
+
+_LAUNCHERS = frozenset({"run", "Popen", "call", "check_call", "check_output"})
+#: Launchers read by name wherever they come from (``tools/cc/_json_safe.py``'s
+#: bounded spawn, which takes the argv first).
+_NAMED_LAUNCHERS = frozenset({"run_bounded"})
+#: The launches the scan finds at the pin, the serial files' included; the
+#: floor the scan must clear before its verdict is read, as the wall-clock
+#: rule's (a scan that finds a handful is broken, not looking at clean files).
+_NESTED_LAUNCHES_AT_PIN = 14  # 2026-11-01: 11 enrolled below, the cited-pin run, the axis registry's two
+_NESTED_LAUNCH_FLOOR = _NESTED_LAUNCHES_AT_PIN // 2
+#: The launches whose child rides the parallel leg, EXACT: ``file::qualname``
+#: -> what the child runs and how long its row took alone. An unenrolled launch
+#: reds, and so does an entry whose function no longer launches (a rename
+#: re-enrolls it). Timed 2026-11-01 on the Windows seat, one worker, a quiet box.
+_PARALLEL_NESTED_RUNS: dict[str, str] = {
+    "tests/test_benchmark_release_hygiene.py::TestResultsMdCitationsResolve::test_every_cited_node_id_collects":
+        "a --collect-only child per node id the bench results cite; 1.2 s",
+    "tests/test_box_lock.py::_spawn":
+        "a planted one-file suite under the box lock's plugin; up to 6.0 s a row",
+    "tests/test_golden_examples.py::test_golden_examples_pass_under_bare_pytest":
+        "the golden examples under a bare pytest, a few one-assert files; under 0.5 s",
+    "tests/test_marker_parity.py::TestFullTreeFragmentsResolve::test_every_fragment_collects_at_least_one_real_nodeid":
+        "one --collect-only of the whole tests/ tree, no row run; 29 s, under its own 300 s bound; the one "
+        "enrolled row marked past the 60 s ceiling (360 s), kept here because no test body runs",
+    "tests/test_proof_tier.py::TestNoParallelLineCollectsASerialFile::_collected":
+        "a --collect-only of the serial files under a tier line's selection; up to 5.5 s a row",
+    "tests/test_proof_tier.py::TestTheFullRecipe::test_the_contract_tiers_body_line_collects_the_diagnostics::collected":
+        "a --collect-only of one file under a selection; 2.3 s",
+    "tests/test_proof_tier.py::TestTheLegsAndTheHeavyLane::test_neither_line_collects_a_heavy_stage_without_heavy::collected":
+        "a --collect-only of one file under a selection; 1.9 s",
+    "tests/test_timeout_backstop.py::_drive":
+        "a planted one-file suite under --timeout=1; POSIX only (SIGALRM), untimed",
+    "tests/test_write_guard.py::TestGitBashDrivePrefix::_inner_session":
+        "a planted two-test probe under the floor's construction refusal; POSIX only, untimed",
+    "tests/test_write_guard.py::TestGitBashDrivePrefix::test_the_rows_the_floor_cannot_drive_are_exactly_the_skipped_ones":
+        "this file's 13 emulated path rows, in process, no hook spawned; the row runs on POSIX at 3.12+, "
+        "and its child took 1.9 s driven by hand on the Windows seat",
+    "tests/test_xdist_never_ran.py::_drive":
+        "a planted one-file suite under xdist with a crash or a ceiling planted; up to 7.2 s a row",
+}
+
+
+def _bindings(nodes: Iterable[ast.AST]) -> dict[str, list[ast.expr]]:
+    """Every value assigned to a plain name among ``nodes``, by name."""
+    out: dict[str, list[ast.expr]] = {}
+    for node in nodes:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    out.setdefault(target.id, []).append(node.value)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            out.setdefault(node.target.id, []).append(node.value)
+    return out
+
+
+def _module_bindings(tree: ast.Module) -> dict[str, list[ast.expr]]:
+    """``_bindings`` over the statements no function or class body holds, so
+    a name bound under a module-level ``if`` or ``try`` is read too."""
+    stack: list[ast.AST] = list(tree.body)
+    nodes: list[ast.AST] = []
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        nodes.append(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return _bindings(nodes)
+
+
+def _word(node: ast.expr, names: dict[str, list[ast.expr]]) -> str | None:
+    """``node`` as a string constant, through a name bound to one and through
+    a ``dedent`` of one."""
+    if (isinstance(node, ast.Call) and node.args
+            and (getattr(node.func, "id", None) == "dedent" or getattr(node.func, "attr", None) == "dedent")):
+        return _word(node.args[0], names)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        for value in names.get(node.id, ()):
+            word = _word(value, {})
+            if word is not None:
+                return word
+    return None
+
+
+def _is_pytest_argv(node: ast.expr | None, names: dict[str, list[ast.expr]], depth: int = 0) -> bool:
+    if node is None or depth > 8:
+        return False
+    if isinstance(node, ast.Name):
+        return any(_is_pytest_argv(value, names, depth + 1) for value in names.get(node.id, ()))
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _is_pytest_argv(node.left, names, depth + 1) or _is_pytest_argv(node.right, names, depth + 1)
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return False
+    if any(isinstance(e, ast.Starred) and _is_pytest_argv(e.value, names, depth + 1) for e in node.elts):
+        return True
+    words = [_word(e, names) for e in node.elts]
+    pairs = list(zip(words, words[1:]))
+    return (words[:1] == ["pytest"] or ("-m", "pytest") in pairs
+            or any(a == "-c" and b is not None and "pytest.main(" in b for a, b in pairs))
+
+
+def nested_pytest_launches(text: str) -> set[str]:
+    """The functions in ``text`` that launch a pytest child, each by its
+    qualified name (``Class::function``; ``<module>`` for a launch at module
+    level)."""
+    tree = ast.parse(text)
+    modules, bare = {"subprocess"}, set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(a.asname or a.name for a in node.names if a.name == "subprocess")
+        elif isinstance(node, ast.ImportFrom) and node.module == "subprocess":
+            bare.update(a.asname or a.name for a in node.names if a.name in _LAUNCHERS)
+    found: set[str] = set()
+
+    def launches(call: ast.Call) -> bool:
+        f = call.func
+        return ((isinstance(f, ast.Attribute) and f.attr in _LAUNCHERS
+                 and isinstance(f.value, ast.Name) and f.value.id in modules)
+                or (isinstance(f, ast.Name) and f.id in bare)
+                or getattr(f, "id", getattr(f, "attr", None)) in _NAMED_LAUNCHERS)
+
+    def visit(node: ast.AST, qual: tuple[str, ...], names: dict[str, list[ast.expr]]) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                own = _bindings(ast.walk(child))
+                visit(child, qual + (child.name,), {k: names.get(k, []) + own.get(k, []) for k in {*names, *own}})
+                continue
+            if isinstance(child, ast.ClassDef):
+                visit(child, qual + (child.name,), names)
+                continue
+            if isinstance(child, ast.Call) and launches(child):
+                argv = child.args[0] if child.args else next(
+                    (k.value for k in child.keywords if k.arg == "args"), None)
+                if _is_pytest_argv(argv, names):
+                    found.add("::".join(qual) or "<module>")
+            visit(child, qual, names)
+
+    visit(tree, (), _module_bindings(tree))
+    return found
+
+
+class TestTheNestedRunRule:
+    """DEF-2035: a pytest child launched off the serial lists is placed when it
+    lands, not found by a red leg; with the detector's must-trip and
+    must-not-trip rows (`docs/STANDING_PRINCIPLES.md` §7)."""
+
+    # Every launch spells the constant `pytest` or `pytest.main(` in a string.
+    _PREFILTER = re.compile(r"""["']pytest["']|pytest\.main\(""")
+
+    @classmethod
+    def _live(cls) -> dict[str, set[str]]:
+        """``{file: its launching functions}`` over every module under tests/,
+        helpers included (a launch hoisted into a ``tests/_*.py`` helper runs
+        wherever its callers do)."""
+        out: dict[str, set[str]] = {}
+        for path in checkout_glob(REPO_ROOT / "tests", "*.py"):
+            text = path.read_text(encoding="utf-8")
+            if cls._PREFILTER.search(text):
+                found = nested_pytest_launches(text)
+                if found:
+                    out[f"tests/{path.name}"] = found
+        return out
+
+    def test_the_runs_this_was_written_for_are_in_the_population(self):
+        """Asserted first: the two children a leg has measured read as
+        launches, and the scan clears its floor, so a clean verdict below is
+        not a scan that found nothing."""
+        live = self._live()
+        assert "test_every_cited_pin_runs_and_passes_on_this_host" in live.get(
+            "tests/test_declared_limits_contract.py", set()), live
+        assert "outcomes" in live.get("tests/test_axis_registry.py", set()), live
+        count = sum(map(len, live.values()))
+        assert _NESTED_LAUNCH_FLOOR <= count <= 2 * _NESTED_LAUNCHES_AT_PIN, (
+            f"{count} launches against a pin of {_NESTED_LAUNCHES_AT_PIN}: under half is a broken "
+            "scan, over twice a population the pin no longer describes; re-pin it with the date")
+
+    def test_no_launch_off_the_serial_lists_is_unplaced(self, pt):
+        """The guard: a new launch in a file on no serial list reds here
+        until it is placed (the section comment says where)."""
+        live = self._live()
+        assert sum(map(len, live.values())) >= _NESTED_LAUNCH_FLOOR, live   # an empty scan is not a pass
+        unplaced = sorted(f"{rel}::{fn}" for rel, fns in live.items() if rel not in pt.SERIAL_FILES
+                          for fn in fns if f"{rel}::{fn}" not in _PARALLEL_NESTED_RUNS)
+        assert not unplaced, (
+            "these launch a pytest child beside the -n auto pool and are not placed: time each alone; "
+            "a child that runs this repo's rows for long, or rows that keep a budget, joins "
+            "NESTED_RUN_SERIAL_FILES in scripts/proof_tier.py (and SERIAL_CONTRACT_FILES when its file "
+            "holds a contract row); one that only collects, runs a planted tree, or runs a few in-process "
+            f"rows for seconds is enrolled in _PARALLEL_NESTED_RUNS with what it runs: {unplaced}")
+
+    def test_every_enrolled_launch_still_launches_off_the_serial_lists(self, pt):
+        """The other way: an entry whose function was renamed, stopped
+        launching or moved to a serial file is struck, so the roster names
+        only what rides the pool."""
+        live = self._live()
+        current = {f"{rel}::{fn}" for rel, fns in live.items() if rel not in pt.SERIAL_FILES for fn in fns}
+        assert not set(_PARALLEL_NESTED_RUNS) - current, sorted(set(_PARALLEL_NESTED_RUNS) - current)
+        assert all(why.strip() for why in _PARALLEL_NESTED_RUNS.values())
+
+    @pytest.mark.parametrize("label, source, expect", [
+        ("an -m pytest display in the call",
+         "import subprocess, sys\ndef test_x():\n    subprocess.run([sys.executable, '-m', 'pytest', '-q'])\n",
+         {"test_x"}),
+        ("a bare pytest head through Popen",
+         "import subprocess\ndef helper():\n    subprocess.Popen(['pytest', 'tests/'])\n", {"helper"}),
+        ("an argv bound to a local first",
+         "import subprocess, sys\ndef _drive():\n    argv = [sys.executable, '-m', 'pytest']\n"
+         "    return subprocess.run(argv)\n", {"_drive"}),
+        ("an argv built with + and a starred name",
+         "import subprocess, sys\nBASE = [sys.executable, '-m', 'pytest']\nclass TestA:\n"
+         "    def test_y(self):\n        subprocess.run([*BASE, '-q'] + ['x'])\n", {"TestA::test_y"}),
+        ("a -c program that calls pytest.main, held in a module constant",
+         "import subprocess, sys\n_PROG = 'import pytest; pytest.main([])'\ndef collect():\n"
+         "    subprocess.run([sys.executable, '-c', _PROG], timeout=45)\n", {"collect"}),
+        ("an aliased module and an args= keyword",
+         "import subprocess as sp, sys\ndef test_z():\n    sp.check_output(args=[sys.executable, '-m', 'pytest'])\n",
+         {"test_z"}),
+        ("a launcher imported bare",
+         "from subprocess import run\nimport sys\ndef test_w():\n    run([sys.executable, '-m', 'pytest'])\n",
+         {"test_w"}),
+        ("a launch at module level", "import subprocess, sys\nsubprocess.run([sys.executable, '-m', 'pytest'])\n",
+         {"<module>"}),
+        ("an argv bound under a module-level if",
+         "import subprocess, sys\nif sys.platform:\n    ARGV = [sys.executable, '-m', 'pytest']\n"
+         "def test_v():\n    subprocess.run(ARGV)\n", {"test_v"}),
+        ("the bounded spawn",
+         "import sys\ndef test_u(primitive):\n    primitive.run_bounded([sys.executable, '-m', 'pytest'], timeout=9)\n",
+         {"test_u"}),
+        ("a -c program built with dedent",
+         "import subprocess, sys, textwrap\ndef test_t():\n"
+         "    prog = textwrap.dedent('''\\n    import pytest\\n    pytest.main([])\\n    ''')\n"
+         "    subprocess.run([sys.executable, '-c', prog])\n", {"test_t"}),
+    ])
+    def test_the_detector_reads(self, label, source, expect):
+        assert nested_pytest_launches(source) == expect, label
+
+    @pytest.mark.parametrize("label, source", [
+        ("an argv compared, never launched (tests/test_archive_probe.py's shape)",
+         "import sys\ndef test_x(vpy):\n    assert build(vpy, []) == [str(vpy), '-m', 'pytest']\n"),
+        ("an argv handed to a function that is not a launcher",
+         "def test_x(pt):\n    pt.run_commands([('pytest', '--version')])\n"),
+        ("a launch of another program",
+         "import subprocess, sys\ndef test_x():\n    subprocess.run([sys.executable, '-m', 'pip', 'list'])\n"),
+        ("a launch quoted in a string",
+         "SNIPPET = \"subprocess.run([sys.executable, '-m', 'pytest'])\"\n"),
+        ("a run method of something that is not subprocess",
+         "import sys\ndef test_x(runner):\n    runner.run([sys.executable, '-m', 'pytest'])\n"),
+    ])
+    def test_the_detector_stays_quiet_on(self, label, source):
+        assert nested_pytest_launches(source) == set(), label
 
 
 class TestRun:
