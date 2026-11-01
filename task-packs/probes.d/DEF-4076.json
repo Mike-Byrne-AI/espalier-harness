@@ -1,0 +1,11 @@
+{
+ "id": "DEF-4076",
+ "subject": "tools/cc/hooks/stop_gate.py",
+ "cmd": "python3 -c \"import sys,tempfile,pathlib as P;sys.path.insert(0,'tools/cc/hooks');import stop_gate as s;s._say_held=lambda *a,**k:None;s._hold_write=lambda *a,**k:None;f=s._SeatPrs(read=True,others=True,seat='probe',mine=('#1 (lane/x)',));print(s._hold_or_clause(P.Path(tempfile.mkdtemp()),'0'*40,'revert/x',1,found=f) is None)\"",
+ "open_value": "True",
+ "why_not": null,
+ "row_sha": "c5801eaf0a5a",
+ "text_sha": "18ecf61c630e",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: second read: the hold passes the Stop and nothing waits on it, so the harm is the missing run-/handoff block; the fix is pinned to _hold_or_clause alone with the driver's whole exemption (clearing = revert/ or a ruling, ship.py open_pr on #394); stop_gate lines cited as of 76df41d5; dates to the local day) [changed: text]"
+}

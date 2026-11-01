@@ -1,0 +1,11 @@
+{
+ "id": "DEF-4078",
+ "subject": "tools/cc/hooks/_speedbump.py",
+ "cmd": "python3 -c \"import sys,os,json,time,atexit,subprocess,tempfile,pathlib as P;r=P.Path(tempfile.mkdtemp());m=r/'main';m.mkdir();g=['git','-C',str(m),'-c','user.name=p','-c','user.email=p@p'];Q=lambda a:subprocess.run(g+a,check=True,capture_output=True);Q(['init','-q']);(m/'a.txt').write_text('a\\n');Q(['add','-A']);Q(['commit','-qm','a']);w=r/'wt';Q(['worktree','add','-q','--detach',str(w)]);c=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'],cwd=str(w));atexit.register(c.kill);time.sleep(0.3);e=dict(os.environ,CLAUDE_PROJECT_DIR=str(m));e.pop('ESPALIER_MAINTENANCE_MODE',None);p=subprocess.run([sys.executable,os.path.abspath('tools/cc/hooks/write_guard.py')],input=json.dumps({'tool_name':'Bash','tool_input':{'command':'kill -9 %d'%c.pid},'cwd':str(m),'session_id':'probe'}),capture_output=True,text=True,cwd=str(m),env=e);print(int('permissionDecision' in p.stdout and 'deny' in p.stdout))\"",
+ "open_value": "0",
+ "why_not": null,
+ "row_sha": "2d8da1412f35",
+ "text_sha": "ada4dc4663c7",
+ "verified_2026_10_31": "OPEN (filed 2026-10-31; probe driven at filing)",
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: second read: a pid no table answers passes by design, so the old probe could not flip; it now runs the hook as a subprocess over a kill of a child whose cwd is a second worktree of a temp clone, the temp clone as the project root; one reader named with DEF-4077 and DEF-4079; dates to the local day) [changed: probe, text]"
+}
