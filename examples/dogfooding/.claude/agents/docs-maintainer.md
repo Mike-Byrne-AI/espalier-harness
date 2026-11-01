@@ -69,18 +69,9 @@ done
 echo "=== Docs changed since last fingerprint ==="
 # The commit the fingerprint was taken at (head_sha): reports/ is gitignored,
 # so the file has no history of its own to read.
-PY=; for c in python3 python 'py -3'; do $c -c 'import sys; sys.exit(sys.version_info < (3, 8))' >/dev/null 2>&1 && { PY=$c; break; }; done
-fp_sha=
-[ -n "$PY" ] && fp_sha=$($PY -c "
-import json
-try:
-    print(json.load(open('reports/repo_fingerprint.json', encoding='utf-8')).get('head_sha', ''))
-except (OSError, ValueError, AttributeError):
-    pass
-" 2>/dev/null)
-if [ -z "$PY" ]; then
-  echo "fingerprint baseline NOT READ: no Python 3 answered to python3, python or py -3"
-elif [ -n "$fp_sha" ] && git cat-file -e "$fp_sha^{commit}" 2>/dev/null; then
+# A hex string in a JSON file: read with grep, so no interpreter is needed.
+fp_sha=$(grep -oE '"head_sha": *"[0-9a-f]{40,64}"' reports/repo_fingerprint.json 2>/dev/null | grep -oE '[0-9a-f]{40,64}')
+if [ -n "$fp_sha" ] && git cat-file -e "$fp_sha^{commit}" 2>/dev/null; then
   git diff --name-only "$fp_sha" HEAD -- "*.md"
 else
   echo "no fingerprint baseline: reports/repo_fingerprint.json records no commit this clone holds; run espalier fingerprint . to record one"

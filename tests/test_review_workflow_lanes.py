@@ -1,5 +1,6 @@
 """The three shipped review workflows say which lanes did not run, and the fan-out
-audit refuses an args value it cannot use.
+audit refuses an args value it cannot use. This file pins both, because a dead lane
+or a widened run otherwise reads as a clean, ordinary result.
 
 Under the Workflow API a skipped agent, or one that dies on a terminal error,
 resolves to ``null``, and ``parallel()`` and ``pipeline()`` turn a thrown lane into

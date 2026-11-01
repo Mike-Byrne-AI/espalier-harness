@@ -45,6 +45,7 @@ from pathlib import Path
 import pytest
 
 from _adopter_tree import build_adopter_tree
+from _stubs import write_stub
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -100,9 +101,7 @@ def pybin(tmp_path_factory) -> Path | None:
     if os.name == "nt":
         return None
     folder = tmp_path_factory.mktemp("pybin")
-    shim = folder / "python"
-    shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
-    shim.chmod(0o755)
+    write_stub(folder / "python", f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
     return folder
 
 
@@ -406,8 +405,7 @@ class TestTheDriftBaselineIsTheCommitTheFingerprintWasTakenAt:
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         for name, body in (("python", "exit 127\n"), ("python3", f'exec "{sys.executable}" "$@"\n')):
-            (bin_dir / name).write_text("#!/bin/sh\n" + body, encoding="utf-8")
-            (bin_dir / name).chmod(0o755)
+            write_stub(bin_dir / name, "#!/bin/sh\n" + body)
         drift = _run(tree, _fence_after(_read(adopter / REPO_ANALYST), DRIFT), bin_dir).stdout
         assert f"  Comparing against the commit the fingerprint was taken at: {taken}" in drift, drift
         docs = _run(tree, _fence_after(_read(adopter / DOCS_MAINTAINER), FRESHNESS), bin_dir).stdout
