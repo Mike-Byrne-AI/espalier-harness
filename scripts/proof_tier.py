@@ -3,7 +3,8 @@
 
 The proof-order bodies (`/implement-task` step 7, `/preflight` Step 2,
 `/implement-pack` step 6) state one rule: a change that touched no engine code
-and no hook runs the tree-wide contracts (`pytest -n auto -m contract -q`); a change
+and no hook runs the tree-wide contracts (``-m contract`` at ``-n auto``, the
+serial files' contract rows after it at one worker); a change
 that touched a file the pull-recall corpus reads (``memory/``, the two
 catalogs, ``docs/sharp-edges/``, the principles) runs those contracts and then
 the recall engine's own tests, because a corpus edit moves the calibration
@@ -61,7 +62,7 @@ can break it; a missing ``mypy`` is a loud exit 127, never a skipped line.
 
 ``--run`` executes the tier's command(s) in order and prints a receipt line per
 command, then a summary naming how many ran and the worst exit code. The full
-tier is four commands, the recall tier three and the contract tier two: the
+tier is four commands, the recall tier four and the contract tier three: the
 lint line (``ruff check .``) sits in every tier, right after the type gate
 where there is one, because a lane's lint red once reached the pull request
 past a green full tier (no tier ran ruff, and the ruff-lint cell is not a
@@ -206,14 +207,26 @@ TIMEOUT_NEAR_SERIAL_FILES: tuple[str, ...] = (
 #: the leg (run 41217045122, 2026-10-31, DEF-4062); on the full tier's serial
 #: leg the child has the runner to itself (74 s alone on the Windows seat). Not
 #: covered: the same rows in their own modules (354 state-writing rows on the
-#: parallel leg, the census of 2026-11-01), and the contract and recall tiers,
-#: whose ``-m contract`` line still collects this file under ``-n auto``.
+#: parallel leg, the census of 2026-11-01). The contract and recall tiers run
+#: its rows on a contract line of their own at one worker
+#: (``SERIAL_CONTRACT_FILES``, DEF-5044).
 NESTED_RUN_SERIAL_FILES: tuple[str, ...] = (
     "tests/test_declared_limits_contract.py",
 )
 
 #: Everything the parallel leg leaves out and the serial leg runs.
 SERIAL_FILES: tuple[str, ...] = WALL_CLOCK_SERIAL_FILES + TIMEOUT_NEAR_SERIAL_FILES + NESTED_RUN_SERIAL_FILES
+
+#: The serial files that hold a ``contract`` row. The contract line names no
+#: file, so it collects the tree at ``-n auto``, and until 2026-11-01 it ran
+#: every row of the cited-pin run beside the pool the list above keeps it off
+#: (13 rows, a collection census; DEF-5044). So the line leaves these out and
+#: a second contract line runs them at one worker. A subset of
+#: ``SERIAL_FILES``, hand-kept like it, and pinned both ways to a driven
+#: collection in tests/test_proof_tier.py: a serial file with a contract row
+#: that is not listed rides the pool, and a listed file with none leaves the
+#: second line collecting nothing, which pytest exits 5 on.
+SERIAL_CONTRACT_FILES: tuple[str, ...] = ("tests/test_declared_limits_contract.py",)
 
 #: The recall engine's own tests: the calibration pins, the eval instrument and
 #: the pasted-table contracts. They score the corpus the tree holds, so a change
@@ -275,9 +288,16 @@ _PYTEST: tuple[str, ...] = ("pytest", "-q")
 _PARALLEL: tuple[str, ...] = ("-n", "auto")
 _ONE_WORKER: tuple[str, ...] = ("-n", "1")
 #: ``own_tests`` leaves a contract-classified file off the own line because
-#: this line runs every row of it (DEF-4089): a ``-k`` or a narrower ``-m``
-#: here would leave those rows run nowhere on the cheaper tiers.
-_CONTRACT_ARGV: tuple[str, ...] = ("pytest", "-n", "auto", "-m", "contract", "-q")
+#: the contract lines run every row of it (DEF-4089): a ``-k`` or a narrower
+#: ``-m`` here would leave those rows run nowhere on the cheaper tiers. The
+#: first names no file and leaves out the serial files it would collect a row
+#: of; the second runs their contract rows at one worker (DEF-5044), and is
+#: there only while one holds such a row.
+_CONTRACT_ARGV: tuple[str, ...] = (("pytest", "-n", "auto", "-m", "contract", "-q")
+                                   + tuple(f"--ignore={rel}" for rel in SERIAL_CONTRACT_FILES))
+_CONTRACT_SERIAL_ARGV: tuple[str, ...] = ("pytest", *_ONE_WORKER, "-m", "contract", "-q", *SERIAL_CONTRACT_FILES)
+_CONTRACT_LINES: tuple[tuple[str, ...], ...] = (
+    (_CONTRACT_ARGV, _CONTRACT_SERIAL_ARGV) if SERIAL_CONTRACT_FILES else (_CONTRACT_ARGV,))
 #: The heavy end-to-end stages (tests/conftest.py::_HEAVY_E2E_TESTS) leave the
 #: per-pull-request tier: the stage-one smoke alone ran 848 s on one xdist
 #: worker of a 992 s parallel leg (a CI cell, 2026-09-30), and one member lives
@@ -301,8 +321,8 @@ _TIER_ARGVS: dict[str, tuple[tuple[str, ...], ...]] = {
         _PYTEST + _PARALLEL + _NOT_HEAVY + tuple(f"--ignore={rel}" for rel in SERIAL_FILES),
         _PYTEST + _ONE_WORKER + _NOT_HEAVY + SERIAL_FILES,
     ),
-    "recall": (_RUFF_ARGV, _CONTRACT_ARGV, _PYTEST + _PARALLEL + RECALL_SLICE_FILES),
-    "contract": (_RUFF_ARGV, _CONTRACT_ARGV),
+    "recall": (_RUFF_ARGV, *_CONTRACT_LINES, _PYTEST + _PARALLEL + RECALL_SLICE_FILES),
+    "contract": (_RUFF_ARGV, *_CONTRACT_LINES),
 }
 TIERS: tuple[str, ...] = tuple(_TIER_ARGVS)
 FULL_COMMANDS: tuple[str, ...] = tuple(shlex.join(argv) for argv in _TIER_ARGVS["full"])
@@ -793,10 +813,11 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     body-only diff ran none of the tests written for the bodies). Every test
     file that names a changed path, short of writing it into a tree it built,
     follows (``path_readers``, derived). A file the conftest classifies
-    ``contract`` is left off, whichever way it came: the contract line, which
-    both cheaper tiers carry, has run every row of it, and the own line ran it
+    ``contract`` is left off, whichever way it came: the contract lines, which
+    both cheaper tiers carry, have run every row of it, and the own line ran it
     again whole (DEF-4089: 16 of the 56 files the tracked bodies brought).
-    A serial file among them runs there at ``-n auto`` alone. The rules are
+    A serial file among them runs on the second, at one worker
+    (``SERIAL_CONTRACT_FILES``, DEF-5044). The rules are
     read by ``_marker_rules``; where they cannot be read nothing is left off."""
     out: list[str] = []
     for rel in changed:
