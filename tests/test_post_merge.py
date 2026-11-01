@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._live_tree import checkout_rglob
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE = REPO_ROOT / "tools" / "cc" / "_post_merge.py"
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "post_merge"
@@ -378,7 +380,7 @@ class TestTheRequiredRead:
 
         spelled = sorted({
             path.relative_to(REPO_ROOT).as_posix()
-            for path in (REPO_ROOT / "tools" / "cc").rglob("*.py")
+            for path in checkout_rglob(REPO_ROOT / "tools" / "cc", "*.py")
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
             if isinstance(node, ast.Constant) and node.value == "--required"
         })
