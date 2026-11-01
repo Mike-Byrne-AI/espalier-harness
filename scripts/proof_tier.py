@@ -102,6 +102,7 @@ missing ref) -- the CI tier job reads that as ``full``, never as cheaper.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import shlex
@@ -322,6 +323,39 @@ def _without_heavy_filter(argv: tuple[str, ...]) -> tuple[str, ...]:
 _RUNNERS: tuple[str, ...] = ("mypy", "ruff", "pytest")
 
 
+#: The tests written for the shipped agent, command and skill bodies, and the
+#: bodies they read, as ``(kind, glob)`` under each root. A body is not a
+#: script, so its tests cannot be derived from its name, and this file is
+#: integration-classified: a diff that edits only a body earned the contract
+#: tier, whose ``-m contract`` deselected every row of it, so the first-contact
+#: diagnostics could regress with every pull-request cell green (DEF-4067).
+#: The kinds are the file's own walk (its ``BODY_KINDS``); the roots are this
+#: checkout's bodies and the deploy source ``espalier init`` copies into the
+#: adopter tree the file builds. Hand-kept like ``SERIAL_FILES``; pinned to the
+#: file's walk in tests/test_proof_tier.py.
+BODY_TEST_FILES: tuple[str, ...] = ("tests/test_first_contact_diagnostics.py",)
+BODY_KINDS: tuple[tuple[str, str], ...] = (("agents", "*.md"), ("commands", "*.md"), ("skills", "*/SKILL.md"))
+BODY_ROOTS: tuple[str, ...] = (".claude/", "espalier/assets/claude/")
+
+
+def is_body(rel: str) -> bool:
+    """A shipped agent, command or skill body: under a ``BODY_ROOTS`` root, one
+    of ``BODY_KINDS`` matched segment by segment (a glob's ``*`` never crosses
+    a ``/``, so a nested agent or a skill's other file is not one)."""
+    rel = rel.replace("\\", "/")
+    for root in BODY_ROOTS:
+        if not rel.startswith(root):
+            continue
+        parts = rel[len(root):].split("/")
+        if not all(parts):
+            continue
+        for kind, pattern in BODY_KINDS:
+            want = [kind, *pattern.split("/")]
+            if len(parts) == len(want) and all(fnmatch.fnmatchcase(p, w) for p, w in zip(parts, want)):
+                return True
+    return False
+
+
 def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     """``tests/test_<stem>.py`` for every changed ``scripts/<stem>.py`` that has
     one, and every changed ``tests/test_*.py`` itself (a test-only diff earned
@@ -333,7 +367,11 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
     it: on 2026-09-20 the row tool's red-first rows were invisible to the
     receipt the proof-order bodies tell the operator to paste (failure-mode
     pass; DEF-775's shape, one directory over). The full tier already runs
-    them, so the line rides along with the two cheaper tiers only."""
+    them, so the line rides along with the two cheaper tiers only. A changed
+    agent, command or skill body brings ``BODY_TEST_FILES``, which is
+    enumerated, not derived: a body's tests cannot be read from its name, so
+    the roster is hand-kept and pinned to that file's walk (DEF-4067: a
+    body-only diff ran none of the tests written for the bodies)."""
     out: list[str] = []
     for rel in changed:
         rel = rel.replace("\\", "/")
@@ -344,6 +382,8 @@ def own_tests(changed, root: Path = _ROOT) -> tuple[str, ...]:
         if rel.startswith("tests/test_") and rel.endswith(".py") and rel.count("/") == 1:
             if (root / rel).is_file() and rel not in out:
                 out.append(rel)
+        if is_body(rel):
+            out.extend(t for t in BODY_TEST_FILES if (root / t).is_file() and t not in out)
     return tuple(out)
 
 

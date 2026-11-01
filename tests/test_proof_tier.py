@@ -414,6 +414,82 @@ class TestTheFullRecipe:
         assert pt.own_tests(["scripts/nested/x.py", "tests/nested/test_y.py"], REPO_ROOT) == ()
         assert pt.own_tests(["tests/test_proof_tier.py"], REPO_ROOT) == ("tests/test_proof_tier.py",)
 
+    def test_a_changed_body_brings_the_tests_that_drive_the_bodies(self, pt):
+        """DEF-4067: a diff that edits only an agent, command or skill body
+        earns the contract tier, whose ``-m contract`` deselects every row of
+        tests/test_first_contact_diagnostics.py (integration-classified), so the
+        first-contact diagnostics could regress with every pull-request cell
+        green and the red arrived on ``main``. A changed body, in this checkout
+        or in the deploy source ``espalier init`` copies into the adopter tree
+        that file builds, now brings the file on the two cheaper tiers; a path
+        beside a body (a skill's other file, a nested agent, a workflow, the
+        dogfooding mirror the file never opens) brings nothing."""
+        diagnostics = "tests/test_first_contact_diagnostics.py"
+        for body in (".claude/agents/repo-analyst.md", ".claude/commands/handoff.md",
+                     ".claude/skills/analyze/SKILL.md", "espalier/assets/claude/agents/repo-analyst.md",
+                     ".claude\\agents\\code-reviewer.md"):
+            assert pt.own_tests([body], REPO_ROOT) == (diagnostics,), body
+        for beside in (".claude/skills/analyze/notes.md", ".claude/agents/nested/x.md",
+                       ".claude/workflows/fanout-audit.js", ".claude/CLAUDE.md", ".claude/settings.json",
+                       "examples/dogfooding/.claude/agents/repo-analyst.md", "docs/.claude/agents/x.md",
+                       ".claude/skills/SKILL.md", ".claude/skills/a/b/SKILL.md", ".claude/skills//SKILL.md",
+                       ".claude/agents//x.md"):
+            assert pt.own_tests([beside], REPO_ROOT) == (), beside
+        changed = [".claude/agents/repo-analyst.md", "espalier/assets/claude/agents/repo-analyst.md",
+                   "scripts/ledger_row.py", diagnostics]
+        assert pt.own_tests(changed, REPO_ROOT) == (diagnostics, "tests/test_ledger_row.py")
+        assert pt.commands("contract", [".claude/agents/repo-analyst.md"], REPO_ROOT) == (
+            "ruff check .", "pytest -n auto -m contract -q",
+            f"pytest -q -n auto -m 'not heavy_e2e' {diagnostics}")
+        assert pt.commands("full", [".claude/agents/repo-analyst.md"], REPO_ROOT) == pt.FULL_COMMANDS
+
+    def test_the_body_roster_is_the_walk_the_diagnostics_read(self, pt):
+        """Hand-kept like ``SERIAL_FILES`` and pinned the same way: the kinds
+        ``own_tests`` maps are the module's own walk, every body that walk
+        reads in this checkout (and its deploy-source twin) brings the module,
+        and every body the module names by constant, or reads through its fence
+        walk, is one of them (a walk that bypassed ``BODY_KINDS`` read nested
+        agents the roster leaves out: failure-mode review)."""
+        sys.path.insert(0, str(REPO_ROOT / "tests"))
+        try:
+            import test_first_contact_diagnostics as fcd
+        finally:
+            sys.path.remove(str(REPO_ROOT / "tests"))
+        rel = "tests/test_first_contact_diagnostics.py"
+        assert pt.BODY_TEST_FILES == (rel,) and (REPO_ROOT / rel).is_file()
+        assert pt.BODY_KINDS == fcd.BODY_KINDS
+        walked = [b.relative_to(REPO_ROOT).as_posix() for b in fcd._shipped_bodies()]
+        assert walked, "the module's walk read no body"
+        named = {fcd.ANALYZE, fcd.TEST_WRITER, fcd.ADVISOR, fcd.REPO_ANALYST, fcd.CODE_REVIEWER,
+                 *(body for body, _heading, _header in fcd.COVERAGE_FENCES)}
+        assert named <= set(walked), named - set(walked)
+        fenced = {body for body, _fence in fcd._walk_fences(REPO_ROOT)}
+        assert fenced and fenced <= set(walked), fenced - set(walked)
+        for body in walked:
+            assert pt.own_tests([body], REPO_ROOT) == (rel,), body
+            twin = "espalier/assets/claude/" + body[len(".claude/"):]
+            assert (REPO_ROOT / twin).is_file(), twin
+            assert pt.own_tests([twin], REPO_ROOT) == (rel,), twin
+
+    def test_the_contract_tiers_body_line_collects_the_diagnostics(self, pt):
+        """Driven, not read: the line a body-only diff adds to the contract tier
+        collects every row the diagnostics module holds, where the tier's
+        ``-m contract`` line collects none of them (the gap DEF-4067 names)."""
+        rel = "tests/test_first_contact_diagnostics.py"
+        line = pt.tier_argvs("contract", [".claude/agents/repo-analyst.md"], REPO_ROOT)[-1]
+        assert line[-1] == rel and "contract" not in line
+        marks = line[line.index("-m"):line.index("-m") + 2]
+
+        def collected(extra: tuple[str, ...]) -> int:
+            argv = [sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", *extra, rel]
+            out = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8").stdout
+            return sum(1 for row in out.splitlines() if row.startswith(rel + "::"))
+
+        every = collected(())
+        assert every, "the diagnostics module collected no row at all"
+        assert collected(marks) == every
+        assert collected(pt._CONTRACT_ARGV[pt._CONTRACT_ARGV.index("-m"):][:2]) == 0
+
     def test_a_changed_script_in_a_real_tree_prints_and_runs_its_own_test_line(self, pt, tmp_path, capsys):
         """The receipt path, not only `commands()`: `main` must hand the diff to
         the tier, or the printed lines and the executed argvs are the tier's

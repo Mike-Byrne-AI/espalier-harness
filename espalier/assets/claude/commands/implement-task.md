@@ -166,7 +166,9 @@ For one bounded change, one main proof path, or a small localized edit.
    # on the two cheaper tiers a changed
    # `scripts/<name>.py` adds a line running its own `tests/test_<name>.py`
    # when that file exists (derived from the diff -- a script's tests are
-   # integration-classified, so the contract slice alone never collected them);
+   # integration-classified, so the contract slice alone never collected them),
+   # and a changed agent, command or skill body adds the test file written for
+   # the bodies (a hand-kept roster, pinned to that file's walk);
    # a changed file among the five serial files rides a second line, at one worker
    if [ -f scripts/proof_tier.py ]; then   # Espalier-Harness tree: its tier script
      python scripts/proof_tier.py --run   # Espalier-Harness tree: the tier the diff earns, one receipt

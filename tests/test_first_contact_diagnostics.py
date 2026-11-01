@@ -86,6 +86,13 @@ CODE_REVIEWER = ".claude/agents/code-reviewer.md"
 #: The code-reviewer's two fences that walk the tree (Phase 3 reads the test
 #: tree by name), each a self-host census and the adopter's in one fence.
 CODE_REVIEWER_FENCES = ("### Phase 1", "### Phase 4")
+#: The bodies this module walks, as ``(kind, glob)`` under ``.claude/``: every
+#: fenced grep and every ``walk``/``own`` copy is read from these. A diff that
+#: touches one earns the contract tier, whose ``-m contract`` deselects this
+#: integration-classified file, so ``scripts/proof_tier.py`` adds the file for
+#: a changed body by this roster (its ``BODY_KINDS``, pinned equal in
+#: tests/test_proof_tier.py; DEF-4067).
+BODY_KINDS = (("agents", "*.md"), ("commands", "*.md"), ("skills", "*/SKILL.md"))
 SELF_HOST_OPEN = "<!-- espalier:self-host-only -->"
 SELF_HOST_CLOSE = "<!-- /espalier:self-host-only -->"
 
@@ -309,7 +316,7 @@ def _walk_fences(root: Path) -> list[tuple[str, str]]:
     ``walk`` and ``own`` pair, as ``(body, fence)``: the population the walk
     rule holds, read from the bodies, so a sixth copy is held too."""
     bodies: list[Path] = []
-    for kind, pattern in (("agents", "*.md"), ("commands", "*.md"), ("skills", "*/SKILL.md")):
+    for kind, pattern in BODY_KINDS:
         base = root / ".claude" / kind
         bodies += visible(checkout_glob(base, pattern), base)
     found = []
@@ -576,7 +583,7 @@ def _pattern_reads_as_an_option(command: str) -> bool:
 def _shipped_bodies() -> list[Path]:
     """Every agent, command and skill body this checkout ships."""
     bodies: list[Path] = []
-    for kind, pattern in (("agents", "*.md"), ("commands", "*.md"), ("skills", "*/SKILL.md")):
+    for kind, pattern in BODY_KINDS:
         base = REPO_ROOT / ".claude" / kind
         bodies += visible(checkout_glob(base, pattern), base)
     return bodies
@@ -612,8 +619,7 @@ class TestEveryFencedGrepParses:
         assert flagged == [], flagged
 
     def test_no_agent_body_runs_a_grep_whose_pattern_reads_as_an_option(self):
-        agents = REPO_ROOT / ".claude" / "agents"
-        bodies = visible(checkout_rglob(agents, "*.md"), agents)
+        bodies = [body for body in _shipped_bodies() if body.parent.name == "agents"]
         assert len(bodies) >= 7, bodies
         lines = [(body.name, line) for body in bodies for line in _fenced_grep_lines(_read(body))]
         assert len(lines) >= 40, len(lines)
