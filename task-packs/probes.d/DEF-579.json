@@ -8,5 +8,5 @@
  "row_sha": "067778bf0d81",
  "text_sha": "63fd5f8f97c5",
  "verified_2026_09_20": "STILL_OPEN (re-pinned value unchanged on 2026-09-20: rebuilt 2026-09-20: the adjudication rewrote the text; the claim stands)",
- "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: d7fe4a (air): the guard still walks tests/ alone; 6db10e7a (2026-10-15) respelled TESTS_DIR.glob(\"*.py\") as checkout_glob(TESTS_DIR, \"*.py\"), which the old probe's literal missed. Re-aimed at the EACCES guard family (the module-level functions named for it or reading _EACCES_UNSAFE_PROBES): True while they name TESTS_DIR and no product root, so a product-code arm in a new helper moves it too) [changed: probe]"
+ "verified_2026_11_01": "STILL_OPEN (re-pinned value unchanged on 2026-11-01: d7fe4a (air): the guard still walks tests/ alone; 6db10e7a (2026-10-15) respelled TESTS_DIR.glob(\"*.py\") as checkout_glob(TESTS_DIR, \"*.py\"), which the old probe's literal missed. Re-aimed at the EACCES guard family (the module-level functions named for it or reading _EACCES_UNSAFE_PROBES): True while they name TESTS_DIR and no product root, so a product-code arm in a new helper moves it too; receipt: in a scratch archive of HEAD, a product-code arm in an EACCES-named helper, or in one reading _EACCES_UNSAFE_PROBES, moves it True -> False) [changed: probe]"
 }
