@@ -158,12 +158,16 @@ Holds the lane, unpushed, while this seat already has another open pull request
 (by the seat whose latest claim or release names its lane: every seat may push
 as one GitHub account) and the lane has no upstream of its own (never pushed,
 or tracking the base it was started from -- the Stop hook's handoff gate reads
-it the same way): one open pull request per seat, so the lane opens once that
-one merges, and the hold says which. A `handoff` held here arms the own-clear
-with the hold, as on a red base. A `revert/` lane, and a lane the dispatcher's
-ruling lets onto a red base, open beside it with a note (the red's clearing
-lands first), as does a lane whose push already landed once; where gh cannot
-list the open pull requests, the check is skipped and said.
+it the same way): one open pull request per seat. Nothing is pushed; the hold
+names the pull request, and `open` run again once it merges or closes opens
+the lane (nothing runs it for you). The Stop hook's hold for the lane is
+written with it, and a `handoff` held here arms the own-clear with the hold, as
+on a red base, the brief saying to stay on the branch until then. A `revert/`
+lane, and a lane the dispatcher's ruling lets onto a red base, open beside it
+with a note (the red's clearing lands first), as does a lane whose push
+already landed once -- the way past a hold that names another seat's pull
+request, which the hold names: `git push -u origin HEAD`, then `open`; where gh
+cannot list the open pull requests, the check is skipped and said.
 
 Refuses, before anything moves, when two or more live sessions work in this
 checkout -- Claude Code's own session registry places them, the session running

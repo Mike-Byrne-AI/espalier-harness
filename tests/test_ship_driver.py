@@ -3806,12 +3806,67 @@ class TestOneOpenPullRequestPerSeat:
         with pytest.raises(ship.Held) as stop:
             ship.open_pr()
         held = stop.value
-        assert held.landed is False and held.waits_for == "#41 merges"
+        assert held.landed is False and held.waits_for == "#41 merges or closes"
         text = str(held)
         assert "this seat (win) already has an open pull request: #41 (lane/y)" in text
-        assert "opens once #41 merges" in text and "#42" not in text
+        assert "opened once #41 merges or closes" in text and "#42" not in text
+        assert "git push -u origin HEAD" in text   # the named way past a wrong attribution
         assert text.isascii()
         assert spawns.mutations == []   # nothing pushed, nothing created
+        # Held before the base is fetched, merged in or folded: nothing of the
+        # lane's shape moves under a hold.
+        assert spawns.count(("git", "fetch", "origin", "main")) == 0
+        assert spawns.count(("git", "merge-tree")) == 0
+
+    def test_the_hold_writes_the_stop_gates_own_hold_record(self, ship, tmp_path, forget_guard, monkeypatch):
+        """The failure-mode review, 2026-11-01: a handoff held here arms the
+        own-clear at this HEAD, so the gate wrote no hold, and the next
+        SessionStart seeded its flag past the lane: nothing asked for it once
+        the window was cleared. Dies to: the hold left to the brief alone."""
+        _arm(ship, self._held_answers(ship, tmp_path, monkeypatch))
+        with pytest.raises(ship.Held):
+            ship.open_pr()
+        gate = ship._paths.hooks_module("stop_gate")
+        hold = gate._hold_read(tmp_path)
+        assert hold is not None and hold["head"] == HEAD and hold["branch"] == "lane/x"
+        assert hold["prs"] == ["#41 (lane/y)"] and hold["seat"] == "win"
+        seed = ship._paths.hooks_module("session_start")
+        assert seed._hold_names(tmp_path / gate.STATE_DIR / gate.HANDOFF_GATE_HOLD, HEAD)
+
+    def test_a_dry_run_holds_and_writes_no_record(self, ship, tmp_path, forget_guard, monkeypatch):
+        _arm(ship, self._held_answers(ship, tmp_path, monkeypatch))
+        with pytest.raises(ship.Held):
+            ship.open_pr(dry_run=True)
+        assert ship._paths.hooks_module("stop_gate")._hold_read(tmp_path) is None
+
+    def test_two_of_this_seats_pull_requests_open_name_both(self, ship, tmp_path, forget_guard, monkeypatch):
+        answers = self._held_answers(ship, tmp_path, monkeypatch)
+        monkeypatch.setattr(ship, "_MAIL", self._channel("win", {"lane/y": "win", "lane/z": "win"}))
+        _arm(ship, answers)
+        with pytest.raises(ship.Held) as stop:
+            ship.open_pr()
+        assert stop.value.waits_for == "#41, #42 merge or close"
+
+    def test_a_red_base_refuses_before_the_hold(self, ship, tmp_path, forget_guard, monkeypatch):
+        """The red base's refusal names the revert and the disarms; the hold
+        would hide them. Dies to: the hold read before the base."""
+        answers = self._held_answers(ship, tmp_path, monkeypatch)
+        answers[("gh", "run", "list", "--workflow", "post-merge.yml")] = (0, _RED_BASE, "")
+        _arm(ship, answers)
+        with pytest.raises(ship.Held) as stop:
+            ship.open_pr()
+        assert "Nothing lands on a red base" in str(stop.value) and stop.value.waits_for == ""
+
+    def test_a_lane_with_no_row_refuses_before_the_hold(self, ship, tmp_path, forget_guard, monkeypatch):
+        """The row is the window's to write first: the hold promises the next
+        window a row written. Dies to: the hold read before the row."""
+        _toml(tmp_path, "handoff_push = true\n")
+        answers = self._held_answers(ship, tmp_path, monkeypatch)
+        answers[_MEMORY_LOG] = (0, "", "")
+        _arm(ship, answers)
+        with pytest.raises(ship.Refused) as stop:
+            ship.open_pr()
+        assert not isinstance(stop.value, ship.Held)
 
     def test_a_lane_tracking_the_base_is_not_its_own_upstream_and_is_held(
             self, ship, tmp_path, forget_guard, monkeypatch):
@@ -3881,10 +3936,10 @@ class TestOneOpenPullRequestPerSeat:
         answers[_list_key()] = [(0, "[]", ""), (0, "[]", "")]
         spawns = _arm(ship, answers)
         calls = TestTheHandoffArmsTheOwnClear._arm_calls(ship, monkeypatch)
-        with pytest.raises(ship.Held, match="opens once #41 merges"):
+        with pytest.raises(ship.Held, match="opened once #41 merges or closes"):
             ship.handoff()
         assert spawns.mutations == []
-        assert calls and calls[0]["held"].landed is False and calls[0]["held"].waits_for == "#41 merges"
+        assert calls and calls[0]["held"].landed is False and calls[0]["held"].waits_for == "#41 merges or closes"
 
     def test_another_seats_pull_requests_say_nothing(self, ship, tmp_path, forget_guard, monkeypatch, capsys):
         _write_guard(tmp_path)

@@ -668,7 +668,8 @@ python tools/cc/ship.py handoff
   `handoff --base-red-ruled <ack id>` lands the lane on that ruling (`/ship`
   step 2). While this seat has another pull request open, a lane never pushed
   is held as `open` holds it (one open pull request per seat): it stays here,
-  whole, and the own-clear's brief says to open it once that one merges.
+  whole, the Stop hook's hold is written for it, and the own-clear's brief
+  says to stay on the branch and run `open` once that one merges or closes.
   Either way, when the lane would conflict with its
   base (two machines' handoffs collide on this very row), the base is merged in
   first with the record files resolved by shape (`/ship` step 2), so the push

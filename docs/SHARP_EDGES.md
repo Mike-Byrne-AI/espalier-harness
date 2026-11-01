@@ -6492,7 +6492,8 @@ unhandled rejection that failed the file).
 exports `ESPALIER_OWN_CLEAR=1`, the handoff's gate: any other window is told it needs a
 `/clear` by hand), armed by `ship.py handoff` through `.espalier-state/own_clear.json`
 whenever the handoff ran to its end -- the push landed, or a refusal the window is done
-with (the base red, the lane whole and unpushed here; a step after a landed push), with the
+with (the base red or this seat's other pull request open, the lane whole and unpushed here;
+a step after a landed push), with the
 refusal in the marker (`landed`, `outcome`) and the lane to land first appended to the brief;
 a refusal the window must fix first arms nothing; `ship.py arm --why ...` arms by hand after
 a hand-open -- keyed by the session id and re-primed only in the process that armed it (the

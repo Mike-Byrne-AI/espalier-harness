@@ -234,11 +234,12 @@ class TestArmOwnClearHere:
         monkeypatch.chdir(repo)
         _in_a_mod_window(monkeypatch)
         held = ship.Held("this seat (box) already has an open pull request: #41 (lane/y)", landed=False,
-                         waits_for="#41 merges")
+                         waits_for="#41 merges or closes")
         ship.arm_own_clear_here(repo, held=held)
         brief = _marker(repo)["brief"]
-        assert "The push was held" in brief and "ship.py open once #41 merges" in brief
-        assert "once the base is green" not in brief
+        assert "The push was held" in brief and "ship.py open once #41 merges or closes" in brief
+        assert "stay on this branch" in brief   # a new branch drops the gate's hold on the lane
+        assert "once the base is green" not in brief and brief.isascii()
         red = ship.Held("main red after merge", landed=False)
         assert red.waits_for == ""
         ship.arm_own_clear_here(repo, held=red)
