@@ -48,6 +48,67 @@ def pytest_configure(config):
     _box_lock.pytest_configure(config)
 
 
+#: Where the modules the restore below keeps live: a ``tools/cc`` module held in
+#: ``sys.modules`` under its bare name, the name its siblings import it by.
+#: Case-folded, since a Windows path can reach a module in another case.
+_TOOLS_CC_PREFIX = os.path.normcase(str(REPO_ROOT / "tools" / "cc")).replace("\\", "/") + "/"
+
+
+def _is_tools_cc_bare(name: str, mod) -> bool:
+    """``mod`` is a ``tools/cc`` module held under its own bare ``name``."""
+    path = os.path.normcase(getattr(mod, "__file__", None) or "").replace("\\", "/")
+    return path.startswith(_TOOLS_CC_PREFIX) and path.endswith(os.path.normcase(f"/{name}.py").replace("\\", "/"))
+
+
+def _replaced_tools_cc_entries(before: dict) -> dict:
+    """The entries of ``before`` (a copy of ``sys.modules``) that are a
+    ``tools/cc`` module under its own bare name and that ``sys.modules`` now
+    holds as another object, or not at all."""
+    return {name: mod for name, mod in before.items()
+            if sys.modules.get(name) is not mod and _is_tools_cc_bare(name, mod)}
+
+
+def _put_back_tools_cc_entries(before: dict) -> None:
+    """Restore what ``_replaced_tools_cc_entries`` names; where it names any,
+    also drop each ``tools/cc`` module the test first imported under its bare
+    name, since it may have bound a replacement (the next import binds the
+    original)."""
+    replaced = _replaced_tools_cc_entries(before)
+    if not replaced:
+        return
+    for name, mod in list(sys.modules.items()):
+        if name not in before and _is_tools_cc_bare(name, mod):
+            del sys.modules[name]
+    sys.modules.update(replaced)
+
+
+@pytest.fixture(autouse=True)
+def _restore_replaced_tools_cc_modules():
+    """Put back, after each test, every ``tools/cc`` module the test replaced
+    or removed under its bare name (DEF-2032). A module loaded at collection
+    binds its siblings by that name (``_zone_watch`` binds ``_hook_utils``), and
+    the memo clears below reach ``sys.modules.get("_hook_utils")``; a loader
+    that registers a fresh copy at test time left every later test clearing
+    the copy while the collection-time module kept its once-set, so
+    ``test_zone_watch`` redded after ``test_state_file_flag_parity`` on one
+    worker, on the gate's serial leg and on the parallel leg alike. Compared
+    by identity; an entry the test added is left unless something was put
+    back, and a module from anywhere else is left. pytest sets a conftest's
+    autouse fixtures up in name order: the copy is taken after the
+    ``_isolate_*`` ones, and ``_no_live_once_flags`` requests this fixture, so
+    it reads the once-set of the module the test left before the original
+    goes back. A replacement made while collecting, or by a module- or
+    class-scoped fixture, is outside the copy. Censuses at 705f7dd: none while
+    collecting, and over the 28 files with a module- or class-scoped loader,
+    only the ``lr`` fixtures of ``test_ledger_row`` and
+    ``test_ledger_fragments``, where ``ledger_row`` loads
+    ``generate_ledger_regions``, ``check_ledger_probes`` and ``_pack_scope``
+    under their own names; nothing here clears a memo of those three."""
+    before = dict(sys.modules)
+    yield
+    _put_back_tools_cc_entries(before)
+
+
 @pytest.fixture(autouse=True)
 def _reset_speedbump_snapshot_record():
     """`_speedbump._last_snapshot` is the per-process record the two snapshot
@@ -248,7 +309,7 @@ def _clear_hook_utils_memos(live) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _no_live_once_flags():
+def _no_live_once_flags(_restore_replaced_tools_cc_modules):
     """A test that drives a ``say_once`` site in-process with no scratch root
     -- ``CLAUDE_PROJECT_DIR`` unset, or a ``Path(".")`` root -- writes the
     ``once_<key>`` flag into THIS checkout's ``.espalier-state/``, and the live
@@ -258,8 +319,9 @@ def _no_live_once_flags():
     operator's own hooks churn it), so this one is attributed instead: a new
     flag whose key this test's process said (``_SAID_THIS_PROCESS``, read
     before the memo fixture above clears it -- autouse fixtures tear down in
-    reverse definition order) is this test's leak. It is deleted and the test
-    fails."""
+    reverse of their setup, which pytest orders by name -- and, since this
+    fixture requests the restore, before a ``_hook_utils`` the test swapped in
+    is put back) is this test's leak. It is deleted and the test fails."""
     state = REPO_ROOT / ".espalier-state"
 
     def _flags() -> set[str]:

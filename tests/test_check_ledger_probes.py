@@ -811,14 +811,16 @@ class TestTheLiveProbeFile:
         "DEF-741": {"WALK2_FINDINGS.md", "WINDOWS_FUSE_NOTES.md"},  # classifier arguments, never opened
         "DEF-1155": {".claude/settings.json", "reports/harness_config.json",
                      "reports/repo_fingerprint.json"},         # fixtures it writes inside its temp tree (the DEF-999 shape)
-        "DEF-4029": {".claude/settings.json"},  # guard spellings judged against a scratch root, never opened (the DEF-741 shape)
-        "DEF-4031": {".claude/settings.json"},  # the same: the spellings are the command text under judgment
+        "DEF-4031": {".claude/settings.json"},  # guard spellings judged against a scratch root, never opened (the DEF-741 shape)
         # DEF-940 left this set on 2026-09-29 with its row (struck: the three
         # session files it named are required ignore entries now), so its probe
         # retired and a baseline for a retired probe is dead. DEF-884 left it
         # on 2026-10-07 the same way: its row struck (the wrapper-closer fix),
         # its probe retired. DEF-1192 left it on 2026-10-11 the same way: its
-        # row struck (the checkout's wiring note), its probe retired.
+        # row struck (the checkout's wiring note), its probe retired. DEF-4029
+        # left it on 2026-11-01 the same way: its row struck (the PowerShell
+        # write reader's four shapes, #366), its probe retired, by lane
+        # the-powershell-write-shapes-row-is-struck.
     }
     _PATH_LITERAL = re.compile(
         r"(?<![\w/.-])((?:[A-Za-z_.][\w.-]*/)+[\w.-]*"
