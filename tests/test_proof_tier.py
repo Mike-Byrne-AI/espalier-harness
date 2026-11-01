@@ -390,9 +390,14 @@ class TestTheFullRecipe:
             assert Path(rel).stem in _SLOW_FILES, rel
 
     def test_the_contract_tier_is_the_lint_then_one_serial_command(self, pt):
+        """A bare ``-m contract``: the own line leaves contract-classified files
+        off because this line runs every row of them (DEF-4089), so a ``-k`` or
+        a narrower ``-m`` added here changes what the cheaper tiers run."""
         assert pt.commands("contract") == ("ruff check .", "pytest -n auto -m contract -q")
 
     def test_the_recall_tier_is_the_contract_slice_then_the_recall_files(self, pt):
+        """The slice line is bare, so its files leave the own line (DEF-4089,
+        ``_runs_whole``); a selection added to it puts them back there."""
         assert pt.commands("recall") == (
             "ruff check .",
             "pytest -n auto -m contract -q",
@@ -454,10 +459,11 @@ class TestTheFullRecipe:
             # readers alone (the dogfooding mirror's tail is the source body's
             # path, so the files that name that path come by name)
             assert not pt.is_body(beside), beside
-            assert pt.own_tests([beside], REPO_ROOT) == pt.path_readers([beside], REPO_ROOT), beside
+            assert pt.own_tests([beside], REPO_ROOT) == tuple(
+                t for t in pt.path_readers([beside], REPO_ROOT) if not _contract_classified(t)), beside
         changed = [".claude/agents/repo-analyst.md", "espalier/assets/claude/agents/repo-analyst.md",
                    "scripts/ledger_row.py", diagnostics]
-        readers = pt.path_readers(changed, REPO_ROOT)
+        readers = [t for t in pt.path_readers(changed, REPO_ROOT) if not _contract_classified(t)]
         assert pt.own_tests(changed, REPO_ROOT) == tuple(
             dict.fromkeys((diagnostics, "tests/test_ledger_row.py", *readers)))
         own = pt.own_tests([".claude/agents/repo-analyst.md"], REPO_ROOT)
@@ -719,6 +725,195 @@ class TestTheFullRecipe:
         # and the argv list --run would execute carries the same line
         changed, untracked = pt.changed_paths(r)
         assert pt.tier_argvs("contract", changed + untracked, r)[-1] == ("pytest", "-q", "-n", "auto", "-m", "not heavy_e2e", "tests/test_s.py")
+
+
+def _tracked_bodies(pt) -> list[str]:
+    """Every tracked agent, command and skill body under the roots, read from
+    the index at each call (the DEF-4089 probe's own population), with a floor."""
+    from tests._git_oracle import require_tracked_paths
+    tracked = require_tracked_paths(REPO_ROOT, *pt.BODY_ROOTS, minimum=50, what="paths under the body roots")
+    bodies = [rel for rel in tracked if pt.is_body(rel)]
+    assert len(bodies) >= 50, bodies
+    return bodies
+
+
+def _contract_classified(rel: str) -> bool:
+    from tests.conftest import _primary_marker
+    return _primary_marker(Path(rel).stem) == "contract"
+
+
+#: The scratch suite the rows below ask: a contract-classified file, one that
+#: shares its prefix, an integration file and an unclassified one, each naming
+#: ``docs/x.md`` by a literal.
+_SCRATCH_RULES = '_MARKER_RULES = [(("test_c",), "contract"), (("test_i",), "integration")]\n'
+_SCRATCH_TESTS = ("test_c.py", "test_c_more.py", "test_i.py", "test_u.py")
+
+
+def _scratch_suite(root: Path, conftest: str | None = _SCRATCH_RULES) -> None:
+    tests = root / "tests"
+    tests.mkdir(parents=True, exist_ok=True)
+    for name in _SCRATCH_TESTS:
+        (tests / name).write_text('X = "docs/x.md"\n', encoding="utf-8")
+    if conftest is not None:
+        (tests / "conftest.py").write_text(conftest, encoding="utf-8")
+
+
+class TestTheOwnLineSkipsWhatTheTierRan:
+    """DEF-4089: the own line ran a file whole that another line of the same
+    tier had already run whole. Both cheaper tiers carry the contract line,
+    which runs every row of a contract-classified file, and the recall tier's
+    slice line runs its four files with no marker filter, so the own line
+    added time and no rows: 16 of the 56 files the tracked bodies' lines
+    brought were contract-classified (the row's probe, 2026-11-01), and 27
+    recall-tier paths brought ``tests/test_recall.py`` beside the slice that
+    runs it."""
+
+    def test_no_contract_classified_file_rides_a_bodys_own_line(self, pt):
+        """The row's probe as a pin: every tracked body's own line, together,
+        holds no file the conftest classifies ``contract``. Earn-the-red: 16
+        at 3ad6dcb, before the skip."""
+        bodies = _tracked_bodies(pt)
+        own = pt.own_tests(bodies, REPO_ROOT)
+        assert own, "the bodies' own line came back empty: the reader map read nothing"
+        assert not [rel for rel in own if _contract_classified(rel)], own
+
+    def test_the_walk_is_the_conftests_over_every_test_module(self, pt):
+        """``primary_marker`` walks the rules the conftest's own literal holds
+        and must answer as ``tests/conftest.py::_primary_marker`` does for
+        every module the suite collects; a change to the conftest's matching
+        reds here rather than drifting the two apart."""
+        from tests.conftest import _primary_marker
+        rules = pt._marker_rules(REPO_ROOT)
+        assert rules, "the conftest's _MARKER_RULES did not read as a literal"
+        stems = sorted(p.stem for p in checkout_glob(REPO_ROOT / "tests", "test_*.py"))
+        assert len(stems) >= 400, len(stems)
+        differ = [(s, pt.primary_marker(s, rules), _primary_marker(s)) for s in stems
+                  if pt.primary_marker(s, rules) != _primary_marker(s)]
+        assert not differ, (
+            f"{differ}: scripts/proof_tier.py::primary_marker is a pytest-free copy of "
+            f"tests/conftest.py::_primary_marker's walk (CI's tier job composes the own line "
+            f"with no pytest installed, DEF-4089): change both the same way")
+        assert {pt.primary_marker(s, rules) for s in stems} >= {"contract", "integration", "unit"}
+
+    def test_a_contract_classified_file_is_left_off_and_the_rest_stay(self, pt, tmp_path):
+        """Both directions, on a scratch suite: the contract file and its
+        prefix sibling leave the line, the integration and unclassified files
+        stay, whichever way the file came (a reader, a changed test file, a
+        changed script's own test)."""
+        _scratch_suite(tmp_path)
+        (tmp_path / "scripts").mkdir()
+        assert pt.own_tests(["docs/x.md"], tmp_path) == ("tests/test_i.py", "tests/test_u.py")
+        assert pt.own_tests(["tests/test_c.py", "scripts/c.py"], tmp_path) == ()
+        assert pt.own_tests(["tests/test_i.py"], tmp_path) == ("tests/test_i.py",)
+        assert pt.commands("contract", ["docs/x.md"], tmp_path)[-1] == (
+            "pytest -q -n auto -m 'not heavy_e2e' tests/test_i.py tests/test_u.py")
+
+    @pytest.mark.parametrize("label,conftest", [
+        ("no conftest", None),
+        ("a conftest that does not parse", "_MARKER_RULES = [\n"),
+        ("rules built at run time", "_MARKER_RULES = list(RULES)\n"),
+        ("rules of another shape", '_MARKER_RULES = {"test_c": "contract"}\n'),
+        ("no rules", "X = 1\n"),
+        ("rules bound twice", _SCRATCH_RULES + "_MARKER_RULES = []\n"),
+        ("rules extended", _SCRATCH_RULES + '_MARKER_RULES += [(("test_u",), "contract")]\n'),
+        ("rules changed in place", _SCRATCH_RULES + '_MARKER_RULES.insert(0, (("test_i",), "contract"))\n'),
+        ("an item set", _SCRATCH_RULES + '_MARKER_RULES[0] = (("test_u",), "contract")\n'),
+    ])
+    def test_rules_that_cannot_be_read_leave_nothing_off(self, pt, tmp_path, label, conftest):
+        """Where the rules cannot be read the line is the one before the skip,
+        never a shorter one: a file the walk cannot classify runs."""
+        _scratch_suite(tmp_path, conftest)
+        assert pt.own_tests(["docs/x.md"], tmp_path) == tuple(
+            f"tests/{name}" for name in _SCRATCH_TESTS), label
+
+    def test_the_line_is_composed_with_no_pytest_to_import(self, pt):
+        """The CI tier job installs no pytest and composes the commands under
+        ``--quiet`` too, so the rules are read from the conftest's text: a
+        script that imported the conftest would answer every pull request
+        ``full`` there. Driven in a child where ``import pytest`` fails."""
+        code = ("import sys; sys.modules['pytest'] = None; sys.path.insert(0, 'scripts'); "
+                "import proof_tier as t; "
+                "print(len(t._marker_rules(t._ROOT) or ())); "
+                "print(len(t.own_tests(['.claude/skills/reflect/SKILL.md'])))")
+        done = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", check=False)
+        assert done.returncode == 0, done.stderr
+        rules, line = (int(n) for n in done.stdout.split())
+        assert rules > 0 and line == len(pt.own_tests([".claude/skills/reflect/SKILL.md"], REPO_ROOT))
+
+    def test_a_line_with_a_selection_on_it_runs_no_file_whole(self, pt, tmp_path, monkeypatch):
+        """Only a bare pytest line runs its files whole: with a ``-k`` on the
+        slice line its file's deselected rows would run nowhere, so the own
+        line keeps it (the failure-mode review's row)."""
+        slice_file = pt.RECALL_SLICE_FILES[0]
+        (tmp_path / "tests").mkdir()
+        (tmp_path / slice_file).write_text('X = "memory/n.md"\n', encoding="utf-8")
+        narrowed = pt._TIER_ARGVS["recall"][:-1] + (
+            pt._PYTEST + pt._PARALLEL + ("-k", "not floor") + pt.RECALL_SLICE_FILES,)
+        monkeypatch.setitem(pt._TIER_ARGVS, "recall", narrowed)
+        assert pt.tier_argvs("recall", ["memory/n.md"], tmp_path)[-1] == (
+            pt._PYTEST + pt._PARALLEL + pt._NOT_HEAVY + (slice_file,))
+        for argv, whole in ((pt._PYTEST + pt._PARALLEL + pt.RECALL_SLICE_FILES, True),
+                            (pt._CONTRACT_ARGV, False), (pt._PYTEST + pt._ONE_WORKER + (slice_file,), False),
+                            (pt._PYTEST + (f"{slice_file}::T::t",), False), (pt._RUFF_ARGV, False)):
+            assert pt._runs_whole(argv) is whole, argv
+
+    def test_a_file_the_recall_line_runs_whole_is_left_off_its_own_line(self, pt, tmp_path):
+        """On the recall tier the slice line runs its files whole, so a corpus
+        path's reader among them leaves the own line; the contract tier runs
+        no slice, so there it stays."""
+        slice_file = pt.RECALL_SLICE_FILES[0]
+        (tmp_path / "tests").mkdir()
+        (tmp_path / slice_file).write_text('X = "memory/n.md"\n', encoding="utf-8")
+        (tmp_path / "tests" / "test_reads_n.py").write_text('X = "memory/n.md"\n', encoding="utf-8")
+        assert pt.tier(["memory/n.md"]) == "recall"
+        assert pt.commands("recall", ["memory/n.md"], tmp_path) == (
+            *pt.RECALL_COMMANDS, "pytest -q -n auto -m 'not heavy_e2e' tests/test_reads_n.py")
+        assert pt.commands("contract", ["memory/n.md"], tmp_path)[-1] == (
+            "pytest -q -n auto -m 'not heavy_e2e' " + " ".join(sorted((slice_file, "tests/test_reads_n.py"))))
+
+
+class TestTheOwnLineCeiling:
+    """DEF-4089: nothing capped how many test files one changed body brings to
+    the own line, so a census list added to a heavy test file grew every
+    body's line, and the five required cells that run it, with nothing to
+    decide (the reflect skill's line of 14 files: 8382 tests in 302 s on four
+    workers at cfa837f, 2026-11-01, mostly tests/test_write_guard.py). The
+    ceiling bounds files, not their cost."""
+
+    def test_every_tracked_body_brings_at_most_the_ceiling(self, pt):
+        bodies = _tracked_bodies(pt)
+        over = {}
+        for body in bodies:
+            own = pt.own_tests([body], REPO_ROOT)
+            if len(own) > pt.OWN_LINE_CEILING:
+                over[body] = own
+        assert not over, (
+            f"past OWN_LINE_CEILING ({pt.OWN_LINE_CEILING}, scripts/proof_tier.py), each body's "
+            f"own line: {over}. A body you did not touch counts too: a test file that names it "
+            f"joins its line. {pt.OWN_LINE_REMEDY}")
+
+    def test_the_receipt_prints_each_changed_bodys_count_beside_the_ceiling(
+            self, pt, tmp_path, capsys, monkeypatch):
+        r = _repo(tmp_path)
+        _commit(r, ".claude/commands/x.md", "x\n", "body")
+        _commit(r, "tests/test_reads_x.py", 'X = ".claude/commands/x.md"\n', "reader")
+        (r / ".claude" / "commands" / "x.md").write_text("y\n", encoding="utf-8")
+        assert pt.main(["--root", str(r)]) == 0
+        out = capsys.readouterr().out
+        want = f"own line per body (ceiling {pt.OWN_LINE_CEILING}): .claude/commands/x.md 1"
+        assert want in out.splitlines(), out
+        assert pt.main(["--root", str(r), "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["own_line_ceiling"] == pt.OWN_LINE_CEILING
+        assert data["own_line_by_body"] == {".claude/commands/x.md": 1}
+        monkeypatch.setattr(pt, "OWN_LINE_CEILING", 0)
+        assert pt.main(["--root", str(r)]) == 0
+        out = capsys.readouterr().out
+        assert ".claude/commands/x.md 1 (past the ceiling" in out, out
+        # the full tier runs no own line, so it prints no count
+        assert pt.main(["--root", str(r), "--tier", "full"]) == 0
+        assert "own line per body" not in capsys.readouterr().out
 
 
 #: Engine entry points that read the freshness manifest of the root they are
