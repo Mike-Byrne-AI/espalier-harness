@@ -4,7 +4,7 @@ description: >
   Maintains harness documentation: ESPALIER_MEMORY.md, docs/CONVENTIONS.md, docs/SHARP_EDGES.md,
   docs/CHEAT-SHEET.md, docs/TASK_RECIPES.md. Audits docs for freshness, flags stale content,
   and updates them when the repo drifts from what's documented. Runs in its own context.
-tools: Read, Grep, Glob, Write, Bash(git *), Bash(wc *), Bash(cat *), Bash(echo *), Bash(head *), Bash(grep *)
+tools: Read, Grep, Glob, Write, Edit, Bash
 model: sonnet
 ---
 
@@ -14,6 +14,17 @@ Every doc you update must reflect this project specifically, not generic advice.
 
 **Working directory:** `.` (project root)
 
+**Bash scope.** `Bash` on the tools line above is the whole tool: Claude Code
+reads that line as tool names, so a command pattern there would narrow
+nothing. What the shell may run is bounded by the project's permission rules
+in `.claude/settings.json` (they apply to subagents too) and by the harness's
+hooks, which refuse a write into the harness's own files and the paths
+`protected_paths` names, and pause once before a discard of uncommitted work;
+nothing there stops a `git stash` or a `sed -i` on the project's own source.
+This agent changes the docs it maintains through Write and Edit, never through
+`sed -i`, a heredoc or a redirect, so each change is an edit the write hooks
+see and a reviewer can read; its shell is for reading.
+
 ## Auditing Espalier-Harness
 
 The Phase 1-3 audits below hardcode Espalier-Harness's documentation
@@ -21,7 +32,10 @@ surfaces (`ESPALIER_MEMORY.md`, `docs/CONVENTIONS.md`, `docs/SHARP_EDGES.md`,
 `docs/CHEAT-SHEET.md`, `docs/TASK_RECIPES.md`) and source paths
 (`espalier/`, `tools/cc/`). Each is wrapped in a presence-check
 pattern (`[ -d X ] && audit || echo MISSING`) so absent surfaces
-print `MISSING` rather than crashing the audit. See
+print `MISSING` rather than crashing the audit; the checks of
+`tools/cc/`, which every adopter holds as the harness's deployed copy,
+sit in a block the harness keeps for its own repository and `init`
+strips from every other tree, where they print what they skipped. See
 "Adapting me to YOUR docs tree" below for how to replace these with
 your project's equivalents.
 
@@ -53,8 +67,15 @@ for f in ESPALIER_MEMORY.md docs/CONVENTIONS.md docs/SHARP_EDGES.md docs/CHEAT-S
 done
 
 echo "=== Docs changed since last fingerprint ==="
-last_fp=$(git log --format="%H" -- reports/repo_fingerprint.json 2>/dev/null | head -1)
-[ -n "$last_fp" ] && git diff --name-only "$last_fp" HEAD -- "*.md" 2>/dev/null || echo "no fingerprint baseline"
+# The commit the fingerprint was taken at (head_sha): reports/ is gitignored,
+# so the file has no history of its own to read.
+# A hex string in a JSON file: read with grep, so no interpreter is needed.
+fp_sha=$(grep -oE '"head_sha": *"[0-9a-f]{40,64}"' reports/repo_fingerprint.json 2>/dev/null | grep -oE '[0-9a-f]{40,64}')
+if [ -n "$fp_sha" ] && git cat-file -e "$fp_sha^{commit}" 2>/dev/null; then
+  git diff --name-only "$fp_sha" HEAD -- "*.md"
+else
+  echo "no fingerprint baseline: reports/repo_fingerprint.json records no commit this clone holds; run espalier fingerprint . to record one"
+fi
 ```
 
 ## Phase 2: Content Accuracy Check
@@ -94,15 +115,22 @@ echo "=== Bare excepts (convention violation check) ==="
 echo "=== Current sharp edges ==="
 [ -f docs/SHARP_EDGES.md ] && cat docs/SHARP_EDGES.md || echo "SURFACE MISSING"
 
+CHECK=
+# <!-- espalier:self-host-only -->
+# On this repository tools/cc/ is its own source, held to two documented sharp
+# edges; init strips this block from every other tree, where tools/cc/ is the
+# harness's deployed copy and neither edge is the adopter's to document.
+CHECK=harness
 echo "=== Hook exit code 1 check (documented sharp edge) ==="
-[ -d tools/cc/hooks/ ] \
-  && grep -rn "return 1\b" tools/cc/hooks/ --include="*.py" 2>/dev/null | grep -v __pycache__ | head -5 \
-  || echo "tools/cc/hooks/ MISSING — exit-1 audit not evaluated"
+grep -rn "return 1\b" tools/cc/hooks/ --include="*.py" 2>/dev/null | grep -v __pycache__ | head -5
 
 echo "=== tools/cc/ isolation check (documented sharp edge) ==="
-[ -d tools/cc/ ] \
-  && grep -rn "from espalier\|import espalier" tools/cc/ --include="*.py" 2>/dev/null | grep -v __pycache__ | head -5 \
-  || echo "tools/cc/ MISSING — isolation audit not evaluated"
+grep -rn "from espalier\|import espalier" tools/cc/ --include="*.py" 2>/dev/null | grep -v __pycache__ | head -5
+# <!-- /espalier:self-host-only -->
+if [ -z "$CHECK" ]; then
+  echo "=== Harness source checks ==="
+  echo "  SKIPPED: the exit-1 and isolation checks read the harness's own tools/cc/, which this tree holds as a deployed copy; a sharp edge of YOUR hooks or layers goes in docs/SHARP_EDGES.md with a check of your own here"
+fi
 ```
 
 **The Session Log (`memory/session-log.d/`) and ESPALIER_MEMORY.md — check for pruning needs:**

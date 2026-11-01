@@ -976,6 +976,24 @@ def _starts_with_emoji(msg: str) -> bool:
     )
 
 
+def detect_head_sha(repo_root: Path) -> str:
+    """The commit ``repo_root`` has checked out, or "" outside git, before a
+    first commit, or where git cannot be run."""
+    import subprocess
+
+    from espalier._spawn import run_no_stdin
+    try:
+        head = run_no_stdin(
+            ["git", "rev-parse", "--verify", "-q", "HEAD"],
+            cwd=repo_root, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=5,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return ""
+    sha = head.stdout.strip()
+    return sha if head.returncode == 0 and re.fullmatch(r"[0-9a-f]{40,64}", sha) else ""
+
+
 def detect_git_conventions(repo_root: Path) -> dict[str, Any]:
     """Analyze git log to detect commit message patterns."""
     import subprocess
@@ -1292,6 +1310,7 @@ def fingerprint_repo(repo_root: Path, config: HarnessConfig | None = None) -> Re
     fingerprint = RepoFingerprint(
         repo_name=repo_root.name,
         repo_root=str(repo_root),
+        head_sha=detect_head_sha(repo_root),
         language_counts=language_counts,
         languages=languages,
         package_systems=package_systems,

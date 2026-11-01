@@ -1,6 +1,6 @@
 export const meta = {
   name: 'convergence-review-template',
-  description: 'Scope-breaker-complete convergence-review scaffold. The successor to _fanout_audit.js: the same finders -> refute -> persist two-hop bridge, PLUS the four mandatory scope-breakers (penumbra / actionable-critic / corpus-blind / delta-attacker) and a terminal convergence-critic that appends a cross-round row to memory/CONVERGENCE_LEDGER.md. Copy this file, rename it, and swap DIMENSIONS for your lens. See memory/convergence-review-protocol.md "Scope-breakers (mandatory floor)".',
+  description: 'Scope-breaker-complete convergence-review scaffold. The successor to _fanout_audit.js: the same finders -> refute -> persist two-hop bridge, PLUS the four mandatory scope-breakers (penumbra / actionable-critic / corpus-blind / delta-attacker) and a terminal convergence-critic that appends a cross-round row to memory/CONVERGENCE_LEDGER.md only from a complete round: a finder, scope-breaker or persist lane that did not run is returned by name and no row is appended, and the default smoke lens appends only to a ledgerPath you name. Copy this file, rename it, and swap DIMENSIONS for your lens. See memory/convergence-review-protocol.md "Scope-breakers (mandatory floor)".',
   phases: [
     { title: 'Find' },
     { title: 'Penumbra' },
@@ -37,7 +37,8 @@ export const meta = {
 //     lens:        "one-line description of this round",
 //     baseRef:     "c8d7175",           // delta-attacker git range base (default HEAD~1)
 //     corpusPath:  "reports/<round>-findings.md",
-//     ledgerPath:  "memory/CONVERGENCE_LEDGER.md",  // scratch path for a smoke/test run
+//     ledgerPath:  "memory/CONVERGENCE_LEDGER.md",  // scratch path for a smoke/test run; the default
+//                                                   // smoke lens appends a row ONLY when this is given
 //     knownCategories: [...],
 //     refute:      true,
 //     model:       "sonnet",          // applied to EVERY agent call (default: inherit the session model)
@@ -46,6 +47,15 @@ export const meta = {
 // lanes return empty, so the scaffold is safe to smoke-run end-to-end for under ten
 // agents. Without it a no-args run is a real review of the host repository: the
 // corpus-blind lane, the critic's second wave and the delta-attacker are unbounded.
+// The default smoke lens (no `finders`) never appends to the tracked convergence
+// ledger on its own: the convergence-critic runs only when `ledgerPath` names where
+// its row goes (a scratch path for a smoke run), so a call whose args did not bind
+// cannot leave a durable row about a review nobody configured.
+//
+// LANES THAT DID NOT RUN are returned by name (`lanesNotRun`, by phase), never folded
+// into an empty result, and the convergence-critic is not launched while any finder,
+// scope-breaker or persist lane did not run: no ledger row and no convergence verdict
+// come from an incomplete round.
 //
 // SCHEMA NOTE: FINDING_SCHEMA lives in the engine's fan_out_findings module (the SoT).
 // The JS sandbox cannot import it, so the shape below is an inlined copy pinned to
@@ -66,8 +76,14 @@ export const meta = {
 // stays SAFE TO SMOKE-RUN end-to-end (deliberately NO fail-fast here — a dated COPY that
 // requires a real lens adds its own guard; the template itself must run on a trivial lens).
 let A = {}
-if (typeof args === 'string') { try { A = args.trim() ? JSON.parse(args) : {} } catch (e) { A = {} } }
+let argsUnparsed = false
+if (typeof args === 'string') { try { A = args.trim() ? JSON.parse(args) : {} } catch (e) { A = {}; argsUnparsed = true } }
 else if (args && typeof args === 'object') { A = args }
+if (!A || typeof A !== 'object' || Array.isArray(A)) { A = {}; argsUnparsed = true }
+if (argsUnparsed) log('convergence-review: args did not resolve to an object; running the default smoke lens, which appends no ledger row unless ledgerPath is given')
+// The default smoke lens appends to the convergence ledger only where the caller named it.
+const SMOKE_LENS = !(Array.isArray(A.finders) && A.finders.length)
+const LEDGER_NAMED = typeof A.ledgerPath === 'string' && A.ledgerPath.trim() !== ''
 const CORPUS_PATH = A.corpusPath || 'reports/convergence-review-findings.md'
 const LEDGER_PATH = A.ledgerPath || 'memory/CONVERGENCE_LEDGER.md'
 const INPUT_PATH = 'reports/.convergence_review_input.json' // gitignored scratch (reports/)
@@ -98,6 +114,30 @@ const SMOKE_CLAUSE = SMOKE
 const stripRefuterFields = (x) => {
   const { corrected_category, corrected_confidence, externally_verified, ...rest } = x
   return rest
+}
+// LANES THAT DID NOT RUN. Under the Workflow API a skipped agent, or one that dies on
+// a terminal error, resolves to null, and parallel() and pipeline() turn a thrown lane
+// into null. Each such lane is recorded here by its label and returned, never folded
+// into an empty result: a lane that found nothing and a lane that never ran must not
+// read the same. A refuter that did not run leaves its finding `unattempted`.
+const lanesNotRun = []
+const refutersNotRun = []
+const notRun = (phaseName, lane) => { lanesNotRun.push({ phase: phaseName, lane }) }
+const notRunByPhase = () => lanesNotRun.reduce((acc, x) => {
+  (acc[x.phase] = acc[x.phase] || []).push(x.lane)
+  return acc
+}, {})
+// A refuted-or-not merge that treats a refuter returning nothing as not run.
+const mergeVerdict = (f, label) => (v) => {
+  const r = v == null
+    ? { ...f, refutation_outcome: 'unattempted', refutation_reason: 'refuter returned nothing (skipped, or died on an error)' }
+    : { ...f, ...v }
+  if (v == null) refutersNotRun.push(label)
+  return r
+}
+const refuterErrored = (f, label) => () => {
+  refutersNotRun.push(label)
+  return { ...f, refutation_outcome: 'unattempted', refutation_reason: 'refuter errored' }
 }
 
 // --- Inlined FINDING_SCHEMA v2 (SoT: the engine's fan_out_findings.FINDING_SCHEMA).
@@ -234,8 +274,8 @@ const scopedThunks = DIMENSIONS.map(d => () =>
     label: `find:${d.id}`, phase: 'Find', schema: FINDINGS,
     ...(d.agentType ? { agentType: d.agentType } : {}),
   }))
-    .then(r => ((r && r.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: d.id, _lane: d.id, category: x.category || d.category })))
-    .catch(() => [])
+    .then(r => (r == null ? null
+      : (r.findings || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: d.id, _lane: d.id, category: x.category || d.category }))))
 )
 
 // SCOPE-BREAKER 3 — CORPUS-BLIND parallel deep-dive.
@@ -251,10 +291,17 @@ const corpusBlindThunk = () =>
     `Return {findings: [ ...FINDING_SCHEMA objects... ]}.` + SMOKE_CLAUSE,
     opts({ label: 'find:corpus-blind', phase: 'Find', schema: FINDINGS }),
   )
-    .then(r => ((r && r.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: 'corpus-blind', _lane: 'corpus-blind', category: x.category || 'completeness' })))
-    .catch(() => [])
+    .then(r => (r == null ? null
+      : (r.findings || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: 'corpus-blind', _lane: 'corpus-blind', category: x.category || 'completeness' }))))
 
 const finderResults = await parallel([...scopedThunks, corpusBlindThunk])
+const finderLanes = [...DIMENSIONS.map(d => `find:${d.id}`), 'find:corpus-blind']
+finderResults.forEach((r, i) => { if (r == null) notRun('Find', finderLanes[i]) })
+// The corpus-blind lane's status goes into the round summary the critic reads: its
+// "converged" gate needs a corpus-blind pass that RAN and found nothing, and a lane
+// that never ran is not that null.
+const corpusBlindResult = finderResults[finderResults.length - 1]
+const corpusBlindRan = corpusBlindResult != null
 let found = finderResults.filter(Boolean).flat()
 
 // CROSS-LANE COLLAPSE — key on NORMALIZED CLAIM TEXT, never on `id`.
@@ -309,9 +356,10 @@ const penumbra = await parallel(found.map((f, i) => () =>
     `Return {findings: [...]}.`,
     opts({ label: `penumbra:${f._lane || 'x'}#${i}`, phase: 'Penumbra', schema: FINDINGS }),
   )
-    .then(r => ((r && r.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: `penumbra:${f._lane}`, _lane: `penumbra:${f._lane}` })))
-    .catch(() => [])
+    .then(r => (r == null ? null
+      : (r.findings || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: `penumbra:${f._lane}`, _lane: `penumbra:${f._lane}` }))))
 ))
+penumbra.forEach((r, i) => { if (r == null) notRun('Penumbra', `penumbra:${found[i]._lane || 'x'}#${i}`) })
 found = found.concat(penumbra.filter(Boolean).flat())
 log(`convergence-review: ${found.length} candidate(s) after penumbra`)
 
@@ -323,8 +371,8 @@ let findings = found
 if (REFUTE && found.length) {
   findings = await parallel(found.map((f, i) => () =>
     agent(refutePrompt(f), opts({ label: `refute:${f._lane || 'x'}#${i}`, phase: 'Refute', schema: REFUTE_RESULT }))
-      .then(v => ({ ...f, ...(v || {}) }))
-      .catch(() => ({ ...f, refutation_outcome: 'unattempted', refutation_reason: 'refuter errored' }))
+      .then(mergeVerdict(f, `refute:${f._lane || 'x'}#${i}`))
+      .catch(refuterErrored(f, `refute:${f._lane || 'x'}#${i}`))
   ))
 }
 
@@ -354,7 +402,8 @@ const critic = await agent(
   `Return {gaps: [{surface, why, oracle}, ...]}.` +
   (SMOKE ? `\n\nSMOKE RUN: name at most ONE gap, with a cheap oracle.` : ''),
   opts({ label: 'actionable-critic', phase: 'Actionable-critic', schema: GAPS }),
-).catch(() => ({ gaps: [] }))
+).catch(() => null)
+if (critic == null) notRun('Actionable-critic', 'actionable-critic')
 
 const gaps = (critic && critic.gaps) || []
 log(`convergence-review: actionable-critic named ${gaps.length} gap(s) -> second finder wave`)
@@ -364,15 +413,16 @@ if (gaps.length) {
       finderPrompt({ title: `gap: ${g.surface}`, body: `${g.why}\n\nRun this oracle: ${g.oracle}` + SMOKE_CLAUSE }),
       opts({ label: `find2:${i}`, phase: 'Actionable-critic', schema: FINDINGS }),
     )
-      .then(r => ((r && r.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: `gap:${i}`, _lane: `gap:${i}`, category: x.category || 'completeness' })))
-      .catch(() => [])
+      .then(r => (r == null ? null
+        : (r.findings || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: `gap:${i}`, _lane: `gap:${i}`, category: x.category || 'completeness' }))))
   ))
+  secondWave.forEach((r, i) => { if (r == null) notRun('Actionable-critic', `find2:${i}`) })
   const wave2 = secondWave.filter(Boolean).flat()
   const wave2Refuted = (REFUTE && wave2.length)
     ? await parallel(wave2.map((f, i) => () =>
         agent(refutePrompt(f), opts({ label: `refute2:${i}`, phase: 'Actionable-critic', schema: REFUTE_RESULT }))
-          .then(v => ({ ...f, ...(v || {}) }))
-          .catch(() => ({ ...f, refutation_outcome: 'unattempted', refutation_reason: 'refuter errored' }))))
+          .then(mergeVerdict(f, `refute2:${i}`))
+          .catch(refuterErrored(f, `refute2:${i}`))))
     : wave2
   findings = findings.concat(wave2Refuted)
 }
@@ -395,15 +445,22 @@ const deltaRaw = await agent(
   `classification guard. Empty array if the diff has no un-updated ripple (or there is no diff).\n\n` +
   `Return {findings: [...]}.` + SMOKE_CLAUSE,
   opts({ label: 'delta-attacker', phase: 'Delta-attacker', schema: FINDINGS }),
-).catch(() => ({ findings: [] }))
+).catch(() => null)
+if (deltaRaw == null) notRun('Delta-attacker', 'delta-attacker')
 const deltaFound = ((deltaRaw && deltaRaw.findings) || []).map(x => ({ ...stripRefuterFields(x), rule_or_scanner: 'delta-attacker', _lane: 'delta-attacker', category: x.category || 'completeness' }))
 const deltaRefuted = (REFUTE && deltaFound.length)
   ? await parallel(deltaFound.map((f, i) => () =>
       agent(refutePrompt(f), opts({ label: `refute-delta:${i}`, phase: 'Delta-attacker', schema: REFUTE_RESULT }))
-        .then(v => ({ ...f, ...(v || {}) }))
-        .catch(() => ({ ...f, refutation_outcome: 'unattempted', refutation_reason: 'refuter errored' }))))
+        .then(mergeVerdict(f, `refute-delta:${i}`))
+        .catch(refuterErrored(f, `refute-delta:${i}`))))
   : deltaFound
 findings = findings.concat(deltaRefuted)
+
+// The corpus-blind lane's own yield, read before the private tags go: a record the
+// claim collapse merged keeps every lane that emitted it in `_lanes`.
+const corpusBlindSurvivors = findings.filter(f =>
+  (f._lanes || [f._lane]).includes('corpus-blind') && f.refutation_outcome !== 'refuted').length
+const corpusBlind = { ran: corpusBlindRan, candidates: corpusBlindRan ? corpusBlindResult.length : 0, survivors: corpusBlindSurvivors }
 
 // Strip the internal _lane AND _lanes tags before the schema-validated persist
 // (additionalProperties:false marks either one invalid). `_lanes` is stamped by
@@ -486,7 +543,7 @@ const persistPrompt =
   `no interpreter that imports espalier answered on this host: report that ` +
   `line as the persist error, never as an empty result.`
 
-const persistResult = await agent(persistPrompt, opts({
+const persistRaw = await agent(persistPrompt, opts({
   label: 'persist:corpus', phase: 'Persist',
   schema: {
     type: 'object', additionalProperties: true,
@@ -505,7 +562,9 @@ const persistResult = await agent(persistPrompt, opts({
       survivors_slim: { type: 'array', items: { type: 'object', additionalProperties: true } },
     },
   },
-})).catch(() => ({ total: findings.length, appended: 0, persist_error: 'persist agent errored (fail-open)', corpus_path: CORPUS_PATH, survivors_slim: [] }))
+})).catch(() => null)
+if (persistRaw == null) notRun('Persist', 'persist:corpus')
+const persistResult = persistRaw || { total: findings.length, appended: 0, persist_error: 'the persist agent did not run (skipped, errored, or died on an error; fail-open): nothing was persisted', corpus_path: CORPUS_PATH, survivors_slim: [] }
 
 // =============================================================================
 // Phase 7 — CONVERGENCE-CRITIC (terminal, mandatory). Stateless: reads the durable
@@ -521,8 +580,23 @@ const roundSummary = JSON.stringify({
   by_refutation_outcome: persistResult.by_refutation_outcome,
   by_category: persistResult.by_category,
   survivors_slim: persistResult.survivors_slim,
+  corpus_blind: corpusBlind,
+  lanes_not_run: notRunByPhase(),
+  refuters_not_run: refutersNotRun.length,
 })
-const criticVerdict = await agent(
+// The critic appends a durable row, so it runs only from a complete round: every
+// finder, scope-breaker and persist lane ran (a refuter that did not run is on its
+// finding as `unattempted`, which the critic reads). And the default smoke lens
+// writes no row unless the caller named the ledger it goes to.
+let criticSkip = null
+if (lanesNotRun.length) {
+  criticSkip = `${lanesNotRun.length} lane(s) did not run (${lanesNotRun.map(x => x.lane).join(', ')}); ` +
+    'an incomplete round gets no ledger row and no convergence verdict'
+} else if (SMOKE_LENS && !LEDGER_NAMED) {
+  criticSkip = `the default smoke lens appends no row to ${LEDGER_PATH}; pass ledgerPath (a scratch path for a smoke run) to exercise this stage`
+}
+if (criticSkip) log(`convergence-review: convergence-critic not launched -- ${criticSkip}`)
+const criticRaw = criticSkip ? null : await agent(
   FRAME +
   `You are the CONVERGENCE-CRITIC — the terminal stage. cwd = repo root. Your job is CROSS-ROUND\n` +
   `sight, then APPEND one row to the ledger. Do NOT rewrite any existing row.\n\n` +
@@ -536,8 +610,9 @@ const criticVerdict = await agent(
   `STEP 3 — Compute, using STEP 1 + STEP 2 + THIS ROUND (below): (a) yield trend vs prior rows;\n` +
   `  (b) refutation-recurrences (a finding refuted 2+ times); (c) confirmed-after-refuted; (d) cross-\n` +
   `  round classes (N isolated same-shape nits); (e) the cumulative never-covered coverage map;\n` +
-  `  (f) scope-narrowing. GATE the word "converged": permit it ONLY if a corpus-blind pass produced\n` +
-  `  the null AND the coverage map has no high-value never-covered surface; otherwise the verdict\n` +
+  `  (f) scope-narrowing. GATE the word "converged": permit it ONLY if THIS ROUND's corpus_blind\n` +
+  `  shows ran=true and survivors=0 (a corpus-blind pass that ran and produced the null) AND the\n` +
+  `  coverage map has no high-value never-covered surface; otherwise the verdict\n` +
   `  is "coverage-null, not convergence-null".\n` +
   `STEP 4 — Compose ONE new row matching the ledger's "## Row schema" (### Round <N> — <date> — ...),\n` +
   `  where <N> = (highest prior round number) + 1. Use today's date if visible in STEP 1/2 timestamps,\n` +
@@ -559,11 +634,19 @@ const criticVerdict = await agent(
       coverage_gaps: { type: 'array', items: { type: 'string' } },
     },
   } }),
-).catch(() => ({ round_appended: false, convergence_read: 'convergence-critic errored (fail-open)' }))
+).catch(() => null)
+if (!criticSkip && criticRaw == null) notRun('Convergence-critic', 'convergence-critic')
+const criticVerdict = criticRaw || (criticSkip
+  ? { round_appended: false, convergence_read: `not run: ${criticSkip}`, converged_word_used: false, coverage_gaps: [] }
+  : { round_appended: false, convergence_read: 'the convergence-critic did not run to its end (skipped, errored, or died on an error; fail-open): read the ledger tail for a partial append' })
 
 // The ONLY thing the main window reads: compact scalars + survivors-slim + the verdict.
 return {
   lens: LENS,
+  argsUnparsed,
+  lanesNotRun: notRunByPhase(),
+  refutersNotRun,
+  corpusBlind,
   candidates: findings.length,
   summary: {
     total: persistResult.total, valid: persistResult.valid, invalid: persistResult.invalid,
@@ -582,6 +665,8 @@ return {
   convergence: {
     read: criticVerdict.convergence_read,
     rowAppended: criticVerdict.round_appended,
+    convergedWordUsed: criticVerdict.converged_word_used === true,
+    criticLaunched: !criticSkip,
     ledgerPath: LEDGER_PATH,
     coverageGaps: criticVerdict.coverage_gaps || [],
   },

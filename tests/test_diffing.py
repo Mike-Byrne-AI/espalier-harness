@@ -224,6 +224,8 @@ class TestReductionsAreNamed:
             "pattern": "src_layout", "layer_rules": {"src/app": "no_io"},
         }
         assert "notes" not in normalized and "garbage_files" not in normalized
+        # the commit it was taken at is a record, never drift
+        assert "head_sha" not in normalized
 
     def test_fifty_large_files_compare_as_presence(self):
         """`detect_large_files` keeps the fifty largest, so at the cut the path
@@ -441,6 +443,7 @@ class TestEveryFieldIsClassified:
 _FINGERPRINT_CENSUS = {
     "repo_name": "clone-dir-name",
     "repo_root": "/somewhere/else",
+    "head_sha": "0123456789abcdef0123456789abcdef01234567",
     "language_counts": {"typescript": 4, "go": 2},
     "languages": ["typescript", "go"],
     "package_systems": ["rust", "go"],  # the pre-2026-10-07 row order; sorted by the reduction

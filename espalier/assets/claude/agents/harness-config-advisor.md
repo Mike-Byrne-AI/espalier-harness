@@ -5,7 +5,7 @@ description: >
   needs. Advises on additions, removals, and adjustments to agents, commands, and
   hooks. Merges agent roster design and command set design in one context.
   Runs in its own context window.
-tools: Read, Grep, Glob, Bash(git *), Bash(cat *), Bash(ls *), Bash(python *)
+tools: Read, Grep, Glob, Bash
 model: opus
 ---
 
@@ -14,6 +14,16 @@ on changes. You know what a good agent roster looks like, what commands solve re
 problems, and how to match configuration to workflow.
 
 **Working directory:** `.` (project root)
+
+**Bash scope.** `Bash` on the tools line above is the whole tool: Claude Code
+reads that line as tool names, so a command pattern there would narrow
+nothing. What the shell may run is bounded by the project's permission rules
+in `.claude/settings.json` (they apply to subagents too) and by the harness's
+hooks, which refuse a write into the harness's own files and the paths
+`protected_paths` names, and pause once before a discard of uncommitted work;
+nothing there stops a `git stash` or a `sed -i` on the project's own source.
+This agent reviews and changes nothing: run only the read-only commands this
+body shows.
 
 ## Phase 1: Current Setup Inventory
 
@@ -46,7 +56,37 @@ skills_dir = root / ".claude" / "skills"
 skills = sorted(p.name for p in skills_dir.iterdir() if p.is_dir() and (p / "SKILL.md").exists()) if skills_dir.exists() else []
 print(f"Skills ({len(skills)}): {skills}")
 
-# Hooks — parsed from settings.json with path validation
+# Hooks -- parsed from settings.json with path validation
+import re
+
+# The script files a hook runs. init writes exec form: the interpreter alone in
+# command and the script in args[]. A legacy shell-form hook names its script
+# inside command, quoted or bare. Both are read, as /smoke's hook check does.
+import os
+import shlex
+
+SCRIPT_SUFFIXES = (".py", ".sh", ".bash", ".js", ".mjs", ".cjs", ".ts", ".ps1")
+SCRIPT_IN_COMMAND = re.compile(r"""["']([^"']+)["']|(\S+)""")
+
+def hook_scripts(h):
+    words = [a for a in (h.get("args") or []) if isinstance(a, str)]
+    cmd = h.get("command") or ""
+    if isinstance(cmd, str):
+        try:  # shell words, so a quoted variable joins the path after it
+            words += shlex.split(cmd.replace("\\", "/"))
+        except ValueError:
+            words += [q or b for q, b in SCRIPT_IN_COMMAND.findall(cmd)]
+    return [w for w in words if w.lower().endswith(SCRIPT_SUFFIXES)]
+
+def resolve_script(path):
+    # strip the project-dir prefix by its tail: the variable's spelling may be rewritten by the loader in this body
+    tail = os.path.expanduser(os.path.expandvars(re.sub(r"^.*?PROJECT_DIR}?/", "", path)))
+    return Path(tail) if Path(tail).is_absolute() else root.resolve() / tail
+
+def describe(h):
+    words = [str(h.get("command") or "")] + [str(a) for a in (h.get("args") or [])]
+    return " ".join(w for w in words if w)[:80]
+
 settings_path = root / ".claude" / "settings.json"
 if settings_path.exists():
     data = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -60,20 +100,13 @@ if settings_path.exists():
     for event, entries in hooks.items():
         for entry in entries:
             for h in entry.get("hooks", []):
-                cmd = h.get("command", "")
                 timeout = h.get("timeout", "?")
-                # Extract script path from command string
-                import re
-                m = re.search(r'"([^"]+\.py)"', cmd) or re.search(r"'([^']+\.py)'", cmd)
-                script_path = m.group(1) if m else None
-                if script_path:
-                    # strip the project-dir prefix by its tail: the variable's spelling may be rewritten by the loader in this body
-                    resolved = root.resolve() / re.sub(r"^.*?PROJECT_DIR}?/", "", script_path)
-                    exists = resolved.exists()
-                    status = "OK" if exists else "MISSING"
+                scripts = hook_scripts(h)
+                if not scripts:
+                    print(f"  {event}: {describe(h)} [names no script file: not checked]")
+                for script_path in scripts:
+                    status = "OK" if resolve_script(script_path).exists() else "MISSING"
                     print(f"  {event}: {Path(script_path).name} [{status}] timeout={timeout}s")
-                else:
-                    print(f"  {event}: {cmd[:60]} [path unresolvable]")
 else:
     print("MISSING: .claude/settings.json")
 
@@ -85,7 +118,7 @@ if fp_path.exists():
     sigs = [s["name"] for s in fp.get("signals", [])]
     print(f"  Signals: {sigs}")
 else:
-    print("\nNo fingerprint — run /analyze first")
+    print("\nNo fingerprint -- run /analyze first")
 EOF
 ```
 
@@ -115,19 +148,55 @@ for _stream in (sys.stdout, sys.stderr):
 root = Path(".")
 issues = []
 
-# 1. Hook scripts -- do target files exist?
+# The script files a hook runs. init writes exec form: the interpreter alone in
+# command and the script in args[]. A legacy shell-form hook names its script
+# inside command, quoted or bare. Both are read, as /smoke's hook check does.
+import os
+import shlex
+
+SCRIPT_SUFFIXES = (".py", ".sh", ".bash", ".js", ".mjs", ".cjs", ".ts", ".ps1")
+SCRIPT_IN_COMMAND = re.compile(r"""["']([^"']+)["']|(\S+)""")
+
+def hook_scripts(h):
+    words = [a for a in (h.get("args") or []) if isinstance(a, str)]
+    cmd = h.get("command") or ""
+    if isinstance(cmd, str):
+        try:  # shell words, so a quoted variable joins the path after it
+            words += shlex.split(cmd.replace("\\", "/"))
+        except ValueError:
+            words += [q or b for q, b in SCRIPT_IN_COMMAND.findall(cmd)]
+    return [w for w in words if w.lower().endswith(SCRIPT_SUFFIXES)]
+
+def resolve_script(path):
+    # strip the project-dir prefix by its tail: the variable's spelling may be rewritten by the loader in this body
+    tail = os.path.expanduser(os.path.expandvars(re.sub(r"^.*?PROJECT_DIR}?/", "", path)))
+    return Path(tail) if Path(tail).is_absolute() else root.resolve() / tail
+
+def describe(h):
+    words = [str(h.get("command") or "")] + [str(a) for a in (h.get("args") or [])]
+    return " ".join(w for w in words if w)[:80]
+
+# 1. Hook scripts -- do target files exist? A hook that names no script file
+#    is not checked, and the verdict says so rather than reading it as clean.
+unchecked = []
 settings_path = root / ".claude" / "settings.json"
 if settings_path.exists():
     data = json.loads(settings_path.read_text(encoding="utf-8"))
+    hooks_seen = 0
     for event, entries in data.get("hooks", {}).items():
         for entry in entries:
             for h in entry.get("hooks", []):
-                cmd = h.get("command", "")
-                m = re.search(r'"([^"]+\.py)"', cmd) or re.search(r"'([^']+\.py)'", cmd)
-                if m:
-                    script = root.resolve() / re.sub(r"^.*?PROJECT_DIR}?/", "", m.group(1))
+                hooks_seen += 1
+                scripts = hook_scripts(h)
+                if not scripts:
+                    unchecked.append(f"{event}: {describe(h)}")
+                for path in scripts:
+                    script = resolve_script(path)
                     if not script.exists():
                         issues.append(f"DEAD HOOK: {event} -> {script.name} not found at {script}")
+    print(f"Hook scripts: {hooks_seen - len(unchecked)} of {hooks_seen} hooks checked")
+else:
+    print("Hook scripts: no .claude/settings.json, so no hook wiring was checked")
 
 # 2. Commands, agents and skills -- a source path a body cites must exist.
 #    The prefixes are the harness's own layout. A body the harness deployed
@@ -179,7 +248,11 @@ if issues:
     print(f"DEAD CONFIG ({len(issues)} issues):")
     for i in issues:
         print(f"  ! {i}")
-else:
+if unchecked:
+    print(f"NOT CHECKED ({len(unchecked)} hooks name no script file this pass can look for):")
+    for u in unchecked:
+        print(f"  ? {u}")
+if not issues and not unchecked:
     print("Dead-config pass: CLEAN")
 EOF
 ```
