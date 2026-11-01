@@ -158,8 +158,72 @@ SELF_HOST_BLOCK_RE = re.compile(
 )
 
 
-def strip_self_host_blocks(body: str) -> str:
-    """``body`` as ``init`` writes it off this repository: its self-host blocks gone."""
+#: What a marker's line may hold besides the marker: nothing, or the comment
+#: that carries it (``//`` in a workflow, ``#`` in a shell fence, ``>`` in a
+#: quote). The strip takes the whole line, so anything else on it is adopter text.
+SELF_HOST_MARKER_PREFIXES = ("", "//", "#", ">")
+
+
+def code_fences(lines: Iterable[str]) -> tuple[list[int | None], int | None]:
+    """``(fence of each line, unclosed)``: for each line, the ordinal of the
+    fenced code block it sits in, counting from 1 and including the block's two
+    fence lines, or None outside every block; and the line that opened a block
+    the text never closes, or None. One reader for the strip and the gate over
+    its source, so the two cannot place a line in different fences.
+
+    The run and close rules are the engine's one fence grammar
+    (``reflect_protocol._next_fence_state``), read on each line with its indent
+    and quote marks removed: a fence nested in a list item sits four or more
+    spaces deep, past the grammar's three, and a block crossing one would take
+    the text between unseen. Reading too many lines as fences can only refuse."""
+    from espalier.reflect_protocol import _next_fence_state
+
+    out: list[int | None] = []
+    fence: str | None = None
+    count = opened = 0
+    for n, line in enumerate(lines, 1):
+        was = fence
+        fence = _next_fence_state(line.lstrip(" \t>"), fence)
+        if was is None and fence is not None:
+            count, opened = count + 1, n
+        out.append(count if was is not None or fence is not None else None)
+    return out, (opened if fence is not None else None)
+
+
+def strip_self_host_blocks(body: str, *, source: str) -> str:
+    """``body`` as ``init`` writes it off this repository: its self-host blocks gone.
+
+    A block the strip would take adopter text with raises ValueError naming
+    ``source`` (the body's path) and the lines: one whose two ends sit in
+    different code fences, or one in a fence and one outside, since stripped
+    whole it takes the text between and the fence lines it leaves re-pair, so
+    the body still renders, with the wrong text; and one whose marker shares
+    its line with text (:data:`SELF_HOST_MARKER_PREFIXES`). ``main`` prints the
+    error as the verb's refusal. A marker with no partner strips nothing and
+    is the source gate's to refuse. Lines are counted as the block pattern
+    reads them, on ``\\n`` alone.
+    """
+    blocks = list(SELF_HOST_BLOCK_RE.finditer(body))
+    if not blocks:
+        return body
+    lines = body.split("\n")
+    fences = code_fences(lines)[0]
+    for m in blocks:
+        first = body.count("\n", 0, m.start())
+        last = body.count("\n", 0, max(m.start(), m.end() - 1))
+        for n in sorted({first, last}):
+            rest = lines[n].replace(SELF_HOST_BLOCK_OPEN, "").replace(SELF_HOST_BLOCK_CLOSE, "").strip()
+            if rest not in SELF_HOST_MARKER_PREFIXES:
+                raise ValueError(
+                    f"{source}: the self-host marker on line {n + 1} shares its line with "
+                    "text the strip would take with it. Put the marker alone on its line."
+                )
+        if fences[first] != fences[last]:
+            raise ValueError(
+                f"{source}: the self-host block from line {first + 1} to line {last + 1} "
+                "opens and closes in different code fences; the strip would take the "
+                "text between them. Close the block in the fence it opens in."
+            )
     return SELF_HOST_BLOCK_RE.sub("", body)
 
 #: The family name :func:`maintainer_marker_hits` reports a self-host path under.
