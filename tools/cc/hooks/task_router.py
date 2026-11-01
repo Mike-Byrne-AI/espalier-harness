@@ -240,6 +240,38 @@ _OWN_CLEAR_REFUSED = (
     "meanwhile."
 )
 
+# The own-clear's held clear (DEF-2039, 2026-11-01): the mod holds the clear
+# while something is in flight (its inFlight causes) and puts the hold on its
+# marker (why, since when, the turn ends it has held); the dispatcher window
+# sat held on a moved HEAD for 9 h and 36 loop ticks with the hold on its
+# status line alone. Said in the held window on every prompt, with the verb
+# that resolves the cause: the mod's own text names none, since it rides the
+# clear's re-prime brief, where a verb would run in the new window over a
+# consumed marker. Keyed by the opening words of each inFlight return
+# (tests/test_own_clear.py pins a key for every return, and a return for every key).
+_OWN_CLEAR_HELD = (
+    "[HARNESS] own-clear: the clear this window's handoff armed has been held since {since}Z over "
+    "{turns} turn end(s): {why}{earlier}. No clear runs while it holds. {verb} A /clear by hand ends it "
+    "too (the mod re-primes the window and names what was left in flight). Say so in the first line of "
+    "your reply, so the operator at this terminal sees it, and take no new job meanwhile."
+)
+_OWN_CLEAR_HOLD_VERBS = (
+    ("a tracked edit is in flight",
+     "What resolves it: commit the edit (a commit after the handoff owes /handoff, which re-arms the marker) "
+     "or restore it (git status --short names it; git restore <path>)."),
+    ("HEAD moved since the handoff",
+     "What resolves it: after a pull with nothing to hand off, python tools/cc/ship.py arm re-arms the marker "
+     "at HEAD; after a commit of the lane's own, /handoff re-arms it (arm refuses over one and says so)."),
+    ("a plan is in progress",
+     "What resolves it: finish the plan's steps, or python tools/cc/execution_plan.py reset when none is "
+     "left to run."),
+    ("git status could not be read",
+     "What resolves it: git's own words are above; the mod reads again at each turn's end."),
+    ("HEAD could not be read",
+     "What resolves it: git's own words are above; the mod reads again at each turn's end."),
+)
+_OWN_CLEAR_HOLD_FALLBACK = "The mod reads again at each turn's end."
+
 
 #: What the mod wrote at the clear into THIS session, said once on the first
 #: prompt after it: the SessionStart banner runs beneath the mod's handler and
@@ -275,16 +307,28 @@ def _read_own_clear_marker(root: Path) -> dict | None:
 
 
 def _own_clear_advisory(root: Path, sid: str) -> str | None:
-    """DEF-5031: the own-clear marker armed for THIS session with the latest
-    ask refused, or ``None`` (no marker, another session's, no refusal, an ask
-    the engine took since -- the mod takes the refusal off the marker at a new
-    ask -- or a torn file). The banner's ``Own-clear:`` line is the sibling
+    """DEF-5031, DEF-2039: the own-clear marker armed for THIS session with
+    its clear held (the hold, with the verb that resolves it) or the latest
+    ask refused, or ``None`` (no marker, another session's, neither, an ask
+    the engine took since -- the mod takes the refusal and the hold off the
+    marker at a new ask -- or a torn file). A hold beside a refusal is the
+    newer: the ask takes a hold off and a refusal leaves the next turn's end
+    to hold or ask again. The banner's ``Own-clear:`` line is the sibling
     reader for every other session; this one speaks in the window whose clear
     it is."""
     marker = _read_own_clear_marker(root)
     if marker is None or marker.get("state") != "armed" or not sid or marker.get("session_id") != sid:
         return None
     count = marker.get("clear_refusals")
+    held = _plain(marker.get("clear_held") or "", 200)
+    if held:
+        verb = next((text for key, text in _OWN_CLEAR_HOLD_VERBS if held.startswith(key)), _OWN_CLEAR_HOLD_FALLBACK)
+        turns = marker.get("clear_held_turns")
+        earlier = (f" (the engine refused an earlier ask {count} time(s))"
+                   if isinstance(count, int) and count > 0 else "")
+        return _OWN_CLEAR_HELD.format(since=str(marker.get("clear_held_since") or "?")[:16],
+                                      turns=turns if isinstance(turns, int) and turns > 0 else "?",
+                                      why=held, earlier=earlier, verb=verb)
     reason = _plain(marker.get("clear_refused") or "", 160)
     if not isinstance(count, int) or count <= 0 or not reason:
         return None

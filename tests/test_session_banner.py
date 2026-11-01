@@ -3875,6 +3875,28 @@ class TestOwnClearLine:
         self._marker(tmp_path)
         assert "never asked" in mod._own_clear_line(tmp_path, "s-2")
 
+    def test_a_held_clear_elsewhere_names_why_since_when_and_the_turn_ends(self, tmp_path):
+        """DEF-2039 (2026-11-01): the mod held the dispatcher window's clear on a
+        moved HEAD for 9 h and 36 loop ticks and wrote nothing, so this line
+        read "never asked (no turn ended there since the handoff)" over a window
+        whose turns had all ended held. The hold rides the marker now; a hold
+        beside a refusal is the newer (the mod takes a hold off at the ask) and
+        names the refusals after it; this window's own hold is the router's."""
+        mod = _load()
+        self._marker(tmp_path, clear_held="HEAD moved since the handoff (a commit after it owes a handoff)",
+                     clear_held_since="2026-11-01T09:23:00.000Z", clear_held_turns=36)
+        line = mod._own_clear_line(tmp_path, "s-2")
+        assert "held since 2026-11-01T09:23Z over 36 turn end(s): HEAD moved since the handoff" in line, line
+        assert "never asked" not in line and "/clear by hand" in line, line
+        assert line.isascii() and "\n" not in line, line
+        self._marker(tmp_path, clear_asked_at="2026-11-01T09:20:00Z", clear_refusals=2, clear_refused="HooksError: x",
+                     clear_held="a plan is in progress", clear_held_since="2026-11-01T09:21:00Z", clear_held_turns=1)
+        line = mod._own_clear_line(tmp_path, "s-2")
+        assert "held since 2026-11-01T09:21Z over 1 turn end(s): a plan is in progress" in line, line
+        assert "refused an earlier ask 2 time(s)" in line, line
+        self._marker(tmp_path, session_id="s-1", clear_held="a tracked edit is in flight")
+        assert mod._own_clear_line(tmp_path, "s-1") == ""
+
     def test_this_window_re_primed_after_refusals_says_so_and_a_clean_re_prime_does_not(self, tmp_path):
         mod = _load()
         self._marker(tmp_path, state="consumed", new_session_id="s-2", consumed_at="2026-10-30T19:22:02Z",

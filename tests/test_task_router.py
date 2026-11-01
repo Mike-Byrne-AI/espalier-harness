@@ -965,3 +965,69 @@ class TestOwnClearRefused:
         (tmp_path / ".espalier-state" / "own_clear.json").write_text('{"state": "arm', encoding="utf-8")
         res = _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path)
         assert res.returncode == 0 and "own-clear" not in res.stdout, res.stdout + res.stderr
+
+
+class TestOwnClearHeld:
+    """DEF-2039: the own-clear mod holds the clear while something is in flight
+    (its ``inFlight`` causes) and puts the hold on its marker (why, since when,
+    the turn ends it has held); the dispatcher window sat held 9 h and 36 loop
+    ticks on 2026-11-01 with the hold on its status line alone. The router
+    tells the held window on every prompt, with the verb that resolves each
+    cause, above an active plan. Dies to: a hold said on another session's
+    marker or a consumed one, a cause with no verb (tests/test_own_clear.py
+    pins one per ``inFlight`` return), or an earlier ask's refusal said over
+    the newer hold."""
+
+    def _marker(self, root: Path, **fields) -> None:
+        state = root / ".espalier-state"
+        state.mkdir(parents=True, exist_ok=True)
+        base = {"state": "armed", "session_id": "ctx-1", "head": "h" * 40,
+                "clear_held_since": "2026-11-01T09:23:00.000Z", "clear_held_turns": 36}
+        (state / "own_clear.json").write_text(json.dumps({**base, **fields}), encoding="utf-8")
+
+    @pytest.mark.parametrize("why, verb", [
+        ("a tracked edit is in flight", "git restore"),
+        ("HEAD moved since the handoff (a commit after it owes a handoff, which re-arms the marker; the ship "
+         "driver's catch-up re-arms it after its own pull)", "python tools/cc/ship.py arm"),
+        ("a plan is in progress", "python tools/cc/execution_plan.py reset"),
+        ("HEAD could not be read (exit 128: fatal: not a git repository)", "git's own words"),
+        ("git status could not be read (exit 128: fatal: index file corrupt)", "git's own words"),
+    ], ids=["edit", "head-moved", "plan", "head-unread", "status-unread"])
+    def test_each_hold_is_named_with_the_verb_that_resolves_it(self, tmp_path, why, verb):
+        self._marker(tmp_path, clear_held=why)
+        res = _run_payload({"session_id": "ctx-1", "prompt": "Worker tick."}, tmp_path)
+        assert res.returncode == 0, res.stderr
+        assert ("[HARNESS] own-clear: the clear this window's handoff armed has been held since "
+                "2026-11-01T09:23Z over 36 turn end(s): " + why.split(" (")[0]) in res.stdout, res.stdout
+        assert verb in res.stdout, res.stdout
+        assert "/clear by hand" in res.stdout and "first line of your reply" in res.stdout
+        assert res.stdout.isascii(), res.stdout
+
+    def test_it_fires_above_an_active_plan(self, tmp_path):
+        _write_plan(tmp_path, "in_progress")
+        self._marker(tmp_path, clear_held="a plan is in progress")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "Worker tick."}, tmp_path)
+        assert "has been held since" in res.stdout, res.stdout
+
+    def test_a_hold_after_a_refused_ask_is_the_one_said_with_the_refusals_named(self, tmp_path):
+        """The mod takes a hold off at the ask, and a refusal leaves the next
+        turn's end to hold or ask again: a hold beside a refusal is the newer."""
+        self._marker(tmp_path, clear_asked_at="2026-11-01T09:20:00Z", clear_refusals=2,
+                     clear_refused="HooksError: x", clear_held="a tracked edit is in flight")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path)
+        assert "has been held since" in res.stdout and "refused an earlier ask 2 time(s)" in res.stdout, res.stdout
+        assert "the clear this window asked the engine for" not in res.stdout, res.stdout
+
+    def test_another_sessions_hold_a_consumed_marker_and_no_hold_say_nothing(self, tmp_path):
+        self._marker(tmp_path, clear_held="a tracked edit is in flight")
+        assert "own-clear" not in _run_payload({"session_id": "ctx-2", "prompt": "hi"}, tmp_path).stdout
+        self._marker(tmp_path, state="consumed", new_session_id="ctx-3", clear_held="a plan is in progress")
+        assert "own-clear" not in _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path).stdout
+        self._marker(tmp_path, clear_held="", clear_held_since=None, clear_held_turns=None)
+        assert "own-clear" not in _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path).stdout
+
+    def test_git_text_in_the_hold_is_folded_to_one_ascii_line(self, tmp_path):
+        self._marker(tmp_path, clear_held="HEAD could not be read (exit 128: “fatal”:\r\nnot a — repository)")
+        res = _run_payload({"session_id": "ctx-1", "prompt": "hi"}, tmp_path)
+        assert res.stdout.isascii(), res.stdout
+        assert "(exit 128: ?fatal?: not a ? repository)" in res.stdout, res.stdout

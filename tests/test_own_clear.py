@@ -808,7 +808,8 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
 
     #: What the mod writes beyond the arm's own fields; the readers below read a subset.
     FIELDS = ("clear_asked_at", "clear_refused", "clear_refusals", "clear_refused_at", "clear_resolved_at",
-              "turns_since_ask", "previous_session_id", "stale_because")
+              "turns_since_ask", "previous_session_id", "stale_because",
+              "clear_held", "clear_held_since", "clear_held_turns")
 
     def test_every_field_the_hooks_read_is_one_the_mod_writes(self, module_text):
         banner = (TOOLS_CC / "hooks" / "session_start.py").read_text(encoding="utf-8")
@@ -816,9 +817,10 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
         for field in self.FIELDS:
             assert field in module_text, f"the mod no longer writes {field}"
         for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_resolved_at", "turns_since_ask",
-                     "stale_because"):
+                     "stale_because", "clear_held", "clear_held_since", "clear_held_turns"):
             assert f'"{name}"' in banner, f"the banner no longer reads {name}"
-        for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_refused_at"):
+        for name in ("clear_refusals", "clear_refused", "clear_asked_at", "clear_refused_at",
+                     "clear_held", "clear_held_since", "clear_held_turns"):
             assert f'"{name}"' in router, f"the router no longer reads {name}"
         assert 'OWN_CLEAR_MARKER = "own_clear.json"' in banner
         assert '_OWN_CLEAR_MARKER = "own_clear.json"' in router
@@ -836,6 +838,45 @@ class TestTheRecordTheModWritesIsWhatTheHooksRead:
         assert "clear_refusals: count" in rejected and "clear_refused_at" in rejected
         assert "state:" not in rejected
         assert ".catch(" not in module_text[module_text.rindex("$.command", 0, start):start]
+
+    def test_a_hold_is_recorded_through_the_re_reading_writer_and_ends_at_the_ask(self, module_text):
+        """DEF-2039's guard, by text since no CI cell installs ``claude`` (the
+        kit drives it): a held turn's end writes the hold through ``record``,
+        which reads the marker again and writes only while it is armed for this
+        session (a write from the handler's older copy would arm again a marker
+        the clear consumed meanwhile), and the ask takes the three fields off."""
+        start = module_text.index("    if (why) {\n      $.ui.status(`own-clear: armed, waiting:")
+        held = module_text[start:module_text.index("return next(e)", start)]
+        assert "await record($, id, { clear_held: why, clear_held_since: since, clear_held_turns: turns }" in held
+        assert "writeMarker(" not in held, "the hold is written from the handler's older copy of the marker"
+        assert "clear_held: undefined, clear_held_since: undefined, clear_held_turns: undefined" in module_text
+
+    def test_every_hold_the_mod_names_has_a_verb_in_the_router(self, module_text):
+        """DEF-2039: the router tells the held window the verb that resolves
+        its hold, keyed by the opening words of each ``inFlight`` return (the
+        mod's text names no verb: it rides the clear's re-prime brief, where a
+        verb would run in the new window over a consumed marker). Read from
+        both sources, comments stripped: every return has a key, and every key
+        a return. Dies to: a new cause in ``inFlight`` with no verb (said with
+        the fallback alone), and a cause reworded on one side."""
+        import ast
+        code = re.sub(r"/\*.*?\*/", "", module_text, flags=re.S)
+        code = "\n".join(line.split("//", 1)[0] for line in code.splitlines())
+        start = code.index("async function inFlight(")
+        body = code[start:code.index("\n}\n", start)]
+        causes = [m.group(2).split("${", 1)[0] for m in re.finditer(r"return ([`'])((?:\\.|(?!\1).)*)\1", body)]
+        causes = [c.replace("\\'", "'") for c in causes if c]
+        assert len(causes) >= 4, f"inFlight's returns were not read: {causes}"
+        router = ast.parse((TOOLS_CC / "hooks" / "task_router.py").read_text(encoding="utf-8"))
+        table = next((node.value for node in router.body if isinstance(node, (ast.Assign, ast.AnnAssign))
+                      and "_OWN_CLEAR_HOLD_VERBS" in ast.unparse(node.targets[0] if isinstance(node, ast.Assign)
+                                                                 else node.target)), None)
+        assert table is not None, "task_router.py no longer keeps _OWN_CLEAR_HOLD_VERBS"
+        keys = [key for key, _verb in ast.literal_eval(table)]
+        for cause in causes:
+            assert any(cause.startswith(key) for key in keys), f"no verb in the router for the hold {cause!r}"
+        for key in keys:
+            assert any(cause.startswith(key) for cause in causes), f"the router's key {key!r} names no hold"
 
     def test_a_pending_clear_holds_the_last_session(self, module_text):
         """DEF-5032's guard: a turn's end writes ``lastId`` only outside a
