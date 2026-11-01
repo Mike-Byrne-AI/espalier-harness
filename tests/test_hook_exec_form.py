@@ -596,10 +596,26 @@ class TestGitBashLookup:
     (its troubleshoot-install page, pinned in ``docs/external/cc-git-bash.md``;
     the 2.1.316 binary reads the same): ``CLAUDE_CODE_GIT_BASH_PATH`` when it
     names an existing bash or sh, then the two Program Files paths, then
-    ``bin/bash.exe`` two levels above the ``git`` on PATH. Its answer decides
-    which shell ``doctor`` reads as the host's when it judges a bare or ``&``
-    statusLine an older ``init`` wrote, so a step out of order names a
-    working line or stays silent over a blank one."""
+    ``bin/bash.exe`` two levels above the ``git`` on PATH, skipping a ``git``
+    the project placed (DEF-3021). Its answer decides which shell ``doctor``
+    reads as the host's when it judges a bare or ``&`` statusLine an older
+    ``init`` wrote, so a step out of order names a working line or stays
+    silent over a blank one."""
+
+    #: The folders the installed 2.1.316 binary's step-2 skip names (its
+    #: ``$t`` set, read 2026-11-01), transcribed here apart from the copy so
+    #: a dropped or added name reds against the binary, not the copy itself.
+    _BINARY_SKIPPED = ("node_modules", ".venv", "venv", "env", ".env", "virtualenv",
+                       ".tox", ".nox", ".direnv", "__pypackages__")
+
+    @classmethod
+    def _plain(cls, tmp_path: Path) -> Path:
+        """``tmp_path``, when no folder above it is one the skip names: a
+        temp root under an ``env`` or ``.venv`` would flip the cases that
+        judge a root above the test's own folders."""
+        if any(part.lower() in cls._BINARY_SKIPPED for part in tmp_path.parts):
+            pytest.skip(f"the temp folder {tmp_path} sits under a folder the skip names")
+        return tmp_path
 
     @pytest.mark.contract
     def test_the_copy_is_the_pinned_lookup(self):
@@ -763,6 +779,7 @@ class TestGitBashLookup:
         assert passage, "the pin's quotes no longer state the step-2 skip: re-read the copy against them"
         named = re.findall(r"`([^`]+)`", passage.group(1))
         assert named and set(named) <= _venv.GIT_SKIPPED_FOLDERS, named
+        assert _venv.GIT_SKIPPED_FOLDERS == frozenset(self._BINARY_SKIPPED)
 
     @pytest.mark.parametrize("placed, launch", [
         ("repo/git.exe", "repo"),
@@ -782,36 +799,67 @@ class TestGitBashLookup:
         example has it. ``doctor`` runs from the repository root, so the copy
         judges against ``repo_root``; unskipped, it found a bash Claude Code
         will not use and stayed silent over a bare line PowerShell blanks."""
-        git = self._file(tmp_path / placed)
+        root = self._plain(tmp_path)
+        git = self._file(root / placed)
         bash = self._file(git.parent.parent / "bin" / "bash.exe")
         venv = self._host(monkeypatch, git=git)
-        assert venv.git_bash_path(tmp_path / launch) is None
+        assert venv.git_bash_path(root / launch) is None
         assert venv.git_bash_path() == str(bash), "with no root to judge against, nothing is skipped"
+
+    @pytest.mark.parametrize("folder", _BINARY_SKIPPED)
+    def test_each_folder_the_binary_names_is_skipped(self, tmp_path, monkeypatch, folder):
+        """Each of the binary's ten, not only the three the page quotes."""
+        root = self._plain(tmp_path)
+        git = self._file(root / "repo" / folder / "Git" / "cmd" / "git.exe")
+        self._file(git.parent.parent / "bin" / "bash.exe")
+        venv = self._host(monkeypatch, git=git)
+        assert venv.git_bash_path(root / "repo") is None
 
     @pytest.mark.parametrize("kept", [
         "repo/tools/Git/cmd/git.exe",
         "env/Git/cmd/git.exe",
         "repo-tools/.venv/Git/cmd/git.exe",
-    ], ids=["below-in-no-such-folder", "env-outside-the-launch-folder", "a-sibling-sharing-the-name"])
+        "repo/envs/Git/cmd/git.exe",
+        "repo/venv2/Git/cmd/git.exe",
+        "repo/.venv-old/Git/cmd/git.exe",
+    ], ids=["below-in-no-such-folder", "env-outside-the-launch-folder", "a-sibling-sharing-the-name",
+            "envs", "venv2", "dot-venv-old"])
     def test_a_git_the_project_did_not_place_is_kept(self, tmp_path, monkeypatch, kept):
         """The skip is as narrow as Claude Code's: a ``git`` below the launch
-        folder in no such folder still answers, so does one outside it
-        whatever its path holds, and a sibling whose name only begins with the
-        launch folder's is not below it."""
-        git = self._file(tmp_path / kept)
+        folder in no such folder still answers (a name is matched whole, so
+        ``envs`` is not ``env``), so does one outside it whatever its path
+        holds, and a sibling whose name only begins with the launch folder's
+        is not below it."""
+        root = self._plain(tmp_path)
+        git = self._file(root / kept)
         bash = self._file(git.parent.parent / "bin" / "bash.exe")
         venv = self._host(monkeypatch, git=git)
-        assert venv.git_bash_path(tmp_path / "repo") == str(bash)
+        assert venv.git_bash_path(root / "repo") == str(bash)
+
+    def test_a_launch_folder_at_the_drive_root_is_judged_too(self, tmp_path, monkeypatch):
+        """A root spelled with its trailing separator (``C:\\``, ``/``) still
+        has folders below it: a ``git`` under ``node_modules`` beneath it is
+        skipped, one in no such folder is kept."""
+        root = self._plain(tmp_path)
+        anchor = Path(root.anchor)
+        placed = self._file(root / "node_modules" / "Git" / "cmd" / "git.exe")
+        self._file(placed.parent.parent / "bin" / "bash.exe")
+        assert self._host(monkeypatch, git=placed).git_bash_path(anchor) is None
+        kept = self._file(root / "plain" / "Git" / "cmd" / "git.exe")
+        bash = self._file(kept.parent.parent / "bin" / "bash.exe")
+        assert self._host(monkeypatch, git=kept).git_bash_path(anchor) == str(bash)
 
     def test_a_skipped_git_lets_the_next_one_on_path_answer(self, tmp_path, monkeypatch):
         """Claude Code's walk passes over a skipped answer to the next
         ``where.exe`` names; the copy asks every ``git`` on PATH, so a Git for
         Windows install after the project's own still answers."""
-        placed = self._file(tmp_path / "repo" / ".venv" / "Git" / "cmd" / "git.exe")
+        root = self._plain(tmp_path)
+        placed = self._file(root / "repo" / ".venv" / "Git" / "cmd" / "git.exe")
         self._file(placed.parent.parent / "bin" / "bash.exe")
-        bash = self._file(tmp_path / "Git" / "bin" / "bash.exe")
-        venv = self._host(monkeypatch, gits=[placed, tmp_path / "Git" / "cmd" / "git.exe"])
-        assert venv.git_bash_path(tmp_path / "repo") == str(bash)
+        bash = self._file(root / "Git" / "bin" / "bash.exe")
+        other = self._file(root / "Git" / "cmd" / "git.exe")
+        venv = self._host(monkeypatch, gits=[placed, other])
+        assert venv.git_bash_path(root / "repo") == str(bash)
 
     @pytest.mark.parametrize("via", ["home", "localappdata"])
     def test_a_git_in_a_windowsapps_alias_folder_under_the_root_is_skipped(self, tmp_path, monkeypatch, via):
@@ -820,6 +868,7 @@ class TestGitBashLookup:
         ``%LOCALAPPDATA%\\Microsoft\\WindowsApps``) when that folder sits at
         or below the launch folder, as it does under a repository at the home
         folder: the binary's rule, which the page does not state."""
+        tmp_path = self._plain(tmp_path)
         home = tmp_path / "home"
         local = home / "AppData" / "Local" if via == "home" else tmp_path / "local"
         git = self._file(local / "Microsoft" / "WindowsApps" / "git.exe")
@@ -829,25 +878,34 @@ class TestGitBashLookup:
         assert venv.git_bash_path(home if via == "home" else tmp_path) is None
         assert venv.git_bash_path(tmp_path / "elsewhere") == str(bash)
 
-    def test_a_root_reached_through_a_link_is_judged_by_its_real_path(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("side", ["root", "git"])
+    def test_a_path_reached_through_a_link_is_judged_by_its_real_path(self, tmp_path, monkeypatch, side):
         """The binary asks the rule again of the real paths, so a repository
-        opened through a link or a junction skips the ``git`` PATH names by
-        the target's spelling."""
-        real = tmp_path / "real"
-        git = self._file(real / ".venv" / "Git" / "cmd" / "git.exe")
-        self._file(git.parent.parent / "bin" / "bash.exe")
-        link = tmp_path / "link"
+        opened through a link or a junction, or a ``git`` PATH names through
+        one into the repository's ``node_modules``, is skipped by the
+        target's spelling."""
+        root = self._plain(tmp_path)
+        repo = root / "repo"
+        target = repo / "node_modules" / "Git"
+        self._file(target / "cmd" / "git.exe")
+        self._file(target / "bin" / "bash.exe")
+        link = root / "link"
         try:
             if os.name == "nt":
                 import _winapi
 
-                _winapi.CreateJunction(str(real), str(link))
+                _winapi.CreateJunction(str(repo if side == "root" else target), str(link))
             else:
-                link.symlink_to(real, target_is_directory=True)
+                link.symlink_to(repo if side == "root" else target, target_is_directory=True)
         except (OSError, NotImplementedError, AttributeError):
             pytest.skip("this host cannot link a directory")
-        venv = self._host(monkeypatch, git=git)
-        assert venv.git_bash_path(link) is None
+        if side == "root":
+            venv = self._host(monkeypatch, git=target / "cmd" / "git.exe")
+            assert venv.git_bash_path(link) is None
+        else:
+            venv = self._host(monkeypatch, git=link / "cmd" / "git.exe")
+            assert venv.git_bash_path(repo) is None
+        assert venv.git_bash_path(root / "elsewhere") is not None, "outside the repository it answers"
 
     def test_doctor_names_a_bare_line_whose_only_git_the_project_placed(self, tmp_path, monkeypatch):
         """The row's user: a bare statusLine an older ``init`` wrote, on a
@@ -856,6 +914,7 @@ class TestGitBashLookup:
         it; ``doctor`` found the bash and said nothing."""
         from espalier import doctor as doctor_module
 
+        tmp_path = self._plain(tmp_path)
         git = self._file(tmp_path / "node_modules" / "Git" / "cmd" / "git.exe")
         self._file(git.parent.parent / "bin" / "bash.exe")
         self._host(monkeypatch, git=git)

@@ -146,8 +146,9 @@ The env-vars page, "Set variables in settings files" and "Precedence":
   bash, so the precedence moves its verdict only on such a host.
 - `git_bash_path` follows the step-2 skip of a `git` the project placed
   (`DEF-3021`), judged against `repo_root`: `doctor` runs from the repository
-  root, where Claude Code judges against the folder it was launched from, and
-  with no root nothing is skipped. The quote leaves open where the
+  root, where Claude Code judges against its working folder when it first
+  looks (normally the one it was launched from), and with no root nothing is
+  skipped. The quote leaves open where the
   virtual-environment folder may sit; the installed 2.1.316 binary, read
   2026-11-01, settles it. Its `where.exe` walk asks one predicate of each
   answer and skips a `git` whose folder is the launch folder; or is below it
@@ -155,14 +156,19 @@ The env-vars page, "Set variables in settings files" and "Precedence":
   above the launch folder too, as the page's own `env` example has it (the
   binary's set: `node_modules`, `.venv`, `venv`, `env`, `.env`, `virtualenv`,
   `.tox`, `.nox`, `.direnv`, `__pypackages__`); or is in a WindowsApps alias
-  folder (`AppData\Local\Microsoft\WindowsApps` under the home folder or under
-  `%LOCALAPPDATA%`) that sits at or below the launch folder. Each is asked of
-  the paths as spelled and then of their real paths, case-insensitively.
+  folder (`AppData\Local\Microsoft\WindowsApps` under the home folder, or
+  `Microsoft\WindowsApps` under `%LOCALAPPDATA%`) that sits at or below the
+  launch folder. Each is asked of the paths as spelled and then of their real
+  paths, case-insensitively; a launch folder whose real path cannot be read
+  skips nothing more, and a `git` folder whose real path cannot be read is
+  skipped.
   `espalier/_venv.py::GIT_SKIPPED_FOLDERS` is that set, and
   `tests/test_hook_exec_form.py::TestGitBashLookup::test_the_skipped_folders_hold_the_pinned_ones`
   reads the three folders the quote names against it. The rest of the set and
-  the WindowsApps rule are the binary's, observed, not quoted. A skip moves
-  the copy toward None, the cheaper of its two wrong answers.
+  the WindowsApps rule are the binary's, observed, not quoted. Over a bare
+  head a skip moves the copy toward None, the cheaper of its two wrong
+  answers; over an `&` head None is the silent one, reached only where Claude
+  Code looks from a folder deeper than the repository root.
 - **Not asserted:** a `CLAUDE_CODE_GIT_BASH_PATH` set in managed settings.
   espalier reads no managed settings file, so such a value is unseen and the
   copy can read None where Claude Code finds Git Bash: `doctor` then names a

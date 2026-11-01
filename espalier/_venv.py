@@ -248,16 +248,20 @@ GIT_SKIPPED_FOLDERS = frozenset({
 
 
 def _placed_by_project(git: str, launch: Path) -> bool:
-    """Does Claude Code's step 2 skip ``git`` as one a project placed, when
-    launched from ``launch`` (DEF-3021)? The installed 2.1.316 binary's
-    predicate, which its ``where.exe`` walk applies to each answer: the
-    folder holding ``git`` is the launch folder; or is below it with one of
-    :data:`GIT_SKIPPED_FOLDERS` anywhere in its path, above the launch folder
-    too (the page's own ``C:\\dev\\env\\myproject\\Git`` example); or is in a
-    WindowsApps alias folder (the home folder's
-    ``AppData\\Local\\Microsoft\\WindowsApps``, or ``%LOCALAPPDATA%``'s) that
-    sits at or below the launch folder. Asked of the paths as spelled, then
-    of their real paths, case-insensitively, as Windows compares them."""
+    """Does Claude Code's step 2 skip ``git`` as one a project placed, with
+    ``launch`` as its launch folder (DEF-3021)? The installed 2.1.316
+    binary's predicate, which its ``where.exe`` walk applies to each answer,
+    the launch folder being its working folder when it first looks (normally
+    the one it was launched from): the folder holding ``git`` is the launch
+    folder; or is below it with one of :data:`GIT_SKIPPED_FOLDERS` anywhere
+    in its path, above the launch folder too (the page's own
+    ``C:\\dev\\env\\myproject\\Git`` example); or is in a WindowsApps alias
+    folder (``AppData\\Local\\Microsoft\\WindowsApps`` under the home folder,
+    or ``Microsoft\\WindowsApps`` under ``%LOCALAPPDATA%``) that sits at or
+    below the launch folder. Asked of the paths as spelled, then of their
+    real paths, case-insensitively, as Windows compares them; as in the
+    binary, a launch folder whose real path cannot be read skips nothing
+    more, and a ``git`` folder whose real path cannot be read is skipped."""
     local = os.environ.get("LOCALAPPDATA", "").strip()
     aliases = [os.path.join(str(Path.home()), "AppData", "Local", "Microsoft", "WindowsApps")]
     if local:
@@ -269,17 +273,27 @@ def _placed_by_project(git: str, launch: Path) -> bool:
     def at_or_below(path: str, root: str) -> bool:
         return path == root or path.startswith(root + "/")
 
-    for resolve in (os.path.abspath, os.path.realpath):
-        folder = spelled(resolve(os.path.dirname(os.path.abspath(git))))
-        root = spelled(resolve(str(launch)))
+    def placed(folder: str, root: str, alias_dirs: list[str]) -> bool:
+        folder, root = spelled(folder), spelled(root)
         if folder == root:
             return True
         if folder.startswith(root + "/") and not GIT_SKIPPED_FOLDERS.isdisjoint(folder.split("/")):
             return True
-        if any(at_or_below(alias, root) and at_or_below(folder, alias)
-               for alias in (spelled(resolve(a)) for a in aliases)):
-            return True
-    return False
+        return any(at_or_below(alias, root) and at_or_below(folder, alias)
+                   for alias in map(spelled, alias_dirs))
+
+    folder = os.path.dirname(os.path.abspath(git))
+    if placed(folder, os.path.abspath(str(launch)), [os.path.abspath(a) for a in aliases]):
+        return True
+    try:
+        real_root = os.path.realpath(str(launch), strict=True)
+    except OSError:
+        return False
+    try:
+        real_folder = os.path.realpath(folder, strict=True)
+    except OSError:
+        return True
+    return placed(real_folder, real_root, [os.path.realpath(a) for a in aliases])
 
 
 def _settings_git_bash_paths(repo_root: Path | None) -> list[str]:
@@ -325,9 +339,11 @@ def git_bash_path(repo_root: Path | None = None) -> str | None:
     the first ``git`` ``where.exe`` names that a project did not place. That
     skip (:func:`_placed_by_project`, DEF-3021) is judged against
     ``repo_root``, since ``doctor`` runs from the repository root where
-    Claude Code judges against the folder it was launched from; with no
-    ``repo_root`` nothing is skipped. A skip errs toward None, the cheap
-    wrong answer below.
+    Claude Code judges against its working folder (normally the one it was
+    launched from); with no ``repo_root`` nothing is skipped. Over a bare
+    head a skip errs toward None, the cheap wrong answer below; over an
+    ``&`` head None is the silent one, reached only where Claude Code looks
+    from a folder deeper than ``repo_root``.
 
     ``init`` no longer reads it: its render runs in both shells (DEF-3017).
     ``doctor`` does, to name a bare or ``&`` line an older install carries
