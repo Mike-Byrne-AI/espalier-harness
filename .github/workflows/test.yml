@@ -150,8 +150,8 @@ jobs:
         # with the serial files (proof_tier.py::SERIAL_FILES) left out.
         # `--leg parallel` is every line but the serial one (the whole tier on
         # the cheaper tiers); the serial line runs in the `test-serial` twin
-        # below, on its own runner. The
-        # `heavy_e2e` stages (tests/conftest.py::_HEAVY_E2E_TESTS) run in no
+        # below, on its own runner. The `heavy_e2e` stages
+        # (tests/conftest.py::_HEAVY_E2E_TESTS) run in no
         # cell here: every pytest line deselects them (the cheaper tiers' own-tests
         # line included), and their one CI home is
         # the floor-version cell of clean-checkout.yml (`--heavy`). A dispatch
@@ -175,8 +175,10 @@ jobs:
   # The serial leg of the tier -- the files scripts/proof_tier.py::SERIAL_FILES
   # names (the lists it joins say why each file is there) -- on its own runner,
   # beside the parallel leg instead of after it. Those files false-fail under
-  # CPU oversubscription, which is why they never join the `-n auto` run; alone
-  # on a runner they run at their serial duration. Five required cells, the same
+  # CPU oversubscription, or launch a nested pytest run that the nested-run
+  # rule in tests/test_proof_tier.py keeps off the pool, which is why they
+  # never join the `-n auto` run; alone on a runner they run at their serial
+  # duration. Five required cells, the same
   # literal matrix as `test` and for the same reasons: branch protection
   # matches check-run names, and a cell that never reports parks the PR. On the
   # cheaper tiers the leg has nothing to run and says so in the receipt (exit
