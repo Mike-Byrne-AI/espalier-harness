@@ -1530,6 +1530,11 @@ class TestTheHandoffGateHoldsForAnOpenPullRequest:
         assert hold["checked"] > before["checked"] and hold["prs"] == ["#41 (lane/first)"], (
             "the hold stands for another interval")
         assert hold["since"] == before["since"] and hold["ahead"] == 1, "the first hold's stamp is kept"
+        # DEF-4083: the re-stamp bounds gh, and is no read: the record says the
+        # fault, and the prompt router says the hold could not be re-checked.
+        assert hold["fault"] == "Unresolved" and "fault" not in before
+        line = self._hook("task_router", "task_router_fault_hold_under_test")._handoff_hold_line(root)
+        assert line is not None and "could not read gh (Unresolved)" in line and "Nothing to do" not in line
         assert mod._gate_handoff(root) == 0            # inside the interval again: no read
         assert len(spawns) == 1 and capsys.readouterr() == ("", "")
 
@@ -1676,6 +1681,68 @@ class TestTheHandoffGateHoldsForAnOpenPullRequest:
         assert router._handoff_hold_line(tmp_path / "nowhere") is None
         (root / ".espalier-state" / mod.HANDOFF_GATE_HOLD).write_text("{torn", encoding="utf-8")
         assert router._handoff_hold_line(root) is None
+
+    def test_the_prompt_router_says_a_hold_read_past_the_interval_is_stale(self, tmp_path, monkeypatch):
+        """DEF-4083: the line is said on every prompt and only a Stop reads gh
+        again, so prompts that came with no Stop between them were told that a
+        merged pull request still held the lane (air-work's #391: told held 3 h
+        23 min after the merge). The line says when the record was last read
+        and, past the gate's re-check interval (the gate's own rule), that the
+        record is stale and what reads it again; a fresh read keeps the hold."""
+        import time
+
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        router = self._hook("task_router", "task_router_stale_hold_under_test")
+        path = root / ".espalier-state" / mod.HANDOFF_GATE_HOLD
+        now = time.time()
+
+        def held(checked_ago: float) -> str:
+            monkeypatch.setattr(mod, "HOLD_CLOCK", lambda: now - checked_ago)
+            mod._hold_write(root, "a" * 40, "lane/the-fixture", "air-work", ["#41 (lane/first)"], 1,
+                            since=now - 4 * 3600 - 30)
+            line = router._handoff_hold_line(root)
+            assert line is not None and line.isascii() and "\n" not in line
+            return line
+
+        fresh = held(30)
+        assert "held 4 h 0 min, last read 0 min ago" in fresh and "Nothing to do for it now" in fresh
+        assert "stale" not in fresh
+        stale = held(3600 + 30)
+        assert "held 4 h 0 min" in stale and "last read 1 h 0 min ago" in stale and "is stale" in stale
+        assert "next Stop with nothing in flight" in stale and "/handoff reads the open pull requests" in stale
+        assert "ship.py open once the lane carries its row" in stale  # open refuses a lane with no row
+        assert "Nothing to do" not in stale and "every 5 min" not in stale
+        assert "is stale" in held(mod.HANDOFF_GATE_HOLD_RECHECK_S + 1)
+        assert "is stale" not in held(mod.HANDOFF_GATE_HOLD_RECHECK_S - 30)
+        assert mod.HANDOFF_GATE_HOLD_RECHECK_S is mod._hook_utils.HANDOFF_GATE_HOLD_RECHECK_S
+        # The gate reads gh again on a stamp ahead of its clock, or none, and
+        # the line claims no age for either.
+        assert "no usable last-read stamp" in held(-600) and "past the gate" not in held(-600)
+        record = json.loads(path.read_text(encoding="utf-8"))
+        for stamp in (None, float("-inf")):
+            if stamp is None:
+                del record["checked"]
+            else:
+                record["checked"] = record["since"] = stamp
+            path.write_text(json.dumps(record), encoding="utf-8")
+            line = router._handoff_hold_line(root)
+            assert line is not None and "no usable last-read stamp" in line, stamp
+        assert "held for a while" in line
+
+    def test_a_hold_on_another_head_is_cleared_at_the_next_stop(self, tmp_path, monkeypatch):
+        """DEF-4083: another head's hold is no hold, and the prompt router says
+        a hold on every prompt until a Stop removes it -- a lane handed off
+        past its hold (the row's commit, the push) was told held, stale, for
+        the rest of the session, since the remembered HEAD returned every
+        later Stop before the hold was read (the failure-mode review)."""
+        root, mod = self._arm(tmp_path, monkeypatch, ahead=1)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True,
+                              check=True).stdout.strip()
+        mod._remember_head(root / ".espalier-state" / mod.HANDOFF_GATE_FLAG, head)
+        mod._hold_write(root, "b" * 40, "lane/the-fixture", "air-work", ["#41 (lane/first)"], 1)
+        assert mod._gate_handoff(root) == 0
+        assert not (root / ".espalier-state" / mod.HANDOFF_GATE_HOLD).exists()
+        assert self._hook("task_router", "task_router_cleared_hold_under_test")._handoff_hold_line(root) is None
 
     def test_no_other_pull_request_open_blocks_without_asking_the_driver(self, tmp_path, monkeypatch, capsys):
         calls: list = []
