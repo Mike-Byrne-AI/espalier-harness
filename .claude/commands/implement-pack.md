@@ -345,7 +345,7 @@ reachability analysis. Both gates run before any sub-task executes.
    a pack on the shipped runtime runs it now:
    ```bash
    if [ -f scripts/proof_tier.py ]; then                  # Espalier-Harness tree: its tier script
-     python scripts/proof_tier.py --run                   # Espalier-Harness tree: the tier the pack earns (full is the type gate, the lint line, xdist, then the serial files; recall the lint line, the contract slice, then the recall tests; contract the lint line then the slice; plus a changed script's or body's own test file on the cheaper tiers), one receipt
+     python scripts/proof_tier.py --run                   # Espalier-Harness tree: the tier the pack earns (full is the type gate, the lint line, xdist, then the serial files; recall the lint line, the contract slice, then the recall tests; contract the lint line then the slice; plus, on the cheaper tiers, a changed script's own test file, the bodies' test file and every test file that names a changed path), one receipt
    else                                                   # adopter tree: the suite in the repository's own runner (a pytest tree that keeps a contract marker may run its slice first)
      PY=; for c in 'python3' python 'py -3'; do $c -c 'import sys, espalier; sys.exit(sys.version_info < (3, 10))' >/dev/null 2>&1 && { PY=$c; break; }; done; [ -n "$PY" ] || { echo 'no Python 3.10+ with espalier answered to python3, python or py -3' >&2; exit 1; }
      TEST=$($PY -c "import sys; sys.stdout.reconfigure(encoding='utf-8', errors='replace'); from espalier.harness_config import preflight_command; print(preflight_command('test'))") || exit 1
