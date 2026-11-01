@@ -313,9 +313,10 @@ class TestUntrackedFilesAreNamed:
 
 
 class TestTheFullRecipe:
-    """The full tier is the parallel run minus the wall-clock-budget files, then
-    those files serially. The list has one home, ``WALL_CLOCK_SERIAL_FILES``;
-    every member must exist, and the two lines must agree on it."""
+    """The full tier is the parallel run minus the serial files, then those
+    files serially. Each reason's list has one home (the three tuples
+    ``SERIAL_FILES`` joins); every member must exist, none is listed twice,
+    and the two lines must agree on them."""
 
     def test_every_wall_clock_file_exists(self, pt):
         for rel in pt.SERIAL_FILES:
@@ -350,7 +351,7 @@ class TestTheFullRecipe:
         ignored = sorted(tok[len("--ignore="):] for tok in parallel.split() if tok.startswith("--ignore="))
         assert ignored == sorted(pt.SERIAL_FILES)
         assert sorted(tok for tok in serial.split() if tok.startswith("tests/")) == sorted(pt.SERIAL_FILES)
-        assert set(pt.WALL_CLOCK_SERIAL_FILES).isdisjoint(pt.TIMEOUT_NEAR_SERIAL_FILES)
+        assert len(pt.SERIAL_FILES) == len(set(pt.SERIAL_FILES)), pt.SERIAL_FILES
 
     def test_every_pytest_line_runs_under_xdist(self, pt):
         """DEF-2017: where pytest-timeout uses its thread method (Windows, a
