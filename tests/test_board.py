@@ -251,7 +251,8 @@ class TestOpenPullRequests:
         run = _gh({"pr list": [self._blocked()], "run list": _GREEN_RUNS, "pr checks": {"7": checks}})
         text = board.render(board.collect(tmp_path, run_=run, now=_NOW))
         assert ("#7 lane/7 [no seat's claim names this branch]: blocked: required checks red "
-                "(test (3.12), test-serial (3.10)); auto-merge armed") in text, text
+                "(test (3.12), test-serial (3.10)); its seat's `python tools/cc/ship.py status` tells a test red "
+                "from a lost runner; auto-merge armed") in text, text
         assert [c for c in run.calls if c[1:3] == ["pr", "checks"]] == [self._REQUIRED_ARGV]
 
     def test_a_blocked_row_with_no_red_waits_on_the_cells_still_running(self, board, monkeypatch, tmp_path):
@@ -280,19 +281,43 @@ class TestOpenPullRequests:
                 "so a review or a required check that has not reported holds it; auto-merge not armed") in text, text
 
     def test_a_blocked_row_whose_read_fails_names_the_command(self, board, monkeypatch, tmp_path):
-        """A repository with no required checks answers rc=1 with no JSON, and
-        `gh` can be offline: neither is a green, and the row names the read
-        that answers. Dies to: an unread read printed as nothing holding it,
-        or the failure costing the whole open-PRs line."""
+        """`gh` can be offline or slow, and a row's answer can take a shape
+        the home does not expect: neither is a green, the row names the read
+        that answers, and the failure costs that row alone. Dies to: an
+        unread read printed as nothing holding it, or one row's failure
+        costing the whole open-PRs line (only Unresolvable caught)."""
         _stub_channel(monkeypatch, board)
-        failed = board.Unresolvable("gh pr checks answered rc=1 with no JSON: no required checks reported")
+        failed = board.Unresolvable("gh pr checks took longer than 15s")
         run = _gh({"pr list": [self._blocked(), self._blocked(8)], "run list": _GREEN_RUNS,
                    "pr checks": {"7": failed, "8": [{"name": "guard", "bucket": "fail"}]}})
         text = board.render(board.collect(tmp_path, run_=run, now=_NOW))
         assert ("#7 lane/7 [no seat's claim names this branch]: blocked: its required checks were not read "
-                "(gh pr checks answered rc=1 with no JSON: no required checks reported): gh pr checks 7 --required; "
-                "auto-merge armed") in text, text
+                "(gh pr checks took longer than 15s): gh pr checks 7 --required; auto-merge armed") in text, text
         assert "#8 lane/8 [no seat's claim names this branch]: blocked: required check red (guard)" in text, text
+        monkeypatch.setattr(board._post_merge, "read_required", lambda number, gh, **k: {"red": []})
+        prs = [self._blocked()]
+        board.read_required_section(tmp_path, prs, run_=run)
+        assert prs[0]["required"]["unread"].startswith("KeyError"), prs
+
+    def test_no_required_check_reported_is_an_answer_not_an_unread_read(self, board, monkeypatch, tmp_path):
+        """A repository that requires a review and no check, and a head whose
+        checks have not registered yet, both get gh's rc=1 words, which name
+        the state; told it was not read, the dispatcher re-runs a command
+        that answers the same. Dies to: the words read as a failed read."""
+        _stub_channel(monkeypatch, board)
+        for words in ("no required checks reported on the 'lane/7' branch", "no checks reported on the 'lane/7' branch"):
+            failed = board.Unresolvable(f"gh pr checks answered rc=1 with no JSON: {words}")
+            run = _gh({"pr list": [self._blocked()], "run list": _GREEN_RUNS, "pr checks": {"7": failed}})
+            text = board.render(board.collect(tmp_path, run_=run, now=_NOW))
+            assert ("#7 lane/7 [no seat's claim names this branch]: blocked: no required check is red or running, "
+                    "so a review or a required check that has not reported holds it") in text, (words, text)
+
+    def test_the_bounds_the_inbox_body_names_are_the_boards(self, board):
+        """The body names the two bounds by their names in board.py. Dies to:
+        one renamed and the body left naming a constant that is gone."""
+        body = (REPO_ROOT / ".claude" / "commands" / "inbox.md").read_text(encoding="utf-8")
+        for name in ("REQUIRED_READ_ROWS", "REQUIRED_BUDGET_SECONDS"):
+            assert f"`{name}`" in body and hasattr(board, name), name
 
     def test_only_a_blocked_row_spends_the_read(self, board, monkeypatch, tmp_path):
         """Dies to: the read made for a row GitHub does not report as blocked
@@ -331,6 +356,22 @@ class TestOpenPullRequests:
         assert all("budget" in pr["required"]["unread"] for pr in prs[2:]), prs[2:]
         line = board._pr_line(dict(prs[3], seat=""))
         assert "blocked: its required checks were not read (" in line and "gh pr checks 4 --required" in line
+        # Each read's timeout is what is left: reads costing 12 s each leave the
+        # third 6 s, and the fourth starts with the budget spent.
+        clock = iter([0.0, 0.0, 12.0, 24.0, 36.0])
+        prs = [self._blocked(n) for n in range(1, 5)]
+        timeouts.clear()
+        board.read_required_section(tmp_path, prs, run_=run, clock=lambda: next(clock))
+        assert timeouts == [board.GH_TIMEOUT, board.GH_TIMEOUT, board.REQUIRED_BUDGET_SECONDS - 24.0], timeouts
+        assert "budget" in prs[3]["required"]["unread"]
+        # A gh error over several lines stays on its row's one line.
+        prs = [self._blocked()]
+
+        def broken(argv, **kw):
+            return 1, "", "HTTP 502\nGraphQL: Bad Gateway\nretry later"
+
+        board.read_required_section(tmp_path, prs, run_=broken, clock=lambda: 0.0)
+        assert "\n" not in board._pr_line(dict(prs[0], seat="")), prs
 
 
 class TestStaleBaseSection:

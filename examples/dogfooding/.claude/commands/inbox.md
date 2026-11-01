@@ -251,7 +251,8 @@ is read on its own, and one that cannot be read says so on its own line:
   with the base (its seat runs `python tools/cc/ship.py catch-up`), or behind
   (which holds only under the up-to-date rule). A blocked one says what holds
   it, from one `gh pr checks <n> --required` read: the required checks that
-  are red by name, else `waiting on N running`, else that nothing required
+  are red by name, else `waiting on N running` (N of the required checks;
+  the banner's `Open PRs:` line counts every check), else that nothing required
   is red or running (a review, or a required check that has not reported).
   A read that fails says so and names that command. The reads are bounded
   (`REQUIRED_READ_ROWS` and `REQUIRED_BUDGET_SECONDS` in `tools/cc/board.py`),

@@ -357,6 +357,17 @@ class TestTheRequiredRead:
                                       "that has not reported holds it")
         assert pm.held_by(["portabilité"], []).isascii()
 
+    def test_the_banner_waits_in_the_same_words(self, pm):
+        """The banner keeps its running tail literal so the row renders
+        without this module; the board prints ``waiting_on``. Dies to: the
+        two phrases drifting apart."""
+        hook = _load(REPO_ROOT / "tools" / "cc" / "hooks" / "session_start.py", "session_start_words_under_test")
+        row = {"number": 7, "headRefName": "lane/7", "baseRefName": "main", "mergeStateStatus": "BLOCKED",
+               "autoMergeRequest": {"x": 1}, "statusCheckRollup": [
+                   {"__typename": "CheckRun", "name": f"t{n}", "status": "IN_PROGRESS", "conclusion": None}
+                   for n in range(3)]}
+        assert hook._pr_summary(row, None).endswith(f"; auto-merge armed; {pm.waiting_on(3)}")
+
     def test_no_reader_spells_the_required_read_outside_this_module(self):
         """The three readers once each spelled their own `gh pr checks
         --required` argv, as a list or as call arguments. Dies to: a second

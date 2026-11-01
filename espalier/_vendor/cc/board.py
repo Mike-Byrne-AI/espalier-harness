@@ -87,6 +87,9 @@ OPEN_PR_LIMIT = 30
 #: it (at most GH_TIMEOUT). A blocked row past either says it was not read.
 REQUIRED_READ_ROWS = 8
 REQUIRED_BUDGET_SECONDS = 30.0
+#: gh's words (rc=1, no JSON) when no check, or no required check, has
+#: reported on the pull request's branch.
+_NO_CHECKS_REPORTED = ("no required checks reported", "no checks reported")
 #: Said beside the overlaps, board and ship notice alike, of a list read to the limit.
 OPEN_PR_CUT_NOTE = f"the open pull requests were read to the first {OPEN_PR_LIMIT}, so more may meet"
 LEDGER = LEDGER_FILE
@@ -209,7 +212,7 @@ def read_required_section(root: Path, prs: list[dict], *, run_: Runner = run,
         if made >= REQUIRED_READ_ROWS:
             pr["required"] = {"unread": f"the board reads the first {REQUIRED_READ_ROWS} blocked rows' checks"}
             continue
-        if left <= 1.0:
+        if left <= 3.0:   # below a gh read's own latency: it would time out, not answer
             pr["required"] = {"unread": f"the {REQUIRED_BUDGET_SECONDS:.0f} s budget for these reads was spent"}
             continue
         made += 1
@@ -217,14 +220,17 @@ def read_required_section(root: Path, prs: list[dict], *, run_: Runner = run,
         try:
             reading = _post_merge.read_required(
                 pr["number"], lambda args, t=timeout: _gh_json(root, *args, run_=run_, timeout=t))
+            pr["required"] = ({"unread": "gh pr checks answered something other than a list"} if reading is None
+                              else {key: [_ascii(str(r.get("name") or "?")) for r in reading[key]]
+                                    for key in ("red", "running")})
         except Unresolvable as exc:
-            pr["required"] = {"unread": str(exc)}
-            continue
-        if reading is None:
-            pr["required"] = {"unread": "gh pr checks answered something other than a list"}
-            continue
-        pr["required"] = {key: [_ascii(str(r.get("name") or "?")) for r in reading[key]]
-                          for key in ("red", "running")}
+            # gh's answer when no required check has reported (a repository
+            # that requires a review alone, or a head whose checks have not
+            # registered yet) is an answer: nothing required is red or running.
+            none = any(words in str(exc) for words in _NO_CHECKS_REPORTED)
+            pr["required"] = {"red": [], "running": []} if none else {"unread": " ".join(str(exc).split())}
+        except Exception as exc:  # noqa: BLE001 -- one row's read costs its row, never the board
+            pr["required"] = {"unread": " ".join(f"{type(exc).__name__}: {os_error_text(exc)}".split())}
 
 
 #: The transitions log: one JSON line per red transition the ``checks:`` line
@@ -1398,6 +1404,10 @@ def _pr_line(pr: dict) -> str:
                        f"gh pr checks {pr.get('number')} --required")
         else:
             meaning = f"blocked: {_post_merge.held_by(required.get('red') or [], required.get('running') or [])}"
+            if required.get("red"):
+                # A red cell is a test's verdict or a lost runner's; only the
+                # driver's read on the lane tells them apart (the banner says so too).
+                meaning += "; its seat's `python tools/cc/ship.py status` tells a test red from a lost runner"
     if pr.get("isDraft"):
         meaning = "draft"
     auto = "auto-merge armed" if pr.get("autoMergeRequest") else "auto-merge not armed"

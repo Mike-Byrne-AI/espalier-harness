@@ -1320,9 +1320,10 @@ def _pr_summary(pr: dict, required_red: list[str] | None = None) -> str:
                     f"({_check_names(required_red)}); tools/cc/ship.py status tells a test red "
                     f"(fix, push, re-bind) from a lost runner (rerun)")
         elif running:
-            # The words the board's blocked row prints too (DEF-4063). This
-            # block renders only with the module present (the gate in _run_main).
-            tail = f"auto-merge armed; {_load_post_merge().waiting_on(running)}"
+            # _post_merge.waiting_on's words, which the board's blocked row
+            # prints (DEF-4063); kept literal here so the row renders without
+            # the module, and pinned equal in tests/test_post_merge.py.
+            tail = f"auto-merge armed; waiting on {running} running"
         elif red and required_red is None:
             tail = (f"auto-merge armed but held ({merge_state.lower()}); could not "
                     f"read which reds are required: gh pr checks {pr['number']} --required")
