@@ -112,10 +112,26 @@ def _no_box_lock(monkeypatch):
     monkeypatch.delenv("ESPALIER_BOX_LOCK", raising=False)
 
 
+def _registry(monkeypatch, tmp_path: Path, *, readable: bool) -> None:
+    """Point Claude Code's session registry at ``tmp_path``: an empty one
+    (read, no session there) or none at all (unread). Left to the host, the
+    reason read the developer's own ``~/.claude`` and a CI runner has none."""
+    cfg = tmp_path / "cfg"
+    (cfg / "sessions").mkdir(parents=True) if readable else cfg.mkdir()
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+
 @needs_git
 @posix_only
 class TestAnotherCheckoutsRun:
-    def test_a_kill_of_a_pid_working_in_another_checkout_is_nudged_once(self, tmp_path, children):
+    @pytest.mark.parametrize("readable, there", [
+        (True, "no live Claude session there"),
+        (False, "its sessions unread"),
+    ])
+    def test_a_kill_of_a_pid_working_in_another_checkout_is_nudged_once(self, tmp_path, children, monkeypatch,
+                                                                          readable, there):
+        _registry(monkeypatch, tmp_path, readable=readable)
         main, other = _clone(tmp_path)
         theirs = children(other)
         time.sleep(0.3)
@@ -123,7 +139,7 @@ class TestAnotherCheckoutsRun:
         assert fired is not None and fired[0] == "CP-KILL", fired
         reason = fired[1]
         assert f"pid {theirs.pid} works in .claude/worktrees/other, another checkout of this clone" in reason, reason
-        assert "seat other-seat" in reason and "no live Claude session there" in reason, reason
+        assert "seat other-seat" in reason and there in reason, reason
         assert reason.isascii() and len(reason.encode("utf-8")) <= 512, reason
         assert _fire(main, f"kill -9 {theirs.pid}") is None, "the re-issue proceeds"
 
