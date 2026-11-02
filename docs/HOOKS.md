@@ -252,7 +252,8 @@ machine -- whose local mail refs hold live assigns for this seat, an `Orders:`
 line follows `Mail:`: the seat's name, how many jobs and the first one's lane
 (or its ids), its unread count, then the short form of the seat's first
 message from the seat driver (`tools/cc/seat.py`): run `/inbox`, then `/inbox
-board`, then start the worker loop, and the command that prints the whole
+board`, then start the worker loop (on a clear or a compaction, which the loop
+survives, start no second one where `CronList` lists it), and the command that prints the whole
 message (`<python> tools/cc/seat.py brief <seat>`, spelled with the host's
 interpreter). It reads the refs the mail line already read and spawns nothing
 of its own; on the dispatcher seat, a seat with no job, or a clone whose

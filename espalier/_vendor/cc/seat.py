@@ -52,6 +52,9 @@ session) and every channel fact from ``mail.py``'s local refs:
   ``--return-jobs`` hands them back to the dispatcher; then release the
   seat's live claims from inside its worktree, under its own name, each by
   its id; then remove it (a lock whose holder exited is released and said).
+  A mail fetch that fails, at the first read or at the one confirming the
+  releases, refuses: the refs as last fetched miss a job given since, and
+  ``--no-fetch`` is the way to retire on them, fetching at neither read.
 
 Verbs::
 
@@ -98,19 +101,34 @@ SETTINGS_REL = ".claude/settings.json"
 BRANCH_PREFIX = "worktree-"
 MAINTENANCE_KEY = "ESPALIER_MAINTENANCE_MODE"
 #: The box-wide lock file the suite's xdist runs take, so two seats on one
-#: machine run one tier at a time: one path per host under the temp directory
-#: (per user on both OSes), set by the launcher for every seat and never by
-#: CI. The suite's plugin exports the holder's pid beside it
-#: (``ESPALIER_BOX_LOCK_HOLDER``) to its own children; the launcher sets the
-#: path alone.
+#: machine run one tier at a time: one path per user under the home
+#: directory, set by the launcher for every seat and never by CI. The suite's
+#: plugin exports the holder's pid beside it (``ESPALIER_BOX_LOCK_HOLDER``) to
+#: its own children, and makes the lock's folder where it is missing; the
+#: launcher sets the path alone.
 BOX_LOCK_KEY = "ESPALIER_BOX_LOCK"
 BOX_LOCK_NAME = "espalier-box.lock"
+BOX_LOCK_HOME = ".espalier"
 
 
 def box_lock_default() -> str:
-    """The host's default lock path: the temp directory the interpreter
-    resolves, which two seats of one user on one box resolve alike."""
-    return os.path.join(tempfile.gettempdir(), BOX_LOCK_NAME)
+    """The host's default lock path, ``~/.espalier/espalier-box.lock``: read
+    from the home directory and never from ``TMPDIR``, so two seats of one
+    user launched from contexts whose temp directories differ (a terminal and
+    an app) lock one file (DEF-4053), in a folder the host does not sweep;
+    ``hooks/_integrity.py`` keeps its audit log under the same home. Where no
+    home can be told (POSIX with neither ``HOME`` nor a passwd entry, which
+    ``Path.home`` raises on, or a home that does not resolve to an absolute
+    path) or the home is a filesystem root (a container's or a service
+    user's ``/``, where a user cannot make the folder), the temp directory,
+    as before."""
+    try:
+        home = Path.home()
+    except RuntimeError:
+        home = None
+    if home is None or not home.is_absolute() or home.parent == home:
+        return os.path.join(tempfile.gettempdir(), BOX_LOCK_NAME)
+    return str(home / BOX_LOCK_HOME / BOX_LOCK_NAME)
 #: What a running session sets in its children: the eleven names read in a
 #: session's environment on 2.1.300 (2026-10-15) and the five more Claude Code
 #: strips from a child session of its own. Carried into a session this driver
@@ -225,17 +243,20 @@ def _seat_name(clone: str | None, path: Path, clone_unread: str = "") -> tuple[s
 
 
 CHANNEL_UNREAD = "the mail channel could not be read"
+FETCH_FAILED = "the mail fetch failed"
+FETCH_STALE = "; claims and jobs as last fetched"
 
 
 def _read_channel(root: Path, *, fetch: bool) -> tuple[list[dict], list[dict], str]:
     """``(live claims, live jobs, note)`` from the local mail refs, after one
     bounded fetch unless ``fetch`` is off. An unreadable channel is said in
-    the note (opening :data:`CHANNEL_UNREAD`), never raised: the seats still
-    list, and ``retire`` refuses on it."""
+    the note (opening :data:`CHANNEL_UNREAD`), and so is a fetch that failed
+    (opening :data:`FETCH_FAILED`), never raised: the seats still list, and
+    ``retire`` refuses on either."""
     try:
         if fetch:
             ok, problem = mail.fetch_mail(root, timeout=FETCH_CAP_S)
-            note = "" if ok else f"the mail fetch failed ({problem}); claims and jobs as last fetched"
+            note = "" if ok else f"{FETCH_FAILED} ({problem}){FETCH_STALE}"
         else:
             note = "claims and jobs as last fetched (--no-fetch)"
         by_machine, _skipped = mail.read_mail(root, timeout=GIT_CAP_S)
@@ -998,16 +1019,34 @@ def reprime_text(brief: Brief) -> str:
     return text + "\n" + REPRIME_NOTE.format(what=what, every=every)
 
 
-def brief_line(role: str, seat: str, python: str = "") -> str:
+#: The SessionStart sources whose window keeps the loop it was running, with
+#: how the line names each: a seat's interval loop is a session-only job,
+#: in memory until the process exits (Claude Code's CronCreate), so a /clear
+#: (measured 2026-10-15) and a compaction keep it, and a resume, a new
+#: process, does not. On these the short form invites no loop (DEF-4052).
+LOOP_KEPT_SOURCES = {"clear": "a /clear", "compact": "a compaction"}
+
+
+def brief_line(role: str, seat: str, python: str = "", source: str = "") -> str:
     """The short form of the same brief, for the SessionStart banner's
     ``Orders:`` line: the two reads to start with, the loop it ends with and
     its interval, and the command that prints the whole message (``python``
     is the interpreter spelling the caller resolved; '' leaves the command
-    out). Read from the templates alone, with no git, so a hook can afford it."""
+    out). ``source`` is the SessionStart payload's: on one that keeps the
+    window's loop (:data:`LOOP_KEPT_SOURCES`) the line says the loop survives
+    it and starts no second one where ``CronList`` lists it, as the
+    own-clear's re-prime does; ``CronList`` is the oracle, since a recurring
+    loop also expires after seven days and a window cleared by hand may never
+    have started one. Read from the templates alone, with no git, so a hook
+    can afford it."""
     loop = DISPATCHER_TICK if role == "dispatcher" else WORKER_TICK
     every = loop.split(" ", 2)[1]
     what = "the board loop" if role == "dispatcher" else "the worker loop"
     tail = f"; {python} tools/cc/seat.py brief {seat} prints the first message" if python else ""
+    kept = LOOP_KEPT_SOURCES.get(source)
+    if kept:
+        return (f"run /inbox, then /inbox board; {what} (/loop {every}) survives {kept}: where CronList lists "
+                f"it, start no second one{tail}")
     return f"run /inbox, then /inbox board, then start {what} (/loop {every}){tail}"
 
 
@@ -1199,6 +1238,12 @@ def cmd_retire(root: Path, seat: str, *, dry_run: bool, fetch: bool, return_jobs
     claims, jobs, note = _read_channel(root, fetch=fetch)
     if note.startswith(CHANNEL_UNREAD):
         raise Refused(f"{note}, so the seat's claims cannot be read: nothing is released or removed")
+    if note.startswith(FETCH_FAILED):
+        # The refs as last fetched miss a job the dispatcher gave the seat
+        # since, and a seat retired over it leaves that job with nobody.
+        raise Refused(f"{note.removesuffix(FETCH_STALE)}, so a job given to {seat} since the last fetch would not be seen: "
+                      f"nothing is released or removed; run retire again once origin answers, or --no-fetch "
+                      f"retires on the refs as last fetched")
     if note:
         say(f"({note})")
     mine = [c for c in claims if c.get("from") == seat]
@@ -1248,8 +1293,21 @@ def cmd_retire(root: Path, seat: str, *, dry_run: bool, fetch: bool, return_jobs
         _send_releases(target.path, seat, [str(j.get("id")) for j in held],
                        f"Seat {seat} retired; this job goes back to the dispatcher.")
     if mine or held:
-        mail.fetch_mail(root, timeout=FETCH_CAP_S)
-        left_claims, left_jobs, _note = _read_channel(root, fetch=False)
+        # The confirming read fetches as the first one did (none under
+        # --no-fetch), and a failed fetch keeps the worktree: the refs as last
+        # fetched would confirm past a job given between the two reads.
+        if fetch:
+            ok, problem = mail.fetch_mail(root, timeout=FETCH_CAP_S)
+            if not ok:
+                raise Refused(f"the releases were sent, and the fetch that confirms them failed ({problem}): the "
+                              f"worktree is kept, since a job given to {seat} since would not be seen; run retire "
+                              "again once origin answers (what was sent stays sent)")
+        left_claims, left_jobs, left_note = _read_channel(root, fetch=False)
+        if left_note.startswith(CHANNEL_UNREAD):
+            # An unread channel is no proof that nothing is left: the first
+            # read refuses on it, and so does this one.
+            raise Refused(f"the releases were sent, and {left_note}, so they cannot be confirmed: the worktree is "
+                          "kept; run retire again (what was sent stays sent)")
         left = [c for c in left_claims if c.get("from") == seat]
         left += [j for j in left_jobs if (j.get("re") or {}).get(mail.ASSIGN_SEAT_KEY) == seat]
         if left:
@@ -1300,7 +1358,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--return-jobs", action="store_true", help="release the seat's jobs back to the dispatcher too")
     p.add_argument("--unchecked", action="store_true", help="pass a session only a session marker names")
-    p.add_argument("--no-fetch", action="store_true")
+    p.add_argument("--no-fetch", action="store_true",
+                   help="retire on the mail refs as last fetched, fetching at neither read (a failed fetch refuses)")
     return parser
 
 
