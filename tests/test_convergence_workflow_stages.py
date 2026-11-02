@@ -169,7 +169,7 @@ class TestConvergenceWorkflowStages:
     def test_the_seeded_convergence_ledger_names_the_trend_reader(self):
         """The ledger header init seeds tells the adopter how its numbers are read;
         it named the bare reader after the critic moved to the trend reader."""
-        seed = (REPO_ROOT / "espalier" / "assets" / "seed" / "CONVERGENCE_LEDGER.md").read_text(encoding="utf-8")
+        seed = (REPO_ROOT / "espalier" / "assets" / "seed" / "CONVERGENCE_LEDGER.md").read_text(encoding="utf-8")  # ledger-read: the seeded convergence ledger header, not the forward ledger
         assert "read_ledger_trend" in seed, "the seeded ledger header still names the bare read_ledger"
 
 

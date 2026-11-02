@@ -19,7 +19,8 @@ The oracle for the predicate is PyYAML (a test dependency): a value it
 rejects is FRAGILE and one it reads shorter than written is CUT. The engine's
 copy (``espalier.render_surface.frontmatter_hazards``) and the hook's
 (``post_write_check._frontmatter_hazards``; a hook cannot import the engine)
-are held to one verdict over one corpus. Each row reads its function by
+are held to one verdict over one corpus, because a fix landed in one copy
+alone rots the other. Each row reads its function by
 name, so at a base without the fix it fails by its assertion.
 """
 # pytest-marker: default-unit  (in-process predicate, audit and roster calls on

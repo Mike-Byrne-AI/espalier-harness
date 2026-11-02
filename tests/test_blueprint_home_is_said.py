@@ -5,7 +5,7 @@ says so (DEF-1105).
 reaches the next session on the same disk and no other: a re-clone, a second
 machine or a lost disk starts an empty one. The shipped workflow guide and the
 handoff's step 1 called that store durable, and the resume report read an empty
-chain as a fresh start. These rows hold the deployed text and the rendered line
+chain as a fresh start. These rows pin the deployed text and the rendered line
 to where the reasoning goes and where a decision that must be kept belongs.
 """
 # pytest-marker: default-unit  (reads two packaged bodies; renders one report dict and one planted scaffold)
