@@ -3358,8 +3358,15 @@ def _walk_shell_roles(
                             s[k + 2:close], walk_substitutions=False)
                     except (_UnresolvedShellSyntax, IndexError):
                         inner, inner_heads = "", set()
+                    # ⚠ EVERY INNER HEAD STRICTLY ON THE ROSTER, NO READER. A
+                    # reader as the INNER command runs its own program -- sed's
+                    # `e`, perl's `system`, awk's `system()` -- and its output
+                    # is what the capture yields; `_head_hands_nothing_to_a_shell`
+                    # admits a reader because ITS readers scan that program, but
+                    # a splice masks it before they can (the lane review's c11
+                    # shape: an echo capture of a sed `e` command).
                     if inner_heads and all(
-                            _head_hands_nothing_to_a_shell(h) for h in inner_heads):
+                            h in _NON_REPARSING_HEADS for h in inner_heads):
                         out[k + 2:close] = inner
                 k = close + 1
                 continue

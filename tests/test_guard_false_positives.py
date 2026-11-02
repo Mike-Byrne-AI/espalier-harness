@@ -694,6 +694,10 @@ GENUINE_BASH = [
      f"sed -n \"$(cat <<'EOF'\n1e echo x > {_HOOK}\nEOF\n)\" /etc/hosts"),
     ("rg-pre-captures-a-heredoc-write",
      f"rg --pre \"$(cat <<'EOF'\necho x > {_HOOK}\nEOF\n)\" ."),
+    # the INNER command a reader that runs its own program: an echo capture
+    # of a sed `e` command writes the hook (the lane review's c11 shape)
+    ("echo-captures-a-sed-e-command",
+     f"echo \"$(sed -n '1e echo x > {_HOOK}' /etc/hosts)\""),
     # F3: an exec'd descriptor into a process substitution running a shell, a
     # later `>&3` sends there -- both the braced group and the braceless form.
     ("exec-fd-procsub-then-group-write",
