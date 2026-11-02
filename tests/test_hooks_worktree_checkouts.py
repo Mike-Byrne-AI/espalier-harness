@@ -207,6 +207,29 @@ class TestSiblingCheckoutContaining:
         root, live = _repo_with_worktree(tmp_path)
         assert _hook_utils().sibling_checkout_containing(live, root / "src") == root.resolve()
 
+    def test_from_a_root_beside_the_main_checkout_a_nested_worktree_is_named(self, tmp_path):
+        root, live = _repo_with_worktree(tmp_path)
+        beside = tmp_path / "beside"
+        _git(["worktree", "add", str(beside), "-b", "wt-beside"], root)
+        assert _hook_utils().sibling_checkout_containing(beside, live / "src") == live.resolve()
+
+    def test_a_worktree_nested_in_a_worktree_is_named_over_the_one_holding_it(self, tmp_path):
+        # `live` sorts before `nested` in git's registry, so the first match was `live`.
+        root, live = _repo_with_worktree(tmp_path)
+        nested = live / "nested"
+        _git(["worktree", "add", str(nested), "-b", "wt-nested"], root)
+        assert _hook_utils().sibling_checkout_containing(root, nested / "src") == nested.resolve()
+
+    def test_the_base_named_is_matched_to_its_sibling_case_insensitively(self, tmp_path, monkeypatch):
+        # A base list spelled in another case (a later edit folding Windows' `c:`
+        # and `C:` together) still names the sibling; an exact compare went silent.
+        root, live = _repo_with_worktree(tmp_path)
+        other = _add_worktree(root, "other")
+        hu = _hook_utils()
+        bases = tuple(b.upper() for b in hu._checkout_bases(live))
+        monkeypatch.setattr(hu, "_checkout_bases", lambda _root: bases)
+        assert hu.sibling_checkout_containing(live, other / "src") == other.resolve()
+
 
 class TestResolveInCheckout:
     """Every normaliser relativises against the DEEPEST checkout containing
